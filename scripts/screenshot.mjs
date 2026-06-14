@@ -35,15 +35,23 @@ try {
 
   await page.goto(`http://localhost:${PORT}/`);
   await page.waitForSelector(".page-title", { timeout: 5000 });
-  await sleep(300);
+  await sleep(400);
   await page.screenshot({ path: `${OUT}/journals-light.png` });
 
-  // A named page.
-  await page.click("text=logseq-claude >> nth=0").catch(() => {});
-  await sleep(300);
+  // Editing state: click a block to show the textarea editor.
+  await page.locator(".block-content").nth(1).click();
+  await sleep(250);
+  await page.screenshot({ path: `${OUT}/editing-light.png` });
+  await page.keyboard.press("Escape");
+
+  // A named page (shows page properties + Linked References).
+  await page.locator(".nav-page").first().click();
+  await sleep(400);
   await page.screenshot({ path: `${OUT}/page-light.png` });
 
-  // Dark theme.
+  // Dark theme on the journals feed.
+  await page.locator(".nav-item").first().click();
+  await sleep(200);
   await page.click(".icon-btn");
   await sleep(300);
   await page.screenshot({ path: `${OUT}/journals-dark.png` });

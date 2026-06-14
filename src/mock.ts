@@ -39,7 +39,9 @@ const PAGES: PageDto[] = [
       b("TODO Ship the M0 vertical slice"),
       b("DOING Wire up the [[block editor]] with caret preservation"),
       b("DONE Validate round-trip on the real `shui-graph`"),
-      b("Inline math works too: $E = mc^2$ and references like ((mock-2))."),
+      b("Inline math works too: $E = mc^2$ and references like ((arch-1))."),
+      b("Open tasks across the graph:"),
+      b("{{query (todo TODO DOING)}}"),
     ],
   },
   {
@@ -69,7 +71,7 @@ const NAMED: PageDto[] = [
         b("Reads the same markdown graph as OG Logseq."),
       ]),
       b("## Architecture"),
-      b("Rust core owns parsing; the frontend owns the live editing tree."),
+      b("Rust core owns parsing; the frontend owns the live editing tree.\nid:: arch-1"),
     ],
   },
 ];
@@ -115,9 +117,9 @@ export function mockBackend(): Backend {
     async runQuery(query: string): Promise<RefGroup[]> {
       // Simplified mock evaluator: task/todo filter or page-ref filter.
       if (/\b(todo|task)\b/i.test(query)) {
-        const named = (query.match(/\b(TODO|DOING|DONE|NOW|LATER)\b/g) ?? []).filter(
-          (w) => !/^(todo|task)$/i.test(w)
-        );
+        // Uppercase markers only (the lowercase `todo`/`task` keyword is excluded
+        // by the case-sensitive match, so no extra filtering is needed).
+        const named = query.match(/\b(TODO|DOING|DONE|NOW|LATER|WAITING|CANCELED)\b/g) ?? [];
         const set = named.length ? named : ["TODO", "DOING", "NOW", "LATER"];
         return collect((b) => {
           const m = leadingMarker(b.raw);
