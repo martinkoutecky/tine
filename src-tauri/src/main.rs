@@ -14,9 +14,11 @@ fn resolve_root(path: &str) -> Option<String> {
     if !path.is_empty() {
         return Some(path.to_string());
     }
-    if let Ok(p) = std::env::var("LOGSEQ_CLAUDE_GRAPH") {
-        if !p.is_empty() {
-            return Some(p);
+    for var in ["TINE_GRAPH", "LOGSEQ_CLAUDE_GRAPH"] {
+        if let Ok(p) = std::env::var(var) {
+            if !p.is_empty() {
+                return Some(p);
+            }
         }
     }
     std::env::args().nth(1)

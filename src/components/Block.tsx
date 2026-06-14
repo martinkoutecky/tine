@@ -27,7 +27,7 @@ import { blockView } from "../render/block";
 import { InlineText } from "../render/inline";
 import { QueryMacro, EmbedMacro } from "./Macro";
 import { openPdf } from "../ui";
-import { HL_COLOR_BG } from "../pdf";
+import { HL_COLOR_BG, HL_COLOR_SOLID } from "../pdf";
 
 // Detect a block whose entire body is a single {{query}} / {{embed}} macro.
 function detectMacro(lines: string[]): { kind: "query" | "embed"; inner: string } | null {
@@ -143,13 +143,20 @@ function Rendered(props: { id: string }): JSX.Element {
         </For>
       }
     >
-      <span
-        class="pdf-annotation"
-        style={{ background: HL_COLOR_BG[annotation()!.color] ?? HL_COLOR_BG.yellow }}
-        onClick={openHighlightPdf}
-        title="Open in PDF"
-      >
-        <InlineText text={view().lines[0]} />
+      <span class="pdf-annotation-line">
+        <span class="hl-prefix" onClick={openHighlightPdf} title="Open in PDF (P{annotation()!.hlPage})">
+          <span
+            class="hl-dot"
+            style={{ background: HL_COLOR_SOLID[annotation()!.color] ?? HL_COLOR_SOLID.yellow }}
+          />
+          <strong class="hl-page-badge">P{annotation()!.hlPage}</strong>
+        </span>{" "}
+        <span
+          class="hl-text"
+          style={{ background: HL_COLOR_BG[annotation()!.color] ?? HL_COLOR_BG.yellow }}
+        >
+          <InlineText text={view().lines[0]} />
+        </span>
       </span>
     </Show>
   );

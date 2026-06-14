@@ -1704,17 +1704,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "953f07c43838f8e6f9758cab68bf5bed85465e7587ebe0b823f1bcd81978ad3a"
 
 [[package]]
-name = "logseq-claude"
-version = "0.1.0"
-dependencies = [
- "logseq-core",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
-]
-
-[[package]]
 name = "logseq-core"
 version = "0.1.0"
 dependencies = [
@@ -3305,6 +3294,17 @@ checksum = "71c652a3727a9cbb9a02f707f530b618ce00d0ccd762009c8c23bd191df3c17d"
 dependencies = [
  "num-conv",
  "time-core",
+]
+
+[[package]]
+name = "tine"
+version = "0.1.0"
+dependencies = [
+ "logseq-core",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
 ]
 
 [[package]]

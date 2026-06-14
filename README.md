@@ -1,8 +1,9 @@
-# logseq-claude
+# Tine
 
-A fast, near-identical clone of [Logseq](https://logseq.com) that operates on the
-same standard markdown graph (`journals/` + `pages/` + `logseq/config.edn`), so you
-can swap between OG Logseq and this app on the same files (one at a time).
+A fast, local outliner — a near-identical, **Logseq-compatible** desktop app that
+operates on the same standard markdown graph (`journals/` + `pages/` +
+`logseq/config.edn`), so you can swap between Logseq and Tine on the same files
+(one at a time). (Repo/dir is still `logseq-claude`; rename anytime.)
 
 **Why:** OG Logseq's UI is slow (Electron + DataScript + heavy re-rendering). This is a
 ground-up rewrite focused on speed and visual/functional parity.
@@ -38,8 +39,8 @@ cargo run -p logseq-core --example roundtrip_dir -- /path/to/graph
 ```bash
 source scripts/env.sh
 npm install                       # first time
-cargo build --release -p logseq-claude    # or: npm run app  (tauri dev)
-LOGSEQ_CLAUDE_GRAPH=/path/to/your/graph ./target/release/logseq-claude
+cargo build --release -p tine     # or: npm run app  (tauri dev)
+TINE_GRAPH=/path/to/your/graph ./target/release/tine
 ```
 
 Point it at the same `journals/`+`pages/`+`logseq/config.edn` tree you use with OG

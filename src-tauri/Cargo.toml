@@ -1,5 +1,5 @@
 [package]
-name = "logseq-claude"
+name = "tine"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

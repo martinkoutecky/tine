@@ -18,3 +18,15 @@ export const HL_COLOR_BG: Record<string, string> = {
   red: "rgba(246, 130, 130, 0.45)",
   purple: "rgba(190, 140, 246, 0.45)",
 };
+
+// Solid swatch colors for the highlight dot in the note bullet (matches OG's
+// colored-dot prefix on annotation blocks).
+export const HL_COLOR_SOLID: Record<string, string> = {
+  yellow: "#f5c518",
+  green: "#3fbf57",
+  blue: "#4a9eff",
+  red: "#ec5c5c",
+  purple: "#a86ff0",
+};
+
+export const HL_COLORS = ["yellow", "green", "blue", "red", "purple"];

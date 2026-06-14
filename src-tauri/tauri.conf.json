@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "logseq-claude",
+  "productName": "Tine",
   "version": "0.1.0",
-  "identifier": "dev.logseqclaude.app",
+  "identifier": "dev.tine.app",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5181",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "logseq-claude",
+        "title": "Tine",
         "width": 1200,
         "height": 820,
         "minWidth": 640,

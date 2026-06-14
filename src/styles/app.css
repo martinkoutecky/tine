@@ -818,12 +818,42 @@ mark {
   background: var(--bg-tertiary);
 }
 
-/* PDF highlight (annotation) block text */
-.pdf-annotation {
+/* PDF highlight (annotation) block: colored dot + "P<page>" badge + text,
+   mirroring OG's prefix-link. Clicking the prefix opens the PDF at that page. */
+.hl-prefix {
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  vertical-align: baseline;
+  user-select: none;
+}
+
+.hl-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.hl-page-badge {
+  font-size: 0.78em;
+  font-weight: 650;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  border-radius: 4px;
+  padding: 0 5px;
+}
+
+.hl-prefix:hover .hl-page-badge {
+  color: var(--link-color);
+}
+
+.hl-text {
   border-radius: 2px;
   padding: 0 2px;
   box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
 }
 
 .pdf-scroll {

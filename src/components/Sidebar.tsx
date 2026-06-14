@@ -14,7 +14,7 @@ export function Sidebar(): JSX.Element {
   return (
     <div class="left-sidebar-inner">
       <div class="sidebar-header">
-        <div class="app-logo">logseq-claude</div>
+        <div class="app-logo">Tine</div>
       </div>
 
       <div class="nav-search">
