@@ -18,6 +18,9 @@ export interface Backend {
   resolveBlock(uuid: string): Promise<RefGroup | null>;
   readAsset(name: string): Promise<Uint8Array>;
   saveAsset(name: string, bytes: Uint8Array): Promise<string>;
+  /** If the OS clipboard holds an image, save it to assets/ and return the
+   *  filename; otherwise null. */
+  pasteImage(): Promise<string | null>;
   readHighlights(pdf: string): Promise<Highlight[]>;
   writeHighlights(pdf: string, label: string, highlights: Highlight[]): Promise<void>;
 }
@@ -77,6 +80,27 @@ class TauriBackend implements Backend {
   }
   saveAsset(name: string, bytes: Uint8Array) {
     return this.call<string>("save_asset", { name, bytes: Array.from(bytes) });
+  }
+  async pasteImage(): Promise<string | null> {
+    try {
+      const { readImage } = await import("@tauri-apps/plugin-clipboard-manager");
+      const img = await readImage();
+      const rgba = await img.rgba();
+      const { width, height } = await img.size();
+      if (!width || !height || !rgba.length) return null;
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return null;
+      ctx.putImageData(new ImageData(new Uint8ClampedArray(rgba), width, height), 0, 0);
+      const blob: Blob | null = await new Promise((res) => canvas.toBlob(res, "image/png"));
+      if (!blob) return null;
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      return await this.saveAsset(`image_${Date.now()}.png`, bytes);
+    } catch {
+      return null; // no image in clipboard, or plugin unavailable
+    }
   }
   readHighlights(pdf: string) {
     return this.call<Highlight[]>("read_highlights", { pdf });

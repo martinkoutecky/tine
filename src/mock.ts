@@ -228,6 +228,9 @@ export function mockBackend(): Backend {
       mockAssets[name] = bytes;
       return name;
     },
+    async pasteImage(): Promise<string | null> {
+      return null; // no OS clipboard in the browser mock
+    },
     async readHighlights(pdf: string): Promise<Highlight[]> {
       return mockHighlights[pdf]?.highlights ?? [];
     },

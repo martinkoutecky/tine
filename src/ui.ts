@@ -1,7 +1,22 @@
 // Small global UI state: theme, left sidebar, and the quick-switcher modal.
 import { createSignal } from "solid-js";
 
-export const [theme, setTheme] = createSignal<"light" | "dark">("light");
+const THEME_KEY = "logseq-claude.theme";
+function loadTheme(): "light" | "dark" {
+  try {
+    const t = localStorage.getItem(THEME_KEY);
+    if (t === "dark" || t === "light") return t;
+  } catch {
+    // ignore
+  }
+  return "light";
+}
+export const [theme, setTheme] = createSignal<"light" | "dark">(loadTheme());
+
+/** Apply the stored theme to the document (call once at startup). */
+export function applyTheme() {
+  document.documentElement.setAttribute("data-theme", theme());
+}
 
 // Task workflow from config.edn (:preferred-workflow): drives mod+enter cycling.
 export const [workflow, setWorkflow] = createSignal<"now" | "todo">("now");
@@ -9,6 +24,11 @@ export function toggleTheme() {
   const next = theme() === "light" ? "dark" : "light";
   setTheme(next);
   document.documentElement.setAttribute("data-theme", next);
+  try {
+    localStorage.setItem(THEME_KEY, next);
+  } catch {
+    // ignore
+  }
 }
 
 export const [sidebarOpen, setSidebarOpen] = createSignal(true);

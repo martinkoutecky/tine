@@ -15,6 +15,7 @@
   "dependencies": {
     "@fontsource/inter": "^5.2.8",
     "@tauri-apps/api": "^2.1.1",
+    "@tauri-apps/plugin-clipboard-manager": "^2.3.2",
     "katex": "^0.16.47",
     "pdfjs-dist": "^4.10.38",
     "solid-js": "^1.9.3"
