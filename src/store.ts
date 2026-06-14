@@ -395,6 +395,33 @@ export function insertOutlineAfter(afterId: string, nodes: OutlineNode[]): strin
   return lastId;
 }
 
+/** Ensure a block has a persistent `id::` uuid (assigned lazily, like OG);
+ *  returns the uuid. Used to make `((uuid))` block references. */
+export function ensureBlockId(id: string): string {
+  const node = doc.byId[id];
+  const m = /(?:^|\n)id:: *([0-9a-fA-F-]{8,})/.exec(node.raw);
+  if (m) return m[1];
+  const uuid = crypto.randomUUID();
+  setDoc("byId", id, "raw", `${node.raw}\nid:: ${uuid}`);
+  markDirty(node.page);
+  return uuid;
+}
+
+/** Serialize a block and its subtree to Logseq markdown. */
+export function blockSubtreeMarkdown(id: string, level = 0): string {
+  const n = doc.byId[id];
+  if (!n) return "";
+  const tabs = "\t".repeat(level);
+  const lines = n.raw.split("\n");
+  const out: string[] = [];
+  out.push(`${tabs}- ${lines[0] ?? ""}`.replace(/\s+$/, ""));
+  for (const line of lines.slice(1)) {
+    out.push(line === "" ? "" : `${tabs}  ${line}`);
+  }
+  for (const c of n.children) out.push(blockSubtreeMarkdown(c, level + 1));
+  return out.join("\n");
+}
+
 /** Remove a block and its subtree. */
 export function deleteBlock(id: string) {
   const node = doc.byId[id];

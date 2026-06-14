@@ -4,6 +4,8 @@ import { PageView } from "./components/Page";
 import { QuickSwitcher } from "./components/QuickSwitcher";
 import { PdfViewer } from "./components/PdfViewer";
 import { TabBar } from "./components/TabBar";
+import { ContextMenu } from "./components/ContextMenu";
+import { RightSidebar } from "./components/RightSidebar";
 import { backend } from "./backend";
 import { installKeybindings } from "./keybindings";
 import {
@@ -105,6 +107,7 @@ export function App(): JSX.Element {
           </div>
         </main>
       </div>
+      <RightSidebar />
       <Show when={pdfTarget()}>
         <div class="pdf-pane">
           <PdfViewer
@@ -115,6 +118,7 @@ export function App(): JSX.Element {
         </div>
       </Show>
       <QuickSwitcher />
+      <ContextMenu />
     </div>
   );
 }

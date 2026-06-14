@@ -233,6 +233,13 @@ export function mockBackend(): Backend {
     async pasteImage(): Promise<string | null> {
       return null; // no OS clipboard in the browser mock
     },
+    async writeText(text: string): Promise<void> {
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        // ignore
+      }
+    },
     async readHighlights(pdf: string): Promise<Highlight[]> {
       return mockHighlights[pdf]?.highlights ?? [];
     },

@@ -6,7 +6,7 @@ describe("mock backend", () => {
     const b = mockBackend();
     const groups = await b.runQuery("(todo TODO DOING)");
     const raws = groups.flatMap((g) => g.blocks.map((bl) => bl.raw));
-    expect(raws.some((r) => r.startsWith("TODO Ship"))).toBe(true);
+    expect(raws.some((r) => r.startsWith("TODO ") && r.includes("Ship the M0"))).toBe(true);
     expect(raws.some((r) => r.startsWith("DOING Wire"))).toBe(true);
   });
 

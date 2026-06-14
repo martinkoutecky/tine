@@ -1,7 +1,7 @@
 import { For, Show, createEffect, createSignal, onCleanup, type JSX } from "solid-js";
 import { doc, loadSingle, loadFeed, appendFeed, type FeedPage } from "../store";
 import { route, openPage } from "../router";
-import { zoomedBlock, zoomOut, zoomInto } from "../ui";
+import { zoomedBlock, zoomOut, zoomInto, isFavorite, toggleFavorite } from "../ui";
 import { backend } from "../backend";
 import { Block } from "./Block";
 import { LinkedReferences } from "./LinkedReferences";
@@ -127,13 +127,25 @@ function ZoomedView(props: { id: string }): JSX.Element {
 function PageSection(props: { page: FeedPage }): JSX.Element {
   return (
     <div class="page-section">
-      <h1
-        class="page-title"
-        classList={{ "journal-title": props.page.kind === "journal" }}
-        onClick={() => openPage(props.page.name, props.page.kind)}
-      >
-        {props.page.title}
-      </h1>
+      <div class="page-title-row">
+        <h1
+          class="page-title"
+          classList={{ "journal-title": props.page.kind === "journal" }}
+          onClick={() => openPage(props.page.name, props.page.kind)}
+        >
+          {props.page.title}
+        </h1>
+        <Show when={props.page.kind === "page"}>
+          <button
+            class="fav-star"
+            classList={{ active: isFavorite(props.page.name) }}
+            title={isFavorite(props.page.name) ? "Unfavorite" : "Add to favorites"}
+            onClick={() => toggleFavorite(props.page.name)}
+          >
+            {isFavorite(props.page.name) ? "★" : "☆"}
+          </button>
+        </Show>
+      </div>
       <Show when={props.page.preBlock}>
         <div class="page-properties">
           <For each={props.page.preBlock!.split("\n").filter(isPropertyLine)}>

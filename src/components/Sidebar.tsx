@@ -1,7 +1,7 @@
 import { For, Show, createResource, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { openJournals, openPage, openPageInNewTab, openInNewTab, route } from "../router";
-import { openSwitcher } from "../ui";
+import { openSwitcher, favorites } from "../ui";
 
 export function Sidebar(): JSX.Element {
   const [pages] = createResource(() => backend().listPages());
@@ -42,6 +42,29 @@ export function Sidebar(): JSX.Element {
           <Icon name="journals" />
           <span>Journals</span>
         </div>
+
+        <Show when={favorites().length > 0}>
+          <div class="nav-section">
+            <div class="nav-section-header">FAVORITES</div>
+            <For each={favorites()}>
+              {(name) => (
+                <div
+                  class="nav-page"
+                  classList={{ active: isActive(name) }}
+                  onClick={() => openPage(name, "page")}
+                  onAuxClick={(e) => {
+                    if (e.button === 1) {
+                      e.preventDefault();
+                      openPageInNewTab(name, "page");
+                    }
+                  }}
+                >
+                  ⭐ {name}
+                </div>
+              )}
+            </For>
+          </div>
+        </Show>
 
         <div class="nav-section">
           <div class="nav-section-header">PAGES</div>

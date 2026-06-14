@@ -55,6 +55,31 @@ export function persistSidebarWidth() {
   }
 }
 
+// Favorites (starred pages), persisted.
+const FAV_KEY = "logseq-claude.favorites";
+function loadFavs(): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(FAV_KEY) ?? "[]");
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
+  }
+}
+export const [favorites, setFavorites] = createSignal<string[]>(loadFavs());
+export function isFavorite(name: string): boolean {
+  return favorites().includes(name);
+}
+export function toggleFavorite(name: string) {
+  const f = favorites();
+  const next = f.includes(name) ? f.filter((x) => x !== name) : [...f, name];
+  setFavorites(next);
+  try {
+    localStorage.setItem(FAV_KEY, JSON.stringify(next));
+  } catch {
+    // ignore
+  }
+}
+
 // Block zoom: focus a single block's subtree (click its bullet). Session-level
 // (the frontend block id stays valid while the page is loaded); cleared on nav.
 export const [zoomedBlock, setZoomedBlock] = createSignal<string | null>(null);
@@ -63,6 +88,32 @@ export function zoomInto(id: string) {
 }
 export function zoomOut() {
   setZoomedBlock(null);
+}
+
+// Right sidebar: open pages/blocks in a side pane (shift-click a link).
+export const [rightSidebar, setRightSidebar] = createSignal<
+  { kind: "page" | "block"; ref: string }[]
+>([]);
+export function openInRightSidebar(kind: "page" | "block", ref: string) {
+  const cur = rightSidebar();
+  if (cur.some((i) => i.kind === kind && i.ref === ref)) return;
+  setRightSidebar([{ kind, ref }, ...cur]);
+}
+export function closeRightSidebarItem(idx: number) {
+  setRightSidebar(rightSidebar().filter((_, i) => i !== idx));
+}
+
+// Right-click block context menu.
+export const [contextMenu, setContextMenu] = createSignal<{
+  x: number;
+  y: number;
+  blockId: string;
+} | null>(null);
+export function openContextMenu(x: number, y: number, blockId: string) {
+  setContextMenu({ x, y, blockId });
+}
+export function closeContextMenu() {
+  setContextMenu(null);
 }
 
 export const [switcherOpen, setSwitcherOpen] = createSignal(false);

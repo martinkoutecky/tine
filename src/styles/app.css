@@ -275,12 +275,70 @@ body {
 
 /* ---------------------------------------------------------------- page */
 
+.page-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .page-title {
   font-size: var(--ls-page-title-size);
   font-weight: 600;
   color: var(--text-title);
   margin: 8px 0 6px;
   line-height: 1.2;
+}
+
+.fav-star {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 20px;
+  color: var(--text-muted);
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.page-title-row:hover .fav-star,
+.fav-star.active {
+  opacity: 1;
+}
+
+.fav-star.active {
+  color: #f5c518;
+}
+
+/* context menu */
+.ctx-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 150;
+}
+
+.ctx-menu {
+  position: fixed;
+  min-width: 180px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.25);
+  padding: 4px;
+}
+
+.ctx-item {
+  padding: 6px 12px;
+  border-radius: 5px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--text-primary);
+}
+
+.ctx-item:hover {
+  background: var(--bg-tertiary);
+}
+
+.ctx-item.danger {
+  color: var(--marker-todo);
 }
 
 .journal-title {
@@ -930,6 +988,70 @@ mark {
   padding: 12px;
   color: var(--text-muted);
   font-size: 14px;
+}
+
+/* ------------------------------------------------------- right sidebar */
+
+.right-sidebar {
+  width: 320px;
+  max-width: 32vw;
+  flex: 0 0 auto;
+  border-left: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.right-sidebar-header {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.right-sidebar-body {
+  padding: 8px;
+}
+
+.rs-item {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+
+.rs-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.rs-item-title {
+  font-weight: 600;
+  color: var(--link-color);
+  cursor: pointer;
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rs-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.rs-item-body {
+  padding: 6px 10px;
 }
 
 /* --------------------------------------------------------------- PDF pane */

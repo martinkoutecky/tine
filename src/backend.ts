@@ -21,6 +21,7 @@ export interface Backend {
   /** If the OS clipboard holds an image, save it to assets/ and return the
    *  filename; otherwise null. */
   pasteImage(): Promise<string | null>;
+  writeText(text: string): Promise<void>;
   readHighlights(pdf: string): Promise<Highlight[]>;
   writeHighlights(pdf: string, label: string, highlights: Highlight[]): Promise<void>;
 }
@@ -100,6 +101,18 @@ class TauriBackend implements Backend {
       return await this.saveAsset(`image_${Date.now()}.png`, bytes);
     } catch {
       return null; // no image in clipboard, or plugin unavailable
+    }
+  }
+  async writeText(text: string): Promise<void> {
+    try {
+      const { writeText } = await import("@tauri-apps/plugin-clipboard-manager");
+      await writeText(text);
+    } catch {
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        // ignore
+      }
     }
   }
   readHighlights(pdf: string) {

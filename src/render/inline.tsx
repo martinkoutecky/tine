@@ -5,7 +5,7 @@
 import { For, Show, createResource, onCleanup, type JSX } from "solid-js";
 import katex from "katex";
 import { openPage, openPageInNewTab } from "../router";
-import { openPdf } from "../ui";
+import { openPdf, openInRightSidebar } from "../ui";
 import { parseInline, type Seg } from "./parseInline";
 import { blockView } from "./block";
 import { backend } from "../backend";
@@ -34,7 +34,8 @@ function renderSeg(s: Seg): JSX.Element {
           class="page-ref"
           onClick={(e) => {
             e.stopPropagation();
-            openPage(s.name);
+            if (e.shiftKey) openInRightSidebar("page", s.name);
+            else openPage(s.name);
           }}
           onAuxClick={(e) => {
             if (e.button === 1) {

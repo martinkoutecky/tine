@@ -31,7 +31,7 @@ import { blockView } from "../render/block";
 import { InlineText } from "../render/inline";
 import { BodyContent } from "../render/body";
 import { QueryMacro, EmbedMacro } from "./Macro";
-import { openPdf, workflow, zoomInto } from "../ui";
+import { openPdf, workflow, zoomInto, openContextMenu } from "../ui";
 import { HL_COLOR_BG, HL_COLOR_SOLID } from "../pdf";
 import { cycleMarker } from "../editor/marker";
 
@@ -78,6 +78,10 @@ export function Block(props: { id: string }): JSX.Element {
       <div
         class="block-main"
         classList={{ "drop-target": dropTarget() === props.id }}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          openContextMenu(e.clientX, e.clientY, props.id);
+        }}
         onDragOver={(e) => {
           if (draggedBlockId && draggedBlockId !== props.id) {
             e.preventDefault();
