@@ -171,6 +171,17 @@ export function mockBackend(): Backend {
       const n = name.toLowerCase();
       return collect((b) => pageRefs(b.raw).some((r) => r.toLowerCase() === n), name);
     },
+    async getUnlinkedRefs(name: string): Promise<RefGroup[]> {
+      const n = name.toLowerCase();
+      const re = new RegExp(`\\b${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`);
+      return collect(
+        (b) => re.test(b.raw.toLowerCase()) && !pageRefs(b.raw).some((r) => r.toLowerCase() === n),
+        name
+      );
+    },
+    async deletePage(): Promise<void> {
+      // no-op in mock
+    },
     async runQuery(query: string): Promise<RefGroup[]> {
       // Simplified mock evaluator: task/todo filter or page-ref filter.
       if (/\b(todo|task)\b/i.test(query)) {

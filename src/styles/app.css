@@ -308,6 +308,32 @@ body {
   color: #f5c518;
 }
 
+.page-delete {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 15px;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.page-title-row:hover .page-delete {
+  opacity: 0.6;
+}
+
+.page-delete:hover {
+  opacity: 1;
+}
+
+.unlinked-references {
+  margin-top: 18px;
+}
+
+.references-header.clickable {
+  cursor: pointer;
+  user-select: none;
+}
+
 /* context menu */
 .ctx-overlay {
   position: fixed;

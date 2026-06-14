@@ -1,10 +1,11 @@
 import { For, Show, createEffect, createSignal, onCleanup, type JSX } from "solid-js";
 import { doc, loadSingle, loadFeed, appendFeed, type FeedPage } from "../store";
-import { route, openPage } from "../router";
+import { route, openPage, openJournals } from "../router";
 import { zoomedBlock, zoomOut, zoomInto, isFavorite, toggleFavorite } from "../ui";
 import { backend } from "../backend";
 import { Block } from "./Block";
 import { LinkedReferences } from "./LinkedReferences";
+import { UnlinkedReferences } from "./UnlinkedReferences";
 import { isPropertyLine, blockView } from "../render/block";
 import { InlineText } from "../render/inline";
 import type { PageDto } from "../types";
@@ -76,6 +77,7 @@ export function PageView(): JSX.Element {
           </Show>
           <Show when={route().kind === "page" && doc.pages[0]}>
             <LinkedReferences name={doc.pages[0].name} />
+            <UnlinkedReferences name={doc.pages[0].name} />
           </Show>
         </div>
       }>
@@ -143,6 +145,18 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
             onClick={() => toggleFavorite(props.page.name)}
           >
             {isFavorite(props.page.name) ? "★" : "☆"}
+          </button>
+          <button
+            class="page-delete"
+            title="Delete page"
+            onClick={async () => {
+              if (confirm(`Delete page "${props.page.name}"? This removes the file.`)) {
+                await backend().deletePage(props.page.name, "page");
+                openJournals();
+              }
+            }}
+          >
+            🗑
           </button>
         </Show>
       </div>

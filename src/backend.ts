@@ -12,6 +12,8 @@ export interface Backend {
   getPage(name: string, kind: "journal" | "page"): Promise<PageDto | null>;
   savePage(page: PageDto): Promise<void>;
   getBacklinks(name: string): Promise<RefGroup[]>;
+  getUnlinkedRefs(name: string): Promise<RefGroup[]>;
+  deletePage(name: string, kind: "journal" | "page"): Promise<void>;
   runQuery(query: string): Promise<RefGroup[]>;
   search(query: string, limit: number): Promise<RefGroup[]>;
   quickSwitch(query: string, limit: number): Promise<PageEntry[]>;
@@ -62,6 +64,12 @@ class TauriBackend implements Backend {
   }
   getBacklinks(name: string) {
     return this.call<RefGroup[]>("get_backlinks", { name });
+  }
+  getUnlinkedRefs(name: string) {
+    return this.call<RefGroup[]>("get_unlinked_refs", { name });
+  }
+  deletePage(name: string, kind: "journal" | "page") {
+    return this.call<void>("delete_page", { name, kind });
   }
   runQuery(query: string) {
     return this.call<RefGroup[]>("run_query", { query });

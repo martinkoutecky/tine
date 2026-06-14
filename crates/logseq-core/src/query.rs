@@ -53,6 +53,36 @@ pub fn backlinks(graph: &Graph, target: &str) -> Vec<RefGroup> {
     collect(graph, |b| refs::references_page(&b.raw, target), Some(target))
 }
 
+fn contains_word(hay: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return false;
+    }
+    let bytes = hay.as_bytes();
+    let mut start = 0;
+    while let Some(pos) = hay[start..].find(needle) {
+        let i = start + pos;
+        let before_ok = i == 0 || !bytes[i - 1].is_ascii_alphanumeric();
+        let after = i + needle.len();
+        let after_ok = after >= hay.len() || !bytes[after].is_ascii_alphanumeric();
+        if before_ok && after_ok {
+            return true;
+        }
+        start = i + needle.len();
+    }
+    false
+}
+
+/// Unlinked references: blocks that mention `target` as plain text (whole word)
+/// but do NOT link it via `[[..]]`/`#tag`.
+pub fn unlinked_refs(graph: &Graph, target: &str) -> Vec<RefGroup> {
+    let lower = target.to_lowercase();
+    collect(
+        graph,
+        |b| contains_word(&b.raw.to_lowercase(), &lower) && !refs::references_page(&b.raw, target),
+        Some(target),
+    )
+}
+
 pub fn run_query(graph: &Graph, query_src: &str) -> Vec<RefGroup> {
     match Pred::parse(query_src) {
         Some(pred) => collect(graph, |b| pred.eval(b), None),

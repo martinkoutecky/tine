@@ -85,6 +85,16 @@ fn get_backlinks(name: String, state: State<'_, AppState>) -> Result<Vec<RefGrou
 }
 
 #[tauri::command]
+fn get_unlinked_refs(name: String, state: State<'_, AppState>) -> Result<Vec<RefGroup>, String> {
+    with_graph(&state, |g| Ok(g.unlinked_refs(&name)))
+}
+
+#[tauri::command]
+fn delete_page(name: String, kind: PageKind, state: State<'_, AppState>) -> Result<(), String> {
+    with_graph(&state, |g| g.delete_page(&name, kind).map_err(|e| e.to_string()))
+}
+
+#[tauri::command]
 fn run_query(query: String, state: State<'_, AppState>) -> Result<Vec<RefGroup>, String> {
     with_graph(&state, |g| Ok(g.run_query(&query)))
 }
@@ -218,6 +228,8 @@ fn main() {
             get_page,
             save_page,
             get_backlinks,
+            get_unlinked_refs,
+            delete_page,
             run_query,
             search,
             quick_switch,

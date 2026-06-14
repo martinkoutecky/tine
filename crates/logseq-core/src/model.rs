@@ -190,6 +190,19 @@ impl Graph {
         crate::query::run_query(self, query_src)
     }
 
+    /// Unlinked references: plain-text mentions of a page that aren't links.
+    pub fn unlinked_refs(&self, target: &str) -> Vec<RefGroup> {
+        crate::query::unlinked_refs(self, target)
+    }
+
+    /// Delete a page/journal file.
+    pub fn delete_page(&self, name: &str, kind: PageKind) -> io::Result<()> {
+        if let Some(entry) = self.find_entry(name, kind) {
+            fs::remove_file(&entry.path)?;
+        }
+        Ok(())
+    }
+
     /// Full-text search across all blocks.
     pub fn search(&self, query: &str, limit: usize) -> Vec<RefGroup> {
         crate::query::search(self, query, limit)
