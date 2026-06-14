@@ -3,6 +3,7 @@ import { page, loadPageDto } from "../store";
 import { route, openPage } from "../router";
 import { backend } from "../backend";
 import { Block } from "./Block";
+import { LinkedReferences } from "./LinkedReferences";
 import { isPropertyLine } from "../render/block";
 import { InlineText } from "../render/inline";
 
@@ -37,6 +38,7 @@ export function PageView(): JSX.Element {
         <div class="page-blocks">
           <For each={page.roots}>{(id) => <Block id={id} />}</For>
         </div>
+        <LinkedReferences name={page.name} />
       </div>
     </Show>
   );

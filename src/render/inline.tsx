@@ -2,9 +2,11 @@
 // [[links]] and #tags), not an innerHTML string. Used to render a block when it
 // is not being edited.
 
-import { For, type JSX } from "solid-js";
+import { For, Show, createResource, type JSX } from "solid-js";
 import { openPage } from "../router";
 import { parseInline, type Seg } from "./parseInline";
+import { blockView } from "./block";
+import { backend } from "../backend";
 
 function renderSegs(segs: Seg[]): JSX.Element {
   return <For each={segs}>{(s) => renderSeg(s)}</For>;
@@ -51,7 +53,7 @@ function renderSeg(s: Seg): JSX.Element {
         </a>
       );
     case "blockref":
-      return <span class="block-ref">(({s.id.slice(0, 8)}))</span>;
+      return <BlockRefView id={s.id} />;
     case "macro":
       return <span class="macro">{`{{${s.body}}}`}</span>;
     case "math":
@@ -70,4 +72,27 @@ function renderSeg(s: Seg): JSX.Element {
 /** Render a block's body text (already stripped of marker/heading prefix). */
 export function InlineText(props: { text: string }): JSX.Element {
   return <>{renderSegs(parseInline(props.text))}</>;
+}
+
+// Inline ((block reference)): resolves to the referenced block's first line and
+// navigates to its source page on click.
+function BlockRefView(props: { id: string }): JSX.Element {
+  const [grp] = createResource(
+    () => props.id,
+    (id) => backend().resolveBlock(id)
+  );
+  return (
+    <span
+      class="block-ref"
+      onClick={(e) => {
+        e.stopPropagation();
+        const g = grp();
+        if (g) openPage(g.page, g.kind);
+      }}
+    >
+      <Show when={grp()} fallback={<>(({props.id.slice(0, 8)}))</>}>
+        <InlineText text={blockView(grp()!.blocks[0].raw).lines[0]} />
+      </Show>
+    </span>
+  );
 }

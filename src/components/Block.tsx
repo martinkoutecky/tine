@@ -1,4 +1,4 @@
-import { Show, For, createMemo, onMount, type JSX } from "solid-js";
+import { Show, Switch, Match, For, createMemo, onMount, type JSX } from "solid-js";
 import {
   page,
   editingId,
@@ -16,6 +16,15 @@ import {
 } from "../store";
 import { blockView } from "../render/block";
 import { InlineText } from "../render/inline";
+import { QueryMacro, EmbedMacro } from "./Macro";
+
+// Detect a block whose entire body is a single {{query}} / {{embed}} macro.
+function detectMacro(lines: string[]): { kind: "query" | "embed"; inner: string } | null {
+  const text = lines.join("\n").trim();
+  const m = /^\{\{(query|embed)\b([\s\S]*)\}\}$/.exec(text);
+  if (!m) return null;
+  return { kind: m[1] as "query" | "embed", inner: `${m[1]}${m[2]}` };
+}
 
 export function Block(props: { id: string }): JSX.Element {
   const node = () => page.byId[props.id];
@@ -75,6 +84,8 @@ function Rendered(props: { id: string }): JSX.Element {
     e.stopPropagation();
   };
 
+  const macro = createMemo(() => detectMacro(view().lines));
+
   const body = (
     <For each={view().lines}>
       {(line, i) => (
@@ -89,6 +100,21 @@ function Rendered(props: { id: string }): JSX.Element {
   );
 
   return (
+    <Show
+      when={!macro()}
+      fallback={
+        <div class="block-content macro-host" onClick={onClick}>
+          <Switch>
+            <Match when={macro()!.kind === "query"}>
+              <QueryMacro body={macro()!.inner} />
+            </Match>
+            <Match when={macro()!.kind === "embed"}>
+              <EmbedMacro body={macro()!.inner} />
+            </Match>
+          </Switch>
+        </div>
+      }
+    >
     <div
       class="block-content"
       classList={{ done: view().done, [`heading h${view().headingLevel ?? ""}`]: view().headingLevel != null }}
@@ -124,6 +150,7 @@ function Rendered(props: { id: string }): JSX.Element {
         </span>
       </Show>
     </div>
+    </Show>
   );
 }
 
