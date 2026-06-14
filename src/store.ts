@@ -6,7 +6,7 @@
 // map, each node tagged with its owning `page`, and an ordered `pages` list
 // each with its own roots. A single-page route is just a feed of length one.
 
-import { createStore, produce } from "solid-js/store";
+import { createStore, produce, unwrap } from "solid-js/store";
 import { createSignal } from "solid-js";
 import type { BlockDto, PageDto, PageKind } from "./types";
 import { backend } from "./backend";
@@ -179,6 +179,60 @@ export function depthOf(id: string): number {
 }
 
 // ---------------------------------------------------------------------------
+// Undo / redo (snapshot-based; typing in one block coalesces to one step)
+// ---------------------------------------------------------------------------
+
+interface Snapshot {
+  byId: Record<string, Node>;
+  pages: FeedPage[];
+}
+const undoStack: Snapshot[] = [];
+let redoStack: Snapshot[] = [];
+let lastUndoTag: string | null = null;
+
+function snapshot(): Snapshot {
+  return {
+    byId: structuredClone(unwrap(doc.byId)),
+    pages: structuredClone(unwrap(doc.pages)),
+  };
+}
+
+/** Record the current state for undo. `tag` coalesces consecutive typing in the
+ *  same block (tag "type:<id>"); structural ops use distinct tags. */
+function pushUndo(tag: string) {
+  if (tag.startsWith("type:") && tag === lastUndoTag) return;
+  undoStack.push(snapshot());
+  if (undoStack.length > 200) undoStack.shift();
+  redoStack = [];
+  lastUndoTag = tag;
+}
+
+function restore(snap: Snapshot) {
+  setDoc("byId", snap.byId);
+  setDoc("pages", snap.pages);
+}
+
+export function undo() {
+  if (!undoStack.length) return;
+  redoStack.push(snapshot());
+  restore(undoStack.pop()!);
+  lastUndoTag = null;
+  setEditingId(null);
+  for (const p of doc.pages) dirty.add(p.name);
+  scheduleSave();
+}
+
+export function redo() {
+  if (!redoStack.length) return;
+  undoStack.push(snapshot());
+  restore(redoStack.pop()!);
+  lastUndoTag = null;
+  setEditingId(null);
+  for (const p of doc.pages) dirty.add(p.name);
+  scheduleSave();
+}
+
+// ---------------------------------------------------------------------------
 // Mutations (each schedules a debounced save of the affected page)
 // ---------------------------------------------------------------------------
 
@@ -189,6 +243,7 @@ function markDirty(pageName: string) {
 }
 
 export function setRaw(id: string, raw: string) {
+  pushUndo(`type:${id}`);
   setDoc("byId", id, "raw", raw);
   markDirty(doc.byId[id].page);
 }
@@ -200,6 +255,7 @@ export function startEditing(id: string, offset: number) {
 
 /** Enter: split the block at `offset`. */
 export function splitBlock(id: string, offset: number) {
+  pushUndo("split");
   const node = doc.byId[id];
   const before = node.raw.slice(0, offset);
   const after = node.raw.slice(offset);
@@ -234,6 +290,7 @@ export function splitBlock(id: string, offset: number) {
 export function indentBlock(id: string, caretOffset: number) {
   const i = indexInSiblings(id);
   if (i <= 0) return;
+  pushUndo("indent");
   const sibs = rootsOf(id);
   const newParent = sibs[i - 1];
   const pageName = doc.byId[id].page;
@@ -256,6 +313,7 @@ export function indentBlock(id: string, caretOffset: number) {
 export function outdentBlock(id: string, caretOffset: number) {
   const node = doc.byId[id];
   if (node.parent === null) return;
+  pushUndo("outdent");
   const parentId = node.parent;
   const grandParent = doc.byId[parentId].parent;
   const pageName = node.page;
@@ -285,6 +343,7 @@ export function mergeWithPrev(id: string): boolean {
   if (prev === null) return false;
   const node = doc.byId[id];
   if (doc.byId[prev].page !== node.page) return false; // don't merge across pages
+  pushUndo("merge");
   const prevRaw = doc.byId[prev].raw;
   const joinOffset = prevRaw.length;
   const pageName = node.page;
@@ -309,6 +368,7 @@ export function mergeWithPrev(id: string): boolean {
 export function toggleCollapse(id: string) {
   const n = doc.byId[id];
   if (n.children.length === 0) return;
+  pushUndo("collapse");
   setDoc("byId", id, "collapsed", !n.collapsed);
   markDirty(n.page);
 }

@@ -5,6 +5,7 @@
 
 import { openSwitcher, toggleTheme, toggleSidebar, closeSwitcher } from "./ui";
 import { openJournals } from "./router";
+import { undo, redo } from "./store";
 
 interface Chord {
   mod: boolean;
@@ -29,6 +30,8 @@ const DEFAULTS: Command[] = [
   { id: "go/journals", binding: "g j", run: openJournals },
   { id: "ui/toggle-theme", binding: "t t", run: toggleTheme },
   { id: "ui/toggle-left-sidebar", binding: "t l", run: toggleSidebar },
+  { id: "editor/undo", binding: "mod+z", run: undo, global: true },
+  { id: "editor/redo", binding: "mod+shift+z", run: redo, global: true },
 ];
 
 function parseChord(s: string): Chord {

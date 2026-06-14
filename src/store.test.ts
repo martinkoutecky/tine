@@ -16,6 +16,9 @@ import {
   takeCaretFor,
   visibleOrder,
   startEditing,
+  setRaw,
+  undo,
+  redo,
 } from "./store";
 import type { BlockDto, PageDto } from "./types";
 
@@ -145,6 +148,37 @@ describe("collapse / visible order", () => {
     toggleCollapse(p);
     const order1 = visibleOrder().map((id) => doc.byId[id].raw);
     expect(order1).toEqual(["p", "q"]);
+  });
+});
+
+describe("undo / redo", () => {
+  it("undoes a structural split and redoes it", () => {
+    const dto = load([blk("hello world")]);
+    const id = dto.blocks[0].id;
+    splitBlock(id, 5);
+    expect(shape()).toEqual([["hello"], [" world"]]);
+    undo();
+    expect(shape()).toEqual([["hello world"]]);
+    redo();
+    expect(shape()).toEqual([["hello"], [" world"]]);
+  });
+
+  it("coalesces typing in one block into a single undo step", () => {
+    const dto = load([blk("a")]);
+    const id = dto.blocks[0].id;
+    setRaw(id, "ab");
+    setRaw(id, "abc");
+    setRaw(id, "abcd");
+    undo(); // should revert to before this block's typing session ("a")
+    expect(doc.byId[id].raw).toBe("a");
+  });
+
+  it("indent then undo restores the flat structure", () => {
+    const dto = load([blk("first"), blk("second")]);
+    indentBlock(dto.blocks[1].id, 0);
+    expect(shape()).toEqual([["first", [["second"]]]]);
+    undo();
+    expect(shape()).toEqual([["first"], ["second"]]);
   });
 });
 
