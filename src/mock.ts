@@ -57,6 +57,18 @@ const PAGES: PageDto[] = [
       b("LATER Read the new #SODA submission"),
     ],
   },
+  {
+    name: "Jun 12th, 2026",
+    kind: "journal",
+    title: "Jun 12th, 2026",
+    pre_block: null,
+    blocks: [
+      b("Set up the [[logseq-claude]] repo and Rust core.", [
+        b("Round-trip tests pass on the real graph."),
+      ]),
+      b("DONE Decide the stack: **Tauri** + *SolidJS*"),
+    ],
+  },
 ];
 
 const NAMED: PageDto[] = [

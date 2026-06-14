@@ -1,10 +1,10 @@
 // The live editing tree. The frontend owns this during a session; all
 // keystrokes and structural ops mutate it synchronously (zero IPC). Persistence
-// is a debounced whole-page save to Rust. See plan §"block editor model".
+// is a debounced per-page save to Rust. See plan §"block editor model".
 //
-// Blocks are stored normalized (byId + parent/children ids) so reparenting on
-// indent/outdent is a cheap array move. Caret is tracked as (blockId, offset)
-// in raw-markdown coordinates and restored after structural ops.
+// Supports multiple pages at once (the journals feed): a single global `byId`
+// map, each node tagged with its owning `page`, and an ordered `pages` list
+// each with its own roots. A single-page route is just a feed of length one.
 
 import { createStore, produce } from "solid-js/store";
 import { createSignal } from "solid-js";
@@ -15,34 +15,27 @@ export interface Node {
   id: string;
   raw: string;
   collapsed: boolean;
-  parent: string | null; // null = root
+  parent: string | null; // null = a root of its page
+  page: string; // owning page name
   children: string[];
 }
 
-interface PageState {
+export interface FeedPage {
   name: string;
   kind: PageKind;
   title: string;
   preBlock: string | null;
-  byId: Record<string, Node>;
   roots: string[];
+}
+
+interface DocState {
+  byId: Record<string, Node>;
+  pages: FeedPage[];
   loaded: boolean;
 }
 
-const empty: PageState = {
-  name: "",
-  kind: "page",
-  title: "",
-  preBlock: null,
-  byId: {},
-  roots: [],
-  loaded: false,
-};
+export const [doc, setDoc] = createStore<DocState>({ byId: {}, pages: [], loaded: false });
 
-export const [page, setPage] = createStore<PageState>({ ...empty });
-
-// Which block is currently being edited (textarea shown), and where to put the
-// caret once that editor mounts.
 export const [editingId, setEditingId] = createSignal<string | null>(null);
 const [caretTarget, setCaretTarget] = createSignal<{ id: string; offset: number } | null>(null);
 
@@ -64,41 +57,73 @@ function freshId(): string {
 // Loading / serializing
 // ---------------------------------------------------------------------------
 
-function flatten(dtos: BlockDto[], parent: string | null, byId: Record<string, Node>): string[] {
+function flatten(
+  dtos: BlockDto[],
+  parent: string | null,
+  pageName: string,
+  byId: Record<string, Node>
+): string[] {
   return dtos.map((d) => {
-    const childIds = flatten(d.children, d.id, byId);
-    byId[d.id] = { id: d.id, raw: d.raw, collapsed: d.collapsed, parent, children: childIds };
+    const childIds = flatten(d.children, d.id, pageName, byId);
+    byId[d.id] = {
+      id: d.id,
+      raw: d.raw,
+      collapsed: d.collapsed,
+      parent,
+      page: pageName,
+      children: childIds,
+    };
     return d.id;
   });
 }
 
-export function loadPageDto(dto: PageDto) {
+function toFeedPage(dto: PageDto, byId: Record<string, Node>): FeedPage {
+  const roots = flatten(dto.blocks, null, dto.name, byId);
+  return { name: dto.name, kind: dto.kind, title: dto.title, preBlock: dto.pre_block, roots };
+}
+
+/** Load a single page (page route). */
+export function loadSingle(dto: PageDto) {
   const byId: Record<string, Node> = {};
-  const roots = flatten(dto.blocks, null, byId);
-  setPage({
-    name: dto.name,
-    kind: dto.kind,
-    title: dto.title,
-    preBlock: dto.pre_block,
-    byId,
-    roots,
-    loaded: true,
-  });
+  const fp = toFeedPage(dto, byId);
+  setDoc({ byId, pages: [fp], loaded: true });
   setEditingId(null);
 }
 
+/** Load the journals feed (replaces current pages). */
+export function loadFeed(dtos: PageDto[]) {
+  const byId: Record<string, Node> = {};
+  const pages = dtos.map((d) => toFeedPage(d, byId));
+  setDoc({ byId, pages, loaded: true });
+  setEditingId(null);
+}
+
+/** Append more pages to the feed (infinite scroll). */
+export function appendFeed(dtos: PageDto[]) {
+  setDoc(
+    produce((s) => {
+      for (const d of dtos) {
+        if (s.pages.some((p) => p.name === d.name)) continue;
+        s.pages.push(toFeedPage(d, s.byId));
+      }
+    })
+  );
+}
+
 function toDto(id: string): BlockDto {
-  const n = page.byId[id];
+  const n = doc.byId[id];
   return { id: n.id, raw: n.raw, collapsed: n.collapsed, children: n.children.map(toDto) };
 }
 
-export function toPageDto(): PageDto {
+export function pageToDto(pageName: string): PageDto | null {
+  const p = doc.pages.find((x) => x.name === pageName);
+  if (!p) return null;
   return {
-    name: page.name,
-    kind: page.kind,
-    title: page.title,
-    pre_block: page.preBlock,
-    blocks: page.roots.map(toDto),
+    name: p.name,
+    kind: p.kind,
+    title: p.title,
+    pre_block: p.preBlock,
+    blocks: p.roots.map(toDto),
   };
 }
 
@@ -106,26 +131,28 @@ export function toPageDto(): PageDto {
 // Tree helpers
 // ---------------------------------------------------------------------------
 
-function siblingsOf(id: string): string[] {
-  const p = page.byId[id].parent;
-  return p === null ? page.roots : page.byId[p].children;
+function rootsOf(id: string): string[] {
+  const n = doc.byId[id];
+  if (n.parent !== null) return doc.byId[n.parent].children;
+  const p = doc.pages.find((x) => x.name === n.page);
+  return p ? p.roots : [];
 }
 
 function indexInSiblings(id: string): number {
-  return siblingsOf(id).indexOf(id);
+  return rootsOf(id).indexOf(id);
 }
 
-/** Visible blocks in display order (skips children of collapsed blocks). */
+/** Visible blocks across the whole feed, in display order. */
 export function visibleOrder(): string[] {
   const out: string[] = [];
   const walk = (ids: string[]) => {
     for (const id of ids) {
       out.push(id);
-      const n = page.byId[id];
+      const n = doc.byId[id];
       if (!n.collapsed && n.children.length) walk(n.children);
     }
   };
-  walk(page.roots);
+  for (const p of doc.pages) walk(p.roots);
   return out;
 }
 
@@ -143,21 +170,27 @@ export function nextVisible(id: string): string | null {
 
 export function depthOf(id: string): number {
   let d = 0;
-  let p = page.byId[id]?.parent ?? null;
+  let p = doc.byId[id]?.parent ?? null;
   while (p !== null) {
     d++;
-    p = page.byId[p].parent;
+    p = doc.byId[p].parent;
   }
   return d;
 }
 
 // ---------------------------------------------------------------------------
-// Mutations (each schedules a debounced save)
+// Mutations (each schedules a debounced save of the affected page)
 // ---------------------------------------------------------------------------
 
-export function setRaw(id: string, raw: string) {
-  setPage("byId", id, "raw", raw);
+const dirty = new Set<string>();
+function markDirty(pageName: string) {
+  dirty.add(pageName);
   scheduleSave();
+}
+
+export function setRaw(id: string, raw: string) {
+  setDoc("byId", id, "raw", raw);
+  markDirty(doc.byId[id].page);
 }
 
 export function startEditing(id: string, offset: number) {
@@ -167,46 +200,48 @@ export function startEditing(id: string, offset: number) {
 
 /** Enter: split the block at `offset`. */
 export function splitBlock(id: string, offset: number) {
-  const node = page.byId[id];
+  const node = doc.byId[id];
   const before = node.raw.slice(0, offset);
   const after = node.raw.slice(offset);
   const newId = freshId();
+  const pageName = node.page;
 
-  setPage(
+  setDoc(
     produce((s) => {
       s.byId[id].raw = before;
       const hasVisibleChildren = node.children.length > 0 && !node.collapsed;
       if (hasVisibleChildren) {
-        // New block becomes the first child of the (expanded) parent.
-        s.byId[newId] = { id: newId, raw: after, collapsed: false, parent: id, children: [] };
+        s.byId[newId] = {
+          id: newId, raw: after, collapsed: false, parent: id, page: pageName, children: [],
+        };
         s.byId[id].children.unshift(newId);
       } else {
-        // New block becomes the next sibling.
         s.byId[newId] = {
-          id: newId,
-          raw: after,
-          collapsed: false,
-          parent: node.parent,
-          children: [],
+          id: newId, raw: after, collapsed: false, parent: node.parent, page: pageName, children: [],
         };
-        const sibs = node.parent === null ? s.roots : s.byId[node.parent].children;
+        const sibs = node.parent === null
+          ? s.pages[s.pages.findIndex((p) => p.name === pageName)].roots
+          : s.byId[node.parent].children;
         sibs.splice(sibs.indexOf(id) + 1, 0, newId);
       }
     })
   );
   startEditing(newId, 0);
-  scheduleSave();
+  markDirty(pageName);
 }
 
 /** Tab: make the block the last child of its previous sibling. */
 export function indentBlock(id: string, caretOffset: number) {
   const i = indexInSiblings(id);
-  if (i <= 0) return; // no previous sibling
-  const sibs = siblingsOf(id);
+  if (i <= 0) return;
+  const sibs = rootsOf(id);
   const newParent = sibs[i - 1];
-  setPage(
+  const pageName = doc.byId[id].page;
+  setDoc(
     produce((s) => {
-      const arr = s.byId[id].parent === null ? s.roots : s.byId[s.byId[id].parent!].children;
+      const arr = s.byId[id].parent === null
+        ? s.pages[s.pages.findIndex((p) => p.name === pageName)].roots
+        : s.byId[s.byId[id].parent!].children;
       arr.splice(arr.indexOf(id), 1);
       s.byId[id].parent = newParent;
       s.byId[newParent].children.push(id);
@@ -214,73 +249,68 @@ export function indentBlock(id: string, caretOffset: number) {
     })
   );
   startEditing(id, caretOffset);
-  scheduleSave();
+  markDirty(pageName);
 }
 
-/** Shift+Tab: move the block out to be the next sibling of its parent.
- *  Following siblings become children of the moved block (Logseq behavior). */
+/** Shift+Tab: move the block out to be the next sibling of its parent. */
 export function outdentBlock(id: string, caretOffset: number) {
-  const node = page.byId[id];
-  if (node.parent === null) return; // already a root
+  const node = doc.byId[id];
+  if (node.parent === null) return;
   const parentId = node.parent;
-  const parentNode = page.byId[parentId];
-  const grandParent = parentNode.parent;
+  const grandParent = doc.byId[parentId].parent;
+  const pageName = node.page;
 
-  setPage(
+  setDoc(
     produce((s) => {
       const parent = s.byId[parentId];
       const idx = parent.children.indexOf(id);
-      // Detach id and its following siblings.
-      const following = parent.children.splice(idx); // [id, ...rest]
-      following.shift(); // drop id itself
-      parent.children = parent.children; // (already mutated)
-      // Append following siblings as children of id.
-      for (const f of following) {
-        s.byId[f].parent = id;
-      }
+      const following = parent.children.splice(idx);
+      following.shift(); // drop id
+      for (const f of following) s.byId[f].parent = id;
       s.byId[id].children.push(...following);
-      // Insert id into grandparent right after parent.
       s.byId[id].parent = grandParent;
-      const gArr = grandParent === null ? s.roots : s.byId[grandParent].children;
+      const gArr = grandParent === null
+        ? s.pages[s.pages.findIndex((p) => p.name === pageName)].roots
+        : s.byId[grandParent].children;
       gArr.splice(gArr.indexOf(parentId) + 1, 0, id);
     })
   );
   startEditing(id, caretOffset);
-  scheduleSave();
+  markDirty(pageName);
 }
 
-/** Backspace at offset 0: merge into the previous visible block. */
+/** Backspace at offset 0: merge into the previous visible block (same page). */
 export function mergeWithPrev(id: string): boolean {
   const prev = prevVisible(id);
   if (prev === null) return false;
-  const node = page.byId[id];
-  // Don't merge into an ancestor that would swallow this block's own subtree
-  // ambiguously; Logseq still merges text into the previous visible block.
-  const prevRaw = page.byId[prev].raw;
+  const node = doc.byId[id];
+  if (doc.byId[prev].page !== node.page) return false; // don't merge across pages
+  const prevRaw = doc.byId[prev].raw;
   const joinOffset = prevRaw.length;
+  const pageName = node.page;
 
-  setPage(
+  setDoc(
     produce((s) => {
       s.byId[prev].raw = prevRaw + node.raw;
-      // Reparent this block's children to the end of prev's children.
       for (const c of node.children) s.byId[c].parent = prev;
       s.byId[prev].children.push(...node.children);
-      // Remove id from its siblings.
-      const arr = node.parent === null ? s.roots : s.byId[node.parent].children;
+      const arr = node.parent === null
+        ? s.pages[s.pages.findIndex((p) => p.name === pageName)].roots
+        : s.byId[node.parent].children;
       arr.splice(arr.indexOf(id), 1);
       delete s.byId[id];
     })
   );
   startEditing(prev, joinOffset);
-  scheduleSave();
+  markDirty(pageName);
   return true;
 }
 
 export function toggleCollapse(id: string) {
-  const n = page.byId[id];
+  const n = doc.byId[id];
   if (n.children.length === 0) return;
-  setPage("byId", id, "collapsed", !n.collapsed);
-  scheduleSave();
+  setDoc("byId", id, "collapsed", !n.collapsed);
+  markDirty(n.page);
 }
 
 // ---------------------------------------------------------------------------
@@ -289,10 +319,14 @@ export function toggleCollapse(id: string) {
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 export function scheduleSave() {
-  if (!page.loaded) return;
+  if (!doc.loaded) return;
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     saveTimer = null;
-    void backend().savePage(toPageDto());
+    for (const name of dirty) {
+      const dto = pageToDto(name);
+      if (dto) void backend().savePage(dto);
+    }
+    dirty.clear();
   }, 400);
 }

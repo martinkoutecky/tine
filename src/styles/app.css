@@ -228,6 +228,20 @@ body {
   height: 50vh;
 }
 
+.page-section {
+  padding-bottom: 18px;
+}
+
+.page-section + .page-section {
+  margin-top: 6px;
+  border-top: 1px solid var(--border-color);
+  padding-top: 14px;
+}
+
+.feed-sentinel {
+  height: 1px;
+}
+
 /* ---------------------------------------------------------------- blocks */
 
 .ls-block {

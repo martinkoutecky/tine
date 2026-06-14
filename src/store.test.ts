@@ -4,8 +4,9 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 import {
-  page,
-  loadPageDto,
+  doc,
+  loadSingle,
+  loadFeed,
   editingId,
   splitBlock,
   indentBlock,
@@ -24,14 +25,14 @@ function blk(raw: string, children: BlockDto[] = []): BlockDto {
 }
 function load(blocks: BlockDto[]): PageDto {
   const dto: PageDto = { name: "Test", kind: "page", title: "Test", pre_block: null, blocks };
-  loadPageDto(dto);
+  loadSingle(dto);
   return dto;
 }
 
 /** Snapshot the tree as nested [raw, [children]] for easy assertions. */
-function shape(ids: string[] = page.roots): any[] {
+function shape(ids: string[] = doc.pages[0].roots): any[] {
   return ids.map((id) => {
-    const n = page.byId[id];
+    const n = doc.byId[id];
     return n.children.length ? [n.raw, shape(n.children)] : [n.raw];
   });
 }
@@ -46,7 +47,7 @@ describe("split (Enter)", () => {
     const id = dto.blocks[0].id;
     splitBlock(id, 5); // after "hello"
     expect(shape()).toEqual([["hello"], [" world"]]);
-    const newId = page.roots[1];
+    const newId = doc.pages[0].roots[1];
     expect(editingId()).toBe(newId);
     expect(takeCaretFor(newId)).toBe(0);
   });
@@ -117,7 +118,7 @@ describe("merge (Backspace at 0)", () => {
     const ok = mergeWithPrev(bar);
     expect(ok).toBe(true);
     expect(shape()).toEqual([["foobar"]]);
-    const foo = page.roots[0];
+    const foo = doc.pages[0].roots[0];
     expect(editingId()).toBe(foo);
     expect(takeCaretFor(foo)).toBe(3); // length of "foo"
   });
@@ -139,10 +140,45 @@ describe("collapse / visible order", () => {
   it("collapsed blocks hide their children from visible order", () => {
     const dto = load([blk("p", [blk("c1"), blk("c2")]), blk("q")]);
     const p = dto.blocks[0].id;
-    const order0 = visibleOrder().map((id) => page.byId[id].raw);
+    const order0 = visibleOrder().map((id) => doc.byId[id].raw);
     expect(order0).toEqual(["p", "c1", "c2", "q"]);
     toggleCollapse(p);
-    const order1 = visibleOrder().map((id) => page.byId[id].raw);
+    const order1 = visibleOrder().map((id) => doc.byId[id].raw);
     expect(order1).toEqual(["p", "q"]);
+  });
+});
+
+describe("journals feed (multi-page)", () => {
+  function feed() {
+    loadFeed([
+      { name: "Today", kind: "journal", title: "Today", pre_block: null, blocks: [blk("today a"), blk("today b")] },
+      { name: "Yesterday", kind: "journal", title: "Yesterday", pre_block: null, blocks: [blk("yest a")] },
+    ]);
+  }
+
+  it("visible order spans all pages in feed order", () => {
+    feed();
+    expect(visibleOrder().map((id) => doc.byId[id].raw)).toEqual([
+      "today a",
+      "today b",
+      "yest a",
+    ]);
+  });
+
+  it("does not merge a block into the previous page's block", () => {
+    feed();
+    const yestFirst = doc.pages[1].roots[0];
+    // prevVisible(yestFirst) is "today b" on a different page — merge must no-op.
+    expect(mergeWithPrev(yestFirst)).toBe(false);
+    expect(doc.pages[1].roots.length).toBe(1);
+  });
+
+  it("splitting keeps the new block on the same page", () => {
+    feed();
+    const todayA = doc.pages[0].roots[0];
+    splitBlock(todayA, "today a".length);
+    const newId = editingId()!;
+    expect(doc.byId[newId].page).toBe("Today");
+    expect(doc.pages[0].roots.length).toBe(3);
   });
 });

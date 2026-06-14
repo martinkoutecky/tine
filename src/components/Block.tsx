@@ -9,7 +9,7 @@ import {
   type Trigger,
 } from "../editor/autocomplete";
 import {
-  page,
+  doc,
   editingId,
   startEditing,
   setRaw,
@@ -36,7 +36,7 @@ function detectMacro(lines: string[]): { kind: "query" | "embed"; inner: string 
 }
 
 export function Block(props: { id: string }): JSX.Element {
-  const node = () => page.byId[props.id];
+  const node = () => doc.byId[props.id];
   const editing = () => editingId() === props.id;
   const hasChildren = () => node().children.length > 0;
   const collapsed = () => node().collapsed;
@@ -84,7 +84,7 @@ export function Block(props: { id: string }): JSX.Element {
 }
 
 function Rendered(props: { id: string }): JSX.Element {
-  const node = () => page.byId[props.id];
+  const node = () => doc.byId[props.id];
   const view = createMemo(() => blockView(node().raw));
 
   const onClick = (e: MouseEvent) => {
@@ -165,7 +165,7 @@ function Rendered(props: { id: string }): JSX.Element {
 
 function cycleMarker(id: string) {
   // TODO -> DOING -> DONE -> (none), and NOW/LATER similarly. Minimal cycle.
-  const raw = page.byId[id].raw;
+  const raw = doc.byId[id].raw;
   const order: Record<string, string> = {
     TODO: "DOING",
     DOING: "DONE",
@@ -191,7 +191,7 @@ interface AcItem {
 
 function Editor(props: { id: string }): JSX.Element {
   let ref!: HTMLTextAreaElement;
-  const node = () => page.byId[props.id];
+  const node = () => doc.byId[props.id];
 
   const [ac, setAc] = createSignal<Trigger | null>(null);
   const [acItems, setAcItems] = createSignal<AcItem[]>([]);
@@ -317,7 +317,7 @@ function Editor(props: { id: string }): JSX.Element {
         const prev = prevVisible(props.id);
         if (prev) {
           e.preventDefault();
-          startEditing(prev, page.byId[prev].raw.length);
+          startEditing(prev, doc.byId[prev].raw.length);
         }
       }
     } else if (e.key === "ArrowDown") {

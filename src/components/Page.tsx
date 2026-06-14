@@ -1,69 +1,111 @@
-import { For, Show, createResource, type JSX } from "solid-js";
-import { page, loadPageDto } from "../store";
+import { For, Show, createEffect, createSignal, onCleanup, type JSX } from "solid-js";
+import { doc, loadSingle, loadFeed, appendFeed, type FeedPage } from "../store";
 import { route, openPage } from "../router";
 import { backend } from "../backend";
 import { Block } from "./Block";
 import { LinkedReferences } from "./LinkedReferences";
 import { isPropertyLine } from "../render/block";
 import { InlineText } from "../render/inline";
+import type { PageDto } from "../types";
 
-// Loads the page named by the current route into the shared editing store.
-async function loadForRoute(r: ReturnType<typeof route>): Promise<boolean> {
-  if (r.kind === "journals") {
-    const js = await backend().journalsDesc(1, 0);
-    if (js[0]) loadPageDto(js[0]);
-    return !!js[0];
-  } else {
-    const dto = await backend().getPage(r.name, r.pageKind);
-    if (dto) loadPageDto(dto);
-    else loadPageDto({ name: r.name, kind: r.pageKind, title: r.name, pre_block: null, blocks: [] });
-    return true;
-  }
+const FEED_PAGE = 3;
+
+function emptyPage(name: string, kind: "journal" | "page"): PageDto {
+  return {
+    name,
+    kind,
+    title: name,
+    pre_block: null,
+    blocks: [{ id: `new-${name}`, raw: "", collapsed: false, children: [] }],
+  };
 }
 
 export function PageView(): JSX.Element {
-  const [loaded] = createResource(route, loadForRoute);
+  const [ready, setReady] = createSignal(false);
+  let journalOffset = 0;
+
+  createEffect(() => {
+    const r = route();
+    setReady(false);
+    void (async () => {
+      if (r.kind === "journals") {
+        const js = await backend().journalsDesc(FEED_PAGE, 0);
+        journalOffset = js.length;
+        loadFeed(js.length ? js : []);
+      } else {
+        const dto = await backend().getPage(r.name, r.pageKind);
+        loadSingle(dto && dto.blocks.length ? dto : emptyPage(r.name, r.pageKind));
+      }
+      setReady(true);
+    })();
+  });
+
+  const loadMore = async () => {
+    if (route().kind !== "journals") return;
+    const js = await backend().journalsDesc(FEED_PAGE, journalOffset);
+    journalOffset += js.length;
+    if (js.length) appendFeed(js);
+  };
 
   return (
-    <Show when={loaded() && page.loaded} fallback={<div class="page-loading" />}>
+    <Show when={ready() && doc.loaded} fallback={<div class="page-loading" />}>
       <div class="page">
-        <h1
-          class="page-title"
-          classList={{ "journal-title": page.kind === "journal" }}
-          onClick={() => page.kind === "journal" && openPage(page.name, "journal")}
-        >
-          {page.title}
-        </h1>
-        <PreBlock />
-        <div class="page-blocks">
-          <For each={page.roots}>{(id) => <Block id={id} />}</For>
-        </div>
-        <LinkedReferences name={page.name} />
+        <For each={doc.pages}>{(p) => <PageSection page={p} />}</For>
+        <Show when={route().kind === "journals"}>
+          <LoadMore onHit={loadMore} />
+        </Show>
+        <Show when={route().kind === "page" && doc.pages[0]}>
+          <LinkedReferences name={doc.pages[0].name} />
+        </Show>
       </div>
     </Show>
   );
 }
 
-function PreBlock(): JSX.Element {
+function PageSection(props: { page: FeedPage }): JSX.Element {
   return (
-    <Show when={page.preBlock}>
-      <div class="page-properties">
-        <For each={page.preBlock!.split("\n").filter(isPropertyLine)}>
-          {(line) => {
-            const idx = line.indexOf("::");
-            const key = line.slice(0, idx).trim();
-            const val = line.slice(idx + 2).trim();
-            return (
-              <div class="prop-row">
-                <span class="prop-key">{key}</span>
-                <span class="prop-value">
-                  <InlineText text={val} />
-                </span>
-              </div>
-            );
-          }}
-        </For>
+    <div class="page-section">
+      <h1
+        class="page-title"
+        classList={{ "journal-title": props.page.kind === "journal" }}
+        onClick={() => openPage(props.page.name, props.page.kind)}
+      >
+        {props.page.title}
+      </h1>
+      <Show when={props.page.preBlock}>
+        <div class="page-properties">
+          <For each={props.page.preBlock!.split("\n").filter(isPropertyLine)}>
+            {(line) => {
+              const idx = line.indexOf("::");
+              return (
+                <div class="prop-row">
+                  <span class="prop-key">{line.slice(0, idx).trim()}</span>
+                  <span class="prop-value">
+                    <InlineText text={line.slice(idx + 2).trim()} />
+                  </span>
+                </div>
+              );
+            }}
+          </For>
+        </div>
+      </Show>
+      <div class="page-blocks">
+        <For each={props.page.roots}>{(id) => <Block id={id} />}</For>
       </div>
-    </Show>
+    </div>
   );
+}
+
+// Auto-loads more journals when scrolled into view.
+function LoadMore(props: { onHit: () => void }): JSX.Element {
+  let sentinel: HTMLDivElement | undefined;
+  createEffect(() => {
+    if (!sentinel) return;
+    const obs = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) props.onHit();
+    });
+    obs.observe(sentinel);
+    onCleanup(() => obs.disconnect());
+  });
+  return <div ref={sentinel} class="feed-sentinel" />;
 }
