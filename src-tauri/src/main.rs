@@ -141,6 +141,13 @@ fn write_highlights(
 }
 
 fn main() {
+    // WebKitGTK's DMABUF renderer aborts on many GPU/compositor combos
+    // (KDE/Wayland, some Mesa/NVIDIA): "Could not create default EGL display:
+    // EGL_BAD_PARAMETER". Force the stable path unless the user overrides it.
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
+
     tauri::Builder::default()
         .manage(AppState { graph: Mutex::new(None) })
         .setup(|app| {
