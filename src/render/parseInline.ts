@@ -12,7 +12,7 @@ export type Seg =
   | { t: "tag"; name: string }
   | { t: "blockref"; id: string }
   | { t: "macro"; body: string }
-  | { t: "math"; tex: string }
+  | { t: "math"; tex: string; display: boolean }
   | { t: "link"; label: string; url: string }
   | { t: "image"; alt: string; url: string };
 
@@ -101,7 +101,7 @@ export function parseInline(input: string): Seg[] {
       const end = findClose(input, i + delim.length, delim);
       if (end !== -1 && end > i + delim.length) {
         flush();
-        out.push({ t: "math", tex: input.slice(i + delim.length, end) });
+        out.push({ t: "math", tex: input.slice(i + delim.length, end), display: dbl });
         i = end + delim.length;
         continue;
       }

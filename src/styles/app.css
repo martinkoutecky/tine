@@ -470,10 +470,10 @@ mark {
   border-radius: 4px;
 }
 
-.math {
-  font-family: var(--ls-font-mono);
-  font-style: italic;
-  color: var(--text-primary);
+.math-display {
+  display: block;
+  margin: 6px 0;
+  text-align: center;
 }
 
 .inline-image {

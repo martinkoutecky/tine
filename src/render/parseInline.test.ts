@@ -23,7 +23,7 @@ describe("parseInline", () => {
   it("block ref, macro, math", () => {
     expect(parseInline("((abc-123))")).toEqual([{ t: "blockref", id: "abc-123" }]);
     expect(parseInline("{{query (todo)}}")).toEqual([{ t: "macro", body: "query (todo)" }]);
-    expect(parseInline("$E=mc^2$")).toEqual([{ t: "math", tex: "E=mc^2" }]);
+    expect(parseInline("$E=mc^2$")).toEqual([{ t: "math", tex: "E=mc^2", display: false }]);
   });
 
   it("links and images", () => {

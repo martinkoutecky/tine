@@ -13,11 +13,14 @@
     "screenshot": "node scripts/screenshot.mjs"
   },
   "dependencies": {
+    "@fontsource/inter": "^5.2.8",
     "@tauri-apps/api": "^2.1.1",
+    "katex": "^0.16.47",
     "solid-js": "^1.9.3"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.1.0",
+    "@types/katex": "^0.16.8",
     "playwright": "^1.49.1",
     "typescript": "^5.6.3",
     "vite": "^5.4.11",

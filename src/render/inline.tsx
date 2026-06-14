@@ -3,6 +3,7 @@
 // is not being edited.
 
 import { For, Show, createResource, type JSX } from "solid-js";
+import katex from "katex";
 import { openPage } from "../router";
 import { parseInline, type Seg } from "./parseInline";
 import { blockView } from "./block";
@@ -57,7 +58,7 @@ function renderSeg(s: Seg): JSX.Element {
     case "macro":
       return <span class="macro">{`{{${s.body}}}`}</span>;
     case "math":
-      return <span class="math">{s.tex}</span>;
+      return <MathView tex={s.tex} display={s.display} />;
     case "link":
       return (
         <a class="external-link" href={s.url} target="_blank" rel="noreferrer">
@@ -67,6 +68,21 @@ function renderSeg(s: Seg): JSX.Element {
     case "image":
       return <img class="inline-image" src={s.url} alt={s.alt} />;
   }
+}
+
+// KaTeX-typeset math. KaTeX output is trusted HTML, so innerHTML is safe here.
+function MathView(props: { tex: string; display: boolean }): JSX.Element {
+  const html = () => {
+    try {
+      return katex.renderToString(props.tex, {
+        throwOnError: false,
+        displayMode: props.display,
+      });
+    } catch {
+      return props.tex;
+    }
+  };
+  return <span class="math" classList={{ "math-display": props.display }} innerHTML={html()} />;
 }
 
 /** Render a block's body text (already stripped of marker/heading prefix). */
