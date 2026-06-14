@@ -1,0 +1,21 @@
+# Rust
+/target
+**/target
+Cargo.lock.bak
+
+# Node
+node_modules
+dist
+.vite
+
+# Playwright
+/test-results
+/playwright-report
+/.playwright
+
+# Editor / OS
+.DS_Store
+*.swp
+
+# Local scratch
+/scratch
