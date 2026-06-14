@@ -60,6 +60,66 @@ body {
   border-bottom: 1px solid transparent;
 }
 
+.tab-bar {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 0 8px;
+  height: 34px;
+  border-bottom: 1px solid var(--border-color);
+  overflow-x: auto;
+  background: var(--bg-secondary);
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  max-width: 200px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-top: 2px solid transparent;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.tab.active {
+  background: var(--bg-primary);
+  color: var(--text-title);
+  border-top-color: var(--link-color);
+}
+
+.tab:hover {
+  background: var(--bg-tertiary);
+}
+
+.tab-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tab-pin {
+  font-size: 10px;
+}
+
+.tab-close {
+  opacity: 0;
+  font-size: 11px;
+  border-radius: 3px;
+  padding: 0 3px;
+}
+
+.tab:hover .tab-close {
+  opacity: 0.6;
+}
+
+.tab-close:hover {
+  opacity: 1;
+  background: var(--bg-quaternary);
+}
+
 .main-content {
   flex: 1;
   overflow-y: auto;

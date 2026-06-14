@@ -3,6 +3,7 @@ import { Sidebar } from "./components/Sidebar";
 import { PageView } from "./components/Page";
 import { QuickSwitcher } from "./components/QuickSwitcher";
 import { PdfViewer } from "./components/PdfViewer";
+import { TabBar } from "./components/TabBar";
 import { backend } from "./backend";
 import { installKeybindings } from "./keybindings";
 import { theme, toggleTheme, sidebarOpen, toggleSidebar, openSwitcher, pdfTarget } from "./ui";
@@ -68,6 +69,7 @@ export function App(): JSX.Element {
             </button>
           </div>
         </header>
+        <TabBar />
         <main class="main-content">
           <div class="main-content-inner">
             <PageView />

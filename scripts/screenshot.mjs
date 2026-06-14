@@ -90,10 +90,19 @@ try {
     }
   }
 
-  // Dark theme on the journals feed.
+  // Tabs: middle-click a page and Journals to open new tabs, pin one.
   await page.locator(".nav-item").first().click();
   await sleep(200);
-  await page.click(".icon-btn");
+  await page.locator(".nav-page").first().click({ button: "middle" });
+  await sleep(200);
+  await page.locator(".tab").nth(1).dblclick(); // pin it
+  await sleep(200);
+  await page.screenshot({ path: `${OUT}/tabs-light.png` });
+
+  // Dark theme on the journals feed.
+  await page.locator(".tab").first().click();
+  await sleep(150);
+  await page.click('[title^="Toggle theme"]');
   await sleep(300);
   await page.screenshot({ path: `${OUT}/journals-dark.png` });
 

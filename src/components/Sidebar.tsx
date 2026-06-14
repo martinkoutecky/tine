@@ -1,6 +1,6 @@
 import { For, Show, createResource, type JSX } from "solid-js";
 import { backend } from "../backend";
-import { openJournals, openPage, route } from "../router";
+import { openJournals, openPage, openPageInNewTab, openInNewTab, route } from "../router";
 import { openSwitcher } from "../ui";
 
 export function Sidebar(): JSX.Element {
@@ -28,7 +28,17 @@ export function Sidebar(): JSX.Element {
       </div>
 
       <div class="nav-contents">
-        <div class="nav-item" classList={{ active: route().kind === "journals" }} onClick={openJournals}>
+        <div
+          class="nav-item"
+          classList={{ active: route().kind === "journals" }}
+          onClick={openJournals}
+          onAuxClick={(e) => {
+            if (e.button === 1) {
+              e.preventDefault();
+              openInNewTab({ kind: "journals" });
+            }
+          }}
+        >
           <Icon name="journals" />
           <span>Journals</span>
         </div>
@@ -42,6 +52,12 @@ export function Sidebar(): JSX.Element {
                   class="nav-page"
                   classList={{ active: isActive(p.name) }}
                   onClick={() => openPage(p.name, "page")}
+                  onAuxClick={(e) => {
+                    if (e.button === 1) {
+                      e.preventDefault();
+                      openPageInNewTab(p.name, "page");
+                    }
+                  }}
                 >
                   {p.name}
                 </div>

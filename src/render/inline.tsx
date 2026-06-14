@@ -4,7 +4,7 @@
 
 import { For, Show, createResource, type JSX } from "solid-js";
 import katex from "katex";
-import { openPage } from "../router";
+import { openPage, openPageInNewTab } from "../router";
 import { openPdf } from "../ui";
 import { parseInline, type Seg } from "./parseInline";
 import { blockView } from "./block";
@@ -36,6 +36,13 @@ function renderSeg(s: Seg): JSX.Element {
             e.stopPropagation();
             openPage(s.name);
           }}
+          onAuxClick={(e) => {
+            if (e.button === 1) {
+              e.preventDefault();
+              e.stopPropagation();
+              openPageInNewTab(s.name);
+            }
+          }}
         >
           <span class="bracket">[[</span>
           {s.name}
@@ -49,6 +56,13 @@ function renderSeg(s: Seg): JSX.Element {
           onClick={(e) => {
             e.stopPropagation();
             openPage(s.name);
+          }}
+          onAuxClick={(e) => {
+            if (e.button === 1) {
+              e.preventDefault();
+              e.stopPropagation();
+              openPageInNewTab(s.name);
+            }
           }}
         >
           #{s.name}
