@@ -42,6 +42,13 @@ try {
   await page.locator(".block-content").nth(1).click();
   await sleep(250);
   await page.screenshot({ path: `${OUT}/editing-light.png` });
+
+  // Autocomplete: type a [[ trigger and capture the popup.
+  await page.keyboard.press("End");
+  await page.keyboard.type(" [[lo");
+  await sleep(300);
+  await page.screenshot({ path: `${OUT}/autocomplete-light.png` });
+  await page.keyboard.press("Escape");
   await page.keyboard.press("Escape");
 
   // A named page (shows page properties + Linked References).

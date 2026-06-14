@@ -1,4 +1,13 @@
-import { Show, Switch, Match, For, createMemo, onMount, type JSX } from "solid-js";
+import { Show, Switch, Match, For, createMemo, createSignal, onMount, type JSX } from "solid-js";
+import { backend } from "../backend";
+import {
+  detectTrigger,
+  applyCompletion,
+  pageInsert,
+  tagInsert,
+  filterCommands,
+  type Trigger,
+} from "../editor/autocomplete";
 import {
   page,
   editingId,
@@ -174,9 +183,69 @@ function cycleMarker(id: string) {
   }
 }
 
+interface AcItem {
+  label: string;
+  insert: string;
+  caret?: number;
+}
+
 function Editor(props: { id: string }): JSX.Element {
   let ref!: HTMLTextAreaElement;
   const node = () => page.byId[props.id];
+
+  const [ac, setAc] = createSignal<Trigger | null>(null);
+  const [acItems, setAcItems] = createSignal<AcItem[]>([]);
+  const [acIndex, setAcIndex] = createSignal(0);
+
+  const closeAc = () => {
+    setAc(null);
+    setAcItems([]);
+    setAcIndex(0);
+  };
+
+  const updateAutocomplete = async () => {
+    const t = detectTrigger(ref.value, ref.selectionStart);
+    if (!t) {
+      closeAc();
+      return;
+    }
+    setAc(t);
+    setAcIndex(0);
+    if (t.kind === "command") {
+      setAcItems(filterCommands(t.query).map((c) => ({ label: c.label, insert: c.insert, caret: c.caret })));
+      return;
+    }
+    const pages = await backend().quickSwitch(t.query, 8);
+    const cur = ac();
+    if (!cur || cur.start !== t.start) return; // trigger changed while awaiting
+    const items: AcItem[] = pages.map((p) =>
+      t.kind === "page"
+        ? { label: p.name, insert: pageInsert(p.name) }
+        : { label: p.name, insert: tagInsert(p.name) }
+    );
+    if (t.query.trim() && !pages.some((p) => p.name.toLowerCase() === t.query.toLowerCase())) {
+      items.push(
+        t.kind === "page"
+          ? { label: `Create "${t.query}"`, insert: pageInsert(t.query) }
+          : { label: `Create #${t.query}`, insert: tagInsert(t.query) }
+      );
+    }
+    setAcItems(items);
+  };
+
+  const selectAc = (item: AcItem) => {
+    const t = ac();
+    if (!t) return;
+    const r = applyCompletion(ref.value, t.start, t.end, item.insert, item.caret);
+    setRaw(props.id, r.raw);
+    closeAc();
+    queueMicrotask(() => {
+      ref.value = r.raw;
+      ref.setSelectionRange(r.caret, r.caret);
+      ref.focus();
+      autosize();
+    });
+  };
 
   const autosize = () => {
     ref.style.height = "auto";
@@ -194,12 +263,38 @@ function Editor(props: { id: string }): JSX.Element {
   const onInput = () => {
     setRaw(props.id, ref.value);
     autosize();
+    void updateAutocomplete();
   };
 
   const onKeyDown = (e: KeyboardEvent) => {
     const start = ref.selectionStart;
     const end = ref.selectionEnd;
     const raw = ref.value;
+
+    // Autocomplete popup takes priority for navigation/selection keys.
+    if (ac() && acItems().length) {
+      const n = acItems().length;
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setAcIndex((acIndex() + 1) % n);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setAcIndex((acIndex() - 1 + n) % n);
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        selectAc(acItems()[acIndex()]);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeAc();
+        return;
+      }
+    }
 
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -246,15 +341,35 @@ function Editor(props: { id: string }): JSX.Element {
   };
 
   return (
-    <textarea
-      ref={ref}
-      class="block-editor"
-      spellcheck={false}
-      value={node().raw}
-      onInput={onInput}
-      onKeyDown={onKeyDown}
-      onBlur={onBlur}
-      rows={1}
-    />
+    <div class="editor-wrap">
+      <textarea
+        ref={ref}
+        class="block-editor"
+        spellcheck={false}
+        value={node().raw}
+        onInput={onInput}
+        onKeyDown={onKeyDown}
+        onBlur={onBlur}
+        rows={1}
+      />
+      <Show when={ac() && acItems().length > 0}>
+        <div class="autocomplete">
+          <For each={acItems()}>
+            {(item, i) => (
+              <div
+                class="ac-item"
+                classList={{ active: i() === acIndex() }}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  selectAc(item);
+                }}
+              >
+                {item.label}
+              </div>
+            )}
+          </For>
+        </div>
+      </Show>
+    </div>
   );
 }

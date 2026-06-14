@@ -354,6 +354,40 @@ body {
 }
 
 /* editor */
+.editor-wrap {
+  position: relative;
+}
+
+.autocomplete {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 50;
+  min-width: 240px;
+  max-height: 280px;
+  overflow-y: auto;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+  padding: 4px;
+  margin-top: 2px;
+}
+
+.ac-item {
+  padding: 5px 10px;
+  border-radius: 5px;
+  font-size: 14px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ac-item.active {
+  background: var(--bg-tertiary);
+}
+
 .block-editor {
   width: 100%;
   border: none;
