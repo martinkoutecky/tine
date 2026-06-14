@@ -23,6 +23,12 @@ export interface PageEntry {
   date_key: number | null;
 }
 
+export interface RefGroup {
+  page: string;
+  kind: PageKind;
+  blocks: BlockDto[];
+}
+
 export interface GraphMeta {
   root: string;
   journals_dir: string;

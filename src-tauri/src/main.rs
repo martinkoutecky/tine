@@ -1,7 +1,7 @@
 // Prevent a console window on Windows release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use logseq_core::model::{Graph, GraphMeta, PageDto, PageEntry, PageKind};
+use logseq_core::model::{Graph, GraphMeta, PageDto, PageEntry, PageKind, RefGroup};
 use std::sync::Mutex;
 use tauri::{Manager, State};
 
@@ -77,6 +77,35 @@ fn save_page(page: PageDto, state: State<'_, AppState>) -> Result<(), String> {
     with_graph(&state, |g| g.save_page(&page).map_err(|e| e.to_string()))
 }
 
+#[tauri::command]
+fn get_backlinks(name: String, state: State<'_, AppState>) -> Result<Vec<RefGroup>, String> {
+    with_graph(&state, |g| Ok(g.backlinks(&name)))
+}
+
+#[tauri::command]
+fn run_query(query: String, state: State<'_, AppState>) -> Result<Vec<RefGroup>, String> {
+    with_graph(&state, |g| Ok(g.run_query(&query)))
+}
+
+#[tauri::command]
+fn search(query: String, limit: usize, state: State<'_, AppState>) -> Result<Vec<RefGroup>, String> {
+    with_graph(&state, |g| Ok(g.search(&query, limit)))
+}
+
+#[tauri::command]
+fn quick_switch(
+    query: String,
+    limit: usize,
+    state: State<'_, AppState>,
+) -> Result<Vec<PageEntry>, String> {
+    with_graph(&state, |g| Ok(g.quick_switch(&query, limit)))
+}
+
+#[tauri::command]
+fn resolve_block(uuid: String, state: State<'_, AppState>) -> Result<Option<RefGroup>, String> {
+    with_graph(&state, |g| Ok(g.resolve_block(&uuid)))
+}
+
 fn main() {
     tauri::Builder::default()
         .manage(AppState { graph: Mutex::new(None) })
@@ -93,7 +122,12 @@ fn main() {
             list_pages,
             journals_desc,
             get_page,
-            save_page
+            save_page,
+            get_backlinks,
+            run_query,
+            search,
+            quick_switch,
+            resolve_block
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

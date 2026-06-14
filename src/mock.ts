@@ -3,7 +3,19 @@
 // backend's shape so the UI behaves identically.
 
 import type { Backend } from "./backend";
-import type { BlockDto, GraphMeta, PageDto, PageEntry } from "./types";
+import type { BlockDto, GraphMeta, PageDto, PageEntry, RefGroup } from "./types";
+
+function pageRefs(raw: string): string[] {
+  const out: string[] = [];
+  const re = /\[\[([^\]]+)\]\]|#\[\[([^\]]+)\]\]|#([\w/_.-]+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(raw))) out.push(m[1] ?? m[2] ?? m[3]);
+  return out;
+}
+function leadingMarker(raw: string): string | null {
+  const m = /^(TODO|DOING|DONE|NOW|LATER|WAITING|CANCELED|CANCELLED|IN-PROGRESS)\b/.exec(raw);
+  return m ? m[1] : null;
+}
 
 let _id = 0;
 const nid = () => `mock-${_id++}`;
@@ -67,6 +79,19 @@ export function mockBackend(): Backend {
   const find = (name: string) =>
     all.find((p) => p.name.toLowerCase() === name.toLowerCase()) ?? null;
 
+  // Collect (page, matching blocks) where keep() holds, grouped by page.
+  const collect = (keep: (b: BlockDto) => boolean, exclude?: string): RefGroup[] => {
+    const groups: RefGroup[] = [];
+    for (const p of all) {
+      if (exclude && p.name.toLowerCase() === exclude.toLowerCase()) continue;
+      const matched: BlockDto[] = [];
+      const walk = (bs: BlockDto[]) => bs.forEach((b) => (keep(b) && matched.push(b), walk(b.children)));
+      walk(p.blocks);
+      if (matched.length) groups.push({ page: p.name, kind: p.kind, blocks: matched });
+    }
+    return groups;
+  };
+
   return {
     async loadGraph(): Promise<GraphMeta> {
       return { root: "/mock/graph", journals_dir: "journals", pages_dir: "pages" };
@@ -82,6 +107,60 @@ export function mockBackend(): Backend {
     },
     async savePage(): Promise<void> {
       // no-op in mock
+    },
+    async getBacklinks(name: string): Promise<RefGroup[]> {
+      const n = name.toLowerCase();
+      return collect((b) => pageRefs(b.raw).some((r) => r.toLowerCase() === n), name);
+    },
+    async runQuery(query: string): Promise<RefGroup[]> {
+      // Simplified mock evaluator: task/todo filter or page-ref filter.
+      if (/\b(todo|task)\b/i.test(query)) {
+        const named = (query.match(/\b(TODO|DOING|DONE|NOW|LATER)\b/g) ?? []).filter(
+          (w) => !/^(todo|task)$/i.test(w)
+        );
+        const set = named.length ? named : ["TODO", "DOING", "NOW", "LATER"];
+        return collect((b) => {
+          const m = leadingMarker(b.raw);
+          return !!m && set.includes(m);
+        });
+      }
+      const ref = pageRefs(query)[0];
+      if (ref) {
+        const n = ref.toLowerCase();
+        return collect((b) => pageRefs(b.raw).some((r) => r.toLowerCase() === n));
+      }
+      return [];
+    },
+    async search(query: string, limit: number): Promise<RefGroup[]> {
+      const q = query.trim().toLowerCase();
+      if (!q) return [];
+      let n = limit;
+      const groups = collect((b) => b.raw.toLowerCase().includes(q));
+      for (const g of groups) {
+        if (g.blocks.length > n) g.blocks = g.blocks.slice(0, n);
+        n -= g.blocks.length;
+      }
+      return groups.filter((g) => g.blocks.length > 0);
+    },
+    async quickSwitch(query: string, limit: number): Promise<PageEntry[]> {
+      const q = query.trim().toLowerCase();
+      return all
+        .filter((p) => p.name.toLowerCase().includes(q))
+        .slice(0, limit)
+        .map((p) => ({ name: p.name, kind: p.kind, date_key: null }));
+    },
+    async resolveBlock(uuid: string): Promise<RefGroup | null> {
+      for (const p of all) {
+        let found: BlockDto | null = null;
+        const walk = (bs: BlockDto[]) =>
+          bs.forEach((b) => {
+            if (!found && b.raw.includes(`id:: ${uuid}`)) found = b;
+            walk(b.children);
+          });
+        walk(p.blocks);
+        if (found) return { page: p.name, kind: p.kind, blocks: [found] };
+      }
+      return null;
     },
   };
 }

@@ -2,7 +2,7 @@
 // browser (Vite dev / Playwright screenshots) we fall back to an in-memory mock
 // seeded from a fixture graph, so the whole UI is exercisable without the shell.
 
-import type { GraphMeta, PageDto, PageEntry } from "./types";
+import type { GraphMeta, PageDto, PageEntry, RefGroup } from "./types";
 import { mockBackend } from "./mock";
 
 export interface Backend {
@@ -11,6 +11,11 @@ export interface Backend {
   journalsDesc(limit: number, offset: number): Promise<PageDto[]>;
   getPage(name: string, kind: "journal" | "page"): Promise<PageDto | null>;
   savePage(page: PageDto): Promise<void>;
+  getBacklinks(name: string): Promise<RefGroup[]>;
+  runQuery(query: string): Promise<RefGroup[]>;
+  search(query: string, limit: number): Promise<RefGroup[]>;
+  quickSwitch(query: string, limit: number): Promise<PageEntry[]>;
+  resolveBlock(uuid: string): Promise<RefGroup | null>;
 }
 
 function isTauri(): boolean {
@@ -46,6 +51,21 @@ class TauriBackend implements Backend {
   }
   savePage(page: PageDto) {
     return this.call<void>("save_page", { page });
+  }
+  getBacklinks(name: string) {
+    return this.call<RefGroup[]>("get_backlinks", { name });
+  }
+  runQuery(query: string) {
+    return this.call<RefGroup[]>("run_query", { query });
+  }
+  search(query: string, limit: number) {
+    return this.call<RefGroup[]>("search", { query, limit });
+  }
+  quickSwitch(query: string, limit: number) {
+    return this.call<PageEntry[]>("quick_switch", { query, limit });
+  }
+  resolveBlock(uuid: string) {
+    return this.call<RefGroup | null>("resolve_block", { uuid });
   }
 }
 

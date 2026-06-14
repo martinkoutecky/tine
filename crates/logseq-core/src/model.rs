@@ -44,6 +44,15 @@ pub struct BlockDto {
     pub children: Vec<BlockDto>,
 }
 
+/// A group of blocks from one source page — used for both Linked References
+/// (backlinks) and `{{query}}` results.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RefGroup {
+    pub page: String,
+    pub kind: PageKind,
+    pub blocks: Vec<BlockDto>,
+}
+
 /// A full page as sent to / received from the frontend.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PageDto {
@@ -152,8 +161,40 @@ impl Graph {
             kind: entry.kind,
             title: entry.name.clone(),
             pre_block: doc.pre_block.clone(),
-            blocks: doc.roots.iter().map(doc_to_dto).collect(),
+            blocks: doc.roots.iter().map(block_to_dto).collect(),
         })
+    }
+
+    /// Read and parse a page file into a [`Document`].
+    pub fn read_document(&self, entry: &PageEntry) -> io::Result<Document> {
+        let content = fs::read_to_string(&entry.path)?;
+        Ok(doc::parse(&content))
+    }
+
+    /// Backlinks for a page: blocks across the graph that reference it,
+    /// grouped by source page. Delegates to the query module.
+    pub fn backlinks(&self, target: &str) -> Vec<RefGroup> {
+        crate::query::backlinks(self, target)
+    }
+
+    /// Evaluate a `{{query ...}}` body over the graph.
+    pub fn run_query(&self, query_src: &str) -> Vec<RefGroup> {
+        crate::query::run_query(self, query_src)
+    }
+
+    /// Full-text search across all blocks.
+    pub fn search(&self, query: &str, limit: usize) -> Vec<RefGroup> {
+        crate::query::search(self, query, limit)
+    }
+
+    /// Fuzzy page-name matches for the quick switcher.
+    pub fn quick_switch(&self, query: &str, limit: usize) -> Vec<PageEntry> {
+        crate::query::quick_switch(self, query, limit)
+    }
+
+    /// Resolve a `((uuid))` block reference.
+    pub fn resolve_block(&self, uuid: &str) -> Option<RefGroup> {
+        crate::query::resolve_block(self, uuid)
     }
 
     pub fn save_page(&self, page: &PageDto) -> io::Result<()> {
@@ -191,12 +232,13 @@ fn list_md(dir: &Path, kind: PageKind) -> Vec<PageEntry> {
     out
 }
 
-fn doc_to_dto(b: &DocBlock) -> BlockDto {
+/// Convert a parsed block (and its subtree) to a DTO, assigning fresh ids.
+pub fn block_to_dto(b: &DocBlock) -> BlockDto {
     BlockDto {
         id: Uuid::new_v4().to_string(),
         raw: b.raw.clone(),
         collapsed: b.collapsed(),
-        children: b.children.iter().map(doc_to_dto).collect(),
+        children: b.children.iter().map(block_to_dto).collect(),
     }
 }
 
