@@ -1,6 +1,7 @@
 import { For, Show, createResource, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { openJournals, openPage, route } from "../router";
+import { openSwitcher } from "../ui";
 
 export function Sidebar(): JSX.Element {
   const [pages] = createResource(() => backend().listPages());
@@ -17,7 +18,13 @@ export function Sidebar(): JSX.Element {
       </div>
 
       <div class="nav-search">
-        <input class="search-input" type="text" placeholder="Search" readonly />
+        <input
+          class="search-input"
+          type="text"
+          placeholder="Search"
+          readonly
+          onClick={openSwitcher}
+        />
       </div>
 
       <div class="nav-contents">

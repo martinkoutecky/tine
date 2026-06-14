@@ -74,6 +74,7 @@ pub struct GraphMeta {
     pub root: String,
     pub journals_dir: String,
     pub pages_dir: String,
+    pub shortcuts: std::collections::HashMap<String, String>,
 }
 
 impl Graph {
@@ -91,6 +92,7 @@ impl Graph {
             root: self.root.display().to_string(),
             journals_dir: self.config.journals_dir.clone(),
             pages_dir: self.config.pages_dir.clone(),
+            shortcuts: self.config.shortcuts.clone(),
         }
     }
 

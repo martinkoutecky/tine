@@ -51,6 +51,15 @@ try {
   await page.keyboard.press("Escape");
   await page.keyboard.press("Escape");
 
+  // Quick switcher (Ctrl-K).
+  await page.keyboard.press("Control+k");
+  await sleep(200);
+  await page.keyboard.type("log");
+  await sleep(250);
+  await page.screenshot({ path: `${OUT}/switcher-light.png` });
+  await page.keyboard.press("Escape");
+  await sleep(150);
+
   // A named page (shows page properties + Linked References).
   await page.locator(".nav-page").first().click();
   await sleep(400);

@@ -1,40 +1,58 @@
-import { createSignal, onMount, type JSX } from "solid-js";
+import { Show, onCleanup, onMount, type JSX } from "solid-js";
 import { Sidebar } from "./components/Sidebar";
 import { PageView } from "./components/Page";
+import { QuickSwitcher } from "./components/QuickSwitcher";
 import { backend } from "./backend";
+import { installKeybindings } from "./keybindings";
+import { theme, toggleTheme, sidebarOpen, openSwitcher } from "./ui";
 
 export function App(): JSX.Element {
-  const [theme, setTheme] = createSignal<"light" | "dark">("light");
-
-  onMount(() => {
-    // The Tauri shell passes the graph path; in browser/mock this is ignored.
+  onMount(async () => {
     const graphPath = (window as any).__GRAPH_PATH__ ?? "";
-    void backend().loadGraph(graphPath);
+    const meta = await backend().loadGraph(graphPath);
+    const dispose = installKeybindings(meta?.shortcuts ?? {});
+    onCleanup(dispose);
   });
 
-  const toggleTheme = () => {
-    const next = theme() === "light" ? "dark" : "light";
-    setTheme(next);
-    document.documentElement.setAttribute("data-theme", next);
-  };
-
   return (
-    <div class="app-container">
-      <div class="left-sidebar">
-        <Sidebar />
-      </div>
+    <div class="app-container" classList={{ "sidebar-collapsed": !sidebarOpen() }}>
+      <Show when={sidebarOpen()}>
+        <div class="left-sidebar">
+          <Sidebar />
+        </div>
+      </Show>
       <div class="main-container">
         <header class="topbar">
           <div class="topbar-left" />
           <div class="topbar-right">
-            <button class="icon-btn" title="Toggle theme" onClick={toggleTheme}>
+            <button class="icon-btn" title="Search (Ctrl+K)" onClick={openSwitcher}>
               <svg viewBox="0 0 24 24" class="nav-icon">
-                <circle cx="12" cy="12" r="5" fill="none" stroke="currentColor" stroke-width="1.6" />
-                <line x1="12" y1="2" x2="12" y2="5" stroke="currentColor" stroke-width="1.6" />
-                <line x1="12" y1="19" x2="12" y2="22" stroke="currentColor" stroke-width="1.6" />
-                <line x1="2" y1="12" x2="5" y2="12" stroke="currentColor" stroke-width="1.6" />
-                <line x1="19" y1="12" x2="22" y2="12" stroke="currentColor" stroke-width="1.6" />
+                <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="1.7" />
+                <line x1="16.5" y1="16.5" x2="21" y2="21" stroke="currentColor" stroke-width="1.7" />
               </svg>
+            </button>
+            <button class="icon-btn" title="Toggle theme (t t)" onClick={toggleTheme}>
+              <Show
+                when={theme() === "light"}
+                fallback={
+                  <svg viewBox="0 0 24 24" class="nav-icon">
+                    <path
+                      d="M21 12.8A9 9 0 1111.2 3 7 7 0 0021 12.8z"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.7"
+                    />
+                  </svg>
+                }
+              >
+                <svg viewBox="0 0 24 24" class="nav-icon">
+                  <circle cx="12" cy="12" r="5" fill="none" stroke="currentColor" stroke-width="1.6" />
+                  <line x1="12" y1="2" x2="12" y2="5" stroke="currentColor" stroke-width="1.6" />
+                  <line x1="12" y1="19" x2="12" y2="22" stroke="currentColor" stroke-width="1.6" />
+                  <line x1="2" y1="12" x2="5" y2="12" stroke="currentColor" stroke-width="1.6" />
+                  <line x1="19" y1="12" x2="22" y2="12" stroke="currentColor" stroke-width="1.6" />
+                </svg>
+              </Show>
             </button>
           </div>
         </header>
@@ -44,6 +62,7 @@ export function App(): JSX.Element {
           </div>
         </main>
       </div>
+      <QuickSwitcher />
     </div>
   );
 }

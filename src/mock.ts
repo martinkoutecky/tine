@@ -96,7 +96,7 @@ export function mockBackend(): Backend {
 
   return {
     async loadGraph(): Promise<GraphMeta> {
-      return { root: "/mock/graph", journals_dir: "journals", pages_dir: "pages" };
+      return { root: "/mock/graph", journals_dir: "journals", pages_dir: "pages", shortcuts: {} };
     },
     async listPages(): Promise<PageEntry[]> {
       return all.map((p) => ({ name: p.name, kind: p.kind, date_key: null }));
