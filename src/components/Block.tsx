@@ -26,7 +26,7 @@ import {
 import { blockView } from "../render/block";
 import { InlineText } from "../render/inline";
 import { QueryMacro, EmbedMacro } from "./Macro";
-import { openPdf, workflow } from "../ui";
+import { openPdf, workflow, zoomInto } from "../ui";
 import { HL_COLOR_BG, HL_COLOR_SOLID } from "../pdf";
 import { cycleMarker } from "../editor/marker";
 
@@ -73,6 +73,11 @@ export function Block(props: { id: string }): JSX.Element {
           <span
             class="bullet-container"
             classList={{ "bullet-closed": collapsed() && hasChildren() }}
+            title="Zoom into block"
+            onClick={(e) => {
+              e.stopPropagation();
+              zoomInto(props.id);
+            }}
           >
             <span class="bullet" />
           </span>

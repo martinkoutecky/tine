@@ -1,10 +1,11 @@
 import { For, Show, createEffect, createSignal, onCleanup, type JSX } from "solid-js";
 import { doc, loadSingle, loadFeed, appendFeed, type FeedPage } from "../store";
 import { route, openPage } from "../router";
+import { zoomedBlock, zoomOut, zoomInto } from "../ui";
 import { backend } from "../backend";
 import { Block } from "./Block";
 import { LinkedReferences } from "./LinkedReferences";
-import { isPropertyLine } from "../render/block";
+import { isPropertyLine, blockView } from "../render/block";
 import { InlineText } from "../render/inline";
 import type { PageDto } from "../types";
 
@@ -25,6 +26,12 @@ export function PageView(): JSX.Element {
   let journalOffset = 0;
   let loadingMore = false;
   let feedDone = false;
+
+  // Clear any zoom when the route changes (navigation exits a zoomed block).
+  createEffect(() => {
+    route();
+    zoomOut();
+  });
 
   createEffect(() => {
     const r = route();
@@ -54,18 +61,66 @@ export function PageView(): JSX.Element {
     loadingMore = false;
   };
 
+  const zoomValid = () => {
+    const z = zoomedBlock();
+    return z && doc.byId[z] ? z : null;
+  };
+
   return (
     <Show when={ready() && doc.loaded} fallback={<div class="page-loading" />}>
-      <div class="page">
-        <For each={doc.pages}>{(p) => <PageSection page={p} />}</For>
-        <Show when={route().kind === "journals"}>
-          <LoadMore onHit={loadMore} />
-        </Show>
-        <Show when={route().kind === "page" && doc.pages[0]}>
-          <LinkedReferences name={doc.pages[0].name} />
-        </Show>
-      </div>
+      <Show when={zoomValid()} fallback={
+        <div class="page">
+          <For each={doc.pages}>{(p) => <PageSection page={p} />}</For>
+          <Show when={route().kind === "journals"}>
+            <LoadMore onHit={loadMore} />
+          </Show>
+          <Show when={route().kind === "page" && doc.pages[0]}>
+            <LinkedReferences name={doc.pages[0].name} />
+          </Show>
+        </div>
+      }>
+        <ZoomedView id={zoomValid()!} />
+      </Show>
     </Show>
+  );
+}
+
+// A single zoomed-in block (its subtree) with an ancestor breadcrumb.
+function ZoomedView(props: { id: string }): JSX.Element {
+  const ancestors = (): string[] => {
+    const out: string[] = [];
+    let p = doc.byId[props.id]?.parent ?? null;
+    while (p !== null) {
+      out.unshift(p);
+      p = doc.byId[p].parent;
+    }
+    return out;
+  };
+  const pageName = () => doc.byId[props.id]?.page ?? "";
+  const pageKind = () => doc.pages.find((p) => p.name === pageName())?.kind ?? "page";
+  const crumb = (id: string) => blockView(doc.byId[id].raw).lines[0] || "…";
+
+  return (
+    <div class="page zoomed-page">
+      <div class="zoom-breadcrumb">
+        <a class="crumb crumb-page" onClick={() => openPage(pageName(), pageKind())}>
+          {pageName()}
+        </a>
+        <For each={ancestors()}>
+          {(aid) => (
+            <>
+              <span class="crumb-sep">›</span>
+              <a class="crumb" onClick={() => zoomInto(aid)}>
+                <InlineText text={crumb(aid)} />
+              </a>
+            </>
+          )}
+        </For>
+      </div>
+      <div class="page-blocks zoomed-block">
+        <Block id={props.id} />
+      </div>
+    </div>
   );
 }
 

@@ -55,6 +55,16 @@ export function persistSidebarWidth() {
   }
 }
 
+// Block zoom: focus a single block's subtree (click its bullet). Session-level
+// (the frontend block id stays valid while the page is loaded); cleared on nav.
+export const [zoomedBlock, setZoomedBlock] = createSignal<string | null>(null);
+export function zoomInto(id: string) {
+  setZoomedBlock(id);
+}
+export function zoomOut() {
+  setZoomedBlock(null);
+}
+
 export const [switcherOpen, setSwitcherOpen] = createSignal(false);
 export function openSwitcher() {
   setSwitcherOpen(true);
