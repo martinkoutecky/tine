@@ -1,0 +1,4 @@
+- A branch of complexity theory measuring difficulty in terms of a #parameter.
+	- FPT: $f(k) \cdot n^{O(1)}$ running time.
+	- Many [[n-fold IP]] results live here.
+- Related to [[logseq-claude]] only by being in my notes.

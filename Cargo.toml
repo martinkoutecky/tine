@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/logseq-core"]
+members = ["crates/logseq-core", "src-tauri"]
 resolver = "2"
 
 [workspace.package]

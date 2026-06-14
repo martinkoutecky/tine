@@ -1,0 +1,7 @@
+{:meta/version 1
+ :preferred-format "Markdown"
+ :preferred-workflow :now
+ :journals-directory "journals"
+ :pages-directory "pages"
+ :journal/page-title-format "MMM do, yyyy"
+ :journal/file-name-format "yyyy_MM_dd"}

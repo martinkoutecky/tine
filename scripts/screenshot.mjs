@@ -28,7 +28,9 @@ async function waitForServer(url, tries = 40) {
 
 try {
   await waitForServer(`http://localhost:${PORT}/`);
-  const browser = await chromium.launch();
+  const browser = await chromium.launch({
+    args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"],
+  });
   const page = await browser.newPage({ viewport: { width: 1280, height: 860 }, deviceScaleFactor: 2 });
 
   await page.goto(`http://localhost:${PORT}/`);

@@ -125,6 +125,25 @@ impl Graph {
         }
     }
 
+    /// Find a page/journal entry by display name.
+    pub fn find_entry(&self, name: &str, kind: PageKind) -> Option<PageEntry> {
+        let dir = match kind {
+            PageKind::Journal => self.journals_path(),
+            PageKind::Page => self.pages_path(),
+        };
+        list_md(&dir, kind)
+            .into_iter()
+            .find(|e| e.name.eq_ignore_ascii_case(name))
+    }
+
+    /// Load a page by name; returns `None` if it doesn't exist on disk.
+    pub fn load_named(&self, name: &str, kind: PageKind) -> io::Result<Option<PageDto>> {
+        match self.find_entry(name, kind) {
+            Some(entry) => Ok(Some(self.load_page(&entry)?)),
+            None => Ok(None),
+        }
+    }
+
     pub fn load_page(&self, entry: &PageEntry) -> io::Result<PageDto> {
         let content = fs::read_to_string(&entry.path)?;
         let doc = doc::parse(&content);

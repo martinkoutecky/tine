@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "app": "tauri dev",
+    "test": "vitest run",
     "screenshot": "node scripts/screenshot.mjs"
   },
   "dependencies": {
@@ -20,6 +21,7 @@
     "playwright": "^1.49.1",
     "typescript": "^5.6.3",
     "vite": "^5.4.11",
-    "vite-plugin-solid": "^2.11.0"
+    "vite-plugin-solid": "^2.11.0",
+    "vitest": "^2.1.9"
   }
 }

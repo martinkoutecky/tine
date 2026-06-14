@@ -1,0 +1,3 @@
+- An integer program whose constraint matrix has #n-fold structure.
+	- Solvable in FPT time parameterized by block dimensions and $\|A\|_\infty$.
+- Shows up across [[parameterized complexity]] projects.
