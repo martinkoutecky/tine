@@ -6,6 +6,7 @@ import {
   isConflicted, clearConflict, markConflict, graphEpoch,
 } from "../ui";
 import { backend } from "../backend";
+import { switchGraph } from "../graph";
 import { Block } from "./Block";
 import { LinkedReferences } from "./LinkedReferences";
 import { UnlinkedReferences } from "./UnlinkedReferences";
@@ -158,6 +159,16 @@ export function PageView(): JSX.Element {
             <ConflictBanner name={doc.pages[0].name} kind={doc.pages[0].kind} />
           </Show>
           <For each={doc.pages}>{(p) => <PageSection page={p} />}</For>
+          <Show when={route().kind === "journals" && doc.pages.length === 0}>
+            <div class="page-load-error">
+              No journal entries found in this graph.
+              <div class="page-load-error-hint">
+                Make sure you opened a Logseq graph (a folder with{" "}
+                <code>journals/</code> + <code>pages/</code>). Use{" "}
+                <button class="conflict-btn" onClick={() => void switchGraph()}>Open graph…</button>
+              </div>
+            </div>
+          </Show>
           <Show when={route().kind === "journals"}>
             <LoadMore onHit={loadMore} />
           </Show>
