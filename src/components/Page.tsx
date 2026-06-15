@@ -3,7 +3,7 @@ import { doc, loadSingle, loadFeed, appendFeed, forceSave, isDirty, editingId, t
 import { route, openPage, openJournals } from "../router";
 import {
   zoomedBlock, zoomOut, zoomInto, isFavorite, toggleFavorite, notesRefresh,
-  isConflicted, clearConflict, markConflict,
+  isConflicted, clearConflict, markConflict, graphEpoch,
 } from "../ui";
 import { backend } from "../backend";
 import { Block } from "./Block";
@@ -49,6 +49,7 @@ export function PageView(): JSX.Element {
 
   createEffect(() => {
     const r = route();
+    graphEpoch(); // reload when the open graph changes
     setReady(false);
     setLoadError(null);
     void (async () => {

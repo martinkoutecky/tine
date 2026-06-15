@@ -262,6 +262,15 @@ export function mockBackend(): Backend {
     async pasteImage(): Promise<string | null> {
       return null; // no OS clipboard in the browser mock
     },
+    async importAsset(path: string): Promise<string> {
+      return path.split("/").pop() ?? path;
+    },
+    async pickFolder(): Promise<string | null> {
+      return null; // no native dialog in the browser mock
+    },
+    async pickFile(): Promise<string | null> {
+      return null;
+    },
     async writeText(text: string): Promise<void> {
       try {
         await navigator.clipboard.writeText(text);

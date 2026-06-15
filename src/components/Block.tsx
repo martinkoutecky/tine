@@ -528,37 +528,27 @@ function Editor(props: { id: string }): JSX.Element {
     });
   };
 
-  // Open the OS file picker, store the chosen file as an asset, and insert its
-  // markdown at the caret. Uses an <input type=file> (works in WebKitGTK; no
-  // Tauri dialog plugin needed) and the existing save_asset command.
-  const uploadAsset = () => {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.style.display = "none";
-    input.onchange = async () => {
-      const f = input.files?.[0];
-      input.remove();
-      if (!f) return;
-      try {
-        const bytes = new Uint8Array(await f.arrayBuffer());
-        const saved = await backend().saveAsset(f.name, bytes);
-        const md = assetMarkdown(saved);
-        const pos = ref.selectionStart;
-        const nr = ref.value.slice(0, pos) + md + ref.value.slice(pos);
-        setRaw(props.id, nr);
-        const c = pos + md.length;
-        queueMicrotask(() => {
-          ref.value = nr;
-          ref.setSelectionRange(c, c);
-          ref.focus();
-          autosize();
-        });
-      } catch {
-        // ignore failed reads
-      }
-    };
-    document.body.appendChild(input);
-    input.click();
+  // Open the native file picker, copy the chosen file into assets/, and insert
+  // its markdown at the caret. Uses the Tauri dialog plugin + import_asset.
+  const uploadAsset = async () => {
+    const path = await backend().pickFile();
+    if (!path) return;
+    try {
+      const saved = await backend().importAsset(path);
+      const md = assetMarkdown(saved);
+      const pos = ref.selectionStart;
+      const nr = ref.value.slice(0, pos) + md + ref.value.slice(pos);
+      setRaw(props.id, nr);
+      const c = pos + md.length;
+      queueMicrotask(() => {
+        ref.value = nr;
+        ref.setSelectionRange(c, c);
+        ref.focus();
+        autosize();
+      });
+    } catch {
+      // ignore failed imports
+    }
   };
 
   const selectAc = (item: AcItem) => {

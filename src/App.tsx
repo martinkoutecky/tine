@@ -8,8 +8,8 @@ import { ContextMenu } from "./components/ContextMenu";
 import { RightSidebar } from "./components/RightSidebar";
 import { Settings } from "./components/Settings";
 import { DatePicker } from "./components/DatePicker";
-import { backend } from "./backend";
 import { installKeybindings } from "./keybindings";
+import { loadGraphPath, persistedGraphPath } from "./graph";
 import {
   theme,
   toggleTheme,
@@ -20,11 +20,9 @@ import {
   pdfPaneWidth,
   setPdfPaneWidth,
   persistPdfPaneWidth,
-  setWorkflow,
   sidebarWidth,
   setSidebarWidth,
   persistSidebarWidth,
-  setGraphMeta,
   graphMeta,
   openSettings,
   shortcutOverrides,
@@ -32,10 +30,8 @@ import {
 
 export function App(): JSX.Element {
   onMount(async () => {
-    const graphPath = (window as any).__GRAPH_PATH__ ?? "";
-    const meta = await backend().loadGraph(graphPath);
-    setGraphMeta(meta ?? null);
-    setWorkflow(meta?.preferred_workflow === "todo" ? "todo" : "now");
+    const graphPath = persistedGraphPath() || ((window as any).__GRAPH_PATH__ ?? "");
+    await loadGraphPath(graphPath);
   });
 
   // (Re)install keybindings whenever config or the user's local overrides change

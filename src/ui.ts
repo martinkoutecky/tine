@@ -24,6 +24,11 @@ export const [workflow, setWorkflow] = createSignal<"now" | "todo">("now");
 
 // Loaded graph metadata (root path, dirs, shortcut overrides), for Settings.
 export const [graphMeta, setGraphMeta] = createSignal<GraphMeta | null>(null);
+// Bumped when the open graph changes, so views reload against the new graph.
+export const [graphEpoch, setGraphEpoch] = createSignal(0);
+export function bumpGraphEpoch() {
+  setGraphEpoch((n) => n + 1);
+}
 export function toggleTheme() {
   const next = theme() === "light" ? "dark" : "light";
   setTheme(next);

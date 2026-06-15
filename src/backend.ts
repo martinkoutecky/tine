@@ -29,6 +29,12 @@ export interface Backend {
   /** If the OS clipboard holds an image, save it to assets/ and return the
    *  filename; otherwise null. */
   pasteImage(): Promise<string | null>;
+  /** Copy a file (by absolute path) into assets/, returning the stored name. */
+  importAsset(path: string): Promise<string>;
+  /** Native folder picker (graph open). Null if cancelled / unsupported. */
+  pickFolder(): Promise<string | null>;
+  /** Native file picker (asset upload). Null if cancelled / unsupported. */
+  pickFile(): Promise<string | null>;
   writeText(text: string): Promise<void>;
   readHighlights(pdf: string): Promise<Highlight[]>;
   writeHighlights(pdf: string, label: string, highlights: Highlight[]): Promise<void>;
@@ -133,6 +139,19 @@ class TauriBackend implements Backend {
     } catch {
       return null; // no image in clipboard, or plugin unavailable
     }
+  }
+  importAsset(path: string) {
+    return this.call<string>("import_asset", { path });
+  }
+  async pickFolder(): Promise<string | null> {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const res = await open({ directory: true, multiple: false, title: "Open graph folder" });
+    return typeof res === "string" ? res : null;
+  }
+  async pickFile(): Promise<string | null> {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const res = await open({ multiple: false, title: "Choose a file" });
+    return typeof res === "string" ? res : null;
   }
   async writeText(text: string): Promise<void> {
     try {

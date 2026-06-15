@@ -289,6 +289,7 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppState { graph: Mutex::new(None) })
         .setup(|app| {
             // Eagerly open the graph if one was configured at startup.

@@ -11,6 +11,7 @@ import {
   resetShortcutOverride,
 } from "../ui";
 import { commandDefaults, eventToBindingString, setKeybindingsSuspended } from "../keybindings";
+import { switchGraph } from "../graph";
 import { backend } from "../backend";
 
 export function Settings(): JSX.Element {
@@ -95,7 +96,14 @@ export function Settings(): JSX.Element {
 
           <div class="settings-row">
             <span class="settings-label">Graph</span>
-            <span class="settings-value mono">{graphMeta()?.root ?? "—"}</span>
+            <div>
+              <span class="settings-value mono">{graphMeta()?.root ?? "—"}</span>
+              <div style={{ "margin-top": "6px" }}>
+                <button class="settings-btn" onClick={() => void switchGraph()}>
+                  Open another graph…
+                </button>
+              </div>
+            </div>
           </div>
 
           <div class="settings-row">
