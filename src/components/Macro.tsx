@@ -56,6 +56,9 @@ export function QueryMacro(props: { body: string }): JSX.Element {
       setSortDir(1);
     }
   };
+  // Clicks on query controls must not bubble to the block's onClick (which would
+  // start editing the {{query}} block and replace results with raw markdown).
+  const stop = (e: MouseEvent) => e.stopPropagation();
   const arrow = (c: string) => (sortCol() === c ? (sortDir() > 0 ? " ▲" : " ▼") : "");
 
   return (
@@ -69,7 +72,13 @@ export function QueryMacro(props: { body: string }): JSX.Element {
         <Match when={true}>
           <div class="query-header">
             Query <span class="query-count">{total()}</span>
-            <button class="query-view-toggle" onClick={() => setTable(!table())}>
+            <button
+              class="query-view-toggle"
+              onClick={(e) => {
+                e.stopPropagation();
+                setTable(!table());
+              }}
+            >
               {table() ? "List" : "Table"}
             </button>
           </div>
@@ -83,7 +92,13 @@ export function QueryMacro(props: { body: string }): JSX.Element {
                 <For each={groups()}>
                   {(g) => (
                     <div class="query-group">
-                      <div class="query-page" onClick={() => openPage(g.page, g.kind)}>
+                      <div
+                        class="query-page"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openPage(g.page, g.kind);
+                        }}
+                      >
                         {g.page}
                       </div>
                       <RefBlocks blocks={g.blocks} />
@@ -94,7 +109,7 @@ export function QueryMacro(props: { body: string }): JSX.Element {
             >
               <table class="md-table query-table">
                 <thead>
-                  <tr>
+                  <tr onClick={stop}>
                     <th onClick={() => sortBy("content")}>Content{arrow("content")}</th>
                     <th onClick={() => sortBy("page")}>Page{arrow("page")}</th>
                     <For each={cols()}>
@@ -109,7 +124,13 @@ export function QueryMacro(props: { body: string }): JSX.Element {
                         <td>
                           <InlineText text={r.text} />
                         </td>
-                        <td class="qt-page" onClick={() => openPage(r.page, r.kind)}>
+                        <td
+                          class="qt-page"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openPage(r.page, r.kind);
+                          }}
+                        >
                           {r.page}
                         </td>
                         <For each={cols()}>{(c) => <td>{r.props[c] ?? ""}</td>}</For>

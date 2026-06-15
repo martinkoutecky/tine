@@ -2,18 +2,35 @@ import { For, Show, createSignal, createResource, createEffect, type JSX } from 
 import { backend } from "../backend";
 import { switcherOpen, closeSwitcher } from "../ui";
 import { openPage } from "../router";
-import type { PageEntry } from "../types";
+import { blockView } from "../render/block";
+import type { PageEntry, PageKind } from "../types";
 
-// Ctrl-K quick switcher: fuzzy page jump + a few full-text hits.
+type Row =
+  | { kind: "page"; entry: PageEntry }
+  | { kind: "block"; page: string; pageKind: PageKind; text: string };
+
+// Ctrl-K quick switcher: fuzzy page jump plus full-text content hits.
 export function QuickSwitcher(): JSX.Element {
   const [query, setQuery] = createSignal("");
   const [sel, setSel] = createSignal(0);
   let inputRef: HTMLInputElement | undefined;
 
   const [pages] = createResource(query, (q) => backend().quickSwitch(q, 8));
+  const [hits] = createResource(query, (q) => (q.trim() ? backend().search(q, 12) : Promise.resolve([])));
 
-  type Row = { kind: "page"; entry: PageEntry };
-  const rows = (): Row[] => (pages() ?? []).map((entry) => ({ kind: "page" as const, entry }));
+  const rows = (): Row[] => {
+    const pageRows: Row[] = (pages() ?? []).map((entry) => ({ kind: "page" as const, entry }));
+    const seen = new Set(pageRows.map((r) => (r.kind === "page" ? r.entry.name.toLowerCase() : "")));
+    const blockRows: Row[] = [];
+    for (const g of hits() ?? []) {
+      for (const b of g.blocks) {
+        const text = blockView(b.raw).lines.join(" ").trim();
+        if (!text) continue;
+        blockRows.push({ kind: "block", page: g.page, pageKind: g.kind, text });
+      }
+    }
+    return [...pageRows, ...blockRows];
+  };
 
   createEffect(() => {
     if (switcherOpen()) {
@@ -24,7 +41,8 @@ export function QuickSwitcher(): JSX.Element {
   });
 
   const choose = (r: Row) => {
-    openPage(r.entry.name, r.entry.kind);
+    if (r.kind === "page") openPage(r.entry.name, r.entry.kind);
+    else openPage(r.page, r.pageKind);
     closeSwitcher();
   };
 
@@ -54,7 +72,7 @@ export function QuickSwitcher(): JSX.Element {
             ref={inputRef}
             class="switcher-input"
             type="text"
-            placeholder="Jump to page…"
+            placeholder="Jump to page or search…"
             value={query()}
             onInput={(e) => {
               setQuery(e.currentTarget.value);
@@ -73,13 +91,28 @@ export function QuickSwitcher(): JSX.Element {
                     choose(r);
                   }}
                 >
-                  <span class="switcher-kind">{r.entry.kind === "journal" ? "journal" : "page"}</span>
-                  <span class="switcher-name">{r.entry.name}</span>
+                  <Show
+                    when={r.kind === "page"}
+                    fallback={
+                      <>
+                        <span class="switcher-kind">text</span>
+                        <span class="switcher-name">
+                          <span class="switcher-page">{(r as { page: string }).page}:</span>{" "}
+                          {(r as { text: string }).text}
+                        </span>
+                      </>
+                    }
+                  >
+                    <span class="switcher-kind">
+                      {(r as { entry: PageEntry }).entry.kind === "journal" ? "journal" : "page"}
+                    </span>
+                    <span class="switcher-name">{(r as { entry: PageEntry }).entry.name}</span>
+                  </Show>
                 </div>
               )}
             </For>
             <Show when={rows().length === 0 && query()}>
-              <div class="switcher-empty">No matching pages</div>
+              <div class="switcher-empty">No matches</div>
             </Show>
           </div>
         </div>

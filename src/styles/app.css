@@ -1135,10 +1135,20 @@ mark {
   border-radius: 4px;
   padding: 1px 6px;
   flex: 0 0 auto;
+  min-width: 48px;
+  text-align: center;
 }
 
 .switcher-name {
   color: var(--text-primary);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.switcher-page {
+  color: var(--text-muted);
+  font-weight: 500;
 }
 
 .switcher-empty {

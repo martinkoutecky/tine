@@ -6,7 +6,6 @@ use crate::doc::{self, DocBlock};
 use crate::model::{Graph, PageKind};
 use std::fs;
 use std::io;
-use std::path::Path;
 
 /// URL/file-safe slug for a page name (links and filenames must match).
 pub fn slug(name: &str) -> String {

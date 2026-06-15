@@ -632,6 +632,40 @@ export function moveBlock(id: string, newParent: string | null, index: number) {
   if (newPage !== oldPage) markDirty(newPage);
 }
 
+/** Move a block up/down among its siblings (mod+Up/Down). Keyed <For> keeps the
+ *  DOM node — so if the block is being edited, the textarea + caret survive. */
+export function moveItem(id: string, dir: 1 | -1) {
+  const node = doc.byId[id];
+  if (!node) return;
+  const sibs = rootsOf(id);
+  const i = sibs.indexOf(id);
+  const ni = i + dir;
+  if (ni < 0 || ni >= sibs.length) return;
+  pushUndo("move-item");
+  setDoc(
+    produce((s) => {
+      const arr =
+        node.parent === null
+          ? s.pages[s.pages.findIndex((p) => p.name === node.page)].roots
+          : s.byId[node.parent!].children;
+      arr.splice(i, 1);
+      arr.splice(ni, 0, id);
+    })
+  );
+  markDirty(node.page);
+}
+
+/** Move every top-level selected block up/down by one sibling slot, preserving
+ *  selection. Used by mod+Up/Down in block-selection mode. */
+export function moveSelectionItems(dir: 1 | -1) {
+  const ids = topSelected();
+  if (!ids.length) return;
+  // Going down, move the bottom-most first so they don't collide; going up,
+  // move the top-most first.
+  const ordered = dir === 1 ? [...ids].reverse() : ids;
+  for (const id of ordered) moveItem(id, dir);
+}
+
 export function toggleCollapse(id: string) {
   const n = doc.byId[id];
   if (n.children.length === 0) return;

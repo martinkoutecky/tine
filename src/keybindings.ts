@@ -10,6 +10,7 @@ import {
   redo,
   hasSelection,
   moveSelection,
+  moveSelectionItems,
   indentSelection,
   outdentSelection,
   deleteSelection,
@@ -26,8 +27,8 @@ function handleSelectionKey(e: KeyboardEvent, mod: boolean): boolean {
   if (k === "Escape") return clearSelection(), true;
   if (e.code === "Tab" && e.shiftKey) return outdentSelection(), true;
   if (e.code === "Tab") return indentSelection(), true;
-  if (k === "ArrowDown") return moveSelection(1, e.shiftKey), true;
-  if (k === "ArrowUp") return moveSelection(-1, e.shiftKey), true;
+  if (k === "ArrowDown") return mod ? moveSelectionItems(1) : moveSelection(1, e.shiftKey), true;
+  if (k === "ArrowUp") return mod ? moveSelectionItems(-1) : moveSelection(-1, e.shiftKey), true;
   if (k === "Backspace" || k === "Delete") return deleteSelection(), true;
   if (mod && k.toLowerCase() === "c") return void backend().writeText(selectionMarkdown()), true;
   if (mod && k.toLowerCase() === "x") {

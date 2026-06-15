@@ -25,7 +25,9 @@ import {
   insertOutlineAfter,
   deleteBlock,
   moveBlock,
+  moveItem,
   selectBlock,
+  moveSelection,
   isSelected,
 } from "../store";
 import { parseOutline } from "../editor/outline";
@@ -428,6 +430,32 @@ function Editor(props: { id: string }): JSX.Element {
       if (e.key === "Escape") {
         e.preventDefault();
         closeAc();
+        return;
+      }
+    }
+
+    const mod = e.ctrlKey || e.metaKey;
+
+    // mod+Up/Down reorders the block among its siblings, keeping it in edit mode
+    // with the caret intact (the DOM reorder can briefly blur the textarea).
+    if (mod && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+      e.preventDefault();
+      setRaw(props.id, raw);
+      moveItem(props.id, e.key === "ArrowDown" ? 1 : -1);
+      startEditing(props.id, start);
+      return;
+    }
+
+    // Shift+Up/Down at the block's first/last line starts a block selection
+    // (current block + neighbour), then the global handler extends it further.
+    if (e.shiftKey && !mod && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+      const down = e.key === "ArrowDown";
+      const atEdge = down ? !raw.slice(start).includes("\n") : !raw.slice(0, start).includes("\n");
+      if (atEdge) {
+        e.preventDefault();
+        setRaw(props.id, raw);
+        selectBlock(props.id);
+        moveSelection(down ? 1 : -1, true);
         return;
       }
     }
