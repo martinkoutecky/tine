@@ -311,10 +311,12 @@ body {
   line-height: 1.2;
 }
 .title-cal {
-  font-size: 0.82em;
+  width: 0.8em;
+  height: 0.8em;
   margin-right: 0.4em;
-  opacity: 0.75;
-  vertical-align: 0.05em;
+  opacity: 0.6;
+  color: var(--text-muted);
+  vertical-align: -0.04em;
 }
 
 .fav-star {

@@ -184,7 +184,12 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
           onClick={() => openPage(props.page.name, props.page.kind)}
         >
           <Show when={props.page.kind === "journal"}>
-            <span class="title-cal" aria-hidden="true">📅</span>
+            <svg class="title-cal" viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="4" y="5" width="16" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.7" />
+              <line x1="4" y1="9.5" x2="20" y2="9.5" stroke="currentColor" stroke-width="1.7" />
+              <line x1="8.5" y1="3" x2="8.5" y2="7" stroke="currentColor" stroke-width="1.7" />
+              <line x1="15.5" y1="3" x2="15.5" y2="7" stroke="currentColor" stroke-width="1.7" />
+            </svg>
           </Show>
           {props.page.title}
         </h1>

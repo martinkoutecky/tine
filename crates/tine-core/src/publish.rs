@@ -172,8 +172,12 @@ fn page_html(title: &str, doc: &doc::Document, kind: PageKind) -> String {
     }
     body.push_str("</ul>");
     // Journal titles get a leading calendar glyph, like Logseq.
+    let cal = "<svg class=\"cal\" viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" fill=\"none\" \
+stroke=\"currentColor\" stroke-width=\"1.7\"><rect x=\"4\" y=\"5\" width=\"16\" height=\"16\" rx=\"2\"/>\
+<line x1=\"4\" y1=\"9.5\" x2=\"20\" y2=\"9.5\"/><line x1=\"8.5\" y1=\"3\" x2=\"8.5\" y2=\"7\"/>\
+<line x1=\"15.5\" y1=\"3\" x2=\"15.5\" y2=\"7\"/></svg>";
     let heading = if kind == PageKind::Journal {
-        format!("<h1 class=\"page\"><span class=\"cal\">\u{1F4C5}</span>{}</h1>", esc(title))
+        format!("<h1 class=\"page\">{}{}</h1>", cal, esc(title))
     } else {
         format!("<h1 class=\"page\">{}</h1>", esc(title))
     };
@@ -199,7 +203,7 @@ body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans
 a.home{color:var(--muted);font-size:.82rem;text-decoration:none}
 a.home:hover{color:var(--fg)}
 h1.page{font-size:1.9rem;font-weight:700;letter-spacing:-.02em;margin:.4rem 0 1.4rem}
-h1.page .cal{color:var(--muted);font-weight:400;margin-right:.4rem}
+h1.page .cal{color:var(--muted);margin-right:.45rem;vertical-align:-3px;opacity:.7}
 ul.outline,ul.outline ul{list-style:none}
 ul.outline{padding-left:0;margin:0}
 ul.outline ul{padding-left:1.25rem;margin:.1rem 0;border-left:1px solid var(--line)}
