@@ -657,6 +657,44 @@ body {
   height: 50vh;
 }
 
+.conflict-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 8px 0 14px;
+  padding: 10px 14px;
+  border: 1px solid var(--marker-todo, #e5484d);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--marker-todo, #e5484d) 10%, var(--bg-primary));
+  font-size: 13px;
+}
+.conflict-msg {
+  color: var(--text-primary);
+}
+.conflict-actions {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+.conflict-btn {
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.conflict-btn:hover {
+  background: var(--bg-tertiary);
+}
+.conflict-btn.keep {
+  border-color: var(--marker-todo, #e5484d);
+  color: var(--marker-todo, #e5484d);
+}
+
 .page-load-error {
   margin-top: 24px;
   padding: 16px 18px;

@@ -168,6 +168,35 @@ fn save_preserves_file_format_no_churn() {
 }
 
 #[test]
+fn save_refuses_to_clobber_external_change() {
+    use tine_core::model::PageKind;
+
+    let root = std::env::temp_dir().join(format!("tine-conflict-test-{}", std::process::id()));
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    let path = root.join("pages").join("N.md");
+    std::fs::write(&path, "- one").unwrap();
+
+    let g = Graph::open(&root);
+    // Build the cache (Tine now "knows" N = "- one"), then load it for editing.
+    g.search("one", 10);
+    let dto = g.load_named("N", PageKind::Page).unwrap().unwrap();
+
+    // An external writer (another app / Syncthing) changes the file.
+    std::fs::write(&path, "- EXTERNAL EDIT").unwrap();
+
+    // Saving the now-stale page must fail with a conflict and NOT overwrite.
+    let err = g.save_page(&dto).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "- EXTERNAL EDIT");
+
+    // "Keep mine" force-saves over it.
+    g.force_save_page(&dto).unwrap();
+    assert!(std::fs::read_to_string(&path).unwrap().contains("one"));
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn query_open_tasks() {
     let g = demo_graph();
     let groups = g.run_query("(task TODO DOING)");

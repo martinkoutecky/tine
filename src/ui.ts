@@ -197,6 +197,19 @@ export function resetShortcutOverride(id: string) {
   persistShortcuts(next);
 }
 
+// Pages that failed to save because the file changed on disk (external edit /
+// Syncthing). Surfaced as a banner; the user resolves with reload or overwrite.
+export const [conflicts, setConflicts] = createSignal<string[]>([]);
+export function markConflict(name: string) {
+  if (!conflicts().includes(name)) setConflicts([...conflicts(), name]);
+}
+export function clearConflict(name: string) {
+  setConflicts(conflicts().filter((n) => n !== name));
+}
+export function isConflicted(name: string): boolean {
+  return conflicts().includes(name);
+}
+
 // Date picker popup for SCHEDULED / DEADLINE (and editing existing ones).
 export const [datePicker, setDatePicker] = createSignal<
   { blockId: string; which: "scheduled" | "deadline"; x: number; y: number } | null

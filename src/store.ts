@@ -11,6 +11,7 @@ import { createSignal } from "solid-js";
 import type { BlockDto, PageDto, PageKind } from "./types";
 import type { OutlineNode } from "./editor/outline";
 import { backend } from "./backend";
+import { markConflict, isConflicted } from "./ui";
 
 export interface Node {
   id: string;
@@ -775,10 +776,32 @@ export function scheduleSave() {
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     saveTimer = null;
-    for (const name of dirty) {
-      const dto = pageToDto(name);
-      if (dto) void backend().savePage(dto);
-    }
+    const names = [...dirty];
     dirty.clear();
+    void (async () => {
+      for (const name of names) {
+        if (isConflicted(name)) continue; // wait for the user to resolve first
+        const dto = pageToDto(name);
+        if (!dto) continue;
+        try {
+          await backend().savePage(dto);
+        } catch (e) {
+          // The file changed on disk; surface it instead of clobbering.
+          if (String(e).includes("conflict")) markConflict(name);
+        }
+      }
+    })();
   }, 400);
+}
+
+/** Resolve a save conflict by overwriting the on-disk file with the in-memory
+ *  version ("keep mine"). */
+export async function forceSave(name: string): Promise<void> {
+  const dto = pageToDto(name);
+  if (!dto) return;
+  try {
+    await backend().savePage(dto, true);
+  } catch {
+    // ignore
+  }
 }

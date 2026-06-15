@@ -1,7 +1,10 @@
 import { For, Show, createEffect, createSignal, on, onCleanup, untrack, type JSX } from "solid-js";
-import { doc, loadSingle, loadFeed, appendFeed, type FeedPage } from "../store";
+import { doc, loadSingle, loadFeed, appendFeed, forceSave, type FeedPage } from "../store";
 import { route, openPage, openJournals } from "../router";
-import { zoomedBlock, zoomOut, zoomInto, isFavorite, toggleFavorite, notesRefresh } from "../ui";
+import {
+  zoomedBlock, zoomOut, zoomInto, isFavorite, toggleFavorite, notesRefresh,
+  isConflicted, clearConflict,
+} from "../ui";
 import { backend } from "../backend";
 import { Block } from "./Block";
 import { LinkedReferences } from "./LinkedReferences";
@@ -118,6 +121,9 @@ export function PageView(): JSX.Element {
     <Show when={ready() && doc.loaded} fallback={<div class="page-loading" />}>
       <Show when={zoomValid()} fallback={
         <div class="page">
+          <Show when={route().kind === "page" && doc.pages[0] && isConflicted(doc.pages[0].name)}>
+            <ConflictBanner name={doc.pages[0].name} kind={doc.pages[0].kind} />
+          </Show>
           <For each={doc.pages}>{(p) => <PageSection page={p} />}</For>
           <Show when={route().kind === "journals"}>
             <LoadMore onHit={loadMore} />
@@ -132,6 +138,32 @@ export function PageView(): JSX.Element {
       </Show>
     </Show>
     </Show>
+  );
+}
+
+// Shown when a save was refused because the file changed on disk (external edit
+// or a Syncthing pull). Lets the user take the disk version or keep theirs.
+function ConflictBanner(props: { name: string; kind: "journal" | "page" }): JSX.Element {
+  const reload = async () => {
+    const dto = await backend().getPage(props.name, props.kind);
+    if (dto) loadSingle(dto.blocks.length ? dto : emptyPage(props.name, props.kind));
+    clearConflict(props.name);
+  };
+  const keepMine = async () => {
+    await forceSave(props.name);
+    clearConflict(props.name);
+  };
+  return (
+    <div class="conflict-banner">
+      <span class="conflict-msg">
+        <strong>“{props.name}” changed on disk</strong> (edited elsewhere or synced in). Your
+        unsaved changes weren't written.
+      </span>
+      <span class="conflict-actions">
+        <button class="conflict-btn" onClick={reload}>Use disk version</button>
+        <button class="conflict-btn keep" onClick={keepMine}>Keep mine (overwrite)</button>
+      </span>
+    </div>
   );
 }
 

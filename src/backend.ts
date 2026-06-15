@@ -10,7 +10,9 @@ export interface Backend {
   listPages(): Promise<PageEntry[]>;
   journalsDesc(limit: number, offset: number): Promise<PageDto[]>;
   getPage(name: string, kind: "journal" | "page"): Promise<PageDto | null>;
-  savePage(page: PageDto): Promise<void>;
+  /** Rejects with "conflict" if the file changed on disk since load (unless
+   *  force overwrites it). */
+  savePage(page: PageDto, force?: boolean): Promise<void>;
   getBacklinks(name: string): Promise<RefGroup[]>;
   getUnlinkedRefs(name: string): Promise<RefGroup[]>;
   deletePage(name: string, kind: "journal" | "page"): Promise<void>;
@@ -61,8 +63,8 @@ class TauriBackend implements Backend {
   getPage(name: string, kind: "journal" | "page") {
     return this.call<PageDto | null>("get_page", { name, kind });
   }
-  savePage(page: PageDto) {
-    return this.call<void>("save_page", { page });
+  savePage(page: PageDto, force = false) {
+    return this.call<void>("save_page", { page, force });
   }
   getBacklinks(name: string) {
     return this.call<RefGroup[]>("get_backlinks", { name });

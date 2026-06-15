@@ -94,8 +94,17 @@ fn get_page(
 }
 
 #[tauri::command]
-fn save_page(page: PageDto, state: State<'_, AppState>) -> Result<(), String> {
-    with_graph(&state, |g| g.save_page(&page).map_err(|e| e.to_string()))
+fn save_page(page: PageDto, force: Option<bool>, state: State<'_, AppState>) -> Result<(), String> {
+    with_graph(&state, |g| {
+        let res = if force.unwrap_or(false) { g.force_save_page(&page) } else { g.save_page(&page) };
+        res.map_err(|e| {
+            if e.kind() == std::io::ErrorKind::AlreadyExists {
+                "conflict".to_string()
+            } else {
+                e.to_string()
+            }
+        })
+    })
 }
 
 #[tauri::command]

@@ -383,15 +383,47 @@ impl Graph {
         Ok(())
     }
 
+    /// The cached parsed Document for a page (what Tine believes is on disk), if
+    /// the cache is built and has it.
+    fn cached_doc(&self, name: &str, kind: PageKind) -> Option<Document> {
+        let guard = self.cache.read().unwrap();
+        guard
+            .as_ref()?
+            .iter()
+            .find(|(e, _)| e.kind == kind && e.name.eq_ignore_ascii_case(name))
+            .map(|(_, d)| d.clone())
+    }
+
+    /// Save a page, refusing to clobber an external change. If the file on disk
+    /// no longer matches what Tine last knew (another app or a Syncthing pull
+    /// wrote it), returns an `AlreadyExists` "conflict" error WITHOUT writing,
+    /// so the caller can surface it and keep the in-memory edits.
     pub fn save_page(&self, page: &PageDto) -> io::Result<()> {
+        let path = self.path_for(&page.name, page.kind);
+        if let (Ok(disk), Some(cached)) =
+            (fs::read_to_string(&path), self.cached_doc(&page.name, page.kind))
+        {
+            if doc::parse(&disk) != cached {
+                return Err(io::Error::new(io::ErrorKind::AlreadyExists, "conflict"));
+            }
+        }
+        self.write_page(page)
+    }
+
+    /// Save a page unconditionally (the user chose "keep mine" over a conflict).
+    pub fn force_save_page(&self, page: &PageDto) -> io::Result<()> {
+        self.write_page(page)
+    }
+
+    fn write_page(&self, page: &PageDto) -> io::Result<()> {
         let doc = Document {
             pre_block: page.pre_block.clone(),
             roots: page.blocks.iter().map(dto_to_doc).collect(),
         };
         let path = self.path_for(&page.name, page.kind);
         // Reproduce the existing file's formatting (trailing newline, post-property
-        // blank line) so an unchanged save is byte-identical and edits produce a
-        // minimal diff — critical to avoid Syncthing churn against Logseq.
+        // blank line, indent) so an unchanged save is byte-identical and edits
+        // produce a minimal diff — critical to avoid Syncthing churn against Logseq.
         let existing = fs::read_to_string(&path).ok();
         let opts = doc::SerializeOpts::detect(existing.as_deref());
         let content = doc::serialize_with(&doc, &opts);

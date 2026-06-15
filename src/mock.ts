@@ -164,7 +164,7 @@ export function mockBackend(): Backend {
       if (name.startsWith("hls__")) return hlsPageDto(name);
       return find(name);
     },
-    async savePage(): Promise<void> {
+    async savePage(_page: PageDto, _force?: boolean): Promise<void> {
       // no-op in mock
     },
     async getBacklinks(name: string): Promise<RefGroup[]> {
