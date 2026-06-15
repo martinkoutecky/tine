@@ -3,7 +3,7 @@
 //! task markers, and property filters. Advanced datalog (`[:find ...]`) is
 //! detected and reported as unsupported rather than crashed.
 
-use crate::doc::{DocBlock, Document};
+use crate::doc::DocBlock;
 use crate::model::{block_to_dto, Graph, PageEntry, RefGroup};
 use crate::refs;
 
@@ -15,38 +15,33 @@ fn walk<'a>(blocks: &'a [DocBlock], f: &mut impl FnMut(&'a DocBlock)) {
     }
 }
 
-/// Load+parse every page, skipping unreadable files.
-fn all_pages(graph: &Graph) -> Vec<(PageEntry, Document)> {
-    graph
-        .list_pages()
-        .into_iter()
-        .filter_map(|e| graph.read_document(&e).ok().map(|d| (e, d)))
-        .collect()
-}
-
-/// Collect matching blocks across the graph, grouped by source page.
+/// Collect matching blocks across the graph, grouped by source page. Scans the
+/// graph's in-memory page cache (built once, kept in sync by edits) so no disk
+/// I/O or re-parsing happens per call.
 fn collect(graph: &Graph, mut keep: impl FnMut(&DocBlock) -> bool, exclude: Option<&str>) -> Vec<RefGroup> {
     let ex = exclude.map(refs::normalize);
-    let mut groups: Vec<RefGroup> = Vec::new();
-    for (entry, doc) in all_pages(graph) {
-        if ex.as_deref() == Some(&refs::normalize(&entry.name)) {
-            continue;
-        }
-        let mut matched: Vec<&DocBlock> = Vec::new();
-        walk(&doc.roots, &mut |b| {
-            if keep(b) {
-                matched.push(b);
+    graph.with_pages(|pages| {
+        let mut groups: Vec<RefGroup> = Vec::new();
+        for (entry, doc) in pages {
+            if ex.as_deref() == Some(&refs::normalize(&entry.name)) {
+                continue;
             }
-        });
-        if !matched.is_empty() {
-            groups.push(RefGroup {
-                page: entry.name.clone(),
-                kind: entry.kind,
-                blocks: matched.into_iter().map(block_to_dto).collect(),
+            let mut matched: Vec<&DocBlock> = Vec::new();
+            walk(&doc.roots, &mut |b| {
+                if keep(b) {
+                    matched.push(b);
+                }
             });
+            if !matched.is_empty() {
+                groups.push(RefGroup {
+                    page: entry.name.clone(),
+                    kind: entry.kind,
+                    blocks: matched.into_iter().map(block_to_dto).collect(),
+                });
+            }
         }
-    }
-    groups
+        groups
+    })
 }
 
 pub fn backlinks(graph: &Graph, target: &str) -> Vec<RefGroup> {
@@ -147,22 +142,24 @@ fn is_subsequence(needle: &str, hay: &str) -> bool {
 
 /// Resolve a `((uuid))` block reference to its block (with subtree).
 pub fn resolve_block(graph: &Graph, uuid: &str) -> Option<RefGroup> {
-    for (entry, doc) in all_pages(graph) {
-        let mut found: Option<&DocBlock> = None;
-        walk(&doc.roots, &mut |b| {
-            if found.is_none() && b.property("id").as_deref() == Some(uuid) {
-                found = Some(b);
-            }
-        });
-        if let Some(b) = found {
-            return Some(RefGroup {
-                page: entry.name.clone(),
-                kind: entry.kind,
-                blocks: vec![block_to_dto(b)],
+    graph.with_pages(|pages| {
+        for (entry, doc) in pages {
+            let mut found: Option<&DocBlock> = None;
+            walk(&doc.roots, &mut |b| {
+                if found.is_none() && b.property("id").as_deref() == Some(uuid) {
+                    found = Some(b);
+                }
             });
+            if let Some(b) = found {
+                return Some(RefGroup {
+                    page: entry.name.clone(),
+                    kind: entry.kind,
+                    blocks: vec![block_to_dto(b)],
+                });
+            }
         }
-    }
-    None
+        None
+    })
 }
 
 /// Is this query body an advanced datalog query we don't support?

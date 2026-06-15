@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::RwLock;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -67,6 +68,11 @@ pub struct PageDto {
 pub struct Graph {
     pub root: PathBuf,
     pub config: Config,
+    /// In-memory cache of every parsed page, keyed implicitly by position.
+    /// Built once on first whole-graph query and kept in sync by edits, so
+    /// search / backlinks / `{{query}}` scan memory instead of re-reading and
+    /// re-parsing the entire tree on every keystroke. `None` = not yet built.
+    cache: RwLock<Option<Vec<(PageEntry, Document)>>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,7 +92,7 @@ impl Graph {
         let config = fs::read_to_string(root.join("logseq").join("config.edn"))
             .map(|s| Config::parse(&s))
             .unwrap_or_default();
-        Graph { root, config }
+        Graph { root, config, cache: RwLock::new(None) }
     }
 
     pub fn meta(&self) -> GraphMeta {
@@ -179,6 +185,63 @@ impl Graph {
         Ok(doc::parse(&content))
     }
 
+    /// Read+parse every page from disk (skipping unreadable files). Used to
+    /// build the in-memory cache.
+    fn load_all_pages(&self) -> Vec<(PageEntry, Document)> {
+        self.list_pages()
+            .into_iter()
+            .filter_map(|e| self.read_document(&e).ok().map(|d| (e, d)))
+            .collect()
+    }
+
+    /// Run `f` over every parsed page, building the cache on first use. The
+    /// borrow is held for the duration of `f`, so callers get references without
+    /// cloning the documents.
+    pub fn with_pages<T>(&self, f: impl FnOnce(&[(PageEntry, Document)]) -> T) -> T {
+        if let Some(pages) = self.cache.read().unwrap().as_ref() {
+            return f(pages);
+        }
+        // Build under the write lock (re-checking in case of a race).
+        let mut guard = self.cache.write().unwrap();
+        if guard.is_none() {
+            *guard = Some(self.load_all_pages());
+        }
+        f(guard.as_ref().unwrap())
+    }
+
+    /// Eagerly build the page cache (call once after opening, off the hot path).
+    pub fn warm_cache(&self) {
+        self.with_pages(|_| ());
+    }
+
+    /// Discard the cache; it rebuilds on the next whole-graph query. Use when an
+    /// external change may have touched many files.
+    pub fn invalidate_cache(&self) {
+        *self.cache.write().unwrap() = None;
+    }
+
+    /// Update one page in the cache after we write it (no full rebuild). A no-op
+    /// if the cache hasn't been built yet.
+    fn cache_upsert(&self, entry: PageEntry, doc: Document) {
+        let mut guard = self.cache.write().unwrap();
+        if let Some(pages) = guard.as_mut() {
+            match pages.iter_mut().find(|(e, _)| {
+                e.kind == entry.kind && e.name.eq_ignore_ascii_case(&entry.name)
+            }) {
+                Some(slot) => slot.1 = doc,
+                None => pages.push((entry, doc)),
+            }
+        }
+    }
+
+    /// Drop one page from the cache after deleting its file.
+    fn cache_remove(&self, name: &str, kind: PageKind) {
+        let mut guard = self.cache.write().unwrap();
+        if let Some(pages) = guard.as_mut() {
+            pages.retain(|(e, _)| !(e.kind == kind && e.name.eq_ignore_ascii_case(name)));
+        }
+    }
+
     /// Backlinks for a page: blocks across the graph that reference it,
     /// grouped by source page. Delegates to the query module.
     pub fn backlinks(&self, target: &str) -> Vec<RefGroup> {
@@ -205,6 +268,7 @@ impl Graph {
         if let Some(entry) = self.find_entry(name, kind) {
             fs::remove_file(&entry.path)?;
         }
+        self.cache_remove(name, kind);
         Ok(())
     }
 
@@ -293,7 +357,17 @@ impl Graph {
         let page_doc = crate::pdf::merge_hls_page(existing.as_ref(), pdf_filename, label, highlights);
         let page_md = doc::serialize(&page_doc);
         fs::create_dir_all(self.pages_path())?;
-        atomic_write(&page_path, page_md.as_bytes())
+        atomic_write(&page_path, page_md.as_bytes())?;
+        // The hls page is a real page; reflect it in the search cache.
+        let name = crate::pdf::hls_page_name(&key);
+        let entry = self.find_entry(&name, PageKind::Page).unwrap_or(PageEntry {
+            name,
+            kind: PageKind::Page,
+            date_key: None,
+            path: page_path,
+        });
+        self.cache_upsert(entry, page_doc);
+        Ok(())
     }
 
     pub fn save_page(&self, page: &PageDto) -> io::Result<()> {
@@ -306,7 +380,16 @@ impl Graph {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        atomic_write(&path, content.as_bytes())
+        atomic_write(&path, content.as_bytes())?;
+        // Keep the search/backlinks cache in sync without a full rebuild.
+        let entry = self.find_entry(&page.name, page.kind).unwrap_or(PageEntry {
+            name: page.name.clone(),
+            kind: page.kind,
+            date_key: None,
+            path,
+        });
+        self.cache_upsert(entry, doc);
+        Ok(())
     }
 }
 

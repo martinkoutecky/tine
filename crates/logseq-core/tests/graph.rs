@@ -53,6 +53,46 @@ fn publishes_static_html() {
 }
 
 #[test]
+fn search_cache_reflects_saves_and_deletes() {
+    use logseq_core::model::{BlockDto, PageDto, PageKind};
+
+    // Isolated temp graph so we can mutate it freely.
+    let root = std::env::temp_dir().join(format!("tine-cache-test-{}", std::process::id()));
+    std::fs::create_dir_all(root.join("journals")).unwrap();
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    std::fs::write(root.join("pages").join("Seed.md"), "- a seed block\n").unwrap();
+
+    let g = Graph::open(&root);
+    // Warms the cache on first search.
+    assert_eq!(g.search("zonkwort", 10).len(), 0, "token absent initially");
+
+    // Saving a page with the token must be visible to a subsequent search
+    // without any disk re-scan (cache upsert).
+    let page = PageDto {
+        name: "Fresh".into(),
+        kind: PageKind::Page,
+        title: "Fresh".into(),
+        pre_block: None,
+        blocks: vec![BlockDto {
+            id: "x".into(),
+            raw: "contains zonkwort here".into(),
+            collapsed: false,
+            children: vec![],
+        }],
+    };
+    g.save_page(&page).unwrap();
+    let hits = g.search("zonkwort", 10);
+    assert_eq!(hits.len(), 1, "saved page should be searchable");
+    assert_eq!(hits[0].page, "Fresh");
+
+    // Deleting the page removes it from the cache too.
+    g.delete_page("Fresh", PageKind::Page).unwrap();
+    assert_eq!(g.search("zonkwort", 10).len(), 0, "deleted page should drop out");
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn query_open_tasks() {
     let g = demo_graph();
     let groups = g.run_query("(task TODO DOING)");

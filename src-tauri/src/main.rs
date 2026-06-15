@@ -25,14 +25,33 @@ fn resolve_root(path: &str) -> Option<String> {
 }
 
 #[tauri::command]
-fn load_graph(path: String, state: State<'_, AppState>) -> Result<GraphMeta, String> {
+fn load_graph(
+    path: String,
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<GraphMeta, String> {
     let root = resolve_root(&path).ok_or_else(|| {
         "no graph path provided (set LOGSEQ_CLAUDE_GRAPH or pass a path)".to_string()
     })?;
     let graph = Graph::open(&root);
     let meta = graph.meta();
     *state.graph.lock().unwrap() = Some(graph);
+    warm_cache_async(app);
     Ok(meta)
+}
+
+/// Build the search/backlinks cache off the hot path. We let the frontend's
+/// first journal load grab the graph lock first, then warm in the background so
+/// the first search is instant instead of re-parsing the whole tree.
+fn warm_cache_async(app: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        let state: State<'_, AppState> = app.state();
+        let guard = state.graph.lock().unwrap();
+        if let Some(g) = guard.as_ref() {
+            g.warm_cache();
+        }
+    });
 }
 
 fn with_graph<T>(
