@@ -12,6 +12,9 @@ pub struct Config {
     /// User keybinding overrides from `:shortcuts {:cmd "binding"}` (string
     /// bindings only; vectors/`false` are ignored for now).
     pub shortcuts: HashMap<String, String>,
+    /// `:publishing/all-pages-public?` — when true, HTML export publishes every
+    /// page; otherwise only pages with `public:: true`.
+    pub all_pages_public: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,6 +32,7 @@ impl Default for Config {
             pages_dir: "pages".into(),
             preferred_workflow: Workflow::Now,
             shortcuts: HashMap::new(),
+            all_pages_public: false,
         }
     }
 }
@@ -59,6 +63,10 @@ impl Config {
             cfg.preferred_workflow = if v == "todo" { Workflow::Todo } else { Workflow::Now };
         }
         cfg.shortcuts = parse_shortcuts(edn);
+        if let Some(i) = edn.find(":publishing/all-pages-public?") {
+            let after = edn[i + ":publishing/all-pages-public?".len()..].trim_start();
+            cfg.all_pages_public = after.starts_with("true");
+        }
         cfg
     }
 }

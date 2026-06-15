@@ -164,39 +164,88 @@ fn render_block(b: &DocBlock, out: &mut String) {
     out.push_str("</li>");
 }
 
-fn page_html(title: &str, doc: &doc::Document) -> String {
+fn page_html(title: &str, doc: &doc::Document, kind: PageKind) -> String {
     let mut body = String::new();
     body.push_str("<ul class=\"outline\">");
     for b in &doc.roots {
         render_block(b, &mut body);
     }
     body.push_str("</ul>");
+    // Journal titles get a leading calendar glyph, like Logseq.
+    let heading = if kind == PageKind::Journal {
+        format!("<h1 class=\"page\"><span class=\"cal\">\u{1F4C5}</span>{}</h1>", esc(title))
+    } else {
+        format!("<h1 class=\"page\">{}</h1>", esc(title))
+    };
     format!(
-        "<!doctype html><html><head><meta charset=\"utf-8\"><title>{}</title>\
+        "<!doctype html><html><head><meta charset=\"utf-8\">\
+<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{}</title>\
 <link rel=\"stylesheet\" href=\"style.css\"></head><body>\
-<a class=\"home\" href=\"index.html\">← index</a><h1>{}</h1>{}</body></html>",
+<a class=\"home\" href=\"index.html\">\u{2190} index</a>{}{}</body></html>",
         esc(title),
-        esc(title),
+        heading,
         body
     )
 }
 
-const STYLE: &str = "body{font-family:Inter,system-ui,sans-serif;max-width:760px;margin:2rem auto;padding:0 1rem;color:#2b2b2b;line-height:1.6}\
-h1{font-size:1.8rem}ul.outline,ul.outline ul{list-style:none}ul.outline{padding-left:0}ul.outline ul{padding-left:1.2rem;border-left:1px solid #eee}\
-li{margin:2px 0}.b{}a.ref,a.tag{color:#1f6fd0;text-decoration:none}a.ref:hover,a.tag:hover{text-decoration:underline}\
-code{background:#f1f1f1;border-radius:4px;padding:0 4px;font-family:monospace}a.home{color:#888;font-size:.85rem;text-decoration:none}\
-img{max-width:100%}";
+const STYLE: &str = r#":root{
+  --bg:#fff;--fg:#2e2e2e;--muted:#8a8f98;--line:#e9e9ec;--accent:#10b981;--link:#0b6ec9;--code:#f4f5f7;
+}
+@media (prefers-color-scheme:dark){:root{--bg:#1b1c1d;--fg:#d8dadd;--muted:#7a7f87;--line:#2d2f31;--link:#5aa9ef;--code:#26282a;}}
+*{box-sizing:border-box}
+body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  background:var(--bg);color:var(--fg);max-width:740px;margin:0 auto;padding:48px 24px 96px;line-height:1.6;
+  -webkit-font-smoothing:antialiased;font-size:16px}
+a.home{color:var(--muted);font-size:.82rem;text-decoration:none}
+a.home:hover{color:var(--fg)}
+h1.page{font-size:1.9rem;font-weight:700;letter-spacing:-.02em;margin:.4rem 0 1.4rem}
+h1.page .cal{color:var(--muted);font-weight:400;margin-right:.4rem}
+ul.outline,ul.outline ul{list-style:none}
+ul.outline{padding-left:0;margin:0}
+ul.outline ul{padding-left:1.25rem;margin:.1rem 0;border-left:1px solid var(--line)}
+li{margin:1px 0;position:relative}
+li::before{content:"";position:absolute;left:-0.95rem;top:.62em;width:5px;height:5px;border-radius:50%;
+  background:var(--muted);opacity:.45}
+ul.outline>li::before{display:none}
+.b{padding:1px 0}
+h1,h2,h3,h4,h5,h6{line-height:1.3;margin:.5rem 0 .2rem;letter-spacing:-.01em}
+h2{font-size:1.4rem}h3{font-size:1.18rem}h4{font-size:1.04rem}
+a.ref,a.tag{color:var(--link);text-decoration:none}
+a.ref:hover,a.tag:hover{text-decoration:underline}
+a.tag{font-size:.92em}
+a[href^="http"]{color:var(--link)}
+code{background:var(--code);border-radius:4px;padding:.05em .35em;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em}
+img{max-width:100%;border-radius:6px;margin:.3rem 0}
+strong{font-weight:650}
+.index-list li{margin:.15rem 0}
+.index-list .k{color:var(--muted);font-size:.8rem;margin-left:.4rem}
+hr{border:none;border-top:1px solid var(--line);margin:1.2rem 0}
+footer{margin-top:64px;color:var(--muted);font-size:.78rem;border-top:1px solid var(--line);padding-top:12px}
+"#;
 
-/// Export the whole graph to `<root>/publish/`. Returns (output dir, page count).
+/// True if a page's property pre-block marks it `public:: true`.
+fn page_is_public(pre_block: Option<&str>) -> bool {
+    let Some(pre) = pre_block else { return false };
+    pre.lines().any(|l| {
+        let t = l.trim();
+        t.starts_with("public::") && t["public::".len()..].trim() == "true"
+    })
+}
+
+/// Export public pages to `<root>/publish/`. Returns (output dir, page count).
+/// Only pages with `public:: true` are published, unless
+/// `:publishing/all-pages-public?` is set in config (matching Logseq).
 pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
     let out = graph.root.join("publish");
     fs::create_dir_all(&out)?;
     fs::write(out.join("style.css"), STYLE)?;
+    let all_public = graph.config.all_pages_public;
 
     let pages = graph.list_pages();
     let mut index = String::from(
-        "<!doctype html><html><head><meta charset=\"utf-8\"><title>Index</title>\
-<link rel=\"stylesheet\" href=\"style.css\"></head><body><h1>Pages</h1><ul class=\"outline\">",
+        "<!doctype html><html><head><meta charset=\"utf-8\">\
+<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Index</title>\
+<link rel=\"stylesheet\" href=\"style.css\"></head><body><h1 class=\"page\">Pages</h1><ul class=\"outline index-list\">",
     );
     let mut count = 0;
     let mut entries: Vec<_> = pages.iter().collect();
@@ -204,13 +253,16 @@ pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
     for e in entries {
         let Ok(content) = fs::read_to_string(&e.path) else { continue };
         let parsed = doc::parse(&content);
+        if !all_public && !page_is_public(parsed.pre_block.as_deref()) {
+            continue;
+        }
         let file = format!("{}.html", slug(&e.name));
-        fs::write(out.join(&file), page_html(&e.name, &parsed))?;
-        let tag = if e.kind == PageKind::Journal { " (journal)" } else { "" };
-        index.push_str(&format!("<li><a href=\"{}\">{}</a>{}</li>", file, esc(&e.name), tag));
+        fs::write(out.join(&file), page_html(&e.name, &parsed, e.kind))?;
+        let tag = if e.kind == PageKind::Journal { "<span class=\"k\">journal</span>" } else { "" };
+        index.push_str(&format!("<li><a class=\"ref\" href=\"{}\">{}</a>{}</li>", file, esc(&e.name), tag));
         count += 1;
     }
-    index.push_str("</ul></body></html>");
+    index.push_str("</ul><footer>Published with Tine</footer></body></html>");
     fs::write(out.join("index.html"), index)?;
     Ok((out.display().to_string(), count))
 }

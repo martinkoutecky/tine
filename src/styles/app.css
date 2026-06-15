@@ -310,6 +310,12 @@ body {
   margin: 8px 0 6px;
   line-height: 1.2;
 }
+.title-cal {
+  font-size: 0.82em;
+  margin-right: 0.4em;
+  opacity: 0.75;
+  vertical-align: 0.05em;
+}
 
 .fav-star {
   background: none;

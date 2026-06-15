@@ -183,6 +183,9 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
           classList={{ "journal-title": props.page.kind === "journal" }}
           onClick={() => openPage(props.page.name, props.page.kind)}
         >
+          <Show when={props.page.kind === "journal"}>
+            <span class="title-cal" aria-hidden="true">📅</span>
+          </Show>
           {props.page.title}
         </h1>
         <button

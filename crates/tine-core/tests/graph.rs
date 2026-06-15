@@ -40,16 +40,27 @@ fn backlinks_to_parameterized_complexity() {
 }
 
 #[test]
-fn publishes_static_html() {
-    let g = demo_graph();
+fn publishes_only_public_pages() {
+    let root = std::env::temp_dir().join(format!("tine-publish-test-{}", std::process::id()));
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    std::fs::create_dir_all(root.join("journals")).unwrap();
+    std::fs::write(
+        root.join("pages").join("Shared.md"),
+        "public:: true\n\n- hello, see [[Secret]]\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("pages").join("Secret.md"), "- private notes\n").unwrap();
+
+    let g = Graph::open(&root);
     let (dir, n) = g.publish_html().unwrap();
-    assert!(n >= 4, "published {n} pages");
-    let idx = std::fs::read_to_string(format!("{dir}/index.html")).unwrap();
-    assert!(idx.contains(".html"));
-    let p = std::fs::read_to_string(format!("{dir}/logseq-claude.html")).unwrap();
-    assert!(p.contains("<h1>logseq-claude</h1>"));
+    assert_eq!(n, 1, "only the public page is published");
+    let p = std::fs::read_to_string(format!("{dir}/shared.html")).unwrap();
+    assert!(p.contains("<h1 class=\"page\">Shared</h1>"));
     assert!(p.contains("<a class=\"ref\""), "should link [[refs]]");
-    std::fs::remove_dir_all(&dir).ok();
+    // The private page must not be exported.
+    assert!(!std::path::Path::new(&format!("{dir}/secret.html")).exists());
+
+    std::fs::remove_dir_all(&root).ok();
 }
 
 #[test]
