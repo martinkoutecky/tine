@@ -4,7 +4,7 @@
 //! detected and reported as unsupported rather than crashed.
 
 use crate::doc::DocBlock;
-use crate::model::{block_to_dto, Graph, PageEntry, RefGroup};
+use crate::model::{block_to_dto, BlockDto, Graph, PageEntry, RefGroup, TemplateDto};
 use crate::refs;
 
 /// Walk all blocks of a document depth-first, calling `f(block)`.
@@ -117,6 +117,53 @@ pub fn search(graph: &Graph, query: &str, limit: usize) -> Vec<RefGroup> {
         true
     });
     groups
+}
+
+/// Find every `template:: <name>` block and the blocks an insertion produces.
+pub fn templates(graph: &Graph) -> Vec<TemplateDto> {
+    graph.with_pages(|pages| {
+        let mut out: Vec<TemplateDto> = Vec::new();
+        for (_entry, doc) in pages {
+            walk(&doc.roots, &mut |b| {
+                let Some(name) = b.property("template") else { return };
+                if name.is_empty() {
+                    return;
+                }
+                let include_parent =
+                    b.property("template-including-parent").as_deref() != Some("false");
+                let blocks = if include_parent {
+                    vec![template_dto(b, true)]
+                } else {
+                    b.children.iter().map(|c| template_dto(c, false)).collect()
+                };
+                out.push(TemplateDto { name, blocks });
+            });
+        }
+        out
+    })
+}
+
+/// Convert a template block subtree to a DTO, dropping `id::` (so inserted
+/// copies get fresh ids) and, at the root, the `template*` properties.
+fn template_dto(b: &DocBlock, strip_template: bool) -> BlockDto {
+    let raw = b
+        .raw
+        .lines()
+        .filter(|l| {
+            let t = l.trim();
+            let drop = t.starts_with("id::")
+                || (strip_template
+                    && (t.starts_with("template::") || t.starts_with("template-including-parent::")));
+            !drop
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    BlockDto {
+        id: String::new(),
+        raw,
+        collapsed: false,
+        children: b.children.iter().map(|c| template_dto(c, false)).collect(),
+    }
 }
 
 /// Fuzzy page-name matcher for the quick switcher. Ranks prefix > substring >

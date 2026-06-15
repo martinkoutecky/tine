@@ -54,6 +54,13 @@ pub struct RefGroup {
     pub blocks: Vec<BlockDto>,
 }
 
+/// A named template (a block with `template:: <name>`) and the blocks to insert.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TemplateDto {
+    pub name: String,
+    pub blocks: Vec<BlockDto>,
+}
+
 /// A full page as sent to / received from the frontend.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PageDto {
@@ -280,6 +287,12 @@ impl Graph {
     /// Fuzzy page-name matches for the quick switcher.
     pub fn quick_switch(&self, query: &str, limit: usize) -> Vec<PageEntry> {
         crate::query::quick_switch(self, query, limit)
+    }
+
+    /// All `template:: <name>` templates across the graph, with the blocks to
+    /// insert (ids and template properties stripped).
+    pub fn templates(&self) -> Vec<TemplateDto> {
+        crate::query::templates(self)
     }
 
     /// Resolve a `((uuid))` block reference.

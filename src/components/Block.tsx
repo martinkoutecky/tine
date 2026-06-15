@@ -364,6 +364,7 @@ interface AcItem {
   insert?: string;
   caret?: number;
   action?: import("../editor/autocomplete").CommandAction;
+  templateNodes?: import("../types").BlockDto[];
 }
 
 // Small calendar glyph for date chips (SVG, not emoji — emoji tofu on WebKitGTK).
@@ -397,6 +398,33 @@ function todayJournalName(d = new Date()): string {
             ? "rd"
             : "th";
   return `${months[d.getMonth()]} ${n}${suffix}, ${d.getFullYear()}`;
+}
+
+// Template support: session-cached list of templates, dynamic-var substitution,
+// and DTO→outline conversion for insertion.
+let templateCache: import("../types").TemplateDto[] | null = null;
+async function getTemplates(): Promise<import("../types").TemplateDto[]> {
+  if (templateCache) return templateCache;
+  try {
+    templateCache = await backend().listTemplates();
+  } catch {
+    templateCache = [];
+  }
+  return templateCache;
+}
+/** Replace Logseq dynamic template vars: <% today/yesterday/tomorrow/time %>. */
+function applyTemplateVars(raw: string): string {
+  return raw.replace(/<%\s*(today|yesterday|tomorrow|time|current time)\s*%>/gi, (_m, kw) => {
+    const k = String(kw).toLowerCase();
+    if (k === "time" || k === "current time") return timeStamp();
+    const d = new Date();
+    if (k === "yesterday") d.setDate(d.getDate() - 1);
+    if (k === "tomorrow") d.setDate(d.getDate() + 1);
+    return `[[${todayJournalName(d)}]]`;
+  });
+}
+function templateToOutline(b: import("../types").BlockDto): { raw: string; children: any[] } {
+  return { raw: applyTemplateVars(b.raw), children: b.children.map(templateToOutline) };
 }
 // Markdown for a freshly saved asset: images embed inline, everything else
 // (PDFs included) becomes a link — a .pdf link renders as a clickable chip that
@@ -450,14 +478,21 @@ function Editor(props: { id: string }): JSX.Element {
     setAc(t);
     setAcIndex(0);
     if (t.kind === "command") {
-      setAcItems(
-        filterCommands(t.query).map((c) => ({
-          label: c.label,
-          insert: c.insert,
-          caret: c.caret,
-          action: c.action,
-        }))
-      );
+      const cmds: AcItem[] = filterCommands(t.query).map((c) => ({
+        label: c.label,
+        insert: c.insert,
+        caret: c.caret,
+        action: c.action,
+      }));
+      const tmpls = await getTemplates();
+      const q = t.query.toLowerCase();
+      const showAll = q.length > 0 && "template".startsWith(q); // typing /t…/template
+      const tItems: AcItem[] = tmpls
+        .filter((tp) => showAll || (q.length > 0 && tp.name.toLowerCase().includes(q)))
+        .map((tp) => ({ label: `Template: ${tp.name}`, templateNodes: tp.blocks }));
+      const cur = ac();
+      if (!cur || cur.start !== t.start) return; // trigger changed while awaiting
+      setAcItems([...cmds, ...tItems]);
       return;
     }
     const pages = await backend().quickSwitch(t.query, 8);
@@ -529,6 +564,20 @@ function Editor(props: { id: string }): JSX.Element {
   const selectAc = (item: AcItem) => {
     const t = ac();
     if (!t) return;
+    if (item.templateNodes) {
+      // Drop the "/name" trigger text, then insert the template's blocks (with
+      // dynamic vars resolved). If the host block is now empty, replace it.
+      const r = applyCompletion(ref.value, t.start, t.end, "");
+      commit(r.raw);
+      closeAc();
+      const nodes = item.templateNodes.map(templateToOutline);
+      const wasEmpty =
+        doc.byId[props.id].raw.trim() === "" && doc.byId[props.id].children.length === 0;
+      const lastId = insertOutlineAfter(props.id, nodes);
+      if (wasEmpty) deleteBlock(props.id);
+      startEditing(lastId, doc.byId[lastId].raw.length);
+      return;
+    }
     switch (item.action) {
       case "scheduled":
       case "deadline": {

@@ -17,6 +17,11 @@ export interface PageDto {
   blocks: BlockDto[];
 }
 
+export interface TemplateDto {
+  name: string;
+  blocks: BlockDto[];
+}
+
 export interface PageEntry {
   name: string;
   kind: PageKind;

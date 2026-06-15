@@ -138,6 +138,11 @@ fn quick_switch(
 }
 
 #[tauri::command]
+fn list_templates(state: State<'_, AppState>) -> Result<Vec<tine_core::model::TemplateDto>, String> {
+    with_graph(&state, |g| Ok(g.templates()))
+}
+
+#[tauri::command]
 fn resolve_block(uuid: String, state: State<'_, AppState>) -> Result<Option<RefGroup>, String> {
     with_graph(&state, |g| Ok(g.resolve_block(&uuid)))
 }
@@ -260,6 +265,7 @@ fn main() {
             run_query,
             search,
             quick_switch,
+            list_templates,
             resolve_block,
             read_asset,
             import_asset,

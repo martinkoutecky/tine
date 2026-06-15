@@ -215,6 +215,18 @@ export function mockBackend(): Backend {
       }
       return groups.filter((g) => g.blocks.length > 0);
     },
+    async listTemplates() {
+      return [
+        {
+          name: "meeting",
+          blocks: [
+            { id: "t1", raw: "## Meeting [[<% today %>]]", collapsed: false, children: [] },
+            { id: "t2", raw: "Attendees:", collapsed: false, children: [] },
+            { id: "t3", raw: "TODO Follow up", collapsed: false, children: [] },
+          ],
+        },
+      ];
+    },
     async quickSwitch(query: string, limit: number): Promise<PageEntry[]> {
       const q = query.trim().toLowerCase();
       return all
