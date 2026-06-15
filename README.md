@@ -1,63 +1,157 @@
-# Tine
+<p align="center">
+  <img src="docs/logo.svg" alt="Tine" height="84">
+</p>
 
-A fast, local outliner — a near-identical, **Logseq-compatible** desktop app that
-operates on the same standard markdown graph (`journals/` + `pages/` +
-`logseq/config.edn`), so you can swap between Logseq and Tine on the same files
-(one at a time). (Repo/dir is still `logseq-claude`; rename anytime.)
+<p align="center">
+  <b>A fast, local, Logseq-compatible outliner.</b><br>
+  Reads and writes the <i>same</i> markdown graph as Logseq — swap between the two on the same files.
+</p>
 
-**Why:** OG Logseq's UI is slow (Electron + DataScript + heavy re-rendering). This is a
-ground-up rewrite focused on speed and visual/functional parity.
+<p align="center">
+  <img src="https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white" alt="Tauri 2">
+  <img src="https://img.shields.io/badge/SolidJS-1.9-2C4F7C?logo=solid&logoColor=white" alt="SolidJS">
+  <img src="https://img.shields.io/badge/Rust-2021-000000?logo=rust&logoColor=white" alt="Rust">
+  <img src="https://img.shields.io/badge/platform-Linux%20(WebKitGTK)-555" alt="Linux">
+</p>
 
-## Stack
+<p align="center">
+  <img src="docs/img/hero.png" alt="Tine — journals view" width="820">
+</p>
 
-- **Shell:** [Tauri 2](https://tauri.app) (Rust) — OS webview, tiny runtime vs Electron.
-- **Frontend:** SolidJS + TypeScript + Vite — fine-grained reactivity, no virtual-DOM churn.
-- **Core:** `crates/logseq-core` — pure Rust: parsing, Logseq-compatible serialization,
-  the graph model, indexing, queries. No GUI deps, fully unit-testable.
+---
 
-## Layout
+## What is Tine?
+
+Tine is a desktop outliner built to look and feel like [Logseq](https://logseq.com) while being
+much faster. It operates directly on the standard Logseq graph layout —
+`journals/`, `pages/`, and `logseq/config.edn` — so you can point it at the graph you already
+use and keep editing in either app (one at a time). Files are written back in
+Logseq-compatible markdown, so there's no lock-in and no import/export step.
+
+**Why build it?** Logseq's UI is built on Electron + DataScript with heavy re-rendering, and it
+gets sluggish on large graphs. Tine is a ground-up rewrite: a small native shell, a pure-Rust
+core for parsing and indexing, and a fine-grained reactive frontend that never diffs a virtual
+DOM. The editor keeps the live tree in the frontend so keystrokes never round-trip to Rust.
+
+> **Status:** usable daily-driver for outlining, linking, tasks, search, and PDF annotation.
+> Not yet a 1.0 — see [Roadmap](#roadmap--non-goals).
+
+## Features
+
+**Outliner**
+- Click-to-edit blocks; `Enter` / `Tab` / `Shift+Tab` / `Backspace` / arrows with correct
+  Logseq semantics and caret preservation (no reflow on indent/outdent).
+- Collapse/expand, zoom into a block, drag-to-reorder, multi-block selection + move/indent/cut.
+- Multi-line blocks, code blocks (syntax-highlighted), markdown tables.
+
+**Linking & references**
+- `[[page]]` links, `#tags`, `((block refs))`, `{{embed}}` — all clickable, with `[[` / `#` / `/`
+  autocomplete.
+- Linked & unlinked references on every page.
+
+**Tasks, properties, queries**
+- `TODO/DOING/DONE/NOW/LATER/WAITING/CANCELED`, priorities, `SCHEDULED`/`DEADLINE`.
+- Page & block properties.
+- `{{query}}` — boolean / task / property / scheduled-deadline filters, rendered as a list or a
+  sortable **table** (full datalog is out of scope).
+
+**PDF annotation**
+- Open PDFs in a resizable, zoomable pane (buttons + Ctrl/Cmd-scroll).
+- Select text → colored highlights, stored Logseq-compatibly (`assets/<key>.edn` + `hls__` pages).
+- A highlight becomes a clean bullet on the notes page — press `Enter`/`Tab` to add nested notes;
+  the metadata stays hidden. The notes page refreshes as you highlight.
+
+**Search & navigation**
+- `Ctrl+K` quick switcher: page titles + full-text content hits.
+- Tabs (middle-click to open, double-click to pin), favorites, recent pages, journals feed.
+
+**Customization & output**
+- Fully remappable keyboard shortcuts — in the Settings modal or via `config.edn :shortcuts`.
+- Light / dark themes.
+- One-click **static HTML export** of the whole graph.
+- Slash menu: headings, code, quote, divider, embed, scheduled/deadline, asset upload, and more.
+
+<p align="center">
+  <img src="docs/img/pdf.png" alt="PDF highlighting with notes" width="49%">
+  <img src="docs/img/settings.png" alt="Remappable shortcuts" width="49%">
+</p>
+
+## Built with
+
+| Layer | Tech | Notes |
+|------|------|-------|
+| Shell | [Tauri 2](https://tauri.app) (Rust) | OS webview (WebKitGTK on Linux) — tiny runtime vs Electron |
+| Frontend | [SolidJS](https://solidjs.com) + TypeScript + [Vite](https://vitejs.dev) | fine-grained reactivity, no virtual-DOM churn |
+| Core | `crates/logseq-core` (pure Rust) | parsing, Logseq-compatible serialization, model, indexing, queries, PDF/EDN, HTML publish |
+| Rendering | [pdf.js](https://mozilla.github.io/pdf.js/), [KaTeX](https://katex.org), highlight.js | PDF, math, code |
+
+The Rust core is GUI-free and unit-tested in isolation; the Tauri layer is a thin set of IPC
+commands over it. The frontend owns the live editing tree (normalized store) and pushes debounced
+saves; whole-graph reads (search, backlinks, queries) hit an in-memory page cache rather than
+re-reading the tree.
+
+## Project layout
 
 ```
-crates/logseq-core/   Rust core (parse/serialize/model) — testable standalone
-src-tauri/            Tauri app: IPC commands + window (added in M0)
-src/                  SolidJS frontend
-scripts/env.sh        Sets CARGO_HOME/RUSTUP_HOME to the persistent toolchain mount
+crates/logseq-core/   Rust core: parse/serialize, model, config, dates, refs, query, pdf, edn, publish
+src-tauri/            Tauri app — IPC commands + window
+src/                  SolidJS frontend (components, store, render pipeline, keybindings)
+scripts/env.sh        Points CARGO_HOME/RUSTUP_HOME at the persistent toolchain
+docs/                 Feature map, notes, screenshots
+samples/              Demo graph used by tests/screenshots
 ```
 
-## Development
+## Build & run
 
 ```bash
-source scripts/env.sh          # Rust toolchain lives on the persistent /aux mount
-cargo test -p logseq-core      # core unit + round-trip tests
+source scripts/env.sh        # toolchain env (CARGO_HOME/RUSTUP_HOME, lib paths)
+npm install                  # first time
 
-# Round-trip any real graph (reports structural bugs vs acceptable canonicalization):
-cargo run -p logseq-core --example roundtrip_dir -- /path/to/graph
+# Build the release binary (NOT `cargo build` — that produces a dev-mode binary
+# that can't connect to the bundled frontend):
+npx tauri build --no-bundle
+
+# Run it against your graph:
+TINE_GPU=1 TINE_GRAPH=/path/to/your/graph ./target/release/tine
 ```
 
-## Running it on a real graph
+- Point `TINE_GRAPH` at the same `journals/` + `pages/` + `logseq/config.edn` tree you use with
+  Logseq. Run one app at a time on a given graph.
+- `TINE_GPU=1` enables GPU compositing (smooth scrolling). It's off by default because some
+  GPU/compositor combos abort WebKitGTK's DMABUF renderer; leave it unset if the window fails to
+  appear.
+- Prefer the **raw binary** over an AppImage on Linux — a bundled Mesa can clash with the host GPU.
+
+### Develop
+
+```bash
+npm run dev                  # frontend only, in a browser, against an in-memory mock backend
+npm run app                  # full Tauri dev window  (alias for: tauri dev)
+```
+
+## Testing
 
 ```bash
 source scripts/env.sh
-npm install                       # first time
-cargo build --release -p tine     # or: npm run app  (tauri dev)
-TINE_GRAPH=/path/to/your/graph ./target/release/tine
+cargo test -p logseq-core    # Rust: parse/serialize round-trip, model, queries, search cache
+npm test                     # Frontend: Vitest (editor ops, outline, autocomplete, markers)
 ```
 
-Point it at the same `journals/`+`pages/`+`logseq/config.edn` tree you use with OG
-Logseq (one app open at a time). Files are written back in Logseq-compatible form.
+Round-trip parsing is validated against a real Logseq graph (0 structural diffs beyond accepted
+canonicalization).
 
-## Status
+## Roadmap & non-goals
 
-Working: outliner editing (click-to-edit, Enter/Tab/Shift-Tab/Backspace/arrows, caret
-preserved), inline rendering (bold/italic/code/strike/highlight, headings, `[[links]]`,
-`#tags`, `((block refs))`, `{{embed}}`, KaTeX math), `{{query}}` (boolean/task/property
-subset), properties, tasks, Linked References, full-text search, Ctrl-K quick switcher,
-`[[`/`#`/`/` autocomplete, multi-day journals feed, configurable shortcuts
-(config.edn `:shortcuts`), light/dark themes, and PDF viewing + text highlighting
-(stored OG-compatibly as `assets/<key>.edn` + `hls__` pages).
+**Planned:** page rename with ref-update, namespaces/aliases UI, callouts, query sorting via the
+DSL, graph view, area (image) PDF highlights.
 
-Tests: 33 frontend (Vitest) + 34 Rust. Round-trip validated against the real OG
-shui-graph (0 structural bugs).
+**Out of scope (by design):** whiteboards, flashcards, the plugin system, full datalog queries,
+sync/built-in git, and mobile.
 
-Not yet: block-move shortcuts remapping for in-editor keys, area (image) PDF highlights,
-right sidebar, graph view. Whiteboards/flashcards intentionally out of scope.
+## License
+
+Not yet chosen — pick one (e.g. MIT or AGPL-3.0) before making the repository public.
+
+---
+
+<sub>Built ground-up as a faster, file-compatible alternative to Logseq. Not affiliated with Logseq.</sub>
