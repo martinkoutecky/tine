@@ -197,6 +197,40 @@ fn save_refuses_to_clobber_external_change() {
 }
 
 #[test]
+fn sync_file_detects_external_change_and_suppresses_self() {
+    use tine_core::model::PageKind;
+
+    let root = std::env::temp_dir().join(format!("tine-sync-test-{}", std::process::id()));
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    let path = root.join("pages").join("S.md");
+    std::fs::write(&path, "- before").unwrap();
+
+    let g = Graph::open(&root);
+    g.search("before", 10); // build the cache (S = "- before")
+
+    // No external change yet → sync reports nothing.
+    assert!(g.sync_file(&path).is_none());
+
+    // External edit → sync reports the entry and refreshes the cache.
+    std::fs::write(&path, "- after the change").unwrap();
+    let changed = g.sync_file(&path).expect("external change detected");
+    assert_eq!(changed.name, "S");
+    assert_eq!(changed.kind, PageKind::Page);
+    assert_eq!(g.search("after", 10).len(), 1, "cache updated to new content");
+    assert_eq!(g.search("before", 10).len(), 0);
+
+    // Re-syncing the same content is a no-op (self-write suppression).
+    assert!(g.sync_file(&path).is_none());
+
+    // Deletion is reported and drops it from the cache.
+    std::fs::remove_file(&path).unwrap();
+    assert!(g.forget_file(&path).is_some());
+    assert_eq!(g.search("after", 10).len(), 0);
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn query_open_tasks() {
     let g = demo_graph();
     let groups = g.run_query("(task TODO DOING)");

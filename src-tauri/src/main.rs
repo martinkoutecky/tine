@@ -2,11 +2,87 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use tine_core::model::{Graph, GraphMeta, PageDto, PageEntry, PageKind, RefGroup};
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Mutex;
-use tauri::{Manager, State};
+use std::time::{Duration, SystemTime};
+use tauri::{Emitter, Manager, State};
 
 struct AppState {
     graph: Mutex<Option<Graph>>,
+}
+
+#[derive(Clone, serde::Serialize)]
+struct GraphChange {
+    name: String,
+    kind: PageKind,
+    removed: bool,
+}
+
+/// Poll the graph dirs for external changes (Logseq, Syncthing) and reconcile
+/// them into the cache, emitting `graph-changed` so the UI can reload. Polling
+/// (not inotify) is deliberate: it's reliable on NFS, where file watchers — and
+/// Syncthing's own — are flaky. Tine's own writes are suppressed by the cache
+/// comparison inside `sync_file`.
+fn start_watcher(app: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        let mut snap: HashMap<PathBuf, SystemTime> = HashMap::new();
+        let mut baseline = false;
+        loop {
+            std::thread::sleep(Duration::from_secs(3));
+            let state: State<'_, AppState> = app.state();
+            let dirs = {
+                let g = state.graph.lock().unwrap();
+                match g.as_ref() {
+                    Some(g) => [g.journals_path(), g.pages_path()],
+                    None => continue,
+                }
+            };
+            let mut current: HashMap<PathBuf, SystemTime> = HashMap::new();
+            for dir in &dirs {
+                if let Ok(rd) = std::fs::read_dir(dir) {
+                    for e in rd.flatten() {
+                        let p = e.path();
+                        if p.extension().and_then(|x| x.to_str()) != Some("md") {
+                            continue;
+                        }
+                        if let Ok(m) = e.metadata().and_then(|md| md.modified()) {
+                            current.insert(p, m);
+                        }
+                    }
+                }
+            }
+            if !baseline {
+                snap = current;
+                baseline = true;
+                continue; // first scan establishes the baseline; emit nothing
+            }
+            let mut changes: Vec<GraphChange> = Vec::new();
+            {
+                let g = state.graph.lock().unwrap();
+                if let Some(g) = g.as_ref() {
+                    for (p, m) in &current {
+                        if snap.get(p) != Some(m) {
+                            if let Some(en) = g.sync_file(p) {
+                                changes.push(GraphChange { name: en.name, kind: en.kind, removed: false });
+                            }
+                        }
+                    }
+                    for p in snap.keys() {
+                        if !current.contains_key(p) {
+                            if let Some(en) = g.forget_file(p) {
+                                changes.push(GraphChange { name: en.name, kind: en.kind, removed: true });
+                            }
+                        }
+                    }
+                }
+            }
+            snap = current;
+            for c in changes {
+                let _ = app.emit("graph-changed", c);
+            }
+        }
+    });
 }
 
 /// Resolve the graph root: explicit path, else env var, else first CLI arg.
@@ -259,6 +335,8 @@ fn main() {
             } else {
                 eprintln!("[tine] NO graph root resolved — set TINE_GRAPH=/path/to/graph");
             }
+            // Watch for external changes (reads whichever graph is current).
+            start_watcher(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

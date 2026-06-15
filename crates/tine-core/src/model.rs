@@ -383,6 +383,70 @@ impl Graph {
         Ok(())
     }
 
+    /// Map an on-disk `.md` path to its page entry (journal or page), or None if
+    /// it isn't in the graph's journals/pages dirs.
+    pub fn entry_for_path(&self, path: &Path) -> Option<PageEntry> {
+        if path.extension().and_then(|e| e.to_str()) != Some("md") {
+            return None;
+        }
+        let stem = path.file_stem().and_then(|s| s.to_str())?;
+        let parent = path.parent()?;
+        if parent == self.journals_path() {
+            let (name, date_key) = match JournalDate::from_file_stem(stem) {
+                Some(d) => (d.title(), Some(d.ordinal_key())),
+                None => (stem.to_string(), None),
+            };
+            Some(PageEntry { name, kind: PageKind::Journal, date_key, path: path.to_path_buf() })
+        } else if parent == self.pages_path() {
+            Some(PageEntry {
+                name: decode_page_name(stem),
+                kind: PageKind::Page,
+                date_key: None,
+                path: path.to_path_buf(),
+            })
+        } else {
+            None
+        }
+    }
+
+    /// Reconcile a (possibly externally-changed) file with the in-memory cache.
+    /// Returns the entry only if its parsed content actually differs from the
+    /// cache (i.e. a real external change) — Tine's own writes keep the cache in
+    /// sync, so they return None. No-op if the cache hasn't been built yet.
+    pub fn sync_file(&self, path: &Path) -> Option<PageEntry> {
+        let entry = self.entry_for_path(path)?;
+        let content = fs::read_to_string(path).ok()?;
+        let newdoc = doc::parse(&content);
+        {
+            let guard = self.cache.read().unwrap();
+            let cache = guard.as_ref()?; // cache not built -> nothing to reconcile
+            if let Some((_, cached)) = cache
+                .iter()
+                .find(|(e, _)| e.kind == entry.kind && e.name.eq_ignore_ascii_case(&entry.name))
+            {
+                if *cached == newdoc {
+                    return None; // unchanged / our own write
+                }
+            }
+        }
+        self.cache_upsert(entry.clone(), newdoc);
+        Some(entry)
+    }
+
+    /// Drop a file deleted on disk from the cache; returns the entry if it was
+    /// cached (so the UI can react).
+    pub fn forget_file(&self, path: &Path) -> Option<PageEntry> {
+        let entry = self.entry_for_path(path)?;
+        let was_cached = {
+            let guard = self.cache.read().unwrap();
+            guard.as_ref().is_some_and(|c| {
+                c.iter().any(|(e, _)| e.kind == entry.kind && e.name.eq_ignore_ascii_case(&entry.name))
+            })
+        };
+        self.cache_remove(&entry.name, entry.kind);
+        was_cached.then_some(entry)
+    }
+
     /// The cached parsed Document for a page (what Tine believes is on disk), if
     /// the cache is built and has it.
     fn cached_doc(&self, name: &str, kind: PageKind) -> Option<Document> {

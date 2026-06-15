@@ -239,6 +239,10 @@ export function redo() {
 // ---------------------------------------------------------------------------
 
 const dirty = new Set<string>();
+/** Does a page have unsaved (debounced) edits pending? */
+export function isDirty(pageName: string): boolean {
+  return dirty.has(pageName);
+}
 function markDirty(pageName: string) {
   dirty.add(pageName);
   scheduleSave();

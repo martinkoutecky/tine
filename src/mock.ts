@@ -266,6 +266,9 @@ export function mockBackend(): Backend {
         // ignore
       }
     },
+    async onGraphChanged(): Promise<() => void> {
+      return () => {}; // no external watcher in the browser mock
+    },
     async readHighlights(pdf: string): Promise<Highlight[]> {
       return mockHighlights[pdf]?.highlights ?? [];
     },

@@ -30,6 +30,14 @@ export interface Backend {
   writeText(text: string): Promise<void>;
   readHighlights(pdf: string): Promise<Highlight[]>;
   writeHighlights(pdf: string, label: string, highlights: Highlight[]): Promise<void>;
+  /** Subscribe to external file changes (file watcher). Returns an unsubscribe. */
+  onGraphChanged(cb: (c: GraphChange) => void): Promise<() => void>;
+}
+
+export interface GraphChange {
+  name: string;
+  kind: "journal" | "page";
+  removed: boolean;
 }
 
 function isTauri(): boolean {
@@ -138,6 +146,10 @@ class TauriBackend implements Backend {
   }
   writeHighlights(pdf: string, label: string, highlights: Highlight[]) {
     return this.call<void>("write_highlights", { pdf, label, highlights });
+  }
+  async onGraphChanged(cb: (c: GraphChange) => void): Promise<() => void> {
+    const { listen } = await import("@tauri-apps/api/event");
+    return listen<GraphChange>("graph-changed", (e) => cb(e.payload));
   }
 }
 

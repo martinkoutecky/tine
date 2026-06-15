@@ -1,9 +1,9 @@
-import { For, Show, createEffect, createSignal, on, onCleanup, untrack, type JSX } from "solid-js";
-import { doc, loadSingle, loadFeed, appendFeed, forceSave, type FeedPage } from "../store";
+import { For, Show, createEffect, createSignal, on, onCleanup, onMount, untrack, type JSX } from "solid-js";
+import { doc, loadSingle, loadFeed, appendFeed, forceSave, isDirty, editingId, type FeedPage } from "../store";
 import { route, openPage, openJournals } from "../router";
 import {
   zoomedBlock, zoomOut, zoomInto, isFavorite, toggleFavorite, notesRefresh,
-  isConflicted, clearConflict,
+  isConflicted, clearConflict, markConflict,
 } from "../ui";
 import { backend } from "../backend";
 import { Block } from "./Block";
@@ -72,6 +72,38 @@ export function PageView(): JSX.Element {
         setReady(true);
       }
     })();
+  });
+
+  // Live external-change watcher: when the file watcher reports a page changed
+  // on disk (Logseq / Syncthing), auto-reload it — unless it has unsaved edits
+  // (→ conflict banner) or its editor is focused (don't yank the cursor).
+  onMount(() => {
+    let unsub = () => {};
+    void backend()
+      .onGraphChanged((c) => {
+        const r = route();
+        if (c.removed) {
+          if (r.kind === "page" && r.name === c.name) openJournals();
+          return;
+        }
+        if (r.kind === "page" && r.name === c.name) {
+          if (isDirty(c.name)) return void markConflict(c.name);
+          if (editingId()) return;
+          void (async () => {
+            const dto = await backend().getPage(c.name, c.kind);
+            if (dto) loadSingle(toLoadable(dto, c.name));
+          })();
+        } else if (r.kind === "journals" && c.kind === "journal" && !editingId()) {
+          void (async () => {
+            const js = await backend().journalsDesc(FEED_PAGE, 0);
+            journalOffset = js.length;
+            feedDone = js.length < FEED_PAGE;
+            loadFeed(js.length ? js : []);
+          })();
+        }
+      })
+      .then((u) => (unsub = u));
+    onCleanup(() => unsub());
   });
 
   // Reload the open notes (hls__) page after a highlight is written, so the new
