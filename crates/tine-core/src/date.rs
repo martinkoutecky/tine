@@ -20,6 +20,21 @@ impl JournalDate {
         self.year as i64 * 10000 + self.month as i64 * 100 + self.day as i64
     }
 
+    /// Parse a display title in the default `MMM do, yyyy` format, e.g.
+    /// "Jan 1st, 2022" or "Jun 14th, 2026". Returns `None` if it doesn't match.
+    pub fn from_title(title: &str) -> Option<JournalDate> {
+        let (md, year) = title.trim().rsplit_once(", ")?;
+        let year: i32 = year.trim().parse().ok()?;
+        let (mon, day) = md.trim().split_once(' ')?;
+        let month = MONTHS.iter().position(|m| m.eq_ignore_ascii_case(mon))? as u32 + 1;
+        let digits: String = day.chars().take_while(|c| c.is_ascii_digit()).collect();
+        let day: u32 = digits.parse().ok()?;
+        if !(1..=31).contains(&day) {
+            return None;
+        }
+        Some(JournalDate { year, month, day })
+    }
+
     /// Parse a journal file stem. Accepts `yyyy_MM_dd` (default) and
     /// `yyyy-MM-dd` (legacy). Returns `None` if it isn't a date.
     pub fn from_file_stem(stem: &str) -> Option<JournalDate> {

@@ -231,6 +231,27 @@ fn sync_file_detects_external_change_and_suppresses_self() {
 }
 
 #[test]
+fn query_between_filters_by_journal_date() {
+    let root = std::env::temp_dir().join(format!("tine-between-test-{}", std::process::id()));
+    std::fs::create_dir_all(root.join("journals")).unwrap();
+    std::fs::write(root.join("journals").join("2022_06_15.md"), "- TODO [[scs]] recent\n").unwrap();
+    std::fs::write(root.join("journals").join("2019_01_01.md"), "- TODO [[scs]] old\n").unwrap();
+
+    let g = Graph::open(&root);
+    let groups = g.run_query(
+        "(and (task TODO) (and [[scs]] (between [[Jan 1st, 2021]] [[Jan 1st, 2100]])))",
+    );
+    let raws: Vec<String> = groups
+        .iter()
+        .flat_map(|gr| gr.blocks.iter().map(|b| b.raw.clone()))
+        .collect();
+    assert!(raws.iter().any(|r| r.contains("recent")), "in-range journal matches: {raws:?}");
+    assert!(!raws.iter().any(|r| r.contains("old")), "out-of-range journal excluded: {raws:?}");
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn query_open_tasks() {
     let g = demo_graph();
     let groups = g.run_query("(task TODO DOING)");

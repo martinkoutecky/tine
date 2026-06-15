@@ -3,9 +3,15 @@
 //! task markers, and property filters. Advanced datalog (`[:find ...]`) is
 //! detected and reported as unsupported rather than crashed.
 
+use crate::date::JournalDate;
 use crate::doc::DocBlock;
 use crate::model::{block_to_dto, BlockDto, Graph, PageEntry, RefGroup, TemplateDto};
 use crate::refs;
+
+/// Parse a journal-page title (e.g. "Jan 1st, 2022") to a `yyyymmdd` ordinal.
+fn journal_ordinal(title: &str) -> Option<i64> {
+    JournalDate::from_title(title).map(|d| d.ordinal_key())
+}
 
 /// Walk all blocks of a document depth-first, calling `f(block)`.
 fn walk<'a>(blocks: &'a [DocBlock], f: &mut impl FnMut(&'a DocBlock)) {
@@ -79,10 +85,27 @@ pub fn unlinked_refs(graph: &Graph, target: &str) -> Vec<RefGroup> {
 }
 
 pub fn run_query(graph: &Graph, query_src: &str) -> Vec<RefGroup> {
-    match Pred::parse(query_src) {
-        Some(pred) => collect(graph, |b| pred.eval(b), None),
-        None => Vec::new(),
-    }
+    let Some(pred) = Pred::parse(query_src) else { return Vec::new() };
+    graph.with_pages(|pages| {
+        let mut groups: Vec<RefGroup> = Vec::new();
+        for (entry, doc) in pages {
+            let ctx = EvalCtx { journal: entry.date_key };
+            let mut matched: Vec<&DocBlock> = Vec::new();
+            walk(&doc.roots, &mut |b| {
+                if pred.eval(b, &ctx) {
+                    matched.push(b);
+                }
+            });
+            if !matched.is_empty() {
+                groups.push(RefGroup {
+                    page: entry.name.clone(),
+                    kind: entry.kind,
+                    blocks: matched.into_iter().map(block_to_dto).collect(),
+                });
+            }
+        }
+        groups
+    })
 }
 
 /// A block's *visible* text for search: the body the user actually reads, with
@@ -239,9 +262,45 @@ enum Pred {
     Property(String, Option<String>),
     Scheduled,
     Deadline,
+    /// Date range (inclusive) over the block's journal day or its
+    /// scheduled/deadline date. Bounds are `yyyymmdd` ordinals; `None` = open.
+    Between(Option<i64>, Option<i64>),
     And(Vec<Pred>),
     Or(Vec<Pred>),
     Not(Box<Pred>),
+}
+
+/// Per-block evaluation context (the page it lives on).
+struct EvalCtx {
+    /// The page's journal-day ordinal (`yyyymmdd`), or `None` for named pages.
+    journal: Option<i64>,
+}
+
+fn date_ordinal(y: i64, m: i64, d: i64) -> i64 {
+    y * 10000 + m * 100 + d
+}
+
+/// Parse an org timestamp body like `<2026-06-15 Mon>` to a `yyyymmdd` ordinal.
+fn parse_angle_date(s: &str) -> Option<i64> {
+    let s = s.trim().strip_prefix('<')?;
+    let end = s.find([' ', '>']).unwrap_or(s.len());
+    let mut it = s[..end].split('-');
+    let y: i64 = it.next()?.parse().ok()?;
+    let m: i64 = it.next()?.parse().ok()?;
+    let d: i64 = it.next()?.parse().ok()?;
+    Some(date_ordinal(y, m, d))
+}
+
+/// Ordinals from a block's SCHEDULED:/DEADLINE: lines.
+fn block_date_ordinals(raw: &str) -> Vec<i64> {
+    raw.lines()
+        .filter_map(|l| {
+            let t = l.trim();
+            t.strip_prefix("SCHEDULED:")
+                .or_else(|| t.strip_prefix("DEADLINE:"))
+                .and_then(parse_angle_date)
+        })
+        .collect()
 }
 
 fn block_priority(raw: &str) -> Option<char> {
@@ -267,7 +326,7 @@ impl Pred {
         Some(p)
     }
 
-    fn eval(&self, block: &DocBlock) -> bool {
+    fn eval(&self, block: &DocBlock, ctx: &EvalCtx) -> bool {
         match self {
             Pred::PageRef(name) => refs::references_page(&block.raw, name),
             Pred::Task(markers) => block
@@ -282,9 +341,14 @@ impl Pred {
             }),
             Pred::Scheduled => block.raw.contains("SCHEDULED:"),
             Pred::Deadline => block.raw.contains("DEADLINE:"),
-            Pred::And(ps) => ps.iter().all(|p| p.eval(block)),
-            Pred::Or(ps) => ps.iter().any(|p| p.eval(block)),
-            Pred::Not(p) => !p.eval(block),
+            Pred::Between(lo, hi) => {
+                let in_range = |c: i64| lo.map_or(true, |l| c >= l) && hi.map_or(true, |h| c <= h);
+                ctx.journal.is_some_and(in_range)
+                    || block_date_ordinals(&block.raw).into_iter().any(in_range)
+            }
+            Pred::And(ps) => ps.iter().all(|p| p.eval(block, ctx)),
+            Pred::Or(ps) => ps.iter().any(|p| p.eval(block, ctx)),
+            Pred::Not(p) => !p.eval(block, ctx),
         }
     }
 }
@@ -414,6 +478,13 @@ fn parse_expr(toks: &[Tok], pos: &mut usize) -> Option<Pred> {
                 }
                 "scheduled" => Pred::Scheduled,
                 "deadline" => Pred::Deadline,
+                "between" => {
+                    // (between [[start-journal]] [[end-journal]]) — journal-title
+                    // refs parsed to ordinals; unparseable bound = open.
+                    let lo = parse_name(toks, pos).and_then(|s| journal_ordinal(&s));
+                    let hi = parse_name(toks, pos).and_then(|s| journal_ordinal(&s));
+                    Pred::Between(lo, hi)
+                }
                 _ => return None,
             };
             // consume closing )
@@ -525,17 +596,33 @@ mod tests {
 
     #[test]
     fn eval_against_blocks() {
+        let none = EvalCtx { journal: None };
         let task = DocBlock::new("TODO buy milk for [[Home]]");
-        assert!(pred("(task TODO)").eval(&task));
-        assert!(pred("[[Home]]").eval(&task));
-        assert!(pred("(and (task TODO) [[Home]])").eval(&task));
-        assert!(!pred("(and (task DONE) [[Home]])").eval(&task));
-        assert!(pred("(not [[Work]])").eval(&task));
+        assert!(pred("(task TODO)").eval(&task, &none));
+        assert!(pred("[[Home]]").eval(&task, &none));
+        assert!(pred("(and (task TODO) [[Home]])").eval(&task, &none));
+        assert!(!pred("(and (task DONE) [[Home]])").eval(&task, &none));
+        assert!(pred("(not [[Work]])").eval(&task, &none));
 
         let mut withprop = DocBlock::new("a book");
         withprop.raw.push_str("\ntype:: book");
-        assert!(pred("(property type book)").eval(&withprop));
-        assert!(pred("(property type)").eval(&withprop));
-        assert!(!pred("(property type article)").eval(&withprop));
+        assert!(pred("(property type book)").eval(&withprop, &none));
+        assert!(pred("(property type)").eval(&withprop, &none));
+        assert!(!pred("(property type article)").eval(&withprop, &none));
+    }
+
+    #[test]
+    fn eval_between() {
+        // A block on a 2022-06-15 journal page.
+        let on_2022 = EvalCtx { journal: Some(20220615) };
+        let on_2019 = EvalCtx { journal: Some(20190101) };
+        let b = DocBlock::new("TODO something");
+        let q = pred("(between [[Jan 1st, 2021]] [[Jan 1st, 2100]])");
+        assert!(q.eval(&b, &on_2022));
+        assert!(!q.eval(&b, &on_2019));
+
+        // Also matches a block's own scheduled date regardless of page.
+        let sched = DocBlock::new("TODO x\nSCHEDULED: <2022-03-03 Thu>");
+        assert!(q.eval(&sched, &EvalCtx { journal: None }));
     }
 }
