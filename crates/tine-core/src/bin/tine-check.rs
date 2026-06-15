@@ -34,17 +34,30 @@ fn main() {
     let mut structural = 0usize;
     let mut cats: BTreeMap<&'static str, usize> = BTreeMap::new();
     let mut structural_paths: Vec<String> = Vec::new();
+    // On-disk format profile (content-free).
+    let mut disk_indent_tab = 0usize; // files whose nested lines use TAB indent
+    let mut disk_indent_space = 0usize; // ...use SPACE indent
+    let mut disk_trail_0 = 0usize; // files ending with no newline
+    let mut disk_trail_1 = 0usize; // ...exactly one
+    let mut disk_trail_2 = 0usize; // ...two or more (trailing blank line)
 
     walk(&root, &mut |path, content| {
         total += 1;
+        match indent_style(content) {
+            Some('\t') => disk_indent_tab += 1,
+            Some(' ') => disk_indent_space += 1,
+            _ => {}
+        }
+        match trailing_newlines(content) {
+            0 => disk_trail_0 += 1,
+            1 => disk_trail_1 += 1,
+            _ => disk_trail_2 += 1,
+        }
         let parsed = doc::parse(content);
         let out = doc::serialize(&parsed);
         let reparsed = doc::parse(&out);
         if reparsed != parsed {
             structural += 1;
-            for t in classify(content, &out) {
-                *cats.entry(t).or_default() += 1;
-            }
             *cats.entry("STRUCTURAL").or_default() += 1;
             if let Ok(rel) = path.strip_prefix(&root) {
                 structural_paths.push(rel.display().to_string());
@@ -63,10 +76,16 @@ fn main() {
     println!("  byte-identical : {byte_identical}");
     println!("  canonicalized  : {canonicalized}   (cosmetic, but causes Syncthing diff churn)");
     println!("  STRUCTURAL     : {structural}   (round-trip bugs — investigate)");
+
+    println!("\non-disk format profile (what your Logseq writes):");
+    println!("  indentation    : TAB in {disk_indent_tab} files, SPACES in {disk_indent_space} files");
+    println!("  trailing \\n    : none in {disk_trail_0}, one in {disk_trail_1}, two+ (blank end) in {disk_trail_2}");
+    println!("  Tine emits     : TAB indent, single trailing \\n, blank line after page properties");
+
     if !cats.is_empty() {
-        println!("\ndifference categories (file counts):");
+        println!("\nprecise difference categories (file counts):");
         for (k, v) in &cats {
-            println!("  {k:<18} {v}");
+            println!("  {k:<22} {v}");
         }
     }
     if structural > 0 {
@@ -79,49 +98,91 @@ fn main() {
             println!("\n(run again with --paths to list the {structural} structural-bug files locally)");
         }
     }
-    println!("\nCategory legend: crlf=CRLF line endings · trailing-ws=trailing spaces ·");
-    println!("blank-lines=blank-line spacing · leading-indent=tabs/spaces indentation ·");
-    println!("content-change=a non-whitespace line changed (report this one to me).");
+    println!("\nLegend: trailing-newline=final newline count differs · interior-blank-lines=blank");
+    println!("lines between content differ · indent-char=tab/space mismatch · indent-width=same");
+    println!("char different count · cont-indent=multi-line block continuation indent ·");
+    println!("trailing-ws=trailing spaces · crlf=CRLF · content-change=REAL text change (report).");
 }
 
-/// Classify the *kind* of difference without revealing content.
+/// Dominant indent character among a file's indented lines, if any.
+fn indent_style(content: &str) -> Option<char> {
+    let mut tab = 0usize;
+    let mut space = 0usize;
+    for l in content.split('\n') {
+        match l.as_bytes().first() {
+            Some(b'\t') => tab += 1,
+            Some(b' ') => space += 1,
+            _ => {}
+        }
+    }
+    if tab == 0 && space == 0 {
+        None
+    } else if tab >= space {
+        Some('\t')
+    } else {
+        Some(' ')
+    }
+}
+
+fn trailing_newlines(content: &str) -> usize {
+    content.bytes().rev().take_while(|b| *b == b'\n').count()
+}
+
+/// Classify the *kinds* of difference without revealing content.
 fn classify(content: &str, out: &str) -> Vec<&'static str> {
     let mut tags = Vec::new();
     if content.contains('\r') {
         tags.push("crlf");
     }
-    // Strip CRLF and compare; if equal, the only diff was line endings.
     let c_lf = content.replace("\r\n", "\n");
     if c_lf == *out {
         return dedup(tags);
     }
-    let cl: Vec<&str> = c_lf.split('\n').collect();
-    let ol: Vec<&str> = out.split('\n').collect();
+    if trailing_newlines(&c_lf) != trailing_newlines(out) {
+        tags.push("trailing-newline");
+    }
+
+    // Work on the lines with any trailing newline(s) removed so the trailing-\n
+    // difference doesn't masquerade as a blank-line difference.
+    let cl: Vec<&str> = c_lf.trim_end_matches('\n').split('\n').collect();
+    let ol: Vec<&str> = out.trim_end_matches('\n').split('\n').collect();
 
     let c_blanks = cl.iter().filter(|l| l.trim().is_empty()).count();
     let o_blanks = ol.iter().filter(|l| l.trim().is_empty()).count();
-    if c_blanks != o_blanks || cl.len() != ol.len() {
-        tags.push("blank-lines");
+    if c_blanks != o_blanks {
+        tags.push("interior-blank-lines");
     }
 
-    // Compare the non-blank lines, normalized for leading/trailing whitespace.
-    let cn: Vec<String> = cl.iter().filter(|l| !l.trim().is_empty()).map(norm).collect();
-    let on: Vec<String> = ol.iter().filter(|l| !l.trim().is_empty()).map(norm).collect();
-    if cn == on {
-        // Only whitespace differences among content lines.
-        if cl.iter().zip(&ol).any(|(a, b)| a.trim_end() != b.trim_end() && a.trim() == b.trim()) {
+    let cn: Vec<&str> = cl.iter().copied().filter(|l| !l.trim().is_empty()).collect();
+    let on: Vec<&str> = ol.iter().copied().filter(|l| !l.trim().is_empty()).collect();
+    if cn.iter().map(|l| l.trim()).ne(on.iter().map(|l| l.trim())) {
+        tags.push("content-change");
+        return dedup(tags);
+    }
+    // Same content lines (trimmed); diagnose the whitespace differences.
+    for (a, b) in cn.iter().zip(&on) {
+        if a.trim_end() != b.trim_end() && a.trim() == b.trim() {
             tags.push("trailing-ws");
         }
-        tags.push("leading-indent");
-    } else {
-        // A real content line changed — the important one.
-        tags.push("content-change");
+        let la = leading(a);
+        let lb = leading(b);
+        if la != lb {
+            let ca = la.chars().next();
+            let cb = lb.chars().next();
+            if ca.is_some() && cb.is_some() && ca != cb {
+                tags.push("indent-char");
+            } else if la.len() != lb.len() {
+                // bullet lines vs continuation lines indent differently
+                tags.push(if a.trim_start().starts_with("- ") { "indent-width" } else { "cont-indent" });
+            }
+        }
     }
     dedup(tags)
 }
 
-fn norm(l: &&str) -> String {
-    l.trim().to_string()
+fn leading(l: &str) -> &str {
+    let n = l.len() - l.trim_start_matches([' ', '\t']).len();
+    &l[..n]
 }
 fn dedup(mut v: Vec<&'static str>) -> Vec<&'static str> {
     v.sort_unstable();
