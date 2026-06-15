@@ -581,6 +581,25 @@ body {
   height: 50vh;
 }
 
+.page-load-error {
+  margin-top: 24px;
+  padding: 16px 18px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+.page-load-error code {
+  background: var(--code-bg);
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+.page-load-error-hint {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
 .page-section {
   padding-bottom: 18px;
 }

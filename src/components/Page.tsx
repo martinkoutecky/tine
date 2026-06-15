@@ -24,9 +24,19 @@ function emptyPage(name: string, kind: "journal" | "page"): PageDto {
 
 export function PageView(): JSX.Element {
   const [ready, setReady] = createSignal(false);
+  const [loadError, setLoadError] = createSignal<string | null>(null);
   let journalOffset = 0;
   let loadingMore = false;
   let feedDone = false;
+
+  // A non-existent page opens as a single empty bullet; but a page that *exists*
+  // with properties and zero bullets (e.g. `title::`-only) must keep its
+  // pre-block — otherwise editing it would save an empty file and drop the
+  // properties. So preserve the DTO and only add an editable block.
+  const toLoadable = (dto: PageDto, name: string): PageDto =>
+    dto.blocks.length
+      ? dto
+      : { ...dto, blocks: [{ id: `new-${name}`, raw: "", collapsed: false, children: [] }] };
 
   // Clear any zoom when the route changes (navigation exits a zoomed block).
   createEffect(() => {
@@ -37,18 +47,27 @@ export function PageView(): JSX.Element {
   createEffect(() => {
     const r = route();
     setReady(false);
+    setLoadError(null);
     void (async () => {
-      if (r.kind === "journals") {
-        feedDone = false;
-        const js = await backend().journalsDesc(FEED_PAGE, 0);
-        journalOffset = js.length;
-        if (js.length < FEED_PAGE) feedDone = true;
-        loadFeed(js.length ? js : []);
-      } else {
-        const dto = await backend().getPage(r.name, r.pageKind);
-        loadSingle(dto && dto.blocks.length ? dto : emptyPage(r.name, r.pageKind));
+      try {
+        if (r.kind === "journals") {
+          feedDone = false;
+          const js = await backend().journalsDesc(FEED_PAGE, 0);
+          journalOffset = js.length;
+          if (js.length < FEED_PAGE) feedDone = true;
+          loadFeed(js.length ? js : []);
+        } else {
+          const dto = await backend().getPage(r.name, r.pageKind);
+          // null = page doesn't exist yet → start a fresh empty page. A failed
+          // read throws and is caught below, so we never overwrite a page whose
+          // load errored with empty content.
+          loadSingle(dto ? toLoadable(dto, r.name) : emptyPage(r.name, r.pageKind));
+        }
+        setReady(true);
+      } catch (e) {
+        setLoadError(String(e));
+        setReady(true);
       }
-      setReady(true);
     })();
   });
 
@@ -62,7 +81,7 @@ export function PageView(): JSX.Element {
         if (r.kind === "page" && r.name === nr.page) {
           void (async () => {
             const dto = await backend().getPage(r.name, r.pageKind);
-            loadSingle(dto && dto.blocks.length ? dto : emptyPage(r.name, r.pageKind));
+            if (dto) loadSingle(toLoadable(dto, r.name));
           })();
         }
       },
@@ -86,6 +105,16 @@ export function PageView(): JSX.Element {
   };
 
   return (
+    <Show when={!loadError()} fallback={
+      <div class="page">
+        <div class="page-load-error">
+          Couldn't open this page: <code>{loadError()}</code>
+          <div class="page-load-error-hint">
+            Tine did not modify the file. Try reopening, or check the file on disk.
+          </div>
+        </div>
+      </div>
+    }>
     <Show when={ready() && doc.loaded} fallback={<div class="page-loading" />}>
       <Show when={zoomValid()} fallback={
         <div class="page">
@@ -101,6 +130,7 @@ export function PageView(): JSX.Element {
       }>
         <ZoomedView id={zoomValid()!} />
       </Show>
+    </Show>
     </Show>
   );
 }

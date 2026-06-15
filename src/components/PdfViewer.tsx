@@ -36,6 +36,9 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
   let pdfDoc: pdfjs.PDFDocumentProxy | null = null;
   let rendering = false;
   let rerenderQueued = false;
+  // Page-1 viewport size at scale 1, for fit-to-width / fit-to-height.
+  let basePW = 0;
+  let basePH = 0;
 
   const persist = () => backend().writeHighlights(props.filename, props.label, highlights());
 
@@ -105,16 +108,20 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
     }
     if (!bytes.length) return;
     pdfDoc = await pdfjs.getDocument({ data: bytes }).promise;
-    // Fit pages to the pane width initially.
     const first = await pdfDoc.getPage(1);
-    const baseWidth = first.getViewport({ scale: 1 }).width;
-    const avail = (scrollRef.clientWidth || 700) - 32;
-    setScale(Math.min(2, Math.max(0.6, avail / baseWidth)));
+    const vp1 = first.getViewport({ scale: 1 });
+    basePW = vp1.width;
+    basePH = vp1.height;
+    setScale(fitWidthScale()); // fit to pane width initially
     await renderPages();
     if (props.page && pageEls[props.page]) {
       pageEls[props.page].scrollIntoView({ block: "start" });
     }
   });
+
+  const clampScale = (s: number) => Math.min(4, Math.max(0.2, s));
+  const fitWidthScale = () => (basePW ? clampScale((scrollRef.clientWidth - 32) / basePW) : 1);
+  const fitHeightScale = () => (basePH ? clampScale((scrollRef.clientHeight - 24) / basePH) : 1);
 
   // Re-render on zoom changes.
   createEffect(on(scale, () => void renderPages(), { defer: true }));
@@ -229,6 +236,12 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
             <span class="pdf-zoom-level">{Math.round(scale() * 100)}%</span>
             <button class="icon-btn" title="Zoom in" onClick={() => zoomBy(1.1)}>
               +
+            </button>
+            <button class="icon-btn" title="Fit width" onClick={() => setScale(fitWidthScale())}>
+              ↔
+            </button>
+            <button class="icon-btn" title="Fit height" onClick={() => setScale(fitHeightScale())}>
+              ↕
             </button>
           </div>
           <button
