@@ -229,7 +229,13 @@ function ZoomedView(props: { id: string }): JSX.Element {
   return (
     <div class="page zoomed-page">
       <div class="zoom-breadcrumb">
-        <a class="crumb crumb-page" onClick={() => openPage(pageName(), pageKind())}>
+        <a
+          class="crumb crumb-page"
+          onClick={() => {
+            zoomOut();
+            openPage(pageName(), pageKind());
+          }}
+        >
           {pageName()}
         </a>
         <For each={ancestors()}>
