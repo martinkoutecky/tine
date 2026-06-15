@@ -2,7 +2,7 @@ import { For, Show, createEffect, createSignal, on, onMount, type JSX } from "so
 import * as pdfjs from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { backend } from "../backend";
-import { closePdf } from "../ui";
+import { closePdf, refreshNotes } from "../ui";
 import { openPage } from "../router";
 import { hlsPageName } from "../pdf";
 import type { Highlight, Rect } from "../types";
@@ -30,35 +30,38 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
   const pageEls: Record<number, HTMLDivElement> = {};
   const [highlights, setHighlights] = createSignal<Highlight[]>([]);
   const [menu, setMenu] = createSignal<{ x: number; y: number } | null>(null);
+  const [scale, setScale] = createSignal(1.4);
   let pending: Pending | null = null;
-  let scale = 1.4;
   const hlLayers: Record<number, HTMLDivElement> = {};
+  let pdfDoc: pdfjs.PDFDocumentProxy | null = null;
+  let rendering = false;
+  let rerenderQueued = false;
 
-  const persist = () => void backend().writeHighlights(props.filename, props.label, highlights());
+  const persist = () => backend().writeHighlights(props.filename, props.label, highlights());
 
-  onMount(async () => {
-    setHighlights(await backend().readHighlights(props.filename));
-    let bytes: Uint8Array;
-    try {
-      bytes = await backend().readAsset(props.filename);
-    } catch {
+  // (Re)render every page at the current scale, preserving scroll position.
+  async function renderPages() {
+    if (!pdfDoc) return;
+    if (rendering) {
+      rerenderQueued = true;
       return;
     }
-    if (!bytes.length) return;
-    const pdf = await pdfjs.getDocument({ data: bytes }).promise;
-    // Fit pages to the pane width.
-    const first = await pdf.getPage(1);
-    const baseWidth = first.getViewport({ scale: 1 }).width;
-    const avail = (scrollRef.clientWidth || 700) - 32;
-    scale = Math.min(2, Math.max(0.6, avail / baseWidth));
-    for (let n = 1; n <= pdf.numPages; n++) {
-      const page = await pdf.getPage(n);
-      const viewport = page.getViewport({ scale });
+    rendering = true;
+    const s = scale();
+    const prevH = scrollRef.scrollHeight || 1;
+    const ratio = scrollRef.scrollTop / prevH;
+    scrollRef.innerHTML = "";
+    for (const k of Object.keys(pageEls)) delete pageEls[Number(k)];
+    for (const k of Object.keys(hlLayers)) delete hlLayers[Number(k)];
+
+    for (let n = 1; n <= pdfDoc.numPages; n++) {
+      const page = await pdfDoc.getPage(n);
+      const viewport = page.getViewport({ scale: s });
       const wrap = document.createElement("div");
       wrap.className = "pdf-page";
       wrap.style.width = `${viewport.width}px`;
       wrap.style.height = `${viewport.height}px`;
-      wrap.style.setProperty("--scale-factor", String(scale));
+      wrap.style.setProperty("--scale-factor", String(s));
 
       const canvas = document.createElement("canvas");
       canvas.width = viewport.width;
@@ -84,13 +87,49 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
       await tl.render();
     }
     repaint();
+    scrollRef.scrollTop = ratio * (scrollRef.scrollHeight || 1);
+    rendering = false;
+    if (rerenderQueued) {
+      rerenderQueued = false;
+      void renderPages();
+    }
+  }
+
+  onMount(async () => {
+    setHighlights(await backend().readHighlights(props.filename));
+    let bytes: Uint8Array;
+    try {
+      bytes = await backend().readAsset(props.filename);
+    } catch {
+      return;
+    }
+    if (!bytes.length) return;
+    pdfDoc = await pdfjs.getDocument({ data: bytes }).promise;
+    // Fit pages to the pane width initially.
+    const first = await pdfDoc.getPage(1);
+    const baseWidth = first.getViewport({ scale: 1 }).width;
+    const avail = (scrollRef.clientWidth || 700) - 32;
+    setScale(Math.min(2, Math.max(0.6, avail / baseWidth)));
+    await renderPages();
     if (props.page && pageEls[props.page]) {
       pageEls[props.page].scrollIntoView({ block: "start" });
     }
   });
 
+  // Re-render on zoom changes.
+  createEffect(on(scale, () => void renderPages(), { defer: true }));
   // Repaint highlight overlays whenever the set changes.
   createEffect(on(highlights, repaint));
+  // Jump to a highlight's page when asked while the viewer is already open.
+  createEffect(
+    on(
+      () => props.page,
+      (p) => {
+        if (p && pageEls[p]) pageEls[p].scrollIntoView({ block: "start" });
+      },
+      { defer: true }
+    )
+  );
 
   function repaint() {
     for (const n of Object.keys(hlLayers)) {
@@ -100,16 +139,26 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
         for (const r of h.position.rects) {
           const div = document.createElement("div");
           div.className = "pdf-hl";
-          div.style.left = `${r.left * scale}px`;
-          div.style.top = `${r.top * scale}px`;
-          div.style.width = `${r.width * scale}px`;
-          div.style.height = `${r.height * scale}px`;
+          div.style.left = `${r.left * scale()}px`;
+          div.style.top = `${r.top * scale()}px`;
+          div.style.width = `${r.width * scale()}px`;
+          div.style.height = `${r.height * scale()}px`;
           div.style.background = COLOR_RGBA[h.color] ?? COLOR_RGBA.yellow;
           layer.appendChild(div);
         }
       }
     }
   }
+
+  const zoomBy = (factor: number) =>
+    setScale((s) => Math.min(4, Math.max(0.4, Math.round(s * factor * 100) / 100)));
+
+  // Ctrl/Cmd + wheel zooms (like a PDF reader); plain wheel scrolls normally.
+  const onWheel = (e: WheelEvent) => {
+    if (!e.ctrlKey && !e.metaKey) return;
+    e.preventDefault();
+    zoomBy(e.deltaY < 0 ? 1.1 : 1 / 1.1);
+  };
 
   const onMouseUp = (e: MouseEvent) => {
     const sel = window.getSelection();
@@ -121,7 +170,6 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
     const clientRects = Array.from(range.getClientRects()).filter((r) => r.width > 0 && r.height > 0);
     if (!clientRects.length) return;
 
-    // Find the page wrapper containing the selection.
     const first = clientRects[0];
     const wrap = (e.target as HTMLElement).closest(".pdf-page") as HTMLElement | null;
     const pageWrap =
@@ -129,12 +177,13 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
     if (!pageWrap) return;
     const pageNum = Number(pageWrap.dataset.page);
     const base = pageWrap.getBoundingClientRect();
+    const s = scale();
 
     const rects: Rect[] = clientRects.map((r) => ({
-      left: (r.left - base.left) / scale,
-      top: (r.top - base.top) / scale,
-      width: r.width / scale,
-      height: r.height / scale,
+      left: (r.left - base.left) / s,
+      top: (r.top - base.top) / s,
+      width: r.width / s,
+      height: r.height / s,
     }));
     const left = Math.min(...rects.map((r) => r.left));
     const top = Math.min(...rects.map((r) => r.top));
@@ -149,7 +198,7 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
     setMenu({ x: e.clientX, y: e.clientY });
   };
 
-  const createHighlight = (color: string) => {
+  const createHighlight = async (color: string) => {
     if (!pending) return;
     const h: Highlight = {
       id: crypto.randomUUID(),
@@ -160,10 +209,12 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
       image: null,
     };
     setHighlights([...highlights(), h]);
-    persist();
     window.getSelection()?.removeAllRanges();
     setMenu(null);
     pending = null;
+    await persist();
+    // Let an open notes (hls__) page reload to show the new highlight.
+    refreshNotes(hlsPageName(props.filename));
   };
 
   return (
@@ -171,6 +222,15 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
       <div class="pdf-toolbar">
         <span class="pdf-title">{props.label}</span>
         <div class="pdf-toolbar-actions">
+          <div class="pdf-zoom">
+            <button class="icon-btn" title="Zoom out" onClick={() => zoomBy(1 / 1.1)}>
+              −
+            </button>
+            <span class="pdf-zoom-level">{Math.round(scale() * 100)}%</span>
+            <button class="icon-btn" title="Zoom in" onClick={() => zoomBy(1.1)}>
+              +
+            </button>
+          </div>
           <button
             class="pdf-notes-btn"
             title="Open highlights & notes page"
@@ -183,7 +243,7 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
           </button>
         </div>
       </div>
-      <div class="pdf-scroll" ref={scrollRef} onMouseUp={onMouseUp} />
+      <div class="pdf-scroll" ref={scrollRef} onMouseUp={onMouseUp} onWheel={onWheel} />
       <Show when={menu()}>
         <div class="pdf-color-menu" style={{ left: `${menu()!.x}px`, top: `${menu()!.y + 8}px` }}>
           <For each={COLORS}>
@@ -193,7 +253,7 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
                 style={{ background: COLOR_RGBA[c] }}
                 onMouseDown={(e) => {
                   e.preventDefault();
-                  createHighlight(c);
+                  void createHighlight(c);
                 }}
               />
             )}

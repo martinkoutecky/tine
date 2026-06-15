@@ -1329,14 +1329,28 @@ mark {
 }
 
 .pdf-pane {
-  width: 46vw;
-  max-width: 760px;
+  position: relative;
   flex: 0 0 auto;
   border-left: 1px solid var(--border-color);
   background: var(--bg-secondary);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+.pdf-pane-resizer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  margin-left: -3px;
+  cursor: col-resize;
+  z-index: 5;
+}
+.pdf-pane-resizer:hover {
+  background: var(--accent, #2b7);
+  opacity: 0.4;
 }
 
 .pdf-viewer {
@@ -1369,6 +1383,23 @@ mark {
   align-items: center;
   gap: 6px;
   flex: 0 0 auto;
+}
+
+.pdf-zoom {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+.pdf-zoom .icon-btn {
+  padding: 2px 6px;
+  font-size: 15px;
+  line-height: 1;
+}
+.pdf-zoom-level {
+  font-size: 11px;
+  color: var(--text-muted);
+  min-width: 40px;
+  text-align: center;
 }
 
 .pdf-notes-btn {

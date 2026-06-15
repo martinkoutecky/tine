@@ -78,6 +78,35 @@ export function persistRightSidebarWidth() {
   }
 }
 
+const PDF_W_KEY = "logseq-claude.pdfPaneWidth";
+function loadPdfWidth(): number {
+  try {
+    const v = Number(localStorage.getItem(PDF_W_KEY));
+    if (v >= 320 && v <= 1200) return v;
+  } catch {
+    // ignore
+  }
+  return 560;
+}
+export const [pdfPaneWidth, setPdfPaneWidth] = createSignal(loadPdfWidth());
+export function persistPdfPaneWidth() {
+  try {
+    localStorage.setItem(PDF_W_KEY, String(pdfPaneWidth()));
+  } catch {
+    // ignore
+  }
+}
+
+// Bumped after a PDF highlight is written, so an open notes (hls__) page can
+// reload itself to show the new highlight without a manual re-open.
+export const [notesRefresh, setNotesRefresh] = createSignal<{ page: string; rev: number }>({
+  page: "",
+  rev: 0,
+});
+export function refreshNotes(page: string) {
+  setNotesRefresh((prev) => ({ page, rev: prev.rev + 1 }));
+}
+
 // Favorites (starred pages/journals), persisted.
 export interface FavItem {
   name: string;

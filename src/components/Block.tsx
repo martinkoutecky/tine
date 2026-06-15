@@ -51,6 +51,12 @@ function detectMacro(lines: string[]): { kind: "query" | "embed"; inner: string 
 // Internal/metadata properties hidden from the rendered properties area.
 const INTERNAL_PROPS = new Set(["id", "collapsed", "hl-page", "hl-color", "hl-type", "ls-type"]);
 
+// A PDF highlight (annotation) block — its raw is generated metadata, so we
+// never let the user drop into raw edit mode (clicking jumps to the PDF).
+function isAnnotationBlock(raw: string): boolean {
+  return /^\s*ls-type::\s*annotation\s*$/m.test(raw);
+}
+
 // For a PDF highlight (annotation) block, resolve the PDF filename from the
 // owning hls__ page's `file-path::` property.
 function pdfFileForPage(pageName: string): string | null {
@@ -175,8 +181,11 @@ export function Block(props: { id: string }): JSX.Element {
         <div
           class="block-content-wrapper"
           onClick={() => {
-            // Click anywhere in the row (not on a link) starts editing.
-            if (!editing()) startEditing(props.id, doc.byId[props.id].raw.length);
+            // Click anywhere in the row (not on a link) starts editing, except
+            // for PDF-highlight blocks (handled by the inner content → PDF).
+            if (!editing() && !isAnnotationBlock(doc.byId[props.id].raw)) {
+              startEditing(props.id, doc.byId[props.id].raw.length);
+            }
           }}
         >
           <Show when={editing()} fallback={<Rendered id={props.id} />}>
@@ -201,12 +210,6 @@ function Rendered(props: { id: string }): JSX.Element {
   const node = () => doc.byId[props.id];
   const view = createMemo(() => blockView(node().raw));
 
-  const onClick = (e: MouseEvent) => {
-    // Links/tags handle their own clicks (stopPropagation). Otherwise edit.
-    startEditing(props.id, node().raw.length);
-    e.stopPropagation();
-  };
-
   const macro = createMemo(() => detectMacro(view().lines));
 
   // PDF highlight (annotation) blocks: a colored, clickable swatch of text that
@@ -224,6 +227,17 @@ function Rendered(props: { id: string }): JSX.Element {
     const a = annotation();
     const file = pdfFileForPage(node().page);
     if (a && file) openPdf(file, file, a.hlPage);
+  };
+
+  // Annotation blocks jump to the PDF on click (never expose the raw metadata);
+  // ordinary blocks start editing.
+  const onClick = (e: MouseEvent) => {
+    e.stopPropagation();
+    if (annotation()) {
+      openHighlightPdf(e);
+      return;
+    }
+    startEditing(props.id, node().raw.length);
   };
 
   const displayProps = () => view().properties.filter(([k]) => !INTERNAL_PROPS.has(k));

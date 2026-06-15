@@ -16,6 +16,9 @@ import {
   toggleSidebar,
   openSwitcher,
   pdfTarget,
+  pdfPaneWidth,
+  setPdfPaneWidth,
+  persistPdfPaneWidth,
   setWorkflow,
   sidebarWidth,
   setSidebarWidth,
@@ -133,7 +136,24 @@ export function App(): JSX.Element {
       </div>
       <RightSidebar />
       <Show when={pdfTarget()}>
-        <div class="pdf-pane">
+        <div class="pdf-pane" style={{ flex: `0 0 ${pdfPaneWidth()}px`, width: `${pdfPaneWidth()}px` }}>
+          <div
+            class="pdf-pane-resizer"
+            onMouseDown={(e) => {
+              e.preventDefault();
+              const startX = e.clientX;
+              const startW = pdfPaneWidth();
+              const onMove = (ev: MouseEvent) =>
+                setPdfPaneWidth(Math.min(1200, Math.max(320, startW + (startX - ev.clientX))));
+              const onUp = () => {
+                window.removeEventListener("mousemove", onMove);
+                window.removeEventListener("mouseup", onUp);
+                persistPdfPaneWidth();
+              };
+              window.addEventListener("mousemove", onMove);
+              window.addEventListener("mouseup", onUp);
+            }}
+          />
           <PdfViewer
             filename={pdfTarget()!.filename}
             label={pdfTarget()!.label}
