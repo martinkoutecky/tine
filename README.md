@@ -148,9 +148,28 @@ DSL, graph view, area (image) PDF highlights.
 **Out of scope (by design):** whiteboards, flashcards, the plugin system, full datalog queries,
 sync/built-in git, and mobile.
 
+## Acknowledgements
+
+Tine is an independent reimplementation, not a fork — the codebase is original Rust + SolidJS and
+contains no Logseq source. It does, however, target Logseq's on-disk format and adapts parts of
+Logseq's outliner CSS (variables and bullet/indent rules), so it is a derivative work for
+licensing purposes and is released under the same license.
+
+[Logseq](https://github.com/logseq/logseq) is © its authors, licensed AGPL-3.0. Tine is **not
+affiliated with or endorsed by Logseq.** Thanks to the Logseq project for the format and the
+design it pioneered.
+
 ## License
 
-Not yet chosen — pick one (e.g. MIT or AGPL-3.0) before making the repository public.
+[GNU AGPL-3.0-only](LICENSE).
+
+Copyright (C) 2026 Martin Koutecký.
+
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU
+Affero General Public License as published by the Free Software Foundation, version 3. It is
+distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied
+warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+[LICENSE](LICENSE) for details.
 
 ---
 
