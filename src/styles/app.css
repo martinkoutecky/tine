@@ -1058,7 +1058,9 @@ mark {
 .priority-C { color: var(--marker-now); }
 
 .date-chip {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   font-size: 0.82em;
   padding: 0 7px;
   margin-left: 6px;
@@ -1066,8 +1068,123 @@ mark {
   background: var(--bg-tertiary);
   color: var(--text-secondary);
   white-space: nowrap;
+  cursor: pointer;
+}
+.date-chip:hover {
+  background: var(--bg-secondary);
+  filter: brightness(0.97);
 }
 .date-chip.deadline {
+  color: var(--marker-todo);
+}
+.chip-cal {
+  width: 0.95em;
+  height: 0.95em;
+  opacity: 0.7;
+}
+
+/* Date picker (SCHEDULED / DEADLINE) */
+.dp-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+}
+.date-picker {
+  position: fixed;
+  width: 244px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.28);
+  padding: 10px;
+  user-select: none;
+}
+.dp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.dp-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.dp-which {
+  color: var(--text-muted);
+  font-weight: 400;
+  text-transform: capitalize;
+}
+.dp-nav {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 18px;
+  line-height: 1;
+  padding: 2px 8px;
+  border-radius: 5px;
+}
+.dp-nav:hover {
+  background: var(--bg-tertiary);
+}
+.dp-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 1px;
+}
+.dp-dow {
+  margin-bottom: 2px;
+}
+.dp-dowcell {
+  text-align: center;
+  font-size: 10px;
+  color: var(--text-muted);
+  padding: 2px 0;
+}
+.dp-cell {
+  aspect-ratio: 1;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-primary);
+  border-radius: 6px;
+}
+.dp-cell:hover {
+  background: var(--bg-tertiary);
+}
+.dp-cell.today {
+  font-weight: 700;
+  color: var(--accent, #10b981);
+}
+.dp-cell.selected {
+  background: var(--accent, #10b981);
+  color: #fff;
+}
+.dp-empty {
+  visibility: hidden;
+}
+.dp-foot {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+.dp-btn {
+  flex: 1;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: 5px 0;
+  cursor: pointer;
+}
+.dp-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+.dp-clear {
   color: var(--marker-todo);
 }
 

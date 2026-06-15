@@ -197,6 +197,17 @@ export function resetShortcutOverride(id: string) {
   persistShortcuts(next);
 }
 
+// Date picker popup for SCHEDULED / DEADLINE (and editing existing ones).
+export const [datePicker, setDatePicker] = createSignal<
+  { blockId: string; which: "scheduled" | "deadline"; x: number; y: number } | null
+>(null);
+export function openDatePicker(blockId: string, which: "scheduled" | "deadline", x: number, y: number) {
+  setDatePicker({ blockId, which, x, y });
+}
+export function closeDatePicker() {
+  setDatePicker(null);
+}
+
 // Block zoom: focus a single block's subtree (click its bullet). Session-level
 // (the frontend block id stays valid while the page is loaded); cleared on nav.
 export const [zoomedBlock, setZoomedBlock] = createSignal<string | null>(null);

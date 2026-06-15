@@ -443,6 +443,38 @@ export function setHeading(id: string, level: number | null) {
   markDirty(node.page);
 }
 
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+/** Read a block's SCHEDULED/DEADLINE date as {y,m,d} (m 0-based), or null. */
+export function readSchedule(id: string, which: "scheduled" | "deadline"): { y: number; m: number; d: number } | null {
+  const node = doc.byId[id];
+  if (!node) return null;
+  const tag = which === "scheduled" ? "SCHEDULED" : "DEADLINE";
+  const m = new RegExp(`^${tag}:\\s*<(\\d{4})-(\\d{2})-(\\d{2})`, "m").exec(node.raw);
+  return m ? { y: +m[1], m: +m[2] - 1, d: +m[3] } : null;
+}
+
+/** Set or clear a block's SCHEDULED/DEADLINE org-timestamp (line 2, like OG). */
+export function setSchedule(
+  id: string,
+  which: "scheduled" | "deadline",
+  date: { y: number; m: number; d: number } | null
+) {
+  const node = doc.byId[id];
+  if (!node) return;
+  pushUndo(`sched:${id}:${which}`);
+  const tag = which === "scheduled" ? "SCHEDULED" : "DEADLINE";
+  const lines = node.raw.split("\n").filter((l) => !new RegExp(`^${tag}:`).test(l.trim()));
+  if (date) {
+    const wd = WEEKDAYS[new Date(date.y, date.m, date.d).getDay()];
+    const stamp = `${tag}: <${date.y}-${pad2(date.m + 1)}-${pad2(date.d)} ${wd}>`;
+    lines.splice(Math.min(1, lines.length), 0, stamp);
+  }
+  setDoc("byId", id, "raw", lines.join("\n"));
+  markDirty(node.page);
+}
+
 /** Collapse or expand a block and its entire descendant subtree. */
 export function setCollapsedDeep(id: string, collapsed: boolean) {
   pushUndo("collapse-all");

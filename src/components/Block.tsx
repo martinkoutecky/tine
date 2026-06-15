@@ -35,7 +35,7 @@ import { blockView, isPropertyLine } from "../render/block";
 import { InlineText } from "../render/inline";
 import { BodyContent } from "../render/body";
 import { QueryMacro, EmbedMacro } from "./Macro";
-import { openPdf, workflow, zoomInto, openContextMenu } from "../ui";
+import { openPdf, workflow, zoomInto, openContextMenu, openDatePicker } from "../ui";
 import { matchesCommand } from "../keybindings";
 import { HL_COLOR_BG, HL_COLOR_SOLID } from "../pdf";
 import { cycleMarker } from "../editor/marker";
@@ -313,13 +313,27 @@ function Rendered(props: { id: string }): JSX.Element {
         })()}
       </Show>
       <Show when={view().scheduled}>
-        <span class="date-chip scheduled" title="Scheduled">
-          🗓 {view().scheduled}
+        <span
+          class="date-chip scheduled"
+          title="Scheduled — click to change"
+          onClick={(e) => {
+            e.stopPropagation();
+            openDatePicker(props.id, "scheduled", e.clientX, e.clientY);
+          }}
+        >
+          <CalGlyph /> {view().scheduled}
         </span>
       </Show>
       <Show when={view().deadline}>
-        <span class="date-chip deadline" title="Deadline">
-          ⏰ {view().deadline}
+        <span
+          class="date-chip deadline"
+          title="Deadline — click to change"
+          onClick={(e) => {
+            e.stopPropagation();
+            openDatePicker(props.id, "deadline", e.clientX, e.clientY);
+          }}
+        >
+          <CalGlyph /> {view().deadline}
         </span>
       </Show>
       <Show when={displayProps().length > 0}>
@@ -352,14 +366,16 @@ interface AcItem {
   action?: import("../editor/autocomplete").CommandAction;
 }
 
-// Org-style timestamp Logseq uses for SCHEDULED/DEADLINE, e.g. <2026-06-15 Mon>.
-function orgStamp(d = new Date()): string {
-  const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `<${y}-${m}-${day} ${days[d.getDay()]}>`;
+// Small calendar glyph for date chips (SVG, not emoji — emoji tofu on WebKitGTK).
+function CalGlyph(): JSX.Element {
+  return (
+    <svg class="chip-cal" viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="4" y="5" width="16" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="2" />
+      <line x1="4" y1="9.5" x2="20" y2="9.5" stroke="currentColor" stroke-width="2" />
+    </svg>
+  );
 }
+
 function timeStamp(d = new Date()): string {
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
@@ -515,11 +531,14 @@ function Editor(props: { id: string }): JSX.Element {
     if (!t) return;
     switch (item.action) {
       case "scheduled":
-        replaceTrigger(`\nSCHEDULED: ${orgStamp()}`);
+      case "deadline": {
+        // Drop the "/scheduled" trigger text, then open the calendar popup
+        // anchored under the editor.
+        replaceTrigger("");
+        const r = ref.getBoundingClientRect();
+        openDatePicker(props.id, item.action, r.left, r.bottom + 4);
         return;
-      case "deadline":
-        replaceTrigger(`\nDEADLINE: ${orgStamp()}`);
-        return;
+      }
       case "now-time":
         replaceTrigger(timeStamp());
         return;

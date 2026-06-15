@@ -7,6 +7,7 @@ import { TabBar } from "./components/TabBar";
 import { ContextMenu } from "./components/ContextMenu";
 import { RightSidebar } from "./components/RightSidebar";
 import { Settings } from "./components/Settings";
+import { DatePicker } from "./components/DatePicker";
 import { backend } from "./backend";
 import { installKeybindings } from "./keybindings";
 import {
@@ -163,6 +164,7 @@ export function App(): JSX.Element {
       </Show>
       <QuickSwitcher />
       <ContextMenu />
+      <DatePicker />
       <Settings />
     </div>
   );
