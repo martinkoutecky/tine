@@ -40,6 +40,19 @@ fn backlinks_to_parameterized_complexity() {
 }
 
 #[test]
+fn publishes_static_html() {
+    let g = demo_graph();
+    let (dir, n) = g.publish_html().unwrap();
+    assert!(n >= 4, "published {n} pages");
+    let idx = std::fs::read_to_string(format!("{dir}/index.html")).unwrap();
+    assert!(idx.contains(".html"));
+    let p = std::fs::read_to_string(format!("{dir}/logseq-claude.html")).unwrap();
+    assert!(p.contains("<h1>logseq-claude</h1>"));
+    assert!(p.contains("<a class=\"ref\""), "should link [[refs]]");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn query_open_tasks() {
     let g = demo_graph();
     let groups = g.run_query("(task TODO DOING)");

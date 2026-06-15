@@ -8,6 +8,7 @@ pub mod doc;
 pub mod edn;
 pub mod model;
 pub mod pdf;
+pub mod publish;
 pub mod query;
 pub mod refs;
 

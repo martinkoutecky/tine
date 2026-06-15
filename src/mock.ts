@@ -182,6 +182,9 @@ export function mockBackend(): Backend {
     async deletePage(): Promise<void> {
       // no-op in mock
     },
+    async publishHtml(): Promise<[string, number]> {
+      return ["/mock/graph/publish", all.length];
+    },
     async runQuery(query: string): Promise<RefGroup[]> {
       // Simplified mock evaluator: task/todo filter or page-ref filter.
       if (/\b(todo|task)\b/i.test(query)) {

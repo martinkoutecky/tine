@@ -179,10 +179,25 @@ pub fn is_advanced(query_src: &str) -> bool {
 enum Pred {
     PageRef(String),
     Task(Vec<String>),
+    Priority(Vec<String>),
     Property(String, Option<String>),
+    Scheduled,
+    Deadline,
     And(Vec<Pred>),
     Or(Vec<Pred>),
     Not(Box<Pred>),
+}
+
+fn block_priority(raw: &str) -> Option<char> {
+    let first = raw.lines().next().unwrap_or("");
+    let i = first.find("[#")?;
+    let rest = &first[i + 2..];
+    let c = rest.chars().next()?;
+    if matches!(c, 'A' | 'B' | 'C') && rest[c.len_utf8()..].starts_with(']') {
+        Some(c)
+    } else {
+        None
+    }
 }
 
 impl Pred {
@@ -203,9 +218,14 @@ impl Pred {
                 .marker()
                 .map(|m| markers.iter().any(|x| x.eq_ignore_ascii_case(m)))
                 .unwrap_or(false),
+            Pred::Priority(ps) => block_priority(&block.raw)
+                .map(|c| ps.iter().any(|x| x.eq_ignore_ascii_case(&c.to_string())))
+                .unwrap_or(false),
             Pred::Property(key, val) => block.properties().iter().any(|(k, v)| {
                 k.eq_ignore_ascii_case(key) && val.as_ref().map(|vv| vv == v).unwrap_or(true)
             }),
+            Pred::Scheduled => block.raw.contains("SCHEDULED:"),
+            Pred::Deadline => block.raw.contains("DEADLINE:"),
             Pred::And(ps) => ps.iter().all(|p| p.eval(block)),
             Pred::Or(ps) => ps.iter().any(|p| p.eval(block)),
             Pred::Not(p) => !p.eval(block),
@@ -319,6 +339,14 @@ fn parse_expr(toks: &[Tok], pos: &mut usize) -> Option<Pred> {
                         Pred::Task(markers)
                     }
                 }
+                "priority" => {
+                    let ps = parse_words(toks, pos);
+                    if ps.is_empty() {
+                        Pred::Priority(vec!["A".into(), "B".into(), "C".into()])
+                    } else {
+                        Pred::Priority(ps)
+                    }
+                }
                 "page-ref" => {
                     let name = parse_name(toks, pos)?;
                     Pred::PageRef(name)
@@ -328,6 +356,8 @@ fn parse_expr(toks: &[Tok], pos: &mut usize) -> Option<Pred> {
                     let val = parse_opt_name(toks, pos);
                     Pred::Property(key, val)
                 }
+                "scheduled" => Pred::Scheduled,
+                "deadline" => Pred::Deadline,
                 _ => return None,
             };
             // consume closing )

@@ -95,6 +95,11 @@ fn delete_page(name: String, kind: PageKind, state: State<'_, AppState>) -> Resu
 }
 
 #[tauri::command]
+fn publish_html(state: State<'_, AppState>) -> Result<(String, usize), String> {
+    with_graph(&state, |g| g.publish_html().map_err(|e| e.to_string()))
+}
+
+#[tauri::command]
 fn run_query(query: String, state: State<'_, AppState>) -> Result<Vec<RefGroup>, String> {
     with_graph(&state, |g| Ok(g.run_query(&query)))
 }
@@ -230,6 +235,7 @@ fn main() {
             get_backlinks,
             get_unlinked_refs,
             delete_page,
+            publish_html,
             run_query,
             search,
             quick_switch,

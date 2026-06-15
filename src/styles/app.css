@@ -417,6 +417,18 @@ body {
   color: #fff;
   border-color: var(--link-color);
 }
+.settings-btn {
+  padding: 5px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 13px;
+}
+.settings-btn:hover {
+  background: var(--bg-tertiary);
+}
 
 /* context menu */
 .ctx-overlay {
@@ -1023,6 +1035,27 @@ mark {
   display: flex;
   gap: 8px;
   align-items: center;
+}
+
+.query-view-toggle {
+  margin-left: auto;
+  font-size: 11px;
+  padding: 2px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.query-table th {
+  cursor: pointer;
+  user-select: none;
+}
+.query-table .qt-page {
+  color: var(--link-color);
+  cursor: pointer;
+  white-space: nowrap;
 }
 
 .query-group {

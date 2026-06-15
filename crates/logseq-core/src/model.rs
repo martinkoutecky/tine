@@ -195,6 +195,11 @@ impl Graph {
         crate::query::unlinked_refs(self, target)
     }
 
+    /// Export the whole graph to static HTML under `<root>/publish/`.
+    pub fn publish_html(&self) -> io::Result<(String, usize)> {
+        crate::publish::publish_graph(self)
+    }
+
     /// Delete a page/journal file.
     pub fn delete_page(&self, name: &str, kind: PageKind) -> io::Result<()> {
         if let Some(entry) = self.find_entry(name, kind) {
