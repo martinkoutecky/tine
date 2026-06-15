@@ -47,19 +47,19 @@ export function Sidebar(): JSX.Element {
           <div class="nav-section">
             <div class="nav-section-header">FAVORITES</div>
             <For each={favorites()}>
-              {(name) => (
+              {(fav) => (
                 <div
                   class="nav-page"
-                  classList={{ active: isActive(name) }}
-                  onClick={() => openPage(name, "page")}
+                  classList={{ active: isActive(fav.name) }}
+                  onClick={() => openPage(fav.name, fav.kind)}
                   onAuxClick={(e) => {
                     if (e.button === 1) {
                       e.preventDefault();
-                      openPageInNewTab(name, "page");
+                      openPageInNewTab(fav.name, fav.kind);
                     }
                   }}
                 >
-                  ⭐ {name}
+                  ⭐ {fav.name}
                 </div>
               )}
             </For>

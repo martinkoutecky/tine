@@ -1,5 +1,11 @@
 import { For, Show, createResource, type JSX } from "solid-js";
-import { rightSidebar, closeRightSidebarItem } from "../ui";
+import {
+  rightSidebar,
+  closeRightSidebarItem,
+  rightSidebarWidth,
+  setRightSidebarWidth,
+  persistRightSidebarWidth,
+} from "../ui";
 import { openPage } from "../router";
 import { backend } from "../backend";
 import { RefBlocks } from "./RefBlocks";
@@ -9,7 +15,25 @@ import { RefBlocks } from "./RefBlocks";
 export function RightSidebar(): JSX.Element {
   return (
     <Show when={rightSidebar().length > 0}>
-      <div class="right-sidebar">
+      <div
+        class="right-sidebar"
+        style={{ flex: `0 0 ${rightSidebarWidth()}px`, width: `${rightSidebarWidth()}px` }}
+      >
+        <div
+          class="rs-resizer"
+          onMouseDown={(e) => {
+            e.preventDefault();
+            const onMove = (ev: MouseEvent) =>
+              setRightSidebarWidth(Math.min(800, Math.max(220, window.innerWidth - ev.clientX)));
+            const onUp = () => {
+              window.removeEventListener("mousemove", onMove);
+              window.removeEventListener("mouseup", onUp);
+              persistRightSidebarWidth();
+            };
+            window.addEventListener("mousemove", onMove);
+            window.addEventListener("mouseup", onUp);
+          }}
+        />
         <div class="right-sidebar-header">Sidebar</div>
         <div class="right-sidebar-body">
           <For each={rightSidebar()}>

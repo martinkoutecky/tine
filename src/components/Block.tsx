@@ -54,9 +54,11 @@ function pdfFileForPage(pageName: string): string | null {
   return m ? m[1].split("/").pop() ?? null : null;
 }
 
-// Drag-and-drop reorder state (module-level, shared across block instances).
-let draggedBlockId: string | null = null;
-const [dropTarget, setDropTarget] = createSignal<string | null>(null);
+// Pointer-based drag reorder (HTML5 DnD is unreliable in WebKitGTK).
+const [dragId, setDragId] = createSignal<string | null>(null);
+const [dropInd, setDropInd] = createSignal<{ id: string; before: boolean } | null>(null);
+let dragMoved = false;
+
 function siblingIndex(id: string): number {
   const n = doc.byId[id];
   if (!n) return -1;
@@ -65,6 +67,54 @@ function siblingIndex(id: string): number {
       ? doc.pages.find((p) => p.name === n.page)?.roots ?? []
       : doc.byId[n.parent].children;
   return sibs.indexOf(id);
+}
+
+function beginDrag(id: string, e: MouseEvent) {
+  const startX = e.clientX;
+  const startY = e.clientY;
+  dragMoved = false;
+  const onMove = (ev: MouseEvent) => {
+    if (!dragMoved && Math.hypot(ev.clientX - startX, ev.clientY - startY) < 4) return;
+    if (!dragMoved) {
+      dragMoved = true;
+      setDragId(id);
+      setEditingId(null);
+    }
+    const el = (document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null)?.closest(
+      ".ls-block"
+    ) as HTMLElement | null;
+    const tid = el?.dataset.blockId;
+    if (tid && tid !== id) {
+      const main = el!.querySelector(".block-main")!.getBoundingClientRect();
+      setDropInd({ id: tid, before: ev.clientY < main.top + main.height / 2 });
+    } else {
+      setDropInd(null);
+    }
+  };
+  const onUp = () => {
+    document.removeEventListener("mousemove", onMove);
+    document.removeEventListener("mouseup", onUp);
+    const ind = dropInd();
+    if (dragMoved && ind && doc.byId[ind.id]) {
+      const tgt = doc.byId[ind.id];
+      // can't drop onto own descendant
+      let p: string | null = ind.id;
+      let ok = true;
+      while (p !== null) {
+        if (p === id) {
+          ok = false;
+          break;
+        }
+        p = doc.byId[p].parent;
+      }
+      if (ok) moveBlock(id, tgt.parent, siblingIndex(ind.id) + (ind.before ? 0 : 1));
+    }
+    setDragId(null);
+    setDropInd(null);
+    setTimeout(() => (dragMoved = false), 0);
+  };
+  document.addEventListener("mousemove", onMove);
+  document.addEventListener("mouseup", onUp);
 }
 
 export function Block(props: { id: string }): JSX.Element {
@@ -77,27 +127,14 @@ export function Block(props: { id: string }): JSX.Element {
     <div class="ls-block" classList={{ collapsed: collapsed() }} data-block-id={props.id}>
       <div
         class="block-main"
-        classList={{ "drop-target": dropTarget() === props.id }}
+        classList={{
+          "drop-before": dropInd()?.id === props.id && dropInd()?.before === true,
+          "drop-after": dropInd()?.id === props.id && dropInd()?.before === false,
+          dragging: dragId() === props.id,
+        }}
         onContextMenu={(e) => {
           e.preventDefault();
           openContextMenu(e.clientX, e.clientY, props.id);
-        }}
-        onDragOver={(e) => {
-          if (draggedBlockId && draggedBlockId !== props.id) {
-            e.preventDefault();
-            setDropTarget(props.id);
-          }
-        }}
-        onDragLeave={() => {
-          if (dropTarget() === props.id) setDropTarget(null);
-        }}
-        onDrop={(e) => {
-          e.preventDefault();
-          if (draggedBlockId && draggedBlockId !== props.id) {
-            moveBlock(draggedBlockId, doc.byId[props.id].parent, siblingIndex(props.id) + 1);
-          }
-          draggedBlockId = null;
-          setDropTarget(null);
         }}
       >
         <div class="block-controls">
@@ -116,17 +153,12 @@ export function Block(props: { id: string }): JSX.Element {
             class="bullet-container"
             classList={{ "bullet-closed": collapsed() && hasChildren() }}
             title="Click to zoom; drag to move"
-            draggable={true}
-            onDragStart={(e) => {
-              draggedBlockId = props.id;
-              if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
-            }}
-            onDragEnd={() => {
-              draggedBlockId = null;
-              setDropTarget(null);
+            onMouseDown={(e) => {
+              if (e.button === 0) beginDrag(props.id, e);
             }}
             onClick={(e) => {
               e.stopPropagation();
+              if (dragMoved) return; // was a drag, not a click
               zoomInto(props.id);
             }}
           >

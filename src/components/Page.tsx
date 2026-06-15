@@ -137,15 +137,15 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
         >
           {props.page.title}
         </h1>
+        <button
+          class="fav-star"
+          classList={{ active: isFavorite(props.page.name) }}
+          title={isFavorite(props.page.name) ? "Unfavorite" : "Add to favorites"}
+          onClick={() => toggleFavorite(props.page.name, props.page.kind)}
+        >
+          {isFavorite(props.page.name) ? "★" : "☆"}
+        </button>
         <Show when={props.page.kind === "page"}>
-          <button
-            class="fav-star"
-            classList={{ active: isFavorite(props.page.name) }}
-            title={isFavorite(props.page.name) ? "Unfavorite" : "Add to favorites"}
-            onClick={() => toggleFavorite(props.page.name)}
-          >
-            {isFavorite(props.page.name) ? "★" : "☆"}
-          </button>
           <button
             class="page-delete"
             title="Delete page"

@@ -424,8 +424,18 @@ body {
   padding: 1px 0;
 }
 
-.block-main.drop-target {
+.block-main.drop-after {
   box-shadow: inset 0 -2px 0 var(--link-color);
+}
+.block-main.drop-before {
+  box-shadow: inset 0 2px 0 var(--link-color);
+}
+.block-main.dragging {
+  opacity: 0.4;
+}
+.bullet-container {
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .block-controls {
@@ -1019,14 +1029,27 @@ mark {
 /* ------------------------------------------------------- right sidebar */
 
 .right-sidebar {
-  width: 320px;
-  max-width: 32vw;
+  position: relative;
+  width: 360px;
   flex: 0 0 auto;
   border-left: 1px solid var(--border-color);
   background: var(--bg-secondary);
   overflow-y: auto;
   display: flex;
   flex-direction: column;
+}
+
+.rs-resizer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 7px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 20;
+}
+.rs-resizer:hover {
+  background: color-mix(in srgb, var(--link-color) 40%, transparent);
 }
 
 .right-sidebar-header {

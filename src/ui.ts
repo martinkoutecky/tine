@@ -55,23 +55,52 @@ export function persistSidebarWidth() {
   }
 }
 
-// Favorites (starred pages), persisted.
+const RS_W_KEY = "logseq-claude.rightSidebarWidth";
+function loadRsWidth(): number {
+  try {
+    const v = Number(localStorage.getItem(RS_W_KEY));
+    if (v >= 220 && v <= 800) return v;
+  } catch {
+    // ignore
+  }
+  return 360;
+}
+export const [rightSidebarWidth, setRightSidebarWidth] = createSignal(loadRsWidth());
+export function persistRightSidebarWidth() {
+  try {
+    localStorage.setItem(RS_W_KEY, String(rightSidebarWidth()));
+  } catch {
+    // ignore
+  }
+}
+
+// Favorites (starred pages/journals), persisted.
+export interface FavItem {
+  name: string;
+  kind: "page" | "journal";
+}
 const FAV_KEY = "logseq-claude.favorites";
-function loadFavs(): string[] {
+function loadFavs(): FavItem[] {
   try {
     const v = JSON.parse(localStorage.getItem(FAV_KEY) ?? "[]");
-    return Array.isArray(v) ? v : [];
+    if (!Array.isArray(v)) return [];
+    // migrate old string[] format
+    return v.map((x: unknown) =>
+      typeof x === "string" ? { name: x, kind: "page" as const } : (x as FavItem)
+    );
   } catch {
     return [];
   }
 }
-export const [favorites, setFavorites] = createSignal<string[]>(loadFavs());
+export const [favorites, setFavorites] = createSignal<FavItem[]>(loadFavs());
 export function isFavorite(name: string): boolean {
-  return favorites().includes(name);
+  return favorites().some((f) => f.name === name);
 }
-export function toggleFavorite(name: string) {
+export function toggleFavorite(name: string, kind: "page" | "journal" = "page") {
   const f = favorites();
-  const next = f.includes(name) ? f.filter((x) => x !== name) : [...f, name];
+  const next = f.some((x) => x.name === name)
+    ? f.filter((x) => x.name !== name)
+    : [...f, { name, kind }];
   setFavorites(next);
   try {
     localStorage.setItem(FAV_KEY, JSON.stringify(next));
