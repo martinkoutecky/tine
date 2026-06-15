@@ -2,6 +2,10 @@
 // bindings; users override them via config.edn `:shortcuts {:cmd "binding"}`
 // (delivered in GraphMeta.shortcuts). "mod" = Ctrl (Cmd on macOS). Bindings may
 // be a single chord ("mod+k") or a sequence of chords ("g j").
+//
+// Both the global dispatcher (this file) and the in-editor key handler
+// (Block.tsx) resolve keys through the same merged binding table, so every
+// listed command is remappable from config.edn.
 
 import { openSwitcher, toggleTheme, toggleSidebar, closeSwitcher } from "./ui";
 import { openJournals } from "./router";
@@ -21,56 +25,59 @@ import {
 } from "./store";
 import { backend } from "./backend";
 
-// Keyboard handling while in block-selection mode (no editor focused).
-function handleSelectionKey(e: KeyboardEvent, mod: boolean): boolean {
-  const k = e.key;
-  if (k === "Escape") return clearSelection(), true;
-  if (e.code === "Tab" && e.shiftKey) return outdentSelection(), true;
-  if (e.code === "Tab") return indentSelection(), true;
-  if (k === "ArrowDown") return mod ? moveSelectionItems(1) : moveSelection(1, e.shiftKey), true;
-  if (k === "ArrowUp") return mod ? moveSelectionItems(-1) : moveSelection(-1, e.shiftKey), true;
-  if (k === "Backspace" || k === "Delete") return deleteSelection(), true;
-  if (mod && k.toLowerCase() === "c") return void backend().writeText(selectionMarkdown()), true;
-  if (mod && k.toLowerCase() === "x") {
-    void backend().writeText(selectionMarkdown());
-    deleteSelection();
-    return true;
-  }
-  if (k === "Enter") {
-    const ids = selectedIds();
-    const last = ids[ids.length - 1];
-    if (last) startEditing(last, 1e9);
-    return true;
-  }
-  return false;
-}
-
 interface Chord {
   mod: boolean;
   shift: boolean;
   alt: boolean;
-  key: string; // lowercase
+  key: string; // lowercase, normalized
 }
 
-export interface Command {
+interface CommandDef {
   id: string;
   binding: string;
-  run: () => void;
-  /** When false (default), the command does not fire while typing in an editor
-   *  unless its chord includes a modifier. */
+  /** Human label for the Settings reference. */
+  label: string;
+  /** Global commands run from the window dispatcher; editor commands are
+   *  matched by Block.tsx inside the textarea handler. */
+  scope: "global" | "editor";
+  run?: () => void;
+  /** When false (default), a global command does not fire while typing in an
+   *  editor unless its chord includes a modifier. */
   global?: boolean;
 }
 
 const isMac = typeof navigator !== "undefined" && /Mac/.test(navigator.platform);
 
-const DEFAULTS: Command[] = [
-  { id: "go/search", binding: "mod+k", run: openSwitcher, global: true },
-  { id: "go/journals", binding: "g j", run: openJournals },
-  { id: "ui/toggle-theme", binding: "t t", run: toggleTheme },
-  { id: "ui/toggle-left-sidebar", binding: "t l", run: toggleSidebar },
-  { id: "editor/undo", binding: "mod+z", run: undo, global: true },
-  { id: "editor/redo", binding: "mod+shift+z", run: redo, global: true },
+// Default command table. Editor command ids mirror OG Logseq where practical.
+const COMMANDS: CommandDef[] = [
+  { id: "go/search", binding: "mod+k", label: "Search / quick switch", scope: "global", run: openSwitcher, global: true },
+  { id: "go/journals", binding: "g j", label: "Go to journals", scope: "global", run: openJournals },
+  { id: "ui/toggle-theme", binding: "t t", label: "Toggle dark / light", scope: "global", run: toggleTheme },
+  { id: "ui/toggle-left-sidebar", binding: "t l", label: "Toggle left sidebar", scope: "global", run: toggleSidebar },
+  { id: "editor/undo", binding: "mod+z", label: "Undo", scope: "global", run: undo, global: true },
+  { id: "editor/redo", binding: "mod+shift+z", label: "Redo", scope: "global", run: redo, global: true },
+  // Editor commands (resolved in Block.tsx / selection handler).
+  { id: "editor/indent", binding: "tab", label: "Indent block", scope: "editor" },
+  { id: "editor/outdent", binding: "shift+tab", label: "Outdent block", scope: "editor" },
+  { id: "editor/move-block-up", binding: "mod+up", label: "Move block up", scope: "editor" },
+  { id: "editor/move-block-down", binding: "mod+down", label: "Move block down", scope: "editor" },
+  { id: "editor/select-block-up", binding: "shift+up", label: "Select block up", scope: "editor" },
+  { id: "editor/select-block-down", binding: "shift+down", label: "Select block down", scope: "editor" },
+  { id: "editor/cycle-todo", binding: "mod+enter", label: "Cycle TODO / DOING / DONE", scope: "editor" },
 ];
+
+function normKey(k: string): string {
+  switch (k) {
+    case "arrowup": return "up";
+    case "arrowdown": return "down";
+    case "arrowleft": return "left";
+    case "arrowright": return "right";
+    case "escape": return "esc";
+    case " ":
+    case "spacebar": return "space";
+    default: return k;
+  }
+}
 
 function parseChord(s: string): Chord {
   const parts = s.toLowerCase().split("+");
@@ -79,7 +86,7 @@ function parseChord(s: string): Chord {
     if (p === "mod" || p === "ctrl" || p === "cmd" || p === "meta") chord.mod = true;
     else if (p === "shift") chord.shift = true;
     else if (p === "alt" || p === "option") chord.alt = true;
-    else chord.key = p;
+    else chord.key = normKey(p);
   }
   return chord;
 }
@@ -89,16 +96,40 @@ function parseBinding(b: string): Chord[] {
 }
 
 function eventToChord(e: KeyboardEvent): Chord {
+  // WebKitGTK reports Shift+Tab with e.key != "Tab"; e.code is reliable.
+  let key = e.code === "Tab" ? "tab" : e.key.toLowerCase();
+  key = normKey(key);
   return {
     mod: isMac ? e.metaKey : e.ctrlKey,
     shift: e.shiftKey,
     alt: e.altKey,
-    key: e.key.toLowerCase(),
+    key,
   };
 }
 
 function chordEq(a: Chord, b: Chord): boolean {
   return a.mod === b.mod && a.shift === b.shift && a.alt === b.alt && a.key === b.key;
+}
+
+// Merged binding table (defaults + config overrides), populated by
+// installKeybindings and consulted by matchesCommand.
+let bindings: Record<string, Chord[]> = {};
+let overridesApplied: Record<string, string> = {};
+
+/** Does the event match the configured binding for `id`? (single-chord only). */
+export function matchesCommand(e: KeyboardEvent, id: string): boolean {
+  const cs = bindings[id];
+  if (!cs || cs.length !== 1) return false;
+  return chordEq(eventToChord(e), cs[0]);
+}
+
+/** Merged shortcuts for the Settings reference. */
+export function currentShortcuts(): { id: string; label: string; binding: string }[] {
+  return COMMANDS.map((c) => ({
+    id: c.id,
+    label: c.label,
+    binding: overridesApplied[c.id] ?? c.binding,
+  })).filter((c) => c.binding !== "false");
 }
 
 function isEditableTarget(t: EventTarget | null): boolean {
@@ -108,13 +139,53 @@ function isEditableTarget(t: EventTarget | null): boolean {
   return tag === "TEXTAREA" || tag === "INPUT" || el.isContentEditable;
 }
 
+// Keyboard handling while in block-selection mode (no editor focused).
+function handleSelectionKey(e: KeyboardEvent): boolean {
+  if (e.key === "Escape") return clearSelection(), true;
+  if (matchesCommand(e, "editor/outdent")) return outdentSelection(), true;
+  if (matchesCommand(e, "editor/indent")) return indentSelection(), true;
+  if (matchesCommand(e, "editor/move-block-down")) return moveSelectionItems(1), true;
+  if (matchesCommand(e, "editor/move-block-up")) return moveSelectionItems(-1), true;
+  if (e.key === "ArrowDown") return moveSelection(1, e.shiftKey), true;
+  if (e.key === "ArrowUp") return moveSelection(-1, e.shiftKey), true;
+  if (e.key === "Backspace" || e.key === "Delete") return deleteSelection(), true;
+  const mod = isMac ? e.metaKey : e.ctrlKey;
+  if (mod && e.key.toLowerCase() === "c") return void backend().writeText(selectionMarkdown()), true;
+  if (mod && e.key.toLowerCase() === "x") {
+    void backend().writeText(selectionMarkdown());
+    deleteSelection();
+    return true;
+  }
+  if (e.key === "Enter") {
+    const ids = selectedIds();
+    const last = ids[ids.length - 1];
+    if (last) startEditing(last, 1e9);
+    return true;
+  }
+  return false;
+}
+
+export interface Command {
+  id: string;
+  binding: string;
+  run: () => void;
+  global?: boolean;
+}
+
 /** Install the global shortcut handler, merging config overrides over defaults.
  *  Returns a disposer. */
 export function installKeybindings(overrides: Record<string, string> = {}): () => void {
-  const commands = DEFAULTS.map((c) => ({
-    ...c,
-    chords: parseBinding(overrides[c.id] ?? c.binding),
-  })).filter((c) => (overrides[c.id] ?? c.binding) !== "false");
+  overridesApplied = overrides;
+  bindings = {};
+  for (const c of COMMANDS) {
+    const b = overrides[c.id] ?? c.binding;
+    if (b !== "false") bindings[c.id] = parseBinding(b);
+  }
+
+  // Global dispatch list (sequences + global chords).
+  const commands = COMMANDS.filter((c) => c.scope === "global" && c.run)
+    .map((c) => ({ ...c, chords: bindings[c.id] }))
+    .filter((c) => c.chords);
 
   let seq: Chord[] = [];
   let seqTimer: ReturnType<typeof setTimeout> | null = null;
@@ -133,7 +204,7 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
 
     // Block-selection mode keys (no editor focused).
     if (!editing && hasSelection()) {
-      if (handleSelectionKey(e, chord.mod)) {
+      if (handleSelectionKey(e)) {
         e.preventDefault();
         resetSeq();
         return;
@@ -166,7 +237,7 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
       if (cs.every((c, i) => chordEq(c, tail[i]))) {
         e.preventDefault();
         resetSeq();
-        cmd.run();
+        cmd.run!();
         return;
       }
     }
@@ -174,8 +245,4 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
 
   window.addEventListener("keydown", handler, true);
   return () => window.removeEventListener("keydown", handler, true);
-}
-
-export function defaultCommands(): Command[] {
-  return DEFAULTS;
 }

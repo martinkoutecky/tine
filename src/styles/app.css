@@ -400,6 +400,37 @@ body {
   font-size: 13px;
   color: var(--text-secondary);
 }
+.settings-shortcuts {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.settings-shortcut-row {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  padding: 2px 0;
+}
+.settings-shortcut-label {
+  color: var(--text-primary);
+}
+.settings-shortcut-binding {
+  background: var(--code-bg);
+  border-radius: 3px;
+  padding: 1px 6px;
+  justify-self: center;
+  white-space: nowrap;
+}
+.settings-shortcut-id {
+  color: var(--text-muted);
+  font-size: 11px;
+  text-align: right;
+}
 .settings-seg {
   display: flex;
   gap: 4px;

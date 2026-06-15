@@ -80,7 +80,7 @@ impl DocBlock {
     }
 }
 
-fn parse_property_line(line: &str) -> Option<(String, String)> {
+pub(crate) fn parse_property_line(line: &str) -> Option<(String, String)> {
     // `key:: value` — key is letters/digits/_/-/. and at least one char.
     let idx = line.find("::")?;
     let key = line[..idx].trim();

@@ -93,6 +93,41 @@ fn search_cache_reflects_saves_and_deletes() {
 }
 
 #[test]
+fn search_ignores_hidden_property_metadata() {
+    use logseq_core::model::{BlockDto, PageDto, PageKind};
+
+    let root = std::env::temp_dir().join(format!("tine-search-meta-{}", std::process::id()));
+    std::fs::create_dir_all(root.join("journals")).unwrap();
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    let g = Graph::open(&root);
+
+    // A block whose only occurrence of "qzxmeta" is in a property line (like an
+    // id:: uuid or hl-color::) must NOT match — the user can't see it.
+    let page = PageDto {
+        name: "Meta".into(),
+        kind: PageKind::Page,
+        title: "Meta".into(),
+        pre_block: None,
+        blocks: vec![BlockDto {
+            id: "x".into(),
+            raw: "a perfectly ordinary block\nsome-prop:: qzxmeta".into(),
+            collapsed: false,
+            children: vec![],
+        }],
+    };
+    g.save_page(&page).unwrap();
+    assert_eq!(
+        g.search("qzxmeta", 10).len(),
+        0,
+        "token only in a property line should not be a search hit"
+    );
+    // But the visible body is still searchable.
+    assert_eq!(g.search("ordinary", 10).len(), 1, "visible body still matches");
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn query_open_tasks() {
     let g = demo_graph();
     let groups = g.run_query("(task TODO DOING)");

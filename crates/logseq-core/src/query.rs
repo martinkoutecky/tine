@@ -85,14 +85,26 @@ pub fn run_query(graph: &Graph, query_src: &str) -> Vec<RefGroup> {
     }
 }
 
-/// Full-text search: blocks whose text contains `query` (case-insensitive),
-/// grouped by page, capped at `limit` total blocks.
+/// A block's *visible* text for search: the body the user actually reads, with
+/// `key:: value` property lines (block ids, `ls-type`, `hl-color`, user props,
+/// `collapsed`, …) removed. Matching the rendered text instead of the raw
+/// markdown avoids false positives where the query only appears in hidden
+/// metadata (e.g. a uuid fragment or a property value).
+pub fn visible_text(raw: &str) -> String {
+    raw.lines()
+        .filter(|l| crate::doc::parse_property_line(l).is_none())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Full-text search: blocks whose visible text contains `query`
+/// (case-insensitive), grouped by page, capped at `limit` total blocks.
 pub fn search(graph: &Graph, query: &str, limit: usize) -> Vec<RefGroup> {
     let q = query.trim().to_lowercase();
     if q.is_empty() {
         return Vec::new();
     }
-    let mut groups = collect(graph, |b| b.raw.to_lowercase().contains(&q), None);
+    let mut groups = collect(graph, |b| visible_text(&b.raw).to_lowercase().contains(&q), None);
     let mut remaining = limit;
     groups.retain_mut(|g| {
         if remaining == 0 {

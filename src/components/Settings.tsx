@@ -1,5 +1,6 @@
-import { Show, createSignal, type JSX } from "solid-js";
+import { For, Show, createSignal, type JSX } from "solid-js";
 import { settingsOpen, closeSettings, theme, toggleTheme, workflow, graphMeta } from "../ui";
+import { currentShortcuts } from "../keybindings";
 import { backend } from "../backend";
 
 export function Settings(): JSX.Element {
@@ -65,12 +66,21 @@ export function Settings(): JSX.Element {
           </div>
 
           <div class="settings-section">Keyboard shortcuts</div>
+          <div class="settings-shortcuts">
+            <For each={currentShortcuts()}>
+              {(s) => (
+                <div class="settings-shortcut-row">
+                  <span class="settings-shortcut-label">{s.label}</span>
+                  <code class="settings-shortcut-binding">{s.binding}</code>
+                  <span class="settings-shortcut-id mono">{s.id}</span>
+                </div>
+              )}
+            </For>
+          </div>
           <div class="settings-hint settings-block">
-            Defaults: <code>mod+k</code> search · <code>g j</code> journals · <code>t t</code> theme ·{" "}
-            <code>t l</code> sidebar · <code>mod+z</code>/<code>mod+shift+z</code> undo/redo ·{" "}
-            <code>mod+enter</code> cycle task · <code>Tab</code>/<code>Shift+Tab</code> indent ·{" "}
-            <code>Esc</code> select block. Override in config.edn under{" "}
-            <code>:shortcuts</code>.
+            Remap any of these in <code>config.edn</code> under <code>:shortcuts</code>,
+            e.g. <code>{`:shortcuts {:editor/move-block-down "alt+shift+down"}`}</code>.
+            "mod" = Ctrl. Set a binding to <code>"false"</code> to disable it.
           </div>
         </div>
       </div>

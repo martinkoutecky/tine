@@ -36,6 +36,7 @@ import { InlineText } from "../render/inline";
 import { BodyContent } from "../render/body";
 import { QueryMacro, EmbedMacro } from "./Macro";
 import { openPdf, workflow, zoomInto, openContextMenu } from "../ui";
+import { matchesCommand } from "../keybindings";
 import { HL_COLOR_BG, HL_COLOR_SOLID } from "../pdf";
 import { cycleMarker } from "../editor/marker";
 
@@ -434,22 +435,21 @@ function Editor(props: { id: string }): JSX.Element {
       }
     }
 
-    const mod = e.ctrlKey || e.metaKey;
-
-    // mod+Up/Down reorders the block among its siblings, keeping it in edit mode
-    // with the caret intact (the DOM reorder can briefly blur the textarea).
-    if (mod && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+    // Configurable editor shortcuts (resolved against config.edn :shortcuts).
+    // Move block up/down: reorder among siblings, keeping edit mode + caret
+    // (the DOM reorder can briefly blur the textarea).
+    if (matchesCommand(e, "editor/move-block-up") || matchesCommand(e, "editor/move-block-down")) {
       e.preventDefault();
       setRaw(props.id, raw);
-      moveItem(props.id, e.key === "ArrowDown" ? 1 : -1);
+      moveItem(props.id, matchesCommand(e, "editor/move-block-down") ? 1 : -1);
       startEditing(props.id, start);
       return;
     }
 
-    // Shift+Up/Down at the block's first/last line starts a block selection
-    // (current block + neighbour), then the global handler extends it further.
-    if (e.shiftKey && !mod && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
-      const down = e.key === "ArrowDown";
+    // Select block up/down: at the block's first/last line, start a block
+    // selection (current block + neighbour); the global handler extends it.
+    if (matchesCommand(e, "editor/select-block-up") || matchesCommand(e, "editor/select-block-down")) {
+      const down = matchesCommand(e, "editor/select-block-down");
       const atEdge = down ? !raw.slice(start).includes("\n") : !raw.slice(0, start).includes("\n");
       if (atEdge) {
         e.preventDefault();
@@ -460,8 +460,7 @@ function Editor(props: { id: string }): JSX.Element {
       }
     }
 
-    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
-      // mod+enter cycles the task marker (TODO -> DOING -> DONE -> none).
+    if (matchesCommand(e, "editor/cycle-todo")) {
       e.preventDefault();
       const { raw: newRaw, delta } = cycleMarker(raw, workflow());
       setRaw(props.id, newRaw);
@@ -471,18 +470,18 @@ function Editor(props: { id: string }): JSX.Element {
         ref.setSelectionRange(pos, pos);
         autosize();
       });
-    } else if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      setRaw(props.id, raw); // flush current text
-      splitBlock(props.id, start);
-    } else if (e.code === "Tab" && !e.shiftKey) {
+    } else if (matchesCommand(e, "editor/indent")) {
       e.preventDefault();
       setRaw(props.id, raw);
       indentBlock(props.id, start);
-    } else if (e.code === "Tab" && e.shiftKey) {
+    } else if (matchesCommand(e, "editor/outdent")) {
       e.preventDefault();
       setRaw(props.id, raw);
       outdentBlock(props.id, start);
+    } else if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+      setRaw(props.id, raw); // flush current text
+      splitBlock(props.id, start);
     } else if (e.key === "Backspace" && start === 0 && end === 0) {
       setRaw(props.id, raw);
       if (mergeWithPrev(props.id)) e.preventDefault();
