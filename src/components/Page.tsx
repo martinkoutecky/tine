@@ -3,7 +3,7 @@ import { doc, loadSingle, loadFeed, appendFeed, forceSave, isDirty, editingId, t
 import { route, openPage, openJournals } from "../router";
 import {
   zoomedBlock, zoomOut, zoomInto, isFavorite, toggleFavorite, notesRefresh,
-  isConflicted, clearConflict, markConflict, graphEpoch,
+  isConflicted, clearConflict, markConflict, graphEpoch, openPageInSidebar,
 } from "../ui";
 import { backend } from "../backend";
 import { switchGraph } from "../graph";
@@ -298,8 +298,11 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
           <h1
             class="page-title"
             classList={{ "journal-title": props.page.kind === "journal" }}
-            title={props.page.kind === "page" ? "Double-click to rename" : undefined}
-            onClick={() => openPage(props.page.name, props.page.kind)}
+            title={props.page.kind === "page" ? "Double-click to rename (shift-click → sidebar)" : "Shift-click to open in sidebar"}
+            onClick={(e) => {
+              if (e.shiftKey) openPageInSidebar(props.page.name, props.page.kind);
+              else openPage(props.page.name, props.page.kind);
+            }}
             onDblClick={startRename}
           >
             <Show when={props.page.kind === "journal"}>

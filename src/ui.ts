@@ -1,6 +1,6 @@
 // Small global UI state: theme, left sidebar, and the quick-switcher modal.
 import { createSignal } from "solid-js";
-import type { GraphMeta } from "./types";
+import type { BlockDto, GraphMeta } from "./types";
 
 const THEME_KEY = "logseq-claude.theme";
 function loadTheme(): "light" | "dark" {
@@ -236,27 +236,60 @@ export function zoomOut() {
   setZoomedBlock(null);
 }
 
-// Right sidebar: open pages/blocks in a side pane (shift-click a link).
-export const [rightSidebar, setRightSidebar] = createSignal<
-  { kind: "page" | "block"; ref: string }[]
->([]);
-export function openInRightSidebar(kind: "page" | "block", ref: string) {
-  const cur = rightSidebar();
-  if (cur.some((i) => i.kind === kind && i.ref === ref)) return;
-  setRightSidebar([{ kind, ref }, ...cur]);
+// Right sidebar: a stack of items opened for reference (shift-click anything).
+//
+// "Everything is a block": every reference resolves to one of two universal
+// targets — a *page* (addressed live by name) or a *block subtree* (a
+// self-contained snapshot of the live frontend tree). Blocks are NOT resolved
+// by round-tripping to the backend via a persisted `id::` — the frontend
+// already owns the tree, so we carry the subtree itself. This makes the gesture
+// work identically from a page, a journal, a query result, or a ref, with no
+// file mutation and no save race.
+export interface SidebarPage {
+  kind: "page";
+  name: string;
+  pageKind: "journal" | "page";
+}
+export interface SidebarBlock {
+  kind: "block";
+  key: string; // dedup key (persisted id:: if any, else the session block id)
+  page: string; // the page the block lives on (for the title link)
+  blocks: BlockDto[]; // snapshot of the block subtree
+}
+export type SidebarItem = SidebarPage | SidebarBlock;
+
+export const [rightSidebar, setRightSidebar] = createSignal<SidebarItem[]>([]);
+
+export function openPageInSidebar(name: string, pageKind: "journal" | "page" = "page") {
+  if (rightSidebar().some((i) => i.kind === "page" && i.name === name)) return;
+  setRightSidebar([{ kind: "page", name, pageKind }, ...rightSidebar()]);
+}
+export function openBlockInSidebar(snap: { key: string; page: string; blocks: BlockDto[] }) {
+  if (rightSidebar().some((i) => i.kind === "block" && i.key === snap.key)) return;
+  setRightSidebar([{ kind: "block", ...snap }, ...rightSidebar()]);
 }
 export function closeRightSidebarItem(idx: number) {
   setRightSidebar(rightSidebar().filter((_, i) => i !== idx));
 }
 
-// Right-click block context menu.
-export const [contextMenu, setContextMenu] = createSignal<{
-  x: number;
-  y: number;
-  blockId: string;
-} | null>(null);
+// Right-click context menu — universal over its target (a block or a page),
+// mirroring the sidebar's two reference kinds.
+export type CtxTarget =
+  | { kind: "block"; blockId: string }
+  | { kind: "page"; name: string; pageKind: "journal" | "page" };
+export const [contextMenu, setContextMenu] = createSignal<
+  ({ x: number; y: number } & CtxTarget) | null
+>(null);
 export function openContextMenu(x: number, y: number, blockId: string) {
-  setContextMenu({ x, y, blockId });
+  setContextMenu({ x, y, kind: "block", blockId });
+}
+export function openPageContextMenu(
+  x: number,
+  y: number,
+  name: string,
+  pageKind: "journal" | "page" = "page"
+) {
+  setContextMenu({ x, y, kind: "page", name, pageKind });
 }
 export function closeContextMenu() {
   setContextMenu(null);

@@ -28,7 +28,7 @@ export function UnlinkedReferences(props: { name: string }): JSX.Element {
                 {g.page}
               </div>
               <div class="reference-blocks">
-                <RefBlocks blocks={g.blocks} />
+                <RefBlocks blocks={g.blocks} page={g.page} />
               </div>
             </div>
           )}

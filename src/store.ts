@@ -505,6 +505,24 @@ export function ensureBlockId(id: string): string {
   return uuid;
 }
 
+/** Snapshot a block's subtree as a self-contained DTO tree — for opening it in
+ *  the right sidebar. Reads only the live frontend store: no backend round-trip,
+ *  no `id::` minting, no save race. Works for any loaded block. */
+function nodeToDto(id: string): BlockDto {
+  const n = doc.byId[id];
+  return {
+    id: n.id,
+    raw: n.raw,
+    collapsed: n.collapsed,
+    children: n.children.map(nodeToDto),
+  };
+}
+export function blockSnapshot(id: string): { key: string; page: string; blocks: BlockDto[] } {
+  const n = doc.byId[id];
+  const idProp = /(?:^|\n)id:: *([0-9a-fA-F-]{8,})/.exec(n.raw);
+  return { key: idProp ? idProp[1] : id, page: n.page, blocks: [nodeToDto(id)] };
+}
+
 /** Serialize a block and its subtree to Logseq markdown. */
 export function blockSubtreeMarkdown(id: string, level = 0): string {
   const n = doc.byId[id];

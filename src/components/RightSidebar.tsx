@@ -5,13 +5,19 @@ import {
   rightSidebarWidth,
   setRightSidebarWidth,
   persistRightSidebarWidth,
+  type SidebarItem,
 } from "../ui";
 import { openPage } from "../router";
 import { backend } from "../backend";
+import { blockView } from "../render/block";
 import { RefBlocks } from "./RefBlocks";
+import type { BlockDto } from "../types";
 
-// Read-only right sidebar: pages/blocks opened via shift-click for reference
-// while editing the main pane.
+// Read-only right sidebar: a stack of pages/blocks opened for reference while
+// editing the main pane. A page item is resolved live by name; a block item
+// renders the snapshot subtree it was opened with (so it survives navigation
+// and never round-trips to the backend). Macros inside a snapshot — e.g. a
+// parked `{{query}}` TODO list — still re-run live via RefBlocks → InlineText.
 export function RightSidebar(): JSX.Element {
   return (
     <Show when={rightSidebar().length > 0}>
@@ -37,7 +43,7 @@ export function RightSidebar(): JSX.Element {
         <div class="right-sidebar-header">Sidebar</div>
         <div class="right-sidebar-body">
           <For each={rightSidebar()}>
-            {(item, i) => <SidebarItem item={item} onClose={() => closeRightSidebarItem(i())} />}
+            {(item, i) => <SidebarItemView item={item} onClose={() => closeRightSidebarItem(i())} />}
           </For>
         </div>
       </div>
@@ -45,30 +51,31 @@ export function RightSidebar(): JSX.Element {
   );
 }
 
-function SidebarItem(props: {
-  item: { kind: "page" | "block"; ref: string };
+function SidebarItemView(props: { item: SidebarItem; onClose: () => void }): JSX.Element {
+  return (
+    <Show when={props.item.kind === "page"} fallback={<BlockItem item={props.item as Extract<SidebarItem, { kind: "block" }>} onClose={props.onClose} />}>
+      <PageItem item={props.item as Extract<SidebarItem, { kind: "page" }>} onClose={props.onClose} />
+    </Show>
+  );
+}
+
+// A page opened in the sidebar: resolved live by name.
+function PageItem(props: {
+  item: { name: string; pageKind: "journal" | "page" };
   onClose: () => void;
 }): JSX.Element {
   const [data] = createResource(
     () => props.item,
     async (it) => {
-      if (it.kind === "page") {
-        const p = await backend().getPage(it.ref, "page");
-        return p ? { title: p.name, blocks: p.blocks } : null;
-      }
-      const g = await backend().resolveBlock(it.ref);
-      return g ? { title: g.page, blocks: g.blocks } : null;
+      const p = await backend().getPage(it.name, it.pageKind);
+      return p ? { title: p.title, blocks: p.blocks } : null;
     }
   );
-
   return (
     <div class="rs-item">
       <div class="rs-item-head">
-        <a
-          class="rs-item-title"
-          onClick={() => props.item.kind === "page" && openPage(props.item.ref, "page")}
-        >
-          {data()?.title ?? props.item.ref}
+        <a class="rs-item-title" onClick={() => openPage(props.item.name, props.item.pageKind)}>
+          {data()?.title ?? props.item.name}
         </a>
         <button class="rs-close" onClick={props.onClose} title="Close">
           ✕
@@ -76,9 +83,32 @@ function SidebarItem(props: {
       </div>
       <Show when={data()}>
         <div class="rs-item-body">
-          <RefBlocks blocks={data()!.blocks} />
+          <RefBlocks blocks={data()!.blocks} page={props.item.name} />
         </div>
       </Show>
+    </div>
+  );
+}
+
+// A block subtree opened in the sidebar: rendered straight from the snapshot.
+function BlockItem(props: {
+  item: { page: string; blocks: BlockDto[] };
+  onClose: () => void;
+}): JSX.Element {
+  const title = () => blockView(props.item.blocks[0]?.raw ?? "").lines[0] || props.item.page;
+  return (
+    <div class="rs-item">
+      <div class="rs-item-head">
+        <a class="rs-item-title" onClick={() => openPage(props.item.page, "page")} title={`On ${props.item.page}`}>
+          {title()}
+        </a>
+        <button class="rs-close" onClick={props.onClose} title="Close">
+          ✕
+        </button>
+      </div>
+      <div class="rs-item-body">
+        <RefBlocks blocks={props.item.blocks} page={props.item.page} />
+      </div>
     </div>
   );
 }

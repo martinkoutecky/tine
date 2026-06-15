@@ -5,7 +5,7 @@
 import { For, Show, createResource, onCleanup, type JSX } from "solid-js";
 import katex from "katex";
 import { openPage, openPageInNewTab } from "../router";
-import { openPdf, openInRightSidebar } from "../ui";
+import { openPdf, openPageInSidebar, openPageContextMenu } from "../ui";
 import { parseInline, type Seg } from "./parseInline";
 import { blockView } from "./block";
 import { backend } from "../backend";
@@ -35,7 +35,7 @@ function renderSeg(s: Seg): JSX.Element {
           class="page-ref"
           onClick={(e) => {
             e.stopPropagation();
-            if (e.shiftKey) openInRightSidebar("page", s.name);
+            if (e.shiftKey) openPageInSidebar(s.name);
             else openPage(s.name);
           }}
           onAuxClick={(e) => {
@@ -44,6 +44,11 @@ function renderSeg(s: Seg): JSX.Element {
               e.stopPropagation();
               openPageInNewTab(s.name);
             }
+          }}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            openPageContextMenu(e.clientX, e.clientY, s.name);
           }}
         >
           <span class="bracket">[[</span>
@@ -57,7 +62,8 @@ function renderSeg(s: Seg): JSX.Element {
           class="tag"
           onClick={(e) => {
             e.stopPropagation();
-            openPage(s.name);
+            if (e.shiftKey) openPageInSidebar(s.name);
+            else openPage(s.name);
           }}
           onAuxClick={(e) => {
             if (e.button === 1) {
@@ -65,6 +71,11 @@ function renderSeg(s: Seg): JSX.Element {
               e.stopPropagation();
               openPageInNewTab(s.name);
             }
+          }}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            openPageContextMenu(e.clientX, e.clientY, s.name);
           }}
         >
           #{s.name}

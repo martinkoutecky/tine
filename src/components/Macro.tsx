@@ -1,6 +1,7 @@
 import { For, Show, Switch, Match, createMemo, createResource, createSignal, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { openPage, openPageInNewTab } from "../router";
+import { openPageInSidebar, openPageContextMenu } from "../ui";
 import { RefBlocks } from "./RefBlocks";
 import { blockView } from "../render/block";
 import { InlineText } from "../render/inline";
@@ -138,7 +139,8 @@ export function QueryMacro(props: { body: string }): JSX.Element {
                         class="query-page"
                         onClick={(e) => {
                           e.stopPropagation();
-                          openPage(g.page, g.kind);
+                          if (e.shiftKey) openPageInSidebar(g.page, g.kind);
+                          else openPage(g.page, g.kind);
                         }}
                         onAuxClick={(e) => {
                           if (e.button === 1) {
@@ -147,10 +149,15 @@ export function QueryMacro(props: { body: string }): JSX.Element {
                             openPageInNewTab(g.page, g.kind);
                           }
                         }}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          openPageContextMenu(e.clientX, e.clientY, g.page, g.kind);
+                        }}
                       >
                         {g.page}
                       </div>
-                      <RefBlocks blocks={g.blocks} />
+                      <RefBlocks blocks={g.blocks} page={g.page} />
                     </div>
                   )}
                 </For>
@@ -177,7 +184,8 @@ export function QueryMacro(props: { body: string }): JSX.Element {
                           class="qt-page"
                           onClick={(e) => {
                             e.stopPropagation();
-                            openPage(r.page, r.kind);
+                            if (e.shiftKey) openPageInSidebar(r.page, r.kind);
+                            else openPage(r.page, r.kind);
                           }}
                           onAuxClick={(e) => {
                             if (e.button === 1) {
@@ -185,6 +193,11 @@ export function QueryMacro(props: { body: string }): JSX.Element {
                               e.stopPropagation();
                               openPageInNewTab(r.page, r.kind);
                             }
+                          }}
+                          onContextMenu={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            openPageContextMenu(e.clientX, e.clientY, r.page, r.kind);
                           }}
                         >
                           {r.page}
@@ -225,7 +238,7 @@ export function EmbedMacro(props: { body: string }): JSX.Element {
   return (
     <div class="embed-block">
       <Show when={data()} fallback={<div class="embed-missing">{`{{${props.body}}}`}</div>}>
-        <RefBlocks blocks={data()!.blocks} />
+        <RefBlocks blocks={data()!.blocks} page={data()!.label} />
       </Show>
     </div>
   );
