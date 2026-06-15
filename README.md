@@ -50,10 +50,12 @@ DOM. The editor keeps the live tree in the frontend so keystrokes never round-tr
 - Linked & unlinked references on every page.
 
 **Tasks, properties, queries**
-- `TODO/DOING/DONE/NOW/LATER/WAITING/CANCELED`, priorities, `SCHEDULED`/`DEADLINE`.
-- Page & block properties.
-- `{{query}}` — boolean / task / property / scheduled-deadline filters, rendered as a list or a
-  sortable **table** (full datalog is out of scope).
+- `TODO/DOING/DONE/NOW/LATER/WAITING/CANCELED`, priorities, `SCHEDULED`/`DEADLINE` with a
+  calendar **date picker**.
+- Page & block properties; **templates** (`template:: name`, `/template`, `<% today %>`).
+- `{{query}}` — boolean / task / property / `between` date-range / scheduled-deadline filters
+  (inline or whole-block), rendered as a list or a sortable **table** (full datalog is out of
+  scope).
 
 **PDF annotation**
 - Open PDFs in a resizable, zoomable pane (buttons + Ctrl/Cmd-scroll).
@@ -64,12 +66,23 @@ DOM. The editor keeps the live tree in the frontend so keystrokes never round-tr
 **Search & navigation**
 - `Ctrl+K` quick switcher: page titles + full-text content hits.
 - Tabs (middle-click to open, double-click to pin), favorites, recent pages, journals feed.
+- Bullet right-click menu: block colors, headings, open-in-sidebar, copy ref, numbered list,
+  collapse/expand all. **Page rename** (double-click a title) updates every `[[ref]]` across the
+  graph.
+
+**Works with your existing setup**
+- **Edit safely alongside Logseq mobile over Syncthing.** A file watcher reconciles changes
+  synced in from other devices, and Tine never silently overwrites a file that changed on disk —
+  it surfaces a conflict instead. Saves preserve each file's exact formatting, so they don't
+  create Syncthing diff churn.
+- Open/switch graphs from the app (native folder picker), or pass `TINE_GRAPH`.
 
 **Customization & output**
 - Fully remappable keyboard shortcuts — in the Settings modal or via `config.edn :shortcuts`.
 - Light / dark themes.
-- One-click **static HTML export** of the whole graph.
-- Slash menu: headings, code, quote, divider, embed, scheduled/deadline, asset upload, and more.
+- One-click **static HTML export** (publishes pages marked `public:: true`).
+- Slash menu: headings, code, quote, divider, embed, scheduled/deadline, asset upload, template,
+  and more.
 
 <p align="center">
   <img src="docs/img/pdf.png" alt="PDF highlighting with notes" width="49%">
@@ -142,11 +155,11 @@ canonicalization).
 
 ## Roadmap & non-goals
 
-**Planned:** page rename with ref-update, namespaces/aliases UI, callouts, query sorting via the
-DSL, graph view, area (image) PDF highlights.
+**Planned:** namespaces/aliases UI, callouts, query sorting via the DSL, graph view, area (image)
+PDF highlights, repeating/timed `SCHEDULED`.
 
 **Out of scope (by design):** whiteboards, flashcards, the plugin system, full datalog queries,
-sync/built-in git, and mobile.
+built-in git, and a mobile app (it coexists with Logseq mobile over your own sync instead).
 
 ## Acknowledgements
 
