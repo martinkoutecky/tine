@@ -9,6 +9,7 @@ import { openPdf, openInRightSidebar } from "../ui";
 import { parseInline, type Seg } from "./parseInline";
 import { blockView } from "./block";
 import { backend } from "../backend";
+import { QueryMacro, EmbedMacro } from "../components/Macro";
 
 function renderSegs(segs: Seg[]): JSX.Element {
   return <For each={segs}>{(s) => renderSeg(s)}</For>;
@@ -71,8 +72,14 @@ function renderSeg(s: Seg): JSX.Element {
       );
     case "blockref":
       return <BlockRefView id={s.id} />;
-    case "macro":
+    case "macro": {
+      // Render {{query}} / {{embed}} wherever they appear — including inline
+      // after a label, e.g. `All todos {{query (task TODO)}}` (Logseq dashboards).
+      const body = s.body.trimStart();
+      if (/^query\b/i.test(body)) return <QueryMacro body={body} />;
+      if (/^embed\b/i.test(body)) return <EmbedMacro body={body} />;
       return <span class="macro">{`{{${s.body}}}`}</span>;
+    }
     case "math":
       return <MathView tex={s.tex} display={s.display} />;
     case "link": {
