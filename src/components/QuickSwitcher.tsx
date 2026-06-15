@@ -19,8 +19,14 @@ export function QuickSwitcher(): JSX.Element {
   const [hits] = createResource(query, (q) => (q.trim() ? backend().search(q, 12) : Promise.resolve([])));
 
   const rows = (): Row[] => {
-    const pageRows: Row[] = (pages() ?? []).map((entry) => ({ kind: "page" as const, entry }));
-    const seen = new Set(pageRows.map((r) => (r.kind === "page" ? r.entry.name.toLowerCase() : "")));
+    // Page matches: require the query as a contiguous substring of the title.
+    // The backend's quick_switch is fuzzy (subsequence) for `[[` autocomplete,
+    // but in a search box subsequence matches read as false positives (e.g.
+    // "banka" matching "BP téma Milan Wikarski").
+    const q = query().trim().toLowerCase();
+    const pageRows: Row[] = (pages() ?? [])
+      .filter((entry) => !q || entry.name.toLowerCase().includes(q))
+      .map((entry) => ({ kind: "page" as const, entry }));
     const blockRows: Row[] = [];
     for (const g of hits() ?? []) {
       for (const b of g.blocks) {

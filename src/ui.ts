@@ -113,6 +113,37 @@ export function toggleFavorite(name: string, kind: "page" | "journal" = "page") 
   }
 }
 
+// User keyboard-shortcut overrides set from the Settings modal. Persisted
+// locally and layered on top of config.edn `:shortcuts` (which is itself on top
+// of the built-in defaults). Map of command id -> binding string.
+const SHORTCUTS_KEY = "logseq-claude.shortcuts";
+function loadShortcutOverrides(): Record<string, string> {
+  try {
+    const v = JSON.parse(localStorage.getItem(SHORTCUTS_KEY) ?? "{}");
+    return v && typeof v === "object" ? v : {};
+  } catch {
+    return {};
+  }
+}
+export const [shortcutOverrides, setShortcutOverrides] =
+  createSignal<Record<string, string>>(loadShortcutOverrides());
+function persistShortcuts(next: Record<string, string>) {
+  setShortcutOverrides(next);
+  try {
+    localStorage.setItem(SHORTCUTS_KEY, JSON.stringify(next));
+  } catch {
+    // ignore
+  }
+}
+export function setShortcutOverride(id: string, binding: string) {
+  persistShortcuts({ ...shortcutOverrides(), [id]: binding });
+}
+export function resetShortcutOverride(id: string) {
+  const next = { ...shortcutOverrides() };
+  delete next[id];
+  persistShortcuts(next);
+}
+
 // Block zoom: focus a single block's subtree (click its bullet). Session-level
 // (the frontend block id stays valid while the page is loaded); cleared on nav.
 export const [zoomedBlock, setZoomedBlock] = createSignal<string | null>(null);

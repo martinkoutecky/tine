@@ -7,7 +7,7 @@
 // (Block.tsx) resolve keys through the same merged binding table, so every
 // listed command is remappable from config.edn.
 
-import { openSwitcher, toggleTheme, toggleSidebar, closeSwitcher } from "./ui";
+import { openSwitcher, toggleTheme, toggleSidebar, closeSwitcher, closeSettings } from "./ui";
 import { openJournals } from "./router";
 import {
   undo,
@@ -116,6 +116,14 @@ function chordEq(a: Chord, b: Chord): boolean {
 let bindings: Record<string, Chord[]> = {};
 let overridesApplied: Record<string, string> = {};
 
+// When true, the global dispatcher ignores all keys — used while the Settings
+// modal is recording a new binding so chords like "mod+k" get captured instead
+// of firing their command.
+let suspended = false;
+export function setKeybindingsSuspended(b: boolean) {
+  suspended = b;
+}
+
 /** Does the event match the configured binding for `id`? (single-chord only). */
 export function matchesCommand(e: KeyboardEvent, id: string): boolean {
   const cs = bindings[id];
@@ -130,6 +138,27 @@ export function currentShortcuts(): { id: string; label: string; binding: string
     label: c.label,
     binding: overridesApplied[c.id] ?? c.binding,
   })).filter((c) => c.binding !== "false");
+}
+
+/** Built-in command defaults (id + label + default binding) for the Settings
+ *  remap UI, which computes the effective binding reactively from these plus
+ *  config.edn and the user's local overrides. */
+export function commandDefaults(): { id: string; label: string; binding: string }[] {
+  return COMMANDS.map((c) => ({ id: c.id, label: c.label, binding: c.binding }));
+}
+
+/** Turn a keyboard event into a binding string like "mod+shift+down". Returns
+ *  null for a bare modifier press (keep waiting). */
+export function eventToBindingString(e: KeyboardEvent): string | null {
+  if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return null;
+  const c = eventToChord(e);
+  if (!c.key) return null;
+  const parts: string[] = [];
+  if (c.mod) parts.push("mod");
+  if (c.alt) parts.push("alt");
+  if (c.shift) parts.push("shift");
+  parts.push(c.key);
+  return parts.join("+");
 }
 
 function isEditableTarget(t: EventTarget | null): boolean {
@@ -196,6 +225,7 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
   };
 
   const handler = (e: KeyboardEvent) => {
+    if (suspended) return;
     // Ignore bare modifier presses.
     if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return;
 
@@ -211,9 +241,12 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
       }
     }
 
-    // Escape closes the switcher regardless of context.
+    // Escape closes transient overlays regardless of context. (While recording
+    // a shortcut the dispatcher is suspended, so Escape there cancels recording
+    // instead of reaching here.)
     if (e.key === "Escape") {
       closeSwitcher();
+      closeSettings();
     }
 
     // While typing, only modifier chords are eligible (so "g j" doesn't fire).

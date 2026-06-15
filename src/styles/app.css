@@ -421,15 +421,50 @@ body {
 }
 .settings-shortcut-binding {
   background: var(--code-bg);
+  border: 1px solid transparent;
   border-radius: 3px;
-  padding: 1px 6px;
+  padding: 1px 8px;
   justify-self: center;
   white-space: nowrap;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.settings-shortcut-binding:hover {
+  border-color: var(--border-color);
+}
+.settings-shortcut-binding.overridden {
+  color: var(--accent, #2b7);
+  font-weight: 600;
+}
+.settings-shortcut-binding.recording {
+  border-color: var(--accent, #2b7);
+  background: transparent;
+  color: var(--text-muted);
+  font-style: italic;
+}
+.settings-shortcut-tail {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.settings-shortcut-reset {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 13px;
+  padding: 0 2px;
+  line-height: 1;
+}
+.settings-shortcut-reset:hover {
+  color: var(--text-primary);
 }
 .settings-shortcut-id {
   color: var(--text-muted);
   font-size: 11px;
-  text-align: right;
 }
 .settings-seg {
   display: flex;

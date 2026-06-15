@@ -1,4 +1,4 @@
-import { Show, onCleanup, onMount, type JSX } from "solid-js";
+import { Show, createEffect, onCleanup, onMount, type JSX } from "solid-js";
 import { Sidebar } from "./components/Sidebar";
 import { PageView } from "./components/Page";
 import { QuickSwitcher } from "./components/QuickSwitcher";
@@ -21,7 +21,9 @@ import {
   setSidebarWidth,
   persistSidebarWidth,
   setGraphMeta,
+  graphMeta,
   openSettings,
+  shortcutOverrides,
 } from "./ui";
 
 export function App(): JSX.Element {
@@ -30,7 +32,14 @@ export function App(): JSX.Element {
     const meta = await backend().loadGraph(graphPath);
     setGraphMeta(meta ?? null);
     setWorkflow(meta?.preferred_workflow === "todo" ? "todo" : "now");
-    const dispose = installKeybindings(meta?.shortcuts ?? {});
+  });
+
+  // (Re)install keybindings whenever config or the user's local overrides change
+  // (precedence: defaults < config.edn :shortcuts < Settings overrides).
+  createEffect(() => {
+    const cfg = graphMeta()?.shortcuts ?? {};
+    const merged = { ...cfg, ...shortcutOverrides() };
+    const dispose = installKeybindings(merged);
     onCleanup(dispose);
   });
 

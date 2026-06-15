@@ -1,6 +1,16 @@
-import { For, Show, createSignal, type JSX } from "solid-js";
-import { settingsOpen, closeSettings, theme, toggleTheme, workflow, graphMeta } from "../ui";
-import { currentShortcuts } from "../keybindings";
+import { For, Show, createEffect, createSignal, onCleanup, type JSX } from "solid-js";
+import {
+  settingsOpen,
+  closeSettings,
+  theme,
+  toggleTheme,
+  workflow,
+  graphMeta,
+  shortcutOverrides,
+  setShortcutOverride,
+  resetShortcutOverride,
+} from "../ui";
+import { commandDefaults, eventToBindingString, setKeybindingsSuspended } from "../keybindings";
 import { backend } from "../backend";
 
 export function Settings(): JSX.Element {
@@ -14,6 +24,43 @@ export function Settings(): JSX.Element {
       setPublishMsg(`Failed: ${String(e)}`);
     }
   };
+
+  // Effective binding = local override > config.edn > built-in default.
+  const shortcuts = () => {
+    const cfg = graphMeta()?.shortcuts ?? {};
+    const ov = shortcutOverrides();
+    return commandDefaults().map((c) => ({
+      ...c,
+      effective: ov[c.id] ?? cfg[c.id] ?? c.binding,
+      overridden: c.id in ov,
+    }));
+  };
+
+  // Recording: capture the next chord for the command being remapped.
+  const [recording, setRecording] = createSignal<string | null>(null);
+  createEffect(() => {
+    const id = recording();
+    if (!id) {
+      setKeybindingsSuspended(false);
+      return;
+    }
+    setKeybindingsSuspended(true);
+    onCleanup(() => setKeybindingsSuspended(false));
+    const onKey = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === "Escape") {
+        setRecording(null);
+        return;
+      }
+      const b = eventToBindingString(e);
+      if (!b) return; // bare modifier — keep waiting
+      setShortcutOverride(id, b);
+      setRecording(null);
+    };
+    window.addEventListener("keydown", onKey, true);
+    onCleanup(() => window.removeEventListener("keydown", onKey, true));
+  });
 
   return (
     <Show when={settingsOpen()}>
@@ -66,21 +113,38 @@ export function Settings(): JSX.Element {
           </div>
 
           <div class="settings-section">Keyboard shortcuts</div>
+          <div class="settings-hint settings-block">
+            Click a binding to record new keys ("mod" = Ctrl). Esc cancels.
+            Overrides are saved locally on top of <code>config.edn</code>.
+          </div>
           <div class="settings-shortcuts">
-            <For each={currentShortcuts()}>
+            <For each={shortcuts()}>
               {(s) => (
                 <div class="settings-shortcut-row">
                   <span class="settings-shortcut-label">{s.label}</span>
-                  <code class="settings-shortcut-binding">{s.binding}</code>
-                  <span class="settings-shortcut-id mono">{s.id}</span>
+                  <button
+                    class="settings-shortcut-binding"
+                    classList={{ recording: recording() === s.id, overridden: s.overridden }}
+                    onClick={() => setRecording(recording() === s.id ? null : s.id)}
+                    title="Click to remap"
+                  >
+                    {recording() === s.id ? "Press keys…" : s.effective}
+                  </button>
+                  <span class="settings-shortcut-tail">
+                    <Show when={s.overridden}>
+                      <button
+                        class="settings-shortcut-reset"
+                        title="Reset to default"
+                        onClick={() => resetShortcutOverride(s.id)}
+                      >
+                        ↺
+                      </button>
+                    </Show>
+                    <span class="settings-shortcut-id mono">{s.id}</span>
+                  </span>
                 </div>
               )}
             </For>
-          </div>
-          <div class="settings-hint settings-block">
-            Remap any of these in <code>config.edn</code> under <code>:shortcuts</code>,
-            e.g. <code>{`:shortcuts {:editor/move-block-down "alt+shift+down"}`}</code>.
-            "mod" = Ctrl. Set a binding to <code>"false"</code> to disable it.
           </div>
         </div>
       </div>
