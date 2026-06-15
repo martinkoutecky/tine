@@ -1,5 +1,6 @@
 // Small global UI state: theme, left sidebar, and the quick-switcher modal.
 import { createSignal } from "solid-js";
+import type { GraphMeta } from "./types";
 
 const THEME_KEY = "logseq-claude.theme";
 function loadTheme(): "light" | "dark" {
@@ -20,6 +21,9 @@ export function applyTheme() {
 
 // Task workflow from config.edn (:preferred-workflow): drives mod+enter cycling.
 export const [workflow, setWorkflow] = createSignal<"now" | "todo">("now");
+
+// Loaded graph metadata (root path, dirs, shortcut overrides), for Settings.
+export const [graphMeta, setGraphMeta] = createSignal<GraphMeta | null>(null);
 export function toggleTheme() {
   const next = theme() === "light" ? "dark" : "light";
   setTheme(next);
@@ -143,6 +147,14 @@ export function openContextMenu(x: number, y: number, blockId: string) {
 }
 export function closeContextMenu() {
   setContextMenu(null);
+}
+
+export const [settingsOpen, setSettingsOpen] = createSignal(false);
+export function openSettings() {
+  setSettingsOpen(true);
+}
+export function closeSettings() {
+  setSettingsOpen(false);
 }
 
 export const [switcherOpen, setSwitcherOpen] = createSignal(false);

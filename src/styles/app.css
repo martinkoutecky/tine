@@ -334,6 +334,90 @@ body {
   user-select: none;
 }
 
+/* settings modal */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.3);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+  z-index: 120;
+}
+.settings-modal {
+  width: 560px;
+  max-width: 92vw;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.3);
+  padding: 18px 20px;
+}
+.settings-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 14px;
+}
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 14px;
+}
+.settings-label {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+.settings-value {
+  color: var(--text-primary);
+}
+.settings-value.mono {
+  font-family: var(--ls-font-mono);
+  font-size: 12px;
+}
+.settings-hint {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.settings-block {
+  margin-top: 8px;
+  line-height: 1.6;
+}
+.settings-block code {
+  background: var(--code-bg);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+.settings-section {
+  margin-top: 16px;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.settings-seg {
+  display: flex;
+  gap: 4px;
+}
+.settings-seg button {
+  padding: 4px 12px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.settings-seg button.active {
+  background: var(--link-color);
+  color: #fff;
+  border-color: var(--link-color);
+}
+
 /* context menu */
 .ctx-overlay {
   position: fixed;
@@ -432,6 +516,10 @@ body {
 }
 .block-main.dragging {
   opacity: 0.4;
+}
+.block-main.selected {
+  background: var(--selection-bg);
+  border-radius: 4px;
 }
 .bullet-container {
   -webkit-user-select: none;

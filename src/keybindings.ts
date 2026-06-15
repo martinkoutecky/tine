@@ -5,7 +5,44 @@
 
 import { openSwitcher, toggleTheme, toggleSidebar, closeSwitcher } from "./ui";
 import { openJournals } from "./router";
-import { undo, redo } from "./store";
+import {
+  undo,
+  redo,
+  hasSelection,
+  moveSelection,
+  indentSelection,
+  outdentSelection,
+  deleteSelection,
+  selectionMarkdown,
+  clearSelection,
+  selectedIds,
+  startEditing,
+} from "./store";
+import { backend } from "./backend";
+
+// Keyboard handling while in block-selection mode (no editor focused).
+function handleSelectionKey(e: KeyboardEvent, mod: boolean): boolean {
+  const k = e.key;
+  if (k === "Escape") return clearSelection(), true;
+  if (e.code === "Tab" && e.shiftKey) return outdentSelection(), true;
+  if (e.code === "Tab") return indentSelection(), true;
+  if (k === "ArrowDown") return moveSelection(1, e.shiftKey), true;
+  if (k === "ArrowUp") return moveSelection(-1, e.shiftKey), true;
+  if (k === "Backspace" || k === "Delete") return deleteSelection(), true;
+  if (mod && k.toLowerCase() === "c") return void backend().writeText(selectionMarkdown()), true;
+  if (mod && k.toLowerCase() === "x") {
+    void backend().writeText(selectionMarkdown());
+    deleteSelection();
+    return true;
+  }
+  if (k === "Enter") {
+    const ids = selectedIds();
+    const last = ids[ids.length - 1];
+    if (last) startEditing(last, 1e9);
+    return true;
+  }
+  return false;
+}
 
 interface Chord {
   mod: boolean;
@@ -92,6 +129,15 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
 
     const chord = eventToChord(e);
     const editing = isEditableTarget(e.target);
+
+    // Block-selection mode keys (no editor focused).
+    if (!editing && hasSelection()) {
+      if (handleSelectionKey(e, chord.mod)) {
+        e.preventDefault();
+        resetSeq();
+        return;
+      }
+    }
 
     // Escape closes the switcher regardless of context.
     if (e.key === "Escape") {

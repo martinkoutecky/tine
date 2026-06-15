@@ -6,6 +6,7 @@ import { PdfViewer } from "./components/PdfViewer";
 import { TabBar } from "./components/TabBar";
 import { ContextMenu } from "./components/ContextMenu";
 import { RightSidebar } from "./components/RightSidebar";
+import { Settings } from "./components/Settings";
 import { backend } from "./backend";
 import { installKeybindings } from "./keybindings";
 import {
@@ -19,12 +20,15 @@ import {
   sidebarWidth,
   setSidebarWidth,
   persistSidebarWidth,
+  setGraphMeta,
+  openSettings,
 } from "./ui";
 
 export function App(): JSX.Element {
   onMount(async () => {
     const graphPath = (window as any).__GRAPH_PATH__ ?? "";
     const meta = await backend().loadGraph(graphPath);
+    setGraphMeta(meta ?? null);
     setWorkflow(meta?.preferred_workflow === "todo" ? "todo" : "now");
     const dispose = installKeybindings(meta?.shortcuts ?? {});
     onCleanup(dispose);
@@ -75,6 +79,17 @@ export function App(): JSX.Element {
                 <line x1="16.5" y1="16.5" x2="21" y2="21" stroke="currentColor" stroke-width="1.7" />
               </svg>
             </button>
+            <button class="icon-btn" title="Settings" onClick={openSettings}>
+              <svg viewBox="0 0 24 24" class="nav-icon">
+                <circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.6" />
+                <path
+                  d="M12 3v2m0 14v2m9-9h-2M5 12H3m13.5-6.5l-1.5 1.5m-6 6l-1.5 1.5m9 0l-1.5-1.5m-6-6L6.5 5.5"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.4"
+                />
+              </svg>
+            </button>
             <button class="icon-btn" title="Toggle theme (t t)" onClick={toggleTheme}>
               <Show
                 when={theme() === "light"}
@@ -119,6 +134,7 @@ export function App(): JSX.Element {
       </Show>
       <QuickSwitcher />
       <ContextMenu />
+      <Settings />
     </div>
   );
 }

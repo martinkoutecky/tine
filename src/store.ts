@@ -250,6 +250,8 @@ export function setRaw(id: string, raw: string) {
 }
 
 export function startEditing(id: string, offset: number) {
+  setSelAnchor(null);
+  setSelFocus(null);
   setCaretTarget({ id, offset });
   setEditingId(id);
 }
@@ -423,10 +425,9 @@ export function blockSubtreeMarkdown(id: string, level = 0): string {
 }
 
 /** Remove a block and its subtree. */
-export function deleteBlock(id: string) {
+function deleteBlockInternal(id: string) {
   const node = doc.byId[id];
   if (!node) return;
-  pushUndo("delete");
   const pageName = node.page;
   setDoc(
     produce((s) => {
@@ -446,8 +447,149 @@ export function deleteBlock(id: string) {
   markDirty(pageName);
 }
 
+export function deleteBlock(id: string) {
+  if (!doc.byId[id]) return;
+  pushUndo("delete");
+  deleteBlockInternal(id);
+}
+
+// ---------------------------------------------------------------------------
+// Multi-block selection (Escape from editing; Shift+Arrows extend) + ops
+// ---------------------------------------------------------------------------
+
+const [selAnchor, setSelAnchor] = createSignal<string | null>(null);
+const [selFocus, setSelFocus] = createSignal<string | null>(null);
+
+export function selectedIds(): string[] {
+  const a = selAnchor();
+  const f = selFocus();
+  if (!a || !f) return [];
+  const order = visibleOrder();
+  let i = order.indexOf(a);
+  let j = order.indexOf(f);
+  if (i < 0 || j < 0) return [];
+  if (i > j) [i, j] = [j, i];
+  return order.slice(i, j + 1);
+}
+export function isSelected(id: string): boolean {
+  return selectedIds().includes(id);
+}
+export function selectBlock(id: string) {
+  setEditingId(null);
+  setSelAnchor(id);
+  setSelFocus(id);
+}
+export function clearSelection() {
+  setSelAnchor(null);
+  setSelFocus(null);
+}
+export function hasSelection(): boolean {
+  return selAnchor() !== null;
+}
+export function moveSelection(dir: 1 | -1, extend: boolean) {
+  const f = selFocus();
+  if (!f) return;
+  const order = visibleOrder();
+  const i = order.indexOf(f);
+  const ni = i + dir;
+  if (ni < 0 || ni >= order.length) return;
+  setSelFocus(order[ni]);
+  if (!extend) setSelAnchor(order[ni]);
+}
+
+/** Top-level selected blocks (exclude those whose parent is also selected). */
+function topSelected(): string[] {
+  const ids = selectedIds();
+  const set = new Set(ids);
+  return ids.filter((id) => {
+    const p = doc.byId[id]?.parent;
+    return !(p && set.has(p));
+  });
+}
+
+export function indentSelection() {
+  const ids = topSelected();
+  if (!ids.length) return;
+  const first = ids[0];
+  const sibs = rootsOf(first);
+  const fi = sibs.indexOf(first);
+  if (fi <= 0) return;
+  const newParent = sibs[fi - 1];
+  pushUndo("indent-sel");
+  for (const id of ids) moveBlockInternal(id, newParent, doc.byId[newParent].children.length);
+  setDoc("byId", newParent, "collapsed", false);
+}
+
+export function outdentSelection() {
+  const ids = topSelected();
+  if (!ids.length) return;
+  const parentId = doc.byId[ids[0]].parent;
+  if (parentId === null) return;
+  const grand = doc.byId[parentId].parent;
+  pushUndo("outdent-sel");
+  let after = parentId;
+  for (const id of ids) {
+    moveBlockInternal(id, grand, indexInSiblings(after) + 1);
+    after = id;
+  }
+}
+
+export function deleteSelection() {
+  const ids = topSelected();
+  if (!ids.length) return;
+  pushUndo("delete-sel");
+  for (const id of ids) deleteBlockInternal(id);
+  clearSelection();
+}
+
+export function selectionMarkdown(): string {
+  return topSelected()
+    .map((id) => blockSubtreeMarkdown(id))
+    .join("\n");
+}
+
 /** Move a block to be a child of `newParent` (or root of its page) at `index`.
  *  Used by drag-and-drop. */
+/** Move without pushing an undo entry (for batched selection ops). */
+function moveBlockInternal(id: string, newParent: string | null, index: number) {
+  const node = doc.byId[id];
+  if (!node) return;
+  let p = newParent;
+  while (p !== null) {
+    if (p === id) return;
+    p = doc.byId[p].parent;
+  }
+  const oldPage = node.page;
+  const newPage = newParent ? doc.byId[newParent].page : oldPage;
+  setDoc(
+    produce((s) => {
+      const oldArr =
+        node.parent === null
+          ? s.pages[s.pages.findIndex((x) => x.name === oldPage)].roots
+          : s.byId[node.parent!].children;
+      const from = oldArr.indexOf(id);
+      oldArr.splice(from, 1);
+      s.byId[id].parent = newParent;
+      const newArr =
+        newParent === null
+          ? s.pages[s.pages.findIndex((x) => x.name === newPage)].roots
+          : s.byId[newParent].children;
+      let idx = index;
+      if (oldArr === newArr && from < idx) idx -= 1;
+      newArr.splice(Math.max(0, Math.min(idx, newArr.length)), 0, id);
+      if (newPage !== oldPage) {
+        const reassign = (bid: string) => {
+          s.byId[bid].page = newPage;
+          s.byId[bid].children.forEach(reassign);
+        };
+        reassign(id);
+      }
+    })
+  );
+  markDirty(oldPage);
+  if (newPage !== oldPage) markDirty(newPage);
+}
+
 export function moveBlock(id: string, newParent: string | null, index: number) {
   const node = doc.byId[id];
   if (!node) return;

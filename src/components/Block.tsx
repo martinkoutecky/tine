@@ -25,6 +25,8 @@ import {
   insertOutlineAfter,
   deleteBlock,
   moveBlock,
+  selectBlock,
+  isSelected,
 } from "../store";
 import { parseOutline } from "../editor/outline";
 import { blockView } from "../render/block";
@@ -131,6 +133,7 @@ export function Block(props: { id: string }): JSX.Element {
           "drop-before": dropInd()?.id === props.id && dropInd()?.before === true,
           "drop-after": dropInd()?.id === props.id && dropInd()?.before === false,
           dragging: dragId() === props.id,
+          selected: isSelected(props.id),
         }}
         onContextMenu={(e) => {
           e.preventDefault();
@@ -474,7 +477,8 @@ function Editor(props: { id: string }): JSX.Element {
         }
       }
     } else if (e.key === "Escape") {
-      ref.blur();
+      e.preventDefault();
+      selectBlock(props.id); // exit editing into block-selection mode
     }
   };
 
