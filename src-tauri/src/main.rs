@@ -199,6 +199,11 @@ fn delete_page(name: String, kind: PageKind, state: State<'_, AppState>) -> Resu
 }
 
 #[tauri::command]
+fn rename_page(old: String, new: String, state: State<'_, AppState>) -> Result<(), String> {
+    with_graph(&state, |g| g.rename_page(&old, &new).map_err(|e| e.to_string()))
+}
+
+#[tauri::command]
 fn publish_html(state: State<'_, AppState>) -> Result<(String, usize), String> {
     with_graph(&state, |g| g.publish_html().map_err(|e| e.to_string()))
 }
@@ -348,6 +353,7 @@ fn main() {
             get_backlinks,
             get_unlinked_refs,
             delete_page,
+            rename_page,
             publish_html,
             run_query,
             search,

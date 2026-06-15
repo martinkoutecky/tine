@@ -270,6 +270,50 @@ impl Graph {
         crate::publish::publish_graph(self)
     }
 
+    /// Rename a page: move its file to the new name and rewrite every `[[old]]`
+    /// / `#old` reference across the graph. Journals can't be renamed (their
+    /// name is their date). Returns an error if `new` already exists.
+    pub fn rename_page(&self, old: &str, new: &str) -> io::Result<()> {
+        let new = new.trim();
+        if new.is_empty() {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "empty name"));
+        }
+        if old.eq_ignore_ascii_case(new) {
+            return Ok(());
+        }
+        let old_path = self.pages_path().join(format!("{}.md", encode_page_name(old)));
+        let new_path = self.pages_path().join(format!("{}.md", encode_page_name(new)));
+        if new_path.exists() {
+            return Err(io::Error::new(io::ErrorKind::AlreadyExists, "target page exists"));
+        }
+        // Move the page's own file (if it has one — a page can exist only as
+        // references, with no file yet).
+        if old_path.exists() {
+            let content = fs::read_to_string(&old_path)?;
+            if let Some(parent) = new_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            atomic_write(&new_path, content.as_bytes())?;
+            fs::remove_file(&old_path)?;
+        }
+        // Rewrite references across every page/journal that mentions `old`.
+        for entry in self.list_pages() {
+            if entry.path == old_path {
+                continue; // already moved
+            }
+            let Ok(content) = fs::read_to_string(&entry.path) else { continue };
+            if !crate::refs::references_page(&content, old) {
+                continue;
+            }
+            let updated = crate::refs::rename_refs(&content, old, new);
+            if updated != content {
+                atomic_write(&entry.path, updated.as_bytes())?;
+            }
+        }
+        self.invalidate_cache();
+        Ok(())
+    }
+
     /// Delete a page/journal file.
     pub fn delete_page(&self, name: &str, kind: PageKind) -> io::Result<()> {
         if let Some(entry) = self.find_entry(name, kind) {

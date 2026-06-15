@@ -71,6 +71,67 @@ pub fn references_page(raw: &str, target: &str) -> bool {
     page_refs(raw).iter().any(|r| normalize(r) == t)
 }
 
+/// Rewrite every reference to page `from` (case-insensitive) as `to`, returning
+/// the new text. Handles `[[from]]`, `#from`, and `#[[from]]`. A `#tag` becomes
+/// `#[[to]]` when `to` contains characters that aren't valid in a bare tag
+/// (e.g. spaces), matching Logseq.
+pub fn rename_refs(raw: &str, from: &str, to: &str) -> String {
+    let target = normalize(from);
+    let mut out = String::with_capacity(raw.len());
+    let mut i = 0;
+    while i < raw.len() {
+        let rest = &raw[i..];
+        if let Some(after) = rest.strip_prefix("[[") {
+            if let Some(end) = after.find("]]") {
+                if normalize(&after[..end]) == target {
+                    out.push_str(&format!("[[{to}]]"));
+                } else {
+                    out.push_str(&raw[i..i + 2 + end + 2]);
+                }
+                i += 2 + end + 2;
+                continue;
+            }
+        }
+        if let Some(after) = rest.strip_prefix("#[[") {
+            if let Some(end) = after.find("]]") {
+                if normalize(&after[..end]) == target {
+                    out.push_str(&tag_for(to));
+                } else {
+                    out.push_str(&raw[i..i + 3 + end + 2]);
+                }
+                i += 3 + end + 2;
+                continue;
+            }
+        }
+        if rest.starts_with('#') {
+            let after = &rest[1..];
+            let len = after.find(|c: char| !is_tag_char(c)).unwrap_or(after.len());
+            if len > 0 {
+                if normalize(&after[..len]) == target {
+                    out.push_str(&tag_for(to));
+                } else {
+                    out.push_str(&raw[i..i + 1 + len]);
+                }
+                i += 1 + len;
+                continue;
+            }
+        }
+        let ch = rest.chars().next().unwrap();
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
+}
+
+/// `#to` if `to` is a bare-tag-safe name, else `#[[to]]`.
+fn tag_for(to: &str) -> String {
+    if to.chars().all(is_tag_char) && !to.is_empty() {
+        format!("#{to}")
+    } else {
+        format!("#[[{to}]]")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

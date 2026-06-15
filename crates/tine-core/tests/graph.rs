@@ -252,6 +252,32 @@ fn query_between_filters_by_journal_date() {
 }
 
 #[test]
+fn rename_page_moves_file_and_updates_refs() {
+    let root = std::env::temp_dir().join(format!("tine-rename-test-{}", std::process::id()));
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    std::fs::create_dir_all(root.join("journals")).unwrap();
+    std::fs::write(root.join("pages").join("Old Name.md"), "- the page body\n").unwrap();
+    std::fs::write(root.join("pages").join("Other.md"), "- see [[Old Name]] and #[[Old Name]]\n").unwrap();
+    std::fs::write(root.join("journals").join("2026_06_15.md"), "- ref [[Old Name]]\n").unwrap();
+
+    let g = Graph::open(&root);
+    g.rename_page("Old Name", "New Name").unwrap();
+
+    // File moved.
+    assert!(!root.join("pages").join("Old Name.md").exists());
+    assert!(root.join("pages").join("New Name.md").exists());
+    // References rewritten everywhere.
+    let other = std::fs::read_to_string(root.join("pages").join("Other.md")).unwrap();
+    assert!(other.contains("[[New Name]]"), "{other}");
+    assert!(other.contains("#[[New Name]]"), "{other}");
+    assert!(!other.contains("Old Name"), "{other}");
+    let journal = std::fs::read_to_string(root.join("journals").join("2026_06_15.md")).unwrap();
+    assert!(journal.contains("[[New Name]]"));
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn query_open_tasks() {
     let g = demo_graph();
     let groups = g.run_query("(task TODO DOING)");

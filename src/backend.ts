@@ -16,6 +16,8 @@ export interface Backend {
   getBacklinks(name: string): Promise<RefGroup[]>;
   getUnlinkedRefs(name: string): Promise<RefGroup[]>;
   deletePage(name: string, kind: "journal" | "page"): Promise<void>;
+  /** Rename a page and update all [[refs]]/#tags across the graph. */
+  renamePage(old: string, next: string): Promise<void>;
   publishHtml(): Promise<[string, number]>;
   runQuery(query: string): Promise<RefGroup[]>;
   search(query: string, limit: number): Promise<RefGroup[]>;
@@ -82,6 +84,9 @@ class TauriBackend implements Backend {
   }
   deletePage(name: string, kind: "journal" | "page") {
     return this.call<void>("delete_page", { name, kind });
+  }
+  renamePage(old: string, next: string) {
+    return this.call<void>("rename_page", { old, new: next });
   }
   publishHtml() {
     return this.call<[string, number]>("publish_html");

@@ -239,24 +239,62 @@ function ZoomedView(props: { id: string }): JSX.Element {
 }
 
 function PageSection(props: { page: FeedPage }): JSX.Element {
+  const [renaming, setRenaming] = createSignal(false);
+  const [newName, setNewName] = createSignal("");
+  const startRename = () => {
+    if (props.page.kind !== "page") return; // journals are named by their date
+    setNewName(props.page.name);
+    setRenaming(true);
+  };
+  const commitRename = async () => {
+    const next = newName().trim();
+    setRenaming(false);
+    if (!next || next === props.page.name) return;
+    try {
+      await backend().renamePage(props.page.name, next);
+      openPage(next, "page");
+    } catch (e) {
+      alert(`Rename failed: ${String(e)}`);
+    }
+  };
+
   return (
     <div class="page-section">
       <div class="page-title-row">
-        <h1
-          class="page-title"
-          classList={{ "journal-title": props.page.kind === "journal" }}
-          onClick={() => openPage(props.page.name, props.page.kind)}
+        <Show
+          when={!renaming()}
+          fallback={
+            <input
+              class="page-title-input"
+              value={newName()}
+              ref={(el) => queueMicrotask(() => (el.focus(), el.select()))}
+              onInput={(e) => setNewName(e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void commitRename();
+                else if (e.key === "Escape") setRenaming(false);
+              }}
+              onBlur={() => setRenaming(false)}
+            />
+          }
         >
-          <Show when={props.page.kind === "journal"}>
-            <svg class="title-cal" viewBox="0 0 24 24" aria-hidden="true">
-              <rect x="4" y="5" width="16" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.7" />
-              <line x1="4" y1="9.5" x2="20" y2="9.5" stroke="currentColor" stroke-width="1.7" />
-              <line x1="8.5" y1="3" x2="8.5" y2="7" stroke="currentColor" stroke-width="1.7" />
-              <line x1="15.5" y1="3" x2="15.5" y2="7" stroke="currentColor" stroke-width="1.7" />
-            </svg>
-          </Show>
-          {props.page.title}
-        </h1>
+          <h1
+            class="page-title"
+            classList={{ "journal-title": props.page.kind === "journal" }}
+            title={props.page.kind === "page" ? "Double-click to rename" : undefined}
+            onClick={() => openPage(props.page.name, props.page.kind)}
+            onDblClick={startRename}
+          >
+            <Show when={props.page.kind === "journal"}>
+              <svg class="title-cal" viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="4" y="5" width="16" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.7" />
+                <line x1="4" y1="9.5" x2="20" y2="9.5" stroke="currentColor" stroke-width="1.7" />
+                <line x1="8.5" y1="3" x2="8.5" y2="7" stroke="currentColor" stroke-width="1.7" />
+                <line x1="15.5" y1="3" x2="15.5" y2="7" stroke="currentColor" stroke-width="1.7" />
+              </svg>
+            </Show>
+            {props.page.title}
+          </h1>
+        </Show>
         <button
           class="fav-star"
           classList={{ active: isFavorite(props.page.name) }}
