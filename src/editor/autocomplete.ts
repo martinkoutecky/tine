@@ -68,12 +68,18 @@ export function tagInsert(name: string): string {
   return /\s/.test(name) ? `#[[${name}]]` : `#${name}`;
 }
 
+/** Action commands need runtime behaviour (date stamps, file picker) rather
+ *  than a fixed insertion; the editor resolves these when chosen. */
+export type CommandAction = "scheduled" | "deadline" | "upload-asset" | "now-time" | "today";
+
 export interface Command {
   label: string;
-  /** Text to insert in place of `/query`. */
-  insert: string;
+  /** Text to insert in place of `/query` (omitted for action commands). */
+  insert?: string;
   /** Caret offset within `insert` (default: end). */
   caret?: number;
+  /** A runtime action resolved by the editor instead of a literal insert. */
+  action?: CommandAction;
 }
 
 export const COMMANDS: Command[] = [
@@ -82,11 +88,25 @@ export const COMMANDS: Command[] = [
   { label: "LATER", insert: "LATER " },
   { label: "NOW", insert: "NOW " },
   { label: "DONE", insert: "DONE " },
+  { label: "WAITING", insert: "WAITING " },
+  { label: "CANCELED", insert: "CANCELED " },
+  { label: "Scheduled", action: "scheduled" },
+  { label: "Deadline", action: "deadline" },
   { label: "Heading 1", insert: "# " },
   { label: "Heading 2", insert: "## " },
   { label: "Heading 3", insert: "### " },
+  { label: "Heading 4", insert: "#### " },
+  { label: "Page reference", insert: "[[]]", caret: 2 },
+  { label: "Link", insert: "[]()", caret: 1 },
+  { label: "Upload an asset", action: "upload-asset" },
+  { label: "Code block", insert: "```\n\n```", caret: 4 },
+  { label: "Quote", insert: "> " },
+  { label: "Divider", insert: "---" },
   { label: "Query", insert: "{{query }}", caret: 8 },
+  { label: "Embed", insert: "{{embed }}", caret: 8 },
   { label: "Math block", insert: "$$$$", caret: 2 },
+  { label: "Current time", action: "now-time" },
+  { label: "Today", action: "today" },
 ];
 
 export function filterCommands(query: string): Command[] {

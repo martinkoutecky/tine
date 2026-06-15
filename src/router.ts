@@ -4,6 +4,7 @@
 // (acting on the active tab) so existing call sites are unchanged.
 
 import { createSignal } from "solid-js";
+import { pushRecent } from "./ui";
 
 export type Route =
   | { kind: "journals" }
@@ -44,6 +45,7 @@ function updateActive(r: Route) {
 
 export function openPage(name: string, pageKind: "journal" | "page" = "page") {
   updateActive({ kind: "page", name, pageKind });
+  pushRecent(name, pageKind);
 }
 
 export function openJournals() {
@@ -59,6 +61,7 @@ export function openInNewTab(r: Route) {
 
 export function openPageInNewTab(name: string, pageKind: "journal" | "page" = "page") {
   openInNewTab({ kind: "page", name, pageKind });
+  pushRecent(name, pageKind);
 }
 
 export function setActiveTab(id: string) {

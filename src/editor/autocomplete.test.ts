@@ -60,7 +60,11 @@ describe("filterCommands", () => {
       "Heading 1",
       "Heading 2",
       "Heading 3",
+      "Heading 4",
     ]);
     expect(filterCommands("query").map((c) => c.label)).toEqual(["Query"]);
+    // Action commands surface too.
+    expect(filterCommands("scheduled").map((c) => c.label)).toEqual(["Scheduled"]);
+    expect(filterCommands("upload").map((c) => c.label)).toEqual(["Upload an asset"]);
   });
 });

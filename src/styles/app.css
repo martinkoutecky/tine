@@ -239,6 +239,28 @@ body {
   color: var(--text-muted);
   padding: 4px 8px;
 }
+.nav-section-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  user-select: none;
+}
+.nav-section-toggle:hover {
+  color: var(--text-secondary);
+}
+.nav-toggle-caret {
+  display: inline-block;
+  transition: transform 0.1s ease;
+  font-size: 9px;
+}
+.nav-toggle-caret.open {
+  transform: rotate(90deg);
+}
+.nav-section-count {
+  margin-left: auto;
+  opacity: 0.7;
+}
 
 .sidebar-footer {
   padding: 10px 6px 4px;

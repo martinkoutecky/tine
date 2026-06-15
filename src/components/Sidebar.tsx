@@ -1,10 +1,11 @@
-import { For, Show, createResource, type JSX } from "solid-js";
+import { For, Show, createResource, createSignal, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { openJournals, openPage, openPageInNewTab, openInNewTab, route } from "../router";
-import { openSwitcher, favorites } from "../ui";
+import { openSwitcher, favorites, recentPages } from "../ui";
 
 export function Sidebar(): JSX.Element {
   const [pages] = createResource(() => backend().listPages());
+  const [showAll, setShowAll] = createSignal(false);
 
   const isActive = (name: string) => {
     const r = route();
@@ -66,10 +67,42 @@ export function Sidebar(): JSX.Element {
           </div>
         </Show>
 
+        <Show when={recentPages().length > 0}>
+          <div class="nav-section">
+            <div class="nav-section-header">RECENT</div>
+            <For each={recentPages()}>
+              {(r) => (
+                <div
+                  class="nav-page"
+                  classList={{ active: isActive(r.name) }}
+                  onClick={() => openPage(r.name, r.kind)}
+                  onAuxClick={(e) => {
+                    if (e.button === 1) {
+                      e.preventDefault();
+                      openPageInNewTab(r.name, r.kind);
+                    }
+                  }}
+                >
+                  {r.name.startsWith("hls__") ? r.name.slice(5) : r.name}
+                </div>
+              )}
+            </For>
+          </div>
+        </Show>
+
         <div class="nav-section">
-          <div class="nav-section-header">PAGES</div>
-          <Show when={pages()}>
-            <For each={pages()!.filter((p) => p.kind === "page")}>
+          <div
+            class="nav-section-header nav-section-toggle"
+            onClick={() => setShowAll(!showAll())}
+          >
+            <span class="nav-toggle-caret" classList={{ open: showAll() }}>▸</span>
+            ALL PAGES
+            <Show when={pages()}>
+              <span class="nav-section-count">{pages()!.filter((p) => p.kind === "page").length}</span>
+            </Show>
+          </div>
+          <Show when={showAll() && pages()}>
+            <For each={pages()!.filter((p) => p.kind === "page").sort((a, b) => a.name.localeCompare(b.name))}>
               {(p) => (
                 <div
                   class="nav-page"

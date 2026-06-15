@@ -113,6 +113,30 @@ export function toggleFavorite(name: string, kind: "page" | "journal" = "page") 
   }
 }
 
+// Recently-visited pages (navigation history), newest first. This is the right
+// signal for the sidebar's "recent" list — file mtime is unreliable (a restored
+// backup makes every file look freshly modified). Persisted locally.
+const RECENT_KEY = "logseq-claude.recent";
+function loadRecent(): FavItem[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(RECENT_KEY) ?? "[]");
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
+  }
+}
+export const [recentPages, setRecentPages] = createSignal<FavItem[]>(loadRecent());
+export function pushRecent(name: string, kind: "page" | "journal" = "page") {
+  const cur = recentPages().filter((r) => !(r.name === name && r.kind === kind));
+  const next = [{ name, kind }, ...cur].slice(0, 20);
+  setRecentPages(next);
+  try {
+    localStorage.setItem(RECENT_KEY, JSON.stringify(next));
+  } catch {
+    // ignore
+  }
+}
+
 // User keyboard-shortcut overrides set from the Settings modal. Persisted
 // locally and layered on top of config.edn `:shortcuts` (which is itself on top
 // of the built-in defaults). Map of command id -> binding string.
