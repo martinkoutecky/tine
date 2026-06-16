@@ -228,7 +228,9 @@ pub fn resolve_block(graph: &Graph, uuid: &str) -> Option<RefGroup> {
         for (entry, doc) in pages {
             let mut found: Option<&DocBlock> = None;
             walk(&doc.roots, &mut |b| {
-                if found.is_none() && b.property("id").as_deref() == Some(uuid) {
+                if found.is_none()
+                    && (b.uuid == uuid || b.property("id").as_deref() == Some(uuid))
+                {
                     found = Some(b);
                 }
             });

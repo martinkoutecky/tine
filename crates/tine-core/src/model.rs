@@ -174,16 +174,25 @@ impl Graph {
         }
     }
 
+    /// Load a page by entry. Served from the in-memory cache so block uuids are
+    /// stable and consistent with queries / refs / the sidebar. Falls back to a
+    /// disk parse for a page not yet in the cache (e.g. just created externally).
     pub fn load_page(&self, entry: &PageEntry) -> io::Result<PageDto> {
+        let cached = self.with_pages(|pages| {
+            pages
+                .iter()
+                .find(|(e, _)| e.kind == entry.kind && e.name.eq_ignore_ascii_case(&entry.name))
+                .map(|(e, d)| page_dto(e, d))
+        });
+        if let Some(dto) = cached {
+            return Ok(dto);
+        }
         let content = fs::read_to_string(&entry.path)?;
-        let doc = doc::parse(&content);
-        Ok(PageDto {
-            name: entry.name.clone(),
-            kind: entry.kind,
-            title: entry.name.clone(),
-            pre_block: doc.pre_block.clone(),
-            blocks: doc.roots.iter().map(block_to_dto).collect(),
-        })
+        let mut doc = doc::parse(&content);
+        for b in &mut doc.roots {
+            assign_uuids(b);
+        }
+        Ok(page_dto(entry, &doc))
     }
 
     /// Read and parse a page file into a [`Document`].
@@ -197,7 +206,14 @@ impl Graph {
     fn load_all_pages(&self) -> Vec<(PageEntry, Document)> {
         self.list_pages()
             .into_iter()
-            .filter_map(|e| self.read_document(&e).ok().map(|d| (e, d)))
+            .filter_map(|e| {
+                self.read_document(&e).ok().map(|mut d| {
+                    for b in &mut d.roots {
+                        assign_uuids(b);
+                    }
+                    (e, d)
+                })
+            })
             .collect()
     }
 
@@ -229,7 +245,12 @@ impl Graph {
 
     /// Update one page in the cache after we write it (no full rebuild). A no-op
     /// if the cache hasn't been built yet.
-    fn cache_upsert(&self, entry: PageEntry, doc: Document) {
+    fn cache_upsert(&self, entry: PageEntry, mut doc: Document) {
+        // Fill uuids for any block that lacks one (e.g. PDF-highlight writes);
+        // blocks saved from the frontend already carry their ids, which are kept.
+        for b in &mut doc.roots {
+            assign_uuids(b);
+        }
         let mut guard = self.cache.write().unwrap();
         if let Some(pages) = guard.as_mut() {
             match pages.iter_mut().find(|(e, _)| {
@@ -576,20 +597,50 @@ fn list_md(dir: &Path, kind: PageKind) -> Vec<PageEntry> {
     out
 }
 
-/// Convert a parsed block (and its subtree) to a DTO, assigning fresh ids.
+/// Assign a stable uuid to every block that lacks one (called when a document
+/// enters the cache). Prefers the persisted `id::` so a referenced block's node
+/// identity and its `((ref))` target coincide; otherwise generates one. Existing
+/// (non-empty) uuids are preserved — this is what carries the frontend's block
+/// ids through a save so identity is stable across edits.
+pub fn assign_uuids(b: &mut DocBlock) {
+    if b.uuid.is_empty() {
+        b.uuid = b
+            .property("id")
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
+    }
+    for c in &mut b.children {
+        assign_uuids(c);
+    }
+}
+
+/// Convert a parsed (cached) block to a DTO, carrying its stable uuid as the id.
 pub fn block_to_dto(b: &DocBlock) -> BlockDto {
     BlockDto {
-        id: Uuid::new_v4().to_string(),
+        id: if b.uuid.is_empty() { Uuid::new_v4().to_string() } else { b.uuid.clone() },
         raw: b.raw.clone(),
         collapsed: b.collapsed(),
         children: b.children.iter().map(block_to_dto).collect(),
     }
 }
 
+/// Convert a frontend DTO subtree back to a doc block, preserving the frontend's
+/// block id as the node uuid so the cache and the frontend agree on identity.
 fn dto_to_doc(b: &BlockDto) -> DocBlock {
     DocBlock {
         raw: b.raw.clone(),
         children: b.children.iter().map(dto_to_doc).collect(),
+        uuid: b.id.clone(),
+    }
+}
+
+/// Build a page DTO from a cached document.
+fn page_dto(entry: &PageEntry, doc: &Document) -> PageDto {
+    PageDto {
+        name: entry.name.clone(),
+        kind: entry.kind,
+        title: entry.name.clone(),
+        pre_block: doc.pre_block.clone(),
+        blocks: doc.roots.iter().map(block_to_dto).collect(),
     }
 }
 

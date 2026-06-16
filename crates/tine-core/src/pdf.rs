@@ -189,7 +189,7 @@ fn highlight_block(h: &Highlight) -> DocBlock {
     }
     lines.push("ls-type:: annotation".to_string());
     lines.push(format!("id:: {}", h.id));
-    DocBlock { raw: lines.join("\n"), children: Vec::new() }
+    DocBlock { raw: lines.join("\n"), children: Vec::new(), uuid: String::new() }
 }
 
 #[cfg(test)]

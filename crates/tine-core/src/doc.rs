@@ -28,16 +28,34 @@ pub struct Document {
     pub roots: Vec<DocBlock>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocBlock {
     /// Dedented block body: first line + continuation lines joined with `\n`.
     pub raw: String,
     pub children: Vec<DocBlock>,
+    /// Stable identity assigned once when the block enters the in-memory cache
+    /// (the persisted `id::` if any, else a generated uuid). It is the handle
+    /// every surface (main view, sidebar, query result, ref) uses to address the
+    /// block, and round-trips through save so it stays stable across edits. It is
+    /// NOT part of block *content*, so it is excluded from equality — otherwise
+    /// the conflict guard (`parse(disk) == cached`) would always see a "change".
+    #[serde(default)]
+    pub uuid: String,
 }
+
+// Identity is metadata, not content: two blocks are equal iff their body and
+// subtree match, regardless of uuid. Keeps the external-change conflict guard
+// and the round-trip tests comparing on content alone.
+impl PartialEq for DocBlock {
+    fn eq(&self, other: &Self) -> bool {
+        self.raw == other.raw && self.children == other.children
+    }
+}
+impl Eq for DocBlock {}
 
 impl DocBlock {
     pub fn new(raw: impl Into<String>) -> Self {
-        DocBlock { raw: raw.into(), children: Vec::new() }
+        DocBlock { raw: raw.into(), children: Vec::new(), uuid: String::new() }
     }
 
     /// `key:: value` properties found in the block body, in order.
@@ -154,7 +172,7 @@ pub fn parse(content: &str) -> Document {
         while let Some(top) = stack.last() {
             if top.col >= keep_above {
                 let f = stack.pop().unwrap();
-                let block = DocBlock { raw: f.raw, children: f.children };
+                let block = DocBlock { raw: f.raw, children: f.children, uuid: String::new() };
                 match stack.last_mut() {
                     Some(parent) => parent.children.push(block),
                     None => roots.push(block),
