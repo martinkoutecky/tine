@@ -1,29 +1,85 @@
-import { type JSX } from "solid-js";
+import { For, Show, createMemo, createSignal, type JSX } from "solid-js";
 import { openPage } from "../router";
 import { journalTitle } from "../journal";
+import { graphMeta } from "../ui";
 
-// Topbar calendar button: pick any date and jump to its journal page. Uses a
-// native date input (overlaid, transparent) for a zero-dependency month picker.
+const MONTHS = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+const DOW_BASE = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
+
+// Topbar calendar button → a month-grid popup to jump to any date's journal.
+// Custom popup (not a native date input) so it closes on outside-click and
+// honours :start-of-week, matching the scheduled/deadline picker.
 export function CalendarJump(): JSX.Element {
+  const [open, setOpen] = createSignal(false);
+  const today = new Date();
+  const [view, setView] = createSignal({ y: today.getFullYear(), m: today.getMonth() });
+  const sow = () => {
+    const n = graphMeta()?.start_of_week ?? 0;
+    return n >= 0 && n <= 6 ? n : 0;
+  };
+  const dow = () => DOW_BASE.slice(sow()).concat(DOW_BASE.slice(0, sow()));
+
+  const grid = createMemo(() => {
+    const { y, m } = view();
+    const first = (new Date(y, m, 1).getDay() - sow() + 7) % 7;
+    const days = new Date(y, m + 1, 0).getDate();
+    const cells: (number | null)[] = [];
+    for (let i = 0; i < first; i++) cells.push(null);
+    for (let d = 1; d <= days; d++) cells.push(d);
+    return cells;
+  });
+  const step = (delta: number) => {
+    const total = view().y * 12 + view().m + delta;
+    setView({ y: Math.floor(total / 12), m: ((total % 12) + 12) % 12 });
+  };
+  const pick = (d: number) => {
+    openPage(journalTitle(new Date(view().y, view().m, d)), "journal");
+    setOpen(false);
+  };
+  const isToday = (d: number) =>
+    view().y === today.getFullYear() && view().m === today.getMonth() && d === today.getDate();
+
   return (
-    <label class="icon-btn calendar-jump" title="Go to date">
-      <svg viewBox="0 0 24 24" class="nav-icon" aria-hidden="true">
-        <rect x="4" y="5" width="16" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.7" />
-        <line x1="4" y1="9.5" x2="20" y2="9.5" stroke="currentColor" stroke-width="1.7" />
-        <line x1="8.5" y1="3" x2="8.5" y2="7" stroke="currentColor" stroke-width="1.7" />
-        <line x1="15.5" y1="3" x2="15.5" y2="7" stroke="currentColor" stroke-width="1.7" />
-      </svg>
-      <input
-        type="date"
-        class="calendar-jump-input"
-        onChange={(e) => {
-          const v = e.currentTarget.value; // yyyy-mm-dd
-          if (!v) return;
-          const [y, m, d] = v.split("-").map(Number);
-          openPage(journalTitle(new Date(y, m - 1, d)), "journal");
-          e.currentTarget.value = "";
-        }}
-      />
-    </label>
+    <>
+      <button class="icon-btn" title="Go to date" onClick={() => setOpen(!open())}>
+        <svg viewBox="0 0 24 24" class="nav-icon" aria-hidden="true">
+          <rect x="4" y="5" width="16" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.7" />
+          <line x1="4" y1="9.5" x2="20" y2="9.5" stroke="currentColor" stroke-width="1.7" />
+          <line x1="8.5" y1="3" x2="8.5" y2="7" stroke="currentColor" stroke-width="1.7" />
+          <line x1="15.5" y1="3" x2="15.5" y2="7" stroke="currentColor" stroke-width="1.7" />
+        </svg>
+      </button>
+      <Show when={open()}>
+        <div class="dp-overlay" onClick={() => setOpen(false)}>
+          <div class="date-picker calendar-jump-pop" onClick={(e) => e.stopPropagation()}>
+            <div class="dp-head">
+              <button class="dp-nav" onClick={() => step(-1)} title="Previous month">‹</button>
+              <span class="dp-title">{MONTHS[view().m]} {view().y}</span>
+              <button class="dp-nav" onClick={() => step(1)} title="Next month">›</button>
+            </div>
+            <div class="dp-grid dp-dow">
+              <For each={dow()}>{(d) => <span class="dp-dowcell">{d}</span>}</For>
+            </div>
+            <div class="dp-grid">
+              <For each={grid()}>
+                {(d) => (
+                  <Show when={d !== null} fallback={<span class="dp-cell dp-empty" />}>
+                    <button class="dp-cell" classList={{ today: isToday(d!) }} onClick={() => pick(d!)}>
+                      {d}
+                    </button>
+                  </Show>
+                )}
+              </For>
+            </div>
+            <div class="dp-foot">
+              <button class="dp-today" onClick={() => pick(today.getDate())}>Today</button>
+            </div>
+          </div>
+        </div>
+      </Show>
+    </>
   );
 }

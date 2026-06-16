@@ -176,15 +176,22 @@ export function PageView(): JSX.Element {
     <Show when={ready() && doc.loaded} fallback={<div class="page-loading" />}>
       <Show when={zoomValid()} fallback={
         <div class="page">
-          <Show when={route().kind === "journals"}>
-            <div class="agenda-block">
-              <QueryMacro
-                body="query (and (or (scheduled) (deadline)) (between -7d +7d))"
-                title="Scheduled & Deadline"
-              />
-            </div>
-          </Show>
-          <For each={mainPages()}>{(p) => <PageSection page={p} />}</For>
+          <For each={mainPages()}>
+            {(p, i) => (
+              <>
+                <PageSection page={p} />
+                {/* Agenda sits at the bottom of today's (the first) day, like OG. */}
+                <Show when={i() === 0 && route().kind === "journals"}>
+                  <div class="agenda-block">
+                    <QueryMacro
+                      body="query (and (or (scheduled) (deadline)) (between -7d +7d))"
+                      title="Scheduled & Deadline"
+                    />
+                  </div>
+                </Show>
+              </>
+            )}
+          </For>
           <Show when={route().kind === "journals" && mainPages().length === 0}>
             <div class="page-load-error">
               No journal entries found in this graph.

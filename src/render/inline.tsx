@@ -13,11 +13,11 @@ import { blockView } from "./block";
 import { backend } from "../backend";
 import { QueryMacro, EmbedMacro, VideoMacro, TweetMacro } from "../components/Macro";
 
-function renderSegs(segs: Seg[]): JSX.Element {
-  return <For each={segs}>{(s) => renderSeg(s)}</For>;
+function renderSegs(segs: Seg[], blockId?: string): JSX.Element {
+  return <For each={segs}>{(s) => renderSeg(s, blockId)}</For>;
 }
 
-function renderSeg(s: Seg): JSX.Element {
+function renderSeg(s: Seg, blockId?: string): JSX.Element {
   switch (s.t) {
     case "text":
       return <>{s.v}</>;
@@ -89,7 +89,7 @@ function renderSeg(s: Seg): JSX.Element {
       // Render {{query}} / {{embed}} wherever they appear — including inline
       // after a label, e.g. `All todos {{query (task TODO)}}` (Logseq dashboards).
       const body = s.body.trimStart();
-      if (/^query\b/i.test(body)) return <QueryMacro body={body} />;
+      if (/^query\b/i.test(body)) return <QueryMacro body={body} blockId={blockId} />;
       if (/^embed\b/i.test(body)) return <EmbedMacro body={body} />;
       if (/^(video|youtube)\b/i.test(body)) return <VideoMacro body={body} />;
       if (/^tweet\b/i.test(body)) return <TweetMacro body={body} />;
@@ -205,9 +205,11 @@ function AssetImage(props: { url: string; alt: string; width?: string; height?: 
   );
 }
 
-/** Render a block's body text (already stripped of marker/heading prefix). */
-export function InlineText(props: { text: string }): JSX.Element {
-  return <>{renderSegs(parseInline(props.text))}</>;
+/** Render a block's body text (already stripped of marker/heading prefix).
+ *  `blockId` (the owning block) is threaded to inline `{{query}}` macros so they
+ *  can show the editable builder + rewrite that block. */
+export function InlineText(props: { text: string; blockId?: string }): JSX.Element {
+  return <>{renderSegs(parseInline(props.text), props.blockId)}</>;
 }
 
 // Inline ((block reference)): resolves to the referenced block's first line,

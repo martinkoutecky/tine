@@ -46,6 +46,7 @@ const PAGES: PageDto[] = [
       b("Inline math works too: $E = mc^2$ and references like ((arch-1))."),
       b("Open tasks across the graph:"),
       b("{{query (todo TODO DOING)}}"),
+      b("All todos + Prio A {{query (and (task TODO) (priority A))}}\nid:: 1002fa7a-7164-456c-9e53-3032f783711c"),
     ],
   },
   {

@@ -96,9 +96,10 @@ export function openPageAtBlock(name: string, pageKind: "journal" | "page", bloc
 }
 
 export function openInNewTab(r: Route) {
+  // Open in a *background* tab without switching to it — matches a browser's
+  // middle-click. Use openPage if you want to navigate there.
   const id = newId();
   setTabs([...tabs(), { id, history: [r], pos: 0, pinned: false }]);
-  setActiveId(id);
   persist();
 }
 

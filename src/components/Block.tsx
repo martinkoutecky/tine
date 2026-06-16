@@ -279,7 +279,7 @@ function Rendered(props: { id: string; owner?: string }): JSX.Element {
   };
 
   const body = (
-    <Show when={annotation()} fallback={<BodyContent lines={view().lines} />}>
+    <Show when={annotation()} fallback={<BodyContent lines={view().lines} blockId={props.id} />}>
       <span class="pdf-annotation-line">
         <span class="hl-prefix" onClick={openHighlightPdf} title="Open in PDF (P{annotation()!.hlPage})">
           <span
@@ -577,11 +577,21 @@ function Editor(props: { id: string }): JSX.Element {
     setHasSel(false);
   };
 
-  // Insert `text` in place of the active trigger and restore the caret.
+  // Insert `text` in place of the active trigger and restore the caret. If the
+  // completion ends with a closing pair (`]]`/`))`/`}}`) and the same pair
+  // already sits right after the caret (e.g. from a `[[ ]]` autopair or editing
+  // inside an existing ref), swallow it so we don't end up with `[[name]]]]`.
   const replaceTrigger = (text: string, caret?: number) => {
     const t = ac();
     if (!t) return;
-    const r = applyCompletion(ref.value, t.start, t.end, text, caret);
+    let end = t.end;
+    for (const pair of ["]]", "))", "}}"]) {
+      if (text.endsWith(pair) && ref.value.slice(t.end, t.end + 2) === pair) {
+        end = t.end + 2;
+        break;
+      }
+    }
+    const r = applyCompletion(ref.value, t.start, end, text, caret);
     commit(r.raw);
     closeAc();
     queueMicrotask(() => {

@@ -129,7 +129,7 @@ function highlight(code: string, lang: string): string {
   }
 }
 
-export function BodyContent(props: { lines: string[] }): JSX.Element {
+export function BodyContent(props: { lines: string[]; blockId?: string }): JSX.Element {
   return (
     <For each={segmentBody(props.lines)}>
       {(seg) => {
@@ -219,7 +219,7 @@ export function BodyContent(props: { lines: string[] }): JSX.Element {
                 <Show when={i() > 0}>
                   <br />
                 </Show>
-                <InlineText text={line} />
+                <InlineText text={line} blockId={props.blockId} />
               </>
             )}
           </For>

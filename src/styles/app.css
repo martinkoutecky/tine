@@ -1522,18 +1522,11 @@ mark {
   text-decoration: underline;
 }
 
-/* Calendar jump: native date input overlaid transparently on the button. */
-.calendar-jump {
-  position: relative;
-  overflow: hidden;
-}
-.calendar-jump-input {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-  cursor: pointer;
-  border: none;
-  padding: 0;
+/* Calendar jump popup: anchored under the topbar calendar button. */
+.calendar-jump-pop {
+  top: 46px;
+  right: 12px;
+  left: auto;
 }
 
 /* ---------------------------------------------------------- references */
