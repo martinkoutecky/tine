@@ -33,6 +33,18 @@ import {
   blockRef,
 } from "../store";
 import { parseOutline } from "../editor/outline";
+import {
+  toggleWrap,
+  insertLink,
+  killLineBefore,
+  killLineAfter,
+  wordForward,
+  wordBackward,
+  killWordForward,
+  killWordBackward,
+  setPriority,
+  type Edit,
+} from "../editor/format";
 import { blockView, isPropertyLine } from "../render/block";
 import { InlineText } from "../render/inline";
 import { BodyContent } from "../render/body";
@@ -522,6 +534,21 @@ function Editor(props: { id: string }): JSX.Element {
     setAcItems(items);
   };
 
+  // Apply a pure text edit (format toggle / kill motion) to the textarea and
+  // restore the resulting selection.
+  const applyEdit = (ed: Edit) => {
+    commit(ed.text);
+    queueMicrotask(() => {
+      ref.value = ed.text;
+      ref.setSelectionRange(ed.start, ed.end);
+      ref.focus();
+      autosize();
+    });
+  };
+  const moveCaret = (pos: number) => {
+    ref.setSelectionRange(pos, pos);
+  };
+
   // Insert `text` in place of the active trigger and restore the caret.
   const replaceTrigger = (text: string, caret?: number) => {
     const t = ac();
@@ -597,6 +624,28 @@ function Editor(props: { id: string }): JSX.Element {
         replaceTrigger(""); // drop the "/upload" trigger text
         uploadAsset();
         return;
+      case "priority-a":
+      case "priority-b":
+      case "priority-c": {
+        // Drop the "/A" trigger, then set the priority token on the first line
+        // (placed after any task marker).
+        const level: "A" | "B" | "C" =
+          item.action === "priority-a" ? "A" : item.action === "priority-b" ? "B" : "C";
+        const base = ref.value.slice(0, t.start) + ref.value.slice(t.end);
+        const lines = base.split("\n");
+        lines[0] = setPriority(lines[0], level);
+        const next = lines.join("\n");
+        commit(next);
+        closeAc();
+        const caret = lines[0].length;
+        queueMicrotask(() => {
+          ref.value = next;
+          ref.setSelectionRange(caret, caret);
+          ref.focus();
+          autosize();
+        });
+        return;
+      }
     }
     replaceTrigger(item.insert ?? "", item.caret);
   };
@@ -649,6 +698,20 @@ function Editor(props: { id: string }): JSX.Element {
         return;
       }
     }
+
+    // Inline-format toggles + Emacs-style motions (pure text ops in format.ts).
+    if (matchesCommand(e, "editor/bold")) { e.preventDefault(); applyEdit(toggleWrap(raw, start, end, "**")); return; }
+    if (matchesCommand(e, "editor/italics")) { e.preventDefault(); applyEdit(toggleWrap(raw, start, end, "*")); return; }
+    if (matchesCommand(e, "editor/strike-through")) { e.preventDefault(); applyEdit(toggleWrap(raw, start, end, "~~")); return; }
+    if (matchesCommand(e, "editor/highlight")) { e.preventDefault(); applyEdit(toggleWrap(raw, start, end, "==")); return; }
+    if (matchesCommand(e, "editor/insert-link")) { e.preventDefault(); applyEdit(insertLink(raw, start, end)); return; }
+    if (matchesCommand(e, "editor/clear-block")) { e.preventDefault(); applyEdit({ text: "", start: 0, end: 0 }); return; }
+    if (matchesCommand(e, "editor/kill-line-before")) { e.preventDefault(); applyEdit(killLineBefore(raw, start)); return; }
+    if (matchesCommand(e, "editor/kill-line-after")) { e.preventDefault(); applyEdit(killLineAfter(raw, start)); return; }
+    if (matchesCommand(e, "editor/backward-kill-word")) { e.preventDefault(); applyEdit(killWordBackward(raw, start)); return; }
+    if (matchesCommand(e, "editor/forward-kill-word")) { e.preventDefault(); applyEdit(killWordForward(raw, start)); return; }
+    if (matchesCommand(e, "editor/backward-word")) { e.preventDefault(); moveCaret(wordBackward(raw, start)); return; }
+    if (matchesCommand(e, "editor/forward-word")) { e.preventDefault(); moveCaret(wordForward(raw, start)); return; }
 
     // Configurable editor shortcuts (resolved against config.edn :shortcuts).
     // Move block up/down: reorder among siblings, keeping edit mode + caret

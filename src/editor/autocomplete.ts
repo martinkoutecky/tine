@@ -70,7 +70,15 @@ export function tagInsert(name: string): string {
 
 /** Action commands need runtime behaviour (date stamps, file picker) rather
  *  than a fixed insertion; the editor resolves these when chosen. */
-export type CommandAction = "scheduled" | "deadline" | "upload-asset" | "now-time" | "today";
+export type CommandAction =
+  | "scheduled"
+  | "deadline"
+  | "upload-asset"
+  | "now-time"
+  | "today"
+  | "priority-a"
+  | "priority-b"
+  | "priority-c";
 
 export interface Command {
   label: string;
@@ -89,7 +97,12 @@ export const COMMANDS: Command[] = [
   { label: "NOW", insert: "NOW " },
   { label: "DONE", insert: "DONE " },
   { label: "WAITING", insert: "WAITING " },
+  { label: "WAIT", insert: "WAIT " },
+  { label: "IN-PROGRESS", insert: "IN-PROGRESS " },
   { label: "CANCELED", insert: "CANCELED " },
+  { label: "Priority A", action: "priority-a" },
+  { label: "Priority B", action: "priority-b" },
+  { label: "Priority C", action: "priority-c" },
   { label: "Scheduled", action: "scheduled" },
   { label: "Deadline", action: "deadline" },
   { label: "Heading 1", insert: "# " },

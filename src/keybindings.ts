@@ -64,6 +64,20 @@ const COMMANDS: CommandDef[] = [
   { id: "editor/select-block-up", binding: "shift+up", label: "Select block up", scope: "editor" },
   { id: "editor/select-block-down", binding: "shift+down", label: "Select block down", scope: "editor" },
   { id: "editor/cycle-todo", binding: "mod+enter", label: "Cycle TODO / DOING / DONE", scope: "editor" },
+  // Inline formatting toggles.
+  { id: "editor/bold", binding: "mod+b", label: "Bold", scope: "editor" },
+  { id: "editor/italics", binding: "mod+i", label: "Italic", scope: "editor" },
+  { id: "editor/strike-through", binding: "mod+shift+s", label: "Strikethrough", scope: "editor" },
+  { id: "editor/highlight", binding: "mod+shift+h", label: "Highlight", scope: "editor" },
+  { id: "editor/insert-link", binding: "mod+shift+l", label: "Insert link", scope: "editor" },
+  { id: "editor/clear-block", binding: "alt+l", label: "Clear block content", scope: "editor" },
+  // Emacs-style cursor/kill motions.
+  { id: "editor/kill-line-before", binding: "alt+u", label: "Delete to line start", scope: "editor" },
+  { id: "editor/kill-line-after", binding: "alt+k", label: "Delete to line end", scope: "editor" },
+  { id: "editor/backward-word", binding: "alt+b", label: "Cursor word backward", scope: "editor" },
+  { id: "editor/forward-word", binding: "alt+f", label: "Cursor word forward", scope: "editor" },
+  { id: "editor/backward-kill-word", binding: "alt+w", label: "Delete word backward", scope: "editor" },
+  { id: "editor/forward-kill-word", binding: "alt+d", label: "Delete word forward", scope: "editor" },
 ];
 
 function normKey(k: string): string {

@@ -15,7 +15,7 @@ function pageRefs(raw: string): string[] {
   return out;
 }
 function leadingMarker(raw: string): string | null {
-  const m = /^(TODO|DOING|DONE|NOW|LATER|WAITING|CANCELED|CANCELLED|IN-PROGRESS)\b/.exec(raw);
+  const m = /^(TODO|DOING|DONE|NOW|LATER|WAITING|WAIT|CANCELED|CANCELLED|IN-PROGRESS)\b/.exec(raw);
   return m ? m[1] : null;
 }
 
