@@ -1452,6 +1452,49 @@ mark {
 .callout-example,
 .callout-quote { --callout-accent: #6b7280; --callout-bg: rgba(107,114,128,0.10); }
 
+/* ------------------------------------------------------------- namespace */
+.ns-crumb {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+.ns-crumb-item {
+  cursor: pointer;
+}
+.ns-crumb-item:hover {
+  color: var(--link-color);
+  text-decoration: underline;
+}
+.ns-crumb-sep {
+  margin: 0 4px;
+  opacity: 0.6;
+}
+.namespace-children {
+  margin-top: 32px;
+}
+.ns-child {
+  padding: 3px 0 3px 6px;
+  color: var(--link-color);
+  cursor: pointer;
+}
+.ns-child:hover {
+  text-decoration: underline;
+}
+
+/* Calendar jump: native date input overlaid transparently on the button. */
+.calendar-jump {
+  position: relative;
+  overflow: hidden;
+}
+.calendar-jump-input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+  border: none;
+  padding: 0;
+}
+
 /* ---------------------------------------------------------- references */
 
 .linked-references {

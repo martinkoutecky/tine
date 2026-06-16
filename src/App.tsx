@@ -5,6 +5,7 @@ import { QuickSwitcher } from "./components/QuickSwitcher";
 import { PdfViewer } from "./components/PdfViewer";
 import { TabBar } from "./components/TabBar";
 import { ContextMenu } from "./components/ContextMenu";
+import { CalendarJump } from "./components/CalendarJump";
 import { ConflictBar } from "./components/ConflictBar";
 import { RightSidebar } from "./components/RightSidebar";
 import { Settings } from "./components/Settings";
@@ -113,6 +114,7 @@ export function App(): JSX.Element {
             </button>
           </div>
           <div class="topbar-right">
+            <CalendarJump />
             <button class="icon-btn" title="Search (Ctrl+K)" onClick={openSwitcher}>
               <svg viewBox="0 0 24 24" class="nav-icon">
                 <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="1.7" />

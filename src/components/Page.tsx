@@ -11,6 +11,7 @@ import { Block } from "./Block";
 import { LinkedReferences } from "./LinkedReferences";
 import { UnlinkedReferences } from "./UnlinkedReferences";
 import { QueryMacro } from "./Macro";
+import { NamespaceCrumb, NamespaceChildren } from "./Namespace";
 import { isPropertyLine, blockView } from "../render/block";
 import { InlineText } from "../render/inline";
 import type { PageDto } from "../types";
@@ -198,6 +199,9 @@ export function PageView(): JSX.Element {
             <LoadMore onHit={loadMore} />
           </Show>
           <Show when={route().kind === "page" && mainPages()[0]}>
+            <Show when={mainPages()[0].kind === "page"}>
+              <NamespaceChildren name={mainPages()[0].name} />
+            </Show>
             <LinkedReferences name={mainPages()[0].name} />
             <UnlinkedReferences name={mainPages()[0].name} />
           </Show>
@@ -277,6 +281,9 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
 
   return (
     <div class="page-section">
+      <Show when={props.page.kind === "page"}>
+        <NamespaceCrumb name={props.page.name} />
+      </Show>
       <div class="page-title-row">
         <Show
           when={!renaming()}
