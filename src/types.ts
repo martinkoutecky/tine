@@ -45,6 +45,7 @@ export interface GraphMeta {
   start_of_week: number; // 0=Sunday … 6=Saturday
   block_hidden_properties: string[];
   default_journal_template: string | null;
+  favorites: string[];
 }
 
 export interface Rect {

@@ -73,8 +73,48 @@ fn collect(graph: &Graph, mut keep: impl FnMut(&DocBlock) -> bool, exclude: Opti
     })
 }
 
+/// Map of `alias::` → canonical page name (original case), scanned from every
+/// page's pre-block. The alias key is normalized for lookup.
+pub fn page_aliases(graph: &Graph) -> Vec<(String, String)> {
+    graph.with_pages(|pages| {
+        let mut out: Vec<(String, String)> = Vec::new();
+        for (entry, doc) in pages {
+            let Some(pre) = &doc.pre_block else { continue };
+            for line in pre.lines() {
+                if let Some((k, v)) = crate::doc::parse_property_line(line) {
+                    if k.eq_ignore_ascii_case("alias") {
+                        for a in v.split(',') {
+                            let a = strip_ref(a.trim());
+                            if !a.is_empty() {
+                                out.push((refs::normalize(&a), entry.name.clone()));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        out
+    })
+}
+
 pub fn backlinks(graph: &Graph, target: &str) -> Vec<RefGroup> {
-    collect(graph, |b| refs::references_page(&b.raw, target), Some(target))
+    // Alias-aware: a page's backlinks include references made through any of its
+    // aliases, and looking up an alias resolves to its canonical page.
+    let aliases = page_aliases(graph);
+    let tnorm = refs::normalize(target);
+    let canonical = aliases
+        .iter()
+        .find(|(a, _)| *a == tnorm)
+        .map(|(_, c)| c.clone())
+        .unwrap_or_else(|| target.to_string());
+    let cnorm = refs::normalize(&canonical);
+    let mut names: Vec<String> = vec![canonical.clone()];
+    for (a, c) in &aliases {
+        if refs::normalize(c) == cnorm {
+            names.push(a.clone());
+        }
+    }
+    collect(graph, |b| names.iter().any(|n| refs::references_page(&b.raw, n)), Some(&canonical))
 }
 
 fn contains_word(hay: &str, needle: &str) -> bool {

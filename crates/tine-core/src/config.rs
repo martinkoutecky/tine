@@ -23,6 +23,8 @@ pub struct Config {
     /// `:default-templates {:journals "Name"}` — template applied to a new,
     /// empty journal page.
     pub default_journal_template: Option<String>,
+    /// `:favorites ["Page" …]` — favorited page names (on-disk, graph-portable).
+    pub favorites: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,6 +46,7 @@ impl Default for Config {
             start_of_week: 0,
             block_hidden_properties: Vec::new(),
             default_journal_template: None,
+            favorites: Vec::new(),
         }
     }
 }
@@ -86,8 +89,33 @@ impl Config {
         cfg.block_hidden_properties = parse_keyword_set(edn, ":block-hidden-properties");
         cfg.default_journal_template = nested_string(edn, ":default-templates", ":journals")
             .filter(|s| !s.is_empty());
+        cfg.favorites = parse_string_vector(edn, ":favorites");
         cfg
     }
+}
+
+/// Parse the quoted strings inside `key [ "a" "b" ]` (a single-level EDN vector).
+fn parse_string_vector(edn: &str, key: &str) -> Vec<String> {
+    let Some(i) = edn.find(key) else { return Vec::new() };
+    let after = &edn[i + key.len()..];
+    let Some(open) = after.find('[') else { return Vec::new() };
+    let body = &after[open + 1..];
+    let close = body.find(']').unwrap_or(body.len());
+    let inner = &body[..close];
+    let mut out = Vec::new();
+    let bytes = inner.as_bytes();
+    let mut j = 0;
+    while j < inner.len() {
+        if bytes[j] == b'"' {
+            if let Some(rel) = inner[j + 1..].find('"') {
+                out.push(inner[j + 1..j + 1 + rel].to_string());
+                j = j + 1 + rel + 1;
+                continue;
+            }
+        }
+        j += 1;
+    }
+    out
 }
 
 /// Extract a quoted string for `inner_key` inside the map following `outer_key`,
@@ -213,6 +241,13 @@ mod tests {
         let cfg = Config::parse(edn);
         assert_eq!(cfg.shortcuts.get("go/search").map(String::as_str), Some("false"));
         assert_eq!(cfg.shortcuts.get("editor/indent").map(String::as_str), Some("tab"));
+    }
+
+    #[test]
+    fn parses_favorites_vector() {
+        let cfg = Config::parse(r#"{:favorites ["Inbox" "Reading List"]}"#);
+        assert_eq!(cfg.favorites, vec!["Inbox".to_string(), "Reading List".to_string()]);
+        assert!(Config::parse("{}").favorites.is_empty());
     }
 
     #[test]

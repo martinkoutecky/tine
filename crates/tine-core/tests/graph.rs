@@ -326,6 +326,57 @@ fn query_and_not_includes_everything_except_excluded() {
 }
 
 #[test]
+fn page_aliases_resolve_and_collect_backlinks() {
+    use tine_core::model::PageKind;
+    let root = std::env::temp_dir().join(format!("tine-alias-test-{}", std::process::id()));
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    // Canonical page "Parameterized Complexity" with an alias "PC".
+    std::fs::write(root.join("pages").join("Parameterized Complexity.md"),
+        "alias:: PC\n\n- the canonical page\n").unwrap();
+    // One page links the canonical name, another links the alias.
+    std::fs::write(root.join("pages").join("A.md"), "- see [[Parameterized Complexity]]\n").unwrap();
+    std::fs::write(root.join("pages").join("B.md"), "- via [[PC]]\n").unwrap();
+
+    let g = Graph::open(&root);
+    // Loading the alias resolves to the canonical page.
+    let dto = g.load_named("PC", PageKind::Page).unwrap().expect("alias resolves");
+    assert!(dto.blocks.iter().any(|b| b.raw.contains("canonical page")));
+    // Backlinks of the canonical page include the alias-referencing page.
+    let pages: Vec<String> = g.backlinks("Parameterized Complexity").iter().map(|gr| gr.page.clone()).collect();
+    assert!(pages.contains(&"A".to_string()), "{pages:?}");
+    assert!(pages.contains(&"B".to_string()), "alias ref counted: {pages:?}");
+    // Backlinks queried via the alias name also resolve to the canonical set.
+    let via_alias: Vec<String> = g.backlinks("PC").iter().map(|gr| gr.page.clone()).collect();
+    assert!(via_alias.contains(&"A".to_string()) && via_alias.contains(&"B".to_string()), "{via_alias:?}");
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn set_favorites_round_trips_in_config_edn() {
+    let root = std::env::temp_dir().join(format!("tine-fav-test-{}", std::process::id()));
+    std::fs::create_dir_all(root.join("logseq")).unwrap();
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    // Existing config with another key that must be preserved.
+    std::fs::write(root.join("logseq").join("config.edn"),
+        "{:preferred-workflow :now\n :journals-directory \"journals\"}\n").unwrap();
+
+    let g = Graph::open(&root);
+    g.set_favorites(&["Inbox".into(), "Reading List".into()]).unwrap();
+    // Re-open and confirm favorites parsed back + the other key survived.
+    let g2 = Graph::open(&root);
+    assert_eq!(g2.meta().favorites, vec!["Inbox".to_string(), "Reading List".to_string()]);
+    let cfg = std::fs::read_to_string(root.join("logseq").join("config.edn")).unwrap();
+    assert!(cfg.contains(":journals-directory"), "other keys preserved: {cfg}");
+
+    // Updating again replaces (not appends) the vector.
+    g2.set_favorites(&["Only One".into()]).unwrap();
+    assert_eq!(Graph::open(&root).meta().favorites, vec!["Only One".to_string()]);
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn query_open_tasks() {
     let g = demo_graph();
     let groups = g.run_query("(task TODO DOING)");

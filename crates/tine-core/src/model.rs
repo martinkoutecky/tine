@@ -100,6 +100,8 @@ pub struct GraphMeta {
     pub block_hidden_properties: Vec<String>,
     /// Template name applied to a new, empty journal page (if configured).
     pub default_journal_template: Option<String>,
+    /// Favorited page names (read from config.edn `:favorites`).
+    pub favorites: Vec<String>,
 }
 
 impl Graph {
@@ -125,7 +127,41 @@ impl Graph {
             start_of_week: self.config.start_of_week,
             block_hidden_properties: self.config.block_hidden_properties.clone(),
             default_journal_template: self.config.default_journal_template.clone(),
+            favorites: self.config.favorites.clone(),
         }
+    }
+
+    /// Persist the favorites list to config.edn `:favorites [...]`, replacing the
+    /// existing vector or inserting one, preserving the rest of the file.
+    pub fn set_favorites(&self, names: &[String]) -> io::Result<()> {
+        let path = self.root.join("logseq").join("config.edn");
+        let mut content = fs::read_to_string(&path).unwrap_or_else(|_| "{}\n".to_string());
+        let vec_str = format!(
+            "[{}]",
+            names
+                .iter()
+                .map(|n| format!("\"{}\"", n.replace('\\', "\\\\").replace('"', "\\\"")))
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+        if let Some(start) = content.find(":favorites") {
+            // Replace the existing (single-level) `:favorites [...]`.
+            if let Some(br) = content[start..].find('[') {
+                let abs = start + br;
+                if let Some(end_rel) = content[abs..].find(']') {
+                    let end = abs + end_rel + 1;
+                    content.replace_range(start..end, &format!(":favorites {vec_str}"));
+                }
+            }
+        } else if let Some(brace) = content.find('{') {
+            content.insert_str(brace + 1, &format!("\n :favorites {vec_str}\n"));
+        } else {
+            content = format!("{{:favorites {vec_str}}}\n");
+        }
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        atomic_write(&path, content.as_bytes())
     }
 
     pub fn journals_path(&self) -> PathBuf {
@@ -179,12 +215,26 @@ impl Graph {
             .find(|e| e.name.eq_ignore_ascii_case(name))
     }
 
-    /// Load a page by name; returns `None` if it doesn't exist on disk.
+    /// Load a page by name; returns `None` if it doesn't exist on disk. Falls
+    /// back to alias resolution (`alias::`) for named pages.
     pub fn load_named(&self, name: &str, kind: PageKind) -> io::Result<Option<PageDto>> {
-        match self.find_entry(name, kind) {
-            Some(entry) => Ok(Some(self.load_page(&entry)?)),
-            None => Ok(None),
+        if let Some(entry) = self.find_entry(name, kind) {
+            return Ok(Some(self.load_page(&entry)?));
         }
+        if kind == PageKind::Page {
+            let tnorm = crate::refs::normalize(name);
+            if let Some((_, canon)) = crate::query::page_aliases(self).into_iter().find(|(a, _)| *a == tnorm) {
+                if let Some(entry) = self.find_entry(&canon, kind) {
+                    return Ok(Some(self.load_page(&entry)?));
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    /// Alias → canonical-page-name pairs (for the UI to resolve links/navigation).
+    pub fn page_aliases(&self) -> Vec<(String, String)> {
+        crate::query::page_aliases(self)
     }
 
     /// Load a page by entry. Served from the in-memory cache so block uuids are

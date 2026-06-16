@@ -219,6 +219,16 @@ fn query_facets(state: State<'_, AppState>) -> Result<Vec<(String, Vec<String>)>
 }
 
 #[tauri::command]
+fn page_aliases(state: State<'_, AppState>) -> Result<Vec<(String, String)>, String> {
+    with_graph(&state, |g| Ok(g.page_aliases()))
+}
+
+#[tauri::command]
+fn set_favorites(names: Vec<String>, state: State<'_, AppState>) -> Result<(), String> {
+    with_graph(&state, |g| g.set_favorites(&names).map_err(|e| e.to_string()))
+}
+
+#[tauri::command]
 fn read_custom_css(state: State<'_, AppState>) -> Result<String, String> {
     with_graph(&state, |g| Ok(g.custom_css()))
 }
@@ -385,6 +395,8 @@ fn main() {
             publish_html,
             run_query,
             query_facets,
+            page_aliases,
+            set_favorites,
             read_custom_css,
             open_external,
             search,

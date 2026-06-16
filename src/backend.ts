@@ -23,6 +23,10 @@ export interface Backend {
   /** Property keys (each with their distinct values) for query-builder
    *  autocomplete. */
   queryFacets(): Promise<[string, string[]][]>;
+  /** `alias::` → canonical page name pairs. */
+  pageAliases(): Promise<[string, string][]>;
+  /** Persist favorited page names to config.edn `:favorites`. */
+  setFavorites(names: string[]): Promise<void>;
   /** The graph's logseq/custom.css (empty string if none). */
   readCustomCss(): Promise<string>;
   /** Open an http(s)/mailto URL in the OS default app. */
@@ -109,6 +113,12 @@ class TauriBackend implements Backend {
   }
   queryFacets() {
     return this.call<[string, string[]][]>("query_facets");
+  }
+  pageAliases() {
+    return this.call<[string, string][]>("page_aliases");
+  }
+  setFavorites(names: string[]) {
+    return this.call<void>("set_favorites", { names });
   }
   readCustomCss() {
     return this.call<string>("read_custom_css");

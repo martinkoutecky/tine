@@ -1,4 +1,4 @@
-import { For, Show, createResource, createSignal, createMemo, type JSX } from "solid-js";
+import { For, Show, createResource, createSignal, createMemo, createEffect, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { openPage, openPageInNewTab } from "../router";
 import { openPageInSidebar, openPageContextMenu } from "../ui";
@@ -6,6 +6,27 @@ import { LiveRefGroup } from "./LiveRefGroup";
 import type { RefGroup } from "../types";
 
 const norm = (s: string) => s.trim().toLowerCase();
+
+// Persist the per-page include/exclude reference filter so it survives reload.
+type FilterMap = Record<string, "in" | "out">;
+const RF_KEY = "logseq-claude.refFilters";
+function loadFilters(page: string): FilterMap {
+  try {
+    return JSON.parse(localStorage.getItem(RF_KEY) ?? "{}")[page] ?? {};
+  } catch {
+    return {};
+  }
+}
+function saveFilters(page: string, f: FilterMap) {
+  try {
+    const m = JSON.parse(localStorage.getItem(RF_KEY) ?? "{}");
+    if (Object.keys(f).length) m[page] = f;
+    else delete m[page];
+    localStorage.setItem(RF_KEY, JSON.stringify(m));
+  } catch {
+    // ignore
+  }
+}
 function refsInRaw(raw: string): string[] {
   const out: string[] = [];
   const re = /\[\[([^\]]+)\]\]|#\[\[([^\]]+)\]\]|#([\w/_.-]+)/g;
@@ -24,7 +45,9 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
   );
   const [collapsed, setCollapsed] = createSignal(false);
   // page name -> "in" (must also reference) | "out" (must not reference).
-  const [filters, setFilters] = createSignal<Record<string, "in" | "out">>({});
+  const [filters, setFilters] = createSignal<FilterMap>(loadFilters(props.name));
+  // Reload the saved filter when the page changes.
+  createEffect(() => setFilters(loadFilters(props.name)));
 
   // Co-referenced pages (other pages mentioned alongside the target), with counts.
   const coRefs = createMemo(() => {
@@ -61,6 +84,7 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
     f[name] = f[name] === "in" ? "out" : f[name] === "out" ? (undefined as never) : "in";
     if (f[name] === undefined) delete f[name];
     setFilters(f);
+    saveFilters(props.name, f);
   };
   const count = () => shown().reduce((acc, g) => acc + g.blocks.length, 0);
 

@@ -5,7 +5,7 @@
 // active tab) so existing call sites are unchanged.
 
 import { createSignal } from "solid-js";
-import { pushRecent } from "./ui";
+import { pushRecent, resolveAlias } from "./ui";
 
 export type Route =
   | { kind: "journals" }
@@ -68,6 +68,8 @@ function navigate(r: Route) {
 }
 
 export function openPage(name: string, pageKind: "journal" | "page" = "page") {
+  // Resolve aliases so the route + working-set key use the canonical page name.
+  if (pageKind === "page") name = resolveAlias(name);
   navigate({ kind: "page", name, pageKind });
   pushRecent(name, pageKind);
 }
@@ -104,6 +106,7 @@ export function openInNewTab(r: Route) {
 }
 
 export function openPageInNewTab(name: string, pageKind: "journal" | "page" = "page") {
+  if (pageKind === "page") name = resolveAlias(name);
   openInNewTab({ kind: "page", name, pageKind });
   pushRecent(name, pageKind);
 }

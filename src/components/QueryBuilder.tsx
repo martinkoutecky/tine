@@ -13,6 +13,7 @@ import {
   clauseLabel,
   addChild,
   removeAt,
+  replaceAt,
   wrapAt,
   unwrapAt,
   setOp,
@@ -161,27 +162,31 @@ function ChipMenu(props: NodeCtx): JSX.Element {
   // The root op has no enclosing position to delete/wrap from.
   const atRoot = () => props.loc.length === 0;
 
+  const [editing, setEditing] = createSignal(false);
+  const canEdit = () => !isOpKey() && props.clause.kind !== "raw";
+  const editKind = () => (props.clause.kind === "raw" ? "page" : (props.clause.kind as ClauseKind));
+
   return (
     <Show when={open()}>
       <div class="qb-menu" onClick={stop}>
-        <Show when={!atRoot()}>
-          <button class="qb-menu-item" onClick={act(() => removeAt(props.tree(), props.loc))}>
-            Delete
-          </button>
-          <button class="qb-menu-item" onClick={act(() => wrapAt(props.tree(), props.loc, "and"))}>
-            Wrap in AND
-          </button>
-          <button class="qb-menu-item" onClick={act(() => wrapAt(props.tree(), props.loc, "or"))}>
-            Wrap in OR
-          </button>
-          <button class="qb-menu-item" onClick={act(() => wrapAt(props.tree(), props.loc, "not"))}>
-            Wrap in NOT
-          </button>
-        </Show>
-        <Show when={isOpKey() && !atRoot()}>
-          <button class="qb-menu-item" onClick={act(() => unwrapAt(props.tree(), props.loc))}>
-            Unwrap
-          </button>
+        <Show when={editing()} fallback={
+          <>
+            <Show when={canEdit()}>
+              <button class="qb-menu-item" onClick={() => setEditing(true)}>Edit…</button>
+            </Show>
+            <Show when={!atRoot()}>
+              <button class="qb-menu-item" onClick={act(() => removeAt(props.tree(), props.loc))}>Delete</button>
+              <button class="qb-menu-item" onClick={act(() => wrapAt(props.tree(), props.loc, "and"))}>Wrap in AND</button>
+              <button class="qb-menu-item" onClick={act(() => wrapAt(props.tree(), props.loc, "or"))}>Wrap in OR</button>
+              <button class="qb-menu-item" onClick={act(() => wrapAt(props.tree(), props.loc, "not"))}>Wrap in NOT</button>
+            </Show>
+            <Show when={isOpKey() && !atRoot()}>
+              <button class="qb-menu-item" onClick={act(() => unwrapAt(props.tree(), props.loc))}>Unwrap</button>
+            </Show>
+          </>
+        }>
+          <div class="qb-picker-title">Edit value</div>
+          <ValuePicker kind={editKind()} onCommit={(c) => props.apply(replaceAt(props.tree(), props.loc, c))} />
         </Show>
       </div>
     </Show>
@@ -207,7 +212,7 @@ function AddButton(props: NodeCtx): JSX.Element {
       <Show when={open()}>
         <AddPicker
           onCommit={(c) => props.apply(addChild(props.tree(), props.loc, c))}
-          onClose={() => props.setAdding(null)}
+          onSetOp={(op) => props.apply(setOp(props.tree(), props.loc, op))}
         />
       </Show>
     </span>
@@ -235,20 +240,30 @@ const FILTER_TYPES: { kind: ClauseKind; label: string }[] = [
 
 function AddPicker(props: {
   onCommit: (c: Clause) => void;
-  onClose: () => void;
+  onSetOp: (op: "and" | "or") => void;
 }): JSX.Element {
-  const [step, setStep] = createSignal<ClauseKind | "page" | "type">("type");
+  const [step, setStep] = createSignal<ClauseKind | "type">("type");
+  // When armed, the next filter is added negated (wrapped in NOT).
+  const [negate, setNegate] = createSignal(false);
 
-  const pick = (kind: ClauseKind | "page") => {
-    if (kind === "scheduled") return props.onCommit({ kind: "scheduled" });
-    if (kind === "deadline") return props.onCommit({ kind: "deadline" });
+  const pick = (kind: ClauseKind) => {
+    if (kind === "scheduled" || kind === "deadline") return commit({ kind });
     setStep(kind);
   };
+  const commit = (c: Clause) => props.onCommit(negate() ? { kind: "op", op: "not", children: [c] } : c);
 
   return (
     <div class="qb-picker" onClick={stop}>
       <Show when={step() === "type"}>
-        <div class="qb-picker-title">Add filter</div>
+        {/* Connectives first (OG-style): AND/OR set how this group joins;
+            NOT arms negation for the filter you pick next. */}
+        <div class="qb-conn-row">
+          <button class="qb-conn" title="Join this group with AND" onClick={() => props.onSetOp("and")}>AND</button>
+          <button class="qb-conn" title="Join this group with OR" onClick={() => props.onSetOp("or")}>OR</button>
+          <button class="qb-conn" classList={{ active: negate() }} title="Exclude the next filter (NOT)" onClick={() => setNegate(!negate())}>NOT</button>
+        </div>
+        <div class="qb-divider" />
+        <div class="qb-picker-title">{negate() ? "Exclude filter…" : "Add filter"}</div>
         <For each={FILTER_TYPES}>
           {(t) => (
             <button class="qb-menu-item" onClick={() => pick(t.kind)}>
@@ -257,37 +272,49 @@ function AddPicker(props: {
           )}
         </For>
       </Show>
-      <Show when={step() === "page"}>
-        <PageInput placeholder="Page or tag name" onCommit={(name) => props.onCommit({ kind: "page", name })} />
-      </Show>
-      <Show when={step() === "task"}>
-        <MultiPick options={MARKERS} onCommit={(markers) => props.onCommit({ kind: "task", markers })} />
-      </Show>
-      <Show when={step() === "priority"}>
-        <MultiPick options={PRIORITIES} onCommit={(levels) => props.onCommit({ kind: "priority", levels })} />
-      </Show>
-      <Show when={step() === "property"}>
-        <PropertyPick onCommit={(key, value) => props.onCommit({ kind: "property", key, value })} />
-      </Show>
-      <Show when={step() === "between"}>
-        <BetweenPick onCommit={(start, end) => props.onCommit({ kind: "between", start, end })} />
-      </Show>
-      <Show when={step() === "onPage"}>
-        <PageInput placeholder="Page name" onCommit={(name) => props.onCommit({ kind: "onPage", name })} />
-      </Show>
-      <Show when={step() === "namespace"}>
-        <PageInput placeholder="Namespace (parent page)" onCommit={(ns) => props.onCommit({ kind: "namespace", ns })} />
-      </Show>
-      <Show when={step() === "pageProperty"}>
-        <PropertyPick onCommit={(key, value) => props.onCommit({ kind: "pageProperty", key, value })} />
-      </Show>
-      <Show when={step() === "content"}>
-        <TextInput placeholder="Text to search for" onCommit={(text) => props.onCommit({ kind: "content", text })} />
-      </Show>
-      <Show when={step() === "pageTags"}>
-        <TextInput placeholder="Tag (one)" onCommit={(t) => props.onCommit({ kind: "pageTags", tags: [t] })} />
+      <Show when={step() !== "type"}>
+        <ValuePicker kind={step() as ClauseKind} onCommit={commit} />
       </Show>
     </div>
+  );
+}
+
+// Renders the value collector for a given clause kind. Shared by the add-filter
+// picker and the in-place "Edit value" flow.
+function ValuePicker(props: { kind: ClauseKind; onCommit: (c: Clause) => void }): JSX.Element {
+  return (
+    <>
+      <Show when={props.kind === "page"}>
+        <PageInput placeholder="Page or tag name" onCommit={(name) => props.onCommit({ kind: "page", name })} />
+      </Show>
+      <Show when={props.kind === "task"}>
+        <MultiPick options={MARKERS} onCommit={(markers) => props.onCommit({ kind: "task", markers })} />
+      </Show>
+      <Show when={props.kind === "priority"}>
+        <MultiPick options={PRIORITIES} onCommit={(levels) => props.onCommit({ kind: "priority", levels })} />
+      </Show>
+      <Show when={props.kind === "property"}>
+        <PropertyPick onCommit={(key, value) => props.onCommit({ kind: "property", key, value })} />
+      </Show>
+      <Show when={props.kind === "between"}>
+        <BetweenPick onCommit={(start, end) => props.onCommit({ kind: "between", start, end })} />
+      </Show>
+      <Show when={props.kind === "onPage"}>
+        <PageInput placeholder="Page name" onCommit={(name) => props.onCommit({ kind: "onPage", name })} />
+      </Show>
+      <Show when={props.kind === "namespace"}>
+        <PageInput placeholder="Namespace (parent page)" onCommit={(ns) => props.onCommit({ kind: "namespace", ns })} />
+      </Show>
+      <Show when={props.kind === "pageProperty"}>
+        <PropertyPick onCommit={(key, value) => props.onCommit({ kind: "pageProperty", key, value })} />
+      </Show>
+      <Show when={props.kind === "content"}>
+        <TextInput placeholder="Text to search for" onCommit={(text) => props.onCommit({ kind: "content", text })} />
+      </Show>
+      <Show when={props.kind === "pageTags"}>
+        <TextInput placeholder="Tag (one)" onCommit={(t) => props.onCommit({ kind: "pageTags", tags: [t] })} />
+      </Show>
+    </>
   );
 }
 

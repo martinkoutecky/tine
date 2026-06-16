@@ -2,7 +2,7 @@
 // persisting the choice so it reopens next launch.
 
 import { backend } from "./backend";
-import { setGraphMeta, setWorkflow, bumpGraphEpoch, setRightSidebar, graphMeta } from "./ui";
+import { setGraphMeta, setWorkflow, bumpGraphEpoch, setRightSidebar, graphMeta, setAliasMap, seedFavorites } from "./ui";
 import { resetStore } from "./store";
 import { openJournals } from "./router";
 import { journalTitle } from "./journal";
@@ -27,6 +27,7 @@ export async function loadGraphPath(path: string): Promise<void> {
   setRightSidebar([]);
   setGraphMeta(meta ?? null);
   setWorkflow(meta?.preferred_workflow === "todo" ? "todo" : "now");
+  seedFavorites(meta?.favorites ?? []);
   if (path) {
     try {
       localStorage.setItem(GRAPH_KEY, path);
@@ -36,8 +37,19 @@ export async function loadGraphPath(path: string): Promise<void> {
   }
   bumpGraphEpoch();
   void injectCustomCss();
+  void loadAliases();
   await ensureJournalTemplate();
   openJournals();
+}
+
+/** Load the graph's alias:: index so link/navigation can resolve aliases. */
+async function loadAliases(): Promise<void> {
+  try {
+    const pairs = await backend().pageAliases();
+    setAliasMap(Object.fromEntries(pairs));
+  } catch {
+    setAliasMap({});
+  }
 }
 
 // Resolve Logseq dynamic template vars in a template block.

@@ -1818,6 +1818,29 @@ mark {
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
+.qb-conn-row {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+}
+.qb-conn {
+  flex: 1;
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  border-radius: 5px;
+  padding: 3px 0;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.qb-conn:hover { border-color: var(--link-color); }
+.qb-conn.active { background: #b91c1c; color: #fff; border-color: #b91c1c; }
+.qb-divider {
+  height: 1px;
+  background: var(--border-color);
+  margin: 2px 0;
+}
 .qb-menu-item {
   text-align: left;
   border: none;

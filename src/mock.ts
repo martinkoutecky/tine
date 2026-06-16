@@ -183,6 +183,7 @@ export function mockBackend(): Backend {
         start_of_week: 0,
         block_hidden_properties: [],
         default_journal_template: null,
+        favorites: [],
       };
     },
     async listPages(): Promise<PageEntry[]> {
@@ -240,6 +241,12 @@ export function mockBackend(): Backend {
     },
     async readCustomCss(): Promise<string> {
       return "";
+    },
+    async pageAliases(): Promise<[string, string][]> {
+      return [];
+    },
+    async setFavorites(): Promise<void> {
+      // no-op in the browser mock
     },
     async openExternal(url: string): Promise<void> {
       try {

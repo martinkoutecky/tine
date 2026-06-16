@@ -1,6 +1,7 @@
 // Small global UI state: theme, left sidebar, and the quick-switcher modal.
 import { createSignal } from "solid-js";
 import type { GraphMeta } from "./types";
+import { backend } from "./backend";
 
 const THEME_KEY = "logseq-claude.theme";
 function loadTheme(): "light" | "dark" {
@@ -189,17 +190,27 @@ export const [favorites, setFavorites] = createSignal<FavItem[]>(loadFavs());
 export function isFavorite(name: string): boolean {
   return favorites().some((f) => f.name === name);
 }
+function persistFavorites(next: FavItem[]) {
+  try {
+    localStorage.setItem(FAV_KEY, JSON.stringify(next));
+  } catch {
+    // ignore
+  }
+  // Persist to config.edn :favorites so favorites travel with the graph.
+  void backend().setFavorites(next.map((f) => f.name)).catch(() => {});
+}
 export function toggleFavorite(name: string, kind: "page" | "journal" = "page") {
   const f = favorites();
   const next = f.some((x) => x.name === name)
     ? f.filter((x) => x.name !== name)
     : [...f, { name, kind }];
   setFavorites(next);
-  try {
-    localStorage.setItem(FAV_KEY, JSON.stringify(next));
-  } catch {
-    // ignore
-  }
+  persistFavorites(next);
+}
+/** Seed favorites from config.edn `:favorites` on graph open (graph is the source
+ *  of truth); falls back to whatever was already loaded (localStorage) if empty. */
+export function seedFavorites(names: string[]) {
+  if (names.length) setFavorites(names.map((name) => ({ name, kind: "page" as const })));
 }
 
 // Recently-visited pages (navigation history), newest first. This is the right
@@ -315,6 +326,7 @@ export type SidebarItem = SidebarPage | SidebarBlock;
 export const [rightSidebar, setRightSidebar] = createSignal<SidebarItem[]>([]);
 
 export function openPageInSidebar(name: string, pageKind: "journal" | "page" = "page") {
+  if (pageKind === "page") name = resolveAlias(name);
   if (rightSidebar().some((i) => i.kind === "page" && i.name === name)) return;
   setRightSidebar([{ kind: "page", name, pageKind }, ...rightSidebar()]);
 }
@@ -376,6 +388,13 @@ export function dismissToast(id: number) {
 
 // Full-screen image lightbox (click an inline image to zoom).
 export const [lightbox, setLightbox] = createSignal<string | null>(null);
+
+// Page aliases (alias:: → canonical), keyed by normalized alias; loaded per graph.
+export const [aliasMap, setAliasMap] = createSignal<Record<string, string>>({});
+/** Resolve a page name through `alias::` to its canonical page (else unchanged). */
+export function resolveAlias(name: string): string {
+  return aliasMap()[name.trim().toLowerCase()] ?? name;
+}
 
 export const [switcherOpen, setSwitcherOpen] = createSignal(false);
 // "all" = full Ctrl-K (pages/create/commands/blocks); "commands" = command
