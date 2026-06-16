@@ -2,7 +2,7 @@
 // [[links]] and #tags), not an innerHTML string. Used to render a block when it
 // is not being edited.
 
-import { For, Show, createResource, onCleanup, type JSX } from "solid-js";
+import { For, Show, createResource, createSignal, onCleanup, type JSX } from "solid-js";
 import katex from "katex";
 // mhchem extends KaTeX with \ce{…} chemistry support (registers globally on import).
 import "katex/contrib/mhchem";
@@ -206,16 +206,20 @@ export function InlineText(props: { text: string }): JSX.Element {
   return <>{renderSegs(parseInline(props.text))}</>;
 }
 
-// Inline ((block reference)): resolves to the referenced block's first line and
-// navigates to its source page on click.
+// Inline ((block reference)): resolves to the referenced block's first line,
+// navigates to its source page on click, and shows a hover preview of the full
+// referenced block (mirrors OG's block-ref tooltip).
 function BlockRefView(props: { id: string }): JSX.Element {
   const [grp] = createResource(
     () => props.id,
     (id) => backend().resolveBlock(id)
   );
+  const [hover, setHover] = createSignal(false);
   return (
     <span
       class="block-ref"
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
       onClick={(e) => {
         e.stopPropagation();
         const g = grp();
@@ -224,6 +228,18 @@ function BlockRefView(props: { id: string }): JSX.Element {
     >
       <Show when={grp()} fallback={<>(({props.id.slice(0, 8)}))</>}>
         <InlineText text={blockView(grp()!.blocks[0].raw).lines[0]} />
+        <Show when={hover()}>
+          <span class="block-ref-preview">
+            <span class="block-ref-preview-page">{grp()!.page}</span>
+            <For each={grp()!.blocks}>
+              {(b) => (
+                <span class="block-ref-preview-line">
+                  <InlineText text={blockView(b.raw).lines.join(" ")} />
+                </span>
+              )}
+            </For>
+          </span>
+        </Show>
       </Show>
     </span>
   );

@@ -145,6 +145,7 @@ function blockActions(id: string): { label: string; run: () => void; danger?: bo
     { label: "Open in sidebar", run: () => openBlockInSidebar(blockRef(id)) },
     { label: "Zoom into block", run: () => zoomInto(id) },
     { label: "Copy block ref", run: () => void backend().writeText(`((${ensureBlockId(id)}))`) },
+    { label: "Copy block embed", run: () => void backend().writeText(`{{embed ((${ensureBlockId(id)}))}}`) },
     { label: "Copy block", run: () => void backend().writeText(blockSubtreeMarkdown(id)) },
     {
       label: "Cut block",
