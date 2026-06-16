@@ -20,6 +20,9 @@ pub struct Config {
     /// `:block-hidden-properties #{:a :b}` — extra property keys to hide from the
     /// rendered properties area, on top of the built-in internal set.
     pub block_hidden_properties: Vec<String>,
+    /// `:default-templates {:journals "Name"}` — template applied to a new,
+    /// empty journal page.
+    pub default_journal_template: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,6 +43,7 @@ impl Default for Config {
             all_pages_public: false,
             start_of_week: 0,
             block_hidden_properties: Vec::new(),
+            default_journal_template: None,
         }
     }
 }
@@ -80,8 +84,26 @@ impl Config {
             }
         }
         cfg.block_hidden_properties = parse_keyword_set(edn, ":block-hidden-properties");
+        cfg.default_journal_template = nested_string(edn, ":default-templates", ":journals")
+            .filter(|s| !s.is_empty());
         cfg
     }
+}
+
+/// Extract a quoted string for `inner_key` inside the map following `outer_key`,
+/// e.g. `:default-templates {:journals "Daily"}` -> "Daily".
+fn nested_string(edn: &str, outer_key: &str, inner_key: &str) -> Option<String> {
+    let i = edn.find(outer_key)? + outer_key.len();
+    let after = &edn[i..];
+    let open = after.find('{')?;
+    let body = &after[open..];
+    let close = body.find('}').unwrap_or(body.len());
+    let inner = &body[..close];
+    let j = inner.find(inner_key)? + inner_key.len();
+    let rest = &inner[j..];
+    let qs = rest.find('"')? + 1;
+    let qe = rest[qs..].find('"')? + qs;
+    Some(rest[qs..qe].to_string())
 }
 
 /// Extract the integer following `key`, if any.
@@ -191,6 +213,14 @@ mod tests {
         let cfg = Config::parse(edn);
         assert_eq!(cfg.shortcuts.get("go/search").map(String::as_str), Some("false"));
         assert_eq!(cfg.shortcuts.get("editor/indent").map(String::as_str), Some("tab"));
+    }
+
+    #[test]
+    fn default_journal_template() {
+        let edn = r#"{:default-templates {:journals "Daily"}}"#;
+        assert_eq!(Config::parse(edn).default_journal_template.as_deref(), Some("Daily"));
+        // Absent → None.
+        assert_eq!(Config::parse(r#"{:preferred-format "Markdown"}"#).default_journal_template, None);
     }
 
     #[test]

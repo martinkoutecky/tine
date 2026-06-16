@@ -44,6 +44,7 @@ export interface GraphMeta {
   shortcuts: Record<string, string>;
   start_of_week: number; // 0=Sunday … 6=Saturday
   block_hidden_properties: string[];
+  default_journal_template: string | null;
 }
 
 export interface Rect {

@@ -98,6 +98,8 @@ pub struct GraphMeta {
     pub start_of_week: u32,
     /// Extra property keys to hide from the rendered properties area.
     pub block_hidden_properties: Vec<String>,
+    /// Template name applied to a new, empty journal page (if configured).
+    pub default_journal_template: Option<String>,
 }
 
 impl Graph {
@@ -122,6 +124,7 @@ impl Graph {
             shortcuts: self.config.shortcuts.clone(),
             start_of_week: self.config.start_of_week,
             block_hidden_properties: self.config.block_hidden_properties.clone(),
+            default_journal_template: self.config.default_journal_template.clone(),
         }
     }
 

@@ -182,6 +182,7 @@ export function mockBackend(): Backend {
         shortcuts: {},
         start_of_week: 0,
         block_hidden_properties: [],
+        default_journal_template: null,
       };
     },
     async listPages(): Promise<PageEntry[]> {
