@@ -1484,6 +1484,26 @@ mark {
   display: block;
   color: var(--text-primary);
 }
+.ref-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.ref-filter-chip {
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  border-radius: 11px;
+  padding: 1px 9px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.ref-filter-chip:hover { border-color: var(--link-color); }
+.ref-filter-chip.f-in { background: #15803d; color: #fff; border-color: #15803d; }
+.ref-filter-chip.f-out { background: #b91c1c; color: #fff; border-color: #b91c1c; text-decoration: line-through; }
+.ref-filter-count { opacity: 0.7; }
+
 .ref-collapse {
   display: inline-flex;
   align-items: center;

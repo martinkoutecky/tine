@@ -87,9 +87,8 @@ fn search_cache_reflects_saves_and_deletes() {
         blocks: vec![BlockDto {
             id: "x".into(),
             raw: "contains zonkwort here".into(),
-            collapsed: false,
-            children: vec![],
-        }],
+            ..Default::default()
+            }],
     };
     g.save_page(&page).unwrap();
     let hits = g.search("zonkwort", 10);
@@ -122,8 +121,7 @@ fn search_ignores_hidden_property_metadata() {
         blocks: vec![BlockDto {
             id: "x".into(),
             raw: "a perfectly ordinary block\nsome-prop:: qzxmeta".into(),
-            collapsed: false,
-            children: vec![],
+            ..Default::default()
         }],
     };
     g.save_page(&page).unwrap();
@@ -212,7 +210,7 @@ fn consecutive_self_saves_do_not_conflict() {
         kind: PageKind::Page,
         title: "D".into(),
         pre_block: None,
-        blocks: vec![BlockDto { id: "b1".into(), raw: raw.into(), collapsed: false, children: vec![] }],
+        blocks: vec![BlockDto { id: "b1".into(), raw: raw.into(), ..Default::default() }],
     };
     // 1) date picker inserts a SCHEDULED line.
     g.save_page(&mk("TODO task\nSCHEDULED: <2026-06-16 Tue>")).unwrap();

@@ -11,7 +11,7 @@ type Item =
   | { t: "page"; name: string; pageKind: PageKind }
   | { t: "create"; name: string }
   | { t: "command"; label: string; binding: string; run: () => void }
-  | { t: "block"; page: string; pageKind: PageKind; blockId: string; text: string };
+  | { t: "block"; page: string; pageKind: PageKind; blockId: string; text: string; crumb: string[] };
 
 interface Section {
   header: string;
@@ -96,7 +96,7 @@ export function QuickSwitcher(): JSX.Element {
       for (const b of g.blocks) {
         const text = blockView(b.raw).lines.join(" ").trim();
         if (!text) continue;
-        const item: Item = { t: "block", page: g.page, pageKind: g.kind, blockId: b.id, text };
+        const item: Item = { t: "block", page: g.page, pageKind: g.kind, blockId: b.id, text, crumb: b.breadcrumb ?? [] };
         (cur && g.page === cur ? curItems : otherItems).push(item);
       }
     }
@@ -278,7 +278,11 @@ function Row(props: { item: Item; query: string }): JSX.Element {
         <>
           <span class="switcher-kind">block</span>
           <span class="switcher-name">
-            <span class="switcher-page">{it.page}:</span> {snippet(it.text, props.query)}
+            <span class="switcher-page">
+              {it.page}
+              {it.crumb.length ? ` › ${it.crumb.join(" › ")} › ` : ": "}
+            </span>
+            {snippet(it.text, props.query)}
           </span>
         </>
       );

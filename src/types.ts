@@ -7,6 +7,8 @@ export interface BlockDto {
   raw: string;
   collapsed: boolean;
   children: BlockDto[];
+  /** Ancestor first-lines (search/reference results only). */
+  breadcrumb?: string[];
 }
 
 export interface PageDto {

@@ -35,7 +35,7 @@ pub struct PageEntry {
 }
 
 /// A block as sent to / received from the frontend.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BlockDto {
     pub id: String,
     pub raw: String,
@@ -43,6 +43,10 @@ pub struct BlockDto {
     pub collapsed: bool,
     #[serde(default)]
     pub children: Vec<BlockDto>,
+    /// Ancestor first-lines (page-relative path) for search/reference results;
+    /// empty for normal page loads. Lets the UI show a "parent › child" trail.
+    #[serde(default)]
+    pub breadcrumb: Vec<String>,
 }
 
 /// A group of blocks from one source page — used for both Linked References
@@ -646,6 +650,7 @@ pub fn block_to_dto(b: &DocBlock) -> BlockDto {
         raw: b.raw.clone(),
         collapsed: b.collapsed(),
         children: b.children.iter().map(block_to_dto).collect(),
+        breadcrumb: Vec::new(),
     }
 }
 

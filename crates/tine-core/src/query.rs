@@ -21,6 +21,30 @@ fn walk<'a>(blocks: &'a [DocBlock], f: &mut impl FnMut(&'a DocBlock)) {
     }
 }
 
+/// Walk depth-first, passing each block's ancestor chain (outermost first).
+fn walk_path<'a>(
+    blocks: &'a [DocBlock],
+    path: &mut Vec<&'a DocBlock>,
+    f: &mut impl FnMut(&'a DocBlock, &[&'a DocBlock]),
+) {
+    for b in blocks {
+        f(b, path);
+        path.push(b);
+        walk_path(&b.children, path, f);
+        path.pop();
+    }
+}
+
+/// A short, single-line label for a block in a breadcrumb trail.
+fn crumb_line(b: &DocBlock) -> String {
+    let line = visible_text(&b.raw).lines().next().unwrap_or("").trim().to_string();
+    if line.chars().count() > 60 {
+        format!("{}…", line.chars().take(60).collect::<String>())
+    } else {
+        line
+    }
+}
+
 /// Collect matching blocks across the graph, grouped by source page. Scans the
 /// graph's in-memory page cache (built once, kept in sync by edits) so no disk
 /// I/O or re-parsing happens per call.
@@ -32,18 +56,17 @@ fn collect(graph: &Graph, mut keep: impl FnMut(&DocBlock) -> bool, exclude: Opti
             if ex.as_deref() == Some(&refs::normalize(&entry.name)) {
                 continue;
             }
-            let mut matched: Vec<&DocBlock> = Vec::new();
-            walk(&doc.roots, &mut |b| {
+            let mut matched: Vec<BlockDto> = Vec::new();
+            let mut path: Vec<&DocBlock> = Vec::new();
+            walk_path(&doc.roots, &mut path, &mut |b, anc| {
                 if keep(b) {
-                    matched.push(b);
+                    let mut dto = block_to_dto(b);
+                    dto.breadcrumb = anc.iter().map(|a| crumb_line(a)).collect();
+                    matched.push(dto);
                 }
             });
             if !matched.is_empty() {
-                groups.push(RefGroup {
-                    page: entry.name.clone(),
-                    kind: entry.kind,
-                    blocks: matched.into_iter().map(block_to_dto).collect(),
-                });
+                groups.push(RefGroup { page: entry.name.clone(), kind: entry.kind, blocks: matched });
             }
         }
         groups
@@ -252,6 +275,7 @@ fn template_dto(b: &DocBlock, strip_template: bool) -> BlockDto {
         raw,
         collapsed: false,
         children: b.children.iter().map(|c| template_dto(c, false)).collect(),
+        breadcrumb: Vec::new(),
     }
 }
 
