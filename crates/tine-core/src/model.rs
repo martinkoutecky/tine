@@ -564,7 +564,16 @@ impl Graph {
                 .iter()
                 .find(|(e, _)| e.kind == entry.kind && e.name.eq_ignore_ascii_case(&entry.name))
             {
-                if *cached == newdoc {
+                // Compare CONTENT, not the in-memory uuids: cached blocks carry
+                // generated uuids (assigned at cache build / upsert), while a
+                // fresh `parse` leaves them empty for non-ref-target blocks, so a
+                // direct `cached == newdoc` would never match and would flag every
+                // one of Tine's own writes as an external change. Normalize the
+                // cached doc through the same serialize→parse round-trip the file
+                // went through (both sides then have empty uuids) and compare.
+                let opts = doc::SerializeOpts::detect(Some(&content));
+                let cached_norm = doc::parse(&doc::serialize_with(cached, &opts));
+                if cached_norm == newdoc {
                     return None; // unchanged / our own write
                 }
             }
