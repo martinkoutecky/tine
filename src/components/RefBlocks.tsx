@@ -7,20 +7,25 @@ import { blockView } from "../render/block";
 import { InlineText } from "../render/inline";
 import { openBlockInSidebar } from "../ui";
 
-// `page` (the page these blocks live on) is threaded through so a shift-click
-// can open the block in the sidebar with a correct "go to page" link.
-export function RefBlocks(props: { blocks: BlockDto[]; page?: string }): JSX.Element {
-  return <For each={props.blocks}>{(b) => <RefBlock block={b} page={props.page} />}</For>;
+// `page`/`pageKind` (where these blocks live) are threaded through so a
+// shift-click can open the block live in the sidebar.
+export function RefBlocks(props: {
+  blocks: BlockDto[];
+  page?: string;
+  pageKind?: "journal" | "page";
+}): JSX.Element {
+  return (
+    <For each={props.blocks}>
+      {(b) => <RefBlock block={b} page={props.page} pageKind={props.pageKind} />}
+    </For>
+  );
 }
 
-// Snapshot a read-only DTO block for the sidebar (same shape as the store's
-// blockSnapshot, but the DTO is already self-contained here).
-function dtoSnapshot(b: BlockDto, page: string): { key: string; page: string; blocks: BlockDto[] } {
-  const idProp = /(?:^|\n)id:: *([0-9a-fA-F-]{8,})/.exec(b.raw);
-  return { key: idProp ? idProp[1] : b.id, page, blocks: [b] };
-}
-
-function RefBlock(props: { block: BlockDto; page?: string }): JSX.Element {
+function RefBlock(props: {
+  block: BlockDto;
+  page?: string;
+  pageKind?: "journal" | "page";
+}): JSX.Element {
   const view = () => blockView(props.block.raw);
   return (
     <div class="ls-block ref-block">
@@ -32,7 +37,11 @@ function RefBlock(props: { block: BlockDto; page?: string }): JSX.Element {
             onClick={(e) => {
               if (e.shiftKey) {
                 e.stopPropagation();
-                openBlockInSidebar(dtoSnapshot(props.block, props.page ?? ""));
+                openBlockInSidebar({
+                  uuid: props.block.id,
+                  page: props.page ?? "",
+                  pageKind: props.pageKind ?? "page",
+                });
               }
             }}
           >
@@ -62,7 +71,7 @@ function RefBlock(props: { block: BlockDto; page?: string }): JSX.Element {
       <Show when={props.block.children.length}>
         <div class="block-children-container">
           <div class="block-children">
-            <RefBlocks blocks={props.block.children} page={props.page} />
+            <RefBlocks blocks={props.block.children} page={props.page} pageKind={props.pageKind} />
           </div>
         </div>
       </Show>

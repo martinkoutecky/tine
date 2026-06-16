@@ -4,7 +4,7 @@ import { openPage, openPageInNewTab } from "../router";
 import { backend } from "../backend";
 import {
   ensureBlockId,
-  blockSnapshot,
+  blockRef,
   blockSubtreeMarkdown,
   deleteBlock,
   setBlockProperty,
@@ -142,7 +142,7 @@ function PageMenu(props: {
 function blockActions(id: string): { label: string; run: () => void; danger?: boolean }[] {
   const numbered = blockProperty(id, "logseq.order-list-type") === "number";
   return [
-    { label: "Open in sidebar", run: () => openBlockInSidebar(blockSnapshot(id)) },
+    { label: "Open in sidebar", run: () => openBlockInSidebar(blockRef(id)) },
     { label: "Zoom into block", run: () => zoomInto(id) },
     { label: "Copy block ref", run: () => void backend().writeText(`((${ensureBlockId(id)}))`) },
     { label: "Copy block", run: () => void backend().writeText(blockSubtreeMarkdown(id)) },

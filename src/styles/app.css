@@ -1617,6 +1617,14 @@ mark {
 .rs-item-body {
   padding: 6px 10px;
 }
+.rs-item-missing {
+  color: var(--text-muted);
+  font-size: 13px;
+  font-style: italic;
+}
+.rs-item-loading {
+  min-height: 20px;
+}
 
 /* --------------------------------------------------------------- PDF pane */
 

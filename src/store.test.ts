@@ -5,6 +5,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import {
   doc,
+  resetStore,
   loadSingle,
   loadFeed,
   editingId,
@@ -42,6 +43,7 @@ function shape(ids: string[] = doc.pages[0].roots): any[] {
 
 beforeEach(() => {
   counter = 0;
+  resetStore();
 });
 
 describe("split (Enter)", () => {

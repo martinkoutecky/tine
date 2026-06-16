@@ -2,7 +2,8 @@
 // persisting the choice so it reopens next launch.
 
 import { backend } from "./backend";
-import { setGraphMeta, setWorkflow, bumpGraphEpoch } from "./ui";
+import { setGraphMeta, setWorkflow, bumpGraphEpoch, setRightSidebar } from "./ui";
+import { resetStore } from "./store";
 import { openJournals } from "./router";
 
 const GRAPH_KEY = "tine.graphPath";
@@ -19,6 +20,9 @@ export function persistedGraphPath(): string {
  *  non-empty path, and reloads the views. */
 export async function loadGraphPath(path: string): Promise<void> {
   const meta = await backend().loadGraph(path);
+  // New graph → drop the old graph's working set and any open sidebar items.
+  resetStore();
+  setRightSidebar([]);
   setGraphMeta(meta ?? null);
   setWorkflow(meta?.preferred_workflow === "todo" ? "todo" : "now");
   if (path) {

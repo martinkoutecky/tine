@@ -32,11 +32,30 @@ export interface FeedPage {
 
 interface DocState {
   byId: Record<string, Node>;
+  // The working set: every page currently loaded in the frontend — the main
+  // view's pages PLUS any page a satellite surface (sidebar, query result,
+  // embed) has pulled in on demand. All share one `byId` keyed by stable block
+  // uuid, so a block rendered in two places is the SAME node and edits to it
+  // propagate everywhere via SolidJS reactivity (OG's "everything is a block",
+  // adapted to lazy loading — the Rust cache is the full graph DB).
   pages: FeedPage[];
+  // Page names the MAIN content area shows, in order (a single page, or the
+  // journals feed). A subset of `pages`.
+  feed: string[];
   loaded: boolean;
 }
 
-export const [doc, setDoc] = createStore<DocState>({ byId: {}, pages: [], loaded: false });
+export const [doc, setDoc] = createStore<DocState>({ byId: {}, pages: [], feed: [], loaded: false });
+
+/** The pages shown in the main content area, in feed order. */
+export function mainPages(): FeedPage[] {
+  return doc.feed.map((n) => doc.pages.find((p) => p.name === n)).filter(Boolean) as FeedPage[];
+}
+
+/** A loaded page record by name (anywhere in the working set), or undefined. */
+export function pageByName(name: string): FeedPage | undefined {
+  return doc.pages.find((p) => p.name === name);
+}
 
 export const [editingId, setEditingId] = createSignal<string | null>(null);
 const [caretTarget, setCaretTarget] = createSignal<{ id: string; offset: number } | null>(null);
@@ -84,32 +103,67 @@ function toFeedPage(dto: PageDto, byId: Record<string, Node>): FeedPage {
   return { name: dto.name, kind: dto.kind, title: dto.title, preBlock: dto.pre_block, roots };
 }
 
-/** Load a single page (page route). */
-export function loadSingle(dto: PageDto) {
-  const byId: Record<string, Node> = {};
-  const fp = toFeedPage(dto, byId);
-  setDoc({ byId, pages: [fp], loaded: true });
-  setEditingId(null);
+/** Drop a page's blocks from the shared byId map (before replacing it). */
+function purgePageNodes(s: DocState, pageName: string) {
+  for (const id of Object.keys(s.byId)) {
+    if (s.byId[id].page === pageName) delete s.byId[id];
+  }
 }
 
-/** Load the journals feed (replaces current pages). */
-export function loadFeed(dtos: PageDto[]) {
-  const byId: Record<string, Node> = {};
-  const pages = dtos.map((d) => toFeedPage(d, byId));
-  setDoc({ byId, pages, loaded: true });
-  setEditingId(null);
-}
-
-/** Append more pages to the feed (infinite scroll). */
-export function appendFeed(dtos: PageDto[]) {
+/** Merge a page into the working set, replacing any prior copy of that page.
+ *  Other loaded pages (and their nodes) are left untouched — so a page open in
+ *  the sidebar survives navigating the main view elsewhere. */
+function upsertPage(dto: PageDto) {
   setDoc(
     produce((s) => {
-      for (const d of dtos) {
-        if (s.pages.some((p) => p.name === d.name)) continue;
-        s.pages.push(toFeedPage(d, s.byId));
-      }
+      purgePageNodes(s, dto.name);
+      const fp = toFeedPage(dto, s.byId);
+      const i = s.pages.findIndex((p) => p.name === dto.name);
+      if (i >= 0) s.pages[i] = fp;
+      else s.pages.push(fp);
     })
   );
+}
+
+/** Load a page into the working set if it isn't already there (used by
+ *  satellite surfaces — sidebar / query results / embeds — so they render the
+ *  same live, editable nodes as the main view). Idempotent: never clobbers an
+ *  already-loaded page's in-progress edits. */
+export function ensurePageLoaded(dto: PageDto) {
+  if (doc.pages.some((p) => p.name === dto.name)) return;
+  upsertPage(dto);
+}
+
+/** Clear the entire working set. Used for test isolation and when switching
+ *  graphs; normal navigation is additive (keeps satellite pages alive). */
+export function resetStore() {
+  setDoc({ byId: {}, pages: [], feed: [], loaded: false });
+  setEditingId(null);
+}
+
+/** Load a single page and make it the main view. */
+export function loadSingle(dto: PageDto) {
+  upsertPage(dto);
+  setDoc("feed", [dto.name]);
+  setDoc("loaded", true);
+  setEditingId(null);
+}
+
+/** Load the journals feed as the main view. */
+export function loadFeed(dtos: PageDto[]) {
+  for (const d of dtos) upsertPage(d);
+  setDoc("feed", dtos.map((d) => d.name));
+  setDoc("loaded", true);
+  setEditingId(null);
+}
+
+/** Append more pages to the journals feed (infinite scroll). */
+export function appendFeed(dtos: PageDto[]) {
+  for (const d of dtos) {
+    if (doc.feed.includes(d.name)) continue;
+    upsertPage(d);
+    setDoc("feed", [...doc.feed, d.name]);
+  }
 }
 
 function toDto(id: string): BlockDto {
@@ -144,7 +198,9 @@ function indexInSiblings(id: string): number {
   return rootsOf(id).indexOf(id);
 }
 
-/** Visible blocks across the whole feed, in display order. */
+/** Visible blocks in the MAIN view, in display order (drives editor arrow-nav).
+ *  Scoped to the feed so navigation stays within the main content area, not
+ *  satellite pages loaded for the sidebar/queries. */
 export function visibleOrder(): string[] {
   const out: string[] = [];
   const walk = (ids: string[]) => {
@@ -154,7 +210,7 @@ export function visibleOrder(): string[] {
       if (!n.collapsed && n.children.length) walk(n.children);
     }
   };
-  for (const p of doc.pages) walk(p.roots);
+  for (const p of mainPages()) walk(p.roots);
   return out;
 }
 
@@ -505,22 +561,12 @@ export function ensureBlockId(id: string): string {
   return uuid;
 }
 
-/** Snapshot a block's subtree as a self-contained DTO tree — for opening it in
- *  the right sidebar. Reads only the live frontend store: no backend round-trip,
- *  no `id::` minting, no save race. Works for any loaded block. */
-function nodeToDto(id: string): BlockDto {
+/** A live reference to a loaded block — its stable uuid + the page it lives on
+ *  (so a satellite surface can load that page and render the same editable
+ *  node). The uuid IS the store key, so no snapshot is needed. */
+export function blockRef(id: string): { uuid: string; page: string; pageKind: PageKind } {
   const n = doc.byId[id];
-  return {
-    id: n.id,
-    raw: n.raw,
-    collapsed: n.collapsed,
-    children: n.children.map(nodeToDto),
-  };
-}
-export function blockSnapshot(id: string): { key: string; page: string; blocks: BlockDto[] } {
-  const n = doc.byId[id];
-  const idProp = /(?:^|\n)id:: *([0-9a-fA-F-]{8,})/.exec(n.raw);
-  return { key: idProp ? idProp[1] : id, page: n.page, blocks: [nodeToDto(id)] };
+  return { uuid: n.id, page: n.page, pageKind: pageByName(n.page)?.kind ?? "page" };
 }
 
 /** Serialize a block and its subtree to Logseq markdown. */

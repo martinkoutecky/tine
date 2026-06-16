@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createSignal, on, onCleanup, onMount, untrack, type JSX } from "solid-js";
-import { doc, loadSingle, loadFeed, appendFeed, forceSave, isDirty, editingId, type FeedPage } from "../store";
+import { doc, mainPages, loadSingle, loadFeed, appendFeed, forceSave, isDirty, editingId, type FeedPage } from "../store";
 import { route, openPage, openJournals } from "../router";
 import {
   zoomedBlock, zoomOut, zoomInto, isFavorite, toggleFavorite, notesRefresh,
@@ -155,11 +155,11 @@ export function PageView(): JSX.Element {
     <Show when={ready() && doc.loaded} fallback={<div class="page-loading" />}>
       <Show when={zoomValid()} fallback={
         <div class="page">
-          <Show when={route().kind === "page" && doc.pages[0] && isConflicted(doc.pages[0].name)}>
-            <ConflictBanner name={doc.pages[0].name} kind={doc.pages[0].kind} />
+          <Show when={route().kind === "page" && mainPages()[0] && isConflicted(mainPages()[0].name)}>
+            <ConflictBanner name={mainPages()[0].name} kind={mainPages()[0].kind} />
           </Show>
-          <For each={doc.pages}>{(p) => <PageSection page={p} />}</For>
-          <Show when={route().kind === "journals" && doc.pages.length === 0}>
+          <For each={mainPages()}>{(p) => <PageSection page={p} />}</For>
+          <Show when={route().kind === "journals" && mainPages().length === 0}>
             <div class="page-load-error">
               No journal entries found in this graph.
               <div class="page-load-error-hint">
@@ -172,9 +172,9 @@ export function PageView(): JSX.Element {
           <Show when={route().kind === "journals"}>
             <LoadMore onHit={loadMore} />
           </Show>
-          <Show when={route().kind === "page" && doc.pages[0]}>
-            <LinkedReferences name={doc.pages[0].name} />
-            <UnlinkedReferences name={doc.pages[0].name} />
+          <Show when={route().kind === "page" && mainPages()[0]}>
+            <LinkedReferences name={mainPages()[0].name} />
+            <UnlinkedReferences name={mainPages()[0].name} />
           </Show>
         </div>
       }>

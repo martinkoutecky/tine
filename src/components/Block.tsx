@@ -29,7 +29,7 @@ import {
   selectBlock,
   moveSelection,
   isSelected,
-  blockSnapshot,
+  blockRef,
 } from "../store";
 import { parseOutline } from "../editor/outline";
 import { blockView, isPropertyLine } from "../render/block";
@@ -182,7 +182,7 @@ export function Block(props: { id: string }): JSX.Element {
             onClick={(e) => {
               e.stopPropagation();
               if (dragMoved) return; // was a drag, not a click
-              if (e.shiftKey) openBlockInSidebar(blockSnapshot(props.id));
+              if (e.shiftKey) openBlockInSidebar(blockRef(props.id));
               else zoomInto(props.id);
             }}
           >

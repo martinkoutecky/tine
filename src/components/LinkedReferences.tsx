@@ -25,7 +25,7 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
                 {g.page}
               </div>
               <div class="reference-blocks">
-                <RefBlocks blocks={g.blocks} page={g.page} />
+                <RefBlocks blocks={g.blocks} page={g.page} pageKind={g.kind} />
               </div>
             </div>
           )}

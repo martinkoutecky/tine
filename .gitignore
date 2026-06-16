@@ -20,3 +20,4 @@ dist
 # Local scratch
 /scratch
 samples/*/publish
+screenshots/

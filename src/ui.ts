@@ -1,6 +1,6 @@
 // Small global UI state: theme, left sidebar, and the quick-switcher modal.
 import { createSignal } from "solid-js";
-import type { BlockDto, GraphMeta } from "./types";
+import type { GraphMeta } from "./types";
 
 const THEME_KEY = "logseq-claude.theme";
 function loadTheme(): "light" | "dark" {
@@ -239,12 +239,11 @@ export function zoomOut() {
 // Right sidebar: a stack of items opened for reference (shift-click anything).
 //
 // "Everything is a block": every reference resolves to one of two universal
-// targets — a *page* (addressed live by name) or a *block subtree* (a
-// self-contained snapshot of the live frontend tree). Blocks are NOT resolved
-// by round-tripping to the backend via a persisted `id::` — the frontend
-// already owns the tree, so we carry the subtree itself. This makes the gesture
-// work identically from a page, a journal, a query result, or a ref, with no
-// file mutation and no save race.
+// targets — a *page* (by name) or a *block* (by stable uuid). Both are LIVE
+// references, not snapshots: the sidebar loads the target's page into the shared
+// working set and renders the same editable <Block> the main view uses, so an
+// edit in the sidebar is an edit to the one underlying node and shows up
+// everywhere (OG's single-source-of-truth model, kept lazy).
 export interface SidebarPage {
   kind: "page";
   name: string;
@@ -252,9 +251,9 @@ export interface SidebarPage {
 }
 export interface SidebarBlock {
   kind: "block";
-  key: string; // dedup key (persisted id:: if any, else the session block id)
-  page: string; // the page the block lives on (for the title link)
-  blocks: BlockDto[]; // snapshot of the block subtree
+  uuid: string; // stable block id — the live handle into the store
+  page: string; // the page it lives on (loaded on demand)
+  pageKind: "journal" | "page";
 }
 export type SidebarItem = SidebarPage | SidebarBlock;
 
@@ -264,9 +263,9 @@ export function openPageInSidebar(name: string, pageKind: "journal" | "page" = "
   if (rightSidebar().some((i) => i.kind === "page" && i.name === name)) return;
   setRightSidebar([{ kind: "page", name, pageKind }, ...rightSidebar()]);
 }
-export function openBlockInSidebar(snap: { key: string; page: string; blocks: BlockDto[] }) {
-  if (rightSidebar().some((i) => i.kind === "block" && i.key === snap.key)) return;
-  setRightSidebar([{ kind: "block", ...snap }, ...rightSidebar()]);
+export function openBlockInSidebar(ref: { uuid: string; page: string; pageKind: "journal" | "page" }) {
+  if (rightSidebar().some((i) => i.kind === "block" && i.uuid === ref.uuid)) return;
+  setRightSidebar([{ kind: "block", ...ref }, ...rightSidebar()]);
 }
 export function closeRightSidebarItem(idx: number) {
   setRightSidebar(rightSidebar().filter((_, i) => i !== idx));

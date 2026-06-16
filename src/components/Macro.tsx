@@ -2,10 +2,12 @@ import { For, Show, Switch, Match, createMemo, createResource, createSignal, typ
 import { backend } from "../backend";
 import { openPage, openPageInNewTab } from "../router";
 import { openPageInSidebar, openPageContextMenu } from "../ui";
+import { doc, ensurePageLoaded, pageByName } from "../store";
 import { RefBlocks } from "./RefBlocks";
+import { Block } from "./Block";
 import { blockView } from "../render/block";
 import { InlineText } from "../render/inline";
-import type { PageKind } from "../types";
+import type { PageKind, RefGroup } from "../types";
 
 const ADVANCED_RE = /\[\s*:find|:where|:find/;
 
@@ -131,37 +133,7 @@ export function QueryMacro(props: { body: string }): JSX.Element {
           >
             <Show
               when={table()}
-              fallback={
-                <For each={groups()}>
-                  {(g) => (
-                    <div class="query-group">
-                      <div
-                        class="query-page"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (e.shiftKey) openPageInSidebar(g.page, g.kind);
-                          else openPage(g.page, g.kind);
-                        }}
-                        onAuxClick={(e) => {
-                          if (e.button === 1) {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            openPageInNewTab(g.page, g.kind);
-                          }
-                        }}
-                        onContextMenu={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          openPageContextMenu(e.clientX, e.clientY, g.page, g.kind);
-                        }}
-                      >
-                        {g.page}
-                      </div>
-                      <RefBlocks blocks={g.blocks} page={g.page} />
-                    </div>
-                  )}
-                </For>
-              }
+              fallback={<For each={groups()}>{(g) => <QueryGroup group={g} />}</For>}
             >
               <table class="md-table query-table">
                 <thead>
@@ -213,6 +185,60 @@ export function QueryMacro(props: { body: string }): JSX.Element {
           </Show>
         </Match>
       </Switch>
+    </div>
+  );
+}
+
+// One page's query results, rendered as LIVE editable blocks. The result page
+// is loaded into the shared working set on demand; each result is the same
+// <Block> the main view uses (so editing a result edits the real block and
+// saves to its page). Until the page is loaded, a read-only block stands in.
+function QueryGroup(props: { group: RefGroup }): JSX.Element {
+  const g = () => props.group;
+  const [ready] = createResource(
+    () => ({ p: g().page, k: g().kind }),
+    async ({ p, k }) => {
+      if (!pageByName(p)) {
+        const dto = await backend().getPage(p, k);
+        if (dto) ensurePageLoaded(dto);
+      }
+      return true;
+    }
+  );
+  return (
+    <div class="query-group">
+      <div
+        class="query-page"
+        onClick={(e) => {
+          e.stopPropagation();
+          if (e.shiftKey) openPageInSidebar(g().page, g().kind);
+          else openPage(g().page, g().kind);
+        }}
+        onAuxClick={(e) => {
+          if (e.button === 1) {
+            e.preventDefault();
+            e.stopPropagation();
+            openPageInNewTab(g().page, g().kind);
+          }
+        }}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          openPageContextMenu(e.clientX, e.clientY, g().page, g().kind);
+        }}
+      >
+        {g().page}
+      </div>
+      <For each={g().blocks}>
+        {(b) => (
+          <Show
+            when={ready() && doc.byId[b.id]}
+            fallback={<RefBlocks blocks={[b]} page={g().page} pageKind={g().kind} />}
+          >
+            <Block id={b.id} />
+          </Show>
+        )}
+      </For>
     </div>
   );
 }
