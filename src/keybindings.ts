@@ -7,7 +7,15 @@
 // (Block.tsx) resolve keys through the same merged binding table, so every
 // listed command is remappable from config.edn.
 
-import { openSwitcher, toggleTheme, toggleSidebar, closeSwitcher, closeSettings } from "./ui";
+import {
+  openSwitcher,
+  openCommandPalette,
+  toggleTheme,
+  toggleSidebar,
+  closeSwitcher,
+  closeSettings,
+  openSettings,
+} from "./ui";
 import { openJournals } from "./router";
 import {
   undo,
@@ -51,9 +59,11 @@ const isMac = typeof navigator !== "undefined" && /Mac/.test(navigator.platform)
 // Default command table. Editor command ids mirror OG Logseq where practical.
 const COMMANDS: CommandDef[] = [
   { id: "go/search", binding: "mod+k", label: "Search / quick switch", scope: "global", run: openSwitcher, global: true },
+  { id: "command-palette/toggle", binding: "mod+shift+p", label: "Command palette", scope: "global", run: openCommandPalette, global: true },
   { id: "go/journals", binding: "g j", label: "Go to journals", scope: "global", run: openJournals },
   { id: "ui/toggle-theme", binding: "t t", label: "Toggle dark / light", scope: "global", run: toggleTheme },
   { id: "ui/toggle-left-sidebar", binding: "t l", label: "Toggle left sidebar", scope: "global", run: toggleSidebar },
+  { id: "ui/open-settings", binding: "t s", label: "Open settings", scope: "global", run: openSettings },
   { id: "editor/undo", binding: "mod+z", label: "Undo", scope: "global", run: undo, global: true },
   { id: "editor/redo", binding: "mod+shift+z", label: "Redo", scope: "global", run: redo, global: true },
   // Editor commands (resolved in Block.tsx / selection handler).
@@ -143,6 +153,20 @@ export function matchesCommand(e: KeyboardEvent, id: string): boolean {
   const cs = bindings[id];
   if (!cs || cs.length !== 1) return false;
   return chordEq(eventToChord(e), cs[0]);
+}
+
+/** Runnable global commands for the command palette / Ctrl-K Commands group:
+ *  every global command with a run handler, with its effective binding. The
+ *  switcher itself is excluded (no point launching the launcher). */
+export function paletteCommands(): { id: string; label: string; binding: string; run: () => void }[] {
+  return COMMANDS.filter((c) => c.scope === "global" && c.run && c.id !== "go/search")
+    .map((c) => ({
+      id: c.id,
+      label: c.label,
+      binding: overridesApplied[c.id] ?? c.binding,
+      run: c.run!,
+    }))
+    .filter((c) => c.binding !== "false");
 }
 
 /** Merged shortcuts for the Settings reference. */

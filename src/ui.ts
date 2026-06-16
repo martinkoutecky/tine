@@ -311,7 +311,16 @@ export function closeSettings() {
 }
 
 export const [switcherOpen, setSwitcherOpen] = createSignal(false);
+// "all" = full Ctrl-K (pages/create/commands/blocks); "commands" = command
+// palette (⌘⇧P), commands only.
+export type SwitcherMode = "all" | "commands";
+export const [switcherMode, setSwitcherMode] = createSignal<SwitcherMode>("all");
 export function openSwitcher() {
+  setSwitcherMode("all");
+  setSwitcherOpen(true);
+}
+export function openCommandPalette() {
+  setSwitcherMode("commands");
   setSwitcherOpen(true);
 }
 export function closeSwitcher() {

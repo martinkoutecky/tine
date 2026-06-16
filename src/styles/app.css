@@ -1750,6 +1750,60 @@ mark {
   font-size: 14px;
 }
 
+.switcher-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px 2px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.switcher-count {
+  font-weight: 600;
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  padding: 0 6px;
+}
+.switcher-kind.create { color: #10b981; }
+.switcher-kind.cmd { color: var(--link-color); }
+.switcher-shortcut {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--ls-font-mono);
+  white-space: nowrap;
+}
+.switcher-name mark {
+  background: rgba(251, 230, 158, 0.55);
+  color: inherit;
+  border-radius: 2px;
+}
+.switcher-footer {
+  display: flex;
+  gap: 14px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--border-color);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.switcher-footer kbd {
+  font-family: var(--ls-font-mono);
+  background: var(--bg-secondary);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+/* Brief highlight when jumping to a block from search. */
+.block-flash > .block-main {
+  animation: block-flash 1.2s ease-out;
+}
+@keyframes block-flash {
+  0% { background: rgba(251, 230, 158, 0.6); }
+  100% { background: transparent; }
+}
+
 /* ------------------------------------------------------- right sidebar */
 
 .right-sidebar {

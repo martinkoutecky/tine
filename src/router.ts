@@ -76,6 +76,25 @@ export function openJournals() {
   navigate({ kind: "journals" });
 }
 
+/** Open a page and scroll the given block into view (block search results jump
+ *  to the specific block, not just the page top). */
+export function openPageAtBlock(name: string, pageKind: "journal" | "page", blockId: string) {
+  openPage(name, pageKind);
+  // Let the page render, then scroll + briefly highlight the target block.
+  let tries = 0;
+  const tick = () => {
+    const el = document.querySelector(`.ls-block[data-block-id="${blockId}"]`);
+    if (el) {
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      el.classList.add("block-flash");
+      setTimeout(() => el.classList.remove("block-flash"), 1200);
+    } else if (tries++ < 20) {
+      setTimeout(tick, 50);
+    }
+  };
+  setTimeout(tick, 60);
+}
+
 export function openInNewTab(r: Route) {
   const id = newId();
   setTabs([...tabs(), { id, history: [r], pos: 0, pinned: false }]);
