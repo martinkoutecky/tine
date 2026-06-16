@@ -231,6 +231,9 @@ export function mockBackend(): Backend {
       }
       return [];
     },
+    async readCustomCss(): Promise<string> {
+      return "";
+    },
     async queryFacets(): Promise<[string, string[]][]> {
       const map = new Map<string, Set<string>>();
       const internal = new Set(["id", "collapsed"]);

@@ -15,6 +15,8 @@ import {
   closeSwitcher,
   closeSettings,
   openSettings,
+  toggleWideMode,
+  toggleDocumentMode,
 } from "./ui";
 import { openJournals } from "./router";
 import {
@@ -64,6 +66,8 @@ const COMMANDS: CommandDef[] = [
   { id: "ui/toggle-theme", binding: "t t", label: "Toggle dark / light", scope: "global", run: toggleTheme },
   { id: "ui/toggle-left-sidebar", binding: "t l", label: "Toggle left sidebar", scope: "global", run: toggleSidebar },
   { id: "ui/open-settings", binding: "t s", label: "Open settings", scope: "global", run: openSettings },
+  { id: "ui/toggle-wide-mode", binding: "t w", label: "Toggle wide mode", scope: "global", run: toggleWideMode },
+  { id: "ui/toggle-document-mode", binding: "t d", label: "Toggle document mode", scope: "global", run: toggleDocumentMode },
   { id: "editor/undo", binding: "mod+z", label: "Undo", scope: "global", run: undo, global: true },
   { id: "editor/redo", binding: "mod+shift+z", label: "Redo", scope: "global", run: redo, global: true },
   // Editor commands (resolved in Block.tsx / selection handler).

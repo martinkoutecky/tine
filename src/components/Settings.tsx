@@ -9,6 +9,12 @@ import {
   shortcutOverrides,
   setShortcutOverride,
   resetShortcutOverride,
+  accentColor,
+  changeAccent,
+  wideMode,
+  toggleWideMode,
+  documentMode,
+  toggleDocumentMode,
 } from "../ui";
 import { commandDefaults, eventToBindingString, setKeybindingsSuspended } from "../keybindings";
 import { switchGraph } from "../graph";
@@ -82,6 +88,35 @@ export function Settings(): JSX.Element {
               </button>
               <button classList={{ active: theme() === "dark" }} onClick={() => theme() !== "dark" && toggleTheme()}>
                 Dark
+              </button>
+            </div>
+          </div>
+
+          <div class="settings-row">
+            <span class="settings-label">Accent color</span>
+            <div>
+              <input
+                type="color"
+                class="settings-color"
+                value={accentColor() ?? "#2563eb"}
+                onInput={(e) => changeAccent(e.currentTarget.value)}
+              />
+              <Show when={accentColor()}>
+                <button class="settings-btn" style={{ "margin-left": "8px" }} onClick={() => changeAccent(null)}>
+                  Reset
+                </button>
+              </Show>
+            </div>
+          </div>
+
+          <div class="settings-row">
+            <span class="settings-label">Layout</span>
+            <div class="settings-seg">
+              <button classList={{ active: wideMode() }} onClick={toggleWideMode}>
+                Wide mode
+              </button>
+              <button classList={{ active: documentMode() }} onClick={toggleDocumentMode}>
+                Document mode
               </button>
             </div>
           </div>

@@ -219,6 +219,11 @@ fn query_facets(state: State<'_, AppState>) -> Result<Vec<(String, Vec<String>)>
 }
 
 #[tauri::command]
+fn read_custom_css(state: State<'_, AppState>) -> Result<String, String> {
+    with_graph(&state, |g| Ok(g.custom_css()))
+}
+
+#[tauri::command]
 fn search(query: String, limit: usize, state: State<'_, AppState>) -> Result<Vec<RefGroup>, String> {
     with_graph(&state, |g| Ok(g.search(&query, limit)))
 }
@@ -363,6 +368,7 @@ fn main() {
             publish_html,
             run_query,
             query_facets,
+            read_custom_css,
             search,
             quick_switch,
             list_templates,

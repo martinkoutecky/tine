@@ -22,6 +22,53 @@ export function applyTheme() {
 // Task workflow from config.edn (:preferred-workflow): drives mod+enter cycling.
 export const [workflow, setWorkflow] = createSignal<"now" | "todo">("now");
 
+// --- appearance: accent color, wide mode, document mode (all persisted) ---
+function loadStr(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+function saveStr(key: string, val: string | null) {
+  try {
+    if (val === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, val);
+  } catch {
+    // ignore
+  }
+}
+
+const ACCENT_KEY = "logseq-claude.accent";
+export const [accentColor, setAccentColor] = createSignal<string | null>(loadStr(ACCENT_KEY));
+/** Apply (or clear) the accent color as the link/highlight CSS variable. */
+export function applyAccent() {
+  const c = accentColor();
+  const root = document.documentElement;
+  if (c) root.style.setProperty("--link-color", c);
+  else root.style.removeProperty("--link-color");
+}
+export function changeAccent(c: string | null) {
+  setAccentColor(c);
+  saveStr(ACCENT_KEY, c);
+  applyAccent();
+}
+
+const WIDE_KEY = "logseq-claude.wide";
+const DOC_KEY = "logseq-claude.doc-mode";
+export const [wideMode, setWideMode] = createSignal(loadStr(WIDE_KEY) === "1");
+export const [documentMode, setDocumentMode] = createSignal(loadStr(DOC_KEY) === "1");
+export function toggleWideMode() {
+  const v = !wideMode();
+  setWideMode(v);
+  saveStr(WIDE_KEY, v ? "1" : null);
+}
+export function toggleDocumentMode() {
+  const v = !documentMode();
+  setDocumentMode(v);
+  saveStr(DOC_KEY, v ? "1" : null);
+}
+
 // Loaded graph metadata (root path, dirs, shortcut overrides), for Settings.
 export const [graphMeta, setGraphMeta] = createSignal<GraphMeta | null>(null);
 // Bumped when the open graph changes, so views reload against the new graph.

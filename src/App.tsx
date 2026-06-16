@@ -28,6 +28,8 @@ import {
   graphMeta,
   openSettings,
   shortcutOverrides,
+  wideMode,
+  documentMode,
 } from "./ui";
 
 export function App(): JSX.Element {
@@ -46,7 +48,14 @@ export function App(): JSX.Element {
   });
 
   return (
-    <div class="app-container" classList={{ "sidebar-collapsed": !sidebarOpen() }}>
+    <div
+      class="app-container"
+      classList={{
+        "sidebar-collapsed": !sidebarOpen(),
+        "wide-mode": wideMode(),
+        "document-mode": documentMode(),
+      }}
+    >
       <Show when={sidebarOpen()}>
         <div class="left-sidebar" style={{ flex: `0 0 ${sidebarWidth()}px`, width: `${sidebarWidth()}px` }}>
           <div class="left-sidebar-scroll">

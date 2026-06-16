@@ -33,7 +33,25 @@ export async function loadGraphPath(path: string): Promise<void> {
     }
   }
   bumpGraphEpoch();
+  void injectCustomCss();
   openJournals();
+}
+
+/** Load the graph's logseq/custom.css into a <style> tag (user theming). */
+async function injectCustomCss(): Promise<void> {
+  let css = "";
+  try {
+    css = await backend().readCustomCss();
+  } catch {
+    css = "";
+  }
+  let el = document.getElementById("tine-custom-css");
+  if (!el) {
+    el = document.createElement("style");
+    el.id = "tine-custom-css";
+    document.head.appendChild(el);
+  }
+  el.textContent = css;
 }
 
 /** Pick a folder and open it as the graph. No-op if cancelled. */

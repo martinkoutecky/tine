@@ -1,6 +1,14 @@
 import { For, Show, type JSX } from "solid-js";
-import { contextMenu, closeContextMenu, zoomInto, openBlockInSidebar, openPageInSidebar } from "../ui";
-import { openPage, openPageInNewTab } from "../router";
+import {
+  contextMenu,
+  closeContextMenu,
+  zoomInto,
+  openBlockInSidebar,
+  openPageInSidebar,
+  isFavorite,
+  toggleFavorite,
+} from "../ui";
+import { openPage, openPageInNewTab, openJournals, route } from "../router";
 import { backend } from "../backend";
 import {
   ensureBlockId,
@@ -122,16 +130,43 @@ function PageMenu(props: {
   pageKind: "journal" | "page";
   close: () => void;
 }): JSX.Element {
-  const items: { label: string; run: () => void }[] = [
+  const fav = () => isFavorite(props.name);
+  const rename = () => {
+    const next = window.prompt("Rename page to:", props.name)?.trim();
+    if (next && next !== props.name) {
+      void backend()
+        .renamePage(props.name, next)
+        .then(() => openPage(next, props.pageKind))
+        .catch(() => {});
+    }
+  };
+  const remove = () => {
+    if (!window.confirm(`Delete page "${props.name}"? This cannot be undone.`)) return;
+    void backend()
+      .deletePage(props.name, props.pageKind)
+      .then(() => {
+        const r = route();
+        if (r.kind === "page" && r.name === props.name) openJournals();
+      })
+      .catch(() => {});
+  };
+  const items: { label: string; run: () => void; danger?: boolean }[] = [
     { label: "Open", run: () => openPage(props.name, props.pageKind) },
     { label: "Open in sidebar", run: () => openPageInSidebar(props.name, props.pageKind) },
     { label: "Open in new tab", run: () => openPageInNewTab(props.name, props.pageKind) },
+    { label: fav() ? "Remove from favorites" : "Add to favorites", run: () => toggleFavorite(props.name, props.pageKind) },
     { label: "Copy page ref", run: () => void backend().writeText(`[[${props.name}]]`) },
+    ...(props.pageKind === "page"
+      ? [
+          { label: "Rename page", run: rename },
+          { label: "Delete page", run: remove, danger: true },
+        ]
+      : []),
   ];
   return (
     <For each={items}>
       {(it) => (
-        <div class="ctx-item" onClick={() => { it.run(); props.close(); }}>
+        <div class="ctx-item" classList={{ danger: !!it.danger }} onClick={() => { it.run(); props.close(); }}>
           {it.label}
         </div>
       )}

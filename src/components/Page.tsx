@@ -3,7 +3,7 @@ import { doc, mainPages, pageByName, reloadPage, loadSingle, loadFeed, appendFee
 import { route, openPage, openJournals } from "../router";
 import {
   zoomedBlock, zoomOut, zoomInto, isFavorite, toggleFavorite, notesRefresh,
-  markConflict, graphEpoch, openPageInSidebar,
+  markConflict, graphEpoch, openPageInSidebar, openPageContextMenu,
 } from "../ui";
 import { backend } from "../backend";
 import { switchGraph } from "../graph";
@@ -303,6 +303,10 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
               else openPage(props.page.name, props.page.kind);
             }}
             onDblClick={startRename}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              openPageContextMenu(e.clientX, e.clientY, props.page.name, props.page.kind);
+            }}
           >
             <Show when={props.page.kind === "journal"}>
               <svg class="title-cal" viewBox="0 0 24 24" aria-hidden="true">

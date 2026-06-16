@@ -365,6 +365,11 @@ impl Graph {
         crate::query::resolve_block(self, uuid)
     }
 
+    /// The graph's `logseq/custom.css`, if present (for user theming).
+    pub fn custom_css(&self) -> String {
+        std::fs::read_to_string(self.root.join("logseq").join("custom.css")).unwrap_or_default()
+    }
+
     /// Property keys (with their distinct values) used across the graph, for the
     /// query builder's property-filter autocomplete. Excludes internal/metadata
     /// properties (id, collapsed, hl-*, …).

@@ -23,6 +23,8 @@ export interface Backend {
   /** Property keys (each with their distinct values) for query-builder
    *  autocomplete. */
   queryFacets(): Promise<[string, string[]][]>;
+  /** The graph's logseq/custom.css (empty string if none). */
+  readCustomCss(): Promise<string>;
   search(query: string, limit: number): Promise<RefGroup[]>;
   quickSwitch(query: string, limit: number): Promise<PageEntry[]>;
   listTemplates(): Promise<TemplateDto[]>;
@@ -105,6 +107,9 @@ class TauriBackend implements Backend {
   }
   queryFacets() {
     return this.call<[string, string[]][]>("query_facets");
+  }
+  readCustomCss() {
+    return this.call<string>("read_custom_css");
   }
   search(query: string, limit: number) {
     return this.call<RefGroup[]>("search", { query, limit });

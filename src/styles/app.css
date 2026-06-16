@@ -156,6 +156,23 @@ body {
   padding: 12px 48px 40vh;
 }
 
+/* Wide mode: drop the reading-width cap. */
+.wide-mode .main-content-inner {
+  max-width: 100%;
+}
+
+/* Document mode: a cleaner prose view — hide bullets, collapse controls, and the
+   child indent guides (structure still there, just visually quiet). */
+.document-mode .bullet-container {
+  opacity: 0;
+}
+.document-mode .collapse-toggle {
+  visibility: hidden;
+}
+.document-mode .block-children-left-border {
+  border-left-color: transparent;
+}
+
 /* ---------------------------------------------------------------- sidebar */
 
 .left-sidebar-inner {
@@ -540,6 +557,16 @@ body {
   background: var(--link-color);
   color: #fff;
   border-color: var(--link-color);
+}
+.settings-color {
+  width: 40px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  cursor: pointer;
+  vertical-align: middle;
 }
 .settings-btn {
   padding: 5px 12px;
