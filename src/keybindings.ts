@@ -76,8 +76,11 @@ const COMMANDS: CommandDef[] = [
   // Editor commands (resolved in Block.tsx / selection handler).
   { id: "editor/indent", binding: "tab", label: "Indent block", scope: "editor" },
   { id: "editor/outdent", binding: "shift+tab", label: "Outdent block", scope: "editor" },
-  { id: "editor/move-block-up", binding: "meta+up", label: "Move block up", scope: "editor" },
-  { id: "editor/move-block-down", binding: "meta+down", label: "Move block down", scope: "editor" },
+  // OG's non-Mac default (alt+shift+arrow). Super+arrow (the old "meta+up"
+  // binding) is grabbed by most Linux compositors for window tiling, so it never
+  // reached the app.
+  { id: "editor/move-block-up", binding: "alt+shift+up", label: "Move block up", scope: "editor" },
+  { id: "editor/move-block-down", binding: "alt+shift+down", label: "Move block down", scope: "editor" },
   { id: "editor/collapse", binding: "mod+up", label: "Collapse block", scope: "editor" },
   { id: "editor/expand", binding: "mod+down", label: "Expand block", scope: "editor" },
   { id: "editor/select-block-up", binding: "shift+up", label: "Select block up", scope: "editor" },
