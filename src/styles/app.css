@@ -1672,13 +1672,6 @@ mark {
   margin-bottom: 18px;
 }
 
-.query-overflow {
-  font-size: 12px;
-  color: var(--text-muted);
-  padding: 6px 4px 2px;
-  font-style: italic;
-}
-
 .query-header {
   font-size: 13px;
   font-weight: 600;
