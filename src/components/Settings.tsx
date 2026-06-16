@@ -110,14 +110,38 @@ export function Settings(): JSX.Element {
           </div>
 
           <div class="settings-row">
-            <span class="settings-label">Layout</span>
-            <div class="settings-seg">
-              <button classList={{ active: wideMode() }} onClick={toggleWideMode}>
-                Wide mode
+            <span class="settings-label">Wide mode</span>
+            <div>
+              <button
+                class="settings-toggle"
+                classList={{ on: wideMode() }}
+                role="switch"
+                aria-checked={wideMode()}
+                onClick={toggleWideMode}
+              >
+                <span class="settings-toggle-knob" />
               </button>
-              <button classList={{ active: documentMode() }} onClick={toggleDocumentMode}>
-                Document mode
+              <span class="settings-hint" style={{ "margin-left": "8px" }}>
+                Drops the reading-width cap.
+              </span>
+            </div>
+          </div>
+
+          <div class="settings-row">
+            <span class="settings-label">Document mode</span>
+            <div>
+              <button
+                class="settings-toggle"
+                classList={{ on: documentMode() }}
+                role="switch"
+                aria-checked={documentMode()}
+                onClick={toggleDocumentMode}
+              >
+                <span class="settings-toggle-knob" />
               </button>
+              <span class="settings-hint" style={{ "margin-left": "8px" }}>
+                Hides bullets and indent guides for a cleaner prose view.
+              </span>
             </div>
           </div>
 

@@ -552,22 +552,34 @@ body {
   color: var(--text-muted);
   font-size: 11px;
 }
-.settings-seg {
-  display: flex;
-  gap: 4px;
-}
-.settings-seg button {
-  padding: 4px 12px;
+/* Independent on/off toggle switch (used for the orthogonal layout modes). */
+.settings-toggle {
+  display: inline-flex;
+  align-items: center;
+  width: 36px;
+  height: 20px;
+  padding: 2px;
   border: 1px solid var(--border-color);
   background: var(--bg-primary);
-  color: var(--text-secondary);
-  border-radius: 6px;
+  border-radius: 999px;
   cursor: pointer;
+  vertical-align: middle;
+  transition: background 0.12s ease, border-color 0.12s ease;
 }
-.settings-seg button.active {
+.settings-toggle.on {
   background: var(--link-color);
-  color: #fff;
   border-color: var(--link-color);
+}
+.settings-toggle-knob {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  transition: transform 0.12s ease, background 0.12s ease;
+}
+.settings-toggle.on .settings-toggle-knob {
+  background: #fff;
+  transform: translateX(16px);
 }
 .settings-color {
   width: 40px;
