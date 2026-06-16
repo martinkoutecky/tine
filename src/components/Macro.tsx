@@ -66,7 +66,16 @@ function splitQuery(arg: string): ParsedQuery {
 // or a sortable table. When `blockId` is given (the block is a standalone query
 // block, not an inline-in-text macro) an interactive builder bar is shown and
 // edits rewrite the {{query ...}} macro in that block's raw text.
-export function QueryMacro(props: { body: string; blockId?: string; title?: string }): JSX.Element {
+export function QueryMacro(props: {
+  body: string;
+  blockId?: string;
+  title?: string;
+  // When set, render nothing at all if the query has no results (used for the
+  // app-inserted journal agenda, which should disappear once vacated — unlike a
+  // user-authored {{query}} block, which keeps showing "No results" so it stays
+  // editable).
+  hideWhenEmpty?: boolean;
+}): JSX.Element {
   const arg = () => props.body.replace(/^query\s*/i, "").trim();
   // Split a trailing front-matter options map ({:title … :collapsed? … :table-view? …})
   // off the query form, so builder/engine see only the form and the options drive
@@ -137,7 +146,12 @@ export function QueryMacro(props: { body: string; blockId?: string; title?: stri
   const stop = (e: MouseEvent) => e.stopPropagation();
   const arrow = (c: string) => (sortCol() === c ? (sortDir() > 0 ? " ▲" : " ▼") : "");
 
+  // Hide the whole block when asked and there's nothing to show (advanced
+  // queries still render their "unsupported" notice).
+  const hidden = () => props.hideWhenEmpty && !ADVANCED_RE.test(arg()) && total() === 0;
+
   return (
+    <Show when={!hidden()}>
     <div class="query-block">
       <Switch>
         <Match when={ADVANCED_RE.test(arg())}>
@@ -243,6 +257,7 @@ export function QueryMacro(props: { body: string; blockId?: string; title?: stri
         </Match>
       </Switch>
     </div>
+    </Show>
   );
 }
 

@@ -186,6 +186,7 @@ export function PageView(): JSX.Element {
                     <QueryMacro
                       body="query (and (or (scheduled) (deadline)) (between -7d +7d))"
                       title="Scheduled & Deadline"
+                      hideWhenEmpty
                     />
                   </div>
                 </Show>
