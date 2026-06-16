@@ -91,6 +91,30 @@ const NAMED: PageDto[] = [
       b("A PDF asset: [sample.pdf](../assets/sample.pdf)"),
     ],
   },
+  // Rendering parity harness: one block per construct, so a screenshot makes any
+  // unrendered/mis-rendered syntax obvious at a glance.
+  {
+    name: "kitchen-sink",
+    kind: "page",
+    title: "kitchen-sink",
+    pre_block: null,
+    blocks: [
+      b("Blockquote:\n> a quoted line\n> a second quoted line"),
+      b("Callout NOTE:\n> [!NOTE] Heads up\n> body of the note"),
+      b("Callout WARNING:\n> [!WARNING] Be careful here"),
+      b("Callout TIP:\n> [!TIP] a helpful tip"),
+      b("Horizontal rule below:\n---"),
+      b("Table with alignment:\n| Left | Center | Right |\n|:---|:---:|---:|\n| a | b | c |\n| 1 | 2 | 3 |"),
+      b("Autolink (bare): visit https://logseq.com/docs for details"),
+      b("Autolink (angle): <https://example.com>"),
+      b("Inline math: $E = mc^2$ and chemistry: $\\ce{H2O + CO2}$"),
+      b("Display math:\n$$\\int_0^1 x^2 \\, dx = \\tfrac13$$"),
+      b("DONE finished task with a logbook drawer\n:LOGBOOK:\nCLOCK: [2026-06-16 Tue 09:00]--[2026-06-16 Tue 09:30] =>  0:30\n:END:"),
+      b("Task markers: TODO a, DOING b, NOW c, LATER d, WAIT e, DONE f"),
+      b("TODO [#A] high-priority task"),
+      b("Inline styles: **bold**, *italic*, ~~strike~~, ==highlight==, `code`"),
+    ],
+  },
 ];
 
 const mockHighlights: Record<string, { label: string; highlights: Highlight[] }> = {};

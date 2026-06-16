@@ -6,7 +6,7 @@
 
 export type Workflow = "now" | "todo";
 
-const MARKERS = ["NOW", "LATER", "TODO", "DOING", "DONE", "WAITING", "CANCELED", "CANCELLED"];
+const MARKERS = ["NOW", "LATER", "TODO", "DOING", "IN-PROGRESS", "DONE", "WAITING", "WAIT", "CANCELED", "CANCELLED"];
 
 export function nextMarker(marker: string | null, workflow: Workflow): string | null {
   switch (marker) {

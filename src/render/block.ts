@@ -8,6 +8,7 @@ export const MARKERS = [
   "NOW",
   "LATER",
   "WAITING",
+  "WAIT",
   "CANCELED",
   "CANCELLED",
   "IN-PROGRESS",
@@ -44,9 +45,22 @@ export function blockView(raw: string): BlockView {
   const lines: string[] = [];
   let scheduled: string | null = null;
   let deadline: string | null = null;
+  // Skip org drawers (`:LOGBOOK:`/`:PROPERTIES:` … `:END:`) and bare CLOCK lines
+  // so they don't render as literal text. Their content stays in `raw`.
+  let inDrawer = false;
   for (const line of allLines) {
-    const sm = SCHEDULED_RE.exec(line.trim());
-    const dm = DEADLINE_RE.exec(line.trim());
+    const t = line.trim();
+    if (inDrawer) {
+      if (/^:END:$/i.test(t)) inDrawer = false;
+      continue;
+    }
+    if (/^:(LOGBOOK|PROPERTIES):$/i.test(t)) {
+      inDrawer = true;
+      continue;
+    }
+    if (/^CLOCK:\s/i.test(t)) continue;
+    const sm = SCHEDULED_RE.exec(t);
+    const dm = DEADLINE_RE.exec(t);
     if (sm) {
       scheduled = sm[1];
     } else if (dm) {

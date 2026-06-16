@@ -33,6 +33,32 @@ describe("parseInline", () => {
     expect(parseInline("![alt](a.png)")).toEqual([{ t: "image", alt: "alt", url: "a.png" }]);
   });
 
+  it("image sizing metadata", () => {
+    expect(parseInline("![a](x.png){:width 200}")).toEqual([
+      { t: "image", alt: "a", url: "x.png", width: "200px" },
+    ]);
+    expect(parseInline("![a](x.png){:height 50%}")).toEqual([
+      { t: "image", alt: "a", url: "x.png", height: "50%" },
+    ]);
+  });
+
+  it("autolinks (bare url + angle)", () => {
+    expect(parseInline("see https://x.com/p here")).toEqual([
+      { t: "text", v: "see " },
+      { t: "link", label: "https://x.com/p", url: "https://x.com/p" },
+      { t: "text", v: " here" },
+    ]);
+    // trailing sentence punctuation excluded
+    expect(parseInline("at https://x.com.")).toEqual([
+      { t: "text", v: "at " },
+      { t: "link", label: "https://x.com", url: "https://x.com" },
+      { t: "text", v: "." },
+    ]);
+    expect(parseInline("<https://x.com>")).toEqual([
+      { t: "link", label: "https://x.com", url: "https://x.com" },
+    ]);
+  });
+
   it("mixed line", () => {
     const segs = parseInline("see [[Page]] and **bold** #tag");
     expect(segs).toEqual([

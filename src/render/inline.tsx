@@ -4,6 +4,8 @@
 
 import { For, Show, createResource, onCleanup, type JSX } from "solid-js";
 import katex from "katex";
+// mhchem extends KaTeX with \ce{…} chemistry support (registers globally on import).
+import "katex/contrib/mhchem";
 import { openPage, openPageInNewTab } from "../router";
 import { openPdf, openPageInSidebar, openPageContextMenu } from "../ui";
 import { parseInline, type Seg } from "./parseInline";
@@ -116,7 +118,7 @@ function renderSeg(s: Seg): JSX.Element {
       );
     }
     case "image":
-      return <AssetImage url={s.url} alt={s.alt} />;
+      return <AssetImage url={s.url} alt={s.alt} width={s.width} height={s.height} />;
   }
 }
 
@@ -162,9 +164,13 @@ function mimeFromExt(path: string): string {
 
 // Image embed: external URLs load directly; graph assets (`../assets/x.png`)
 // are read from disk via the backend and shown as a blob URL.
-function AssetImage(props: { url: string; alt: string }): JSX.Element {
+function AssetImage(props: { url: string; alt: string; width?: string; height?: string }): JSX.Element {
+  const dim = () => ({
+    ...(props.width ? { width: props.width } : {}),
+    ...(props.height ? { height: props.height } : {}),
+  });
   if (/^(https?:|data:|blob:)/.test(props.url)) {
-    return <img class="inline-image" src={props.url} alt={props.alt} />;
+    return <img class="inline-image" src={props.url} alt={props.alt} style={dim()} />;
   }
   let objectUrl = "";
   const [src] = createResource(
@@ -190,7 +196,7 @@ function AssetImage(props: { url: string; alt: string }): JSX.Element {
       when={src()}
       fallback={<span class="inline-image-missing">🖼 {props.alt || assetRelPath(props.url)}</span>}
     >
-      <img class="inline-image" src={src()!} alt={props.alt} />
+      <img class="inline-image" src={src()!} alt={props.alt} style={dim()} />
     </Show>
   );
 }

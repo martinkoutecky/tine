@@ -5,16 +5,41 @@ import { For, Show, type JSX } from "solid-js";
 import hljs from "highlight.js/lib/common";
 import { InlineText } from "./inline";
 
+type Align = "left" | "center" | "right" | null;
+
 type BodySeg =
   | { kind: "lines"; lines: string[] }
   | { kind: "code"; lang: string; code: string }
-  | { kind: "table"; rows: string[][] };
+  | { kind: "table"; rows: string[][]; aligns: Align[] }
+  | { kind: "hr" }
+  | { kind: "quote"; lines: string[] }
+  | { kind: "callout"; kind2: string; title: string; lines: string[] };
 
 function isTableRow(line: string): boolean {
   return /^\s*\|.*\|\s*$/.test(line);
 }
 function isTableSep(line: string): boolean {
   return /^\s*\|?[\s:|-]+\|?\s*$/.test(line) && line.includes("-");
+}
+function isHr(line: string): boolean {
+  return /^\s*([-*_])\1{2,}\s*$/.test(line);
+}
+function isQuote(line: string): boolean {
+  return /^\s*>\s?/.test(line);
+}
+function stripQuote(line: string): string {
+  return line.replace(/^\s*>\s?/, "");
+}
+// `> [!NOTE] optional title` opens a callout; type is lowercased.
+const CALLOUT_RE = /^\[!(\w+)\]\s*(.*)$/;
+
+/** Per-column alignment from a table separator row (`:--`, `--:`, `:-:`). */
+function parseAligns(sep: string): Align[] {
+  return splitRow(sep).map((c) => {
+    const l = c.startsWith(":");
+    const r = c.endsWith(":");
+    return l && r ? "center" : r ? "right" : l ? "left" : null;
+  });
 }
 
 export function segmentBody(lines: string[]): BodySeg[] {
@@ -45,6 +70,7 @@ export function segmentBody(lines: string[]): BodySeg[] {
       flush();
       const rows: string[][] = [];
       const header = splitRow(line);
+      const aligns = parseAligns(lines[i + 1]);
       i++; // skip separator
       const body: string[][] = [];
       while (i + 1 < lines.length && isTableRow(lines[i + 1])) {
@@ -52,7 +78,30 @@ export function segmentBody(lines: string[]): BodySeg[] {
         i++;
       }
       rows.push(header, ...body);
-      segs.push({ kind: "table", rows });
+      segs.push({ kind: "table", rows, aligns });
+      continue;
+    }
+    // horizontal rule
+    if (isHr(line)) {
+      flush();
+      segs.push({ kind: "hr" });
+      continue;
+    }
+    // blockquote / callout: a run of `>`-prefixed lines
+    if (isQuote(line)) {
+      flush();
+      const qlines: string[] = [];
+      while (i < lines.length && isQuote(lines[i])) {
+        qlines.push(stripQuote(lines[i]));
+        i++;
+      }
+      i--; // for-loop will ++
+      const co = CALLOUT_RE.exec(qlines[0] ?? "");
+      if (co) {
+        segs.push({ kind: "callout", kind2: co[1].toLowerCase(), title: co[2].trim(), lines: qlines.slice(1) });
+      } else {
+        segs.push({ kind: "quote", lines: qlines });
+      }
       continue;
     }
     buf.push(line);
@@ -92,23 +141,64 @@ export function BodyContent(props: { lines: string[] }): JSX.Element {
         }
         if (seg.kind === "table") {
           const [head, ...body] = seg.rows;
+          const al = (i: number) => (seg.aligns[i] ? { "text-align": seg.aligns[i]! } : undefined);
           return (
             <table class="md-table">
               <thead>
                 <tr>
-                  <For each={head}>{(c) => <th><InlineText text={c} /></th>}</For>
+                  <For each={head}>{(c, i) => <th style={al(i())}><InlineText text={c} /></th>}</For>
                 </tr>
               </thead>
               <tbody>
                 <For each={body}>
                   {(row) => (
                     <tr>
-                      <For each={row}>{(c) => <td><InlineText text={c} /></td>}</For>
+                      <For each={row}>{(c, i) => <td style={al(i())}><InlineText text={c} /></td>}</For>
                     </tr>
                   )}
                 </For>
               </tbody>
             </table>
+          );
+        }
+        if (seg.kind === "hr") {
+          return <hr class="md-hr" />;
+        }
+        if (seg.kind === "quote") {
+          return (
+            <blockquote class="md-quote">
+              <For each={seg.lines}>
+                {(line, i) => (
+                  <>
+                    <Show when={i() > 0}>
+                      <br />
+                    </Show>
+                    <InlineText text={line} />
+                  </>
+                )}
+              </For>
+            </blockquote>
+          );
+        }
+        if (seg.kind === "callout") {
+          return (
+            <div class={`callout callout-${seg.kind2}`}>
+              <div class="callout-title">{seg.title || seg.kind2.toUpperCase()}</div>
+              <Show when={seg.lines.length > 0}>
+                <div class="callout-body">
+                  <For each={seg.lines}>
+                    {(line, i) => (
+                      <>
+                        <Show when={i() > 0}>
+                          <br />
+                        </Show>
+                        <InlineText text={line} />
+                      </>
+                    )}
+                  </For>
+                </div>
+              </Show>
+            </div>
           );
         }
         return (

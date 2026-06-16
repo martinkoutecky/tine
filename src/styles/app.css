@@ -1329,6 +1329,49 @@ mark {
   font-weight: 600;
 }
 
+/* ------------------------------------------------ blockquote / hr / callout */
+.md-quote {
+  margin: 4px 0;
+  padding: 2px 0 2px 14px;
+  border-left: 3px solid var(--border-color);
+  color: var(--text-secondary);
+}
+.md-hr {
+  border: none;
+  border-top: 1px solid var(--border-color);
+  margin: 10px 0;
+}
+.callout {
+  margin: 6px 0;
+  padding: 8px 12px;
+  border-radius: 6px;
+  border-left: 4px solid var(--callout-accent, var(--border-color));
+  background: var(--callout-bg, var(--bg-secondary));
+}
+.callout-title {
+  font-weight: 600;
+  font-size: 0.9em;
+  text-transform: capitalize;
+  color: var(--callout-accent, var(--text-secondary));
+  margin-bottom: 2px;
+}
+.callout-body {
+  color: var(--text-primary);
+}
+/* Per-type accent + tint (OG/Obsidian-style). */
+.callout-note,
+.callout-info { --callout-accent: #3b82f6; --callout-bg: rgba(59,130,246,0.10); }
+.callout-tip,
+.callout-hint { --callout-accent: #10b981; --callout-bg: rgba(16,185,129,0.10); }
+.callout-important { --callout-accent: #8b5cf6; --callout-bg: rgba(139,92,246,0.10); }
+.callout-warning,
+.callout-caution { --callout-accent: #f59e0b; --callout-bg: rgba(245,158,11,0.12); }
+.callout-danger,
+.callout-error,
+.callout-bug { --callout-accent: #ef4444; --callout-bg: rgba(239,68,68,0.10); }
+.callout-example,
+.callout-quote { --callout-accent: #6b7280; --callout-bg: rgba(107,114,128,0.10); }
+
 /* ---------------------------------------------------------- references */
 
 .linked-references {

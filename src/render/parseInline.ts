@@ -14,7 +14,18 @@ export type Seg =
   | { t: "macro"; body: string }
   | { t: "math"; tex: string; display: boolean }
   | { t: "link"; label: string; url: string }
-  | { t: "image"; alt: string; url: string };
+  | { t: "image"; alt: string; url: string; width?: string; height?: string };
+
+/** Parse a Logseq image-metadata brace like `{:width 200, :height 100}`. */
+function parseImageMeta(brace: string | undefined): { width?: string; height?: string } {
+  if (!brace) return {};
+  const out: { width?: string; height?: string } = {};
+  const w = /:width\s+([0-9]+%?|[0-9]+px)/.exec(brace);
+  const h = /:height\s+([0-9]+%?|[0-9]+px)/.exec(brace);
+  if (w) out.width = /^\d+$/.test(w[1]) ? `${w[1]}px` : w[1];
+  if (h) out.height = /^\d+$/.test(h[1]) ? `${h[1]}px` : h[1];
+  return out;
+}
 
 const TAG_RE = /^#([\w/_-]+)/;
 
@@ -36,10 +47,10 @@ export function parseInline(input: string): Seg[] {
   while (i < input.length) {
     const rest = input.slice(i);
 
-    let m = /^!\[([^\]]*)\]\(([^)]+)\)/.exec(rest);
+    let m = /^!\[([^\]]*)\]\(([^)]+)\)(\{[^}]*\})?/.exec(rest);
     if (m) {
       flush();
-      out.push({ t: "image", alt: m[1], url: m[2] });
+      out.push({ t: "image", alt: m[1], url: m[2], ...parseImageMeta(m[3]) });
       i += m[0].length;
       continue;
     }
@@ -48,6 +59,23 @@ export function parseInline(input: string): Seg[] {
       flush();
       out.push({ t: "link", label: m[1], url: m[2] });
       i += m[0].length;
+      continue;
+    }
+    // Angle autolink <https://…> / <mailto:…>
+    m = /^<((?:https?:\/\/|mailto:)[^>\s]+)>/.exec(rest);
+    if (m) {
+      flush();
+      out.push({ t: "link", label: m[1], url: m[1] });
+      i += m[0].length;
+      continue;
+    }
+    // Bare URL autolink (trailing sentence punctuation excluded)
+    m = /^https?:\/\/[^\s<]+/.exec(rest);
+    if (m) {
+      const url = m[0].replace(/[.,;:!?)\]]+$/, "");
+      flush();
+      out.push({ t: "link", label: url, url });
+      i += url.length;
       continue;
     }
     if (rest.startsWith("[[")) {
