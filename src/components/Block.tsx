@@ -1,4 +1,4 @@
-import { Show, Switch, Match, For, createMemo, createSignal, createUniqueId, onMount, type JSX } from "solid-js";
+import { Show, Switch, Match, For, createMemo, createSignal, createUniqueId, createEffect, onMount, type JSX } from "solid-js";
 import { backend } from "../backend";
 import {
   detectTrigger,
@@ -20,6 +20,7 @@ import {
   outdentBlock,
   mergeWithPrev,
   toggleCollapse,
+  setCollapsed,
   takeCaretFor,
   prevVisible,
   nextVisible,
@@ -486,6 +487,14 @@ function Editor(props: { id: string }): JSX.Element {
   const [ac, setAc] = createSignal<Trigger | null>(null);
   const [acItems, setAcItems] = createSignal<AcItem[]>([]);
   const [acIndex, setAcIndex] = createSignal(0);
+  let acListRef: HTMLDivElement | undefined;
+  // Keep the highlighted autocomplete item scrolled into view during arrow nav.
+  createEffect(() => {
+    acIndex();
+    queueMicrotask(() =>
+      acListRef?.querySelector(".ac-item.active")?.scrollIntoView({ block: "nearest" })
+    );
+  });
 
   const closeAc = () => {
     setAc(null);
@@ -740,6 +749,18 @@ function Editor(props: { id: string }): JSX.Element {
       return;
     }
 
+    // Collapse / expand the current block's children (ctrl+up / ctrl+down).
+    if (matchesCommand(e, "editor/collapse")) {
+      e.preventDefault();
+      setCollapsed(props.id, true);
+      return;
+    }
+    if (matchesCommand(e, "editor/expand")) {
+      e.preventDefault();
+      setCollapsed(props.id, false);
+      return;
+    }
+
     // Select block up/down: at the block's first/last line, start a block
     // selection (current block + neighbour); the global handler extends it.
     if (matchesCommand(e, "editor/select-block-up") || matchesCommand(e, "editor/select-block-down")) {
@@ -885,7 +906,7 @@ function Editor(props: { id: string }): JSX.Element {
         </div>
       </Show>
       <Show when={ac() && acItems().length > 0}>
-        <div class="autocomplete">
+        <div class="autocomplete" ref={acListRef}>
           <For each={acItems()}>
             {(item, i) => (
               <div

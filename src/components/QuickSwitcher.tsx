@@ -26,6 +26,14 @@ export function QuickSwitcher(): JSX.Element {
   const [query, setQuery] = createSignal("");
   const [sel, setSel] = createSignal(0);
   let inputRef: HTMLInputElement | undefined;
+  let resultsRef: HTMLDivElement | undefined;
+  // Scroll the highlighted row into view as the cursor moves across sections.
+  createEffect(() => {
+    sel();
+    queueMicrotask(() =>
+      resultsRef?.querySelector(".switcher-row.active")?.scrollIntoView({ block: "nearest" })
+    );
+  });
 
   const commandsOnly = () => switcherMode() === "commands";
   const [pages] = createResource(
@@ -192,7 +200,7 @@ export function QuickSwitcher(): JSX.Element {
             }}
             onKeyDown={onKeyDown}
           />
-          <div class="switcher-results">
+          <div class="switcher-results" ref={resultsRef}>
             <For each={sections()}>
               {(section, sIdx) => (
                 <div class="switcher-section">

@@ -39,6 +39,9 @@ interface Chord {
   mod: boolean;
   shift: boolean;
   alt: boolean;
+  // The Super/Win key on Linux/Windows (distinct from `mod`); on macOS Cmd is
+  // already `mod`, so `meta` is only meaningful off-Mac.
+  meta: boolean;
   key: string; // lowercase, normalized
 }
 
@@ -73,8 +76,10 @@ const COMMANDS: CommandDef[] = [
   // Editor commands (resolved in Block.tsx / selection handler).
   { id: "editor/indent", binding: "tab", label: "Indent block", scope: "editor" },
   { id: "editor/outdent", binding: "shift+tab", label: "Outdent block", scope: "editor" },
-  { id: "editor/move-block-up", binding: "mod+up", label: "Move block up", scope: "editor" },
-  { id: "editor/move-block-down", binding: "mod+down", label: "Move block down", scope: "editor" },
+  { id: "editor/move-block-up", binding: "meta+up", label: "Move block up", scope: "editor" },
+  { id: "editor/move-block-down", binding: "meta+down", label: "Move block down", scope: "editor" },
+  { id: "editor/collapse", binding: "mod+up", label: "Collapse block", scope: "editor" },
+  { id: "editor/expand", binding: "mod+down", label: "Expand block", scope: "editor" },
   { id: "editor/select-block-up", binding: "shift+up", label: "Select block up", scope: "editor" },
   { id: "editor/select-block-down", binding: "shift+down", label: "Select block down", scope: "editor" },
   { id: "editor/cycle-todo", binding: "mod+enter", label: "Cycle TODO / DOING / DONE", scope: "editor" },
@@ -109,9 +114,10 @@ function normKey(k: string): string {
 
 function parseChord(s: string): Chord {
   const parts = s.toLowerCase().split("+");
-  const chord: Chord = { mod: false, shift: false, alt: false, key: "" };
+  const chord: Chord = { mod: false, shift: false, alt: false, meta: false, key: "" };
   for (const p of parts) {
-    if (p === "mod" || p === "ctrl" || p === "cmd" || p === "meta") chord.mod = true;
+    if (p === "mod" || p === "ctrl" || p === "cmd") chord.mod = true;
+    else if (p === "meta" || p === "super" || p === "win") chord.meta = true;
     else if (p === "shift") chord.shift = true;
     else if (p === "alt" || p === "option") chord.alt = true;
     else chord.key = normKey(p);
@@ -131,12 +137,14 @@ function eventToChord(e: KeyboardEvent): Chord {
     mod: isMac ? e.metaKey : e.ctrlKey,
     shift: e.shiftKey,
     alt: e.altKey,
+    // Super/Win on non-Mac (on Mac, metaKey is already `mod`).
+    meta: !isMac && e.metaKey,
     key,
   };
 }
 
 function chordEq(a: Chord, b: Chord): boolean {
-  return a.mod === b.mod && a.shift === b.shift && a.alt === b.alt && a.key === b.key;
+  return a.mod === b.mod && a.shift === b.shift && a.alt === b.alt && a.meta === b.meta && a.key === b.key;
 }
 
 // Merged binding table (defaults + config overrides), populated by
@@ -197,6 +205,7 @@ export function eventToBindingString(e: KeyboardEvent): string | null {
   if (!c.key) return null;
   const parts: string[] = [];
   if (c.mod) parts.push("mod");
+  if (c.meta) parts.push("meta");
   if (c.alt) parts.push("alt");
   if (c.shift) parts.push("shift");
   parts.push(c.key);

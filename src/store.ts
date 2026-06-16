@@ -937,6 +937,16 @@ export function toggleCollapse(id: string) {
   markDirty(n.page);
 }
 
+/** Explicitly collapse or expand a block (no-op if it has no children or is
+ *  already in the requested state). */
+export function setCollapsed(id: string, collapsed: boolean) {
+  const n = doc.byId[id];
+  if (!n || n.children.length === 0 || n.collapsed === collapsed) return;
+  pushUndo("collapse");
+  setDoc("byId", id, "collapsed", collapsed);
+  markDirty(n.page);
+}
+
 // ---------------------------------------------------------------------------
 // Debounced persistence
 // ---------------------------------------------------------------------------

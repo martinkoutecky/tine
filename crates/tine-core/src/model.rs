@@ -544,7 +544,15 @@ impl Graph {
         if let (Ok(disk), Some(cached)) =
             (fs::read_to_string(&path), self.cached_doc(&page.name, page.kind))
         {
-            if doc::parse(&disk) != cached {
+            // Compare disk against the cached doc *normalized through the same
+            // serialize→parse round-trip the file went through*. The cache after
+            // our own save holds the in-memory (DTO-derived) doc, whose `raw` can
+            // differ trivially from what `parse(serialize(doc))` yields; comparing
+            // the raw cached doc would then flag our own previous write as an
+            // external edit on the next save (the spurious "changed on disk").
+            let opts = doc::SerializeOpts::detect(Some(&disk));
+            let cached_norm = doc::parse(&doc::serialize_with(&cached, &opts));
+            if doc::parse(&disk) != cached_norm {
                 return Err(io::Error::new(io::ErrorKind::AlreadyExists, "conflict"));
             }
         }

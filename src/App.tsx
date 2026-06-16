@@ -113,6 +113,7 @@ export function App(): JSX.Element {
               </svg>
             </button>
           </div>
+          <TabBar />
           <div class="topbar-right">
             <CalendarJump />
             <button class="icon-btn" title="Search (Ctrl+K)" onClick={openSwitcher}>
@@ -157,7 +158,6 @@ export function App(): JSX.Element {
             </button>
           </div>
         </header>
-        <TabBar />
         <ConflictBar />
         <main class="main-content">
           <div class="main-content-inner">

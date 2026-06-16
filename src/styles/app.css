@@ -80,40 +80,51 @@ body {
   flex: 0 0 var(--ls-headbar-height);
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   padding: 0 14px;
-  border-bottom: 1px solid transparent;
+  border-bottom: 1px solid var(--border-color);
+}
+.topbar-left,
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
 }
 
+/* Tabs live inline in the topbar (between nav arrows and the action icons) to
+   avoid wasting a whole row. They take the middle, scrolling if there are many. */
 .tab-bar {
+  flex: 1 1 auto;
+  min-width: 0;
   display: flex;
-  align-items: stretch;
-  gap: 2px;
-  padding: 0 8px;
-  height: 34px;
-  border-bottom: 1px solid var(--border-color);
+  align-items: center;
+  gap: 4px;
   overflow-x: auto;
-  background: var(--bg-secondary);
+  scrollbar-width: none;
+}
+.tab-bar::-webkit-scrollbar {
+  display: none;
 }
 
 .tab {
   display: flex;
   align-items: center;
   gap: 6px;
+  height: 26px;
   padding: 0 10px;
   max-width: 200px;
   font-size: 13px;
   color: var(--text-secondary);
   cursor: pointer;
-  border-top: 2px solid transparent;
+  border-radius: 6px;
   user-select: none;
   white-space: nowrap;
 }
 
 .tab.active {
-  background: var(--bg-primary);
+  background: var(--bg-tertiary);
   color: var(--text-title);
-  border-top-color: var(--link-color);
 }
 
 .tab:hover {

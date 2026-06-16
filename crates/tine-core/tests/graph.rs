@@ -197,6 +197,35 @@ fn save_refuses_to_clobber_external_change() {
 }
 
 #[test]
+fn consecutive_self_saves_do_not_conflict() {
+    // Regression: inserting a SCHEDULED date then deleting it (two saves with no
+    // external writer) must not raise a spurious "changed on disk" conflict. The
+    // guard must compare disk against the cached doc normalized the same way the
+    // file was, not the raw in-memory DTO doc.
+    use tine_core::model::{BlockDto, PageDto, PageKind};
+
+    let root = std::env::temp_dir().join(format!("tine-selfsave-{}", std::process::id()));
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    let g = Graph::open(&root);
+    let mk = |raw: &str| PageDto {
+        name: "D".into(),
+        kind: PageKind::Page,
+        title: "D".into(),
+        pre_block: None,
+        blocks: vec![BlockDto { id: "b1".into(), raw: raw.into(), collapsed: false, children: vec![] }],
+    };
+    // 1) date picker inserts a SCHEDULED line.
+    g.save_page(&mk("TODO task\nSCHEDULED: <2026-06-16 Tue>")).unwrap();
+    // 2) user deletes the inserted text — must NOT be read as an external edit.
+    g.save_page(&mk("TODO task")).expect("no spurious conflict after our own save");
+    // 3) and a further edit still saves cleanly.
+    g.save_page(&mk("TODO task edited")).expect("no spurious conflict");
+    assert!(std::fs::read_to_string(root.join("pages").join("D.md")).unwrap().contains("edited"));
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn sync_file_detects_external_change_and_suppresses_self() {
     use tine_core::model::PageKind;
 
