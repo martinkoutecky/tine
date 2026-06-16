@@ -52,7 +52,7 @@ import { QueryMacro, EmbedMacro } from "./Macro";
 import { openPdf, workflow, zoomInto, openContextMenu, openDatePicker, openBlockInSidebar } from "../ui";
 import { matchesCommand } from "../keybindings";
 import { HL_COLOR_BG, HL_COLOR_SOLID } from "../pdf";
-import { cycleMarker } from "../editor/marker";
+import { cycleMarkerSmart } from "../editor/repeat";
 
 // Detect a block whose entire body is a single {{query}} / {{embed}} macro.
 function detectMacro(lines: string[]): { kind: "query" | "embed"; inner: string } | null {
@@ -66,6 +66,9 @@ function detectMacro(lines: string[]): { kind: "query" | "embed"; inner: string 
 const INTERNAL_PROPS = new Set([
   "id", "collapsed", "hl-page", "hl-color", "hl-type", "ls-type",
   "background-color", "logseq.order-list-type",
+  // OG hidden-built-in-properties (don't render these in the properties area).
+  "heading", "title", "filters", "created-at", "updated-at", "last-modified-at",
+  "query-table", "query-properties", "query-sort-by", "query-sort-desc", "logseq.tldraw.shape",
 ]);
 
 // Logseq's built-in block background colors → a soft tint for rendering.
@@ -376,7 +379,7 @@ function Rendered(props: { id: string; owner?: string }): JSX.Element {
 
 // Cycle the task marker on a block (OG order), used by the marker chip click.
 function cycleBlockMarker(id: string) {
-  const { raw } = cycleMarker(doc.byId[id].raw, workflow());
+  const { raw } = cycleMarkerSmart(doc.byId[id].raw, workflow());
   setRaw(id, raw);
 }
 
@@ -740,7 +743,7 @@ function Editor(props: { id: string }): JSX.Element {
 
     if (matchesCommand(e, "editor/cycle-todo")) {
       e.preventDefault();
-      const { raw: newRaw, delta } = cycleMarker(raw, workflow());
+      const { raw: newRaw, delta } = cycleMarkerSmart(raw, workflow());
       commit(newRaw);
       const pos = Math.max(0, start + delta);
       queueMicrotask(() => {

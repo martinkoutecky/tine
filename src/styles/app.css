@@ -1492,6 +1492,10 @@ mark {
   background: var(--bg-secondary);
 }
 
+.agenda-block {
+  margin-bottom: 18px;
+}
+
 .query-header {
   font-size: 13px;
   font-weight: 600;

@@ -10,6 +10,7 @@ import { switchGraph } from "../graph";
 import { Block } from "./Block";
 import { LinkedReferences } from "./LinkedReferences";
 import { UnlinkedReferences } from "./UnlinkedReferences";
+import { QueryMacro } from "./Macro";
 import { isPropertyLine, blockView } from "../render/block";
 import { InlineText } from "../render/inline";
 import type { PageDto } from "../types";
@@ -174,6 +175,14 @@ export function PageView(): JSX.Element {
     <Show when={ready() && doc.loaded} fallback={<div class="page-loading" />}>
       <Show when={zoomValid()} fallback={
         <div class="page">
+          <Show when={route().kind === "journals"}>
+            <div class="agenda-block">
+              <QueryMacro
+                body="query (and (or (scheduled) (deadline)) (between -7d +7d))"
+                title="Scheduled & Deadline"
+              />
+            </div>
+          </Show>
           <For each={mainPages()}>{(p) => <PageSection page={p} />}</For>
           <Show when={route().kind === "journals" && mainPages().length === 0}>
             <div class="page-load-error">
