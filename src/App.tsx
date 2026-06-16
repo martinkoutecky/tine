@@ -5,6 +5,7 @@ import { QuickSwitcher } from "./components/QuickSwitcher";
 import { PdfViewer } from "./components/PdfViewer";
 import { TabBar } from "./components/TabBar";
 import { ContextMenu } from "./components/ContextMenu";
+import { ConflictBar } from "./components/ConflictBar";
 import { RightSidebar } from "./components/RightSidebar";
 import { Settings } from "./components/Settings";
 import { DatePicker } from "./components/DatePicker";
@@ -146,6 +147,7 @@ export function App(): JSX.Element {
           </div>
         </header>
         <TabBar />
+        <ConflictBar />
         <main class="main-content">
           <div class="main-content-inner">
             <PageView />

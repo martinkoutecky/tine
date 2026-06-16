@@ -1,4 +1,4 @@
-import { Show, Switch, Match, For, createMemo, createSignal, onMount, type JSX } from "solid-js";
+import { Show, Switch, Match, For, createMemo, createSignal, createUniqueId, onMount, type JSX } from "solid-js";
 import { backend } from "../backend";
 import {
   detectTrigger,
@@ -11,6 +11,7 @@ import {
 import {
   doc,
   editingId,
+  editingOwner,
   startEditing,
   setRaw,
   setEditingId,
@@ -141,7 +142,12 @@ function beginDrag(id: string, e: MouseEvent) {
 
 export function Block(props: { id: string }): JSX.Element {
   const node = () => doc.byId[props.id];
-  const editing = () => editingId() === props.id;
+  // Unique per rendered instance, so when one block uuid appears in several
+  // surfaces only the instance that was clicked mounts the editor (the rest stay
+  // rendered and reflect edits live). null owner = unscoped (keyboard nav).
+  const instanceId = createUniqueId();
+  const editing = () =>
+    editingId() === props.id && (editingOwner() === null || editingOwner() === instanceId);
   const hasChildren = () => node().children.length > 0;
   const collapsed = () => node().collapsed;
 
@@ -193,11 +199,12 @@ export function Block(props: { id: string }): JSX.Element {
         <div
           class="block-content-wrapper"
           onClick={() => {
-            // Click anywhere in the row (not on a link) starts editing.
-            if (!editing()) startEditing(props.id, doc.byId[props.id].raw.length);
+            // Click anywhere in the row (not on a link) starts editing — and
+            // claims the editor for THIS instance.
+            if (!editing()) startEditing(props.id, doc.byId[props.id].raw.length, instanceId);
           }}
         >
-          <Show when={editing()} fallback={<Rendered id={props.id} />}>
+          <Show when={editing()} fallback={<Rendered id={props.id} owner={instanceId} />}>
             <Editor id={props.id} />
           </Show>
         </div>
@@ -215,7 +222,7 @@ export function Block(props: { id: string }): JSX.Element {
   );
 }
 
-function Rendered(props: { id: string }): JSX.Element {
+function Rendered(props: { id: string; owner?: string }): JSX.Element {
   const node = () => doc.byId[props.id];
   const view = createMemo(() => blockView(node().raw));
 
@@ -243,7 +250,7 @@ function Rendered(props: { id: string }): JSX.Element {
   // the PDF.
   const onClick = (e: MouseEvent) => {
     e.stopPropagation();
-    startEditing(props.id, node().raw.length);
+    startEditing(props.id, node().raw.length, props.owner ?? null);
   };
 
   const displayProps = () => view().properties.filter(([k]) => !INTERNAL_PROPS.has(k));

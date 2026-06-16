@@ -1,9 +1,9 @@
 import { For, Show, createEffect, createSignal, on, onCleanup, onMount, untrack, type JSX } from "solid-js";
-import { doc, mainPages, loadSingle, loadFeed, appendFeed, forceSave, isDirty, editingId, type FeedPage } from "../store";
+import { doc, mainPages, pageByName, reloadPage, loadSingle, loadFeed, appendFeed, isDirty, editingId, type FeedPage } from "../store";
 import { route, openPage, openJournals } from "../router";
 import {
   zoomedBlock, zoomOut, zoomInto, isFavorite, toggleFavorite, notesRefresh,
-  isConflicted, clearConflict, markConflict, graphEpoch, openPageInSidebar,
+  markConflict, graphEpoch, openPageInSidebar,
 } from "../ui";
 import { backend } from "../backend";
 import { switchGraph } from "../graph";
@@ -84,23 +84,42 @@ export function PageView(): JSX.Element {
     void backend()
       .onGraphChanged((c) => {
         const r = route();
+        // Only suppress an auto-reload if the user is editing a block ON the
+        // changed page (don't yank that caret); editing elsewhere is fine.
+        const editingThis = () => {
+          const ed = editingId();
+          return !!ed && doc.byId[ed]?.page === c.name;
+        };
         if (c.removed) {
           if (r.kind === "page" && r.name === c.name) openJournals();
           return;
         }
         if (r.kind === "page" && r.name === c.name) {
           if (isDirty(c.name)) return void markConflict(c.name);
-          if (editingId()) return;
+          if (editingThis()) return;
           void (async () => {
             const dto = await backend().getPage(c.name, c.kind);
             if (dto) loadSingle(toLoadable(dto, c.name));
           })();
-        } else if (r.kind === "journals" && c.kind === "journal" && !editingId()) {
+          return;
+        }
+        if (r.kind === "journals" && c.kind === "journal" && !editingId()) {
           void (async () => {
             const js = await backend().journalsDesc(FEED_PAGE, 0);
             journalOffset = js.length;
             feedDone = js.length < FEED_PAGE;
             loadFeed(js.length ? js : []);
+          })();
+        }
+        // Satellite page (open only in the sidebar / as a query result) changed
+        // on disk: keep its live copy fresh, unless it has unsaved edits (→
+        // conflict) or a block on it is being edited.
+        if (pageByName(c.name) && !doc.feed.includes(c.name)) {
+          if (isDirty(c.name)) return void markConflict(c.name);
+          if (editingThis()) return;
+          void (async () => {
+            const dto = await backend().getPage(c.name, c.kind);
+            if (dto) reloadPage(dto);
           })();
         }
       })
@@ -155,9 +174,6 @@ export function PageView(): JSX.Element {
     <Show when={ready() && doc.loaded} fallback={<div class="page-loading" />}>
       <Show when={zoomValid()} fallback={
         <div class="page">
-          <Show when={route().kind === "page" && mainPages()[0] && isConflicted(mainPages()[0].name)}>
-            <ConflictBanner name={mainPages()[0].name} kind={mainPages()[0].kind} />
-          </Show>
           <For each={mainPages()}>{(p) => <PageSection page={p} />}</For>
           <Show when={route().kind === "journals" && mainPages().length === 0}>
             <div class="page-load-error">
@@ -182,32 +198,6 @@ export function PageView(): JSX.Element {
       </Show>
     </Show>
     </Show>
-  );
-}
-
-// Shown when a save was refused because the file changed on disk (external edit
-// or a Syncthing pull). Lets the user take the disk version or keep theirs.
-function ConflictBanner(props: { name: string; kind: "journal" | "page" }): JSX.Element {
-  const reload = async () => {
-    const dto = await backend().getPage(props.name, props.kind);
-    if (dto) loadSingle(dto.blocks.length ? dto : emptyPage(props.name, props.kind));
-    clearConflict(props.name);
-  };
-  const keepMine = async () => {
-    await forceSave(props.name);
-    clearConflict(props.name);
-  };
-  return (
-    <div class="conflict-banner">
-      <span class="conflict-msg">
-        <strong>“{props.name}” changed on disk</strong> (edited elsewhere or synced in). Your
-        unsaved changes weren't written.
-      </span>
-      <span class="conflict-actions">
-        <button class="conflict-btn" onClick={reload}>Use disk version</button>
-        <button class="conflict-btn keep" onClick={keepMine}>Keep mine (overwrite)</button>
-      </span>
-    </div>
   );
 }
 

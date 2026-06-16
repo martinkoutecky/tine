@@ -11,7 +11,7 @@ import { createSignal } from "solid-js";
 import type { BlockDto, PageDto, PageKind } from "./types";
 import type { OutlineNode } from "./editor/outline";
 import { backend } from "./backend";
-import { markConflict, isConflicted, bumpDataRev } from "./ui";
+import { markConflict, isConflicted, bumpDataRev, rightSidebar, conflicts } from "./ui";
 
 export interface Node {
   id: string;
@@ -58,6 +58,11 @@ export function pageByName(name: string): FeedPage | undefined {
 }
 
 export const [editingId, setEditingId] = createSignal<string | null>(null);
+// Which on-screen <Block> instance owns the active editor. One block uuid can
+// render in several places at once (main view + sidebar + query result); without
+// this they'd all mount a textarea for the same node and fight over its value.
+// null = unscoped (e.g. keyboard nav) — any instance of editingId may edit.
+export const [editingOwner, setEditingOwner] = createSignal<string | null>(null);
 const [caretTarget, setCaretTarget] = createSignal<{ id: string; offset: number } | null>(null);
 
 export function takeCaretFor(id: string): number | null {
@@ -132,11 +137,67 @@ function upsertPage(dto: PageDto) {
 export function ensurePageLoaded(dto: PageDto) {
   if (doc.pages.some((p) => p.name === dto.name)) return;
   upsertPage(dto);
+  evictIfNeeded();
+}
+
+// Cap the working set so a long session browsing a big graph doesn't grow byId
+// without bound. FIFO-evict pages that aren't pinned: the main feed, anything
+// open in the right sidebar, the page being edited, and any page with unsaved
+// edits are all kept (evicting a dirty page would lose those edits).
+const WORKING_SET_CAP = 80;
+function pinnedPages(): Set<string> {
+  const pin = new Set<string>(doc.feed);
+  for (const it of rightSidebar()) pin.add(it.kind === "page" ? it.name : it.page);
+  for (const name of dirty) pin.add(name);
+  // Conflicted pages hold unsaved edits that aren't in `dirty` (the save batch
+  // removed them); evicting one would silently drop those edits.
+  for (const name of conflicts()) pin.add(name);
+  const ed = editingId();
+  if (ed && doc.byId[ed]) pin.add(doc.byId[ed].page);
+  return pin;
+}
+
+/** Replace a page in the working set from a fresh DTO (e.g. resolving a conflict
+ *  with the disk version, or a watcher reload). Updates the main view and any
+ *  satellite that shows it, since they share `byId`. */
+export function reloadPage(dto: PageDto) {
+  upsertPage(dto);
+}
+function evictIfNeeded() {
+  if (doc.pages.length <= WORKING_SET_CAP) return;
+  const pin = pinnedPages();
+  setDoc(
+    produce((s) => {
+      // Oldest first (insertion order); stop once at the cap or only pinned left.
+      for (let i = 0; i < s.pages.length && s.pages.length > WORKING_SET_CAP; ) {
+        const name = s.pages[i].name;
+        if (pin.has(name)) {
+          i++;
+          continue;
+        }
+        for (const id of Object.keys(s.byId)) {
+          if (s.byId[id].page === name) delete s.byId[id];
+        }
+        s.pages.splice(i, 1);
+      }
+    })
+  );
 }
 
 /** Clear the entire working set. Used for test isolation and when switching
- *  graphs; normal navigation is additive (keeps satellite pages alive). */
+ *  graphs; normal navigation is additive (keeps satellite pages alive). Also
+ *  cancels pending saves and clears dirty flags so nothing from the old graph
+ *  can be written after a switch. */
 export function resetStore() {
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+  }
+  if (dataRevTimer) {
+    clearTimeout(dataRevTimer);
+    dataRevTimer = null;
+  }
+  dirty.clear();
   setDoc({ byId: {}, pages: [], feed: [], loaded: false });
   setEditingId(null);
 }
@@ -147,6 +208,7 @@ export function loadSingle(dto: PageDto) {
   setDoc("feed", [dto.name]);
   setDoc("loaded", true);
   setEditingId(null);
+  evictIfNeeded();
 }
 
 /** Load the journals feed as the main view. */
@@ -155,6 +217,7 @@ export function loadFeed(dtos: PageDto[]) {
   setDoc("feed", dtos.map((d) => d.name));
   setDoc("loaded", true);
   setEditingId(null);
+  evictIfNeeded();
 }
 
 /** Append more pages to the journals feed (infinite scroll). */
@@ -164,6 +227,7 @@ export function appendFeed(dtos: PageDto[]) {
     upsertPage(d);
     setDoc("feed", [...doc.feed, d.name]);
   }
+  evictIfNeeded();
 }
 
 function toDto(id: string): BlockDto {
@@ -310,11 +374,12 @@ export function setRaw(id: string, raw: string) {
   markDirty(doc.byId[id].page);
 }
 
-export function startEditing(id: string, offset: number) {
+export function startEditing(id: string, offset: number, owner: string | null = null) {
   setSelAnchor(null);
   setSelFocus(null);
   setCaretTarget({ id, offset });
   setEditingId(id);
+  setEditingOwner(owner);
 }
 
 /** Enter: split the block at `offset`. */
@@ -838,6 +903,17 @@ export function toggleCollapse(id: string) {
 // Debounced persistence
 // ---------------------------------------------------------------------------
 
+// Debounced query-recompute trigger: bump dataRev only after edits go quiet, so
+// sustained typing doesn't re-run every visible query every save batch.
+let dataRevTimer: ReturnType<typeof setTimeout> | null = null;
+function scheduleDataRev() {
+  if (dataRevTimer) clearTimeout(dataRevTimer);
+  dataRevTimer = setTimeout(() => {
+    dataRevTimer = null;
+    bumpDataRev();
+  }, 700);
+}
+
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 export function scheduleSave() {
   if (!doc.loaded) return;
@@ -860,8 +936,10 @@ export function scheduleSave() {
           if (String(e).includes("conflict")) markConflict(name);
         }
       }
-      // The backend cache now reflects these edits → let queries recompute.
-      if (saved) bumpDataRev();
+      // The backend cache now reflects these edits → let queries recompute,
+      // but coalesce: re-running every on-screen query is a whole-graph scan, so
+      // wait for a lull instead of firing on every 400ms save batch.
+      if (saved) scheduleDataRev();
     })();
   }, 400);
 }

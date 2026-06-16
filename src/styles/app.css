@@ -685,13 +685,16 @@ body {
   height: 50vh;
 }
 
+.conflict-stack {
+  padding: 8px 16px 0;
+}
 .conflict-banner {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  margin: 8px 0 14px;
+  margin: 0 0 8px;
   padding: 10px 14px;
   border: 1px solid var(--marker-todo, #e5484d);
   border-radius: 8px;
