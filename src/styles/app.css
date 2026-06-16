@@ -1005,6 +1005,36 @@ body {
   background: var(--bg-tertiary);
 }
 
+.sel-toolbar {
+  position: absolute;
+  top: -34px;
+  left: 0;
+  z-index: 40;
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+}
+.sel-toolbar button {
+  width: 26px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  border-radius: 4px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+}
+.sel-toolbar button:hover {
+  background: var(--bg-tertiary);
+}
+
 .block-editor {
   width: 100%;
   border: none;

@@ -675,6 +675,18 @@ export function blockSubtreeMarkdown(id: string, level = 0): string {
   return out.join("\n");
 }
 
+/** Serialize a fetched BlockDto subtree to Logseq markdown (for pages not in the
+ *  working set, e.g. copy-page-as-markdown). */
+export function dtoSubtreeMarkdown(b: BlockDto, level = 0): string {
+  const tabs = "\t".repeat(level);
+  const lines = b.raw.split("\n");
+  const out: string[] = [];
+  out.push(`${tabs}- ${lines[0] ?? ""}`.replace(/\s+$/, ""));
+  for (const line of lines.slice(1)) out.push(line === "" ? "" : `${tabs}  ${line}`);
+  for (const c of b.children) out.push(dtoSubtreeMarkdown(c, level + 1));
+  return out.join("\n");
+}
+
 /** Remove a block and its subtree. */
 function deleteBlockInternal(id: string) {
   const node = doc.byId[id];

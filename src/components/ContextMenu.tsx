@@ -20,6 +20,7 @@ import {
   blockProperty,
   setHeading,
   setCollapsedDeep,
+  dtoSubtreeMarkdown,
 } from "../store";
 
 // Block background colors, matching Logseq's built-in set.
@@ -156,6 +157,15 @@ function PageMenu(props: {
     { label: "Open in new tab", run: () => openPageInNewTab(props.name, props.pageKind) },
     { label: fav() ? "Remove from favorites" : "Add to favorites", run: () => toggleFavorite(props.name, props.pageKind) },
     { label: "Copy page ref", run: () => void backend().writeText(`[[${props.name}]]`) },
+    {
+      label: "Copy page as Markdown",
+      run: () =>
+        void backend()
+          .getPage(props.name, props.pageKind)
+          .then((p) => {
+            if (p) backend().writeText(p.blocks.map((b) => dtoSubtreeMarkdown(b)).join("\n"));
+          }),
+    },
     ...(props.pageKind === "page"
       ? [
           { label: "Rename page", run: rename },

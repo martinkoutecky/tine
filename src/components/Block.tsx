@@ -552,6 +552,19 @@ function Editor(props: { id: string }): JSX.Element {
     ref.setSelectionRange(pos, pos);
   };
 
+  // Floating selection toolbar (bold/italic/highlight/link) — shown while a
+  // non-empty selection exists in this block's editor.
+  const [hasSel, setHasSel] = createSignal(false);
+  const updateSel = () => setHasSel(ref.selectionStart !== ref.selectionEnd);
+  const fmt = (left: string, right?: string) => {
+    applyEdit(toggleWrap(ref.value, ref.selectionStart, ref.selectionEnd, left, right));
+    queueMicrotask(updateSel);
+  };
+  const doLink = () => {
+    applyEdit(insertLink(ref.value, ref.selectionStart, ref.selectionEnd));
+    setHasSel(false);
+  };
+
   // Insert `text` in place of the active trigger and restore the caret.
   const replaceTrigger = (text: string, caret?: number) => {
     const t = ac();
@@ -853,8 +866,24 @@ function Editor(props: { id: string }): JSX.Element {
         onKeyDown={onKeyDown}
         onBlur={onBlur}
         onPaste={onPaste}
+        onSelect={updateSel}
+        onMouseUp={updateSel}
         rows={1}
       />
+      <Show when={hasSel()}>
+        <div class="sel-toolbar" onMouseDown={(e) => e.preventDefault()}>
+          <button title="Bold (mod+b)" onClick={() => fmt("**")}><b>B</b></button>
+          <button title="Italic (mod+i)" onClick={() => fmt("*")}><i>I</i></button>
+          <button title="Strikethrough" onClick={() => fmt("~~")}><s>S</s></button>
+          <button title="Highlight" onClick={() => fmt("==")}><mark>H</mark></button>
+          <button title="Link" onClick={doLink}>
+            <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
+              <path d="M9 15l6-6M10 6l1-1a4 4 0 015.7 5.7l-1 1M14 18l-1 1a4 4 0 01-5.7-5.7l1-1"
+                fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+            </svg>
+          </button>
+        </div>
+      </Show>
       <Show when={ac() && acItems().length > 0}>
         <div class="autocomplete">
           <For each={acItems()}>
