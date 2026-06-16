@@ -17,7 +17,8 @@ export type Clause =
   | { kind: "property"; key: string; value: string | null }
   | { kind: "scheduled" }
   | { kind: "deadline" }
-  | { kind: "between"; start: string; end: string }
+  | { kind: "journal" } // block lives on a journal page
+  | { kind: "between"; field: BetweenField; start: string; end: string }
   | { kind: "onPage"; name: string } // (page name) — blocks on a named page
   | { kind: "namespace"; ns: string }
   | { kind: "pageProperty"; key: string; value: string | null }
@@ -27,8 +28,27 @@ export type Clause =
   // (but non-datalog) query round-trips losslessly instead of being discarded.
   | { kind: "raw"; text: string };
 
+// Which date a `between` range tests against. "any" = the permissive default
+// (journal date OR scheduled OR deadline); "journal" matches OG's journal-only
+// `between`. Serialized as a leading keyword for everything but "any".
+export type BetweenField = "any" | "journal" | "scheduled" | "deadline";
+export const BETWEEN_FIELDS: BetweenField[] = ["journal", "scheduled", "deadline", "any"];
+
 export const MARKERS = ["TODO", "DOING", "NOW", "LATER", "DONE", "WAITING", "CANCELED"];
 export const PRIORITIES = ["A", "B", "C"];
+
+/** A date bound that resolves on its own (keyword / relative / ISO) is written
+ *  bare; a journal page title is wrapped in `[[ ]]` (matching OG). */
+function isBareDateToken(s: string): boolean {
+  return (
+    /^(today|yesterday|tomorrow|now)$/i.test(s) ||
+    /^[+-]?\d+[dwmy]$/i.test(s) ||
+    /^\d{4}-\d{2}-\d{2}$/.test(s)
+  );
+}
+function dateBound(s: string): string {
+  return isBareDateToken(s.trim()) ? s.trim() : `[[${s.trim()}]]`;
+}
 
 // ---------------------------------------------------------------------------
 // Tokenizer (mirrors query.rs::tokenize, plus source spans for raw capture)
@@ -183,10 +203,20 @@ function parseExpr(toks: Tok[], cur: Cur, src: string): Clause | null {
       case "deadline":
         clause = { kind: "deadline" };
         break;
+      case "journal":
+        clause = { kind: "journal" };
+        break;
       case "between": {
+        // Optional leading field keyword (journal/scheduled/deadline).
+        let field: BetweenField = "any";
+        const peek = toks[cur.pos];
+        if (peek && peek.t === "word" && ["journal", "scheduled", "deadline"].includes(peek.v.toLowerCase())) {
+          field = peek.v.toLowerCase() as BetweenField;
+          cur.pos++;
+        }
         const start = parseName(toks, cur) ?? "";
         const end = parseName(toks, cur) ?? "";
-        clause = { kind: "between", start, end };
+        clause = { kind: "between", field, start, end };
         break;
       }
       default:
@@ -286,8 +316,12 @@ function clauseDsl(c: Clause): string {
       return "(scheduled)";
     case "deadline":
       return "(deadline)";
-    case "between":
-      return `(between [[${c.start}]] [[${c.end}]])`;
+    case "journal":
+      return "(journal)";
+    case "between": {
+      const f = c.field && c.field !== "any" ? `${c.field} ` : "";
+      return `(between ${f}${dateBound(c.start)} ${dateBound(c.end)})`;
+    }
     case "onPage":
       return `(page ${word(c.name)})`;
     case "namespace":
@@ -340,8 +374,12 @@ export function clauseLabel(c: Clause): string {
       return "scheduled";
     case "deadline":
       return "deadline";
-    case "between":
-      return `between: ${c.start || "?"} ~ ${c.end || "?"}`;
+    case "journal":
+      return "on journal page";
+    case "between": {
+      const f = c.field && c.field !== "any" ? `${c.field} ` : "";
+      return `${f}between: ${c.start || "?"} ~ ${c.end || "?"}`;
+    }
     case "onPage":
       return `page: ${c.name}`;
     case "namespace":

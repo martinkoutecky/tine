@@ -1909,6 +1909,57 @@ mark {
   cursor: default;
 }
 
+/* Date-range picker: field selector + relative presets + previewed inputs. */
+.qb-between {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px;
+  min-width: 260px;
+}
+.qb-between-field,
+.qb-between-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+/* The field selector's active state means "selected", not "exclude" — use the
+   accent rather than the red NOT colour. */
+.qb-between-field .qb-conn {
+  flex: 1 1 auto;
+}
+.qb-between-field .qb-conn.active {
+  background: var(--link-color);
+  color: #fff;
+  border-color: var(--link-color);
+}
+.qb-preset {
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.qb-preset:hover {
+  border-color: var(--link-color);
+  color: var(--text-primary);
+}
+.qb-bound {
+  display: flex;
+  flex-direction: column;
+}
+.qb-bound .qb-input {
+  margin-bottom: 0;
+}
+.qb-bound-preview {
+  min-height: 14px;
+  padding: 0 2px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
 .query-table th {
   cursor: pointer;
   user-select: none;

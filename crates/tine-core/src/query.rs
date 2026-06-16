@@ -5,7 +5,7 @@
 
 use crate::date::JournalDate;
 use crate::doc::DocBlock;
-use crate::model::{block_to_dto, BlockDto, Graph, PageEntry, RefGroup, TemplateDto};
+use crate::model::{block_to_dto, BlockDto, Graph, PageEntry, PageKind, RefGroup, TemplateDto};
 use crate::refs;
 
 /// Parse a journal-page title (e.g. "Jan 1st, 2022") to a `yyyymmdd` ordinal.
@@ -180,6 +180,7 @@ pub fn run_query(graph: &Graph, query_src: &str) -> Vec<RefGroup> {
             let (page_props, page_tags) = page_facets(doc.pre_block.as_deref());
             let ctx = EvalCtx {
                 journal: entry.date_key,
+                is_journal: entry.kind == PageKind::Journal,
                 page_name: &entry.name,
                 page_props: &page_props,
                 page_tags: &page_tags,
@@ -435,9 +436,11 @@ enum Pred {
     Property(String, Option<String>),
     Scheduled,
     Deadline,
-    /// Date range (inclusive) over the block's journal day or its
-    /// scheduled/deadline date. Bounds are `yyyymmdd` ordinals; `None` = open.
-    Between(Option<i64>, Option<i64>),
+    /// Block lives on a journal page.
+    Journal,
+    /// Date range (inclusive) over a chosen date field. Bounds are `yyyymmdd`
+    /// ordinals; `None` = open.
+    Between(BetweenField, Option<i64>, Option<i64>),
     /// Blocks on a specific page (by name).
     Page(String),
     /// Pages whose name is under a namespace (`ns/…`).
@@ -456,6 +459,19 @@ enum Pred {
     SortBy(String, bool),
 }
 
+/// Which date a `between` range is tested against.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum BetweenField {
+    /// Journal date OR scheduled OR deadline (Tine's permissive default;
+    /// fieldless `(between …)` keeps this for back-compat).
+    Any,
+    /// The page's journal date only — implies journal pages, matching OG's
+    /// `:between` rule (`:block/journal? true`).
+    Journal,
+    Scheduled,
+    Deadline,
+}
+
 /// Result-level options extracted from the query (sample, sort-by).
 #[derive(Debug, Default, Clone)]
 struct QueryOpts {
@@ -467,6 +483,8 @@ struct QueryOpts {
 struct EvalCtx<'a> {
     /// The page's journal-day ordinal (`yyyymmdd`), or `None` for named pages.
     journal: Option<i64>,
+    /// Whether the block lives on a journal page (drives `(journal)`).
+    is_journal: bool,
     page_name: &'a str,
     page_props: &'a [(String, String)],
     page_tags: &'a [String],
@@ -487,14 +505,20 @@ fn parse_angle_date(s: &str) -> Option<i64> {
     Some(date_ordinal(y, m, d))
 }
 
-/// Ordinals from a block's SCHEDULED:/DEADLINE: lines.
-fn block_date_ordinals(raw: &str) -> Vec<i64> {
+/// Ordinals from a block's SCHEDULED:/DEADLINE: lines. `only` restricts to one
+/// marker (`"SCHEDULED:"` / `"DEADLINE:"`); `None` returns both.
+fn block_date_ordinals(raw: &str, only: Option<&str>) -> Vec<i64> {
     raw.lines()
         .filter_map(|l| {
             let t = l.trim();
-            t.strip_prefix("SCHEDULED:")
-                .or_else(|| t.strip_prefix("DEADLINE:"))
-                .and_then(parse_angle_date)
+            let sched = t.strip_prefix("SCHEDULED:");
+            let dead = t.strip_prefix("DEADLINE:");
+            let body = match only {
+                Some("SCHEDULED:") => sched,
+                Some("DEADLINE:") => dead,
+                _ => sched.or(dead),
+            };
+            body.and_then(parse_angle_date)
         })
         .collect()
 }
@@ -549,10 +573,22 @@ impl Pred {
                 .any(|(k, v)| k.eq_ignore_ascii_case(key) && value_matches(v, val.as_deref())),
             Pred::Scheduled => block.raw.contains("SCHEDULED:"),
             Pred::Deadline => block.raw.contains("DEADLINE:"),
-            Pred::Between(lo, hi) => {
+            Pred::Journal => ctx.is_journal,
+            Pred::Between(field, lo, hi) => {
                 let in_range = |c: i64| lo.map_or(true, |l| c >= l) && hi.map_or(true, |h| c <= h);
-                ctx.journal.is_some_and(in_range)
-                    || block_date_ordinals(&block.raw).into_iter().any(in_range)
+                match field {
+                    BetweenField::Any => {
+                        ctx.journal.is_some_and(in_range)
+                            || block_date_ordinals(&block.raw, None).into_iter().any(in_range)
+                    }
+                    BetweenField::Journal => ctx.journal.is_some_and(in_range),
+                    BetweenField::Scheduled => block_date_ordinals(&block.raw, Some("SCHEDULED:"))
+                        .into_iter()
+                        .any(in_range),
+                    BetweenField::Deadline => block_date_ordinals(&block.raw, Some("DEADLINE:"))
+                        .into_iter()
+                        .any(in_range),
+                }
             }
             Pred::Page(name) => refs::normalize(ctx.page_name) == refs::normalize(name),
             Pred::Namespace(ns) => {
@@ -783,12 +819,34 @@ fn parse_expr(toks: &[Tok], pos: &mut usize, today: JournalDate) -> Option<Pred>
                 "page-tags" | "tags" => Pred::PageTags(parse_words(toks, pos)),
                 "scheduled" => Pred::Scheduled,
                 "deadline" => Pred::Deadline,
+                "journal" => Pred::Journal,
                 "between" => {
-                    // (between START END): journal titles, `today`/`yesterday`/
-                    // `tomorrow`, signed durations `±N[dwmy]`, or `yyyy-MM-dd`.
+                    // (between [FIELD] START END): optional leading field keyword
+                    // journal|scheduled|deadline (default Any = journal-or-
+                    // scheduled-or-deadline); bounds are journal titles,
+                    // `today`/`yesterday`/`tomorrow`, signed durations `±N[dwmy]`,
+                    // or `yyyy-MM-dd`.
+                    let field = match toks.get(*pos) {
+                        Some(Tok::Word(w)) => match w.to_ascii_lowercase().as_str() {
+                            "journal" => {
+                                *pos += 1;
+                                BetweenField::Journal
+                            }
+                            "scheduled" => {
+                                *pos += 1;
+                                BetweenField::Scheduled
+                            }
+                            "deadline" => {
+                                *pos += 1;
+                                BetweenField::Deadline
+                            }
+                            _ => BetweenField::Any,
+                        },
+                        _ => BetweenField::Any,
+                    };
                     let lo = parse_name(toks, pos).and_then(|s| resolve_date_token(&s, today));
                     let hi = parse_name(toks, pos).and_then(|s| resolve_date_token(&s, today));
-                    Pred::Between(lo, hi)
+                    Pred::Between(field, lo, hi)
                 }
                 "sample" => {
                     let n = parse_name(toks, pos).and_then(|s| s.parse::<usize>().ok()).unwrap_or(0);
@@ -885,10 +943,10 @@ mod tests {
 
     /// A minimal eval context for a block on a named (non-journal) page.
     fn ctx_named<'a>() -> EvalCtx<'a> {
-        EvalCtx { journal: None, page_name: "Test", page_props: &[], page_tags: &[] }
+        EvalCtx { journal: None, is_journal: false, page_name: "Test", page_props: &[], page_tags: &[] }
     }
     fn ctx_journal<'a>(key: i64) -> EvalCtx<'a> {
-        EvalCtx { journal: Some(key), page_name: "Journal", page_props: &[], page_tags: &[] }
+        EvalCtx { journal: Some(key), is_journal: true, page_name: "Journal", page_props: &[], page_tags: &[] }
     }
 
     #[test]
@@ -952,20 +1010,73 @@ mod tests {
     fn eval_between_relative_dates() {
         // TODAY = 2026-06-16. (between -7d +7d) => [2026-06-09, 2026-06-23].
         let q = pred("(between -7d +7d)");
-        assert_eq!(q, Pred::Between(Some(20260609), Some(20260623)));
+        assert_eq!(q, Pred::Between(BetweenField::Any, Some(20260609), Some(20260623)));
         let b = DocBlock::new("x");
         assert!(q.eval(&b, &ctx_journal(20260616)));
         assert!(q.eval(&b, &ctx_journal(20260609)));
         assert!(!q.eval(&b, &ctx_journal(20260601)));
         // keyword bounds + month/year units
-        assert_eq!(pred("(between today tomorrow)"), Pred::Between(Some(20260616), Some(20260617)));
-        assert_eq!(pred("(between -1m +1y)"), Pred::Between(Some(20260516), Some(20270616)));
+        assert_eq!(
+            pred("(between today tomorrow)"),
+            Pred::Between(BetweenField::Any, Some(20260616), Some(20260617))
+        );
+        assert_eq!(
+            pred("(between -1m +1y)"),
+            Pred::Between(BetweenField::Any, Some(20260516), Some(20270616))
+        );
+    }
+
+    #[test]
+    fn between_field_selector_and_journal_only() {
+        // Field keyword parses into the right variant.
+        assert_eq!(
+            pred("(between journal -30d today)"),
+            Pred::Between(BetweenField::Journal, Some(20260517), Some(20260616))
+        );
+        assert_eq!(
+            pred("(between scheduled -7d +7d)"),
+            Pred::Between(BetweenField::Scheduled, Some(20260609), Some(20260623))
+        );
+
+        // `between journal` restricts to journal pages: a block with an in-range
+        // SCHEDULED date on a *named* page must NOT match.
+        let q = pred("(between journal -30d today)");
+        let sched = DocBlock::new("TODO x\nSCHEDULED: <2026-06-10 Wed>");
+        assert!(!q.eval(&sched, &ctx_named())); // named page, journal=None
+        assert!(q.eval(&DocBlock::new("TODO y"), &ctx_journal(20260610))); // journal page in range
+        assert!(!q.eval(&DocBlock::new("TODO z"), &ctx_journal(20260101))); // journal page out of range
+
+        // `between scheduled` ignores the page's journal date entirely.
+        let qs = pred("(between scheduled -30d today)");
+        assert!(qs.eval(&sched, &ctx_named()));
+        assert!(!qs.eval(&DocBlock::new("TODO y"), &ctx_journal(20260610)));
+
+        // `between deadline` only looks at DEADLINE lines.
+        let qd = pred("(between deadline -30d today)");
+        let dead = DocBlock::new("TODO x\nDEADLINE: <2026-06-10 Wed>");
+        assert!(qd.eval(&dead, &ctx_named()));
+        assert!(!qd.eval(&sched, &ctx_named()));
+    }
+
+    #[test]
+    fn journal_predicate_and_target_query() {
+        let b = DocBlock::new("TODO buy milk");
+        assert_eq!(pred("(journal)"), Pred::Journal);
+        assert!(pred("(journal)").eval(&b, &ctx_journal(20260616)));
+        assert!(!pred("(journal)").eval(&b, &ctx_named()));
+
+        // The motivating query: TODOs on journal pages dated in the last 30 days.
+        let q = pred("(and (task TODO) (between journal -30d today))");
+        assert!(q.eval(&b, &ctx_journal(20260601)));
+        assert!(!q.eval(&b, &ctx_journal(20260101))); // too old
+        assert!(!q.eval(&DocBlock::new("DONE buy milk"), &ctx_journal(20260601))); // not TODO
+        assert!(!q.eval(&b, &ctx_named())); // not a journal page
     }
 
     #[test]
     fn eval_page_and_namespace() {
         let b = DocBlock::new("hi");
-        let ctx = EvalCtx { journal: None, page_name: "Project/Alpha", page_props: &[], page_tags: &[] };
+        let ctx = EvalCtx { journal: None, is_journal: false, page_name: "Project/Alpha", page_props: &[], page_tags: &[] };
         assert!(pred("(page Project/Alpha)").eval(&b, &ctx));
         assert!(!pred("(page Project/Beta)").eval(&b, &ctx));
         assert!(pred("(namespace Project)").eval(&b, &ctx));
@@ -977,7 +1088,7 @@ mod tests {
         let b = DocBlock::new("hi");
         let props = vec![("type".to_string(), "project".to_string())];
         let tags = vec!["research".to_string(), "active".to_string()];
-        let ctx = EvalCtx { journal: None, page_name: "P", page_props: &props, page_tags: &tags };
+        let ctx = EvalCtx { journal: None, is_journal: false, page_name: "P", page_props: &props, page_tags: &tags };
         assert!(pred("(page-property type project)").eval(&b, &ctx));
         assert!(pred("(page-property type)").eval(&b, &ctx));
         assert!(!pred("(page-property type book)").eval(&b, &ctx));

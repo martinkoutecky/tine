@@ -19,8 +19,11 @@ import {
   setOp,
   MARKERS,
   PRIORITIES,
+  BETWEEN_FIELDS,
   type Clause,
+  type BetweenField,
 } from "../editor/queryBuilder";
+import { DATE_PRESETS, previewDate } from "../editor/dateExpr";
 
 // Interactive query builder: an OG-style chip-bar over a {{query}} DSL string.
 // The DSL text is the single source of truth — we parse it to a tree, apply an
@@ -163,7 +166,9 @@ function ChipMenu(props: NodeCtx): JSX.Element {
   const atRoot = () => props.loc.length === 0;
 
   const [editing, setEditing] = createSignal(false);
-  const canEdit = () => !isOpKey() && props.clause.kind !== "raw";
+  // Nullary clauses (scheduled/deadline/journal) and raw/op have nothing to edit.
+  const canEdit = () =>
+    !isOpKey() && !["raw", "scheduled", "deadline", "journal"].includes(props.clause.kind);
   const editKind = () => (props.clause.kind === "raw" ? "page" : (props.clause.kind as ClauseKind));
 
   return (
@@ -230,6 +235,7 @@ const FILTER_TYPES: { kind: ClauseKind; label: string }[] = [
   { kind: "property", label: "Property" },
   { kind: "scheduled", label: "Scheduled" },
   { kind: "deadline", label: "Deadline" },
+  { kind: "journal", label: "On journal page" },
   { kind: "between", label: "Between dates" },
   { kind: "content", label: "Full-text search" },
   { kind: "onPage", label: "On page" },
@@ -247,7 +253,7 @@ function AddPicker(props: {
   const [negate, setNegate] = createSignal(false);
 
   const pick = (kind: ClauseKind) => {
-    if (kind === "scheduled" || kind === "deadline") return commit({ kind });
+    if (kind === "scheduled" || kind === "deadline" || kind === "journal") return commit({ kind });
     setStep(kind);
   };
   const commit = (c: Clause) => props.onCommit(negate() ? { kind: "op", op: "not", children: [c] } : c);
@@ -297,7 +303,7 @@ function ValuePicker(props: { kind: ClauseKind; onCommit: (c: Clause) => void })
         <PropertyPick onCommit={(key, value) => props.onCommit({ kind: "property", key, value })} />
       </Show>
       <Show when={props.kind === "between"}>
-        <BetweenPick onCommit={(start, end) => props.onCommit({ kind: "between", start, end })} />
+        <BetweenPick onCommit={(field, start, end) => props.onCommit({ kind: "between", field, start, end })} />
       </Show>
       <Show when={props.kind === "onPage"}>
         <PageInput placeholder="Page name" onCommit={(name) => props.onCommit({ kind: "onPage", name })} />
@@ -446,17 +452,82 @@ function PropertyPick(props: { onCommit: (key: string, value: string | null) => 
   );
 }
 
-// Between two journal dates (page-name inputs with autocomplete).
-function BetweenPick(props: { onCommit: (start: string, end: string) => void }): JSX.Element {
+// Date-range picker. A field selector (which date to test), one-click relative
+// presets, and two bound inputs that accept keywords (`today`), relative offsets
+// (`-30d`), ISO dates, or a journal-page title — each with a live resolved-date
+// preview so the free-text accepts more than its placeholder hints.
+const FIELD_LABEL: Record<BetweenField, string> = {
+  journal: "Journal date",
+  scheduled: "Scheduled",
+  deadline: "Deadline",
+  any: "Any date",
+};
+function BetweenPick(props: { onCommit: (field: BetweenField, start: string, end: string) => void }): JSX.Element {
+  const [field, setField] = createSignal<BetweenField>("journal");
   const [start, setStart] = createSignal("");
   const [end, setEnd] = createSignal("");
+  const ready = () => !!start().trim() && !!end().trim();
+  const submit = () => {
+    if (ready()) props.onCommit(field(), start().trim(), end().trim());
+  };
   return (
-    <div class="qb-value">
-      <input class="qb-input" autofocus placeholder="Start (journal page)" value={start()} onInput={(e) => setStart(e.currentTarget.value)} />
-      <input class="qb-input" placeholder="End (journal page)" value={end()} onInput={(e) => setEnd(e.currentTarget.value)} />
-      <button class="qb-commit" disabled={!start().trim() || !end().trim()} onClick={() => props.onCommit(start().trim(), end().trim())}>
+    <div class="qb-between">
+      <div class="qb-between-field">
+        <For each={BETWEEN_FIELDS}>
+          {(f) => (
+            <button class="qb-conn" classList={{ active: field() === f }} onClick={() => setField(f)}>
+              {FIELD_LABEL[f]}
+            </button>
+          )}
+        </For>
+      </div>
+      <div class="qb-between-presets">
+        <For each={DATE_PRESETS}>
+          {(p) => (
+            <button
+              class="qb-preset"
+              title={`${p.start} → ${p.end}`}
+              onClick={() => {
+                setStart(p.start);
+                setEnd(p.end);
+              }}
+            >
+              {p.label}
+            </button>
+          )}
+        </For>
+      </div>
+      <DateBoundInput placeholder="Start — today, -30d, 2026-06-01, or a page" value={start()} onInput={setStart} onEnter={submit} autofocus />
+      <DateBoundInput placeholder="End — today, +7d, 2026-06-30, or a page" value={end()} onInput={setEnd} onEnter={submit} />
+      <button class="qb-commit" disabled={!ready()} onClick={submit}>
         Add
       </button>
+    </div>
+  );
+}
+
+// A single date-bound input with a live resolved-date preview underneath.
+function DateBoundInput(props: {
+  placeholder: string;
+  value: string;
+  onInput: (v: string) => void;
+  onEnter: () => void;
+  autofocus?: boolean;
+}): JSX.Element {
+  const preview = createMemo(() => previewDate(props.value));
+  return (
+    <div class="qb-bound">
+      <input
+        class="qb-input"
+        autofocus={props.autofocus}
+        placeholder={props.placeholder}
+        value={props.value}
+        onInput={(e) => props.onInput(e.currentTarget.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") props.onEnter();
+        }}
+      />
+      <span class="qb-bound-preview">{preview() ? `→ ${preview()}` : " "}</span>
     </div>
   );
 }

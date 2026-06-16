@@ -50,7 +50,21 @@ describe("parse + serialize round-trip", () => {
     expect(roundtrip("(page-property public)")).toBe("(page-property public)");
     expect(roundtrip("(page-tags research active)")).toBe("(page-tags research active)");
     expect(roundtrip('"full text"')).toBe('"full text"');
-    expect(roundtrip("(between -7d +7d)")).toBe("(between [[-7d]] [[+7d]])");
+    // Relative/keyword/ISO bounds stay bare; journal titles keep their [[ ]].
+    expect(roundtrip("(between -7d +7d)")).toBe("(between -7d +7d)");
+    expect(roundtrip("(between today tomorrow)")).toBe("(between today tomorrow)");
+    expect(roundtrip("(between 2026-01-01 2026-12-31)")).toBe("(between 2026-01-01 2026-12-31)");
+  });
+
+  it("between field selector and journal predicate round-trip", () => {
+    expect(roundtrip("(journal)")).toBe("(journal)");
+    expect(roundtrip("(between journal -30d today)")).toBe("(between journal -30d today)");
+    expect(roundtrip("(between scheduled -7d +7d)")).toBe("(between scheduled -7d +7d)");
+    expect(roundtrip("(between deadline today +14d)")).toBe("(between deadline today +14d)");
+    // The motivating query.
+    expect(roundtrip("(and (task TODO) (between journal -30d today))")).toBe(
+      "(and (task TODO) (between journal -30d today))"
+    );
   });
 
   it("quotes property values with spaces", () => {
@@ -133,6 +147,11 @@ describe("labels", () => {
     expect(clauseLabel({ kind: "task", markers: ["NOW", "LATER"] })).toBe("task: NOW | LATER");
     expect(clauseLabel({ kind: "property", key: "type", value: "book" })).toBe("type: book");
     expect(clauseLabel({ kind: "property", key: "public", value: null })).toBe("public: any");
-    expect(clauseLabel({ kind: "between", start: "-7d", end: "+7d" })).toBe("between: -7d ~ +7d");
+    expect(clauseLabel({ kind: "between", field: "any", start: "-7d", end: "+7d" })).toBe(
+      "between: -7d ~ +7d"
+    );
+    expect(clauseLabel({ kind: "between", field: "journal", start: "-30d", end: "today" })).toBe(
+      "journal between: -30d ~ today"
+    );
   });
 });
