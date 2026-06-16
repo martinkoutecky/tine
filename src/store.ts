@@ -11,7 +11,7 @@ import { createSignal } from "solid-js";
 import type { BlockDto, PageDto, PageKind } from "./types";
 import type { OutlineNode } from "./editor/outline";
 import { backend } from "./backend";
-import { markConflict, isConflicted } from "./ui";
+import { markConflict, isConflicted, bumpDataRev } from "./ui";
 
 export interface Node {
   id: string;
@@ -847,17 +847,21 @@ export function scheduleSave() {
     const names = [...dirty];
     dirty.clear();
     void (async () => {
+      let saved = 0;
       for (const name of names) {
         if (isConflicted(name)) continue; // wait for the user to resolve first
         const dto = pageToDto(name);
         if (!dto) continue;
         try {
           await backend().savePage(dto);
+          saved++;
         } catch (e) {
           // The file changed on disk; surface it instead of clobbering.
           if (String(e).includes("conflict")) markConflict(name);
         }
       }
+      // The backend cache now reflects these edits → let queries recompute.
+      if (saved) bumpDataRev();
     })();
   }, 400);
 }

@@ -29,6 +29,14 @@ export const [graphEpoch, setGraphEpoch] = createSignal(0);
 export function bumpGraphEpoch() {
   setGraphEpoch((n) => n + 1);
 }
+
+// Bumped after a save batch lands (the Rust cache now reflects the edit), so
+// derived whole-graph views — {{query}} results, backlinks — can recompute.
+// This is Tine's stand-in for OG's reactive-DB query invalidation.
+export const [dataRev, setDataRev] = createSignal(0);
+export function bumpDataRev() {
+  setDataRev((n) => n + 1);
+}
 export function toggleTheme() {
   const next = theme() === "light" ? "dark" : "light";
   setTheme(next);
