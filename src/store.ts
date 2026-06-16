@@ -388,8 +388,34 @@ export function splitBlock(id: string, offset: number) {
   const node = doc.byId[id];
   const before = node.raw.slice(0, offset);
   const after = node.raw.slice(offset);
-  const newId = freshId();
   const pageName = node.page;
+
+  // Caret-at-start case (blank before, content after): create a NEW EMPTY block
+  // *before* the current one. The current block keeps its uuid, its content, and
+  // its children — its identity never changes. This mirrors OG's
+  // insert-new-block-before-block-aux! and is what keeps a block stable when it's
+  // shown elsewhere (sidebar / ref / query) and you press Enter at its head.
+  // Without it, the content would migrate to a fresh uuid and any external view
+  // tracking the original uuid would land on the now-empty block.
+  if (before.trim() === "" && after.trim() !== "") {
+    const emptyId = freshId();
+    setDoc(
+      produce((s) => {
+        s.byId[emptyId] = {
+          id: emptyId, raw: "", collapsed: false, parent: node.parent, page: pageName, children: [],
+        };
+        const sibs = node.parent === null
+          ? s.pages[s.pages.findIndex((p) => p.name === pageName)].roots
+          : s.byId[node.parent].children;
+        sibs.splice(sibs.indexOf(id), 0, emptyId);
+      })
+    );
+    startEditing(emptyId, 0);
+    markDirty(pageName);
+    return;
+  }
+
+  const newId = freshId();
 
   setDoc(
     produce((s) => {

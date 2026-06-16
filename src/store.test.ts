@@ -57,6 +57,28 @@ describe("split (Enter)", () => {
     expect(takeCaretFor(newId)).toBe(0);
   });
 
+  it("at start (offset 0), inserts an empty block before and the original keeps its uuid + content", () => {
+    const dto = load([blk("a"), blk("query block")]);
+    const id = dto.blocks[1].id;
+    splitBlock(id, 0); // caret at head of "query block"
+    expect(shape()).toEqual([["a"], [""], ["query block"]]);
+    // the new empty block is being edited
+    const emptyId = doc.pages[0].roots[1];
+    expect(editingId()).toBe(emptyId);
+    expect(emptyId).not.toBe(id);
+    // crucially, the original uuid still holds the content (sidebar/refs stay valid)
+    expect(doc.byId[id].raw).toBe("query block");
+    expect(doc.pages[0].roots[2]).toBe(id);
+  });
+
+  it("at start, the original block keeps its children", () => {
+    const dto = load([blk("q", [blk("child")])]);
+    const id = dto.blocks[0].id;
+    splitBlock(id, 0);
+    expect(shape()).toEqual([[""], ["q", [["child"]]]]);
+    expect(doc.byId[id].raw).toBe("q");
+  });
+
   it("at end of an expanded parent, new block becomes first child", () => {
     const dto = load([blk("parent", [blk("child")])]);
     const id = dto.blocks[0].id;
