@@ -11,13 +11,18 @@
 
 export type Clause =
   | { kind: "op"; op: "and" | "or" | "not"; children: Clause[] }
-  | { kind: "page"; name: string }
+  | { kind: "page"; name: string } // a [[page]] / #tag / (page-ref) reference
   | { kind: "task"; markers: string[] }
   | { kind: "priority"; levels: string[] }
   | { kind: "property"; key: string; value: string | null }
   | { kind: "scheduled" }
   | { kind: "deadline" }
   | { kind: "between"; start: string; end: string }
+  | { kind: "onPage"; name: string } // (page name) — blocks on a named page
+  | { kind: "namespace"; ns: string }
+  | { kind: "pageProperty"; key: string; value: string | null }
+  | { kind: "pageTags"; tags: string[] }
+  | { kind: "content"; text: string }
   // Verbatim fallback for a sub-expression we don't model, so an unfamiliar
   // (but non-datalog) query round-trips losslessly instead of being discarded.
   | { kind: "raw"; text: string };
@@ -103,6 +108,11 @@ function parseExpr(toks: Tok[], cur: Cur, src: string): Clause | null {
     cur.pos++;
     return { kind: "page", name: t.v };
   }
+  // A bare quoted string is a full-text content filter.
+  if (t.t === "str") {
+    cur.pos++;
+    return { kind: "content", text: t.v };
+  }
   if (t.t === "(") {
     const open = t;
     cur.pos++;
@@ -133,6 +143,16 @@ function parseExpr(toks: Tok[], cur: Cur, src: string): Clause | null {
         clause = n != null ? { kind: "page", name: n } : null;
         break;
       }
+      case "page": {
+        const n = parseName(toks, cur);
+        clause = n != null ? { kind: "onPage", name: n } : null;
+        break;
+      }
+      case "namespace": {
+        const n = parseName(toks, cur);
+        clause = n != null ? { kind: "namespace", ns: n } : null;
+        break;
+      }
       case "property": {
         const key = parseName(toks, cur);
         if (key == null) {
@@ -143,6 +163,20 @@ function parseExpr(toks: Tok[], cur: Cur, src: string): Clause | null {
         clause = { kind: "property", key, value };
         break;
       }
+      case "page-property": {
+        const key = parseName(toks, cur);
+        if (key == null) {
+          clause = null;
+          break;
+        }
+        const value = parseOptName(toks, cur);
+        clause = { kind: "pageProperty", key, value };
+        break;
+      }
+      case "page-tags":
+      case "tags":
+        clause = { kind: "pageTags", tags: parseWords(toks, cur) };
+        break;
       case "scheduled":
         clause = { kind: "scheduled" };
         break;
@@ -254,6 +288,18 @@ function clauseDsl(c: Clause): string {
       return "(deadline)";
     case "between":
       return `(between [[${c.start}]] [[${c.end}]])`;
+    case "onPage":
+      return `(page ${word(c.name)})`;
+    case "namespace":
+      return `(namespace ${word(c.ns)})`;
+    case "pageProperty":
+      return c.value != null && c.value !== ""
+        ? `(page-property ${word(c.key)} ${word(c.value)})`
+        : `(page-property ${word(c.key)})`;
+    case "pageTags":
+      return `(page-tags ${c.tags.join(" ")})`;
+    case "content":
+      return `"${c.text}"`;
     case "raw":
       return c.text;
     case "op": {
@@ -296,6 +342,16 @@ export function clauseLabel(c: Clause): string {
       return "deadline";
     case "between":
       return `between: ${c.start || "?"} ~ ${c.end || "?"}`;
+    case "onPage":
+      return `page: ${c.name}`;
+    case "namespace":
+      return `namespace: ${c.ns}`;
+    case "pageProperty":
+      return c.value != null && c.value !== "" ? `page ${c.key}: ${c.value}` : `page ${c.key}: any`;
+    case "pageTags":
+      return `page tags: ${c.tags.join(" | ")}`;
+    case "content":
+      return `text: "${c.text}"`;
     case "raw":
       return c.text;
     case "op":

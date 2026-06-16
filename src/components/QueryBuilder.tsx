@@ -217,7 +217,7 @@ function AddButton(props: NodeCtx): JSX.Element {
 // Add-filter picker: choose a clause type, then collect its value(s).
 // ---------------------------------------------------------------------------
 
-const FILTER_TYPES: { kind: ClauseKind | "page"; label: string }[] = [
+const FILTER_TYPES: { kind: ClauseKind; label: string }[] = [
   { kind: "page", label: "Page / tag reference" },
   { kind: "task", label: "Task marker" },
   { kind: "priority", label: "Priority" },
@@ -225,6 +225,11 @@ const FILTER_TYPES: { kind: ClauseKind | "page"; label: string }[] = [
   { kind: "scheduled", label: "Scheduled" },
   { kind: "deadline", label: "Deadline" },
   { kind: "between", label: "Between dates" },
+  { kind: "content", label: "Full-text search" },
+  { kind: "onPage", label: "On page" },
+  { kind: "namespace", label: "In namespace" },
+  { kind: "pageProperty", label: "Page property" },
+  { kind: "pageTags", label: "Page tags" },
 ];
 
 function AddPicker(props: {
@@ -266,6 +271,40 @@ function AddPicker(props: {
       <Show when={step() === "between"}>
         <BetweenPick onCommit={(start, end) => props.onCommit({ kind: "between", start, end })} />
       </Show>
+      <Show when={step() === "onPage"}>
+        <PageInput placeholder="Page name" onCommit={(name) => props.onCommit({ kind: "onPage", name })} />
+      </Show>
+      <Show when={step() === "namespace"}>
+        <PageInput placeholder="Namespace (parent page)" onCommit={(ns) => props.onCommit({ kind: "namespace", ns })} />
+      </Show>
+      <Show when={step() === "pageProperty"}>
+        <PropertyPick onCommit={(key, value) => props.onCommit({ kind: "pageProperty", key, value })} />
+      </Show>
+      <Show when={step() === "content"}>
+        <TextInput placeholder="Text to search for" onCommit={(text) => props.onCommit({ kind: "content", text })} />
+      </Show>
+      <Show when={step() === "pageTags"}>
+        <TextInput placeholder="Tag (one)" onCommit={(t) => props.onCommit({ kind: "pageTags", tags: [t] })} />
+      </Show>
+    </div>
+  );
+}
+
+// Plain free-text input that commits on Enter.
+function TextInput(props: { placeholder: string; onCommit: (text: string) => void }): JSX.Element {
+  const [v, setV] = createSignal("");
+  return (
+    <div class="qb-value">
+      <input
+        class="qb-input"
+        autofocus
+        placeholder={props.placeholder}
+        value={v()}
+        onInput={(e) => setV(e.currentTarget.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && v().trim()) props.onCommit(v().trim());
+        }}
+      />
     </div>
   );
 }

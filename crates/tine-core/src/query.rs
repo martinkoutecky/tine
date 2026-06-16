@@ -84,12 +84,43 @@ pub fn unlinked_refs(graph: &Graph, target: &str) -> Vec<RefGroup> {
     )
 }
 
+/// Page-level properties and `tags::` values parsed from a page's pre-block.
+fn page_facets(pre_block: Option<&str>) -> (Vec<(String, String)>, Vec<String>) {
+    let mut props = Vec::new();
+    let mut tags = Vec::new();
+    if let Some(pre) = pre_block {
+        for line in pre.lines() {
+            if let Some((k, v)) = crate::doc::parse_property_line(line) {
+                if k.eq_ignore_ascii_case("tags") {
+                    tags = v
+                        .split(',')
+                        .map(|t| strip_ref(t.trim()))
+                        .filter(|t| !t.is_empty())
+                        .collect();
+                }
+                props.push((k, v));
+            }
+        }
+    }
+    (props, tags)
+}
+
 pub fn run_query(graph: &Graph, query_src: &str) -> Vec<RefGroup> {
-    let Some(pred) = Pred::parse(query_src) else { return Vec::new() };
-    graph.with_pages(|pages| {
+    let today = JournalDate::today();
+    let Some(pred) = Pred::parse(query_src, today) else { return Vec::new() };
+    let mut opts = QueryOpts::default();
+    pred.collect_opts(&mut opts);
+
+    let mut groups = graph.with_pages(|pages| {
         let mut groups: Vec<RefGroup> = Vec::new();
         for (entry, doc) in pages {
-            let ctx = EvalCtx { journal: entry.date_key };
+            let (page_props, page_tags) = page_facets(doc.pre_block.as_deref());
+            let ctx = EvalCtx {
+                journal: entry.date_key,
+                page_name: &entry.name,
+                page_props: &page_props,
+                page_tags: &page_tags,
+            };
             let mut matched: Vec<&DocBlock> = Vec::new();
             walk(&doc.roots, &mut |b| {
                 if pred.eval(b, &ctx) {
@@ -97,15 +128,50 @@ pub fn run_query(graph: &Graph, query_src: &str) -> Vec<RefGroup> {
                 }
             });
             if !matched.is_empty() {
-                groups.push(RefGroup {
-                    page: entry.name.clone(),
-                    kind: entry.kind,
-                    blocks: matched.into_iter().map(block_to_dto).collect(),
-                });
+                let mut blocks: Vec<BlockDto> = matched.into_iter().map(block_to_dto).collect();
+                // sort-by a property value (or the block text) within the group.
+                if let Some((field, asc)) = &opts.sort {
+                    blocks.sort_by(|a, b| {
+                        let ka = sort_key(a, field);
+                        let kb = sort_key(b, field);
+                        if *asc { ka.cmp(&kb) } else { kb.cmp(&ka) }
+                    });
+                }
+                groups.push(RefGroup { page: entry.name.clone(), kind: entry.kind, blocks });
             }
         }
         groups
-    })
+    });
+
+    // sample N: cap total results (deterministic: first N across pages).
+    if let Some(n) = opts.sample {
+        let mut remaining = n;
+        groups.retain_mut(|g| {
+            if remaining == 0 {
+                return false;
+            }
+            if g.blocks.len() > remaining {
+                g.blocks.truncate(remaining);
+            }
+            remaining -= g.blocks.len();
+            true
+        });
+    }
+    groups
+}
+
+/// Sort key for a result block: the named property's value if present, else the
+/// block's visible first line (lowercased for stable case-insensitive order).
+fn sort_key(b: &BlockDto, field: &str) -> String {
+    if let Some((_, v)) = blockview_property(&b.raw, field) {
+        return v.to_lowercase();
+    }
+    visible_text(&b.raw).lines().next().unwrap_or("").to_lowercase()
+}
+fn blockview_property(raw: &str, key: &str) -> Option<(String, String)> {
+    raw.lines()
+        .filter_map(crate::doc::parse_property_line)
+        .find(|(k, _)| k.eq_ignore_ascii_case(key))
 }
 
 /// A block's *visible* text for search: the body the user actually reads, with
@@ -308,15 +374,38 @@ enum Pred {
     /// Date range (inclusive) over the block's journal day or its
     /// scheduled/deadline date. Bounds are `yyyymmdd` ordinals; `None` = open.
     Between(Option<i64>, Option<i64>),
+    /// Blocks on a specific page (by name).
+    Page(String),
+    /// Pages whose name is under a namespace (`ns/…`).
+    Namespace(String),
+    /// A page-level property (on the page's pre-block).
+    PageProperty(String, Option<String>),
+    /// Page has any of these `tags::`.
+    PageTags(Vec<String>),
+    /// Full-text match on the block's visible content.
+    Content(String),
     And(Vec<Pred>),
     Or(Vec<Pred>),
     Not(Box<Pred>),
+    /// Result-level options (always pass as filters; collected as `QueryOpts`).
+    Sample(usize),
+    SortBy(String, bool),
+}
+
+/// Result-level options extracted from the query (sample, sort-by).
+#[derive(Debug, Default, Clone)]
+struct QueryOpts {
+    sample: Option<usize>,
+    sort: Option<(String, bool)>, // (field, ascending)
 }
 
 /// Per-block evaluation context (the page it lives on).
-struct EvalCtx {
+struct EvalCtx<'a> {
     /// The page's journal-day ordinal (`yyyymmdd`), or `None` for named pages.
     journal: Option<i64>,
+    page_name: &'a str,
+    page_props: &'a [(String, String)],
+    page_tags: &'a [String],
 }
 
 fn date_ordinal(y: i64, m: i64, d: i64) -> i64 {
@@ -359,14 +448,25 @@ fn block_priority(raw: &str) -> Option<char> {
 }
 
 impl Pred {
-    fn parse(src: &str) -> Option<Pred> {
+    fn parse(src: &str, today: JournalDate) -> Option<Pred> {
         if is_advanced(src) {
             return None;
         }
         let tokens = tokenize(src);
         let mut pos = 0;
-        let p = parse_expr(&tokens, &mut pos)?;
+        let p = parse_expr(&tokens, &mut pos, today)?;
         Some(p)
+    }
+
+    /// Pull result-level options (sample / sort-by) out of the tree.
+    fn collect_opts(&self, opts: &mut QueryOpts) {
+        match self {
+            Pred::Sample(n) => opts.sample = Some(*n),
+            Pred::SortBy(f, asc) => opts.sort = Some((f.clone(), *asc)),
+            Pred::And(ps) | Pred::Or(ps) => ps.iter().for_each(|p| p.collect_opts(opts)),
+            Pred::Not(p) => p.collect_opts(opts),
+            _ => {}
+        }
     }
 
     fn eval(&self, block: &DocBlock, ctx: &EvalCtx) -> bool {
@@ -379,9 +479,10 @@ impl Pred {
             Pred::Priority(ps) => block_priority(&block.raw)
                 .map(|c| ps.iter().any(|x| x.eq_ignore_ascii_case(&c.to_string())))
                 .unwrap_or(false),
-            Pred::Property(key, val) => block.properties().iter().any(|(k, v)| {
-                k.eq_ignore_ascii_case(key) && val.as_ref().map(|vv| vv == v).unwrap_or(true)
-            }),
+            Pred::Property(key, val) => block
+                .properties()
+                .iter()
+                .any(|(k, v)| k.eq_ignore_ascii_case(key) && value_matches(v, val.as_deref())),
             Pred::Scheduled => block.raw.contains("SCHEDULED:"),
             Pred::Deadline => block.raw.contains("DEADLINE:"),
             Pred::Between(lo, hi) => {
@@ -389,11 +490,89 @@ impl Pred {
                 ctx.journal.is_some_and(in_range)
                     || block_date_ordinals(&block.raw).into_iter().any(in_range)
             }
+            Pred::Page(name) => refs::normalize(ctx.page_name) == refs::normalize(name),
+            Pred::Namespace(ns) => {
+                let p = refs::normalize(ctx.page_name);
+                let n = refs::normalize(ns);
+                p.starts_with(&format!("{n}/"))
+            }
+            Pred::PageProperty(key, val) => ctx
+                .page_props
+                .iter()
+                .any(|(k, v)| k.eq_ignore_ascii_case(key) && value_matches(v, val.as_deref())),
+            Pred::PageTags(tags) => tags.iter().any(|t| {
+                ctx.page_tags.iter().any(|pt| pt.eq_ignore_ascii_case(t))
+            }),
+            Pred::Content(s) => visible_text(&block.raw).to_lowercase().contains(&s.to_lowercase()),
             Pred::And(ps) => ps.iter().all(|p| p.eval(block, ctx)),
             Pred::Or(ps) => ps.iter().any(|p| p.eval(block, ctx)),
             Pred::Not(p) => !p.eval(block, ctx),
+            // Options are not filters.
+            Pred::Sample(_) | Pred::SortBy(..) => true,
         }
     }
+}
+
+/// Match a stored property value against a query value. Handles multi-value
+/// (comma-separated) and page-ref / tag wrapping, case-insensitively. A `None`
+/// query value matches any present value.
+fn value_matches(stored: &str, query: Option<&str>) -> bool {
+    let Some(q) = query else { return true };
+    let q = strip_ref(q).to_lowercase();
+    stored
+        .split(',')
+        .map(|p| strip_ref(p.trim()).to_lowercase())
+        .any(|v| v == q)
+}
+fn strip_ref(s: &str) -> String {
+    let t = s.trim();
+    let t = t.strip_prefix("[[").and_then(|x| x.strip_suffix("]]")).unwrap_or(t);
+    t.strip_prefix('#').unwrap_or(t).trim().to_string()
+}
+
+/// Resolve a `between` bound token to a `yyyymmdd` ordinal: `today`/`yesterday`/
+/// `tomorrow`, signed durations `±N[dwmy]`, `yyyy-MM-dd`, or a journal title.
+fn resolve_date_token(tok: &str, today: JournalDate) -> Option<i64> {
+    let t = tok.trim();
+    match t.to_ascii_lowercase().as_str() {
+        "today" | "now" => return Some(today.ordinal_key()),
+        "yesterday" => return Some(today.add_days(-1).ordinal_key()),
+        "tomorrow" => return Some(today.add_days(1).ordinal_key()),
+        _ => {}
+    }
+    if let Some(d) = parse_relative(t, today) {
+        return Some(d.ordinal_key());
+    }
+    if let Some(jd) = JournalDate::from_file_stem(t) {
+        return Some(jd.ordinal_key());
+    }
+    journal_ordinal(t)
+}
+
+/// Parse a signed relative duration like `-7d`, `+2w`, `3m`, `-1y` off `today`.
+fn parse_relative(t: &str, today: JournalDate) -> Option<JournalDate> {
+    let bytes = t.as_bytes();
+    if bytes.is_empty() {
+        return None;
+    }
+    let (sign, rest) = match bytes[0] {
+        b'+' => (1i64, &t[1..]),
+        b'-' => (-1i64, &t[1..]),
+        _ => (1i64, t),
+    };
+    let unit = rest.chars().last()?;
+    if !matches!(unit, 'd' | 'w' | 'm' | 'y') {
+        return None;
+    }
+    let n: i64 = rest[..rest.len() - 1].parse().ok()?;
+    let n = sign * n;
+    Some(match unit {
+        'd' => today.add_days(n),
+        'w' => today.add_days(n * 7),
+        'm' => today.add_months(n),
+        'y' => today.add_months(n * 12),
+        _ => return None,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -475,12 +654,17 @@ fn tokenize(src: &str) -> Vec<Tok> {
     toks
 }
 
-fn parse_expr(toks: &[Tok], pos: &mut usize) -> Option<Pred> {
+fn parse_expr(toks: &[Tok], pos: &mut usize, today: JournalDate) -> Option<Pred> {
     let t = toks.get(*pos)?.clone();
     match t {
         Tok::PageRef(name) | Tok::Tag(name) => {
             *pos += 1;
             Some(Pred::PageRef(name))
+        }
+        // A bare quoted string is a full-text content filter.
+        Tok::Str(s) => {
+            *pos += 1;
+            Some(Pred::Content(s))
         }
         Tok::LParen => {
             *pos += 1; // consume (
@@ -490,9 +674,9 @@ fn parse_expr(toks: &[Tok], pos: &mut usize) -> Option<Pred> {
             };
             *pos += 1;
             let pred = match head.as_str() {
-                "and" => Pred::And(parse_list(toks, pos)),
-                "or" => Pred::Or(parse_list(toks, pos)),
-                "not" => Pred::Not(Box::new(parse_expr(toks, pos)?)),
+                "and" => Pred::And(parse_list(toks, pos, today)),
+                "or" => Pred::Or(parse_list(toks, pos, today)),
+                "not" => Pred::Not(Box::new(parse_expr(toks, pos, today)?)),
                 "task" | "todo" => {
                     let markers = parse_words(toks, pos);
                     // `(todo)` with no args means any open task.
@@ -514,19 +698,42 @@ fn parse_expr(toks: &[Tok], pos: &mut usize) -> Option<Pred> {
                     let name = parse_name(toks, pos)?;
                     Pred::PageRef(name)
                 }
+                "page" => {
+                    let name = parse_name(toks, pos)?;
+                    Pred::Page(name)
+                }
+                "namespace" => {
+                    let name = parse_name(toks, pos)?;
+                    Pred::Namespace(name)
+                }
                 "property" => {
                     let key = parse_name(toks, pos)?;
                     let val = parse_opt_name(toks, pos);
                     Pred::Property(key, val)
                 }
+                "page-property" => {
+                    let key = parse_name(toks, pos)?;
+                    let val = parse_opt_name(toks, pos);
+                    Pred::PageProperty(key, val)
+                }
+                "page-tags" | "tags" => Pred::PageTags(parse_words(toks, pos)),
                 "scheduled" => Pred::Scheduled,
                 "deadline" => Pred::Deadline,
                 "between" => {
-                    // (between [[start-journal]] [[end-journal]]) — journal-title
-                    // refs parsed to ordinals; unparseable bound = open.
-                    let lo = parse_name(toks, pos).and_then(|s| journal_ordinal(&s));
-                    let hi = parse_name(toks, pos).and_then(|s| journal_ordinal(&s));
+                    // (between START END): journal titles, `today`/`yesterday`/
+                    // `tomorrow`, signed durations `±N[dwmy]`, or `yyyy-MM-dd`.
+                    let lo = parse_name(toks, pos).and_then(|s| resolve_date_token(&s, today));
+                    let hi = parse_name(toks, pos).and_then(|s| resolve_date_token(&s, today));
                     Pred::Between(lo, hi)
+                }
+                "sample" => {
+                    let n = parse_name(toks, pos).and_then(|s| s.parse::<usize>().ok()).unwrap_or(0);
+                    Pred::Sample(n)
+                }
+                "sort-by" => {
+                    let field = parse_name(toks, pos).unwrap_or_default();
+                    let dir = parse_opt_name(toks, pos).unwrap_or_else(|| "asc".into());
+                    Pred::SortBy(field, !dir.eq_ignore_ascii_case("desc"))
                 }
                 _ => return None,
             };
@@ -540,13 +747,13 @@ fn parse_expr(toks: &[Tok], pos: &mut usize) -> Option<Pred> {
     }
 }
 
-fn parse_list(toks: &[Tok], pos: &mut usize) -> Vec<Pred> {
+fn parse_list(toks: &[Tok], pos: &mut usize, today: JournalDate) -> Vec<Pred> {
     let mut out = Vec::new();
     while let Some(t) = toks.get(*pos) {
         if *t == Tok::RParen {
             break;
         }
-        match parse_expr(toks, pos) {
+        match parse_expr(toks, pos, today) {
             Some(p) => out.push(p),
             None => break,
         }
@@ -605,8 +812,19 @@ fn parse_opt_name(toks: &[Tok], pos: &mut usize) -> Option<String> {
 mod tests {
     use super::*;
 
+    // Fixed "today" so relative-date tests are deterministic: 2026-06-16.
+    const TODAY: JournalDate = JournalDate { year: 2026, month: 6, day: 16 };
+
     fn pred(src: &str) -> Pred {
-        Pred::parse(src).expect("parse")
+        Pred::parse(src, TODAY).expect("parse")
+    }
+
+    /// A minimal eval context for a block on a named (non-journal) page.
+    fn ctx_named<'a>() -> EvalCtx<'a> {
+        EvalCtx { journal: None, page_name: "Test", page_props: &[], page_tags: &[] }
+    }
+    fn ctx_journal<'a>(key: i64) -> EvalCtx<'a> {
+        EvalCtx { journal: Some(key), page_name: "Journal", page_props: &[], page_tags: &[] }
     }
 
     #[test]
@@ -634,12 +852,12 @@ mod tests {
     #[test]
     fn advanced_datalog_is_unsupported() {
         assert!(is_advanced("[:find (pull ?b [*]) :where [?b :block/marker]]"));
-        assert!(Pred::parse("[:find ?b :where ...]").is_none());
+        assert!(Pred::parse("[:find ?b :where ...]", TODAY).is_none());
     }
 
     #[test]
     fn eval_against_blocks() {
-        let none = EvalCtx { journal: None };
+        let none = ctx_named();
         let task = DocBlock::new("TODO buy milk for [[Home]]");
         assert!(pred("(task TODO)").eval(&task, &none));
         assert!(pred("[[Home]]").eval(&task, &none));
@@ -655,17 +873,73 @@ mod tests {
     }
 
     #[test]
-    fn eval_between() {
-        // A block on a 2022-06-15 journal page.
-        let on_2022 = EvalCtx { journal: Some(20220615) };
-        let on_2019 = EvalCtx { journal: Some(20190101) };
+    fn eval_between_journal_titles() {
+        let on_2022 = ctx_journal(20220615);
+        let on_2019 = ctx_journal(20190101);
         let b = DocBlock::new("TODO something");
         let q = pred("(between [[Jan 1st, 2021]] [[Jan 1st, 2100]])");
         assert!(q.eval(&b, &on_2022));
         assert!(!q.eval(&b, &on_2019));
-
-        // Also matches a block's own scheduled date regardless of page.
         let sched = DocBlock::new("TODO x\nSCHEDULED: <2022-03-03 Thu>");
-        assert!(q.eval(&sched, &EvalCtx { journal: None }));
+        assert!(q.eval(&sched, &ctx_named()));
+    }
+
+    #[test]
+    fn eval_between_relative_dates() {
+        // TODAY = 2026-06-16. (between -7d +7d) => [2026-06-09, 2026-06-23].
+        let q = pred("(between -7d +7d)");
+        assert_eq!(q, Pred::Between(Some(20260609), Some(20260623)));
+        let b = DocBlock::new("x");
+        assert!(q.eval(&b, &ctx_journal(20260616)));
+        assert!(q.eval(&b, &ctx_journal(20260609)));
+        assert!(!q.eval(&b, &ctx_journal(20260601)));
+        // keyword bounds + month/year units
+        assert_eq!(pred("(between today tomorrow)"), Pred::Between(Some(20260616), Some(20260617)));
+        assert_eq!(pred("(between -1m +1y)"), Pred::Between(Some(20260516), Some(20270616)));
+    }
+
+    #[test]
+    fn eval_page_and_namespace() {
+        let b = DocBlock::new("hi");
+        let ctx = EvalCtx { journal: None, page_name: "Project/Alpha", page_props: &[], page_tags: &[] };
+        assert!(pred("(page Project/Alpha)").eval(&b, &ctx));
+        assert!(!pred("(page Project/Beta)").eval(&b, &ctx));
+        assert!(pred("(namespace Project)").eval(&b, &ctx));
+        assert!(!pred("(namespace Other)").eval(&b, &ctx));
+    }
+
+    #[test]
+    fn eval_page_property_and_tags() {
+        let b = DocBlock::new("hi");
+        let props = vec![("type".to_string(), "project".to_string())];
+        let tags = vec!["research".to_string(), "active".to_string()];
+        let ctx = EvalCtx { journal: None, page_name: "P", page_props: &props, page_tags: &tags };
+        assert!(pred("(page-property type project)").eval(&b, &ctx));
+        assert!(pred("(page-property type)").eval(&b, &ctx));
+        assert!(!pred("(page-property type book)").eval(&b, &ctx));
+        assert!(pred("(page-tags research)").eval(&b, &ctx));
+        assert!(!pred("(page-tags archived)").eval(&b, &ctx));
+    }
+
+    #[test]
+    fn eval_content_and_multivalue_property() {
+        let none = ctx_named();
+        let b = DocBlock::new("the quick brown fox");
+        assert!(pred("\"quick brown\"").eval(&b, &none));
+        assert!(!pred("\"slow\"").eval(&b, &none));
+        // multi-value + page-ref property value matching
+        let mut mv = DocBlock::new("x");
+        mv.raw.push_str("\ntags:: [[research]], optimization");
+        assert!(pred("(property tags research)").eval(&mv, &none));
+        assert!(pred("(property tags optimization)").eval(&mv, &none));
+        assert!(!pred("(property tags cooking)").eval(&mv, &none));
+    }
+
+    #[test]
+    fn parse_extracts_options() {
+        let mut opts = QueryOpts::default();
+        pred("(and (task TODO) (sample 5) (sort-by priority desc))").collect_opts(&mut opts);
+        assert_eq!(opts.sample, Some(5));
+        assert_eq!(opts.sort, Some(("priority".to_string(), false)));
     }
 }

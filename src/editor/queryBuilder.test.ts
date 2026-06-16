@@ -43,6 +43,16 @@ describe("parse + serialize round-trip", () => {
     );
   });
 
+  it("new OG-parity filters round-trip", () => {
+    expect(roundtrip("(page Project/Alpha)")).toBe("(page Project/Alpha)");
+    expect(roundtrip("(namespace Project)")).toBe("(namespace Project)");
+    expect(roundtrip("(page-property type book)")).toBe("(page-property type book)");
+    expect(roundtrip("(page-property public)")).toBe("(page-property public)");
+    expect(roundtrip("(page-tags research active)")).toBe("(page-tags research active)");
+    expect(roundtrip('"full text"')).toBe('"full text"');
+    expect(roundtrip("(between -7d +7d)")).toBe("(between [[-7d]] [[+7d]])");
+  });
+
   it("quotes property values with spaces", () => {
     const t = parseQuery('(property title "War and Peace")');
     expect(toDsl(t)).toBe('(property title "War and Peace")');
