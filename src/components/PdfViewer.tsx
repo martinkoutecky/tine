@@ -28,6 +28,9 @@ interface Pending {
 export function PdfViewer(props: { filename: string; label: string; page?: number }): JSX.Element {
   let scrollRef!: HTMLDivElement;
   const pageEls: Record<number, HTMLDivElement> = {};
+  // The inner wrapper holds the rasterized content (canvas + text + highlights)
+  // at its render scale; zoom is a CSS transform on this, so it's instant.
+  const innerEls: Record<number, HTMLDivElement> = {};
   const textLayers: Record<number, HTMLDivElement> = {};
   const hlLayers: Record<number, HTMLDivElement> = {};
   const [highlights, setHighlights] = createSignal<Highlight[]>([]);
@@ -55,40 +58,53 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
   const fitWidthScale = () => (dims[1] ? clampScale((scrollRef.clientWidth - 32) / dims[1].w) : 1);
   const fitHeightScale = () => (dims[1] ? clampScale((scrollRef.clientHeight - 24) / dims[1].h) : 1);
 
-  // Build all page wrappers once, sized for the current scale. Cheap: no
-  // rasterization — just sized placeholders that the IntersectionObserver fills
-  // in as they scroll into view.
+  // Position/size a page wrapper for the current DISPLAY scale, and scale its
+  // (rasterized-at-renderedScale) inner content with a CSS transform. The
+  // transform is GPU-cheap, so this is what makes zoom instant — no raster.
+  function layoutPage(n: number, s: number) {
+    const wrap = pageEls[n];
+    const inner = innerEls[n];
+    if (!wrap || !inner) return;
+    wrap.style.width = `${dims[n].w * s}px`;
+    wrap.style.height = `${dims[n].h * s}px`;
+    const r = renderedScale[n];
+    inner.style.transform = r ? `scale(${s / r})` : "";
+  }
+
+  // Build all page wrappers once. Cheap: no rasterization — just sized
+  // placeholders the IntersectionObserver fills in as they scroll into view.
   function buildLayout() {
     if (!pdfDoc) return;
     scrollRef.innerHTML = "";
-    for (const k of Object.keys(pageEls)) delete pageEls[Number(k)];
-    for (const k of Object.keys(textLayers)) delete textLayers[Number(k)];
-    for (const k of Object.keys(hlLayers)) delete hlLayers[Number(k)];
-    for (const k of Object.keys(renderedScale)) delete renderedScale[Number(k)];
+    for (const m of [pageEls, innerEls, textLayers, hlLayers, renderedScale]) {
+      for (const k of Object.keys(m)) delete (m as Record<number, unknown>)[Number(k)];
+    }
     visible.clear();
     io?.disconnect();
-    io = new IntersectionObserver(onIntersect, { root: scrollRef, rootMargin: "600px 0px" });
+    io = new IntersectionObserver(onIntersect, { root: scrollRef, rootMargin: "400px 0px" });
 
     const s = scale();
     for (let n = 1; n <= pdfDoc.numPages; n++) {
       const wrap = document.createElement("div");
       wrap.className = "pdf-page";
       wrap.dataset.page = String(n);
-      wrap.style.width = `${dims[n].w * s}px`;
-      wrap.style.height = `${dims[n].h * s}px`;
-      wrap.style.setProperty("--scale-factor", String(s));
 
+      const inner = document.createElement("div");
+      inner.className = "pdf-page-inner";
       const textLayer = document.createElement("div");
       textLayer.className = "textLayer";
       const hl = document.createElement("div");
       hl.className = "pdf-hl-layer";
-      wrap.appendChild(textLayer);
-      wrap.appendChild(hl);
+      inner.appendChild(textLayer);
+      inner.appendChild(hl);
+      wrap.appendChild(inner);
 
       scrollRef.appendChild(wrap);
       pageEls[n] = wrap;
+      innerEls[n] = inner;
       textLayers[n] = textLayer;
       hlLayers[n] = hl;
+      layoutPage(n, s);
       io.observe(wrap);
     }
   }
@@ -101,42 +117,57 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
         void renderPage(n);
       } else {
         visible.delete(n);
+        // Free the bitmap of pages scrolled well away (keeps a 100+-page PDF
+        // from accumulating dozens of large canvases); re-renders on return.
+        teardownPage(n);
       }
     }
   }
 
-  // Rasterize one page at the current scale (no-op if already current). Cancels
-  // any in-flight raster for the page first so rapid zooms don't pile up.
+  // Drop a page's rasterized content but keep its sized wrapper.
+  function teardownPage(n: number) {
+    if (renderedScale[n] === undefined) return;
+    tasks[n]?.cancel();
+    delete tasks[n];
+    delete renderedScale[n];
+    innerEls[n]?.querySelector("canvas")?.remove();
+    if (textLayers[n]) textLayers[n].innerHTML = "";
+    if (hlLayers[n]) hlLayers[n].innerHTML = "";
+  }
+
+  // Rasterize one page at the current scale. Skips if the existing bitmap is
+  // already at (or finer than) the display scale — so zooming OUT never rasters,
+  // and zooming IN rasters only once the view settles. Cancels any in-flight
+  // raster first so rapid zooms don't pile up.
   async function renderPage(n: number) {
     if (!pdfDoc) return;
     const s = scale();
-    if (renderedScale[n] === s) {
-      clearTransform(n);
+    const r = renderedScale[n];
+    if (r !== undefined && s <= r + 0.001) {
+      layoutPage(n, s); // bitmap is fine (equal or being downscaled) — just place it
       return;
     }
-    const wrap = pageEls[n];
-    if (!wrap) return;
+    const inner = innerEls[n];
+    if (!inner) return;
     tasks[n]?.cancel();
     delete tasks[n];
 
     const page = await pdfDoc.getPage(n);
-    if (scale() !== s || !pageEls[n]) return; // zoomed again while awaiting
+    if (scale() < s - 0.001 || !innerEls[n]) return; // zoomed out again while awaiting
     const viewport = page.getViewport({ scale: s });
 
-    let canvas = wrap.querySelector("canvas") as HTMLCanvasElement | null;
+    let canvas = inner.querySelector("canvas") as HTMLCanvasElement | null;
     if (!canvas) {
       canvas = document.createElement("canvas");
-      wrap.insertBefore(canvas, wrap.firstChild);
+      inner.insertBefore(canvas, inner.firstChild);
     }
-    // Render into a backing store at device-pixel resolution and CSS-size it
-    // back down, so text is crisp on HiDPI displays (without this the canvas is
-    // rasterized at CSS px and the glyphs look fuzzy / lose thin strokes).
+    // Backing store at device-pixel resolution, CSS-sized down → crisp glyphs on
+    // HiDPI without fuzzy strokes.
     const dpr = window.devicePixelRatio || 1;
     canvas.width = Math.ceil(viewport.width * dpr);
     canvas.height = Math.ceil(viewport.height * dpr);
     canvas.style.width = `${Math.floor(viewport.width)}px`;
     canvas.style.height = `${Math.floor(viewport.height)}px`;
-    canvas.style.transform = "";
 
     const task = page.render({
       canvasContext: canvas.getContext("2d")!,
@@ -149,60 +180,37 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
     } catch {
       return; // cancelled by a newer zoom
     }
-    if (scale() !== s) return;
     delete tasks[n];
 
     const textContent = await page.getTextContent();
-    if (scale() !== s || !textLayers[n]) return;
+    if (!textLayers[n]) return;
     const tl = textLayers[n];
     tl.innerHTML = "";
     const layer = new (pdfjs as any).TextLayer({ textContentSource: textContent, container: tl, viewport });
     await layer.render();
 
+    // Inner content is now 1:1 at scale s; size it and clear the zoom transform.
+    inner.style.width = `${viewport.width}px`;
+    inner.style.height = `${viewport.height}px`;
     renderedScale[n] = s;
-    clearTransform(n);
+    layoutPage(n, scale());
     repaintPage(n);
   }
 
-  function clearTransform(n: number) {
-    const c = pageEls[n]?.querySelector("canvas") as HTMLCanvasElement | null;
-    if (c) c.style.transform = "";
-  }
-
-  // Instant zoom feedback: scale the already-rendered canvas via CSS transform
-  // (GPU, no raster) until the debounced re-raster at the new scale lands.
-  function applyZoomTransform() {
-    const s = scale();
-    for (const n of visible) {
-      const prev = renderedScale[n];
-      const c = pageEls[n]?.querySelector("canvas") as HTMLCanvasElement | null;
-      if (c && prev) {
-        c.style.transformOrigin = "top left";
-        c.style.transform = `scale(${s / prev})`;
-      }
-    }
-  }
-
-  // Resize all wrappers for the new scale (keeps scroll geometry correct), show
-  // instant transform feedback on visible pages, then debounce the real raster.
+  // Zoom = instant CSS transform on every page's inner content + a wrapper
+  // resize (so scroll geometry stays right). The actual re-raster (only of
+  // visible pages that are now upscaled) is debounced until the view settles.
   function onZoom() {
     if (!pdfDoc) return;
     const s = scale();
     const prevH = scrollRef.scrollHeight || 1;
     const ratio = scrollRef.scrollTop / prevH;
-    for (let n = 1; n <= pdfDoc.numPages; n++) {
-      const wrap = pageEls[n];
-      if (!wrap) continue;
-      wrap.style.width = `${dims[n].w * s}px`;
-      wrap.style.height = `${dims[n].h * s}px`;
-      wrap.style.setProperty("--scale-factor", String(s));
-    }
+    for (let n = 1; n <= pdfDoc.numPages; n++) layoutPage(n, s);
     scrollRef.scrollTop = ratio * (scrollRef.scrollHeight || 1);
-    applyZoomTransform();
     clearTimeout(zoomTimer);
     zoomTimer = window.setTimeout(() => {
       for (const n of visible) void renderPage(n);
-    }, 110);
+    }, 180);
   }
 
   onMount(async () => {
@@ -255,7 +263,10 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
     const layer = hlLayers[n];
     if (!layer) return;
     layer.innerHTML = "";
-    const s = scale();
+    // Highlights live inside the inner wrapper, which is rasterized at
+    // renderedScale and CSS-scaled to the display scale — so paint them in the
+    // render-scale space (the transform handles the rest).
+    const s = renderedScale[n] ?? scale();
     for (const h of highlights()) {
       if (h.page !== n) continue;
       for (const r of h.position.rects) {

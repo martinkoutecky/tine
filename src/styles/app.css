@@ -2680,8 +2680,20 @@ mark {
 
 .pdf-page {
   position: relative;
+  overflow: hidden;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
   background: #fff;
+}
+
+/* Rasterized content; zoom scales this via a GPU transform (origin top-left). */
+.pdf-page-inner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: top left;
+}
+.pdf-page-inner canvas {
+  display: block;
 }
 
 .pdf-page .textLayer {
