@@ -84,6 +84,11 @@ pub struct Graph {
     /// search / backlinks / `{{query}}` scan memory instead of re-reading and
     /// re-parsing the entire tree on every keystroke. `None` = not yet built.
     cache: RwLock<Option<Vec<(PageEntry, Document)>>>,
+    /// Cached `alias:: → canonical` pairs, derived from the page cache. Rebuilt
+    /// lazily and dropped whenever the page cache mutates (the only time aliases
+    /// can change). Avoids re-scanning the whole graph for aliases on every page
+    /// load / backlink lookup.
+    alias_cache: RwLock<Option<Vec<(String, String)>>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -111,7 +116,7 @@ impl Graph {
         let config = fs::read_to_string(root.join("logseq").join("config.edn"))
             .map(|s| Config::parse(&s))
             .unwrap_or_default();
-        Graph { root, config, cache: RwLock::new(None) }
+        Graph { root, config, cache: RwLock::new(None), alias_cache: RwLock::new(None) }
     }
 
     pub fn meta(&self) -> GraphMeta {
@@ -182,10 +187,21 @@ impl Graph {
 
     /// Journals sorted newest-first.
     pub fn journals_desc(&self) -> Vec<PageEntry> {
-        let mut js: Vec<PageEntry> = list_md(&self.journals_path(), PageKind::Journal)
-            .into_iter()
-            .filter(|e| e.date_key.is_some())
-            .collect();
+        // Prefer the warmed whole-graph cache — its PageEntry list is kept current
+        // by cache_upsert/cache_remove, so we avoid a directory read + parse on
+        // every infinite-scroll feed append. Fall back to scanning the dir while
+        // the cache isn't built yet.
+        let mut js: Vec<PageEntry> = match self.cache.read().unwrap().as_ref() {
+            Some(pages) => pages
+                .iter()
+                .filter(|(e, _)| e.kind == PageKind::Journal && e.date_key.is_some())
+                .map(|(e, _)| e.clone())
+                .collect(),
+            None => list_md(&self.journals_path(), PageKind::Journal)
+                .into_iter()
+                .filter(|e| e.date_key.is_some())
+                .collect(),
+        };
         js.sort_by_key(|e| std::cmp::Reverse(e.date_key.unwrap_or(0)));
         js
     }
@@ -275,7 +291,7 @@ impl Graph {
         }
         if kind == PageKind::Page {
             let tnorm = crate::refs::normalize(name);
-            if let Some((_, canon)) = crate::query::page_aliases(self).into_iter().find(|(a, _)| *a == tnorm) {
+            if let Some((_, canon)) = self.page_aliases().into_iter().find(|(a, _)| *a == tnorm) {
                 if let Some(entry) = self.find_entry(&canon, kind) {
                     return Ok(Some(self.load_page(&entry)?));
                 }
@@ -286,7 +302,12 @@ impl Graph {
 
     /// Alias → canonical-page-name pairs (for the UI to resolve links/navigation).
     pub fn page_aliases(&self) -> Vec<(String, String)> {
-        crate::query::page_aliases(self)
+        if let Some(a) = self.alias_cache.read().unwrap().as_ref() {
+            return a.clone();
+        }
+        let aliases = crate::query::page_aliases(self);
+        *self.alias_cache.write().unwrap() = Some(aliases.clone());
+        aliases
     }
 
     /// Load a page by entry. Served from the in-memory cache so block uuids are
@@ -356,6 +377,7 @@ impl Graph {
     /// external change may have touched many files.
     pub fn invalidate_cache(&self) {
         *self.cache.write().unwrap() = None;
+        *self.alias_cache.write().unwrap() = None;
     }
 
     /// Update one page in the cache after we write it (no full rebuild). A no-op
@@ -375,6 +397,7 @@ impl Graph {
                 None => pages.push((entry, doc)),
             }
         }
+        *self.alias_cache.write().unwrap() = None; // a saved page may change aliases
     }
 
     /// Drop one page from the cache after deleting its file.
@@ -383,6 +406,7 @@ impl Graph {
         if let Some(pages) = guard.as_mut() {
             pages.retain(|(e, _)| !(e.kind == kind && e.name.eq_ignore_ascii_case(name)));
         }
+        *self.alias_cache.write().unwrap() = None;
     }
 
     /// Backlinks for a page: blocks across the graph that reference it,
@@ -719,12 +743,17 @@ impl Graph {
             }
             atomic_write(&path, content.as_bytes())?;
         }
-        // Keep the search/backlinks cache in sync without a full rebuild.
-        let entry = self.find_entry(&page.name, page.kind).unwrap_or(PageEntry {
-            name: page.name.clone(),
-            kind: page.kind,
-            date_key: None,
-            path,
+        // Keep the search/backlinks cache in sync without a full rebuild. For a
+        // brand-new journal, derive its date_key from the name so it's recognized
+        // as a dated journal by `journals_desc` (which reads from this cache) —
+        // otherwise today's freshly-created page would be missing from the feed.
+        let entry = self.find_entry(&page.name, page.kind).unwrap_or_else(|| {
+            let date_key = if page.kind == PageKind::Journal {
+                crate::date::JournalDate::from_title(&page.name).map(|d| d.ordinal_key())
+            } else {
+                None
+            };
+            PageEntry { name: page.name.clone(), kind: page.kind, date_key, path }
         });
         self.cache_upsert(entry, doc);
         Ok(())

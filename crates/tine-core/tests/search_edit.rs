@@ -41,6 +41,35 @@ fn search_reflects_toggle_on_journal_page() {
 }
 
 // The watcher must recognize Tine's own writes: after save_page, sync_file on
+// journals_desc reads from the warmed cache (perf); a brand-new journal created
+// after warming must still appear in the feed — its cache entry must carry a
+// date_key, else today's freshly-created page would silently vanish.
+#[test]
+fn new_journal_appears_in_journals_desc_via_cache() {
+    let root = mk("newjournal");
+    std::fs::write(root.join("journals").join("2026_06_16.md"), "- old day\n").unwrap();
+    let g = Graph::open(&root);
+    g.warm_cache(); // build the cache BEFORE the new journal exists
+    assert_eq!(g.journals_desc().len(), 1);
+
+    let dto = tine_core::model::PageDto {
+        name: "Jun 18th, 2026".into(),
+        kind: PageKind::Journal,
+        title: "Jun 18th, 2026".into(),
+        pre_block: None,
+        blocks: vec![tine_core::model::BlockDto {
+            raw: "a new task".into(),
+            ..Default::default()
+        }],
+    };
+    g.save_page(&dto).expect("save new journal");
+
+    let js = g.journals_desc();
+    assert_eq!(js.len(), 2, "the freshly-created journal must appear in the feed");
+    assert_eq!(js[0].name, "Jun 18th, 2026", "newest day sorts first");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 // that file returns None (no phantom external-change → no false conflict).
 #[test]
 fn own_write_is_suppressed_by_watcher() {
