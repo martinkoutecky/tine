@@ -296,6 +296,36 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
     const chord = eventToChord(e);
     const editing = isEditableTarget(e.target);
 
+    // Escape, in priority order, so focus mode peels off one layer at a time
+    // (Logseq-like): overlays first; then if editing a block's text let the
+    // editor exit text-editing (don't exit focus yet); then a selected block
+    // deselects (and in focus mode that same Esc exits focus); else exit focus.
+    // Net: editing → Esc (to block-select) → Esc (exit focus) = twice, not once.
+    if (e.key === "Escape") {
+      if (switcherOpen() || settingsOpen()) {
+        closeSwitcher();
+        closeSettings();
+        e.preventDefault();
+        resetSeq();
+        return;
+      }
+      if (editing) return; // defer to the editor's own Esc (capture phase)
+      if (hasSelection()) {
+        clearSelection();
+        if (focusMode()) void exitFocusMode();
+        e.preventDefault();
+        resetSeq();
+        return;
+      }
+      if (focusMode()) {
+        void exitFocusMode();
+        e.preventDefault();
+        resetSeq();
+        return;
+      }
+      return;
+    }
+
     // Block-selection mode keys (no editor focused).
     if (!editing && hasSelection()) {
       if (handleSelectionKey(e)) {
@@ -303,18 +333,6 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
         resetSeq();
         return;
       }
-    }
-
-    // Escape closes transient overlays regardless of context. (While recording
-    // a shortcut the dispatcher is suspended, so Escape there cancels recording
-    // instead of reaching here.)
-    if (e.key === "Escape") {
-      const overlayOpen = switcherOpen() || settingsOpen();
-      closeSwitcher();
-      closeSettings();
-      // Exit focus mode last: only when Esc didn't just close an overlay and
-      // there's no block selection (which has its own Esc handling above).
-      if (!overlayOpen && !hasSelection() && focusMode()) void exitFocusMode();
     }
 
     // While typing, only modifier chords are eligible (so "g j" doesn't fire).
