@@ -3,7 +3,7 @@ import { doc, mainPages, pageByName, reloadPage, loadSingle, loadFeed, appendFee
 import { route, openPage, openJournals } from "../router";
 import {
   zoomedBlock, zoomOut, zoomInto, isFavorite, toggleFavorite, notesRefresh,
-  markConflict, graphEpoch, openPageInSidebar, openPageContextMenu, carryDays,
+  markConflict, graphEpoch, openPageInSidebar, openPageContextMenu, carryDays, showCarryButtons,
 } from "../ui";
 import { carryDay, carryPrevDay, carryDaysBack } from "../carry";
 import { backend } from "../backend";
@@ -403,7 +403,7 @@ function CarryActions(props: { page: FeedPage }): JSX.Element {
   const isJournal = () => props.page.kind === "journal";
   const isToday = () => isJournal() && props.page.name === journalTitle(new Date());
   return (
-    <Show when={isJournal()}>
+    <Show when={isJournal() && showCarryButtons()}>
       <div class="page-carry-actions">
         <Show
           when={isToday()}

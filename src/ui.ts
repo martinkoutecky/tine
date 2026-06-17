@@ -119,6 +119,14 @@ export function setCarryHeader(v: boolean) {
 export function carryHeaderText(): string | null {
   return carryHeader() ? "Carried over" : null;
 }
+// Show the carry-over action buttons on journal titles (default ON). Some
+// people find them disruptive — turn off to fall back to the right-click menu.
+const CARRY_BTNS_KEY = "logseq-claude.showCarryButtons";
+export const [showCarryButtons, setShowCarryButtonsSig] = createSignal(loadStr(CARRY_BTNS_KEY) !== "0");
+export function setShowCarryButtons(v: boolean) {
+  setShowCarryButtonsSig(v);
+  saveStr(CARRY_BTNS_KEY, v ? null : "0");
+}
 // N for the "carry last N days" command (presets 7/30/365 don't use it).
 export const [carryDays, setCarryDaysSig] = createSignal(Number(loadStr(CARRY_N_KEY)) || 7);
 export function setCarryDays(n: number) {

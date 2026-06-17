@@ -23,6 +23,8 @@ import {
   setCarryHeader,
   carryDays,
   setCarryDays,
+  showCarryButtons,
+  setShowCarryButtons,
   pushToast,
 } from "../ui";
 import { commandDefaults, eventToBindingString, setKeybindingsSuspended } from "../keybindings";
@@ -257,6 +259,16 @@ function AppearanceTab(): JSX.Element {
 function TasksTab(): JSX.Element {
   return (
     <>
+      <div class="settings-row">
+        <span class="settings-label">Show carry-over buttons</span>
+        <div>
+          <Toggle on={showCarryButtons()} onClick={() => setShowCarryButtons(!showCarryButtons())} />
+          <span class="settings-hint" style={{ "margin-left": "8px" }}>
+            Show the carry buttons next to journal titles. Off → use the right-click menu instead.
+          </span>
+        </div>
+      </div>
+
       <div class="settings-row">
         <span class="settings-label">Carry-over keeps context</span>
         <div>
