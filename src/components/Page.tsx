@@ -14,6 +14,7 @@ import { QueryMacro } from "./Macro";
 import { NamespaceCrumb, NamespaceChildren } from "./Namespace";
 import { isPropertyLine, blockView } from "../render/block";
 import { InlineText } from "../render/inline";
+import { journalTitle } from "../journal";
 import type { PageDto } from "../types";
 
 const FEED_PAGE = 3;
@@ -26,6 +27,15 @@ function emptyPage(name: string, kind: "journal" | "page"): PageDto {
     pre_block: null,
     blocks: [{ id: `new-${name}`, raw: "", collapsed: false, children: [] }],
   };
+}
+
+// OG always shows today's journal at the top of the feed, even with no file yet
+// (the file is created lazily on first edit — Tine writes on save). So prepend
+// an empty today page unless the newest journal on disk already is today.
+function withToday(js: PageDto[]): PageDto[] {
+  const title = journalTitle(new Date());
+  if (js.some((p) => p.name === title)) return js;
+  return [emptyPage(title, "journal"), ...js];
 }
 
 export function PageView(): JSX.Element {
@@ -62,7 +72,7 @@ export function PageView(): JSX.Element {
           const js = await backend().journalsDesc(FEED_PAGE, 0);
           journalOffset = js.length;
           if (js.length < FEED_PAGE) feedDone = true;
-          loadFeed(js.length ? js : []);
+          loadFeed(withToday(js));
         } else {
           const dto = await backend().getPage(r.name, r.pageKind);
           // null = page doesn't exist yet → start a fresh empty page. A failed
@@ -110,7 +120,7 @@ export function PageView(): JSX.Element {
             const js = await backend().journalsDesc(FEED_PAGE, 0);
             journalOffset = js.length;
             feedDone = js.length < FEED_PAGE;
-            loadFeed(js.length ? js : []);
+            loadFeed(withToday(js));
           })();
         }
         // Satellite page (open only in the sidebar / as a query result) changed
