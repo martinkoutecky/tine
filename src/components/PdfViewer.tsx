@@ -182,8 +182,11 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
     }
     delete tasks[n];
 
+    // Scrolled out of view while rastering? Skip the DOM-heavy text layer; the
+    // page re-renders (canvas + text) when it returns to view.
+    if (!visible.has(n)) return;
     const textContent = await page.getTextContent();
-    if (!textLayers[n]) return;
+    if (!textLayers[n] || !visible.has(n)) return;
     const tl = textLayers[n];
     tl.innerHTML = "";
     const layer = new (pdfjs as any).TextLayer({ textContentSource: textContent, container: tl, viewport });

@@ -1,8 +1,12 @@
-import { Show, createEffect, onCleanup, onMount, type JSX } from "solid-js";
+import { Show, Suspense, createEffect, lazy, onCleanup, onMount, type JSX } from "solid-js";
 import { Sidebar } from "./components/Sidebar";
 import { PageView } from "./components/Page";
 import { QuickSwitcher } from "./components/QuickSwitcher";
-import { PdfViewer } from "./components/PdfViewer";
+// pdf.js (~hundreds of KB) is heavy and most sessions never open a PDF — load
+// the viewer only when one is opened.
+const PdfViewer = lazy(() =>
+  import("./components/PdfViewer").then((m) => ({ default: m.PdfViewer }))
+);
 import { TabBar } from "./components/TabBar";
 import { ContextMenu } from "./components/ContextMenu";
 import { Toasts, Lightbox } from "./components/Toasts";
@@ -234,11 +238,13 @@ export function App(): JSX.Element {
               window.addEventListener("mouseup", onUp);
             }}
           />
-          <PdfViewer
-            filename={pdfTarget()!.filename}
-            label={pdfTarget()!.label}
-            page={pdfTarget()!.page}
-          />
+          <Suspense fallback={<div class="pdf-loading" />}>
+            <PdfViewer
+              filename={pdfTarget()!.filename}
+              label={pdfTarget()!.label}
+              page={pdfTarget()!.page}
+            />
+          </Suspense>
         </div>
       </Show>
       <Show when={focusMode()}>

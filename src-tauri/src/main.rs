@@ -4,12 +4,16 @@
 use tine_core::model::{Graph, GraphMeta, PageDto, PageEntry, PageKind, RefGroup};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime};
 use tauri::{Emitter, Manager, State};
 
+// The graph lives behind an RwLock holding an Arc, so read commands clone the
+// Arc and release the lock immediately — a long read (search / query / asset
+// read) no longer serializes every other command behind it. Only replacing the
+// graph (open / switch) takes the write lock.
 struct AppState {
-    graph: Mutex<Option<Graph>>,
+    graph: RwLock<Option<Arc<Graph>>>,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -32,7 +36,7 @@ fn start_watcher(app: tauri::AppHandle) {
             std::thread::sleep(Duration::from_secs(3));
             let state: State<'_, AppState> = app.state();
             let dirs = {
-                let g = state.graph.lock().unwrap();
+                let g = state.graph.read().unwrap();
                 match g.as_ref() {
                     Some(g) => [g.journals_path(), g.pages_path()],
                     None => continue,
@@ -59,7 +63,7 @@ fn start_watcher(app: tauri::AppHandle) {
             }
             let mut changes: Vec<GraphChange> = Vec::new();
             {
-                let g = state.graph.lock().unwrap();
+                let g = state.graph.read().unwrap();
                 if let Some(g) = g.as_ref() {
                     for (p, m) in &current {
                         if snap.get(p) != Some(m) {
@@ -113,7 +117,7 @@ fn load_graph(
     let meta = graph.meta();
     // Recover any journals mis-saved under their title (see method docs).
     graph.migrate_journal_filenames();
-    *state.graph.lock().unwrap() = Some(graph);
+    *state.graph.write().unwrap() = Some(Arc::new(graph));
     backup_async(app.clone());
     warm_cache_async(app);
     Ok(meta)
@@ -140,7 +144,7 @@ fn do_backup(app: &tauri::AppHandle, suffix: &str) -> usize {
     // Grab just the paths under the lock, then copy from disk lock-free.
     let (journals, pages, cfg, root) = {
         let state: State<'_, AppState> = app.state();
-        let guard = state.graph.lock().unwrap();
+        let guard = state.graph.read().unwrap();
         match guard.as_ref() {
             Some(g) => (
                 g.journals_path(),
@@ -222,7 +226,7 @@ fn set_backup_keep(keep: usize, app: tauri::AppHandle) -> Result<(), String> {
 fn backup_base(app: &tauri::AppHandle) -> Option<PathBuf> {
     let root = {
         let state: State<'_, AppState> = app.state();
-        let guard = state.graph.lock().unwrap();
+        let guard = state.graph.read().unwrap();
         guard.as_ref().map(|g| g.root.clone())?
     };
     let data_dir = app.path().app_data_dir().ok()?;
@@ -278,7 +282,7 @@ fn restore_backup(stamp: String, app: tauri::AppHandle, state: State<'_, AppStat
         return Err("invalid backup id".into());
     }
     let (journals, pages, cfg_dest) = {
-        let guard = state.graph.lock().unwrap();
+        let guard = state.graph.read().unwrap();
         let g = guard.as_ref().ok_or("no graph loaded")?;
         (
             g.journals_path(),
@@ -425,7 +429,7 @@ fn warm_cache_async(app: tauri::AppHandle) {
         // parsing every file synchronously under the lock.
         std::thread::sleep(std::time::Duration::from_millis(250));
         let state: State<'_, AppState> = app.state();
-        let guard = state.graph.lock().unwrap();
+        let guard = state.graph.read().unwrap();
         if let Some(g) = guard.as_ref() {
             g.warm_cache();
         }
@@ -436,9 +440,13 @@ fn with_graph<T>(
     state: &State<'_, AppState>,
     f: impl FnOnce(&Graph) -> Result<T, String>,
 ) -> Result<T, String> {
-    let guard = state.graph.lock().unwrap();
-    let graph = guard.as_ref().ok_or("no graph loaded")?;
-    f(graph)
+    // Clone the Arc under a brief read lock, then run `f` with the lock released
+    // so concurrent commands don't block each other.
+    let graph = {
+        let guard = state.graph.read().unwrap();
+        guard.as_ref().ok_or("no graph loaded")?.clone()
+    };
+    f(&graph)
 }
 
 #[tauri::command]
@@ -646,7 +654,7 @@ fn main() {
                 )
                 .build(),
         )
-        .manage(AppState { graph: Mutex::new(None) })
+        .manage(AppState { graph: RwLock::new(None) })
         .setup(|app| {
             // Eagerly open the graph if one was configured at startup.
             if let Some(root) = resolve_root("") {
@@ -693,7 +701,7 @@ fn main() {
                     eprintln!("[tine] sample journal files: {sample:?}");
                 }
                 let state: State<'_, AppState> = app.state();
-                *state.graph.lock().unwrap() = Some(g);
+                *state.graph.write().unwrap() = Some(Arc::new(g));
                 // Warm the whole-graph cache in the background. Without this the
                 // startup (TINE_GRAPH / argv) path never warms — only the
                 // `load_graph` command did — so the user's first `g j` (whose

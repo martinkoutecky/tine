@@ -1,4 +1,4 @@
-import { For, Show, createSignal, createResource, createEffect, createMemo, type JSX } from "solid-js";
+import { For, Show, createSignal, createResource, createEffect, createMemo, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { switcherOpen, closeSwitcher, switcherMode, recentPages } from "../ui";
 import { openPage, openPageAtBlock, route } from "../router";
@@ -36,12 +36,23 @@ export function QuickSwitcher(): JSX.Element {
   });
 
   const commandsOnly = () => switcherMode() === "commands";
+  // The backend search/quick-switch IPC keys off a debounced query so holding
+  // keys doesn't fire a whole-graph scan per character; local sections (recents,
+  // commands, create-option) still react to `query()` instantly.
+  const [debouncedQuery, setDebouncedQuery] = createSignal("");
+  let qTimer: ReturnType<typeof setTimeout> | undefined;
+  createEffect(() => {
+    const q = query();
+    clearTimeout(qTimer);
+    qTimer = setTimeout(() => setDebouncedQuery(q), 110);
+  });
+  onCleanup(() => clearTimeout(qTimer));
   const [pages] = createResource(
-    () => (commandsOnly() ? "" : query()),
+    () => (commandsOnly() ? "" : debouncedQuery()),
     (q) => (q.trim() && !commandsOnly() ? backend().quickSwitch(q, 8) : Promise.resolve([] as PageEntry[]))
   );
   const [hits] = createResource(
-    () => (commandsOnly() ? "" : query()),
+    () => (commandsOnly() ? "" : debouncedQuery()),
     (q) => (q.trim() && !commandsOnly() ? backend().search(q, 20) : Promise.resolve([]))
   );
 

@@ -715,10 +715,20 @@ function Editor(props: { id: string }): JSX.Element {
     autosize();
   });
 
+  let acTimer: ReturnType<typeof setTimeout> | undefined;
   const onInput = () => {
     commit(ref.value);
     autosize();
-    void updateAutocomplete();
+    // Close the popup synchronously when the trigger ends (instant), but debounce
+    // the page/template IPC fetch so holding down a key doesn't fire a backend
+    // round-trip per character.
+    if (!detectTrigger(ref.value, ref.selectionStart)) {
+      clearTimeout(acTimer);
+      closeAc();
+      return;
+    }
+    clearTimeout(acTimer);
+    acTimer = setTimeout(() => void updateAutocomplete(), 90);
   };
 
   const onKeyDown = (e: KeyboardEvent) => {
