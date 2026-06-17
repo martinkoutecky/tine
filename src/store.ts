@@ -660,6 +660,30 @@ export function blockRef(id: string): { uuid: string; page: string; pageKind: Pa
   return { uuid: n.id, page: n.page, pageKind: pageByName(n.page)?.kind ?? "page" };
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Persist a block's `id::` equal to its current uuid, so its in-memory key and
+ *  on-disk identity match — making a reference to it survive an app restart.
+ *  No-op if it already has an id::. Only writes when the uuid is a real UUID
+ *  (always true for blocks loaded from the graph); a freshly-created,
+ *  not-yet-reloaded block is skipped rather than writing a non-UUID id::. */
+export function ensureStableBlockId(id: string): void {
+  const node = doc.byId[id];
+  if (!node) return;
+  if (/(?:^|\n)id:: *\S+/.test(node.raw)) return;
+  if (!UUID_RE.test(id)) return;
+  setDoc("byId", id, "raw", `${node.raw}\nid:: ${id}`);
+  markDirty(node.page);
+  scheduleSave();
+}
+
+/** Like `blockRef`, but first persists the block's `id::` so the reference
+ *  resolves after a restart. Used when parking a block in the right sidebar. */
+export function persistentBlockRef(id: string): { uuid: string; page: string; pageKind: PageKind } {
+  ensureStableBlockId(id);
+  return blockRef(id);
+}
+
 /** Serialize a block and its subtree to Logseq markdown. */
 export function blockSubtreeMarkdown(id: string, level = 0): string {
   const n = doc.byId[id];

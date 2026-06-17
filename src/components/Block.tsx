@@ -31,7 +31,7 @@ import {
   selectBlock,
   moveSelection,
   isSelected,
-  blockRef,
+  persistentBlockRef,
 } from "../store";
 import { parseOutline } from "../editor/outline";
 import {
@@ -206,7 +206,7 @@ export function Block(props: { id: string }): JSX.Element {
             onClick={(e) => {
               e.stopPropagation();
               if (dragMoved) return; // was a drag, not a click
-              if (e.shiftKey) openBlockInSidebar(blockRef(props.id));
+              if (e.shiftKey) openBlockInSidebar(persistentBlockRef(props.id));
               else zoomInto(props.id);
             }}
           >

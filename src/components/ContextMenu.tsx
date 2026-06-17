@@ -13,7 +13,7 @@ import { openPage, openPageInNewTab, openJournals, route } from "../router";
 import { backend } from "../backend";
 import {
   ensureBlockId,
-  blockRef,
+  persistentBlockRef,
   blockSubtreeMarkdown,
   deleteBlock,
   setBlockProperty,
@@ -193,7 +193,7 @@ function PageMenu(props: {
 function blockActions(id: string): { label: string; run: () => void; danger?: boolean }[] {
   const numbered = blockProperty(id, "logseq.order-list-type") === "number";
   return [
-    { label: "Open in sidebar", run: () => openBlockInSidebar(blockRef(id)) },
+    { label: "Open in sidebar", run: () => openBlockInSidebar(persistentBlockRef(id)) },
     { label: "Zoom into block", run: () => zoomInto(id) },
     { label: "Copy block ref", run: () => { void backend().writeText(`((${ensureBlockId(id)}))`); pushToast("Copied block ref", "success"); } },
     { label: "Copy block embed", run: () => { void backend().writeText(`{{embed ((${ensureBlockId(id)}))}}`); pushToast("Copied block embed", "success"); } },
