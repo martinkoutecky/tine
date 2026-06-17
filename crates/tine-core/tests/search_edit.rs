@@ -67,3 +67,19 @@ fn own_write_is_suppressed_by_watcher() {
     assert!(g.sync_file(&path).is_some(), "external edit → detected");
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn journal_content_days_distinguishes_empty() {
+    let root = mk("contentdays");
+    // Non-empty journal, an empty one (placeholder bullet), and a props-only one.
+    std::fs::write(root.join("journals").join("2026_06_16.md"), "- went for a walk\n").unwrap();
+    std::fs::write(root.join("journals").join("2026_06_15.md"), "- \n").unwrap();
+    std::fs::write(root.join("journals").join("2026_06_14.md"), "title:: x\n").unwrap();
+    let g = Graph::open(&root);
+    g.warm_cache();
+    let days = g.journal_content_days();
+    assert!(days.contains(&20260616), "non-empty day present: {days:?}");
+    assert!(!days.contains(&20260615), "empty bullet day absent");
+    assert!(!days.contains(&20260614), "props-only day absent");
+    let _ = std::fs::remove_dir_all(&root);
+}

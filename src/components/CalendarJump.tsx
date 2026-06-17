@@ -1,7 +1,8 @@
-import { For, Show, createMemo, createSignal, type JSX } from "solid-js";
+import { For, Show, createMemo, createResource, createSignal, type JSX } from "solid-js";
 import { openPage } from "../router";
 import { journalTitle } from "../journal";
-import { graphMeta } from "../ui";
+import { graphMeta, dataRev } from "../ui";
+import { backend } from "../backend";
 
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
@@ -42,6 +43,16 @@ export function CalendarJump(): JSX.Element {
   const isToday = (d: number) =>
     view().y === today.getFullYear() && view().m === today.getMonth() && d === today.getDate();
 
+  // Journal days that have content, fetched while the popup is open (re-fetched
+  // on dataRev so adding content updates the dots). yyyymmdd keys, month 1-based.
+  const [contentDays] = createResource(
+    () => (open() ? dataRev() : null),
+    () => backend().journalContentDays()
+  );
+  const haveContent = createMemo(() => new Set(contentDays() ?? []));
+  const hasContent = (d: number) =>
+    haveContent().has(view().y * 10000 + (view().m + 1) * 100 + d);
+
   return (
     <>
       <button class="icon-btn" title="Go to date" onClick={() => setOpen(!open())}>
@@ -67,7 +78,12 @@ export function CalendarJump(): JSX.Element {
               <For each={grid()}>
                 {(d) => (
                   <Show when={d !== null} fallback={<span class="dp-cell dp-empty" />}>
-                    <button class="dp-cell" classList={{ today: isToday(d!) }} onClick={() => pick(d!)}>
+                    <button
+                      class="dp-cell"
+                      classList={{ today: isToday(d!), "has-content": hasContent(d!) }}
+                      title={hasContent(d!) ? "Has an entry" : "Empty"}
+                      onClick={() => pick(d!)}
+                    >
                       {d}
                     </button>
                   </Show>

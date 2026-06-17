@@ -145,9 +145,13 @@ export function toggleTheme() {
   }
 }
 
-export const [sidebarOpen, setSidebarOpen] = createSignal(true);
+// Left sidebar open/collapsed — persisted (default open; store only when collapsed).
+const SIDEBAR_OPEN_KEY = "logseq-claude.sidebarOpen";
+export const [sidebarOpen, setSidebarOpen] = createSignal(loadStr(SIDEBAR_OPEN_KEY) !== "0");
 export function toggleSidebar() {
-  setSidebarOpen(!sidebarOpen());
+  const v = !sidebarOpen();
+  setSidebarOpen(v);
+  saveStr(SIDEBAR_OPEN_KEY, v ? null : "0");
 }
 
 const SIDEBAR_W_KEY = "logseq-claude.sidebarWidth";
@@ -372,7 +376,39 @@ export interface SidebarBlock {
 }
 export type SidebarItem = SidebarPage | SidebarBlock;
 
-export const [rightSidebar, setRightSidebar] = createSignal<SidebarItem[]>([]);
+// What's open in the right sidebar — persisted across restarts. Items are plain
+// JSON (page name / block uuid). Page items always restore; block items resolve
+// only if their block still carries a stable uuid (a ref target with `id::`) —
+// `pruneSidebarBlocks` drops the rest after the graph loads (see graph.ts), so
+// stale entries don't linger.
+const RS_ITEMS_KEY = "logseq-claude.rightSidebarItems";
+function validSidebarItem(i: unknown): i is SidebarItem {
+  if (!i || typeof i !== "object") return false;
+  const o = i as Record<string, unknown>;
+  if (o.kind === "page") return typeof o.name === "string";
+  if (o.kind === "block") return typeof o.uuid === "string" && typeof o.page === "string";
+  return false;
+}
+function loadRsItems(): SidebarItem[] {
+  try {
+    const raw = localStorage.getItem(RS_ITEMS_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr.filter(validSidebarItem) : [];
+  } catch {
+    return [];
+  }
+}
+const [rightSidebar, setRightSidebarRaw] = createSignal<SidebarItem[]>(loadRsItems());
+export { rightSidebar };
+export function setRightSidebar(items: SidebarItem[]) {
+  setRightSidebarRaw(items);
+  try {
+    if (items.length) localStorage.setItem(RS_ITEMS_KEY, JSON.stringify(items));
+    else localStorage.removeItem(RS_ITEMS_KEY);
+  } catch {
+    // ignore
+  }
+}
 
 export function openPageInSidebar(name: string, pageKind: "journal" | "page" = "page") {
   if (pageKind === "page") name = resolveAlias(name);
@@ -385,6 +421,20 @@ export function openBlockInSidebar(ref: { uuid: string; page: string; pageKind: 
 }
 export function closeRightSidebarItem(idx: number) {
   setRightSidebar(rightSidebar().filter((_, i) => i !== idx));
+}
+
+/** Drop restored block items whose block can't be resolved (its in-memory uuid
+ *  changed across the restart). Page items are left untouched. */
+export async function pruneSidebarBlocks(): Promise<void> {
+  const blocks = rightSidebar().filter((i): i is SidebarBlock => i.kind === "block");
+  if (!blocks.length) return;
+  const resolved = await Promise.all(
+    blocks.map((b) => backend().resolveBlock(b.uuid).catch(() => null))
+  );
+  const dead = new Set(blocks.filter((_, i) => !resolved[i]).map((b) => b.uuid));
+  if (dead.size) {
+    setRightSidebar(rightSidebar().filter((i) => i.kind !== "block" || !dead.has(i.uuid)));
+  }
 }
 
 // Right-click context menu — universal over its target (a block or a page),

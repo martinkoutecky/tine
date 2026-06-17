@@ -190,6 +190,19 @@ impl Graph {
         js
     }
 
+    /// Journal `date_key`s (yyyymmdd) whose page has real content — i.e. at
+    /// least one block with a non-empty, non-property line. Drives the calendar
+    /// picker's empty/non-empty day marking. Served from the cache.
+    pub fn journal_content_days(&self) -> Vec<i64> {
+        self.with_pages(|pages| {
+            pages
+                .iter()
+                .filter(|(e, _)| e.kind == PageKind::Journal)
+                .filter_map(|(e, d)| e.date_key.filter(|_| doc_has_content(&d.roots)))
+                .collect()
+        })
+    }
+
     /// Resolve a page name to a file path. Journals match by date title;
     /// pages match by filename stem.
     fn path_for(&self, name: &str, kind: PageKind) -> PathBuf {
@@ -691,6 +704,17 @@ fn list_md(dir: &Path, kind: PageKind) -> Vec<PageEntry> {
 
 /// Assign a stable uuid to every block that lacks one (called when a document
 /// enters the cache). Prefers the persisted `id::` so a referenced block's node
+/// True if any block in the subtree has a non-empty line that isn't a `key::`
+/// property line — i.e. the page is more than an empty/placeholder bullet.
+fn doc_has_content(blocks: &[DocBlock]) -> bool {
+    blocks.iter().any(|b| {
+        b.raw
+            .lines()
+            .any(|l| !l.trim().is_empty() && crate::doc::parse_property_line(l).is_none())
+            || doc_has_content(&b.children)
+    })
+}
+
 /// identity and its `((ref))` target coincide; otherwise generates one. Existing
 /// (non-empty) uuids are preserved — this is what carries the frontend's block
 /// ids through a save so identity is stable across edits.

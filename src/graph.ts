@@ -2,7 +2,7 @@
 // persisting the choice so it reopens next launch.
 
 import { backend } from "./backend";
-import { setGraphMeta, setWorkflow, bumpGraphEpoch, setRightSidebar, graphMeta, setAliasMap, seedFavorites } from "./ui";
+import { setGraphMeta, setWorkflow, bumpGraphEpoch, setRightSidebar, graphMeta, setAliasMap, seedFavorites, pruneSidebarBlocks } from "./ui";
 import { resetStore } from "./store";
 import { openJournals } from "./router";
 import { journalTitle } from "./journal";
@@ -21,10 +21,14 @@ export function persistedGraphPath(): string {
 /** Load a graph by path ("" → backend uses env/CLI). Updates meta, persists a
  *  non-empty path, and reloads the views. */
 export async function loadGraphPath(path: string): Promise<void> {
+  // Whether we're switching to a *different* graph than last time. Only then do
+  // we drop the persisted right-sidebar items; reopening the same graph at
+  // startup keeps them (and we prune stale block refs below).
+  const prev = persistedGraphPath();
+  const switching = !!prev && !!path && prev !== path;
   const meta = await backend().loadGraph(path);
-  // New graph → drop the old graph's working set and any open sidebar items.
   resetStore();
-  setRightSidebar([]);
+  if (switching) setRightSidebar([]);
   setGraphMeta(meta ?? null);
   setWorkflow(meta?.preferred_workflow === "todo" ? "todo" : "now");
   seedFavorites(meta?.favorites ?? []);
@@ -38,6 +42,7 @@ export async function loadGraphPath(path: string): Promise<void> {
   bumpGraphEpoch();
   void injectCustomCss();
   void loadAliases();
+  if (!switching) void pruneSidebarBlocks();
   await ensureJournalTemplate();
   openJournals();
 }

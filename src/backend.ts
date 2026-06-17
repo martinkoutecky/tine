@@ -9,6 +9,8 @@ export interface Backend {
   loadGraph(path: string): Promise<GraphMeta>;
   listPages(): Promise<PageEntry[]>;
   journalsDesc(limit: number, offset: number): Promise<PageDto[]>;
+  /** Journal date-keys (yyyymmdd) whose page has real content. */
+  journalContentDays(): Promise<number[]>;
   getPage(name: string, kind: "journal" | "page"): Promise<PageDto | null>;
   /** Rejects with "conflict" if the file changed on disk since load (unless
    *  force overwrites it). */
@@ -86,6 +88,9 @@ class TauriBackend implements Backend {
   }
   journalsDesc(limit: number, offset: number) {
     return this.call<PageDto[]>("journals_desc", { limit, offset });
+  }
+  journalContentDays() {
+    return this.call<number[]>("journal_content_days");
   }
   getPage(name: string, kind: "journal" | "page") {
     return this.call<PageDto | null>("get_page", { name, kind });

@@ -192,6 +192,9 @@ export function mockBackend(): Backend {
     async journalsDesc(limit: number, offset: number): Promise<PageDto[]> {
       return PAGES.slice(offset, offset + limit);
     },
+    async journalContentDays(): Promise<number[]> {
+      return [];
+    },
     async getPage(name: string): Promise<PageDto | null> {
       if (name.startsWith("hls__")) return hlsPageDto(name);
       return find(name);

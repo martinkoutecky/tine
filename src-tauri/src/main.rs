@@ -271,6 +271,11 @@ fn list_templates(state: State<'_, AppState>) -> Result<Vec<tine_core::model::Te
 }
 
 #[tauri::command]
+fn journal_content_days(state: State<'_, AppState>) -> Result<Vec<i64>, String> {
+    with_graph(&state, |g| Ok(g.journal_content_days()))
+}
+
+#[tauri::command]
 fn resolve_block(uuid: String, state: State<'_, AppState>) -> Result<Option<RefGroup>, String> {
     with_graph(&state, |g| Ok(g.resolve_block(&uuid)))
 }
@@ -402,6 +407,7 @@ fn main() {
             search,
             quick_switch,
             list_templates,
+            journal_content_days,
             resolve_block,
             read_asset,
             import_asset,

@@ -1361,13 +1361,33 @@ mark {
   padding: 2px 0;
 }
 .dp-cell {
+  position: relative;
   aspect-ratio: 1;
   border: none;
   background: none;
   cursor: pointer;
   font-size: 12px;
-  color: var(--text-primary);
+  /* Days with no entry sit muted; days with content are full-strength + dotted. */
+  color: var(--text-secondary);
+  opacity: 0.65;
   border-radius: 6px;
+}
+.dp-cell.has-content {
+  color: var(--text-primary);
+  opacity: 1;
+  font-weight: 600;
+}
+/* A small dot under the number marks a non-empty journal day. */
+.dp-cell.has-content::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 3px;
+  transform: translateX(-50%);
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--link-color);
 }
 .dp-cell:hover {
   background: var(--bg-tertiary);
@@ -1375,6 +1395,7 @@ mark {
 .dp-cell.today {
   font-weight: 700;
   color: var(--accent, #10b981);
+  opacity: 1;
 }
 .dp-cell.selected {
   background: var(--accent, #10b981);
