@@ -23,6 +23,8 @@ import {
   selectBlock,
   moveSelection,
   moveSelectionItems,
+  moveBlockFeed,
+  pageByName,
 } from "./store";
 import type { BlockDto, PageDto } from "./types";
 
@@ -165,6 +167,55 @@ describe("move selection (mod+up/down in block-select)", () => {
     moveSelection(1, true); // extend to C → selection [B, C]
     moveSelectionItems(-1);
     expect(shape()).toEqual([["B"], ["C"], ["A"]]);
+  });
+});
+
+describe("cross-day move (journal feed as one list)", () => {
+  const journal = (name: string, blocks: BlockDto[]): PageDto => ({
+    name, kind: "journal", title: name, pre_block: null, blocks,
+  });
+  const raws = (name: string) => pageByName(name)!.roots.map((id) => doc.byId[id].raw);
+
+  it("moves a root block up into the day above (feed order), keeping content", async () => {
+    const today = journal("Today", [blk("t1")]);
+    const older = journal("Older", [blk("o1"), blk("o2")]);
+    loadFeed([today, older]); // today on top, older below
+    const o1 = older.blocks[0].id;
+    const res = await moveBlockFeed(o1, -1); // up → end of the day above
+    expect(res).toBe("crossed");
+    expect(raws("Today")).toEqual(["t1", "o1"]);
+    expect(raws("Older")).toEqual(["o2"]);
+    expect(doc.byId[o1].page).toBe("Today");
+  });
+
+  it("moves a root block down into the day below (prepended)", async () => {
+    const today = journal("Today", [blk("t1"), blk("t2")]);
+    const older = journal("Older", [blk("o1")]);
+    loadFeed([today, older]);
+    const t2 = today.blocks[1].id;
+    const res = await moveBlockFeed(t2, 1); // down → start of the day below
+    expect(res).toBe("crossed");
+    expect(raws("Today")).toEqual(["t1"]);
+    expect(raws("Older")).toEqual(["t2", "o1"]);
+  });
+
+  it("carries a block's subtree across with it", async () => {
+    const today = journal("Today", [blk("t1")]);
+    const older = journal("Older", [blk("o1", [blk("o1a")])]);
+    loadFeed([today, older]);
+    const o1 = older.blocks[0].id;
+    const o1a = older.blocks[0].children[0].id;
+    await moveBlockFeed(o1, -1);
+    expect(doc.byId[o1].children.map((id) => doc.byId[id].raw)).toEqual(["o1a"]);
+    expect(doc.byId[o1a].page).toBe("Today"); // subtree reassigned to the new day
+  });
+
+  it("can't move up past the top of the feed (today)", async () => {
+    const today = journal("Today", [blk("t1")]);
+    loadFeed([today]);
+    const res = await moveBlockFeed(today.blocks[0].id, -1);
+    expect(res).toBe("none");
+    expect(raws("Today")).toEqual(["t1"]);
   });
 });
 

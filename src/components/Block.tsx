@@ -27,7 +27,7 @@ import {
   insertOutlineAfter,
   deleteBlock,
   moveBlock,
-  moveItem,
+  moveBlockFeed,
   selectBlock,
   moveSelection,
   isSelected,
@@ -770,17 +770,23 @@ function Editor(props: { id: string }): JSX.Element {
     // (the DOM reorder can briefly blur the textarea).
     if (matchesCommand(e, "editor/move-block-up") || matchesCommand(e, "editor/move-block-down")) {
       e.preventDefault();
+      const dir = matchesCommand(e, "editor/move-block-down") ? 1 : -1;
       commit(raw);
-      // Keep editing the moved block with the caret intact. The DOM reorder
-      // blurs the textarea (and onBlur would otherwise exit editing), so guard
-      // the blur and refocus + restore the caret once the reorder settles.
+      // Keep editing the moved block with the caret intact. Within a day the DOM
+      // node is reordered (blurs the textarea); across days it remounts on the
+      // new day. Guard the blur, pre-store the caret (so a cross-day remount
+      // restores it), then refocus the surviving node once the move settles.
       setBlockMoving(true);
-      moveItem(props.id, matchesCommand(e, "editor/move-block-down") ? 1 : -1);
-      requestAnimationFrame(() => {
-        ref.focus();
-        const o = Math.min(start, ref.value.length);
-        ref.setSelectionRange(o, o);
-        setBlockMoving(false);
+      startEditing(props.id, start);
+      void moveBlockFeed(props.id, dir).then(() => {
+        requestAnimationFrame(() => {
+          if (ref.isConnected) {
+            ref.focus();
+            const o = Math.min(start, ref.value.length);
+            ref.setSelectionRange(o, o);
+          }
+          setBlockMoving(false);
+        });
       });
       return;
     }

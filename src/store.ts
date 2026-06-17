@@ -993,19 +993,99 @@ function canMoveItem(id: string, dir: 1 | -1): boolean {
   return ni >= 0 && ni < sibs.length;
 }
 
-/** Move every top-level selected block up/down by one sibling slot, preserving
- *  selection. Used by mod+Up/Down in block-selection mode. */
-export function moveSelectionItems(dir: 1 | -1) {
+// The journal feed treats its days as one continuous list: a root block at the
+// top/bottom of a day moves into the adjacent *displayed* day (feed order, not
+// calendar — non-displayed days like an uncreated 16th are skipped). Page.tsx
+// registers a loader so a down-move past the last loaded day pulls in more.
+let feedExtender: (() => Promise<boolean>) | null = null;
+export function setFeedExtender(fn: () => Promise<boolean>): void {
+  feedExtender = fn;
+}
+
+/** Reassign a block subtree's `page` (used when it crosses to another day). */
+function reassignPage(s: DocState, id: string, page: string) {
+  s.byId[id].page = page;
+  for (const c of s.byId[id].children) reassignPage(s, c, page);
+}
+
+/** Move root blocks `ids` (document order) to the start (down) / end (up) of
+ *  `toPage`, removing them from `fromPage`. Both pages must be loaded. */
+function crossMoveBlocks(ids: string[], fromPage: string, toPage: string, dir: 1 | -1) {
+  setDoc(
+    produce((s) => {
+      const from = s.pages.find((p) => p.name === fromPage);
+      const to = s.pages.find((p) => p.name === toPage);
+      if (!from || !to) return;
+      const idset = new Set(ids);
+      from.roots = from.roots.filter((x) => !idset.has(x));
+      // up → bottom of the day above; down → top of the day below (keep order).
+      if (dir === -1) to.roots.push(...ids);
+      else to.roots.unshift(...ids);
+      for (const id of ids) {
+        s.byId[id].parent = null;
+        reassignPage(s, id, toPage);
+      }
+    })
+  );
+  markDirty(fromPage);
+  markDirty(toPage);
+}
+
+/** Resolve the adjacent feed day for a root block at the page boundary, loading
+ *  older days if a down-move runs off the last loaded one. Returns the target
+ *  page name, or null if there's nowhere to go. */
+async function feedNeighbor(page: string, dir: 1 | -1): Promise<string | null> {
+  let fi = doc.feed.indexOf(page);
+  if (fi < 0) return null; // not a feed day (e.g. a named page)
+  let ti = fi + dir;
+  if (ti < 0) return null; // top of the feed (today) — can't go higher
+  if (ti >= doc.feed.length) {
+    if (dir !== 1 || !feedExtender || !(await feedExtender())) return null;
+    fi = doc.feed.indexOf(page);
+    ti = fi + dir;
+    if (ti < 0 || ti >= doc.feed.length) return null;
+  }
+  return doc.feed[ti];
+}
+
+/** Move a single block one slot, crossing into the adjacent day at a page
+ *  boundary. Returns how it moved so the caller can restore the caret. */
+export async function moveBlockFeed(id: string, dir: 1 | -1): Promise<"within" | "crossed" | "none"> {
+  const node = doc.byId[id];
+  if (!node) return "none";
+  if (canMoveItem(id, dir)) {
+    moveItem(id, dir);
+    return "within";
+  }
+  if (node.parent !== null) return "none"; // nested block at a child-list edge: stop
+  const target = await feedNeighbor(node.page, dir);
+  if (!target) return "none";
+  pushUndo("move-cross");
+  crossMoveBlocks([id], node.page, target, dir);
+  return "crossed";
+}
+
+/** Move every top-level selected block up/down by one slot, preserving the
+ *  selection; at a day boundary the whole group crosses into the adjacent day. */
+export async function moveSelectionItems(dir: 1 | -1) {
   const ids = topSelected(); // document order: ids[0] topmost, last bottommost
   if (!ids.length) return;
-  // If the leading block is already against the boundary, the group can't move —
-  // do nothing (otherwise the trailing blocks would shuffle past it / wrap).
   const lead = dir === 1 ? ids[ids.length - 1] : ids[0];
-  if (!canMoveItem(lead, dir)) return;
-  // Going down, move the bottom-most first so they don't collide; going up,
-  // move the top-most first.
-  const ordered = dir === 1 ? [...ids].reverse() : ids;
-  for (const id of ordered) moveItem(id, dir);
+  if (canMoveItem(lead, dir)) {
+    // Going down, move the bottom-most first so they don't collide; up, the top.
+    const ordered = dir === 1 ? [...ids].reverse() : ids;
+    for (const id of ordered) moveItem(id, dir);
+    return;
+  }
+  // Boundary: cross the whole group into the adjacent day (only if every
+  // selected block is a root block on the same feed day).
+  const page = doc.byId[ids[0]]?.page;
+  if (!page) return;
+  if (ids.some((id) => doc.byId[id].parent !== null || doc.byId[id].page !== page)) return;
+  const target = await feedNeighbor(page, dir);
+  if (!target) return;
+  pushUndo("move-sel-cross");
+  crossMoveBlocks(ids, page, target, dir);
 }
 
 export function toggleCollapse(id: string) {

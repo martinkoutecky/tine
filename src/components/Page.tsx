@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createSignal, on, onCleanup, onMount, untrack, type JSX } from "solid-js";
-import { doc, mainPages, pageByName, reloadPage, loadSingle, loadFeed, appendFeed, isDirty, editingId, type FeedPage } from "../store";
+import { doc, mainPages, pageByName, reloadPage, loadSingle, loadFeed, appendFeed, isDirty, editingId, setFeedExtender, type FeedPage } from "../store";
 import { route, openPage, openJournals } from "../router";
 import {
   zoomedBlock, zoomOut, zoomInto, isFavorite, toggleFavorite, notesRefresh,
@@ -166,6 +166,14 @@ export function PageView(): JSX.Element {
     else feedDone = true;
     loadingMore = false;
   };
+
+  // Let a cross-day move-down pull in older days when it runs off the last
+  // loaded one (returns whether more was actually loaded).
+  setFeedExtender(async () => {
+    const before = doc.feed.length;
+    await loadMore();
+    return doc.feed.length > before;
+  });
 
   const zoomValid = () => {
     const z = zoomedBlock();
