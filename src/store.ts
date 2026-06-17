@@ -986,11 +986,22 @@ export function moveItem(id: string, dir: 1 | -1) {
   markDirty(node.page);
 }
 
+/** Can a block move one slot in `dir` within its sibling list? */
+function canMoveItem(id: string, dir: 1 | -1): boolean {
+  const sibs = rootsOf(id);
+  const ni = sibs.indexOf(id) + dir;
+  return ni >= 0 && ni < sibs.length;
+}
+
 /** Move every top-level selected block up/down by one sibling slot, preserving
  *  selection. Used by mod+Up/Down in block-selection mode. */
 export function moveSelectionItems(dir: 1 | -1) {
-  const ids = topSelected();
+  const ids = topSelected(); // document order: ids[0] topmost, last bottommost
   if (!ids.length) return;
+  // If the leading block is already against the boundary, the group can't move —
+  // do nothing (otherwise the trailing blocks would shuffle past it / wrap).
+  const lead = dir === 1 ? ids[ids.length - 1] : ids[0];
+  if (!canMoveItem(lead, dir)) return;
   // Going down, move the bottom-most first so they don't collide; going up,
   // move the top-most first.
   const ordered = dir === 1 ? [...ids].reverse() : ids;

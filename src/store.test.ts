@@ -20,6 +20,9 @@ import {
   setRaw,
   undo,
   redo,
+  selectBlock,
+  moveSelection,
+  moveSelectionItems,
 } from "./store";
 import type { BlockDto, PageDto } from "./types";
 
@@ -144,6 +147,24 @@ describe("outdent (Shift+Tab)", () => {
     outdentBlock(a, 0);
     // a moves out after p, and b,c become a's children
     expect(shape()).toEqual([["p"], ["a", [["b"], ["c"]]]]);
+  });
+});
+
+describe("move selection (mod+up/down in block-select)", () => {
+  it("is a no-op at the top boundary (doesn't wrap the trailing blocks)", () => {
+    const dto = load([blk("A"), blk("B"), blk("C")]);
+    selectBlock(dto.blocks[0].id); // A
+    moveSelection(1, true); // extend to B → selection [A, B]
+    moveSelectionItems(-1); // up, but A is already at the top
+    expect(shape()).toEqual([["A"], ["B"], ["C"]]);
+  });
+
+  it("moves a mid-list selection up by one", () => {
+    const dto = load([blk("A"), blk("B"), blk("C")]);
+    selectBlock(dto.blocks[1].id); // B
+    moveSelection(1, true); // extend to C → selection [B, C]
+    moveSelectionItems(-1);
+    expect(shape()).toEqual([["B"], ["C"], ["A"]]);
   });
 });
 
