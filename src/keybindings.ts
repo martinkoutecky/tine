@@ -125,6 +125,18 @@ function normKey(k: string): string {
   }
 }
 
+// A bare modifier-key press (so chord recording / sequence matching keeps
+// waiting for the real key). Covers Super/Windows — WebKitGTK reports its
+// `key` as "Super"/"OS", not "Meta" — plus the standard names; also matches by
+// `code` as a fallback.
+const MODIFIER_KEYS = new Set([
+  "control", "shift", "alt", "meta", "super", "hyper", "os", "altgraph", "capslock",
+]);
+function isModifierKey(e: KeyboardEvent): boolean {
+  if (MODIFIER_KEYS.has(e.key.toLowerCase())) return true;
+  return /^(Control|Shift|Alt|Meta|OS|Super|Hyper)(Left|Right)?$/.test(e.code);
+}
+
 function parseChord(s: string): Chord {
   const parts = s.toLowerCase().split("+");
   const chord: Chord = { mod: false, shift: false, alt: false, meta: false, key: "" };
@@ -213,12 +225,12 @@ export function commandDefaults(): { id: string; label: string; binding: string 
 /** Turn a keyboard event into a binding string like "mod+shift+down". Returns
  *  null for a bare modifier press (keep waiting). */
 export function eventToBindingString(e: KeyboardEvent): string | null {
-  if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return null;
+  if (isModifierKey(e)) return null;
   const c = eventToChord(e);
   if (!c.key) return null;
   const parts: string[] = [];
   if (c.mod) parts.push("mod");
-  if (c.meta) parts.push("meta");
+  if (c.meta) parts.push("super"); // the Super/Windows key (clearer than "meta")
   if (c.alt) parts.push("alt");
   if (c.shift) parts.push("shift");
   parts.push(c.key);
@@ -290,8 +302,8 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
 
   const handler = (e: KeyboardEvent) => {
     if (suspended) return;
-    // Ignore bare modifier presses.
-    if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return;
+    // Ignore bare modifier presses (incl. Super/Windows).
+    if (isModifierKey(e)) return;
 
     const chord = eventToChord(e);
     const editing = isEditableTarget(e.target);
