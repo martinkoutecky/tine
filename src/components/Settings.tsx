@@ -84,14 +84,18 @@ export function Settings(): JSX.Element {
 
           <div class="settings-row">
             <span class="settings-label">Theme</span>
-            <div class="settings-seg">
-              <button classList={{ active: theme() === "light" }} onClick={() => theme() !== "light" && toggleTheme()}>
-                Light
-              </button>
-              <button classList={{ active: theme() === "dark" }} onClick={() => theme() !== "dark" && toggleTheme()}>
-                Dark
-              </button>
-            </div>
+            <button
+              class="theme-switch"
+              classList={{ "is-dark": theme() === "dark" }}
+              role="switch"
+              aria-checked={theme() === "dark"}
+              title="Toggle light / dark (t t)"
+              onClick={toggleTheme}
+            >
+              <span class="theme-opt">☀ Light</span>
+              <span class="theme-opt">☾ Dark</span>
+              <span class="theme-knob" />
+            </button>
           </div>
 
           <div class="settings-row">

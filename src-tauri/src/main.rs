@@ -332,6 +332,18 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
+        // Remember window size/position/maximized across launches (Wayland
+        // compositors don't restore this per-app). Exclude FULLSCREEN so it
+        // doesn't conflict with focus mode, which is intentionally not persisted.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::SIZE
+                        | tauri_plugin_window_state::StateFlags::POSITION
+                        | tauri_plugin_window_state::StateFlags::MAXIMIZED,
+                )
+                .build(),
+        )
         .manage(AppState { graph: Mutex::new(None) })
         .setup(|app| {
             // Eagerly open the graph if one was configured at startup.

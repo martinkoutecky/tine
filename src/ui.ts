@@ -101,7 +101,6 @@ export function toggleDimInFocus() {
 // Remember the window's pre-focus fullscreen state so exiting focus restores it
 // (rather than always dropping out of fullscreen if the user was already in it).
 let preFocusFullscreen = false;
-let preFocusDim = false;
 async function appWindow() {
   const { getCurrentWindow } = await import("@tauri-apps/api/window");
   return getCurrentWindow();
@@ -112,11 +111,9 @@ export function toggleFocusMode() {
 }
 export async function enterFocusMode() {
   if (focusMode()) return;
-  // Auto-enable dim (remembering the prior state to restore on exit).
-  if (dimInFocus()) {
-    preFocusDim = dimInactiveBlocks();
-    setDimInactiveBlocks(true);
-  }
+  // When the setting is on, focus mode owns dim: on while focused, off when
+  // exited (a transient signal change — it doesn't rewrite the t-b preference).
+  if (dimInFocus()) setDimInactiveBlocks(true);
   setFocusMode(true);
   if (!isTauri()) return;
   try {
@@ -130,7 +127,7 @@ export async function enterFocusMode() {
 export async function exitFocusMode() {
   if (!focusMode()) return;
   setFocusMode(false);
-  if (dimInFocus()) setDimInactiveBlocks(preFocusDim);
+  if (dimInFocus()) setDimInactiveBlocks(false);
   if (!isTauri()) return;
   try {
     if (!preFocusFullscreen) (await appWindow()).setFullscreen(false);
