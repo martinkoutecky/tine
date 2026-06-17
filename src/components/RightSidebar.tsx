@@ -7,6 +7,7 @@ import {
   rightSidebarWidth,
   setRightSidebarWidth,
   persistRightSidebarWidth,
+  graphEpoch,
   type SidebarItem,
 } from "../ui";
 import { openPage } from "../router";
@@ -68,8 +69,11 @@ export function RightSidebar(): JSX.Element {
 // Load the item's page into the working set; returns a signal that flips true
 // once the page (and thus the live nodes) are available.
 function useLoadedPage(name: () => string, kind: () => "journal" | "page") {
+  // Key on graphEpoch so this re-runs once the graph is open: a restored
+  // sidebar mounts before loadGraphPath finishes, so the first attempt can hit
+  // a not-yet-open graph; bumping the epoch retries it.
   const [ready] = createResource(
-    () => ({ n: name(), k: kind() }),
+    () => ({ n: name(), k: kind(), e: graphEpoch() }),
     async ({ n, k }) => {
       if (!pageByName(n)) {
         const dto = await backend().getPage(n, k);

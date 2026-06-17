@@ -92,6 +92,14 @@ body {
   flex: 0 0 auto;
 }
 /* Thin divider that sets the far-right Settings cog apart from the action icons. */
+.settings-build {
+  margin-top: 18px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-color);
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: right;
+}
 .topbar-sep {
   width: 1px;
   align-self: stretch;

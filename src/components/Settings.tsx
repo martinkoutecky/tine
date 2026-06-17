@@ -233,8 +233,20 @@ export function Settings(): JSX.Element {
               )}
             </For>
           </div>
+
+          <div class="settings-build">Built {buildStamp()}</div>
         </div>
       </div>
     </Show>
   );
+}
+
+// Build timestamp (stamped by Vite at bundle time) — handy for confirming the
+// running binary is the latest, not a stale Syncthing copy.
+function buildStamp(): string {
+  try {
+    return new Date(__BUILD_TIME__).toLocaleString();
+  } catch {
+    return __BUILD_TIME__;
+  }
 }
