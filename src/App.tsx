@@ -38,12 +38,34 @@ import {
   dimInactiveBlocks,
   exitFocusMode,
 } from "./ui";
-import { editingId } from "./store";
+import { editingId, flushAll } from "./store";
+import { isTauri } from "./backend";
 
 export function App(): JSX.Element {
   onMount(async () => {
     const graphPath = persistedGraphPath() || ((window as any).__GRAPH_PATH__ ?? "");
     await loadGraphPath(graphPath);
+  });
+
+  // Persist pending edits before the window closes — the 400ms save debounce
+  // would otherwise drop the last keystrokes typed right before quitting.
+  onMount(() => {
+    if (!isTauri()) return;
+    let unlisten = () => {};
+    void (async () => {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      const w = getCurrentWindow();
+      unlisten = await w.onCloseRequested(async (e) => {
+        e.preventDefault();
+        try {
+          await flushAll();
+        } catch {
+          // never block quitting on a save error
+        }
+        await w.destroy();
+      });
+    })();
+    onCleanup(() => unlisten());
   });
 
   // (Re)install keybindings whenever config or the user's local overrides change

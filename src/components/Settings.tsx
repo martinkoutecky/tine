@@ -29,6 +29,7 @@ import {
 } from "../ui";
 import { commandDefaults, eventToBindingString, setKeybindingsSuspended } from "../keybindings";
 import { switchGraph, loadGraphPath } from "../graph";
+import { flushAll } from "../store";
 import { backend, type BackupInfo } from "../backend";
 
 type Tab = "appearance" | "tasks" | "backups" | "graph" | "shortcuts";
@@ -391,6 +392,9 @@ function BackupsTab(): JSX.Element {
       return;
     setBusy(true);
     try {
+      // Persist current edits first so the pre-restore safety snapshot captures
+      // them (and the reload below doesn't write stale edits over the restore).
+      await flushAll();
       await backend().restoreBackup(b.stamp);
       const root = graphMeta()?.root ?? "";
       await loadGraphPath(root); // reopen from the restored files

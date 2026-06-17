@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createSignal, on, onCleanup, onMount, untrack, type JSX } from "solid-js";
-import { doc, mainPages, pageByName, reloadPage, loadSingle, loadFeed, appendFeed, isDirty, editingId, setFeedExtender, type FeedPage } from "../store";
+import { doc, mainPages, pageByName, reloadPage, loadSingle, loadFeed, appendFeed, isDirty, editingId, setFeedExtender, flushPage, type FeedPage } from "../store";
 import { route, openPage, openJournals } from "../router";
 import {
   zoomedBlock, zoomOut, zoomInto, isFavorite, toggleFavorite, notesRefresh,
@@ -116,8 +116,23 @@ export function PageView(): JSX.Element {
           })();
           return;
         }
-        if (r.kind === "journals" && c.kind === "journal" && !editingId()) {
+        if (r.kind === "journals" && c.kind === "journal") {
+          // Never let an external change clobber an unsaved edit: if the changed
+          // day has pending edits, surface a conflict instead of reloading; if a
+          // block on it is being edited, leave the caret alone.
+          if (isDirty(c.name)) return void markConflict(c.name);
+          if (editingThis()) return;
           void (async () => {
+            if (pageByName(c.name)) {
+              // Refresh just the changed day in place — a full feed reload would
+              // also drop OTHER loaded days' unsaved edits.
+              const dto = await backend().getPage(c.name, c.kind);
+              if (dto) reloadPage(dto);
+              return;
+            }
+            // A new journal file appeared (e.g. today created elsewhere): pull
+            // the feed to include it, but only if no loaded day is dirty.
+            if (doc.feed.some((n) => isDirty(n))) return;
             const js = await backend().journalsDesc(FEED_PAGE, 0);
             journalOffset = js.length;
             feedDone = js.length < FEED_PAGE;
@@ -299,6 +314,8 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
     setRenaming(false);
     if (!next || next === props.page.name) return;
     try {
+      // Flush unsaved edits before the file is moved on disk and reloaded.
+      await flushPage(props.page.name);
       await backend().renamePage(props.page.name, next);
       openPage(next, "page");
     } catch (e) {

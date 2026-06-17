@@ -665,20 +665,31 @@ impl Graph {
     /// so the caller can surface it and keep the in-memory edits.
     pub fn save_page(&self, page: &PageDto) -> io::Result<()> {
         let path = self.path_for(&page.name, page.kind);
-        if let (Ok(disk), Some(cached)) =
-            (fs::read_to_string(&path), self.cached_doc(&page.name, page.kind))
-        {
-            // Compare disk against the cached doc *normalized through the same
-            // serialize→parse round-trip the file went through*. The cache after
-            // our own save holds the in-memory (DTO-derived) doc, whose `raw` can
-            // differ trivially from what `parse(serialize(doc))` yields; comparing
-            // the raw cached doc would then flag our own previous write as an
-            // external edit on the next save (the spurious "changed on disk").
-            let opts = doc::SerializeOpts::detect(Some(&disk));
-            let cached_norm = doc::parse(&doc::serialize_with(&cached, &opts));
-            if doc::parse(&disk) != cached_norm {
+        let disk = fs::read_to_string(&path);
+        let cached = self.cached_doc(&page.name, page.kind);
+        match (&disk, &cached) {
+            (Ok(disk_s), Some(cached_doc)) => {
+                // Compare disk against the cached doc *normalized through the same
+                // serialize→parse round-trip the file went through*. The cache
+                // after our own save holds the in-memory (DTO-derived) doc, whose
+                // `raw` can differ trivially from what `parse(serialize(doc))`
+                // yields; comparing the raw cached doc would then flag our own
+                // previous write as an external edit on the next save.
+                let opts = doc::SerializeOpts::detect(Some(disk_s));
+                let cached_norm = doc::parse(&doc::serialize_with(cached_doc, &opts));
+                if doc::parse(disk_s) != cached_norm {
+                    return Err(io::Error::new(io::ErrorKind::AlreadyExists, "conflict"));
+                }
+            }
+            // File exists on disk, but the (already-built) cache has no record of
+            // it: Tine believed this page was new, yet a file with that name
+            // appeared (external create / Syncthing pull). Refuse to clobber it.
+            // Only when the cache is actually built — during the brief pre-warm
+            // window we have no baseline and fall through to write as before.
+            (Ok(_), None) if self.cache.read().unwrap().is_some() => {
                 return Err(io::Error::new(io::ErrorKind::AlreadyExists, "conflict"));
             }
+            _ => {}
         }
         self.write_page(page)
     }

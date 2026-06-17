@@ -164,6 +164,16 @@ pub fn parse(content: &str) -> Document {
         content_start: usize,
         raw: String,
         children: Vec<DocBlock>,
+        /// Currently inside an open ``` fence in this block's own content. While
+        /// true, every following line is literal continuation — even one that
+        /// looks like a `- ` bullet — so fenced code isn't shredded into child
+        /// blocks (which would corrupt the code on the next save).
+        in_code: bool,
+    }
+    // A content line that begins (ignoring leading whitespace) with ``` opens or
+    // closes a fenced code block.
+    fn is_fence(text: &str) -> bool {
+        text.trim_start().starts_with("```")
     }
     let mut stack: Vec<Frame> = Vec::new();
     let mut roots: Vec<DocBlock> = Vec::new();
@@ -185,21 +195,32 @@ pub fn parse(content: &str) -> Document {
     }
 
     for line in block_lines {
-        if let Some((col, content)) = bullet(line) {
-            // New block: fold every block at this column or deeper, so the
-            // remaining stack top (shallower column) becomes the parent.
-            fold_to(&mut stack, &mut roots, col);
-            stack.push(Frame {
-                col,
-                content_start: col + 2,
-                raw: content.to_string(),
-                children: Vec::new(),
-            });
-        } else if let Some(top) = stack.last_mut() {
+        let top_in_code = stack.last().map(|f| f.in_code).unwrap_or(false);
+        // A `- ` line starts a new block only when we're NOT inside a fenced code
+        // block of the current top frame; inside a fence it's literal content.
+        if !top_in_code {
+            if let Some((col, content)) = bullet(line) {
+                // New block: fold every block at this column or deeper, so the
+                // remaining stack top (shallower column) becomes the parent.
+                fold_to(&mut stack, &mut roots, col);
+                stack.push(Frame {
+                    col,
+                    content_start: col + 2,
+                    raw: content.to_string(),
+                    children: Vec::new(),
+                    in_code: is_fence(content), // bullet line may open a fence
+                });
+                continue;
+            }
+        }
+        if let Some(top) = stack.last_mut() {
             // Continuation line: strip the block's content-start indentation.
             let stripped = strip_n_ws(line, top.content_start);
             top.raw.push('\n');
             top.raw.push_str(stripped);
+            if is_fence(stripped) {
+                top.in_code = !top.in_code; // open or close the fence
+            }
         }
         // (A continuation before any bullet can't happen: it'd be pre-block.)
     }

@@ -127,14 +127,16 @@ const BACKUP_KEEP_DEFAULT: usize = 12;
 
 fn backup_async(app: tauri::AppHandle) {
     std::thread::spawn(move || {
-        do_backup(&app);
+        do_backup(&app, "");
     });
 }
 
 /// Take one snapshot of the current graph now (synchronous). Returns the number
 /// of files copied (0 = nothing to back up). Reads the keep count from the local
-/// app-settings file and prunes old snapshots afterwards.
-fn do_backup(app: &tauri::AppHandle) -> usize {
+/// app-settings file and prunes old snapshots afterwards. `suffix` tags special
+/// snapshots (e.g. "pre-restore") so they get a distinct, collision-proof
+/// directory name and are exempt from the keep-count prune.
+fn do_backup(app: &tauri::AppHandle, suffix: &str) -> usize {
     // Grab just the paths under the lock, then copy from disk lock-free.
     let (journals, pages, cfg, root) = {
         let state: State<'_, AppState> = app.state();
@@ -153,7 +155,9 @@ fn do_backup(app: &tauri::AppHandle) -> usize {
     let base = data_dir
         .join("backups")
         .join(sanitize_id(&root.display().to_string()));
-    let dest = base.join(backup_stamp());
+    let stamp = backup_stamp();
+    let name = if suffix.is_empty() { stamp } else { format!("{stamp}-{suffix}") };
+    let dest = base.join(name);
     let mut n = copy_md_dir(&journals, &dest.join(dir_name(&journals)));
     n += copy_md_dir(&pages, &dest.join(dir_name(&pages)));
     if cfg.exists() {
@@ -287,46 +291,56 @@ fn restore_backup(stamp: String, app: tauri::AppHandle, state: State<'_, AppStat
     if !src.is_dir() {
         return Err("backup not found".into());
     }
-    // Safety net: snapshot the current (pre-restore) state before overwriting.
-    do_backup(&app);
-    restore_md_dir(&src.join(dir_name(&journals)), &journals);
-    restore_md_dir(&src.join(dir_name(&pages)), &pages);
+    // Safety net: snapshot the current (pre-restore) state first, under a distinct
+    // name so it can't collide with (or be pruned by) the launch snapshot the
+    // post-restore reload will take.
+    do_backup(&app, "pre-restore");
+    // Restore each dir; a copy failure aborts WITHOUT having deleted anything
+    // (copy-in happens before delete-extras), so a failure never loses data.
+    restore_md_dir(&src.join(dir_name(&journals)), &journals)
+        .map_err(|e| format!("restore journals failed: {e}"))?;
+    restore_md_dir(&src.join(dir_name(&pages)), &pages)
+        .map_err(|e| format!("restore pages failed: {e}"))?;
     let src_cfg = src.join("logseq").join("config.edn");
     if src_cfg.exists() {
         if let Some(parent) = cfg_dest.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        let _ = std::fs::copy(&src_cfg, &cfg_dest);
+        std::fs::copy(&src_cfg, &cfg_dest).map_err(|e| format!("restore config failed: {e}"))?;
     }
     Ok(())
 }
 
-/// Replace the `.md` files in `dest` with those from `src` (clear-then-copy, so
-/// files created after the snapshot are removed — a faithful point-in-time
-/// restore). Non-`.md` files (assets, etc.) are left untouched.
-fn restore_md_dir(src: &std::path::Path, dest: &std::path::Path) {
+/// Restore the `.md` files in `dest` from `src`: copy the backup's files in
+/// FIRST (overwriting), and only then delete any `dest` `.md` not in the backup.
+/// Ordering matters — a copy error returns early leaving a superset of files, so
+/// a failed restore never deletes data. Non-`.md` files are left untouched.
+fn restore_md_dir(src: &std::path::Path, dest: &std::path::Path) -> std::io::Result<()> {
     if !src.is_dir() {
-        return;
+        return Ok(());
     }
-    let _ = std::fs::create_dir_all(dest);
-    if let Ok(rd) = std::fs::read_dir(dest) {
-        for e in rd.flatten() {
-            let p = e.path();
-            if p.extension().and_then(|x| x.to_str()) == Some("md") {
-                let _ = std::fs::remove_file(p);
+    std::fs::create_dir_all(dest)?;
+    let mut restored: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for e in std::fs::read_dir(src)?.flatten() {
+        let p = e.path();
+        if p.extension().and_then(|x| x.to_str()) == Some("md") {
+            if let Some(name) = p.file_name() {
+                std::fs::copy(&p, dest.join(name))?;
+                restored.insert(name.to_string_lossy().into_owned());
             }
         }
     }
-    if let Ok(rd) = std::fs::read_dir(src) {
-        for e in rd.flatten() {
-            let p = e.path();
-            if p.extension().and_then(|x| x.to_str()) == Some("md") {
-                if let Some(name) = p.file_name() {
-                    let _ = std::fs::copy(&p, dest.join(name));
+    for e in std::fs::read_dir(dest)?.flatten() {
+        let p = e.path();
+        if p.extension().and_then(|x| x.to_str()) == Some("md") {
+            if let Some(name) = p.file_name() {
+                if !restored.contains(name.to_string_lossy().as_ref()) {
+                    let _ = std::fs::remove_file(&p);
                 }
             }
         }
     }
+    Ok(())
 }
 
 fn dir_name(p: &std::path::Path) -> String {
@@ -355,8 +369,21 @@ fn copy_md_dir(src: &std::path::Path, dest: &std::path::Path) -> usize {
 }
 fn prune_backups(base: &std::path::Path, keep: usize) {
     let Ok(rd) = std::fs::read_dir(base) else { return };
-    let mut dirs: Vec<std::path::PathBuf> =
-        rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
+    // Only the routine launch snapshots are subject to the keep-count. Tagged
+    // snapshots (e.g. "...-pre-restore") are deliberate safety points and are
+    // never auto-pruned.
+    let mut dirs: Vec<std::path::PathBuf> = rd
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.is_dir()
+                && !p
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .map(|s| s.contains("-pre-restore"))
+                    .unwrap_or(false)
+        })
+        .collect();
     dirs.sort(); // timestamp-named → chronological
     if dirs.len() > keep {
         for d in &dirs[..dirs.len() - keep] {

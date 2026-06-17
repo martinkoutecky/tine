@@ -16,8 +16,9 @@ export function ConflictBar(): JSX.Element {
     clearConflict(name);
   };
   const keepMine = async (name: string) => {
-    await forceSave(name);
-    clearConflict(name);
+    // Only clear the conflict if the overwrite actually landed — otherwise the
+    // edit is still unsaved and must stay surfaced.
+    if (await forceSave(name)) clearConflict(name);
   };
 
   return (

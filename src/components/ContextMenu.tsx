@@ -24,6 +24,7 @@ import {
   setHeading,
   setCollapsedDeep,
   dtoSubtreeMarkdown,
+  flushPage,
 } from "../store";
 
 // Block background colors, matching Logseq's built-in set.
@@ -138,8 +139,10 @@ function PageMenu(props: {
   const rename = () => {
     const next = window.prompt("Rename page to:", props.name)?.trim();
     if (next && next !== props.name) {
-      void backend()
-        .renamePage(props.name, next)
+      // Persist any unsaved edits first — rename moves the file on disk and the
+      // renamed page is reloaded from disk, so in-memory edits would be lost.
+      void flushPage(props.name)
+        .then(() => backend().renamePage(props.name, next))
         .then(() => {
           openPage(next, props.pageKind);
           pushToast(`Renamed to “${next}”`, "success");

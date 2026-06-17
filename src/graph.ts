@@ -3,7 +3,7 @@
 
 import { backend } from "./backend";
 import { setGraphMeta, setWorkflow, bumpGraphEpoch, setRightSidebar, graphMeta, setAliasMap, seedFavorites, pruneSidebarBlocks } from "./ui";
-import { resetStore } from "./store";
+import { resetStore, flushAll } from "./store";
 import { openJournals } from "./router";
 import { journalTitle } from "./journal";
 import type { BlockDto } from "./types";
@@ -26,6 +26,10 @@ export async function loadGraphPath(path: string): Promise<void> {
   // startup keeps them (and we prune stale block refs below).
   const prev = persistedGraphPath();
   const switching = !!prev && !!path && prev !== path;
+  // Persist the current graph's pending edits BEFORE opening another graph —
+  // otherwise the debounced save would either fire against the new graph or be
+  // dropped by resetStore. No-op on first load (nothing dirty / same graph).
+  await flushAll();
   const meta = await backend().loadGraph(path);
   resetStore();
   if (switching) setRightSidebar([]);

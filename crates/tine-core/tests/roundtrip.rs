@@ -41,6 +41,30 @@ fn multiline_block_continuation() {
 }
 
 #[test]
+fn fenced_code_with_bullet_line_stays_one_block() {
+    // A `- ` line inside a ``` fence is literal code, NOT a child block; it must
+    // round-trip and not split the block (the DS6 corruption case).
+    let input = "- ```clojure\n  (defn f [x] x)\n  - not a child\n  ```\n- after\n";
+    assert_roundtrip(input);
+    let doc = doc::parse(input);
+    assert_eq!(doc.roots.len(), 2);
+    assert_eq!(doc.roots[0].children.len(), 0, "code fence must not become children");
+    assert_eq!(doc.roots[0].raw, "```clojure\n(defn f [x] x)\n- not a child\n```");
+    assert_eq!(doc.roots[1].raw, "after");
+}
+
+#[test]
+fn fenced_code_on_child_block() {
+    let input = "- parent\n\t- ```\n\t  - inner\n\t  ```\n\t- real sibling\n";
+    assert_roundtrip(input);
+    let doc = doc::parse(input);
+    assert_eq!(doc.roots[0].children.len(), 2);
+    assert_eq!(doc.roots[0].children[0].raw, "```\n- inner\n```");
+    assert_eq!(doc.roots[0].children[0].children.len(), 0);
+    assert_eq!(doc.roots[0].children[1].raw, "real sibling");
+}
+
+#[test]
 fn block_properties() {
     let input = "- a task\n  id:: 628953c1-8d75-49fe-a648-f4c612109098\n  collapsed:: true\n";
     assert_roundtrip(input);

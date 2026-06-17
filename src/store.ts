@@ -11,7 +11,7 @@ import { createSignal, createMemo, createRoot } from "solid-js";
 import type { BlockDto, PageDto, PageKind } from "./types";
 import type { OutlineNode } from "./editor/outline";
 import { backend } from "./backend";
-import { markConflict, isConflicted, bumpDataRev, rightSidebar, conflicts } from "./ui";
+import { markConflict, isConflicted, bumpDataRev, rightSidebar, conflicts, pushToast } from "./ui";
 import { blockView } from "./render/block";
 import { journalTitle } from "./journal";
 
@@ -206,6 +206,9 @@ export function resetStore() {
     clearTimeout(dataRevTimer);
     dataRevTimer = null;
   }
+  // Invalidate any in-flight/queued save so it can't write the old graph's
+  // content into the newly-loaded graph (see persistPage's token check).
+  graphToken++;
   dirty.clear();
   setDoc({ byId: {}, pages: [], feed: [], loaded: false });
   setEditingId(null);
@@ -610,13 +613,23 @@ export function mergeWithPrev(id: string): boolean {
   // its identity) and drop the absorbed block's — otherwise the id::/collapsed::
   // lines would be concatenated mid-line and a block could end up with two ids.
   const prevSplit = splitHiddenProps(doc.byId[prev].raw);
-  const curVisible = splitHiddenProps(node.raw).visible;
+  const curSplit = splitHiddenProps(node.raw);
+  const curVisible = curSplit.visible;
   const joinOffset = prevSplit.visible.length;
   const pageName = node.page;
 
+  // Preserve the absorbed block's `id::` if the survivor has none — otherwise
+  // inbound ((id)) references to the absorbed block would orphan on merge.
+  let hidden = prevSplit.hidden;
+  const survivorHasId = /(?:^|\n)id:: /.test(prevSplit.hidden);
+  const absorbedId = /(?:^|\n)(id:: \S+)/.exec(curSplit.hidden)?.[1];
+  if (!survivorHasId && absorbedId) {
+    hidden = hidden ? `${hidden}\n${absorbedId}` : absorbedId;
+  }
+
   setDoc(
     produce((s) => {
-      s.byId[prev].raw = withHiddenProps(prevSplit.visible + curVisible, prevSplit.hidden);
+      s.byId[prev].raw = withHiddenProps(prevSplit.visible + curVisible, hidden);
       for (const c of node.children) s.byId[c].parent = prev;
       s.byId[prev].children.push(...node.children);
       const arr = node.parent === null
@@ -760,6 +773,9 @@ export function ensureBlockId(id: string): string {
   const uuid = crypto.randomUUID();
   setDoc("byId", id, "raw", `${node.raw}\nid:: ${uuid}`);
   markDirty(node.page);
+  // Persist immediately: a ref to this id may be pasted and the app quit before
+  // the 400ms debounce fires, which would leave the reference dangling.
+  void flushPage(node.page);
   return uuid;
 }
 
@@ -1330,33 +1346,56 @@ function scheduleDataRev() {
   }, 700);
 }
 
+// Bumped whenever the working set is reset (graph switch). A save captures the
+// token when it starts; if the graph changed underneath it, the write is
+// abandoned so the old graph's content can never land in the new graph.
+let graphToken = 0;
+
+// Pages with a write currently in flight — so an edit made *during* a save
+// re-dirties the page (and is saved again) instead of being lost, and we never
+// run two concurrent writes for the same page.
+const saving = new Set<string>();
+
+/** Persist one page. On a conflict, mark it (don't clobber). On a transient
+ *  failure, KEEP it dirty and surface the error — never silently drop an edit.
+ *  Returns whether the write actually landed. */
+async function persistPage(name: string, token: number): Promise<boolean> {
+  if (isConflicted(name) || token !== graphToken) return false;
+  const dto = pageToDto(name);
+  if (!dto) return false;
+  saving.add(name);
+  try {
+    await backend().savePage(dto);
+    return true;
+  } catch (e) {
+    if (String(e).includes("conflict")) {
+      markConflict(name);
+    } else if (token === graphToken) {
+      // Disk full / permission / transient IPC error: keep the edit pending so
+      // the next batch retries, and tell the user rather than failing silently.
+      dirty.add(name);
+      pushToast(`Couldn't save “${name}” — will retry. (${String(e)})`, "error");
+    }
+    return false;
+  } finally {
+    saving.delete(name);
+  }
+}
+
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 export function scheduleSave() {
   if (!doc.loaded) return;
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     saveTimer = null;
-    const names = [...dirty];
-    dirty.clear();
+    const token = graphToken;
+    // Take the pages we're about to write OUT of `dirty` (skipping any already
+    // being saved); persistPage re-adds them on failure. An edit landing during
+    // the write re-dirties via markDirty → saved in the next batch.
+    const names = [...dirty].filter((n) => !saving.has(n));
+    for (const n of names) dirty.delete(n);
     void (async () => {
-      // Independent page writes — fire them in parallel rather than awaiting
-      // each IPC round-trip in turn (a multi-day carry or post-undo batch would
-      // otherwise serialize dozens of writes).
-      const results = await Promise.all(
-        names.map(async (name) => {
-          if (isConflicted(name)) return false; // wait for the user to resolve first
-          const dto = pageToDto(name);
-          if (!dto) return false;
-          try {
-            await backend().savePage(dto);
-            return true;
-          } catch (e) {
-            // The file changed on disk; surface it instead of clobbering.
-            if (String(e).includes("conflict")) markConflict(name);
-            return false;
-          }
-        })
-      );
+      const results = await Promise.all(names.map((n) => persistPage(n, token)));
       // The backend cache now reflects these edits → let queries recompute,
       // but coalesce: re-running every on-screen query is a whole-graph scan, so
       // wait for a lull instead of firing on every 400ms save batch.
@@ -1367,28 +1406,40 @@ export function scheduleSave() {
 
 /** Save one page immediately, bypassing the debounce — for actions that must
  *  durably persist before the user might quit (e.g. parking a block in the
- *  sidebar writes an id:: that has to survive a restart). */
-export async function flushPage(name: string): Promise<void> {
-  if (!doc.loaded || isConflicted(name)) return;
+ *  sidebar writes an id:: that has to survive a restart). Returns success. */
+export async function flushPage(name: string): Promise<boolean> {
+  if (!doc.loaded || isConflicted(name)) return false;
   dirty.delete(name);
-  const dto = pageToDto(name);
-  if (!dto) return;
-  try {
-    await backend().savePage(dto);
-    scheduleDataRev();
-  } catch (e) {
-    if (String(e).includes("conflict")) markConflict(name);
+  const ok = await persistPage(name, graphToken);
+  if (ok) scheduleDataRev();
+  return ok;
+}
+
+/** Persist every dirty page now and wait for them — for graph switch and app
+ *  close, where the debounce window would otherwise drop the last edits. */
+export async function flushAll(): Promise<void> {
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
   }
+  const token = graphToken;
+  const names = [...dirty].filter((n) => !saving.has(n));
+  for (const n of names) dirty.delete(n);
+  const results = await Promise.all(names.map((n) => persistPage(n, token)));
+  if (results.some(Boolean)) bumpDataRev();
 }
 
 /** Resolve a save conflict by overwriting the on-disk file with the in-memory
- *  version ("keep mine"). */
-export async function forceSave(name: string): Promise<void> {
+ *  version ("keep mine"). Returns whether the overwrite succeeded — the caller
+ *  must not clear the conflict unless it did. */
+export async function forceSave(name: string): Promise<boolean> {
   const dto = pageToDto(name);
-  if (!dto) return;
+  if (!dto) return false;
   try {
     await backend().savePage(dto, true);
-  } catch {
-    // ignore
+    return true;
+  } catch (e) {
+    pushToast(`Couldn't overwrite “${name}”: ${String(e)}`, "error");
+    return false;
   }
 }
