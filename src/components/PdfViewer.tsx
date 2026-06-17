@@ -49,6 +49,13 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
   const visible = new Set<number>();
   let io: IntersectionObserver | null = null;
   let zoomTimer: number | undefined;
+  // The text layer (hundreds of glyph spans on a math page) is rebuilt OFF the
+  // zoom hot path: the canvas sharpens immediately, the text catches up shortly
+  // after the view settles. `textScale[n]` is the scale its text was built at;
+  // `pendingText` holds pages whose text needs a (re)build.
+  const textScale: Record<number, number> = {};
+  const pendingText = new Set<number>();
+  let textTimer: number | undefined;
 
   const persist = () => backend().writeHighlights(props.filename, props.label, highlights());
   const clampScale = (s: number) => Math.min(4, Math.max(0.2, s));
@@ -65,6 +72,9 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
     for (const k of Object.keys(textLayers)) delete textLayers[Number(k)];
     for (const k of Object.keys(hlLayers)) delete hlLayers[Number(k)];
     for (const k of Object.keys(renderedScale)) delete renderedScale[Number(k)];
+    for (const k of Object.keys(textScale)) delete textScale[Number(k)];
+    pendingText.clear();
+    clearTimeout(textTimer);
     visible.clear();
     io?.disconnect();
     io = new IntersectionObserver(onIntersect, { root: scrollRef, rootMargin: "600px 0px" });
@@ -129,9 +139,10 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
       wrap.insertBefore(canvas, wrap.firstChild);
     }
     // Render into a backing store at device-pixel resolution and CSS-size it
-    // back down, so text is crisp on HiDPI displays (without this the canvas is
-    // rasterized at CSS px and the glyphs look fuzzy / lose thin strokes).
-    const dpr = window.devicePixelRatio || 1;
+    // back down, so text is crisp on HiDPI displays. Cap the device-pixel factor
+    // at 2 — beyond that the extra pixels aren't visible but the raster cost (and
+    // zoom-in lag) grows quadratically.
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
     canvas.width = Math.ceil(viewport.width * dpr);
     canvas.height = Math.ceil(viewport.height * dpr);
     canvas.style.width = `${Math.floor(viewport.width)}px`;
@@ -152,16 +163,42 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
     if (scale() !== s) return;
     delete tasks[n];
 
+    // Canvas is crisp now — the page is usable. Rebuild the (expensive) text
+    // layer off the hot path so it doesn't make every zoom step janky.
+    renderedScale[n] = s;
+    clearTransform(n);
+    repaintPage(n);
+    scheduleText(n);
+  }
+
+  // Coalesced, deferred text-layer (re)build. Runs ~after the view settles, only
+  // for visible pages whose text isn't already at the page's current scale.
+  function scheduleText(n: number) {
+    pendingText.add(n);
+    clearTimeout(textTimer);
+    textTimer = window.setTimeout(() => void buildPendingText(), 220);
+  }
+  async function buildPendingText() {
+    const todo = [...pendingText];
+    pendingText.clear();
+    for (const n of todo) {
+      const r = renderedScale[n];
+      if (!visible.has(n) || r === undefined || textScale[n] === r) continue;
+      await buildTextLayer(n, r);
+    }
+  }
+  async function buildTextLayer(n: number, atScale: number) {
+    if (!pdfDoc || !textLayers[n]) return;
+    const page = await pdfDoc.getPage(n);
+    if (renderedScale[n] !== atScale || !textLayers[n]) return; // re-rastered since
+    const viewport = page.getViewport({ scale: atScale });
     const textContent = await page.getTextContent();
-    if (scale() !== s || !textLayers[n]) return;
+    if (renderedScale[n] !== atScale || !textLayers[n]) return;
     const tl = textLayers[n];
     tl.innerHTML = "";
     const layer = new (pdfjs as any).TextLayer({ textContentSource: textContent, container: tl, viewport });
     await layer.render();
-
-    renderedScale[n] = s;
-    clearTransform(n);
-    repaintPage(n);
+    textScale[n] = atScale;
   }
 
   function clearTransform(n: number) {
@@ -231,6 +268,7 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
   onCleanup(() => {
     io?.disconnect();
     clearTimeout(zoomTimer);
+    clearTimeout(textTimer);
     for (const k of Object.keys(tasks)) tasks[Number(k)]?.cancel();
   });
 
