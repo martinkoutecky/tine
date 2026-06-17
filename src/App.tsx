@@ -19,6 +19,8 @@ import {
   toggleTheme,
   sidebarOpen,
   toggleSidebar,
+  rightSidebarOpen,
+  toggleRightSidebar,
   openSwitcher,
   pdfTarget,
   pdfPaneWidth,
@@ -136,17 +138,6 @@ export function App(): JSX.Element {
                 <line x1="16.5" y1="16.5" x2="21" y2="21" stroke="currentColor" stroke-width="1.7" />
               </svg>
             </button>
-            <button class="icon-btn" title="Settings" onClick={openSettings}>
-              <svg viewBox="0 0 24 24" class="nav-icon">
-                <circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.6" />
-                <path
-                  d="M12 3v2m0 14v2m9-9h-2M5 12H3m13.5-6.5l-1.5 1.5m-6 6l-1.5 1.5m9 0l-1.5-1.5m-6-6L6.5 5.5"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.4"
-                />
-              </svg>
-            </button>
             <button class="icon-btn" title="Toggle theme (t t)" onClick={toggleTheme}>
               <Show
                 when={theme() === "light"}
@@ -169,6 +160,28 @@ export function App(): JSX.Element {
                   <line x1="19" y1="12" x2="22" y2="12" stroke="currentColor" stroke-width="1.6" />
                 </svg>
               </Show>
+            </button>
+            <button
+              class="icon-btn"
+              classList={{ active: rightSidebarOpen() }}
+              title="Toggle right sidebar (t r)"
+              onClick={toggleRightSidebar}
+            >
+              <svg viewBox="0 0 24 24" class="nav-icon">
+                <rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.7" />
+                <line x1="15" y1="4" x2="15" y2="20" stroke="currentColor" stroke-width="1.7" />
+              </svg>
+            </button>
+            {/* Settings sits apart at the far right (separated by a divider) so
+                it reads as app-level config, not another content control. */}
+            <span class="topbar-sep" />
+            <button class="icon-btn" title="Settings (t s)" onClick={openSettings}>
+              <svg viewBox="0 0 24 24" class="nav-icon" aria-hidden="true">
+                <path
+                  fill="currentColor"
+                  d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.488.488 0 00-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 00-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 00-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32a.49.49 0 00-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"
+                />
+              </svg>
             </button>
           </div>
         </header>

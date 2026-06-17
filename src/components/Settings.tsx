@@ -15,6 +15,8 @@ import {
   toggleWideMode,
   documentMode,
   toggleDocumentMode,
+  dimInFocus,
+  setDimInFocus,
 } from "../ui";
 import { commandDefaults, eventToBindingString, setKeybindingsSuspended } from "../keybindings";
 import { switchGraph } from "../graph";
@@ -141,6 +143,24 @@ export function Settings(): JSX.Element {
               </button>
               <span class="settings-hint" style={{ "margin-left": "8px" }}>
                 Hides bullets and indent guides for a cleaner prose view.
+              </span>
+            </div>
+          </div>
+
+          <div class="settings-row">
+            <span class="settings-label">Dim in focus mode</span>
+            <div>
+              <button
+                class="settings-toggle"
+                classList={{ on: dimInFocus() }}
+                role="switch"
+                aria-checked={dimInFocus()}
+                onClick={() => setDimInFocus(!dimInFocus())}
+              >
+                <span class="settings-toggle-knob" />
+              </button>
+              <span class="settings-hint" style={{ "margin-left": "8px" }}>
+                Auto-enable dim inactive blocks (t b) when entering focus mode (t f).
               </span>
             </div>
           </div>

@@ -1,6 +1,8 @@
 import { For, Show, createResource, type JSX } from "solid-js";
 import {
   rightSidebar,
+  rightSidebarOpen,
+  toggleRightSidebar,
   closeRightSidebarItem,
   rightSidebarWidth,
   setRightSidebarWidth,
@@ -20,7 +22,7 @@ import { Block } from "./Block";
 // {{query}} also stays live, since it's the real block.
 export function RightSidebar(): JSX.Element {
   return (
-    <Show when={rightSidebar().length > 0}>
+    <Show when={rightSidebarOpen()}>
       <div
         class="right-sidebar"
         style={{ flex: `0 0 ${rightSidebarWidth()}px`, width: `${rightSidebarWidth()}px` }}
@@ -40,11 +42,23 @@ export function RightSidebar(): JSX.Element {
             window.addEventListener("mouseup", onUp);
           }}
         />
-        <div class="right-sidebar-header">Sidebar</div>
+        <div class="right-sidebar-header">
+          <span>Sidebar</span>
+          <button class="rs-close" title="Close sidebar (t r)" onClick={toggleRightSidebar}>✕</button>
+        </div>
         <div class="right-sidebar-body">
-          <For each={rightSidebar()}>
-            {(item, i) => <SidebarItemView item={item} onClose={() => closeRightSidebarItem(i())} />}
-          </For>
+          <Show
+            when={rightSidebar().length > 0}
+            fallback={
+              <div class="rs-empty">
+                Nothing open. Shift-click a page or block to open it here.
+              </div>
+            }
+          >
+            <For each={rightSidebar()}>
+              {(item, i) => <SidebarItemView item={item} onClose={() => closeRightSidebarItem(i())} />}
+            </For>
+          </Show>
         </div>
       </div>
     </Show>

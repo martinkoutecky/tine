@@ -85,9 +85,23 @@ export function toggleDimInactiveBlocks() {
   saveStr(DIM_KEY, v ? "1" : null);
 }
 
+// When on (default), entering focus mode auto-enables dim-inactive-blocks and
+// exiting restores the prior dim state. The override is transient (it doesn't
+// rewrite the persisted dim preference, so your manual `t b` choice is kept).
+const DIM_IN_FOCUS_KEY = "logseq-claude.dimInFocus";
+export const [dimInFocus, setDimInFocusSig] = createSignal(loadStr(DIM_IN_FOCUS_KEY) !== "0");
+export function setDimInFocus(v: boolean) {
+  setDimInFocusSig(v);
+  saveStr(DIM_IN_FOCUS_KEY, v ? null : "0");
+}
+export function toggleDimInFocus() {
+  setDimInFocus(!dimInFocus());
+}
+
 // Remember the window's pre-focus fullscreen state so exiting focus restores it
 // (rather than always dropping out of fullscreen if the user was already in it).
 let preFocusFullscreen = false;
+let preFocusDim = false;
 async function appWindow() {
   const { getCurrentWindow } = await import("@tauri-apps/api/window");
   return getCurrentWindow();
@@ -98,6 +112,11 @@ export function toggleFocusMode() {
 }
 export async function enterFocusMode() {
   if (focusMode()) return;
+  // Auto-enable dim (remembering the prior state to restore on exit).
+  if (dimInFocus()) {
+    preFocusDim = dimInactiveBlocks();
+    setDimInactiveBlocks(true);
+  }
   setFocusMode(true);
   if (!isTauri()) return;
   try {
@@ -111,6 +130,7 @@ export async function enterFocusMode() {
 export async function exitFocusMode() {
   if (!focusMode()) return;
   setFocusMode(false);
+  if (dimInFocus()) setDimInactiveBlocks(preFocusDim);
   if (!isTauri()) return;
   try {
     if (!preFocusFullscreen) (await appWindow()).setFullscreen(false);
@@ -400,6 +420,23 @@ function loadRsItems(): SidebarItem[] {
 }
 const [rightSidebar, setRightSidebarRaw] = createSignal<SidebarItem[]>(loadRsItems());
 export { rightSidebar };
+
+// The right sidebar has its own open/closed state (persisted), independent of
+// whether it currently holds items — so it can be toggled (icon / `t r`) and
+// shows an empty hint when open but empty. Opening an item forces it open.
+const RS_OPEN_KEY = "logseq-claude.rightSidebarOpen";
+// Open if explicitly persisted open, or (migration / first run) if items were
+// restored — so a populated sidebar shows even before the open-state was tracked.
+export const [rightSidebarOpen, setRightSidebarOpenSig] = createSignal(
+  loadStr(RS_OPEN_KEY) === "1" || rightSidebar().length > 0
+);
+function setRightSidebarOpen(v: boolean) {
+  setRightSidebarOpenSig(v);
+  saveStr(RS_OPEN_KEY, v ? "1" : null);
+}
+export function toggleRightSidebar() {
+  setRightSidebarOpen(!rightSidebarOpen());
+}
 export function setRightSidebar(items: SidebarItem[]) {
   setRightSidebarRaw(items);
   try {
@@ -412,10 +449,12 @@ export function setRightSidebar(items: SidebarItem[]) {
 
 export function openPageInSidebar(name: string, pageKind: "journal" | "page" = "page") {
   if (pageKind === "page") name = resolveAlias(name);
+  setRightSidebarOpen(true);
   if (rightSidebar().some((i) => i.kind === "page" && i.name === name)) return;
   setRightSidebar([{ kind: "page", name, pageKind }, ...rightSidebar()]);
 }
 export function openBlockInSidebar(ref: { uuid: string; page: string; pageKind: "journal" | "page" }) {
+  setRightSidebarOpen(true);
   if (rightSidebar().some((i) => i.kind === "block" && i.uuid === ref.uuid)) return;
   setRightSidebar([{ kind: "block", ...ref }, ...rightSidebar()]);
 }

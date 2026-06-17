@@ -91,6 +91,13 @@ body {
   gap: 2px;
   flex: 0 0 auto;
 }
+/* Thin divider that sets the far-right Settings cog apart from the action icons. */
+.topbar-sep {
+  width: 1px;
+  align-self: stretch;
+  margin: 6px 6px;
+  background: var(--border-color);
+}
 
 /* Tabs live inline in the topbar (between nav arrows and the action icons) to
    avoid wasting a whole row. They take the middle, scrolling if there are many. */
@@ -389,6 +396,12 @@ body {
 }
 
 .icon-btn:hover {
+  background: var(--bg-tertiary);
+}
+
+/* Pressed/active state (e.g. right-sidebar toggle while the pane is open). */
+.icon-btn.active {
+  color: var(--link-color);
   background: var(--bg-tertiary);
 }
 
@@ -2292,6 +2305,9 @@ mark {
 }
 
 .right-sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.05em;
@@ -2302,6 +2318,13 @@ mark {
 
 .right-sidebar-body {
   padding: 8px;
+}
+.rs-empty {
+  padding: 16px 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+  line-height: 1.5;
 }
 
 .rs-item {
