@@ -383,11 +383,38 @@ export function startEditing(id: string, offset: number, owner: string | null = 
 }
 
 /** Enter: split the block at `offset`. */
+// Built-in properties hidden from the editor (like OG): `id::`/`collapsed::` are
+// kept in the file for persistence but never shown in the edit textarea. They're
+// stripped from the edit view (reattached on commit) and stay with the ORIGINAL
+// block across a split.
+const HIDDEN_PROP_KEYS = new Set(["id", "collapsed"]);
+function propLineKey(line: string): string | null {
+  const m = /^\s*([A-Za-z0-9_.\/-]+)::/.exec(line);
+  return m ? m[1].toLowerCase() : null;
+}
+/** Split a block's raw into the editor-visible text (content + user properties)
+ *  and the hidden built-in property lines. */
+export function splitHiddenProps(raw: string): { visible: string; hidden: string } {
+  const vis: string[] = [];
+  const hid: string[] = [];
+  for (const l of raw.split("\n")) {
+    const k = propLineKey(l);
+    (k && HIDDEN_PROP_KEYS.has(k) ? hid : vis).push(l);
+  }
+  return { visible: vis.join("\n"), hidden: hid.join("\n") };
+}
+export function withHiddenProps(visible: string, hidden: string): string {
+  return hidden ? `${visible}\n${hidden}` : visible;
+}
+
 export function splitBlock(id: string, offset: number) {
   pushUndo("split");
   const node = doc.byId[id];
-  const before = node.raw.slice(0, offset);
-  const after = node.raw.slice(offset);
+  // The caret offset is in editor-visible space (hidden props aren't shown), so
+  // split the visible text and keep the hidden props on the original block.
+  const { visible, hidden } = splitHiddenProps(node.raw);
+  const before = visible.slice(0, offset);
+  const after = visible.slice(offset);
   const pageName = node.page;
 
   // Caret-at-start case (blank before, content after): create a NEW EMPTY block
@@ -419,7 +446,7 @@ export function splitBlock(id: string, offset: number) {
 
   setDoc(
     produce((s) => {
-      s.byId[id].raw = before;
+      s.byId[id].raw = withHiddenProps(before, hidden);
       const hasVisibleChildren = node.children.length > 0 && !node.collapsed;
       if (hasVisibleChildren) {
         s.byId[newId] = {
@@ -499,13 +526,17 @@ export function mergeWithPrev(id: string): boolean {
   const node = doc.byId[id];
   if (doc.byId[prev].page !== node.page) return false; // don't merge across pages
   pushUndo("merge");
-  const prevRaw = doc.byId[prev].raw;
-  const joinOffset = prevRaw.length;
+  // Merge visible content only; keep the previous block's hidden props (it keeps
+  // its identity) and drop the absorbed block's — otherwise the id::/collapsed::
+  // lines would be concatenated mid-line and a block could end up with two ids.
+  const prevSplit = splitHiddenProps(doc.byId[prev].raw);
+  const curVisible = splitHiddenProps(node.raw).visible;
+  const joinOffset = prevSplit.visible.length;
   const pageName = node.page;
 
   setDoc(
     produce((s) => {
-      s.byId[prev].raw = prevRaw + node.raw;
+      s.byId[prev].raw = withHiddenProps(prevSplit.visible + curVisible, prevSplit.hidden);
       for (const c of node.children) s.byId[c].parent = prev;
       s.byId[prev].children.push(...node.children);
       const arr = node.parent === null

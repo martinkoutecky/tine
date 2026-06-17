@@ -32,6 +32,8 @@ import {
   moveSelection,
   isSelected,
   persistentBlockRef,
+  splitHiddenProps,
+  withHiddenProps,
 } from "../store";
 import { parseOutline } from "../editor/outline";
 import {
@@ -482,12 +484,20 @@ function Editor(props: { id: string }): JSX.Element {
   let ref!: HTMLTextAreaElement;
   const node = () => doc.byId[props.id];
 
-  // Annotation (PDF highlight) blocks expose only their highlight text in the
-  // editor; the metadata properties stay hidden but are reattached on commit.
+  // What the textarea shows. Annotation (PDF highlight) blocks expose only their
+  // highlight text (all metadata hidden); every other block hides just the
+  // built-in id::/collapsed:: lines (like OG). Hidden lines are preserved and
+  // reattached on commit.
   const isAnnot = () => isAnnotationBlock(node().raw);
-  const editorValue = () => (isAnnot() ? splitProps(node().raw).text : node().raw);
-  const commit = (text: string) =>
-    setRaw(props.id, isAnnot() ? joinProps(text, splitProps(node().raw).props) : text);
+  const editorValue = () =>
+    isAnnot() ? splitProps(node().raw).text : splitHiddenProps(node().raw).visible;
+  const commit = (text: string) => {
+    if (isAnnot()) {
+      setRaw(props.id, joinProps(text, splitProps(node().raw).props));
+      return;
+    }
+    setRaw(props.id, withHiddenProps(text, splitHiddenProps(node().raw).hidden));
+  };
 
   const [ac, setAc] = createSignal<Trigger | null>(null);
   const [acItems, setAcItems] = createSignal<AcItem[]>([]);

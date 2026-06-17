@@ -57,6 +57,15 @@ describe("split (Enter)", () => {
     expect(takeCaretFor(newId)).toBe(0);
   });
 
+  it("keeps the hidden id:: on the original block when splitting (offset is in visible space)", () => {
+    const dto = load([blk("hello world\nid:: 5462a76e-8aa4-4362-896e-9af769e5df77")]);
+    const id = dto.blocks[0].id;
+    splitBlock(id, 5); // caret after "hello" in the *visible* text
+    // Original keeps "hello" + its id::; the new block gets just " world".
+    expect(doc.byId[id].raw).toBe("hello\nid:: 5462a76e-8aa4-4362-896e-9af769e5df77");
+    expect(doc.byId[doc.pages[0].roots[1]].raw).toBe(" world");
+  });
+
   it("at start (offset 0), inserts an empty block before and the original keeps its uuid + content", () => {
     const dto = load([blk("a"), blk("query block")]);
     const id = dto.blocks[1].id;
@@ -155,6 +164,19 @@ describe("merge (Backspace at 0)", () => {
     const b = dto.blocks[1].id;
     mergeWithPrev(b);
     expect(shape()).toEqual([["ab", [["b1"]]]]);
+  });
+
+  it("merges visible content, keeps prev's id::, drops the absorbed block's", () => {
+    const dto = load([
+      blk("foo\nid:: 11111111-1111-4111-8111-111111111111"),
+      blk("bar\nid:: 22222222-2222-4222-8222-222222222222"),
+    ]);
+    const bar = dto.blocks[1].id;
+    mergeWithPrev(bar);
+    const foo = doc.pages[0].roots[0];
+    // Visible content joined; only the previous block's id:: survives.
+    expect(doc.byId[foo].raw).toBe("foobar\nid:: 11111111-1111-4111-8111-111111111111");
+    expect(takeCaretFor(foo)).toBe(3); // join at end of "foo" (visible space)
   });
 
   it("first block can't merge backwards", () => {
