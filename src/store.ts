@@ -954,6 +954,17 @@ export function moveBlock(id: string, newParent: string | null, index: number) {
 
 /** Move a block up/down among its siblings (mod+Up/Down). Keyed <For> keeps the
  *  DOM node — so if the block is being edited, the textarea + caret survive. */
+// During a block-move reorder the textarea momentarily blurs; this flag tells
+// the editor's onBlur to keep edit mode (the move handler refocuses + restores
+// the caret right after).
+let blockMoving = false;
+export function isBlockMoving(): boolean {
+  return blockMoving;
+}
+export function setBlockMoving(v: boolean): void {
+  blockMoving = v;
+}
+
 export function moveItem(id: string, dir: 1 | -1) {
   const node = doc.byId[id];
   if (!node) return;

@@ -112,8 +112,111 @@ fn load_graph(
     let graph = Graph::open(&root);
     let meta = graph.meta();
     *state.graph.lock().unwrap() = Some(graph);
+    backup_async(app.clone());
     warm_cache_async(app);
     Ok(meta)
+}
+
+// Snapshot the graph's markdown into the OS app-data dir on open, keeping the
+// last few. Local-only (outside the graph, so Syncthing never sees it); a safety
+// net against a bad write or accidental edit. Best-effort and fully detached so
+// it never blocks startup or holds the graph lock during file copies.
+const BACKUP_KEEP: usize = 12;
+fn backup_async(app: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        // Grab just the paths under the lock, then copy from disk lock-free.
+        let (journals, pages, cfg, root) = {
+            let state: State<'_, AppState> = app.state();
+            let guard = state.graph.lock().unwrap();
+            match guard.as_ref() {
+                Some(g) => (
+                    g.journals_path(),
+                    g.pages_path(),
+                    g.root.join("logseq").join("config.edn"),
+                    g.root.clone(),
+                ),
+                None => return,
+            }
+        };
+        let Ok(data_dir) = app.path().app_data_dir() else { return };
+        let base = data_dir
+            .join("backups")
+            .join(sanitize_id(&root.display().to_string()));
+        let dest = base.join(backup_stamp());
+        let mut n = copy_md_dir(&journals, &dest.join(dir_name(&journals)));
+        n += copy_md_dir(&pages, &dest.join(dir_name(&pages)));
+        if cfg.exists() {
+            let out = dest.join("logseq");
+            if std::fs::create_dir_all(&out).is_ok()
+                && std::fs::copy(&cfg, out.join("config.edn")).is_ok()
+            {
+                n += 1;
+            }
+        }
+        if n == 0 {
+            let _ = std::fs::remove_dir_all(&dest);
+            return;
+        }
+        prune_backups(&base, BACKUP_KEEP);
+    });
+}
+
+fn dir_name(p: &std::path::Path) -> String {
+    p.file_name().and_then(|s| s.to_str()).unwrap_or("dir").to_string()
+}
+fn sanitize_id(s: &str) -> String {
+    s.chars().map(|c| if c.is_alphanumeric() { c } else { '_' }).collect()
+}
+fn copy_md_dir(src: &std::path::Path, dest: &std::path::Path) -> usize {
+    let Ok(rd) = std::fs::read_dir(src) else { return 0 };
+    let mut n = 0;
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.extension().and_then(|x| x.to_str()) != Some("md") {
+            continue;
+        }
+        if std::fs::create_dir_all(dest).is_ok() {
+            if let Some(name) = p.file_name() {
+                if std::fs::copy(&p, dest.join(name)).is_ok() {
+                    n += 1;
+                }
+            }
+        }
+    }
+    n
+}
+fn prune_backups(base: &std::path::Path, keep: usize) {
+    let Ok(rd) = std::fs::read_dir(base) else { return };
+    let mut dirs: Vec<std::path::PathBuf> =
+        rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
+    dirs.sort(); // timestamp-named → chronological
+    if dirs.len() > keep {
+        for d in &dirs[..dirs.len() - keep] {
+            let _ = std::fs::remove_dir_all(d);
+        }
+    }
+}
+/// UTC `YYYY-MM-DD_HH-MM-SS` from the system clock (Hinnant civil-from-days).
+fn backup_stamp() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let days = secs.div_euclid(86_400);
+    let rem = secs.rem_euclid(86_400);
+    let (h, mi, s) = (rem / 3600, (rem % 3600) / 60, rem % 60);
+    let z = days + 719_468;
+    let era = (if z >= 0 { z } else { z - 146_096 }) / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if m <= 2 { y + 1 } else { y };
+    format!("{year:04}-{m:02}-{d:02}_{h:02}-{mi:02}-{s:02}")
 }
 
 /// Build the search/backlinks cache off the hot path. We let the frontend's

@@ -34,6 +34,8 @@ import {
   persistentBlockRef,
   splitHiddenProps,
   withHiddenProps,
+  isBlockMoving,
+  setBlockMoving,
 } from "../store";
 import { parseOutline } from "../editor/outline";
 import {
@@ -769,8 +771,17 @@ function Editor(props: { id: string }): JSX.Element {
     if (matchesCommand(e, "editor/move-block-up") || matchesCommand(e, "editor/move-block-down")) {
       e.preventDefault();
       commit(raw);
+      // Keep editing the moved block with the caret intact. The DOM reorder
+      // blurs the textarea (and onBlur would otherwise exit editing), so guard
+      // the blur and refocus + restore the caret once the reorder settles.
+      setBlockMoving(true);
       moveItem(props.id, matchesCommand(e, "editor/move-block-down") ? 1 : -1);
-      startEditing(props.id, start);
+      requestAnimationFrame(() => {
+        ref.focus();
+        const o = Math.min(start, ref.value.length);
+        ref.setSelectionRange(o, o);
+        setBlockMoving(false);
+      });
       return;
     }
 
@@ -861,6 +872,9 @@ function Editor(props: { id: string }): JSX.Element {
 
   const onBlur = () => {
     commit(ref.value);
+    // A block-move reorder blurs us momentarily — stay in edit mode (the move
+    // handler refocuses and restores the caret).
+    if (isBlockMoving()) return;
     // Only clear if no other block grabbed editing focus.
     if (editingId() === props.id) setEditingId(null);
   };
