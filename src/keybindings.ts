@@ -154,6 +154,17 @@ function parseBinding(b: string): Chord[] {
   return b.trim().split(/\s+/).map(parseChord);
 }
 
+// Is this the Super/Windows key itself? (its own keydown/keyup, used to track
+// held state — WebKitGTK/Wayland doesn't reliably set e.metaKey for it.)
+function isSuperKey(e: KeyboardEvent): boolean {
+  const k = e.key.toLowerCase();
+  return k === "super" || k === "os" || k === "meta" || /^(Meta|OS|Super)(Left|Right)?$/.test(e.code);
+}
+// Whether the Super key is currently held. Maintained from keydown/keyup because
+// e.metaKey is unreliable on this platform; reset on blur so a missed keyup
+// (e.g. the WM grabbed the combo) doesn't leave it stuck.
+let superDown = false;
+
 function eventToChord(e: KeyboardEvent): Chord {
   // WebKitGTK reports Shift+Tab with e.key != "Tab"; e.code is reliable.
   let key = e.code === "Tab" ? "tab" : e.key.toLowerCase();
@@ -162,8 +173,9 @@ function eventToChord(e: KeyboardEvent): Chord {
     mod: isMac ? e.metaKey : e.ctrlKey,
     shift: e.shiftKey,
     alt: e.altKey,
-    // Super/Win on non-Mac (on Mac, metaKey is already `mod`).
-    meta: !isMac && e.metaKey,
+    // Super/Win on non-Mac (on Mac, metaKey is already `mod`). Fall back to the
+    // tracked held state when the event's own metaKey flag is missing.
+    meta: !isMac && (e.metaKey || superDown),
     key,
   };
 }
@@ -374,6 +386,24 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
     }
   };
 
+  // Track the Super key's held state separately (e.metaKey is unreliable here).
+  // Runs even while the dispatcher is suspended (shortcut recording) so a
+  // Super+key chord can be captured.
+  const superTracker = (e: KeyboardEvent) => {
+    if (isSuperKey(e)) superDown = e.type === "keydown";
+  };
+  const clearSuper = () => {
+    superDown = false;
+  };
+
   window.addEventListener("keydown", handler, true);
-  return () => window.removeEventListener("keydown", handler, true);
+  window.addEventListener("keydown", superTracker, true);
+  window.addEventListener("keyup", superTracker, true);
+  window.addEventListener("blur", clearSuper);
+  return () => {
+    window.removeEventListener("keydown", handler, true);
+    window.removeEventListener("keydown", superTracker, true);
+    window.removeEventListener("keyup", superTracker, true);
+    window.removeEventListener("blur", clearSuper);
+  };
 }
