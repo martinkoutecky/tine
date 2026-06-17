@@ -11,6 +11,8 @@ import {
 } from "../ui";
 import { openPage, openPageInNewTab, openJournals, route } from "../router";
 import { backend } from "../backend";
+import { carryDay } from "../carry";
+import { journalTitle } from "../journal";
 import {
   ensureBlockId,
   persistentBlockRef,
@@ -172,6 +174,10 @@ function PageMenu(props: {
             pushToast("Copied page as Markdown", "success");
           }),
     },
+    // Carry a past day's unfinished tasks to today (journal days only, not today).
+    ...(props.pageKind === "journal" && props.name !== journalTitle(new Date())
+      ? [{ label: "Carry unfinished tasks → today", run: () => void carryDay(props.name) }]
+      : []),
     ...(props.pageKind === "page"
       ? [
           { label: "Rename page", run: rename },

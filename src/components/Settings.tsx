@@ -17,6 +17,12 @@ import {
   toggleDocumentMode,
   dimInFocus,
   setDimInFocus,
+  carryKeepsContext,
+  setCarryKeepsContext,
+  carryHeader,
+  setCarryHeader,
+  carryDays,
+  setCarryDays,
 } from "../ui";
 import { commandDefaults, eventToBindingString, setKeybindingsSuspended } from "../keybindings";
 import { switchGraph } from "../graph";
@@ -165,6 +171,59 @@ export function Settings(): JSX.Element {
               </button>
               <span class="settings-hint" style={{ "margin-left": "8px" }}>
                 Auto-enable dim inactive blocks (t b) when entering focus mode (t f).
+              </span>
+            </div>
+          </div>
+
+          <div class="settings-row">
+            <span class="settings-label">Carry-over keeps context</span>
+            <div>
+              <button
+                class="settings-toggle"
+                classList={{ on: carryKeepsContext() }}
+                role="switch"
+                aria-checked={carryKeepsContext()}
+                onClick={() => setCarryKeepsContext(!carryKeepsContext())}
+              >
+                <span class="settings-toggle-knob" />
+              </button>
+              <span class="settings-hint" style={{ "margin-left": "8px" }}>
+                Move whole blocks that contain an open task (on) vs. pull out just the task (off).
+              </span>
+            </div>
+          </div>
+
+          <div class="settings-row">
+            <span class="settings-label">Carry-over header</span>
+            <div>
+              <button
+                class="settings-toggle"
+                classList={{ on: carryHeader() }}
+                role="switch"
+                aria-checked={carryHeader()}
+                onClick={() => setCarryHeader(!carryHeader())}
+              >
+                <span class="settings-toggle-knob" />
+              </button>
+              <span class="settings-hint" style={{ "margin-left": "8px" }}>
+                Add a “Carried over” heading above carried tasks.
+              </span>
+            </div>
+          </div>
+
+          <div class="settings-row">
+            <span class="settings-label">Carry “last N days”</span>
+            <div>
+              <input
+                type="number"
+                min="1"
+                max="3650"
+                class="settings-num"
+                value={carryDays()}
+                onChange={(e) => setCarryDays(Number(e.currentTarget.value))}
+              />
+              <span class="settings-hint" style={{ "margin-left": "8px" }}>
+                N for the “Carry unfinished tasks: last N days” command (Ctrl-K).
               </span>
             </div>
           </div>

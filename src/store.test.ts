@@ -25,7 +25,9 @@ import {
   moveSelectionItems,
   moveBlockFeed,
   pageByName,
+  carryUnfinished,
 } from "./store";
+import { journalTitle } from "./journal";
 import type { BlockDto, PageDto } from "./types";
 
 let counter = 0;
@@ -216,6 +218,61 @@ describe("cross-day move (journal feed as one list)", () => {
     const res = await moveBlockFeed(today.blocks[0].id, -1);
     expect(res).toBe("none");
     expect(raws("Today")).toEqual(["t1"]);
+  });
+});
+
+describe("carry unfinished tasks → today", () => {
+  const TODAY = journalTitle(new Date());
+  const journal = (name: string, blocks: BlockDto[]): PageDto => ({
+    name, kind: "journal", title: name, pre_block: null, blocks,
+  });
+  const raws = (name: string) => pageByName(name)!.roots.map((id) => doc.byId[id].raw);
+
+  it("keepContext: moves whole top-level blocks containing an open task; leaves the rest", () => {
+    const today = journal(TODAY, [blk("")]); // synthetic empty today
+    const older = journal("Older", [
+      blk("TODO A", [blk("DONE A1")]), // open task with done child → moves whole
+      blk("DONE B"), // finished → stays
+      blk("note C"), // plain note → stays
+      blk("note D", [blk("TODO D1")]), // note containing an open task → moves whole (context)
+    ]);
+    loadFeed([today, older]);
+    const moved = carryUnfinished(["Older"], true, null);
+    expect(moved).toBe(2);
+    expect(raws(TODAY)).toEqual(["TODO A", "note D"]); // empty placeholder dropped
+    expect(raws("Older")).toEqual(["DONE B", "note C"]);
+    // subtrees travel along
+    const a = pageByName(TODAY)!.roots[0];
+    expect(doc.byId[a].children.map((id) => doc.byId[id].raw)).toEqual(["DONE A1"]);
+  });
+
+  it("pull-out (keepContext off): extracts just the open-task subtrees, leaving scaffolding", () => {
+    const today = journal(TODAY, [blk("existing")]);
+    const older = journal("Older", [blk("note D", [blk("TODO D1", [blk("DONE D1a")])])]);
+    loadFeed([today, older]);
+    const moved = carryUnfinished(["Older"], false, null);
+    expect(moved).toBe(1);
+    expect(raws(TODAY)).toEqual(["existing", "TODO D1"]); // pulled out; note D stays
+    expect(raws("Older")).toEqual(["note D"]);
+    const t = pageByName(TODAY)!.roots[1];
+    expect(doc.byId[t].children.map((id) => doc.byId[id].raw)).toEqual(["DONE D1a"]);
+  });
+
+  it("processes days in order (newest first ends up on top) and can add a header", () => {
+    const today = journal(TODAY, [blk("")]);
+    const d1 = journal("D1", [blk("TODO from-d1")]);
+    const d2 = journal("D2", [blk("TODO from-d2")]);
+    loadFeed([today, d1, d2]);
+    carryUnfinished(["D1", "D2"], true, "Carried over");
+    expect(raws(TODAY)).toEqual(["Carried over", "TODO from-d1", "TODO from-d2"]);
+  });
+
+  it("is a no-op when there are no open tasks", () => {
+    const today = journal(TODAY, [blk("")]);
+    const older = journal("Older", [blk("DONE x"), blk("just a note")]);
+    loadFeed([today, older]);
+    expect(carryUnfinished(["Older"], true, null)).toBe(0);
+    expect(raws("Older")).toEqual(["DONE x", "just a note"]);
   });
 });
 

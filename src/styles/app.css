@@ -715,6 +715,15 @@ body {
 .theme-switch.is-dark .theme-knob {
   transform: translateX(100%);
 }
+.settings-num {
+  width: 64px;
+  padding: 3px 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 13px;
+}
 .settings-color {
   width: 40px;
   height: 28px;

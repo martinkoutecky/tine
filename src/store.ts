@@ -12,6 +12,8 @@ import type { BlockDto, PageDto, PageKind } from "./types";
 import type { OutlineNode } from "./editor/outline";
 import { backend } from "./backend";
 import { markConflict, isConflicted, bumpDataRev, rightSidebar, conflicts } from "./ui";
+import { blockView } from "./render/block";
+import { journalTitle } from "./journal";
 
 export interface Node {
   id: string;
@@ -1086,6 +1088,100 @@ export async function moveSelectionItems(dir: 1 | -1) {
   if (!target) return;
   pushUndo("move-sel-cross");
   crossMoveBlocks(ids, page, target, dir);
+}
+
+// ---------------------------------------------------------------------------
+// Carry unfinished tasks forward (B)
+// ---------------------------------------------------------------------------
+
+const OPEN_MARKERS = new Set(["TODO", "DOING", "NOW", "LATER", "WAITING"]);
+function isOpenTask(id: string): boolean {
+  const m = blockView(doc.byId[id]?.raw ?? "").marker;
+  return !!m && OPEN_MARKERS.has(m);
+}
+function subtreeHasOpenTask(id: string): boolean {
+  const n = doc.byId[id];
+  if (!n) return false;
+  return isOpenTask(id) || n.children.some(subtreeHasOpenTask);
+}
+/** Collect the top-most open-task blocks in a subtree (open tasks not nested
+ *  under another open task) — the pull-out unit when keepContext is off. */
+function collectTopOpenTasks(id: string, acc: string[]) {
+  if (isOpenTask(id)) {
+    acc.push(id);
+    return; // its open-task descendants travel with it
+  }
+  for (const c of doc.byId[id]?.children ?? []) collectTopOpenTasks(c, acc);
+}
+
+/** Carry unfinished tasks from `fromPages` into today's journal. Pages are
+ *  processed in the given order and each batch is appended, so passing days
+ *  newest→oldest puts the newest on top. `keepContext` true moves each top-level
+ *  block that contains an open task whole; false pulls out just the open-task
+ *  subtrees. Returns the number of blocks moved. Today + every fromPage must be
+ *  loaded into the working set first. */
+export function carryUnfinished(
+  fromPages: string[],
+  keepContext: boolean,
+  header: string | null
+): number {
+  const today = journalTitle(new Date());
+  if (!pageByName(today)) return 0;
+  type Item = { id: string; from: string; parent: string | null };
+  const plan: Item[] = [];
+  for (const fp of fromPages) {
+    if (fp === today) continue;
+    const page = pageByName(fp);
+    if (!page) continue;
+    if (keepContext) {
+      for (const rid of page.roots) {
+        if (subtreeHasOpenTask(rid)) plan.push({ id: rid, from: fp, parent: null });
+      }
+    } else {
+      const ids: string[] = [];
+      for (const rid of page.roots) collectTopOpenTasks(rid, ids);
+      for (const id of ids) plan.push({ id, from: fp, parent: doc.byId[id].parent });
+    }
+  }
+  if (!plan.length) return 0;
+  pushUndo("carry");
+  setDoc(
+    produce((s) => {
+      const todayPage = s.pages.find((p) => p.name === today);
+      if (!todayPage) return;
+      const carried: string[] = [];
+      for (const item of plan) {
+        if (item.parent === null) {
+          const pg = s.pages.find((p) => p.name === item.from);
+          if (pg) pg.roots = pg.roots.filter((x) => x !== item.id);
+        } else {
+          const par = s.byId[item.parent];
+          if (par) par.children = par.children.filter((x) => x !== item.id);
+        }
+        s.byId[item.id].parent = null;
+        reassignPage(s, item.id, today);
+        carried.push(item.id);
+      }
+      // Drop today's lone empty placeholder bullet so carried tasks don't sit
+      // under a blank line.
+      if (todayPage.roots.length === 1) {
+        const only = s.byId[todayPage.roots[0]];
+        if (only && only.children.length === 0 && only.raw.trim() === "") {
+          delete s.byId[todayPage.roots[0]];
+          todayPage.roots = [];
+        }
+      }
+      if (header) {
+        const hid = freshId();
+        s.byId[hid] = { id: hid, raw: header, collapsed: false, parent: null, page: today, children: [] };
+        todayPage.roots.push(hid);
+      }
+      todayPage.roots.push(...carried);
+    })
+  );
+  for (const fp of new Set(plan.map((p) => p.from))) markDirty(fp);
+  markDirty(today);
+  return plan.length;
 }
 
 export function toggleCollapse(id: string) {

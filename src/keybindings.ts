@@ -24,7 +24,9 @@ import {
   exitFocusMode,
   switcherOpen,
   settingsOpen,
+  carryDays,
 } from "./ui";
+import { carryDaysBack } from "./carry";
 import { openJournals } from "./router";
 import {
   undo,
@@ -81,6 +83,12 @@ const COMMANDS: CommandDef[] = [
   { id: "ui/toggle-document-mode", binding: "t d", label: "Toggle document mode", scope: "global", run: toggleDocumentMode },
   { id: "ui/toggle-focus-mode", binding: "t f", label: "Toggle focus mode", scope: "global", run: toggleFocusMode },
   { id: "ui/toggle-dim-blocks", binding: "t b", label: "Toggle dim inactive blocks", scope: "global", run: toggleDimInactiveBlocks },
+  // Carry unfinished tasks forward. Palette-only (no default binding); the presets
+  // and the settings-configured N are all surfaced in Ctrl-K.
+  { id: "task/carry-7", binding: "", label: "Carry unfinished tasks: last 7 days", scope: "global", run: () => void carryDaysBack(7) },
+  { id: "task/carry-30", binding: "", label: "Carry unfinished tasks: last 30 days", scope: "global", run: () => void carryDaysBack(30) },
+  { id: "task/carry-365", binding: "", label: "Carry unfinished tasks: last 365 days", scope: "global", run: () => void carryDaysBack(365) },
+  { id: "task/carry-n", binding: "", label: "Carry unfinished tasks: last N days (Settings)", scope: "global", run: () => void carryDaysBack(carryDays()) },
   { id: "editor/undo", binding: "mod+z", label: "Undo", scope: "global", run: undo, global: true },
   { id: "editor/redo", binding: "mod+shift+z", label: "Redo", scope: "global", run: redo, global: true },
   // Editor commands (resolved in Block.tsx / selection handler).

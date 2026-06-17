@@ -98,6 +98,35 @@ export function toggleDimInFocus() {
   setDimInFocus(!dimInFocus());
 }
 
+// --- carry-unfinished-tasks settings (persisted) ---
+const CARRY_CTX_KEY = "logseq-claude.carryKeepsContext";
+const CARRY_HDR_KEY = "logseq-claude.carryHeader";
+const CARRY_N_KEY = "logseq-claude.carryDays";
+// Default ON: move whole top-level blocks that contain an open task (keep their
+// context), rather than pulling just the task out.
+export const [carryKeepsContext, setCarryKeepsContextSig] = createSignal(loadStr(CARRY_CTX_KEY) !== "0");
+export function setCarryKeepsContext(v: boolean) {
+  setCarryKeepsContextSig(v);
+  saveStr(CARRY_CTX_KEY, v ? null : "0");
+}
+// Default OFF: prepend a "Carried over" header above the carried blocks.
+export const [carryHeader, setCarryHeaderSig] = createSignal(loadStr(CARRY_HDR_KEY) === "1");
+export function setCarryHeader(v: boolean) {
+  setCarryHeaderSig(v);
+  saveStr(CARRY_HDR_KEY, v ? "1" : null);
+}
+/** Header text to insert, or null when disabled. */
+export function carryHeaderText(): string | null {
+  return carryHeader() ? "Carried over" : null;
+}
+// N for the "carry last N days" command (presets 7/30/365 don't use it).
+export const [carryDays, setCarryDaysSig] = createSignal(Number(loadStr(CARRY_N_KEY)) || 7);
+export function setCarryDays(n: number) {
+  const v = Math.max(1, Math.min(3650, Math.floor(n) || 7));
+  setCarryDaysSig(v);
+  saveStr(CARRY_N_KEY, String(v));
+}
+
 // Remember the window's pre-focus fullscreen state so exiting focus restores it
 // (rather than always dropping out of fullscreen if the user was already in it).
 let preFocusFullscreen = false;
