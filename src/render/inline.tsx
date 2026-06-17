@@ -2,10 +2,7 @@
 // [[links]] and #tags), not an innerHTML string. Used to render a block when it
 // is not being edited.
 
-import { For, Show, createResource, createSignal, onCleanup, type JSX } from "solid-js";
-import katex from "katex";
-// mhchem extends KaTeX with \ce{…} chemistry support (registers globally on import).
-import "katex/contrib/mhchem";
+import { For, Show, createMemo, createResource, createSignal, onCleanup, type JSX } from "solid-js";
 import { openPage, openPageInNewTab } from "../router";
 import { openPdf, openPageInSidebar, openPageContextMenu, setLightbox } from "../ui";
 import { parseInline, type Seg } from "./parseInline";
@@ -148,19 +145,42 @@ function renderSeg(s: Seg, blockId?: string): JSX.Element {
   }
 }
 
+// KaTeX is heavy (hundreds of KB) — load it on first actual math, not eagerly
+// into the initial bundle, and cache the module promise so it loads once.
+let katexMod: Promise<typeof import("katex").default> | null = null;
+function loadKatex() {
+  if (!katexMod) {
+    katexMod = (async () => {
+      const m = await import("katex");
+      // mhchem extends KaTeX with \ce{…}; registers on the (shared) katex instance.
+      await import("katex/contrib/mhchem");
+      return m.default;
+    })();
+  }
+  return katexMod;
+}
+
 // KaTeX-typeset math. KaTeX output is trusted HTML, so innerHTML is safe here.
+// Shows the raw TeX until KaTeX has loaded, then upgrades. The typeset result is
+// memoized so re-renders of this span don't re-run the (non-trivial) typesetter.
 function MathView(props: { tex: string; display: boolean }): JSX.Element {
-  const html = () => {
+  const [katex] = createResource(loadKatex);
+  const html = createMemo(() => {
+    const k = katex();
+    if (!k) return null;
     try {
-      return katex.renderToString(props.tex, {
-        throwOnError: false,
-        displayMode: props.display,
-      });
+      return k.renderToString(props.tex, { throwOnError: false, displayMode: props.display });
     } catch {
-      return props.tex;
+      return null;
     }
-  };
-  return <span class="math" classList={{ "math-display": props.display }} innerHTML={html()} />;
+  });
+  return (
+    <span class="math" classList={{ "math-display": props.display }}>
+      <Show when={html()} fallback={<span class="math-raw">{props.tex}</span>}>
+        <span innerHTML={html()!} />
+      </Show>
+    </span>
+  );
 }
 
 // Resolve the path of a graph asset relative to the `assets/` dir.

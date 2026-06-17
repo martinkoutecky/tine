@@ -110,11 +110,20 @@ function toFeedPage(dto: PageDto, byId: Record<string, Node>): FeedPage {
   return { name: dto.name, kind: dto.kind, title: dto.title, preBlock: dto.pre_block, roots };
 }
 
-/** Drop a page's blocks from the shared byId map (before replacing it). */
+function removeNodeSubtree(s: DocState, id: string) {
+  const n = s.byId[id];
+  if (!n) return;
+  for (const c of n.children) removeNodeSubtree(s, c);
+  delete s.byId[id];
+}
+
+/** Drop a page's blocks from the shared byId map (before replacing it). Walks the
+ *  page's own root subtrees — O(page size) — rather than sweeping all of `byId`
+ *  (which made loading K pages into an N-node feed O(K·N)). */
 function purgePageNodes(s: DocState, pageName: string) {
-  for (const id of Object.keys(s.byId)) {
-    if (s.byId[id].page === pageName) delete s.byId[id];
-  }
+  const page = s.pages.find((p) => p.name === pageName);
+  if (!page) return;
+  for (const r of page.roots) removeNodeSubtree(s, r);
 }
 
 /** Merge a page into the working set, replacing any prior copy of that page.
@@ -177,9 +186,7 @@ function evictIfNeeded() {
           i++;
           continue;
         }
-        for (const id of Object.keys(s.byId)) {
-          if (s.byId[id].page === name) delete s.byId[id];
-        }
+        purgePageNodes(s, name);
         s.pages.splice(i, 1);
       }
     })
@@ -264,32 +271,41 @@ function indexInSiblings(id: string): number {
   return rootsOf(id).indexOf(id);
 }
 
-/** Visible blocks in the MAIN view, in display order (drives editor arrow-nav).
- *  Scoped to the feed so navigation stays within the main content area, not
- *  satellite pages loaded for the sidebar/queries. */
+/** Visible blocks in the MAIN view, in display order (drives editor arrow-nav),
+ *  plus an id→index map. Memoized: it's recomputed only when the feed or a
+ *  collapsed/children state changes (NOT on plain typing), and shared across the
+ *  many callers in one tick. Scoped to the feed so navigation stays within the
+ *  main content area, not satellite pages loaded for the sidebar/queries. */
+const visibleData = createRoot(() =>
+  createMemo(() => {
+    const order: string[] = [];
+    const index = new Map<string, number>();
+    const walk = (ids: string[]) => {
+      for (const id of ids) {
+        index.set(id, order.length);
+        order.push(id);
+        const n = doc.byId[id];
+        if (n && !n.collapsed && n.children.length) walk(n.children);
+      }
+    };
+    for (const p of mainPages()) walk(p.roots);
+    return { order, index };
+  })
+);
 export function visibleOrder(): string[] {
-  const out: string[] = [];
-  const walk = (ids: string[]) => {
-    for (const id of ids) {
-      out.push(id);
-      const n = doc.byId[id];
-      if (!n.collapsed && n.children.length) walk(n.children);
-    }
-  };
-  for (const p of mainPages()) walk(p.roots);
-  return out;
+  return visibleData().order;
 }
 
 export function prevVisible(id: string): string | null {
-  const order = visibleOrder();
-  const i = order.indexOf(id);
-  return i > 0 ? order[i - 1] : null;
+  const { order, index } = visibleData();
+  const i = index.get(id);
+  return i !== undefined && i > 0 ? order[i - 1] : null;
 }
 
 export function nextVisible(id: string): string | null {
-  const order = visibleOrder();
-  const i = order.indexOf(id);
-  return i >= 0 && i < order.length - 1 ? order[i + 1] : null;
+  const { order, index } = visibleData();
+  const i = index.get(id);
+  return i !== undefined && i < order.length - 1 ? order[i + 1] : null;
 }
 
 export function depthOf(id: string): number {
@@ -306,12 +322,24 @@ export function depthOf(id: string): number {
 // Undo / redo (snapshot-based; typing in one block coalesces to one step)
 // ---------------------------------------------------------------------------
 
-interface Snapshot {
+// A full-working-set snapshot (structural ops) or a single-block raw patch
+// (typing). Typing is by far the most frequent op, so it records an O(1) inverse
+// instead of cloning the whole graph on the first keystroke of every burst.
+interface SnapEntry {
+  kind: "snap";
   byId: Record<string, Node>;
   pages: FeedPage[];
+  dirty: string[]; // pages to re-save on undo/redo (not every loaded page)
 }
-const undoStack: Snapshot[] = [];
-let redoStack: Snapshot[] = [];
+interface RawEntry {
+  kind: "raw";
+  id: string;
+  raw: string; // the block's text to restore
+  page: string;
+}
+type UndoEntry = SnapEntry | RawEntry;
+const undoStack: UndoEntry[] = [];
+let redoStack: UndoEntry[] = [];
 let lastUndoTag: string | null = null;
 
 // Hand-rolled clones — Node/FeedPage are flat (primitives + a string[]), so a
@@ -342,45 +370,67 @@ function clonePages(src: FeedPage[]): FeedPage[] {
     roots: p.roots.slice(),
   }));
 }
-function snapshot(): Snapshot {
+function snapEntry(dirtyPages?: string[]): SnapEntry {
   return {
+    kind: "snap",
     byId: cloneNodes(unwrap(doc.byId)),
     pages: clonePages(unwrap(doc.pages)),
+    dirty: dirtyPages ?? doc.pages.map((p) => p.name),
   };
 }
 
-/** Record the current state for undo. `tag` coalesces consecutive typing in the
- *  same block (tag "type:<id>"); structural ops use distinct tags. */
-function pushUndo(tag: string) {
-  if (tag.startsWith("type:") && tag === lastUndoTag) return;
-  undoStack.push(snapshot());
+/** Snapshot before a STRUCTURAL op. Pass the affected page name(s) so an undo
+ *  re-saves only those pages, not every loaded page; omit to fall back to all
+ *  (safe). `tag` is kept only to reset the typing-coalesce marker. */
+function pushUndo(tag: string, dirtyPages?: string[]) {
+  undoStack.push(snapEntry(dirtyPages));
   if (undoStack.length > 200) undoStack.shift();
   redoStack = [];
   lastUndoTag = tag;
 }
 
-function restore(snap: Snapshot) {
-  setDoc("byId", snap.byId);
-  setDoc("pages", snap.pages);
+/** Record an O(1) inverse patch for a single-block text edit (typing). A typing
+ *  burst in one block coalesces to a single entry holding the pre-burst text. */
+function pushRawUndo(id: string, prevRaw: string) {
+  const tag = `type:${id}`;
+  if (tag === lastUndoTag) return; // mid-burst: keep the first (pre-burst) raw
+  undoStack.push({ kind: "raw", id, raw: prevRaw, page: doc.byId[id].page });
+  if (undoStack.length > 200) undoStack.shift();
+  redoStack = [];
+  lastUndoTag = tag;
+}
+
+/** Apply one entry and return its inverse (to push onto the opposite stack). */
+function applyEntry(e: UndoEntry): UndoEntry {
+  if (e.kind === "raw") {
+    const node = doc.byId[e.id];
+    const inverse: RawEntry = { kind: "raw", id: e.id, raw: node ? node.raw : "", page: e.page };
+    if (node) {
+      setDoc("byId", e.id, "raw", e.raw);
+      dirty.add(e.page);
+    }
+    return inverse;
+  }
+  const inverse = snapEntry(e.dirty);
+  setDoc("byId", e.byId);
+  setDoc("pages", e.pages);
+  for (const p of e.dirty) dirty.add(p);
+  return inverse;
 }
 
 export function undo() {
   if (!undoStack.length) return;
-  redoStack.push(snapshot());
-  restore(undoStack.pop()!);
+  redoStack.push(applyEntry(undoStack.pop()!));
   lastUndoTag = null;
   setEditingId(null);
-  for (const p of doc.pages) dirty.add(p.name);
   scheduleSave();
 }
 
 export function redo() {
   if (!redoStack.length) return;
-  undoStack.push(snapshot());
-  restore(redoStack.pop()!);
+  undoStack.push(applyEntry(redoStack.pop()!));
   lastUndoTag = null;
   setEditingId(null);
-  for (const p of doc.pages) dirty.add(p.name);
   scheduleSave();
 }
 
@@ -399,7 +449,7 @@ function markDirty(pageName: string) {
 }
 
 export function setRaw(id: string, raw: string) {
-  pushUndo(`type:${id}`);
+  pushRawUndo(id, doc.byId[id].raw);
   setDoc("byId", id, "raw", raw);
   markDirty(doc.byId[id].page);
 }
@@ -892,8 +942,12 @@ export function outdentSelection() {
 export function deleteSelection() {
   const ids = topSelected();
   if (!ids.length) return;
-  pushUndo("delete-sel");
   const pages = new Set<string>();
+  for (const id of ids) {
+    const n = doc.byId[id];
+    if (n) pages.add(n.page);
+  }
+  pushUndo("delete-sel", [...pages]);
   // One produce for the whole selection — deleting each block separately fires a
   // reactive update per block (15 reflows for 15 bullets); batching collapses it
   // to a single update so the cut feels instant.
@@ -1285,23 +1339,28 @@ export function scheduleSave() {
     const names = [...dirty];
     dirty.clear();
     void (async () => {
-      let saved = 0;
-      for (const name of names) {
-        if (isConflicted(name)) continue; // wait for the user to resolve first
-        const dto = pageToDto(name);
-        if (!dto) continue;
-        try {
-          await backend().savePage(dto);
-          saved++;
-        } catch (e) {
-          // The file changed on disk; surface it instead of clobbering.
-          if (String(e).includes("conflict")) markConflict(name);
-        }
-      }
+      // Independent page writes — fire them in parallel rather than awaiting
+      // each IPC round-trip in turn (a multi-day carry or post-undo batch would
+      // otherwise serialize dozens of writes).
+      const results = await Promise.all(
+        names.map(async (name) => {
+          if (isConflicted(name)) return false; // wait for the user to resolve first
+          const dto = pageToDto(name);
+          if (!dto) return false;
+          try {
+            await backend().savePage(dto);
+            return true;
+          } catch (e) {
+            // The file changed on disk; surface it instead of clobbering.
+            if (String(e).includes("conflict")) markConflict(name);
+            return false;
+          }
+        })
+      );
       // The backend cache now reflects these edits → let queries recompute,
       // but coalesce: re-running every on-screen query is a whole-graph scan, so
       // wait for a lull instead of firing on every 400ms save batch.
-      if (saved) scheduleDataRev();
+      if (results.some(Boolean)) scheduleDataRev();
     })();
   }, 400);
 }

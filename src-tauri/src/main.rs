@@ -392,7 +392,11 @@ fn backup_stamp() -> String {
 /// the first search is instant instead of re-parsing the whole tree.
 fn warm_cache_async(app: tauri::AppHandle) {
     std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(1500));
+        // Brief delay so the first journal paint (which only needs a few pages)
+        // grabs the lock first; then build the whole-graph cache in the
+        // background so the first search / query / `g j` agenda doesn't pay for
+        // parsing every file synchronously under the lock.
+        std::thread::sleep(std::time::Duration::from_millis(250));
         let state: State<'_, AppState> = app.state();
         let guard = state.graph.lock().unwrap();
         if let Some(g) = guard.as_ref() {
@@ -663,6 +667,12 @@ fn main() {
                 }
                 let state: State<'_, AppState> = app.state();
                 *state.graph.lock().unwrap() = Some(g);
+                // Warm the whole-graph cache in the background. Without this the
+                // startup (TINE_GRAPH / argv) path never warms — only the
+                // `load_graph` command did — so the user's first `g j` (whose
+                // agenda query touches the whole graph) paid to parse every file
+                // synchronously. First nav slow, second fine; this fixes it.
+                warm_cache_async(app.handle().clone());
             } else {
                 eprintln!("[tine] NO graph root resolved — set TINE_GRAPH=/path/to/graph");
             }

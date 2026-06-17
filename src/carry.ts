@@ -84,13 +84,15 @@ export async function carryDay(pageName: string): Promise<void> {
 export async function carryDaysBack(days: number): Promise<void> {
   const today = await ensureToday();
   const base = new Date();
-  const titles: string[] = [];
+  const candidates: string[] = [];
   for (let i = 1; i <= days; i++) {
     const d = new Date(base);
     d.setDate(d.getDate() - i);
-    const t = journalTitle(d);
-    if (await ensureLoaded(t, "journal")) titles.push(t); // skip days with no file
+    candidates.push(journalTitle(d));
   }
+  // Load all the day files in parallel rather than one IPC round-trip at a time.
+  const loaded = await Promise.all(candidates.map((t) => ensureLoaded(t, "journal")));
+  const titles = candidates.filter((_, i) => loaded[i]); // skip days with no file
   const n = carryUnfinished(titles, carryKeepsContext(), carryHeaderText());
   await report(n, [today, ...titles]);
 }

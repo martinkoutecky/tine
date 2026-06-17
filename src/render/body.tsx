@@ -1,8 +1,7 @@
 // Block-body rendering: splits a block's text lines into paragraphs, fenced
 // code blocks (syntax-highlighted), and markdown tables.
 
-import { For, Show, type JSX } from "solid-js";
-import hljs from "highlight.js/lib/common";
+import { For, Show, createMemo, createResource, type JSX } from "solid-js";
 import { InlineText } from "./inline";
 import { backend } from "../backend";
 
@@ -120,13 +119,49 @@ function splitRow(line: string): string[] {
     .map((c) => c.trim());
 }
 
-function highlight(code: string, lang: string): string {
-  try {
-    if (lang && hljs.getLanguage(lang)) return hljs.highlight(code, { language: lang }).value;
-    return hljs.highlightAuto(code).value;
-  } catch {
-    return code.replace(/&/g, "&amp;").replace(/</g, "&lt;");
-  }
+function escapeHtml(code: string): string {
+  return code.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+}
+
+// highlight.js/common is large — load on first code block, cache the promise.
+let hljsMod: Promise<typeof import("highlight.js/lib/common").default> | null = null;
+function loadHljs() {
+  if (!hljsMod) hljsMod = import("highlight.js/lib/common").then((m) => m.default);
+  return hljsMod;
+}
+
+// A fenced code block: renders escaped (plain) immediately, then upgrades to
+// syntax-highlighted once highlight.js loads. The highlight result is memoized
+// (highlightAuto is expensive) so re-renders don't re-tokenize.
+function CodeBlock(props: { code: string; lang: string }): JSX.Element {
+  const [hljs] = createResource(loadHljs);
+  const html = createMemo(() => {
+    const h = hljs();
+    if (!h) return escapeHtml(props.code);
+    try {
+      if (props.lang && h.getLanguage(props.lang)) {
+        return h.highlight(props.code, { language: props.lang }).value;
+      }
+      return h.highlightAuto(props.code).value;
+    } catch {
+      return escapeHtml(props.code);
+    }
+  });
+  return (
+    <pre class="code-block">
+      <button
+        class="code-copy"
+        title="Copy code"
+        onClick={(e) => {
+          e.stopPropagation();
+          void backend().writeText(props.code);
+        }}
+      >
+        Copy
+      </button>
+      <code class="hljs" innerHTML={html()} />
+    </pre>
+  );
 }
 
 export function BodyContent(props: { lines: string[]; blockId?: string }): JSX.Element {
@@ -134,21 +169,7 @@ export function BodyContent(props: { lines: string[]; blockId?: string }): JSX.E
     <For each={segmentBody(props.lines)}>
       {(seg) => {
         if (seg.kind === "code") {
-          return (
-            <pre class="code-block">
-              <button
-                class="code-copy"
-                title="Copy code"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  void backend().writeText(seg.code);
-                }}
-              >
-                Copy
-              </button>
-              <code class="hljs" innerHTML={highlight(seg.code, seg.lang)} />
-            </pre>
-          );
+          return <CodeBlock code={seg.code} lang={seg.lang} />;
         }
         if (seg.kind === "table") {
           const [head, ...body] = seg.rows;
