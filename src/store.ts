@@ -7,7 +7,7 @@
 // each with its own roots. A single-page route is just a feed of length one.
 
 import { createStore, produce, unwrap } from "solid-js/store";
-import { createSignal } from "solid-js";
+import { createSignal, createMemo, createRoot } from "solid-js";
 import type { BlockDto, PageDto, PageKind } from "./types";
 import type { OutlineNode } from "./editor/outline";
 import { backend } from "./backend";
@@ -314,10 +314,38 @@ const undoStack: Snapshot[] = [];
 let redoStack: Snapshot[] = [];
 let lastUndoTag: string | null = null;
 
+// Hand-rolled clones — Node/FeedPage are flat (primitives + a string[]), so a
+// tailored copy is far cheaper than structuredClone (which probes types and
+// walks for cycles). This runs on EVERY structural op (split/merge/indent/move/
+// delete) for undo, so its cost is felt as general editor latency.
+function cloneNodes(src: Record<string, Node>): Record<string, Node> {
+  const out: Record<string, Node> = {};
+  for (const id in src) {
+    const n = src[id];
+    out[id] = {
+      id: n.id,
+      raw: n.raw,
+      collapsed: n.collapsed,
+      parent: n.parent,
+      page: n.page,
+      children: n.children.slice(),
+    };
+  }
+  return out;
+}
+function clonePages(src: FeedPage[]): FeedPage[] {
+  return src.map((p) => ({
+    name: p.name,
+    kind: p.kind,
+    title: p.title,
+    preBlock: p.preBlock,
+    roots: p.roots.slice(),
+  }));
+}
 function snapshot(): Snapshot {
   return {
-    byId: structuredClone(unwrap(doc.byId)),
-    pages: structuredClone(unwrap(doc.pages)),
+    byId: cloneNodes(unwrap(doc.byId)),
+    pages: clonePages(unwrap(doc.pages)),
   };
 }
 
@@ -793,8 +821,13 @@ export function selectedIds(): string[] {
   if (i > j) [i, j] = [j, i];
   return order.slice(i, j + 1);
 }
+// Memoized set of selected ids. `isSelected` is read in the render of EVERY
+// block (Block.tsx classList), and selectedIds() rebuilds visibleOrder() each
+// call — so without this, a selection over N visible blocks costs O(N²). The
+// memo recomputes only when the anchor/focus or the visible tree changes.
+const selectedSet = createRoot(() => createMemo(() => new Set(selectedIds())));
 export function isSelected(id: string): boolean {
-  return selectedIds().includes(id);
+  return selectedSet().has(id);
 }
 export function selectBlock(id: string) {
   setEditingId(null);
@@ -860,7 +893,33 @@ export function deleteSelection() {
   const ids = topSelected();
   if (!ids.length) return;
   pushUndo("delete-sel");
-  for (const id of ids) deleteBlockInternal(id);
+  const pages = new Set<string>();
+  // One produce for the whole selection — deleting each block separately fires a
+  // reactive update per block (15 reflows for 15 bullets); batching collapses it
+  // to a single update so the cut feels instant.
+  setDoc(
+    produce((s) => {
+      for (const id of ids) {
+        const node = s.byId[id];
+        if (!node) continue;
+        pages.add(node.page);
+        const arr =
+          node.parent === null
+            ? s.pages[s.pages.findIndex((p) => p.name === node.page)].roots
+            : s.byId[node.parent].children;
+        const ix = arr.indexOf(id);
+        if (ix >= 0) arr.splice(ix, 1);
+        const rm = (bid: string) => {
+          for (const c of s.byId[bid].children) rm(c);
+          delete s.byId[bid];
+        };
+        rm(id);
+      }
+    })
+  );
+  const ed = editingId();
+  if (ed && !doc.byId[ed]) setEditingId(null);
+  for (const p of pages) markDirty(p);
   clearSelection();
 }
 
