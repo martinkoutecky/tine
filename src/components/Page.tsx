@@ -3,8 +3,9 @@ import { doc, mainPages, pageByName, reloadPage, loadSingle, loadFeed, appendFee
 import { route, openPage, openJournals } from "../router";
 import {
   zoomedBlock, zoomOut, zoomInto, isFavorite, toggleFavorite, notesRefresh,
-  markConflict, graphEpoch, openPageInSidebar, openPageContextMenu,
+  markConflict, graphEpoch, openPageInSidebar, openPageContextMenu, carryDays,
 } from "../ui";
+import { carryDay, carryPrevDay, carryDaysBack } from "../carry";
 import { backend } from "../backend";
 import { switchGraph } from "../graph";
 import { Block } from "./Block";
@@ -369,6 +370,7 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
           </svg>
         </button>
       </div>
+      <CarryActions page={props.page} />
       <Show when={props.page.preBlock}>
         <div class="page-properties">
           <For each={props.page.preBlock!.split("\n").filter(isPropertyLine)}>
@@ -390,6 +392,48 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
         <For each={props.page.roots}>{(id) => <Block id={id} />}</For>
       </div>
     </div>
+  );
+}
+
+// Discoverable carry-over actions under a journal's title (replaces having to
+// right-click → "Carry…"). Today gets pull-in buttons (from the previous
+// non-empty day, and from the last N days); a past day gets a push-to-today
+// button. Named pages show nothing.
+function CarryActions(props: { page: FeedPage }): JSX.Element {
+  const isJournal = () => props.page.kind === "journal";
+  const isToday = () => isJournal() && props.page.name === journalTitle(new Date());
+  return (
+    <Show when={isJournal()}>
+      <div class="page-carry-actions">
+        <Show
+          when={isToday()}
+          fallback={
+            <button
+              class="carry-btn"
+              title="Move this day's unfinished tasks to today"
+              onClick={() => void carryDay(props.page.name)}
+            >
+              Carry unfinished tasks → today
+            </button>
+          }
+        >
+          <button
+            class="carry-btn"
+            title="Pull unfinished tasks from the most recent day that has content"
+            onClick={() => void carryPrevDay()}
+          >
+            Carry from previous day
+          </button>
+          <button
+            class="carry-btn"
+            title={`Pull unfinished tasks from the last ${carryDays()} days (change N in Settings)`}
+            onClick={() => void carryDaysBack(carryDays())}
+          >
+            Carry last {carryDays()} days
+          </button>
+        </Show>
+      </div>
+    </Show>
   );
 }
 

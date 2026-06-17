@@ -350,6 +350,18 @@ export function mockBackend(): Backend {
     async onGraphChanged(): Promise<() => void> {
       return () => {}; // no external watcher in the browser mock
     },
+    async getBackupKeep(): Promise<number> {
+      return 12;
+    },
+    async setBackupKeep(): Promise<void> {
+      // no-op in the browser mock
+    },
+    async listBackups() {
+      return [];
+    },
+    async restoreBackup(): Promise<void> {
+      // no-op in the browser mock
+    },
     async readHighlights(pdf: string): Promise<Highlight[]> {
       return mockHighlights[pdf]?.highlights ?? [];
     },

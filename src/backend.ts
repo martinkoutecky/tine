@@ -53,6 +53,20 @@ export interface Backend {
   writeHighlights(pdf: string, label: string, highlights: Highlight[]): Promise<void>;
   /** Subscribe to external file changes (file watcher). Returns an unsubscribe. */
   onGraphChanged(cb: (c: GraphChange) => void): Promise<() => void>;
+  /** How many launch snapshots to keep. */
+  getBackupKeep(): Promise<number>;
+  setBackupKeep(keep: number): Promise<void>;
+  /** Available snapshots for the current graph, newest first. */
+  listBackups(): Promise<BackupInfo[]>;
+  /** Restore a snapshot (overwrites journals/pages/config; snapshots current
+   *  state first). Destructive — confirm before calling. */
+  restoreBackup(stamp: string): Promise<void>;
+}
+
+export interface BackupInfo {
+  /** `YYYY-MM-DD_HH-MM-SS` (UTC). */
+  stamp: string;
+  files: number;
 }
 
 export interface GraphChange {
@@ -205,6 +219,18 @@ class TauriBackend implements Backend {
   async onGraphChanged(cb: (c: GraphChange) => void): Promise<() => void> {
     const { listen } = await import("@tauri-apps/api/event");
     return listen<GraphChange>("graph-changed", (e) => cb(e.payload));
+  }
+  getBackupKeep() {
+    return this.call<number>("get_backup_keep");
+  }
+  setBackupKeep(keep: number) {
+    return this.call<void>("set_backup_keep", { keep });
+  }
+  listBackups() {
+    return this.call<BackupInfo[]>("list_backups");
+  }
+  restoreBackup(stamp: string) {
+    return this.call<void>("restore_backup", { stamp });
   }
 }
 

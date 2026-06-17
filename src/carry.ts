@@ -48,6 +48,28 @@ async function report(n: number, touched: string[]): Promise<void> {
   pushToast(n ? `Carried ${n} item${n === 1 ? "" : "s"} to today` : "No unfinished tasks to carry");
 }
 
+/** Carry unfinished tasks from the previous *non-empty* day to today. "Previous
+ *  day" means the most recent journal before today that actually has content
+ *  (not literally yesterday, which is often blank). */
+export async function carryPrevDay(): Promise<void> {
+  const today = new Date();
+  const todayKey =
+    today.getFullYear() * 10000 + (today.getMonth() + 1) * 100 + today.getDate();
+  let days: number[] = [];
+  try {
+    days = await backend().journalContentDays();
+  } catch {
+    days = [];
+  }
+  const prevKey = days.filter((k) => k < todayKey).sort((a, b) => a - b).pop();
+  if (prevKey == null) {
+    pushToast("No previous day with content to carry from");
+    return;
+  }
+  const d = new Date(Math.floor(prevKey / 10000), (Math.floor(prevKey / 100) % 100) - 1, prevKey % 100);
+  await carryDay(journalTitle(d));
+}
+
 /** Carry one day's unfinished tasks to today (used from a day's context menu). */
 export async function carryDay(pageName: string): Promise<void> {
   const today = await ensureToday();

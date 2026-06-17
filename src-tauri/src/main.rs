@@ -123,44 +123,210 @@ fn load_graph(
 // last few. Local-only (outside the graph, so Syncthing never sees it); a safety
 // net against a bad write or accidental edit. Best-effort and fully detached so
 // it never blocks startup or holds the graph lock during file copies.
-const BACKUP_KEEP: usize = 12;
+const BACKUP_KEEP_DEFAULT: usize = 12;
+
 fn backup_async(app: tauri::AppHandle) {
     std::thread::spawn(move || {
-        // Grab just the paths under the lock, then copy from disk lock-free.
-        let (journals, pages, cfg, root) = {
-            let state: State<'_, AppState> = app.state();
-            let guard = state.graph.lock().unwrap();
-            match guard.as_ref() {
-                Some(g) => (
-                    g.journals_path(),
-                    g.pages_path(),
-                    g.root.join("logseq").join("config.edn"),
-                    g.root.clone(),
-                ),
-                None => return,
+        do_backup(&app);
+    });
+}
+
+/// Take one snapshot of the current graph now (synchronous). Returns the number
+/// of files copied (0 = nothing to back up). Reads the keep count from the local
+/// app-settings file and prunes old snapshots afterwards.
+fn do_backup(app: &tauri::AppHandle) -> usize {
+    // Grab just the paths under the lock, then copy from disk lock-free.
+    let (journals, pages, cfg, root) = {
+        let state: State<'_, AppState> = app.state();
+        let guard = state.graph.lock().unwrap();
+        match guard.as_ref() {
+            Some(g) => (
+                g.journals_path(),
+                g.pages_path(),
+                g.root.join("logseq").join("config.edn"),
+                g.root.clone(),
+            ),
+            None => return 0,
+        }
+    };
+    let Ok(data_dir) = app.path().app_data_dir() else { return 0 };
+    let base = data_dir
+        .join("backups")
+        .join(sanitize_id(&root.display().to_string()));
+    let dest = base.join(backup_stamp());
+    let mut n = copy_md_dir(&journals, &dest.join(dir_name(&journals)));
+    n += copy_md_dir(&pages, &dest.join(dir_name(&pages)));
+    if cfg.exists() {
+        let out = dest.join("logseq");
+        if std::fs::create_dir_all(&out).is_ok()
+            && std::fs::copy(&cfg, out.join("config.edn")).is_ok()
+        {
+            n += 1;
+        }
+    }
+    if n == 0 {
+        let _ = std::fs::remove_dir_all(&dest);
+        return 0;
+    }
+    prune_backups(&base, backup_keep(app));
+    n
+}
+
+// --- local app settings (outside the graph): currently just the backup keep
+// count. A tiny JSON file in the OS app-data dir. ---
+fn settings_path(app: &tauri::AppHandle) -> Option<PathBuf> {
+    app.path().app_data_dir().ok().map(|d| d.join("tine-settings.json"))
+}
+fn backup_keep(app: &tauri::AppHandle) -> usize {
+    settings_path(app)
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v.get("backup_keep").and_then(|x| x.as_u64()))
+        .map(|n| (n as usize).max(1))
+        .unwrap_or(BACKUP_KEEP_DEFAULT)
+}
+
+#[derive(serde::Serialize)]
+struct BackupInfo {
+    stamp: String,
+    files: usize,
+}
+
+#[tauri::command]
+fn get_backup_keep(app: tauri::AppHandle) -> usize {
+    backup_keep(&app)
+}
+
+#[tauri::command]
+fn set_backup_keep(keep: usize, app: tauri::AppHandle) -> Result<(), String> {
+    let keep = keep.clamp(1, 1000);
+    let p = settings_path(&app).ok_or("no app-data dir")?;
+    if let Some(parent) = p.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let json = serde_json::json!({ "backup_keep": keep });
+    std::fs::write(&p, serde_json::to_string_pretty(&json).unwrap())
+        .map_err(|e| e.to_string())?;
+    // Apply the new (possibly lower) cap to the current graph's snapshots now.
+    if let Some(base) = backup_base(&app) {
+        prune_backups(&base, keep);
+    }
+    Ok(())
+}
+
+/// The backup directory for the currently-open graph (`<app-data>/backups/<id>`).
+fn backup_base(app: &tauri::AppHandle) -> Option<PathBuf> {
+    let root = {
+        let state: State<'_, AppState> = app.state();
+        let guard = state.graph.lock().unwrap();
+        guard.as_ref().map(|g| g.root.clone())?
+    };
+    let data_dir = app.path().app_data_dir().ok()?;
+    Some(data_dir.join("backups").join(sanitize_id(&root.display().to_string())))
+}
+
+#[tauri::command]
+fn list_backups(app: tauri::AppHandle) -> Result<Vec<BackupInfo>, String> {
+    let Some(base) = backup_base(&app) else { return Ok(Vec::new()) };
+    let mut out = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(&base) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if !p.is_dir() {
+                continue;
             }
-        };
-        let Ok(data_dir) = app.path().app_data_dir() else { return };
-        let base = data_dir
-            .join("backups")
-            .join(sanitize_id(&root.display().to_string()));
-        let dest = base.join(backup_stamp());
-        let mut n = copy_md_dir(&journals, &dest.join(dir_name(&journals)));
-        n += copy_md_dir(&pages, &dest.join(dir_name(&pages)));
-        if cfg.exists() {
-            let out = dest.join("logseq");
-            if std::fs::create_dir_all(&out).is_ok()
-                && std::fs::copy(&cfg, out.join("config.edn")).is_ok()
-            {
+            let stamp = match p.file_name().and_then(|s| s.to_str()) {
+                Some(s) => s.to_string(),
+                None => continue,
+            };
+            let files = count_md_recursive(&p);
+            out.push(BackupInfo { stamp, files });
+        }
+    }
+    out.sort_by(|a, b| b.stamp.cmp(&a.stamp)); // newest first
+    Ok(out)
+}
+
+fn count_md_recursive(dir: &std::path::Path) -> usize {
+    let mut n = 0;
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                n += count_md_recursive(&p);
+            } else if p.extension().and_then(|x| x.to_str()) == Some("md") {
                 n += 1;
             }
         }
-        if n == 0 {
-            let _ = std::fs::remove_dir_all(&dest);
-            return;
+    }
+    n
+}
+
+/// Restore a snapshot into the live graph, overwriting `journals/`, `pages/` and
+/// `config.edn`. Takes a fresh safety snapshot of the *current* state first (so a
+/// mistaken restore is itself reversible). Destructive — the frontend confirms.
+#[tauri::command]
+fn restore_backup(stamp: String, app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    // Guard against path traversal — a stamp is only ever `YYYY-MM-DD_HH-MM-SS`.
+    if stamp.is_empty()
+        || !stamp.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err("invalid backup id".into());
+    }
+    let (journals, pages, cfg_dest) = {
+        let guard = state.graph.lock().unwrap();
+        let g = guard.as_ref().ok_or("no graph loaded")?;
+        (
+            g.journals_path(),
+            g.pages_path(),
+            g.root.join("logseq").join("config.edn"),
+        )
+    };
+    let base = backup_base(&app).ok_or("no app-data dir")?;
+    let src = base.join(&stamp);
+    if !src.is_dir() {
+        return Err("backup not found".into());
+    }
+    // Safety net: snapshot the current (pre-restore) state before overwriting.
+    do_backup(&app);
+    restore_md_dir(&src.join(dir_name(&journals)), &journals);
+    restore_md_dir(&src.join(dir_name(&pages)), &pages);
+    let src_cfg = src.join("logseq").join("config.edn");
+    if src_cfg.exists() {
+        if let Some(parent) = cfg_dest.parent() {
+            let _ = std::fs::create_dir_all(parent);
         }
-        prune_backups(&base, BACKUP_KEEP);
-    });
+        let _ = std::fs::copy(&src_cfg, &cfg_dest);
+    }
+    Ok(())
+}
+
+/// Replace the `.md` files in `dest` with those from `src` (clear-then-copy, so
+/// files created after the snapshot are removed — a faithful point-in-time
+/// restore). Non-`.md` files (assets, etc.) are left untouched.
+fn restore_md_dir(src: &std::path::Path, dest: &std::path::Path) {
+    if !src.is_dir() {
+        return;
+    }
+    let _ = std::fs::create_dir_all(dest);
+    if let Ok(rd) = std::fs::read_dir(dest) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.extension().and_then(|x| x.to_str()) == Some("md") {
+                let _ = std::fs::remove_file(p);
+            }
+        }
+    }
+    if let Ok(rd) = std::fs::read_dir(src) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.extension().and_then(|x| x.to_str()) == Some("md") {
+                if let Some(name) = p.file_name() {
+                    let _ = std::fs::copy(&p, dest.join(name));
+                }
+            }
+        }
+    }
 }
 
 fn dir_name(p: &std::path::Path) -> String {
@@ -530,7 +696,11 @@ fn main() {
             import_asset,
             save_asset,
             read_highlights,
-            write_highlights
+            write_highlights,
+            get_backup_keep,
+            set_backup_keep,
+            list_backups,
+            restore_backup
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
