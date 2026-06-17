@@ -97,6 +97,11 @@ impl JournalDate {
         let month = MONTHS.get((self.month - 1) as usize).copied().unwrap_or("?");
         format!("{} {}, {}", month, ordinal(self.day), self.year)
     }
+
+    /// Default journal file stem, e.g. "2026_06_14" (round-trips `from_file_stem`).
+    pub fn file_stem(&self) -> String {
+        format!("{:04}_{:02}_{:02}", self.year, self.month, self.day)
+    }
 }
 
 fn is_leap(y: i32) -> bool {

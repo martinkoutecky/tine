@@ -111,6 +111,8 @@ fn load_graph(
     })?;
     let graph = Graph::open(&root);
     let meta = graph.meta();
+    // Recover any journals mis-saved under their title (see method docs).
+    graph.migrate_journal_filenames();
     *state.graph.lock().unwrap() = Some(graph);
     backup_async(app.clone());
     warm_cache_async(app);

@@ -203,6 +203,36 @@ impl Graph {
         })
     }
 
+    /// One-time recovery: a journal that was saved under its display title
+    /// ("Jun 18th, 2026.md") instead of its date stem ("2026_06_18.md") can't be
+    /// parsed back to a date, so it drops out of the feed and the day looks
+    /// empty. Rename such files to their stem — but only when the stem file
+    /// doesn't already exist (never clobber/merge). Returns how many were fixed.
+    pub fn migrate_journal_filenames(&self) -> usize {
+        let dir = self.journals_path();
+        let Ok(rd) = fs::read_dir(&dir) else { return 0 };
+        let mut n = 0;
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.extension().and_then(|x| x.to_str()) != Some("md") {
+                continue;
+            }
+            let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else { continue };
+            if JournalDate::from_file_stem(stem).is_some() {
+                continue; // already a valid date stem
+            }
+            let Some(d) = JournalDate::from_title(stem) else { continue }; // not a date title
+            let target = dir.join(format!("{}.md", d.file_stem()));
+            if target.exists() {
+                continue; // don't clobber an existing stem file
+            }
+            if fs::rename(&p, &target).is_ok() {
+                n += 1;
+            }
+        }
+        n
+    }
+
     /// Resolve a page name to a file path. Journals match by date title;
     /// pages match by filename stem.
     fn path_for(&self, name: &str, kind: PageKind) -> PathBuf {
@@ -212,7 +242,16 @@ impl Graph {
                 .into_iter()
                 .find(|e| e.name.eq_ignore_ascii_case(name))
                 .map(|e| e.path)
-                .unwrap_or_else(|| self.journals_path().join(format!("{name}.md"))),
+                .unwrap_or_else(|| {
+                    // New journal: name it by its date stem ("2026_06_18.md"), not
+                    // the display title — a title-named file ("Jun 18th, 2026.md")
+                    // can't be parsed back to a date, so journals_desc would drop
+                    // it and the day would look empty.
+                    let stem = JournalDate::from_title(name)
+                        .map(|d| d.file_stem())
+                        .unwrap_or_else(|| name.to_string());
+                    self.journals_path().join(format!("{stem}.md"))
+                }),
             PageKind::Page => self.pages_path().join(format!("{}.md", encode_page_name(name))),
         }
     }

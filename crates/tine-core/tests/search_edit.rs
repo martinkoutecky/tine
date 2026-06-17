@@ -110,3 +110,49 @@ fn frontend_added_id_survives_reload_and_resolves() {
     assert!(g2.resolve_block(&uuid).is_some(), "resolve_block finds it by id::");
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn new_journal_saved_with_date_stem_not_title() {
+    let root = mk("journalname");
+    let g = Graph::open(&root);
+    g.warm_cache();
+    // Save a brand-new journal by its title (no file yet).
+    let dto = tine_core::model::PageDto {
+        name: "Jun 18th, 2026".into(),
+        kind: PageKind::Journal,
+        title: "Jun 18th, 2026".into(),
+        pre_block: None,
+        blocks: vec![tine_core::model::BlockDto {
+            id: String::new(),
+            raw: "TODO carried task".into(),
+            collapsed: false,
+            children: vec![],
+            breadcrumb: vec![],
+        }],
+    };
+    g.save_page(&dto).expect("save new journal");
+    // It must land on the date-stem file, and reopening must show it in the feed.
+    assert!(root.join("journals").join("2026_06_18.md").exists(), "stem-named file");
+    assert!(!root.join("journals").join("Jun 18th, 2026.md").exists(), "no title-named file");
+    let g2 = Graph::open(&root);
+    assert!(
+        g2.journals_desc().iter().any(|e| e.name == "Jun 18th, 2026"),
+        "new journal appears in the feed after reload"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn migrate_renames_title_named_journal_files() {
+    let root = mk("journalmigrate");
+    // Simulate a previously-mis-saved journal (title as filename).
+    std::fs::write(root.join("journals").join("Jun 18th, 2026.md"), "- TODO recovered\n").unwrap();
+    let g = Graph::open(&root);
+    let n = g.migrate_journal_filenames();
+    assert_eq!(n, 1);
+    assert!(root.join("journals").join("2026_06_18.md").exists(), "renamed to stem");
+    assert!(!root.join("journals").join("Jun 18th, 2026.md").exists(), "title file gone");
+    // Content preserved + now visible.
+    assert!(g.journals_desc().iter().any(|e| e.name == "Jun 18th, 2026"));
+    let _ = std::fs::remove_dir_all(&root);
+}
