@@ -49,6 +49,10 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
   const visible = new Set<number>();
   let io: IntersectionObserver | null = null;
   let zoomTimer: number | undefined;
+  // Scroll anchor captured at the START of a zoom burst (pre-resize), restored
+  // once on settle — so a 5×Ctrl+ burst keeps the document position without an
+  // anchor calc per press.
+  let zoomAnchorRatio: number | null = null;
   // The text layer (hundreds of glyph spans on a math page) is rebuilt OFF the
   // zoom hot path: the canvas sharpens immediately, the text catches up shortly
   // after the view settles. `textScale[n]` is the scale its text was built at;
@@ -255,26 +259,40 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
     }
   }
 
-  // Resize all wrappers for the new scale (keeps scroll geometry correct), show
-  // instant transform feedback on visible pages, then debounce the real raster.
+  function sizeWrapper(n: number, s: number) {
+    const wrap = pageEls[n];
+    if (!wrap) return;
+    wrap.style.width = `${dims[n].w * s}px`;
+    wrap.style.height = `${dims[n].h * s}px`;
+    wrap.style.setProperty("--scale-factor", String(s));
+  }
+
+  // Per zoom step (cheap, O(visible)): size only the visible wrappers to the new
+  // scale and transform their canvases, so the view tracks the zoom instantly.
+  // The expensive work — resizing EVERY wrapper (scroll geometry), restoring the
+  // anchor, and re-rastering — is coalesced to one debounced `settleZoom`, so a
+  // burst of Ctrl+ presses does that heavy pass once, not once per press.
   function onZoom() {
     if (!pdfDoc) return;
     const s = scale();
-    const prevH = scrollRef.scrollHeight || 1;
-    const ratio = scrollRef.scrollTop / prevH;
-    for (let n = 1; n <= pdfDoc.numPages; n++) {
-      const wrap = pageEls[n];
-      if (!wrap) continue;
-      wrap.style.width = `${dims[n].w * s}px`;
-      wrap.style.height = `${dims[n].h * s}px`;
-      wrap.style.setProperty("--scale-factor", String(s));
+    if (zoomAnchorRatio === null) {
+      zoomAnchorRatio = scrollRef.scrollTop / (scrollRef.scrollHeight || 1);
     }
-    scrollRef.scrollTop = ratio * (scrollRef.scrollHeight || 1);
+    for (const n of visible) sizeWrapper(n, s);
     applyZoomTransform();
     clearTimeout(zoomTimer);
-    zoomTimer = window.setTimeout(() => {
-      for (const n of visible) void renderPage(n);
-    }, 110);
+    zoomTimer = window.setTimeout(settleZoom, 120);
+  }
+
+  function settleZoom() {
+    if (!pdfDoc) return;
+    const s = scale();
+    for (let n = 1; n <= pdfDoc.numPages; n++) sizeWrapper(n, s);
+    if (zoomAnchorRatio !== null) {
+      scrollRef.scrollTop = zoomAnchorRatio * (scrollRef.scrollHeight || 1);
+      zoomAnchorRatio = null;
+    }
+    for (const n of visible) void renderPage(n);
   }
 
   onMount(async () => {
