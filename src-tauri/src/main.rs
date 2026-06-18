@@ -571,6 +571,13 @@ fn set_favorites(names: Vec<String>, state: State<'_, AppState>) -> Result<(), S
 }
 
 #[tauri::command]
+fn set_preferred_workflow(workflow: String, state: State<'_, AppState>) -> Result<(), String> {
+    with_graph(&state, |g| {
+        g.set_preferred_workflow(&workflow).map_err(|e| e.to_string())
+    })
+}
+
+#[tauri::command]
 fn read_custom_css(state: State<'_, AppState>) -> Result<String, String> {
     with_graph(&state, |g| Ok(g.custom_css()))
 }
@@ -773,6 +780,7 @@ fn main() {
             query_facets,
             page_aliases,
             set_favorites,
+            set_preferred_workflow,
             read_custom_css,
             open_external,
             search,

@@ -220,6 +220,60 @@ impl Graph {
         atomic_write(&path, content.as_bytes())
     }
 
+    /// Persist the task workflow to config.edn `:preferred-workflow :todo`/`:now`,
+    /// replacing the existing keyword value (preserving the rest of the file) or
+    /// inserting the key. Mirrors Logseq's own config key so it travels with the
+    /// graph. We locate the key on a non-comment line so a commented-out example
+    /// `;; :preferred-workflow …` is never edited by mistake.
+    pub fn set_preferred_workflow(&self, wf: &str) -> io::Result<()> {
+        let kw = if wf == "todo" { ":todo" } else { ":now" };
+        let key = ":preferred-workflow";
+        let path = self.root.join("logseq").join("config.edn");
+        let mut content = fs::read_to_string(&path).unwrap_or_else(|_| "{}\n".to_string());
+
+        // Byte offset of the first *uncommented* occurrence of the key (text
+        // before any `;` on its line), so we don't edit a comment.
+        let mut found: Option<usize> = None;
+        let mut pos = 0usize;
+        for line in content.split_inclusive('\n') {
+            let code = match line.find(';') {
+                Some(i) => &line[..i],
+                None => line,
+            };
+            if let Some(rel) = code.find(key) {
+                found = Some(pos + rel);
+                break;
+            }
+            pos += line.len();
+        }
+
+        if let Some(start) = found {
+            let after = start + key.len();
+            // The value is a keyword: first non-whitespace char after the key,
+            // expected to start with ':', running to whitespace/`}`/`)`.
+            match content[after..].find(|c: char| !c.is_whitespace()) {
+                Some(rel) if content[after + rel..].starts_with(':') => {
+                    let vstart = after + rel;
+                    let vrest = &content[vstart + 1..];
+                    let end = vrest
+                        .find(|c: char| c.is_whitespace() || c == '}' || c == ')')
+                        .unwrap_or(vrest.len());
+                    content.replace_range(vstart..vstart + 1 + end, kw);
+                }
+                // Key present but no keyword value — insert one right after it.
+                _ => content.insert_str(after, &format!(" {kw}")),
+            }
+        } else if let Some(brace) = content.find('{') {
+            content.insert_str(brace + 1, &format!("\n :preferred-workflow {kw}\n"));
+        } else {
+            content = format!("{{:preferred-workflow {kw}}}\n");
+        }
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        atomic_write(&path, content.as_bytes())
+    }
+
     pub fn journals_path(&self) -> PathBuf {
         self.root.join(&self.config.journals_dir)
     }

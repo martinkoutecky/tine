@@ -522,7 +522,7 @@ body {
   z-index: 120;
 }
 .settings-modal {
-  width: 760px;
+  width: 840px;
   max-width: 94vw;
   height: 70vh;
   max-height: 640px;
@@ -616,6 +616,64 @@ body {
 .settings-hint {
   color: var(--text-muted);
   font-size: 12px;
+}
+/* A setting laid out vertically: label + control on the top line, the
+   explanatory hint on its own full-width line below (so long hints wrap
+   cleanly instead of being crammed into the right column). Matches the
+   .settings-row border/padding so the two can be mixed within a tab. */
+.settings-field {
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+.settings-field-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 14px;
+}
+.settings-field-control {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+.settings-field-hint {
+  margin-top: 5px;
+  line-height: 1.5;
+  max-width: 62ch;
+}
+/* Segmented two-option control (e.g. task workflow). */
+.settings-segment {
+  display: inline-flex;
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  overflow: hidden;
+}
+.settings-segment button {
+  background: none;
+  border: none;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.settings-segment button:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+.settings-segment button + button {
+  border-left: 1px solid var(--border-color);
+}
+.settings-segment button.active {
+  background: var(--link-color, #2563eb);
+  color: #fff;
+}
+.settings-segment button.active:hover {
+  background: var(--link-color, #2563eb);
 }
 .settings-block {
   margin-top: 8px;

@@ -30,6 +30,8 @@ export interface Backend {
   pageAliases(): Promise<[string, string][]>;
   /** Persist favorited page names to config.edn `:favorites`. */
   setFavorites(names: string[]): Promise<void>;
+  /** Persist the task workflow to config.edn `:preferred-workflow`. */
+  setPreferredWorkflow(workflow: "now" | "todo"): Promise<void>;
   /** The graph's logseq/custom.css (empty string if none). */
   readCustomCss(): Promise<string>;
   /** Open an http(s)/mailto URL in the OS default app. */
@@ -140,6 +142,9 @@ class TauriBackend implements Backend {
   }
   setFavorites(names: string[]) {
     return this.call<void>("set_favorites", { names });
+  }
+  setPreferredWorkflow(workflow: "now" | "todo") {
+    return this.call<void>("set_preferred_workflow", { workflow });
   }
   readCustomCss() {
     return this.call<string>("read_custom_css");

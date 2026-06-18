@@ -251,6 +251,9 @@ export function mockBackend(): Backend {
     async setFavorites(): Promise<void> {
       // no-op in the browser mock
     },
+    async setPreferredWorkflow(): Promise<void> {
+      // no-op in the browser mock
+    },
     async openExternal(url: string): Promise<void> {
       try {
         window.open(url, "_blank", "noreferrer");

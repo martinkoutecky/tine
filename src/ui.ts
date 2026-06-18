@@ -22,6 +22,13 @@ export function applyTheme() {
 
 // Task workflow from config.edn (:preferred-workflow): drives mod+enter cycling.
 export const [workflow, setWorkflow] = createSignal<"now" | "todo">("now");
+/** Set the workflow and persist it to config.edn (graph-portable, like Logseq).
+ *  The signal is the runtime source of truth; the file is re-read on next open. */
+export function changeWorkflow(wf: "now" | "todo") {
+  if (wf === workflow()) return;
+  setWorkflow(wf);
+  void backend().setPreferredWorkflow(wf).catch(() => {});
+}
 
 // --- appearance: accent color, wide mode, document mode (all persisted) ---
 function loadStr(key: string): string | null {

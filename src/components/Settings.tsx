@@ -5,6 +5,7 @@ import {
   theme,
   toggleTheme,
   workflow,
+  changeWorkflow,
   graphMeta,
   shortcutOverrides,
   setShortcutOverride,
@@ -178,6 +179,23 @@ export function Settings(): JSX.Element {
   );
 }
 
+// One setting: label + control on a line, with the explanatory hint on its own
+// full-width line below (so long hints read cleanly instead of being squeezed
+// into the right column). Pass `hint` as JSX to allow inline <code>/markup.
+function Field(props: { label: string; hint?: JSX.Element; children: JSX.Element }): JSX.Element {
+  return (
+    <div class="settings-field">
+      <div class="settings-field-row">
+        <span class="settings-label">{props.label}</span>
+        <div class="settings-field-control">{props.children}</div>
+      </div>
+      <Show when={props.hint}>
+        <div class="settings-hint settings-field-hint">{props.hint}</div>
+      </Show>
+    </div>
+  );
+}
+
 function Toggle(props: { on: boolean; onClick: () => void }): JSX.Element {
   return (
     <button
@@ -228,35 +246,20 @@ function AppearanceTab(): JSX.Element {
         </div>
       </div>
 
-      <div class="settings-row">
-        <span class="settings-label">Wide mode</span>
-        <div>
-          <Toggle on={wideMode()} onClick={toggleWideMode} />
-          <span class="settings-hint" style={{ "margin-left": "8px" }}>
-            Drops the reading-width cap.
-          </span>
-        </div>
-      </div>
+      <Field label="Wide mode" hint="Drops the reading-width cap.">
+        <Toggle on={wideMode()} onClick={toggleWideMode} />
+      </Field>
 
-      <div class="settings-row">
-        <span class="settings-label">Document mode</span>
-        <div>
-          <Toggle on={documentMode()} onClick={toggleDocumentMode} />
-          <span class="settings-hint" style={{ "margin-left": "8px" }}>
-            Hides bullets and indent guides for a cleaner prose view.
-          </span>
-        </div>
-      </div>
+      <Field label="Document mode" hint="Hides bullets and indent guides for a cleaner prose view.">
+        <Toggle on={documentMode()} onClick={toggleDocumentMode} />
+      </Field>
 
-      <div class="settings-row">
-        <span class="settings-label">Dim in focus mode</span>
-        <div>
-          <Toggle on={dimInFocus()} onClick={() => setDimInFocus(!dimInFocus())} />
-          <span class="settings-hint" style={{ "margin-left": "8px" }}>
-            Auto-enable dim inactive blocks (t b) when entering focus mode (t f).
-          </span>
-        </div>
-      </div>
+      <Field
+        label="Dim in focus mode"
+        hint="Auto-enable dim inactive blocks (t b) when entering focus mode (t f)."
+      >
+        <Toggle on={dimInFocus()} onClick={() => setDimInFocus(!dimInFocus())} />
+      </Field>
     </>
   );
 }
@@ -264,87 +267,89 @@ function AppearanceTab(): JSX.Element {
 function TasksTab(): JSX.Element {
   return (
     <>
-      <div class="settings-row">
-        <span class="settings-label">Show carry-over buttons</span>
-        <div>
-          <Toggle on={showCarryButtons()} onClick={() => setShowCarryButtons(!showCarryButtons())} />
-          <span class="settings-hint" style={{ "margin-left": "8px" }}>
-            Show the carry buttons next to journal titles. Off → use the right-click menu instead.
-          </span>
-        </div>
-      </div>
+      <Field
+        label="Show carry-over buttons"
+        hint="Show the carry buttons next to journal titles. Off → use the right-click menu instead."
+      >
+        <Toggle on={showCarryButtons()} onClick={() => setShowCarryButtons(!showCarryButtons())} />
+      </Field>
 
-      <div class="settings-row">
-        <span class="settings-label">Carry-over keeps context</span>
-        <div>
-          <Toggle on={carryKeepsContext()} onClick={() => setCarryKeepsContext(!carryKeepsContext())} />
-          <span class="settings-hint" style={{ "margin-left": "8px" }}>
-            Move whole blocks that contain an open task (on) vs. pull out just the task (off).
-          </span>
-        </div>
-      </div>
+      <Field
+        label="Carry-over keeps context"
+        hint="Move whole blocks that contain an open task (on) vs. pull out just the task (off)."
+      >
+        <Toggle on={carryKeepsContext()} onClick={() => setCarryKeepsContext(!carryKeepsContext())} />
+      </Field>
 
-      <div class="settings-row">
-        <span class="settings-label">Carry-over header</span>
-        <div>
-          <Toggle on={carryHeader()} onClick={() => setCarryHeader(!carryHeader())} />
-          <span class="settings-hint" style={{ "margin-left": "8px" }}>
-            Add a “Carried over” heading above carried tasks.
-          </span>
-        </div>
-      </div>
+      <Field label="Carry-over header" hint="Add a “Carried over” heading above carried tasks.">
+        <Toggle on={carryHeader()} onClick={() => setCarryHeader(!carryHeader())} />
+      </Field>
 
-      <div class="settings-row">
-        <span class="settings-label">Carry “last N days”</span>
-        <div>
-          <input
-            type="number"
-            min="1"
-            max="3650"
-            class="settings-num"
-            value={carryDays()}
-            onChange={(e) => setCarryDays(Number(e.currentTarget.value))}
-          />
-          <span class="settings-hint" style={{ "margin-left": "8px" }}>
-            N for the “Carry last N days” button on today’s journal (and the Ctrl-K command).
-          </span>
-        </div>
-      </div>
+      <Field
+        label="Carry “last N days”"
+        hint="N for the “Carry last N days” button on today’s journal (and the Ctrl-K command)."
+      >
+        <input
+          type="number"
+          min="1"
+          max="3650"
+          class="settings-num"
+          value={carryDays()}
+          onChange={(e) => setCarryDays(Number(e.currentTarget.value))}
+        />
+      </Field>
 
-      <div class="settings-row">
-        <span class="settings-label">Task workflow</span>
-        <span class="settings-value">
-          {workflow() === "now" ? "NOW / LATER" : "TODO / DOING"}{" "}
-          <span class="settings-hint">(set :preferred-workflow in config.edn)</span>
-        </span>
-      </div>
-
-      <div class="settings-row">
-        <span class="settings-label">Agenda window</span>
-        <div>
-          <input
-            type="number"
-            min="0"
-            max="3650"
-            class="settings-num"
-            value={agendaDaysBack()}
-            onChange={(e) => setAgendaDaysBack(Number(e.currentTarget.value))}
-          />
-          <span class="settings-hint" style={{ margin: "0 8px" }}>days back ·</span>
-          <input
-            type="number"
-            min="0"
-            max="3650"
-            class="settings-num"
-            value={agendaDaysAhead()}
-            onChange={(e) => setAgendaDaysAhead(Number(e.currentTarget.value))}
-          />
-          <span class="settings-hint" style={{ "margin-left": "8px" }}>
-            days ahead. Today’s “Scheduled &amp; Deadline” list shows items whose
-            scheduled/deadline date is within this window; older/further ones are hidden.
-          </span>
+      <Field
+        label="Task workflow"
+        hint={
+          <>
+            Which markers Tab/⌘↵ cycle through and what new tasks use. Saved to{" "}
+            <code>:preferred-workflow</code> in <code>config.edn</code>, so it travels with the
+            graph.
+          </>
+        }
+      >
+        <div class="settings-segment">
+          <button
+            classList={{ active: workflow() === "todo" }}
+            onClick={() => changeWorkflow("todo")}
+          >
+            TODO / DOING
+          </button>
+          <button classList={{ active: workflow() === "now" }} onClick={() => changeWorkflow("now")}>
+            NOW / LATER
+          </button>
         </div>
-      </div>
+      </Field>
+
+      <Field
+        label="Agenda window"
+        hint={
+          <>
+            Today’s “Scheduled &amp; Deadline” list shows items whose scheduled/deadline date is
+            within this window; older/further ones are hidden.
+          </>
+        }
+      >
+        <input
+          type="number"
+          min="0"
+          max="3650"
+          class="settings-num"
+          value={agendaDaysBack()}
+          onChange={(e) => setAgendaDaysBack(Number(e.currentTarget.value))}
+        />
+        <span class="settings-hint">days back ·</span>
+        <input
+          type="number"
+          min="0"
+          max="3650"
+          class="settings-num"
+          value={agendaDaysAhead()}
+          onChange={(e) => setAgendaDaysAhead(Number(e.currentTarget.value))}
+        />
+        <span class="settings-hint">days ahead</span>
+      </Field>
     </>
   );
 }
@@ -451,22 +456,16 @@ function BackupsTab(): JSX.Element {
         write — independent of OG Logseq’s own backups.
       </div>
 
-      <div class="settings-row">
-        <span class="settings-label">Snapshots to keep</span>
-        <div>
-          <input
-            type="number"
-            min="1"
-            max="1000"
-            class="settings-num"
-            value={keep()}
-            onChange={(e) => void saveKeep(Number(e.currentTarget.value))}
-          />
-          <span class="settings-hint" style={{ "margin-left": "8px" }}>
-            Oldest snapshots beyond this are pruned.
-          </span>
-        </div>
-      </div>
+      <Field label="Snapshots to keep" hint="Oldest snapshots beyond this are pruned.">
+        <input
+          type="number"
+          min="1"
+          max="1000"
+          class="settings-num"
+          value={keep()}
+          onChange={(e) => void saveKeep(Number(e.currentTarget.value))}
+        />
+      </Field>
 
       <div class="settings-section">
         Available snapshots

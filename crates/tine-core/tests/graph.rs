@@ -426,6 +426,44 @@ fn set_favorites_round_trips_in_config_edn() {
 }
 
 #[test]
+fn set_preferred_workflow_round_trips_in_config_edn() {
+    let root = std::env::temp_dir().join(format!("tine-wf-test-{}", std::process::id()));
+    std::fs::create_dir_all(root.join("logseq")).unwrap();
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    // Existing config: another key + a *commented* decoy that must NOT be edited.
+    std::fs::write(
+        root.join("logseq").join("config.edn"),
+        "{;; :preferred-workflow :todo (example)\n :preferred-workflow :now\n :start-of-week 1}\n",
+    )
+    .unwrap();
+
+    let g = Graph::open(&root);
+    assert_eq!(g.meta().preferred_workflow, "now");
+    g.set_preferred_workflow("todo").unwrap();
+
+    let g2 = Graph::open(&root);
+    assert_eq!(g2.meta().preferred_workflow, "todo");
+    let cfg = std::fs::read_to_string(root.join("logseq").join("config.edn")).unwrap();
+    assert!(cfg.contains(":start-of-week 1"), "other keys preserved: {cfg}");
+    // The commented decoy line is untouched (still says :todo (example)).
+    assert!(cfg.contains(";; :preferred-workflow :todo (example)"), "comment preserved: {cfg}");
+
+    // Flipping back replaces (not appends) the keyword.
+    g2.set_preferred_workflow("now").unwrap();
+    assert_eq!(Graph::open(&root).meta().preferred_workflow, "now");
+    let cfg = std::fs::read_to_string(root.join("logseq").join("config.edn")).unwrap();
+    assert_eq!(cfg.matches(":preferred-workflow :now").count(), 1, "no duplicate key: {cfg}");
+
+    // Inserting into a config that lacks the key entirely.
+    std::fs::write(root.join("logseq").join("config.edn"), "{:start-of-week 0}\n").unwrap();
+    let g3 = Graph::open(&root);
+    g3.set_preferred_workflow("todo").unwrap();
+    assert_eq!(Graph::open(&root).meta().preferred_workflow, "todo");
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn query_open_tasks() {
     let g = demo_graph();
     let groups = g.run_query("(task TODO DOING)");
