@@ -4,7 +4,7 @@
 
 import { For, Show, createMemo, createResource, createSignal, type JSX } from "solid-js";
 import { openPage, openPageInNewTab } from "../router";
-import { openPdf, openPageInSidebar, openPageContextMenu, setLightbox, dataRev } from "../ui";
+import { openPdf, openPageInSidebar, openPageContextMenu, setLightbox, graphEpoch } from "../ui";
 import { parseInline, type Seg } from "./parseInline";
 import { blockView } from "./block";
 import { backend } from "../backend";
@@ -248,7 +248,7 @@ export function InlineText(props: { text: string; blockId?: string }): JSX.Eleme
 // referenced block (mirrors OG's block-ref tooltip).
 function BlockRefView(props: { id: string }): JSX.Element {
   const [grp] = createResource(
-    () => `${props.id} ${dataRev()}`, // re-resolve when an edit lands; batched + cached
+    () => `${props.id} ${graphEpoch()}`, // resolve once per open graph; batched + cached
     () => resolveBlockBatched(props.id)
   );
   const [hover, setHover] = createSignal(false);

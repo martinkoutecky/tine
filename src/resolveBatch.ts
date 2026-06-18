@@ -1,12 +1,13 @@
 import { backend } from "./backend";
-import { dataRev } from "./ui";
+import { graphEpoch } from "./ui";
 import type { RefGroup } from "./types";
 
 // Batches inline ((uuid)) reference / embed resolutions: every request made in the
 // same microtask tick is coalesced into ONE resolve_blocks IPC instead of one per
-// ref, and results are cached for the current dataRev. So a page with N block refs
-// costs 1 round-trip (not N), duplicate refs share a result, and an edit (dataRev
-// bump) refreshes everything on the next resolve.
+// ref, and each uuid is resolved at most ONCE per open graph (cached). So a page
+// with N refs costs 1 round-trip (not N), duplicate refs + re-mounts share the
+// result, and — deliberately, to minimize CPU on a throttled machine — refs are
+// NOT re-resolved on every edit (they refresh on graph switch / reopen).
 let cacheRev = -1;
 const cache = new Map<string, Promise<RefGroup | null>>();
 let pending = new Map<string, (v: RefGroup | null) => void>();
@@ -25,12 +26,12 @@ function flush() {
 }
 
 /** Resolve one block reference — coalesced into a shared batch and memoized for
- *  the current dataRev. */
+ *  the lifetime of the open graph. */
 export function resolveBlockBatched(id: string): Promise<RefGroup | null> {
-  const rev = dataRev();
-  if (rev !== cacheRev) {
-    cache.clear(); // stale after any edit — re-resolve at the new generation
-    cacheRev = rev;
+  const epoch = graphEpoch();
+  if (epoch !== cacheRev) {
+    cache.clear(); // new graph — drop the previous graph's resolutions
+    cacheRev = epoch;
   }
   const hit = cache.get(id);
   if (hit) return hit;
