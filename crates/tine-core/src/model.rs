@@ -1172,6 +1172,11 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
     })();
     if res.is_err() {
         let _ = fs::remove_file(&tmp); // never leave a temp behind on failure
+    } else {
+        // Persist the rename itself: fsync the directory so a crash right after the
+        // write can't lose the new directory entry (the rename) on some
+        // filesystems. Best-effort — not all platforms allow fsync on a dir.
+        let _ = fs::File::open(dir).and_then(|d| d.sync_all());
     }
     res
 }
