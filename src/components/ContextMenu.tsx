@@ -28,6 +28,19 @@ import {
   deletePage,
 } from "../store";
 
+// Copy a block reference/embed — but only after the block's id:: is durably on
+// disk. ensureBlockId returns null if the save couldn't land (conflict/error), in
+// which case we must NOT copy a ref that would dangle after a restart.
+async function copyBlockRef(id: string, fmt: (uuid: string) => string, okMsg: string) {
+  const uuid = await ensureBlockId(id);
+  if (!uuid) {
+    pushToast("Couldn't save the block id — reference not copied (resolve the conflict first).", "error");
+    return;
+  }
+  await backend().writeText(fmt(uuid));
+  pushToast(okMsg, "success");
+}
+
 // Block background colors, matching Logseq's built-in set.
 const COLORS = ["yellow", "red", "pink", "green", "blue", "purple", "gray"];
 const COLOR_BG: Record<string, string> = {
@@ -219,8 +232,8 @@ function blockActions(id: string): { label: string; run: () => void; danger?: bo
   return [
     { label: "Open in sidebar", run: () => openBlockInSidebar(persistentBlockRef(id)) },
     { label: "Zoom into block", run: () => zoomInto(id) },
-    { label: "Copy block ref", run: () => { void backend().writeText(`((${ensureBlockId(id)}))`); pushToast("Copied block ref", "success"); } },
-    { label: "Copy block embed", run: () => { void backend().writeText(`{{embed ((${ensureBlockId(id)}))}}`); pushToast("Copied block embed", "success"); } },
+    { label: "Copy block ref", run: () => void copyBlockRef(id, (u) => `((${u}))`, "Copied block ref") },
+    { label: "Copy block embed", run: () => void copyBlockRef(id, (u) => `{{embed ((${u}))}}`, "Copied block embed") },
     { label: "Copy block", run: () => { void backend().writeText(blockSubtreeMarkdown(id)); pushToast("Copied block", "success"); } },
     {
       label: "Cut block",

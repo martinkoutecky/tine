@@ -867,19 +867,24 @@ export function setCollapsedDeep(id: string, collapsed: boolean) {
   markDirty(doc.byId[id].page);
 }
 
-/** Ensure a block has a persistent `id::` uuid (assigned lazily, like OG);
- *  returns the uuid. Used to make `((uuid))` block references. */
-export function ensureBlockId(id: string): string {
+/** Ensure a block has a persistent `id::` uuid (assigned lazily, like OG) AND
+ *  that it's durably on disk, returning the uuid — or null if it couldn't be
+ *  saved (conflict/error). Used to make `((uuid))` references: the caller must
+ *  not put a ref on the clipboard until the id is actually written, or quitting /
+ *  resolving a conflict with "use disk version" would leave the ref dangling. */
+export async function ensureBlockId(id: string): Promise<string | null> {
   const node = doc.byId[id];
+  if (!node) return null;
   const m = /(?:^|\n)id:: *([0-9a-fA-F-]{8,})/.exec(node.raw);
-  if (m) return m[1];
-  const uuid = crypto.randomUUID();
-  setDoc("byId", id, "raw", `${node.raw}\nid:: ${uuid}`);
-  markDirty(node.page);
-  // Persist immediately: a ref to this id may be pasted and the app quit before
-  // the 400ms debounce fires, which would leave the reference dangling.
-  void flushPage(node.page);
-  return uuid;
+  const uuid = m ? m[1] : crypto.randomUUID();
+  if (!m) {
+    setDoc("byId", id, "raw", `${node.raw}\nid:: ${uuid}`);
+    markDirty(node.page);
+  }
+  // Even a pre-existing id:: may not be on disk yet (added in-memory, not flushed);
+  // flush and only hand back the uuid if the write actually landed.
+  const ok = await flushPage(node.page);
+  return ok ? uuid : null;
 }
 
 /** A live reference to a loaded block — its stable uuid + the page it lives on
