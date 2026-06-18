@@ -142,6 +142,33 @@ fn frontend_added_id_survives_reload_and_resolves() {
 }
 
 #[test]
+fn memoized_query_and_backlinks_invalidate_after_edit() {
+    let root = mk("querycache");
+    std::fs::write(root.join("pages").join("Tasks.md"), "- TODO a\n- DONE b\n").unwrap();
+    std::fs::write(root.join("pages").join("Note.md"), "- see [[Tasks]]\n").unwrap();
+    let g = Graph::open(&root);
+    g.warm_cache();
+    let total = |r: &[tine_core::RefGroup]| r.iter().map(|g| g.blocks.len()).sum::<usize>();
+
+    // Prime the memo: one open TODO, one backlink to Tasks.
+    assert_eq!(total(&g.run_query("(task TODO)")), 1);
+    assert_eq!(total(&g.backlinks("Tasks")), 1);
+
+    // Edit Tasks (flip DONE→TODO) and Note (drop the [[Tasks]] link) via saves.
+    let mut tasks = g.load_named("Tasks", PageKind::Page).unwrap().unwrap();
+    tasks.blocks[1].raw = "TODO b".into();
+    g.save_page(&tasks, tasks.rev.as_deref()).unwrap();
+    let mut note = g.load_named("Note", PageKind::Page).unwrap().unwrap();
+    note.blocks[0].raw = "no link anymore".into();
+    g.save_page(&note, note.rev.as_deref()).unwrap();
+
+    // The memo MUST reflect the edits, not serve the primed results.
+    assert_eq!(total(&g.run_query("(task TODO)")), 2, "query must see the flipped task");
+    assert_eq!(total(&g.backlinks("Tasks")), 0, "backlinks must see the removed link");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn resolve_block_index_refreshes_after_cache_change() {
     let root = mk("blockidx");
     std::fs::write(root.join("pages").join("A.md"), "- alpha\n  id:: aaaa-1111\n").unwrap();

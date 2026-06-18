@@ -109,6 +109,21 @@ pub struct Graph {
     /// owning page instead of walking every block of every page. A stale hint is
     /// harmless: resolution falls back to a full scan when the block isn't found.
     block_index: RwLock<Option<(u64, std::collections::HashMap<String, String>)>>,
+    /// Memoized results of the pervasive whole-graph scans (run_query / backlinks /
+    /// unlinked_refs), keyed by `(cache_gen, today)` so it self-invalidates on ANY
+    /// cache mutation and on a date rollover (relative-date queries depend on
+    /// today). Lets a re-render, a second component showing the same query, or
+    /// navigating back to a page recompute nothing; never serves a stale result.
+    derived_cache: RwLock<Option<DerivedCache>>,
+}
+
+/// Gen+today-tagged cache of derived scan results. Reset wholesale whenever the
+/// tag no longer matches — so every entry is always consistent with the current
+/// graph state (no per-entry invalidation to get wrong).
+struct DerivedCache {
+    gen: u64,
+    today: i64,
+    results: std::collections::HashMap<String, Vec<RefGroup>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -144,6 +159,7 @@ impl Graph {
             build_lock: std::sync::Mutex::new(()),
             alias_cache: RwLock::new(None),
             block_index: RwLock::new(None),
+            derived_cache: RwLock::new(None),
         }
     }
 
@@ -540,20 +556,58 @@ impl Graph {
         }
     }
 
+    /// Memoize a derived whole-graph scan result, keyed by `(cache_gen, today)` +
+    /// `key`. On a tag mismatch the whole cache is dropped, so a hit is always
+    /// consistent with the current graph. `compute` runs with NO lock held (it
+    /// takes the cache read lock itself), so it can't deadlock against `with_pages`.
+    fn derived_memo(&self, key: String, compute: impl FnOnce() -> Vec<RefGroup>) -> Vec<RefGroup> {
+        use std::sync::atomic::Ordering;
+        let gen = self.cache_gen.load(Ordering::Acquire);
+        let today = crate::date::JournalDate::today().ordinal_key();
+        {
+            let g = self.derived_cache.read().unwrap();
+            if let Some(dc) = g.as_ref() {
+                if dc.gen == gen && dc.today == today {
+                    if let Some(r) = dc.results.get(&key) {
+                        return r.clone();
+                    }
+                }
+            }
+        }
+        let result = compute();
+        let mut g = self.derived_cache.write().unwrap();
+        match g.as_mut() {
+            Some(dc) if dc.gen == gen && dc.today == today => {
+                dc.results.insert(key, result.clone());
+            }
+            _ => {
+                let mut results = std::collections::HashMap::new();
+                results.insert(key, result.clone());
+                *g = Some(DerivedCache { gen, today, results });
+            }
+        }
+        result
+    }
+
     /// Backlinks for a page: blocks across the graph that reference it,
-    /// grouped by source page. Delegates to the query module.
+    /// grouped by source page. Delegates to the query module (memoized).
     pub fn backlinks(&self, target: &str) -> Vec<RefGroup> {
-        crate::query::backlinks(self, target)
+        self.derived_memo(format!("b\0{}", crate::refs::normalize(target)), || {
+            crate::query::backlinks(self, target)
+        })
     }
 
-    /// Evaluate a `{{query ...}}` body over the graph.
+    /// Evaluate a `{{query ...}}` body over the graph (memoized).
     pub fn run_query(&self, query_src: &str) -> Vec<RefGroup> {
-        crate::query::run_query(self, query_src)
+        self.derived_memo(format!("q\0{query_src}"), || crate::query::run_query(self, query_src))
     }
 
-    /// Unlinked references: plain-text mentions of a page that aren't links.
+    /// Unlinked references: plain-text mentions of a page that aren't links
+    /// (memoized).
     pub fn unlinked_refs(&self, target: &str) -> Vec<RefGroup> {
-        crate::query::unlinked_refs(self, target)
+        self.derived_memo(format!("u\0{}", crate::refs::normalize(target)), || {
+            crate::query::unlinked_refs(self, target)
+        })
     }
 
     /// Export the whole graph to static HTML under `<root>/publish/`.
