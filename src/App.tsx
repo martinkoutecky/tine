@@ -65,14 +65,29 @@ export function App(): JSX.Element {
       const w = getCurrentWindow();
       unlisten = await w.onCloseRequested(async (e) => {
         if (closing) return; // second pass (from close() below) — let it through
-        closing = true;
         e.preventDefault();
+        // Try to persist everything. Cap the wait so a genuinely stuck save IPC
+        // can't wedge the window open forever — but a timeout counts as "not
+        // saved", not "safe to discard".
+        let saved = false;
         try {
-          // Cap the wait so a stuck save IPC can't prevent quitting.
-          await Promise.race([flushAll(), new Promise((r) => setTimeout(r, 1500))]);
+          saved = await Promise.race([
+            flushAll(),
+            new Promise<boolean>((r) => setTimeout(() => r(false), 4000)),
+          ]);
         } catch {
-          // never block quitting on a save error
+          saved = false;
         }
+        // If edits remain unsaved (conflict, error, or stalled flush), DON'T
+        // silently throw them away — ask. Default (Cancel) keeps the app open so
+        // the user can resolve the conflict; only an explicit confirm quits.
+        if (!saved) {
+          const quit = window.confirm(
+            "Tine has unsaved changes that couldn't be saved (a conflict or a stuck save).\n\nQuit anyway and lose them?"
+          );
+          if (!quit) return; // stay open
+        }
+        closing = true;
         try {
           await w.destroy();
         } catch {

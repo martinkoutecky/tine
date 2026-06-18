@@ -11,7 +11,7 @@ import { createSignal, createMemo, createRoot } from "solid-js";
 import type { BlockDto, PageDto, PageKind } from "./types";
 import type { OutlineNode } from "./editor/outline";
 import { backend } from "./backend";
-import { markConflict, isConflicted, bumpDataRev, rightSidebar, conflicts, pushToast } from "./ui";
+import { markConflict, isConflicted, clearConflict, bumpDataRev, rightSidebar, conflicts, pushToast } from "./ui";
 import { blockView } from "./render/block";
 import { journalTitle } from "./journal";
 
@@ -130,6 +130,9 @@ function purgePageNodes(s: DocState, pageName: string) {
  *  Other loaded pages (and their nodes) are left untouched — so a page open in
  *  the sidebar survives navigating the main view elsewhere. */
 function upsertPage(dto: PageDto) {
+  // A real page with this name exists again → lift any delete tombstone so edits
+  // to the freshly-(re)created page save normally.
+  deletedPages.delete(dto.name);
   // Record the load baseline (the on-disk rev) so saves conflict against it.
   baseRev.set(dto.name, dto.rev ?? null);
   setDoc(
@@ -151,6 +154,33 @@ export function ensurePageLoaded(dto: PageDto) {
   if (doc.pages.some((p) => p.name === dto.name)) return;
   upsertPage(dto);
   evictIfNeeded();
+}
+
+/** Delete a page: tombstone it (so any pending/in-flight save can't recreate the
+ *  file), drop its dirty/baseline/conflict state, remove it from the working set
+ *  and feed, then delete on disk. Routing deletion through the store — rather than
+ *  calling the backend directly — is what prevents a queued baseRev=null save from
+ *  resurrecting a just-typed, never-saved page. Returns backend success. */
+export async function deletePage(name: string, kind: PageKind): Promise<boolean> {
+  deletedPages.add(name);
+  dirty.delete(name);
+  baseRev.delete(name);
+  clearConflict(name);
+  setDoc(
+    produce((s) => {
+      purgePageNodes(s, name);
+      const pi = s.pages.findIndex((p) => p.name === name);
+      if (pi >= 0) s.pages.splice(pi, 1);
+      const fi = s.feed.indexOf(name);
+      if (fi >= 0) s.feed.splice(fi, 1);
+    })
+  );
+  try {
+    await backend().deletePage(name, kind);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // Cap the working set so a long session browsing a big graph doesn't grow byId
@@ -214,6 +244,7 @@ export function resetStore() {
   graphToken++;
   dirty.clear();
   baseRev.clear();
+  deletedPages.clear();
   setDoc({ byId: {}, pages: [], feed: [], loaded: false });
   setEditingId(null);
 }
@@ -461,6 +492,11 @@ const dirty = new Set<string>();
 // Sent on save so the backend conflicts against the version the editor actually
 // has, not its own mutable cache (which the watcher can advance under us).
 const baseRev = new Map<string, string | null>();
+// Pages the user just deleted. A never-saved page can have a queued save with
+// baseRev=null; without this, that save fires after the delete and the backend
+// (missing file + null baseline = "new page") happily recreates it. While a name
+// is tombstoned, saves for it are skipped; re-loading/creating the page clears it.
+const deletedPages = new Set<string>();
 /** Does a page have unsaved (debounced) edits pending? */
 export function isDirty(pageName: string): boolean {
   return dirty.has(pageName);
@@ -1393,6 +1429,7 @@ function enqueueSave(name: string, force = false): Promise<boolean> {
  *  conflicts against external changes; updates the baseline on success. On a
  *  conflict marks it (no clobber); on a transient error keeps it dirty + toasts. */
 async function doSave(name: string, force: boolean): Promise<boolean> {
+  if (deletedPages.has(name)) return true; // tombstoned — never recreate a deleted page
   if (!force && !dirty.has(name)) return true; // already saved by a prior link
   if (isConflicted(name) && !force) return false;
   const token = graphToken;

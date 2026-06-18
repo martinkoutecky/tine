@@ -356,9 +356,7 @@ impl Graph {
         }
         let content = fs::read_to_string(&entry.path)?;
         let mut doc = doc::parse(&content);
-        for b in &mut doc.roots {
-            assign_uuids(b);
-        }
+        assign_doc_uuids(&mut doc.roots);
         let mut dto = page_dto(entry, &doc);
         dto.rev = rev;
         Ok(dto)
@@ -377,9 +375,7 @@ impl Graph {
             .into_iter()
             .filter_map(|e| {
                 self.read_document(&e).ok().map(|mut d| {
-                    for b in &mut d.roots {
-                        assign_uuids(b);
-                    }
+                    assign_doc_uuids(&mut d.roots);
                     (e, d)
                 })
             })
@@ -436,9 +432,7 @@ impl Graph {
         self.cache_gen.fetch_add(1, std::sync::atomic::Ordering::Release);
         // Fill uuids for any block that lacks one (e.g. PDF-highlight writes);
         // blocks saved from the frontend already carry their ids, which are kept.
-        for b in &mut doc.roots {
-            assign_uuids(b);
-        }
+        assign_doc_uuids(&mut doc.roots);
         // Only the alias map needs dropping when an `alias::` was added/changed/
         // removed — invalidating on every save would make a normal edit an O(P)
         // alias rescan on the next navigation.
@@ -604,21 +598,13 @@ impl Graph {
     pub fn save_asset(&self, name: &str, bytes: &[u8]) -> io::Result<String> {
         let assets = self.assets_path();
         fs::create_dir_all(&assets)?;
-        let (stem, ext) = match name.rsplit_once('.') {
-            Some((s, e)) => (s.to_string(), format!(".{e}")),
-            None => (name.to_string(), String::new()),
-        };
-        let mut final_name = name.to_string();
-        let mut i = 1;
-        while assets.join(&final_name).exists() {
-            final_name = format!("{stem}_{i}{ext}");
-            i += 1;
-        }
+        let final_name = dedup_asset_name(&assets, name);
         fs::write(assets.join(&final_name), bytes)?;
         Ok(final_name)
     }
 
-    /// Copy a file into `assets/`, returning the stored filename.
+    /// Copy a file into `assets/`, returning the stored filename. De-duplicates
+    /// against existing assets (never overwrites one already referenced by notes).
     pub fn import_asset(&self, src: &Path) -> io::Result<String> {
         let name = src
             .file_name()
@@ -627,8 +613,9 @@ impl Graph {
             .to_string();
         let assets = self.assets_path();
         fs::create_dir_all(&assets)?;
-        fs::copy(src, assets.join(&name))?;
-        Ok(name)
+        let final_name = dedup_asset_name(&assets, &name);
+        fs::copy(src, assets.join(&final_name))?;
+        Ok(final_name)
     }
 
     /// Read highlights for a PDF from `assets/<key>.edn`.
@@ -744,17 +731,6 @@ impl Graph {
         was_cached.then_some(entry)
     }
 
-    /// The cached parsed Document for a page (what Tine believes is on disk), if
-    /// the cache is built and has it.
-    fn cached_doc(&self, name: &str, kind: PageKind) -> Option<Document> {
-        let guard = self.cache.read().unwrap();
-        guard
-            .as_ref()?
-            .iter()
-            .find(|(e, _)| e.kind == kind && e.name.eq_ignore_ascii_case(name))
-            .map(|(_, d)| d.clone())
-    }
-
     /// Save a page, refusing to clobber an external change. If the file on disk
     /// no longer matches what Tine last knew (another app or a Syncthing pull
     /// wrote it), returns an `AlreadyExists` "conflict" error WITHOUT writing,
@@ -836,6 +812,27 @@ impl Graph {
     }
 }
 
+/// A filename under `assets/` that doesn't collide with an existing file: `name`
+/// itself if free, else `stem_1.ext`, `stem_2.ext`, … so an import/paste never
+/// overwrites an asset already referenced by notes.
+fn dedup_asset_name(assets: &Path, name: &str) -> String {
+    if !assets.join(name).exists() {
+        return name.to_string();
+    }
+    let (stem, ext) = match name.rsplit_once('.') {
+        Some((s, e)) => (s.to_string(), format!(".{e}")),
+        None => (name.to_string(), String::new()),
+    };
+    let mut i = 1;
+    loop {
+        let candidate = format!("{stem}_{i}{ext}");
+        if !assets.join(&candidate).exists() {
+            return candidate;
+        }
+        i += 1;
+    }
+}
+
 fn list_md(dir: &Path, kind: PageKind) -> Vec<PageEntry> {
     let mut out = Vec::new();
     let Ok(rd) = fs::read_dir(dir) else { return out };
@@ -857,8 +854,6 @@ fn list_md(dir: &Path, kind: PageKind) -> Vec<PageEntry> {
     out
 }
 
-/// Assign a stable uuid to every block that lacks one (called when a document
-/// enters the cache). Prefers the persisted `id::` so a referenced block's node
 /// True if any block in the subtree has a non-empty line that isn't a `key::`
 /// property line — i.e. the page is more than an empty/placeholder bullet.
 fn doc_has_content(blocks: &[DocBlock]) -> bool {
@@ -870,17 +865,31 @@ fn doc_has_content(blocks: &[DocBlock]) -> bool {
     })
 }
 
-/// identity and its `((ref))` target coincide; otherwise generates one. Existing
-/// (non-empty) uuids are preserved — this is what carries the frontend's block
-/// ids through a save so identity is stable across edits.
-pub fn assign_uuids(b: &mut DocBlock) {
-    if b.uuid.is_empty() {
-        b.uuid = b
-            .property("id")
-            .unwrap_or_else(|| Uuid::new_v4().to_string());
+/// Assign uuids across a whole document's roots, sharing ONE `seen` set so a
+/// persisted `id::` duplicated across blocks (copy-paste of raw text, or a sync
+/// conflict) doesn't make two nodes share a uuid. The first occurrence keeps the
+/// id (so `((id))` refs still resolve); later duplicates get a fresh internal
+/// uuid. The raw `id::` line is left untouched — we only fix in-memory identity,
+/// which otherwise collides in the frontend's global byId map and can duplicate
+/// or drop a block's content on save.
+pub fn assign_doc_uuids(roots: &mut [DocBlock]) {
+    let mut seen = std::collections::HashSet::new();
+    for b in roots {
+        assign_uuids_rec(b, &mut seen);
     }
+}
+
+fn assign_uuids_rec(b: &mut DocBlock, seen: &mut std::collections::HashSet<String>) {
+    if b.uuid.is_empty() {
+        b.uuid = match b.property("id") {
+            // Reuse the persisted id only if no earlier block already claimed it.
+            Some(id) if !id.is_empty() && !seen.contains(&id) => id,
+            _ => Uuid::new_v4().to_string(),
+        };
+    }
+    seen.insert(b.uuid.clone());
     for c in &mut b.children {
-        assign_uuids(c);
+        assign_uuids_rec(c, seen);
     }
 }
 
@@ -955,17 +964,71 @@ fn decode_page_name(stem: &str) -> String {
     stem.replace("___", "/")
 }
 
-/// Atomic write: write to a temp file in the same directory, then rename.
+/// Atomic write: write to a temp file in the same directory, then rename. The
+/// temp name is unique per write (pid + sequence) so two concurrent writers to
+/// the same path (e.g. an autosave and a highlight/rename rewrite) can't truncate
+/// each other's temp; the rename is still atomic. The temp is removed if the
+/// write fails, so a unique name never leaks an orphan behind.
 fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
-    let tmp = dir.join(format!(
-        ".{}.tmp",
-        path.file_name().and_then(|s| s.to_str()).unwrap_or("page")
-    ));
-    {
+    let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or("page");
+    let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+    let tmp = dir.join(format!(".{fname}.{}.{seq}.tmp", std::process::id()));
+    let res = (|| {
         let mut f = fs::File::create(&tmp)?;
         f.write_all(bytes)?;
         f.sync_all()?;
+        drop(f);
+        fs::rename(&tmp, path)
+    })();
+    if res.is_err() {
+        let _ = fs::remove_file(&tmp); // never leave a temp behind on failure
     }
-    fs::rename(&tmp, path)
+    res
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn assign_doc_uuids_dedups_duplicate_ids() {
+        // Two blocks persisting the SAME id:: (copy-paste of raw text, or a sync
+        // conflict) must NOT end up sharing a uuid — that collides in the
+        // frontend's global byId map and duplicates/drops content on save.
+        let mut roots = vec![
+            DocBlock::new("first\nid:: dup-1234"),
+            DocBlock::new("second\nid:: dup-1234"),
+        ];
+        assign_doc_uuids(&mut roots);
+        assert_eq!(roots[0].uuid, "dup-1234", "first occurrence keeps the id");
+        assert_ne!(roots[1].uuid, "dup-1234", "duplicate gets a fresh uuid");
+        assert!(!roots[1].uuid.is_empty());
+
+        // A nested duplicate is caught too.
+        let mut parent = DocBlock::new("p\nid:: x");
+        parent.children.push(DocBlock::new("c\nid:: x"));
+        assign_doc_uuids(std::slice::from_mut(&mut parent));
+        assert_eq!(parent.uuid, "x");
+        assert_ne!(parent.children[0].uuid, "x");
+    }
+
+    #[test]
+    fn dedup_asset_name_avoids_overwrite() {
+        let dir = std::env::temp_dir().join(format!("tine-asset-test-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        // Free name → unchanged.
+        assert_eq!(dedup_asset_name(&dir, "paper.pdf"), "paper.pdf");
+        // Occupied → suffixed, never the same path.
+        fs::write(dir.join("paper.pdf"), b"old").unwrap();
+        assert_eq!(dedup_asset_name(&dir, "paper.pdf"), "paper_1.pdf");
+        fs::write(dir.join("paper_1.pdf"), b"old").unwrap();
+        assert_eq!(dedup_asset_name(&dir, "paper.pdf"), "paper_2.pdf");
+        // Extensionless names work too.
+        fs::write(dir.join("NOTES"), b"x").unwrap();
+        assert_eq!(dedup_asset_name(&dir, "NOTES"), "NOTES_1");
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

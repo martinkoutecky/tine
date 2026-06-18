@@ -25,6 +25,7 @@ import {
   setCollapsedDeep,
   dtoSubtreeMarkdown,
   flushPage,
+  deletePage,
 } from "../store";
 
 // Block background colors, matching Logseq's built-in set.
@@ -160,9 +161,15 @@ function PageMenu(props: {
   };
   const remove = () => {
     if (!window.confirm(`Delete page "${props.name}"? This cannot be undone.`)) return;
-    void backend()
-      .deletePage(props.name, props.pageKind)
-      .then(() => {
+    // Route through the store (not backend directly) so it tombstones the page and
+    // cancels any pending save — otherwise a just-typed, never-saved page could be
+    // recreated by a queued save right after we delete it.
+    void deletePage(props.name, props.pageKind)
+      .then((ok) => {
+        if (!ok) {
+          pushToast("Delete failed", "error");
+          return;
+        }
         const r = route();
         if (r.kind === "page" && r.name === props.name) openJournals();
         pushToast(`Deleted “${props.name}”`, "success");
