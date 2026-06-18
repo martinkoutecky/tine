@@ -319,6 +319,9 @@ export function mockBackend(): Backend {
       }
       return null;
     },
+    async resolveBlocks(uuids: string[]): Promise<(RefGroup | null)[]> {
+      return Promise.all(uuids.map((u) => this.resolveBlock(u)));
+    },
     async readAsset(name: string): Promise<Uint8Array> {
       if (mockAssets[name]) return mockAssets[name];
       if (name === "sample.pdf") return decodeB64(SAMPLE_PDF_B64);

@@ -38,6 +38,7 @@ export interface Backend {
   quickSwitch(query: string, limit: number): Promise<PageEntry[]>;
   listTemplates(): Promise<TemplateDto[]>;
   resolveBlock(uuid: string): Promise<RefGroup | null>;
+  resolveBlocks(uuids: string[]): Promise<(RefGroup | null)[]>;
   readAsset(name: string): Promise<Uint8Array>;
   saveAsset(name: string, bytes: Uint8Array): Promise<string>;
   /** If the OS clipboard holds an image, save it to assets/ and return the
@@ -157,6 +158,9 @@ class TauriBackend implements Backend {
   }
   resolveBlock(uuid: string) {
     return this.call<RefGroup | null>("resolve_block", { uuid });
+  }
+  resolveBlocks(uuids: string[]) {
+    return this.call<(RefGroup | null)[]>("resolve_blocks", { uuids });
   }
   async readAsset(name: string) {
     // read_asset now returns raw bytes (tauri::ipc::Response) → an ArrayBuffer,

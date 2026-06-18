@@ -623,6 +623,11 @@ fn resolve_block(uuid: String, state: State<'_, AppState>) -> Result<Option<RefG
 }
 
 #[tauri::command]
+fn resolve_blocks(uuids: Vec<String>, state: State<'_, AppState>) -> Result<Vec<Option<RefGroup>>, String> {
+    with_graph(&state, |g| Ok(g.resolve_blocks(&uuids)))
+}
+
+#[tauri::command]
 fn read_asset(name: String, state: State<'_, AppState>) -> Result<tauri::ipc::Response, String> {
     // Return RAW bytes (not a JSON number[]), so a multi-MB PDF/image isn't
     // serialized element-by-element and re-parsed on the JS side — the frontend
@@ -774,6 +779,7 @@ fn main() {
             list_templates,
             journal_content_days,
             resolve_block,
+            resolve_blocks,
             read_asset,
             import_asset,
             save_asset,

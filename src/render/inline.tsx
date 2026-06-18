@@ -4,11 +4,12 @@
 
 import { For, Show, createMemo, createResource, createSignal, type JSX } from "solid-js";
 import { openPage, openPageInNewTab } from "../router";
-import { openPdf, openPageInSidebar, openPageContextMenu, setLightbox } from "../ui";
+import { openPdf, openPageInSidebar, openPageContextMenu, setLightbox, dataRev } from "../ui";
 import { parseInline, type Seg } from "./parseInline";
 import { blockView } from "./block";
 import { backend } from "../backend";
 import { loadAssetBlob } from "../assetCache";
+import { resolveBlockBatched } from "../resolveBatch";
 import { QueryMacro, EmbedMacro, VideoMacro, TweetMacro } from "../components/Macro";
 
 function renderSegs(segs: Seg[], blockId?: string): JSX.Element {
@@ -247,8 +248,8 @@ export function InlineText(props: { text: string; blockId?: string }): JSX.Eleme
 // referenced block (mirrors OG's block-ref tooltip).
 function BlockRefView(props: { id: string }): JSX.Element {
   const [grp] = createResource(
-    () => props.id,
-    (id) => backend().resolveBlock(id)
+    () => `${props.id} ${dataRev()}`, // re-resolve when an edit lands; batched + cached
+    () => resolveBlockBatched(props.id)
   );
   const [hover, setHover] = createSignal(false);
   return (

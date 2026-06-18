@@ -719,6 +719,13 @@ impl Graph {
         crate::query::resolve_block(self, uuid)
     }
 
+    /// Resolve many block references in one call (for a page full of `((uuid))`
+    /// refs / embeds) — one IPC instead of N. The uuid index is built once and
+    /// reused across the batch.
+    pub fn resolve_blocks(&self, uuids: &[String]) -> Vec<Option<RefGroup>> {
+        uuids.iter().map(|u| crate::query::resolve_block(self, u)).collect()
+    }
+
     /// The graph's `logseq/custom.css`, if present (for user theming).
     pub fn custom_css(&self) -> String {
         std::fs::read_to_string(self.root.join("logseq").join("custom.css")).unwrap_or_default()
