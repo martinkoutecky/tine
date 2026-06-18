@@ -16,6 +16,7 @@ import { RightSidebar } from "./components/RightSidebar";
 import { Settings } from "./components/Settings";
 import { DatePicker } from "./components/DatePicker";
 import { installKeybindings } from "./keybindings";
+import { installBlockSelectionDrag } from "./blockDrag";
 import { loadGraphPath, persistedGraphPath, refreshAliases } from "./graph";
 import { goBack, goForward, canGoBack, canGoForward } from "./router";
 import {
@@ -111,6 +112,10 @@ export function App(): JSX.Element {
     const dispose = installKeybindings(merged);
     onCleanup(dispose);
   });
+
+  // Mouse-drag block selection: a drag that crosses a block boundary switches
+  // from in-textarea text selection to whole-block selection (OG behavior).
+  onMount(() => onCleanup(installBlockSelectionDrag()));
 
   return (
     <div

@@ -1094,6 +1094,12 @@ export function clearSelection() {
   setSelAnchor(null);
   setSelFocus(null);
 }
+/** Extend the current block selection's focus to `id` (mouse-drag / shift-click).
+ *  Starts a fresh selection anchored at `id` if none is active. */
+export function extendSelectionTo(id: string) {
+  if (selAnchor() === null) setSelAnchor(id);
+  setSelFocus(id);
+}
 export function hasSelection(): boolean {
   return selAnchor() !== null;
 }
