@@ -91,10 +91,13 @@ pub struct Graph {
     /// re-parsing the entire tree on every keystroke. `None` = not yet built.
     cache: RwLock<Option<Vec<(PageEntry, Document)>>>,
     /// Bumped on every cache mutation (upsert/remove). The lock-free cache build
-    /// captures this before reading disk and refuses to install its snapshot if a
-    /// mutation raced it (which would otherwise install stale content over a
-    /// concurrent save). See `with_pages`.
+    /// captures this before reading disk and rebuilds if a mutation raced it
+    /// (which would otherwise install stale content over a concurrent save).
     cache_gen: std::sync::atomic::AtomicU64,
+    /// Serializes whole-graph cache builds so a racing warmup/search/query parses
+    /// the graph ONCE, not once per caller. Held only during the build (not the
+    /// cache lock), so it never blocks readers of an already-built cache.
+    build_lock: std::sync::Mutex<()>,
     /// Cached `alias:: → canonical` pairs, derived from the page cache. Rebuilt
     /// lazily and dropped whenever the page cache mutates (the only time aliases
     /// can change). Avoids re-scanning the whole graph for aliases on every page
@@ -132,6 +135,7 @@ impl Graph {
             config,
             cache: RwLock::new(None),
             cache_gen: std::sync::atomic::AtomicU64::new(0),
+            build_lock: std::sync::Mutex::new(()),
             alias_cache: RwLock::new(None),
         }
     }
@@ -389,26 +393,27 @@ impl Graph {
         if let Some(pages) = self.cache.read().unwrap().as_ref() {
             return f(pages);
         }
-        // Build the cache WITHOUT holding the write lock — the whole-graph parse is
-        // the slow part, and holding the write lock across it would block every
-        // concurrent read command (search/query/page load) during the startup
-        // warm. A racing builder just does duplicate work; the first to grab the
-        // lock installs and the rest discard theirs.
+        // Single-flight build: serialize builders on `build_lock` (NOT the cache
+        // lock) so the whole-graph parse happens once, not once per racing caller,
+        // and so we never hold the cache write lock during the slow parse.
         use std::sync::atomic::Ordering;
-        let gen0 = self.cache_gen.load(Ordering::Acquire);
-        let built = self.load_all_pages();
-        let mut guard = self.cache.write().unwrap();
-        if guard.is_none() {
-            if self.cache_gen.load(Ordering::Acquire) == gen0 {
-                *guard = Some(built); // no mutation raced our read → snapshot is fresh
-            } else {
-                // A save/remove raced our lock-free build (its cache mutation
-                // no-op'd because the cache was still None). Rebuild while holding
-                // the write lock so we can't install a stale snapshot.
-                *guard = Some(self.load_all_pages());
+        let _bl = self.build_lock.lock().unwrap();
+        if self.cache.read().unwrap().is_none() {
+            loop {
+                let gen0 = self.cache_gen.load(Ordering::Acquire);
+                let built = self.load_all_pages();
+                // If a save/remove raced our read (its cache mutation no-op'd
+                // because the cache was still None), its disk write is already
+                // done — rebuild so we don't install a stale snapshot. We hold
+                // build_lock, so no other builder competes.
+                if self.cache_gen.load(Ordering::Acquire) == gen0 {
+                    *self.cache.write().unwrap() = Some(built);
+                    break;
+                }
             }
         }
-        f(guard.as_ref().unwrap())
+        drop(_bl);
+        f(self.cache.read().unwrap().as_ref().unwrap())
     }
 
     /// Eagerly build the page cache (call once after opening, off the hot path).
@@ -756,45 +761,44 @@ impl Graph {
     /// so the caller can surface it and keep the in-memory edits.
     pub fn save_page(&self, page: &PageDto, base_rev: Option<&str>) -> io::Result<String> {
         let path = self.path_for(&page.name, page.kind);
-        match fs::read_to_string(&path) {
+        // Single read of the current file (the conflict baseline AND the
+        // formatting source AND, with the written content, the returned rev) —
+        // avoids re-reading the file 2-3× per save, which is felt on NFS.
+        let existing: Option<String> = match fs::read_to_string(&path) {
             Ok(disk_s) => {
-                // A file exists. It must still match the exact bytes the editor
-                // loaded (`base_rev`); if it changed underneath us (external edit /
-                // Syncthing pull — possibly already folded into the cache), refuse
-                // to clobber. `base_rev == None` means the editor believed the page
-                // was new, so any existing file is an external creation → conflict.
-                let unchanged = base_rev.is_some_and(|rev| content_rev(&disk_s) == rev);
-                if !unchanged {
+                // The file must still match the exact bytes the editor loaded
+                // (`base_rev`); if it changed underneath us (external edit /
+                // Syncthing pull), refuse to clobber. `base_rev == None` means the
+                // editor believed the page was new, so any existing file is an
+                // external creation → conflict.
+                if !base_rev.is_some_and(|rev| content_rev(&disk_s) == rev) {
                     return Err(io::Error::new(io::ErrorKind::AlreadyExists, "conflict"));
                 }
+                Some(disk_s)
             }
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
-                // The file is gone. If the editor had a baseline (the page existed
-                // at load), it was deleted externally — DON'T silently resurrect
-                // it; surface a conflict. base_rev == None is a genuinely new page.
+                // The file is gone. If the editor had a baseline (page existed at
+                // load), it was deleted externally — DON'T silently resurrect it.
                 if base_rev.is_some() {
                     return Err(io::Error::new(io::ErrorKind::AlreadyExists, "conflict"));
                 }
+                None
             }
             Err(e) => return Err(e), // hard error (permission, I/O) — don't write blind
-        }
-        self.write_page(page)?;
-        Ok(self.disk_rev(&path))
+        };
+        self.write_page(page, existing.as_deref())
     }
 
     /// Save a page unconditionally (the user chose "keep mine" over a conflict).
     pub fn force_save_page(&self, page: &PageDto) -> io::Result<String> {
         let path = self.path_for(&page.name, page.kind);
-        self.write_page(page)?;
-        Ok(self.disk_rev(&path))
+        let existing = fs::read_to_string(&path).ok();
+        self.write_page(page, existing.as_deref())
     }
 
-    /// Rev of the file now on disk (the new baseline after a write).
-    fn disk_rev(&self, path: &Path) -> String {
-        fs::read_to_string(path).map(|s| content_rev(&s)).unwrap_or_default()
-    }
-
-    fn write_page(&self, page: &PageDto) -> io::Result<()> {
+    /// Write a page, reproducing `existing`'s formatting, and return the new
+    /// on-disk content rev (computed from what was written — no extra read).
+    fn write_page(&self, page: &PageDto, existing: Option<&str>) -> io::Result<String> {
         let doc = Document {
             pre_block: page.pre_block.clone(),
             roots: page.blocks.iter().map(dto_to_doc).collect(),
@@ -803,12 +807,11 @@ impl Graph {
         // Reproduce the existing file's formatting (trailing newline, post-property
         // blank line, indent) so an unchanged save is byte-identical and edits
         // produce a minimal diff — critical to avoid Syncthing churn against Logseq.
-        let existing = fs::read_to_string(&path).ok();
-        let opts = doc::SerializeOpts::detect(existing.as_deref());
+        let opts = doc::SerializeOpts::detect(existing);
         let content = doc::serialize_with(&doc, &opts);
         // No-op save: identical bytes already on disk (e.g. focus/blur with no
         // real edit). Skip the write entirely — keep the cache current though.
-        if existing.as_deref() != Some(content.as_str()) {
+        if existing != Some(content.as_str()) {
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent)?;
             }
@@ -827,7 +830,9 @@ impl Graph {
             PageEntry { name: page.name.clone(), kind: page.kind, date_key, path }
         });
         self.cache_upsert(entry, doc);
-        Ok(())
+        // The new baseline rev = hash of exactly what's now on disk (the content we
+        // serialized, or the identical existing bytes on a no-op) — no re-read.
+        Ok(content_rev(&content))
     }
 }
 

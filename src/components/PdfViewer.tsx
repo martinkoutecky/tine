@@ -127,8 +127,13 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
   async function renderPage(n: number) {
     if (!pdfDoc) return;
     const s = scale();
-    if (renderedScale[n] === s) {
-      clearTransform(n);
+    const r = renderedScale[n];
+    // Keep the existing bitmap (CSS-transformed) when it's still good enough: any
+    // downscale, or an upscale within RERASTER_THRESHOLD. This is what makes zoom
+    // feel instant — no page.render() per zoom step. Only re-raster once you zoom
+    // in far enough that the bitmap would look soft.
+    if (r !== undefined && s <= r * RERASTER_THRESHOLD) {
+      setCanvasTransform(n, s / r);
       return;
     }
     const wrap = pageEls[n];
@@ -226,6 +231,18 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
     const c = pageEls[n]?.querySelector("canvas") as HTMLCanvasElement | null;
     if (c) c.style.transform = "";
   }
+  // Display an already-rasterized page at the current scale via a GPU transform
+  // of its bitmap (no re-raster). factor 1 → identity (native bitmap).
+  function setCanvasTransform(n: number, factor: number) {
+    const c = pageEls[n]?.querySelector("canvas") as HTMLCanvasElement | null;
+    if (!c) return;
+    c.style.transformOrigin = "top left";
+    c.style.transform = Math.abs(factor - 1) < 0.001 ? "" : `scale(${factor})`;
+  }
+  // How far a rendered bitmap may be UPSCALED before we re-raster for crispness.
+  // Within this, zoom is pure CSS transform (instant, like Firefox/Okular) — a
+  // bit soft when enlarged but never janky; zoom-out is always crisp.
+  const RERASTER_THRESHOLD = 1.5;
 
   // Instant zoom feedback: scale the already-rendered canvas via CSS transform
   // (GPU, no raster) until the debounced re-raster at the new scale lands.
