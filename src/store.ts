@@ -1316,7 +1316,8 @@ export async function moveSelectionItems(dir: 1 | -1) {
     // a 15-block nudge became 15 full clones, the visible jank. Going down, move
     // the bottom-most first so they don't collide; up, the top.
     const ordered = dir === 1 ? [...ids].reverse() : ids;
-    pushUndo("move-sel");
+    const pages = [...new Set(ordered.map((id) => doc.byId[id]?.page).filter(Boolean) as string[])];
+    pushUndo("move-sel", pages); // scope the undo to the touched pages, not the whole set
     setDoc(
       produce((s) => {
         for (const id of ordered) {
@@ -1334,7 +1335,6 @@ export async function moveSelectionItems(dir: 1 | -1) {
         }
       })
     );
-    const pages = new Set(ordered.map((id) => doc.byId[id]?.page).filter(Boolean) as string[]);
     for (const p of pages) markDirty(p);
     return;
   }
