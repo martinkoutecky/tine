@@ -1,7 +1,7 @@
 import { For, Show, type JSX } from "solid-js";
 import { conflicts, clearConflict } from "../ui";
 import { backend } from "../backend";
-import { reloadPage, forceSave, pageByName } from "../store";
+import { reloadPage, forceSave, pageByName, forgetPage } from "../store";
 
 // Global save-conflict surface. A save is refused (not clobbered) when the file
 // changed on disk under us (external edit / Syncthing). Such a page is parked in
@@ -12,8 +12,15 @@ export function ConflictBar(): JSX.Element {
   const reload = async (name: string) => {
     const kind = pageByName(name)?.kind ?? "page";
     const dto = await backend().getPage(name, kind);
-    if (dto) reloadPage(dto);
-    clearConflict(name);
+    if (dto) {
+      reloadPage(dto);
+      clearConflict(name);
+    } else {
+      // The file is gone on disk (deleted/renamed externally). "Use disk version"
+      // = accept that: drop the page and its unsaved edits from the store, rather
+      // than clearing the conflict and leaving untracked content to be lost silently.
+      forgetPage(name);
+    }
   };
   const keepMine = async (name: string) => {
     // Only clear the conflict if the overwrite actually landed — otherwise the

@@ -26,6 +26,7 @@ import {
   moveBlockFeed,
   pageByName,
   carryUnfinished,
+  ensurePageLoaded,
 } from "./store";
 import { journalTitle } from "./journal";
 import type { BlockDto, PageDto } from "./types";
@@ -245,6 +246,25 @@ describe("page-scoped structural undo", () => {
     redo();
     expect(raws("Today")).toEqual(["t", "1"]);
     expect(raws("Older")).toEqual(["o1", "o2"]);
+  });
+
+  it("cross-day move undo leaves an unrelated loaded page intact", async () => {
+    const today = journal("Today", [blk("t1")]);
+    const older = journal("Older", [blk("o1")]);
+    loadFeed([today, older]);
+    // A separate page in the working set (e.g. open in the sidebar), loaded after
+    // the move's snapshot would be taken.
+    ensurePageLoaded({ name: "Side", kind: "page", title: "Side", pre_block: null, blocks: [blk("s1")] });
+    const sideId = pageByName("Side")!.roots[0];
+
+    await moveBlockFeed(older.blocks[0].id, -1); // cross-day move (scoped to Today+Older)
+    undo();
+
+    expect(raws("Today")).toEqual(["t1"]);
+    expect(raws("Older")).toEqual(["o1"]);
+    // The unrelated page must survive the undo (the old null-fallback wiped it).
+    expect(pageByName("Side")).toBeTruthy();
+    expect(doc.byId[sideId]?.raw).toBe("s1");
   });
 
   it("undo of a cross-page move restores both pages (full-snapshot fallback)", async () => {

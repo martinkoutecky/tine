@@ -626,7 +626,7 @@ function Editor(props: { id: string }): JSX.Element {
       const md = assetMarkdown(saved);
       const pos = ref.selectionStart;
       const nr = ref.value.slice(0, pos) + md + ref.value.slice(pos);
-      setRaw(props.id, nr);
+      commit(nr); // reattach hidden id::/collapsed:: (nr is visible-only text)
       const c = pos + md.length;
       queueMicrotask(() => {
         ref.value = nr;

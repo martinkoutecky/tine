@@ -156,13 +156,12 @@ export function ensurePageLoaded(dto: PageDto) {
   evictIfNeeded();
 }
 
-/** Delete a page: tombstone it (so any pending/in-flight save can't recreate the
- *  file), drop its dirty/baseline/conflict state, remove it from the working set
- *  and feed, then delete on disk. Routing deletion through the store — rather than
- *  calling the backend directly — is what prevents a queued baseRev=null save from
- *  resurrecting a just-typed, never-saved page. Returns backend success. */
-export async function deletePage(name: string, kind: PageKind): Promise<boolean> {
-  deletedPages.add(name);
+/** Drop a page from the working set + feed and clear its dirty/baseline/conflict
+ *  state — WITHOUT touching disk. Use when the page no longer exists on disk and
+ *  the user accepts that (e.g. resolving an external-deletion conflict with "use
+ *  disk version"): otherwise the unsaved in-memory copy is left untracked — not
+ *  dirty, not conflicted — and is silently lost at close. */
+export function forgetPage(name: string) {
   dirty.delete(name);
   baseRev.delete(name);
   clearConflict(name);
@@ -175,6 +174,16 @@ export async function deletePage(name: string, kind: PageKind): Promise<boolean>
       if (fi >= 0) s.feed.splice(fi, 1);
     })
   );
+}
+
+/** Delete a page: tombstone it (so any pending/in-flight save can't recreate the
+ *  file), drop its dirty/baseline/conflict state, remove it from the working set
+ *  and feed, then delete on disk. Routing deletion through the store — rather than
+ *  calling the backend directly — is what prevents a queued baseRev=null save from
+ *  resurrecting a just-typed, never-saved page. Returns backend success. */
+export async function deletePage(name: string, kind: PageKind): Promise<boolean> {
+  deletedPages.add(name);
+  forgetPage(name);
   try {
     await backend().deletePage(name, kind);
     return true;
@@ -468,28 +477,40 @@ function applyEntry(e: UndoEntry): UndoEntry {
     }
     return inverse;
   }
-  // Capture the CURRENT state of the same page scope as the inverse (for redo),
-  // then restore the snapshot in place — touching only the affected pages, so
-  // pages loaded/edited concurrently on OTHER pages are left intact.
+  // Capture the CURRENT state of the same page scope as the inverse (for redo).
   const inverse = snapEntry(e.pages);
-  setDoc(
-    produce((s) => {
-      const nameSet = new Set(e.pages ?? s.pages.map((p) => p.name));
-      // Drop the affected pages' current nodes (incl. any the op added)…
-      for (const id in s.byId) {
-        if (nameSet.has(s.byId[id].page)) delete s.byId[id];
-      }
-      // …and reinstate the snapshotted ones.
-      for (const id in e.nodes) s.byId[id] = cloneNode(e.nodes[id]);
-      // Restore each affected page's FeedPage (roots/preBlock/…).
-      for (const po of e.pageObjs) {
-        const restored = clonePages([po])[0];
-        const i = s.pages.findIndex((p) => p.name === po.name);
-        if (i >= 0) s.pages[i] = restored;
-        else s.pages.push(restored);
-      }
-    })
-  );
+  if (e.pages === null) {
+    // Whole-working-set snapshot (fallback): replace byId + pages wholesale so the
+    // store is always internally consistent. (A page loaded AFTER the snapshot is
+    // dropped cleanly rather than left with dangling roots — but every op that can
+    // touch multiple pages now declares its scope, so this path is a last resort.)
+    setDoc(
+      produce((s) => {
+        const nodes: Record<string, Node> = {};
+        for (const id in e.nodes) nodes[id] = cloneNode(e.nodes[id]);
+        s.byId = nodes;
+        s.pages = e.pageObjs.map((po) => clonePages([po])[0]);
+      })
+    );
+  } else {
+    // Scoped restore: touch ONLY the affected pages, so pages loaded/edited
+    // concurrently on OTHER pages are left intact.
+    const scope = new Set(e.pages);
+    setDoc(
+      produce((s) => {
+        for (const id in s.byId) {
+          if (scope.has(s.byId[id].page)) delete s.byId[id]; // drop affected pages' nodes (incl. ones the op added)
+        }
+        for (const id in e.nodes) s.byId[id] = cloneNode(e.nodes[id]); // reinstate the snapshot
+        for (const po of e.pageObjs) {
+          const restored = clonePages([po])[0];
+          const i = s.pages.findIndex((p) => p.name === po.name);
+          if (i >= 0) s.pages[i] = restored;
+          else s.pages.push(restored);
+        }
+      })
+    );
+  }
   for (const p of e.dirty) dirty.add(p);
   return inverse;
 }
@@ -1278,7 +1299,7 @@ export async function moveBlockFeed(id: string, dir: 1 | -1): Promise<"within" |
   if (node.parent !== null) return "none"; // nested block at a child-list edge: stop
   const target = await feedNeighbor(node.page, dir);
   if (!target) return "none";
-  pushUndo("move-cross");
+  pushUndo("move-cross", [node.page, target]);
   crossMoveBlocks([id], node.page, target, dir);
   return "crossed";
 }
@@ -1324,7 +1345,7 @@ export async function moveSelectionItems(dir: 1 | -1) {
   if (ids.some((id) => doc.byId[id].parent !== null || doc.byId[id].page !== page)) return;
   const target = await feedNeighbor(page, dir);
   if (!target) return;
-  pushUndo("move-sel-cross");
+  pushUndo("move-sel-cross", [page, target]);
   crossMoveBlocks(ids, page, target, dir);
 }
 
@@ -1382,7 +1403,7 @@ export function carryUnfinished(
     }
   }
   if (!plan.length) return 0;
-  pushUndo("carry");
+  pushUndo("carry", [today, ...new Set(plan.map((i) => i.from))]);
   setDoc(
     produce((s) => {
       const todayPage = s.pages.find((p) => p.name === today);
