@@ -406,9 +406,10 @@ fn set_favorites_round_trips_in_config_edn() {
     let root = std::env::temp_dir().join(format!("tine-fav-test-{}", std::process::id()));
     std::fs::create_dir_all(root.join("logseq")).unwrap();
     std::fs::create_dir_all(root.join("pages")).unwrap();
-    // Existing config with another key that must be preserved.
+    // Existing config with another key that must be preserved + a COMMENTED
+    // :favorites decoy that must NOT be edited (the write must target the real key).
     std::fs::write(root.join("logseq").join("config.edn"),
-        "{:preferred-workflow :now\n :journals-directory \"journals\"}\n").unwrap();
+        "{;; :favorites [\"example\"]\n :preferred-workflow :now\n :journals-directory \"journals\"}\n").unwrap();
 
     let g = Graph::open(&root);
     g.set_favorites(&["Inbox".into(), "Reading List".into()]).unwrap();
@@ -417,6 +418,7 @@ fn set_favorites_round_trips_in_config_edn() {
     assert_eq!(g2.meta().favorites, vec!["Inbox".to_string(), "Reading List".to_string()]);
     let cfg = std::fs::read_to_string(root.join("logseq").join("config.edn")).unwrap();
     assert!(cfg.contains(":journals-directory"), "other keys preserved: {cfg}");
+    assert!(cfg.contains(";; :favorites [\"example\"]"), "commented decoy untouched: {cfg}");
 
     // Updating again replaces (not appends) the vector.
     g2.set_favorites(&["Only One".into()]).unwrap();

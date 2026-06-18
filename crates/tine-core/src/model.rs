@@ -200,7 +200,7 @@ impl Graph {
                 .collect::<Vec<_>>()
                 .join(" ")
         );
-        if let Some(start) = content.find(":favorites") {
+        if let Some(start) = find_uncommented(&content, ":favorites") {
             // Replace the existing (single-level) `:favorites [...]`.
             if let Some(br) = content[start..].find('[') {
                 let abs = start + br;
@@ -231,23 +231,7 @@ impl Graph {
         let path = self.root.join("logseq").join("config.edn");
         let mut content = fs::read_to_string(&path).unwrap_or_else(|_| "{}\n".to_string());
 
-        // Byte offset of the first *uncommented* occurrence of the key (text
-        // before any `;` on its line), so we don't edit a comment.
-        let mut found: Option<usize> = None;
-        let mut pos = 0usize;
-        for line in content.split_inclusive('\n') {
-            let code = match line.find(';') {
-                Some(i) => &line[..i],
-                None => line,
-            };
-            if let Some(rel) = code.find(key) {
-                found = Some(pos + rel);
-                break;
-            }
-            pos += line.len();
-        }
-
-        if let Some(start) = found {
+        if let Some(start) = find_uncommented(&content, key) {
             let after = start + key.len();
             // The value is a keyword: first non-whitespace char after the key,
             // expected to start with ':', running to whitespace/`}`/`)`.
@@ -1082,6 +1066,24 @@ impl Graph {
 /// A filename under `assets/` that doesn't collide with an existing file: `name`
 /// itself if free, else `stem_1.ext`, `stem_2.ext`, … so an import/paste never
 /// overwrites an asset already referenced by notes.
+/// Byte offset of the first occurrence of `key` on a NON-comment line (the text
+/// before any `;` on that line), or None. Config writers use this so a
+/// commented-out example like `;; :favorites […]` is never edited by mistake.
+fn find_uncommented(content: &str, key: &str) -> Option<usize> {
+    let mut pos = 0usize;
+    for line in content.split_inclusive('\n') {
+        let code = match line.find(';') {
+            Some(i) => &line[..i],
+            None => line,
+        };
+        if let Some(rel) = code.find(key) {
+            return Some(pos + rel);
+        }
+        pos += line.len();
+    }
+    None
+}
+
 /// Atomically reserve a unique filename in `assets/` for `name`, de-duplicating
 /// against existing files by appending `_1`, `_2`, … to the stem. Unlike a plain
 /// `exists()` check followed by a write, this CREATES the file exclusively
