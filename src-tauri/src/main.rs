@@ -35,10 +35,13 @@ fn start_watcher(app: tauri::AppHandle) {
         loop {
             std::thread::sleep(Duration::from_secs(3));
             let state: State<'_, AppState> = app.state();
-            let dirs = {
+            // Clone the graph Arc and release the outer lock immediately, so the
+            // (potentially slow) reconcile below — directory scan + per-file
+            // sync_file parses — never holds the lock that a graph switch needs.
+            let (dirs, graph) = {
                 let g = state.graph.read().unwrap();
                 match g.as_ref() {
-                    Some(g) => [g.journals_path(), g.pages_path()],
+                    Some(g) => ([g.journals_path(), g.pages_path()], g.clone()),
                     None => continue,
                 }
             };
@@ -62,22 +65,17 @@ fn start_watcher(app: tauri::AppHandle) {
                 continue; // first scan establishes the baseline; emit nothing
             }
             let mut changes: Vec<GraphChange> = Vec::new();
-            {
-                let g = state.graph.read().unwrap();
-                if let Some(g) = g.as_ref() {
-                    for (p, m) in &current {
-                        if snap.get(p) != Some(m) {
-                            if let Some(en) = g.sync_file(p) {
-                                changes.push(GraphChange { name: en.name, kind: en.kind, removed: false });
-                            }
-                        }
+            for (p, m) in &current {
+                if snap.get(p) != Some(m) {
+                    if let Some(en) = graph.sync_file(p) {
+                        changes.push(GraphChange { name: en.name, kind: en.kind, removed: false });
                     }
-                    for p in snap.keys() {
-                        if !current.contains_key(p) {
-                            if let Some(en) = g.forget_file(p) {
-                                changes.push(GraphChange { name: en.name, kind: en.kind, removed: true });
-                            }
-                        }
+                }
+            }
+            for p in snap.keys() {
+                if !current.contains_key(p) {
+                    if let Some(en) = graph.forget_file(p) {
+                        changes.push(GraphChange { name: en.name, kind: en.kind, removed: true });
                     }
                 }
             }
