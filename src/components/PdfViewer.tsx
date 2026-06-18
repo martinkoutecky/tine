@@ -45,6 +45,16 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
   const renderedScale: Record<number, number> = {};
   // Live render tasks (so a zoom mid-render can cancel the stale raster).
   const tasks: Record<number, pdfjs.RenderTask> = {};
+  // Pages whose REAL unscaled size has been measured (others use a page-1
+  // estimate until first render), so opening a long PDF doesn't parse every page
+  // dict before first paint.
+  const dimsKnown = new Set<number>();
+  // Rendered pages in recency order (LRU). A canvas + text layer is freed once we
+  // exceed CANVAS_CAP so a long PDF doesn't keep a bitmap for every page ever
+  // viewed; the wrapper stays (sized) and re-renders on scroll-back. Small papers
+  // never hit the cap, so they keep every canvas (instant scroll-back).
+  const lru: number[] = [];
+  const CANVAS_CAP = 24;
   // Pages currently intersecting the viewport — the only ones we rasterize.
   const visible = new Set<number>();
   let io: IntersectionObserver | null = null;
@@ -84,6 +94,7 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
     for (const k of Object.keys(textLayerObjs)) delete textLayerObjs[Number(k)];
     pendingText.clear();
     clearTimeout(textTimer);
+    lru.length = 0;
     visible.clear();
     io?.disconnect();
     // Modest prefetch margin: render/text only pages near the viewport, so a
@@ -150,6 +161,17 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
     const page = await pdfDoc.getPage(n);
     if (scale() !== s || !pageEls[n]) return; // zoomed again while awaiting
     const viewport = page.getViewport({ scale: s });
+    // First time we touch this page, learn its real unscaled size and correct the
+    // wrapper if the page-1 estimate was off (non-uniform PDF).
+    if (!dimsKnown.has(n)) {
+      dimsKnown.add(n);
+      const rw = viewport.width / s;
+      const rh = viewport.height / s;
+      if (Math.abs(rw - dims[n].w) > 0.5 || Math.abs(rh - dims[n].h) > 0.5) {
+        dims[n] = { w: rw, h: rh };
+        sizeWrapper(n, scale());
+      }
+    }
 
     let canvas = wrap.querySelector("canvas") as HTMLCanvasElement | null;
     if (!canvas) {
@@ -187,6 +209,40 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
     clearTransform(n);
     repaintPage(n);
     scheduleText(n);
+    touchLru(n);
+    evictCanvases();
+  }
+
+  // Record `n` as most-recently rendered.
+  function touchLru(n: number) {
+    const i = lru.indexOf(n);
+    if (i >= 0) lru.splice(i, 1);
+    lru.push(n);
+  }
+  // Free canvases/text for the least-recently rendered OFF-SCREEN pages once we're
+  // over the cap. The wrapper (and its size) stays, so scroll geometry is intact
+  // and the page re-renders when scrolled back into view.
+  function evictCanvases() {
+    let i = 0;
+    while (lru.length > CANVAS_CAP && i < lru.length) {
+      const n = lru[i];
+      if (visible.has(n)) {
+        i++;
+        continue;
+      }
+      freePage(n);
+      lru.splice(i, 1);
+    }
+  }
+  function freePage(n: number) {
+    tasks[n]?.cancel();
+    delete tasks[n];
+    pageEls[n]?.querySelector("canvas")?.remove();
+    delete renderedScale[n];
+    if (textLayers[n]) textLayers[n].innerHTML = "";
+    delete textLayerObjs[n];
+    delete textScale[n];
+    pendingText.delete(n);
   }
 
   // Coalesced, deferred text-layer (re)build. Runs ~after the view settles, only
@@ -305,16 +361,17 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
     }
     if (!bytes.length) return;
     pdfDoc = await pdfjs.getDocument({ data: bytes }).promise;
-    // Fetch every page's unscaled size once (getPage parses the page dict, not
-    // its content) so wrappers size correctly — in PARALLEL, so a long PDF
-    // doesn't pay N sequential page-dict parses before the first paint.
+    // Measure ONLY page 1 up front (for fit-width + as the size estimate for the
+    // rest). Every other page is sized from that estimate and corrected to its
+    // real size the first time it renders — so first paint doesn't wait on N
+    // page-dict parses. Uniform PDFs (the common case) never visibly shift.
     const doc = pdfDoc;
-    const vps = await Promise.all(
-      Array.from({ length: doc.numPages }, (_, i) =>
-        doc.getPage(i + 1).then((p) => p.getViewport({ scale: 1 }))
-      )
-    );
-    vps.forEach((vp, i) => (dims[i + 1] = { w: vp.width, h: vp.height }));
+    const p1 = await doc.getPage(1);
+    const vp1 = p1.getViewport({ scale: 1 });
+    dims[1] = { w: vp1.width, h: vp1.height };
+    dimsKnown.clear();
+    dimsKnown.add(1);
+    for (let n = 2; n <= doc.numPages; n++) dims[n] = { w: vp1.width, h: vp1.height };
     setScale(fitWidthScale());
     buildLayout();
     if (props.page && pageEls[props.page]) {
