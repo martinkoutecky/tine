@@ -92,16 +92,25 @@ function flatten(
   byId: Record<string, Node>
 ): string[] {
   return dtos.map((d) => {
-    const childIds = flatten(d.children, d.id, pageName, byId);
-    byId[d.id] = {
-      id: d.id,
+    // Cross-page id:: collision guard: if another LOADED page already owns this
+    // id (two files share a persisted `id::` — copy-pasted raw, or a sync hiccup),
+    // give this block a fresh store key instead of overwriting the other page's
+    // node. Without this, the global byId entry is clobbered and saving one page
+    // serializes the other's content. The block's raw (incl. its id:: line) is
+    // untouched, so the file on disk is unchanged. Rust dedups ids WITHIN a page,
+    // so this only fires across pages.
+    const existing = byId[d.id];
+    const key = existing && existing.page !== pageName ? `dup~${crypto.randomUUID()}` : d.id;
+    const childIds = flatten(d.children, key, pageName, byId);
+    byId[key] = {
+      id: key,
       raw: d.raw,
       collapsed: d.collapsed,
       parent,
       page: pageName,
       children: childIds,
     };
-    return d.id;
+    return key;
   });
 }
 

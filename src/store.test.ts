@@ -222,6 +222,32 @@ describe("cross-day move (journal feed as one list)", () => {
   });
 });
 
+describe("cross-page duplicate id::", () => {
+  const page = (name: string, blocks: BlockDto[]): PageDto => ({
+    name, kind: "page", title: name, pre_block: null, blocks,
+  });
+
+  it("re-keys a duplicate id:: on a second page so the two blocks stay distinct", () => {
+    // Two files carrying the SAME persisted id (e.g. copy-pasted raw, or a sync
+    // hiccup) — the global byId must not collapse them into one node.
+    ensurePageLoaded(page("A", [{ id: "dup", raw: "alpha\nid:: dup", collapsed: false, children: [] }]));
+    ensurePageLoaded(page("B", [{ id: "dup", raw: "beta\nid:: dup", collapsed: false, children: [] }]));
+
+    const aRoot = pageByName("A")!.roots[0];
+    const bRoot = pageByName("B")!.roots[0];
+    expect(aRoot).toBe("dup"); // first page keeps the id
+    expect(bRoot).not.toBe("dup"); // second page re-keyed
+    expect(doc.byId[aRoot].raw).toContain("alpha");
+    expect(doc.byId[bRoot].raw).toContain("beta");
+
+    // Editing B's block must not touch A's (the corruption the guard prevents).
+    setRaw(bRoot, "beta edited\nid:: dup");
+    expect(doc.byId[aRoot].raw).toContain("alpha");
+    expect(doc.byId[aRoot].page).toBe("A");
+    expect(doc.byId[bRoot].page).toBe("B");
+  });
+});
+
 describe("page-scoped structural undo", () => {
   const journal = (name: string, blocks: BlockDto[]): PageDto => ({
     name, kind: "journal", title: name, pre_block: null, blocks,
