@@ -162,7 +162,26 @@ fn do_backup(app: &tauri::AppHandle, suffix: &str) -> (usize, bool) {
         .join(sanitize_id(&root.display().to_string()));
     let stamp = backup_stamp();
     let name = if suffix.is_empty() { stamp } else { format!("{stamp}-{suffix}") };
-    let dest = base.join(name);
+    // Reserve a UNIQUE destination directory. The stamp is second-granularity, so
+    // two snapshots in the same second (e.g. a launch snapshot racing a pre-restore
+    // snapshot) would otherwise share one directory — and copy_md_dir, which copies
+    // in but never removes files absent from the live graph, would mix both
+    // snapshots' files, leaving a later restore with stale notes. `create_dir`
+    // (non-recursive) fails atomically if the name is taken, so we bump a counter
+    // until we win an unused name.
+    let _ = std::fs::create_dir_all(&base);
+    let mut dest = base.join(&name);
+    let mut k = 2;
+    loop {
+        match std::fs::create_dir(&dest) {
+            Ok(()) => break,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                dest = base.join(format!("{name}-{k}"));
+                k += 1;
+            }
+            Err(_) => break, // other error → fall through; copy below is best-effort
+        }
+    }
     let (cj, fj) = copy_md_dir(&journals, &dest.join(dir_name(&journals)));
     let (cp, fp) = copy_md_dir(&pages, &dest.join(dir_name(&pages)));
     let mut n = cj + cp;

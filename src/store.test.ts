@@ -24,6 +24,10 @@ import {
   moveSelection,
   moveSelectionItems,
   moveBlockFeed,
+  moveBlock,
+  indentSelection,
+  reloadPage,
+  forgetPage,
   pageByName,
   carryUnfinished,
   ensurePageLoaded,
@@ -506,5 +510,75 @@ describe("journals feed (multi-page)", () => {
     const newId = editingId()!;
     expect(doc.byId[newId].page).toBe("Today");
     expect(doc.pages[0].roots.length).toBe(3);
+  });
+});
+
+describe("stale undo is dropped on external reload / forget (ds8-1)", () => {
+  const page = (name: string, blocks: BlockDto[]): PageDto => ({
+    name, kind: "page", title: name, pre_block: null, blocks,
+  });
+
+  it("undo after an external reload can't clobber the reloaded content", () => {
+    loadSingle(page("P", [blk("original")]));
+    splitBlock(doc.pages[0].roots[0], 4); // structural op → undo entry for P exists
+    expect(doc.pages[0].roots.length).toBe(2);
+    // External edit lands on disk; we reload P with new content + rev.
+    reloadPage({
+      name: "P", kind: "page", title: "P", pre_block: null, rev: "r2",
+      blocks: [{ id: "x", raw: "external version", collapsed: false, children: [] }],
+    });
+    const before = doc.pages[0].roots.map((id) => doc.byId[id].raw);
+    undo(); // must be a no-op — the pre-reload snapshot was invalidated
+    expect(doc.pages[0].roots.map((id) => doc.byId[id].raw)).toEqual(before);
+    expect(doc.byId[doc.pages[0].roots[0]].raw).toBe("external version");
+  });
+
+  it("undo after forgetPage can't resurrect the page", () => {
+    loadSingle(page("P", [blk("a")]));
+    splitBlock(doc.pages[0].roots[0], 1);
+    forgetPage("P"); // e.g. accepting "use disk version" after an external delete
+    expect(pageByName("P")).toBeUndefined();
+    undo(); // must NOT re-add P (which would recreate the deleted file)
+    expect(pageByName("P")).toBeUndefined();
+  });
+});
+
+describe("root-to-root drop across pages targets the drop page (#38)", () => {
+  const journal = (name: string, blocks: BlockDto[]): PageDto => ({
+    name, kind: "journal", title: name, pre_block: null, blocks,
+  });
+  const raws = (name: string) => pageByName(name)!.roots.map((id) => doc.byId[id].raw);
+
+  it("a root block dropped onto another day's root lands on that day, not the source", async () => {
+    const today = journal("Today", [blk("t1")]);
+    const older = journal("Older", [blk("o1")]);
+    loadFeed([today, older]);
+    const t1 = today.blocks[0].id;
+    // Drop t1 (a root) after o1 (a root on Older): newParent=null, targetPage=Older.
+    await moveBlock(t1, null, 1, "Older");
+    expect(raws("Today")).toEqual([]); // left the source page
+    expect(raws("Older")).toEqual(["o1", "t1"]); // landed on the drop page
+    expect(doc.byId[t1].page).toBe("Older");
+  });
+});
+
+describe("selection indent is single-page (ds8-2)", () => {
+  const journal = (name: string, blocks: BlockDto[]): PageDto => ({
+    name, kind: "journal", title: name, pre_block: null, blocks,
+  });
+
+  it("indenting a cross-day selection leaves the other day's block in place", () => {
+    const today = journal("Today", [blk("t1"), blk("t2")]);
+    const older = journal("Older", [blk("o1")]);
+    loadFeed([today, older]);
+    const t1 = today.blocks[0].id, t2 = today.blocks[1].id, o1 = older.blocks[0].id;
+    selectBlock(t2); // anchor on Today
+    moveSelection(1, true); // extend down across the day boundary to o1
+    indentSelection();
+    // t2 indents under t1 (same page); o1 must NOT have been dragged onto Today.
+    expect(doc.byId[o1].page).toBe("Older");
+    expect(pageByName("Older")!.roots).toContain(o1);
+    expect(doc.byId[t2].parent).toBe(t1);
+    expect(doc.byId[t2].page).toBe("Today");
   });
 });

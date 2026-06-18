@@ -150,7 +150,9 @@ function beginDrag(id: string, e: MouseEvent) {
         }
         p = doc.byId[p].parent;
       }
-      if (ok) moveBlock(id, tgt.parent, siblingIndex(ind.id) + (ind.before ? 0 : 1));
+      // Pass the target's page so a root-to-root drop across pages (e.g. between
+      // journal days) lands on the page it was dropped onto, not the source page.
+      if (ok) void moveBlock(id, tgt.parent, siblingIndex(ind.id) + (ind.before ? 0 : 1), tgt.page);
     }
     setDragId(null);
     setDropInd(null);

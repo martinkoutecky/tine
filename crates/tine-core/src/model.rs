@@ -806,10 +806,11 @@ impl Graph {
     /// Write raw bytes (e.g. a pasted image) into `assets/`, returning the
     /// stored filename (de-duplicated if it already exists).
     pub fn save_asset(&self, name: &str, bytes: &[u8]) -> io::Result<String> {
+        use std::io::Write;
         let assets = self.assets_path();
         fs::create_dir_all(&assets)?;
-        let final_name = dedup_asset_name(&assets, name);
-        fs::write(assets.join(&final_name), bytes)?;
+        let (final_name, mut file) = reserve_asset(&assets, name)?;
+        file.write_all(bytes)?;
         Ok(final_name)
     }
 
@@ -823,7 +824,10 @@ impl Graph {
             .to_string();
         let assets = self.assets_path();
         fs::create_dir_all(&assets)?;
-        let final_name = dedup_asset_name(&assets, &name);
+        // Reserve the name (creating an empty placeholder so no concurrent writer
+        // can claim it), then copy the source over our own placeholder.
+        let (final_name, _file) = reserve_asset(&assets, &name)?;
+        drop(_file);
         fs::copy(src, assets.join(&final_name))?;
         Ok(final_name)
     }
@@ -1058,9 +1062,24 @@ impl Graph {
 /// A filename under `assets/` that doesn't collide with an existing file: `name`
 /// itself if free, else `stem_1.ext`, `stem_2.ext`, … so an import/paste never
 /// overwrites an asset already referenced by notes.
-fn dedup_asset_name(assets: &Path, name: &str) -> String {
-    if !assets.join(name).exists() {
-        return name.to_string();
+/// Atomically reserve a unique filename in `assets/` for `name`, de-duplicating
+/// against existing files by appending `_1`, `_2`, … to the stem. Unlike a plain
+/// `exists()` check followed by a write, this CREATES the file exclusively
+/// (`create_new`), so a concurrent writer (OG Logseq, or another asset op) that
+/// races between the name check and our write can't claim the same name and get
+/// silently overwritten — whoever loses the create retries the next candidate.
+/// Returns the chosen name and the open (empty) file handle.
+fn reserve_asset(assets: &Path, name: &str) -> io::Result<(String, fs::File)> {
+    let create_new = |n: &str| {
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(assets.join(n))
+    };
+    match create_new(name) {
+        Ok(f) => return Ok((name.to_string(), f)),
+        Err(e) if e.kind() != io::ErrorKind::AlreadyExists => return Err(e),
+        _ => {}
     }
     let (stem, ext) = match name.rsplit_once('.') {
         Some((s, e)) => (s.to_string(), format!(".{e}")),
@@ -1069,10 +1088,11 @@ fn dedup_asset_name(assets: &Path, name: &str) -> String {
     let mut i = 1;
     loop {
         let candidate = format!("{stem}_{i}{ext}");
-        if !assets.join(&candidate).exists() {
-            return candidate;
+        match create_new(&candidate) {
+            Ok(f) => return Ok((candidate, f)),
+            Err(e) if e.kind() != io::ErrorKind::AlreadyExists => return Err(e),
+            _ => i += 1,
         }
-        i += 1;
     }
 }
 
@@ -1274,19 +1294,23 @@ mod tests {
     }
 
     #[test]
-    fn dedup_asset_name_avoids_overwrite() {
+    fn reserve_asset_avoids_overwrite() {
         let dir = std::env::temp_dir().join(format!("tine-asset-test-{}", std::process::id()));
-        let _ = fs::create_dir_all(&dir);
-        // Free name → unchanged.
-        assert_eq!(dedup_asset_name(&dir, "paper.pdf"), "paper.pdf");
-        // Occupied → suffixed, never the same path.
-        fs::write(dir.join("paper.pdf"), b"old").unwrap();
-        assert_eq!(dedup_asset_name(&dir, "paper.pdf"), "paper_1.pdf");
-        fs::write(dir.join("paper_1.pdf"), b"old").unwrap();
-        assert_eq!(dedup_asset_name(&dir, "paper.pdf"), "paper_2.pdf");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        // Each reserve CREATES the file (exclusively), so the next reserve of the
+        // same name is forced onto a fresh suffix — no manual writes needed, and a
+        // racing writer can never be handed an already-taken name.
+        assert_eq!(reserve_asset(&dir, "paper.pdf").unwrap().0, "paper.pdf");
+        assert_eq!(reserve_asset(&dir, "paper.pdf").unwrap().0, "paper_1.pdf");
+        assert_eq!(reserve_asset(&dir, "paper.pdf").unwrap().0, "paper_2.pdf");
         // Extensionless names work too.
-        fs::write(dir.join("NOTES"), b"x").unwrap();
-        assert_eq!(dedup_asset_name(&dir, "NOTES"), "NOTES_1");
+        assert_eq!(reserve_asset(&dir, "NOTES").unwrap().0, "NOTES");
+        assert_eq!(reserve_asset(&dir, "NOTES").unwrap().0, "NOTES_1");
+        // Every reserved name is a real, distinct file on disk.
+        for n in ["paper.pdf", "paper_1.pdf", "paper_2.pdf", "NOTES", "NOTES_1"] {
+            assert!(dir.join(n).exists(), "{n} reserved");
+        }
         let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -142,6 +142,11 @@ function upsertPage(dto: PageDto) {
   // A real page with this name exists again → lift any delete tombstone so edits
   // to the freshly-(re)created page save normally.
   deletedPages.delete(dto.name);
+  // Replacing an already-loaded copy means the page's content changed under us
+  // (a conflict-resolution / watcher reload). Any undo entry predating this reload
+  // is stale — replaying it would clobber the just-loaded (external) version, so
+  // drop those entries. (A first load has no prior entries → no-op.)
+  const replacing = doc.pages.some((p) => p.name === dto.name);
   // Record the load baseline (the on-disk rev) so saves conflict against it.
   baseRev.set(dto.name, dto.rev ?? null);
   setDoc(
@@ -153,6 +158,7 @@ function upsertPage(dto: PageDto) {
       else s.pages.push(fp);
     })
   );
+  if (replacing) invalidateUndoForPage(dto.name);
 }
 
 /** Load a page into the working set if it isn't already there (used by
@@ -174,6 +180,9 @@ export function forgetPage(name: string) {
   dirty.delete(name);
   baseRev.delete(name);
   clearConflict(name);
+  // The page is leaving the working set; a stale undo snapshot must not be able to
+  // re-add it (and, with baseRev gone, recreate an externally-deleted file).
+  invalidateUndoForPage(name);
   setDoc(
     produce((s) => {
       purgePageNodes(s, name);
@@ -432,6 +441,30 @@ export function clearUndoHistory() {
   undoStack.length = 0;
   redoStack = [];
   lastUndoTag = null;
+}
+
+/** Does an undo entry reference page `name`? A raw entry by its `page`; a snap
+ *  entry by its declared scope (a `null` scope = whole working set, so it touches
+ *  every page including this one). */
+function entryTouchesPage(e: UndoEntry, name: string): boolean {
+  if (e.kind === "raw") return e.page === name;
+  return e.pages === null || e.pages.includes(name);
+}
+
+/** Drop undo/redo entries that reference `name`. Called when a page's on-disk
+ *  content is reloaded under us (external edit → new baseRev) or the page is
+ *  forgotten/deleted: a snapshot taken before that reload is stale, and replaying
+ *  it would mark the page dirty and let autosave overwrite the external version —
+ *  or, for a forgotten/deleted page, resurrect the file. We drop the whole entry
+ *  (not just the page's slice) because a snap can't be partially applied; this can
+ *  cost an unrelated co-snapshotted page its undo step, which is the safe tradeoff
+ *  (lose an undo vs. clobber a file). */
+export function invalidateUndoForPage(name: string) {
+  for (let i = undoStack.length - 1; i >= 0; i--) {
+    if (entryTouchesPage(undoStack[i], name)) undoStack.splice(i, 1);
+  }
+  redoStack = redoStack.filter((e) => !entryTouchesPage(e, name));
+  lastUndoTag = null; // don't coalesce a later edit onto a now-dropped entry
 }
 
 // Hand-rolled clones — Node/FeedPage are flat (primitives + a string[]), so a
@@ -1093,11 +1126,16 @@ export function indentSelection() {
   const fi = sibs.indexOf(first);
   if (fi <= 0) return;
   const newParent = sibs[fi - 1];
-  // The selection can span feed days (pages); the move's target is on first's
-  // page, already among the selected pages — so the union of selected pages is
-  // the complete affected set.
-  pushUndo("indent-sel", [...new Set(ids.map((x) => doc.byId[x]?.page).filter(Boolean) as string[])]);
-  for (const id of ids) moveBlockInternal(id, newParent, doc.byId[newParent].children.length);
+  // Structural indent is single-page ONLY. The target (newParent) is on first's
+  // page; moving a block from another feed day under it would be a cross-page
+  // structural move (removal-before-add hazard) — and indenting under a different
+  // day's block is nonsensical anyway. So move only the selected blocks that are
+  // already on the target page.
+  const destPage = doc.byId[newParent].page;
+  const same = ids.filter((id) => doc.byId[id]?.page === destPage);
+  if (!same.length) return;
+  pushUndo("indent-sel", [destPage]);
+  for (const id of same) moveBlockInternal(id, newParent, doc.byId[newParent].children.length);
   setDoc("byId", newParent, "collapsed", false);
 }
 
@@ -1107,10 +1145,14 @@ export function outdentSelection() {
   const parentId = doc.byId[ids[0]].parent;
   if (parentId === null) return;
   const grand = doc.byId[parentId].parent;
-  // Target `grand` is on ids[0]'s page, already among the selected pages.
-  pushUndo("outdent-sel", [...new Set(ids.map((x) => doc.byId[x]?.page).filter(Boolean) as string[])]);
+  // Single-page only (see indentSelection): outdent moves blocks to `grand`, on
+  // ids[0]'s page — so restrict to the blocks already on that page.
+  const destPage = doc.byId[parentId].page;
+  const same = ids.filter((id) => doc.byId[id]?.page === destPage);
+  if (!same.length) return;
+  pushUndo("outdent-sel", [destPage]);
   let after = parentId;
-  for (const id of ids) {
+  for (const id of same) {
     moveBlockInternal(id, grand, indexInSiblings(after) + 1);
     after = id;
   }
@@ -1202,7 +1244,15 @@ function moveBlockInternal(id: string, newParent: string | null, index: number) 
   if (newPage !== oldPage) markDirty(newPage);
 }
 
-export function moveBlock(id: string, newParent: string | null, index: number) {
+/** Move a block under `newParent` (or, when `newParent` is null, to the roots of
+ *  `targetPage` — pass the drop target's page so a root-to-root drop across pages
+ *  lands on the RIGHT page instead of defaulting back to the source). */
+export async function moveBlock(
+  id: string,
+  newParent: string | null,
+  index: number,
+  targetPage?: string
+) {
   const node = doc.byId[id];
   if (!node) return;
   // Don't drop a block into its own descendant.
@@ -1212,7 +1262,18 @@ export function moveBlock(id: string, newParent: string | null, index: number) {
     p = doc.byId[p].parent;
   }
   const oldPage = node.page;
-  const newPage = newParent ? doc.byId[newParent].page : oldPage;
+  // A root drop has no parent to read the page from — use the explicit target
+  // page (the day/page the drop landed on); fall back to the source page only if
+  // the caller didn't supply one (a same-page reorder).
+  const newPage = newParent ? doc.byId[newParent].page : (targetPage ?? oldPage);
+  // Cross-page drag: flush the source while it still holds the block, so a
+  // pre-existing pending save can't write the removal before the destination
+  // lands. Abort (no move) if the source can't be saved.
+  if (newPage !== oldPage && !(await prepareCrossPageSources([oldPage]))) {
+    pushToast(`Couldn't move — “${oldPage}” has unsaved changes that need resolving first.`, "error");
+    return;
+  }
+  if (!doc.byId[id]) return; // block vanished during the async flush
   // Drag-move can cross pages → snapshot both source and destination.
   pushUndo("move", [...new Set([oldPage, newPage])]);
   setDoc(
@@ -1343,6 +1404,20 @@ function persistCrossPage(dest: string, sources: string[]) {
   })();
 }
 
+/** Before a cross-page move mutates memory, durably flush every SOURCE page while
+ *  it still contains the blocks. Otherwise a save that was ALREADY pending/in-flight
+ *  for a source (from an earlier, unrelated edit) can fire right after the in-memory
+ *  removal and write the post-removal state to disk before the destination is saved
+ *  — a removal-only, data-losing state that dest-first persistence alone can't
+ *  prevent. Returns false if any source can't be flushed (an unresolved conflict);
+ *  the caller MUST then abort the move. Clean sources flush as instant no-ops. */
+export async function prepareCrossPageSources(sources: string[]): Promise<boolean> {
+  for (const s of new Set(sources)) {
+    if ((isDirty(s) || saveChain.has(s)) && !(await flushPage(s))) return false;
+  }
+  return true;
+}
+
 /** Resolve the adjacent feed day for a root block at the page boundary, loading
  *  older days if a down-move runs off the last loaded one. Returns the target
  *  page name, or null if there's nowhere to go. */
@@ -1372,6 +1447,8 @@ export async function moveBlockFeed(id: string, dir: 1 | -1): Promise<"within" |
   if (node.parent !== null) return "none"; // nested block at a child-list edge: stop
   const target = await feedNeighbor(node.page, dir);
   if (!target) return "none";
+  if (!(await prepareCrossPageSources([node.page]))) return "none"; // source has unsaved edits → abort
+  if (!doc.byId[id]) return "none"; // vanished during the flush
   pushUndo("move-cross", [node.page, target]);
   crossMoveBlocks([id], node.page, target, dir);
   return "crossed";
@@ -1418,6 +1495,7 @@ export async function moveSelectionItems(dir: 1 | -1) {
   if (ids.some((id) => doc.byId[id].parent !== null || doc.byId[id].page !== page)) return;
   const target = await feedNeighbor(page, dir);
   if (!target) return;
+  if (!(await prepareCrossPageSources([page]))) return; // source has unsaved edits → abort
   pushUndo("move-sel-cross", [page, target]);
   crossMoveBlocks(ids, page, target, dir);
 }

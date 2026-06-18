@@ -4,7 +4,15 @@
 // newest→oldest so the newest carried tasks end up on top of today.
 
 import { backend } from "./backend";
-import { pageByName, ensurePageLoaded, carryUnfinished, flushPage, isDirty, markDirty } from "./store";
+import {
+  pageByName,
+  ensurePageLoaded,
+  carryUnfinished,
+  flushPage,
+  isDirty,
+  markDirty,
+  prepareCrossPageSources,
+} from "./store";
 import { journalTitle } from "./journal";
 import { carryKeepsContext, carryHeaderText, pushToast } from "./ui";
 import { openJournals } from "./router";
@@ -89,6 +97,13 @@ export async function carryDay(pageName: string): Promise<void> {
   const today = await ensureToday();
   if (pageName === today) return;
   if (!(await ensureLoaded(pageName, "journal"))) return;
+  // Flush the source day (while it still holds the tasks) before the in-memory
+  // move, so a save already pending for it can't write the removal before today
+  // is saved. Abort if it can't be flushed (unresolved conflict).
+  if (!(await prepareCrossPageSources([pageName]))) {
+    pushToast("Couldn't carry — that day has unsaved changes to resolve first.", "error");
+    return;
+  }
   const n = carryUnfinished([pageName], carryKeepsContext(), carryHeaderText());
   await report(n, today, [pageName]);
 }
@@ -107,6 +122,11 @@ export async function carryDaysBack(days: number): Promise<void> {
   // Load all the day files in parallel rather than one IPC round-trip at a time.
   const loaded = await Promise.all(candidates.map((t) => ensureLoaded(t, "journal")));
   const titles = candidates.filter((_, i) => loaded[i]); // skip days with no file
+  // Flush source days (with their tasks intact) before the in-memory move — see carryDay.
+  if (!(await prepareCrossPageSources(titles))) {
+    pushToast("Couldn't carry — a day has unsaved changes to resolve first.", "error");
+    return;
+  }
   const n = carryUnfinished(titles, carryKeepsContext(), carryHeaderText());
   await report(n, today, titles);
 }
