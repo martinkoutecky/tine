@@ -394,7 +394,12 @@ function BackupsTab(): JSX.Element {
     try {
       // Persist current edits first so the pre-restore safety snapshot captures
       // them (and the reload below doesn't write stale edits over the restore).
-      await flushAll();
+      // Abort if a page couldn't be saved rather than discard it.
+      if (!(await flushAll())) {
+        pushToast("Some pages couldn't be saved — resolve conflicts before restoring.", "error");
+        setBusy(false);
+        return;
+      }
       await backend().restoreBackup(b.stamp);
       const root = graphMeta()?.root ?? "";
       await loadGraphPath(root); // reopen from the restored files

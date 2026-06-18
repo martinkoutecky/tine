@@ -12,9 +12,10 @@ export interface Backend {
   /** Journal date-keys (yyyymmdd) whose page has real content. */
   journalContentDays(): Promise<number[]>;
   getPage(name: string, kind: "journal" | "page"): Promise<PageDto | null>;
-  /** Rejects with "conflict" if the file changed on disk since load (unless
-   *  force overwrites it). */
-  savePage(page: PageDto, force?: boolean): Promise<void>;
+  /** Save a page. `baseRev` is the file hash the editor loaded; the backend
+   *  rejects with "conflict" if the file changed on disk since then (unless
+   *  `force`). Returns the new on-disk rev to use as the next baseline. */
+  savePage(page: PageDto, baseRev: string | null, force?: boolean): Promise<string>;
   getBacklinks(name: string): Promise<RefGroup[]>;
   getUnlinkedRefs(name: string): Promise<RefGroup[]>;
   deletePage(name: string, kind: "journal" | "page"): Promise<void>;
@@ -109,8 +110,8 @@ class TauriBackend implements Backend {
   getPage(name: string, kind: "journal" | "page") {
     return this.call<PageDto | null>("get_page", { name, kind });
   }
-  savePage(page: PageDto, force = false) {
-    return this.call<void>("save_page", { page, force });
+  savePage(page: PageDto, baseRev: string | null, force = false) {
+    return this.call<string>("save_page", { page, baseRev, force });
   }
   getBacklinks(name: string) {
     return this.call<RefGroup[]>("get_backlinks", { name });

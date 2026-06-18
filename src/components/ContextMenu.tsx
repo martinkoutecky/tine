@@ -141,11 +141,19 @@ function PageMenu(props: {
     if (next && next !== props.name) {
       // Persist any unsaved edits first — rename moves the file on disk and the
       // renamed page is reloaded from disk, so in-memory edits would be lost.
+      // Abort if they couldn't be saved.
       void flushPage(props.name)
-        .then(() => backend().renamePage(props.name, next))
-        .then(() => {
-          openPage(next, props.pageKind);
-          pushToast(`Renamed to “${next}”`, "success");
+        .then((ok) => {
+          if (!ok) {
+            pushToast("Couldn't save pending edits — resolve the conflict before renaming.", "error");
+            return;
+          }
+          return backend()
+            .renamePage(props.name, next)
+            .then(() => {
+              openPage(next, props.pageKind);
+              pushToast(`Renamed to “${next}”`, "success");
+            });
         })
         .catch(() => pushToast("Rename failed", "error"));
     }

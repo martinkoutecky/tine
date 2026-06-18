@@ -156,6 +156,7 @@ export function QuickSwitcher(): JSX.Element {
     try {
       await backend().savePage(
         { name, kind: "page", title: name, pre_block: null, blocks: [{ id: "", raw: "", collapsed: false, children: [] }] },
+        null, // brand-new page — no baseline
         false
       );
     } catch {

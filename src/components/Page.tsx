@@ -63,7 +63,7 @@ export function PageView(): JSX.Element {
 
   createEffect(() => {
     const r = route();
-    graphEpoch(); // reload when the open graph changes
+    const epoch = graphEpoch(); // reload when the open graph changes
     setReady(false);
     setLoadError(null);
     void (async () => {
@@ -71,11 +71,13 @@ export function PageView(): JSX.Element {
         if (r.kind === "journals") {
           feedDone = false;
           const js = await backend().journalsDesc(FEED_PAGE, 0);
+          if (epoch !== graphEpoch()) return; // graph switched mid-load — drop it
           journalOffset = js.length;
           if (js.length < FEED_PAGE) feedDone = true;
           loadFeed(withToday(js));
         } else {
           const dto = await backend().getPage(r.name, r.pageKind);
+          if (epoch !== graphEpoch()) return; // graph switched mid-load — drop it
           // null = page doesn't exist yet → start a fresh empty page. A failed
           // read throws and is caught below, so we never overwrite a page whose
           // load errored with empty content.
@@ -83,6 +85,7 @@ export function PageView(): JSX.Element {
         }
         setReady(true);
       } catch (e) {
+        if (epoch !== graphEpoch()) return;
         setLoadError(String(e));
         setReady(true);
       }
@@ -314,8 +317,12 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
     setRenaming(false);
     if (!next || next === props.page.name) return;
     try {
-      // Flush unsaved edits before the file is moved on disk and reloaded.
-      await flushPage(props.page.name);
+      // Flush unsaved edits before the file is moved on disk and reloaded; abort
+      // the rename if they couldn't be saved (conflict / error).
+      if (!(await flushPage(props.page.name))) {
+        alert("Couldn't save pending edits — resolve the conflict before renaming.");
+        return;
+      }
       await backend().renamePage(props.page.name, next);
       openPage(next, "page");
     } catch (e) {

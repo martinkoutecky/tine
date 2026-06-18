@@ -1,4 +1,4 @@
-import { Show, Suspense, createEffect, lazy, onCleanup, onMount, type JSX } from "solid-js";
+import { Show, Suspense, createEffect, lazy, on, onCleanup, onMount, type JSX } from "solid-js";
 import { Sidebar } from "./components/Sidebar";
 import { PageView } from "./components/Page";
 import { QuickSwitcher } from "./components/QuickSwitcher";
@@ -16,7 +16,7 @@ import { RightSidebar } from "./components/RightSidebar";
 import { Settings } from "./components/Settings";
 import { DatePicker } from "./components/DatePicker";
 import { installKeybindings } from "./keybindings";
-import { loadGraphPath, persistedGraphPath } from "./graph";
+import { loadGraphPath, persistedGraphPath, refreshAliases } from "./graph";
 import { goBack, goForward, canGoBack, canGoForward } from "./router";
 import {
   theme,
@@ -41,6 +41,7 @@ import {
   focusMode,
   dimInactiveBlocks,
   exitFocusMode,
+  dataRev,
 } from "./ui";
 import { editingId, flushAll } from "./store";
 import { isTauri } from "./backend";
@@ -81,6 +82,11 @@ export function App(): JSX.Element {
     })();
     onCleanup(() => unlisten());
   });
+
+  // After edits settle (dataRev bumps), refresh the alias map so changing an
+  // alias:: doesn't leave navigation resolving to the old canonical page. The
+  // Rust side caches aliases, so this is cheap unless a save actually changed them.
+  createEffect(on(dataRev, () => void refreshAliases(), { defer: true }));
 
   // (Re)install keybindings whenever config or the user's local overrides change
   // (precedence: defaults < config.edn :shortcuts < Settings overrides).

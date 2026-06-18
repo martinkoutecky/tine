@@ -89,8 +89,9 @@ fn search_cache_reflects_saves_and_deletes() {
             raw: "contains zonkwort here".into(),
             ..Default::default()
             }],
+        rev: None,
     };
-    g.save_page(&page).unwrap();
+    g.save_page(&page, None).unwrap();
     let hits = g.search("zonkwort", 10);
     assert_eq!(hits.len(), 1, "saved page should be searchable");
     assert_eq!(hits[0].page, "Fresh");
@@ -123,8 +124,9 @@ fn search_ignores_hidden_property_metadata() {
             raw: "a perfectly ordinary block\nsome-prop:: qzxmeta".into(),
             ..Default::default()
         }],
+        rev: None,
     };
-    g.save_page(&page).unwrap();
+    g.save_page(&page, None).unwrap();
     assert_eq!(
         g.search("qzxmeta", 10).len(),
         0,
@@ -156,7 +158,7 @@ fn save_preserves_file_format_no_churn() {
     // trailing-newline + indent convention is preserved.
     for name in ["A", "B", "C"] {
         let dto = g.load_named(name, PageKind::Page).unwrap().unwrap();
-        g.save_page(&dto).unwrap();
+        g.save_page(&dto, dto.rev.as_deref()).unwrap();
     }
     assert_eq!(std::fs::read_to_string(root.join("pages").join("A.md")).unwrap(), no_nl);
     assert_eq!(std::fs::read_to_string(root.join("pages").join("B.md")).unwrap(), with_nl);
@@ -183,7 +185,7 @@ fn save_refuses_to_clobber_external_change() {
     std::fs::write(&path, "- EXTERNAL EDIT").unwrap();
 
     // Saving the now-stale page must fail with a conflict and NOT overwrite.
-    let err = g.save_page(&dto).unwrap_err();
+    let err = g.save_page(&dto, dto.rev.as_deref()).unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "- EXTERNAL EDIT");
 
@@ -196,10 +198,11 @@ fn save_refuses_to_clobber_external_change() {
 
 #[test]
 fn consecutive_self_saves_do_not_conflict() {
-    // Regression: inserting a SCHEDULED date then deleting it (two saves with no
-    // external writer) must not raise a spurious "changed on disk" conflict. The
-    // guard must compare disk against the cached doc normalized the same way the
-    // file was, not the raw in-memory DTO doc.
+    // Regression: inserting a SCHEDULED date then deleting it (consecutive saves
+    // with no external writer) must not raise a spurious "changed on disk"
+    // conflict. Each save returns the new baseline rev, which the next save passes
+    // back (exactly what the frontend does) — so our own write is never mistaken
+    // for an external edit.
     use tine_core::model::{BlockDto, PageDto, PageKind};
 
     let root = std::env::temp_dir().join(format!("tine-selfsave-{}", std::process::id()));
@@ -211,13 +214,16 @@ fn consecutive_self_saves_do_not_conflict() {
         title: "D".into(),
         pre_block: None,
         blocks: vec![BlockDto { id: "b1".into(), raw: raw.into(), ..Default::default() }],
+        rev: None,
     };
-    // 1) date picker inserts a SCHEDULED line.
-    g.save_page(&mk("TODO task\nSCHEDULED: <2026-06-16 Tue>")).unwrap();
+    // 1) date picker inserts a SCHEDULED line (page is new — no baseline yet).
+    let r1 = g.save_page(&mk("TODO task\nSCHEDULED: <2026-06-16 Tue>"), None).unwrap();
     // 2) user deletes the inserted text — must NOT be read as an external edit.
-    g.save_page(&mk("TODO task")).expect("no spurious conflict after our own save");
+    let r2 = g
+        .save_page(&mk("TODO task"), Some(&r1))
+        .expect("no spurious conflict after our own save");
     // 3) and a further edit still saves cleanly.
-    g.save_page(&mk("TODO task edited")).expect("no spurious conflict");
+    g.save_page(&mk("TODO task edited"), Some(&r2)).expect("no spurious conflict");
     assert!(std::fs::read_to_string(root.join("pages").join("D.md")).unwrap().contains("edited"));
 
     std::fs::remove_dir_all(&root).ok();

@@ -54,6 +54,28 @@ fn fenced_code_with_bullet_line_stays_one_block() {
 }
 
 #[test]
+fn nested_backtick_fence_not_closed_early() {
+    // A ```` (4-backtick) fence whose body contains ``` must NOT close at the
+    // inner ```; the `- ` line stays literal and the block survives round-trip.
+    let input = "- ````\n  ```\n  - still code\n  ````\n- after\n";
+    assert_roundtrip(input);
+    let doc = doc::parse(input);
+    assert_eq!(doc.roots.len(), 2);
+    assert_eq!(doc.roots[0].children.len(), 0, "inner ``` must not split the block");
+    assert_eq!(doc.roots[0].raw, "````\n```\n- still code\n````");
+}
+
+#[test]
+fn tilde_fence_protects_bullet_lines() {
+    let input = "- ~~~\n  - not a child\n  ~~~\n- after\n";
+    assert_roundtrip(input);
+    let doc = doc::parse(input);
+    assert_eq!(doc.roots.len(), 2);
+    assert_eq!(doc.roots[0].children.len(), 0);
+    assert_eq!(doc.roots[0].raw, "~~~\n- not a child\n~~~");
+}
+
+#[test]
 fn fenced_code_on_child_block() {
     let input = "- parent\n\t- ```\n\t  - inner\n\t  ```\n\t- real sibling\n";
     assert_roundtrip(input);

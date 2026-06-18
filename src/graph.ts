@@ -2,7 +2,7 @@
 // persisting the choice so it reopens next launch.
 
 import { backend } from "./backend";
-import { setGraphMeta, setWorkflow, bumpGraphEpoch, setRightSidebar, graphMeta, setAliasMap, seedFavorites, pruneSidebarBlocks } from "./ui";
+import { setGraphMeta, setWorkflow, bumpGraphEpoch, setRightSidebar, graphMeta, graphEpoch, setAliasMap, seedFavorites, pruneSidebarBlocks, pushToast } from "./ui";
 import { resetStore, flushAll } from "./store";
 import { openJournals } from "./router";
 import { journalTitle } from "./journal";
@@ -29,7 +29,13 @@ export async function loadGraphPath(path: string): Promise<void> {
   // Persist the current graph's pending edits BEFORE opening another graph —
   // otherwise the debounced save would either fire against the new graph or be
   // dropped by resetStore. No-op on first load (nothing dirty / same graph).
-  await flushAll();
+  // If something couldn't be saved (conflict / disk error), abort the switch so
+  // resetStore doesn't discard that edit.
+  const flushed = await flushAll();
+  if (switching && !flushed) {
+    pushToast("Some pages couldn't be saved — resolve conflicts before switching graphs.", "error");
+    return;
+  }
   const meta = await backend().loadGraph(path);
   resetStore();
   if (switching) setRightSidebar([]);
@@ -51,15 +57,21 @@ export async function loadGraphPath(path: string): Promise<void> {
   openJournals();
 }
 
-/** Load the graph's alias:: index so link/navigation can resolve aliases. */
-async function loadAliases(): Promise<void> {
+/** Load the graph's alias:: index so link/navigation can resolve aliases.
+ *  Guarded by the graph epoch so a slow response after a graph switch can't
+ *  install the old graph's aliases. Exposed as `refreshAliases` so it can be
+ *  re-run after edits (an alias:: change would otherwise leave nav stale). */
+export async function refreshAliases(): Promise<void> {
+  const epoch = graphEpoch();
   try {
     const pairs = await backend().pageAliases();
+    if (epoch !== graphEpoch()) return;
     setAliasMap(Object.fromEntries(pairs));
   } catch {
-    setAliasMap({});
+    if (epoch === graphEpoch()) setAliasMap({});
   }
 }
+const loadAliases = refreshAliases;
 
 // Resolve Logseq dynamic template vars in a template block.
 function applyTemplateVars(raw: string): string {
@@ -95,6 +107,7 @@ async function ensureJournalTemplate(): Promise<void> {
     });
     await backend().savePage(
       { name: title, kind: "journal", title, pre_block: null, blocks: tmpl.blocks.map(resolve) },
+      null, // brand-new journal — no baseline
       false
     );
   } catch {

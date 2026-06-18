@@ -74,6 +74,12 @@ pub struct PageDto {
     /// Raw page-property pre-block (if any).
     pub pre_block: Option<String>,
     pub blocks: Vec<BlockDto>,
+    /// Hash of the on-disk file content when this page was loaded — the editor's
+    /// baseline. Sent back on save so we conflict against the version the editor
+    /// actually loaded (not the mutable cache, which the watcher can advance).
+    /// `None` for a page with no file yet.
+    #[serde(default)]
+    pub rev: Option<String>,
 }
 
 pub struct Graph {
@@ -314,13 +320,17 @@ impl Graph {
     /// stable and consistent with queries / refs / the sidebar. Falls back to a
     /// disk parse for a page not yet in the cache (e.g. just created externally).
     pub fn load_page(&self, entry: &PageEntry) -> io::Result<PageDto> {
+        // The editor's save-baseline is the hash of the actual on-disk bytes at
+        // load time (read regardless of cache hit — load is not the hot path).
+        let rev = fs::read_to_string(&entry.path).ok().map(|s| content_rev(&s));
         let cached = self.with_pages(|pages| {
             pages
                 .iter()
                 .find(|(e, _)| e.kind == entry.kind && e.name.eq_ignore_ascii_case(&entry.name))
                 .map(|(e, d)| page_dto(e, d))
         });
-        if let Some(dto) = cached {
+        if let Some(mut dto) = cached {
+            dto.rev = rev;
             return Ok(dto);
         }
         let content = fs::read_to_string(&entry.path)?;
@@ -328,7 +338,9 @@ impl Graph {
         for b in &mut doc.roots {
             assign_uuids(b);
         }
-        Ok(page_dto(entry, &doc))
+        let mut dto = page_dto(entry, &doc);
+        dto.rev = rev;
+        Ok(dto)
     }
 
     /// Read and parse a page file into a [`Document`].
@@ -687,40 +699,33 @@ impl Graph {
     /// no longer matches what Tine last knew (another app or a Syncthing pull
     /// wrote it), returns an `AlreadyExists` "conflict" error WITHOUT writing,
     /// so the caller can surface it and keep the in-memory edits.
-    pub fn save_page(&self, page: &PageDto) -> io::Result<()> {
+    pub fn save_page(&self, page: &PageDto, base_rev: Option<&str>) -> io::Result<String> {
         let path = self.path_for(&page.name, page.kind);
-        let disk = fs::read_to_string(&path);
-        let cached = self.cached_doc(&page.name, page.kind);
-        match (&disk, &cached) {
-            (Ok(disk_s), Some(cached_doc)) => {
-                // Compare disk against the cached doc *normalized through the same
-                // serialize→parse round-trip the file went through*. The cache
-                // after our own save holds the in-memory (DTO-derived) doc, whose
-                // `raw` can differ trivially from what `parse(serialize(doc))`
-                // yields; comparing the raw cached doc would then flag our own
-                // previous write as an external edit on the next save.
-                let opts = doc::SerializeOpts::detect(Some(disk_s));
-                let cached_norm = doc::parse(&doc::serialize_with(cached_doc, &opts));
-                if doc::parse(disk_s) != cached_norm {
-                    return Err(io::Error::new(io::ErrorKind::AlreadyExists, "conflict"));
-                }
-            }
-            // File exists on disk, but the (already-built) cache has no record of
-            // it: Tine believed this page was new, yet a file with that name
-            // appeared (external create / Syncthing pull). Refuse to clobber it.
-            // Only when the cache is actually built — during the brief pre-warm
-            // window we have no baseline and fall through to write as before.
-            (Ok(_), None) if self.cache.read().unwrap().is_some() => {
+        if let Ok(disk_s) = fs::read_to_string(&path) {
+            // A file exists. It must still match the exact bytes the editor loaded
+            // (`base_rev`); if it changed underneath us (external edit / Syncthing
+            // pull — possibly already folded into the cache), refuse to clobber.
+            // `base_rev == None` means the editor believed the page was new, so any
+            // existing file is an external creation and is likewise a conflict.
+            let unchanged = base_rev.is_some_and(|rev| content_rev(&disk_s) == rev);
+            if !unchanged {
                 return Err(io::Error::new(io::ErrorKind::AlreadyExists, "conflict"));
             }
-            _ => {}
         }
-        self.write_page(page)
+        self.write_page(page)?;
+        Ok(self.disk_rev(&path))
     }
 
     /// Save a page unconditionally (the user chose "keep mine" over a conflict).
-    pub fn force_save_page(&self, page: &PageDto) -> io::Result<()> {
-        self.write_page(page)
+    pub fn force_save_page(&self, page: &PageDto) -> io::Result<String> {
+        let path = self.path_for(&page.name, page.kind);
+        self.write_page(page)?;
+        Ok(self.disk_rev(&path))
+    }
+
+    /// Rev of the file now on disk (the new baseline after a write).
+    fn disk_rev(&self, path: &Path) -> String {
+        fs::read_to_string(path).map(|s| content_rev(&s)).unwrap_or_default()
     }
 
     fn write_page(&self, page: &PageDto) -> io::Result<()> {
@@ -837,7 +842,20 @@ fn page_dto(entry: &PageEntry, doc: &Document) -> PageDto {
         title: entry.name.clone(),
         pre_block: doc.pre_block.clone(),
         blocks: doc.roots.iter().map(block_to_dto).collect(),
+        rev: None,
     }
+}
+
+/// Stable (deterministic, seed-free) content hash — FNV-1a/64 as hex. Used as a
+/// per-load baseline so a save can detect that the file changed underneath the
+/// editor. Deterministic so a rev returned from one save matches the next read.
+pub fn content_rev(s: &str) -> String {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in s.bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{h:016x}")
 }
 
 /// Logseq encodes some characters in page filenames. We handle the common

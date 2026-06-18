@@ -164,16 +164,35 @@ pub fn parse(content: &str) -> Document {
         content_start: usize,
         raw: String,
         children: Vec<DocBlock>,
-        /// Currently inside an open ``` fence in this block's own content. While
-        /// true, every following line is literal continuation — even one that
-        /// looks like a `- ` bullet — so fenced code isn't shredded into child
-        /// blocks (which would corrupt the code on the next save).
-        in_code: bool,
+        /// The open fence marker `(char, length)` if this block's content is
+        /// currently inside a fenced code block — `Some` means every following
+        /// line is literal continuation (even one that looks like a `- ` bullet),
+        /// so fenced code isn't shredded into child blocks. A fence closes only on
+        /// a marker of the SAME char and at least the opener's length, so a ````
+        /// fence containing ``` (or `~~~`) round-trips correctly.
+        fence: Option<(char, usize)>,
     }
-    // A content line that begins (ignoring leading whitespace) with ``` opens or
-    // closes a fenced code block.
-    fn is_fence(text: &str) -> bool {
-        text.trim_start().starts_with("```")
+    // The fence marker at the start of a content line: `(char, run-length)` for a
+    // run of >=3 backticks or tildes, ignoring leading whitespace; else None.
+    fn fence_marker(text: &str) -> Option<(char, usize)> {
+        let t = text.trim_start();
+        let c = t.chars().next()?;
+        if c != '`' && c != '~' {
+            return None;
+        }
+        let n = t.chars().take_while(|&x| x == c).count();
+        (n >= 3).then_some((c, n))
+    }
+    // Given the current open fence (if any) and a content line, return the new
+    // fence state: open on the first valid marker, close only on a matching one.
+    fn next_fence(cur: Option<(char, usize)>, line: &str) -> Option<(char, usize)> {
+        match cur {
+            None => fence_marker(line),
+            Some((c, n)) => match fence_marker(line) {
+                Some((c2, n2)) if c2 == c && n2 >= n => None, // closing fence
+                _ => Some((c, n)),                            // still inside
+            },
+        }
     }
     let mut stack: Vec<Frame> = Vec::new();
     let mut roots: Vec<DocBlock> = Vec::new();
@@ -195,10 +214,10 @@ pub fn parse(content: &str) -> Document {
     }
 
     for line in block_lines {
-        let top_in_code = stack.last().map(|f| f.in_code).unwrap_or(false);
+        let in_code = stack.last().map(|f| f.fence.is_some()).unwrap_or(false);
         // A `- ` line starts a new block only when we're NOT inside a fenced code
         // block of the current top frame; inside a fence it's literal content.
-        if !top_in_code {
+        if !in_code {
             if let Some((col, content)) = bullet(line) {
                 // New block: fold every block at this column or deeper, so the
                 // remaining stack top (shallower column) becomes the parent.
@@ -208,7 +227,7 @@ pub fn parse(content: &str) -> Document {
                     content_start: col + 2,
                     raw: content.to_string(),
                     children: Vec::new(),
-                    in_code: is_fence(content), // bullet line may open a fence
+                    fence: next_fence(None, content), // bullet line may open a fence
                 });
                 continue;
             }
@@ -218,9 +237,7 @@ pub fn parse(content: &str) -> Document {
             let stripped = strip_n_ws(line, top.content_start);
             top.raw.push('\n');
             top.raw.push_str(stripped);
-            if is_fence(stripped) {
-                top.in_code = !top.in_code; // open or close the fence
-            }
+            top.fence = next_fence(top.fence, stripped);
         }
         // (A continuation before any bullet can't happen: it'd be pre-block.)
     }

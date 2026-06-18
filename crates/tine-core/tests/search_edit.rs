@@ -19,7 +19,7 @@ fn search_reflects_toggle_on_named_page() {
     g.warm_cache();
     let mut dto = g.load_named("Tasks", PageKind::Page).unwrap().unwrap();
     dto.blocks[0].raw = dto.blocks[0].raw.replace("TODO", "DOING");
-    g.save_page(&dto).expect("save");
+    g.save_page(&dto, dto.rev.as_deref()).expect("save");
     assert!(!g.search("DOING", 20).is_empty(), "named: DOING found after save");
     assert!(g.search("TODO", 20).is_empty(), "named: TODO gone after toggle");
     let _ = std::fs::remove_dir_all(&root);
@@ -34,7 +34,7 @@ fn search_reflects_toggle_on_journal_page() {
     let title = g.run_query("(task TODO)")[0].page.clone();
     let mut dto = g.load_named(&title, PageKind::Journal).unwrap().unwrap();
     dto.blocks[0].raw = dto.blocks[0].raw.replace("TODO", "DOING");
-    g.save_page(&dto).expect("journal save");
+    g.save_page(&dto, dto.rev.as_deref()).expect("journal save");
     assert!(!g.search("DOING", 20).is_empty(), "journal: DOING found after save");
     assert!(g.search("TODO", 20).is_empty(), "journal: TODO gone after toggle");
     let _ = std::fs::remove_dir_all(&root);
@@ -61,8 +61,9 @@ fn new_journal_appears_in_journals_desc_via_cache() {
             raw: "a new task".into(),
             ..Default::default()
         }],
+        rev: None,
     };
-    g.save_page(&dto).expect("save new journal");
+    g.save_page(&dto, None).expect("save new journal");
 
     let js = g.journals_desc();
     assert_eq!(js.len(), 2, "the freshly-created journal must appear in the feed");
@@ -86,7 +87,7 @@ fn own_write_is_suppressed_by_watcher() {
     // Edit + save through the normal path.
     let mut dto = g.load_named("Notes", PageKind::Page).unwrap().unwrap();
     dto.blocks[0].raw = dto.blocks[0].raw.replace("TODO", "DOING");
-    g.save_page(&dto).expect("save");
+    g.save_page(&dto, dto.rev.as_deref()).expect("save");
 
     // The watcher polling this file must see it as OUR write, not external.
     assert!(g.sync_file(&path).is_none(), "own write → suppressed (no phantom graph-changed)");
@@ -126,7 +127,7 @@ fn frontend_added_id_survives_reload_and_resolves() {
     let uuid = dto.blocks[0].id.clone();
     eprintln!("store uuid = {uuid}");
     dto.blocks[0].raw = format!("{}\nid:: {}", dto.blocks[0].raw, uuid);
-    g.save_page(&dto).expect("save");
+    g.save_page(&dto, dto.rev.as_deref()).expect("save");
 
     eprintln!("--- file on disk ---\n{}", std::fs::read_to_string(root.join("pages").join("TODOs.md")).unwrap());
 
@@ -158,8 +159,9 @@ fn new_journal_saved_with_date_stem_not_title() {
             children: vec![],
             breadcrumb: vec![],
         }],
+        rev: None,
     };
-    g.save_page(&dto).expect("save new journal");
+    g.save_page(&dto, None).expect("save new journal");
     // It must land on the date-stem file, and reopening must show it in the feed.
     assert!(root.join("journals").join("2026_06_18.md").exists(), "stem-named file");
     assert!(!root.join("journals").join("Jun 18th, 2026.md").exists(), "no title-named file");

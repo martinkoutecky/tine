@@ -17,6 +17,9 @@ export interface PageDto {
   title: string;
   pre_block: string | null;
   blocks: BlockDto[];
+  /** Hash of the on-disk file at load time — the save baseline. `null`/absent for
+   *  a page with no file yet. Sent back on save to detect external changes. */
+  rev?: string | null;
 }
 
 export interface TemplateDto {

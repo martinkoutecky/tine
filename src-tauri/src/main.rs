@@ -297,8 +297,13 @@ fn restore_backup(stamp: String, app: tauri::AppHandle, state: State<'_, AppStat
     }
     // Safety net: snapshot the current (pre-restore) state first, under a distinct
     // name so it can't collide with (or be pruned by) the launch snapshot the
-    // post-restore reload will take.
-    do_backup(&app, "pre-restore");
+    // post-restore reload will take. Abort if the snapshot fails while the live
+    // graph has content — never run a destructive restore without a way back.
+    let snapshot_n = do_backup(&app, "pre-restore");
+    let live_n = count_md_recursive(&journals) + count_md_recursive(&pages);
+    if live_n > 0 && snapshot_n == 0 {
+        return Err("couldn't create the pre-restore safety snapshot — restore aborted".into());
+    }
     // Restore each dir; a copy failure aborts WITHOUT having deleted anything
     // (copy-in happens before delete-extras), so a failure never loses data.
     restore_md_dir(&src.join(dir_name(&journals)), &journals)
@@ -315,10 +320,12 @@ fn restore_backup(stamp: String, app: tauri::AppHandle, state: State<'_, AppStat
     Ok(())
 }
 
-/// Restore the `.md` files in `dest` from `src`: copy the backup's files in
-/// FIRST (overwriting), and only then delete any `dest` `.md` not in the backup.
-/// Ordering matters — a copy error returns early leaving a superset of files, so
-/// a failed restore never deletes data. Non-`.md` files are left untouched.
+/// Restore the `.md` files in `dest` from `src`. Each file is copied to a temp
+/// file in `dest` then atomically renamed over the target — so a failure or
+/// power-loss mid-copy can never leave a live note truncated/half-written. Copies
+/// happen FIRST; only after they all succeed do we delete `dest` `.md` files not
+/// in the backup. A copy error returns early leaving a superset of files (no
+/// data lost). Non-`.md` files are left untouched.
 fn restore_md_dir(src: &std::path::Path, dest: &std::path::Path) -> std::io::Result<()> {
     if !src.is_dir() {
         return Ok(());
@@ -329,7 +336,10 @@ fn restore_md_dir(src: &std::path::Path, dest: &std::path::Path) -> std::io::Res
         let p = e.path();
         if p.extension().and_then(|x| x.to_str()) == Some("md") {
             if let Some(name) = p.file_name() {
-                std::fs::copy(&p, dest.join(name))?;
+                let target = dest.join(name);
+                let tmp = dest.join(format!(".{}.tine-restore", name.to_string_lossy()));
+                std::fs::copy(&p, &tmp)?;
+                std::fs::rename(&tmp, &target)?; // atomic replace on the same fs
                 restored.insert(name.to_string_lossy().into_owned());
             }
         }
@@ -480,9 +490,18 @@ fn get_page(
 }
 
 #[tauri::command]
-fn save_page(page: PageDto, force: Option<bool>, state: State<'_, AppState>) -> Result<(), String> {
+fn save_page(
+    page: PageDto,
+    base_rev: Option<String>,
+    force: Option<bool>,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
     with_graph(&state, |g| {
-        let res = if force.unwrap_or(false) { g.force_save_page(&page) } else { g.save_page(&page) };
+        let res = if force.unwrap_or(false) {
+            g.force_save_page(&page)
+        } else {
+            g.save_page(&page, base_rev.as_deref())
+        };
         res.map_err(|e| {
             if e.kind() == std::io::ErrorKind::AlreadyExists {
                 "conflict".to_string()
