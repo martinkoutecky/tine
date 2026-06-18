@@ -464,6 +464,38 @@ fn set_preferred_workflow_round_trips_in_config_edn() {
 }
 
 #[test]
+fn deleted_journal_is_not_served_from_stale_cache() {
+    use tine_core::PageKind;
+    let root = std::env::temp_dir().join(format!("tine-del-cache-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("journals")).unwrap();
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    let jpath = root.join("journals").join("2026_06_18.md");
+    std::fs::write(&jpath, "- hello\n").unwrap();
+
+    let g = Graph::open(&root);
+    // Warm the whole-graph cache so the journal is held in memory.
+    let entries = g.journals_desc();
+    assert_eq!(entries.len(), 1);
+    let entry = entries[0].clone();
+    assert!(g.load_page(&entry).is_ok());
+
+    // External delete (OG Logseq / Syncthing) before the watcher reconciles.
+    std::fs::remove_file(&jpath).unwrap();
+
+    // load_page must report NotFound, NOT serve the cached copy — serving it with
+    // a null rev would let a subsequent save recreate the deleted file.
+    let err = g.load_page(&entry).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+    // load_named treats the vanished page as absent (Ok(None)), not an error.
+    assert!(g.load_named(&entry.name, PageKind::Journal).unwrap().is_none());
+    // The stale entry was evicted, so the feed no longer lists it.
+    assert!(g.journals_desc().is_empty(), "deleted journal must drop out of the feed");
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn query_open_tasks() {
     let g = demo_graph();
     let groups = g.run_query("(task TODO DOING)");

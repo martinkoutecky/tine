@@ -398,14 +398,25 @@ impl Graph {
     /// Load a page by name; returns `None` if it doesn't exist on disk. Falls
     /// back to alias resolution (`alias::`) for named pages.
     pub fn load_named(&self, name: &str, kind: PageKind) -> io::Result<Option<PageDto>> {
+        // A file that vanished between listing and load (external delete) reports
+        // NotFound from load_page — map it to "no page" rather than an error, so
+        // the page is treated as absent (never resurrected) and the get_page
+        // contract (Ok(None) = doesn't exist) holds.
+        let load = |entry: &PageEntry| -> io::Result<Option<PageDto>> {
+            match self.load_page(entry) {
+                Ok(dto) => Ok(Some(dto)),
+                Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+                Err(e) => Err(e),
+            }
+        };
         if let Some(entry) = self.find_entry(name, kind) {
-            return Ok(Some(self.load_page(&entry)?));
+            return load(&entry);
         }
         if kind == PageKind::Page {
             let tnorm = crate::refs::normalize(name);
             if let Some((_, canon)) = self.page_aliases().into_iter().find(|(a, _)| *a == tnorm) {
                 if let Some(entry) = self.find_entry(&canon, kind) {
-                    return Ok(Some(self.load_page(&entry)?));
+                    return load(&entry);
                 }
             }
         }
@@ -490,6 +501,15 @@ impl Graph {
         let read = fs::read_to_string(&entry.path);
         if let Ok(content) = &read {
             self.sync_file_content(&entry.path, content);
+        } else if read.as_ref().err().is_some_and(|e| e.kind() == io::ErrorKind::NotFound) {
+            // The file is gone (external delete) but may still sit in the warm
+            // cache. Serving that cached copy below — with rev = None — would make
+            // it a null-baseline page, so a later edit + save would treat it as
+            // brand-new and silently RESURRECT the externally-deleted file. Evict
+            // the stale entry and report NotFound; callers treat the page as
+            // absent (the feed skips it, get_page returns None).
+            self.forget_file(&entry.path);
+            return Err(read.unwrap_err());
         }
         let rev = read.as_ref().ok().map(|s| content_rev(s));
         // Serve from the cache if it's ALREADY built, but never trigger a build

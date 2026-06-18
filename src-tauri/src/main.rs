@@ -397,7 +397,16 @@ fn copy_md_dir(src: &std::path::Path, dest: &std::path::Path) -> (usize, usize) 
     // tell an empty-at-backup dir from a missing one, and leaves destination .md
     // extras in place (mixing current files into the restored snapshot).
     let _ = std::fs::create_dir_all(dest);
-    let Ok(rd) = std::fs::read_dir(src) else { return (0, 0) };
+    let rd = match std::fs::read_dir(src) {
+        Ok(rd) => rd,
+        // A genuinely-absent source dir (e.g. a graph with no pages/) is not a
+        // failure — there's nothing to snapshot. But a dir we CAN'T read
+        // (permission / I/O) MUST count as failed, so a pre-restore safety
+        // snapshot isn't falsely reported complete and a destructive restore can
+        // refuse to proceed without a trustworthy rollback.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (0, 0),
+        Err(_) => return (0, 1),
+    };
     let (mut copied, mut failed) = (0usize, 0usize);
     for e in rd.flatten() {
         let p = e.path();
@@ -506,7 +515,14 @@ fn journals_desc(
         let entries = g.journals_desc();
         let mut out = Vec::new();
         for e in entries.into_iter().skip(offset).take(limit) {
-            out.push(g.load_page(&e).map_err(|err| err.to_string())?);
+            match g.load_page(&e) {
+                Ok(dto) => out.push(dto),
+                // A journal deleted from disk between the cache listing and this
+                // load just drops out of the feed — don't fail the whole batch (and
+                // don't serve a stale ghost; load_page already evicted it).
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => return Err(err.to_string()),
+            }
         }
         Ok(out)
     })
