@@ -169,6 +169,26 @@ fn memoized_query_and_backlinks_invalidate_after_edit() {
 }
 
 #[test]
+fn delete_page_moves_to_trash_recoverable() {
+    let root = mk("deltrash");
+    std::fs::write(root.join("pages").join("Doomed.md"), "- keep me\n").unwrap();
+    let g = Graph::open(&root);
+    g.warm_cache();
+    g.delete_page("Doomed", PageKind::Page).expect("delete");
+
+    // Gone from pages/, no longer resolvable...
+    assert!(!root.join("pages").join("Doomed.md").exists());
+    assert!(g.load_named("Doomed", PageKind::Page).unwrap().is_none());
+    // ...but recoverable from the local trash (content intact).
+    let trash = root.join("logseq").join(".tine-trash");
+    let trashed: Vec<_> = std::fs::read_dir(&trash).unwrap().flatten().collect();
+    assert_eq!(trashed.len(), 1, "deleted file should be in the trash");
+    let body = std::fs::read_to_string(trashed[0].path()).unwrap();
+    assert!(body.contains("keep me"));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn resolve_block_index_refreshes_after_cache_change() {
     let root = mk("blockidx");
     std::fs::write(root.join("pages").join("A.md"), "- alpha\n  id:: aaaa-1111\n").unwrap();

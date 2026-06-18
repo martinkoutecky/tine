@@ -659,10 +659,19 @@ impl Graph {
         Ok(())
     }
 
-    /// Delete a page/journal file.
+    /// Delete a page/journal file. Rather than unlinking, the file is moved to a
+    /// graph-local trash (`logseq/.tine-trash/`, outside journals//pages/ so it's
+    /// never re-loaded) — so a delete that races an unseen external edit, or a
+    /// simple misclick, is recoverable. Best-effort: falls back to removal if the
+    /// trash move fails.
     pub fn delete_page(&self, name: &str, kind: PageKind) -> io::Result<()> {
         if let Some(entry) = self.find_entry(name, kind) {
-            fs::remove_file(&entry.path)?;
+            let trash = self.root.join("logseq").join(".tine-trash");
+            let fname = entry.path.file_name().and_then(|s| s.to_str()).unwrap_or("page.md");
+            let dest = trash.join(format!("{}__{fname}", trash_stamp()));
+            if fs::create_dir_all(&trash).is_err() || fs::rename(&entry.path, &dest).is_err() {
+                fs::remove_file(&entry.path)?;
+            }
         }
         self.cache_remove(name, kind);
         Ok(())
@@ -1081,6 +1090,16 @@ fn encode_page_name(name: &str) -> String {
 
 fn decode_page_name(stem: &str) -> String {
     stem.replace("___", "/")
+}
+
+/// A unique-ish label (epoch millis + process-local sequence) for trashed files,
+/// so deleting two pages with the same name doesn't collide in the trash.
+fn trash_stamp() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let ms = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+    format!("{ms}-{}", SEQ.fetch_add(1, Ordering::Relaxed))
 }
 
 /// Atomic write: write to a temp file in the same directory, then rename. The
