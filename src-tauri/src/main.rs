@@ -610,8 +610,13 @@ fn resolve_block(uuid: String, state: State<'_, AppState>) -> Result<Option<RefG
 }
 
 #[tauri::command]
-fn read_asset(name: String, state: State<'_, AppState>) -> Result<Vec<u8>, String> {
-    with_graph(&state, |g| g.read_asset(&name).map_err(|e| e.to_string()))
+fn read_asset(name: String, state: State<'_, AppState>) -> Result<tauri::ipc::Response, String> {
+    // Return RAW bytes (not a JSON number[]), so a multi-MB PDF/image isn't
+    // serialized element-by-element and re-parsed on the JS side — the frontend
+    // receives an ArrayBuffer directly.
+    with_graph(&state, |g| {
+        g.read_asset(&name).map(tauri::ipc::Response::new).map_err(|e| e.to_string())
+    })
 }
 
 #[tauri::command]

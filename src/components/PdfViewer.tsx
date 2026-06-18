@@ -274,11 +274,15 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
     if (!bytes.length) return;
     pdfDoc = await pdfjs.getDocument({ data: bytes }).promise;
     // Fetch every page's unscaled size once (getPage parses the page dict, not
-    // its content — cheap relative to rendering) so wrappers size correctly.
-    for (let n = 1; n <= pdfDoc.numPages; n++) {
-      const vp = (await pdfDoc.getPage(n)).getViewport({ scale: 1 });
-      dims[n] = { w: vp.width, h: vp.height };
-    }
+    // its content) so wrappers size correctly — in PARALLEL, so a long PDF
+    // doesn't pay N sequential page-dict parses before the first paint.
+    const doc = pdfDoc;
+    const vps = await Promise.all(
+      Array.from({ length: doc.numPages }, (_, i) =>
+        doc.getPage(i + 1).then((p) => p.getViewport({ scale: 1 }))
+      )
+    );
+    vps.forEach((vp, i) => (dims[i + 1] = { w: vp.width, h: vp.height }));
     setScale(fitWidthScale());
     buildLayout();
     if (props.page && pageEls[props.page]) {

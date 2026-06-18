@@ -159,8 +159,10 @@ class TauriBackend implements Backend {
     return this.call<RefGroup | null>("resolve_block", { uuid });
   }
   async readAsset(name: string) {
-    const bytes = await this.call<number[]>("read_asset", { name });
-    return new Uint8Array(bytes);
+    // read_asset now returns raw bytes (tauri::ipc::Response) → an ArrayBuffer,
+    // not a JSON number[] — far cheaper for large PDFs/images.
+    const buf = await this.call<ArrayBuffer>("read_asset", { name });
+    return new Uint8Array(buf);
   }
   saveAsset(name: string, bytes: Uint8Array) {
     return this.call<string>("save_asset", { name, bytes: Array.from(bytes) });

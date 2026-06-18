@@ -1,9 +1,11 @@
 import {
   For,
   Show,
+  createEffect,
   createMemo,
   createResource,
   createSignal,
+  onCleanup,
   type JSX,
 } from "solid-js";
 import { backend } from "../backend";
@@ -346,7 +348,17 @@ function TextInput(props: { placeholder: string; onCommit: (text: string) => voi
 // Page-name input with fuzzy autocomplete from the graph.
 function PageInput(props: { placeholder: string; onCommit: (name: string) => void }): JSX.Element {
   const [q, setQ] = createSignal("");
-  const [matches] = createResource(q, (s) => backend().quickSwitch(s, 8));
+  // Debounce the backend fuzzy-match (quick_switch lists pages from disk) so
+  // holding a key doesn't fire an IPC + dir scan per character.
+  const [dq, setDq] = createSignal("");
+  let dqTimer: ReturnType<typeof setTimeout> | undefined;
+  createEffect(() => {
+    const s = q();
+    clearTimeout(dqTimer);
+    dqTimer = setTimeout(() => setDq(s), 120);
+  });
+  onCleanup(() => clearTimeout(dqTimer));
+  const [matches] = createResource(dq, (s) => backend().quickSwitch(s, 8));
   return (
     <div class="qb-value">
       <input

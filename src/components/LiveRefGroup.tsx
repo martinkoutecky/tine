@@ -5,6 +5,38 @@ import { Block } from "./Block";
 import { RefBlocks } from "./RefBlocks";
 import type { BlockDto, PageKind } from "../types";
 
+// One shared IntersectionObserver for ALL live-ref groups — a broad query/backlink
+// set would otherwise spin up O(groups) observers. Each group registers a one-shot
+// "near the viewport" callback; the observer unobserves it once fired.
+const nearCbs = new WeakMap<Element, () => void>();
+let sharedNearIO: IntersectionObserver | null = null;
+function observeNear(el: Element, cb: () => void) {
+  if (!sharedNearIO) {
+    sharedNearIO = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (!e.isIntersecting) continue;
+          const fn = nearCbs.get(e.target);
+          if (fn) {
+            nearCbs.delete(e.target);
+            sharedNearIO!.unobserve(e.target);
+            fn();
+          }
+        }
+      },
+      { rootMargin: "1200px 0px" }
+    );
+  }
+  nearCbs.set(el, cb);
+  sharedNearIO.observe(el);
+}
+function unobserveNear(el: Element) {
+  if (sharedNearIO && nearCbs.has(el)) {
+    nearCbs.delete(el);
+    sharedNearIO.unobserve(el);
+  }
+}
+
 // Renders result/backlink/embed blocks as LIVE editable <Block>s, but LAZILY:
 // the group is a reserved-height placeholder until it scrolls within ~1.2 screens
 // of the viewport (IntersectionObserver), at which point its source page is
@@ -19,17 +51,10 @@ export function LiveRefGroup(props: { page: string; kind: PageKind; blocks: Bloc
   const [near, setNear] = createSignal(false);
   let el: HTMLDivElement | undefined;
   onMount(() => {
-    const io = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) {
-          setNear(true);
-          io.disconnect();
-        }
-      },
-      { rootMargin: "1200px 0px" }
-    );
-    if (el) io.observe(el);
-    onCleanup(() => io.disconnect());
+    if (!el) return;
+    const node = el;
+    observeNear(node, () => setNear(true));
+    onCleanup(() => unobserveNear(node));
   });
 
   // Load the source page only once the group is near the viewport.

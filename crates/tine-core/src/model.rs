@@ -372,10 +372,15 @@ impl Graph {
         if let Some(pages) = self.cache.read().unwrap().as_ref() {
             return f(pages);
         }
-        // Build under the write lock (re-checking in case of a race).
+        // Build the cache WITHOUT holding the write lock — the whole-graph parse is
+        // the slow part, and holding the write lock across it would block every
+        // concurrent read command (search/query/page load) during the startup
+        // warm. A racing builder just does duplicate work; the first to grab the
+        // lock installs and the rest discard theirs.
+        let built = self.load_all_pages();
         let mut guard = self.cache.write().unwrap();
         if guard.is_none() {
-            *guard = Some(self.load_all_pages());
+            *guard = Some(built);
         }
         f(guard.as_ref().unwrap())
     }
@@ -400,25 +405,45 @@ impl Graph {
         for b in &mut doc.roots {
             assign_uuids(b);
         }
+        // Only the alias map needs dropping when an `alias::` was added/changed/
+        // removed — invalidating on every save would make a normal edit an O(P)
+        // alias rescan on the next navigation.
+        let new_has_alias = doc_has_alias(&doc);
+        let mut alias_touched = new_has_alias;
         let mut guard = self.cache.write().unwrap();
         if let Some(pages) = guard.as_mut() {
             match pages.iter_mut().find(|(e, _)| {
                 e.kind == entry.kind && e.name.eq_ignore_ascii_case(&entry.name)
             }) {
-                Some(slot) => slot.1 = doc,
+                Some(slot) => {
+                    alias_touched = new_has_alias || doc_has_alias(&slot.1);
+                    slot.1 = doc;
+                }
                 None => pages.push((entry, doc)),
             }
         }
-        *self.alias_cache.write().unwrap() = None; // a saved page may change aliases
+        drop(guard);
+        if alias_touched {
+            *self.alias_cache.write().unwrap() = None;
+        }
     }
 
     /// Drop one page from the cache after deleting its file.
     fn cache_remove(&self, name: &str, kind: PageKind) {
         let mut guard = self.cache.write().unwrap();
+        let mut alias_touched = false;
         if let Some(pages) = guard.as_mut() {
+            if let Some((_, d)) =
+                pages.iter().find(|(e, _)| e.kind == kind && e.name.eq_ignore_ascii_case(name))
+            {
+                alias_touched = doc_has_alias(d);
+            }
             pages.retain(|(e, _)| !(e.kind == kind && e.name.eq_ignore_ascii_case(name)));
         }
-        *self.alias_cache.write().unwrap() = None;
+        drop(guard);
+        if alias_touched {
+            *self.alias_cache.write().unwrap() = None;
+        }
     }
 
     /// Backlinks for a page: blocks across the graph that reference it,
@@ -844,6 +869,16 @@ fn page_dto(entry: &PageEntry, doc: &Document) -> PageDto {
         blocks: doc.roots.iter().map(block_to_dto).collect(),
         rev: None,
     }
+}
+
+/// Whether a document declares an `alias::` anywhere — used to decide if a save
+/// must invalidate the cached alias map (most saves don't touch aliases).
+fn doc_has_alias(doc: &Document) -> bool {
+    doc.pre_block.as_deref().is_some_and(|p| p.contains("alias::"))
+        || doc.roots.iter().any(block_has_alias)
+}
+fn block_has_alias(b: &DocBlock) -> bool {
+    b.raw.contains("alias::") || b.children.iter().any(block_has_alias)
 }
 
 /// Stable (deterministic, seed-free) content hash — FNV-1a/64 as hex. Used as a

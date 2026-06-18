@@ -99,8 +99,9 @@ pub fn page_aliases(graph: &Graph) -> Vec<(String, String)> {
 
 pub fn backlinks(graph: &Graph, target: &str) -> Vec<RefGroup> {
     // Alias-aware: a page's backlinks include references made through any of its
-    // aliases, and looking up an alias resolves to its canonical page.
-    let aliases = page_aliases(graph);
+    // aliases, and looking up an alias resolves to its canonical page. Use the
+    // cached alias map rather than rescanning every page on each backlink call.
+    let aliases = graph.page_aliases();
     let tnorm = refs::normalize(target);
     let canonical = aliases
         .iter()
