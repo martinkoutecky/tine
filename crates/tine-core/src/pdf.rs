@@ -159,7 +159,25 @@ pub fn merge_hls_page(
     highlights: &[Highlight],
 ) -> Document {
     let asset_path = format!("../assets/{pdf_filename}");
-    let pre = format!("file:: [{label}]({asset_path})\nfile-path:: {asset_path}");
+    // Start with the generated file::/file-path::, then keep any OTHER pre-block
+    // properties the user added (e.g. tags::) — replacing only the generated two
+    // rather than discarding the whole pre-block.
+    let mut pre_lines = vec![
+        format!("file:: [{label}]({asset_path})"),
+        format!("file-path:: {asset_path}"),
+    ];
+    if let Some(doc) = existing {
+        if let Some(prev) = &doc.pre_block {
+            for line in prev.lines() {
+                let key = crate::doc::parse_property_line(line).map(|(k, _)| k.to_ascii_lowercase());
+                if matches!(key.as_deref(), Some("file") | Some("file-path")) {
+                    continue;
+                }
+                pre_lines.push(line.to_string());
+            }
+        }
+    }
+    let pre = pre_lines.join("\n");
 
     // Split existing roots into annotation blocks (keyed by id) and everything
     // else — user-authored top-level notes that must be PRESERVED, not rebuilt
@@ -271,6 +289,19 @@ mod tests {
         let raws: Vec<&str> = merged.roots.iter().map(|b| b.raw.as_str()).collect();
         assert!(raws.iter().any(|r| r.contains("my summary note")), "user note dropped: {raws:?}");
         assert!(raws.iter().any(|r| r.contains(&h.id)), "annotation missing: {raws:?}");
+    }
+
+    #[test]
+    fn merge_hls_page_keeps_user_page_properties() {
+        // Existing hls page with a user property (tags::) + stale file::/file-path::.
+        let existing = crate::doc::parse(
+            "tags:: reading\nfile:: [old](../assets/old.pdf)\nfile-path:: ../assets/old.pdf\n",
+        );
+        let merged = merge_hls_page(Some(&existing), "paper.pdf", "Paper", &[]);
+        let pre = merged.pre_block.unwrap();
+        assert!(pre.contains("tags:: reading"), "user page property dropped: {pre}");
+        assert!(pre.contains("file-path:: ../assets/paper.pdf"), "file-path not updated: {pre}");
+        assert!(!pre.contains("old.pdf"), "stale file path kept: {pre}");
     }
 
     #[test]

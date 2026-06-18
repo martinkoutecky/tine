@@ -4,7 +4,7 @@
 // newest→oldest so the newest carried tasks end up on top of today.
 
 import { backend } from "./backend";
-import { pageByName, ensurePageLoaded, carryUnfinished, flushPage, isDirty } from "./store";
+import { pageByName, ensurePageLoaded, carryUnfinished, flushPage, isDirty, markDirty } from "./store";
 import { journalTitle } from "./journal";
 import { carryKeepsContext, carryHeaderText, pushToast } from "./ui";
 import { openJournals } from "./router";
@@ -40,11 +40,13 @@ async function ensureToday(): Promise<string> {
 // lands — so a today-conflict can't leave the carried blocks removed from their
 // source files but never written to today (a removal-only, data-losing state).
 async function persist(today: string, sources: string[]): Promise<boolean> {
+  // Destination (today) must land first. carryUnfinished intentionally left the
+  // source days NOT dirty, so nothing can save a source removal until today is
+  // safely written — only THEN do we mark + flush the sources.
   if (isDirty(today) && !(await flushPage(today))) return false;
-  const seen = new Set<string>([today]);
-  const results = await Promise.all(
-    sources.filter((n) => !seen.has(n) && (seen.add(n), isDirty(n))).map((n) => flushPage(n))
-  );
+  const uniq = [...new Set(sources)].filter((n) => n !== today);
+  for (const n of uniq) markDirty(n);
+  const results = await Promise.all(uniq.map((n) => flushPage(n)));
   return results.every(Boolean);
 }
 

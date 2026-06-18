@@ -191,6 +191,10 @@ export function forgetPage(name: string) {
  *  calling the backend directly — is what prevents a queued baseRev=null save from
  *  resurrecting a just-typed, never-saved page. Returns backend success. */
 export async function deletePage(name: string, kind: PageKind): Promise<boolean> {
+  // Capture the current (possibly unsaved) content first, so the recoverable trash
+  // copy is the LATEST version — not the stale bytes on disk. If it can't be saved
+  // (an unresolved external conflict), abort rather than trash a stale file.
+  if ((isDirty(name) || isConflicted(name)) && !(await flushPage(name))) return false;
   // Tombstone first so any queued/in-flight save no-ops during the delete, but
   // DON'T drop the in-memory page until the backend actually deletes it — if the
   // delete fails, the page (and its unsaved edits) must survive.
@@ -574,7 +578,7 @@ const deletedPages = new Set<string>();
 export function isDirty(pageName: string): boolean {
   return dirty.has(pageName);
 }
-function markDirty(pageName: string) {
+export function markDirty(pageName: string) {
   dirty.add(pageName);
   scheduleSave();
 }
@@ -749,8 +753,8 @@ export function mergeWithPrev(id: string): boolean {
   // Preserve the absorbed block's `id::` if the survivor has none — otherwise
   // inbound ((id)) references to the absorbed block would orphan on merge.
   let hidden = prevSplit.hidden;
-  const survivorHasId = /(?:^|\n)id:: /.test(prevSplit.hidden);
-  const absorbedId = /(?:^|\n)(id:: \S+)/.exec(curSplit.hidden)?.[1];
+  const survivorHasId = /(?:^|\n)id:: /i.test(prevSplit.hidden);
+  const absorbedId = /(?:^|\n)(id:: \S+)/i.exec(curSplit.hidden)?.[1];
   if (!survivorHasId && absorbedId) {
     hidden = hidden ? `${hidden}\n${absorbedId}` : absorbedId;
   }
@@ -900,10 +904,11 @@ export function setCollapsedDeep(id: string, collapsed: boolean) {
 export async function ensureBlockId(id: string): Promise<string | null> {
   const node = doc.byId[id];
   if (!node) return null;
-  // Any existing id:: is the block's durable id — match its value, not just a
-  // UUID shape, so a custom `id:: foo` isn't treated as missing (which would
-  // append a SECOND id:: that Rust's property("id") then ignores → dangling ref).
-  const m = /(?:^|\n)id:: *(\S+)/.exec(node.raw);
+  // Any existing id:: is the block's durable id — match its value (not just a
+  // UUID shape), case-INSENSITIVELY (Rust's property("id") is case-insensitive, so
+  // an `ID::` from another editor counts), so we never append a SECOND id:: that
+  // Rust then ignores → dangling copied ref.
+  const m = /(?:^|\n)id:: *(\S+)/i.exec(node.raw);
   const uuid = m ? m[1] : crypto.randomUUID();
   if (!m) {
     setDoc("byId", id, "raw", `${node.raw}\nid:: ${uuid}`);
@@ -1220,8 +1225,12 @@ export function moveBlock(id: string, newParent: string | null, index: number) {
       }
     })
   );
-  markDirty(oldPage);
-  if (newPage !== oldPage) markDirty(newPage);
+  if (newPage !== oldPage) {
+    // Cross-page drag: persist the destination before the source removal.
+    persistCrossPage(newPage, [oldPage]);
+  } else {
+    markDirty(oldPage);
+  }
 }
 
 /** Move a block up/down among its siblings (mod+Up/Down). Keyed <For> keeps the
@@ -1486,7 +1495,9 @@ export function carryUnfinished(
       todayPage.roots.push(...carried);
     })
   );
-  for (const fp of new Set(plan.map((p) => p.from))) markDirty(fp);
+  // Mark ONLY today (the destination) dirty here. The source days are marked +
+  // flushed by carry.ts AFTER today saves, so the debounced batch can't write a
+  // source removal while today is still unsaved/conflicted (removal-only loss).
   markDirty(today);
   return plan.length;
 }
