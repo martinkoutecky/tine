@@ -115,6 +115,12 @@ pub struct Graph {
     /// today). Lets a re-render, a second component showing the same query, or
     /// navigating back to a page recompute nothing; never serves a stale result.
     derived_cache: RwLock<Option<DerivedCache>>,
+    /// Memoized `list_pages()` (the journals//pages/ directory scan), keyed by
+    /// cache_gen — which bumps on every page create/delete/rename (Tine or watcher)
+    /// — so quick-switch / [[ ]] autocomplete don't re-read both dirs on every
+    /// keystroke. An externally-created page not yet seen by the watcher is at most
+    /// one watcher tick (≤3s) stale here.
+    page_list_cache: RwLock<Option<(u64, Vec<PageEntry>)>>,
 }
 
 /// Gen+today-tagged cache of derived scan results. Reset wholesale whenever the
@@ -160,6 +166,7 @@ impl Graph {
             alias_cache: RwLock::new(None),
             block_index: RwLock::new(None),
             derived_cache: RwLock::new(None),
+            page_list_cache: RwLock::new(None),
         }
     }
 
@@ -223,9 +230,16 @@ impl Graph {
 
     /// List all pages and journals in the graph.
     pub fn list_pages(&self) -> Vec<PageEntry> {
+        let gen = self.cache_gen.load(std::sync::atomic::Ordering::Acquire);
+        if let Some((g, entries)) = self.page_list_cache.read().unwrap().as_ref() {
+            if *g == gen {
+                return entries.clone();
+            }
+        }
         let mut entries = Vec::new();
         entries.extend(list_md(&self.journals_path(), PageKind::Journal));
         entries.extend(list_md(&self.pages_path(), PageKind::Page));
+        *self.page_list_cache.write().unwrap() = Some((gen, entries.clone()));
         entries
     }
 

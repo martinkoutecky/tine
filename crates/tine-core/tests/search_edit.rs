@@ -200,6 +200,33 @@ fn write_highlights_preserves_externally_added_ones() {
 }
 
 #[test]
+fn list_pages_memo_reflects_new_and_deleted_pages() {
+    let root = mk("listmemo");
+    std::fs::write(root.join("pages").join("A.md"), "- a\n").unwrap();
+    let g = Graph::open(&root);
+    g.warm_cache();
+    let names = |g: &Graph| {
+        let mut v: Vec<String> = g.list_pages().into_iter().map(|e| e.name).collect();
+        v.sort();
+        v
+    };
+    assert_eq!(names(&g), vec!["A"]); // primes the memo
+
+    // Create B via a save (cache_upsert bumps cache_gen → memo invalidates).
+    let mut b = g.load_named("A", PageKind::Page).unwrap().unwrap();
+    b.name = "B".into();
+    b.title = "B".into();
+    b.rev = None;
+    g.save_page(&b, None).unwrap();
+    assert!(names(&g).contains(&"B".to_string()), "new page must appear: {:?}", names(&g));
+
+    // Delete A → memo must drop it.
+    g.delete_page("A", PageKind::Page).unwrap();
+    assert!(!names(&g).contains(&"A".to_string()), "deleted page must disappear: {:?}", names(&g));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn delete_page_moves_to_trash_recoverable() {
     let root = mk("deltrash");
     std::fs::write(root.join("pages").join("Doomed.md"), "- keep me\n").unwrap();
