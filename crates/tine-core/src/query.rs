@@ -1060,6 +1060,31 @@ mod tests {
     }
 
     #[test]
+    fn agenda_query_keys_off_scheduled_deadline_not_journal_date() {
+        // The journal-agenda DSL the app inserts (window = ±7d around TODAY).
+        // It must match on the SCHEDULED/DEADLINE date itself, NOT the journal
+        // day the block happens to live on — otherwise a stale-deadline item
+        // carried onto a recent day shows up forever (the reported bug).
+        let q = pred("(or (between scheduled -7d +7d) (between deadline -7d +7d))");
+
+        // Ancient deadline, sitting on TODAY's journal page: must NOT match.
+        let stale = DocBlock::new("TODO old thing\nDEADLINE: <2025-01-01 Wed>");
+        assert!(!q.eval(&stale, &ctx_journal(20260616)));
+
+        // Deadline today (on any page): matches.
+        let due = DocBlock::new("TODO pay\nDEADLINE: <2026-06-16 Tue>");
+        assert!(q.eval(&due, &ctx_named()));
+
+        // Scheduled in range but on an OLD journal page: still matches (the scan
+        // is whole-graph; the journal day is irrelevant to the window).
+        let sched = DocBlock::new("TODO meet\nSCHEDULED: <2026-06-18 Thu>");
+        assert!(q.eval(&sched, &ctx_journal(20200101)));
+
+        // No scheduled/deadline at all: never in the agenda, even on today.
+        assert!(!q.eval(&DocBlock::new("just a note"), &ctx_journal(20260616)));
+    }
+
+    #[test]
     fn journal_predicate_and_target_query() {
         let b = DocBlock::new("TODO buy milk");
         assert_eq!(pred("(journal)"), Pred::Journal);

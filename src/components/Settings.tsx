@@ -25,6 +25,10 @@ import {
   setCarryDays,
   showCarryButtons,
   setShowCarryButtons,
+  agendaDaysBack,
+  setAgendaDaysBack,
+  agendaDaysAhead,
+  setAgendaDaysAhead,
   pushToast,
 } from "../ui";
 import { commandDefaults, eventToBindingString, setKeybindingsSuspended } from "../keybindings";
@@ -313,6 +317,33 @@ function TasksTab(): JSX.Element {
           {workflow() === "now" ? "NOW / LATER" : "TODO / DOING"}{" "}
           <span class="settings-hint">(set :preferred-workflow in config.edn)</span>
         </span>
+      </div>
+
+      <div class="settings-row">
+        <span class="settings-label">Agenda window</span>
+        <div>
+          <input
+            type="number"
+            min="0"
+            max="3650"
+            class="settings-num"
+            value={agendaDaysBack()}
+            onChange={(e) => setAgendaDaysBack(Number(e.currentTarget.value))}
+          />
+          <span class="settings-hint" style={{ margin: "0 8px" }}>days back ·</span>
+          <input
+            type="number"
+            min="0"
+            max="3650"
+            class="settings-num"
+            value={agendaDaysAhead()}
+            onChange={(e) => setAgendaDaysAhead(Number(e.currentTarget.value))}
+          />
+          <span class="settings-hint" style={{ "margin-left": "8px" }}>
+            days ahead. Today’s “Scheduled &amp; Deadline” list shows items whose
+            scheduled/deadline date is within this window; older/further ones are hidden.
+          </span>
+        </div>
       </div>
     </>
   );

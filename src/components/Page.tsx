@@ -4,6 +4,7 @@ import { route, openPage, openJournals } from "../router";
 import {
   zoomedBlock, zoomOut, zoomInto, isFavorite, toggleFavorite, notesRefresh,
   markConflict, graphEpoch, openPageInSidebar, openPageContextMenu, carryDays, showCarryButtons,
+  agendaQuery,
 } from "../ui";
 import { carryDay, carryPrevDay, carryDaysBack } from "../carry";
 import { backend } from "../backend";
@@ -217,11 +218,13 @@ export function PageView(): JSX.Element {
             {(p, i) => (
               <>
                 <PageSection page={p} />
-                {/* Agenda sits at the bottom of today's (the first) day, like OG. */}
+                {/* Agenda sits at the bottom of today's (the first) day, like OG.
+                    Window is configurable (Settings → Journal) and keyed off the
+                    item's scheduled/deadline date over the whole graph. */}
                 <Show when={i() === 0 && route().kind === "journals"}>
                   <div class="agenda-block">
                     <QueryMacro
-                      body="query (and (or (scheduled) (deadline)) (between -7d +7d))"
+                      body={agendaQuery()}
                       title="Scheduled & Deadline"
                       hideWhenEmpty
                     />

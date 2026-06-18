@@ -135,6 +135,43 @@ export function setCarryDays(n: number) {
   saveStr(CARRY_N_KEY, String(v));
 }
 
+// --- journal agenda ("Scheduled & Deadline") window (persisted) ---
+// How many days BACK and AHEAD of today an item's SCHEDULED/DEADLINE date may be
+// before it drops out of the agenda. Default 7/7 (the historical hard-coded
+// window). The window is tested against the scheduled/deadline date itself —
+// NOT the journal day the item happens to live on — and the query scans the
+// whole graph, so an overdue item on an old page still shows while it's in range.
+const AGENDA_BACK_KEY = "logseq-claude.agendaDaysBack";
+const AGENDA_AHEAD_KEY = "logseq-claude.agendaDaysAhead";
+function loadDays(key: string, def: number): number {
+  const n = Number(loadStr(key));
+  return Number.isFinite(n) && n >= 0 ? n : def;
+}
+export const [agendaDaysBack, setAgendaDaysBackSig] = createSignal(loadDays(AGENDA_BACK_KEY, 7));
+export const [agendaDaysAhead, setAgendaDaysAheadSig] = createSignal(loadDays(AGENDA_AHEAD_KEY, 7));
+export function setAgendaDaysBack(n: number) {
+  const v = Math.max(0, Math.min(3650, Math.floor(n) || 0));
+  setAgendaDaysBackSig(v);
+  saveStr(AGENDA_BACK_KEY, String(v));
+}
+export function setAgendaDaysAhead(n: number) {
+  const v = Math.max(0, Math.min(3650, Math.floor(n) || 0));
+  setAgendaDaysAheadSig(v);
+  saveStr(AGENDA_AHEAD_KEY, String(v));
+}
+/**
+ * The journal agenda's query DSL, built from the configured window. Matches a
+ * block if its SCHEDULED date OR its DEADLINE date falls in
+ * [today − back, today + ahead] — keyed off the date itself, not the page's
+ * journal day, so a stale-deadline item on a recent day no longer shows and an
+ * overdue item on an old page still does.
+ */
+export function agendaQuery(): string {
+  const lo = `-${agendaDaysBack()}d`;
+  const hi = `+${agendaDaysAhead()}d`;
+  return `query (or (between scheduled ${lo} ${hi}) (between deadline ${lo} ${hi}))`;
+}
+
 // Remember the window's pre-focus fullscreen state so exiting focus restores it
 // (rather than always dropping out of fullscreen if the user was already in it).
 let preFocusFullscreen = false;
