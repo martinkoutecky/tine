@@ -4,6 +4,7 @@
 import { backend } from "./backend";
 import { setGraphMeta, setWorkflow, bumpGraphEpoch, setRightSidebar, graphMeta, graphEpoch, setAliasMap, seedFavorites, pruneSidebarBlocks, pushToast } from "./ui";
 import { resetStore, flushAll } from "./store";
+import { clearAssetBlobCache } from "./assetCache";
 import { openJournals } from "./router";
 import { journalTitle } from "./journal";
 import type { BlockDto } from "./types";
@@ -40,6 +41,7 @@ export async function loadGraphPath(path: string): Promise<void> {
   }
   const meta = await backend().loadGraph(path);
   resetStore();
+  clearAssetBlobCache(); // old graph's image blob URLs must not leak into the new one
   if (switching) setRightSidebar([]);
   setGraphMeta(meta ?? null);
   setWorkflow(meta?.preferred_workflow === "todo" ? "todo" : "now");

@@ -1258,9 +1258,31 @@ export async function moveSelectionItems(dir: 1 | -1) {
   if (!ids.length) return;
   const lead = dir === 1 ? ids[ids.length - 1] : ids[0];
   if (canMoveItem(lead, dir)) {
-    // Going down, move the bottom-most first so they don't collide; up, the top.
+    // Batch the whole selection into ONE undo entry + ONE produce. Doing it
+    // per-block (a moveItem call each) snapshots the entire working set K times —
+    // a 15-block nudge became 15 full clones, the visible jank. Going down, move
+    // the bottom-most first so they don't collide; up, the top.
     const ordered = dir === 1 ? [...ids].reverse() : ids;
-    for (const id of ordered) moveItem(id, dir);
+    pushUndo("move-sel");
+    setDoc(
+      produce((s) => {
+        for (const id of ordered) {
+          const node = s.byId[id];
+          if (!node) continue;
+          const arr =
+            node.parent === null
+              ? s.pages[s.pages.findIndex((p) => p.name === node.page)].roots
+              : s.byId[node.parent].children;
+          const i = arr.indexOf(id);
+          const ni = i + dir;
+          if (i < 0 || ni < 0 || ni >= arr.length) continue;
+          arr.splice(i, 1);
+          arr.splice(ni, 0, id);
+        }
+      })
+    );
+    const pages = new Set(ordered.map((id) => doc.byId[id]?.page).filter(Boolean) as string[]);
+    for (const p of pages) markDirty(p);
     return;
   }
   // Boundary: cross the whole group into the adjacent day (only if every

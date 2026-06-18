@@ -2,12 +2,13 @@
 // [[links]] and #tags), not an innerHTML string. Used to render a block when it
 // is not being edited.
 
-import { For, Show, createMemo, createResource, createSignal, onCleanup, type JSX } from "solid-js";
+import { For, Show, createMemo, createResource, createSignal, type JSX } from "solid-js";
 import { openPage, openPageInNewTab } from "../router";
 import { openPdf, openPageInSidebar, openPageContextMenu, setLightbox } from "../ui";
 import { parseInline, type Seg } from "./parseInline";
 import { blockView } from "./block";
 import { backend } from "../backend";
+import { loadAssetBlob } from "../assetCache";
 import { QueryMacro, EmbedMacro, VideoMacro, TweetMacro } from "../components/Macro";
 
 function renderSegs(segs: Seg[], blockId?: string): JSX.Element {
@@ -189,25 +190,6 @@ function assetRelPath(url: string): string | null {
   return i === -1 ? null : url.slice(i + "assets/".length);
 }
 
-function mimeFromExt(path: string): string {
-  const ext = path.split(".").pop()?.toLowerCase();
-  switch (ext) {
-    case "png":
-      return "image/png";
-    case "jpg":
-    case "jpeg":
-      return "image/jpeg";
-    case "gif":
-      return "image/gif";
-    case "svg":
-      return "image/svg+xml";
-    case "webp":
-      return "image/webp";
-    default:
-      return "application/octet-stream";
-  }
-}
-
 // Image embed: external URLs load directly; graph assets (`../assets/x.png`)
 // are read from disk via the backend and shown as a blob URL.
 function AssetImage(props: { url: string; alt: string; width?: string; height?: string }): JSX.Element {
@@ -226,25 +208,17 @@ function AssetImage(props: { url: string; alt: string; width?: string; height?: 
       />
     );
   }
-  let objectUrl = "";
+  // Served from a shared, graph-scoped blob cache so repeated references and
+  // re-mounts don't re-read the file or mint duplicate blob URLs. The cache owns
+  // the URL's lifetime (cleared on graph switch), so we don't revoke on unmount.
   const [src] = createResource(
     () => props.url,
     async (url) => {
       const rel = assetRelPath(url);
       if (!rel) return "";
-      try {
-        const bytes = await backend().readAsset(rel);
-        if (!bytes.length) return "";
-        objectUrl = URL.createObjectURL(
-          new Blob([bytes as unknown as BlobPart], { type: mimeFromExt(rel) })
-        );
-        return objectUrl;
-      } catch {
-        return "";
-      }
+      return loadAssetBlob(rel);
     }
   );
-  onCleanup(() => objectUrl && URL.revokeObjectURL(objectUrl));
   return (
     <Show
       when={src()}

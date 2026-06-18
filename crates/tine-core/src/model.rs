@@ -331,6 +331,18 @@ impl Graph {
         aliases
     }
 
+    /// A page DTO from the cache ONLY if the cache is already built — never
+    /// triggers a (synchronous, whole-graph) build. `None` on a cold cache or a
+    /// page not yet cached, so latency-path callers can parse just one file.
+    fn peek_cached_page(&self, entry: &PageEntry) -> Option<PageDto> {
+        let guard = self.cache.read().unwrap();
+        guard
+            .as_ref()?
+            .iter()
+            .find(|(e, _)| e.kind == entry.kind && e.name.eq_ignore_ascii_case(&entry.name))
+            .map(|(e, d)| page_dto(e, d))
+    }
+
     /// Load a page by entry. Served from the in-memory cache so block uuids are
     /// stable and consistent with queries / refs / the sidebar. Falls back to a
     /// disk parse for a page not yet in the cache (e.g. just created externally).
@@ -344,13 +356,15 @@ impl Graph {
         // The editor's save-baseline is the hash of the actual on-disk bytes at
         // load time (read regardless of cache hit — load is not the hot path).
         let rev = fs::read_to_string(&entry.path).ok().map(|s| content_rev(&s));
-        let cached = self.with_pages(|pages| {
-            pages
-                .iter()
-                .find(|(e, _)| e.kind == entry.kind && e.name.eq_ignore_ascii_case(&entry.name))
-                .map(|(e, d)| page_dto(e, d))
-        });
-        if let Some(mut dto) = cached {
+        // Serve from the cache if it's ALREADY built, but never trigger a build
+        // here: a cold-cache `with_pages` would synchronously parse the entire
+        // graph just to return one page, making first paint scale with graph size
+        // (and defeating the background warm). On a cold cache, parse only this
+        // file; `warm_cache_async` builds the rest. (Non-ref blocks then get fresh
+        // uuids that may differ from the warm cache until the page is reloaded —
+        // benign: id:: ref targets are stable, and live-ref views fall back to a
+        // read-only render for an unmatched uuid, never losing edits.)
+        if let Some(mut dto) = self.peek_cached_page(entry) {
             dto.rev = rev;
             return Ok(dto);
         }
