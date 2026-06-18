@@ -429,10 +429,15 @@ impl Graph {
         // the editor's content while the rev below reflects the NEW disk bytes —
         // and the editor's save would then clobber the external edit with the rev
         // matching. sync_file is a no-op when the cache already matches disk.
-        self.sync_file(&entry.path);
-        // The editor's save-baseline is the hash of the actual on-disk bytes at
-        // load time (read regardless of cache hit — load is not the hot path).
-        let rev = fs::read_to_string(&entry.path).ok().map(|s| content_rev(&s));
+        // Read the file ONCE: reconcile the cache against it, derive the save
+        // baseline (rev) from the SAME bytes (so rev and the served content can't
+        // disagree via a write landing between two reads), and — on a cache miss —
+        // parse it below.
+        let read = fs::read_to_string(&entry.path);
+        if let Ok(content) = &read {
+            self.sync_file_content(&entry.path, content);
+        }
+        let rev = read.as_ref().ok().map(|s| content_rev(s));
         // Serve from the cache if it's ALREADY built, but never trigger a build
         // here: a cold-cache `with_pages` would synchronously parse the entire
         // graph just to return one page, making first paint scale with graph size
@@ -445,7 +450,9 @@ impl Graph {
             dto.rev = rev;
             return Ok(dto);
         }
-        let content = fs::read_to_string(&entry.path)?;
+        // Cache miss: parse the bytes we already read (propagate the original read
+        // error if it failed).
+        let content = read?;
         let mut doc = doc::parse(&content);
         assign_doc_uuids(&mut doc.roots);
         let mut dto = page_dto(entry, &doc);
@@ -845,9 +852,15 @@ impl Graph {
     /// cache (i.e. a real external change) — Tine's own writes keep the cache in
     /// sync, so they return None. No-op if the cache hasn't been built yet.
     pub fn sync_file(&self, path: &Path) -> Option<PageEntry> {
-        let entry = self.entry_for_path(path)?;
         let content = fs::read_to_string(path).ok()?;
-        let newdoc = doc::parse(&content);
+        self.sync_file_content(path, &content)
+    }
+
+    /// Reconcile the cache for `path` given its already-read `content` — so a
+    /// caller that has just read the file (e.g. load_page) doesn't read it twice.
+    fn sync_file_content(&self, path: &Path, content: &str) -> Option<PageEntry> {
+        let entry = self.entry_for_path(path)?;
+        let newdoc = doc::parse(content);
         {
             let guard = self.cache.read().unwrap();
             let cache = guard.as_ref()?; // cache not built -> nothing to reconcile
@@ -862,7 +875,7 @@ impl Graph {
                 // one of Tine's own writes as an external change. Normalize the
                 // cached doc through the same serialize→parse round-trip the file
                 // went through (both sides then have empty uuids) and compare.
-                let opts = doc::SerializeOpts::detect(Some(&content));
+                let opts = doc::SerializeOpts::detect(Some(content));
                 let cached_norm = doc::parse(&doc::serialize_with(cached, &opts));
                 if cached_norm == newdoc {
                     return None; // unchanged / our own write
