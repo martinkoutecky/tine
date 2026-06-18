@@ -255,22 +255,38 @@ pub fn visible_text(raw: &str) -> String {
 /// (case-insensitive), grouped by page, capped at `limit` total blocks.
 pub fn search(graph: &Graph, query: &str, limit: usize) -> Vec<RefGroup> {
     let q = query.trim().to_lowercase();
-    if q.is_empty() {
+    if q.is_empty() || limit == 0 {
         return Vec::new();
     }
-    let mut groups = collect(graph, |b| visible_text(&b.raw).to_lowercase().contains(&q), None);
-    let mut remaining = limit;
-    groups.retain_mut(|g| {
-        if remaining == 0 {
-            return false;
+    // Stop scanning once we've collected `limit` matches, rather than walking the
+    // whole graph and truncating afterwards — Ctrl-K only shows the first page of
+    // results, so on a large graph this avoids most of the work.
+    graph.with_pages(|pages| {
+        let mut groups: Vec<RefGroup> = Vec::new();
+        let mut remaining = limit;
+        for (entry, doc) in pages {
+            if remaining == 0 {
+                break;
+            }
+            let mut matched: Vec<BlockDto> = Vec::new();
+            let mut path: Vec<&DocBlock> = Vec::new();
+            walk_path(&doc.roots, &mut path, &mut |b, anc| {
+                if remaining == 0 {
+                    return;
+                }
+                if visible_text(&b.raw).to_lowercase().contains(&q) {
+                    let mut dto = block_to_dto(b);
+                    dto.breadcrumb = anc.iter().map(|a| crumb_line(a)).collect();
+                    matched.push(dto);
+                    remaining -= 1;
+                }
+            });
+            if !matched.is_empty() {
+                groups.push(RefGroup { page: entry.name.clone(), kind: entry.kind, blocks: matched });
+            }
         }
-        if g.blocks.len() > remaining {
-            g.blocks.truncate(remaining);
-        }
-        remaining -= g.blocks.len();
-        true
-    });
-    groups
+        groups
+    })
 }
 
 /// Find every `template:: <name>` block and the blocks an insertion produces.
