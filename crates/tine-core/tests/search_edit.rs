@@ -169,6 +169,37 @@ fn memoized_query_and_backlinks_invalidate_after_edit() {
 }
 
 #[test]
+fn write_highlights_preserves_externally_added_ones() {
+    use tine_core::pdf::{Highlight, Position, Rect};
+    let root = mk("hlmerge");
+    let g = Graph::open(&root);
+    let mk_hl = |id: &str, text: &str| {
+        let r = Rect { top: 0.0, left: 0.0, width: 1.0, height: 1.0 };
+        Highlight {
+            id: id.into(),
+            page: 1,
+            position: Position { page: 1, bounding: r.clone(), rects: vec![r] },
+            color: "yellow".into(),
+            text: Some(text.into()),
+            image: None,
+        }
+    };
+    // Tine writes H1.
+    g.write_highlights("paper.pdf", "Paper", &[mk_hl("H1", "one")]).unwrap();
+    // An external editor (OG) adds H2 to the same EDN.
+    let edn_path = root.join("assets").join(format!("{}.edn", tine_core::pdf::asset_key("paper.pdf")));
+    let mut both = tine_core::pdf::parse_highlights(&std::fs::read_to_string(&edn_path).unwrap());
+    both.push(mk_hl("H2", "two"));
+    std::fs::write(&edn_path, tine_core::pdf::write_highlights(&both)).unwrap();
+    // Tine, still only knowing H1, adds H3 and writes — H2 must NOT be dropped.
+    g.write_highlights("paper.pdf", "Paper", &[mk_hl("H1", "one"), mk_hl("H3", "three")]).unwrap();
+    let after = g.read_highlights("paper.pdf");
+    let ids: std::collections::HashSet<&str> = after.iter().map(|h| h.id.as_str()).collect();
+    assert!(ids.contains("H1") && ids.contains("H2") && ids.contains("H3"), "got {ids:?}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn delete_page_moves_to_trash_recoverable() {
     let root = mk("deltrash");
     std::fs::write(root.join("pages").join("Doomed.md"), "- keep me\n").unwrap();

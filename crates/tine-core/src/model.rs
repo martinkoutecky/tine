@@ -764,13 +764,27 @@ impl Graph {
     ) -> io::Result<()> {
         let key = crate::pdf::asset_key(pdf_filename);
         fs::create_dir_all(self.assets_path())?;
-        let edn = crate::pdf::write_highlights(highlights);
-        atomic_write(&self.assets_path().join(format!("{key}.edn")), edn.as_bytes())?;
+        let edn_path = self.assets_path().join(format!("{key}.edn"));
+        // Merge with the current on-disk set by id before overwriting, so a
+        // highlight added externally (e.g. by OG between our load and this write)
+        // isn't dropped. The viewer only ADDS highlights, so a union is correct —
+        // our copy wins on a shared id, disk-only ids are kept.
+        let have: std::collections::HashSet<&str> = highlights.iter().map(|h| h.id.as_str()).collect();
+        let mut merged: Vec<crate::pdf::Highlight> = highlights.to_vec();
+        if let Ok(s) = fs::read_to_string(&edn_path) {
+            for h in crate::pdf::parse_highlights(&s) {
+                if !have.contains(h.id.as_str()) {
+                    merged.push(h);
+                }
+            }
+        }
+        let edn = crate::pdf::write_highlights(&merged);
+        atomic_write(&edn_path, edn.as_bytes())?;
 
         // Upsert into the existing hls page, preserving note children by id.
         let page_path = self.pages_path().join(format!("{}.md", crate::pdf::hls_page_name(&key)));
         let existing = fs::read_to_string(&page_path).ok().map(|s| doc::parse(&s));
-        let page_doc = crate::pdf::merge_hls_page(existing.as_ref(), pdf_filename, label, highlights);
+        let page_doc = crate::pdf::merge_hls_page(existing.as_ref(), pdf_filename, label, &merged);
         let page_md = doc::serialize(&page_doc);
         fs::create_dir_all(self.pages_path())?;
         atomic_write(&page_path, page_md.as_bytes())?;
