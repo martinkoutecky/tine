@@ -4,7 +4,7 @@
 //! detected and reported as unsupported rather than crashed.
 
 use crate::date::JournalDate;
-use crate::doc::DocBlock;
+use crate::doc::{DocBlock, Document};
 use crate::model::{block_to_dto, BlockDto, Graph, PageEntry, PageKind, RefGroup, TemplateDto};
 use crate::refs;
 
@@ -397,8 +397,12 @@ fn is_subsequence(needle: &str, hay: &str) -> bool {
 
 /// Resolve a `((uuid))` block reference to its block (with subtree).
 pub fn resolve_block(graph: &Graph, uuid: &str) -> Option<RefGroup> {
+    // Jump to the owning page via the uuid index, falling back to a full scan if
+    // the hint is missing or stale (so a lagging index can never give a wrong
+    // answer — just a slower one).
+    let hint = graph.block_page_hint(uuid);
     graph.with_pages(|pages| {
-        for (entry, doc) in pages {
+        let find_in = |entry: &PageEntry, doc: &Document| -> Option<RefGroup> {
             let mut found: Option<&DocBlock> = None;
             walk(&doc.roots, &mut |b| {
                 if found.is_none()
@@ -407,12 +411,22 @@ pub fn resolve_block(graph: &Graph, uuid: &str) -> Option<RefGroup> {
                     found = Some(b);
                 }
             });
-            if let Some(b) = found {
-                return Some(RefGroup {
-                    page: entry.name.clone(),
-                    kind: entry.kind,
-                    blocks: vec![block_to_dto(b)],
-                });
+            found.map(|b| RefGroup {
+                page: entry.name.clone(),
+                kind: entry.kind,
+                blocks: vec![block_to_dto(b)],
+            })
+        };
+        if let Some(h) = &hint {
+            if let Some((entry, doc)) = pages.iter().find(|(e, _)| &e.name == h) {
+                if let Some(rg) = find_in(entry, doc) {
+                    return Some(rg);
+                }
+            }
+        }
+        for (entry, doc) in pages {
+            if let Some(rg) = find_in(entry, doc) {
+                return Some(rg);
             }
         }
         None

@@ -103,6 +103,12 @@ pub struct Graph {
     /// can change). Avoids re-scanning the whole graph for aliases on every page
     /// load / backlink lookup.
     alias_cache: RwLock<Option<Vec<(String, String)>>>,
+    /// `block uuid / id:: → page name` hint, derived from the page cache and keyed
+    /// by `cache_gen` so it self-invalidates on any cache mutation (same pattern as
+    /// `alias_cache`). Lets `((uuid))` ref / embed resolution jump straight to the
+    /// owning page instead of walking every block of every page. A stale hint is
+    /// harmless: resolution falls back to a full scan when the block isn't found.
+    block_index: RwLock<Option<(u64, std::collections::HashMap<String, String>)>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -137,6 +143,7 @@ impl Graph {
             cache_gen: std::sync::atomic::AtomicU64::new(0),
             build_lock: std::sync::Mutex::new(()),
             alias_cache: RwLock::new(None),
+            block_index: RwLock::new(None),
         }
     }
 
@@ -331,6 +338,46 @@ impl Graph {
         aliases
     }
 
+    /// The page that owns a block uuid / `id::`, via a `cache_gen`-keyed index, or
+    /// `None` if unknown. A hint only — callers must verify (the index can lag a
+    /// concurrent edit). O(graph) to (re)build once per cache change, then O(1).
+    pub fn block_page_hint(&self, uuid: &str) -> Option<String> {
+        use std::sync::atomic::Ordering;
+        let gen = self.cache_gen.load(Ordering::Acquire);
+        if let Some((idx_gen, map)) = self.block_index.read().unwrap().as_ref() {
+            if *idx_gen == gen {
+                return map.get(uuid).cloned();
+            }
+        }
+        fn walk_idx(
+            blocks: &[DocBlock],
+            name: &str,
+            m: &mut std::collections::HashMap<String, String>,
+        ) {
+            for b in blocks {
+                if !b.uuid.is_empty() {
+                    m.entry(b.uuid.clone()).or_insert_with(|| name.to_string());
+                }
+                if let Some(id) = b.property("id") {
+                    if !id.is_empty() {
+                        m.entry(id).or_insert_with(|| name.to_string());
+                    }
+                }
+                walk_idx(&b.children, name, m);
+            }
+        }
+        let map = self.with_pages(|pages| {
+            let mut m = std::collections::HashMap::new();
+            for (entry, doc) in pages {
+                walk_idx(&doc.roots, &entry.name, &mut m);
+            }
+            m
+        });
+        let result = map.get(uuid).cloned();
+        *self.block_index.write().unwrap() = Some((gen, map));
+        result
+    }
+
     /// A page DTO from the cache ONLY if the cache is already built — never
     /// triggers a (synchronous, whole-graph) build. `None` on a cold cache or a
     /// page not yet cached, so latency-path callers can parse just one file.
@@ -434,8 +481,12 @@ impl Graph {
     /// Discard the cache; it rebuilds on the next whole-graph query. Use when an
     /// external change may have touched many files.
     pub fn invalidate_cache(&self) {
+        // Bump the generation so the gen-keyed block index rebuilds against the
+        // fresh content rather than trusting a hint from the discarded cache.
+        self.cache_gen.fetch_add(1, std::sync::atomic::Ordering::Release);
         *self.cache.write().unwrap() = None;
         *self.alias_cache.write().unwrap() = None;
+        *self.block_index.write().unwrap() = None;
     }
 
     /// Update one page in the cache after we write it (no full rebuild). A no-op

@@ -142,6 +142,25 @@ fn frontend_added_id_survives_reload_and_resolves() {
 }
 
 #[test]
+fn resolve_block_index_refreshes_after_cache_change() {
+    let root = mk("blockidx");
+    std::fs::write(root.join("pages").join("A.md"), "- alpha\n  id:: aaaa-1111\n").unwrap();
+    let g = Graph::open(&root);
+    g.warm_cache();
+    // First resolve builds the gen-keyed uuid index.
+    assert_eq!(g.resolve_block("aaaa-1111").unwrap().page, "A");
+
+    // A new page appears on disk; invalidate the cache as the watcher would.
+    std::fs::write(root.join("pages").join("B.md"), "- beta\n  id:: bbbb-2222\n").unwrap();
+    g.invalidate_cache();
+    // The index must rebuild against the fresh cache — not serve a stale "not
+    // found" for the new block, nor lose the old one.
+    assert_eq!(g.resolve_block("bbbb-2222").unwrap().page, "B");
+    assert_eq!(g.resolve_block("aaaa-1111").unwrap().page, "A");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn new_journal_saved_with_date_stem_not_title() {
     let root = mk("journalname");
     let g = Graph::open(&root);
