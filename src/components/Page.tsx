@@ -3,7 +3,7 @@ import { doc, mainPages, pageByName, reloadPage, loadSingle, loadFeed, appendFee
 import { route, openPage, openJournals } from "../router";
 import {
   zoomedBlock, zoomOut, zoomInto, isFavorite, toggleFavorite, notesRefresh,
-  markConflict, graphEpoch, openPageInSidebar, openPageContextMenu, carryDays, showCarryButtons,
+  markConflict, isConflicted, graphEpoch, openPageInSidebar, openPageContextMenu, carryDays, showCarryButtons,
   agendaQuery,
 } from "../ui";
 import { carryDay, carryPrevDay, carryDaysBack } from "../carry";
@@ -112,7 +112,7 @@ export function PageView(): JSX.Element {
           return;
         }
         if (r.kind === "page" && r.name === c.name) {
-          if (isDirty(c.name)) return void markConflict(c.name);
+          if (isDirty(c.name) || isConflicted(c.name)) return void markConflict(c.name);
           if (editingThis()) return;
           void (async () => {
             const dto = await backend().getPage(c.name, c.kind);
@@ -124,7 +124,7 @@ export function PageView(): JSX.Element {
           // Never let an external change clobber an unsaved edit: if the changed
           // day has pending edits, surface a conflict instead of reloading; if a
           // block on it is being edited, leave the caret alone.
-          if (isDirty(c.name)) return void markConflict(c.name);
+          if (isDirty(c.name) || isConflicted(c.name)) return void markConflict(c.name);
           if (editingThis()) return;
           void (async () => {
             if (pageByName(c.name)) {
@@ -136,7 +136,7 @@ export function PageView(): JSX.Element {
             }
             // A new journal file appeared (e.g. today created elsewhere): pull
             // the feed to include it, but only if no loaded day is dirty.
-            if (doc.feed.some((n) => isDirty(n))) return;
+            if (doc.feed.some((n) => isDirty(n) || isConflicted(n))) return;
             const js = await backend().journalsDesc(FEED_PAGE, 0);
             journalOffset = js.length;
             feedDone = js.length < FEED_PAGE;
@@ -147,7 +147,7 @@ export function PageView(): JSX.Element {
         // on disk: keep its live copy fresh, unless it has unsaved edits (→
         // conflict) or a block on it is being edited.
         if (pageByName(c.name) && !doc.feed.includes(c.name)) {
-          if (isDirty(c.name)) return void markConflict(c.name);
+          if (isDirty(c.name) || isConflicted(c.name)) return void markConflict(c.name);
           if (editingThis()) return;
           void (async () => {
             const dto = await backend().getPage(c.name, c.kind);

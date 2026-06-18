@@ -191,14 +191,18 @@ export function forgetPage(name: string) {
  *  calling the backend directly — is what prevents a queued baseRev=null save from
  *  resurrecting a just-typed, never-saved page. Returns backend success. */
 export async function deletePage(name: string, kind: PageKind): Promise<boolean> {
+  // Tombstone first so any queued/in-flight save no-ops during the delete, but
+  // DON'T drop the in-memory page until the backend actually deletes it — if the
+  // delete fails, the page (and its unsaved edits) must survive.
   deletedPages.add(name);
-  forgetPage(name);
   try {
     await backend().deletePage(name, kind);
-    return true;
   } catch {
+    deletedPages.delete(name); // delete failed — lift the tombstone; page + edits stay intact
     return false;
   }
+  forgetPage(name); // success — now drop it from the working set + feed
+  return true;
 }
 
 // Cap the working set so a long session browsing a big graph doesn't grow byId
@@ -263,6 +267,10 @@ export function resetStore() {
   dirty.clear();
   baseRev.clear();
   deletedPages.clear();
+  // Drop undo/redo history: it holds page snapshots from the OLD graph; an undo
+  // after a graph switch would otherwise restore (and save) those into the new
+  // graph, even creating a foreign page there.
+  clearUndoHistory();
   setDoc({ byId: {}, pages: [], feed: [], loaded: false });
   setEditingId(null);
 }
@@ -413,6 +421,14 @@ type UndoEntry = SnapEntry | RawEntry;
 const undoStack: UndoEntry[] = [];
 let redoStack: UndoEntry[] = [];
 let lastUndoTag: string | null = null;
+
+/** Discard all undo/redo history. Called on graph switch/reset so old-graph
+ *  snapshots can't be replayed into a different graph. */
+export function clearUndoHistory() {
+  undoStack.length = 0;
+  redoStack = [];
+  lastUndoTag = null;
+}
 
 // Hand-rolled clones — Node/FeedPage are flat (primitives + a string[]), so a
 // tailored copy is far cheaper than structuredClone (which probes types and
@@ -884,7 +900,10 @@ export function setCollapsedDeep(id: string, collapsed: boolean) {
 export async function ensureBlockId(id: string): Promise<string | null> {
   const node = doc.byId[id];
   if (!node) return null;
-  const m = /(?:^|\n)id:: *([0-9a-fA-F-]{8,})/.exec(node.raw);
+  // Any existing id:: is the block's durable id — match its value, not just a
+  // UUID shape, so a custom `id:: foo` isn't treated as missing (which would
+  // append a SECOND id:: that Rust's property("id") then ignores → dangling ref).
+  const m = /(?:^|\n)id:: *(\S+)/.exec(node.raw);
   const uuid = m ? m[1] : crypto.randomUUID();
   if (!m) {
     setDoc("byId", id, "raw", `${node.raw}\nid:: ${uuid}`);

@@ -222,6 +222,21 @@ describe("cross-day move (journal feed as one list)", () => {
   });
 });
 
+describe("undo history is graph-local", () => {
+  it("resetStore clears undo so an undo can't restore the previous graph", () => {
+    load([blk("hello world")]);
+    splitBlock(doc.pages[0].roots[0], 5); // structural op → undo entry exists
+    expect(doc.pages[0].roots.length).toBe(2);
+
+    resetStore(); // simulate a graph switch
+    load([blk("fresh graph")]); // a different graph's page
+    const before = JSON.stringify(doc.pages[0].roots);
+    undo(); // must be a no-op — the old graph's snapshot is gone
+    expect(JSON.stringify(doc.pages[0].roots)).toBe(before);
+    expect(doc.byId[doc.pages[0].roots[0]].raw).toBe("fresh graph");
+  });
+});
+
 describe("cross-page duplicate id::", () => {
   const page = (name: string, blocks: BlockDto[]): PageDto => ({
     name, kind: "page", title: name, pre_block: null, blocks,

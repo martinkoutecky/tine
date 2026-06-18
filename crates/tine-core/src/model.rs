@@ -863,7 +863,15 @@ impl Graph {
         let newdoc = doc::parse(content);
         {
             let guard = self.cache.read().unwrap();
-            let cache = guard.as_ref()?; // cache not built -> nothing to reconcile
+            let Some(cache) = guard.as_ref() else {
+                // Cache not built yet: nothing to reconcile in the parse cache, but
+                // the page SET may have changed (this could be a newly-created
+                // file). Drop the page-list memo so list_pages — and the eventual
+                // warm build that reads it — re-scan the dir and include it.
+                drop(guard);
+                *self.page_list_cache.write().unwrap() = None;
+                return None;
+            };
             if let Some((_, cached)) = cache
                 .iter()
                 .find(|(e, _)| e.kind == entry.kind && e.name.eq_ignore_ascii_case(&entry.name))
