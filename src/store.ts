@@ -371,14 +371,19 @@ export function depthOf(id: string): number {
 // Undo / redo (snapshot-based; typing in one block coalesces to one step)
 // ---------------------------------------------------------------------------
 
-// A full-working-set snapshot (structural ops) or a single-block raw patch
-// (typing). Typing is by far the most frequent op, so it records an O(1) inverse
-// instead of cloning the whole graph on the first keystroke of every burst.
+// A page-scoped structural snapshot, or a single-block raw patch (typing).
+// Typing is by far the most frequent op, so it records an O(1) inverse instead
+// of cloning anything. A structural op snapshots ONLY the pages it touches (its
+// nodes + page objects), so the cost is O(edited page), not O(whole working set)
+// — a structural edit no longer slows down as more journal days / sidebar / query
+// pages get loaded. `pages: null` means "all loaded pages" (the safe fallback for
+// an op that can't declare its scope).
 interface SnapEntry {
   kind: "snap";
-  byId: Record<string, Node>;
-  pages: FeedPage[];
-  dirty: string[]; // pages to re-save on undo/redo (not every loaded page)
+  pages: string[] | null; // affected page names (null = whole working set)
+  pageObjs: FeedPage[]; // snapshot of those pages' FeedPage objects
+  nodes: Record<string, Node>; // snapshot of nodes living on those pages
+  dirty: string[]; // pages to re-save on undo/redo
 }
 interface RawEntry {
   kind: "raw";
@@ -395,20 +400,15 @@ let lastUndoTag: string | null = null;
 // tailored copy is far cheaper than structuredClone (which probes types and
 // walks for cycles). This runs on EVERY structural op (split/merge/indent/move/
 // delete) for undo, so its cost is felt as general editor latency.
-function cloneNodes(src: Record<string, Node>): Record<string, Node> {
-  const out: Record<string, Node> = {};
-  for (const id in src) {
-    const n = src[id];
-    out[id] = {
-      id: n.id,
-      raw: n.raw,
-      collapsed: n.collapsed,
-      parent: n.parent,
-      page: n.page,
-      children: n.children.slice(),
-    };
-  }
-  return out;
+function cloneNode(n: Node): Node {
+  return {
+    id: n.id,
+    raw: n.raw,
+    collapsed: n.collapsed,
+    parent: n.parent,
+    page: n.page,
+    children: n.children.slice(),
+  };
 }
 function clonePages(src: FeedPage[]): FeedPage[] {
   return src.map((p) => ({
@@ -419,20 +419,28 @@ function clonePages(src: FeedPage[]): FeedPage[] {
     roots: p.roots.slice(),
   }));
 }
-function snapEntry(dirtyPages?: string[]): SnapEntry {
-  return {
-    kind: "snap",
-    byId: cloneNodes(unwrap(doc.byId)),
-    pages: clonePages(unwrap(doc.pages)),
-    dirty: dirtyPages ?? doc.pages.map((p) => p.name),
-  };
+function snapEntry(affected?: string[] | null): SnapEntry {
+  // null/omitted → snapshot the whole working set (safe fallback). Otherwise just
+  // the named pages: their FeedPage objects + every node living on them.
+  const names = affected ?? doc.pages.map((p) => p.name);
+  const nameSet = new Set(names);
+  const byId = unwrap(doc.byId);
+  const nodes: Record<string, Node> = {};
+  for (const id in byId) {
+    if (nameSet.has(byId[id].page)) nodes[id] = cloneNode(byId[id]);
+  }
+  const pageObjs = clonePages(unwrap(doc.pages).filter((p) => nameSet.has(p.name)));
+  return { kind: "snap", pages: affected ?? null, pageObjs, nodes, dirty: names };
 }
 
-/** Snapshot before a STRUCTURAL op. Pass the affected page name(s) so an undo
- *  re-saves only those pages, not every loaded page; omit to fall back to all
- *  (safe). `tag` is kept only to reset the typing-coalesce marker. */
-function pushUndo(tag: string, dirtyPages?: string[]) {
-  undoStack.push(snapEntry(dirtyPages));
+/** Snapshot before a STRUCTURAL op. Pass the affected page name(s) so both the
+ *  snapshot AND the undo re-save are scoped to just those pages; omit only when
+ *  the op's page set isn't known (falls back to the whole working set — correct
+ *  but O(loaded pages)). The affected set MUST include every page whose nodes the
+ *  op changes, including a cross-page move's source AND destination, or undo
+ *  would miss a page. `tag` resets the typing-coalesce marker. */
+function pushUndo(tag: string, affected?: string[]) {
+  undoStack.push(snapEntry(affected));
   if (undoStack.length > 200) undoStack.shift();
   redoStack = [];
   lastUndoTag = tag;
@@ -460,9 +468,28 @@ function applyEntry(e: UndoEntry): UndoEntry {
     }
     return inverse;
   }
-  const inverse = snapEntry(e.dirty);
-  setDoc("byId", e.byId);
-  setDoc("pages", e.pages);
+  // Capture the CURRENT state of the same page scope as the inverse (for redo),
+  // then restore the snapshot in place — touching only the affected pages, so
+  // pages loaded/edited concurrently on OTHER pages are left intact.
+  const inverse = snapEntry(e.pages);
+  setDoc(
+    produce((s) => {
+      const nameSet = new Set(e.pages ?? s.pages.map((p) => p.name));
+      // Drop the affected pages' current nodes (incl. any the op added)…
+      for (const id in s.byId) {
+        if (nameSet.has(s.byId[id].page)) delete s.byId[id];
+      }
+      // …and reinstate the snapshotted ones.
+      for (const id in e.nodes) s.byId[id] = cloneNode(e.nodes[id]);
+      // Restore each affected page's FeedPage (roots/preBlock/…).
+      for (const po of e.pageObjs) {
+        const restored = clonePages([po])[0];
+        const i = s.pages.findIndex((p) => p.name === po.name);
+        if (i >= 0) s.pages[i] = restored;
+        else s.pages.push(restored);
+      }
+    })
+  );
   for (const p of e.dirty) dirty.add(p);
   return inverse;
 }
@@ -546,7 +573,7 @@ export function withHiddenProps(visible: string, hidden: string): string {
 }
 
 export function splitBlock(id: string, offset: number) {
-  pushUndo("split");
+  pushUndo("split", [doc.byId[id].page]);
   const node = doc.byId[id];
   // The caret offset is in editor-visible space (hidden props aren't shown), so
   // split the visible text and keep the hidden props on the original block.
@@ -610,7 +637,7 @@ export function splitBlock(id: string, offset: number) {
 export function indentBlock(id: string, caretOffset: number) {
   const i = indexInSiblings(id);
   if (i <= 0) return;
-  pushUndo("indent");
+  pushUndo("indent", [doc.byId[id].page]);
   const sibs = rootsOf(id);
   const newParent = sibs[i - 1];
   const pageName = doc.byId[id].page;
@@ -633,7 +660,7 @@ export function indentBlock(id: string, caretOffset: number) {
 export function outdentBlock(id: string, caretOffset: number) {
   const node = doc.byId[id];
   if (node.parent === null) return;
-  pushUndo("outdent");
+  pushUndo("outdent", [node.page]);
   const parentId = node.parent;
   const grandParent = doc.byId[parentId].parent;
   const pageName = node.page;
@@ -663,7 +690,7 @@ export function mergeWithPrev(id: string): boolean {
   if (prev === null) return false;
   const node = doc.byId[id];
   if (doc.byId[prev].page !== node.page) return false; // don't merge across pages
-  pushUndo("merge");
+  pushUndo("merge", [node.page]);
   // Merge visible content only; keep the previous block's hidden props (it keeps
   // its identity) and drop the absorbed block's — otherwise the id::/collapsed::
   // lines would be concatenated mid-line and a block could end up with two ids.
@@ -703,7 +730,7 @@ export function mergeWithPrev(id: string): boolean {
  *  Returns the last top-level inserted block id (to focus). */
 export function insertOutlineAfter(afterId: string, nodes: OutlineNode[]): string {
   if (!nodes.length) return afterId;
-  pushUndo("paste");
+  pushUndo("paste", [doc.byId[afterId].page]);
   const parent = doc.byId[afterId].parent;
   const pageName = doc.byId[afterId].page;
   let lastId = afterId;
@@ -746,7 +773,7 @@ export function blockProperty(id: string, key: string): string | null {
 export function setBlockProperty(id: string, key: string, value: string | null) {
   const node = doc.byId[id];
   if (!node) return;
-  pushUndo(`prop:${id}:${key}`);
+  pushUndo(`prop:${id}:${key}`, [node.page]);
   const lines = node.raw.split("\n").filter((l) => {
     const m = PROP_LINE.exec(l);
     return !(m && m[1] === key);
@@ -765,7 +792,7 @@ export function toggleBlockProperty(id: string, key: string, value: string) {
 export function setHeading(id: string, level: number | null) {
   const node = doc.byId[id];
   if (!node) return;
-  pushUndo(`heading:${id}`);
+  pushUndo(`heading:${id}`, [node.page]);
   const lines = node.raw.split("\n");
   let first = (lines[0] ?? "").replace(/^#{1,6} /, "");
   if (level && level >= 1 && level <= 6) first = `${"#".repeat(level)} ${first}`;
@@ -794,7 +821,7 @@ export function setSchedule(
 ) {
   const node = doc.byId[id];
   if (!node) return;
-  pushUndo(`sched:${id}:${which}`);
+  pushUndo(`sched:${id}:${which}`, [node.page]);
   const tag = which === "scheduled" ? "SCHEDULED" : "DEADLINE";
   const lines = node.raw.split("\n").filter((l) => !new RegExp(`^${tag}:`).test(l.trim()));
   if (date) {
@@ -808,7 +835,7 @@ export function setSchedule(
 
 /** Collapse or expand a block and its entire descendant subtree. */
 export function setCollapsedDeep(id: string, collapsed: boolean) {
-  pushUndo("collapse-all");
+  pushUndo("collapse-all", [doc.byId[id].page]);
   const walk = (bid: string) => {
     const n = doc.byId[bid];
     if (!n) return;
@@ -920,7 +947,7 @@ function deleteBlockInternal(id: string) {
 
 export function deleteBlock(id: string) {
   if (!doc.byId[id]) return;
-  pushUndo("delete");
+  pushUndo("delete", [doc.byId[id].page]);
   deleteBlockInternal(id);
 }
 
@@ -991,7 +1018,10 @@ export function indentSelection() {
   const fi = sibs.indexOf(first);
   if (fi <= 0) return;
   const newParent = sibs[fi - 1];
-  pushUndo("indent-sel");
+  // The selection can span feed days (pages); the move's target is on first's
+  // page, already among the selected pages — so the union of selected pages is
+  // the complete affected set.
+  pushUndo("indent-sel", [...new Set(ids.map((x) => doc.byId[x]?.page).filter(Boolean) as string[])]);
   for (const id of ids) moveBlockInternal(id, newParent, doc.byId[newParent].children.length);
   setDoc("byId", newParent, "collapsed", false);
 }
@@ -1002,7 +1032,8 @@ export function outdentSelection() {
   const parentId = doc.byId[ids[0]].parent;
   if (parentId === null) return;
   const grand = doc.byId[parentId].parent;
-  pushUndo("outdent-sel");
+  // Target `grand` is on ids[0]'s page, already among the selected pages.
+  pushUndo("outdent-sel", [...new Set(ids.map((x) => doc.byId[x]?.page).filter(Boolean) as string[])]);
   let after = parentId;
   for (const id of ids) {
     moveBlockInternal(id, grand, indexInSiblings(after) + 1);
@@ -1105,9 +1136,10 @@ export function moveBlock(id: string, newParent: string | null, index: number) {
     if (p === id) return;
     p = doc.byId[p].parent;
   }
-  pushUndo("move");
   const oldPage = node.page;
   const newPage = newParent ? doc.byId[newParent].page : oldPage;
+  // Drag-move can cross pages → snapshot both source and destination.
+  pushUndo("move", [...new Set([oldPage, newPage])]);
   setDoc(
     produce((s) => {
       const oldArr =
@@ -1158,7 +1190,7 @@ export function moveItem(id: string, dir: 1 | -1) {
   const i = sibs.indexOf(id);
   const ni = i + dir;
   if (ni < 0 || ni >= sibs.length) return;
-  pushUndo("move-item");
+  pushUndo("move-item", [node.page]);
   setDoc(
     produce((s) => {
       const arr =
@@ -1393,7 +1425,7 @@ export function carryUnfinished(
 export function toggleCollapse(id: string) {
   const n = doc.byId[id];
   if (n.children.length === 0) return;
-  pushUndo("collapse");
+  pushUndo("collapse", [n.page]);
   setDoc("byId", id, "collapsed", !n.collapsed);
   markDirty(n.page);
 }
@@ -1403,7 +1435,7 @@ export function toggleCollapse(id: string) {
 export function setCollapsed(id: string, collapsed: boolean) {
   const n = doc.byId[id];
   if (!n || n.children.length === 0 || n.collapsed === collapsed) return;
-  pushUndo("collapse");
+  pushUndo("collapse", [n.page]);
   setDoc("byId", id, "collapsed", collapsed);
   markDirty(n.page);
 }

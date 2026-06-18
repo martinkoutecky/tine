@@ -221,6 +221,48 @@ describe("cross-day move (journal feed as one list)", () => {
   });
 });
 
+describe("page-scoped structural undo", () => {
+  const journal = (name: string, blocks: BlockDto[]): PageDto => ({
+    name, kind: "journal", title: name, pre_block: null, blocks,
+  });
+  const raws = (name: string) => pageByName(name)!.roots.map((id) => doc.byId[id].raw);
+
+  it("undo of a single-page edit restores that page and leaves other loaded pages untouched", () => {
+    const today = journal("Today", [blk("t1")]);
+    const older = journal("Older", [blk("o1"), blk("o2")]);
+    loadFeed([today, older]);
+    const olderIds = pageByName("Older")!.roots.slice();
+
+    splitBlock(today.blocks[0].id, 1); // edit ONLY Today: "t1" -> "t","1"
+    expect(raws("Today")).toEqual(["t", "1"]);
+
+    undo();
+    expect(raws("Today")).toEqual(["t1"]); // restored
+    // Other page's nodes are completely unaffected (same ids, same content).
+    expect(pageByName("Older")!.roots).toEqual(olderIds);
+    expect(raws("Older")).toEqual(["o1", "o2"]);
+
+    redo();
+    expect(raws("Today")).toEqual(["t", "1"]);
+    expect(raws("Older")).toEqual(["o1", "o2"]);
+  });
+
+  it("undo of a cross-page move restores both pages (full-snapshot fallback)", async () => {
+    const today = journal("Today", [blk("t1")]);
+    const older = journal("Older", [blk("o1"), blk("o2")]);
+    loadFeed([today, older]);
+    const o1 = older.blocks[0].id;
+    await moveBlockFeed(o1, -1); // o1 crosses up into Today
+    expect(raws("Today")).toEqual(["t1", "o1"]);
+    expect(raws("Older")).toEqual(["o2"]);
+
+    undo();
+    expect(raws("Today")).toEqual(["t1"]);
+    expect(raws("Older")).toEqual(["o1", "o2"]);
+    expect(doc.byId[o1].page).toBe("Older"); // page ownership restored too
+  });
+});
+
 describe("carry unfinished tasks → today", () => {
   const TODAY = journalTitle(new Date());
   const journal = (name: string, blocks: BlockDto[]): PageDto => ({
