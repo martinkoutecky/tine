@@ -612,7 +612,23 @@ function propLineKey(line: string): string | null {
 export function splitHiddenProps(raw: string): { visible: string; hidden: string } {
   const vis: string[] = [];
   const hid: string[] = [];
+  // Track fenced code so a literal `id::`/`collapsed::` line INSIDE a ``` / ~~~
+  // block is left as visible content — not yanked out as hidden metadata and
+  // reattached outside the fence (which corrupts the code on focus+blur).
+  let fence: string | null = null;
   for (const l of raw.split("\n")) {
+    const fm = /^\s*(`{3,}|~{3,})/.exec(l);
+    if (fm) {
+      const ch = fm[1][0];
+      if (fence === null) fence = ch;
+      else if (ch === fence) fence = null;
+      vis.push(l);
+      continue;
+    }
+    if (fence !== null) {
+      vis.push(l); // inside a code fence — never metadata
+      continue;
+    }
     const k = propLineKey(l);
     (k && HIDDEN_PROP_KEYS.has(k) ? hid : vis).push(l);
   }

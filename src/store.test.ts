@@ -27,6 +27,8 @@ import {
   pageByName,
   carryUnfinished,
   ensurePageLoaded,
+  splitHiddenProps,
+  withHiddenProps,
 } from "./store";
 import { journalTitle } from "./journal";
 import type { BlockDto, PageDto } from "./types";
@@ -219,6 +221,18 @@ describe("cross-day move (journal feed as one list)", () => {
     const res = await moveBlockFeed(today.blocks[0].id, -1);
     expect(res).toBe("none");
     expect(raws("Today")).toEqual(["t1"]);
+  });
+});
+
+describe("hidden-property splitting is fence-aware", () => {
+  it("keeps id::/collapsed:: inside a code fence as visible content", () => {
+    const raw = "```text\nid:: literal-in-code\ncollapsed:: true\n```\nid:: real-block-id";
+    const { visible, hidden } = splitHiddenProps(raw);
+    expect(hidden).toBe("id:: real-block-id"); // only the real trailing property is hidden
+    expect(visible).toContain("id:: literal-in-code"); // fenced lines stay put
+    expect(visible).toContain("collapsed:: true");
+    // Round-trip (focus→blur) must reconstruct the identical raw, not corrupt it.
+    expect(withHiddenProps(visible, hidden)).toBe(raw);
   });
 });
 

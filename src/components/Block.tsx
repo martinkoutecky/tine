@@ -494,11 +494,14 @@ function Editor(props: { id: string }): JSX.Element {
   const editorValue = () =>
     isAnnot() ? splitProps(node().raw).text : splitHiddenProps(node().raw).visible;
   const commit = (text: string) => {
-    if (isAnnot()) {
-      setRaw(props.id, joinProps(text, splitProps(node().raw).props));
-      return;
-    }
-    setRaw(props.id, withHiddenProps(text, splitHiddenProps(node().raw).hidden));
+    const next = isAnnot()
+      ? joinProps(text, splitProps(node().raw).props)
+      : withHiddenProps(text, splitHiddenProps(node().raw).hidden);
+    // No-op commit (focus/blur with no real edit, or text that reconstructs the
+    // identical raw): don't mark the page dirty or push undo — avoids churn and
+    // can't rewrite the block's bytes.
+    if (next === node().raw) return;
+    setRaw(props.id, next);
   };
 
   const [ac, setAc] = createSignal<Trigger | null>(null);
