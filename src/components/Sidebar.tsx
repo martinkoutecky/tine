@@ -1,11 +1,25 @@
-import { For, Show, createResource, createSignal, type JSX } from "solid-js";
+import { For, Show, createMemo, createResource, createSignal, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { openJournals, openPage, openPageInNewTab, openInNewTab, route } from "../router";
 import { openSwitcher, favorites, recentPages } from "../ui";
 
+// Cap the rendered "All pages" list. Beyond this, rendering every row (each
+// reading route() for its active state) makes both the initial render and every
+// navigation O(pages); past a few hundred the list isn't scannable anyway, so we
+// show the first N alphabetically and point the rest at search (Ctrl-K).
+const ALL_PAGES_CAP = 300;
+
 export function Sidebar(): JSX.Element {
   const [pages] = createResource(() => backend().listPages());
   const [showAll, setShowAll] = createSignal(false);
+
+  // Filter + sort ONCE per page-list change (memoized), not on every render /
+  // navigation as the inline `.filter().sort()` in JSX did.
+  const allPages = createMemo(() =>
+    (pages() ?? [])
+      .filter((p) => p.kind === "page")
+      .sort((a, b) => a.name.localeCompare(b.name))
+  );
 
   const isActive = (name: string) => {
     const r = route();
@@ -98,11 +112,11 @@ export function Sidebar(): JSX.Element {
             <span class="nav-toggle-caret" classList={{ open: showAll() }}>▸</span>
             ALL PAGES
             <Show when={pages()}>
-              <span class="nav-section-count">{pages()!.filter((p) => p.kind === "page").length}</span>
+              <span class="nav-section-count">{allPages().length}</span>
             </Show>
           </div>
           <Show when={showAll() && pages()}>
-            <For each={pages()!.filter((p) => p.kind === "page").sort((a, b) => a.name.localeCompare(b.name))}>
+            <For each={allPages().slice(0, ALL_PAGES_CAP)}>
               {(p) => (
                 <div
                   class="nav-page"
@@ -119,6 +133,11 @@ export function Sidebar(): JSX.Element {
                 </div>
               )}
             </For>
+            <Show when={allPages().length > ALL_PAGES_CAP}>
+              <div class="nav-page nav-page-more" onClick={openSwitcher}>
+                +{allPages().length - ALL_PAGES_CAP} more — search to open…
+              </div>
+            </Show>
           </Show>
         </div>
       </div>
