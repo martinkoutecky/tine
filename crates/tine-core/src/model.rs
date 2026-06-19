@@ -684,6 +684,10 @@ impl Graph {
         *guard = None;
         self.disk_revs.write().unwrap().clear(); // under the cache lock (cache → disk_revs)
         drop(guard);
+        // A bulk external change is the reason to invalidate; any pending
+        // self-write markers are stale relative to the new disk state, so clear
+        // them too (else one could wrongly suppress a real change post-rebuild).
+        self.recent_writes.lock().unwrap().clear();
         *self.alias_cache.write().unwrap() = None;
         *self.block_index.write().unwrap() = None;
     }
@@ -1087,12 +1091,18 @@ impl Graph {
         // cache hasn't folded in the write yet (the rename→cache_upsert gap the
         // watcher can read into). The cache comparison below alone races that gap.
         let disk_rev = content_rev(content);
-        {
+        // The self-write marker exists ONLY to stop the WATCHER raising a false
+        // "changed on disk" during the rename→cache_upsert window, so only the
+        // watcher (consume_self_write) consults it. load_page must NOT short-
+        // circuit here: in that window the cache is still pre-write, so returning
+        // early would serve a STALE cached doc with the fresh disk rev (a later
+        // save could then clobber disk). load_page instead falls through to the
+        // disk_revs fast path / parse-reconcile below and serves content matching
+        // the exact bytes it just read.
+        if consume_self_write {
             let mut recent = self.recent_writes.lock().unwrap();
             if recent.get(path).is_some_and(|r| *r == disk_rev) {
-                if consume_self_write {
-                    recent.remove(path);
-                }
+                recent.remove(path);
                 return None;
             }
         }
@@ -1152,6 +1162,12 @@ impl Graph {
             }
         }
         self.cache_upsert(entry.clone(), newdoc, disk_rev);
+        // A real change was just folded in (cache_upsert set disk_revs to match
+        // disk, which now suppresses the watcher), so any leftover self-write
+        // marker for this path is stale — drop it. Otherwise a later external
+        // write that happens to restore Tine's earlier bytes would be wrongly
+        // suppressed as our own write, leaving the cache stale for queries.
+        self.recent_writes.lock().unwrap().remove(path);
         Some(entry)
     }
 
