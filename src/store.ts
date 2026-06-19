@@ -508,11 +508,23 @@ function snapEntry(affected?: string[] | null): SnapEntry {
   const names = affected ?? doc.pages.map((p) => p.name);
   const nameSet = new Set(names);
   const byId = unwrap(doc.byId);
+  const pages = unwrap(doc.pages);
   const nodes: Record<string, Node> = {};
-  for (const id in byId) {
-    if (nameSet.has(byId[id].page)) nodes[id] = cloneNode(byId[id]);
+  // Collect each affected page's nodes by walking its root subtrees — O(nodes on
+  // those pages), NOT O(whole loaded working set). A consistent pre-op tree has
+  // every node-with-page-P reachable from P's roots (same invariant
+  // purgePageNodes relies on), so this captures exactly the by-page set without
+  // sweeping byId as sidebars/old journal days/query results accumulate.
+  const visit = (id: string) => {
+    const n = byId[id];
+    if (!n || nodes[id]) return;
+    nodes[id] = cloneNode(n);
+    for (const c of n.children) visit(c);
+  };
+  for (const p of pages) {
+    if (nameSet.has(p.name)) for (const r of p.roots) visit(r);
   }
-  const pageObjs = clonePages(unwrap(doc.pages).filter((p) => nameSet.has(p.name)));
+  const pageObjs = clonePages(pages.filter((p) => nameSet.has(p.name)));
   return { kind: "snap", pages: affected ?? null, pageObjs, nodes, dirty: names };
 }
 
@@ -569,12 +581,14 @@ function applyEntry(e: UndoEntry): UndoEntry {
   } else {
     // Scoped restore: touch ONLY the affected pages, so pages loaded/edited
     // concurrently on OTHER pages are left intact.
-    const scope = new Set(e.pages);
+    const scope = e.pages;
     setDoc(
       produce((s) => {
-        for (const id in s.byId) {
-          if (scope.has(s.byId[id].page)) delete s.byId[id]; // drop affected pages' nodes (incl. ones the op added)
-        }
+        // Drop the affected pages' CURRENT nodes (incl. ones the op added) by
+        // walking their current root subtrees — O(affected page sizes), not a
+        // full byId sweep. Then reinstate the snapshot. (Same root-walk
+        // purgePageNodes uses for upsert/forget.)
+        for (const name of scope) purgePageNodes(s, name);
         for (const id in e.nodes) s.byId[id] = cloneNode(e.nodes[id]); // reinstate the snapshot
         for (const po of e.pageObjs) {
           const restored = clonePages([po])[0];

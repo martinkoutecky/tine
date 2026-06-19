@@ -307,6 +307,20 @@ describe("page-scoped structural undo", () => {
     expect(raws("Older")).toEqual(["o1", "o2"]);
   });
 
+  it("undo removes an op-added node from byId entirely (root-walk purge, no leak)", () => {
+    const today = journal("Today", [blk("t1")]);
+    loadFeed([today]);
+    splitBlock(today.blocks[0].id, 1); // adds a new node on Today
+    const addedId = pageByName("Today")!.roots[1];
+    expect(doc.byId[addedId]).toBeTruthy();
+
+    undo();
+    // The scoped restore must purge the affected page's current subtree (incl. the
+    // op-added node) by walking roots — not leave it dangling in byId.
+    expect(doc.byId[addedId]).toBeUndefined();
+    expect(raws("Today")).toEqual(["t1"]);
+  });
+
   it("cross-day move undo leaves an unrelated loaded page intact", async () => {
     const today = journal("Today", [blk("t1")]);
     const older = journal("Older", [blk("o1")]);
