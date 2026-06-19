@@ -2940,6 +2940,71 @@ mark {
   text-align: center;
 }
 
+/* Page navigation (current / total, editable to jump) */
+.pdf-pager {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+.pdf-pager .icon-btn {
+  padding: 2px 5px;
+  font-size: 16px;
+  line-height: 1;
+}
+.pdf-page-input {
+  width: 40px;
+  text-align: center;
+  padding: 2px 4px;
+  font-size: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+}
+.pdf-page-input:focus {
+  border-color: var(--link-color);
+  outline: none;
+}
+.pdf-page-total {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0 4px 0 2px;
+}
+.icon-btn.active {
+  color: var(--link-color);
+  background: var(--bg-tertiary);
+}
+
+/* Find-in-document bar (slim row under the toolbar) */
+.pdf-find-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+}
+.pdf-find-input {
+  width: 220px;
+  padding: 4px 8px;
+  font-size: 13px;
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+}
+.pdf-find-input:focus {
+  border-color: var(--link-color);
+  outline: none;
+}
+.pdf-find-count {
+  font-size: 12px;
+  color: var(--text-muted);
+  min-width: 70px;
+  text-align: center;
+}
+
 .pdf-notes-btn {
   font-size: 12px;
   padding: 4px 10px;

@@ -36,6 +36,24 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
   // highlight (`id` set → offers recolor + remove).
   const [menu, setMenu] = createSignal<{ x: number; y: number; id?: string } | null>(null);
   const [scale, setScale] = createSignal(1.4);
+  // Page indicator: total pages + the page currently filling the viewport, and a
+  // separately-tracked editable field (so a scroll doesn't fight the user typing).
+  const [numPages, setNumPages] = createSignal(0);
+  const [curPage, setCurPage] = createSignal(1);
+  const [pageField, setPageField] = createSignal("1");
+  let pageInputFocused = false;
+  let scrollRaf: number | undefined;
+  // Find-in-PDF: matches are (page, char span) over each page's joined text;
+  // findCur is the 1-based index of the active match (0 = none).
+  const [findOpen, setFindOpen] = createSignal(false);
+  const [findQuery, setFindQuery] = createSignal("");
+  const [findCount, setFindCount] = createSignal(0);
+  const [findCur, setFindCur] = createSignal(0);
+  let findMatches: { page: number }[] = [];
+  const pageTextCache: Record<number, string> = {};
+  let findToken = 0;
+  let findDebounce: number | undefined;
+  let findInputEl: HTMLInputElement | undefined;
   let pending: Pending | null = null;
   // The highlight ids last synced to disk (load baseline, refreshed after each
   // successful write) — sent so the backend's 3-way merge honors deletions while
@@ -420,7 +438,11 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
     dimsKnown.add(1);
     for (let n = 2; n <= doc.numPages; n++) dims[n] = { w: vp1.width, h: vp1.height };
     setScale(fitWidthScale());
+    setNumPages(doc.numPages);
     buildLayout();
+    const startPage = props.page && pageEls[props.page] ? props.page : 1;
+    setCurPage(startPage);
+    setPageField(String(startPage));
     if (props.page && pageEls[props.page]) {
       pageEls[props.page].scrollIntoView({ block: "start" });
     }
@@ -430,6 +452,8 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
     io?.disconnect();
     clearTimeout(zoomTimer);
     clearTimeout(textTimer);
+    clearTimeout(findDebounce);
+    if (scrollRaf !== undefined) cancelAnimationFrame(scrollRaf);
     for (const k of Object.keys(tasks)) tasks[Number(k)]?.cancel();
   });
 
@@ -489,6 +513,11 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
   // preventDefault stops the webview's own page zoom.
   const onKeyZoom = (e: KeyboardEvent) => {
     if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+    if (e.key === "f" || e.key === "F") {
+      e.preventDefault();
+      openFind();
+      return;
+    }
     if (e.key === "=" || e.key === "+") {
       e.preventDefault();
       zoomBy(1.1);
@@ -561,11 +590,223 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
     if (!(await persist())) setHighlights(prev); // revert the optimistic add on failure
   };
 
+  // --- page navigation -----------------------------------------------------
+  const scrollToPage = (n: number) => {
+    const np = numPages() || 1;
+    const p = Math.max(1, Math.min(np, Math.floor(n) || 1));
+    if (pageEls[p]) scrollRef.scrollTop = pageEls[p].offsetTop;
+  };
+  const commitPageField = () => {
+    const v = parseInt(pageField(), 10);
+    if (Number.isFinite(v)) scrollToPage(v);
+  };
+  // Track the page filling the viewport's upper region (rAF-throttled).
+  const updateCurPage = () => {
+    scrollRaf = undefined;
+    const np = numPages();
+    if (!np) return;
+    const probe = scrollRef.scrollTop + scrollRef.clientHeight * 0.25;
+    let n = 1;
+    for (let i = 1; i <= np; i++) {
+      const el = pageEls[i];
+      if (!el) continue;
+      if (el.offsetTop <= probe) n = i;
+      else break;
+    }
+    setCurPage(n);
+  };
+  const onScroll = () => {
+    if (scrollRaf !== undefined) return;
+    scrollRaf = requestAnimationFrame(updateCurPage);
+  };
+  // Keep the page field showing the scrolled page (unless it's being edited).
+  createEffect(() => {
+    const c = curPage();
+    if (!pageInputFocused) setPageField(String(c));
+  });
+
+  // --- find in document ----------------------------------------------------
+  async function pageText(n: number): Promise<string> {
+    if (pageTextCache[n] !== undefined) return pageTextCache[n];
+    if (!pdfDoc) return "";
+    const page = await pdfDoc.getPage(n);
+    const tc = await page.getTextContent();
+    const s = (tc.items as any[]).map((it) => (typeof it.str === "string" ? it.str : "")).join("");
+    pageTextCache[n] = s;
+    return s;
+  }
+  const scheduleFind = (q: string) => {
+    setFindQuery(q);
+    clearTimeout(findDebounce);
+    findDebounce = window.setTimeout(() => void runFind(q), 180);
+  };
+  async function runFind(query: string) {
+    const token = ++findToken;
+    const q = query.trim().toLowerCase();
+    if (!q || !pdfDoc) {
+      findMatches = [];
+      setFindCount(0);
+      setFindCur(0);
+      window.getSelection()?.removeAllRanges();
+      return;
+    }
+    const acc: { page: number }[] = [];
+    const np = pdfDoc.numPages;
+    for (let n = 1; n <= np; n++) {
+      const text = (await pageText(n)).toLowerCase();
+      if (token !== findToken) return; // a newer query superseded this run
+      let i = text.indexOf(q);
+      while (i >= 0) {
+        acc.push({ page: n });
+        i = text.indexOf(q, i + q.length);
+      }
+    }
+    if (token !== findToken) return;
+    findMatches = acc;
+    setFindCount(acc.length);
+    if (acc.length) void gotoMatch(0);
+    else {
+      setFindCur(0);
+      window.getSelection()?.removeAllRanges();
+    }
+  }
+  const nextMatch = (delta: number) => {
+    if (findMatches.length) void gotoMatch(findCur() - 1 + delta);
+  };
+  async function gotoMatch(i: number) {
+    const len = findMatches.length;
+    if (!len) return;
+    const idx = ((i % len) + len) % len;
+    setFindCur(idx + 1);
+    const m = findMatches[idx];
+    scrollToPage(m.page);
+    await ensureTextLayer(m.page);
+    selectOccurrence(m.page, occurrenceIndexOnPage(idx, m.page));
+  }
+  function occurrenceIndexOnPage(matchIdx: number, page: number): number {
+    let k = -1;
+    for (let i = 0; i <= matchIdx; i++) if (findMatches[i].page === page) k++;
+    return k;
+  }
+  // Make sure a page is rasterized and its text layer built (so we can range over
+  // it) — used when jumping to a match on a not-yet-rendered page.
+  async function ensureTextLayer(n: number) {
+    if (!pdfDoc) return;
+    const s = scale();
+    if (renderedScale[n] !== s) await renderPage(n);
+    if (renderedScale[n] !== undefined && textScale[n] !== renderedScale[n]) {
+      await buildTextLayer(n, renderedScale[n]);
+    }
+  }
+  // Select the occ-th occurrence of the query within page n's text layer (the
+  // pdf.js text layer is transparent text over the canvas, so a DOM selection IS
+  // the visible find highlight — no overlay needed). Offsets are computed against
+  // the same item concatenation runFind counts, so the index lines up.
+  function selectOccurrence(n: number, occ: number) {
+    const tl = textLayers[n];
+    if (!tl || occ < 0) return;
+    const q = findQuery().trim().toLowerCase();
+    if (!q) return;
+    const walker = document.createTreeWalker(tl, NodeFilter.SHOW_TEXT);
+    const nodes: Text[] = [];
+    const starts: number[] = [];
+    let combined = "";
+    for (let nd = walker.nextNode(); nd; nd = walker.nextNode()) {
+      starts.push(combined.length);
+      nodes.push(nd as Text);
+      combined += nd.textContent ?? "";
+    }
+    const hay = combined.toLowerCase();
+    let from = hay.indexOf(q);
+    let k = 0;
+    while (from >= 0 && k < occ) {
+      from = hay.indexOf(q, from + q.length);
+      k++;
+    }
+    if (from < 0) return;
+    const to = from + q.length;
+    const nodeAt = (offset: number) => {
+      for (let i = 0; i < nodes.length; i++) {
+        const len = nodes[i].textContent?.length ?? 0;
+        if (offset < starts[i] + len) return { node: nodes[i], start: starts[i] };
+      }
+      return null;
+    };
+    const a = nodeAt(from);
+    const b = nodeAt(to - 1);
+    if (!a || !b) return;
+    const range = document.createRange();
+    try {
+      range.setStart(a.node, from - a.start);
+      range.setEnd(b.node, to - 1 - b.start + 1);
+    } catch {
+      return;
+    }
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+    const rect = range.getBoundingClientRect();
+    const cont = scrollRef.getBoundingClientRect();
+    if (rect.top < cont.top + 48 || rect.bottom > cont.bottom - 24) {
+      scrollRef.scrollTop += rect.top - cont.top - scrollRef.clientHeight * 0.3;
+    }
+  }
+  const openFind = () => {
+    setFindOpen(true);
+    queueMicrotask(() => {
+      findInputEl?.focus();
+      findInputEl?.select();
+    });
+    if (findQuery().trim()) void runFind(findQuery());
+  };
+  const closeFind = () => {
+    setFindOpen(false);
+    window.getSelection()?.removeAllRanges();
+  };
+
   return (
     <div class="pdf-viewer">
       <div class="pdf-toolbar">
         <span class="pdf-title">{props.label}</span>
         <div class="pdf-toolbar-actions">
+          <div class="pdf-pager">
+            <button class="icon-btn" title="Previous page" onClick={() => scrollToPage(curPage() - 1)}>
+              ‹
+            </button>
+            <input
+              class="pdf-page-input"
+              title="Page — type a number and press Enter to jump"
+              value={pageField()}
+              onFocus={(e) => {
+                pageInputFocused = true;
+                e.currentTarget.select();
+              }}
+              onInput={(e) => setPageField(e.currentTarget.value)}
+              onBlur={() => {
+                pageInputFocused = false;
+                commitPageField();
+                setPageField(String(curPage()));
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  commitPageField();
+                  e.currentTarget.blur();
+                }
+              }}
+            />
+            <span class="pdf-page-total">/ {numPages()}</span>
+            <button class="icon-btn" title="Next page" onClick={() => scrollToPage(curPage() + 1)}>
+              ›
+            </button>
+          </div>
+          <button
+            class="icon-btn"
+            classList={{ active: findOpen() }}
+            title="Find in document (Ctrl+F)"
+            onClick={() => (findOpen() ? closeFind() : openFind())}
+          >
+            🔍
+          </button>
           <div class="pdf-zoom">
             <button class="icon-btn" title="Zoom out" onClick={() => zoomBy(1 / 1.1)}>
               −
@@ -593,7 +834,39 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
           </button>
         </div>
       </div>
-      <div class="pdf-scroll" ref={scrollRef} onMouseUp={onMouseUp} onWheel={onWheel} />
+      <Show when={findOpen()}>
+        <div class="pdf-find-bar">
+          <input
+            ref={(el) => (findInputEl = el)}
+            class="pdf-find-input"
+            placeholder="Find in document"
+            value={findQuery()}
+            onInput={(e) => scheduleFind(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                nextMatch(e.shiftKey ? -1 : 1);
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                closeFind();
+              }
+            }}
+          />
+          <span class="pdf-find-count">
+            {findCount() ? `${findCur()} / ${findCount()}` : findQuery().trim() ? "No results" : ""}
+          </span>
+          <button class="icon-btn" title="Previous match (Shift+Enter)" onClick={() => nextMatch(-1)}>
+            ↑
+          </button>
+          <button class="icon-btn" title="Next match (Enter)" onClick={() => nextMatch(1)}>
+            ↓
+          </button>
+          <button class="icon-btn" title="Close (Esc)" onClick={closeFind}>
+            ✕
+          </button>
+        </div>
+      </Show>
+      <div class="pdf-scroll" ref={scrollRef} onMouseUp={onMouseUp} onWheel={onWheel} onScroll={onScroll} />
       <Show when={menu()}>
         <div class="pdf-color-menu" style={{ left: `${menu()!.x}px`, top: `${menu()!.y + 8}px` }}>
           <For each={COLORS}>
