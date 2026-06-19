@@ -47,6 +47,8 @@ describe("resolveDateToken", () => {
     expect(resolveDateToken("2026-13-01", TODAY)).toBeNull();
     expect(resolveDateToken("2026-00-10", TODAY)).toBeNull();
     expect(iso(resolveDateToken("2026-02-28", TODAY))).toBe("2026-02-28"); // valid still works
+    // Years 0–99 are literal, not 1900-based.
+    expect(resolveDateToken("0099-01-01", TODAY)?.getFullYear()).toBe(99);
   });
 
   it("previewDate renders or blanks", () => {

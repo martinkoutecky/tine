@@ -309,8 +309,8 @@ impl Graph {
         // values are strings only, so the first `}` after `{` closes it.
         let dt = find_uncommented(&content, ":default-templates").and_then(|start| {
             let open = start + content[start..].find('{')?;
-            let close = open + content[open..].find('}')?;
-            Some((open, close)) // byte indices of `{` and `}`
+            let close = match_close_brace(&content, open); // EDN-aware (skips strings/comments/nesting)
+            Some((open, close)) // byte indices of `{` and matching `}`
         });
 
         match name {
@@ -318,7 +318,7 @@ impl Graph {
                 let v = format!("\"{}\"", n.replace('\\', "\\\\").replace('"', "\\\""));
                 match dt {
                     Some((open, close)) => {
-                        if let Some(jrel) = content[open + 1..close].find(":journals") {
+                        if let Some(jrel) = find_keyword(&content[open + 1..close], ":journals") {
                             // Replace the existing string value after :journals.
                             let after = open + 1 + jrel + ":journals".len();
                             // If there was no value at all, fall back to inserting.
@@ -351,7 +351,7 @@ impl Graph {
                 // Remove the `:journals "…"` pair (leaving any other keys + an empty
                 // `:default-templates {}`, which parses to "no journal template").
                 if let Some((open, close)) = dt {
-                    if let Some(jrel) = content[open + 1..close].find(":journals") {
+                    if let Some(jrel) = find_keyword(&content[open + 1..close], ":journals") {
                         let jstart = open + 1 + jrel;
                         let after = jstart + ":journals".len();
                         // End just past the value's closing quote (escape-aware, so a
@@ -1411,6 +1411,73 @@ fn edn_str_end(s: &str, open: usize) -> usize {
         }
     }
     s.len()
+}
+
+/// Matching close `}` for the map whose `{` is at byte `open`, EDN-aware: skips
+/// strings (with escapes), `;` line comments, and nested braces. Returns
+/// end-of-string if unbalanced. (`}` is ASCII → returned index is a char boundary.)
+fn match_close_brace(s: &str, open: usize) -> usize {
+    let b = s.as_bytes();
+    let mut i = open + 1;
+    let mut depth = 1usize;
+    while i < b.len() {
+        match b[i] {
+            b'"' => {
+                i = edn_str_end(s, i);
+                continue;
+            }
+            b';' => {
+                while i < b.len() && b[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return i;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    s.len()
+}
+
+/// Byte index of a real `key` keyword inside `map_inner` (a map body), skipping
+/// strings + `;` comments, and requiring a token boundary after it. None if absent.
+fn find_keyword(map_inner: &str, key: &str) -> Option<usize> {
+    let b = map_inner.as_bytes();
+    let mut i = 0usize;
+    while i < b.len() {
+        match b[i] {
+            b'"' => {
+                i = edn_str_end(map_inner, i);
+                continue;
+            }
+            b';' => {
+                while i < b.len() && b[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            _ if map_inner[i..].starts_with(key) => {
+                let after = i + key.len();
+                let boundary = after >= b.len()
+                    || matches!(b[after], b' ' | b'\t' | b'\n' | b'\r' | b'"' | b'{' | b'}' | b',');
+                if boundary {
+                    return Some(i);
+                }
+                i = after;
+                continue;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
 }
 
 fn find_uncommented(content: &str, key: &str) -> Option<usize> {

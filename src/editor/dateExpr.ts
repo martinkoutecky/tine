@@ -15,8 +15,10 @@ function addDays(d: Date, n: number): Date {
   return r;
 }
 // Build a Date only if the y/m/d round-trip exactly (rejects 2026-02-31 etc.).
+// Use setFullYear so years 0–99 aren't reinterpreted as 1900-based by the Date ctor.
 function validDate(y: number, m: number, d: number): Date | null {
-  const dt = new Date(y, m, d);
+  const dt = new Date(2000, 0, 1);
+  dt.setFullYear(y, m, d);
   return dt.getFullYear() === y && dt.getMonth() === m && dt.getDate() === d ? dt : null;
 }
 function addMonths(d: Date, n: number): Date {

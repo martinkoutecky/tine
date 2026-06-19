@@ -650,6 +650,29 @@ fn set_default_journal_template_round_trips_in_config_edn() {
 }
 
 #[test]
+fn set_default_journal_template_ignores_commented_journals_inside_map() {
+    // `:journals` appears only inside a comment within the :default-templates map;
+    // the writer must NOT edit the comment — it must insert a real key and leave
+    // the comment + sibling untouched.
+    let root = std::env::temp_dir().join(format!("tine-jtmpl-c-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("logseq")).unwrap();
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    let cfg_path = root.join("logseq").join("config.edn");
+    std::fs::write(
+        &cfg_path,
+        "{:default-templates { ;; :journals \"Commented\"\n  :pages \"P\"}}\n",
+    )
+    .unwrap();
+    Graph::open(&root).set_default_journal_template(Some("Real")).unwrap();
+    let c = std::fs::read_to_string(&cfg_path).unwrap();
+    assert!(c.contains(":journals \"Real\""), "real journals inserted: {}", c);
+    assert!(c.contains(";; :journals \"Commented\""), "comment untouched: {}", c);
+    assert!(c.contains(":pages \"P\""), "sibling preserved: {}", c);
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn set_default_journal_template_quoted_name_does_not_corrupt_config() {
     // A template name with an embedded quote is escaped on write; the escape-aware
     // value-end scan must then replace/clear only the value on the next edit,
