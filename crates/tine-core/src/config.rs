@@ -1,8 +1,17 @@
-//! Minimal reader for `logseq/config.edn`. We only extract the handful of keys
-//! that affect file layout/parsing. This is intentionally a light string scan,
-//! not a full EDN parser (swap in `edn-rs` later if needed).
+//! `logseq/config.edn` read AND write — one cohesive module.
+//!
+//! We don't full-parse config.edn (it contains arbitrary Clojure/datalog forms —
+//! `(…)` lists, `fn` bodies, `:where` rules — that a small EDN model can't safely
+//! represent). Instead both reads and writes use ONE shared, string/comment/escape
+//! -aware scanner family (`find_keyword`/`edn_str_end`/`match_close_*`/
+//! `next_value_span`) to locate just the handful of keys we care about and edit
+//! values surgically — so writes preserve comments + formatting + unrelated keys,
+//! and reads are immune to whatever else the file contains.
 
+use crate::model::{atomic_write, Graph};
 use std::collections::HashMap;
+use std::fs;
+use std::io;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -10,7 +19,7 @@ pub struct Config {
     pub pages_dir: String,
     pub preferred_workflow: Workflow,
     /// User keybinding overrides from `:shortcuts {:cmd "binding"}` (string
-    /// bindings only; vectors/`false` are ignored for now).
+    /// bindings only; vectors take the first binding, `false` disables).
     pub shortcuts: HashMap<String, String>,
     /// `:publishing/all-pages-public?` — when true, HTML export publishes every
     /// page; otherwise only pages with `public:: true`.
@@ -53,13 +62,9 @@ impl Default for Config {
 
 impl Config {
     pub fn parse(edn: &str) -> Config {
-        // Strip line comments (`;` to end of line) so commented-out example
-        // keys like `;; :journals-directory "foo"` aren't mistaken for real
-        // settings — but only OUTSIDE strings, so a value containing `;` (e.g. a
-        // favorited/templated page named `A;B`) isn't truncated on read.
-        let edn = strip_edn_comments(edn);
-        let edn = edn.as_str();
-
+        // Each key is located independently with the comment/string-aware
+        // `find_keyword`, then its value read with the shared scanners — no
+        // up-front comment strip and no whole-file parse.
         let mut cfg = Config::default();
         if let Some(v) = string_value(edn, ":journals-directory") {
             cfg.journals_dir = v;
@@ -71,216 +76,500 @@ impl Config {
             cfg.preferred_workflow = if v == "todo" { Workflow::Todo } else { Workflow::Now };
         }
         cfg.shortcuts = parse_shortcuts(edn);
-        if let Some(i) = edn.find(":publishing/all-pages-public?") {
-            let after = edn[i + ":publishing/all-pages-public?".len()..].trim_start();
-            cfg.all_pages_public = after.starts_with("true");
-        }
+        cfg.all_pages_public = bool_value(edn, ":publishing/all-pages-public?").unwrap_or(false);
         if let Some(n) = int_value(edn, ":start-of-week") {
             if n <= 6 {
                 cfg.start_of_week = n;
             }
         }
         cfg.block_hidden_properties = parse_keyword_set(edn, ":block-hidden-properties");
-        cfg.default_journal_template = nested_string(edn, ":default-templates", ":journals")
-            .filter(|s| !s.is_empty());
+        cfg.default_journal_template =
+            nested_string(edn, ":default-templates", ":journals").filter(|s| !s.is_empty());
         cfg.favorites = parse_string_vector(edn, ":favorites");
         cfg
     }
 }
 
-/// Strip `;`-to-end-of-line EDN comments, but ONLY outside double-quoted strings
-/// (escape-aware), so a string value containing `;` (a favorited/templated page
-/// named `A;B`) survives. Newlines are preserved so later line-based scans align.
-fn strip_edn_comments(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let chars: Vec<char> = s.chars().collect();
-    let mut i = 0;
-    let mut in_str = false;
-    while i < chars.len() {
-        let c = chars[i];
-        if in_str {
-            out.push(c);
-            if c == '\\' && i + 1 < chars.len() {
-                out.push(chars[i + 1]);
-                i += 2;
-                continue;
+// ---------------------------------------------------------------------------
+// Writers — surgical, comment/format-preserving in-place edits of config.edn.
+// (Graph.root is pub; atomic_write is pub(crate); both reachable from here.)
+// ---------------------------------------------------------------------------
+
+impl Graph {
+    /// Persist the favorites list to `:favorites [...]`, replacing the existing
+    /// vector or inserting one, preserving the rest of the file.
+    pub fn set_favorites(&self, names: &[String]) -> io::Result<()> {
+        let path = self.root.join("logseq").join("config.edn");
+        let mut content = fs::read_to_string(&path).unwrap_or_else(|_| "{}\n".to_string());
+        let vec_str = format!(
+            "[{}]",
+            names
+                .iter()
+                .map(|n| format!("\"{}\"", n.replace('\\', "\\\\").replace('"', "\\\"")))
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+        if let Some(start) = find_keyword(&content, ":favorites") {
+            // Replace the existing `:favorites [...]` vector. Require its value to
+            // be a vector and find the matching `]` with an EDN-aware scan so a
+            // favorite NAME containing `]` (or a comment in the vector) can't
+            // truncate the replacement and corrupt config.edn.
+            let after = start + ":favorites".len();
+            let b = content.as_bytes();
+            let mut j = after;
+            while j < b.len() && matches!(b[j], b' ' | b'\t' | b'\n' | b'\r' | b',') {
+                j += 1;
             }
-            if c == '"' {
-                in_str = false;
+            if j < b.len() && b[j] == b'[' {
+                let end = match_close_bracket(&content, j) + 1;
+                content.replace_range(start..end, &format!(":favorites {vec_str}"));
+            } else {
+                content.insert_str(after, &format!(" {vec_str}"));
             }
-            i += 1;
-        } else if c == '"' {
-            in_str = true;
-            out.push(c);
-            i += 1;
-        } else if c == ';' {
-            while i < chars.len() && chars[i] != '\n' {
+        } else if let Some(brace) = content.find('{') {
+            content.insert_str(brace + 1, &format!("\n :favorites {vec_str}\n"));
+        } else {
+            content = format!("{{:favorites {vec_str}}}\n");
+        }
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        atomic_write(&path, content.as_bytes())
+    }
+
+    /// Persist the task workflow to `:preferred-workflow :todo`/`:now`, replacing
+    /// the keyword value or inserting the key. `find_keyword` skips comments/strings
+    /// so a commented or in-string `:preferred-workflow` is never edited.
+    pub fn set_preferred_workflow(&self, wf: &str) -> io::Result<()> {
+        let kw = if wf == "todo" { ":todo" } else { ":now" };
+        let key = ":preferred-workflow";
+        let path = self.root.join("logseq").join("config.edn");
+        let mut content = fs::read_to_string(&path).unwrap_or_else(|_| "{}\n".to_string());
+
+        if let Some(start) = find_keyword(&content, key) {
+            let after = start + key.len();
+            match content[after..].find(|c: char| !c.is_whitespace()) {
+                Some(rel) if content[after + rel..].starts_with(':') => {
+                    let vstart = after + rel;
+                    let vrest = &content[vstart + 1..];
+                    let end = vrest
+                        .find(|c: char| c.is_whitespace() || c == '}' || c == ')')
+                        .unwrap_or(vrest.len());
+                    content.replace_range(vstart..vstart + 1 + end, kw);
+                }
+                _ => content.insert_str(after, &format!(" {kw}")),
+            }
+        } else if let Some(brace) = content.find('{') {
+            content.insert_str(brace + 1, &format!("\n :preferred-workflow {kw}\n"));
+        } else {
+            content = format!("{{:preferred-workflow {kw}}}\n");
+        }
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        atomic_write(&path, content.as_bytes())
+    }
+
+    /// Persist the new-journal default template as `:default-templates {:journals
+    /// "Name"}`. `Some` sets/replaces the `:journals` entry; `None` removes it.
+    /// Other keys in `:default-templates`, the rest of the file, and comments are
+    /// preserved.
+    pub fn set_default_journal_template(&self, name: Option<&str>) -> io::Result<()> {
+        let path = self.root.join("logseq").join("config.edn");
+        let mut content = fs::read_to_string(&path).unwrap_or_else(|_| "{}\n".to_string());
+
+        // Locate a real `:default-templates` whose value is a map literal `{ … }`.
+        let dt = find_keyword(&content, ":default-templates").and_then(|start| {
+            let after = start + ":default-templates".len();
+            let b = content.as_bytes();
+            let mut j = after;
+            while j < b.len() && matches!(b[j], b' ' | b'\t' | b'\n' | b'\r' | b',') {
+                j += 1;
+            }
+            if j >= b.len() || b[j] != b'{' {
+                return None; // value isn't a map → don't touch it
+            }
+            let close = match_close_brace(&content, j);
+            Some((j, close)) // byte indices of `{` and matching `}`
+        });
+
+        match name {
+            Some(n) => {
+                let v = format!("\"{}\"", n.replace('\\', "\\\\").replace('"', "\\\""));
+                match dt {
+                    Some((open, close)) => {
+                        if let Some(jrel) = find_keyword(&content[open + 1..close], ":journals") {
+                            // Replace the value IMMEDIATELY after :journals (string or
+                            // not) — never scan for the next quote anywhere, which could
+                            // land on a later key's value.
+                            let after = open + 1 + jrel + ":journals".len();
+                            match next_value_span(&content, after, close) {
+                                Some((vstart, vend, _)) => content.replace_range(vstart..vend, &v),
+                                None => content.insert_str(after, &format!(" {v}")),
+                            }
+                        } else {
+                            let sep = if content[open + 1..close].trim().is_empty() { "" } else { " " };
+                            content.insert_str(open + 1, &format!(":journals {v}{sep}"));
+                        }
+                    }
+                    None => {
+                        let entry = format!("\n :default-templates {{:journals {v}}}\n");
+                        if let Some(brace) = content.find('{') {
+                            content.insert_str(brace + 1, &entry);
+                        } else {
+                            content = format!("{{:default-templates {{:journals {v}}}}}\n");
+                        }
+                    }
+                }
+            }
+            None => {
+                if let Some((open, close)) = dt {
+                    if let Some(jrel) = find_keyword(&content[open + 1..close], ":journals") {
+                        let jstart = open + 1 + jrel;
+                        let after = jstart + ":journals".len();
+                        let end = next_value_span(&content, after, close)
+                            .map(|(_, vend, _)| vend)
+                            .unwrap_or(after);
+                        let tail: usize = content[end..close]
+                            .chars()
+                            .take_while(|c| c.is_whitespace() || *c == ',')
+                            .map(|c| c.len_utf8())
+                            .sum();
+                        content.replace_range(jstart..end + tail, "");
+                    }
+                }
+            }
+        }
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        atomic_write(&path, content.as_bytes())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Shared scanner family — byte-offset, string/comment/escape-aware. Used by
+// BOTH the readers above and the writers above. `;` comment handling lives in
+// `find_keyword` (so there's no separate comment-strip pass).
+// ---------------------------------------------------------------------------
+
+/// Index just past the closing quote of an EDN string opening at byte `open` (a
+/// `"`), skipping `\"` / `\\`. Returns end-of-string if unterminated. (`"` is
+/// ASCII → the returned index is a char boundary.)
+fn edn_str_end(s: &str, open: usize) -> usize {
+    let b = s.as_bytes();
+    let mut i = open + 1;
+    while i < b.len() {
+        match b[i] {
+            b'\\' => i += 2,
+            b'"' => return i + 1,
+            _ => i += 1,
+        }
+    }
+    s.len()
+}
+
+/// Matching close `}` for the map whose `{` is at byte `open`, EDN-aware: skips
+/// strings, `;` comments, and nested braces. End-of-string if unbalanced.
+fn match_close_brace(s: &str, open: usize) -> usize {
+    match_close(s, open, b'{', b'}')
+}
+
+/// Matching close `]` for the vector whose `[` is at byte `open`, EDN-aware.
+fn match_close_bracket(s: &str, open: usize) -> usize {
+    match_close(s, open, b'[', b']')
+}
+
+fn match_close(s: &str, open: usize, openc: u8, closec: u8) -> usize {
+    let b = s.as_bytes();
+    let mut i = open + 1;
+    let mut depth = 1usize;
+    while i < b.len() {
+        let c = b[i];
+        if c == b'"' {
+            i = edn_str_end(s, i);
+            continue;
+        }
+        if c == b';' {
+            while i < b.len() && b[i] != b'\n' {
                 i += 1;
             }
-        } else {
-            out.push(c);
-            i += 1;
+            continue;
         }
-    }
-    out
-}
-
-/// Read an EDN double-quoted string whose opening quote is at `chars[at]`,
-/// unescaping `\"`/`\\` (symmetric with the writers' escaping). Returns the value
-/// and the index just past the closing quote. String content may contain `]`/`}`
-/// — that's exactly what the naive delimiter scans below used to truncate on.
-fn read_edn_string(chars: &[char], at: usize) -> (String, usize) {
-    let mut s = String::new();
-    let mut j = at + 1;
-    while j < chars.len() && chars[j] != '"' {
-        if chars[j] == '\\' && matches!(chars.get(j + 1), Some('"') | Some('\\')) {
-            s.push(chars[j + 1]);
-            j += 2;
-        } else {
-            s.push(chars[j]);
-            j += 1;
-        }
-    }
-    (s, (j + 1).min(chars.len()))
-}
-
-/// Parse the quoted strings inside `key [ "a" "b" ]` (a single-level EDN vector).
-/// String-aware: a value containing `]` (e.g. a favorited page titled `f[x]`)
-/// doesn't end the vector early — must mirror `set_favorites`, which can emit it.
-fn parse_string_vector(edn: &str, key: &str) -> Vec<String> {
-    let Some(i) = edn.find(key) else { return Vec::new() };
-    let chars: Vec<char> = edn[i + key.len()..].chars().collect();
-    let Some(open) = chars.iter().position(|&c| c == '[') else { return Vec::new() };
-    let mut out = Vec::new();
-    let mut j = open + 1;
-    while j < chars.len() {
-        match chars[j] {
-            ']' => break,
-            '"' => {
-                let (val, next) = read_edn_string(&chars, j);
-                out.push(val);
-                j = next;
+        if c == openc {
+            depth += 1;
+        } else if c == closec {
+            depth -= 1;
+            if depth == 0 {
+                return i;
             }
-            _ => j += 1,
         }
+        i += 1;
     }
-    out
+    s.len()
 }
 
-/// Extract a quoted string for `inner_key` inside the map following `outer_key`,
-/// e.g. `:default-templates {:journals "Daily"}` -> "Daily". String-aware: the
-/// map's closing `}` is matched past any `}` inside a string value (e.g. a
-/// template named `Plan {B}`), and the value itself is unescaped.
-fn nested_string(edn: &str, outer_key: &str, inner_key: &str) -> Option<String> {
-    let i = edn.find(outer_key)? + outer_key.len();
-    let chars: Vec<char> = edn[i..].chars().collect();
-    let open = chars.iter().position(|&c| c == '{')?;
-    // Matching `}` for the map, skipping string contents + nested braces.
-    let mut depth = 0usize;
-    let mut k = open;
-    let mut close = chars.len();
-    while k < chars.len() {
-        match chars[k] {
-            '"' => {
-                let (_, next) = read_edn_string(&chars, k);
-                k = next;
+/// Byte index of a real `key` keyword in `s`, skipping strings + `;` comments and
+/// requiring a token boundary after it. None if absent. Linear scan (always
+/// advances), so arbitrary `(…)`/`#{…}`/etc. content can't hang or mislead it.
+fn find_keyword(s: &str, key: &str) -> Option<usize> {
+    let b = s.as_bytes();
+    let mut i = 0usize;
+    while i < b.len() {
+        match b[i] {
+            b'"' => {
+                i = edn_str_end(s, i);
                 continue;
             }
-            '{' => depth += 1,
-            '}' => {
-                depth -= 1;
-                if depth == 0 {
-                    close = k;
-                    break;
+            b';' => {
+                while i < b.len() && b[i] != b'\n' {
+                    i += 1;
                 }
+                continue;
+            }
+            _ if s[i..].starts_with(key) => {
+                let after = i + key.len();
+                let boundary = after >= b.len()
+                    || matches!(b[after], b' ' | b'\t' | b'\n' | b'\r' | b'"' | b'{' | b'}' | b',');
+                if boundary {
+                    return Some(i);
+                }
+                i = after;
+                continue;
             }
             _ => {}
         }
-        k += 1;
+        i += 1;
     }
-    // Find `inner_key` within the map body, then read its quoted value.
-    let inner: String = chars[open + 1..close].iter().collect();
-    let rel = inner.find(inner_key)? + inner_key.len();
-    let tail: Vec<char> = inner[rel..].chars().collect();
-    let q = tail.iter().position(|&c| c == '"')?;
-    Some(read_edn_string(&tail, q).0)
+    None
 }
 
-/// Extract the integer following `key`, if any.
+/// Span `[start, end)` of the value token following byte `from` (skipping leading
+/// whitespace/commas) within `..close`, plus whether it is an EDN string. None if
+/// there is no value before `close`. A string's end is escape-aware; a non-string
+/// token ends at the next whitespace/comma/brace/quote.
+fn next_value_span(s: &str, from: usize, close: usize) -> Option<(usize, usize, bool)> {
+    let b = s.as_bytes();
+    let mut i = from;
+    while i < close && matches!(b[i], b' ' | b'\t' | b'\n' | b'\r' | b',') {
+        i += 1;
+    }
+    if i >= close {
+        return None;
+    }
+    if b[i] == b'"' {
+        return Some((i, edn_str_end(s, i).min(close), true));
+    }
+    let start = i;
+    while i < close && !matches!(b[i], b' ' | b'\t' | b'\n' | b'\r' | b',' | b'{' | b'}' | b'"') {
+        i += 1;
+    }
+    Some((start, i, false))
+}
+
+// ---------------------------------------------------------------------------
+// Readers — each finds its key with `find_keyword`, then reads the value with
+// the shared scanners.
+// ---------------------------------------------------------------------------
+
+/// First non-blank byte at/after `from`, skipping whitespace, commas, and `;`
+/// comments (a comment can sit between a key and its value).
+fn skip_blank(s: &str, from: usize) -> usize {
+    let b = s.as_bytes();
+    let mut i = from;
+    loop {
+        while i < b.len() && matches!(b[i], b' ' | b'\t' | b'\n' | b'\r' | b',') {
+            i += 1;
+        }
+        if i < b.len() && b[i] == b';' {
+            while i < b.len() && b[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+        break;
+    }
+    i
+}
+
+/// Unescape `\"`→`"` and `\\`→`\` (the inverse of the writers' escaping); other
+/// backslashes are kept literal.
+fn unescape(inner: &str) -> String {
+    let b = inner.as_bytes();
+    let mut out = String::with_capacity(inner.len());
+    let mut i = 0;
+    while i < inner.len() {
+        if b[i] == b'\\' && matches!(b.get(i + 1), Some(b'"') | Some(b'\\')) {
+            out.push(b[i + 1] as char);
+            i += 2;
+        } else {
+            let ch = inner[i..].chars().next().unwrap();
+            out.push(ch);
+            i += ch.len_utf8();
+        }
+    }
+    out
+}
+
+/// Read the (unescaped) content of the EDN string whose opening `"` is at `open`.
+fn read_string_at(s: &str, open: usize) -> String {
+    let end = edn_str_end(s, open);
+    let inner_end = if end > open + 1 && s.as_bytes()[end - 1] == b'"' { end - 1 } else { end };
+    unescape(&s[open + 1..inner_end])
+}
+
+/// String value following `key`, e.g. `:journals-directory "journals"`.
+fn string_value(edn: &str, key: &str) -> Option<String> {
+    let start = find_keyword(edn, key)?;
+    let from = skip_blank(edn, start + key.len());
+    (edn.as_bytes().get(from) == Some(&b'"')).then(|| read_string_at(edn, from))
+}
+
+/// Keyword value (`:foo` → `foo`) following `key`.
+fn keyword_value(edn: &str, key: &str) -> Option<String> {
+    let start = find_keyword(edn, key)?;
+    let from = skip_blank(edn, start + key.len());
+    let b = edn.as_bytes();
+    if b.get(from) != Some(&b':') {
+        return None;
+    }
+    let vstart = from + 1;
+    let mut j = vstart;
+    while j < b.len() && !matches!(b[j], b' ' | b'\t' | b'\n' | b'\r' | b',' | b'}' | b')' | b']') {
+        j += 1;
+    }
+    Some(edn[vstart..j].to_string())
+}
+
+/// Boolean value (`true`/`false`) following `key`.
+fn bool_value(edn: &str, key: &str) -> Option<bool> {
+    let start = find_keyword(edn, key)?;
+    let from = skip_blank(edn, start + key.len());
+    if edn[from..].starts_with("true") {
+        Some(true)
+    } else if edn[from..].starts_with("false") {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+/// Non-negative integer following `key`.
 fn int_value(edn: &str, key: &str) -> Option<u32> {
-    let rest = edn[edn.find(key)? + key.len()..].trim_start();
-    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    let start = find_keyword(edn, key)?;
+    let from = skip_blank(edn, start + key.len());
+    let digits: String = edn[from..].chars().take_while(|c| c.is_ascii_digit()).collect();
     digits.parse().ok()
 }
 
-/// Parse `key #{:a :b}` (an EDN keyword set) into bare keyword strings.
+/// Quoted strings in the vector following `key` (`:favorites ["a" "b"]`),
+/// string-aware so a value containing `]` doesn't end the vector early.
+fn parse_string_vector(edn: &str, key: &str) -> Vec<String> {
+    let Some(start) = find_keyword(edn, key) else { return Vec::new() };
+    let from = skip_blank(edn, start + key.len());
+    let b = edn.as_bytes();
+    if b.get(from) != Some(&b'[') {
+        return Vec::new();
+    }
+    let close = match_close_bracket(edn, from);
+    let mut out = Vec::new();
+    let mut i = from + 1;
+    while i < close {
+        if b[i] == b'"' {
+            out.push(read_string_at(edn, i));
+            i = edn_str_end(edn, i);
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+/// The quoted string for `inner` inside the map following `outer`, e.g.
+/// `:default-templates {:journals "Daily"}` → "Daily". String/brace-aware.
+fn nested_string(edn: &str, outer: &str, inner: &str) -> Option<String> {
+    let start = find_keyword(edn, outer)?;
+    let from = skip_blank(edn, start + outer.len());
+    if edn.as_bytes().get(from) != Some(&b'{') {
+        return None;
+    }
+    let close = match_close_brace(edn, from);
+    let irel = find_keyword(&edn[from + 1..close], inner)?;
+    let vfrom = skip_blank(edn, from + 1 + irel + inner.len());
+    (edn.as_bytes().get(vfrom) == Some(&b'"')).then(|| read_string_at(edn, vfrom))
+}
+
+/// Keywords in the set following `key` (`:block-hidden-properties #{:a :b}`).
 fn parse_keyword_set(edn: &str, key: &str) -> Vec<String> {
-    let Some(i) = edn.find(key) else { return Vec::new() };
-    let after = &edn[i + key.len()..];
-    let Some(open) = after.find('{') else { return Vec::new() };
-    let body = &after[open + 1..];
-    let Some(close) = body.find('}') else { return Vec::new() };
-    body[..close]
+    let Some(start) = find_keyword(edn, key) else { return Vec::new() };
+    let from = skip_blank(edn, start + key.len());
+    let b = edn.as_bytes();
+    if b.get(from) != Some(&b'#') || b.get(from + 1) != Some(&b'{') {
+        return Vec::new();
+    }
+    let brace = from + 1;
+    let close = match_close_brace(edn, brace);
+    edn[brace + 1..close]
         .split_whitespace()
         .filter_map(|t| t.strip_prefix(':'))
         .map(|t| t.to_string())
         .collect()
 }
 
-/// Extract the `:shortcuts {...}` map as command-id -> binding (string values).
+/// The `:shortcuts {…}` map as command-id → binding. Values: `"binding"` |
+/// `false` (disable) | `["b1" "b2"]` (first wins). String/brace-aware.
 fn parse_shortcuts(edn: &str) -> HashMap<String, String> {
     let mut map = HashMap::new();
-    let Some(i) = edn.find(":shortcuts") else { return map };
-    let after = &edn[i + ":shortcuts".len()..];
-    let Some(open) = after.find('{') else { return map };
-    let body = &after[open + 1..];
-    // Shortcut maps contain only string/keyword values (no nested maps), so the
-    // first '}' closes the section.
-    let Some(close) = body.find('}') else { return map };
-    let inner = &body[..close];
-
-    let bytes = inner.as_bytes();
-    let mut i = 0;
-    while i < inner.len() {
-        if bytes[i] == b':' {
-            let start = i + 1;
-            let mut j = start;
-            while j < inner.len() && !bytes[j].is_ascii_whitespace() {
-                j += 1;
+    let Some(start) = find_keyword(edn, ":shortcuts") else { return map };
+    let from = skip_blank(edn, start + ":shortcuts".len());
+    let b = edn.as_bytes();
+    if b.get(from) != Some(&b'{') {
+        return map;
+    }
+    let close = match_close_brace(edn, from);
+    let mut i = from + 1;
+    while i < close {
+        i = skip_blank(edn, i);
+        if i >= close || b[i] != b':' {
+            break; // not a keyword key — stop rather than desync
+        }
+        let kstart = i + 1;
+        let mut j = kstart;
+        while j < close && !matches!(b[j], b' ' | b'\t' | b'\n' | b'\r' | b',') {
+            j += 1;
+        }
+        let key = edn[kstart..j].to_string();
+        let vfrom = skip_blank(edn, j);
+        if vfrom >= close {
+            break;
+        }
+        match b[vfrom] {
+            b'"' => {
+                map.insert(key, read_string_at(edn, vfrom));
+                i = edn_str_end(edn, vfrom);
             }
-            let key = &inner[start..j];
-            let mut k = j;
-            while k < inner.len() && bytes[k].is_ascii_whitespace() {
-                k += 1;
-            }
-            // Value forms: "binding" | false (disable) | ["b1" "b2"] (first wins).
-            if k < inner.len() && bytes[k] == b'"' {
-                let vstart = k + 1;
-                if let Some(rel) = inner[vstart..].find('"') {
-                    map.insert(key.to_string(), inner[vstart..vstart + rel].to_string());
-                    i = vstart + rel + 1;
-                    continue;
-                }
-            } else if inner[k..].starts_with("false") {
-                map.insert(key.to_string(), "false".to_string());
-                i = k + "false".len();
-                continue;
-            } else if k < inner.len() && bytes[k] == b'[' {
-                // Take the first quoted binding inside the vector.
-                if let Some(close) = inner[k..].find(']') {
-                    let vec_body = &inner[k + 1..k + close];
-                    if let Some(qs) = vec_body.find('"') {
-                        if let Some(qe) = vec_body[qs + 1..].find('"') {
-                            map.insert(key.to_string(), vec_body[qs + 1..qs + 1 + qe].to_string());
-                        }
+            b'[' => {
+                let vclose = match_close_bracket(edn, vfrom);
+                let mut k = vfrom + 1;
+                while k < vclose {
+                    if b[k] == b'"' {
+                        map.insert(key.clone(), read_string_at(edn, k));
+                        break;
                     }
-                    i = k + close + 1;
-                    continue;
+                    k += 1;
                 }
+                i = vclose + 1;
             }
-            i = k.max(j);
-        } else {
-            i += 1;
+            _ => {
+                if edn[vfrom..close].starts_with("false") {
+                    map.insert(key, "false".to_string());
+                }
+                let mut k = vfrom;
+                while k < close && !matches!(b[k], b' ' | b'\t' | b'\n' | b'\r' | b',') {
+                    k += 1;
+                }
+                i = k;
+            }
         }
     }
     map
@@ -326,7 +615,6 @@ mod tests {
     fn default_journal_template() {
         let edn = r#"{:default-templates {:journals "Daily"}}"#;
         assert_eq!(Config::parse(edn).default_journal_template.as_deref(), Some("Daily"));
-        // Absent → None.
         assert_eq!(Config::parse(r#"{:preferred-format "Markdown"}"#).default_journal_template, None);
     }
 
@@ -338,27 +626,20 @@ mod tests {
         assert_eq!(cfg.start_of_week, 1);
         assert_eq!(cfg.block_hidden_properties, vec!["public".to_string(), "icon".to_string()]);
     }
-}
 
-/// Extract the string after `key` ignoring comments crudely: find `key`, then
-/// the next double-quoted token.
-fn string_value(edn: &str, key: &str) -> Option<String> {
-    let idx = edn.find(key)? + key.len();
-    let rest = &edn[idx..];
-    let start = rest.find('"')? + 1;
-    let end = rest[start..].find('"')? + start;
-    Some(rest[start..end].to_string())
-}
-
-/// Extract the keyword (`:foo` -> `foo`) following `key`.
-fn keyword_value(edn: &str, key: &str) -> Option<String> {
-    let idx = edn.find(key)? + key.len();
-    let rest = edn[idx..].trim_start();
-    let rest = rest.strip_prefix(':')?;
-    let end = rest
-        .find(|c: char| c.is_whitespace() || c == '}' || c == ')')
-        .unwrap_or(rest.len());
-    Some(rest[..end].to_string())
+    #[test]
+    fn ignores_datalog_and_paren_forms_around_keys() {
+        // A real config has (…) lists / #{…} sets / nested vectors; targeted key
+        // reads must skip all of it and still find the simple keys (no hang).
+        let edn = r#"{:default-queries
+                       [{:query [:find (pull ?h [*]) :where [(contains? #{"NOW"} ?m)]]
+                         :result-transform (fn [r] (sort-by (fn [h] (get h :x)) r))}]
+                      :journals-directory "diary"
+                      :start-of-week 2}"#;
+        let cfg = Config::parse(edn);
+        assert_eq!(cfg.journals_dir, "diary");
+        assert_eq!(cfg.start_of_week, 2);
+    }
 }
 
 #[cfg(test)]
