@@ -891,6 +891,11 @@ impl Graph {
         let page_doc = crate::pdf::merge_hls_page(existing.as_ref(), pdf_filename, label, &merged);
         let page_md = doc::serialize(&page_doc);
         fs::create_dir_all(self.pages_path())?;
+        // The hls page is a normal watched page. Record this write so the file
+        // watcher recognizes it as ours — otherwise saving a highlight trips a
+        // false "changed on disk" on the notes page (see write_page /
+        // sync_file_content). The .edn lives under assets/ which isn't watched.
+        self.recent_writes.lock().unwrap().insert(page_path.clone(), content_rev(&page_md));
         atomic_write(&page_path, page_md.as_bytes())?;
         // The hls page is a real page; reflect it in the search cache.
         let name = crate::pdf::hls_page_name(&key);

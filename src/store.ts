@@ -241,6 +241,18 @@ function pinnedPages(): Set<string> {
 export function reloadPage(dto: PageDto) {
   upsertPage(dto);
 }
+
+/** After a PDF highlight write changed an `hls__` page on disk, refresh its
+ *  loaded copy (main view or sidebar) so its content AND save baseline (baseRev)
+ *  track disk — otherwise a later editor save would conflict against the highlight
+ *  write. Skips a page with unsaved edits / an open conflict: the caller flushes
+ *  those FIRST so they're on disk and merged in, rather than clobbered here. */
+export async function reloadHlsIfLoaded(name: string): Promise<void> {
+  if (!pageByName(name)) return;
+  if (isDirty(name) || isConflicted(name)) return;
+  const dto = await backend().getPage(name, "page");
+  if (dto) reloadPage(dto);
+}
 function evictIfNeeded() {
   if (doc.pages.length <= WORKING_SET_CAP) return;
   const pin = pinnedPages();

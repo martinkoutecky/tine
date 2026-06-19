@@ -208,6 +208,41 @@ fn write_highlights_preserves_externally_added_ones() {
 }
 
 #[test]
+fn highlight_write_is_not_seen_as_external_change() {
+    // Saving a highlight rewrites the hls__ notes page, which is a normal watched
+    // page. The watcher must recognize that as Tine's own write (not raise a false
+    // "changed on disk" against the open notes page). Same recent_writes guard as
+    // ordinary saves; verified even when the parse cache lags the write.
+    use tine_core::pdf::{asset_key, hls_page_name, Highlight, Position, Rect};
+    let root = mk("hlself");
+    let g = Graph::open(&root);
+    g.search("x", 10); // build the cache
+
+    let r = Rect { top: 0.0, left: 0.0, width: 1.0, height: 1.0 };
+    let h = Highlight {
+        id: "H1".into(),
+        page: 1,
+        position: Position { page: 1, bounding: r.clone(), rects: vec![r] },
+        color: "yellow".into(),
+        text: Some("noted".into()),
+        image: None,
+    };
+    g.write_highlights("paper.pdf", "Paper", &[h], &[]).unwrap();
+
+    let hls_path = root
+        .join("pages")
+        .join(format!("{}.md", hls_page_name(&asset_key("paper.pdf"))));
+    // Drop the page from the parse cache to simulate the rename→cache_upsert gap
+    // the 3s poller can read into.
+    assert!(g.forget_file(&hls_path).is_some(), "hls page should have been cached");
+    assert!(
+        g.sync_file(&hls_path).is_none(),
+        "highlight write must not be reported as an external change"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn list_pages_memo_reflects_new_and_deleted_pages() {
     let root = mk("listmemo");
     std::fs::write(root.join("pages").join("A.md"), "- a\n").unwrap();

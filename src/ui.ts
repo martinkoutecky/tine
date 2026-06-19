@@ -309,16 +309,6 @@ export function persistPdfPaneWidth() {
   }
 }
 
-// Bumped after a PDF highlight is written, so an open notes (hls__) page can
-// reload itself to show the new highlight without a manual re-open.
-export const [notesRefresh, setNotesRefresh] = createSignal<{ page: string; rev: number }>({
-  page: "",
-  rev: 0,
-});
-export function refreshNotes(page: string) {
-  setNotesRefresh((prev) => ({ page, rev: prev.rev + 1 }));
-}
-
 // Favorites (starred pages/journals), persisted.
 export interface FavItem {
   name: string;

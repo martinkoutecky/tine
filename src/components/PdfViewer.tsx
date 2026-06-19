@@ -2,7 +2,8 @@ import { For, Show, createEffect, createSignal, on, onCleanup, onMount, type JSX
 import * as pdfjs from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { backend } from "../backend";
-import { closePdf, refreshNotes } from "../ui";
+import { closePdf, pushToast, isConflicted } from "../ui";
+import { flushPage, isDirty, reloadHlsIfLoaded } from "../store";
 import { openPage } from "../router";
 import { hlsPageName } from "../pdf";
 import type { Highlight, Rect } from "../types";
@@ -81,23 +82,45 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
   const pendingText = new Set<number>();
   let textTimer: number | undefined;
 
-  const persist = async () => {
+  // Persist the current highlight set to disk. Returns false (and toasts) without
+  // mutating the on-disk baseline if anything failed, so the caller can revert the
+  // optimistic UI change rather than show a highlight that didn't actually save.
+  const persist = async (): Promise<boolean> => {
+    const hlsName = hlsPageName(props.filename);
+    // If the notes (hls__) page is open with unsaved edits, get them onto disk
+    // FIRST so the backend merges against them. Otherwise this write reads a disk
+    // copy that lacks them, and the reload below would drop them. Abort (don't
+    // clobber) if the notes page can't be flushed.
+    if (isDirty(hlsName) || isConflicted(hlsName)) {
+      if (!(await flushPage(hlsName))) {
+        pushToast("Couldn't save notes — highlight not written. Resolve the conflict and retry.", "error");
+        return false;
+      }
+    }
     const ids = highlights().map((h) => h.id);
-    await backend().writeHighlights(props.filename, props.label, highlights(), baseIds);
+    try {
+      await backend().writeHighlights(props.filename, props.label, highlights(), baseIds);
+    } catch (e) {
+      pushToast(`Couldn't save highlight — try again. (${String(e)})`, "error");
+      return false;
+    }
     baseIds = ids; // what's now on disk becomes the next write's baseline
+    // Refresh the loaded notes page (content + save baseline) to include the change.
+    await reloadHlsIfLoaded(hlsName);
+    return true;
   };
   // Remove a highlight (and its annotation block on the hls page).
   const deleteHighlight = async (id: string) => {
+    const prev = highlights();
     setHighlights(highlights().filter((h) => h.id !== id));
     setMenu(null);
-    await persist();
-    refreshNotes(hlsPageName(props.filename));
+    if (!(await persist())) setHighlights(prev); // restore — it's still on disk
   };
   const recolorHighlight = async (id: string, color: string) => {
+    const prev = highlights();
     setHighlights(highlights().map((h) => (h.id === id ? { ...h, color } : h)));
     setMenu(null);
-    await persist();
-    refreshNotes(hlsPageName(props.filename));
+    if (!(await persist())) setHighlights(prev); // restore the previous color
   };
   const clampScale = (s: number) => Math.min(4, Math.max(0.2, s));
   const fitWidthScale = () => (dims[1] ? clampScale((scrollRef.clientWidth - 32) / dims[1].w) : 1);
@@ -530,13 +553,12 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
       text: pending.text,
       image: null,
     };
+    const prev = highlights();
     setHighlights([...highlights(), h]);
     window.getSelection()?.removeAllRanges();
     setMenu(null);
     pending = null;
-    await persist();
-    // Let an open notes (hls__) page reload to show the new highlight.
-    refreshNotes(hlsPageName(props.filename));
+    if (!(await persist())) setHighlights(prev); // revert the optimistic add on failure
   };
 
   return (

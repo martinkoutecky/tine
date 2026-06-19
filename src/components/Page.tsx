@@ -1,8 +1,8 @@
-import { For, Show, createEffect, createSignal, on, onCleanup, onMount, untrack, type JSX } from "solid-js";
+import { For, Show, createEffect, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { doc, mainPages, pageByName, reloadPage, loadSingle, loadFeed, appendFeed, isDirty, editingId, setFeedExtender, flushPage, type FeedPage } from "../store";
 import { route, openPage, openJournals } from "../router";
 import {
-  zoomedBlock, zoomOut, zoomInto, isFavorite, toggleFavorite, notesRefresh,
+  zoomedBlock, zoomOut, zoomInto, isFavorite, toggleFavorite,
   markConflict, isConflicted, graphEpoch, openPageInSidebar, openPageContextMenu, carryDays, showCarryButtons,
   agendaQuery,
 } from "../ui";
@@ -158,24 +158,6 @@ export function PageView(): JSX.Element {
       .then((u) => (unsub = u));
     onCleanup(() => unsub());
   });
-
-  // Reload the open notes (hls__) page after a highlight is written, so the new
-  // annotation shows without re-opening the page.
-  createEffect(
-    on(
-      notesRefresh,
-      (nr) => {
-        const r = untrack(route);
-        if (r.kind === "page" && r.name === nr.page) {
-          void (async () => {
-            const dto = await backend().getPage(r.name, r.pageKind);
-            if (dto) loadSingle(toLoadable(dto, r.name));
-          })();
-        }
-      },
-      { defer: true }
-    )
-  );
 
   const loadMore = async () => {
     if (route().kind !== "journals" || loadingMore || feedDone) return;
