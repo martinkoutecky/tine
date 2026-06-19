@@ -34,8 +34,6 @@ import {
   moveSelection,
   isSelected,
   persistentBlockRef,
-  splitHiddenProps,
-  withHiddenProps,
   isBlockMoving,
   setBlockMoving,
 } from "../store";
@@ -52,7 +50,7 @@ import {
   setPriority,
   type Edit,
 } from "../editor/format";
-import { blockView, isPropertyLine } from "../render/block";
+import { blockView } from "../render/block";
 import { InlineText } from "../render/inline";
 import { BodyContent } from "../render/body";
 import { QueryMacro, EmbedMacro } from "./Macro";
@@ -62,6 +60,7 @@ import { HL_COLOR_BG, HL_COLOR_SOLID } from "../pdf";
 import { cycleMarkerSmart } from "../editor/repeat";
 import { applyTemplateVars } from "../editor/templateVars";
 import { caretAtFirstRow, caretAtLastRow } from "../editor/caretRows";
+import { splitProps, joinProps, isBuiltinHidden, hideAll } from "../editor/properties";
 
 // Detect a block whose entire body is a single {{query}} / {{embed}} macro.
 function detectMacro(lines: string[]): { kind: "query" | "embed"; inner: string } | null {
@@ -475,19 +474,6 @@ function assetMarkdown(name: string): string {
     : `[${name}](../assets/${name})`;
 }
 
-// Split a block's raw into editable text vs. trailing `key:: value` property
-// lines. For annotation blocks we edit only the text (the highlight) and keep
-// the metadata (hl-page/hl-color/ls-type/id) hidden but preserved.
-function splitProps(raw: string): { text: string; props: string } {
-  const text: string[] = [];
-  const props: string[] = [];
-  for (const l of raw.split("\n")) (isPropertyLine(l) ? props : text).push(l);
-  return { text: text.join("\n"), props: props.join("\n") };
-}
-function joinProps(text: string, props: string): string {
-  return props ? `${text}\n${props}` : text;
-}
-
 function Editor(props: { id: string }): JSX.Element {
   let ref!: HTMLTextAreaElement;
   const node = () => doc.byId[props.id];
@@ -497,12 +483,12 @@ function Editor(props: { id: string }): JSX.Element {
   // built-in id::/collapsed:: lines (like OG). Hidden lines are preserved and
   // reattached on commit.
   const isAnnot = () => isAnnotationBlock(node().raw);
-  const editorValue = () =>
-    isAnnot() ? splitProps(node().raw).text : splitHiddenProps(node().raw).visible;
+  // Annotation blocks hide ALL properties (edit only the highlight text); every
+  // other block hides just the built-in id::/collapsed::. One fence-aware splitter.
+  const hideFn = () => (isAnnot() ? hideAll : isBuiltinHidden);
+  const editorValue = () => splitProps(node().raw, hideFn()).visible;
   const commit = (text: string) => {
-    const next = isAnnot()
-      ? joinProps(text, splitProps(node().raw).props)
-      : withHiddenProps(text, splitHiddenProps(node().raw).hidden);
+    const next = joinProps(text, splitProps(node().raw, hideFn()).hidden);
     // No-op commit (focus/blur with no real edit, or text that reconstructs the
     // identical raw): don't mark the page dirty or push undo — avoids churn and
     // can't rewrite the block's bytes.

@@ -31,9 +31,8 @@ import {
   pageByName,
   carryUnfinished,
   ensurePageLoaded,
-  splitHiddenProps,
-  withHiddenProps,
 } from "./store";
+import { splitProps, joinProps, isBuiltinHidden, hideAll } from "./editor/properties";
 import { journalTitle } from "./journal";
 import type { BlockDto, PageDto } from "./types";
 
@@ -228,15 +227,24 @@ describe("cross-day move (journal feed as one list)", () => {
   });
 });
 
-describe("hidden-property splitting is fence-aware", () => {
-  it("keeps id::/collapsed:: inside a code fence as visible content", () => {
+describe("property splitting is fence-aware", () => {
+  it("keeps built-in id::/collapsed:: inside a code fence as visible content", () => {
     const raw = "```text\nid:: literal-in-code\ncollapsed:: true\n```\nid:: real-block-id";
-    const { visible, hidden } = splitHiddenProps(raw);
+    const { visible, hidden } = splitProps(raw, isBuiltinHidden);
     expect(hidden).toBe("id:: real-block-id"); // only the real trailing property is hidden
     expect(visible).toContain("id:: literal-in-code"); // fenced lines stay put
     expect(visible).toContain("collapsed:: true");
     // Round-trip (focus→blur) must reconstruct the identical raw, not corrupt it.
-    expect(withHiddenProps(visible, hidden)).toBe(raw);
+    expect(joinProps(visible, hidden)).toBe(raw);
+  });
+
+  it("hideAll (annotation blocks) is ALSO fence-aware — a key:: inside a fence stays", () => {
+    // The old annotation splitter wasn't fence-aware and would yank this out.
+    const raw = "highlight text\n```\nkey:: not-a-prop\n```\nls-type:: annotation\nhl-page:: 3";
+    const { visible, hidden } = splitProps(raw, hideAll);
+    expect(visible).toBe("highlight text\n```\nkey:: not-a-prop\n```");
+    expect(hidden).toBe("ls-type:: annotation\nhl-page:: 3");
+    expect(joinProps(visible, hidden)).toBe(raw);
   });
 });
 

@@ -3,6 +3,58 @@
 
 export const PROP_LINE = /^([A-Za-z0-9_./-]+):: ?(.*)$/;
 
+// Built-in properties hidden from the editor by default (like OG): `id::` and
+// `collapsed::` are kept in the file for persistence but never shown in the edit
+// textarea. Annotation (PDF highlight) blocks instead hide ALL properties and
+// edit only their text.
+const BUILTIN_HIDDEN = new Set(["id", "collapsed"]);
+/** Hide just the built-in `id::`/`collapsed::` properties (normal blocks). */
+export const isBuiltinHidden = (key: string): boolean => BUILTIN_HIDDEN.has(key);
+/** Hide every property (annotation blocks edit only their text). */
+export const hideAll = (_key: string): boolean => true;
+
+function propLineKey(line: string): string | null {
+  const m = /^\s*([A-Za-z0-9_./-]+)::/.exec(line);
+  return m ? m[1].toLowerCase() : null;
+}
+
+/** Split a block's raw into the editor-visible text and the hidden property
+ *  lines. Fence-aware: a `key:: value` line inside a ```/~~~ code fence stays
+ *  visible content — it must NOT be pulled out as metadata and reattached
+ *  outside the fence (which would corrupt the code on focus+blur). `isHidden`
+ *  selects which property keys are hidden (e.g. {@link isBuiltinHidden} or
+ *  {@link hideAll}). Inverse of {@link joinProps}. */
+export function splitProps(
+  raw: string,
+  isHidden: (key: string) => boolean
+): { visible: string; hidden: string } {
+  const vis: string[] = [];
+  const hid: string[] = [];
+  let fence: string | null = null;
+  for (const l of raw.split("\n")) {
+    const fm = /^\s*(`{3,}|~{3,})/.exec(l);
+    if (fm) {
+      const ch = fm[1][0];
+      if (fence === null) fence = ch;
+      else if (ch === fence) fence = null;
+      vis.push(l);
+      continue;
+    }
+    if (fence !== null) {
+      vis.push(l); // inside a code fence — never metadata
+      continue;
+    }
+    const k = propLineKey(l);
+    (k && isHidden(k) ? hid : vis).push(l);
+  }
+  return { visible: vis.join("\n"), hidden: hid.join("\n") };
+}
+
+/** Reattach hidden property lines below the visible text. */
+export function joinProps(visible: string, hidden: string): string {
+  return hidden ? `${visible}\n${hidden}` : visible;
+}
+
 /** First value for `key` (case-insensitive) in a property block, or null. */
 export function readPropertyValue(block: string | null, key: string): string | null {
   if (!block) return null;
