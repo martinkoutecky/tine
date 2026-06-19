@@ -5,6 +5,7 @@ import {
   pageInsert,
   tagInsert,
   filterCommands,
+  fuzzyScore,
 } from "./autocomplete";
 
 describe("detectTrigger", () => {
@@ -84,5 +85,38 @@ describe("filterCommands", () => {
     // Action commands surface too.
     expect(filterCommands("scheduled").map((c) => c.label)).toEqual(["Scheduled"]);
     expect(filterCommands("upload").map((c) => c.label)).toEqual(["Upload an asset"]);
+  });
+
+  it("ranks best matches first (OG-style); /A surfaces Priority A", () => {
+    // The reported bug: /A used to return LATER/WAITING/WAIT first.
+    expect(filterCommands("a")[0].label).toBe("Priority A");
+    expect(filterCommands("b")[0].label).toBe("Priority B");
+    expect(filterCommands("c")[0].label).toBe("Priority C");
+    // The label still matches, so /priority keeps working.
+    expect(filterCommands("priority").map((c) => c.label)).toEqual([
+      "Priority A",
+      "Priority B",
+      "Priority C",
+    ]);
+  });
+
+  it("a bare slash (empty query) lists every command in defined order", () => {
+    const all = filterCommands("");
+    expect(all.length).toBeGreaterThan(20);
+    expect(all[0].label).toBe("TODO");
+  });
+});
+
+describe("fuzzyScore", () => {
+  it("a full-length exact match outranks longer partial matches", () => {
+    // Why /A → "A" wins in OG: same-length match gets the max length-distance.
+    expect(fuzzyScore("a", "A")).toBeGreaterThan(fuzzyScore("a", "LATER"));
+    expect(fuzzyScore("a", "LATER")).toBeGreaterThan(0);
+  });
+  it("a contiguous substring outranks a scattered subsequence", () => {
+    expect(fuzzyScore("opus", "opus tag")).toBeGreaterThan(fuzzyScore("opus", "Opinion Diffusion"));
+  });
+  it("non-subsequence scores 0", () => {
+    expect(fuzzyScore("xyz", "Priority A")).toBe(0);
   });
 });

@@ -94,6 +94,11 @@ export interface Command {
   caret?: number;
   /** A runtime action resolved by the editor instead of a literal insert. */
   action?: CommandAction;
+  /** Optional short match alias scored in ADDITION to the label, so a one-letter
+   *  query surfaces this command first (mirrors OG, whose priority commands are
+   *  literally named "A"/"B"/"C" — a full-length exact match that outranks longer
+   *  partial matches). Display still uses `label`. */
+  key?: string;
 }
 
 export const COMMANDS: Command[] = [
@@ -106,9 +111,9 @@ export const COMMANDS: Command[] = [
   { label: "WAIT", insert: "WAIT " },
   { label: "IN-PROGRESS", insert: "IN-PROGRESS " },
   { label: "CANCELED", insert: "CANCELED " },
-  { label: "Priority A", action: "priority-a" },
-  { label: "Priority B", action: "priority-b" },
-  { label: "Priority C", action: "priority-c" },
+  { label: "Priority A", action: "priority-a", key: "A" },
+  { label: "Priority B", action: "priority-b", key: "B" },
+  { label: "Priority C", action: "priority-c", key: "C" },
   { label: "Scheduled", action: "scheduled" },
   { label: "Deadline", action: "deadline" },
   { label: "Heading 1", insert: "# " },
@@ -128,7 +133,68 @@ export const COMMANDS: Command[] = [
   { label: "Today", action: "today" },
 ];
 
+// --- Fuzzy ranking (port of OG Logseq's frontend.search/score) ---------------
+// Higher = better; a score of 0 means "not a match" (the query isn't even a
+// subsequence). The dominant term is a +1000 boost when the query appears as a
+// contiguous substring; ties then break on a length-distance term that is 1.0
+// for an exact full-length match (so a one-char query "a" ranks the command "A"
+// above longer partial matches like "LATER"), and a small per-char run bonus.
+
+const MAX = 1000;
+
+function cleanStr(s: string): string {
+  // Lowercase and drop the same punctuation OG ignores when matching.
+  return s.toLowerCase().replace(/[[\]\\/_ ()]+/g, "");
+}
+
+function strLenDistance(a: string, b: string): number {
+  const maxed = Math.max(a.length, b.length);
+  if (maxed === 0) return 1;
+  const mined = Math.min(a.length, b.length);
+  return 1 - (maxed - mined) / maxed;
+}
+
+/** OG's fuzzy score for `query` against `str` (case-insensitive). */
+export function fuzzyScore(query: string, str: string): number {
+  const oq = query.toLowerCase();
+  const os = str.toLowerCase();
+  const q = cleanStr(oq);
+  const s = cleanStr(os);
+  let qi = 0;
+  let si = 0;
+  let mult = 1;
+  let score = 0;
+  for (;;) {
+    if (qi >= q.length) {
+      // All query chars matched (as a subsequence). Add the length-distance tie-
+      // breaker and the exact-substring boost (on the un-cleaned lowercased text,
+      // like OG).
+      return score + strLenDistance(q, s) + (os.includes(oq) ? MAX : 0);
+    }
+    if (si >= s.length) return 0; // query left over, string exhausted → no match
+    if (q[qi] === s[si]) {
+      score += mult; // reward longer matched runs: mult grows on consecutive hits
+      mult += 1;
+      qi += 1;
+      si += 1;
+    } else {
+      mult = 1; // gap → reset the run multiplier
+      si += 1;
+    }
+  }
+}
+
+/** Slash-command matches for `query`, ranked best-first (OG-style). An empty
+ *  query (bare `/`) lists every command in its defined order. A command's
+ *  optional `key` is scored alongside its label (max), so e.g. `/A` surfaces
+ *  "Priority A" first. */
 export function filterCommands(query: string): Command[] {
-  const q = query.toLowerCase();
-  return COMMANDS.filter((c) => c.label.toLowerCase().includes(q));
+  if (!query) return COMMANDS.slice();
+  return COMMANDS.map((c) => ({
+    c,
+    s: Math.max(fuzzyScore(query, c.label), c.key ? fuzzyScore(query, c.key) : 0),
+  }))
+    .filter((x) => x.s > 0)
+    .sort((a, b) => b.s - a.s) // stable: equal scores keep their defined order
+    .map((x) => x.c);
 }

@@ -553,17 +553,33 @@ function Editor(props: { id: string }): JSX.Element {
     const pages = await backend().quickSwitch(t.query, 8);
     const cur = ac();
     if (!cur || cur.start !== t.start) return; // trigger changed while awaiting
-    const items: AcItem[] = pages.map((p) =>
+    // Order the "create <typed>" option like OG Logseq: none if the query already
+    // names a page exactly; otherwise the create option goes FIRST — UNLESS the
+    // top match is a prefix of the query, in which case that prefix match leads
+    // and create is second. So typing `#opus` (where "Opinion Diffusion" is only a
+    // fuzzy/subsequence match, not a prefix) puts "Create #opus" first, and Enter
+    // creates the literal tag rather than jumping to the fuzzy match.
+    const q = t.query.trim();
+    const pageItem = (name: string): AcItem =>
       t.kind === "page"
-        ? { label: p.name, insert: pageInsert(p.name) }
-        : { label: p.name, insert: tagInsert(p.name) }
-    );
-    if (t.query.trim() && !pages.some((p) => p.name.toLowerCase() === t.query.toLowerCase())) {
-      items.push(
-        t.kind === "page"
-          ? { label: `Create "${t.query}"`, insert: pageInsert(t.query) }
-          : { label: `Create #${t.query}`, insert: tagInsert(t.query) }
-      );
+        ? { label: name, insert: pageInsert(name) }
+        : { label: name, insert: tagInsert(name) };
+    const createItem: AcItem =
+      t.kind === "page"
+        ? { label: `Create "${q}"`, insert: pageInsert(q) }
+        : { label: `Create #${q}`, insert: tagInsert(q) };
+    const exact = pages.some((p) => p.name.toLowerCase() === q.toLowerCase());
+    const ql = q.toLowerCase();
+    let items: AcItem[];
+    if (!q || exact) {
+      items = pages.map((p) => pageItem(p.name)); // exact/blank → no create option
+    } else if (pages.length === 0) {
+      items = [createItem]; // nothing matched → just create
+    } else if (pages[0].name.toLowerCase().startsWith(ql)) {
+      // Top result is a prefix match → it leads, then create, then the rest.
+      items = [pageItem(pages[0].name), createItem, ...pages.slice(1).map((p) => pageItem(p.name))];
+    } else {
+      items = [createItem, ...pages.map((p) => pageItem(p.name))]; // no prefix → create first
     }
     setAcItems(items);
   };
