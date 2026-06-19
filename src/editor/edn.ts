@@ -68,6 +68,21 @@ export function queryMacroExtent(raw: string): { start: number; end: number } | 
   return null; // unterminated
 }
 
+/** Extents of ALL `{{query …}}` macros in `raw`, in source order. A block can
+ *  hold more than one query; a rewrite must target the RIGHT one (matching by
+ *  content), not always the first. */
+export function queryMacroExtents(raw: string): { start: number; end: number }[] {
+  const out: { start: number; end: number }[] = [];
+  let from = 0;
+  while (from < raw.length) {
+    const ext = queryMacroExtent(raw.slice(from));
+    if (!ext) break;
+    out.push({ start: from + ext.start, end: from + ext.end });
+    from += ext.end;
+  }
+  return out;
+}
+
 /** Split a query argument into its form and a trailing balanced `{…}` options
  *  map. Brace-aware: braces inside strings (e.g. a `:title "a {b}"`) don't break
  *  it. `opts` includes the braces; both parts are trimmed. No trailing map → "". */

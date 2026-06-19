@@ -654,6 +654,39 @@ fn config_readers_are_edn_aware_for_bracket_brace_in_values() {
 }
 
 #[test]
+fn config_reader_preserves_semicolon_in_string_values() {
+    // Round-8 audit: comment stripping cut every line at the first `;`, even
+    // inside a string, so a favorited/templated page named `A;B` reloaded as `A`.
+    // Comment stripping is now string-aware.
+    let root = std::env::temp_dir().join(format!("tine-cfg-semi-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("logseq")).unwrap();
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+
+    Graph::open(&root)
+        .set_favorites(&["A;B".into(), "C".into()])
+        .unwrap();
+    assert_eq!(
+        Graph::open(&root).meta().favorites,
+        vec!["A;B".to_string(), "C".to_string()]
+    );
+
+    Graph::open(&root).set_default_journal_template(Some("Plan;B")).unwrap();
+    assert_eq!(
+        Graph::open(&root).meta().default_journal_template.as_deref(),
+        Some("Plan;B")
+    );
+
+    // A real (line-start) comment is still stripped — the decoy must not be read.
+    let cfg_path = root.join("logseq").join("config.edn");
+    let cur = std::fs::read_to_string(&cfg_path).unwrap();
+    std::fs::write(&cfg_path, format!(";; :journals-directory \"DECOY\"\n{cur}")).unwrap();
+    assert_ne!(Graph::open(&root).meta().journals_dir, "DECOY", "line comment still stripped");
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn set_preferred_workflow_round_trips_in_config_edn() {
     let root = std::env::temp_dir().join(format!("tine-wf-test-{}", std::process::id()));
     std::fs::create_dir_all(root.join("logseq")).unwrap();

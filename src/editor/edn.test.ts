@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { quoteEdnString, unquoteEdnString, splitTrailingMap, queryMacroExtent } from "./edn";
+import { quoteEdnString, unquoteEdnString, splitTrailingMap, queryMacroExtent, queryMacroExtents } from "./edn";
 
 describe("edn helpers", () => {
   it("quote/unquote round-trips quotes and backslashes", () => {
@@ -45,5 +45,15 @@ describe("edn helpers", () => {
     const ref = '{{query (page [[A }} B]]) {:title "t"}}}\nid:: x';
     const e3 = queryMacroExtent(ref)!;
     expect(ref.slice(e3.start, e3.end)).toBe('{{query (page [[A }} B]]) {:title "t"}}}');
+  });
+
+  it("finds ALL query macros in a block, in order", () => {
+    const raw = "A {{query (task TODO)}} B {{query (task DONE)}}";
+    const exts = queryMacroExtents(raw);
+    expect(exts.map((e) => raw.slice(e.start, e.end))).toEqual([
+      "{{query (task TODO)}}",
+      "{{query (task DONE)}}",
+    ]);
+    expect(queryMacroExtents("no queries here")).toEqual([]);
   });
 });

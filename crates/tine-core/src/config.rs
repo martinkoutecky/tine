@@ -55,15 +55,9 @@ impl Config {
     pub fn parse(edn: &str) -> Config {
         // Strip line comments (`;` to end of line) so commented-out example
         // keys like `;; :journals-directory "foo"` aren't mistaken for real
-        // settings.
-        let edn: String = edn
-            .lines()
-            .map(|l| match l.find(';') {
-                Some(i) => &l[..i],
-                None => l,
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+        // settings — but only OUTSIDE strings, so a value containing `;` (e.g. a
+        // favorited/templated page named `A;B`) isn't truncated on read.
+        let edn = strip_edn_comments(edn);
         let edn = edn.as_str();
 
         let mut cfg = Config::default();
@@ -92,6 +86,43 @@ impl Config {
         cfg.favorites = parse_string_vector(edn, ":favorites");
         cfg
     }
+}
+
+/// Strip `;`-to-end-of-line EDN comments, but ONLY outside double-quoted strings
+/// (escape-aware), so a string value containing `;` (a favorited/templated page
+/// named `A;B`) survives. Newlines are preserved so later line-based scans align.
+fn strip_edn_comments(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = 0;
+    let mut in_str = false;
+    while i < chars.len() {
+        let c = chars[i];
+        if in_str {
+            out.push(c);
+            if c == '\\' && i + 1 < chars.len() {
+                out.push(chars[i + 1]);
+                i += 2;
+                continue;
+            }
+            if c == '"' {
+                in_str = false;
+            }
+            i += 1;
+        } else if c == '"' {
+            in_str = true;
+            out.push(c);
+            i += 1;
+        } else if c == ';' {
+            while i < chars.len() && chars[i] != '\n' {
+                i += 1;
+            }
+        } else {
+            out.push(c);
+            i += 1;
+        }
+    }
+    out
 }
 
 /// Read an EDN double-quoted string whose opening quote is at `chars[at]`,
