@@ -61,6 +61,7 @@ import { matchesCommand } from "../keybindings";
 import { HL_COLOR_BG, HL_COLOR_SOLID } from "../pdf";
 import { cycleMarkerSmart } from "../editor/repeat";
 import { applyTemplateVars } from "../editor/templateVars";
+import { caretAtFirstRow, caretAtLastRow } from "../editor/caretRows";
 
 // Detect a block whose entire body is a single {{query}} / {{embed}} macro.
 function detectMacro(lines: string[]): { kind: "query" | "embed"; inner: string } | null {
@@ -878,11 +879,17 @@ function Editor(props: { id: string }): JSX.Element {
       return;
     }
 
-    // Select block up/down: at the block's first/last line, start a block
-    // selection (current block + neighbour); the global handler extends it.
+    // Select block up/down: only when the caret is on the block's first/last
+    // VISUAL row start a block selection (current block + neighbour) — otherwise
+    // fall through and let the textarea extend the selection by one wrapped line.
+    // The cheap source-`\n` test is a pre-filter; the visual-row check then rules
+    // out a long single line that merely wraps (where there's no `\n` but the
+    // caret isn't actually on the first/last visual row).
     if (matchesCommand(e, "editor/select-block-up") || matchesCommand(e, "editor/select-block-down")) {
       const down = matchesCommand(e, "editor/select-block-down");
-      const atEdge = down ? !raw.slice(start).includes("\n") : !raw.slice(0, start).includes("\n");
+      const atEdge = down
+        ? !raw.slice(start).includes("\n") && caretAtLastRow(ref, start)
+        : !raw.slice(0, start).includes("\n") && caretAtFirstRow(ref, start);
       if (atEdge) {
         e.preventDefault();
         commit(raw);
@@ -927,18 +934,22 @@ function Editor(props: { id: string }): JSX.Element {
       if (isAnnot()) return;
       commit(raw);
       if (mergeWithPrev(props.id)) e.preventDefault();
-    } else if (e.key === "ArrowUp") {
+    } else if (e.key === "ArrowUp" && !e.shiftKey) {
+      // Leave for the previous block only from the FIRST visual row; otherwise
+      // let the textarea move the caret up one wrapped line. (A long single line
+      // has no `\n` but still wraps — the source-`\n` test alone wrongly jumped
+      // to the parent from the second visual row.)
       const before = raw.slice(0, start);
-      if (!before.includes("\n")) {
+      if (!before.includes("\n") && caretAtFirstRow(ref, start)) {
         const prev = prevVisible(props.id);
         if (prev) {
           e.preventDefault();
           startEditing(prev, doc.byId[prev].raw.length);
         }
       }
-    } else if (e.key === "ArrowDown") {
+    } else if (e.key === "ArrowDown" && !e.shiftKey) {
       const after = raw.slice(start);
-      if (!after.includes("\n")) {
+      if (!after.includes("\n") && caretAtLastRow(ref, start)) {
         const next = nextVisible(props.id);
         if (next) {
           e.preventDefault();
