@@ -184,16 +184,17 @@ export function fuzzyScore(query: string, str: string): number {
   }
 }
 
+/** Fuzzy score for a command against `query`: the best of its label and its
+ *  optional short `key` (so a one-letter query can surface it first). */
+export function commandScore(query: string, c: Command): number {
+  return Math.max(fuzzyScore(query, c.label), c.key ? fuzzyScore(query, c.key) : 0);
+}
+
 /** Slash-command matches for `query`, ranked best-first (OG-style). An empty
- *  query (bare `/`) lists every command in its defined order. A command's
- *  optional `key` is scored alongside its label (max), so e.g. `/A` surfaces
- *  "Priority A" first. */
+ *  query (bare `/`) lists every command in its defined order. */
 export function filterCommands(query: string): Command[] {
   if (!query) return COMMANDS.slice();
-  return COMMANDS.map((c) => ({
-    c,
-    s: Math.max(fuzzyScore(query, c.label), c.key ? fuzzyScore(query, c.key) : 0),
-  }))
+  return COMMANDS.map((c) => ({ c, s: commandScore(query, c) }))
     .filter((x) => x.s > 0)
     .sort((a, b) => b.s - a.s) // stable: equal scores keep their defined order
     .map((x) => x.c);

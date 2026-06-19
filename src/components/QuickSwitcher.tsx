@@ -3,6 +3,7 @@ import { backend } from "../backend";
 import { switcherOpen, closeSwitcher, switcherMode, recentPages } from "../ui";
 import { openPage, openPageAtBlock, route } from "../router";
 import { paletteCommands } from "../keybindings";
+import { fuzzyScore } from "../editor/autocomplete";
 import { blockView } from "../render/block";
 import type { PageEntry, PageKind } from "../types";
 
@@ -62,10 +63,17 @@ export function QuickSwitcher(): JSX.Element {
   };
 
   const commandItems = (q: string): Item[] => {
-    const ql = q.trim().toLowerCase();
-    return paletteCommands()
-      .filter((c) => !ql || c.label.toLowerCase().includes(ql))
-      .map((c) => ({ t: "command" as const, label: c.label, binding: c.binding, run: c.run }));
+    const ql = q.trim();
+    // Rank the command palette with the same fuzzy score as the slash menu
+    // (empty query → all, in defined order); a stable sort keeps ties ordered.
+    const ranked = !ql
+      ? paletteCommands()
+      : paletteCommands()
+          .map((c) => ({ c, s: fuzzyScore(ql, c.label) }))
+          .filter((x) => x.s > 0)
+          .sort((a, b) => b.s - a.s)
+          .map((x) => x.c);
+    return ranked.map((c) => ({ t: "command" as const, label: c.label, binding: c.binding, run: c.run }));
   };
 
   const sections = createMemo<Section[]>(() => {

@@ -5,7 +5,9 @@ import {
   applyCompletion,
   pageInsert,
   tagInsert,
-  filterCommands,
+  COMMANDS,
+  commandScore,
+  fuzzyScore,
   type Trigger,
 } from "../editor/autocomplete";
 import {
@@ -533,21 +535,30 @@ function Editor(props: { id: string }): JSX.Element {
     setAc(t);
     setAcIndex(0);
     if (t.kind === "command") {
-      const cmds: AcItem[] = filterCommands(t.query).map((c) => ({
-        label: c.label,
-        insert: c.insert,
-        caret: c.caret,
-        action: c.action,
-      }));
+      const q = t.query;
       const tmpls = await getTemplates();
-      const q = t.query.toLowerCase();
-      const showAll = q.length > 0 && "template".startsWith(q); // typing /t…/template
-      const tItems: AcItem[] = tmpls
-        .filter((tp) => showAll || (q.length > 0 && tp.name.toLowerCase().includes(q)))
-        .map((tp) => ({ label: `Template: ${tp.name}`, templateNodes: tp.blocks }));
       const cur = ac();
       if (!cur || cur.start !== t.start) return; // trigger changed while awaiting
-      setAcItems([...cmds, ...tItems]);
+      // Commands AND templates in one fuzzy-ranked list, so a strong template
+      // match can outrank a weak command (and vice-versa). Empty query (bare `/`)
+      // lists all commands in defined order, no templates. `idx` preserves the
+      // defined order — commands before templates — as the stable tiebreaker.
+      const showAllTemplates = !!q && "template".startsWith(q.toLowerCase()); // /t…/template lists them all
+      const scored: { item: AcItem; s: number; idx: number }[] = [];
+      COMMANDS.forEach((c, i) => {
+        const s = q ? commandScore(q, c) : 1;
+        if (s > 0)
+          scored.push({ item: { label: c.label, insert: c.insert, caret: c.caret, action: c.action }, s, idx: i });
+      });
+      if (q) {
+        tmpls.forEach((tp, j) => {
+          const s = showAllTemplates ? 1 : fuzzyScore(q, tp.name);
+          if (s > 0)
+            scored.push({ item: { label: `Template: ${tp.name}`, templateNodes: tp.blocks }, s, idx: COMMANDS.length + j });
+        });
+      }
+      scored.sort((a, b) => b.s - a.s || a.idx - b.idx);
+      setAcItems(scored.map((x) => x.item));
       return;
     }
     const pages = await backend().quickSwitch(t.query, 8);
