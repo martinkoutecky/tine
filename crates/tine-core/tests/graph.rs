@@ -594,6 +594,66 @@ fn set_favorites_edn_aware_vector_end() {
 }
 
 #[test]
+fn set_preferred_workflow_ignores_key_inside_string_literal() {
+    // Round-7 audit: the key was located with a non-string-aware scan, so a
+    // `:preferred-workflow` inside a string value could be edited instead of the
+    // real key. `find_keyword` now skips strings.
+    let root = std::env::temp_dir().join(format!("tine-wf-str-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("logseq")).unwrap();
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    let cfg_path = root.join("logseq").join("config.edn");
+    // A string value mentions the key; the REAL key is separate and says :now.
+    std::fs::write(
+        &cfg_path,
+        "{:note \":preferred-workflow :now\"\n :preferred-workflow :now}\n",
+    )
+    .unwrap();
+
+    Graph::open(&root).set_preferred_workflow("todo").unwrap();
+    let c = std::fs::read_to_string(&cfg_path).unwrap();
+    // The string decoy is untouched; the REAL (non-string) key flipped to :todo.
+    // (Asserted on file content: the matching READER `keyword_value` isn't
+    // string-aware for key LOCATION — a separate, far more pathological case
+    // codex did not flag — so we verify the writer targeted the right key here.)
+    assert!(c.contains("\":preferred-workflow :now\""), "string decoy untouched: {c}");
+    assert!(c.contains(":preferred-workflow :todo"), "real key flipped in file: {c}");
+    assert_eq!(c.matches(":todo").count(), 1, "exactly the real value changed: {c}");
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn config_readers_are_edn_aware_for_bracket_brace_in_values() {
+    // Round-7 audit: the hardened writers can now emit a `]`/`}` inside a string
+    // value (a favorited/templated page titled `f[x]` / `Plan {B}`); the readers
+    // used delimiter scans that truncated at the first raw `]`/`}` and silently
+    // lost the value on reload. Writer→file→reader must now round-trip.
+    let root = std::env::temp_dir().join(format!("tine-cfg-read-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("logseq")).unwrap();
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+
+    // Favorites with a `]` in a name (and a plain sibling) survive a reload.
+    Graph::open(&root)
+        .set_favorites(&["arr[0]".into(), "plain".into()])
+        .unwrap();
+    assert_eq!(
+        Graph::open(&root).meta().favorites,
+        vec!["arr[0]".to_string(), "plain".to_string()]
+    );
+
+    // Default journal template name containing `}` survives a reload.
+    Graph::open(&root).set_default_journal_template(Some("Plan {B}")).unwrap();
+    assert_eq!(
+        Graph::open(&root).meta().default_journal_template.as_deref(),
+        Some("Plan {B}")
+    );
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn set_preferred_workflow_round_trips_in_config_edn() {
     let root = std::env::temp_dir().join(format!("tine-wf-test-{}", std::process::id()));
     std::fs::create_dir_all(root.join("logseq")).unwrap();

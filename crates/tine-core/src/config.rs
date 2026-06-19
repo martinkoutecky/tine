@@ -94,44 +94,85 @@ impl Config {
     }
 }
 
+/// Read an EDN double-quoted string whose opening quote is at `chars[at]`,
+/// unescaping `\"`/`\\` (symmetric with the writers' escaping). Returns the value
+/// and the index just past the closing quote. String content may contain `]`/`}`
+/// — that's exactly what the naive delimiter scans below used to truncate on.
+fn read_edn_string(chars: &[char], at: usize) -> (String, usize) {
+    let mut s = String::new();
+    let mut j = at + 1;
+    while j < chars.len() && chars[j] != '"' {
+        if chars[j] == '\\' && matches!(chars.get(j + 1), Some('"') | Some('\\')) {
+            s.push(chars[j + 1]);
+            j += 2;
+        } else {
+            s.push(chars[j]);
+            j += 1;
+        }
+    }
+    (s, (j + 1).min(chars.len()))
+}
+
 /// Parse the quoted strings inside `key [ "a" "b" ]` (a single-level EDN vector).
+/// String-aware: a value containing `]` (e.g. a favorited page titled `f[x]`)
+/// doesn't end the vector early — must mirror `set_favorites`, which can emit it.
 fn parse_string_vector(edn: &str, key: &str) -> Vec<String> {
     let Some(i) = edn.find(key) else { return Vec::new() };
-    let after = &edn[i + key.len()..];
-    let Some(open) = after.find('[') else { return Vec::new() };
-    let body = &after[open + 1..];
-    let close = body.find(']').unwrap_or(body.len());
-    let inner = &body[..close];
+    let chars: Vec<char> = edn[i + key.len()..].chars().collect();
+    let Some(open) = chars.iter().position(|&c| c == '[') else { return Vec::new() };
     let mut out = Vec::new();
-    let bytes = inner.as_bytes();
-    let mut j = 0;
-    while j < inner.len() {
-        if bytes[j] == b'"' {
-            if let Some(rel) = inner[j + 1..].find('"') {
-                out.push(inner[j + 1..j + 1 + rel].to_string());
-                j = j + 1 + rel + 1;
-                continue;
+    let mut j = open + 1;
+    while j < chars.len() {
+        match chars[j] {
+            ']' => break,
+            '"' => {
+                let (val, next) = read_edn_string(&chars, j);
+                out.push(val);
+                j = next;
             }
+            _ => j += 1,
         }
-        j += 1;
     }
     out
 }
 
 /// Extract a quoted string for `inner_key` inside the map following `outer_key`,
-/// e.g. `:default-templates {:journals "Daily"}` -> "Daily".
+/// e.g. `:default-templates {:journals "Daily"}` -> "Daily". String-aware: the
+/// map's closing `}` is matched past any `}` inside a string value (e.g. a
+/// template named `Plan {B}`), and the value itself is unescaped.
 fn nested_string(edn: &str, outer_key: &str, inner_key: &str) -> Option<String> {
     let i = edn.find(outer_key)? + outer_key.len();
-    let after = &edn[i..];
-    let open = after.find('{')?;
-    let body = &after[open..];
-    let close = body.find('}').unwrap_or(body.len());
-    let inner = &body[..close];
-    let j = inner.find(inner_key)? + inner_key.len();
-    let rest = &inner[j..];
-    let qs = rest.find('"')? + 1;
-    let qe = rest[qs..].find('"')? + qs;
-    Some(rest[qs..qe].to_string())
+    let chars: Vec<char> = edn[i..].chars().collect();
+    let open = chars.iter().position(|&c| c == '{')?;
+    // Matching `}` for the map, skipping string contents + nested braces.
+    let mut depth = 0usize;
+    let mut k = open;
+    let mut close = chars.len();
+    while k < chars.len() {
+        match chars[k] {
+            '"' => {
+                let (_, next) = read_edn_string(&chars, k);
+                k = next;
+                continue;
+            }
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    close = k;
+                    break;
+                }
+            }
+            _ => {}
+        }
+        k += 1;
+    }
+    // Find `inner_key` within the map body, then read its quoted value.
+    let inner: String = chars[open + 1..close].iter().collect();
+    let rel = inner.find(inner_key)? + inner_key.len();
+    let tail: Vec<char> = inner[rel..].chars().collect();
+    let q = tail.iter().position(|&c| c == '"')?;
+    Some(read_edn_string(&tail, q).0)
 }
 
 /// Extract the integer following `key`, if any.

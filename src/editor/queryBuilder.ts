@@ -233,12 +233,29 @@ function parseExpr(toks: Tok[], cur: Cur, src: string): Clause | null {
       default:
         clause = null;
     }
-    // Consume up to and including the matching ")".
-    while (toks[cur.pos] && toks[cur.pos].t !== ")") cur.pos++;
-    const close = toks[cur.pos];
-    if (close && close.t === ")") cur.pos++;
+    // Consume up to and including THIS form's matching ")", tracking nested
+    // parens — the opening "(" consumed above puts us at depth 1. (Parens inside
+    // strings/page-refs are folded into str/page tokens, so they never count.)
+    // A lazy stop at the first ")" would split an unknown NESTED form like
+    // `(custom (nested x))` at the inner ")", orphaning later siblings and
+    // emitting an unbalanced raw fragment that corrupts the query on re-serialize.
+    let depth = 1;
+    let close: Tok | undefined;
+    while (cur.pos < toks.length) {
+      const tk = toks[cur.pos];
+      if (tk.t === "(") depth++;
+      else if (tk.t === ")") {
+        depth--;
+        if (depth === 0) {
+          close = tk;
+          cur.pos++;
+          break;
+        }
+      }
+      cur.pos++;
+    }
     if (clause == null && close) {
-      // Unknown form: preserve it verbatim so it round-trips.
+      // Unknown form: preserve it verbatim (balanced) so it round-trips.
       return { kind: "raw", text: src.slice(open.s, close.e) };
     }
     return clause;

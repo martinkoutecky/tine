@@ -279,10 +279,12 @@ impl Graph {
         let path = self.root.join("logseq").join("config.edn");
         let mut content = fs::read_to_string(&path).unwrap_or_else(|_| "{}\n".to_string());
 
-        if let Some(start) = find_uncommented(&content, key) {
+        if let Some(start) = find_keyword(&content, key) {
             let after = start + key.len();
             // The value is a keyword: first non-whitespace char after the key,
             // expected to start with ':', running to whitespace/`}`/`)`.
+            // `find_keyword` (not `find_uncommented`) so a `:preferred-workflow`
+            // inside a string literal can't be mistaken for the real key.
             match content[after..].find(|c: char| !c.is_whitespace()) {
                 Some(rel) if content[after + rel..].starts_with(':') => {
                     let vstart = after + rel;
@@ -1555,21 +1557,6 @@ fn next_value_span(s: &str, from: usize, close: usize) -> Option<(usize, usize, 
         i += 1;
     }
     Some((start, i, false))
-}
-
-fn find_uncommented(content: &str, key: &str) -> Option<usize> {
-    let mut pos = 0usize;
-    for line in content.split_inclusive('\n') {
-        let code = match line.find(';') {
-            Some(i) => &line[..i],
-            None => line,
-        };
-        if let Some(rel) = code.find(key) {
-            return Some(pos + rel);
-        }
-        pos += line.len();
-    }
-    None
 }
 
 /// Atomically reserve a unique filename in `assets/` for `name`, de-duplicating

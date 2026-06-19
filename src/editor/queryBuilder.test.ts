@@ -114,6 +114,23 @@ describe("parse + serialize round-trip", () => {
     // (sample 5) isn't in Tine's runnable grammar — keep it rather than drop it.
     expect(roundtrip("(sample 5)")).toBe("(sample 5)");
   });
+
+  it("preserves a NESTED unknown form and the clauses after it", () => {
+    // The raw fallback must capture a BALANCED extent — a lazy stop at the first
+    // ")" split `(custom (nested x))` at the inner ")", dropping [[B]] and writing
+    // an unbalanced fragment back to the {{query}} block.
+    const dsl = "(and [[A]] (custom (nested x)) [[B]])";
+    expect(roundtrip(dsl)).toBe(dsl);
+    expect(parseQuery(dsl)).toEqual({
+      kind: "op",
+      op: "and",
+      children: [
+        { kind: "page", name: "A" },
+        { kind: "raw", text: "(custom (nested x))" },
+        { kind: "page", name: "B" },
+      ],
+    });
+  });
 });
 
 describe("tree shape", () => {
