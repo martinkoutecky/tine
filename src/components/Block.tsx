@@ -707,9 +707,22 @@ function Editor(props: { id: string }): JSX.Element {
     replaceTrigger(item.insert ?? "", item.caret);
   };
 
-  const autosize = () => {
+  // Resize the textarea to fit its content. Setting height:auto then reading
+  // scrollHeight forces a synchronous layout, so doing it per keystroke thrashes
+  // layout; `autosize` coalesces to one resize per animation frame. `resizeNow`
+  // is the immediate variant for mount (avoids a one-frame collapsed flash).
+  const resizeNow = () => {
+    if (!ref || !ref.isConnected) return;
     ref.style.height = "auto";
     ref.style.height = `${ref.scrollHeight}px`;
+  };
+  let autosizeRaf: number | undefined;
+  const autosize = () => {
+    if (autosizeRaf !== undefined) return; // already scheduled this frame
+    autosizeRaf = requestAnimationFrame(() => {
+      autosizeRaf = undefined;
+      resizeNow();
+    });
   };
 
   onMount(() => {
@@ -717,7 +730,7 @@ function Editor(props: { id: string }): JSX.Element {
     ref.focus();
     const o = Math.min(offset, ref.value.length);
     ref.setSelectionRange(o, o);
-    autosize();
+    resizeNow();
   });
 
   let acTimer: ReturnType<typeof setTimeout> | undefined;

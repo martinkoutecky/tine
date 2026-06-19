@@ -15,28 +15,34 @@ export interface Trigger {
 
 /** Detect an active completion trigger immediately before `caret`. */
 export function detectTrigger(raw: string, caret: number): Trigger | null {
-  const before = raw.slice(0, caret);
+  // No trigger spans a newline: the `[[` inner forbids it, and `#tag`/`/command`
+  // are anchored at line start or after whitespace. So only the CURRENT line's
+  // prefix can matter — slicing just that (not the whole `raw[0..caret]`) avoids
+  // an O(block length) allocation per keystroke on long blocks. Returned indices
+  // are offset back into `raw` by `lineStart`, so callers see absolute positions.
+  const lineStart = raw.lastIndexOf("\n", caret - 1) + 1;
+  const before = raw.slice(lineStart, caret);
 
-  // [[page — open brackets with no closing/newline since.
+  // [[page — open brackets with no closing since (the line has no newline).
   const open = before.lastIndexOf("[[");
   if (open !== -1) {
     const inner = before.slice(open + 2);
-    if (!inner.includes("]") && !inner.includes("[") && !inner.includes("\n")) {
-      return { kind: "page", query: inner, start: open, end: caret };
+    if (!inner.includes("]") && !inner.includes("[")) {
+      return { kind: "page", query: inner, start: lineStart + open, end: caret };
     }
   }
 
   // #tag — `#` at start or after whitespace, followed by tag chars.
   const tag = /(^|\s)#([\w/_.-]*)$/.exec(before);
   if (tag) {
-    const start = before.length - tag[2].length - 1; // position of '#'
+    const start = lineStart + before.length - tag[2].length - 1; // position of '#'
     return { kind: "tag", query: tag[2], start, end: caret };
   }
 
   // /command — `/` at start or after whitespace.
   const cmd = /(^|\s)\/([\w-]*)$/.exec(before);
   if (cmd) {
-    const start = before.length - cmd[2].length - 1;
+    const start = lineStart + before.length - cmd[2].length - 1;
     return { kind: "command", query: cmd[2], start, end: caret };
   }
 

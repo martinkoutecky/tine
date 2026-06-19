@@ -30,6 +30,24 @@ describe("detectTrigger", () => {
     const t = detectTrigger("/que", 4);
     expect(t).toEqual({ kind: "command", query: "que", start: 0, end: 4 });
   });
+
+  it("detects a trigger on a later line with correct absolute indices", () => {
+    // The trigger is on the 2nd line; indices must be offset back into the full
+    // string (the line-prefix optimization must not break absolute positions).
+    const raw = "first line\nsee [[log";
+    const t = detectTrigger(raw, raw.length);
+    expect(t).toEqual({ kind: "page", query: "log", start: 15, end: raw.length });
+    // And a # tag at the very start of a non-first line.
+    const raw2 = "intro\n#pro";
+    expect(detectTrigger(raw2, raw2.length)).toEqual({
+      kind: "tag", query: "pro", start: 6, end: raw2.length,
+    });
+  });
+
+  it("no trigger when an open [[ is on a previous line (can't span newline)", () => {
+    // "[[" then a newline before the caret → not an active page trigger.
+    expect(detectTrigger("a [[\nbcd", 8)).toBeNull();
+  });
 });
 
 describe("applyCompletion", () => {
