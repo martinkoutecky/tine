@@ -129,6 +129,22 @@ pub struct Graph {
     /// bytes we wrote and suppress that false positive (the parse-cache comparison
     /// alone races that window). See `write_page` / `sync_file_content`.
     recent_writes: std::sync::Mutex<std::collections::HashMap<PathBuf, String>>,
+    /// `key(kind,name) → content_rev` of the on-disk bytes the cached page's
+    /// `Document` was parsed from. Invariant: an entry exists IFF the page is in
+    /// the cache, and `disk_revs[key] == content_rev(current disk bytes)` ⟹ the
+    /// cached doc reflects disk (is fresh). Lets `sync_file_content` skip the
+    /// parse→serialize→parse freshness comparison when a file is unchanged — the
+    /// common case on every page navigation and most watcher polls. A missing or
+    /// mismatched entry always falls through to the correct parse-compare path, so
+    /// the worst a desync can cause is redundant work, never a stale serve.
+    disk_revs: RwLock<std::collections::HashMap<String, String>>,
+}
+
+/// Cache key for `disk_revs` (and any other (kind,name)-keyed side table):
+/// case-insensitive name, scoped by kind so a page and a journal of the same
+/// title never collide.
+fn rev_key(kind: PageKind, name: &str) -> String {
+    format!("{kind:?}\u{1}{}", name.to_ascii_lowercase())
 }
 
 /// Gen+today-tagged cache of derived scan results. Reset wholesale whenever the
@@ -176,6 +192,7 @@ impl Graph {
             derived_cache: RwLock::new(None),
             page_list_cache: RwLock::new(None),
             recent_writes: std::sync::Mutex::new(std::collections::HashMap::new()),
+            disk_revs: RwLock::new(std::collections::HashMap::new()),
         }
     }
 
@@ -543,16 +560,29 @@ impl Graph {
 
     /// Read+parse every page from disk (skipping unreadable files). Used to
     /// build the in-memory cache.
-    fn load_all_pages(&self) -> Vec<(PageEntry, Document)> {
+    fn load_all_pages(&self) -> Vec<(PageEntry, Document, String)> {
         self.list_pages()
             .into_iter()
             .filter_map(|e| {
-                self.read_document(&e).ok().map(|mut d| {
-                    assign_doc_uuids(&mut d.roots);
-                    (e, d)
-                })
+                let content = fs::read_to_string(&e.path).ok()?;
+                let rev = content_rev(&content);
+                let mut d = doc::parse(&content);
+                assign_doc_uuids(&mut d.roots);
+                Some((e, d, rev))
             })
             .collect()
+    }
+
+    /// Install a freshly-built whole-graph snapshot atomically: the parsed pages
+    /// into the cache, their on-disk revs into `disk_revs`. Cache set BEFORE
+    /// disk_revs so a reader never observes a fresh rev paired with a stale cache.
+    fn install_built(&self, built: Vec<(PageEntry, Document, String)>) {
+        let revs: std::collections::HashMap<String, String> =
+            built.iter().map(|(e, _, r)| (rev_key(e.kind, &e.name), r.clone())).collect();
+        let pages: Vec<(PageEntry, Document)> =
+            built.into_iter().map(|(e, d, _)| (e, d)).collect();
+        *self.cache.write().unwrap() = Some(pages);
+        *self.disk_revs.write().unwrap() = revs;
     }
 
     /// Run `f` over every parsed page, building the cache on first use. The
@@ -576,7 +606,7 @@ impl Graph {
                 // done — rebuild so we don't install a stale snapshot. We hold
                 // build_lock, so no other builder competes.
                 if self.cache_gen.load(Ordering::Acquire) == gen0 {
-                    *self.cache.write().unwrap() = Some(built);
+                    self.install_built(built);
                     break;
                 }
             }
@@ -600,11 +630,13 @@ impl Graph {
         // without waiting on our sleeps. If it wins, we discard our work.
         let gen0 = self.cache_gen.load(Ordering::Acquire);
         let entries = self.list_pages();
-        let mut built: Vec<(PageEntry, Document)> = Vec::with_capacity(entries.len());
+        let mut built: Vec<(PageEntry, Document, String)> = Vec::with_capacity(entries.len());
         for (i, e) in entries.into_iter().enumerate() {
-            if let Ok(mut d) = self.read_document(&e) {
+            if let Ok(content) = fs::read_to_string(&e.path) {
+                let rev = content_rev(&content);
+                let mut d = doc::parse(&content);
                 assign_doc_uuids(&mut d.roots);
-                built.push((e, d));
+                built.push((e, d, rev));
             }
             if i % 24 == 23 {
                 if self.cache.read().unwrap().is_some() {
@@ -619,7 +651,7 @@ impl Graph {
         // next on-demand build rather than install a stale snapshot).
         let _bl = self.build_lock.lock().unwrap();
         if self.cache.read().unwrap().is_none() && self.cache_gen.load(Ordering::Acquire) == gen0 {
-            *self.cache.write().unwrap() = Some(built);
+            self.install_built(built);
         }
     }
 
@@ -632,13 +664,18 @@ impl Graph {
         *self.cache.write().unwrap() = None;
         *self.alias_cache.write().unwrap() = None;
         *self.block_index.write().unwrap() = None;
+        self.disk_revs.write().unwrap().clear();
     }
 
     /// Update one page in the cache after we write it (no full rebuild). A no-op
-    /// if the cache hasn't been built yet.
-    fn cache_upsert(&self, entry: PageEntry, mut doc: Document) {
+    /// if the cache hasn't been built yet. `disk_rev` is `content_rev` of the
+    /// exact on-disk bytes `doc` was produced from (the freshness key — see
+    /// `disk_revs`).
+    fn cache_upsert(&self, entry: PageEntry, mut doc: Document, disk_rev: String) {
         // Signal a mutation so a concurrent lock-free cache build won't install a
-        // snapshot that predates this change (see with_pages).
+        // snapshot that predates this change (see with_pages). Update the cache
+        // slot BEFORE disk_revs below, so a reader can never observe a fresh rev
+        // paired with a stale cached doc.
         self.cache_gen.fetch_add(1, std::sync::atomic::Ordering::Release);
         // Fill uuids for any block that lacks one (e.g. PDF-highlight writes);
         // blocks saved from the frontend already carry their ids, which are kept.
@@ -648,6 +685,8 @@ impl Graph {
         // alias rescan on the next navigation.
         let new_has_alias = doc_has_alias(&doc);
         let mut alias_touched = new_has_alias;
+        let key = rev_key(entry.kind, &entry.name);
+        let mut cached = false;
         let mut guard = self.cache.write().unwrap();
         if let Some(pages) = guard.as_mut() {
             match pages.iter_mut().find(|(e, _)| {
@@ -659,8 +698,15 @@ impl Graph {
                 }
                 None => pages.push((entry, doc)),
             }
+            cached = true;
         }
         drop(guard);
+        // Keep disk_revs in lockstep with the cache: set it only when the page is
+        // actually cached (preserving "entry exists IFF cached"), and only after
+        // the cache slot is updated.
+        if cached {
+            self.disk_revs.write().unwrap().insert(key, disk_rev);
+        }
         if alias_touched {
             *self.alias_cache.write().unwrap() = None;
         }
@@ -680,6 +726,7 @@ impl Graph {
             pages.retain(|(e, _)| !(e.kind == kind && e.name.eq_ignore_ascii_case(name)));
         }
         drop(guard);
+        self.disk_revs.write().unwrap().remove(&rev_key(kind, name));
         if alias_touched {
             *self.alias_cache.write().unwrap() = None;
         }
@@ -946,7 +993,7 @@ impl Graph {
             date_key: None,
             path: page_path,
         });
-        self.cache_upsert(entry, page_doc);
+        self.cache_upsert(entry, page_doc, content_rev(&page_md));
         Ok(())
     }
 
@@ -1011,12 +1058,28 @@ impl Graph {
         // record has done its job, so the map stays bounded to in-flight writes and
         // a later *external* write that happens to restore those exact bytes is no
         // longer silently suppressed.
+        let disk_rev = content_rev(content);
         {
             let mut recent = self.recent_writes.lock().unwrap();
-            if recent.get(path).is_some_and(|r| *r == content_rev(content)) {
+            if recent.get(path).is_some_and(|r| *r == disk_rev) {
                 recent.remove(path);
                 return None;
             }
+        }
+        // Fast freshness check (B1): if the cache for this page already reflects
+        // these exact disk bytes, there's nothing to reconcile — skip the parse +
+        // serialize→parse normalization comparison below. By the disk_revs
+        // invariant, a present, matching entry means the cached doc IS fresh; a
+        // missing/mismatched entry falls through to the exact comparison, so this
+        // can only ever save work, never serve stale content.
+        if self
+            .disk_revs
+            .read()
+            .unwrap()
+            .get(&rev_key(entry.kind, &entry.name))
+            .is_some_and(|r| *r == disk_rev)
+        {
+            return None;
         }
         let newdoc = doc::parse(content);
         {
@@ -1048,7 +1111,7 @@ impl Graph {
                 }
             }
         }
-        self.cache_upsert(entry.clone(), newdoc);
+        self.cache_upsert(entry.clone(), newdoc, disk_rev);
         Some(entry)
     }
 
@@ -1162,7 +1225,7 @@ impl Graph {
                 };
                 PageEntry { name: page.name.clone(), kind: page.kind, date_key, path }
             });
-            self.cache_upsert(entry, doc);
+            self.cache_upsert(entry, doc, rev.clone());
         }
         // The new baseline rev = hash of exactly what's now on disk (the content we
         // serialized, or the identical existing bytes on a no-op) — no re-read.

@@ -373,6 +373,41 @@ fn recent_writes_entry_is_consumed_on_first_match() {
 }
 
 #[test]
+fn disk_rev_fast_path_is_fresh_and_detects_external_change() {
+    // B1: an unchanged file syncs to a no-op via the disk_rev fast-path (no
+    // reparse), but a genuine external edit is still detected — the rev must
+    // never mask a change, and the served content must update.
+    use tine_core::model::{BlockDto, PageDto, PageKind};
+
+    let root = std::env::temp_dir().join(format!("tine-diskrev-{}", std::process::id()));
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    let g = Graph::open(&root);
+    g.search("x", 10); // build the cache
+    let page = PageDto {
+        name: "R".into(),
+        kind: PageKind::Page,
+        title: "R".into(),
+        pre_block: None,
+        blocks: vec![BlockDto { id: "b1".into(), raw: "alpha".into(), ..Default::default() }],
+        rev: None,
+    };
+    g.save_page(&page, None).unwrap(); // populates disk_revs[R] + recent_writes
+    let path = root.join("pages").join("R.md");
+    assert!(g.sync_file(&path).is_none(), "first sync: suppressed via recent_writes");
+    assert!(g.sync_file(&path).is_none(), "second sync: unchanged via disk_rev fast-path");
+
+    // A real external edit must still be detected (not masked by disk_revs).
+    std::fs::write(&path, "- beta\n").unwrap();
+    let changed = g.sync_file(&path).expect("external change detected despite disk_revs entry");
+    assert_eq!(changed.name, "R");
+    // The cache now serves the new content (load_page goes through sync_file_content).
+    let dto = g.load_named("R", PageKind::Page).unwrap().unwrap();
+    assert!(dto.blocks.iter().any(|b| b.raw.contains("beta")), "served stale after external edit");
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn watcher_suppresses_own_write_when_parse_cache_lags() {
     // Regression for the false "changed on disk" conflict seen during normal
     // typing (no external writer): the file watcher reads files outside the cache
