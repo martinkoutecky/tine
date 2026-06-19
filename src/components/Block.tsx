@@ -51,16 +51,16 @@ import {
   type Edit,
 } from "../editor/format";
 import { blockView } from "../render/block";
-import { InlineText } from "../render/inline";
 import { BodyContent } from "../render/body";
 import { QueryMacro, EmbedMacro } from "./Macro";
-import { openPdf, workflow, zoomInto, openContextMenu, openDatePicker, openBlockInSidebar, graphMeta, dataRev, setQueryBuilderAutoOpen, openPageProps } from "../ui";
+import { workflow, zoomInto, openContextMenu, openDatePicker, openBlockInSidebar, graphMeta, dataRev, setQueryBuilderAutoOpen, openPageProps } from "../ui";
 import { matchesCommand } from "../keybindings";
-import { HL_COLOR_BG, HL_COLOR_SOLID } from "../pdf";
 import { cycleMarkerSmart } from "../editor/repeat";
 import { applyTemplateVars } from "../editor/templateVars";
 import { caretAtFirstRow, caretAtLastRow } from "../editor/caretRows";
 import { splitProps, joinProps, isBuiltinHidden, hideAll } from "../editor/properties";
+import { isAnnotationBlock, annotationInfo } from "../editor/annotation";
+import { AnnotationBody } from "./AnnotationBody";
 
 // Detect a block whose entire body is a single {{query}} / {{embed}} macro.
 function detectMacro(lines: string[]): { kind: "query" | "embed"; inner: string } | null {
@@ -85,20 +85,6 @@ const BLOCK_BG: Record<string, string> = {
   green: "rgba(166,227,180,0.4)", blue: "rgba(168,201,240,0.4)", purple: "rgba(205,180,238,0.4)",
   gray: "rgba(211,214,218,0.5)",
 };
-
-// A PDF highlight (annotation) block — its raw is generated metadata, so we
-// never let the user drop into raw edit mode (clicking jumps to the PDF).
-function isAnnotationBlock(raw: string): boolean {
-  return /^\s*ls-type::\s*annotation\s*$/m.test(raw);
-}
-
-// For a PDF highlight (annotation) block, resolve the PDF filename from the
-// owning hls__ page's `file-path::` property.
-function pdfFileForPage(pageName: string): string | null {
-  const p = doc.pages.find((x) => x.name === pageName);
-  const m = p?.preBlock ? /file-path::\s*(\S+)/.exec(p.preBlock) : null;
-  return m ? m[1].split("/").pop() ?? null : null;
-}
 
 // Pointer-based drag reorder (HTML5 DnD is unreliable in WebKitGTK).
 const [dragId, setDragId] = createSignal<string | null>(null);
@@ -255,22 +241,11 @@ function Rendered(props: { id: string; owner?: string }): JSX.Element {
 
   const macro = createMemo(() => detectMacro(view().lines));
 
-  // PDF highlight (annotation) blocks: a colored, clickable swatch of text that
-  // opens the PDF at the highlight's page. Notes go in child blocks.
-  const annotation = createMemo(() => {
-    const props = view().properties;
-    if (!props.some(([k, v]) => k === "ls-type" && v === "annotation")) return null;
-    const color = props.find(([k]) => k === "hl-color")?.[1] ?? "yellow";
-    const hlPage = Number(props.find(([k]) => k === "hl-page")?.[1] ?? "1");
-    return { color, hlPage };
-  });
-
-  const openHighlightPdf = (e: MouseEvent) => {
-    e.stopPropagation();
-    const a = annotation();
-    const file = pdfFileForPage(node().page);
-    if (a && file) openPdf(file, file, a.hlPage);
-  };
+  // PDF highlight (annotation) blocks render a colored, clickable swatch
+  // (AnnotationBody) that opens the PDF at the highlight's page; notes go in
+  // child blocks. The detection + rendering live in editor/annotation +
+  // components/AnnotationBody.
+  const annotation = createMemo(() => annotationInfo(view().properties));
 
   // Click edits the block. For annotation blocks the editor shows only the
   // highlight text (metadata stays hidden); the colored prefix still jumps to
@@ -291,21 +266,12 @@ function Rendered(props: { id: string; owner?: string }): JSX.Element {
 
   const body = (
     <Show when={annotation()} fallback={<BodyContent lines={view().lines} blockId={props.id} />}>
-      <span class="pdf-annotation-line">
-        <span class="hl-prefix" onClick={openHighlightPdf} title="Open in PDF (P{annotation()!.hlPage})">
-          <span
-            class="hl-dot"
-            style={{ background: HL_COLOR_SOLID[annotation()!.color] ?? HL_COLOR_SOLID.yellow }}
-          />
-          <strong class="hl-page-badge">P{annotation()!.hlPage}</strong>
-        </span>{" "}
-        <span
-          class="hl-text"
-          style={{ background: HL_COLOR_BG[annotation()!.color] ?? HL_COLOR_BG.yellow }}
-        >
-          <InlineText text={view().lines[0]} />
-        </span>
-      </span>
+      <AnnotationBody
+        color={annotation()!.color}
+        hlPage={annotation()!.hlPage}
+        line={view().lines[0]}
+        page={node().page}
+      />
     </Show>
   );
 
