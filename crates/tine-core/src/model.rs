@@ -518,7 +518,7 @@ impl Graph {
         // parse it below.
         let read = fs::read_to_string(&entry.path);
         if let Ok(content) = &read {
-            self.sync_file_content(&entry.path, content);
+            self.sync_file_content(&entry.path, content, false);
         } else if read.as_ref().err().is_some_and(|e| e.kind() == io::ErrorKind::NotFound) {
             // The file is gone (external delete) but may still sit in the warm
             // cache. Serving that cached copy below — with rev = None — would make
@@ -581,8 +581,12 @@ impl Graph {
             built.iter().map(|(e, _, r)| (rev_key(e.kind, &e.name), r.clone())).collect();
         let pages: Vec<(PageEntry, Document)> =
             built.into_iter().map(|(e, d, _)| (e, d)).collect();
-        *self.cache.write().unwrap() = Some(pages);
+        // Publish cache + revs atomically under the cache lock (cache → disk_revs
+        // order), so no reader observes a fresh rev paired with a stale cache.
+        let mut guard = self.cache.write().unwrap();
+        *guard = Some(pages);
         *self.disk_revs.write().unwrap() = revs;
+        drop(guard);
     }
 
     /// Run `f` over every parsed page, building the cache on first use. The
@@ -631,11 +635,17 @@ impl Graph {
         let gen0 = self.cache_gen.load(Ordering::Acquire);
         let entries = self.list_pages();
         let mut built: Vec<(PageEntry, Document, String)> = Vec::with_capacity(entries.len());
+        // Record each file's mtime BEFORE reading it, so a re-stat before install
+        // catches any external edit that landed during the paced parse (external
+        // writers don't bump cache_gen, so the gen check below can't see them).
+        let mut mtimes: Vec<(PathBuf, Option<std::time::SystemTime>)> = Vec::with_capacity(entries.len());
         for (i, e) in entries.into_iter().enumerate() {
+            let mtime = fs::metadata(&e.path).and_then(|m| m.modified()).ok();
             if let Ok(content) = fs::read_to_string(&e.path) {
                 let rev = content_rev(&content);
                 let mut d = doc::parse(&content);
                 assign_doc_uuids(&mut d.roots);
+                mtimes.push((e.path.clone(), mtime));
                 built.push((e, d, rev));
             }
             if i % 24 == 23 {
@@ -645,10 +655,19 @@ impl Graph {
                 std::thread::sleep(std::time::Duration::from_millis(2));
             }
         }
-        // Install only if nobody else built it and no save/remove raced our reads
-        // (its cache mutation would have no-op'd against the None cache, so its
-        // disk write must be folded in by a rebuild — here we just defer to the
-        // next on-demand build rather than install a stale snapshot).
+        // If any built file changed during the paced parse, our snapshot may be
+        // stale and the watcher might not yet baseline-track it — discard and let
+        // the next on-demand build read fresh. (A false positive just rebuilds.)
+        if mtimes
+            .iter()
+            .any(|(p, m)| fs::metadata(p).and_then(|md| md.modified()).ok() != *m)
+        {
+            return;
+        }
+        // Install only if nobody else built it and no Tine save/remove raced our
+        // reads (its cache mutation would have no-op'd against the None cache, so
+        // its disk write must be folded in by a rebuild — defer to the next
+        // on-demand build rather than install a stale snapshot).
         let _bl = self.build_lock.lock().unwrap();
         if self.cache.read().unwrap().is_none() && self.cache_gen.load(Ordering::Acquire) == gen0 {
             self.install_built(built);
@@ -661,10 +680,12 @@ impl Graph {
         // Bump the generation so the gen-keyed block index rebuilds against the
         // fresh content rather than trusting a hint from the discarded cache.
         self.cache_gen.fetch_add(1, std::sync::atomic::Ordering::Release);
-        *self.cache.write().unwrap() = None;
+        let mut guard = self.cache.write().unwrap();
+        *guard = None;
+        self.disk_revs.write().unwrap().clear(); // under the cache lock (cache → disk_revs)
+        drop(guard);
         *self.alias_cache.write().unwrap() = None;
         *self.block_index.write().unwrap() = None;
-        self.disk_revs.write().unwrap().clear();
     }
 
     /// Update one page in the cache after we write it (no full rebuild). A no-op
@@ -686,7 +707,6 @@ impl Graph {
         let new_has_alias = doc_has_alias(&doc);
         let mut alias_touched = new_has_alias;
         let key = rev_key(entry.kind, &entry.name);
-        let mut cached = false;
         let mut guard = self.cache.write().unwrap();
         if let Some(pages) = guard.as_mut() {
             match pages.iter_mut().find(|(e, _)| {
@@ -698,15 +718,18 @@ impl Graph {
                 }
                 None => pages.push((entry, doc)),
             }
-            cached = true;
-        }
-        drop(guard);
-        // Keep disk_revs in lockstep with the cache: set it only when the page is
-        // actually cached (preserving "entry exists IFF cached"), and only after
-        // the cache slot is updated.
-        if cached {
+            // Update disk_revs WHILE STILL HOLDING the cache write lock, so the
+            // cached doc and its freshness rev are published atomically and can
+            // never diverge across concurrent same-page writers (e.g. an editor
+            // save racing a PDF write_highlights on an hls__ page). If they could
+            // diverge, the sync_file_content fast-path could match disk against a
+            // rev that isn't the cached doc's and serve a stale doc. Lock order is
+            // always cache → disk_revs; readers never hold disk_revs while taking
+            // the cache lock, so this nesting can't deadlock. Sets only when the
+            // page is actually cached (preserves "entry exists IFF cached").
             self.disk_revs.write().unwrap().insert(key, disk_rev);
         }
+        drop(guard);
         if alias_touched {
             *self.alias_cache.write().unwrap() = None;
         }
@@ -724,9 +747,11 @@ impl Graph {
                 alias_touched = doc_has_alias(d);
             }
             pages.retain(|(e, _)| !(e.kind == kind && e.name.eq_ignore_ascii_case(name)));
+            // Drop the rev under the cache lock (same cache → disk_revs order as
+            // cache_upsert) so the two never diverge.
+            self.disk_revs.write().unwrap().remove(&rev_key(kind, name));
         }
         drop(guard);
-        self.disk_revs.write().unwrap().remove(&rev_key(kind, name));
         if alias_touched {
             *self.alias_cache.write().unwrap() = None;
         }
@@ -1043,26 +1068,31 @@ impl Graph {
     /// sync, so they return None. No-op if the cache hasn't been built yet.
     pub fn sync_file(&self, path: &Path) -> Option<PageEntry> {
         let content = fs::read_to_string(path).ok()?;
-        self.sync_file_content(path, &content)
+        // The watcher consumes the self-write marker (one-shot) so the map stays
+        // bounded to in-flight writes.
+        self.sync_file_content(path, &content, true)
     }
 
     /// Reconcile the cache for `path` given its already-read `content` — so a
     /// caller that has just read the file (e.g. load_page) doesn't read it twice.
-    fn sync_file_content(&self, path: &Path, content: &str) -> Option<PageEntry> {
+    /// `consume_self_write`: whether a match on the self-write marker REMOVES it.
+    /// The watcher passes true (bounding); load_page passes false — load_page can
+    /// run in the rename→cache_upsert window and must not steal the marker out
+    /// from under the watcher, which would turn the watcher's later poll into a
+    /// false "changed on disk".
+    fn sync_file_content(&self, path: &Path, content: &str, consume_self_write: bool) -> Option<PageEntry> {
         let entry = self.entry_for_path(path)?;
         // Our own write: if the bytes on disk are exactly what Tine last wrote
         // here, this is not an external change — suppress it even if the parse
         // cache hasn't folded in the write yet (the rename→cache_upsert gap the
         // watcher can read into). The cache comparison below alone races that gap.
-        // CONSUME the entry on a match: once the watcher has observed our write the
-        // record has done its job, so the map stays bounded to in-flight writes and
-        // a later *external* write that happens to restore those exact bytes is no
-        // longer silently suppressed.
         let disk_rev = content_rev(content);
         {
             let mut recent = self.recent_writes.lock().unwrap();
             if recent.get(path).is_some_and(|r| *r == disk_rev) {
-                recent.remove(path);
+                if consume_self_write {
+                    recent.remove(path);
+                }
                 return None;
             }
         }
