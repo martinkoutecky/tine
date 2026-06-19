@@ -565,6 +565,35 @@ fn set_favorites_round_trips_in_config_edn() {
 }
 
 #[test]
+fn set_favorites_edn_aware_vector_end() {
+    // Round-6 audit: the end of `:favorites [...]` was found with the first raw
+    // `]`, so a favorite NAME containing `]` truncated the replacement and left a
+    // corrupt fragment. The end scan is now EDN-aware (skips strings/escapes).
+    let root = std::env::temp_dir().join(format!("tine-fav-edn-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("logseq")).unwrap();
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    let cfg_path = root.join("logseq").join("config.edn");
+    // Existing vector whose FIRST entry contains a `]`, plus a sibling key.
+    std::fs::write(
+        &cfg_path,
+        "{:favorites [\"A]B\" \"C\"]\n :journals-directory \"journals\"}\n",
+    )
+    .unwrap();
+
+    Graph::open(&root).set_favorites(&["Only".into()]).unwrap();
+    let cfg = std::fs::read_to_string(&cfg_path).unwrap();
+    assert_eq!(Graph::open(&root).meta().favorites, vec!["Only".to_string()]);
+    assert!(cfg.contains(":journals-directory"), "sibling preserved: {cfg}");
+    // The whole old vector is gone — no truncation fragment left behind.
+    assert!(!cfg.contains("A]B"), "old first entry fully replaced: {cfg}");
+    assert!(!cfg.contains("\"C\""), "old second entry gone (no leftover): {cfg}");
+    assert_eq!(cfg.matches(":favorites").count(), 1, "exactly one :favorites: {cfg}");
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn set_preferred_workflow_round_trips_in_config_edn() {
     let root = std::env::temp_dir().join(format!("tine-wf-test-{}", std::process::id()));
     std::fs::create_dir_all(root.join("logseq")).unwrap();

@@ -99,10 +99,12 @@ function tokenize(src: string): Tok[] {
     } else if (c === '"') {
       let j = i + 1;
       let s = "";
-      // Escape-aware: `\"`/`\\` are literal quote/backslash, so a quote inside
-      // the value doesn't end the string early (mirrors query.rs::tokenize).
+      // Escape-aware: ONLY `\"` and `\\` are escapes (→ literal quote/backslash),
+      // so a quote inside the value doesn't end the string early. A backslash
+      // before any other char is kept literally, so a hand-authored path like
+      // `"C:\tmp"` round-trips unchanged (mirrors query.rs::tokenize).
       while (j < ch.length && ch[j] !== '"') {
-        if (ch[j] === "\\" && j + 1 < ch.length) {
+        if (ch[j] === "\\" && (ch[j + 1] === '"' || ch[j + 1] === "\\")) {
           s += ch[j + 1];
           j += 2;
         } else {

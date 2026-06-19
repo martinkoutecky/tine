@@ -91,6 +91,18 @@ describe("parse + serialize round-trip", () => {
     // A literal backslash round-trips (escaped on write, unescaped on read).
     const bs: Clause = { kind: "op", op: "and", children: [{ kind: "content", text: "a\\b" }] };
     expect(parseQuery(toDsl(bs))).toEqual(bs);
+
+    // Generated value forcing quoting AND containing a backslash (Windows path).
+    const winpath: Clause = { kind: "op", op: "and", children: [{ kind: "property", key: "path", value: "C:\\program files" }] };
+    expect(parseQuery(toDsl(winpath))).toEqual(winpath);
+
+    // Only `\"` and `\\` are escapes: a HAND-AUTHORED single backslash before a
+    // normal char is kept literally, so `"C:\tmp"` doesn't become `C:tmp`.
+    expect(parseQuery('"a\\q b"')).toEqual({
+      kind: "op",
+      op: "and",
+      children: [{ kind: "content", text: "a\\q b" }],
+    });
   });
 
   it("empty query is empty string", () => {

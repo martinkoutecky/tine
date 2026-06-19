@@ -765,11 +765,13 @@ fn tokenize(src: &str) -> Vec<Tok> {
         } else if c == '"' {
             let mut j = i + 1;
             let mut s = String::new();
-            // Escape-aware: `\"`/`\\` are a literal quote/backslash, so a quote
-            // inside the value doesn't end the string early (mirrors the
-            // frontend query-builder tokenizer + serializer's quoteStr).
+            // Escape-aware: ONLY `\"` and `\\` are escapes (→ literal quote/
+            // backslash), so a quote inside the value doesn't end the string
+            // early. A backslash before any other char is kept literally, so a
+            // hand-authored path like `"C:\tmp"` round-trips unchanged (mirrors
+            // the frontend query-builder tokenizer + serializer's quoteStr).
             while j < chars.len() && chars[j] != '"' {
-                if chars[j] == '\\' && j + 1 < chars.len() {
+                if chars[j] == '\\' && matches!(chars.get(j + 1), Some('"') | Some('\\')) {
                     s.push(chars[j + 1]);
                     j += 2;
                 } else {
@@ -1017,6 +1019,10 @@ mod tests {
         // end the string early and silently truncate the query.
         assert_eq!(pred("\"foo \\\"bar\\\"\""), Pred::Content("foo \"bar\"".into()));
         assert_eq!(pred("\"a\\\\b\""), Pred::Content("a\\b".into()));
+        // Only `\"`/`\\` are escapes: a hand-authored backslash before another
+        // char is literal, so `"C:\tmp"` stays `C:\tmp` (not `C:tmp`).
+        assert_eq!(pred("\"a\\q\""), Pred::Content("a\\q".into()));
+        assert_eq!(pred("\"C:\\tmp\""), Pred::Content("C:\\tmp".into()));
         // End-to-end: the term still matches a block whose text contains the quote.
         let none = ctx_named();
         let b = DocBlock::new("note: foo \"bar\" baz");

@@ -238,14 +238,24 @@ impl Graph {
                 .collect::<Vec<_>>()
                 .join(" ")
         );
-        if let Some(start) = find_uncommented(&content, ":favorites") {
-            // Replace the existing (single-level) `:favorites [...]`.
-            if let Some(br) = content[start..].find('[') {
-                let abs = start + br;
-                if let Some(end_rel) = content[abs..].find(']') {
-                    let end = abs + end_rel + 1;
-                    content.replace_range(start..end, &format!(":favorites {vec_str}"));
-                }
+        if let Some(start) = find_keyword(&content, ":favorites") {
+            // Replace the existing `:favorites [...]` vector. Locate the key
+            // EDN-aware (skips strings/comments) and require its value to be a
+            // vector; find the matching `]` with an EDN-aware scan so a favorite
+            // NAME containing `]` (or a comment inside the vector) can't truncate
+            // the replacement and corrupt config.edn.
+            let after = start + ":favorites".len();
+            let b = content.as_bytes();
+            let mut j = after;
+            while j < b.len() && matches!(b[j], b' ' | b'\t' | b'\n' | b'\r' | b',') {
+                j += 1;
+            }
+            if j < b.len() && b[j] == b'[' {
+                let end = match_close_bracket(&content, j) + 1;
+                content.replace_range(start..end, &format!(":favorites {vec_str}"));
+            } else {
+                // Key present but no vector value — insert one right after it.
+                content.insert_str(after, &format!(" {vec_str}"));
             }
         } else if let Some(brace) = content.find('{') {
             content.insert_str(brace + 1, &format!("\n :favorites {vec_str}\n"));
@@ -1443,6 +1453,39 @@ fn match_close_brace(s: &str, open: usize) -> usize {
             }
             b'{' => depth += 1,
             b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return i;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    s.len()
+}
+
+/// Matching close `]` for the vector whose `[` is at byte `open`, EDN-aware:
+/// skips strings (with escapes), `;` line comments, and nested brackets. Returns
+/// end-of-string if unbalanced. (`]` is ASCII → returned index is a char boundary.)
+fn match_close_bracket(s: &str, open: usize) -> usize {
+    let b = s.as_bytes();
+    let mut i = open + 1;
+    let mut depth = 1usize;
+    while i < b.len() {
+        match b[i] {
+            b'"' => {
+                i = edn_str_end(s, i);
+                continue;
+            }
+            b';' => {
+                while i < b.len() && b[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            b'[' => depth += 1,
+            b']' => {
                 depth -= 1;
                 if depth == 0 {
                     return i;
