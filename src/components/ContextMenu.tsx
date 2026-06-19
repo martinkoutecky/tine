@@ -213,6 +213,10 @@ function MakeTemplate(props: { id: string; close: () => void }): JSX.Element {
         <button class="ctx-template-submit" onClick={() => void submit()}>
           Create template
         </button>
+        <div class="ctx-template-hint">
+          Tip: in the template, <code>{"<% today %>"}</code>, <code>{"<% current page %>"}</code>,{" "}
+          <code>{"<% date: +3d %>"}</code> expand when it's inserted (or via <code>/Template var</code>).
+        </div>
       </div>
     </Show>
   );

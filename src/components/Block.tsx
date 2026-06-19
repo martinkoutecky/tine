@@ -60,6 +60,7 @@ import { openPdf, workflow, zoomInto, openContextMenu, openDatePicker, openBlock
 import { matchesCommand } from "../keybindings";
 import { HL_COLOR_BG, HL_COLOR_SOLID } from "../pdf";
 import { cycleMarkerSmart } from "../editor/repeat";
+import { applyTemplateVars } from "../editor/templateVars";
 
 // Detect a block whose entire body is a single {{query}} / {{embed}} macro.
 function detectMacro(lines: string[]): { kind: "query" | "embed"; inner: string } | null {
@@ -455,19 +456,14 @@ async function getTemplates(): Promise<import("../types").TemplateDto[]> {
   }
   return templateCache;
 }
-/** Replace Logseq dynamic template vars: <% today/yesterday/tomorrow/time %>. */
-function applyTemplateVars(raw: string): string {
-  return raw.replace(/<%\s*(today|yesterday|tomorrow|time|current time)\s*%>/gi, (_m, kw) => {
-    const k = String(kw).toLowerCase();
-    if (k === "time" || k === "current time") return timeStamp();
-    const d = new Date();
-    if (k === "yesterday") d.setDate(d.getDate() - 1);
-    if (k === "tomorrow") d.setDate(d.getDate() + 1);
-    return `[[${todayJournalName(d)}]]`;
-  });
-}
-function templateToOutline(b: import("../types").BlockDto): { raw: string; children: any[] } {
-  return { raw: applyTemplateVars(b.raw), children: b.children.map(templateToOutline) };
+function templateToOutline(
+  b: import("../types").BlockDto,
+  currentPage?: string
+): { raw: string; children: any[] } {
+  return {
+    raw: applyTemplateVars(b.raw, currentPage),
+    children: b.children.map((c) => templateToOutline(c, currentPage)),
+  };
 }
 // Markdown for a freshly saved asset: images embed inline, everything else
 // (PDFs included) becomes a link — a .pdf link renders as a clickable chip that
@@ -685,7 +681,7 @@ function Editor(props: { id: string }): JSX.Element {
       const r = applyCompletion(ref.value, t.start, t.end, "");
       commit(r.raw);
       closeAc();
-      const nodes = item.templateNodes.map(templateToOutline);
+      const nodes = item.templateNodes.map((n) => templateToOutline(n, doc.byId[props.id]?.page));
       const wasEmpty =
         doc.byId[props.id].raw.trim() === "" && doc.byId[props.id].children.length === 0;
       const lastId = insertOutlineAfter(props.id, nodes);

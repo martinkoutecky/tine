@@ -1,6 +1,8 @@
 // Pure autocomplete logic for the block editor: detect a `[[`, `#`, or `/`
 // trigger at the caret, and apply a chosen completion. No DOM — unit-testable.
 
+import { TEMPLATE_VARS } from "./templateVars";
+
 export type TriggerKind = "page" | "tag" | "command";
 
 export interface Trigger {
@@ -133,6 +135,10 @@ export const COMMANDS: Command[] = [
   { label: "Math block", insert: "$$$$", caret: 2 },
   { label: "Current time", action: "now-time" },
   { label: "Today", action: "today" },
+  // Template variables: insert the `<% … %>` placeholder (expanded when the
+  // template is inserted). The list is shared with the "Make a template" hint.
+  ...TEMPLATE_VARS.map((v) => ({ label: `Template var: ${v.label}`, insert: v.insert })),
+  { label: "Template var: date…", insert: "<% date:  %>", caret: 9 },
 ];
 
 // --- Fuzzy ranking (port of OG Logseq's frontend.search/score) ---------------

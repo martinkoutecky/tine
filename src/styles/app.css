@@ -1034,6 +1034,18 @@ body {
 .ctx-template-submit:hover {
   filter: brightness(1.05);
 }
+.ctx-template-hint {
+  max-width: 260px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+.ctx-template-hint code {
+  background: var(--code-bg);
+  border-radius: 3px;
+  padding: 0 3px;
+  white-space: nowrap;
+}
 .ctx-color {
   width: 20px;
   height: 20px;

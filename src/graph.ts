@@ -7,6 +7,7 @@ import { resetStore, flushAll } from "./store";
 import { clearAssetBlobCache } from "./assetCache";
 import { openJournals } from "./router";
 import { journalTitle } from "./journal";
+import { applyTemplateVars } from "./editor/templateVars";
 import type { BlockDto } from "./types";
 
 const GRAPH_KEY = "tine.graphPath";
@@ -77,20 +78,6 @@ export async function refreshAliases(): Promise<void> {
 }
 const loadAliases = refreshAliases;
 
-// Resolve Logseq dynamic template vars in a template block.
-function applyTemplateVars(raw: string): string {
-  return raw.replace(/<%\s*(today|yesterday|tomorrow|time|current time)\s*%>/gi, (_m, kw) => {
-    const k = String(kw).toLowerCase();
-    const d = new Date();
-    if (k === "time" || k === "current time") {
-      return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-    }
-    if (k === "yesterday") d.setDate(d.getDate() - 1);
-    if (k === "tomorrow") d.setDate(d.getDate() + 1);
-    return `[[${journalTitle(d)}]]`;
-  });
-}
-
 // If config.edn sets :default-templates {:journals "X"}, create today's journal
 // from that template when it doesn't exist yet (or is empty). No-op when unset,
 // so default behaviour is unchanged.
@@ -105,7 +92,7 @@ async function ensureJournalTemplate(): Promise<void> {
     if (!tmpl) return;
     const resolve = (b: BlockDto): BlockDto => ({
       id: "",
-      raw: applyTemplateVars(b.raw),
+      raw: applyTemplateVars(b.raw, title),
       collapsed: false,
       children: b.children.map(resolve),
     });
