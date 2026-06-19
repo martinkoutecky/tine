@@ -2,12 +2,18 @@
 // the prior Qt attempt got wrong (caret lost on indent/split/merge). No DOM
 // needed; these are pure operations on the store.
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   doc,
   resetStore,
   loadSingle,
   loadFeed,
+  markDirty,
+  flushPage,
+  flushAll,
+  forceSave,
+  isDirty,
+  deletePage,
   editingId,
   splitBlock,
   indentBlock,
@@ -35,6 +41,8 @@ import {
 } from "./store";
 import { exportOutline, DEFAULT_EXPORT_OPTIONS } from "./editor/exportText";
 import { splitProps, joinProps, isBuiltinHidden, hideAll } from "./editor/properties";
+import { backend } from "./backend";
+import { isConflicted, conflicts, clearConflict } from "./ui";
 import { journalTitle } from "./journal";
 import type { BlockDto, PageDto } from "./types";
 
@@ -624,5 +632,86 @@ describe("selection indent is single-page (ds8-2)", () => {
     expect(pageByName("Older")!.roots).toContain(o1);
     expect(doc.byId[t2].parent).toBe(t1);
     expect(doc.byId[t2].page).toBe("Today");
+  });
+});
+
+// Characterization tests for the debounced persistence engine (markDirty →
+// scheduleSave/doSave/flushPage/flushAll/forceSave + the dirty/baseRev/
+// deletedPages/conflict guards). These pin the save behaviour so the R2
+// extraction into a SaveCoordinator is provably behaviour-preserving.
+describe("save engine (persistence)", () => {
+  let saveSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    conflicts()
+      .slice()
+      .forEach(clearConflict); // ui conflicts aren't cleared by resetStore
+    vi.useFakeTimers();
+    saveSpy = vi.spyOn(backend(), "savePage").mockResolvedValue("rev1");
+  });
+  afterEach(() => {
+    vi.runOnlyPendingTimers();
+    vi.useRealTimers();
+    saveSpy.mockRestore();
+  });
+
+  it("debounces dirty pages into one batched save", async () => {
+    load([blk("hello")]);
+    markDirty("Test");
+    markDirty("Test"); // coalesced into the same 400ms batch
+    expect(saveSpy).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(400);
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+    expect((saveSpy.mock.calls[0][0] as { name: string }).name).toBe("Test");
+    expect(isDirty("Test")).toBe(false);
+  });
+
+  it("flushPage writes immediately and advances the baseline rev", async () => {
+    load([blk("x")]);
+    saveSpy.mockResolvedValue("rev2");
+    markDirty("Test");
+    expect(await flushPage("Test")).toBe(true);
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+    // Next save sends the rev returned by the previous one as its baseRev.
+    markDirty("Test");
+    await flushPage("Test");
+    expect(saveSpy.mock.calls[1][1]).toBe("rev2");
+  });
+
+  it("a conflict marks the page (no clobber) and flushAll reports failure", async () => {
+    load([blk("x")]);
+    markDirty("Test");
+    saveSpy.mockRejectedValueOnce(new Error("conflict"));
+    expect(await flushAll()).toBe(false);
+    expect(isConflicted("Test")).toBe(true);
+  });
+
+  it("a transient error keeps the page dirty for retry", async () => {
+    load([blk("x")]);
+    markDirty("Test");
+    saveSpy.mockRejectedValueOnce(new Error("disk full"));
+    expect(await flushPage("Test")).toBe(false);
+    expect(isDirty("Test")).toBe(true);
+    expect(await flushPage("Test")).toBe(true); // retry succeeds
+  });
+
+  it("a tombstoned (deleted) page is never written", async () => {
+    load([blk("x")]);
+    markDirty("Test");
+    await deletePage("Test", "page"); // tombstones the page
+    saveSpy.mockClear();
+    markDirty("Test"); // a stray queued save after delete must not recreate it
+    expect(await flushPage("Test")).toBe(true);
+    expect(saveSpy).not.toHaveBeenCalled();
+  });
+
+  it("forceSave overwrites even a conflicted page (force=true)", async () => {
+    load([blk("x")]);
+    markDirty("Test");
+    saveSpy.mockRejectedValueOnce(new Error("conflict"));
+    await flushPage("Test");
+    expect(isConflicted("Test")).toBe(true);
+    saveSpy.mockResolvedValue("rev3");
+    expect(await forceSave("Test")).toBe(true);
+    expect(saveSpy.mock.calls.at(-1)![2]).toBe(true); // force flag
   });
 });
