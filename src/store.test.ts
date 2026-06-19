@@ -2,7 +2,7 @@
 // the prior Qt attempt got wrong (caret lost on indent/split/merge). No DOM
 // needed; these are pure operations on the store.
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi, type MockInstance } from "vitest";
 import {
   doc,
   resetStore,
@@ -41,7 +41,7 @@ import {
 } from "./store";
 import { exportOutline, DEFAULT_EXPORT_OPTIONS } from "./editor/exportText";
 import { splitProps, joinProps, isBuiltinHidden, hideAll } from "./editor/properties";
-import { backend } from "./backend";
+import { backend, type Backend } from "./backend";
 import { isConflicted, conflicts, clearConflict } from "./ui";
 import { journalTitle } from "./journal";
 import type { BlockDto, PageDto } from "./types";
@@ -640,7 +640,7 @@ describe("selection indent is single-page (ds8-2)", () => {
 // deletedPages/conflict guards). These pin the save behaviour so the R2
 // extraction into a SaveCoordinator is provably behaviour-preserving.
 describe("save engine (persistence)", () => {
-  let saveSpy: ReturnType<typeof vi.spyOn>;
+  let saveSpy: MockInstance<Backend["savePage"]>;
   beforeEach(() => {
     conflicts()
       .slice()

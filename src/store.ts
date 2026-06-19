@@ -12,10 +12,29 @@ import type { BlockDto, PageDto, PageKind } from "./types";
 import type { OutlineNode } from "./editor/outline";
 import type { ExportNode } from "./editor/exportText";
 import { backend } from "./backend";
-import { markConflict, isConflicted, clearConflict, bumpDataRev, rightSidebar, conflicts, pushToast } from "./ui";
+import { isConflicted, clearConflict, rightSidebar, conflicts, pushToast } from "./ui";
 import { blockView } from "./render/block";
 import { journalTitle } from "./journal";
 import { upsertPropertyLine, readPropertyValue, splitProps, joinProps, isBuiltinHidden } from "./editor/properties";
+import {
+  markDirty,
+  isDirty,
+  scheduleSave,
+  flushPage,
+  flushAll,
+  forceSave,
+  addDirty,
+  dirtyPages,
+  setBaseRev,
+  tombstone,
+  untombstone,
+  forgetSaveState,
+  resetSaveState,
+  isSaving,
+} from "./persistence";
+// The debounced persistence engine lives in persistence.ts; re-exported here so
+// the rest of the app keeps importing the save API from the store.
+export { markDirty, isDirty, scheduleSave, flushPage, flushAll, forceSave };
 
 export interface Node {
   id: string;
@@ -143,14 +162,14 @@ function purgePageNodes(s: DocState, pageName: string) {
 function upsertPage(dto: PageDto) {
   // A real page with this name exists again → lift any delete tombstone so edits
   // to the freshly-(re)created page save normally.
-  deletedPages.delete(dto.name);
+  untombstone(dto.name);
   // Replacing an already-loaded copy means the page's content changed under us
   // (a conflict-resolution / watcher reload). Any undo entry predating this reload
   // is stale — replaying it would clobber the just-loaded (external) version, so
   // drop those entries. (A first load has no prior entries → no-op.)
   const replacing = doc.pages.some((p) => p.name === dto.name);
   // Record the load baseline (the on-disk rev) so saves conflict against it.
-  baseRev.set(dto.name, dto.rev ?? null);
+  setBaseRev(dto.name, dto.rev ?? null);
   setDoc(
     produce((s) => {
       purgePageNodes(s, dto.name);
@@ -179,8 +198,7 @@ export function ensurePageLoaded(dto: PageDto) {
  *  disk version"): otherwise the unsaved in-memory copy is left untracked — not
  *  dirty, not conflicted — and is silently lost at close. */
 export function forgetPage(name: string) {
-  dirty.delete(name);
-  baseRev.delete(name);
+  forgetSaveState(name);
   clearConflict(name);
   // The page is leaving the working set; a stale undo snapshot must not be able to
   // re-add it (and, with baseRev gone, recreate an externally-deleted file).
@@ -209,11 +227,11 @@ export async function deletePage(name: string, kind: PageKind): Promise<boolean>
   // Tombstone first so any queued/in-flight save no-ops during the delete, but
   // DON'T drop the in-memory page until the backend actually deletes it — if the
   // delete fails, the page (and its unsaved edits) must survive.
-  deletedPages.add(name);
+  tombstone(name);
   try {
     await backend().deletePage(name, kind);
   } catch {
-    deletedPages.delete(name); // delete failed — lift the tombstone; page + edits stay intact
+    untombstone(name); // delete failed — lift the tombstone; page + edits stay intact
     return false;
   }
   forgetPage(name); // success — now drop it from the working set + feed
@@ -228,7 +246,7 @@ const WORKING_SET_CAP = 80;
 function pinnedPages(): Set<string> {
   const pin = new Set<string>(doc.feed);
   for (const it of rightSidebar()) pin.add(it.kind === "page" ? it.name : it.page);
-  for (const name of dirty) pin.add(name);
+  for (const name of dirtyPages()) pin.add(name);
   // Conflicted pages hold unsaved edits that aren't in `dirty` (the save batch
   // removed them); evicting one would silently drop those edits.
   for (const name of conflicts()) pin.add(name);
@@ -279,21 +297,10 @@ function evictIfNeeded() {
  *  cancels pending saves and clears dirty flags so nothing from the old graph
  *  can be written after a switch. */
 export function resetStore() {
-  if (saveTimer) {
-    clearTimeout(saveTimer);
-    saveTimer = null;
-  }
-  if (dataRevTimer) {
-    clearTimeout(dataRevTimer);
-    dataRevTimer = null;
-  }
-  // Invalidate any in-flight/queued save so it can't write the old graph's
-  // content into the newly-loaded graph: bump the token (baseline updates bail)
-  // and clear dirty (a stray queued save becomes a no-op).
-  graphToken++;
-  dirty.clear();
-  baseRev.clear();
-  deletedPages.clear();
+  // Cancel pending/in-flight saves and clear all save guard state (timers, graph
+  // token, dirty/baseline/tombstone) so nothing from the old graph can be written
+  // after the switch.
+  resetSaveState();
   // Drop undo/redo history: it holds page snapshots from the OLD graph; an undo
   // after a graph switch would otherwise restore (and save) those into the new
   // graph, even creating a foreign page there.
@@ -570,7 +577,7 @@ function applyEntry(e: UndoEntry): UndoEntry {
     const inverse: RawEntry = { kind: "raw", id: e.id, raw: node ? node.raw : "", page: e.page };
     if (node) {
       setDoc("byId", e.id, "raw", e.raw);
-      dirty.add(e.page);
+      addDirty(e.page);
     }
     return inverse;
   }
@@ -610,7 +617,7 @@ function applyEntry(e: UndoEntry): UndoEntry {
       })
     );
   }
-  for (const p of e.dirty) dirty.add(p);
+  for (const p of e.dirty) addDirty(p);
   return inverse;
 }
 
@@ -633,25 +640,6 @@ export function redo() {
 // ---------------------------------------------------------------------------
 // Mutations (each schedules a debounced save of the affected page)
 // ---------------------------------------------------------------------------
-
-const dirty = new Set<string>();
-// Per-page save baseline: the on-disk file rev the editor last loaded or saved.
-// Sent on save so the backend conflicts against the version the editor actually
-// has, not its own mutable cache (which the watcher can advance under us).
-const baseRev = new Map<string, string | null>();
-// Pages the user just deleted. A never-saved page can have a queued save with
-// baseRev=null; without this, that save fires after the delete and the backend
-// (missing file + null baseline = "new page") happily recreates it. While a name
-// is tombstoned, saves for it are skipped; re-loading/creating the page clears it.
-const deletedPages = new Set<string>();
-/** Does a page have unsaved (debounced) edits pending? */
-export function isDirty(pageName: string): boolean {
-  return dirty.has(pageName);
-}
-export function markDirty(pageName: string) {
-  dirty.add(pageName);
-  scheduleSave();
-}
 
 export function setRaw(id: string, raw: string) {
   pushRawUndo(id, doc.byId[id].raw);
@@ -1475,7 +1463,7 @@ function persistCrossPage(dest: string, sources: string[]) {
  *  the caller MUST then abort the move. Clean sources flush as instant no-ops. */
 export async function prepareCrossPageSources(sources: string[]): Promise<boolean> {
   for (const s of new Set(sources)) {
-    if ((isDirty(s) || saveChain.has(s)) && !(await flushPage(s))) return false;
+    if ((isDirty(s) || isSaving(s)) && !(await flushPage(s))) return false;
   }
   return true;
 }
@@ -1676,131 +1664,3 @@ export function setCollapsed(id: string, collapsed: boolean) {
   markDirty(n.page);
 }
 
-// ---------------------------------------------------------------------------
-// Debounced persistence
-// ---------------------------------------------------------------------------
-
-// Debounced query-recompute trigger: bump dataRev only after edits go quiet, so
-// sustained typing doesn't re-run every visible query every save batch.
-let dataRevTimer: ReturnType<typeof setTimeout> | null = null;
-function scheduleDataRev() {
-  if (dataRevTimer) clearTimeout(dataRevTimer);
-  dataRevTimer = setTimeout(() => {
-    dataRevTimer = null;
-    bumpDataRev();
-  }, 700);
-}
-
-// Bumped whenever the working set is reset (graph switch). A save abandons its
-// baseline update if the graph changed under it; resetStore also clears `dirty`
-// so a stray queued save becomes a no-op — old-graph content can't reach a new
-// graph.
-let graphToken = 0;
-
-// Per-page save queue: writes for one page run strictly one-after-another (never
-// concurrently) and each runs against the LATEST store state. This means a
-// flushPage racing the debounce, or an edit landing during an in-flight write,
-// can neither write stale content "last" nor be dropped — the trailing save
-// always reflects the final edit and is awaited by flushAll.
-const saveChain = new Map<string, Promise<boolean>>();
-
-function enqueueSave(name: string, force = false): Promise<boolean> {
-  const prev = saveChain.get(name) ?? Promise.resolve(true);
-  const next = prev.then(() => doSave(name, force), () => doSave(name, force));
-  saveChain.set(name, next);
-  void next.finally(() => {
-    if (saveChain.get(name) === next) saveChain.delete(name);
-  });
-  return next;
-}
-
-/** Write the page's CURRENT state once. No-op success if it isn't dirty and not
- *  forced. Sends `baseRev` (the version the editor loaded) so the backend
- *  conflicts against external changes; updates the baseline on success. On a
- *  conflict marks it (no clobber); on a transient error keeps it dirty + toasts. */
-async function doSave(name: string, force: boolean): Promise<boolean> {
-  if (deletedPages.has(name)) return true; // tombstoned — never recreate a deleted page
-  if (!force && !dirty.has(name)) return true; // already saved by a prior link
-  if (isConflicted(name) && !force) return false;
-  const token = graphToken;
-  const dto = pageToDto(name);
-  if (!dto) return false;
-  dirty.delete(name);
-  try {
-    const rev = await backend().savePage(dto, baseRev.get(name) ?? null, force);
-    if (token === graphToken) baseRev.set(name, rev);
-    return true;
-  } catch (e) {
-    if (String(e).includes("conflict")) {
-      markConflict(name);
-    } else if (token === graphToken) {
-      dirty.add(name); // keep pending — retried on next edit / flush
-      pushToast(`Couldn't save “${name}” — will retry. (${String(e)})`, "error");
-    }
-    return false;
-  }
-}
-
-let saveTimer: ReturnType<typeof setTimeout> | null = null;
-export function scheduleSave() {
-  if (!doc.loaded) return;
-  if (saveTimer) clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    saveTimer = null;
-    const names = [...dirty];
-    void (async () => {
-      const results = await Promise.all(names.map((n) => enqueueSave(n)));
-      // The backend cache now reflects these edits → let queries recompute, but
-      // coalesce: re-running every on-screen query is a whole-graph scan, so wait
-      // for a lull instead of firing on every 400ms save batch.
-      if (results.some(Boolean)) scheduleDataRev();
-    })();
-  }, 400);
-}
-
-/** Save one page immediately, bypassing the debounce — for actions that must
- *  durably persist before the user might quit (e.g. parking a block in the
- *  sidebar writes an id:: that has to survive a restart). Returns success. */
-export async function flushPage(name: string): Promise<boolean> {
-  if (!doc.loaded) return false;
-  const ok = await enqueueSave(name);
-  if (ok) scheduleDataRev();
-  return ok;
-}
-
-/** Persist every dirty page now and wait for them (incl. anything mid-write) —
- *  for graph switch / restore / app close. Returns true only if everything
- *  landed (no conflicts or errors), so the caller can abort a destructive
- *  transition rather than discard the un-saved edit. */
-export async function flushAll(): Promise<boolean> {
-  if (saveTimer) {
-    clearTimeout(saveTimer);
-    saveTimer = null;
-  }
-  let landed = false;
-  // Drain repeatedly: an edit made WHILE a save is in flight re-dirties the page,
-  // and a queued save may still be running, so one pass can miss work. Keep
-  // flushing until nothing is pending (bounded against a persistently-failing
-  // save).
-  for (let i = 0; i < 4; i++) {
-    const names = new Set<string>([...dirty, ...saveChain.keys()]);
-    if (names.size === 0) break;
-    const results = await Promise.all([...names].map((n) => enqueueSave(n)));
-    if (results.some(Boolean)) landed = true;
-  }
-  if (landed) bumpDataRev();
-  // Success only if nothing is still pending AND there are no unresolved
-  // conflicts (a conflicted page's edit is NOT on disk) — so a destructive
-  // transition (graph switch / restore / close) can abort instead of discarding it.
-  return dirty.size === 0 && conflicts().length === 0;
-}
-
-/** Resolve a save conflict by overwriting the on-disk file with the in-memory
- *  version ("keep mine"). Returns whether the overwrite succeeded — the caller
- *  must not clear the conflict unless it did. */
-export async function forceSave(name: string): Promise<boolean> {
-  dirty.add(name); // ensure doSave writes even though it's parked as conflicted
-  const ok = await enqueueSave(name, true);
-  if (!ok) pushToast(`Couldn't overwrite “${name}”.`, "error");
-  return ok;
-}
