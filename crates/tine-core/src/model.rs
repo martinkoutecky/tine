@@ -587,7 +587,40 @@ impl Graph {
 
     /// Eagerly build the page cache (call once after opening, off the hot path).
     pub fn warm_cache(&self) {
-        self.with_pages(|_| ());
+        use std::sync::atomic::Ordering;
+        if self.cache.read().unwrap().is_some() {
+            return; // already built (e.g. by a query) — nothing to warm
+        }
+        // Build PACED and WITHOUT holding build_lock during the parse: on a
+        // thermally throttled laptop the warm would otherwise peg a core in one
+        // burst right after launch, competing with first scrolling/typing/the
+        // first agenda query. Parse into a LOCAL vec in small chunks with a brief
+        // yield between them, so the load is spread out and an on-demand
+        // `with_pages` (a user query) can still take build_lock and build fast
+        // without waiting on our sleeps. If it wins, we discard our work.
+        let gen0 = self.cache_gen.load(Ordering::Acquire);
+        let entries = self.list_pages();
+        let mut built: Vec<(PageEntry, Document)> = Vec::with_capacity(entries.len());
+        for (i, e) in entries.into_iter().enumerate() {
+            if let Ok(mut d) = self.read_document(&e) {
+                assign_doc_uuids(&mut d.roots);
+                built.push((e, d));
+            }
+            if i % 24 == 23 {
+                if self.cache.read().unwrap().is_some() {
+                    return; // a query built the cache while we parsed
+                }
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+        }
+        // Install only if nobody else built it and no save/remove raced our reads
+        // (its cache mutation would have no-op'd against the None cache, so its
+        // disk write must be folded in by a rebuild — here we just defer to the
+        // next on-demand build rather than install a stale snapshot).
+        let _bl = self.build_lock.lock().unwrap();
+        if self.cache.read().unwrap().is_none() && self.cache_gen.load(Ordering::Acquire) == gen0 {
+            *self.cache.write().unwrap() = Some(built);
+        }
     }
 
     /// Discard the cache; it rebuilds on the next whole-graph query. Use when an
