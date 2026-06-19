@@ -25,10 +25,12 @@ export function DatePicker(): JSX.Element {
 }
 
 // Parse an org repeater cookie (`+1w`, `.+1w`, `++1w`) into UI state. `.+` means
-// "measure the next due date from the completion day"; plain `+` from the date.
-function parseRepeater(r: string | null): { unit: string; num: number; fromDone: boolean } {
+// "from the completion day"; `+` from the stored date; `++` is catch-up. The mode
+// is preserved verbatim so editing a `++` task's date doesn't rewrite it to `+`.
+type RepMode = "+" | "++" | ".+";
+function parseRepeater(r: string | null): { unit: string; num: number; mode: RepMode } {
   const m = r ? /^(\.\+|\+\+|\+)(\d+)([dwmy])$/.exec(r) : null;
-  return m ? { unit: m[3], num: +m[2], fromDone: m[1] === ".+" } : { unit: "", num: 1, fromDone: false };
+  return m ? { unit: m[3], num: +m[2], mode: m[1] as RepMode } : { unit: "", num: 1, mode: "+" };
 }
 
 function Picker(props: { bid: string; which: "scheduled" | "deadline"; x: number; y: number }): JSX.Element {
@@ -44,9 +46,9 @@ function Picker(props: { bid: string; which: "scheduled" | "deadline"; x: number
   const init = parseRepeater(sel?.repeater ?? null);
   const [repUnit, setRepUnit] = createSignal(init.unit);
   const [repNum, setRepNum] = createSignal(init.num);
-  const [repFromDone, setRepFromDone] = createSignal(init.fromDone);
+  const [repMode, setRepMode] = createSignal<RepMode>(init.mode);
   const repeater = (): string | null =>
-    repUnit() ? `${repFromDone() ? ".+" : "+"}${Math.max(1, repNum())}${repUnit()}` : null;
+    repUnit() ? `${repMode()}${Math.max(1, repNum())}${repUnit()}` : null;
 
   // Days laid out in weeks (leading blanks for the first-of-month offset).
   const grid = createMemo(() => {
@@ -140,8 +142,8 @@ function Picker(props: { bid: string; which: "scheduled" | "deadline"; x: number
             >
               <input
                 type="checkbox"
-                checked={repFromDone()}
-                onChange={(e) => setRepFromDone(e.currentTarget.checked)}
+                checked={repMode() === ".+"}
+                onChange={(e) => setRepMode(e.currentTarget.checked ? ".+" : "+")}
               />
               from completion
             </label>

@@ -23,12 +23,33 @@ function advanceTimestamp(ts: string): string | null {
   if (!m || !m[4]) return null;
   const [, y, mo, d, kind, n, unit] = m;
   const num = Number(n);
-  // `.+` repeats from the completion date (today); others from the stored date.
-  const dt = kind === ".+" ? new Date() : new Date(Number(y), Number(mo) - 1, Number(d));
-  if (unit === "d") dt.setDate(dt.getDate() + num);
-  else if (unit === "w") dt.setDate(dt.getDate() + num * 7);
-  else if (unit === "m") dt.setMonth(dt.getMonth() + num);
-  else if (unit === "y") dt.setFullYear(dt.getFullYear() + num);
+  if (!num) return null; // a +0 repeater is degenerate — don't loop/advance
+  const step = (dt: Date) => {
+    if (unit === "d") dt.setDate(dt.getDate() + num);
+    else if (unit === "w") dt.setDate(dt.getDate() + num * 7);
+    else if (unit === "m") dt.setMonth(dt.getMonth() + num);
+    else if (unit === "y") dt.setFullYear(dt.getFullYear() + num);
+  };
+  // `.+` repeats from the completion date (today); `+`/`++` from the stored date.
+  // `++` is catch-up: advance repeatedly until strictly past today (skipping any
+  // missed occurrences); `+`/`.+` advance once. The kind is preserved verbatim.
+  let dt: Date;
+  if (kind === ".+") {
+    dt = new Date();
+    step(dt);
+  } else {
+    dt = new Date(Number(y), Number(mo) - 1, Number(d));
+    if (kind === "++") {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      let guard = 0;
+      do {
+        step(dt);
+      } while (dt <= today && ++guard < 100000);
+    } else {
+      step(dt);
+    }
+  }
   const yyyy = dt.getFullYear();
   const MM = String(dt.getMonth() + 1).padStart(2, "0");
   const dd = String(dt.getDate()).padStart(2, "0");

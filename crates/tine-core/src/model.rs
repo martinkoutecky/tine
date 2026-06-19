@@ -321,13 +321,12 @@ impl Graph {
                         if let Some(jrel) = content[open + 1..close].find(":journals") {
                             // Replace the existing string value after :journals.
                             let after = open + 1 + jrel + ":journals".len();
-                            let vstart = after + content[after..close].find('"').unwrap_or(0);
-                            let vend = content[vstart + 1..close]
-                                .find('"')
-                                .map(|e| vstart + 1 + e + 1) // just past the closing quote
-                                .unwrap_or(close);
                             // If there was no value at all, fall back to inserting.
                             if content[after..close].contains('"') {
+                                let vstart = after + content[after..close].find('"').unwrap_or(0);
+                                // Escape-aware end scan: a `\"` inside the old value must
+                                // not be mistaken for the closing quote (would corrupt the file).
+                                let vend = edn_str_end(&content, vstart);
                                 content.replace_range(vstart..vend, &v);
                             } else {
                                 content.insert_str(after, &format!(" {v}"));
@@ -355,14 +354,12 @@ impl Graph {
                     if let Some(jrel) = content[open + 1..close].find(":journals") {
                         let jstart = open + 1 + jrel;
                         let after = jstart + ":journals".len();
-                        // End just past the value's closing quote (or at `}`).
+                        // End just past the value's closing quote (escape-aware, so a
+                        // `\"` in the value doesn't truncate the removed range).
                         let mut end = after;
                         if let Some(qrel) = content[after..close].find('"') {
                             let vstart = after + qrel;
-                            end = content[vstart + 1..close]
-                                .find('"')
-                                .map(|e| vstart + 1 + e + 1)
-                                .unwrap_or(close);
+                            end = edn_str_end(&content, vstart);
                         }
                         // Swallow trailing separators so we don't leave a gap.
                         let tail: usize = content[end..close]
@@ -1398,6 +1395,24 @@ impl Graph {
 /// Byte offset of the first occurrence of `key` on a NON-comment line (the text
 /// before any `;` on that line), or None. Config writers use this so a
 /// commented-out example like `;; :favorites […]` is never edited by mistake.
+/// Index just past the closing quote of an EDN string that opens at byte `open`
+/// (a `"`), skipping `\"` / `\\` escapes — so an escaped quote inside the value
+/// can't make a range-edit land on the wrong byte and corrupt config.edn. Returns
+/// end-of-string if the string is unterminated. (`"` is ASCII, so the returned
+/// index is always a char boundary.)
+fn edn_str_end(s: &str, open: usize) -> usize {
+    let b = s.as_bytes();
+    let mut i = open + 1;
+    while i < b.len() {
+        match b[i] {
+            b'\\' => i += 2,
+            b'"' => return i + 1,
+            _ => i += 1,
+        }
+    }
+    s.len()
+}
+
 fn find_uncommented(content: &str, key: &str) -> Option<usize> {
     let mut pos = 0usize;
     for line in content.split_inclusive('\n') {

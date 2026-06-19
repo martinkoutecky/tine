@@ -348,12 +348,21 @@ function toDto(id: string): BlockDto {
 export function pageToDto(pageName: string): PageDto | null {
   const p = doc.pages.find((x) => x.name === pageName);
   if (!p) return null;
+  let blocks = p.roots.map(toDto);
+  // Don't persist a lone placeholder block. A page that exists only for its
+  // properties is loaded with one empty editable bullet (toLoadable); saving it
+  // — e.g. after a page-property edit — must NOT write that bullet back as a
+  // stray "- " and corrupt the round-trip. Symmetric with the load side;
+  // reopening re-adds the editable bullet.
+  if (blocks.length === 1 && blocks[0].raw.trim() === "" && blocks[0].children.length === 0) {
+    blocks = [];
+  }
   return {
     name: p.name,
     kind: p.kind,
     title: p.title,
     pre_block: p.preBlock,
-    blocks: p.roots.map(toDto),
+    blocks,
   };
 }
 

@@ -42,6 +42,13 @@ describe("resolveDateToken", () => {
     expect(resolveDateToken("garbage", TODAY)).toBeNull();
   });
 
+  it("rejects impossible calendar dates instead of rolling them over", () => {
+    expect(resolveDateToken("2026-02-31", TODAY)).toBeNull();
+    expect(resolveDateToken("2026-13-01", TODAY)).toBeNull();
+    expect(resolveDateToken("2026-00-10", TODAY)).toBeNull();
+    expect(iso(resolveDateToken("2026-02-28", TODAY))).toBe("2026-02-28"); // valid still works
+  });
+
   it("previewDate renders or blanks", () => {
     expect(previewDate("-30d", TODAY)).toBe("May 17th, 2026");
     expect(previewDate("Some Page", TODAY)).toBe("");

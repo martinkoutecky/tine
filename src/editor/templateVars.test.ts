@@ -25,6 +25,8 @@ describe("applyTemplateVars", () => {
     t.setDate(t.getDate() + 3);
     expect(applyTemplateVars("<% date: +3d %>")).toBe(`[[${journalTitle(t)}]]`);
     expect(applyTemplateVars("<% date: 2026-07-01 %>")).toBe(`[[${journalTitle(new Date(2026, 6, 1))}]]`);
+    // An impossible date is left verbatim, not silently rolled to a wrong day.
+    expect(applyTemplateVars("<% date: 2026-02-31 %>")).toBe("<% date: 2026-02-31 %>");
   });
 
   it("expands time as HH:MM and leaves unknown/empty vars verbatim", () => {

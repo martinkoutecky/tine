@@ -650,6 +650,38 @@ fn set_default_journal_template_round_trips_in_config_edn() {
 }
 
 #[test]
+fn set_default_journal_template_quoted_name_does_not_corrupt_config() {
+    // A template name with an embedded quote is escaped on write; the escape-aware
+    // value-end scan must then replace/clear only the value on the next edit,
+    // never mis-scanning the `\"` and corrupting config.edn.
+    let root = std::env::temp_dir().join(format!("tine-jtmpl-q-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("logseq")).unwrap();
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    let cfg_path = root.join("logseq").join("config.edn");
+    std::fs::write(&cfg_path, "{:start-of-week 1\n :default-templates {:journals \"Old\"}}\n").unwrap();
+    let cfg = || std::fs::read_to_string(&cfg_path).unwrap();
+
+    Graph::open(&root).set_default_journal_template(Some("My \"Daily\"")).unwrap();
+    assert!(cfg().contains("\\\""), "embedded quote should be escaped: {}", cfg());
+
+    // Replace with a plain name: clean single :journals, sibling intact, old value gone.
+    Graph::open(&root).set_default_journal_template(Some("Plain")).unwrap();
+    let c = cfg();
+    assert!(c.contains(":journals \"Plain\""), "value replaced cleanly: {}", c);
+    assert_eq!(c.matches(":journals").count(), 1, "exactly one :journals: {}", c);
+    assert!(c.contains(":start-of-week 1"), "sibling preserved: {}", c);
+    assert!(!c.contains("Daily"), "old quoted value fully removed: {}", c);
+
+    // Clearing a value that contains an escaped quote removes the whole pair.
+    std::fs::write(&cfg_path, "{:default-templates {:journals \"a\\\"b\"}}\n").unwrap();
+    Graph::open(&root).set_default_journal_template(None).unwrap();
+    assert!(!cfg().contains(":journals"), "journals cleared, no garbage: {}", cfg());
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn deleted_journal_is_not_served_from_stale_cache() {
     use tine_core::PageKind;
     let root = std::env::temp_dir().join(format!("tine-del-cache-{}", std::process::id()));

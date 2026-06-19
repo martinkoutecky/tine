@@ -14,6 +14,11 @@ function addDays(d: Date, n: number): Date {
   r.setDate(r.getDate() + n);
   return r;
 }
+// Build a Date only if the y/m/d round-trip exactly (rejects 2026-02-31 etc.).
+function validDate(y: number, m: number, d: number): Date | null {
+  const dt = new Date(y, m, d);
+  return dt.getFullYear() === y && dt.getMonth() === m && dt.getDate() === d ? dt : null;
+}
 function addMonths(d: Date, n: number): Date {
   const r = new Date(d);
   const day = r.getDate();
@@ -55,20 +60,17 @@ export function resolveDateToken(tok: string, today = new Date()): Date | null {
         return addMonths(today, n * 12);
     }
   }
-  // ISO yyyy-MM-dd.
+  // ISO yyyy-MM-dd. Reject impossible dates (e.g. 2026-02-31) rather than letting
+  // JS Date silently roll them over to a wrong day.
   const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(t);
   if (iso) {
-    const d = new Date(+iso[1], +iso[2] - 1, +iso[3]);
-    return isNaN(d.getTime()) ? null : d;
+    return validDate(+iso[1], +iso[2] - 1, +iso[3]);
   }
   // "MMM do, yyyy" journal title (e.g. "Jun 16th, 2026") — resolvable locally.
   const jt = /^([a-z]{3})\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})$/i.exec(t);
   if (jt) {
     const m = MONTHS.indexOf(jt[1].toLowerCase());
-    if (m >= 0) {
-      const d = new Date(+jt[3], m, +jt[2]);
-      return isNaN(d.getTime()) ? null : d;
-    }
+    if (m >= 0) return validDate(+jt[3], m, +jt[2]);
   }
   return null;
 }

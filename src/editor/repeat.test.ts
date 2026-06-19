@@ -27,4 +27,15 @@ describe("repeaters", () => {
     const { raw } = cycleMarkerSmart("DOING jog", "todo");
     expect(raw).toBe("DONE jog");
   });
+
+  it("a ++ catch-up repeater advances past today and preserves the ++ kind", () => {
+    // Stored date far in the past so catch-up must skip many occurrences.
+    const out = rollRepeat("TODO standup\nSCHEDULED: <2020-01-06 Mon ++1w>", "todo")!;
+    expect(out).toContain("++1w"); // NOT downgraded to +1w
+    const m = /<(\d{4})-(\d{2})-(\d{2})/.exec(out)!;
+    const d = new Date(+m[1], +m[2] - 1, +m[3]);
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    expect(d.getTime()).toBeGreaterThan(todayStart.getTime());
+  });
 });
