@@ -32,6 +32,9 @@ export interface Backend {
   setFavorites(names: string[]): Promise<void>;
   /** Persist the task workflow to config.edn `:preferred-workflow`. */
   setPreferredWorkflow(workflow: "now" | "todo"): Promise<void>;
+  /** Set (or clear, with null) the new-journal default template in config.edn
+   *  `:default-templates {:journals "Name"}`. */
+  setDefaultJournalTemplate(name: string | null): Promise<void>;
   /** The graph's logseq/custom.css (empty string if none). */
   readCustomCss(): Promise<string>;
   /** Open an http(s)/mailto URL in the OS default app. */
@@ -145,6 +148,9 @@ class TauriBackend implements Backend {
   }
   setPreferredWorkflow(workflow: "now" | "todo") {
     return this.call<void>("set_preferred_workflow", { workflow });
+  }
+  setDefaultJournalTemplate(name: string | null) {
+    return this.call<void>("set_default_journal_template", { name });
   }
   readCustomCss() {
     return this.call<string>("read_custom_css");

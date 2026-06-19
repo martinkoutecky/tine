@@ -613,6 +613,16 @@ fn set_preferred_workflow(workflow: String, state: State<'_, AppState>) -> Resul
 }
 
 #[tauri::command]
+fn set_default_journal_template(
+    name: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    with_graph(&state, |g| {
+        g.set_default_journal_template(name.as_deref()).map_err(|e| e.to_string())
+    })
+}
+
+#[tauri::command]
 fn read_custom_css(state: State<'_, AppState>) -> Result<String, String> {
     with_graph(&state, |g| Ok(g.custom_css()))
 }
@@ -816,6 +826,7 @@ fn main() {
             page_aliases,
             set_favorites,
             set_preferred_workflow,
+            set_default_journal_template,
             read_custom_css,
             open_external,
             search,

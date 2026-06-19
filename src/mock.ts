@@ -254,6 +254,9 @@ export function mockBackend(): Backend {
     async setPreferredWorkflow(): Promise<void> {
       // no-op in the browser mock
     },
+    async setDefaultJournalTemplate(): Promise<void> {
+      // no-op in the browser mock
+    },
     async openExternal(url: string): Promise<void> {
       try {
         window.open(url, "_blank", "noreferrer");
@@ -294,6 +297,8 @@ export function mockBackend(): Backend {
       return [
         {
           name: "meeting",
+          page: "Templates",
+          kind: "page" as const,
           blocks: [
             { id: "t1", raw: "## Meeting [[<% today %>]]", collapsed: false, children: [] },
             { id: "t2", raw: "Attendees:", collapsed: false, children: [] },

@@ -63,6 +63,10 @@ pub struct RefGroup {
 pub struct TemplateDto {
     pub name: String,
     pub blocks: Vec<BlockDto>,
+    /// Page the template's defining block lives on (so the UI can jump to edit it).
+    pub page: String,
+    /// Kind of that page (journal/page), for navigation.
+    pub kind: PageKind,
 }
 
 /// A full page as sent to / received from the frontend.
@@ -285,6 +289,91 @@ impl Graph {
             content.insert_str(brace + 1, &format!("\n :preferred-workflow {kw}\n"));
         } else {
             content = format!("{{:preferred-workflow {kw}}}\n");
+        }
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        atomic_write(&path, content.as_bytes())
+    }
+
+    /// Persist the new-journal default template to config.edn as
+    /// `:default-templates {:journals "Name"}`. `Some` sets/replaces the
+    /// `:journals` entry; `None` removes it. Any OTHER keys in
+    /// `:default-templates`, the rest of the file, and comments are preserved.
+    /// Mirrors Logseq's own config key, so it travels with the graph.
+    pub fn set_default_journal_template(&self, name: Option<&str>) -> io::Result<()> {
+        let path = self.root.join("logseq").join("config.edn");
+        let mut content = fs::read_to_string(&path).unwrap_or_else(|_| "{}\n".to_string());
+
+        // Locate an uncommented `:default-templates { … }` map, if present. Its
+        // values are strings only, so the first `}` after `{` closes it.
+        let dt = find_uncommented(&content, ":default-templates").and_then(|start| {
+            let open = start + content[start..].find('{')?;
+            let close = open + content[open..].find('}')?;
+            Some((open, close)) // byte indices of `{` and `}`
+        });
+
+        match name {
+            Some(n) => {
+                let v = format!("\"{}\"", n.replace('\\', "\\\\").replace('"', "\\\""));
+                match dt {
+                    Some((open, close)) => {
+                        if let Some(jrel) = content[open + 1..close].find(":journals") {
+                            // Replace the existing string value after :journals.
+                            let after = open + 1 + jrel + ":journals".len();
+                            let vstart = after + content[after..close].find('"').unwrap_or(0);
+                            let vend = content[vstart + 1..close]
+                                .find('"')
+                                .map(|e| vstart + 1 + e + 1) // just past the closing quote
+                                .unwrap_or(close);
+                            // If there was no value at all, fall back to inserting.
+                            if content[after..close].contains('"') {
+                                content.replace_range(vstart..vend, &v);
+                            } else {
+                                content.insert_str(after, &format!(" {v}"));
+                            }
+                        } else {
+                            // Map present but no :journals — insert the pair.
+                            let sep = if content[open + 1..close].trim().is_empty() { "" } else { " " };
+                            content.insert_str(open + 1, &format!(":journals {v}{sep}"));
+                        }
+                    }
+                    None => {
+                        let entry = format!("\n :default-templates {{:journals {v}}}\n");
+                        if let Some(brace) = content.find('{') {
+                            content.insert_str(brace + 1, &entry);
+                        } else {
+                            content = format!("{{:default-templates {{:journals {v}}}}}\n");
+                        }
+                    }
+                }
+            }
+            None => {
+                // Remove the `:journals "…"` pair (leaving any other keys + an empty
+                // `:default-templates {}`, which parses to "no journal template").
+                if let Some((open, close)) = dt {
+                    if let Some(jrel) = content[open + 1..close].find(":journals") {
+                        let jstart = open + 1 + jrel;
+                        let after = jstart + ":journals".len();
+                        // End just past the value's closing quote (or at `}`).
+                        let mut end = after;
+                        if let Some(qrel) = content[after..close].find('"') {
+                            let vstart = after + qrel;
+                            end = content[vstart + 1..close]
+                                .find('"')
+                                .map(|e| vstart + 1 + e + 1)
+                                .unwrap_or(close);
+                        }
+                        // Swallow trailing separators so we don't leave a gap.
+                        let tail: usize = content[end..close]
+                            .chars()
+                            .take_while(|c| c.is_whitespace() || *c == ',')
+                            .map(|c| c.len_utf8())
+                            .sum();
+                        content.replace_range(jstart..end + tail, "");
+                    }
+                }
+            }
         }
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;

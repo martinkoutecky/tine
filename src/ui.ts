@@ -219,6 +219,15 @@ export async function exitFocusMode() {
 
 // Loaded graph metadata (root path, dirs, shortcut overrides), for Settings.
 export const [graphMeta, setGraphMeta] = createSignal<GraphMeta | null>(null);
+
+/** Set (or clear, with null) the template applied to new journal days, persisting
+ *  it to config.edn `:default-templates {:journals "Name"}` and updating the live
+ *  meta so the UI reflects it immediately. */
+export function setJournalTemplate(name: string | null) {
+  const m = graphMeta();
+  if (m) setGraphMeta({ ...m, default_journal_template: name });
+  void backend().setDefaultJournalTemplate(name).catch(() => {});
+}
 // Bumped when the open graph changes, so views reload against the new graph.
 export const [graphEpoch, setGraphEpoch] = createSignal(0);
 export function bumpGraphEpoch() {

@@ -1,7 +1,8 @@
-import { For, Show, createEffect, createSignal, onCleanup, type JSX } from "solid-js";
+import { For, Show, createEffect, createResource, createSignal, onCleanup, type JSX } from "solid-js";
 import {
   settingsOpen,
   closeSettings,
+  setJournalTemplate,
   theme,
   toggleTheme,
   workflow,
@@ -32,6 +33,7 @@ import {
   setAgendaDaysAhead,
   pushToast,
 } from "../ui";
+import { openPage } from "../router";
 import { commandDefaults, eventToBindingString, setKeybindingsSuspended } from "../keybindings";
 import { switchGraph, loadGraphPath } from "../graph";
 import { flushAll } from "../store";
@@ -264,6 +266,59 @@ function AppearanceTab(): JSX.Element {
   );
 }
 
+// New-journal template picker: a dropdown of all `template::` templates + "(none)
+// = blank days" (the factory default — clearing the pointer), and an "Edit →" jump
+// to the chosen template's block. Uses existing concepts only: templates + the
+// config pointer. No catalogue, no built-in default.
+function JournalTemplateField(): JSX.Element {
+  const [templates] = createResource(() => backend().listTemplates());
+  const current = () => graphMeta()?.default_journal_template ?? "";
+  const list = () => templates() ?? [];
+  const selected = () => list().find((t) => t.name === current());
+  // A configured name that no longer matches a template (stale pointer) — surface
+  // it so the dropdown reflects config rather than silently showing "(none)".
+  const missing = () => current() !== "" && !list().some((t) => t.name === current());
+  return (
+    <Field
+      label="New-journal template"
+      hint={
+        <>
+          Template inserted into a new day's journal. Saved to{" "}
+          <code>:default-templates {"{:journals …}"}</code> in <code>config.edn</code>. “(none)” →
+          blank days (the default). Make a template via a block's right-click menu.
+        </>
+      }
+    >
+      <div class="settings-jtmpl">
+        <select
+          class="settings-select"
+          value={current()}
+          onChange={(e) => setJournalTemplate(e.currentTarget.value || null)}
+        >
+          <option value="">(none) — blank days</option>
+          <Show when={missing()}>
+            <option value={current()}>{current()} (not found)</option>
+          </Show>
+          <For each={list()}>{(t) => <option value={t.name}>{t.name}</option>}</For>
+        </select>
+        <Show when={selected()}>
+          {(t) => (
+            <button
+              class="settings-link"
+              onClick={() => {
+                openPage(t().page, t().kind);
+                closeSettings();
+              }}
+            >
+              Edit →
+            </button>
+          )}
+        </Show>
+      </div>
+    </Field>
+  );
+}
+
 function TasksTab(): JSX.Element {
   return (
     <>
@@ -321,6 +376,8 @@ function TasksTab(): JSX.Element {
           </button>
         </div>
       </Field>
+
+      <JournalTemplateField />
 
       <Field
         label="Agenda window"

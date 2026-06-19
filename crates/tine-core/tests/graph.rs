@@ -603,6 +603,53 @@ fn set_preferred_workflow_round_trips_in_config_edn() {
 }
 
 #[test]
+fn set_default_journal_template_round_trips_in_config_edn() {
+    let root = std::env::temp_dir().join(format!("tine-jtmpl-{}", std::process::id()));
+    std::fs::create_dir_all(root.join("logseq")).unwrap();
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    let cfg_path = root.join("logseq").join("config.edn");
+    // Existing config: a sibling key + a *commented* decoy that must NOT be edited.
+    std::fs::write(
+        &cfg_path,
+        "{;; :default-templates {:journals \"Commented\"}\n :start-of-week 1}\n",
+    )
+    .unwrap();
+    let cfg = || std::fs::read_to_string(&cfg_path).unwrap();
+    let jtmpl = || Graph::open(&root).meta().default_journal_template;
+
+    let g = Graph::open(&root);
+    assert_eq!(jtmpl(), None, "unset to begin with");
+
+    // Set (key absent → inserted, NOT touching the commented decoy).
+    g.set_default_journal_template(Some("Daily")).unwrap();
+    assert_eq!(jtmpl().as_deref(), Some("Daily"));
+    assert!(cfg().contains(":start-of-week 1"), "sibling key preserved: {}", cfg());
+    assert!(cfg().contains(";; :default-templates {:journals \"Commented\"}"), "comment preserved: {}", cfg());
+
+    // Replace (no duplicate key).
+    Graph::open(&root).set_default_journal_template(Some("Weekly")).unwrap();
+    assert_eq!(jtmpl().as_deref(), Some("Weekly"));
+    assert_eq!(cfg().matches(":journals").count(), 2, "one real + one commented :journals: {}", cfg());
+
+    // A multi-word name round-trips.
+    Graph::open(&root).set_default_journal_template(Some("My Daily Log")).unwrap();
+    assert_eq!(jtmpl().as_deref(), Some("My Daily Log"));
+
+    // Clear → back to factory default (blank journals).
+    Graph::open(&root).set_default_journal_template(None).unwrap();
+    assert_eq!(jtmpl(), None);
+    assert!(cfg().contains(":start-of-week 1"), "sibling still preserved after clear: {}", cfg());
+
+    // Preserve a SIBLING key inside :default-templates when clearing :journals.
+    std::fs::write(&cfg_path, "{:default-templates {:journals \"D\" :pages \"P\"}}\n").unwrap();
+    Graph::open(&root).set_default_journal_template(None).unwrap();
+    assert_eq!(jtmpl(), None);
+    assert!(cfg().contains(":pages \"P\""), "sibling inner key preserved: {}", cfg());
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn deleted_journal_is_not_served_from_stale_cache() {
     use tine_core::PageKind;
     let root = std::env::temp_dir().join(format!("tine-del-cache-{}", std::process::id()));

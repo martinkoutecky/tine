@@ -884,6 +884,31 @@ body {
   color: var(--text-primary);
   font-size: 13px;
 }
+.settings-jtmpl {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.settings-select {
+  padding: 3px 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 13px;
+  max-width: 220px;
+}
+.settings-link {
+  border: none;
+  background: none;
+  color: var(--accent, #4c8bf5);
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.settings-link:hover {
+  text-decoration: underline;
+}
 .settings-color {
   width: 40px;
   height: 28px;

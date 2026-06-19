@@ -25,6 +25,9 @@ export interface PageDto {
 export interface TemplateDto {
   name: string;
   blocks: BlockDto[];
+  /** Page the template's defining block lives on (to jump to it for editing). */
+  page: string;
+  kind: PageKind;
 }
 
 export interface PageEntry {

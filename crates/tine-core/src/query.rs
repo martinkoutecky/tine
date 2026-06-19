@@ -293,7 +293,7 @@ pub fn search(graph: &Graph, query: &str, limit: usize) -> Vec<RefGroup> {
 pub fn templates(graph: &Graph) -> Vec<TemplateDto> {
     graph.with_pages(|pages| {
         let mut out: Vec<TemplateDto> = Vec::new();
-        for (_entry, doc) in pages {
+        for (entry, doc) in pages {
             walk(&doc.roots, &mut |b| {
                 let Some(name) = b.property("template") else { return };
                 if name.is_empty() {
@@ -306,7 +306,7 @@ pub fn templates(graph: &Graph) -> Vec<TemplateDto> {
                 } else {
                     b.children.iter().map(|c| template_dto(c, false)).collect()
                 };
-                out.push(TemplateDto { name, blocks });
+                out.push(TemplateDto { name, blocks, page: entry.name.clone(), kind: entry.kind });
             });
         }
         out

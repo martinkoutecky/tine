@@ -8,6 +8,8 @@ import {
   isFavorite,
   toggleFavorite,
   pushToast,
+  graphMeta,
+  setJournalTemplate,
 } from "../ui";
 import { openPage, openPageInNewTab, openJournals, route } from "../router";
 import { backend } from "../backend";
@@ -301,6 +303,10 @@ function PageMenu(props: {
 
 function blockActions(id: string): { label: string; run: () => void; danger?: boolean }[] {
   const numbered = blockProperty(id, "logseq.order-list-type") === "number";
+  // If this block is itself a template (`template:: name`), offer to set it as the
+  // new-journal default (or clear it if it already is) — right where templates live.
+  const tmplName = blockProperty(id, "template");
+  const isJournalTmpl = !!tmplName && graphMeta()?.default_journal_template === tmplName;
   return [
     { label: "Open in sidebar", run: () => openBlockInSidebar(persistentBlockRef(id)) },
     { label: "Zoom into block", run: () => zoomInto(id) },
@@ -320,6 +326,14 @@ function blockActions(id: string): { label: string; run: () => void; danger?: bo
     },
     { label: "Collapse all", run: () => setCollapsedDeep(id, true) },
     { label: "Expand all", run: () => setCollapsedDeep(id, false) },
+    ...(tmplName
+      ? [
+          {
+            label: isJournalTmpl ? "✓ Used for new journals" : "Use for new journals",
+            run: () => setJournalTemplate(isJournalTmpl ? null : tmplName),
+          },
+        ]
+      : []),
     { label: "Delete block", run: () => deleteBlock(id), danger: true },
   ];
 }
