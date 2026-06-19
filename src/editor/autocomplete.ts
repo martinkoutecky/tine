@@ -85,6 +85,7 @@ export type CommandAction =
   | "now-time"
   | "today"
   | "query-builder"
+  | "page-props"
   | "priority-a"
   | "priority-b"
   | "priority-c";
@@ -135,6 +136,7 @@ export const COMMANDS: Command[] = [
   { label: "Math block", insert: "$$$$", caret: 2 },
   { label: "Current time", action: "now-time" },
   { label: "Today", action: "today" },
+  { label: "Page properties", action: "page-props" },
   // Template variables: insert the `<% … %>` placeholder (expanded when the
   // template is inserted). The list is shared with the "Make a template" hint.
   ...TEMPLATE_VARS.map((v) => ({ label: `Template var: ${v.label}`, insert: v.insert })),

@@ -480,6 +480,113 @@ body {
   opacity: 1;
 }
 
+.page-gear {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+.page-title-row:hover .page-gear {
+  opacity: 1;
+}
+.page-gear:hover {
+  color: var(--text-primary);
+}
+.gear-icon {
+  width: 17px;
+  height: 17px;
+}
+
+/* Page-properties panel */
+.pp-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+}
+.page-props-panel {
+  position: fixed;
+  width: 320px;
+  max-height: 380px;
+  overflow-y: auto;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.28);
+  padding: 12px;
+}
+.pp-head {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 10px;
+}
+.pp-head .pp-page {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+.pp-field {
+  margin-bottom: 12px;
+}
+.pp-field .pp-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 3px;
+}
+.pp-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 4px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+.pp-input:focus {
+  border-color: var(--link-color);
+  outline: none;
+}
+.pp-hint {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.pp-bool {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  cursor: pointer;
+}
+.pp-bool .pp-text {
+  display: flex;
+  flex-direction: column;
+}
+.pp-foot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+.pp-done {
+  padding: 4px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+}
+.pp-done:hover {
+  background: var(--bg-tertiary);
+}
+
 .fav-star.active {
   color: #f5c518;
 }

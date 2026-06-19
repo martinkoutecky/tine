@@ -56,7 +56,7 @@ import { blockView, isPropertyLine } from "../render/block";
 import { InlineText } from "../render/inline";
 import { BodyContent } from "../render/body";
 import { QueryMacro, EmbedMacro } from "./Macro";
-import { openPdf, workflow, zoomInto, openContextMenu, openDatePicker, openBlockInSidebar, graphMeta, dataRev, setQueryBuilderAutoOpen } from "../ui";
+import { openPdf, workflow, zoomInto, openContextMenu, openDatePicker, openBlockInSidebar, graphMeta, dataRev, setQueryBuilderAutoOpen, openPageProps } from "../ui";
 import { matchesCommand } from "../keybindings";
 import { HL_COLOR_BG, HL_COLOR_SOLID } from "../pdf";
 import { cycleMarkerSmart } from "../editor/repeat";
@@ -711,6 +711,14 @@ function Editor(props: { id: string }): JSX.Element {
         closeAc();
         setQueryBuilderAutoOpen(props.id);
         setEditingId(null);
+        return;
+      }
+      case "page-props": {
+        // Drop the trigger text, then open the page-properties panel for the
+        // page this block lives on (anchored under the editor).
+        replaceTrigger("");
+        const rect = ref.getBoundingClientRect();
+        openPageProps(doc.byId[props.id].page, rect.left, rect.bottom + 4);
         return;
       }
       case "today":

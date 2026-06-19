@@ -15,6 +15,7 @@ import { ConflictBar } from "./components/ConflictBar";
 import { RightSidebar } from "./components/RightSidebar";
 import { Settings } from "./components/Settings";
 import { DatePicker } from "./components/DatePicker";
+import { PageProps } from "./components/PageProps";
 import { installKeybindings } from "./keybindings";
 import { installBlockSelectionDrag } from "./blockDrag";
 import { loadGraphPath, persistedGraphPath, refreshAliases } from "./graph";
@@ -293,6 +294,7 @@ export function App(): JSX.Element {
       <QuickSwitcher />
       <ContextMenu />
       <DatePicker />
+      <PageProps />
       <Settings />
       <Toasts />
       <Lightbox />

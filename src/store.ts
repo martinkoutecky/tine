@@ -14,6 +14,7 @@ import { backend } from "./backend";
 import { markConflict, isConflicted, clearConflict, bumpDataRev, rightSidebar, conflicts, pushToast } from "./ui";
 import { blockView } from "./render/block";
 import { journalTitle } from "./journal";
+import { upsertPropertyLine, readPropertyValue } from "./editor/properties";
 
 export interface Node {
   id: string;
@@ -906,6 +907,24 @@ export function setBlockProperty(id: string, key: string, value: string | null) 
   if (value !== null) lines.push(`${key}:: ${value}`);
   setDoc("byId", id, "raw", lines.join("\n"));
   markDirty(node.page);
+}
+
+/** Read a page-level property from the page's pre-block (the leading
+ *  `key:: value` lines), or null. */
+export function readPageProperty(pageName: string, key: string): string | null {
+  const p = doc.pages.find((x) => x.name === pageName);
+  return p ? readPropertyValue(p.preBlock, key) : null;
+}
+
+/** Set or clear a page-level property in the page's pre-block. Persists through
+ *  the normal dirty/save path (pageToDto includes pre_block); undo-safe because
+ *  the page snapshot captures preBlock. */
+export function setPageProperty(pageName: string, key: string, value: string | null) {
+  const idx = doc.pages.findIndex((x) => x.name === pageName);
+  if (idx < 0) return;
+  pushUndo(`pageprop:${pageName}:${key}`, [pageName]);
+  setDoc("pages", idx, "preBlock", upsertPropertyLine(doc.pages[idx].preBlock, key, value));
+  markDirty(pageName);
 }
 
 /** Toggle a property: set it to `value`, or remove it if already that value. */

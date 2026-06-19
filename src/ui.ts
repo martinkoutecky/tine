@@ -184,6 +184,16 @@ export function agendaQuery(): string {
 // immediately (the block id, consumed once on mount, then cleared).
 export const [queryBuilderAutoOpen, setQueryBuilderAutoOpen] = createSignal<string | null>(null);
 
+// Page-properties panel (alias / public / tags / icon / title), opened from the
+// page-title gear or the "/Page properties" command. Anchored at x,y.
+export const [pagePropsPanel, setPagePropsPanel] = createSignal<{ name: string; x: number; y: number } | null>(null);
+export function openPageProps(name: string, x: number, y: number) {
+  setPagePropsPanel({ name, x, y });
+}
+export function closePageProps() {
+  setPagePropsPanel(null);
+}
+
 // Remember the window's pre-focus fullscreen state so exiting focus restores it
 // (rather than always dropping out of fullscreen if the user was already in it).
 let preFocusFullscreen = false;
