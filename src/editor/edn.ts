@@ -24,10 +24,21 @@ function strClose(s: string, i: number): number {
   return s.length - 1;
 }
 
-/** Extent [start, end) of the first `{{query …}}` macro in `raw`, brace/string-
- *  aware: a `}}` inside a string or a nested `{…}` map won't end it early. Null if
- *  there's no `{{query` macro or it's unterminated. Use this to REWRITE the macro
- *  in place — a lazy `/\{\{query…\}\}/` regex truncates at the first `}}`. */
+// If a Logseq page ref `[[…]]` opens at `i`, return the index just PAST its
+// closing `]]` (or end-of-string if unterminated); else -1. Page refs don't
+// nest, so the first `]]` closes it. Used to treat a ref's text — which may
+// contain stray `{`/`}` (e.g. `[[a}}b]]`) — as opaque while scanning braces.
+function pageRefEnd(s: string, i: number): number {
+  if (s[i] !== "[" || s[i + 1] !== "[") return -1;
+  const close = s.indexOf("]]", i + 2);
+  return close === -1 ? s.length : close + 2;
+}
+
+/** Extent [start, end) of the first `{{query …}}` macro in `raw`, brace/string/
+ *  page-ref-aware: a `}}` inside a string, a nested `{…}` map, or a `[[page]]`
+ *  ref won't end it early. Null if there's no `{{query` macro or it's
+ *  unterminated. Use this to REWRITE the macro in place — a lazy
+ *  `/\{\{query…\}\}/` regex truncates at the first `}}`. */
 export function queryMacroExtent(raw: string): { start: number; end: number } | null {
   const m = /\{\{query\b/i.exec(raw);
   if (!m) return null;
@@ -39,6 +50,13 @@ export function queryMacroExtent(raw: string): { start: number; end: number } | 
     if (c === '"') {
       i = strClose(raw, i) + 1;
       continue;
+    }
+    if (c === "[") {
+      const pe = pageRefEnd(raw, i);
+      if (pe !== -1) {
+        i = pe;
+        continue;
+      }
     }
     if (c === "{") depth++;
     else if (c === "}") {
@@ -63,6 +81,13 @@ export function splitTrailingMap(arg: string): { form: string; opts: string } {
     if (c === '"') {
       i = strClose(s, i);
       continue;
+    }
+    if (c === "[") {
+      const pe = pageRefEnd(s, i);
+      if (pe !== -1) {
+        i = pe - 1; // -1: the loop's i++ advances onto the char past the ref
+        continue;
+      }
     }
     if (c === ";") {
       while (i < s.length && s[i] !== "\n") i++;

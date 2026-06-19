@@ -705,6 +705,58 @@ fn set_default_journal_template_quoted_name_does_not_corrupt_config() {
 }
 
 #[test]
+fn set_default_journal_template_edn_aware_value_location() {
+    // Round-4 audit: the value after `:journals` must be located/replaced as the
+    // IMMEDIATE token, never "the next quote anywhere in the map" (which could land
+    // on a later key's string value), and the outer `:default-templates` must not be
+    // matched inside a string literal.
+    let root = std::env::temp_dir().join(format!("tine-jtmpl-edn-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("logseq")).unwrap();
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    let cfg_path = root.join("logseq").join("config.edn");
+    let cfg = || std::fs::read_to_string(&cfg_path).unwrap();
+
+    // (a) `:journals` has a NON-string value (nil) and a later sibling has a string.
+    // Setting must replace `nil`, not the `:pages` value.
+    std::fs::write(&cfg_path, "{:default-templates {:journals nil :pages \"P\"}}\n").unwrap();
+    Graph::open(&root).set_default_journal_template(Some("X")).unwrap();
+    let c = cfg();
+    assert!(c.contains(":journals \"X\""), "nil value replaced with X: {}", c);
+    assert!(c.contains(":pages \"P\""), "later sibling string untouched: {}", c);
+    assert!(!c.contains("nil"), "old nil value gone: {}", c);
+    assert_eq!(
+        Graph::open(&root).meta().default_journal_template.as_deref(),
+        Some("X")
+    );
+
+    // Clearing the same shape removes only `:journals nil`, keeps `:pages "P"`.
+    std::fs::write(&cfg_path, "{:default-templates {:journals nil :pages \"P\"}}\n").unwrap();
+    Graph::open(&root).set_default_journal_template(None).unwrap();
+    let c = cfg();
+    assert!(!c.contains(":journals"), "journals pair removed: {}", c);
+    assert!(c.contains(":pages \"P\""), "sibling string preserved on clear: {}", c);
+
+    // (b) `:default-templates {…}` appears only INSIDE a string literal — it is not
+    // the real key, so the writer must not edit it; it inserts a real key instead.
+    std::fs::write(
+        &cfg_path,
+        "{:note \":default-templates {:journals \\\"fake\\\"}\"}\n",
+    )
+    .unwrap();
+    Graph::open(&root).set_default_journal_template(Some("Real")).unwrap();
+    let c = cfg();
+    assert!(c.contains(":journals \"Real\""), "real journals inserted: {}", c);
+    assert!(c.contains("fake"), "string-literal decoy preserved verbatim: {}", c);
+    assert_eq!(
+        Graph::open(&root).meta().default_journal_template.as_deref(),
+        Some("Real")
+    );
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn deleted_journal_is_not_served_from_stale_cache() {
     use tine_core::PageKind;
     let root = std::env::temp_dir().join(format!("tine-del-cache-{}", std::process::id()));

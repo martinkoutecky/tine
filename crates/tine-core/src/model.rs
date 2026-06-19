@@ -305,12 +305,24 @@ impl Graph {
         let path = self.root.join("logseq").join("config.edn");
         let mut content = fs::read_to_string(&path).unwrap_or_else(|_| "{}\n".to_string());
 
-        // Locate an uncommented `:default-templates { … }` map, if present. Its
-        // values are strings only, so the first `}` after `{` closes it.
-        let dt = find_uncommented(&content, ":default-templates").and_then(|start| {
-            let open = start + content[start..].find('{')?;
-            let close = match_close_brace(&content, open); // EDN-aware (skips strings/comments/nesting)
-            Some((open, close)) // byte indices of `{` and matching `}`
+        // Locate a real (non-string, non-comment) `:default-templates` whose value
+        // is a map literal `{ … }`. `find_keyword` skips strings/comments and
+        // requires a token boundary, so a `:default-templates` inside a string
+        // value can't be mistaken for the key; we then require the next non-blank
+        // char to be `{` so a non-map value (e.g. `:default-templates nil`) doesn't
+        // make us grab a brace from elsewhere in the file.
+        let dt = find_keyword(&content, ":default-templates").and_then(|start| {
+            let after = start + ":default-templates".len();
+            let b = content.as_bytes();
+            let mut j = after;
+            while j < b.len() && matches!(b[j], b' ' | b'\t' | b'\n' | b'\r' | b',') {
+                j += 1;
+            }
+            if j >= b.len() || b[j] != b'{' {
+                return None; // value isn't a map → don't touch it
+            }
+            let close = match_close_brace(&content, j); // EDN-aware (skips strings/comments/nesting)
+            Some((j, close)) // byte indices of `{` and matching `}`
         });
 
         match name {
@@ -319,17 +331,15 @@ impl Graph {
                 match dt {
                     Some((open, close)) => {
                         if let Some(jrel) = find_keyword(&content[open + 1..close], ":journals") {
-                            // Replace the existing string value after :journals.
+                            // Replace the value IMMEDIATELY after :journals — whatever
+                            // it is (a string, or a non-string token like `nil`). Do NOT
+                            // scan for the next quote anywhere in the map: that could land
+                            // on a *later* key's string value (e.g. `:journals nil :pages
+                            // "P"` would otherwise replace "P").
                             let after = open + 1 + jrel + ":journals".len();
-                            // If there was no value at all, fall back to inserting.
-                            if content[after..close].contains('"') {
-                                let vstart = after + content[after..close].find('"').unwrap_or(0);
-                                // Escape-aware end scan: a `\"` inside the old value must
-                                // not be mistaken for the closing quote (would corrupt the file).
-                                let vend = edn_str_end(&content, vstart);
-                                content.replace_range(vstart..vend, &v);
-                            } else {
-                                content.insert_str(after, &format!(" {v}"));
+                            match next_value_span(&content, after, close) {
+                                Some((vstart, vend, _)) => content.replace_range(vstart..vend, &v),
+                                None => content.insert_str(after, &format!(" {v}")),
                             }
                         } else {
                             // Map present but no :journals — insert the pair.
@@ -354,13 +364,12 @@ impl Graph {
                     if let Some(jrel) = find_keyword(&content[open + 1..close], ":journals") {
                         let jstart = open + 1 + jrel;
                         let after = jstart + ":journals".len();
-                        // End just past the value's closing quote (escape-aware, so a
-                        // `\"` in the value doesn't truncate the removed range).
-                        let mut end = after;
-                        if let Some(qrel) = content[after..close].find('"') {
-                            let vstart = after + qrel;
-                            end = edn_str_end(&content, vstart);
-                        }
+                        // End just past the IMMEDIATE value token (string or not),
+                        // escape-aware — not the next quote anywhere in the map, which
+                        // could belong to a later key.
+                        let end = next_value_span(&content, after, close)
+                            .map(|(_, vend, _)| vend)
+                            .unwrap_or(after);
                         // Swallow trailing separators so we don't leave a gap.
                         let tail: usize = content[end..close]
                             .chars()
@@ -1478,6 +1487,31 @@ fn find_keyword(map_inner: &str, key: &str) -> Option<usize> {
         i += 1;
     }
     None
+}
+
+/// Span `[start, end)` of the value token following byte `from` (skipping leading
+/// whitespace/commas) within `..close`, plus whether it is an EDN string. None if
+/// there is no value before `close` (e.g. `:journals}`). A string value's end is
+/// escape-aware; a non-string token (`nil`, a number, a symbol) ends at the next
+/// whitespace/comma/brace/quote. Used to replace/remove the value that belongs to
+/// a key without accidentally consuming a later key's value.
+fn next_value_span(s: &str, from: usize, close: usize) -> Option<(usize, usize, bool)> {
+    let b = s.as_bytes();
+    let mut i = from;
+    while i < close && matches!(b[i], b' ' | b'\t' | b'\n' | b'\r' | b',') {
+        i += 1;
+    }
+    if i >= close {
+        return None;
+    }
+    if b[i] == b'"' {
+        return Some((i, edn_str_end(s, i).min(close), true));
+    }
+    let start = i;
+    while i < close && !matches!(b[i], b' ' | b'\t' | b'\n' | b'\r' | b',' | b'{' | b'}' | b'"') {
+        i += 1;
+    }
+    Some((start, i, false))
 }
 
 fn find_uncommented(content: &str, key: &str) -> Option<usize> {

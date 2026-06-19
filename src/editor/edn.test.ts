@@ -21,6 +21,12 @@ describe("edn helpers", () => {
     });
     // A brace inside the form (no trailing map) → no opts.
     expect(splitTrailingMap('(todo "x}")')).toEqual({ form: '(todo "x}")', opts: "" });
+    // A `}` inside a [[page ref]] in the form must NOT confuse the split.
+    expect(splitTrailingMap('(page [[a}b]]) {:title "x"}')).toEqual({
+      form: "(page [[a}b]])",
+      opts: '{:title "x"}',
+    });
+    expect(splitTrailingMap("(page [[a}b]])")).toEqual({ form: "(page [[a}b]])", opts: "" });
   });
 
   it("finds the query macro extent, ignoring }} inside strings", () => {
@@ -35,5 +41,9 @@ describe("edn helpers", () => {
     const withProps = '{{query (todo) {:title "A"}}}\nid:: abc';
     const e2 = queryMacroExtent(withProps)!;
     expect(withProps.slice(e2.start, e2.end)).toBe('{{query (todo) {:title "A"}}}');
+    // `}}` inside a [[page ref]] in the form must NOT end the macro early.
+    const ref = '{{query (page [[A }} B]]) {:title "t"}}}\nid:: x';
+    const e3 = queryMacroExtent(ref)!;
+    expect(ref.slice(e3.start, e3.end)).toBe('{{query (page [[A }} B]]) {:title "t"}}}');
   });
 });
