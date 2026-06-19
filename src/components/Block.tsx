@@ -235,6 +235,32 @@ export function Block(props: { id: string }): JSX.Element {
   );
 }
 
+// Walk `root`'s rendered text in document order (treating <br> as "\n") and
+// report the running text plus the offset that corresponds to a clicked
+// (container, off) from caretRangeFromPoint. The caller only trusts the offset
+// when this text equals the editor text 1:1 — so hidden markdown markers, a
+// heading `#`, or filtered property/scheduled lines (which make rendered ≠ raw)
+// can't misplace the caret; those blocks fall back to end-of-block.
+function renderedCaret(root: Node, container: Node, off: number): { text: string; caret: number | null } {
+  let text = "";
+  let caret: number | null = null;
+  const walk = (n: Node) => {
+    if (n.nodeType === Node.TEXT_NODE) {
+      if (n === container) caret = text.length + off;
+      text += n.textContent ?? "";
+      return;
+    }
+    if (n === container && caret === null) caret = text.length; // element container
+    if ((n as Element).tagName === "BR") {
+      text += "\n";
+      return;
+    }
+    for (const c of Array.from(n.childNodes)) walk(c);
+  };
+  walk(root);
+  return { text, caret };
+}
+
 function Rendered(props: { id: string; owner?: string }): JSX.Element {
   const node = () => doc.byId[props.id];
   const view = createMemo(() => blockView(node().raw));
@@ -247,12 +273,27 @@ function Rendered(props: { id: string; owner?: string }): JSX.Element {
   // components/AnnotationBody.
   const annotation = createMemo(() => annotationInfo(view().properties));
 
-  // Click edits the block. For annotation blocks the editor shows only the
-  // highlight text (metadata stays hidden); the colored prefix still jumps to
-  // the PDF.
+  // Click edits the block, placing the caret WHERE you clicked (not at the end).
+  // We map the click to the editor text via caretRangeFromPoint, but only trust
+  // it when the rendered text matches the editor text exactly — i.e. a plain
+  // block. Formatted/heading/property blocks (rendered ≠ raw) fall back to end.
+  let contentRef: HTMLDivElement | undefined;
+  const clickOffset = (e: MouseEvent): number | null => {
+    if (!contentRef) return null;
+    const d = document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null };
+    const range = d.caretRangeFromPoint?.(e.clientX, e.clientY);
+    if (!range) return null;
+    const { text, caret } = renderedCaret(contentRef, range.startContainer, range.startOffset);
+    if (caret == null) return null;
+    const editorText = splitProps(node().raw, isBuiltinHidden).visible;
+    if (text !== editorText) return null; // not a plain block — don't risk a wrong offset
+    return Math.min(caret, editorText.length);
+  };
+  // For annotation blocks the editor shows only the highlight text (metadata
+  // stays hidden); the colored prefix still jumps to the PDF.
   const onClick = (e: MouseEvent) => {
     e.stopPropagation();
-    startEditing(props.id, node().raw.length, props.owner ?? null);
+    startEditing(props.id, clickOffset(e) ?? node().raw.length, props.owner ?? null);
   };
 
   const displayProps = () => {
@@ -292,6 +333,7 @@ function Rendered(props: { id: string; owner?: string }): JSX.Element {
       }
     >
     <div
+      ref={contentRef}
       class="block-content"
       classList={{ done: view().done, "has-bg": !!bgColor(), [`heading h${view().headingLevel ?? ""}`]: view().headingLevel != null }}
       style={bgColor() ? { background: bgColor() } : undefined}
