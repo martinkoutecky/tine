@@ -848,12 +848,21 @@ body {
   z-index: 1;
   flex: 1;
   min-width: 68px;
-  white-space: nowrap; /* keep the icon + label on one line (don't wrap "Light") */
-  text-align: center;
+  /* Center icon + label as one row with a fixed icon column, so ☀/☾ (different
+     glyph widths) don't shift the labels out of alignment between the two options. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
   padding: 4px 16px;
   font-size: 12px;
   color: var(--text-secondary);
   transition: color 0.15s ease;
+}
+.theme-ico {
+  display: inline-block;
+  width: 13px;
+  text-align: center;
 }
 /* Highlight whichever option the knob is under. */
 .theme-switch:not(.is-dark) .theme-opt:first-child,

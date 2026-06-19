@@ -225,8 +225,8 @@ function AppearanceTab(): JSX.Element {
           title="Toggle light / dark (t t)"
           onClick={toggleTheme}
         >
-          <span class="theme-opt">☀ Light</span>
-          <span class="theme-opt">☾ Dark</span>
+          <span class="theme-opt"><span class="theme-ico">☀</span>Light</span>
+          <span class="theme-opt"><span class="theme-ico">☾</span>Dark</span>
           <span class="theme-knob" />
         </button>
       </div>
