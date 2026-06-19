@@ -307,6 +307,72 @@ fn sync_file_detects_external_change_and_suppresses_self() {
 }
 
 #[test]
+fn noop_save_does_not_bump_cache_generation() {
+    // A save whose serialized bytes match disk (focus/blur, forced flush of an
+    // unchanged page) must NOT bump cache_gen — that key invalidates every
+    // memoized query/backlink/derived result, so a no-op re-save would force a
+    // whole-graph requery on every open dashboard. A real edit still bumps it.
+    use tine_core::model::{BlockDto, PageDto, PageKind};
+
+    let root = std::env::temp_dir().join(format!("tine-noopgen-{}", std::process::id()));
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    let g = Graph::open(&root);
+    g.search("x", 10); // build the cache
+    let mk = |raw: &str| PageDto {
+        name: "N".into(),
+        kind: PageKind::Page,
+        title: "N".into(),
+        pre_block: None,
+        blocks: vec![BlockDto { id: "b1".into(), raw: raw.into(), ..Default::default() }],
+        rev: None,
+    };
+    let r1 = g.save_page(&mk("hello"), None).unwrap();
+    let gen1 = g.cache_generation();
+    // Re-save byte-identical content (no-op) with the returned baseline.
+    let r2 = g.save_page(&mk("hello"), Some(&r1)).unwrap();
+    assert_eq!(r1, r2, "rev must be stable across a no-op save");
+    assert_eq!(g.cache_generation(), gen1, "no-op save must not bump cache_gen");
+    // A real edit DOES bump it.
+    g.save_page(&mk("hello world"), Some(&r2)).unwrap();
+    assert!(g.cache_generation() > gen1, "a real edit must bump cache_gen");
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn recent_writes_entry_is_consumed_on_first_match() {
+    // The self-write guard map is consumed once the watcher observes the write, so
+    // it stays bounded AND a later external write restoring those exact bytes is
+    // not silently suppressed. After a save we drop the page from the parse cache
+    // (so cache-comparison can't also suppress): the FIRST sync is suppressed via
+    // recent_writes, the SECOND sees a change (proving the entry was consumed).
+    use tine_core::model::{BlockDto, PageDto, PageKind};
+
+    let root = std::env::temp_dir().join(format!("tine-rwconsume-{}", std::process::id()));
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    let g = Graph::open(&root);
+    g.search("x", 10);
+    let page = PageDto {
+        name: "C".into(),
+        kind: PageKind::Page,
+        title: "C".into(),
+        pre_block: None,
+        blocks: vec![BlockDto { id: "b1".into(), raw: "noted".into(), ..Default::default() }],
+        rev: None,
+    };
+    g.save_page(&page, None).unwrap();
+    let path = root.join("pages").join("C.md");
+    assert!(g.forget_file(&path).is_some(), "page should have been cached");
+    assert!(g.sync_file(&path).is_none(), "first sync suppressed via recent_writes");
+    assert!(
+        g.sync_file(&path).is_some(),
+        "entry must be consumed: a second look at the now-uncached page is a real change"
+    );
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn watcher_suppresses_own_write_when_parse_cache_lags() {
     // Regression for the false "changed on disk" conflict seen during normal
     // typing (no external writer): the file watcher reads files outside the cache

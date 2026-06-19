@@ -196,6 +196,14 @@ impl Graph {
         }
     }
 
+    /// Current cache generation — bumped on every cache-mutating page change, and
+    /// the key that memoized queries/backlinks/derived results invalidate against.
+    /// Exposed for observability and tests (e.g. asserting a no-op save doesn't
+    /// needlessly invalidate everything).
+    pub fn cache_generation(&self) -> u64 {
+        self.cache_gen.load(std::sync::atomic::Ordering::Acquire)
+    }
+
     /// Persist the favorites list to config.edn `:favorites [...]`, replacing the
     /// existing vector or inserting one, preserving the rest of the file.
     pub fn set_favorites(&self, names: &[String]) -> io::Result<()> {
@@ -895,7 +903,7 @@ impl Graph {
         // watcher recognizes it as ours — otherwise saving a highlight trips a
         // false "changed on disk" on the notes page (see write_page /
         // sync_file_content). The .edn lives under assets/ which isn't watched.
-        self.recent_writes.lock().unwrap().insert(page_path.clone(), content_rev(&page_md));
+        self.note_self_write(&page_path, content_rev(&page_md));
         atomic_write(&page_path, page_md.as_bytes())?;
         // The hls page is a real page; reflect it in the search cache.
         let name = crate::pdf::hls_page_name(&key);
@@ -935,6 +943,20 @@ impl Graph {
         }
     }
 
+    /// Record that Tine just wrote content with rev `rev` to `path`, so the file
+    /// watcher recognizes the write as ours (see `sync_file_content`). The map is
+    /// consumed on first match; this hard cap is a backstop so a write that the
+    /// watcher never observes (file deleted before the next poll, watcher idle)
+    /// can't leak across a long session. Clearing only reopens the tiny
+    /// rename→cache_upsert race for genuinely in-flight writes — harmless.
+    fn note_self_write(&self, path: &Path, rev: String) {
+        let mut recent = self.recent_writes.lock().unwrap();
+        if recent.len() >= 1024 {
+            recent.clear();
+        }
+        recent.insert(path.to_path_buf(), rev);
+    }
+
     /// Reconcile a (possibly externally-changed) file with the in-memory cache.
     /// Returns the entry only if its parsed content actually differs from the
     /// cache (i.e. a real external change) — Tine's own writes keep the cache in
@@ -952,8 +974,16 @@ impl Graph {
         // here, this is not an external change — suppress it even if the parse
         // cache hasn't folded in the write yet (the rename→cache_upsert gap the
         // watcher can read into). The cache comparison below alone races that gap.
-        if self.recent_writes.lock().unwrap().get(path) == Some(&content_rev(content)) {
-            return None;
+        // CONSUME the entry on a match: once the watcher has observed our write the
+        // record has done its job, so the map stays bounded to in-flight writes and
+        // a later *external* write that happens to restore those exact bytes is no
+        // longer silently suppressed.
+        {
+            let mut recent = self.recent_writes.lock().unwrap();
+            if recent.get(path).is_some_and(|r| *r == content_rev(content)) {
+                recent.remove(path);
+                return None;
+            }
         }
         let newdoc = doc::parse(content);
         {
@@ -1058,33 +1088,49 @@ impl Graph {
         let opts = doc::SerializeOpts::detect(existing);
         let content = doc::serialize_with(&doc, &opts);
         let rev = content_rev(&content);
-        // Record what we're about to write BEFORE it lands, so the file watcher
-        // (which reads files outside the cache lock) recognizes these exact bytes
-        // as our own write during the window between the atomic rename below and
-        // the `cache_upsert` further down — otherwise it reads disk-ahead-of-cache
-        // and flags Tine's own save as an external change (false conflict).
-        self.recent_writes.lock().unwrap().insert(path.clone(), rev.clone());
-        // No-op save: identical bytes already on disk (e.g. focus/blur with no
-        // real edit). Skip the write entirely — keep the cache current though.
-        if existing != Some(content.as_str()) {
+        // No-op save: identical bytes already on disk (e.g. focus/blur with no real
+        // edit, or a forced flush of an unchanged page). Skip the write, the
+        // watcher record, AND — crucially — the cache update below.
+        let changed = existing != Some(content.as_str());
+        if changed {
+            // Record what we're about to write BEFORE it lands, so the file watcher
+            // (which reads files outside the cache lock) recognizes these exact
+            // bytes as our own write during the window between the atomic rename
+            // and the `cache_upsert` below — otherwise it reads disk-ahead-of-cache
+            // and flags Tine's own save as an external change (false conflict).
+            self.note_self_write(&path, rev.clone());
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent)?;
             }
             atomic_write(&path, content.as_bytes())?;
         }
-        // Keep the search/backlinks cache in sync without a full rebuild. For a
-        // brand-new journal, derive its date_key from the name so it's recognized
-        // as a dated journal by `journals_desc` (which reads from this cache) —
-        // otherwise today's freshly-created page would be missing from the feed.
-        let entry = self.find_entry(&page.name, page.kind).unwrap_or_else(|| {
-            let date_key = if page.kind == PageKind::Journal {
-                crate::date::JournalDate::from_title(&page.name).map(|d| d.ordinal_key())
-            } else {
-                None
-            };
-            PageEntry { name: page.name.clone(), kind: page.kind, date_key, path }
-        });
-        self.cache_upsert(entry, doc);
+        // Touch the cache only when the bytes changed, or the page isn't in an
+        // already-built cache yet (fold a cold page in). A no-op save of an
+        // already-cached page MUST NOT call cache_upsert: it bumps `cache_gen`,
+        // which keys every memoized query/backlink/derived result — so an unchanged
+        // re-save would force a whole-graph requery on every open dashboard.
+        let need_cache_update = changed || {
+            let guard = self.cache.read().unwrap();
+            guard.as_ref().is_some_and(|pages| {
+                !pages
+                    .iter()
+                    .any(|(e, _)| e.kind == page.kind && e.name.eq_ignore_ascii_case(&page.name))
+            })
+        };
+        if need_cache_update {
+            // For a brand-new journal, derive its date_key from the name so it's
+            // recognized as a dated journal by `journals_desc` (which reads this
+            // cache) — otherwise today's freshly-created page would be missing.
+            let entry = self.find_entry(&page.name, page.kind).unwrap_or_else(|| {
+                let date_key = if page.kind == PageKind::Journal {
+                    crate::date::JournalDate::from_title(&page.name).map(|d| d.ordinal_key())
+                } else {
+                    None
+                };
+                PageEntry { name: page.name.clone(), kind: page.kind, date_key, path }
+            });
+            self.cache_upsert(entry, doc);
+        }
         // The new baseline rev = hash of exactly what's now on disk (the content we
         // serialized, or the identical existing bytes on a no-op) — no re-read.
         Ok(rev)
