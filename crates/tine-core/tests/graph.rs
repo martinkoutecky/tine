@@ -340,15 +340,16 @@ fn noop_save_does_not_bump_cache_generation() {
 }
 
 #[test]
-fn recent_writes_entry_is_consumed_on_first_match() {
-    // The self-write guard map is consumed once the watcher observes the write, so
-    // it stays bounded AND a later external write restoring those exact bytes is
-    // not silently suppressed. After a save we drop the page from the parse cache
-    // (so cache-comparison can't also suppress): the FIRST sync is suppressed via
-    // recent_writes, the SECOND sees a change (proving the entry was consumed).
+fn self_write_marker_does_not_outlive_its_save() {
+    // The self-write marker only covers the rename→cache_upsert window and is
+    // dropped by the writer once the write is published, so it can't linger and
+    // later suppress a REAL external change that restores Tine's earlier bytes
+    // (a delete+recreate, here simulated by forgetting the cached page and
+    // re-syncing the still-on-disk file). Before this fix, the stale marker made
+    // the recreate look like our own write and it was silently dropped.
     use tine_core::model::{BlockDto, PageDto, PageKind};
 
-    let root = std::env::temp_dir().join(format!("tine-rwconsume-{}", std::process::id()));
+    let root = std::env::temp_dir().join(format!("tine-marker-life-{}", std::process::id()));
     std::fs::create_dir_all(root.join("pages")).unwrap();
     let g = Graph::open(&root);
     g.search("x", 10);
@@ -360,13 +361,14 @@ fn recent_writes_entry_is_consumed_on_first_match() {
         blocks: vec![BlockDto { id: "b1".into(), raw: "noted".into(), ..Default::default() }],
         rev: None,
     };
-    g.save_page(&page, None).unwrap();
+    g.save_page(&page, None).unwrap(); // sets, then self-removes, the marker
     let path = root.join("pages").join("C.md");
     assert!(g.forget_file(&path).is_some(), "page should have been cached");
-    assert!(g.sync_file(&path).is_none(), "first sync suppressed via recent_writes");
+    // The page still exists on disk; with the marker gone, re-syncing must treat
+    // it as a real (re)appearance, not a suppressed self-write.
     assert!(
         g.sync_file(&path).is_some(),
-        "entry must be consumed: a second look at the now-uncached page is a real change"
+        "a stale self-write marker must not suppress the page reappearing"
     );
 
     std::fs::remove_dir_all(&root).ok();
@@ -391,10 +393,10 @@ fn disk_rev_fast_path_is_fresh_and_detects_external_change() {
         blocks: vec![BlockDto { id: "b1".into(), raw: "alpha".into(), ..Default::default() }],
         rev: None,
     };
-    g.save_page(&page, None).unwrap(); // populates disk_revs[R] + recent_writes
+    g.save_page(&page, None).unwrap(); // populates disk_revs[R] (marker self-removed)
     let path = root.join("pages").join("R.md");
-    assert!(g.sync_file(&path).is_none(), "first sync: suppressed via recent_writes");
-    assert!(g.sync_file(&path).is_none(), "second sync: unchanged via disk_rev fast-path");
+    assert!(g.sync_file(&path).is_none(), "unchanged save → suppressed via disk_rev fast-path");
+    assert!(g.sync_file(&path).is_none(), "still unchanged → disk_rev fast-path again");
 
     // A real external edit must still be detected (not masked by disk_revs).
     std::fs::write(&path, "- beta\n").unwrap();
@@ -408,18 +410,18 @@ fn disk_rev_fast_path_is_fresh_and_detects_external_change() {
 }
 
 #[test]
-fn watcher_suppresses_own_write_when_parse_cache_lags() {
+fn self_write_is_not_reported_as_external_change() {
     // Regression for the false "changed on disk" conflict seen during normal
-    // typing (no external writer): the file watcher reads files outside the cache
-    // lock, so in the window between a save's atomic rename and its cache_upsert it
-    // can read disk-ahead-of-cache and flag Tine's own write as an external change.
-    // `recent_writes` lets it recognize our own bytes regardless of cache state.
+    // typing (no external writer): a watcher poll after Tine's own save must not
+    // report a false external change. Post-save, disk_revs reflects the write and
+    // suppresses the poll (the short-lived marker covers only the in-flight
+    // window). Uses the multi-line `> quote` shape that surfaced the original bug.
     use tine_core::model::{BlockDto, PageDto, PageKind};
 
-    let root = std::env::temp_dir().join(format!("tine-selfwrite-lag-{}", std::process::id()));
+    let root = std::env::temp_dir().join(format!("tine-selfwrite-{}", std::process::id()));
     std::fs::create_dir_all(root.join("pages")).unwrap();
     let g = Graph::open(&root);
-    g.search("x", 10); // build the (empty) cache
+    g.search("x", 10); // build the cache
 
     let path = root.join("pages").join("W.md");
     let page = PageDto {
@@ -427,19 +429,12 @@ fn watcher_suppresses_own_write_when_parse_cache_lags() {
         kind: PageKind::Page,
         title: "W".into(),
         pre_block: None,
-        // A multi-line block ending in a `>` quote line — the shape that surfaced
-        // the bug (shift-enter then ">").
         blocks: vec![BlockDto { id: "b1".into(), raw: "hello\n> quote".into(), ..Default::default() }],
         rev: None,
     };
     g.save_page(&page, None).unwrap();
 
-    // Simulate the rename→cache_upsert gap: drop the page from the parse cache so
-    // the cache no longer reflects the file — exactly the state the 3s poller can
-    // read into mid-save.
-    assert!(g.forget_file(&path).is_some(), "page should have been cached by the save");
-
-    // The watcher polling now must STILL recognize our own write and emit nothing.
+    // A watcher poll right after our own save must emit nothing.
     assert!(
         g.sync_file(&path).is_none(),
         "Tine's own save must not be reported as an external change"

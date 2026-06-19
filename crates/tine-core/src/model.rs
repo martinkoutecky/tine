@@ -684,10 +684,6 @@ impl Graph {
         *guard = None;
         self.disk_revs.write().unwrap().clear(); // under the cache lock (cache → disk_revs)
         drop(guard);
-        // A bulk external change is the reason to invalidate; any pending
-        // self-write markers are stale relative to the new disk state, so clear
-        // them too (else one could wrongly suppress a real change post-rebuild).
-        self.recent_writes.lock().unwrap().clear();
         *self.alias_cache.write().unwrap() = None;
         *self.block_index.write().unwrap() = None;
     }
@@ -1012,7 +1008,8 @@ impl Graph {
         // watcher recognizes it as ours — otherwise saving a highlight trips a
         // false "changed on disk" on the notes page (see write_page /
         // sync_file_content). The .edn lives under assets/ which isn't watched.
-        self.note_self_write(&page_path, content_rev(&page_md));
+        let page_rev = content_rev(&page_md);
+        self.note_self_write(&page_path, page_rev.clone());
         atomic_write(&page_path, page_md.as_bytes())?;
         // The hls page is a real page; reflect it in the search cache.
         let name = crate::pdf::hls_page_name(&key);
@@ -1020,9 +1017,18 @@ impl Graph {
             name,
             kind: PageKind::Page,
             date_key: None,
-            path: page_path,
+            path: page_path.clone(),
         });
-        self.cache_upsert(entry, page_doc, content_rev(&page_md));
+        self.cache_upsert(entry, page_doc, page_rev.clone());
+        // Drop the self-write marker now the write is published (see write_page):
+        // bound it to its write window so it can't linger and later suppress a real
+        // external change. Remove only if it's still ours.
+        {
+            let mut recent = self.recent_writes.lock().unwrap();
+            if recent.get(&page_path).is_some_and(|r| *r == page_rev) {
+                recent.remove(&page_path);
+            }
+        }
         Ok(())
     }
 
@@ -1162,12 +1168,6 @@ impl Graph {
             }
         }
         self.cache_upsert(entry.clone(), newdoc, disk_rev);
-        // A real change was just folded in (cache_upsert set disk_revs to match
-        // disk, which now suppresses the watcher), so any leftover self-write
-        // marker for this path is stale — drop it. Otherwise a later external
-        // write that happens to restore Tine's earlier bytes would be wrongly
-        // suppressed as our own write, leaving the cache stale for queries.
-        self.recent_writes.lock().unwrap().remove(path);
         Some(entry)
     }
 
@@ -1279,9 +1279,23 @@ impl Graph {
                 } else {
                     None
                 };
-                PageEntry { name: page.name.clone(), kind: page.kind, date_key, path }
+                PageEntry { name: page.name.clone(), kind: page.kind, date_key, path: path.clone() }
             });
             self.cache_upsert(entry, doc, rev.clone());
+        }
+        // Drop the self-write marker now that the write is published. It only had
+        // to cover the window between the atomic write above and the cache_upsert
+        // just done; disk_revs now suppresses the watcher. Removing it here (rather
+        // than leaving it for the watcher to consume) bounds the marker to its
+        // write window, so it can never outlive this save and later suppress a real
+        // external change that happens to restore these exact bytes (e.g. a
+        // delete+recreate, or a cold-cache save). Remove only if it's still OURS — a
+        // concurrent same-path writer may have replaced it.
+        if changed {
+            let mut recent = self.recent_writes.lock().unwrap();
+            if recent.get(&path).is_some_and(|r| *r == rev) {
+                recent.remove(&path);
+            }
         }
         // The new baseline rev = hash of exactly what's now on disk (the content we
         // serialized, or the identical existing bytes on a no-op) — no re-read.

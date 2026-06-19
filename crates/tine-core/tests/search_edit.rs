@@ -210,9 +210,8 @@ fn write_highlights_preserves_externally_added_ones() {
 #[test]
 fn highlight_write_is_not_seen_as_external_change() {
     // Saving a highlight rewrites the hls__ notes page, which is a normal watched
-    // page. The watcher must recognize that as Tine's own write (not raise a false
-    // "changed on disk" against the open notes page). Same recent_writes guard as
-    // ordinary saves; verified even when the parse cache lags the write.
+    // page. A watcher poll after the write must not raise a false "changed on disk"
+    // against it — post-write, disk_revs reflects the write and suppresses the poll.
     use tine_core::pdf::{asset_key, hls_page_name, Highlight, Position, Rect};
     let root = mk("hlself");
     let g = Graph::open(&root);
@@ -232,9 +231,6 @@ fn highlight_write_is_not_seen_as_external_change() {
     let hls_path = root
         .join("pages")
         .join(format!("{}.md", hls_page_name(&asset_key("paper.pdf"))));
-    // Drop the page from the parse cache to simulate the rename→cache_upsert gap
-    // the 3s poller can read into.
-    assert!(g.forget_file(&hls_path).is_some(), "hls page should have been cached");
     assert!(
         g.sync_file(&hls_path).is_none(),
         "highlight write must not be reported as an external change"
