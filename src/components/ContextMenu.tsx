@@ -10,6 +10,7 @@ import {
   pushToast,
   graphMeta,
   setJournalTemplate,
+  openPageProps,
 } from "../ui";
 import { openPage, openPageInNewTab, openJournals, route } from "../router";
 import { backend } from "../backend";
@@ -79,6 +80,8 @@ export function ContextMenu(): JSX.Element {
                 <PageMenu
                   name={(m() as { name: string }).name}
                   pageKind={(m() as { pageKind: "journal" | "page" }).pageKind}
+                  x={m().x}
+                  y={m().y}
                   close={close}
                 />
               }
@@ -225,6 +228,8 @@ function MakeTemplate(props: { id: string; close: () => void }): JSX.Element {
 function PageMenu(props: {
   name: string;
   pageKind: "journal" | "page";
+  x: number;
+  y: number;
   close: () => void;
 }): JSX.Element {
   const fav = () => isFavorite(props.name);
@@ -283,6 +288,7 @@ function PageMenu(props: {
             pushToast("Copied page as Markdown", "success");
           }),
     },
+    { label: "Page properties…", run: () => openPageProps(props.name, props.x, props.y) },
     // Carry a past day's unfinished tasks to today (journal days only, not today).
     ...(props.pageKind === "journal" && props.name !== journalTitle(new Date())
       ? [{ label: "Carry unfinished tasks → today", run: () => void carryDay(props.name) }]

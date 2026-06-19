@@ -1,4 +1,4 @@
-import { For, Show, createSignal, type JSX } from "solid-js";
+import { For, Show, createSignal, onMount, type JSX } from "solid-js";
 import { pagePropsPanel, closePageProps } from "../ui";
 import { readPageProperty, setPageProperty } from "../store";
 import { PAGE_PROP_SPECS, type PagePropSpec } from "../editor/properties";
@@ -20,7 +20,11 @@ function Panel(props: { name: string; x: number; y: number }): JSX.Element {
   const w = typeof window !== "undefined" ? window.innerWidth : 1280;
   const h = typeof window !== "undefined" ? window.innerHeight : 800;
   const left = Math.max(8, Math.min(props.x, w - 332));
-  const top = Math.max(8, Math.min(props.y, h - 380));
+  // Anchor at the click, then once mounted lift the panel up by its measured
+  // height so its full content stays on-screen — no scrollbar for normal content.
+  const [top, setTop] = createSignal(Math.max(8, Math.min(props.y, h - 380)));
+  let el: HTMLDivElement | undefined;
+  onMount(() => setTop(Math.max(8, Math.min(props.y, h - (el?.offsetHeight ?? 380) - 8))));
   return (
     <div
       class="pp-overlay"
@@ -30,7 +34,7 @@ function Panel(props: { name: string; x: number; y: number }): JSX.Element {
         closePageProps();
       }}
     >
-      <div class="page-props-panel" style={{ left: `${left}px`, top: `${top}px` }} onClick={(e) => e.stopPropagation()}>
+      <div ref={el} class="page-props-panel" style={{ left: `${left}px`, top: `${top()}px` }} onClick={(e) => e.stopPropagation()}>
         <div class="pp-head">
           Page properties <span class="pp-page">{props.name}</span>
         </div>
@@ -67,7 +71,13 @@ function Field(props: { name: string; spec: PagePropSpec }): JSX.Element {
   }
 
   const [v, setV] = createSignal(initial);
-  const commit = () => setPageProperty(props.name, props.spec.key, v().trim() || null);
+  // Only write on an actual local edit. Otherwise blurring/closing the panel
+  // re-commits the value read when it opened — clobbering a concurrent external
+  // edit (OG/Syncthing) that the file-watcher reloaded while the panel was open.
+  const commit = () => {
+    if (v() === initial) return;
+    setPageProperty(props.name, props.spec.key, v().trim() || null);
+  };
   return (
     <div class="pp-field">
       <label class="pp-label">{props.spec.label}</label>

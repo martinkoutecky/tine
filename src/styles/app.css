@@ -511,7 +511,7 @@ body {
 .page-props-panel {
   position: fixed;
   width: 320px;
-  max-height: 380px;
+  max-height: calc(100vh - 16px);
   overflow-y: auto;
   background: var(--bg-primary);
   border: 1px solid var(--border-color);

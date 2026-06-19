@@ -363,8 +363,7 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
           </h1>
         </Show>
         <CarryActions page={props.page} />
-        <Show when={props.page.kind === "page"}>
-          <button
+        <button
             class="page-gear"
             title="Page properties (alias, public, tags, icon, title)"
             onClick={(e) => openPageProps(props.page.name, e.clientX, e.clientY)}
@@ -378,8 +377,7 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
                 stroke-linejoin="round"
               />
             </svg>
-          </button>
-        </Show>
+        </button>
         <button
           class="fav-star"
           classList={{ active: isFavorite(props.page.name) }}
