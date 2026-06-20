@@ -77,6 +77,26 @@ export function toggleDocumentMode() {
   saveStr(DOC_KEY, v ? "1" : null);
 }
 
+// --- which content pane is focused. Drives Ctrl+/- zoom routing (notes → whole
+// interface, pdf → the PDF's own scale). Transient session state, not persisted. ---
+export const [activePane, setActivePane] = createSignal<"notes" | "pdf">("notes");
+/** Track the focused pane from clicks / focus moves. Capture-phase so it sees
+ *  every interaction regardless of stopPropagation downstream. The notes pane is
+ *  the default — anything outside the PDF pane (editor, sidebar, chrome) counts as
+ *  "notes" for zoom purposes. Returns an uninstaller. */
+export function installPaneTracker(): () => void {
+  const update = (e: Event) => {
+    const t = e.target as Element | null;
+    setActivePane(t?.closest?.(".pdf-pane") ? "pdf" : "notes");
+  };
+  window.addEventListener("pointerdown", update, true);
+  window.addEventListener("focusin", update, true);
+  return () => {
+    window.removeEventListener("pointerdown", update, true);
+    window.removeEventListener("focusin", update, true);
+  };
+}
+
 // --- focus mode (hide chrome + fullscreen) + dim-inactive-blocks ---
 // Focus is a deliberate session mode → NOT persisted. Dim is an appearance
 // preference → persisted, like wide/document. Focus composes with wide/document:

@@ -2,7 +2,7 @@ import { For, Show, createEffect, createSignal, on, onCleanup, onMount, type JSX
 import * as pdfjs from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { backend } from "../backend";
-import { closePdf, pushToast, isConflicted } from "../ui";
+import { closePdf, pushToast, isConflicted, activePane } from "../ui";
 import { flushPage, isDirty, reloadHlsIfLoaded } from "../store";
 import { openPage } from "../router";
 import { hlsPageName } from "../pdf";
@@ -518,6 +518,9 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
       openFind();
       return;
     }
+    // +/-/0 zoom the PDF only when the PDF pane is focused; otherwise the notes
+    // pane owns them for whole-interface zoom (see zoom.ts).
+    if (activePane() !== "pdf") return;
     if (e.key === "=" || e.key === "+") {
       e.preventDefault();
       zoomBy(1.1);

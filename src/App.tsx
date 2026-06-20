@@ -45,7 +45,9 @@ import {
   dimInactiveBlocks,
   exitFocusMode,
   dataRev,
+  installPaneTracker,
 } from "./ui";
+import { applyZoom, installInterfaceZoomKeys } from "./zoom";
 import { editingId, flushAll } from "./store";
 import { isTauri } from "./backend";
 
@@ -118,6 +120,15 @@ export function App(): JSX.Element {
   // Mouse-drag block selection: a drag that crosses a block boundary switches
   // from in-textarea text selection to whole-block selection (OG behavior).
   onMount(() => onCleanup(installBlockSelectionDrag()));
+
+  // Interface zoom (Ctrl +/-/0): restore the saved level, track which pane is
+  // focused, and own the zoom keys when the notes pane is active (the PDF pane
+  // keeps them for its own zoom).
+  onMount(() => {
+    applyZoom();
+    onCleanup(installPaneTracker());
+    onCleanup(installInterfaceZoomKeys());
+  });
 
   return (
     <div

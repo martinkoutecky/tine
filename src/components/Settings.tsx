@@ -33,6 +33,7 @@ import {
   setAgendaDaysAhead,
   pushToast,
 } from "../ui";
+import { interfaceZoom, zoomIn, zoomOut, zoomReset } from "../zoom";
 import { openPage } from "../router";
 import { commandDefaults, eventToBindingString, setKeybindingsSuspended } from "../keybindings";
 import { switchGraph, loadGraphPath } from "../graph";
@@ -247,6 +248,24 @@ function AppearanceTab(): JSX.Element {
           </Show>
         </div>
       </div>
+
+      <Field
+        label="Interface size"
+        hint="Zoom the whole interface — Ctrl + / Ctrl − / Ctrl 0. Saved on this device. (When the PDF pane is focused, those keys zoom the PDF instead.)"
+      >
+        <div style={{ display: "flex", "align-items": "center", gap: "8px" }}>
+          <button class="settings-btn" title="Smaller (Ctrl −)" onClick={zoomOut}>−</button>
+          <span class="mono" style={{ "min-width": "3.4em", "text-align": "center" }}>
+            {Math.round(interfaceZoom() * 100)}%
+          </span>
+          <button class="settings-btn" title="Larger (Ctrl +)" onClick={zoomIn}>+</button>
+          <Show when={interfaceZoom() !== 1}>
+            <button class="settings-btn" style={{ "margin-left": "8px" }} onClick={zoomReset}>
+              Reset
+            </button>
+          </Show>
+        </div>
+      </Field>
 
       <Field label="Wide mode" hint="Drops the reading-width cap.">
         <Toggle on={wideMode()} onClick={toggleWideMode} />
