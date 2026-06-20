@@ -879,6 +879,34 @@ fn set_default_journal_template_edn_aware_value_location() {
 }
 
 #[test]
+fn config_writers_skip_comment_between_key_and_value() {
+    // A `;` comment between a key and its value must not mislead a writer (the
+    // readers already skip it). Verify the writers do too — no duplicate key, the
+    // real value is replaced.
+    let root = std::env::temp_dir().join(format!("tine-wr-cmt-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("logseq")).unwrap();
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    let cfg_path = root.join("logseq").join("config.edn");
+
+    std::fs::write(&cfg_path, "{:favorites ; note\n [\"Old\"]}\n").unwrap();
+    Graph::open(&root).set_favorites(&["New".into()]).unwrap();
+    let c = std::fs::read_to_string(&cfg_path).unwrap();
+    assert_eq!(c.matches(":favorites").count(), 1, "replaced, not duplicated: {c}");
+    assert!(!c.contains("\"Old\""), "old value gone: {c}");
+    assert_eq!(Graph::open(&root).meta().favorites, vec!["New".to_string()]);
+
+    std::fs::write(&cfg_path, "{:default-templates {:journals ; note\n \"Old\"}}\n").unwrap();
+    Graph::open(&root).set_default_journal_template(Some("New")).unwrap();
+    assert_eq!(
+        Graph::open(&root).meta().default_journal_template.as_deref(),
+        Some("New")
+    );
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn deleted_journal_is_not_served_from_stale_cache() {
     use tine_core::PageKind;
     let root = std::env::temp_dir().join(format!("tine-del-cache-{}", std::process::id()));

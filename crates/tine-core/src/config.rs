@@ -115,12 +115,8 @@ impl Graph {
             // favorite NAME containing `]` (or a comment in the vector) can't
             // truncate the replacement and corrupt config.edn.
             let after = start + ":favorites".len();
-            let b = content.as_bytes();
-            let mut j = after;
-            while j < b.len() && matches!(b[j], b' ' | b'\t' | b'\n' | b'\r' | b',') {
-                j += 1;
-            }
-            if j < b.len() && b[j] == b'[' {
+            let j = skip_blank(&content, after); // comment-aware, like the readers
+            if content.as_bytes().get(j) == Some(&b'[') {
                 let end = match_close_bracket(&content, j) + 1;
                 content.replace_range(start..end, &format!(":favorites {vec_str}"));
             } else {
@@ -148,16 +144,15 @@ impl Graph {
 
         if let Some(start) = find_keyword(&content, key) {
             let after = start + key.len();
-            match content[after..].find(|c: char| !c.is_whitespace()) {
-                Some(rel) if content[after + rel..].starts_with(':') => {
-                    let vstart = after + rel;
-                    let vrest = &content[vstart + 1..];
-                    let end = vrest
-                        .find(|c: char| c.is_whitespace() || c == '}' || c == ')')
-                        .unwrap_or(vrest.len());
-                    content.replace_range(vstart..vstart + 1 + end, kw);
-                }
-                _ => content.insert_str(after, &format!(" {kw}")),
+            let vstart = skip_blank(&content, after); // comment-aware
+            if content[vstart..].starts_with(':') {
+                let vrest = &content[vstart + 1..];
+                let end = vrest
+                    .find(|c: char| c.is_whitespace() || c == '}' || c == ')')
+                    .unwrap_or(vrest.len());
+                content.replace_range(vstart..vstart + 1 + end, kw);
+            } else {
+                content.insert_str(after, &format!(" {kw}"));
             }
         } else if let Some(brace) = content.find('{') {
             content.insert_str(brace + 1, &format!("\n :preferred-workflow {kw}\n"));
@@ -181,12 +176,8 @@ impl Graph {
         // Locate a real `:default-templates` whose value is a map literal `{ … }`.
         let dt = find_keyword(&content, ":default-templates").and_then(|start| {
             let after = start + ":default-templates".len();
-            let b = content.as_bytes();
-            let mut j = after;
-            while j < b.len() && matches!(b[j], b' ' | b'\t' | b'\n' | b'\r' | b',') {
-                j += 1;
-            }
-            if j >= b.len() || b[j] != b'{' {
+            let j = skip_blank(&content, after); // comment-aware
+            if content.as_bytes().get(j) != Some(&b'{') {
                 return None; // value isn't a map → don't touch it
             }
             let close = match_close_brace(&content, j);
@@ -355,8 +346,17 @@ fn find_keyword(s: &str, key: &str) -> Option<usize> {
 fn next_value_span(s: &str, from: usize, close: usize) -> Option<(usize, usize, bool)> {
     let b = s.as_bytes();
     let mut i = from;
-    while i < close && matches!(b[i], b' ' | b'\t' | b'\n' | b'\r' | b',') {
-        i += 1;
+    loop {
+        while i < close && matches!(b[i], b' ' | b'\t' | b'\n' | b'\r' | b',') {
+            i += 1;
+        }
+        if i < close && b[i] == b';' {
+            while i < close && b[i] != b'\n' {
+                i += 1; // a `;` comment between key and value isn't the value
+            }
+            continue;
+        }
+        break;
     }
     if i >= close {
         return None;
