@@ -456,6 +456,43 @@ describe("carry unfinished tasks → today", () => {
     expect(carryUnfinished(["Older"], true, null)).toBe(0);
     expect(raws("Older")).toEqual(["DONE x", "just a note"]);
   });
+
+  it("pull-out drops the empty scaffolding it hollows out (no leftover blank bullets)", () => {
+    const today = journal(TODAY, [blk("")]);
+    // Each task sits under its own empty parent bullet; pulling the tasks out
+    // would otherwise leave a column of empty bullets.
+    const older = journal("Older", [
+      blk("", [blk("TODO a")]),
+      blk("", [blk("TODO b")]),
+    ]);
+    loadFeed([today, older]);
+    expect(carryUnfinished(["Older"], false, null)).toBe(2);
+    expect(raws("Older")).toEqual([]); // emptied parents pruned
+  });
+
+  it("pull-out removes bare spacer bullets but keeps real scaffolding/notes", () => {
+    const today = journal(TODAY, [blk("")]);
+    const older = journal("Older", [
+      blk("TODO a"),
+      blk(""), // spacer → pruned
+      blk("Project X", [blk("TODO b")]), // text parent → kept (real note)
+      blk("done note"), // text → kept
+      blk(""), // trailing spacer → pruned
+    ]);
+    loadFeed([today, older]);
+    expect(carryUnfinished(["Older"], false, null)).toBe(2);
+    expect(raws("Older")).toEqual(["Project X", "done note"]);
+  });
+
+  it("keeps a blank parent that still has surviving (non-task) children", () => {
+    const today = journal(TODAY, [blk("")]);
+    const older = journal("Older", [blk("", [blk("TODO a"), blk("a kept note")])]);
+    loadFeed([today, older]);
+    carryUnfinished(["Older"], false, null);
+    expect(raws("Older")).toEqual([""]); // blank parent stays — it still holds a note
+    const p = pageByName("Older")!.roots[0];
+    expect(doc.byId[p].children.map((id) => doc.byId[id].raw)).toEqual(["a kept note"]);
+  });
 });
 
 describe("merge (Backspace at 0)", () => {
