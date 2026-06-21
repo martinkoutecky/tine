@@ -2887,6 +2887,18 @@ mark {
   border-radius: 8px;
   padding: 0 6px;
 }
+.switcher-more {
+  padding: 7px 12px;
+  margin: 2px 0;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--link-color);
+}
+.switcher-more:hover {
+  background: var(--bg-tertiary);
+}
 .switcher-kind.create { color: #10b981; }
 .switcher-kind.cmd { color: var(--link-color); }
 .switcher-shortcut {

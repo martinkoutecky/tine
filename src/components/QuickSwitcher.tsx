@@ -17,14 +17,17 @@ type Item =
 interface Section {
   header: string;
   items: Item[];
-  // True when the backend had more matches than we display — the count badge
-  // then reads "N+" instead of claiming an exact (and wrong) total.
+  // True when there are more matches than we currently show — the count badge
+  // reads "N+" (not a wrong exact total) and a "Load more" row is offered.
   more?: boolean;
+  // Fetch the next chunk for this section (grows its limit). Set iff `more`.
+  loadMore?: () => void;
 }
 
-// How many results we show per backend-capped section. We fetch one MORE than
-// this; getting it back means "there are more than CAP" (the search stops at the
-// cap, so this never walks the whole graph just to count) → render CAP, badge "+".
+// Initial page size per backend-capped section, and how many more each "Load
+// more" pulls in. We fetch one MORE than the current limit; getting it back
+// means "there are still more" (the search stops at the limit, so this never
+// walks the whole graph just to count) → show the limit, offer "Load more".
 const PAGE_CAP = 12;
 const BLOCK_CAP = 50;
 
@@ -33,6 +36,15 @@ const BLOCK_CAP = 50;
 export function QuickSwitcher(): JSX.Element {
   const [query, setQuery] = createSignal("");
   const [sel, setSel] = createSignal(0);
+  // How many page/block results to show right now; "Load more" grows these. They
+  // reset to the base size whenever the query text changes (a fresh search).
+  const [pageLimit, setPageLimit] = createSignal(PAGE_CAP);
+  const [blockLimit, setBlockLimit] = createSignal(BLOCK_CAP);
+  createEffect(() => {
+    query();
+    setPageLimit(PAGE_CAP);
+    setBlockLimit(BLOCK_CAP);
+  });
   let inputRef: HTMLInputElement | undefined;
   let resultsRef: HTMLDivElement | undefined;
   // X11/WebKitGTK pastes the PRIMARY selection into the focused input on ANY
@@ -60,13 +72,16 @@ export function QuickSwitcher(): JSX.Element {
     qTimer = setTimeout(() => setDebouncedQuery(q), 110);
   });
   onCleanup(() => clearTimeout(qTimer));
+  // Fetch limit+1 so we can tell "there are more" without counting the whole
+  // graph. The +1 row is never displayed. Re-fetches when the query OR the
+  // (Load-more-grown) limit changes; the early-stop scan keeps each fetch cheap.
   const [pages] = createResource(
-    () => (commandsOnly() ? "" : debouncedQuery()),
-    (q) => (q.trim() && !commandsOnly() ? backend().quickSwitch(q, PAGE_CAP + 1) : Promise.resolve([] as PageEntry[]))
+    () => (commandsOnly() ? null : { q: debouncedQuery(), limit: pageLimit() }),
+    (s) => (s && s.q.trim() ? backend().quickSwitch(s.q, s.limit + 1) : Promise.resolve([] as PageEntry[]))
   );
   const [hits] = createResource(
-    () => (commandsOnly() ? "" : debouncedQuery()),
-    (q) => (q.trim() && !commandsOnly() ? backend().search(q, BLOCK_CAP + 1) : Promise.resolve([]))
+    () => (commandsOnly() ? null : { q: debouncedQuery(), limit: blockLimit() }),
+    (s) => (s && s.q.trim() ? backend().search(s.q, s.limit + 1) : Promise.resolve([]))
   );
 
   const currentPageName = () => {
@@ -109,8 +124,15 @@ export function QuickSwitcher(): JSX.Element {
     const allPages: Item[] = (pages() ?? [])
       .filter((e) => e.name.toLowerCase().includes(ql))
       .map((e) => ({ t: "page", name: e.name, pageKind: e.kind }));
-    const pageItems = allPages.slice(0, PAGE_CAP);
-    if (pageItems.length) out.push({ header: "Pages", items: pageItems, more: allPages.length > PAGE_CAP });
+    const morePages = allPages.length > pageLimit();
+    const pageItems = morePages ? allPages.slice(0, pageLimit()) : allPages;
+    if (pageItems.length)
+      out.push({
+        header: "Pages",
+        items: pageItems,
+        more: morePages,
+        loadMore: morePages ? () => setPageLimit((n) => n + PAGE_CAP) : undefined,
+      });
 
     // Create page (when no exact match exists).
     const exact = pageItems.some((p) => p.t === "page" && p.name.toLowerCase() === ql);
@@ -120,25 +142,37 @@ export function QuickSwitcher(): JSX.Element {
     const cmds = commandItems(q);
     if (cmds.length) out.push({ header: "Commands", items: cmds });
 
-    // Blocks, split into current-page vs the rest.
+    // Blocks. Gather every match (backend order), then page the whole set so a
+    // user who can't narrow the query can still reach all of it via "Load more".
     const cur = currentPageName();
-    const curItems: Item[] = [];
-    const otherItems: Item[] = [];
+    const all: { item: Item; onCur: boolean }[] = [];
     for (const g of hits() ?? []) {
       for (const b of g.blocks) {
         const text = blockView(b.raw).lines.join(" ").trim();
         if (!text) continue;
-        const item: Item = { t: "block", page: g.page, pageKind: g.kind, blockId: b.id, text, crumb: b.breadcrumb ?? [] };
-        (cur && g.page === cur ? curItems : otherItems).push(item);
+        all.push({
+          item: { t: "block", page: g.page, pageKind: g.kind, blockId: b.id, text, crumb: b.breadcrumb ?? [] },
+          onCur: !!(cur && g.page === cur),
+        });
       }
     }
-    // We asked for BLOCK_CAP + 1; if we got past the cap there are more matches
-    // than we show. Trim the "other" bucket (keep the few current-page hits) so
-    // the rendered total is BLOCK_CAP, and flag the overflow on the Blocks badge.
-    const moreBlocks = curItems.length + otherItems.length > BLOCK_CAP;
-    if (moreBlocks) otherItems.length = Math.max(0, BLOCK_CAP - curItems.length);
-    if (curItems.length) out.push({ header: "Current page", items: curItems });
-    if (otherItems.length) out.push({ header: "Blocks", items: otherItems, more: moreBlocks });
+    // We asked for blockLimit + 1; getting past the limit means more remain.
+    const moreBlocks = all.length > blockLimit();
+    const shown = moreBlocks ? all.slice(0, blockLimit()) : all;
+    // Surface current-page hits first (own section), the rest under "Blocks".
+    const curItems = shown.filter((x) => x.onCur).map((x) => x.item);
+    const otherItems = shown.filter((x) => !x.onCur).map((x) => x.item);
+    const blockSecs: Section[] = [];
+    if (curItems.length) blockSecs.push({ header: "Current page", items: curItems });
+    if (otherItems.length) blockSecs.push({ header: "Blocks", items: otherItems });
+    if (blockSecs.length) {
+      // Hang the overflow badge + loader on the last block section, so "Load
+      // more" sits at the very bottom of the results.
+      const last = blockSecs[blockSecs.length - 1];
+      last.more = moreBlocks;
+      if (moreBlocks) last.loadMore = () => setBlockLimit((n) => n + BLOCK_CAP);
+      out.push(...blockSecs);
+    }
 
     return out;
   });
@@ -292,6 +326,18 @@ export function QuickSwitcher(): JSX.Element {
                       );
                     }}
                   </For>
+                  <Show when={section.loadMore}>
+                    <div
+                      class="switcher-more"
+                      onMouseDown={(e) => {
+                        if (e.button !== 0) return;
+                        e.preventDefault(); // keep input focus; don't close
+                        section.loadMore!();
+                      }}
+                    >
+                      Load more results…
+                    </div>
+                  </Show>
                 </div>
               )}
             </For>
