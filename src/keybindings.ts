@@ -27,7 +27,7 @@ import {
   carryDays,
 } from "./ui";
 import { carryDaysBack } from "./carry";
-import { openJournals } from "./router";
+import { openJournals, goBack, goForward } from "./router";
 import {
   undo,
   redo,
@@ -75,6 +75,10 @@ const COMMANDS: CommandDef[] = [
   { id: "go/search", binding: "mod+k", label: "Search / quick switch", scope: "global", run: openSwitcher, global: true },
   { id: "command-palette/toggle", binding: "mod+shift+p", label: "Command palette", scope: "global", run: openCommandPalette, global: true },
   { id: "go/journals", binding: "g j", label: "Go to journals", scope: "global", run: openJournals },
+  // Browser-style history nav (per-tab back/forward). Special-cased in the
+  // dispatcher so they fire even while editing a block; remappable like any other.
+  { id: "go/backward", binding: "alt+left", label: "Go back", scope: "global", run: goBack, global: true },
+  { id: "go/forward", binding: "alt+right", label: "Go forward", scope: "global", run: goForward, global: true },
   { id: "ui/toggle-theme", binding: "t t", label: "Toggle dark / light", scope: "global", run: toggleTheme },
   { id: "ui/toggle-left-sidebar", binding: "t l", label: "Toggle left sidebar", scope: "global", run: toggleSidebar },
   { id: "ui/toggle-right-sidebar", binding: "t r", label: "Toggle right sidebar", scope: "global", run: toggleRightSidebar },
@@ -368,6 +372,22 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
         resetSeq();
         return;
       }
+      return;
+    }
+
+    // Browser-style history nav, handled BEFORE the while-editing guard so
+    // Alt+Left / Alt+Right work from inside a block too (like a browser navigating
+    // from a focused field). preventDefault stops the textarea's own alt-arrow.
+    if (matchesCommand(e, "go/backward")) {
+      e.preventDefault();
+      resetSeq();
+      goBack();
+      return;
+    }
+    if (matchesCommand(e, "go/forward")) {
+      e.preventDefault();
+      resetSeq();
+      goForward();
       return;
     }
 
