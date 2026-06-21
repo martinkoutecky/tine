@@ -20,7 +20,7 @@ import { ExportModal } from "./components/ExportModal";
 import { installKeybindings } from "./keybindings";
 import { installBlockSelectionDrag } from "./blockDrag";
 import { loadGraphPath, persistedGraphPath, refreshAliases } from "./graph";
-import { goBack, goForward, canGoBack, canGoForward } from "./router";
+import { goBack, goForward, canGoBack, canGoForward, flushSession } from "./router";
 import {
   theme,
   toggleTheme,
@@ -92,6 +92,14 @@ export function App(): JSX.Element {
             "Tine has unsaved changes that couldn't be saved (a conflict or a stuck save).\n\nQuit anyway and lose them?"
           );
           if (!quit) return; // stay open
+        }
+        // Persist the final tab session too — the 150ms debounce may not have
+        // fired if the last tab action came right before quitting. Capped so a
+        // stuck IPC can't wedge the window open.
+        try {
+          await Promise.race([flushSession(), new Promise((r) => setTimeout(r, 1000))]);
+        } catch {
+          // best-effort
         }
         closing = true;
         try {

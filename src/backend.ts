@@ -68,6 +68,12 @@ export interface Backend {
   /** Restore a snapshot (overwrites journals/pages/config; snapshots current
    *  state first). Destructive — confirm before calling. */
   restoreBackup(stamp: string): Promise<void>;
+  /** Load the persisted UI session JSON (open tabs / active tab / zoom), or null.
+   *  Stored in a real file by the backend — WebKitGTK localStorage isn't durably
+   *  persisted for this app. */
+  loadSession(): Promise<string | null>;
+  /** Persist the UI session JSON. */
+  saveSession(data: string): Promise<void>;
 }
 
 export interface BackupInfo {
@@ -249,6 +255,12 @@ class TauriBackend implements Backend {
   }
   restoreBackup(stamp: string) {
     return this.call<void>("restore_backup", { stamp });
+  }
+  loadSession() {
+    return this.call<string | null>("load_session");
+  }
+  saveSession(data: string) {
+    return this.call<void>("save_session", { data });
   }
 }
 

@@ -246,6 +246,38 @@ fn set_backup_keep(keep: usize, app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Path to the persisted UI session (open tabs / active tab / zoom). This is
+/// app-level window state, not graph content, so it lives next to the settings
+/// file in the app-data dir. (WebKitGTK's localStorage is not durably persisted
+/// for this app, so the frontend can't rely on it — it round-trips here.)
+fn session_path(app: &tauri::AppHandle) -> Option<PathBuf> {
+    app.path().app_data_dir().ok().map(|d| d.join("tine-session.json"))
+}
+
+#[tauri::command]
+fn load_session(app: tauri::AppHandle) -> Option<String> {
+    std::fs::read_to_string(session_path(&app)?).ok()
+}
+
+#[tauri::command]
+fn save_session(data: String, app: tauri::AppHandle) -> Result<(), String> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    // Unique temp name per write so two concurrent saves (a burst of tab actions)
+    // can't clobber each other's temp file before the rename.
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let p = session_path(&app).ok_or("no app-data dir")?;
+    if let Some(parent) = p.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    let tmp = p.with_extension(format!("json.tmp{seq}"));
+    // Write to a temp file then atomically rename, so a crash mid-write can never
+    // leave a truncated session that fails to parse.
+    std::fs::write(&tmp, data.as_bytes()).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &p).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// The backup directory for the currently-open graph (`<app-data>/backups/<id>`).
 fn backup_base(app: &tauri::AppHandle) -> Option<PathBuf> {
     let root = {
@@ -843,7 +875,9 @@ fn main() {
             get_backup_keep,
             set_backup_keep,
             list_backups,
-            restore_backup
+            restore_backup,
+            load_session,
+            save_session
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

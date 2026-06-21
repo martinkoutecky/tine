@@ -51,10 +51,11 @@ function tabTitle(r: Route): string {
   return routeTitle(r);
 }
 
-// Tab strip: click to activate, middle-click to close, double-click to pin
-// (pinned tabs persist across sessions), drag to reorder. Always shown — even a
-// single tab is rendered, so the pill signals that tabs exist (a feature OG
-// Logseq lacks out of the box) without costing extra vertical space.
+// Tab strip: click to activate, middle-click to close, double-click to pin,
+// drag to reorder. The whole tab session persists across launches (see router
+// persist/restoreSession); pinning is now just a visual marker. Always shown —
+// even a single tab is rendered, so the pill signals that tabs exist (a feature
+// OG Logseq lacks out of the box) without costing extra vertical space.
 export function TabBar(): JSX.Element {
   let dragId: string | null = null;
 
@@ -68,12 +69,24 @@ export function TabBar(): JSX.Element {
             class="tab"
             classList={{ active: t.id === activeId(), pinned: t.pinned }}
             draggable={true}
-            onDragStart={() => (dragId = t.id)}
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={() => {
+            onDragStart={(e) => {
+              dragId = t.id;
+              // WebKitGTK won't actually start a drag unless dataTransfer carries
+              // something — without this, dragover/drop never fire and reordering
+              // silently does nothing.
+              e.dataTransfer?.setData("text/plain", t.id);
+              if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+            }}
+            onDragOver={(e) => {
+              e.preventDefault();
+              if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
               if (dragId) reorderTab(dragId, t.id);
               dragId = null;
             }}
+            onDragEnd={() => (dragId = null)}
             onClick={() => setActiveTab(t.id)}
             onDblClick={() => togglePin(t.id)}
             onAuxClick={(e) => {

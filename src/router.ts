@@ -8,6 +8,7 @@
 import { createSignal } from "solid-js";
 import { pushRecent, resolveAlias } from "./ui";
 import { doc, persistentBlockRef } from "./store";
+import { backend } from "./backend";
 
 export type Route =
   | { kind: "journals" }
@@ -24,9 +25,14 @@ export interface Tab {
 let counter = 0;
 const newId = () => `tab-${counter++}`;
 
-const initial = restore();
-const [tabs, setTabs] = createSignal<Tab[]>(initial.tabs);
-const [activeId, setActiveId] = createSignal<string>(initial.tabs[initial.active].id);
+// Start on a single journals tab. The saved session (if any) is loaded
+// asynchronously from the backend by restoreSession(), called once at startup
+// before first paint — see main.tsx. (localStorage isn't durably persisted in
+// this WebKitGTK app, so the session round-trips through a real backend file.)
+const [tabs, setTabs] = createSignal<Tab[]>([
+  { id: newId(), history: [{ kind: "journals" }], pos: 0, pinned: false },
+]);
+const [activeId, setActiveId] = createSignal<string>(tabs()[0].id);
 
 export { tabs, activeId };
 
@@ -201,54 +207,89 @@ export function reorderTab(dragId: string, targetId: string) {
   persist();
 }
 
-// ---- persistence (full session) ----
+// ---- persistence (full session, backed by a real file via the backend) ----
 //
 // The whole tab session is saved on every change: each tab (not just pinned
 // ones), in order, with its full back/forward history and which entry it's on,
 // plus which tab is active. Routes already carry the zoomed-in block, so a tab
-// zoomed into a bullet comes back zoomed. Saved on launch, restored verbatim.
-
-const KEY = "logseq-claude.session";
+// zoomed into a bullet comes back zoomed. Persisted through the Rust backend to
+// a file (WebKitGTK localStorage isn't durably persisted for this app), and
+// restored once at startup by restoreSession().
 
 interface PersistedSession {
   tabs: { history: Route[]; pos: number; pinned: boolean }[];
   activeIndex: number;
 }
 
+let saveTimer: ReturnType<typeof setTimeout> | undefined;
+
 function persist() {
-  try {
+  // Light debounce: a burst of tab actions collapses to one backend write, and
+  // it serializes writes so concurrent saves don't race. 150ms is short enough
+  // that the user won't out-run it before quitting.
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
     const list = tabs();
     const session: PersistedSession = {
       tabs: list.map((t) => ({ history: t.history, pos: t.pos, pinned: t.pinned })),
       activeIndex: Math.max(0, list.findIndex((t) => t.id === activeId())),
     };
-    localStorage.setItem(KEY, JSON.stringify(session));
+    void backend().saveSession(JSON.stringify(session)).catch(() => {});
+  }, 150);
+}
+
+function parseSession(raw: string): { tabs: Tab[]; active: number } | null {
+  try {
+    const s = JSON.parse(raw) as PersistedSession;
+    const restored: Tab[] = (s?.tabs ?? [])
+      .filter((t) => t && Array.isArray(t.history) && t.history.length > 0)
+      .map((t) => ({
+        id: newId(),
+        history: t.history,
+        pos: Math.min(Math.max(0, t.pos | 0), t.history.length - 1),
+        pinned: !!t.pinned,
+      }));
+    if (!restored.length) return null;
+    const active = Math.min(Math.max(0, s.activeIndex | 0), restored.length - 1);
+    return { tabs: restored, active };
   } catch {
-    // ignore (e.g. storage disabled)
+    return null;
   }
 }
 
-function restore(): { tabs: Tab[]; active: number } {
+/** Write the session immediately, bypassing the debounce. Called on window
+ *  close so a tab action taken right before quitting isn't lost. */
+export async function flushSession(): Promise<void> {
+  clearTimeout(saveTimer);
+  const list = tabs();
+  const session: PersistedSession = {
+    tabs: list.map((t) => ({ history: t.history, pos: t.pos, pinned: t.pinned })),
+    activeIndex: Math.max(0, list.findIndex((t) => t.id === activeId())),
+  };
   try {
-    const raw = localStorage.getItem(KEY);
-    if (raw) {
-      const s = JSON.parse(raw) as PersistedSession;
-      const tabs: Tab[] = (s?.tabs ?? [])
-        .filter((t) => t && Array.isArray(t.history) && t.history.length > 0)
-        .map((t) => ({
-          id: newId(),
-          history: t.history,
-          pos: Math.min(Math.max(0, t.pos | 0), t.history.length - 1),
-          pinned: !!t.pinned,
-        }));
-      if (tabs.length) {
-        const active = Math.min(Math.max(0, s.activeIndex | 0), tabs.length - 1);
-        return { tabs, active };
-      }
-    }
+    await backend().saveSession(JSON.stringify(session));
   } catch {
-    // fall through to a fresh session
+    // best-effort — session restore is non-critical
   }
-  // No (or unreadable) saved session: start on a single journals tab.
-  return { tabs: [{ id: newId(), history: [{ kind: "journals" }], pos: 0, pinned: false }], active: 0 };
+}
+
+/** Load the saved tab session from the backend and apply it. Call once at
+ *  startup, before first paint. No-op if nothing was saved, it's unreadable, or
+ *  the user already changed the tabs (we never clobber live state). */
+export async function restoreSession(): Promise<void> {
+  let raw: string | null = null;
+  try {
+    raw = await backend().loadSession();
+  } catch {
+    return; // backend unavailable — keep the default journals tab
+  }
+  if (!raw) return;
+  // Guard against clobbering: only restore while the strip is still the pristine
+  // single-journals default (the user hasn't navigated during the async read).
+  const cur = tabs();
+  if (cur.length !== 1 || cur[0].history.length !== 1 || cur[0].history[0].kind !== "journals") return;
+  const parsed = parseSession(raw);
+  if (!parsed) return;
+  setTabs(parsed.tabs);
+  setActiveId(parsed.tabs[parsed.active].id);
 }

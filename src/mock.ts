@@ -122,6 +122,8 @@ const NAMED: PageDto[] = [
 ];
 
 const mockHighlights: Record<string, { label: string; highlights: Highlight[] }> = {};
+// In-memory UI session for the browser mock (no backend file).
+let mockSession: string | null = null;
 const mockAssets: Record<string, Uint8Array> = {};
 
 // Synthesize an hls__ page DTO from stored highlights (mirrors the Rust
@@ -372,6 +374,12 @@ export function mockBackend(): Backend {
     },
     async restoreBackup(): Promise<void> {
       // no-op in the browser mock
+    },
+    async loadSession(): Promise<string | null> {
+      return mockSession;
+    },
+    async saveSession(data: string): Promise<void> {
+      mockSession = data;
     },
     async readHighlights(pdf: string): Promise<Highlight[]> {
       return mockHighlights[pdf]?.highlights ?? [];
