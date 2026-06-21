@@ -522,14 +522,19 @@ describe("merge (Backspace at 0)", () => {
 });
 
 describe("collapse / visible order", () => {
-  it("collapsed blocks hide their children from visible order", () => {
+  it("collapsed blocks hide their children, and persist collapsed:: in raw", () => {
     const dto = load([blk("p", [blk("c1"), blk("c2")]), blk("q")]);
     const p = dto.blocks[0].id;
-    const order0 = visibleOrder().map((id) => doc.byId[id].raw);
+    const order0 = visibleOrder().map((id) => doc.byId[id].raw.split("\n")[0]);
     expect(order0).toEqual(["p", "c1", "c2", "q"]);
     toggleCollapse(p);
-    const order1 = visibleOrder().map((id) => doc.byId[id].raw);
+    const order1 = visibleOrder().map((id) => doc.byId[id].raw.split("\n")[0]);
     expect(order1).toEqual(["p", "q"]);
+    // Collapse is mirrored into the block's raw so it survives a reload (OG stores
+    // it as a block property); expanding again removes the line.
+    expect(doc.byId[p].raw).toContain("collapsed:: true");
+    toggleCollapse(p);
+    expect(doc.byId[p].raw).not.toContain("collapsed::");
   });
 });
 

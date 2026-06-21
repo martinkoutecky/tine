@@ -69,6 +69,13 @@ export function TabBar(): JSX.Element {
             class="tab"
             classList={{ active: t.id === activeId(), pinned: t.pinned }}
             draggable={true}
+            onMouseDown={(e) => {
+              // Stop the double-click (pin) gesture from word-selecting the label
+              // — user-select:none alone still flashes a selection in WebKitGTK.
+              // Only the 2nd+ click (detail>=2); the single mousedown that starts
+              // a drag is left untouched.
+              if (e.detail >= 2) e.preventDefault();
+            }}
             onDragStart={(e) => {
               dragId = t.id;
               // WebKitGTK won't actually start a drag unless dataTransfer carries

@@ -735,7 +735,11 @@ export function indentBlock(id: string, caretOffset: number) {
       arr.splice(arr.indexOf(id), 1);
       s.byId[id].parent = newParent;
       s.byId[newParent].children.push(id);
-      s.byId[newParent].collapsed = false;
+      // Expand the new parent — and clear any persisted collapsed:: in its raw,
+      // else a reload would re-collapse it and hide the just-indented child.
+      const np = s.byId[newParent];
+      np.raw = rawWithCollapsed(np.raw, false);
+      np.collapsed = false;
     })
   );
   startEditing(id, caretOffset);
@@ -949,13 +953,33 @@ export function setSchedule(
   markDirty(node.page);
 }
 
+/** A block's raw with `collapsed:: true` added or removed so the persisted
+ *  property matches the collapsed state. OG stores collapse in the file as a
+ *  block property, so mirroring it here makes a collapse survive a relaunch and
+ *  show up collapsed in OG / the mobile app. Fence-aware via splitProps. */
+function rawWithCollapsed(raw: string, collapsed: boolean): string {
+  const { visible, hidden } = splitProps(raw, isBuiltinHidden);
+  const nextHidden = upsertPropertyLine(hidden, "collapsed", collapsed ? "true" : null) ?? "";
+  return joinProps(visible, nextHidden);
+}
+
+/** Set a block's collapsed state AND mirror it into its raw `collapsed::` so it
+ *  persists — the on-disk markdown is the source of truth on the next load. */
+function writeCollapsed(id: string, collapsed: boolean) {
+  const n = doc.byId[id];
+  if (!n) return;
+  const nextRaw = rawWithCollapsed(n.raw, collapsed);
+  setDoc("byId", id, "collapsed", collapsed);
+  if (nextRaw !== n.raw) setDoc("byId", id, "raw", nextRaw);
+}
+
 /** Collapse or expand a block and its entire descendant subtree. */
 export function setCollapsedDeep(id: string, collapsed: boolean) {
   pushUndo("collapse-all", [doc.byId[id].page]);
   const walk = (bid: string) => {
     const n = doc.byId[bid];
     if (!n) return;
-    if (n.children.length) setDoc("byId", bid, "collapsed", collapsed);
+    if (n.children.length) writeCollapsed(bid, collapsed);
     n.children.forEach(walk);
   };
   walk(id);
@@ -1186,7 +1210,7 @@ export function indentSelection() {
   if (!same.length) return;
   pushUndo("indent-sel", [destPage]);
   for (const id of same) moveBlockInternal(id, newParent, doc.byId[newParent].children.length);
-  setDoc("byId", newParent, "collapsed", false);
+  writeCollapsed(newParent, false);
 }
 
 export function outdentSelection() {
@@ -1654,7 +1678,7 @@ export function toggleCollapse(id: string) {
   const n = doc.byId[id];
   if (n.children.length === 0) return;
   pushUndo("collapse", [n.page]);
-  setDoc("byId", id, "collapsed", !n.collapsed);
+  writeCollapsed(id, !n.collapsed);
   markDirty(n.page);
 }
 
@@ -1664,7 +1688,7 @@ export function setCollapsed(id: string, collapsed: boolean) {
   const n = doc.byId[id];
   if (!n || n.children.length === 0 || n.collapsed === collapsed) return;
   pushUndo("collapse", [n.page]);
-  setDoc("byId", id, "collapsed", collapsed);
+  writeCollapsed(id, collapsed);
   markDirty(n.page);
 }
 
