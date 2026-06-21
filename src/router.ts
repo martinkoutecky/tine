@@ -151,6 +151,11 @@ export function setActiveTab(id: string) {
   setActiveId(id);
 }
 
+/** Close the currently-active tab (Ctrl+W). No-op when it's the only tab. */
+export function closeActiveTab() {
+  closeTab(activeId());
+}
+
 export function closeTab(id: string) {
   const list = tabs();
   if (list.length === 1) return; // always keep one tab

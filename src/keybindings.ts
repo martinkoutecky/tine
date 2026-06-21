@@ -27,7 +27,7 @@ import {
   carryDays,
 } from "./ui";
 import { carryDaysBack } from "./carry";
-import { openJournals, goBack, goForward } from "./router";
+import { openJournals, goBack, goForward, closeActiveTab } from "./router";
 import {
   undo,
   redo,
@@ -79,6 +79,10 @@ const COMMANDS: CommandDef[] = [
   // dispatcher so they fire even while editing a block; remappable like any other.
   { id: "go/backward", binding: "alt+left", label: "Go back", scope: "global", run: goBack, global: true },
   { id: "go/forward", binding: "alt+right", label: "Go forward", scope: "global", run: goForward, global: true },
+  // mod+w is a mod-chord, so it clears the while-editing guard and reaches the
+  // generic dispatch loop below — closes the active tab even mid-edit (like a
+  // browser). The last tab can't be closed, so this never quits the app.
+  { id: "tab/close", binding: "mod+w", label: "Close current tab", scope: "global", run: closeActiveTab, global: true },
   { id: "ui/toggle-theme", binding: "t t", label: "Toggle dark / light", scope: "global", run: toggleTheme },
   { id: "ui/toggle-left-sidebar", binding: "t l", label: "Toggle left sidebar", scope: "global", run: toggleSidebar },
   { id: "ui/toggle-right-sidebar", binding: "t r", label: "Toggle right sidebar", scope: "global", run: toggleRightSidebar },
