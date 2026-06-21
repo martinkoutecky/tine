@@ -2,7 +2,7 @@ import { For, Show, createEffect, createSignal, onCleanup, onMount, type JSX } f
 import { doc, mainPages, pageByName, reloadPage, loadSingle, loadFeed, appendFeed, isDirty, editingId, setFeedExtender, flushPage, type FeedPage } from "../store";
 import { route, openPage, openJournals, openPageInNewTab } from "../router";
 import {
-  zoomedBlock, zoomOut, zoomInto, isFavorite, toggleFavorite,
+  zoomedBlock, zoomInto, isFavorite, toggleFavorite,
   markConflict, isConflicted, graphEpoch, openPageInSidebar, openPageContextMenu, carryDays, showCarryButtons,
   agendaQuery, openPageProps,
 } from "../ui";
@@ -55,12 +55,6 @@ export function PageView(): JSX.Element {
     dto.blocks.length
       ? dto
       : { ...dto, blocks: [{ id: `new-${name}`, raw: "", collapsed: false, children: [] }] };
-
-  // Clear any zoom when the route changes (navigation exits a zoomed block).
-  createEffect(() => {
-    route();
-    zoomOut();
-  });
 
   createEffect(() => {
     const r = route();
@@ -264,10 +258,7 @@ function ZoomedView(props: { id: string }): JSX.Element {
       <div class="zoom-breadcrumb">
         <a
           class="crumb crumb-page"
-          onClick={() => {
-            zoomOut();
-            openPage(pageName(), pageKind());
-          }}
+          onClick={() => openPage(pageName(), pageKind())}
         >
           {pageName()}
         </a>

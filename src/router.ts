@@ -9,7 +9,7 @@ import { pushRecent, resolveAlias } from "./ui";
 
 export type Route =
   | { kind: "journals" }
-  | { kind: "page"; name: string; pageKind: "journal" | "page" };
+  | { kind: "page"; name: string; pageKind: "journal" | "page"; block?: string };
 
 export interface Tab {
   id: string;
@@ -49,7 +49,8 @@ export function routeTitle(r: Route): string {
 function sameRoute(a: Route, b: Route): boolean {
   if (a.kind !== b.kind) return false;
   if (a.kind === "journals") return true;
-  return a.name === (b as typeof a).name && a.pageKind === (b as typeof a).pageKind;
+  const bb = b as typeof a;
+  return a.name === bb.name && a.pageKind === bb.pageKind && a.block === bb.block;
 }
 
 // Navigate the active tab to a new route, pushing it onto the history stack
@@ -76,6 +77,16 @@ export function openPage(name: string, pageKind: "journal" | "page" = "page") {
 
 export function openJournals() {
   navigate({ kind: "journals" });
+}
+
+/** Zoom the active tab into a block (or back out, when null). Zoom is part of the
+ *  route, so it joins the per-tab back/forward history and a block can be opened
+ *  pre-zoomed in its own tab via openPageInNewTab(name, kind, uuid). No-op when the
+ *  active tab isn't on a page. */
+export function focusBlock(id: string | null) {
+  const r = route();
+  if (r.kind !== "page") return;
+  navigate({ kind: "page", name: r.name, pageKind: r.pageKind, block: id ?? undefined });
 }
 
 /** Open a page and scroll the given block into view (block search results jump
@@ -105,9 +116,13 @@ export function openInNewTab(r: Route) {
   persist();
 }
 
-export function openPageInNewTab(name: string, pageKind: "journal" | "page" = "page") {
+export function openPageInNewTab(
+  name: string,
+  pageKind: "journal" | "page" = "page",
+  block?: string
+) {
   if (pageKind === "page") name = resolveAlias(name);
-  openInNewTab({ kind: "page", name, pageKind });
+  openInNewTab({ kind: "page", name, pageKind, block });
   pushRecent(name, pageKind);
 }
 

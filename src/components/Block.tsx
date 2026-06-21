@@ -54,6 +54,7 @@ import { blockView } from "../render/block";
 import { BodyContent } from "../render/body";
 import { QueryMacro, EmbedMacro } from "./Macro";
 import { workflow, zoomInto, openContextMenu, openDatePicker, openBlockInSidebar, graphMeta, dataRev, setQueryBuilderAutoOpen, openPageProps } from "../ui";
+import { openPageInNewTab } from "../router";
 import { editorCommandFor } from "../keybindings";
 import { cycleMarkerSmart } from "../editor/repeat";
 import { applyTemplateVars } from "../editor/templateVars";
@@ -194,7 +195,7 @@ export function Block(props: { id: string }): JSX.Element {
           <span
             class="bullet-container"
             classList={{ "bullet-closed": collapsed() && hasChildren() }}
-            title="Click to zoom; shift-click to open in sidebar; drag to move"
+            title="Click to zoom; shift-click → sidebar; middle-click → new tab; drag to move"
             onMouseDown={(e) => {
               if (e.button === 0) beginDrag(props.id, e);
             }}
@@ -203,6 +204,13 @@ export function Block(props: { id: string }): JSX.Element {
               if (dragMoved) return; // was a drag, not a click
               if (e.shiftKey) openBlockInSidebar(persistentBlockRef(props.id));
               else zoomInto(props.id);
+            }}
+            onAuxClick={(e) => {
+              if (e.button !== 1) return; // middle-click → open the zoom in a new tab
+              e.preventDefault();
+              e.stopPropagation();
+              const ref = persistentBlockRef(props.id); // writes id:: so the tab survives a restart
+              openPageInNewTab(ref.page, ref.pageKind, ref.uuid);
             }}
           >
             <span class="bullet" />

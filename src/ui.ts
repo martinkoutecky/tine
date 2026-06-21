@@ -2,6 +2,8 @@
 import { createSignal } from "solid-js";
 import type { GraphMeta } from "./types";
 import { backend, isTauri } from "./backend";
+// Zoom is route state; these are call-time only, so the ui↔router cycle is safe.
+import { route, focusBlock } from "./router";
 
 const THEME_KEY = "logseq-claude.theme";
 function loadTheme(): "light" | "dark" {
@@ -500,14 +502,19 @@ export function closeDatePicker() {
   setDatePicker(null);
 }
 
-// Block zoom: focus a single block's subtree (click its bullet). Session-level
-// (the frontend block id stays valid while the page is loaded); cleared on nav.
-export const [zoomedBlock, setZoomedBlock] = createSignal<string | null>(null);
+// Block zoom: focus a single block's subtree (click its bullet). Zoom is part of
+// the active tab's ROUTE (the block's stable uuid) — so it's per-tab, joins the
+// back/forward history, and a block can be opened pre-zoomed in its own tab
+// (middle-click a bullet). zoomedBlock derives from the current route.
+export function zoomedBlock(): string | null {
+  const r = route();
+  return r.kind === "page" ? r.block ?? null : null;
+}
 export function zoomInto(id: string) {
-  setZoomedBlock(id);
+  focusBlock(id);
 }
 export function zoomOut() {
-  setZoomedBlock(null);
+  focusBlock(null);
 }
 
 // Right sidebar: a stack of items opened for reference (shift-click anything).
