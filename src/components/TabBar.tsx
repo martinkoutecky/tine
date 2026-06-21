@@ -59,7 +59,9 @@ export function TabBar(): JSX.Element {
   let dragId: string | null = null;
 
   return (
-    <div class="tab-bar">
+    // The tab strip fills the toolbar's middle, so its empty space is the main
+    // window-drag handle (the tabs, being children, still click/drag-to-reorder).
+    <div class="tab-bar" data-tauri-drag-region>
       <For each={tabs()}>
         {(t) => (
           <div

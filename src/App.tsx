@@ -50,6 +50,7 @@ import {
 import { applyZoom, installInterfaceZoomKeys, installInterfaceZoomWheel } from "./zoom";
 import { editingId, flushAll } from "./store";
 import { isTauri } from "./backend";
+import { WindowControls, ResizeGrips, installWindowChrome, maximized } from "./components/WindowChrome";
 
 export function App(): JSX.Element {
   onMount(async () => {
@@ -131,6 +132,13 @@ export function App(): JSX.Element {
     onCleanup(installInterfaceZoomWheel());
   });
 
+  // Frameless window: the toolbar doubles as the title bar (decorations are off),
+  // so track maximized state to drive our custom max/restore glyph + resize grips.
+  onMount(() => {
+    if (!isTauri()) return;
+    onCleanup(installWindowChrome());
+  });
+
   return (
     <div
       class="app-container"
@@ -172,7 +180,10 @@ export function App(): JSX.Element {
         <Show when={focusMode()}>
           <div class="topbar-hover-zone" />
         </Show>
-        <header class="topbar">
+        {/* The toolbar doubles as the title bar: data-tauri-drag-region lets the
+            user drag the window by its empty areas (buttons/tabs, being children
+            without the attribute, still click normally; double-click maximizes). */}
+        <header class="topbar" data-tauri-drag-region>
           <div class="topbar-left">
             <button
               class="icon-btn"
@@ -259,6 +270,12 @@ export function App(): JSX.Element {
                 />
               </svg>
             </button>
+            {/* Frameless-window controls live at the very right, where the native
+                title bar's buttons used to be (Tauri/desktop only). */}
+            <Show when={isTauri()}>
+              <span class="topbar-sep" />
+              <WindowControls />
+            </Show>
           </div>
         </header>
         <ConflictBar />
@@ -312,6 +329,11 @@ export function App(): JSX.Element {
       <Settings />
       <Toasts />
       <Lightbox />
+      {/* Resize grips for the frameless window — hidden while maximized (no edge
+          to drag, and they'd otherwise overlap the content scrollbar). */}
+      <Show when={isTauri() && !maximized()}>
+        <ResizeGrips />
+      </Show>
     </div>
   );
 }

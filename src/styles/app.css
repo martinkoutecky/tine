@@ -171,6 +171,50 @@ body {
   background: var(--bg-quaternary);
 }
 
+/* --- Frameless-window chrome (decorations off; toolbar = title bar) --------- */
+.win-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+.win-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 26px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  border-radius: 5px;
+  cursor: pointer;
+  padding: 0;
+}
+.win-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-title);
+}
+.win-close:hover {
+  background: #e81123;
+  color: #fff;
+}
+
+/* Invisible resize strips pinned to the window edges/corners. Thin so they only
+   catch the very edge; corners slightly larger for diagonal resize. */
+.resize-grip {
+  position: fixed;
+  z-index: 9999;
+}
+.grip-n { top: 0; left: 8px; right: 8px; height: 4px; cursor: ns-resize; }
+.grip-s { bottom: 0; left: 8px; right: 8px; height: 4px; cursor: ns-resize; }
+.grip-e { top: 8px; bottom: 8px; right: 0; width: 4px; cursor: ew-resize; }
+.grip-w { top: 8px; bottom: 8px; left: 0; width: 4px; cursor: ew-resize; }
+.grip-nw { top: 0; left: 0; width: 8px; height: 8px; cursor: nwse-resize; }
+.grip-ne { top: 0; right: 0; width: 8px; height: 8px; cursor: nesw-resize; }
+.grip-sw { bottom: 0; left: 0; width: 8px; height: 8px; cursor: nesw-resize; }
+.grip-se { bottom: 0; right: 0; width: 8px; height: 8px; cursor: nwse-resize; }
+
 .main-content {
   flex: 1;
   overflow-y: auto;
