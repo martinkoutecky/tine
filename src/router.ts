@@ -6,6 +6,7 @@
 
 import { createSignal } from "solid-js";
 import { pushRecent, resolveAlias } from "./ui";
+import { doc, persistentBlockRef } from "./store";
 
 export type Route =
   | { kind: "journals" }
@@ -81,12 +82,23 @@ export function openJournals() {
 
 /** Zoom the active tab into a block (or back out, when null). Zoom is part of the
  *  route, so it joins the per-tab back/forward history and a block can be opened
- *  pre-zoomed in its own tab via openPageInNewTab(name, kind, uuid). No-op when the
- *  active tab isn't on a page. */
+ *  pre-zoomed in its own tab via openPageInNewTab(name, kind, uuid).
+ *
+ *  Zooming navigates to the block's OWN page (not whichever route you're on), so
+ *  it works from the journals feed, a linked-reference, or the command palette —
+ *  not only when you're already on that page. Same destination as a middle-click,
+ *  just in the current tab. persistentBlockRef pins the uuid (writes id:: once)
+ *  so a zoomed tab survives a reload/restart, exactly like the new-tab path. */
 export function focusBlock(id: string | null) {
-  const r = route();
-  if (r.kind !== "page") return;
-  navigate({ kind: "page", name: r.name, pageKind: r.pageKind, block: id ?? undefined });
+  if (id === null) {
+    // Zoom out: stay on the current page, drop the block. (No-op off a page.)
+    const r = route();
+    if (r.kind === "page") navigate({ kind: "page", name: r.name, pageKind: r.pageKind });
+    return;
+  }
+  if (!doc.byId[id]) return; // block no longer loaded — nothing to zoom into
+  const ref = persistentBlockRef(id);
+  navigate({ kind: "page", name: ref.page, pageKind: ref.pageKind, block: ref.uuid });
 }
 
 /** Open a page and scroll the given block into view (block search results jump
