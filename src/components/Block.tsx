@@ -571,12 +571,12 @@ function Editor(props: { id: string }): JSX.Element {
     const pages = await backend().quickSwitch(t.query, 8);
     const cur = ac();
     if (!cur || cur.start !== t.start) return; // trigger changed while awaiting
-    // Order the "create <typed>" option like OG Logseq: none if the query already
-    // names a page exactly; otherwise the create option goes FIRST — UNLESS the
-    // top match is a prefix of the query, in which case that prefix match leads
-    // and create is second. So typing `#opus` (where "Opinion Diffusion" is only a
-    // fuzzy/subsequence match, not a prefix) puts "Create #opus" first, and Enter
-    // creates the literal tag rather than jumping to the fuzzy match.
+    // "Create <typed>" is the DEFAULT (first) item whenever the query isn't an
+    // exact existing page. So typing a fresh #tag and pressing Enter makes that
+    // tag — even when it prefix- or fuzzy-matches an existing page, which would
+    // otherwise be silently selected (e.g. #book completing to a "Books" page).
+    // The matches still follow, so arrowing down + Enter completes to an existing
+    // page instead. No create option for a blank query or an exact match.
     const q = t.query.trim();
     const pageItem = (name: string): AcItem =>
       t.kind === "page"
@@ -587,18 +587,10 @@ function Editor(props: { id: string }): JSX.Element {
         ? { label: `Create "${q}"`, insert: pageInsert(q) }
         : { label: `Create #${q}`, insert: tagInsert(q) };
     const exact = pages.some((p) => p.name.toLowerCase() === q.toLowerCase());
-    const ql = q.toLowerCase();
-    let items: AcItem[];
-    if (!q || exact) {
-      items = pages.map((p) => pageItem(p.name)); // exact/blank → no create option
-    } else if (pages.length === 0) {
-      items = [createItem]; // nothing matched → just create
-    } else if (pages[0].name.toLowerCase().startsWith(ql)) {
-      // Top result is a prefix match → it leads, then create, then the rest.
-      items = [pageItem(pages[0].name), createItem, ...pages.slice(1).map((p) => pageItem(p.name))];
-    } else {
-      items = [createItem, ...pages.map((p) => pageItem(p.name))]; // no prefix → create first
-    }
+    const items: AcItem[] =
+      !q || exact
+        ? pages.map((p) => pageItem(p.name)) // exact/blank → no create option
+        : [createItem, ...pages.map((p) => pageItem(p.name))]; // else create leads
     setAcItems(items);
   };
 
