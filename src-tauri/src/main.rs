@@ -792,11 +792,21 @@ fn write_highlights(
 }
 
 /// Show + focus the always-on-top quick-capture mini window (created hidden at
-/// startup). Re-centers it each time so it lands predictably regardless of where
-/// the main window is. No-op if the window is missing.
+/// startup). Each show resets it to the small base size and anchors it near the
+/// top of the screen so the frontend can grow it downward (multiple blocks, an
+/// autocomplete popup, the date picker) without running off the bottom edge.
+/// No-op if the window is missing.
 fn show_capture(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("capture") {
-        let _ = w.center();
+        let _ = w.set_size(tauri::LogicalSize::new(600.0, 92.0));
+        if let Ok(Some(mon)) = w.current_monitor() {
+            let size = mon.size().to_logical::<f64>(mon.scale_factor());
+            let x = ((size.width - 600.0) / 2.0).max(0.0);
+            let y = size.height * 0.18;
+            let _ = w.set_position(tauri::LogicalPosition::new(x, y));
+        } else {
+            let _ = w.center();
+        }
         let _ = w.show();
         let _ = w.set_focus();
     }

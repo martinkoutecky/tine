@@ -411,7 +411,7 @@ function TasksTab(): JSX.Element {
 
       <Field
         label="Quick-capture Enter key"
-        hint="In the quick-capture window: ON → Enter files the capture. OFF → Enter starts a new block; ⌘/Ctrl+Enter files."
+        hint={`In the quick-capture window: ON → Enter files the capture. OFF → Enter starts a new block; the “Quick-capture: file to today’s journal” shortcut files (default Ctrl+Shift+Enter, remappable under Keyboard shortcuts). Ctrl+Enter stays free for cycling the task marker.`}
       >
         <Toggle on={captureEnterFiles()} onClick={toggleCaptureEnter} />
       </Field>

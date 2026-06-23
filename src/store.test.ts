@@ -38,6 +38,8 @@ import {
   carryUnfinished,
   ensurePageLoaded,
   exportNodesFor,
+  prevVisible,
+  nextVisible,
 } from "./store";
 import { exportOutline, DEFAULT_EXPORT_OPTIONS } from "./editor/exportText";
 import { splitProps, joinProps, isBuiltinHidden, hideAll } from "./editor/properties";
@@ -518,6 +520,29 @@ describe("merge (Backspace at 0)", () => {
   it("first block can't merge backwards", () => {
     const dto = load([blk("only")]);
     expect(mergeWithPrev(dto.blocks[0].id)).toBe(false);
+  });
+
+  // The quick-capture window edits a scratch page that's never part of the main
+  // routed view (mainPages()), so visibleData() doesn't index its blocks.
+  // prevVisible/nextVisible must fall back to the block's own page — otherwise
+  // Backspace-merge and Up/Down nav are dead in the capture window.
+  it("merges + navigates on a detached page absent from the main view", () => {
+    ensurePageLoaded({
+      name: "·capture·",
+      kind: "page",
+      title: "·capture·",
+      pre_block: null,
+      blocks: [blk("first"), blk("second")],
+    });
+    const cap = pageByName("·capture·")!;
+    const [first, second] = cap.roots;
+    expect(prevVisible(second)).toBe(first);
+    expect(nextVisible(first)).toBe(second);
+    expect(prevVisible(first)).toBe(null);
+    expect(mergeWithPrev(second)).toBe(true);
+    const after = pageByName("·capture·")!;
+    expect(after.roots.length).toBe(1);
+    expect(doc.byId[after.roots[0]].raw).toBe("firstsecond");
   });
 });
 

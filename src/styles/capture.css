@@ -1,10 +1,12 @@
-/* Quick-capture window shell. The editor internals (`.editor-wrap`,
-   `.block-editor`, `.autocomplete`, `.sel-toolbar`) are styled by app.css — this
-   only frames the single Editor to fill the small window. */
+/* Quick-capture window shell. The outline (`.page-blocks` → `.ls-block`) and the
+   editor internals (`.editor-wrap`, `.block-editor`, `.autocomplete`, the date
+   picker) are all styled by app.css — this only frames the auto-sized mini
+   window. The window resizes itself to fit its content + any open popup (see
+   `fitWindow` in capture.tsx), so the shell must NOT be a fixed-height flex row
+   (that stacked the root blocks into side-by-side columns and hid the bullets). */
 html,
 body {
   margin: 0;
-  height: 100%;
 }
 body {
   background: var(--bg-primary, #ffffff);
@@ -12,17 +14,13 @@ body {
   overflow: hidden;
 }
 .capture-shell {
-  height: 100vh;
-  padding: 14px 16px;
-  display: flex;
-  align-items: flex-start;
+  padding: 12px 14px;
 }
-.capture-shell .editor-wrap {
-  position: relative;
-  width: 100%;
-}
-.capture-shell .block-editor {
-  width: 100%;
-  font-size: 17px;
-  line-height: 1.5;
+/* The format toolbar defaults to floating 34px ABOVE the line, which clips at
+   the window's top edge for the first block in this compact window. Drop it just
+   below the line instead; fitWindow() grows the window so it stays fully
+   visible. */
+.capture-shell .sel-toolbar {
+  top: calc(100% + 4px);
+  bottom: auto;
 }

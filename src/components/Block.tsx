@@ -972,8 +972,11 @@ export function Editor(props: { id: string }): JSX.Element {
     // autocomplete-popup block above, so when the popup is open Enter still
     // selects the highlighted item — only a popup-closed Enter files.
     if (cap) {
-      // Cmd/Ctrl+Enter always files the capture.
-      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+      // File the capture via the configurable `editor/quick-capture-file`
+      // shortcut (default mod+shift+enter). `cmd` is already resolved above; it's
+      // not in runEditorCmd, so it fell through to here. Remappable in Settings →
+      // Keyboard shortcuts (and the capture window syncs the user's binding).
+      if (cmd === "editor/quick-capture-file") {
         e.preventDefault();
         commit(raw);
         cap.submit();

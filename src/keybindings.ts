@@ -112,6 +112,10 @@ const COMMANDS: CommandDef[] = [
   { id: "editor/select-block-up", binding: "shift+up", label: "Select block up", scope: "editor" },
   { id: "editor/select-block-down", binding: "shift+down", label: "Select block down", scope: "editor" },
   { id: "editor/cycle-todo", binding: "mod+enter", label: "Cycle TODO / DOING / DONE", scope: "editor" },
+  // Quick-capture mini-window only: file the capture to today's journal. Acts
+  // only when CaptureCtx is present (Block.tsx); a no-op in the main app. Default
+  // mod+shift+enter avoids mod+enter (cycle-todo) and shift+enter (soft newline).
+  { id: "editor/quick-capture-file", binding: "mod+shift+enter", label: "Quick-capture: file to today's journal", scope: "editor" },
   // Inline formatting toggles.
   { id: "editor/bold", binding: "mod+b", label: "Bold", scope: "editor" },
   { id: "editor/italics", binding: "mod+i", label: "Italic", scope: "editor" },

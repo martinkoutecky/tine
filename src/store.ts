@@ -414,16 +414,45 @@ export function visibleOrder(): string[] {
   return visibleData().order;
 }
 
+// Visible (expanded) block order within a single page — the fallback for blocks
+// that aren't part of the main routed view, e.g. the quick-capture scratch page,
+// whose roots never appear in mainPages(). Without this, prevVisible/nextVisible
+// (and therefore Backspace-merge and Up/Down nav) are dead in the capture window.
+function pageVisibleOrder(pageName: string): string[] {
+  const order: string[] = [];
+  const page = doc.pages.find((p) => p.name === pageName);
+  if (!page) return order;
+  const walk = (ids: string[]) => {
+    for (const id of ids) {
+      order.push(id);
+      const n = doc.byId[id];
+      if (n && !n.collapsed && n.children.length) walk(n.children);
+    }
+  };
+  walk(page.roots);
+  return order;
+}
+
 export function prevVisible(id: string): string | null {
   const { order, index } = visibleData();
   const i = index.get(id);
-  return i !== undefined && i > 0 ? order[i - 1] : null;
+  if (i !== undefined) return i > 0 ? order[i - 1] : null;
+  const node = doc.byId[id];
+  if (!node) return null;
+  const ord = pageVisibleOrder(node.page);
+  const j = ord.indexOf(id);
+  return j > 0 ? ord[j - 1] : null;
 }
 
 export function nextVisible(id: string): string | null {
   const { order, index } = visibleData();
   const i = index.get(id);
-  return i !== undefined && i < order.length - 1 ? order[i + 1] : null;
+  if (i !== undefined) return i < order.length - 1 ? order[i + 1] : null;
+  const node = doc.byId[id];
+  if (!node) return null;
+  const ord = pageVisibleOrder(node.page);
+  const j = ord.indexOf(id);
+  return j >= 0 && j < ord.length - 1 ? ord[j + 1] : null;
 }
 
 export function depthOf(id: string): number {

@@ -6,6 +6,8 @@
   "permissions": [
     "core:default",
     "core:window:allow-hide",
+    "core:window:allow-set-size",
+    "core:window:allow-is-visible",
     "core:event:allow-emit",
     "core:event:allow-listen"
   ]

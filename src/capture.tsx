@@ -8,9 +8,10 @@
 // window never writes the graph itself — it never sets doc.loaded, so the
 // persistence engine's saves are no-ops here).
 import { render } from "solid-js/web";
-import { For, Show, createSignal, onMount } from "solid-js";
+import { For, Show, createSignal, createEffect, onCleanup, onMount } from "solid-js";
 import { Block, CaptureCtx, type CaptureApi } from "./components/Block";
 import { DatePicker } from "./components/DatePicker";
+import { datePicker } from "./ui";
 import {
   ensurePageLoaded,
   pageByName,
@@ -22,6 +23,12 @@ import {
 } from "./store";
 import { installKeybindings } from "./keybindings";
 import { backend } from "./backend";
+// theme.css MUST come first: it defines every CSS variable (--bg-primary,
+// --bullet-color, --ls-block-bullet-size, --selection-bg) AND the
+// html[data-theme="dark"] overrides. Without it the capture webview had no
+// variable definitions → white background, invisible bullets (size 0), no
+// selection highlight, and data-theme="dark" did nothing.
+import "./styles/theme.css";
 import "./styles/app.css";
 import "./styles/capture.css";
 
@@ -60,13 +67,61 @@ function Capture() {
 
   // The window is created hidden at startup, so the editor's onMount fit to a
   // 0-height layout and focus was a no-op. Re-fit + focus the live textarea when
-  // the window is actually shown.
+  // the window is actually shown (the *first editing* textarea — capture starts
+  // with the caret in the first/only block).
   const refit = () => {
     const ta = document.querySelector<HTMLTextAreaElement>(".capture-shell textarea");
     if (!ta) return;
     ta.focus();
     ta.style.height = "auto";
     ta.style.height = `${ta.scrollHeight}px`;
+  };
+
+  // --- auto-grow the window to fit its content + any open popup --------------
+  // The capture window starts tiny (one line). As you add blocks, wrap lines, or
+  // open an autocomplete popup / date picker, paint would overflow the OS window
+  // and get clipped — so we measure what's actually rendered and resize the
+  // window to fit (capped at 80% of the screen). Rust resets it to the base size
+  // on each show, so this only ever grows from the small base.
+  let lastH = 0;
+  const measureHeight = (): number => {
+    const PAD = 14; // breathing room below the content
+    const shell = document.querySelector<HTMLElement>(".capture-shell");
+    let h = shell ? shell.getBoundingClientRect().bottom : 72;
+    const popup = document.querySelector<HTMLElement>(".autocomplete");
+    if (popup) h = Math.max(h, popup.getBoundingClientRect().bottom);
+    // The format toolbar floats just below the editing line (see capture.css) —
+    // grow the window so it isn't clipped at the bottom edge.
+    const toolbar = document.querySelector<HTMLElement>(".sel-toolbar");
+    if (toolbar) h = Math.max(h, toolbar.getBoundingClientRect().bottom);
+    // The date picker is fixed-positioned and clamps to the *current* window
+    // height, so reserve a fixed slab tall enough to show it (it then positions
+    // itself once the resize takes effect — its placement is window-size-aware).
+    if (datePicker()) h = Math.max(h, 392);
+    return Math.ceil(h + PAD);
+  };
+
+  const fitWindow = async () => {
+    try {
+      const { getCurrentWindow, LogicalSize } = await import("@tauri-apps/api/window");
+      const win = getCurrentWindow();
+      if (!(await win.isVisible())) return;
+      const screenMax = Math.round((window.screen?.availHeight ?? 1000) * 0.8);
+      const h = Math.max(64, Math.min(measureHeight(), screenMax));
+      if (Math.abs(h - lastH) < 2) return; // avoid churn / feedback loops
+      lastH = h;
+      await win.setSize(new LogicalSize(600, h));
+    } catch {
+      // not in Tauri (dev preview)
+    }
+  };
+  let fitRaf: number | undefined;
+  const scheduleFit = () => {
+    if (fitRaf !== undefined) return;
+    fitRaf = requestAnimationFrame(() => {
+      fitRaf = undefined;
+      void fitWindow();
+    });
   };
 
   const hideWindow = async () => {
@@ -80,6 +135,37 @@ function Capture() {
 
   const loadPref = () => {
     void backend().getCaptureEnterFiles().then(setEnterFiles).catch(() => {});
+  };
+
+  // The capture webview can't read the main window's chosen theme (localStorage
+  // isn't shared across WebKitGTK webviews, and prefers-color-scheme doesn't
+  // track the app theme). Ask the running main window for it; it replies (and
+  // also broadcasts on every change) with `capture-apply-theme`.
+  const applyThemeAttr = (t: string) => {
+    if (t === "dark" || t === "light") document.documentElement.setAttribute("data-theme", t);
+  };
+  const requestTheme = async () => {
+    try {
+      const { emit } = await import("@tauri-apps/api/event");
+      await emit("capture-request-theme");
+    } catch {
+      // not in Tauri
+    }
+  };
+
+  // Editor shortcuts (incl. the configurable `editor/quick-capture-file` that
+  // files the capture) are merged from config.edn + the user's Settings
+  // overrides, which live in the MAIN window's localStorage — unreadable here.
+  // Ask the main window for the merged map and re-install our keybindings with
+  // it, so a remapped shortcut is honored in the capture window too.
+  let disposeKeys: () => void = () => {};
+  const requestShortcuts = async () => {
+    try {
+      const { emit } = await import("@tauri-apps/api/event");
+      await emit("capture-request-shortcuts");
+    } catch {
+      // not in Tauri
+    }
   };
 
   const submit = () => {
@@ -105,19 +191,75 @@ function Capture() {
 
   const captureApi: CaptureApi = { submit, cancel, enterFiles };
 
+  // Grow/shrink the window whenever the rendered content changes: new/removed
+  // blocks and popups (childList), or a textarea autosizing (inline `style`).
+  // Plus the date-picker signal, which a MutationObserver on the DOM also catches
+  // but the effect makes the dependency explicit.
+  createEffect(() => {
+    datePicker();
+    scheduleFit();
+  });
+
   onMount(() => {
     // Populate the keybinding table so editor shortcuts (bold/italic/…) work the
-    // same as the main window. Its global handler is harmless here.
-    installKeybindings();
+    // same as the main window — defaults until the main window sends the merged
+    // map (see the capture-apply-shortcuts listener). Its global handler is
+    // harmless here.
+    disposeKeys = installKeybindings();
+    onCleanup(() => disposeKeys());
     loadPref();
     seed();
+
+    const root = document.getElementById("capture-root");
+    if (root) {
+      const mo = new MutationObserver(scheduleFit);
+      mo.observe(root, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["style"],
+      });
+      onCleanup(() => mo.disconnect());
+    }
+
+    void (async () => {
+      try {
+        const { listen } = await import("@tauri-apps/api/event");
+        const unTheme = await listen<{ theme: string }>("capture-apply-theme", (e) =>
+          applyThemeAttr(e.payload.theme)
+        );
+        const unKeys = await listen<Record<string, string>>("capture-apply-shortcuts", (e) => {
+          disposeKeys();
+          disposeKeys = installKeybindings(e.payload ?? {});
+        });
+        onCleanup(() => {
+          unTheme();
+          unKeys();
+        });
+      } catch {
+        // not in Tauri
+      }
+    })();
+    void requestTheme();
+    void requestShortcuts();
+
     void (async () => {
       try {
         const { getCurrentWindow } = await import("@tauri-apps/api/window");
         await getCurrentWindow().onFocusChanged(({ payload: focused }) => {
           if (focused) {
             loadPref(); // pick up a Settings change made while we were hidden
-            requestAnimationFrame(refit);
+            void requestTheme(); // and a theme change
+            void requestShortcuts(); // and a shortcut remap
+            // Rust resets the OS window to the small base size on each show, but
+            // `lastH` still holds the previous (grown) height — so clear it, else
+            // a reopen with a preserved multi-block draft would skip the re-fit
+            // and stay too small.
+            lastH = 0;
+            requestAnimationFrame(() => {
+              refit();
+              scheduleFit();
+            });
           } else {
             // Dismiss on blur. The draft is preserved (only Esc/submit clear it)
             // so an accidental focus loss can't lose text.
@@ -134,7 +276,9 @@ function Capture() {
     <CaptureCtx.Provider value={captureApi}>
       <div class="capture-shell">
         <Show when={ready()}>
-          <For each={roots()}>{(rid) => <Block id={rid} />}</For>
+          <div class="page-blocks">
+            <For each={roots()}>{(rid) => <Block id={rid} />}</For>
+          </div>
         </Show>
       </div>
       <DatePicker />

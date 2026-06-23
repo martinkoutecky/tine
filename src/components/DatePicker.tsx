@@ -1,4 +1,4 @@
-import { For, Show, createMemo, createSignal, type JSX } from "solid-js";
+import { For, Show, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { datePicker, closeDatePicker, graphMeta } from "../ui";
 import { readSchedule, setSchedule } from "../store";
 
@@ -83,13 +83,39 @@ function Picker(props: { bid: string; which: "scheduled" | "deadline"; x: number
     view().y === today.getFullYear() && view().m === today.getMonth() && d === today.getDate();
   const isSel = (d: number) => !!sel && sel.y === view().y && sel.m === view().m && sel.d === d;
 
-  // Keep the popup on-screen.
-  const left = Math.min(props.x, (typeof window !== "undefined" ? window.innerWidth : 1280) - 260);
-  const top = Math.min(props.y, (typeof window !== "undefined" ? window.innerHeight : 800) - 300);
+  // Keep the popup on-screen. Reactive to the window size so it stays visible
+  // even when the host window resizes after the picker opens — the quick-capture
+  // window grows to make room for the picker, and this repositions it into view.
+  const [winW, setWinW] = createSignal(typeof window !== "undefined" ? window.innerWidth : 1280);
+  const [winH, setWinH] = createSignal(typeof window !== "undefined" ? window.innerHeight : 800);
+  const left = () => Math.max(4, Math.min(props.x, winW() - 260));
+  const top = () => Math.max(4, Math.min(props.y, winH() - 300));
+  onMount(() => {
+    const onResize = () => {
+      setWinW(window.innerWidth);
+      setWinH(window.innerHeight);
+    };
+    // Esc closes the picker (capture phase so it beats the editor's own Esc — in
+    // the quick-capture window a bubbling Esc would otherwise dismiss the whole
+    // window and leave the picker open behind it).
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        closeDatePicker();
+      }
+    };
+    window.addEventListener("resize", onResize);
+    window.addEventListener("keydown", onKey, true);
+    onCleanup(() => {
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("keydown", onKey, true);
+    });
+  });
 
   return (
     <div class="dp-overlay" onClick={closeDatePicker} onContextMenu={(e) => { e.preventDefault(); closeDatePicker(); }}>
-      <div class="date-picker" style={{ left: `${left}px`, top: `${top}px` }} onClick={(e) => e.stopPropagation()}>
+      <div class="date-picker" style={{ left: `${left()}px`, top: `${top()}px` }} onClick={(e) => e.stopPropagation()}>
         <div class="dp-head">
           <button class="dp-nav" onClick={() => step(-1)} title="Previous month">‹</button>
           <span class="dp-title">

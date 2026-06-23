@@ -136,18 +136,64 @@ export function App(): JSX.Element {
     onCleanup(() => unlisten());
   });
 
+  // Tell the quick-capture mini-window our theme. It can't read the main
+  // window's localStorage (WebKitGTK doesn't share it across webviews), so it
+  // requests the theme when shown and we reply; we also broadcast on every
+  // change so an open capture window updates live.
+  onMount(() => {
+    if (!isTauri()) return;
+    let unlisten = () => {};
+    void (async () => {
+      const { emit, listen } = await import("@tauri-apps/api/event");
+      unlisten = await listen("capture-request-theme", () => {
+        void emit("capture-apply-theme", { theme: theme() });
+      });
+    })();
+    onCleanup(() => unlisten());
+  });
+  createEffect(() => {
+    const t = theme();
+    if (!isTauri()) return;
+    void (async () => {
+      const { emit } = await import("@tauri-apps/api/event");
+      await emit("capture-apply-theme", { theme: t });
+    })();
+  });
+
   // After edits settle (dataRev bumps), refresh the alias map so changing an
   // alias:: doesn't leave navigation resolving to the old canonical page. The
   // Rust side caches aliases, so this is cheap unless a save actually changed them.
   createEffect(on(dataRev, () => void refreshAliases(), { defer: true }));
 
   // (Re)install keybindings whenever config or the user's local overrides change
-  // (precedence: defaults < config.edn :shortcuts < Settings overrides).
+  // (precedence: defaults < config.edn :shortcuts < Settings overrides). We also
+  // mirror the merged map to the quick-capture window so a remapped
+  // editor/quick-capture-file (or any editor shortcut) is honored there too — it
+  // can't read this window's localStorage overrides on its own.
+  let latestShortcuts: Record<string, string> = {};
+  const broadcastShortcuts = () => {
+    if (!isTauri()) return;
+    void (async () => {
+      const { emit } = await import("@tauri-apps/api/event");
+      await emit("capture-apply-shortcuts", latestShortcuts);
+    })();
+  };
   createEffect(() => {
     const cfg = graphMeta()?.shortcuts ?? {};
     const merged = { ...cfg, ...shortcutOverrides() };
+    latestShortcuts = merged;
     const dispose = installKeybindings(merged);
+    broadcastShortcuts();
     onCleanup(dispose);
+  });
+  onMount(() => {
+    if (!isTauri()) return;
+    let unlisten = () => {};
+    void (async () => {
+      const { listen } = await import("@tauri-apps/api/event");
+      unlisten = await listen("capture-request-shortcuts", broadcastShortcuts);
+    })();
+    onCleanup(() => unlisten());
   });
 
   // Mouse-drag block selection: a drag that crosses a block boundary switches
