@@ -3,7 +3,7 @@
 
 import { TEMPLATE_VARS } from "./templateVars";
 
-export type TriggerKind = "page" | "tag" | "command";
+export type TriggerKind = "page" | "tag" | "command" | "block";
 
 export interface Trigger {
   kind: TriggerKind;
@@ -25,12 +25,21 @@ export function detectTrigger(raw: string, caret: number): Trigger | null {
   const lineStart = raw.lastIndexOf("\n", caret - 1) + 1;
   const before = raw.slice(lineStart, caret);
 
-  // [[page — open brackets with no closing since (the line has no newline).
-  const open = before.lastIndexOf("[[");
-  if (open !== -1) {
-    const inner = before.slice(open + 2);
+  // [[page and ((block — an opener with no closer since (the line has no
+  // newline). Whichever opener sits closer to the caret wins (you can type a
+  // `((` inside text that follows a `[[`, or vice-versa, e.g. `{{embed ((`).
+  const openPage = before.lastIndexOf("[[");
+  const openBlock = before.lastIndexOf("((");
+  if (openPage !== -1 && openPage > openBlock) {
+    const inner = before.slice(openPage + 2);
     if (!inner.includes("]") && !inner.includes("[")) {
-      return { kind: "page", query: inner, start: lineStart + open, end: caret };
+      return { kind: "page", query: inner, start: lineStart + openPage, end: caret };
+    }
+  }
+  if (openBlock !== -1 && openBlock > openPage) {
+    const inner = before.slice(openBlock + 2);
+    if (!inner.includes(")") && !inner.includes("(")) {
+      return { kind: "block", query: inner, start: lineStart + openBlock, end: caret };
     }
   }
 

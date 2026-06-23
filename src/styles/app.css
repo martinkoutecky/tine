@@ -1679,10 +1679,25 @@ body {
 }
 
 .ac-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
   padding: 5px 10px;
   border-radius: 5px;
   font-size: 14px;
   cursor: pointer;
+  overflow: hidden;
+}
+
+.ac-item .ac-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ac-item .ac-sub {
+  font-size: 11px;
+  color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

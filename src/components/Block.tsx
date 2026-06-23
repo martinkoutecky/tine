@@ -34,6 +34,7 @@ import {
   moveSelection,
   isSelected,
   persistentBlockRef,
+  persistBlockRefTarget,
   isBlockMoving,
   setBlockMoving,
 } from "../store";
@@ -416,10 +417,23 @@ function cycleBlockMarker(id: string) {
 
 interface AcItem {
   label: string;
+  /** Secondary, dimmer line (e.g. the page a block-ref candidate lives on). */
+  sub?: string;
   insert?: string;
   caret?: number;
   action?: import("../editor/autocomplete").CommandAction;
   templateNodes?: import("../types").BlockDto[];
+  /** A `((block reference))` candidate: insert `((uuid))` and persist id::. */
+  blockRef?: { uuid: string; page: string; kind: import("../types").PageKind };
+}
+
+/** First visible (non-`key:: value`) line of a block's raw markdown — what the
+ *  block-reference picker shows as the candidate's label. */
+function blockFirstLine(raw: string): string {
+  for (const line of raw.split("\n")) {
+    if (!/^\s*[\w-]+:: /.test(line) && line.trim() !== "") return line.trim();
+  }
+  return "";
 }
 
 // Small calendar glyph for date chips (SVG, not emoji — emoji tofu on WebKitGTK).
@@ -568,6 +582,26 @@ function Editor(props: { id: string }): JSX.Element {
       setAcItems(scored.map((x) => x.item));
       return;
     }
+    if (t.kind === "block") {
+      // `((` → full-text search for a block to reference, grouped by page. An
+      // empty query (bare `((`) returns nothing — the popup stays hidden until
+      // the user types. Selecting inserts `((uuid))` (see selectAc).
+      const groups = await backend().search(t.query, 8);
+      const cur = ac();
+      if (!cur || cur.start !== t.start) return; // trigger changed while awaiting
+      const items: AcItem[] = [];
+      for (const g of groups) {
+        for (const b of g.blocks) {
+          items.push({
+            label: blockFirstLine(b.raw) || g.page,
+            sub: g.page,
+            blockRef: { uuid: b.id, page: g.page, kind: g.kind },
+          });
+        }
+      }
+      setAcItems(items);
+      return;
+    }
     const pages = await backend().quickSwitch(t.query, 8);
     const cur = ac();
     if (!cur || cur.start !== t.start) return; // trigger changed while awaiting
@@ -673,6 +707,14 @@ function Editor(props: { id: string }): JSX.Element {
   const selectAc = (item: AcItem) => {
     const t = ac();
     if (!t) return;
+    if (item.blockRef) {
+      // Insert `((uuid))` now (resolves in-session via the in-memory uuid), then
+      // durably stamp the target's id:: in the background so it survives restart.
+      const { uuid, page, kind } = item.blockRef;
+      replaceTrigger(`((${uuid}))`);
+      void persistBlockRefTarget(uuid, page, kind);
+      return;
+    }
     if (item.templateNodes) {
       // Drop the "/name" trigger text, then insert the template's blocks (with
       // dynamic vars resolved). If the host block is now empty, replace it.
@@ -1063,7 +1105,10 @@ function Editor(props: { id: string }): JSX.Element {
                   selectAc(item);
                 }}
               >
-                {item.label}
+                <span class="ac-label">{item.label}</span>
+                <Show when={item.sub}>
+                  <span class="ac-sub">{item.sub}</span>
+                </Show>
               </div>
             )}
           </For>

@@ -49,6 +49,31 @@ describe("detectTrigger", () => {
     // "[[" then a newline before the caret → not an active page trigger.
     expect(detectTrigger("a [[\nbcd", 8)).toBeNull();
   });
+
+  it("detects (( block trigger", () => {
+    const t = detectTrigger("see ((lemma", 11);
+    expect(t).toEqual({ kind: "block", query: "lemma", start: 4, end: 11 });
+  });
+
+  it("no block trigger once parens closed", () => {
+    expect(detectTrigger("see ((abcd)) more", 17)).toBeNull();
+  });
+
+  it("(( inside {{embed ...}} still fires a block trigger", () => {
+    const raw = "{{embed ((foo";
+    expect(detectTrigger(raw, raw.length)).toEqual({
+      kind: "block", query: "foo", start: 8, end: raw.length,
+    });
+  });
+
+  it("the opener closest to the caret wins (( after [[ )", () => {
+    // A `((` typed after an (unclosed) `[[` on the same line — the nearer opener
+    // (the block ref) is the active trigger.
+    const raw = "[[Page ((blk";
+    expect(detectTrigger(raw, raw.length)).toEqual({
+      kind: "block", query: "blk", start: 7, end: raw.length,
+    });
+  });
 });
 
 describe("applyCompletion", () => {

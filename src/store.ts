@@ -1044,6 +1044,27 @@ export function persistentBlockRef(id: string): { uuid: string; page: string; pa
   return blockRef(id);
 }
 
+/** Make a freshly-inserted `((uuid))` reference durable: ensure the TARGET block
+ *  (which may live on a page that isn't loaded — block search spans the whole
+ *  graph) carries `id:: uuid` on disk, so the ref still resolves after a restart.
+ *  The owning page is loaded only if absent (`ensurePageLoaded` never clobbers
+ *  unsaved edits). A no-op if the block already has an `id::`. Fire-and-forget:
+ *  the ref resolves in-session via the in-memory uuid even before this lands. */
+export async function persistBlockRefTarget(
+  uuid: string,
+  page: string,
+  kind: PageKind
+): Promise<void> {
+  if (!doc.byId[uuid]) {
+    const dto = await backend().getPage(page, kind);
+    if (dto) ensurePageLoaded(dto);
+  }
+  // Re-check: a concurrent navigation may have loaded the page meanwhile, or the
+  // cache may have been rebuilt (external change) and reassigned the block a new
+  // uuid — in which case there's nothing safe to stamp.
+  if (doc.byId[uuid]) ensureStableBlockId(uuid);
+}
+
 /** Serialize a block and its subtree to Logseq markdown. */
 export function blockSubtreeMarkdown(id: string, level = 0): string {
   const n = doc.byId[id];
