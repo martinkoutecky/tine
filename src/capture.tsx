@@ -1,13 +1,16 @@
 // Quick-capture mini window. A separate Tauri webview (capture.html) that the
-// running app pops on a `tine --capture` signal. It hosts the SAME block Editor
-// the main app uses — so `[[`/`#`/`((`/`/` autocomplete, slash commands and
-// formatting behave identically — backed by an isolated single-block scratch
-// store. On submit it emits the block as outline markdown; the MAIN window turns
-// that into an append to today's journal (App.tsx), preserving the single-writer
-// design (this window never writes the graph itself).
+// running app pops on a `tine --capture` signal. It renders the SAME block tree
+// the main app uses (Block + Editor) over an isolated scratch store — so all
+// autocomplete (`[[`/`#`/`((`/`/`), slash commands, the date picker and
+// formatting behave identically, and Enter can create real new blocks. On submit
+// the scratch is serialized to outline markdown and emitted; the MAIN window
+// appends it to today's journal (App.tsx), keeping the single-writer design (this
+// window never writes the graph itself — it never sets doc.loaded, so the
+// persistence engine's saves are no-ops here).
 import { render } from "solid-js/web";
-import { Show, createSignal, onMount } from "solid-js";
-import { Editor } from "./components/Block";
+import { For, Show, createSignal, onMount } from "solid-js";
+import { Block, CaptureCtx, type CaptureApi } from "./components/Block";
+import { DatePicker } from "./components/DatePicker";
 import {
   ensurePageLoaded,
   pageByName,
@@ -18,18 +21,18 @@ import {
   doc,
 } from "./store";
 import { installKeybindings } from "./keybindings";
+import { backend } from "./backend";
 import "./styles/app.css";
 import "./styles/capture.css";
 
 const SCRATCH = "·capture·";
 
 function Capture() {
-  const [rootId, setRootId] = createSignal("");
+  const [ready, setReady] = createSignal(false);
+  const [enterFiles, setEnterFiles] = createSignal(false);
 
-  // Seed an isolated single-block scratch page. We deliberately NEVER set
-  // doc.loaded, so the persistence engine's scheduleSave/flush are no-ops and the
-  // scratch is never written to disk. Autocomplete still works: it reads the
-  // graph from the Rust backend (invoke), not from this store.
+  const roots = () => pageByName(SCRATCH)?.roots ?? [];
+
   const seed = () => {
     ensurePageLoaded({
       name: SCRATCH,
@@ -39,14 +42,11 @@ function Capture() {
       blocks: [{ id: "", raw: "", collapsed: false, children: [] }],
       rev: null,
     });
-    const rid = pageByName(SCRATCH)?.roots[0] ?? "";
-    setEditingId(rid);
-    setRootId(rid);
+    setEditingId(pageByName(SCRATCH)?.roots[0] ?? null);
+    setReady(true);
   };
 
-  // Reset the scratch IN PLACE — keep the SAME block id so the mounted Editor
-  // never references a deleted node: drop any extra blocks a template/paste made,
-  // blank the first block, and put editing focus back on it.
+  // Reset to a single empty block (the page stays loaded; we just clear it).
   const clearScratch = () => {
     const page = pageByName(SCRATCH);
     const rid = page?.roots[0];
@@ -58,6 +58,17 @@ function Capture() {
     setEditingId(rid);
   };
 
+  // The window is created hidden at startup, so the editor's onMount fit to a
+  // 0-height layout and focus was a no-op. Re-fit + focus the live textarea when
+  // the window is actually shown.
+  const refit = () => {
+    const ta = document.querySelector<HTMLTextAreaElement>(".capture-shell textarea");
+    if (!ta) return;
+    ta.focus();
+    ta.style.height = "auto";
+    ta.style.height = `${ta.scrollHeight}px`;
+  };
+
   const hideWindow = async () => {
     try {
       const { getCurrentWindow } = await import("@tauri-apps/api/window");
@@ -67,9 +78,12 @@ function Capture() {
     }
   };
 
+  const loadPref = () => {
+    void backend().getCaptureEnterFiles().then(setEnterFiles).catch(() => {});
+  };
+
   const submit = () => {
-    const page = pageByName(SCRATCH);
-    const md = page ? page.roots.map((r) => blockSubtreeMarkdown(r)).join("\n").trim() : "";
+    const md = roots().map((r) => blockSubtreeMarkdown(r)).join("\n").trim();
     void (async () => {
       if (md) {
         try {
@@ -89,19 +103,26 @@ function Capture() {
     void hideWindow();
   };
 
+  const captureApi: CaptureApi = { submit, cancel, enterFiles };
+
   onMount(() => {
     // Populate the keybinding table so editor shortcuts (bold/italic/…) work the
-    // same as the main window. Its global handler is harmless here — the
-    // switcher/panels it references don't exist in this window.
+    // same as the main window. Its global handler is harmless here.
     installKeybindings();
+    loadPref();
     seed();
     void (async () => {
       try {
         const { getCurrentWindow } = await import("@tauri-apps/api/window");
-        // Dismiss on blur (click-away / alt-tab). The draft is preserved — only
-        // Esc or submit clear it — so an accidental focus loss can't lose text.
         await getCurrentWindow().onFocusChanged(({ payload: focused }) => {
-          if (!focused) void hideWindow();
+          if (focused) {
+            loadPref(); // pick up a Settings change made while we were hidden
+            requestAnimationFrame(refit);
+          } else {
+            // Dismiss on blur. The draft is preserved (only Esc/submit clear it)
+            // so an accidental focus loss can't lose text.
+            void hideWindow();
+          }
         });
       } catch {
         // not in Tauri
@@ -110,11 +131,14 @@ function Capture() {
   });
 
   return (
-    <div class="capture-shell">
-      <Show when={rootId()} keyed>
-        {(rid) => <Editor id={rid} onSubmit={submit} onCancel={cancel} />}
-      </Show>
-    </div>
+    <CaptureCtx.Provider value={captureApi}>
+      <div class="capture-shell">
+        <Show when={ready()}>
+          <For each={roots()}>{(rid) => <Block id={rid} />}</For>
+        </Show>
+      </div>
+      <DatePicker />
+    </CaptureCtx.Provider>
   );
 }
 

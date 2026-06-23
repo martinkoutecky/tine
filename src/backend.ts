@@ -63,6 +63,9 @@ export interface Backend {
   /** How many launch snapshots to keep. */
   getBackupKeep(): Promise<number>;
   setBackupKeep(keep: number): Promise<void>;
+  /** Quick-capture Enter behaviour: true → Enter files; false → Enter = new block. */
+  getCaptureEnterFiles(): Promise<boolean>;
+  setCaptureEnterFiles(value: boolean): Promise<void>;
   /** Available snapshots for the current graph, newest first. */
   listBackups(): Promise<BackupInfo[]>;
   /** Restore a snapshot (overwrites journals/pages/config; snapshots current
@@ -249,6 +252,12 @@ class TauriBackend implements Backend {
   }
   setBackupKeep(keep: number) {
     return this.call<void>("set_backup_keep", { keep });
+  }
+  getCaptureEnterFiles() {
+    return this.call<boolean>("get_capture_enter_files");
+  }
+  setCaptureEnterFiles(value: boolean) {
+    return this.call<void>("set_capture_enter_files", { value });
   }
   listBackups() {
     return this.call<BackupInfo[]>("list_backups");

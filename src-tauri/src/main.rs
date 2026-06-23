@@ -236,13 +236,50 @@ fn set_backup_keep(keep: usize, app: tauri::AppHandle) -> Result<(), String> {
     if let Some(parent) = p.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let json = serde_json::json!({ "backup_keep": keep });
+    // Merge into the existing settings (don't clobber other keys, e.g.
+    // capture_enter_files).
+    let mut json = std::fs::read_to_string(&p)
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    json["backup_keep"] = serde_json::json!(keep);
     std::fs::write(&p, serde_json::to_string_pretty(&json).unwrap())
         .map_err(|e| e.to_string())?;
     // Apply the new (possibly lower) cap to the current graph's snapshots now.
     if let Some(base) = backup_base(&app) {
         prune_backups(&base, keep);
     }
+    Ok(())
+}
+
+/// Quick-capture Enter behaviour (app-level, in tine-settings.json): true → a
+/// plain Enter files the capture; false (default) → Enter makes a new block and
+/// Cmd/Ctrl+Enter files.
+fn capture_enter_files(app: &tauri::AppHandle) -> bool {
+    settings_path(app)
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v.get("capture_enter_files").and_then(|x| x.as_bool()))
+        .unwrap_or(false)
+}
+
+#[tauri::command]
+fn get_capture_enter_files(app: tauri::AppHandle) -> bool {
+    capture_enter_files(&app)
+}
+
+#[tauri::command]
+fn set_capture_enter_files(value: bool, app: tauri::AppHandle) -> Result<(), String> {
+    let p = settings_path(&app).ok_or("no app-data dir")?;
+    if let Some(parent) = p.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let mut json = std::fs::read_to_string(&p)
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    json["capture_enter_files"] = serde_json::Value::Bool(value);
+    std::fs::write(&p, serde_json::to_string_pretty(&json).unwrap()).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -916,6 +953,8 @@ fn main() {
             write_highlights,
             get_backup_keep,
             set_backup_keep,
+            get_capture_enter_files,
+            set_capture_enter_files,
             list_backups,
             restore_backup,
             load_session,

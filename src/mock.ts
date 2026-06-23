@@ -369,6 +369,12 @@ export function mockBackend(): Backend {
     async setBackupKeep(): Promise<void> {
       // no-op in the browser mock
     },
+    async getCaptureEnterFiles(): Promise<boolean> {
+      return false;
+    },
+    async setCaptureEnterFiles(): Promise<void> {
+      // no-op in the browser mock
+    },
     async listBackups() {
       return [];
     },

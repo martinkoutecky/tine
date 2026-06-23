@@ -1,4 +1,4 @@
-import { Show, Switch, Match, For, createMemo, createSignal, createUniqueId, createEffect, onMount, onCleanup, type JSX } from "solid-js";
+import { Show, Switch, Match, For, createMemo, createSignal, createContext, useContext, createUniqueId, createEffect, onMount, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
 import {
   detectTrigger,
@@ -152,6 +152,17 @@ function beginDrag(id: string, e: MouseEvent) {
   document.addEventListener("mousemove", onMove);
   document.addEventListener("mouseup", onUp);
 }
+
+// Set ONLY by the quick-capture window (capture.tsx). Flows through the Block
+// tree to every Editor so the capture's submit/cancel gestures and Enter mode
+// work without prop-drilling. Absent (null) in the main app — normal editing.
+export interface CaptureApi {
+  submit: () => void;
+  cancel: () => void;
+  /** true → a plain Enter files; false → Enter is a new block, Cmd/Ctrl+Enter files. */
+  enterFiles: () => boolean;
+}
+export const CaptureCtx = createContext<CaptureApi | null>(null);
 
 export function Block(props: { id: string }): JSX.Element {
   const node = () => doc.byId[props.id];
@@ -509,11 +520,9 @@ function assetMarkdown(name: string): string {
 // instead of splitting the block, Escape dismisses instead of entering
 // block-selection. Everything else — autocomplete, slash commands, formatting —
 // is the identical page-editing experience because it's the identical component.
-export function Editor(props: {
-  id: string;
-  onSubmit?: () => void;
-  onCancel?: () => void;
-}): JSX.Element {
+export function Editor(props: { id: string }): JSX.Element {
+  // Non-null only inside the quick-capture window (see CaptureCtx).
+  const cap = useContext(CaptureCtx);
   let ref!: HTMLTextAreaElement;
   // Caret/selection stashed when the *window* (not this block) loses focus, so
   // returning to Tine resumes editing exactly where you left off.
@@ -734,9 +743,7 @@ export function Editor(props: {
       const wasEmpty =
         doc.byId[props.id].raw.trim() === "" && doc.byId[props.id].children.length === 0;
       const lastId = insertOutlineAfter(props.id, nodes);
-      // In quick-capture the editor is bound to this one scratch block; deleting
-      // it would leave the standalone Editor referencing a removed node. Keep it.
-      if (wasEmpty && !props.onSubmit) deleteBlock(props.id);
+      if (wasEmpty) deleteBlock(props.id);
       startEditing(lastId, doc.byId[lastId].raw.length);
       return;
     }
@@ -961,14 +968,35 @@ export function Editor(props: {
     const cmd = editorCommandFor(e);
     if (cmd && runEditorCmd[cmd]?.(e)) return;
 
+    // Quick-capture window key handling (cap set only there). Runs AFTER the
+    // autocomplete-popup block above, so when the popup is open Enter still
+    // selects the highlighted item — only a popup-closed Enter files.
+    if (cap) {
+      // Cmd/Ctrl+Enter always files the capture.
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        commit(raw);
+        cap.submit();
+        return;
+      }
+      // "Enter files" mode: a popup-closed plain Enter files. In "new block" mode
+      // it falls through to the normal split-into-a-new-block handling below.
+      if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey && cap.enterFiles()) {
+        e.preventDefault();
+        commit(raw);
+        cap.submit();
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        cap.cancel();
+        return;
+      }
+    }
+
     if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
       e.preventDefault();
       commit(raw); // flush current text
-      if (props.onSubmit) {
-        // Quick-capture: Enter commits the capture rather than splitting.
-        props.onSubmit();
-        return;
-      }
       if (isAnnot()) {
         // A highlight block isn't split (that would mangle its metadata); Enter
         // adds a new sibling bullet below, which the user can Tab to nest as a
@@ -1007,10 +1035,6 @@ export function Editor(props: {
       }
     } else if (e.key === "Escape") {
       e.preventDefault();
-      if (props.onCancel) {
-        props.onCancel(); // quick-capture: dismiss the box
-        return;
-      }
       selectBlock(props.id); // exit editing into block-selection mode
     }
   };
@@ -1038,6 +1062,7 @@ export function Editor(props: {
   const onWindowFocus = () => {
     if (editingId() !== props.id || !ref || !ref.isConnected) return;
     ref.focus();
+    resizeNow(); // a window shown after being hidden may have fit to a 0-height layout
     if (savedSel) {
       const end = Math.min(savedSel.end, ref.value.length);
       const start = Math.min(savedSel.start, end);
@@ -1063,9 +1088,7 @@ export function Editor(props: {
       const wasEmpty =
         doc.byId[props.id].raw.trim() === "" && doc.byId[props.id].children.length === 0;
       const lastId = insertOutlineAfter(props.id, nodes);
-      // In quick-capture the editor is bound to this one scratch block; deleting
-      // it would leave the standalone Editor referencing a removed node. Keep it.
-      if (wasEmpty && !props.onSubmit) deleteBlock(props.id);
+      if (wasEmpty) deleteBlock(props.id);
       startEditing(lastId, doc.byId[lastId].raw.length);
       return;
     }

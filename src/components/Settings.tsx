@@ -339,6 +339,17 @@ function JournalTemplateField(): JSX.Element {
 }
 
 function TasksTab(): JSX.Element {
+  // Quick-capture Enter behaviour (app-level setting, read by the capture window).
+  const [captureEnterFiles, setCaptureEnterFiles] = createSignal(false);
+  void backend()
+    .getCaptureEnterFiles()
+    .then(setCaptureEnterFiles)
+    .catch(() => {});
+  const toggleCaptureEnter = () => {
+    const v = !captureEnterFiles();
+    setCaptureEnterFiles(v);
+    void backend().setCaptureEnterFiles(v).catch(() => {});
+  };
   return (
     <>
       <Field
@@ -397,6 +408,13 @@ function TasksTab(): JSX.Element {
       </Field>
 
       <JournalTemplateField />
+
+      <Field
+        label="Quick-capture Enter key"
+        hint="In the quick-capture window: ON → Enter files the capture. OFF → Enter starts a new block; ⌘/Ctrl+Enter files."
+      >
+        <Toggle on={captureEnterFiles()} onClick={toggleCaptureEnter} />
+      </Field>
 
       <Field
         label="Agenda window"
