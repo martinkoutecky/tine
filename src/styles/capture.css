@@ -1,44 +1,28 @@
-* {
-  box-sizing: border-box;
-}
+/* Quick-capture window shell. The editor internals (`.editor-wrap`,
+   `.block-editor`, `.autocomplete`, `.sel-toolbar`) are styled by app.css — this
+   only frames the single Editor to fill the small window. */
 html,
 body {
   margin: 0;
   height: 100%;
 }
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
-  background: #ffffff;
-}
-.capture {
-  height: 100vh;
-  padding: 16px 18px;
-  display: flex;
-  align-items: center;
-}
-.capture-input {
-  width: 100%;
-  border: none;
-  outline: none;
-  resize: none;
+  background: var(--bg-primary, #ffffff);
+  color: var(--text-primary, #1a1a1a);
   overflow: hidden;
-  font-size: 18px;
-  line-height: 1.45;
-  background: transparent;
-  color: #1a1a1a;
-  font-family: inherit;
 }
-.capture-input::placeholder {
-  color: #9aa0a6;
+.capture-shell {
+  height: 100vh;
+  padding: 14px 16px;
+  display: flex;
+  align-items: flex-start;
 }
-@media (prefers-color-scheme: dark) {
-  body {
-    background: #1e1e1e;
-  }
-  .capture-input {
-    color: #eaeaea;
-  }
-  .capture-input::placeholder {
-    color: #8a8f98;
-  }
+.capture-shell .editor-wrap {
+  position: relative;
+  width: 100%;
+}
+.capture-shell .block-editor {
+  width: 100%;
+  font-size: 17px;
+  line-height: 1.5;
 }

@@ -504,7 +504,16 @@ function assetMarkdown(name: string): string {
     : `[${name}](../assets/${name})`;
 }
 
-function Editor(props: { id: string }): JSX.Element {
+// `onSubmit`/`onCancel` (set only by the quick-capture window) repurpose a plain
+// Enter / Escape when the autocomplete popup is closed: Enter commits the capture
+// instead of splitting the block, Escape dismisses instead of entering
+// block-selection. Everything else — autocomplete, slash commands, formatting —
+// is the identical page-editing experience because it's the identical component.
+export function Editor(props: {
+  id: string;
+  onSubmit?: () => void;
+  onCancel?: () => void;
+}): JSX.Element {
   let ref!: HTMLTextAreaElement;
   // Caret/selection stashed when the *window* (not this block) loses focus, so
   // returning to Tine resumes editing exactly where you left off.
@@ -725,7 +734,9 @@ function Editor(props: { id: string }): JSX.Element {
       const wasEmpty =
         doc.byId[props.id].raw.trim() === "" && doc.byId[props.id].children.length === 0;
       const lastId = insertOutlineAfter(props.id, nodes);
-      if (wasEmpty) deleteBlock(props.id);
+      // In quick-capture the editor is bound to this one scratch block; deleting
+      // it would leave the standalone Editor referencing a removed node. Keep it.
+      if (wasEmpty && !props.onSubmit) deleteBlock(props.id);
       startEditing(lastId, doc.byId[lastId].raw.length);
       return;
     }
@@ -953,6 +964,11 @@ function Editor(props: { id: string }): JSX.Element {
     if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
       e.preventDefault();
       commit(raw); // flush current text
+      if (props.onSubmit) {
+        // Quick-capture: Enter commits the capture rather than splitting.
+        props.onSubmit();
+        return;
+      }
       if (isAnnot()) {
         // A highlight block isn't split (that would mangle its metadata); Enter
         // adds a new sibling bullet below, which the user can Tab to nest as a
@@ -991,6 +1007,10 @@ function Editor(props: { id: string }): JSX.Element {
       }
     } else if (e.key === "Escape") {
       e.preventDefault();
+      if (props.onCancel) {
+        props.onCancel(); // quick-capture: dismiss the box
+        return;
+      }
       selectBlock(props.id); // exit editing into block-selection mode
     }
   };
@@ -1043,7 +1063,9 @@ function Editor(props: { id: string }): JSX.Element {
       const wasEmpty =
         doc.byId[props.id].raw.trim() === "" && doc.byId[props.id].children.length === 0;
       const lastId = insertOutlineAfter(props.id, nodes);
-      if (wasEmpty) deleteBlock(props.id);
+      // In quick-capture the editor is bound to this one scratch block; deleting
+      // it would leave the standalone Editor referencing a removed node. Keep it.
+      if (wasEmpty && !props.onSubmit) deleteBlock(props.id);
       startEditing(lastId, doc.byId[lastId].raw.length);
       return;
     }

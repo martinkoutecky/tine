@@ -1,9 +1,20 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="light" data-color="logseq">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Quick Capture</title>
+    <script>
+      // The capture window is a separate webview and can't read the main app's
+      // chosen theme, so follow the OS light/dark preference.
+      try {
+        document.documentElement.dataset.theme = window.matchMedia(
+          "(prefers-color-scheme: dark)"
+        ).matches
+          ? "dark"
+          : "light";
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="capture-root"></div>

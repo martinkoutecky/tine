@@ -9,7 +9,7 @@
 import { createStore, produce, unwrap } from "solid-js/store";
 import { createSignal, createMemo, createRoot } from "solid-js";
 import type { BlockDto, PageDto, PageKind } from "./types";
-import type { OutlineNode } from "./editor/outline";
+import { parseOutline, type OutlineNode } from "./editor/outline";
 import type { ExportNode } from "./editor/exportText";
 import { backend } from "./backend";
 import { isConflicted, clearConflict, rightSidebar, conflicts, pushToast } from "./ui";
@@ -845,16 +845,18 @@ export function insertOutlineAfter(afterId: string, nodes: OutlineNode[]): strin
   return lastId;
 }
 
-/** Append `text` as a new top-level block at the END of today's journal, then
- *  flush immediately. This is the single writer for global quick-capture: routing
- *  through the live store (rather than a separate-process file append) means a
- *  capture can't race a main-view edit of today's journal into a conflict. Loads
- *  — or, if the day has no file yet, synthesizes — the journal first; never
- *  clobbers in-progress edits (`ensurePageLoaded` is a no-op when already loaded).
- *  Returns whether the write reached disk. */
-export async function appendToTodayJournal(text: string): Promise<boolean> {
-  const raw = text.trim();
-  if (!raw) return false;
+/** Append a quick-capture (Logseq outline markdown, as produced by the capture
+ *  window's editor — usually one bullet, but templates/multi-line paste can make
+ *  several) at the END of today's journal, then flush immediately. This is the
+ *  single writer for global quick-capture: routing through the live store (rather
+ *  than a separate-process file append) means a capture can't race a main-view
+ *  edit of today's journal into a conflict. Loads — or, if the day has no file
+ *  yet, synthesizes — the journal first; never clobbers in-progress edits
+ *  (`ensurePageLoaded` is a no-op when already loaded). Returns whether the write
+ *  reached disk. */
+export async function appendToTodayJournal(markdown: string): Promise<boolean> {
+  const nodes = parseOutline(markdown);
+  if (!nodes.length) return false;
   const title = journalTitle(new Date());
   if (!pageByName(title)) {
     const dto: PageDto =
@@ -866,18 +868,22 @@ export async function appendToTodayJournal(text: string): Promise<boolean> {
   if (!page) return false;
   if (page.roots.length) {
     // Append after the last top-level block (end of the journal).
-    insertOutlineAfter(page.roots[page.roots.length - 1], [{ raw, children: [] }]);
+    insertOutlineAfter(page.roots[page.roots.length - 1], nodes);
   } else {
-    // Empty (or brand-new) journal — create its first root block.
+    // Empty (or brand-new) journal: seed an empty anchor root, append after it,
+    // then drop the anchor — reuses insertOutlineAfter's subtree creation rather
+    // than a bespoke root builder.
     pushUndo("capture", [title]);
-    const id = freshId();
+    const anchor = freshId();
     setDoc(
       produce((s) => {
-        s.byId[id] = { id, raw, collapsed: false, parent: null, page: title, children: [] };
-        s.pages[s.pages.findIndex((p) => p.name === title)].roots.push(id);
+        s.byId[anchor] = { id: anchor, raw: "", collapsed: false, parent: null, page: title, children: [] };
+        s.pages[s.pages.findIndex((p) => p.name === title)].roots.push(anchor);
       })
     );
     markDirty(title);
+    insertOutlineAfter(anchor, nodes);
+    deleteBlock(anchor);
   }
   return await flushPage(title);
 }
