@@ -20,6 +20,21 @@ export interface CalcLine {
   error?: boolean;
 }
 
+/** If `text` is a ```calc fenced block, return its inner source (the lines
+ *  between the fences); otherwise null. Tolerates a missing closing fence (the
+ *  block is mid-edit) by taking everything after the opener — so the editor's
+ *  live preview keeps working while you type. */
+export function calcSource(text: string): string | null {
+  const lines = text.split("\n");
+  if ((lines[0]?.trim().toLowerCase() ?? "") !== "```calc") return null;
+  const inner: string[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i].trim() === "```") break;
+    inner.push(lines[i]);
+  }
+  return inner.join("\n");
+}
+
 type Tok =
   | { t: "num"; v: number }
   | { t: "name"; v: string }

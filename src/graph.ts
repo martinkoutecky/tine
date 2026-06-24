@@ -59,7 +59,12 @@ export async function loadGraphPath(path: string): Promise<void> {
   void loadAliases();
   if (!switching) void pruneSidebarBlocks();
   await ensureJournalTemplate();
-  openJournals();
+  // Land on the journals feed only when this is a genuine graph SWITCH (the old
+  // tabs point at pages that don't exist in the new graph). On the initial
+  // startup load of the same graph, `restoreSession()` has already set up the
+  // tabs and focused one — forcing journals here would clobber that restored
+  // active tab (e.g. a pinned page tab reverting to Journals after relaunch).
+  if (switching) openJournals();
 }
 
 /** Load the graph's alias:: index so link/navigation can resolve aliases.

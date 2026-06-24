@@ -199,7 +199,8 @@ function CodeBlock(props: { code: string; lang: string }): JSX.Element {
 
 // A ```calc block: each input line on the left, its evaluated result on the
 // right (Logseq's calculator). The raw text is unchanged — render-only.
-function CalcBlock(props: { src: string }): JSX.Element {
+// Exported so the editor can show the SAME live results panel while you type.
+export function CalcBlock(props: { src: string }): JSX.Element {
   const lines = createMemo(() => evalCalc(props.src));
   return (
     <div class="calc-block">

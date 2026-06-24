@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { evalCalc } from "./calc";
+import { calcSource, evalCalc } from "./calc";
 
 // Just the output column, for terse assertions.
 const out = (src: string) => evalCalc(src).map((l) => l.output);
@@ -42,5 +42,18 @@ describe("calc evaluator (Logseq parity)", () => {
     expect(r[0].output).toBeNull();
     expect(r[0].error).toBe(true);
     expect(r[1].output).toBe("7");
+  });
+});
+
+describe("calcSource (extract ```calc fence for the live editor preview)", () => {
+  it("returns the inner source of a complete fence", () => {
+    expect(calcSource("```calc\n1+1\n2*3\n```")).toBe("1+1\n2*3");
+  });
+  it("tolerates a missing closing fence (mid-edit)", () => {
+    expect(calcSource("```calc\n1+1")).toBe("1+1");
+  });
+  it("is null for non-calc text or other code fences", () => {
+    expect(calcSource("just text")).toBeNull();
+    expect(calcSource("```js\n1+1\n```")).toBeNull();
   });
 });

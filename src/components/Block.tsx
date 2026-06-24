@@ -52,7 +52,8 @@ import {
   type Edit,
 } from "../editor/format";
 import { blockView } from "../render/block";
-import { BodyContent } from "../render/body";
+import { BodyContent, CalcBlock } from "../render/body";
+import { calcSource } from "../editor/calc";
 import { QueryMacro, EmbedMacro } from "./Macro";
 import { workflow, zoomInto, openContextMenu, openDatePicker, openBlockInSidebar, graphMeta, dataRev, setQueryBuilderAutoOpen, openPageProps } from "../ui";
 import { openPageInNewTab } from "../router";
@@ -538,6 +539,11 @@ export function Editor(props: { id: string }): JSX.Element {
   // other block hides just the built-in id::/collapsed::. One fence-aware splitter.
   const hideFn = () => (isAnnot() ? hideAll : isBuiltinHidden);
   const editorValue = () => splitProps(node().raw, hideFn()).visible;
+  // Live calc preview: when this block is a ```calc fence, show the SAME results
+  // panel as the rendered view, recomputed on every keystroke (onInput commits
+  // to node().raw live, so editorValue() is current). Matches OG's calculator,
+  // which stays live while you type instead of only computing after you exit.
+  const calcLive = createMemo(() => calcSource(editorValue()));
   const commit = (text: string) => {
     const next = joinProps(text, splitProps(node().raw, hideFn()).hidden);
     // No-op commit (focus/blur with no real edit, or text that reconstructs the
@@ -1127,6 +1133,9 @@ export function Editor(props: { id: string }): JSX.Element {
         onMouseUp={updateSel}
         rows={1}
       />
+      <Show when={calcLive() !== null}>
+        <CalcBlock src={calcLive()!} />
+      </Show>
       <Show when={hasSel()}>
         <div class="sel-toolbar" onMouseDown={(e) => e.preventDefault()}>
           <button title="Bold (mod+b)" onClick={() => fmt("**")}><b>B</b></button>
