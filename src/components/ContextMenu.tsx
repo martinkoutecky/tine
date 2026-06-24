@@ -29,7 +29,7 @@ import {
   setHeading,
   setCollapsedDeep,
   dtoSubtreeMarkdown,
-  flushPage,
+  flushAll,
   deletePage,
   selectedIds,
 } from "../store";
@@ -238,10 +238,11 @@ function PageMenu(props: {
   const rename = () => {
     const next = window.prompt("Rename page to:", props.name)?.trim();
     if (next && next !== props.name) {
-      // Persist any unsaved edits first — rename moves the file on disk and the
-      // renamed page is reloaded from disk, so in-memory edits would be lost.
-      // Abort if they couldn't be saved.
-      void flushPage(props.name)
+      // Persist ALL unsaved edits first — the rename transaction reads every
+      // referencing page from disk to rewrite its `[[refs]]`, so a dirty edit on
+      // ANY page (not just the renamed one) would be read stale and lost. Abort if
+      // anything couldn't be saved.
+      void flushAll()
         .then((ok) => {
           if (!ok) {
             pushToast("Couldn't save pending edits — resolve the conflict before renaming.", "error");

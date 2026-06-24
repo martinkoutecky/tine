@@ -34,7 +34,21 @@ pub struct Config {
     pub default_journal_template: Option<String>,
     /// `:favorites ["Page" …]` — favorited page names (on-disk, graph-portable).
     pub favorites: Vec<String>,
+    /// `:journal/file-name-format` — Logseq's journal FILENAME format (cljs-time /
+    /// Joda tokens). `None` = the default `"yyyy_MM_dd"`. Tine only synthesizes
+    /// the default format, so a non-default value here means Tine must NOT create
+    /// new journal files (it would duplicate the user's real journal for the day).
+    pub journal_file_name_format: Option<String>,
+    /// `:journal/page-title-format` — Logseq's journal TITLE format. `None` = the
+    /// default `"MMM do, yyyy"`. See `journal_file_name_format`.
+    pub journal_page_title_format: Option<String>,
 }
+
+/// Logseq's default journal formats (verified against
+/// `logseq/deps/common/src/logseq/common/util/date_time.cljs`). Tine recognizes
+/// and synthesizes only these.
+pub const DEFAULT_JOURNAL_FILE_FORMAT: &str = "yyyy_MM_dd";
+pub const DEFAULT_JOURNAL_TITLE_FORMAT: &str = "MMM do, yyyy";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Workflow {
@@ -56,11 +70,26 @@ impl Default for Config {
             block_hidden_properties: Vec::new(),
             default_journal_template: None,
             favorites: Vec::new(),
+            journal_file_name_format: None,
+            journal_page_title_format: None,
         }
     }
 }
 
 impl Config {
+    /// Whether the graph uses Logseq's DEFAULT journal filename + title formats
+    /// (or sets neither). Tine can only round-trip the default formats; a custom
+    /// format must block new-journal synthesis (see `Graph::write_page`).
+    pub fn is_default_journal_format(&self) -> bool {
+        self.journal_file_name_format
+            .as_deref()
+            .map_or(true, |f| f == DEFAULT_JOURNAL_FILE_FORMAT)
+            && self
+                .journal_page_title_format
+                .as_deref()
+                .map_or(true, |f| f == DEFAULT_JOURNAL_TITLE_FORMAT)
+    }
+
     pub fn parse(edn: &str) -> Config {
         // Each key is located independently with the comment/string-aware
         // `find_keyword`, then its value read with the shared scanners — no
@@ -86,6 +115,10 @@ impl Config {
         cfg.default_journal_template =
             nested_string(edn, ":default-templates", ":journals").filter(|s| !s.is_empty());
         cfg.favorites = parse_string_vector(edn, ":favorites");
+        cfg.journal_file_name_format =
+            string_value(edn, ":journal/file-name-format").filter(|s| !s.is_empty());
+        cfg.journal_page_title_format =
+            string_value(edn, ":journal/page-title-format").filter(|s| !s.is_empty());
         cfg
     }
 }

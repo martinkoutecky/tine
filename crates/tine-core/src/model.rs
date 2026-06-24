@@ -150,6 +150,14 @@ pub struct Graph {
     /// "Create …". Built from the page cache, and only when it's already warm
     /// (never force-built on a keystroke); empty until then.
     referenced_names_cache: RwLock<Option<(u64, Vec<String>)>>,
+    /// Per-resolved-path write locks. The same page file has TWO in-process
+    /// writers — the editor (`save_page`/`write_page`) and the PDF highlight path
+    /// (`write_highlights`, for an `hls__` page) — and a rename rewrites many
+    /// files at once. Holding the per-path lock across the whole
+    /// read→conflict-check→write→`cache_upsert` makes same-page writes serialize,
+    /// so they can't clobber each other or leave a stale self-write marker.
+    /// Lock order is ALWAYS page_lock → cache → disk_revs; never the reverse.
+    page_locks: std::sync::Mutex<std::collections::HashMap<PathBuf, std::sync::Arc<std::sync::Mutex<()>>>>,
 }
 
 /// Cache key for `disk_revs` (and any other (kind,name)-keyed side table):
@@ -206,7 +214,23 @@ impl Graph {
             recent_writes: std::sync::Mutex::new(std::collections::HashMap::new()),
             disk_revs: RwLock::new(std::collections::HashMap::new()),
             referenced_names_cache: RwLock::new(None),
+            page_locks: std::sync::Mutex::new(std::collections::HashMap::new()),
         }
+    }
+
+    /// The write lock for a resolved page path (see `page_locks`). Returns an
+    /// `Arc` the caller holds (`let _g = lock.lock().unwrap();`) for the critical
+    /// section. The `page_locks` map mutex is released before the per-page lock is
+    /// taken, so callers never serialize on the map. Opportunistically prunes
+    /// entries no caller still holds (strong_count == 1) to bound growth.
+    fn page_lock(&self, path: &Path) -> std::sync::Arc<std::sync::Mutex<()>> {
+        let mut map = self.page_locks.lock().unwrap();
+        if map.len() >= 64 {
+            map.retain(|_, v| std::sync::Arc::strong_count(v) > 1);
+        }
+        map.entry(path.to_path_buf())
+            .or_insert_with(|| std::sync::Arc::new(std::sync::Mutex::new(())))
+            .clone()
     }
 
     pub fn meta(&self) -> GraphMeta {
@@ -840,20 +864,25 @@ impl Graph {
         if new_path.exists() {
             return Err(io::Error::new(io::ErrorKind::AlreadyExists, "target page exists"));
         }
-        // Move the page's own file (if it has one — a page can exist only as
-        // references, with no file yet).
-        if old_path.exists() {
-            let content = fs::read_to_string(&old_path)?;
-            if let Some(parent) = new_path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            atomic_write(&new_path, content.as_bytes())?;
-            fs::remove_file(&old_path)?;
+        // Transactional rename: collect the full edit set (no writes), lock every
+        // touched file, re-verify each is unchanged since collection, then commit —
+        // rolling back every write if any step fails. Routes writes through the
+        // self-write guard so the watcher doesn't flag our own rewrites. This
+        // closes the half-rename / clobber hazards of the old direct-write loop.
+        struct RefEdit {
+            path: PathBuf,
+            old: String,
+            new: String,
+            base_rev: String,
         }
-        // Rewrite references across every page/journal that mentions `old`.
+
+        // Phase 0 — collect (no writes). The page may exist only via references
+        // (no file of its own), in which case there's nothing to move.
+        let move_content = if old_path.exists() { Some(fs::read_to_string(&old_path)?) } else { None };
+        let mut edits: Vec<RefEdit> = Vec::new();
         for entry in self.list_pages() {
             if entry.path == old_path {
-                continue; // already moved
+                continue; // the moved file itself; self-refs aren't rewritten (rare)
             }
             let Ok(content) = fs::read_to_string(&entry.path) else { continue };
             if !crate::refs::references_page(&content, old) {
@@ -861,8 +890,65 @@ impl Graph {
             }
             let updated = crate::refs::rename_refs(&content, old, new);
             if updated != content {
-                atomic_write(&entry.path, updated.as_bytes())?;
+                let base_rev = content_rev(&content);
+                edits.push(RefEdit { path: entry.path, old: content, new: updated, base_rev });
             }
+        }
+
+        // Phase 1 — lock every touched path in sorted order (deadlock-free against
+        // a concurrent single-page save, which only ever holds ONE lock).
+        let mut lock_paths: Vec<PathBuf> = edits.iter().map(|e| e.path.clone()).collect();
+        if move_content.is_some() {
+            lock_paths.push(old_path.clone());
+            lock_paths.push(new_path.clone());
+        }
+        lock_paths.sort();
+        lock_paths.dedup();
+        let locks: Vec<_> = lock_paths.iter().map(|p| self.page_lock(p)).collect();
+        let _guards: Vec<_> = locks.iter().map(|l| l.lock().unwrap()).collect();
+
+        // Phase 2 — re-verify nothing changed under us since Phase 0; abort with NO
+        // change on any mismatch (an external editor / Syncthing pull landed).
+        if new_path.exists() {
+            return Err(io::Error::new(io::ErrorKind::AlreadyExists, "target page exists"));
+        }
+        for e in &edits {
+            if content_rev(&fs::read_to_string(&e.path).unwrap_or_default()) != e.base_rev {
+                return Err(io::Error::new(io::ErrorKind::AlreadyExists, "conflict"));
+            }
+        }
+
+        // Phase 3 — commit, tracking writes for rollback on any failure.
+        let mut written: Vec<&RefEdit> = Vec::new();
+        let mut moved = false;
+        let result: io::Result<()> = (|| {
+            if move_content.is_some() {
+                if let Some(parent) = new_path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                // fs::rename preserves the bytes; read them fresh so the self-write
+                // marker matches exactly what lands at new_path.
+                let cur = fs::read_to_string(&old_path)?;
+                self.note_self_write(&new_path, content_rev(&cur));
+                fs::rename(&old_path, &new_path)?;
+                moved = true;
+            }
+            for e in &edits {
+                self.note_self_write(&e.path, content_rev(&e.new));
+                atomic_write(&e.path, e.new.as_bytes())?;
+                written.push(e);
+            }
+            Ok(())
+        })();
+        if let Err(err) = result {
+            for e in written.iter().rev() {
+                let _ = atomic_write(&e.path, e.old.as_bytes());
+            }
+            if moved {
+                let _ = fs::rename(&new_path, &old_path);
+            }
+            self.invalidate_cache();
+            return Err(err);
         }
         self.invalidate_cache();
         Ok(())
@@ -987,6 +1073,13 @@ impl Graph {
         base_ids: &[String],
     ) -> io::Result<()> {
         let key = crate::pdf::asset_key(pdf_filename);
+        // Serialize against an editor save of the SAME `hls__` page (see
+        // `page_locks`): hold the page lock across the .edn merge AND the page
+        // read→merge→write→cache_upsert, so the two writers can't clobber each
+        // other or trip a false self-write conflict.
+        let page_path = self.pages_path().join(format!("{}.md", crate::pdf::hls_page_name(&key)));
+        let lock = self.page_lock(&page_path);
+        let _guard = lock.lock().unwrap();
         fs::create_dir_all(self.assets_path())?;
         let edn_path = self.assets_path().join(format!("{key}.edn"));
         // 3-way merge against the on-disk set: keep our current highlights, plus
@@ -1007,7 +1100,7 @@ impl Graph {
         atomic_write(&edn_path, edn.as_bytes())?;
 
         // Upsert into the existing hls page, preserving note children by id.
-        let page_path = self.pages_path().join(format!("{}.md", crate::pdf::hls_page_name(&key)));
+        // (`page_path` + its lock were taken at the top of this fn.)
         let existing = fs::read_to_string(&page_path).ok().map(|s| doc::parse(&s));
         let page_doc = crate::pdf::merge_hls_page(existing.as_ref(), pdf_filename, label, &merged);
         let page_md = doc::serialize(&page_doc);
@@ -1199,6 +1292,12 @@ impl Graph {
     /// so the caller can surface it and keep the in-memory edits.
     pub fn save_page(&self, page: &PageDto, base_rev: Option<&str>) -> io::Result<String> {
         let path = self.path_for(&page.name, page.kind);
+        // Serialize against any other writer of THIS page (a PDF highlight write
+        // of the same `hls__` page, or another save) for the whole
+        // read→conflict-check→write→cache_upsert, so neither can clobber the other
+        // or steal its self-write marker (see `page_locks`).
+        let lock = self.page_lock(&path);
+        let _guard = lock.lock().unwrap();
         // Single read of the current file (the conflict baseline AND the
         // formatting source AND, with the written content, the returned rev) —
         // avoids re-reading the file 2-3× per save, which is felt on NFS.
@@ -1224,19 +1323,39 @@ impl Graph {
             }
             Err(e) => return Err(e), // hard error (permission, I/O) — don't write blind
         };
-        self.write_page(page, existing.as_deref())
+        // recheck = true: re-verify the file hasn't changed on disk in the instant
+        // before the write, to narrow the inherent race against a NON-cooperating
+        // external writer (OG/Syncthing) that doesn't take our page lock.
+        self.write_page(page, existing.as_deref(), true)
     }
 
     /// Save a page unconditionally (the user chose "keep mine" over a conflict).
     pub fn force_save_page(&self, page: &PageDto) -> io::Result<String> {
         let path = self.path_for(&page.name, page.kind);
+        let lock = self.page_lock(&path);
+        let _guard = lock.lock().unwrap();
         let existing = fs::read_to_string(&path).ok();
-        self.write_page(page, existing.as_deref())
+        // recheck = false: "keep mine" overwrites unconditionally.
+        self.write_page(page, existing.as_deref(), false)
     }
 
     /// Write a page, reproducing `existing`'s formatting, and return the new
     /// on-disk content rev (computed from what was written — no extra read).
-    fn write_page(&self, page: &PageDto, existing: Option<&str>) -> io::Result<String> {
+    fn write_page(&self, page: &PageDto, existing: Option<&str>, recheck: bool) -> io::Result<String> {
+        // A2: never synthesize a NEW journal file on a graph configured with a
+        // non-default journal format — Tine only writes the default `yyyy_MM_dd`
+        // filename, so creating one on a custom-format graph would duplicate /
+        // misplace that day's real journal. Editing an existing journal is fine.
+        if page.kind == PageKind::Journal
+            && existing.is_none()
+            && !self.config.is_default_journal_format()
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "unsupported journal format: this graph uses a custom \
+                 :journal/file-name-format or :journal/page-title-format Tine can't create yet",
+            ));
+        }
         let doc = Document {
             pre_block: page.pre_block.clone(),
             roots: page.blocks.iter().map(dto_to_doc).collect(),
@@ -1246,7 +1365,20 @@ impl Graph {
         // blank line, indent) so an unchanged save is byte-identical and edits
         // produce a minimal diff — critical to avoid Syncthing churn against Logseq.
         let opts = doc::SerializeOpts::detect(existing);
-        let content = doc::serialize_with(&doc, &opts);
+        let mut content = doc::serialize_with(&doc, &opts);
+        // A5: if the ONLY difference from disk is whitespace trivia the serializer
+        // doesn't round-trip byte-exactly (post-property blank-line count, empty-
+        // bullet spelling `- ` vs `-`, indented blank continuation lines), keep the
+        // existing bytes verbatim. `doc::parse` collapses exactly this trivia (and
+        // ignores uuids), so equal parses ⟹ the user changed nothing of substance →
+        // don't rewrite (avoids needless Syncthing churn). Adopting the disk bytes
+        // makes `changed` below false and the returned rev the on-disk rev — so
+        // every downstream path (cache, baseline) stays correct automatically.
+        if let Some(e) = existing {
+            if e != content && doc::parse(e) == doc::parse(&content) {
+                content = e.to_string();
+            }
+        }
         let rev = content_rev(&content);
         // No-op save: identical bytes already on disk (e.g. focus/blur with no real
         // edit, or a forced flush of an unchanged page). Skip the write, the
@@ -1261,6 +1393,28 @@ impl Graph {
             self.note_self_write(&path, rev.clone());
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent)?;
+            }
+            // A3: last-moment recheck. We hold this page's lock, so no other Tine
+            // writer can have touched the file since our baseline read — but a
+            // non-cooperating external writer (OG/Syncthing) might have. Re-read and
+            // confirm the file still matches the bytes we were authorized against
+            // (`existing`); if it changed, abort WITHOUT writing and drop our marker
+            // so the watcher still sees the external change. `force_save_page` skips
+            // this (recheck=false) so "keep mine" overwrites unconditionally.
+            if recheck {
+                let now = fs::read_to_string(&path).ok();
+                let still_matches = match (now.as_deref(), existing) {
+                    (Some(n), Some(e)) => n == e,
+                    (None, None) => true,
+                    _ => false,
+                };
+                if !still_matches {
+                    let mut recent = self.recent_writes.lock().unwrap();
+                    if recent.get(&path).is_some_and(|r| *r == rev) {
+                        recent.remove(&path);
+                    }
+                    return Err(io::Error::new(io::ErrorKind::AlreadyExists, "conflict"));
+                }
             }
             atomic_write(&path, content.as_bytes())?;
         }
@@ -1600,6 +1754,102 @@ mod tests {
         // Neither filed nor referenced → not offered (so autocomplete still says
         // "Create" for a genuinely new name).
         assert!(!has("nonexistent", "nonexistent"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("tine-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        dir
+    }
+
+    #[test]
+    fn rename_transaction_moves_file_and_rewrites_refs() {
+        let dir = scratch("rename");
+        fs::write(dir.join("pages").join("Alpha.md"), "- alpha body\n").unwrap();
+        fs::write(dir.join("pages").join("Other.md"), "- see [[Alpha]] here\n").unwrap();
+        let g = Graph::open(&dir);
+        g.warm_cache();
+        g.rename_page("Alpha", "Beta").unwrap();
+        // The page file moved (content preserved) and the old file is gone.
+        assert!(!dir.join("pages").join("Alpha.md").exists());
+        assert_eq!(fs::read_to_string(dir.join("pages").join("Beta.md")).unwrap(), "- alpha body\n");
+        // Every reference was rewritten across the graph.
+        let other = fs::read_to_string(dir.join("pages").join("Other.md")).unwrap();
+        assert!(other.contains("[[Beta]]"), "ref rewritten to [[Beta]]");
+        assert!(!other.contains("[[Alpha]]"), "no stale [[Alpha]] left");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_skips_rewrite_when_only_whitespace_trivia_differs() {
+        // The file has an empty bullet written `- ` (trailing space); the
+        // serializer would re-emit it as `-`. A5: a load→save with no real edit
+        // must NOT rewrite the file (no Syncthing churn) and must not bump the
+        // cache generation — the parsed structure is identical.
+        let dir = scratch("noop");
+        let path = dir.join("pages").join("A.md");
+        let original = "- a\n- \n"; // second bullet: dash + trailing space
+        fs::write(&path, original).unwrap();
+        let g = Graph::open(&dir);
+        g.warm_cache();
+        let entry = g.find_entry("A", PageKind::Page).unwrap();
+        let dto = g.load_page(&entry).unwrap();
+        let gen_before = g.cache_generation();
+        let rev = g.save_page(&dto, dto.rev.as_deref()).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), original, "bytes left untouched");
+        assert_eq!(rev, content_rev(original), "returned rev is the on-disk rev");
+        assert_eq!(g.cache_generation(), gen_before, "no cache_gen bump on a trivia-only no-op");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    fn jdto(name: &str) -> PageDto {
+        PageDto {
+            name: name.into(),
+            kind: PageKind::Journal,
+            title: name.into(),
+            pre_block: None,
+            blocks: vec![BlockDto {
+                id: String::new(),
+                raw: "hi".into(),
+                collapsed: false,
+                children: vec![],
+                breadcrumb: vec![],
+            }],
+            rev: None,
+        }
+    }
+
+    #[test]
+    fn custom_journal_format_refuses_new_journal() {
+        let dir = scratch("jfmt");
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq").join("config.edn"),
+            "{:journal/file-name-format \"yyyy-MM-dd\"}\n",
+        )
+        .unwrap();
+        let g = Graph::open(&dir);
+        // Creating "today" must be refused — Tine would otherwise write a default
+        // `yyyy_MM_dd` file that duplicates the user's real `yyyy-MM-dd` journal.
+        assert!(g.save_page(&jdto("Jun 24th, 2026"), None).is_err());
+        assert_eq!(
+            fs::read_dir(dir.join("journals")).unwrap().count(),
+            0,
+            "no journal file synthesized on a custom-format graph"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn default_journal_format_creates_journal() {
+        let dir = scratch("jfmt-default");
+        // No config.edn → defaults → creation proceeds as before.
+        let g = Graph::open(&dir);
+        g.save_page(&jdto("Jun 24th, 2026"), None).unwrap();
+        assert!(dir.join("journals").join("2026_06_24.md").exists());
         let _ = fs::remove_dir_all(&dir);
     }
 }
