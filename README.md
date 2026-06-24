@@ -158,8 +158,14 @@ raw speed. (Where a comparison is made, it's against current Logseq desktop core
   query (raw or visual builder), template, asset upload, and dates.
 
 <p align="center">
-  <img src="docs/img/pdf.png" alt="PDF highlighting with notes" width="49%">
+  <img src="docs/img/pdf.png" alt="PDF text + area (image) highlighting with a notes page" width="49%">
   <img src="docs/img/settings.png" alt="Remappable shortcuts" width="49%">
+</p>
+
+<p align="center">
+  <img src="docs/img/dim.png" alt="Dim inactive blocks — spotlight the one you're working on" width="32%">
+  <img src="docs/img/carry.png" alt="Carry unfinished tasks forward to today" width="32%">
+  <img src="docs/img/query.png" alt="Query results + the visual query builder chip bar" width="32%">
 </p>
 
 ---

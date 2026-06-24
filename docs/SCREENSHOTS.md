@@ -28,10 +28,13 @@ Scripts write to the gitignored `screenshots/` dir; the README set is then
 | `docs/img/` file     | Shows                                              | Generator → source file                          | Regenerate when… |
 |----------------------|----------------------------------------------------|--------------------------------------------------|------------------|
 | `hero.png`           | Journals feed (blocks, tasks, code, table, sidebar)| `screenshot.mjs` → `journals-light.png`          | journal/outline rendering, block markers, **sidebar sections (e.g. Namespaces)** change |
-| `tabs.png`           | Built-in tabs (background + pinned)                | `shot-readme.mjs` → `rm-tabs.png`                | tab bar, pinning, or topbar layout changes |
+| `tabs.png`           | Built-in tabs (3 tabs, one pinned)                 | `shot-tabs-pdf.mjs` → `feat-tabs.png`            | tab bar, pinning, or topbar layout changes |
 | `focus-dim.png`      | Focus mode + dim-inactive-blocks                   | `shot-readme.mjs` → `rm-focus-dim.png`           | focus/dim behavior or chrome changes |
+| `dim.png`            | Dim-inactive-blocks (one block spotlit)            | `shot-features.mjs` → `feat-dim.png`             | dim behavior changes |
+| `carry.png`          | Carry-unfinished-tasks buttons on a journal        | `shot-features.mjs` → `feat-carry.png` (clipped) | carry UI/buttons change |
+| `query.png`          | Query results + visual query-builder chip bar      | `shot-features.mjs` → `feat-query.png`           | query rendering or the builder bar changes |
 | `quick-capture.png`  | Quick-capture mini-window with slash menu open     | `shot-capture.mjs` → `rm-quick-capture.png`      | capture window, slash menu, or editor-parity changes |
-| `pdf.png`            | PDF pane + highlights + notes page                 | `screenshot.mjs` → `pdf-notes-light.png`         | PDF viewer, highlight rendering (incl. **area highlights**), or notes layout changes |
+| `pdf.png`            | PDF pane + text highlight + area (image) highlight | `shot-tabs-pdf.mjs` → `feat-pdf.png`             | PDF viewer, highlight rendering (text/area), or pane layout changes |
 | `settings.png`       | Settings modal (shortcuts shown)                   | settings shot (curated)                          | Settings modal gains/loses controls (**watch mode, first-day-of-week**, themes, snapshots) |
 
 ## Known limitations / honest caveats
@@ -50,6 +53,6 @@ Scripts write to the gitignored `screenshots/` dir; the README set is then
 ## Currently unillustrated (candidates for new README shots)
 
 These shipped without a screenshot — add one if the README would benefit:
-`/calc` blocks, callouts (org `#+BEGIN_…` / `> [!note]`), the visual query
-builder with a sort clause, area (image) PDF highlights, the sidebar namespace
-tree, advanced (datalog) query results.
+`/calc` blocks, callouts (org `#+BEGIN_…` / `> [!note]`), the sidebar namespace
+tree, advanced (datalog) query results. (Tabs, dim, carry, queries+builder, and
+text+area PDF highlights are now illustrated.)
