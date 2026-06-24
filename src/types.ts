@@ -57,7 +57,7 @@ export interface GraphMeta {
   pages_dir: string;
   preferred_workflow: string; // "now" | "todo"
   shortcuts: Record<string, string>;
-  start_of_week: number; // 0=Sunday … 6=Saturday
+  start_of_week: number; // Logseq :start-of-week, 0=Monday … 6=Sunday (default 6)
   block_hidden_properties: string[];
   default_journal_template: string | null;
   favorites: string[];

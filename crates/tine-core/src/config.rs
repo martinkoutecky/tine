@@ -24,7 +24,9 @@ pub struct Config {
     /// `:publishing/all-pages-public?` — when true, HTML export publishes every
     /// page; otherwise only pages with `public:: true`.
     pub all_pages_public: bool,
-    /// `:start-of-week` — first day of the week in the date picker, 0=Sunday … 6=Saturday.
+    /// `:start-of-week` — first day of the week in the date picker. Logseq's
+    /// convention: 0=Monday, 1=Tuesday … 6=Sunday (default 6). The frontend
+    /// converts this to a JS getDay() index via (n+1)%7.
     pub start_of_week: u32,
     /// `:block-hidden-properties #{:a :b}` — extra property keys to hide from the
     /// rendered properties area, on top of the built-in internal set.
@@ -66,7 +68,7 @@ impl Default for Config {
             preferred_workflow: Workflow::Now,
             shortcuts: HashMap::new(),
             all_pages_public: false,
-            start_of_week: 0,
+            start_of_week: 6, // Logseq's default (Sunday) — see field doc
             block_hidden_properties: Vec::new(),
             default_journal_template: None,
             favorites: Vec::new(),
@@ -263,6 +265,39 @@ impl Graph {
                     }
                 }
             }
+        }
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        atomic_write(&path, content.as_bytes())
+    }
+
+    /// Persist the first day of week to `:start-of-week N` (Logseq convention:
+    /// 0=Monday … 6=Sunday), replacing the numeric value or inserting the key.
+    /// `find_keyword` is comment/string-aware, so a commented `:start-of-week` is
+    /// never edited (we insert a real one instead).
+    pub fn set_start_of_week(&self, n: u32) -> io::Result<()> {
+        let n = n.min(6);
+        let key = ":start-of-week";
+        let path = self.root.join("logseq").join("config.edn");
+        let mut content = fs::read_to_string(&path).unwrap_or_else(|_| "{}\n".to_string());
+
+        if let Some(start) = find_keyword(&content, key) {
+            let after = start + key.len();
+            let vstart = skip_blank(&content, after); // comment-aware
+            let digits = content[vstart..]
+                .chars()
+                .take_while(|c| c.is_ascii_digit())
+                .count();
+            if digits > 0 {
+                content.replace_range(vstart..vstart + digits, &n.to_string());
+            } else {
+                content.insert_str(after, &format!(" {n}"));
+            }
+        } else if let Some(brace) = content.find('{') {
+            content.insert_str(brace + 1, &format!("\n :start-of-week {n}\n"));
+        } else {
+            content = format!("{{:start-of-week {n}}}\n");
         }
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;

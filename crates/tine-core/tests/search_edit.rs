@@ -32,6 +32,28 @@ fn sort_by_priority_is_global_across_pages() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+// Setting the first day of week writes config.edn `:start-of-week` (Logseq
+// convention, 0=Monday … 6=Sunday) and round-trips on reopen — replacing an
+// existing value and inserting when the key is absent.
+#[test]
+fn set_start_of_week_round_trips_through_config_edn() {
+    let root = mk("sow");
+    std::fs::create_dir_all(root.join("logseq")).unwrap();
+    std::fs::write(root.join("logseq").join("config.edn"), "{:start-of-week 6}\n").unwrap();
+    let g = Graph::open(&root);
+    assert_eq!(g.meta().start_of_week, 6);
+    g.set_start_of_week(0).expect("write start-of-week");
+    assert_eq!(Graph::open(&root).meta().start_of_week, 0, "0 (Monday) persisted");
+
+    // Insert into a config that has no :start-of-week key yet.
+    std::fs::write(root.join("logseq").join("config.edn"), "{:preferred-workflow :todo}\n").unwrap();
+    Graph::open(&root).set_start_of_week(2).expect("insert start-of-week");
+    let g2 = Graph::open(&root);
+    assert_eq!(g2.meta().start_of_week, 2);
+    assert_eq!(g2.meta().preferred_workflow, "todo", "existing key preserved");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 #[test]
 fn search_reflects_toggle_on_named_page() {
     let root = mk("named");

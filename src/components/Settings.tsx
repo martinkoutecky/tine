@@ -19,9 +19,7 @@ import {
   toggleDocumentMode,
   dimInFocus,
   setDimInFocus,
-  firstDayPref,
-  setFirstDayPref,
-  type FirstDayPref,
+  changeStartOfWeek,
   carryKeepsContext,
   setCarryKeepsContext,
   carryHeader,
@@ -287,16 +285,27 @@ function AppearanceTab(): JSX.Element {
 
       <Field
         label="First day of week"
-        hint="Starting column of the calendar and the scheduled/deadline date pickers. “Auto” follows your system locale (Monday across most of Europe, Sunday in the US)."
+        hint={
+          <>
+            Starting column of the calendar and the scheduled/deadline date
+            pickers. Saved to <code>:start-of-week</code> in <code>config.edn</code>
+            (Logseq’s setting), so it travels with the graph.
+          </>
+        }
       >
         <select
           class="settings-select"
-          value={firstDayPref()}
-          onChange={(e) => setFirstDayPref(e.currentTarget.value as FirstDayPref)}
+          value={String(graphMeta()?.start_of_week ?? 6)}
+          onChange={(e) => changeStartOfWeek(Number(e.currentTarget.value))}
         >
-          <option value="locale">Auto (locale)</option>
-          <option value="monday">Monday</option>
-          <option value="sunday">Sunday</option>
+          {/* Logseq convention: 0=Monday … 6=Sunday. */}
+          <option value="0">Monday</option>
+          <option value="1">Tuesday</option>
+          <option value="2">Wednesday</option>
+          <option value="3">Thursday</option>
+          <option value="4">Friday</option>
+          <option value="5">Saturday</option>
+          <option value="6">Sunday</option>
         </select>
       </Field>
     </>

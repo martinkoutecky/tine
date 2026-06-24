@@ -46,6 +46,9 @@ export interface Backend {
   /** Set (or clear, with null) the new-journal default template in config.edn
    *  `:default-templates {:journals "Name"}`. */
   setDefaultJournalTemplate(name: string | null): Promise<void>;
+  /** Persist the first day of week to config.edn `:start-of-week` (Logseq
+   *  convention: 0=Monday … 6=Sunday). */
+  setStartOfWeek(n: number): Promise<void>;
   /** The graph's logseq/custom.css (empty string if none). */
   readCustomCss(): Promise<string>;
   /** Open an http(s)/mailto URL in the OS default app. */
@@ -187,6 +190,9 @@ class TauriBackend implements Backend {
   }
   setDefaultJournalTemplate(name: string | null) {
     return this.call<void>("set_default_journal_template", { name });
+  }
+  setStartOfWeek(n: number) {
+    return this.call<void>("set_start_of_week", { n });
   }
   readCustomCss() {
     return this.call<string>("read_custom_css");

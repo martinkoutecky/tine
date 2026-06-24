@@ -264,6 +264,9 @@ export function mockBackend(): Backend {
     async setDefaultJournalTemplate(): Promise<void> {
       // no-op in the browser mock
     },
+    async setStartOfWeek(): Promise<void> {
+      // no-op in the browser mock
+    },
     async openExternal(url: string): Promise<void> {
       try {
         window.open(url, "_blank", "noreferrer");
