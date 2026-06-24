@@ -195,17 +195,19 @@ export function setActiveTab(id: string) {
 
 /** Close the currently-active tab (Ctrl+W). No-op when it's the only tab. */
 export function closeActiveTab() {
-  closeTab(activeId());
+  void closeTab(activeId());
 }
 
-export function closeTab(id: string) {
+export async function closeTab(id: string) {
   const list = tabs();
   if (list.length === 1) return; // always keep one tab
   const t = list.find((x) => x.id === id);
   // Pinned = sticky = "I want to keep this": confirm before closing, so an
-  // accidental Ctrl+W (or middle-click) doesn't drop it. A plain no-op would be
-  // more confusing than a one-line prompt.
-  if (t?.pinned && !confirm(`Close pinned tab “${routeTitle(tabRoute(t))}”?`)) return;
+  // accidental Ctrl+W (or middle-click) doesn't drop it. Uses the GTK dialog
+  // (backend.confirm), NOT window.confirm — the latter silently returns true in
+  // this WebKitGTK build, so the tab would close without ever asking. Unpinned
+  // tabs skip the await and close synchronously (no behaviour change there).
+  if (t?.pinned && !(await backend().confirm(`Close pinned tab “${routeTitle(tabRoute(t))}”?`))) return;
   const idx = list.findIndex((x) => x.id === id);
   const next = list.filter((x) => x.id !== id);
   setTabs(next);

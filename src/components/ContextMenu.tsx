@@ -258,8 +258,10 @@ function PageMenu(props: {
         .catch(() => pushToast("Rename failed", "error"));
     }
   };
-  const remove = () => {
-    if (!window.confirm(`Delete page "${props.name}"? This cannot be undone.`)) return;
+  const remove = async () => {
+    // Native GTK confirm — window.confirm silently returns true here, which would
+    // delete the page with no prompt (this is destructive + irreversible).
+    if (!(await backend().confirm(`Delete page "${props.name}"? This cannot be undone.`))) return;
     // Route through the store (not backend directly) so it tombstones the page and
     // cancels any pending save — otherwise a just-typed, never-saved page could be
     // recreated by a queued save right after we delete it.

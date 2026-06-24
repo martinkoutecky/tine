@@ -50,7 +50,7 @@ import {
 } from "./ui";
 import { applyZoom, installInterfaceZoomKeys, installInterfaceZoomWheel } from "./zoom";
 import { editingId, flushAll, appendToTodayJournal } from "./store";
-import { isTauri } from "./backend";
+import { backend, isTauri } from "./backend";
 import { WindowControls, ResizeGrips, installWindowChrome, maximized } from "./components/WindowChrome";
 
 export function App(): JSX.Element {
@@ -89,8 +89,12 @@ export function App(): JSX.Element {
         // silently throw them away — ask. Default (Cancel) keeps the app open so
         // the user can resolve the conflict; only an explicit confirm quits.
         if (!saved) {
-          const quit = window.confirm(
-            "Tine has unsaved changes that couldn't be saved (a conflict or a stuck save).\n\nQuit anyway and lose them?"
+          // Native GTK confirm — window.confirm silently returns true in this
+          // WebKitGTK build, which would quit and discard the unsaved edits with
+          // no prompt at all. The whole point here is to NOT lose them silently.
+          const quit = await backend().confirm(
+            "Tine has unsaved changes that couldn't be saved (a conflict or a stuck save).\n\nQuit anyway and lose them?",
+            "Unsaved changes"
           );
           if (!quit) return; // stay open
         }

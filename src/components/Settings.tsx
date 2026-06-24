@@ -19,6 +19,9 @@ import {
   toggleDocumentMode,
   dimInFocus,
   setDimInFocus,
+  firstDayPref,
+  setFirstDayPref,
+  type FirstDayPref,
   carryKeepsContext,
   setCarryKeepsContext,
   carryHeader,
@@ -280,6 +283,21 @@ function AppearanceTab(): JSX.Element {
         hint="Auto-enable dim inactive blocks (t b) when entering focus mode (t f)."
       >
         <Toggle on={dimInFocus()} onClick={() => setDimInFocus(!dimInFocus())} />
+      </Field>
+
+      <Field
+        label="First day of week"
+        hint="Starting column of the calendar and the scheduled/deadline date pickers. “Auto” follows your system locale (Monday across most of Europe, Sunday in the US)."
+      >
+        <select
+          class="settings-select"
+          value={firstDayPref()}
+          onChange={(e) => setFirstDayPref(e.currentTarget.value as FirstDayPref)}
+        >
+          <option value="locale">Auto (locale)</option>
+          <option value="monday">Monday</option>
+          <option value="sunday">Sunday</option>
+        </select>
       </Field>
     </>
   );
@@ -551,12 +569,14 @@ function BackupsTab(): JSX.Element {
 
   const restore = async (b: BackupInfo) => {
     const when = fmtStamp(b.stamp);
+    // Native GTK confirm — window.confirm silently returns true here, which would
+    // overwrite the graph with no prompt.
     if (
-      !confirm(
+      !(await backend().confirm(
         `Restore the snapshot from ${when}?\n\n` +
           `This overwrites journals/ and pages/ with the ${b.files} file(s) in that backup. ` +
           `Your current state is snapshotted first, so this is reversible.`
-      )
+      ))
     )
       return;
     setBusy(true);

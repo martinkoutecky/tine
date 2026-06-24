@@ -18,11 +18,12 @@ import {
 // now prompts) doesn't hang the teardown.
 beforeEach(() => {
   vi.stubGlobal("confirm", () => true);
-  // Collapse to one tab.
-  while (tabs().length > 1) closeTab(tabs()[tabs().length - 1].id);
+  // Unpin everything first so closeTab (which prompts for pinned tabs, via the
+  // mock's window.confirm) takes the synchronous unpinned path during teardown.
+  for (const t of tabs()) if (t.pinned) togglePin(t.id);
+  while (tabs().length > 1) void closeTab(tabs()[tabs().length - 1].id);
   setActiveTab(tabs()[0].id);
-  if (tabs()[0].pinned) togglePin(tabs()[0].id); // unpin
-  openJournals(); // reset its route in place (now unpinned)
+  openJournals(); // reset its route in place
 });
 
 const pinActive = () => togglePin(activeId());
@@ -62,6 +63,18 @@ describe("sticky (pinned) tabs", () => {
     openJournals({ inPlace: true });
     expect(tabs().length).toBe(1);
     expect(activeTab().pinned).toBe(true);
+  });
+
+  it("closing a pinned tab asks first and respects the answer", async () => {
+    openInNewTab({ kind: "page", name: "Keep", pageKind: "page" }, true);
+    const id = activeId();
+    togglePin(id);
+    vi.stubGlobal("confirm", () => false); // backend.confirm → mock → window.confirm
+    await closeTab(id);
+    expect(tabs().some((t) => t.id === id)).toBe(true); // cancelled → still open
+    vi.stubGlobal("confirm", () => true);
+    await closeTab(id);
+    expect(tabs().some((t) => t.id === id)).toBe(false); // confirmed → closed
   });
 });
 

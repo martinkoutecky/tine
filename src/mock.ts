@@ -352,6 +352,13 @@ export function mockBackend(): Backend {
     async importAsset(path: string): Promise<string> {
       return path.split("/").pop() ?? path;
     },
+    async confirm(message: string): Promise<boolean> {
+      // The browser/test env has a working global confirm (unlike the WebKitGTK
+      // app), so defer to it. Read it off globalThis so test stubs (vi.stubGlobal)
+      // are honoured.
+      const c = (globalThis as { confirm?: (m?: string) => boolean }).confirm;
+      return typeof c === "function" ? c(message) : true;
+    },
     async pickFolder(): Promise<string | null> {
       return null; // no native dialog in the browser mock
     },

@@ -62,6 +62,11 @@ export interface Backend {
   pasteImage(): Promise<string | null>;
   /** Copy a file (by absolute path) into assets/, returning the stored name. */
   importAsset(path: string): Promise<string>;
+  /** Native yes/no confirmation dialog. Returns true if the user confirms.
+   *  Uses the GTK dialog plugin, NOT window.confirm — the latter silently
+   *  returns true without showing anything in this WebKitGTK build, which would
+   *  bypass destructive-action and close-tab prompts. */
+  confirm(message: string, title?: string): Promise<boolean>;
   /** Native folder picker (graph open). Null if cancelled / unsupported. */
   pickFolder(): Promise<string | null>;
   /** Native file picker (asset upload). Null if cancelled / unsupported. */
@@ -236,6 +241,10 @@ class TauriBackend implements Backend {
   }
   importAsset(path: string) {
     return this.call<string>("import_asset", { path });
+  }
+  async confirm(message: string, title?: string): Promise<boolean> {
+    const { ask } = await import("@tauri-apps/plugin-dialog");
+    return ask(message, { title: title ?? "Tine", kind: "warning" });
   }
   async pickFolder(): Promise<string | null> {
     const { open } = await import("@tauri-apps/plugin-dialog");
