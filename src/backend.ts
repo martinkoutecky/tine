@@ -2,7 +2,15 @@
 // browser (Vite dev / Playwright screenshots) we fall back to an in-memory mock
 // seeded from a fixture graph, so the whole UI is exercisable without the shell.
 
-import type { GraphMeta, Highlight, PageDto, PageEntry, RefGroup, TemplateDto } from "./types";
+import type {
+  AdvancedQueryResult,
+  GraphMeta,
+  Highlight,
+  PageDto,
+  PageEntry,
+  RefGroup,
+  TemplateDto,
+} from "./types";
 import { mockBackend } from "./mock";
 
 export interface Backend {
@@ -23,6 +31,9 @@ export interface Backend {
   renamePage(old: string, next: string): Promise<void>;
   publishHtml(): Promise<[string, number]>;
   runQuery(query: string): Promise<RefGroup[]>;
+  /** Advanced (datalog-subset) query: maps the supported clauses onto the engine
+   *  and reports what ran vs was ignored. `currentPage` resolves `:current-page`. */
+  runAdvancedQuery(query: string, currentPage?: string): Promise<AdvancedQueryResult>;
   /** Property keys (each with their distinct values) for query-builder
    *  autocomplete. */
   queryFacets(): Promise<[string, string[]][]>;
@@ -145,6 +156,9 @@ class TauriBackend implements Backend {
   }
   runQuery(query: string) {
     return this.call<RefGroup[]>("run_query", { query });
+  }
+  runAdvancedQuery(query: string, currentPage?: string) {
+    return this.call<AdvancedQueryResult>("run_advanced_query", { query, currentPage });
   }
   queryFacets() {
     return this.call<[string, string[]][]>("query_facets");

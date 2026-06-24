@@ -835,6 +835,16 @@ impl Graph {
         self.derived_memo(format!("q\0{query_src}"), || crate::query::run_query(self, query_src))
     }
 
+    /// Evaluate an advanced (datalog-subset) query, returning the matched groups
+    /// plus which clauses ran vs were ignored. Not memoized (invoked on demand).
+    pub fn run_advanced_query(
+        &self,
+        query_src: &str,
+        current_page: Option<&str>,
+    ) -> crate::query::AdvancedResult {
+        crate::query::run_advanced_query(self, query_src, current_page)
+    }
+
     /// Unlinked references: plain-text mentions of a page that aren't links
     /// (memoized).
     pub fn unlinked_refs(&self, target: &str) -> Vec<RefGroup> {
@@ -1850,6 +1860,26 @@ mod tests {
         let g = Graph::open(&dir);
         g.save_page(&jdto("Jun 24th, 2026"), None).unwrap();
         assert!(dir.join("journals").join("2026_06_24.md").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn advanced_query_runs_supported_subset_flags_rest() {
+        let dir = scratch("adv");
+        fs::write(dir.join("journals").join("2026_06_20.md"), "- TODO ship it\n- DONE done\n").unwrap();
+        fs::write(dir.join("pages").join("Note.md"), "- TODO not a journal\n").unwrap();
+        let g = Graph::open(&dir);
+        g.warm_cache();
+        // (task ?b #{"TODO"}) maps to the existing Task predicate.
+        let r = g.run_advanced_query(r#"[:find (pull ?b [*]) :where (task ?b #{"TODO"})]"#, None);
+        assert!(r.supported);
+        assert!(r.ran.contains(&"task".to_string()));
+        let total: usize = r.groups.iter().map(|grp| grp.blocks.len()).sum();
+        assert_eq!(total, 2, "both TODO blocks match");
+        // A clause outside the subset (a raw [?e :a ?v] join) → nothing supported.
+        let u = g.run_advanced_query("[:find ?b :where [?b :block/foo ?v]]", None);
+        assert!(!u.supported);
+        assert!(u.groups.is_empty());
         let _ = fs::remove_dir_all(&dir);
     }
 }

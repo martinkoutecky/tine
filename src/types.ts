@@ -42,6 +42,15 @@ export interface RefGroup {
   blocks: BlockDto[];
 }
 
+/** Result of an advanced (datalog) query: matched groups + which clause heads
+ *  ran vs were ignored (`supported` is false only when nothing in the subset matched). */
+export interface AdvancedQueryResult {
+  groups: RefGroup[];
+  ran: string[];
+  ignored: string[];
+  supported: boolean;
+}
+
 export interface GraphMeta {
   root: string;
   journals_dir: string;

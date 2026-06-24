@@ -174,7 +174,12 @@ pub fn run_query(graph: &Graph, query_src: &str) -> Vec<RefGroup> {
     let Some(pred) = Pred::parse(query_src, today) else { return Vec::new() };
     let mut opts = QueryOpts::default();
     pred.collect_opts(&mut opts);
+    run_pred(graph, &pred, &opts)
+}
 
+/// Evaluate a parsed predicate against the whole graph (shared by the simple-DSL
+/// `run_query` and the advanced-datalog `run_advanced_query`).
+fn run_pred(graph: &Graph, pred: &Pred, opts: &QueryOpts) -> Vec<RefGroup> {
     let mut groups = graph.with_pages(|pages| {
         let mut groups: Vec<RefGroup> = Vec::new();
         for (entry, doc) in pages {
@@ -223,6 +228,248 @@ pub fn run_query(graph: &Graph, query_src: &str) -> Vec<RefGroup> {
         });
     }
     groups
+}
+
+/// Result of an advanced (datalog) query: matched groups + which clause heads
+/// ran vs were ignored, so the UI shows "ran X; ignored Y" rather than a blunt
+/// "unsupported". `supported` is false only when nothing in the subset matched.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AdvancedResult {
+    pub groups: Vec<RefGroup>,
+    pub ran: Vec<String>,
+    pub ignored: Vec<String>,
+    pub supported: bool,
+}
+
+/// Run an advanced `[:find … :where …]` / `{:query … :inputs …}` query by mapping
+/// the common clause subset (task / between / page-ref / property / page-property
+/// / priority + and/or/not) onto the simple-DSL `Pred` engine — the matching
+/// predicates already exist. Unrecognized clauses (custom rules, `[?e ?a ?v]`
+/// joins, `:view`/`:result-transform`) are listed in `ignored` and skipped, never
+/// guessed (a wrong result is worse than "unsupported").
+pub fn run_advanced_query(graph: &Graph, query_src: &str, current_page: Option<&str>) -> AdvancedResult {
+    let today = JournalDate::today();
+    let inputs = resolve_inputs(query_src, current_page, today);
+    let mut ran = Vec::new();
+    let mut ignored = Vec::new();
+    let preds: Vec<Pred> = where_groups(query_src)
+        .iter()
+        .filter_map(|g| parse_adv_group(g, &inputs, today, &mut ran, &mut ignored))
+        .collect();
+    if preds.is_empty() {
+        return AdvancedResult { groups: Vec::new(), ran, ignored, supported: false };
+    }
+    let pred = if preds.len() == 1 { preds.into_iter().next().unwrap() } else { Pred::And(preds) };
+    let mut opts = QueryOpts::default();
+    pred.collect_opts(&mut opts);
+    let groups = run_pred(graph, &pred, &opts);
+    AdvancedResult { groups, ran, ignored, supported: true }
+}
+
+/// Collect balanced `(...)`/`[...]` groups at the top level of `s` (string-aware),
+/// stopping at the first top-level *closing* bracket (so scanning after `:where`
+/// halts at the find-vector's `]` rather than swallowing `:inputs`).
+fn scan_groups(s: &str) -> Vec<String> {
+    let b = s.as_bytes();
+    let mut i = 0;
+    let mut out = Vec::new();
+    while i < b.len() {
+        let c = b[i] as char;
+        if c == ')' || c == ']' || c == '}' {
+            break;
+        }
+        if c == '(' || c == '[' {
+            let start = i;
+            let mut depth = 0;
+            let mut in_str = false;
+            while i < b.len() {
+                let ch = b[i] as char;
+                if in_str {
+                    if ch == '\\' {
+                        i += 2;
+                        continue;
+                    }
+                    if ch == '"' {
+                        in_str = false;
+                    }
+                } else if ch == '"' {
+                    in_str = true;
+                } else if ch == '(' || ch == '[' || ch == '{' {
+                    depth += 1;
+                } else if ch == ')' || ch == ']' || ch == '}' {
+                    depth -= 1;
+                    if depth == 0 {
+                        i += 1;
+                        break;
+                    }
+                }
+                i += 1;
+            }
+            out.push(s[start..i.min(s.len())].to_string());
+            continue;
+        }
+        i += 1;
+    }
+    out
+}
+
+/// The clause groups in the `:where` section.
+fn where_groups(src: &str) -> Vec<String> {
+    match src.find(":where") {
+        Some(idx) => scan_groups(&src[idx + ":where".len()..]),
+        None => Vec::new(),
+    }
+}
+
+/// Map one `:where` group to a `Pred` (or None → ignored). Recurses for and/or/not.
+fn parse_adv_group(
+    group: &str,
+    inputs: &std::collections::HashMap<String, i64>,
+    today: JournalDate,
+    ran: &mut Vec<String>,
+    ignored: &mut Vec<String>,
+) -> Option<Pred> {
+    let c = group.trim();
+    if !c.starts_with('(') {
+        ignored.push("pattern".into()); // `[?e :a ?v]` joins, etc. — not in the subset
+        return None;
+    }
+    let inner = &c[1..c.len().saturating_sub(1)];
+    let head = inner.split_whitespace().next().unwrap_or("").to_ascii_lowercase();
+    match head.as_str() {
+        "and" | "or" | "not" => {
+            let kids: Vec<Pred> = scan_groups(inner)
+                .iter()
+                .filter_map(|g| parse_adv_group(g, inputs, today, ran, ignored))
+                .collect();
+            if kids.is_empty() {
+                None
+            } else if head == "not" {
+                Some(Pred::Not(Box::new(kids.into_iter().next().unwrap())))
+            } else if head == "or" {
+                Some(Pred::Or(kids))
+            } else {
+                Some(Pred::And(kids))
+            }
+        }
+        "task" | "todo" => {
+            ran.push("task".into());
+            Some(Pred::Task(adv_strings(inner)))
+        }
+        "priority" => {
+            ran.push("priority".into());
+            Some(Pred::Priority(adv_strings(inner)))
+        }
+        "page-ref" => adv_strings(inner).into_iter().next().map(|n| {
+            ran.push("page-ref".into());
+            Pred::PageRef(n)
+        }),
+        "property" | "page-property" => inner
+            .split_whitespace()
+            .skip(1)
+            .find(|t| t.starts_with(':'))
+            .map(|t| t.trim_start_matches(':').to_string())
+            .map(|k| {
+                let val = adv_strings(inner).into_iter().next();
+                ran.push(head.clone());
+                if head == "property" {
+                    Pred::Property(k, val)
+                } else {
+                    Pred::PageProperty(k, val)
+                }
+            }),
+        "between" => {
+            // (between ?b ?start ?end): the last two args are the bounds.
+            let args: Vec<&str> = inner.split_whitespace().skip(1).collect();
+            if args.len() < 2 {
+                ignored.push("between".into());
+                return None;
+            }
+            let lo = adv_bound(args[args.len() - 2], inputs, today);
+            let hi = adv_bound(args[args.len() - 1], inputs, today);
+            if lo.is_none() && hi.is_none() {
+                ignored.push("between".into());
+                return None;
+            }
+            ran.push("between".into());
+            Some(Pred::Between(BetweenField::Journal, lo, hi)) // OG :between = journal-day
+        }
+        other => {
+            if !other.is_empty() {
+                ignored.push(other.to_string());
+            }
+            None
+        }
+    }
+}
+
+/// All double-quoted string literals in a clause (markers, page names, values).
+fn adv_strings(s: &str) -> Vec<String> {
+    let b = s.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'"' {
+            let start = i + 1;
+            i += 1;
+            while i < b.len() && b[i] != b'"' {
+                if b[i] == b'\\' {
+                    i += 1;
+                }
+                i += 1;
+            }
+            out.push(s[start..i.min(s.len())].to_string());
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Resolve a `between` bound: an input `?var` (looked up) or a literal token.
+fn adv_bound(tok: &str, inputs: &std::collections::HashMap<String, i64>, today: JournalDate) -> Option<i64> {
+    let t = tok.trim();
+    if t.starts_with('?') {
+        return inputs.get(t).copied();
+    }
+    resolve_date_token(t.trim_start_matches(':'), today)
+}
+
+/// Build a `?var → yyyymmdd` map by zipping `:in $ ?a ?b …` var names with the
+/// `:inputs [ … ]` values (Logseq's positional binding). Only date inputs resolve
+/// to an ordinal; others (e.g. `:current-page`) are skipped — their pattern
+/// clause is ignored anyway.
+fn resolve_inputs(
+    src: &str,
+    _current_page: Option<&str>,
+    today: JournalDate,
+) -> std::collections::HashMap<String, i64> {
+    let mut map = std::collections::HashMap::new();
+    let vars: Vec<String> = match src.find(":in") {
+        Some(i) => {
+            let rest = &src[i + 3..];
+            let end = rest.find(":where").or_else(|| rest.find(']')).unwrap_or(rest.len());
+            rest[..end].split_whitespace().filter(|t| t.starts_with('?')).map(String::from).collect()
+        }
+        None => Vec::new(),
+    };
+    let vals: Vec<String> = match src.find(":inputs") {
+        Some(i) => {
+            let rest = &src[i + ":inputs".len()..];
+            match (rest.find('['), rest.find(']')) {
+                (Some(a), Some(b)) if b > a => {
+                    rest[a + 1..b].split_whitespace().map(String::from).collect()
+                }
+                _ => Vec::new(),
+            }
+        }
+        None => Vec::new(),
+    };
+    for (v, val) in vars.iter().zip(vals.iter()) {
+        if let Some(ord) = resolve_date_token(val.trim_start_matches(':'), today) {
+            map.insert(v.clone(), ord);
+        }
+    }
+    map
 }
 
 /// Sort key for a result block: the named property's value if present, else the

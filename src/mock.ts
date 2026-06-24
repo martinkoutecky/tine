@@ -225,6 +225,11 @@ export function mockBackend(): Backend {
     async publishHtml(): Promise<[string, number]> {
       return ["/mock/graph/publish", all.length];
     },
+    async runAdvancedQuery(query: string) {
+      // Dev-preview stub: the real engine runs in the Tauri backend.
+      void query;
+      return { groups: [], ran: [], ignored: [], supported: false };
+    },
     async runQuery(query: string): Promise<RefGroup[]> {
       // Simplified mock evaluator: task/todo filter or page-ref filter.
       if (/\b(todo|task)\b/i.test(query)) {

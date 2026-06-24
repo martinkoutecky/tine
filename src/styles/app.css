@@ -2811,6 +2811,12 @@ mark {
   font-size: 13px;
   color: var(--text-muted);
 }
+.query-adv-note {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+  margin-bottom: 2px;
+}
 
 .embed-block {
   border-left: 3px solid var(--border-color);

@@ -660,6 +660,15 @@ fn run_query(query: String, state: State<'_, AppState>) -> Result<Vec<RefGroup>,
 }
 
 #[tauri::command]
+fn run_advanced_query(
+    query: String,
+    current_page: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<tine_core::query::AdvancedResult, String> {
+    with_graph(&state, |g| Ok(g.run_advanced_query(&query, current_page.as_deref())))
+}
+
+#[tauri::command]
 fn query_facets(state: State<'_, AppState>) -> Result<Vec<(String, Vec<String>)>, String> {
     with_graph(&state, |g| Ok(g.property_facets()))
 }
@@ -943,6 +952,7 @@ fn main() {
             rename_page,
             publish_html,
             run_query,
+            run_advanced_query,
             query_facets,
             page_aliases,
             set_favorites,
