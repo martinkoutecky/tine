@@ -11,13 +11,16 @@ import type { Highlight, Rect } from "../types";
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
 const COLORS = ["yellow", "green", "blue", "red", "purple"];
-const COLOR_RGBA: Record<string, string> = {
-  yellow: "rgba(255, 226, 86, 0.4)",
-  green: "rgba(116, 226, 130, 0.4)",
-  blue: "rgba(110, 176, 246, 0.4)",
-  red: "rgba(246, 130, 130, 0.4)",
-  purple: "rgba(190, 140, 246, 0.4)",
+const COLOR_RGB: Record<string, string> = {
+  yellow: "255, 226, 86",
+  green: "116, 226, 130",
+  blue: "110, 176, 246",
+  red: "246, 130, 130",
+  purple: "190, 140, 246",
 };
+const COLOR_RGBA: Record<string, string> = Object.fromEntries(
+  Object.entries(COLOR_RGB).map(([k, v]) => [k, `rgba(${v}, 0.4)`])
+);
 
 interface Pending {
   page: number;
@@ -498,13 +501,15 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
       // reads as a framed area rather than a text shade.
       if (h.image != null) {
         const r = h.position.bounding;
+        const rgb = COLOR_RGB[h.color] ?? COLOR_RGB.yellow;
         const div = document.createElement("div");
         div.className = "pdf-hl pdf-hl-area";
         div.style.left = `${r.left * s}px`;
         div.style.top = `${r.top * s}px`;
         div.style.width = `${r.width * s}px`;
         div.style.height = `${r.height * s}px`;
-        div.style.borderColor = COLOR_RGBA[h.color] ?? COLOR_RGBA.yellow;
+        div.style.borderColor = `rgba(${rgb}, 0.9)`;
+        div.style.background = `rgba(${rgb}, 0.18)`; // translucent fill over the captured region
         div.style.cursor = "pointer";
         div.onclick = openEdit(h.id);
         layer.appendChild(div);
@@ -564,7 +569,10 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
   });
 
   const onMouseUp = (e: MouseEvent) => {
-    if (areaMode()) return; // area drag owns the mouse; text-select is suppressed
+    // An area drag (toggle or Ctrl/⌘) owns the mouse; don't also make a text
+    // highlight. `areaDrag` is still set here — onMouseUp (on .pdf-scroll) runs
+    // before the window-level onAreaUp that clears it.
+    if (areaMode() || areaDrag) return;
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed || !sel.toString().trim()) {
       setMenu(null);
@@ -624,8 +632,11 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
   // Rubber-band a rectangle over a single page; on release, crop that region of
   // the page canvas to a PNG (saved in OG's `assets/<key>/<page>_<id>_<stamp>.png`
   // layout) and create an area highlight (`text: null`, `image: <stamp>`).
+  // Area capture starts when the toolbar toggle is on OR the user holds
+  // Ctrl/⌘ while dragging (a quick modifier alternative to the button).
+  const areaModifier = (e: MouseEvent) => e.ctrlKey || e.metaKey;
   const onAreaDown = (e: MouseEvent) => {
-    if (!areaMode() || e.button !== 0) return;
+    if ((!areaMode() && !areaModifier(e)) || e.button !== 0) return;
     const wrap = (e.target as HTMLElement).closest(".pdf-page") as HTMLElement | null;
     if (!wrap) return;
     e.preventDefault();

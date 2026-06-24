@@ -1938,6 +1938,27 @@ mod tests {
     }
 
     #[test]
+    fn deleting_highlight_write_is_not_seen_as_external() {
+        // Repro for the "someone else edited the note" warning when deleting a
+        // highlight while its hls__ page is open: the hls page write (and the
+        // delete-rewrite) must be recognized as Tine's OWN write by the watcher,
+        // not flagged as an external change.
+        let dir = scratch("hldel");
+        let g = Graph::open(&dir);
+        g.warm_cache();
+        let h1 = mkhl("aaaaaaaa-0000-0000-0000-000000000001", 1, Some("one"));
+        let h2 = mkhl("bbbbbbbb-0000-0000-0000-000000000002", 2, Some("two"));
+        let page_path = dir.join("pages").join("hls__paper.md");
+        g.write_highlights("paper.pdf", "Paper", &[h1.clone(), h2.clone()], &[]).unwrap();
+        assert!(g.sync_file(&page_path).is_none(), "initial highlight write looked external");
+        // Delete h2 (write just h1; baseline = both) — the rewrite must also be ours.
+        g.write_highlights("paper.pdf", "Paper", &[h1.clone()], &[h1.id.clone(), h2.id.clone()])
+            .unwrap();
+        assert!(g.sync_file(&page_path).is_none(), "delete-rewrite looked external (false conflict)");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn write_pdf_area_image_uses_og_layout() {
         let dir = scratch("areaimg");
         let g = Graph::open(&dir);

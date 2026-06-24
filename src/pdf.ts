@@ -1,10 +1,24 @@
 // Shared PDF helpers (mirror the Rust asset_key / hls naming and colors).
 
+// MUST stay byte-for-byte in sync with the Rust `asset_key` (crates/tine-core/
+// src/pdf.rs) — the frontend derives the hls__ page name the Notes pane opens,
+// and the backend derives the page it writes; a divergence points them at
+// different pages. Matches OG's `sanitize-filename`: strip only OS-illegal
+// characters, preserve case / `-` / `_` / spaces.
 export function assetKey(filename: string): string {
-  const stem = filename.replace(/\.pdf$/i, "");
-  return Array.from(stem)
-    .map((c) => (/[a-z0-9]/i.test(c) ? c.toLowerCase() : "_"))
-    .join("");
+  const stem = filename.replace(/\.(pdf)$/i, "");
+  let out = Array.from(stem)
+    .filter((c) => {
+      const n = c.codePointAt(0)!;
+      if (n <= 0x1f || (n >= 0x80 && n <= 0x9f)) return false; // control chars
+      return !'/?<>\\:*|"'.includes(c); // reserved/illegal set
+    })
+    .join("")
+    .replace(/[. ]+$/, ""); // trailing dots/spaces (Windows)
+  // Windows reserved device names (optionally with an extension) → removed.
+  const base = (out.split(".")[0] ?? "").toLowerCase();
+  if (/^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/.test(base)) out = "";
+  return out;
 }
 
 export function hlsPageName(filename: string): string {
