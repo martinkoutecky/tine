@@ -1,10 +1,14 @@
-# Build Tine for Linux, macOS, and Windows and attach the installers to a
-# GitHub release. Dormant until the repo lives on GitHub and you push a tag:
+# Build Tine installers for Linux, macOS (universal), and Windows and attach
+# them to a draft GitHub Release. Triggered by pushing a version tag:
 #
 #   git tag v0.1.0 && git push origin v0.1.0
 #
-# (or run it manually from the Actions tab). macOS/Windows builds are unsigned;
-# add signing secrets later for notarized/SmartScreen-clean installers.
+# …or run it manually from the Actions tab (workflow_dispatch) to smoke-test the
+# build matrix without cutting a release.
+#
+# Signing: macOS/Windows installers are UNSIGNED until you add the secrets noted
+# below. Unsigned builds still run, but Gatekeeper (macOS) and SmartScreen
+# (Windows) warn the user. See the comments on the signing env vars.
 name: release
 
 on:
@@ -15,14 +19,21 @@ on:
 jobs:
   build:
     permissions:
-      contents: write
+      contents: write # create the release + upload assets
     strategy:
       fail-fast: false
       matrix:
         include:
           - platform: ubuntu-22.04
+            args: "--features custom-protocol"
+            rust-targets: ""
           - platform: macos-latest
+            # one universal binary that runs on both Apple Silicon and Intel
+            args: "--target universal-apple-darwin --features custom-protocol"
+            rust-targets: "aarch64-apple-darwin,x86_64-apple-darwin"
           - platform: windows-latest
+            args: "--features custom-protocol"
+            rust-targets: ""
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
@@ -32,7 +43,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+            libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev \
+            libayatana-appindicator3-dev patchelf \
+            build-essential curl wget file libssl-dev libxdo-dev
 
       - uses: actions/setup-node@v4
         with:
@@ -40,19 +53,39 @@ jobs:
           cache: npm
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-targets }}
 
       - uses: swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri -> target
+          # Cargo workspace is the repo ROOT (target/ lives there, not src-tauri/)
+          workspaces: ". -> target"
 
       - run: npm ci
 
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # --- macOS code signing + notarization (inert until set) -----------
+          # Add these as repo secrets for notarized, Gatekeeper-clean .dmgs:
+          #   APPLE_CERTIFICATE            base64 of the Developer ID .p12
+          #   APPLE_CERTIFICATE_PASSWORD  the .p12 password
+          #   APPLE_SIGNING_IDENTITY      e.g. "Developer ID Application: Name (TEAMID)"
+          #   APPLE_ID / APPLE_PASSWORD   Apple ID + app-specific password (notarytool)
+          #   APPLE_TEAM_ID               your Apple Developer Team ID
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Windows signing is configured via tauri.conf.json (bundle.windows
+          # .certificateThumbprint) or an Azure Trusted Signing action — left
+          # unsigned for now.
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Tine ${{ github.ref_name }}"
-          releaseBody: "See the assets below to download and install Tine."
+          releaseBody: "Download an installer for your platform below. macOS/Windows builds are currently unsigned."
           releaseDraft: true
           prerelease: false
+          args: ${{ matrix.args }}
