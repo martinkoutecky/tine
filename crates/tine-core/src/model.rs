@@ -1062,13 +1062,47 @@ impl Graph {
         Ok(final_name)
     }
 
+    /// Write a cropped area-highlight image to OG's file-graph layout:
+    /// `assets/<key>/<page>_<id>_<stamp>.png` (`<stamp>` = the `js/Date.now()`
+    /// epoch-ms integer also stored in the highlight's `:content {:image …}`).
+    /// Returns the assets-relative path.
+    ///
+    /// **Non-dedup on purpose:** the filename IS the stable link from the `.edn`
+    /// entry to the file, so a re-save must overwrite in place rather than rename
+    /// on collision (which `reserve_asset` would do, breaking the link).
+    pub fn write_pdf_area_image(
+        &self,
+        pdf_filename: &str,
+        page: i64,
+        id: &str,
+        stamp: i64,
+        bytes: &[u8],
+    ) -> io::Result<String> {
+        let key = crate::pdf::asset_key(pdf_filename);
+        let dir = self.assets_path().join(&key);
+        fs::create_dir_all(&dir)?;
+        let name = format!("{page}_{id}_{stamp}.png");
+        atomic_write(&dir.join(&name), bytes)?;
+        Ok(format!("{key}/{name}"))
+    }
+
     /// Read highlights for a PDF from `assets/<key>.edn`.
+    ///
+    /// If the OG-compatible key's file is absent but a file under Tine's old
+    /// `legacy_asset_key` exists, read that instead (it is migrated forward to
+    /// the new key on the next `write_highlights`). This keeps highlights made
+    /// by pre-launch Tine builds from disappearing after the key change.
     pub fn read_highlights(&self, pdf_filename: &str) -> Vec<crate::pdf::Highlight> {
         let key = crate::pdf::asset_key(pdf_filename);
-        match fs::read_to_string(self.assets_path().join(format!("{key}.edn"))) {
-            Ok(s) => crate::pdf::parse_highlights(&s),
-            Err(_) => Vec::new(),
-        }
+        let s = fs::read_to_string(self.assets_path().join(format!("{key}.edn")))
+            .ok()
+            .or_else(|| {
+                let legacy = crate::pdf::legacy_asset_key(pdf_filename);
+                (legacy != key)
+                    .then(|| fs::read_to_string(self.assets_path().join(format!("{legacy}.edn"))).ok())
+                    .flatten()
+            });
+        s.map(|s| crate::pdf::parse_highlights(&s)).unwrap_or_default()
     }
 
     /// Persist highlights: write `assets/<key>.edn` and the `hls__<key>` page.
@@ -1083,6 +1117,14 @@ impl Graph {
         base_ids: &[String],
     ) -> io::Result<()> {
         let key = crate::pdf::asset_key(pdf_filename);
+        // Legacy (pre-launch) key. When it differs and only the legacy files
+        // exist, we read those as the baseline and migrate them to the new key
+        // below — so the key change never strands existing highlights.
+        let legacy_key = crate::pdf::legacy_asset_key(pdf_filename);
+        let legacy_edn = (legacy_key != key)
+            .then(|| self.assets_path().join(format!("{legacy_key}.edn")));
+        let legacy_page = (legacy_key != key)
+            .then(|| self.pages_path().join(format!("{}.md", crate::pdf::hls_page_name(&legacy_key))));
         // Serialize against an editor save of the SAME `hls__` page (see
         // `page_locks`): hold the page lock across the .edn merge AND the page
         // read→merge→write→cache_upsert, so the two writers can't clobber each
@@ -1095,12 +1137,16 @@ impl Graph {
         // 3-way merge against the on-disk set: keep our current highlights, plus
         // any disk highlight that is an EXTERNAL addition (id not in our baseline
         // and not already present). A highlight we deliberately deleted (in the
-        // baseline, absent from current) is NOT resurrected.
+        // baseline, absent from current) is NOT resurrected. Prefer the new-key
+        // file; fall back to the legacy-key file (migrating it forward).
         let have: std::collections::HashSet<&str> = highlights.iter().map(|h| h.id.as_str()).collect();
         let base: std::collections::HashSet<&str> = base_ids.iter().map(|s| s.as_str()).collect();
         let mut merged: Vec<crate::pdf::Highlight> = highlights.to_vec();
-        if let Ok(s) = fs::read_to_string(&edn_path) {
-            for h in crate::pdf::parse_highlights(&s) {
+        let existing_edn = fs::read_to_string(&edn_path)
+            .ok()
+            .or_else(|| legacy_edn.as_ref().and_then(|p| fs::read_to_string(p).ok()));
+        if let Some(s) = &existing_edn {
+            for h in crate::pdf::parse_highlights(s) {
                 if !have.contains(h.id.as_str()) && !base.contains(h.id.as_str()) {
                     merged.push(h);
                 }
@@ -1110,8 +1156,13 @@ impl Graph {
         atomic_write(&edn_path, edn.as_bytes())?;
 
         // Upsert into the existing hls page, preserving note children by id.
-        // (`page_path` + its lock were taken at the top of this fn.)
-        let existing = fs::read_to_string(&page_path).ok().map(|s| doc::parse(&s));
+        // (`page_path` + its lock were taken at the top of this fn.) Prefer the
+        // new-key page; fall back to the legacy-key page so its user notes are
+        // carried over during migration.
+        let existing = fs::read_to_string(&page_path)
+            .ok()
+            .or_else(|| legacy_page.as_ref().and_then(|p| fs::read_to_string(p).ok()))
+            .map(|s| doc::parse(&s));
         let page_doc = crate::pdf::merge_hls_page(existing.as_ref(), pdf_filename, label, &merged);
         let page_md = doc::serialize(&page_doc);
         fs::create_dir_all(self.pages_path())?;
@@ -1138,6 +1189,20 @@ impl Graph {
             let mut recent = self.recent_writes.lock().unwrap();
             if recent.get(&page_path).is_some_and(|r| *r == page_rev) {
                 recent.remove(&page_path);
+            }
+        }
+        // Migrate-on-write: the new-key artifacts now durably carry everything
+        // from the legacy-key files (highlights above, user notes via
+        // `merge_hls_page`), so remove the stale legacy files to avoid leaving a
+        // duplicate hls page. Best-effort — a failure just leaves a harmless
+        // orphan, never lost data.
+        if let Some(p) = &legacy_edn {
+            let _ = fs::remove_file(p);
+        }
+        if let Some(p) = &legacy_page {
+            if p.exists() {
+                let _ = fs::remove_file(p);
+                self.cache_remove(&crate::pdf::hls_page_name(&legacy_key), PageKind::Page);
             }
         }
         Ok(())
@@ -1812,6 +1877,75 @@ mod tests {
         assert_eq!(fs::read_to_string(&path).unwrap(), original, "bytes left untouched");
         assert_eq!(rev, content_rev(original), "returned rev is the on-disk rev");
         assert_eq!(g.cache_generation(), gen_before, "no cache_gen bump on a trivia-only no-op");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    fn mkhl(id: &str, page: i64, text: Option<&str>) -> crate::pdf::Highlight {
+        let r = crate::pdf::Rect { top: 1.0, left: 2.0, width: 3.0, height: 4.0 };
+        crate::pdf::Highlight {
+            id: id.into(),
+            page,
+            position: crate::pdf::Position { page, bounding: r.clone(), rects: vec![r] },
+            color: "yellow".into(),
+            text: text.map(String::from),
+            image: None,
+        }
+    }
+
+    #[test]
+    fn write_highlights_migrates_legacy_key_forward() {
+        // Old Tine wrote highlight files under a lowercase+underscore key
+        // (`my_paper`); the OG-compatible key for "My Paper.pdf" is "My Paper". A
+        // read must find the legacy file, and the next write must migrate the
+        // artifacts to the new key (removing the stale legacy ones).
+        let dir = scratch("hlmig");
+        let pdf = "My Paper.pdf";
+        let legacy_key = crate::pdf::legacy_asset_key(pdf); // "my_paper"
+        let new_key = crate::pdf::asset_key(pdf); // "My Paper"
+        assert_ne!(legacy_key, new_key);
+        let assets = dir.join("assets");
+        fs::create_dir_all(&assets).unwrap();
+        let h1 = mkhl("11111111-1111-1111-1111-111111111111", 3, Some("legacy text"));
+        fs::write(assets.join(format!("{legacy_key}.edn")), crate::pdf::write_highlights(&[h1.clone()]))
+            .unwrap();
+        let legacy_page = crate::pdf::hls_page_document(pdf, "My Paper", &[h1.clone()]);
+        fs::write(dir.join("pages").join(format!("hls__{legacy_key}.md")), doc::serialize(&legacy_page))
+            .unwrap();
+
+        let g = Graph::open(&dir);
+        g.warm_cache();
+        // Read-fallback: the legacy file is found under the new-key lookup.
+        let read = g.read_highlights(pdf);
+        assert_eq!(read.len(), 1);
+        assert_eq!(read[0].id, h1.id);
+
+        // Write H1 + a newly-added H2 (editor baseline = [H1]).
+        let h2 = mkhl("22222222-2222-2222-2222-222222222222", 4, Some("new text"));
+        g.write_highlights(pdf, "My Paper", &[h1.clone(), h2.clone()], &[h1.id.clone()]).unwrap();
+
+        // New-key artifacts exist with both highlights; the legacy ones are gone.
+        let new_edn = assets.join(format!("{new_key}.edn"));
+        assert!(new_edn.exists(), "new-key edn written");
+        let migrated = crate::pdf::parse_highlights(&fs::read_to_string(&new_edn).unwrap());
+        assert_eq!(migrated.len(), 2, "both highlights carried forward");
+        assert!(dir.join("pages").join(format!("hls__{new_key}.md")).exists(), "new hls page");
+        assert!(!assets.join(format!("{legacy_key}.edn")).exists(), "legacy edn removed");
+        assert!(
+            !dir.join("pages").join(format!("hls__{legacy_key}.md")).exists(),
+            "legacy hls page removed"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_pdf_area_image_uses_og_layout() {
+        let dir = scratch("areaimg");
+        let g = Graph::open(&dir);
+        let rel = g.write_pdf_area_image("My Paper.pdf", 7, "abc-id", 1659920114630, &[1, 2, 3, 4]).unwrap();
+        // OG layout: assets/<key>/<page>_<id>_<stamp>.png with the OG-compatible key.
+        assert_eq!(rel, "My Paper/7_abc-id_1659920114630.png");
+        let p = dir.join("assets").join("My Paper").join("7_abc-id_1659920114630.png");
+        assert_eq!(fs::read(&p).unwrap(), vec![1, 2, 3, 4]);
         let _ = fs::remove_dir_all(&dir);
     }
 

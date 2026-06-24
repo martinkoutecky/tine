@@ -800,6 +800,20 @@ fn write_highlights(
     })
 }
 
+#[tauri::command]
+fn save_pdf_area_image(
+    pdf: String,
+    page: i64,
+    id: String,
+    stamp: i64,
+    bytes: Vec<u8>,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    with_graph(&state, |g| {
+        g.write_pdf_area_image(&pdf, page, &id, stamp, &bytes).map_err(|e| e.to_string())
+    })
+}
+
 /// Show + focus the always-on-top quick-capture mini window (created hidden at
 /// startup). Each show resets it to the small base size and anchors it near the
 /// top of the screen so the frontend can grow it downward (multiple blocks, an
@@ -971,6 +985,7 @@ fn main() {
             save_asset,
             read_highlights,
             write_highlights,
+            save_pdf_area_image,
             get_backup_keep,
             set_backup_keep,
             get_capture_enter_files,

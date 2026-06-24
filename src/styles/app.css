@@ -1384,6 +1384,29 @@ body {
   color: var(--text-secondary);
 }
 
+/* "aka" chips — a page's aliases (other names that link here), read-only. */
+.page-aliases {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0 8px;
+}
+.page-aliases-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.alias-chip {
+  font-size: 12.5px;
+  padding: 1px 8px;
+  border-radius: 10px;
+  background: var(--bg-tertiary, rgba(127, 127, 127, 0.12));
+  color: var(--text-secondary);
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.2));
+}
+
 .prop-row {
   display: flex;
   gap: 8px;
@@ -3354,6 +3377,38 @@ mark {
   position: absolute;
   border-radius: 2px;
   mix-blend-mode: multiply;
+  /* The layer is pointer-events:none so a drag over blank space still starts a
+     text selection / area capture; re-enable on the highlight itself so clicking
+     it opens the edit (recolor / remove) popup. */
+  pointer-events: auto;
+}
+
+/* Area (image) highlight: a framed rectangle over the captured region — the
+   cropped content stays visible underneath the live page canvas. */
+.pdf-hl-area {
+  mix-blend-mode: normal;
+  background: transparent;
+  border: 2px solid var(--accent, #6eb0f6);
+  box-sizing: border-box;
+}
+
+/* Area-capture mode: a crosshair over the page and no text selection while the
+   user rubber-bands a region. */
+.pdf-scroll.area-mode {
+  cursor: crosshair;
+  user-select: none;
+}
+.pdf-scroll.area-mode .textLayer {
+  user-select: none;
+}
+
+/* The live rubber-band rectangle drawn during an area drag. */
+.pdf-area-band {
+  position: absolute;
+  border: 1px dashed var(--accent, #6eb0f6);
+  background: rgba(110, 176, 246, 0.15);
+  pointer-events: none;
+  z-index: 5;
 }
 
 .pdf-color-menu {

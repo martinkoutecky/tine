@@ -14,7 +14,7 @@ import { LinkedReferences } from "./LinkedReferences";
 import { UnlinkedReferences } from "./UnlinkedReferences";
 import { QueryMacro } from "./Macro";
 import { NamespaceCrumb, NamespaceChildren } from "./Namespace";
-import { isPropertyLine, blockView } from "../render/block";
+import { isPropertyLine, aliasNames, blockView } from "../render/block";
 import { InlineText } from "../render/inline";
 import { journalTitle } from "../journal";
 import type { PageDto } from "../types";
@@ -397,9 +397,22 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
           </svg>
         </button>
       </div>
+      <Show when={aliasNames(props.page.preBlock).length}>
+        <div class="page-aliases" title="Also known as — other names that link here">
+          <span class="page-aliases-label">aka</span>
+          <For each={aliasNames(props.page.preBlock)}>
+            {(a) => <span class="alias-chip">{a}</span>}
+          </For>
+        </div>
+      </Show>
       <Show when={props.page.preBlock}>
         <div class="page-properties">
-          <For each={props.page.preBlock!.split("\n").filter(isPropertyLine)}>
+          {/* `alias` is surfaced as chips above, so drop it from the raw property list. */}
+          <For
+            each={props.page
+              .preBlock!.split("\n")
+              .filter((l) => isPropertyLine(l) && l.slice(0, l.indexOf("::")).trim().toLowerCase() !== "alias")}
+          >
             {(line) => {
               const idx = line.indexOf("::");
               return (

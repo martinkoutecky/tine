@@ -23,6 +23,24 @@ export function isPropertyLine(line: string): boolean {
   return key.length > 0 && /^[A-Za-z0-9_./-]+$/.test(key) && PROP_RE.test(line);
 }
 
+/** The alias names declared by a page's `alias::` pre-block property
+ *  (comma-separated, as Logseq stores them). Empty array if there are none. */
+export function aliasNames(preBlock: string | null | undefined): string[] {
+  if (!preBlock) return [];
+  for (const line of preBlock.split("\n")) {
+    const idx = line.indexOf("::");
+    if (idx <= 0) continue;
+    if (line.slice(0, idx).trim().toLowerCase() === "alias") {
+      return line
+        .slice(idx + 2)
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+    }
+  }
+  return [];
+}
+
 export interface BlockView {
   marker: string | null;
   done: boolean;

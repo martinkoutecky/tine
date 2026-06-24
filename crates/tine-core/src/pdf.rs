@@ -130,9 +130,55 @@ pub fn write_highlights(highlights: &[Highlight]) -> String {
 // ----------------------------------------------------------------- hls__ page
 
 /// Sanitize a PDF filename into the key used for the edn file + hls page.
-/// (Approximation of Logseq's `inflate-asset`: lowercased, non-alphanumerics
-/// to underscores. Exact stamping differs, but the structure matches.)
+///
+/// Matches Logseq's `safe-sanitize-file-name` (the npm `sanitize-filename`
+/// 1.6.4 library applied to the filename **stem**): only OS-illegal characters
+/// are stripped — **case, `-`, `_`, spaces, and unicode letters are preserved**.
+/// So `paper-1.pdf` and `paper_1.pdf` get *distinct* keys, exactly as OG keeps
+/// them; `My Paper.pdf` → key `My Paper`. (Tine's old key lowercased and mapped
+/// every non-alphanumeric to `_`, which diverged from OG and collided distinct
+/// PDFs — see `legacy_asset_key` for the read-fallback/migration path.)
 pub fn asset_key(pdf_filename: &str) -> String {
+    let stem = pdf_filename
+        .strip_suffix(".pdf")
+        .or_else(|| pdf_filename.strip_suffix(".PDF"))
+        .unwrap_or(pdf_filename);
+    sanitize_filename(stem)
+}
+
+/// Strip only the characters the npm `sanitize-filename` 1.6.4 library removes
+/// (default empty-string replacement), so the result matches OG's key byte-for-
+/// byte: drop the reserved set `/ ? < > \ : * | "`, control chars
+/// (`0x00–0x1f`, `0x80–0x9f`), trailing dots/spaces, and Windows reserved device
+/// names (CON/PRN/AUX/NUL/COM0-9/LPT0-9). Nothing is lowercased or substituted.
+fn sanitize_filename(s: &str) -> String {
+    let illegal = |c: char| matches!(c, '/' | '?' | '<' | '>' | '\\' | ':' | '*' | '|' | '"');
+    let control = |c: char| {
+        let n = c as u32;
+        n <= 0x1f || (0x80..=0x9f).contains(&n)
+    };
+    let mut out: String = s.chars().filter(|&c| !illegal(c) && !control(c)).collect();
+    // Windows: strip trailing dots and spaces.
+    while out.ends_with('.') || out.ends_with(' ') {
+        out.pop();
+    }
+    // Windows reserved device names (optionally with an extension) → removed.
+    let base = out.split('.').next().unwrap_or("").to_ascii_lowercase();
+    let reserved = matches!(base.as_str(), "con" | "prn" | "aux" | "nul")
+        || ((base.starts_with("com") || base.starts_with("lpt"))
+            && base.len() == 4
+            && base.as_bytes()[3].is_ascii_digit());
+    if reserved {
+        out.clear();
+    }
+    out
+}
+
+/// Tine's pre-launch key scheme (lowercased, every non-alphanumeric → `_`).
+/// Retained ONLY so highlight files written by older Tine builds can still be
+/// located (read-fallback) and migrated forward to the OG-compatible
+/// [`asset_key`] on the next write. Do not use for new writes.
+pub fn legacy_asset_key(pdf_filename: &str) -> String {
     let stem = pdf_filename.strip_suffix(".pdf").unwrap_or(pdf_filename);
     stem.chars()
         .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' })
@@ -333,6 +379,31 @@ mod tests {
         // Re-save with an empty highlight set → block removed.
         let merged = merge_hls_page(Some(&page), "b.pdf", "b", &[]);
         assert_eq!(merged.roots.len(), 0);
+    }
+
+    #[test]
+    fn asset_key_matches_og_sanitize_filename() {
+        // Case + `-`/`_`/spaces preserved; `-` and `_` stay DISTINCT (no collision).
+        assert_eq!(asset_key("paper-1.pdf"), "paper-1");
+        assert_eq!(asset_key("paper_1.pdf"), "paper_1");
+        assert_ne!(asset_key("paper-1.pdf"), asset_key("paper_1.pdf"));
+        assert_eq!(asset_key("My Paper.pdf"), "My Paper");
+        // OS-illegal chars dropped (empty replacement), case otherwise kept.
+        assert_eq!(asset_key("a/b:c.pdf"), "abc");
+        assert_eq!(asset_key("Re: notes?.pdf"), "Re notes");
+        // Uppercase extension handled.
+        assert_eq!(asset_key("Book.PDF"), "Book");
+        // Trailing dots/spaces stripped; reserved device name removed.
+        assert_eq!(asset_key("draft. .pdf"), "draft");
+        assert_eq!(asset_key("CON.pdf"), "");
+    }
+
+    #[test]
+    fn legacy_key_is_the_old_lowercase_scheme() {
+        assert_eq!(legacy_asset_key("paper-1.pdf"), "paper_1");
+        assert_eq!(legacy_asset_key("My Paper.pdf"), "my_paper");
+        // Already-simple names agree with the new key (no migration needed).
+        assert_eq!(legacy_asset_key("paper.pdf"), asset_key("paper.pdf"));
     }
 
     #[test]

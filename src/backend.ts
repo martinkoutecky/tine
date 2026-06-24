@@ -69,6 +69,10 @@ export interface Backend {
   writeText(text: string): Promise<void>;
   readHighlights(pdf: string): Promise<Highlight[]>;
   writeHighlights(pdf: string, label: string, highlights: Highlight[], baseIds: string[]): Promise<void>;
+  /** Save a cropped area-highlight PNG to OG's layout `assets/<key>/<page>_<id>_<stamp>.png`
+   *  (non-dedup — the filename links the `.edn` `:image <stamp>` to the file).
+   *  Returns the assets-relative path. */
+  savePdfAreaImage(pdf: string, page: number, id: string, stamp: number, bytes: Uint8Array): Promise<string>;
   /** Subscribe to external file changes (file watcher). Returns an unsubscribe. */
   onGraphChanged(cb: (c: GraphChange) => void): Promise<() => void>;
   /** How many launch snapshots to keep. */
@@ -256,6 +260,15 @@ class TauriBackend implements Backend {
   }
   writeHighlights(pdf: string, label: string, highlights: Highlight[], baseIds: string[]) {
     return this.call<void>("write_highlights", { pdf, label, highlights, baseIds });
+  }
+  savePdfAreaImage(pdf: string, page: number, id: string, stamp: number, bytes: Uint8Array) {
+    return this.call<string>("save_pdf_area_image", {
+      pdf,
+      page,
+      id,
+      stamp,
+      bytes: Array.from(bytes),
+    });
   }
   async onGraphChanged(cb: (c: GraphChange) => void): Promise<() => void> {
     const { listen } = await import("@tauri-apps/api/event");

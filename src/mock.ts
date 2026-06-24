@@ -398,5 +398,14 @@ export function mockBackend(): Backend {
     async writeHighlights(pdf: string, label: string, highlights: Highlight[], _baseIds: string[]): Promise<void> {
       mockHighlights[pdf] = { label, highlights };
     },
+    async savePdfAreaImage(
+      pdf: string,
+      page: number,
+      id: string,
+      stamp: number,
+      _bytes: Uint8Array,
+    ): Promise<string> {
+      return `${pdf.replace(/\.pdf$/i, "")}/${page}_${id}_${stamp}.png`;
+    },
   };
 }
