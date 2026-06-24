@@ -107,7 +107,9 @@ export function PageView(): JSX.Element {
           return !!ed && doc.byId[ed]?.page === c.name;
         };
         if (c.removed) {
-          if (r.kind === "page" && r.name === c.name) openJournals();
+          // Page deleted externally while open → reload journals in place (not a
+          // new tab, even on a pinned tab — the page no longer exists).
+          if (r.kind === "page" && r.name === c.name) openJournals({ inPlace: true });
           return;
         }
         if (r.kind === "page" && r.name === c.name) {

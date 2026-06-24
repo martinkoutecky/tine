@@ -52,10 +52,14 @@ function tabTitle(r: Route): string {
 }
 
 // Tab strip: click to activate, middle-click to close, double-click to pin,
-// drag to reorder. The whole tab session persists across launches (see router
-// persist/restoreSession); pinning is now just a visual marker. Always shown —
-// even a single tab is rendered, so the pill signals that tabs exist (a feature
-// OG Logseq lacks out of the box) without costing extra vertical space.
+// drag to reorder. Pinned tabs are "sticky": they sort to the left and stay on
+// their content — navigating from one (clicking a page/link, Ctrl-K) opens the
+// destination in a new foreground tab instead of leaving the pinned view (zoom
+// stays in place; middle-click still opens in the background). Closing a pinned
+// tab asks first. The whole session persists across launches (see router
+// persist/restoreSession). Always shown — even a single tab is rendered, so the
+// pill signals that tabs exist (a feature OG Logseq lacks) without costing
+// extra vertical space.
 export function TabBar(): JSX.Element {
   let dragId: string | null = null;
 
@@ -102,7 +106,11 @@ export function TabBar(): JSX.Element {
                 closeTab(t.id);
               }
             }}
-            title={t.pinned ? "Pinned — double-click to unpin" : "Double-click to pin"}
+            title={
+              t.pinned
+                ? "Pinned (sticky) — links open in a new tab. Double-click to unpin"
+                : "Double-click to pin (sticky)"
+            }
           >
             <Show when={t.pinned}>
               <span class="tab-pin">📌</span>

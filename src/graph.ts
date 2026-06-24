@@ -64,7 +64,9 @@ export async function loadGraphPath(path: string): Promise<void> {
   // startup load of the same graph, `restoreSession()` has already set up the
   // tabs and focused one — forcing journals here would clobber that restored
   // active tab (e.g. a pinned page tab reverting to Journals after relaunch).
-  if (switching) openJournals();
+  // inPlace: a graph switch resets the active tab even if it's pinned/sticky
+  // (the old pinned content is gone), rather than spawning a new tab.
+  if (switching) openJournals({ inPlace: true });
 }
 
 /** Load the graph's alias:: index so link/navigation can resolve aliases.

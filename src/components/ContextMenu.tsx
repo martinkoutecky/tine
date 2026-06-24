@@ -270,7 +270,9 @@ function PageMenu(props: {
           return;
         }
         const r = route();
-        if (r.kind === "page" && r.name === props.name) openJournals();
+        // Deleted the page you're viewing → fall back to journals in place (the
+        // page is gone; don't open a new tab even on a pinned tab).
+        if (r.kind === "page" && r.name === props.name) openJournals({ inPlace: true });
         pushToast(`Deleted “${props.name}”`, "success");
       })
       .catch(() => pushToast("Delete failed", "error"));

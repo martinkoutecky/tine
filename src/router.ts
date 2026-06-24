@@ -65,7 +65,19 @@ export function sameRoute(a: Route, b: Route): boolean {
 // Navigate the active tab to a new route, pushing it onto the history stack
 // (dropping any forward entries — standard browser behaviour). Re-navigating to
 // the current route is a no-op so the back stack doesn't fill with duplicates.
-function navigate(r: Route) {
+//
+// Sticky (pinned) tabs: a pinned tab stays on its content. When `opts.sticky` is
+// set (a user navigation, not a programmatic reset) and the active tab is pinned,
+// the destination opens in a NEW foreground tab instead of replacing the pinned
+// view — except a no-op (same route). Zoom (focusBlock) navigates in place, so it
+// doesn't pass `sticky`. Programmatic resets (graph switch, post-delete) pass
+// `inPlace` to force the active tab regardless of pin.
+function navigate(r: Route, opts: { sticky?: boolean } = {}) {
+  const active = activeTab();
+  if (opts.sticky && active.pinned && !sameRoute(tabRoute(active), r)) {
+    openInNewTab(r, true);
+    return;
+  }
   setTabs(
     tabs().map((t) => {
       if (t.id !== activeId()) return t;
@@ -77,15 +89,19 @@ function navigate(r: Route) {
   persist();
 }
 
-export function openPage(name: string, pageKind: "journal" | "page" = "page") {
+export function openPage(
+  name: string,
+  pageKind: "journal" | "page" = "page",
+  opts: { inPlace?: boolean } = {}
+) {
   // Resolve aliases so the route + working-set key use the canonical page name.
   if (pageKind === "page") name = resolveAlias(name);
-  navigate({ kind: "page", name, pageKind });
+  navigate({ kind: "page", name, pageKind }, { sticky: !opts.inPlace });
   pushRecent(name, pageKind);
 }
 
-export function openJournals() {
-  navigate({ kind: "journals" });
+export function openJournals(opts: { inPlace?: boolean } = {}) {
+  navigate({ kind: "journals" }, { sticky: !opts.inPlace });
 }
 
 /** Zoom the active tab into a block (or back out, when null). Zoom is part of the
@@ -128,11 +144,14 @@ export function openPageAtBlock(name: string, pageKind: "journal" | "page", bloc
   setTimeout(tick, 60);
 }
 
-export function openInNewTab(r: Route) {
-  // Open in a *background* tab without switching to it — matches a browser's
-  // middle-click. Use openPage if you want to navigate there.
+export function openInNewTab(r: Route, foreground = false) {
+  // Open a new tab. Default is *background* (no focus switch) — matches a
+  // browser's middle-click. `foreground` is used by the sticky-tab redirect, so
+  // a click on a pinned tab lands you on the new tab. New tabs are unpinned, so
+  // appending keeps the pinned-left invariant (all pinned precede all unpinned).
   const id = newId();
   setTabs([...tabs(), { id, history: [r], pos: 0, pinned: false }]);
+  if (foreground) setActiveId(id);
   persist();
 }
 
@@ -182,19 +201,43 @@ export function closeActiveTab() {
 export function closeTab(id: string) {
   const list = tabs();
   if (list.length === 1) return; // always keep one tab
-  const idx = list.findIndex((t) => t.id === id);
-  const next = list.filter((t) => t.id !== id);
+  const t = list.find((x) => x.id === id);
+  // Pinned = sticky = "I want to keep this": confirm before closing, so an
+  // accidental Ctrl+W (or middle-click) doesn't drop it. A plain no-op would be
+  // more confusing than a one-line prompt.
+  if (t?.pinned && !confirm(`Close pinned tab “${routeTitle(tabRoute(t))}”?`)) return;
+  const idx = list.findIndex((x) => x.id === id);
+  const next = list.filter((x) => x.id !== id);
   setTabs(next);
   if (activeId() === id) setActiveId(next[Math.max(0, idx - 1)].id);
   persist();
 }
 
+/** Stable partition: all pinned tabs first (in their relative order), then the
+ *  unpinned ones. Pinned tabs always sit to the left of the strip (matches the
+ *  OG plugin), so a pinned tab can't be visually stranded among unpinned ones. */
+function partitionPinned(list: Tab[]): Tab[] {
+  return [...list.filter((t) => t.pinned), ...list.filter((t) => !t.pinned)];
+}
+
+/** Toggle pin on a tab and move it to the pinned/unpinned boundary: pinning a
+ *  tab slides it to the right end of the pinned group (rightmost pinned);
+ *  unpinning slides it to the left end of the unpinned group. Both land it at the
+ *  same spot — the boundary — which is what the OG plugin does on double-click. */
 export function togglePin(id: string) {
-  setTabs(tabs().map((t) => (t.id === id ? { ...t, pinned: !t.pinned } : t)));
+  const list = tabs();
+  const t = list.find((x) => x.id === id);
+  if (!t) return;
+  const updated = { ...t, pinned: !t.pinned };
+  const rest = list.filter((x) => x.id !== id);
+  const pinned = rest.filter((x) => x.pinned);
+  const unpinned = rest.filter((x) => !x.pinned);
+  setTabs([...pinned, updated, ...unpinned]);
   persist();
 }
 
-/** Move the dragged tab to the position of the target tab. */
+/** Move the dragged tab to the position of the target tab, then re-assert the
+ *  pinned-left invariant (a cross-group drag snaps back to its own group). */
 export function reorderTab(dragId: string, targetId: string) {
   if (dragId === targetId) return;
   const list = [...tabs()];
@@ -203,7 +246,7 @@ export function reorderTab(dragId: string, targetId: string) {
   if (from < 0 || to < 0) return;
   const [moved] = list.splice(from, 1);
   list.splice(to, 0, moved);
-  setTabs(list);
+  setTabs(partitionPinned(list));
   persist();
 }
 
@@ -250,8 +293,12 @@ function parseSession(raw: string): { tabs: Tab[]; active: number } | null {
         pinned: !!t.pinned,
       }));
     if (!restored.length) return null;
-    const active = Math.min(Math.max(0, s.activeIndex | 0), restored.length - 1);
-    return { tabs: restored, active };
+    // Keep the active tab pointing at the same tab after we re-sort pinned-left
+    // (older sessions may have a mixed order).
+    const activeTabId = restored[Math.min(Math.max(0, s.activeIndex | 0), restored.length - 1)].id;
+    const ordered = partitionPinned(restored);
+    const active = Math.max(0, ordered.findIndex((t) => t.id === activeTabId));
+    return { tabs: ordered, active };
   } catch {
     return null;
   }

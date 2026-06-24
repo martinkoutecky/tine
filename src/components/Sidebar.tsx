@@ -48,7 +48,7 @@ export function Sidebar(): JSX.Element {
         <div
           class="nav-item"
           classList={{ active: route().kind === "journals" }}
-          onClick={openJournals}
+          onClick={() => openJournals()}
           onAuxClick={(e) => {
             if (e.button === 1) {
               e.preventDefault();
