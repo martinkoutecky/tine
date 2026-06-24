@@ -1,4 +1,4 @@
-import { For, Show, createResource, type JSX } from "solid-js";
+import { For, Show, createResource, createSignal, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { openPage } from "../router";
 import { graphEpoch } from "../ui";
@@ -26,6 +26,77 @@ export function NamespaceCrumb(props: { name: string }): JSX.Element {
             );
           }}
         </For>
+      </div>
+    </Show>
+  );
+}
+
+// --- Sidebar namespace tree -------------------------------------------------
+
+export interface NsNode {
+  seg: string;
+  full: string;
+  children: NsNode[];
+}
+
+/** Build a nested namespace tree from page names containing `/`. Intermediate
+ *  segments become nodes even if they have no file of their own. */
+export function buildNamespaceTree(names: string[]): NsNode[] {
+  const roots: NsNode[] = [];
+  const byFull = new Map<string, NsNode>();
+  for (const name of names) {
+    if (!name.includes("/")) continue;
+    let level = roots;
+    let prefix = "";
+    for (const seg of name.split("/")) {
+      prefix = prefix ? `${prefix}/${seg}` : seg;
+      let node = byFull.get(prefix.toLowerCase());
+      if (!node) {
+        node = { seg, full: prefix, children: [] };
+        byFull.set(prefix.toLowerCase(), node);
+        level.push(node);
+      }
+      level = node.children;
+    }
+  }
+  const sortRec = (ns: NsNode[]) => {
+    ns.sort((a, b) => a.seg.localeCompare(b.seg));
+    ns.forEach((n) => sortRec(n.children));
+  };
+  sortRec(roots);
+  return roots;
+}
+
+function NsNodeView(props: { node: NsNode; depth: number }): JSX.Element {
+  const [open, setOpen] = createSignal(props.depth < 1);
+  const has = () => props.node.children.length > 0;
+  return (
+    <div class="ns-node">
+      <div class="ns-node-row" style={{ "padding-left": `${props.depth * 12}px` }}>
+        <Show when={has()} fallback={<span class="ns-node-spacer" />}>
+          <span class="ns-node-toggle" onClick={() => setOpen(!open())}>{open() ? "▾" : "▸"}</span>
+        </Show>
+        <span class="ns-node-label" onClick={() => openPage(props.node.full, "page")}>
+          {props.node.seg}
+        </span>
+      </div>
+      <Show when={has() && open()}>
+        <For each={props.node.children}>{(c) => <NsNodeView node={c} depth={props.depth + 1} />}</For>
+      </Show>
+    </div>
+  );
+}
+
+/** A collapsible tree of all namespaces in the graph, for the left sidebar. */
+export function NamespaceTree(): JSX.Element {
+  const [tree] = createResource(
+    () => graphEpoch(),
+    async () => buildNamespaceTree((await backend().listPages()).map((p) => p.name)),
+  );
+  return (
+    <Show when={(tree() ?? []).length > 0}>
+      <div class="ns-tree">
+        <For each={tree()}>{(n) => <NsNodeView node={n} depth={0} />}</For>
       </div>
     </Show>
   );

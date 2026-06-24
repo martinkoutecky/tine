@@ -2,6 +2,7 @@ import { For, Show, createMemo, createResource, createSignal, type JSX } from "s
 import { backend } from "../backend";
 import { openJournals, openPage, openPageInNewTab, openInNewTab, route } from "../router";
 import { openSwitcher, favorites, recentPages } from "../ui";
+import { NamespaceTree } from "./Namespace";
 
 // Cap the rendered "All pages" list. Beyond this, rendering every row (each
 // reading route() for its active state) makes both the initial render and every
@@ -12,6 +13,7 @@ const ALL_PAGES_CAP = 300;
 export function Sidebar(): JSX.Element {
   const [pages] = createResource(() => backend().listPages());
   const [showAll, setShowAll] = createSignal(false);
+  const [showNs, setShowNs] = createSignal(false);
 
   // Filter + sort ONCE per page-list change (memoized), not on every render /
   // navigation as the inline `.filter().sort()` in JSX did.
@@ -138,6 +140,19 @@ export function Sidebar(): JSX.Element {
                 +{allPages().length - ALL_PAGES_CAP} more — search to open…
               </div>
             </Show>
+          </Show>
+        </div>
+
+        <div class="nav-section">
+          <div
+            class="nav-section-header nav-section-toggle"
+            onClick={() => setShowNs(!showNs())}
+          >
+            <span class="nav-toggle-caret" classList={{ open: showNs() }}>▸</span>
+            NAMESPACES
+          </div>
+          <Show when={showNs()}>
+            <NamespaceTree />
           </Show>
         </div>
       </div>

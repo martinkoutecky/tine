@@ -2345,6 +2345,38 @@ mark {
   color: var(--text-muted);
 }
 
+/* Sidebar namespace tree */
+.ns-node-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 13px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.ns-node-row:hover {
+  background: var(--bg-tertiary);
+}
+.ns-node-toggle,
+.ns-node-spacer {
+  width: 14px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 10px;
+  flex: 0 0 auto;
+}
+.ns-node-label {
+  flex: 1;
+  padding: 2px 0;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ns-node-label:hover {
+  color: var(--link-color);
+}
+
 /* ------------------------------------------------------------- namespace */
 .ns-crumb {
   font-size: 13px;
