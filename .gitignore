@@ -25,3 +25,8 @@ scripts/app-icon-1024.png
 
 # Local agent working agreement (per-machine, not shared)
 /CLAUDE.md
+
+# Local agent scratch — subagent task specs + notes, and the internal
+# deferred-work list. Working artifacts between Martin and Claude, not shared.
+/subagent-tasks
+/DEFERRED.md
