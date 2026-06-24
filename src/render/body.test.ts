@@ -43,4 +43,22 @@ describe("segmentBody block constructs", () => {
       { kind: "lines", lines: ["plain"] },
     ]);
   });
+
+  it("org admonition #+BEGIN_NOTE → callout (case-insensitive)", () => {
+    expect(segmentBody(["#+begin_NOTE", "be careful", "#+END_note"])).toEqual([
+      { kind: "callout", kind2: "note", title: "", lines: ["be careful"] },
+    ]);
+  });
+
+  it("org #+BEGIN_QUOTE → blockquote, not a callout", () => {
+    expect(segmentBody(["#+BEGIN_QUOTE", "a quote", "#+END_QUOTE"])).toEqual([
+      { kind: "quote", lines: ["a quote"] },
+    ]);
+  });
+
+  it("unterminated #+BEGIN_ falls through to plain lines", () => {
+    expect(segmentBody(["#+BEGIN_NOTE", "dangling"])).toEqual([
+      { kind: "lines", lines: ["#+BEGIN_NOTE", "dangling"] },
+    ]);
+  });
 });

@@ -104,6 +104,36 @@ export function segmentBody(lines: string[]): BodySeg[] {
       }
       continue;
     }
+    // org-mode admonition block: `#+BEGIN_X` … `#+END_X` (one multi-line block,
+    // line-leading, type case-insensitive). Logseq renders note/tip/important/
+    // caution/warning/pinned as colored callouts, QUOTE as a plain blockquote, and
+    // anything else (center, …) as plain content. The raw `#+BEGIN/#+END` stay in
+    // the block's `raw`, so this is render-only and round-trips byte-for-byte.
+    const beg = /^\s*#\+begin_(\w+)\s*(.*)$/i.exec(line);
+    if (beg) {
+      const type = beg[1].toLowerCase();
+      const endRe = new RegExp(`^\\s*#\\+end_${type}\\s*$`, "i");
+      const inner: string[] = [];
+      let j = i + 1;
+      while (j < lines.length && !endRe.test(lines[j])) {
+        inner.push(lines[j]);
+        j++;
+      }
+      if (j < lines.length) {
+        // matched `#+END_<type>` — consume the whole block
+        flush();
+        i = j; // for-loop ++ steps past the END line
+        if (["note", "tip", "important", "caution", "warning", "pinned"].includes(type)) {
+          segs.push({ kind: "callout", kind2: type, title: beg[2].trim(), lines: inner });
+        } else if (type === "quote") {
+          segs.push({ kind: "quote", lines: inner });
+        } else {
+          segs.push({ kind: "lines", lines: inner }); // center / unknown → plain
+        }
+        continue;
+      }
+      // no matching END — fall through and treat as an ordinary line
+    }
     buf.push(line);
   }
   flush();

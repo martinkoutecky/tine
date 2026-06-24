@@ -205,3 +205,16 @@ describe("labels", () => {
     );
   });
 });
+
+describe("sort-by clause", () => {
+  it("parses and round-trips", () => {
+    expect(roundtrip("(sort-by priority desc)")).toBe("(sort-by priority desc)");
+    expect(roundtrip("(sort-by page)")).toBe("(sort-by page asc)"); // default asc
+    expect(roundtrip("(and (task TODO) (sort-by priority desc))")).toBe(
+      "(and (task TODO) (sort-by priority desc))"
+    );
+  });
+  it("has a readable label", () => {
+    expect(clauseLabel({ kind: "sortBy", field: "priority", dir: "desc" })).toBe("sort: priority ↓");
+  });
+});

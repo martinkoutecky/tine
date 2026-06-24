@@ -24,6 +24,7 @@ export type Clause =
   | { kind: "pageProperty"; key: string; value: string | null }
   | { kind: "pageTags"; tags: string[] }
   | { kind: "content"; text: string }
+  | { kind: "sortBy"; field: string; dir: "asc" | "desc" } // result ordering (query-global)
   // Verbatim fallback for a sub-expression we don't model, so an unfamiliar
   // (but non-datalog) query round-trips losslessly instead of being discarded.
   | { kind: "raw"; text: string };
@@ -230,6 +231,16 @@ function parseExpr(toks: Tok[], cur: Cur, src: string): Clause | null {
         clause = { kind: "between", field, start, end };
         break;
       }
+      case "sort-by": {
+        const field = parseName(toks, cur);
+        if (field == null) {
+          clause = null;
+          break;
+        }
+        const dir = parseOptName(toks, cur);
+        clause = { kind: "sortBy", field, dir: dir?.toLowerCase() === "desc" ? "desc" : "asc" };
+        break;
+      }
       default:
         clause = null;
     }
@@ -372,6 +383,8 @@ function clauseDsl(c: Clause): string {
       return `(page-tags ${c.tags.join(" ")})`;
     case "content":
       return quoteStr(c.text);
+    case "sortBy":
+      return `(sort-by ${word(c.field)} ${c.dir})`;
     case "raw":
       return c.text;
     case "op": {
@@ -428,6 +441,8 @@ export function clauseLabel(c: Clause): string {
       return `page tags: ${c.tags.join(" | ")}`;
     case "content":
       return `text: "${c.text}"`;
+    case "sortBy":
+      return `sort: ${c.field} ${c.dir === "desc" ? "↓" : "↑"}`;
     case "raw":
       return c.text;
     case "op":

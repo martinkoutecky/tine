@@ -40,6 +40,77 @@ const locKey = (l: number[]) => l.join(".");
 
 type ClauseKind = Clause["kind"];
 
+// Sort is query-GLOBAL (not a filter chip), so it's handled separately from the
+// clause tree: a single root-level `sortBy` child. These helpers read/replace it.
+function rootChildren(root: Clause): Clause[] {
+  return root.kind === "op" && root.op === "and" ? root.children : [root];
+}
+function currentSort(root: Clause): { field: string; dir: "asc" | "desc" } | null {
+  const s = rootChildren(root).find((c) => c.kind === "sortBy");
+  return s && s.kind === "sortBy" ? { field: s.field, dir: s.dir } : null;
+}
+function withSort(root: Clause, sort: { field: string; dir: "asc" | "desc" } | null): Clause {
+  // Explicit Clause[] — else TS narrows the filtered array to exclude sortBy
+  // (inferred type predicate) and rejects the push below.
+  const kids: Clause[] = rootChildren(root).filter((c) => c.kind !== "sortBy");
+  if (sort && sort.field.trim()) {
+    kids.push({ kind: "sortBy", field: sort.field.trim(), dir: sort.dir });
+  }
+  // Re-wrap as a root `and`; toDsl simplifies a single child back to bare form.
+  return { kind: "op", op: "and", children: kids };
+}
+
+// A small "+ sort" / "sort: field ↑" control in the bar (NOT a filter chip).
+function SortControl(props: { tree: () => Clause; apply: (c: Clause) => void }): JSX.Element {
+  const [open, setOpen] = createSignal(false);
+  const cur = () => currentSort(props.tree());
+  const [field, setField] = createSignal("");
+  const [dir, setDir] = createSignal<"asc" | "desc">("asc");
+  const openPopover = () => {
+    const c = cur();
+    setField(c?.field ?? "");
+    setDir(c?.dir ?? "asc");
+    setOpen(true);
+  };
+  const applySort = () => {
+    props.apply(withSort(props.tree(), field().trim() ? { field: field().trim(), dir: dir() } : null));
+    setOpen(false);
+  };
+  return (
+    <span class="qb-add-wrap">
+      <button class="qb-add" title="Sort results" onClick={(e) => { stop(e); openPopover(); }}>
+        {cur() ? `sort: ${cur()!.field} ${cur()!.dir === "desc" ? "↓" : "↑"}` : "+ sort"}
+      </button>
+      <Show when={open()}>
+        <div class="qb-picker" onClick={stop}>
+          <div class="qb-picker-title">Sort by</div>
+          <input
+            class="qb-input"
+            placeholder="field (priority, page, a property…)"
+            value={field()}
+            onInput={(e) => setField(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") applySort();
+            }}
+            // eslint-disable-next-line
+            ref={(el) => queueMicrotask(() => el.focus())}
+          />
+          <div class="qb-conn-row">
+            <button class="qb-conn" classList={{ active: dir() === "asc" }} onClick={() => setDir("asc")}>Asc ↑</button>
+            <button class="qb-conn" classList={{ active: dir() === "desc" }} onClick={() => setDir("desc")}>Desc ↓</button>
+          </div>
+          <div class="qb-conn-row">
+            <button class="qb-conn" onClick={applySort}>Apply</button>
+            <Show when={cur()}>
+              <button class="qb-conn" onClick={() => { props.apply(withSort(props.tree(), null)); setOpen(false); }}>Clear</button>
+            </Show>
+          </div>
+        </div>
+      </Show>
+    </span>
+  );
+}
+
 export function QueryBuilder(props: {
   dsl: () => string;
   onChange: (dsl: string) => void;
@@ -64,6 +135,7 @@ export function QueryBuilder(props: {
     <div class="qb-bar" onClick={stop}>
       <Node clause={tree()} loc={[]} isRoot tree={tree} apply={apply}
         openMenu={openMenu} setOpenMenu={setOpenMenu} adding={adding} setAdding={setAdding} />
+      <SortControl tree={tree} apply={apply} />
     </div>
   );
 }

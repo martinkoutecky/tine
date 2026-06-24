@@ -2316,6 +2316,7 @@ mark {
 .callout-bug { --callout-accent: #ef4444; --callout-bg: rgba(239,68,68,0.10); }
 .callout-example,
 .callout-quote { --callout-accent: #6b7280; --callout-bg: rgba(107,114,128,0.10); }
+.callout-pinned { --callout-accent: #64748b; --callout-bg: rgba(100,116,139,0.10); }
 
 /* ------------------------------------------------------------- namespace */
 .ns-crumb {

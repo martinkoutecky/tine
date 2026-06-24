@@ -138,6 +138,13 @@ export const COMMANDS: Command[] = [
   { label: "Upload an asset", action: "upload-asset" },
   { label: "Code block", insert: "```\n\n```", caret: 4 },
   { label: "Quote", insert: "> " },
+  // Org-mode admonitions (Logseq's colored callouts). Caret lands on the empty
+  // content line between BEGIN/END.
+  ...["NOTE", "TIP", "IMPORTANT", "WARNING", "CAUTION"].map((t) => ({
+    label: `Admonition: ${t.toLowerCase()}`,
+    insert: `#+BEGIN_${t}\n\n#+END_${t}`,
+    caret: `#+BEGIN_${t}\n`.length,
+  })),
   { label: "Divider", insert: "---" },
   { label: "Query", insert: "{{query }}", caret: 8 },
   { label: "Query (visual builder)", action: "query-builder" },
