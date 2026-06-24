@@ -198,20 +198,34 @@ fn run_pred(graph: &Graph, pred: &Pred, opts: &QueryOpts) -> Vec<RefGroup> {
                 }
             });
             if !matched.is_empty() {
-                let mut blocks: Vec<BlockDto> = matched.into_iter().map(block_to_dto).collect();
-                // sort-by a property value (or the block text) within the group.
-                if let Some((field, asc)) = &opts.sort {
-                    blocks.sort_by(|a, b| {
-                        let ka = sort_key(a, field);
-                        let kb = sort_key(b, field);
-                        if *asc { ka.cmp(&kb) } else { kb.cmp(&ka) }
-                    });
-                }
+                let blocks: Vec<BlockDto> = matched.into_iter().map(block_to_dto).collect();
                 groups.push(RefGroup { page: entry.name.clone(), kind: entry.kind, blocks });
             }
         }
         groups
     });
+
+    // sort-by is GLOBAL (like Logseq): flatten every matched block across all
+    // pages, sort the whole set, and emit one block per group in that order — so
+    // e.g. priority-A tasks float to the very top regardless of which page they
+    // live on. (Sorting within each page group, as before, can't express a global
+    // order once results are grouped by page.) Non-sorted queries keep their
+    // natural page grouping untouched.
+    if let Some((field, asc)) = &opts.sort {
+        let mut flat: Vec<RefGroup> = Vec::new();
+        for g in groups {
+            let RefGroup { page, kind, blocks } = g;
+            for b in blocks {
+                flat.push(RefGroup { page: page.clone(), kind, blocks: vec![b] });
+            }
+        }
+        flat.sort_by(|a, b| {
+            let ka = sort_key(&a.blocks[0], &a.page, field);
+            let kb = sort_key(&b.blocks[0], &b.page, field);
+            if *asc { ka.cmp(&kb) } else { kb.cmp(&ka) }
+        });
+        groups = flat;
+    }
 
     // sample N: cap total results (deterministic: first N across pages).
     if let Some(n) = opts.sample {
@@ -474,11 +488,25 @@ fn resolve_inputs(
 
 /// Sort key for a result block: the named property's value if present, else the
 /// block's visible first line (lowercased for stable case-insensitive order).
-fn sort_key(b: &BlockDto, field: &str) -> String {
-    if let Some((_, v)) = blockview_property(&b.raw, field) {
-        return v.to_lowercase();
+fn sort_key(b: &BlockDto, page: &str, field: &str) -> String {
+    match field.to_ascii_lowercase().as_str() {
+        // Task priority is the `[#A]` marker, NOT a `priority::` property — map it
+        // to A<B<C and sort unprioritized blocks last (so ascending floats A to the
+        // top). Descending naturally reverses (A sinks to the bottom).
+        "priority" => match block_priority(&b.raw) {
+            Some(c) => c.to_ascii_uppercase().to_string(),
+            None => "Z".to_string(),
+        },
+        // Sort by the source page name.
+        "page" => page.to_lowercase(),
+        // Otherwise: a block property value if present, else the block's text.
+        _ => {
+            if let Some((_, v)) = blockview_property(&b.raw, field) {
+                return v.to_lowercase();
+            }
+            visible_text(&b.raw).lines().next().unwrap_or("").to_lowercase()
+        }
     }
-    visible_text(&b.raw).lines().next().unwrap_or("").to_lowercase()
 }
 fn blockview_property(raw: &str, key: &str) -> Option<(String, String)> {
     raw.lines()

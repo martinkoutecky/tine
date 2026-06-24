@@ -11,6 +11,27 @@ fn mk(tag: &str) -> std::path::PathBuf {
     root
 }
 
+// `(sort-by priority)` must sort the WHOLE result set, not within each page —
+// so priority-A tasks float to the top no matter which page they're on. The
+// engine returns one block per group (in global order) when a sort is active.
+#[test]
+fn sort_by_priority_is_global_across_pages() {
+    let root = mk("sortprio");
+    std::fs::write(root.join("pages").join("P1.md"), "- TODO [#C] c-one\n- TODO [#A] a-one\n").unwrap();
+    std::fs::write(root.join("pages").join("P2.md"), "- TODO [#B] b-two\n- TODO [#A] a-two\n").unwrap();
+    let g = Graph::open(&root);
+    g.warm_cache();
+    let prio = |grp: &tine_core::RefGroup| {
+        let raw = &grp.blocks[0].raw;
+        raw[raw.find("[#").unwrap() + 2..].chars().next().unwrap()
+    };
+    let asc: Vec<char> = g.run_query("(and (task TODO) (sort-by priority asc))").iter().map(prio).collect();
+    assert_eq!(asc, vec!['A', 'A', 'B', 'C'], "A floats to the top globally (across pages)");
+    let desc: Vec<char> = g.run_query("(and (task TODO) (sort-by priority desc))").iter().map(prio).collect();
+    assert_eq!(desc, vec!['C', 'B', 'A', 'A'], "descending sinks A to the bottom");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 #[test]
 fn search_reflects_toggle_on_named_page() {
     let root = mk("named");

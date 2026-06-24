@@ -2485,6 +2485,22 @@ mark {
   text-decoration: underline;
 }
 
+/* Sorted query: a flat global list, so each result carries a small page
+   breadcrumb instead of a full page header, and rows sit tight together. */
+.query-group-flat {
+  margin-bottom: 2px;
+}
+.query-crumb {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  cursor: pointer;
+  margin-bottom: 0;
+}
+.query-crumb:hover {
+  text-decoration: underline;
+  color: var(--link-color);
+}
+
 .ref-block .block-main {
   min-height: 22px;
 }

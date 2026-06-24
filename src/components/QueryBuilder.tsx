@@ -66,6 +66,18 @@ function SortControl(props: { tree: () => Clause; apply: (c: Clause) => void }):
   const cur = () => currentSort(props.tree());
   const [field, setField] = createSignal("");
   const [dir, setDir] = createSignal<"asc" | "desc">("asc");
+  let wrapEl: HTMLSpanElement | undefined;
+  // Dismiss the popover when clicking anywhere outside it (another chip, the bar
+  // background, or off the block). Capture phase so it fires regardless of the
+  // bar's stopPropagation; only active while open.
+  createEffect(() => {
+    if (!open()) return;
+    const onDown = (e: MouseEvent) => {
+      if (wrapEl && !wrapEl.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown, true);
+    onCleanup(() => document.removeEventListener("mousedown", onDown, true));
+  });
   const openPopover = () => {
     const c = cur();
     setField(c?.field ?? "");
@@ -77,7 +89,7 @@ function SortControl(props: { tree: () => Clause; apply: (c: Clause) => void }):
     setOpen(false);
   };
   return (
-    <span class="qb-add-wrap">
+    <span class="qb-add-wrap" ref={wrapEl}>
       <button class="qb-sort" classList={{ active: !!cur() }} title="Sort results" onClick={(e) => { stop(e); openPopover(); }}>
         {cur() ? `sort: ${cur()!.field} ${cur()!.dir === "desc" ? "↓" : "↑"}` : "+ sort"}
       </button>
