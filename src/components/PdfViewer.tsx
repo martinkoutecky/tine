@@ -321,6 +321,16 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
   // Coalesced, deferred text-layer (re)build. Runs ~after the view settles, only
   // for visible pages whose text isn't already at the page's current scale.
   function scheduleText(n: number) {
+    // FIRST build for a page (scroll-in): do it now, not behind the single shared
+    // timer that every other page's render keeps resetting during a scroll — that
+    // delay is why pages past the first sometimes had no selectable text layer
+    // (no I-beam, so no way to make a regular highlight). Rebuilds (zoom) stay
+    // deferred off the hot path.
+    if (textScale[n] === undefined) {
+      const r = renderedScale[n];
+      if (r !== undefined) void buildTextLayer(n, r);
+      return;
+    }
     pendingText.add(n);
     clearTimeout(textTimer);
     textTimer = window.setTimeout(() => void buildPendingText(), 220);
