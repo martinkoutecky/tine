@@ -90,8 +90,16 @@ function SortControl(props: { tree: () => Clause; apply: (c: Clause) => void }):
   };
   return (
     <span class="qb-add-wrap" ref={wrapEl}>
-      <button class="qb-sort" classList={{ active: !!cur() }} title="Sort results" onClick={(e) => { stop(e); openPopover(); }}>
-        {cur() ? `sort: ${cur()!.field} ${cur()!.dir === "desc" ? "↓" : "↑"}` : "+ sort"}
+      {/* A stable "+ sort" affordance — it does NOT morph into the current sort
+          value (the active sort shows as its own chip in the bar). It just gains
+          an `active` highlight and opens the popover (pre-filled) to change/clear. */}
+      <button
+        class="qb-sort"
+        classList={{ active: !!cur() }}
+        title={cur() ? `Sorted by ${cur()!.field} (${cur()!.dir === "desc" ? "desc" : "asc"}). Click to change.` : "Sort results"}
+        onClick={(e) => { stop(e); openPopover(); }}
+      >
+        + sort
       </button>
       <Show when={open()}>
         <div class="qb-picker" onClick={stop}>
@@ -257,10 +265,16 @@ function ChipMenu(props: NodeCtx): JSX.Element {
   // The root op has no enclosing position to delete/wrap from.
   const atRoot = () => props.loc.length === 0;
 
+  // A sort clause isn't a filter: it's edited via the "+ sort" control, so its
+  // chip menu offers only Delete (no Edit, no wrap-in-AND/OR/NOT — wrapping a
+  // sort would nest it out of the root and silently disable it).
+  const isSort = () => props.clause.kind === "sortBy";
+
   const [editing, setEditing] = createSignal(false);
-  // Nullary clauses (scheduled/deadline/journal) and raw/op have nothing to edit.
+  // Nullary clauses (scheduled/deadline/journal), sort, and raw/op have nothing
+  // to edit here.
   const canEdit = () =>
-    !isOpKey() && !["raw", "scheduled", "deadline", "journal"].includes(props.clause.kind);
+    !isOpKey() && !["raw", "scheduled", "deadline", "journal", "sortBy"].includes(props.clause.kind);
   const editKind = () => (props.clause.kind === "raw" ? "page" : (props.clause.kind as ClauseKind));
 
   return (
@@ -273,9 +287,11 @@ function ChipMenu(props: NodeCtx): JSX.Element {
             </Show>
             <Show when={!atRoot()}>
               <button class="qb-menu-item" onClick={act(() => removeAt(props.tree(), props.loc))}>Delete</button>
-              <button class="qb-menu-item" onClick={act(() => wrapAt(props.tree(), props.loc, "and"))}>Wrap in AND</button>
-              <button class="qb-menu-item" onClick={act(() => wrapAt(props.tree(), props.loc, "or"))}>Wrap in OR</button>
-              <button class="qb-menu-item" onClick={act(() => wrapAt(props.tree(), props.loc, "not"))}>Wrap in NOT</button>
+              <Show when={!isSort()}>
+                <button class="qb-menu-item" onClick={act(() => wrapAt(props.tree(), props.loc, "and"))}>Wrap in AND</button>
+                <button class="qb-menu-item" onClick={act(() => wrapAt(props.tree(), props.loc, "or"))}>Wrap in OR</button>
+                <button class="qb-menu-item" onClick={act(() => wrapAt(props.tree(), props.loc, "not"))}>Wrap in NOT</button>
+              </Show>
             </Show>
             <Show when={isOpKey() && !atRoot()}>
               <button class="qb-menu-item" onClick={act(() => unwrapAt(props.tree(), props.loc))}>Unwrap</button>
