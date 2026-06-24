@@ -245,11 +245,64 @@ pub fn merge_hls_page(
 
     let mut roots: Vec<DocBlock> = highlights
         .iter()
-        .map(|h| ann_by_id.remove(&h.id).unwrap_or_else(|| highlight_block(h)))
+        .map(|h| match ann_by_id.remove(&h.id) {
+            // Keep the user's note text + child blocks, but refresh the highlight
+            // metadata (color/page) from the authoritative highlight — so
+            // recoloring in the PDF pane updates the colored badge here too.
+            Some(existing) => refresh_annotation(existing, h),
+            None => highlight_block(h),
+        })
         .collect();
     // Keep the user's own top-level notes (after the generated annotations).
     roots.extend(user_roots);
     Document { pre_block: Some(pre), roots }
+}
+
+/// Refresh an existing annotation block's `hl-color::` / `hl-page::` to match the
+/// (possibly recolored / re-paged) highlight, preserving everything else — the
+/// user's highlight-text line, any extra properties, and the note children. The
+/// old block was previously kept verbatim, so a recolor never reached the page.
+fn refresh_annotation(mut block: DocBlock, h: &Highlight) -> DocBlock {
+    let mut saw_color = false;
+    let mut saw_page = false;
+    let mut lines: Vec<String> = block
+        .raw
+        .lines()
+        .map(|line| match crate::doc::parse_property_line(line).map(|(k, _)| k.to_ascii_lowercase()) {
+            Some(k) if k == "hl-color" => {
+                saw_color = true;
+                format!("hl-color:: {}", h.color)
+            }
+            Some(k) if k == "hl-page" => {
+                saw_page = true;
+                format!("hl-page:: {}", h.page)
+            }
+            _ => line.to_string(),
+        })
+        .collect();
+    // If the metadata lines were missing (hand-edited file), add them before id::.
+    if !saw_color || !saw_page {
+        let id_pos = lines.iter().position(|l| {
+            crate::doc::parse_property_line(l).map(|(k, _)| k.to_ascii_lowercase()).as_deref() == Some("id")
+        });
+        let mut add: Vec<String> = Vec::new();
+        if !saw_page {
+            add.push(format!("hl-page:: {}", h.page));
+        }
+        if !saw_color {
+            add.push(format!("hl-color:: {}", h.color));
+        }
+        match id_pos {
+            Some(i) => {
+                for (j, l) in add.into_iter().enumerate() {
+                    lines.insert(i + j, l);
+                }
+            }
+            None => lines.extend(add),
+        }
+    }
+    block.raw = lines.join("\n");
+    block
 }
 
 fn highlight_block(h: &Highlight) -> DocBlock {
@@ -370,6 +423,26 @@ mod tests {
         assert_eq!(merged.roots[0].children.len(), 1, "note child preserved");
         assert_eq!(merged.roots[0].children[0].raw, "my note about this highlight");
         assert!(merged.roots[1].raw.contains("second highlight"));
+    }
+
+    #[test]
+    fn merge_updates_color_on_recolor() {
+        // First save: yellow highlight, with a user note child.
+        let mut h = sample();
+        h.color = "yellow".into();
+        let page = hls_page_document("b.pdf", "b", &[h.clone()]);
+        let mut md = crate::doc::serialize(&page);
+        md.push_str("\t- my note\n");
+        let edited = crate::doc::parse(&md);
+
+        // Recolor to green and re-merge.
+        h.color = "green".into();
+        let merged = merge_hls_page(Some(&edited), "b.pdf", "b", &[h]);
+        assert_eq!(merged.roots.len(), 1);
+        assert!(merged.roots[0].raw.contains("hl-color:: green"), "color not updated: {}", merged.roots[0].raw);
+        assert!(!merged.roots[0].raw.contains("hl-color:: yellow"), "old color kept: {}", merged.roots[0].raw);
+        assert_eq!(merged.roots[0].children.len(), 1, "note child must survive a recolor");
+        assert_eq!(merged.roots[0].children[0].raw, "my note");
     }
 
     #[test]
