@@ -87,6 +87,10 @@ raw speed. (Where a comparison is made, it's against current Logseq desktop core
   real block tree; paste clipboard images → graph assets.
 - Inline formatting (`Mod+B/I`, strike, ==highlight==, link) with a floating selection toolbar, plus
   Emacs-style word/line kill motions.
+- **Callouts/admonitions** — both Obsidian-style `> [!note] …` and org `#+BEGIN_NOTE … #+END_NOTE`
+  blocks render as colored callouts (`QUOTE` stays a plain blockquote) — and a live **`/calc`
+  block** that evaluates arithmetic as you type (`+ - * / ^ %`, parentheses, `name = expr`
+  variables across lines, a running result).
 
 **Linking, references & queries**
 - `[[page]]`, `#tags`, `#[[multi word]]`, `((block ref))`, `{{embed}}` — all clickable, with
@@ -99,6 +103,10 @@ raw speed. (Where a comparison is made, it's against current Logseq desktop core
   `(namespace …)`, `(between START END)` with a field selector, `(sort-by …)`. Results render as a
   list or a sortable **table**; an interactive **visual query builder** (chip/clause bar) builds them
   without writing the DSL.
+- A scoped compatibility path for Logseq's **advanced (Datalog) queries**: recognized clauses
+  (`task`, `between`, `property`, `page-property`, `priority`, page-refs, boolean `or/and/not`, and
+  `:today`/`:current-page`-style inputs) map onto the same engine, and any unsupported part is
+  flagged in the result rather than silently dropped or wrongly answered.
 
 **Tasks, journals & dates**
 - `TODO/DOING/DONE/NOW/LATER/WAITING/CANCELED`, two configurable workflows, priorities, cycle with
@@ -107,26 +115,37 @@ raw speed. (Where a comparison is made, it's against current Logseq desktop core
   **recurring tasks** (`+1w` / `.+1w` / `++1w`) where completing a repeater advances the date.
 - Multi-day **journal feed** (one continuous editable list); today's journal created lazily on
   first edit; move blocks across days; an **agenda** of scheduled/deadline items in a configurable
-  look-back/-ahead window; journal **templates**; a calendar with content markers.
+  look-back/-ahead window; journal **templates**; a calendar with content markers whose **first day
+  of week** follows your `config.edn :start-of-week` (any of the seven days, settable in-app).
 
 **PDF annotation**
 - Open PDFs in a resizable, zoomable pane (instant zoom, HiDPI, per-page virtualization); in-PDF
   `Ctrl+F` find with a page jump box.
-- Select text → colored **highlights**, stored Logseq-compatibly (`assets/<key>.edn` + `hls__`
-  pages). Each highlight becomes a clean bullet you can nest notes under; writes **merge with disk**
-  so an externally-added highlight or your top-level notes are never dropped.
+- Select text → colored **highlights**, or drag a rectangle (area mode / `Ctrl`-drag) to clip an
+  **area (image) highlight** — both stored Logseq-compatibly (`assets/<key>.edn` + `hls__` pages,
+  area crops as PNG assets). Each highlight becomes a clean bullet you can nest notes under; writes
+  **merge with disk** so an externally-added highlight or your top-level notes are never dropped, and
+  recoloring a highlight updates its note-page badge to match.
 
 **Search & navigation**
 - `Ctrl+K` quick switcher: page titles + full-text content hits (visible text only — no false hits
   on hidden properties/uuids), with block breadcrumbs and middle-click → background tab.
-- Command palette (`Mod+Shift+P`), favorites, recent pages, namespace hierarchy.
-- **Page rename** (double-click a title) rewrites every `[[ref]]`/`#tag` across the graph.
+- Command palette (`Mod+Shift+P`), favorites, recent pages, a collapsible **namespace tree** in the
+  sidebar, and read-only **"aka" alias chips** on pages reachable by another name.
+- **Page rename** (double-click a title) rewrites every `[[ref]]`/`#tag` across the graph in one
+  transaction (see data-safety, below).
 
 **Works with your existing setup**
-- **Edit safely alongside Logseq mobile over Syncthing.** A polling file watcher reconciles changes
-  synced in from other devices, and Tine **never silently overwrites a file that changed on disk —
-  it surfaces a conflict** instead. Saves preserve each file's exact formatting (tabs vs spaces,
-  comments, compact EDN), so they don't create sync diff churn.
+- **Edit safely alongside Logseq mobile over Syncthing.** A filesystem watcher — **inotify by
+  default** (zero idle wakeups), with a polling fallback for filesystems where inotify misses edits,
+  switchable in Settings — reconciles changes synced in from other devices, and Tine **never
+  silently overwrites a file that changed on disk — it surfaces a conflict** instead. Saves preserve
+  each file's exact formatting (tabs vs spaces, comments, compact EDN) and skip byte-identical
+  rewrites, so they don't create sync diff churn.
+- **Page rename is transactional** — the page move and every `[[ref]]`/`#tag` rewrite across the
+  graph commit all-or-nothing, re-checking each file just before writing and rolling back on
+  conflict, so a rename can't half-apply. A graph with a custom journal file-name format is detected
+  and left untouched rather than getting a duplicate journal.
 - **Launch snapshots** (configurable keep-count) with a restore UI that takes a safety snapshot
   first; page delete moves to a recoverable **trash**; `atomic_write` + fsync.
 - Open/switch graphs from the app (native folder picker) or via `TINE_GRAPH`.
@@ -135,8 +154,8 @@ raw speed. (Where a comparison is made, it's against current Logseq desktop core
 - **Fully remappable keyboard shortcuts** — in the Settings modal or via `config.edn :shortcuts`.
 - Light/dark themes, accent color, custom CSS, wide mode (`t w`) and document mode (`t d`).
 - One-click **static HTML export** (`public:: true` pages); **"copy/export as"** for a block subtree
-  or page as Markdown; a slash menu for headings, code, quote, divider, embed, template, asset
-  upload, and dates.
+  or page as Markdown; a slash menu for headings, code, calculator, quote, callouts, divider, embed,
+  query (raw or visual builder), template, asset upload, and dates.
 
 <p align="center">
   <img src="docs/img/pdf.png" alt="PDF highlighting with notes" width="49%">
@@ -154,7 +173,7 @@ raw speed. (Where a comparison is made, it's against current Logseq desktop core
 | Core | `crates/tine-core` (pure Rust) | parse/serialize, model, indexing, queries, refs, dates, PDF/EDN, HTML publish |
 | Rendering | [pdf.js](https://mozilla.github.io/pdf.js/), [KaTeX](https://katex.org), highlight.js | PDF, math, code |
 
-The Rust core is GUI-free and unit-tested in isolation; the Tauri layer is a thin set of ~37 IPC
+The Rust core is GUI-free and unit-tested in isolation; the Tauri layer is a thin set of ~41 IPC
 commands over it. The frontend owns the live editing tree (normalized store) and pushes debounced,
 format-preserving saves; whole-graph reads hit an in-memory page cache (`RwLock<Arc<Graph>>` — read
 commands clone the Arc and release the lock immediately) keyed by a graph generation counter.
@@ -216,10 +235,9 @@ without reading note content.
 
 ## Roadmap & non-goals
 
-**Planned / under evaluation:** namespaces/aliases UI, callouts, query sorting in the builder,
-graph view, area (image) PDF highlights, configurable typographic auto-replace, and a
-**compatibility path for advanced Datalog queries** (the one big thing Logseq power users would
-miss — being scoped, not promised).
+**Planned / under evaluation:** graph view, configurable typographic auto-replace, **broader
+coverage of advanced Datalog queries** (a scoped subset works today — see above), and full support
+for **custom journal file-name/title formats** (currently detected and guarded against, not written).
 
 **Out of scope (by design):** whiteboards, flashcards, the plugin system, built-in git, and a
 native mobile app — Tine coexists with Logseq mobile over your own sync instead of replacing it.
