@@ -2318,6 +2318,33 @@ mark {
 .callout-quote { --callout-accent: #6b7280; --callout-bg: rgba(107,114,128,0.10); }
 .callout-pinned { --callout-accent: #64748b; --callout-bg: rgba(100,116,139,0.10); }
 
+/* ```calc calculator block: input lines left, evaluated results right. */
+.calc-block {
+  font-family: var(--ls-font-mono);
+  font-size: 0.9em;
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin: 4px 0;
+}
+.calc-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 1px 0;
+}
+.calc-in {
+  white-space: pre-wrap;
+  color: var(--text-primary);
+}
+.calc-out {
+  color: var(--link-color);
+  font-weight: 600;
+}
+.calc-row.calc-error .calc-in {
+  color: var(--text-muted);
+}
+
 /* ------------------------------------------------------------- namespace */
 .ns-crumb {
   font-size: 13px;

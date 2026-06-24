@@ -4,12 +4,14 @@
 import { For, Show, createMemo, createResource, type JSX } from "solid-js";
 import { InlineText } from "./inline";
 import { backend } from "../backend";
+import { evalCalc } from "../editor/calc";
 
 type Align = "left" | "center" | "right" | null;
 
 type BodySeg =
   | { kind: "lines"; lines: string[] }
   | { kind: "code"; lang: string; code: string }
+  | { kind: "calc"; code: string }
   | { kind: "table"; rows: string[][]; aligns: Align[] }
   | { kind: "hr" }
   | { kind: "quote"; lines: string[] }
@@ -62,7 +64,8 @@ export function segmentBody(lines: string[]): BodySeg[] {
         code.push(lines[i]);
         i++;
       }
-      segs.push({ kind: "code", lang, code: code.join("\n") });
+      const joined = code.join("\n");
+      segs.push(lang === "calc" ? { kind: "calc", code: joined } : { kind: "code", lang, code: joined });
       continue;
     }
     // table: a run of pipe rows
@@ -194,12 +197,33 @@ function CodeBlock(props: { code: string; lang: string }): JSX.Element {
   );
 }
 
+// A ```calc block: each input line on the left, its evaluated result on the
+// right (Logseq's calculator). The raw text is unchanged — render-only.
+function CalcBlock(props: { src: string }): JSX.Element {
+  const lines = createMemo(() => evalCalc(props.src));
+  return (
+    <div class="calc-block">
+      <For each={lines()}>
+        {(ln) => (
+          <div class="calc-row" classList={{ "calc-error": !!ln.error }}>
+            <span class="calc-in">{ln.input || " "}</span>
+            <span class="calc-out">{ln.output ?? ""}</span>
+          </div>
+        )}
+      </For>
+    </div>
+  );
+}
+
 export function BodyContent(props: { lines: string[]; blockId?: string }): JSX.Element {
   return (
     <For each={segmentBody(props.lines)}>
       {(seg) => {
         if (seg.kind === "code") {
           return <CodeBlock code={seg.code} lang={seg.lang} />;
+        }
+        if (seg.kind === "calc") {
+          return <CalcBlock src={seg.code} />;
         }
         if (seg.kind === "table") {
           const [head, ...body] = seg.rows;

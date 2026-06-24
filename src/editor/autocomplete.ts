@@ -137,6 +137,7 @@ export const COMMANDS: Command[] = [
   { label: "Link", insert: "[]()", caret: 1 },
   { label: "Upload an asset", action: "upload-asset" },
   { label: "Code block", insert: "```\n\n```", caret: 4 },
+  { label: "Calculator", insert: "```calc\n\n```", caret: 8 },
   { label: "Quote", insert: "> " },
   // Org-mode admonitions (Logseq's colored callouts). Caret lands on the empty
   // content line between BEGIN/END.
