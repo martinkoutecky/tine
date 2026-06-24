@@ -78,7 +78,7 @@ function SortControl(props: { tree: () => Clause; apply: (c: Clause) => void }):
   };
   return (
     <span class="qb-add-wrap">
-      <button class="qb-add" title="Sort results" onClick={(e) => { stop(e); openPopover(); }}>
+      <button class="qb-sort" classList={{ active: !!cur() }} title="Sort results" onClick={(e) => { stop(e); openPopover(); }}>
         {cur() ? `sort: ${cur()!.field} ${cur()!.dir === "desc" ? "↓" : "↑"}` : "+ sort"}
       </button>
       <Show when={open()}>

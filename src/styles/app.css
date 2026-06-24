@@ -2645,6 +2645,28 @@ mark {
   color: var(--link-color);
   border-color: var(--link-color);
 }
+/* Sort control: a labelled pill (NOT the round "+" add button) — auto width so
+   "+ sort" / "sort: field ↑" never wraps inside a 20px circle. */
+.qb-sort {
+  border: 1px dashed var(--border-color);
+  background: transparent;
+  color: var(--text-muted);
+  padding: 2px 8px;
+  border-radius: 11px;
+  font-size: 12px;
+  line-height: 1.3;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.qb-sort:hover {
+  color: var(--link-color);
+  border-color: var(--link-color);
+}
+.qb-sort.active {
+  color: var(--text-primary);
+  border-style: solid;
+  border-color: var(--link-color);
+}
 /* Empty-query call-to-action: a labelled pill instead of a bare round "+". */
 .qb-add-prominent {
   width: auto;
