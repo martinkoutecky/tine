@@ -86,6 +86,14 @@ fn in_code(pos: usize, ranges: &[std::ops::Range<usize>]) -> bool {
     ranges.iter().any(|r| r.contains(&pos))
 }
 
+/// A `#tag` is only a tag at a word boundary: `#` at the start, or preceded by a
+/// char that isn't itself tag-body material. So `word#x`, `ex.com#x`, `path/#x`
+/// (URL fragments) are NOT tags — matching OG — while ` #x`, `(#x`, `]#x` are.
+/// (`[[name]]` links don't need this; they're bracket-delimited.)
+fn tag_boundary(raw: &str, i: usize) -> bool {
+    i == 0 || raw[..i].chars().next_back().map_or(true, |c| !is_tag_char(c))
+}
+
 /// All page references in `raw`: `[[name]]`, `#tag`, and `#[[name]]`. Tags are
 /// included because Logseq treats `#foo` as a reference to page `foo`.
 pub fn page_refs(raw: &str) -> Vec<String> {
@@ -102,7 +110,7 @@ pub fn page_refs(raw: &str) -> Vec<String> {
                     continue;
                 }
             }
-            if rest.starts_with('#') {
+            if rest.starts_with('#') && tag_boundary(raw, i) {
                 if let Some(after) = rest.strip_prefix("#[[") {
                     if let Some(end) = after.find("]]") {
                         out.push(after[..end].to_string());
@@ -176,18 +184,20 @@ pub fn rename_refs(raw: &str, from: &str, to: &str) -> String {
                     continue;
                 }
             }
-            if let Some(after) = rest.strip_prefix("#[[") {
-                if let Some(end) = after.find("]]") {
-                    if normalize(&after[..end]) == target {
-                        out.push_str(&tag_for(to));
-                    } else {
-                        out.push_str(&raw[i..i + 3 + end + 2]);
+            if tag_boundary(raw, i) {
+                if let Some(after) = rest.strip_prefix("#[[") {
+                    if let Some(end) = after.find("]]") {
+                        if normalize(&after[..end]) == target {
+                            out.push_str(&tag_for(to));
+                        } else {
+                            out.push_str(&raw[i..i + 3 + end + 2]);
+                        }
+                        i += 3 + end + 2;
+                        continue;
                     }
-                    i += 3 + end + 2;
-                    continue;
                 }
             }
-            if rest.starts_with('#') {
+            if rest.starts_with('#') && tag_boundary(raw, i) {
                 let after = &rest[1..];
                 let len = after.find(|c: char| !is_tag_char(c)).unwrap_or(after.len());
                 if len > 0 {
@@ -257,6 +267,25 @@ mod tests {
         assert_eq!(page_refs(raw), vec!["A", "A"]); // the two outside the fence
         // a tag inside inline code isn't a ref
         assert_eq!(page_refs("`#nope` yes #yep"), vec!["yep"]);
+    }
+
+    #[test]
+    fn hash_needs_a_word_boundary() {
+        // bare-URL fragment is NOT a tag; the real tag after a space is
+        assert_eq!(page_refs("see https://ex.com/p#Old then #real"), vec!["real"]);
+        // glued to a word → not a tag
+        assert_eq!(page_refs("a c#sharp note"), Vec::<String>::new());
+        // legit boundaries still produce tags
+        assert_eq!(page_refs("[[Foo]]#bar (#baz) ,#qux"), vec!["Foo", "bar", "baz", "qux"]);
+    }
+
+    #[test]
+    fn rename_leaves_url_fragments_alone() {
+        // `#Old` inside a URL isn't a tag → untouched; the real tag is renamed
+        assert_eq!(
+            rename_refs("visit https://ex.com/docs#Old and tag #Old", "Old", "New"),
+            "visit https://ex.com/docs#Old and tag #New"
+        );
     }
 
     #[test]
