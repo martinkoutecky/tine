@@ -491,6 +491,106 @@ fn rename_page_moves_file_and_updates_refs() {
 }
 
 #[test]
+fn rename_cascades_namespace_and_rewrites_self_refs() {
+    // F2 (namespace cascade) + F3 (self-refs): renaming `Proj` must move every
+    // `Proj/*` page to `Renamed/*`, rewrite refs to all of them everywhere, and
+    // rewrite the renamed pages' OWN refs.
+    let root = std::env::temp_dir().join(format!("tine-ns-rename-{}", std::process::id()));
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    std::fs::create_dir_all(root.join("journals")).unwrap();
+    std::fs::write(root.join("pages").join("Proj.md"), "- root, see [[Proj]] self\n").unwrap();
+    std::fs::write(root.join("pages").join("Proj___Child.md"), "- child of [[Proj]]\n").unwrap();
+    std::fs::write(root.join("pages").join("Proj___Child___Deep.md"), "- deep\n").unwrap();
+    std::fs::write(root.join("pages").join("Other.md"), "- [[Proj]] and [[Proj/Child]]\n").unwrap();
+    std::fs::write(root.join("journals").join("2026_06_15.md"), "- note [[Proj/Child/Deep]]\n").unwrap();
+
+    let g = Graph::open(&root);
+    g.rename_page("Proj", "Renamed").unwrap();
+
+    let p = root.join("pages");
+    // Subtree moved.
+    assert!(!p.join("Proj.md").exists());
+    assert!(!p.join("Proj___Child.md").exists());
+    assert!(!p.join("Proj___Child___Deep.md").exists());
+    assert!(p.join("Renamed.md").exists());
+    assert!(p.join("Renamed___Child.md").exists());
+    assert!(p.join("Renamed___Child___Deep.md").exists());
+    // F3: the renamed page's own self-ref rewritten.
+    let renamed = std::fs::read_to_string(p.join("Renamed.md")).unwrap();
+    assert!(renamed.contains("[[Renamed]]"), "self-ref: {renamed}");
+    // Child's ref to its parent rewritten.
+    let child = std::fs::read_to_string(p.join("Renamed___Child.md")).unwrap();
+    assert!(child.contains("[[Renamed]]"), "child→parent ref: {child}");
+    // Refs everywhere rewritten, parent and namespaced child both.
+    let other = std::fs::read_to_string(p.join("Other.md")).unwrap();
+    assert!(other.contains("[[Renamed]]") && other.contains("[[Renamed/Child]]"), "{other}");
+    assert!(!other.contains("Proj"), "{other}");
+    let journal = std::fs::read_to_string(root.join("journals").join("2026_06_15.md")).unwrap();
+    assert!(journal.contains("[[Renamed/Child/Deep]]"), "{journal}");
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn rename_rewrites_bare_tags_property() {
+    // F1: a page referencing the renamed page only through a bare `tags::` value
+    // (no inline [[..]]) must have that value rewritten; siblings preserved.
+    let root = std::env::temp_dir().join(format!("tine-tags-rename-{}", std::process::id()));
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    std::fs::create_dir_all(root.join("journals")).unwrap();
+    std::fs::write(root.join("pages").join("Old.md"), "- old page body\n").unwrap();
+    std::fs::write(root.join("pages").join("Note.md"), "tags:: Old, keep\n\n- body\n").unwrap();
+
+    let g = Graph::open(&root);
+    g.rename_page("Old", "New").unwrap();
+
+    assert!(!root.join("pages").join("Old.md").exists());
+    assert!(root.join("pages").join("New.md").exists());
+    let note = std::fs::read_to_string(root.join("pages").join("Note.md")).unwrap();
+    assert!(note.contains("tags:: New, keep"), "bare tag rewritten + sibling kept: {note}");
+    assert!(!note.contains("Old"), "{note}");
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn rename_aborts_on_target_collision_without_changes() {
+    // Renaming onto an existing page name aborts with NO change (Tine doesn't
+    // merge). Both files must be byte-identical afterwards.
+    let root = std::env::temp_dir().join(format!("tine-collide-rename-{}", std::process::id()));
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    std::fs::create_dir_all(root.join("journals")).unwrap();
+    std::fs::write(root.join("pages").join("A.md"), "- a body [[B]]\n").unwrap();
+    std::fs::write(root.join("pages").join("B.md"), "- b body\n").unwrap();
+
+    let g = Graph::open(&root);
+    assert!(g.rename_page("A", "B").is_err(), "rename onto existing page must fail");
+    assert_eq!(std::fs::read_to_string(root.join("pages").join("A.md")).unwrap(), "- a body [[B]]\n");
+    assert_eq!(std::fs::read_to_string(root.join("pages").join("B.md")).unwrap(), "- b body\n");
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn rename_ref_only_page_rewrites_refs_without_a_file() {
+    // A page that exists only via references (no file of its own) still has its
+    // refs rewritten across the graph.
+    let root = std::env::temp_dir().join(format!("tine-refonly-rename-{}", std::process::id()));
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    std::fs::create_dir_all(root.join("journals")).unwrap();
+    std::fs::write(root.join("pages").join("Ref.md"), "- mentions [[Ghost]] here\n").unwrap();
+
+    let g = Graph::open(&root);
+    g.rename_page("Ghost", "Spirit").unwrap();
+
+    assert!(!root.join("pages").join("Ghost.md").exists());
+    let r = std::fs::read_to_string(root.join("pages").join("Ref.md")).unwrap();
+    assert!(r.contains("[[Spirit]]") && !r.contains("Ghost"), "{r}");
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn query_and_not_includes_everything_except_excluded() {
     // (and (task TODO) (not [[X]])) must return ALL TODO blocks that don't
     // reference [[X]] — regression for "NOT excludes right but drops others".

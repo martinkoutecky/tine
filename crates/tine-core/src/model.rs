@@ -941,104 +941,172 @@ impl Graph {
         crate::publish::publish_graph(self)
     }
 
-    /// Rename a page: move its file to the new name and rewrite every `[[old]]`
-    /// / `#old` reference across the graph. Journals can't be renamed (their
-    /// name is their date). Returns an error if `new` already exists.
+    /// Rename a page, OG-style. Moves its file to the new name and rewrites every
+    /// reference across pages AND journals — inline `[[old]]`/`#old`, the page's
+    /// OWN self/sibling refs, and bare `tags:: old` property refs — and CASCADES
+    /// to the whole `old/*` namespace subtree (each `old/child` page moves to
+    /// `new/child`, its refs rewritten), matching Logseq's `rename-namespace-pages!`.
+    /// Journals can't be renamed (their name is their date). Transactional: locks
+    /// every touched file, re-verifies each is unchanged since collection, commits,
+    /// and rolls back every write on any failure. Aborts (no change) if a target
+    /// name already exists or a touched file changed under us.
     pub fn rename_page(&self, old: &str, new: &str) -> io::Result<()> {
+        let old = old.trim();
         let new = new.trim();
         if new.is_empty() {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "empty name"));
         }
-        if old.eq_ignore_ascii_case(new) {
-            return Ok(());
+        if old.is_empty() || old.eq_ignore_ascii_case(new) {
+            return Ok(()); // nothing to do (case-only rename is intentionally a no-op)
         }
-        let old_path = self.pages_path().join(format!("{}.md", encode_page_name(old)));
-        let new_path = self.pages_path().join(format!("{}.md", encode_page_name(new)));
-        if new_path.exists() {
-            return Err(io::Error::new(io::ErrorKind::AlreadyExists, "target page exists"));
-        }
-        // Transactional rename: collect the full edit set (no writes), lock every
-        // touched file, re-verify each is unchanged since collection, then commit —
-        // rolling back every write if any step fails. Routes writes through the
-        // self-write guard so the watcher doesn't flag our own rewrites. This
-        // closes the half-rename / clobber hazards of the old direct-write loop.
-        struct RefEdit {
-            path: PathBuf,
-            old: String,
-            new: String,
-            base_rev: String,
-        }
+        let old_n = crate::refs::normalize(old);
+        let ns_prefix = format!("{old_n}/");
+        let skip = old.chars().count();
+        let entries = self.list_pages();
 
-        // Phase 0 — collect (no writes). The page may exist only via references
-        // (no file of its own), in which case there's nothing to move.
-        let move_content = if old_path.exists() { Some(fs::read_to_string(&old_path)?) } else { None };
-        let mut edits: Vec<RefEdit> = Vec::new();
-        for entry in self.list_pages() {
-            if entry.path == old_path {
-                continue; // the moved file itself; self-refs aren't rewritten (rare)
+        // Phase 0a — the rename SET: the page itself plus every file-backed
+        // namespace descendant (`old/*`). Each contributes a file move and an
+        // (old_name -> new_name) ref-rewrite pair applied graph-wide. We only match
+        // the exact name or the `old/` prefix (never a bare substring), so renaming
+        // `work` -> `work1` turns `work/log` into `work1/log`, not `work1/work1log`.
+        let mut rename_pairs: Vec<(String, String)> = Vec::new();
+        let mut moves: Vec<(PathBuf, PathBuf)> = Vec::new();
+        let mut primary_is_file = false;
+        for entry in &entries {
+            if entry.kind != PageKind::Page {
+                continue; // journals aren't namespaced pages; their refs still get rewritten in 0b
             }
-            let Ok(content) = fs::read_to_string(&entry.path) else { continue };
-            if !crate::refs::references_page(&content, old) {
+            let en = crate::refs::normalize(&entry.name);
+            let is_primary = en == old_n;
+            if !is_primary && !en.starts_with(&ns_prefix) {
                 continue;
             }
-            let updated = crate::refs::rename_refs(&content, old, new);
-            if updated != content {
-                let base_rev = content_rev(&content);
-                edits.push(RefEdit { path: entry.path, old: content, new: updated, base_rev });
+            let new_name = if is_primary {
+                new.to_string()
+            } else {
+                // replace the `old` prefix, preserving the descendant's own casing
+                let suffix: String = entry.name.chars().skip(skip).collect();
+                format!("{new}{suffix}")
+            };
+            let new_path = self.pages_path().join(format!("{}.md", encode_page_name(&new_name)));
+            if new_path != entry.path && new_path.exists() {
+                return Err(io::Error::new(io::ErrorKind::AlreadyExists, "target page exists"));
             }
+            if is_primary {
+                primary_is_file = true;
+            }
+            rename_pairs.push((entry.name.clone(), new_name));
+            moves.push((entry.path.clone(), new_path));
+        }
+        // A page can exist only via references (no file of its own); still rewrite
+        // refs to it.
+        if !primary_is_file {
+            rename_pairs.push((old.to_string(), new.to_string()));
         }
 
-        // Phase 1 — lock every touched path in sorted order (deadlock-free against
-        // a concurrent single-page save, which only ever holds ONE lock).
-        let mut lock_paths: Vec<PathBuf> = edits.iter().map(|e| e.path.clone()).collect();
-        if move_content.is_some() {
-            lock_paths.push(old_path.clone());
-            lock_paths.push(new_path.clone());
+        // Phase 0b — compute every file edit (inline refs + bare `tags::`), across
+        // pages AND journals. A moved page's OWN content is rewritten too (self /
+        // sibling refs) and lands at its new path.
+        struct Edit {
+            src: PathBuf,
+            dst: PathBuf,
+            orig: String,
+            new_content: String,
+            base_rev: String,
+            is_move: bool,
+        }
+        let move_dst: std::collections::HashMap<PathBuf, PathBuf> = moves.into_iter().collect();
+        let mut edits: Vec<Edit> = Vec::new();
+        for entry in &entries {
+            let Ok(content) = fs::read_to_string(&entry.path) else { continue };
+            let mut updated = content.clone();
+            for (o, n) in &rename_pairs {
+                updated = crate::refs::rename_refs(&updated, o, n);
+                updated = crate::refs::rename_tags_property(&updated, o, n);
+            }
+            match move_dst.get(&entry.path) {
+                Some(dst) => edits.push(Edit {
+                    src: entry.path.clone(),
+                    dst: dst.clone(),
+                    base_rev: content_rev(&content),
+                    orig: content,
+                    new_content: updated,
+                    is_move: true,
+                }),
+                None if updated != content => edits.push(Edit {
+                    src: entry.path.clone(),
+                    dst: entry.path.clone(),
+                    base_rev: content_rev(&content),
+                    orig: content,
+                    new_content: updated,
+                    is_move: false,
+                }),
+                None => {}
+            }
+        }
+        if edits.is_empty() {
+            return Ok(()); // page doesn't exist / nothing references it
+        }
+
+        // Phase 1 — lock every touched path (src + move dst), sorted + deduped
+        // (deadlock-free against a single-page save, which only ever holds ONE lock).
+        let mut lock_paths: Vec<PathBuf> = Vec::new();
+        for e in &edits {
+            lock_paths.push(e.src.clone());
+            if e.is_move {
+                lock_paths.push(e.dst.clone());
+            }
         }
         lock_paths.sort();
         lock_paths.dedup();
         let locks: Vec<_> = lock_paths.iter().map(|p| self.page_lock(p)).collect();
         let _guards: Vec<_> = locks.iter().map(|l| l.lock().unwrap()).collect();
 
-        // Phase 2 — re-verify nothing changed under us since Phase 0; abort with NO
-        // change on any mismatch (an external editor / Syncthing pull landed).
-        if new_path.exists() {
-            return Err(io::Error::new(io::ErrorKind::AlreadyExists, "target page exists"));
-        }
+        // Phase 2 — re-verify nothing changed under us since Phase 0; abort (no
+        // change) on any mismatch (an external editor / Syncthing pull landed).
         for e in &edits {
-            if content_rev(&fs::read_to_string(&e.path).unwrap_or_default()) != e.base_rev {
+            if e.is_move && e.dst != e.src && e.dst.exists() {
+                return Err(io::Error::new(io::ErrorKind::AlreadyExists, "target page exists"));
+            }
+            if content_rev(&fs::read_to_string(&e.src).unwrap_or_default()) != e.base_rev {
                 return Err(io::Error::new(io::ErrorKind::AlreadyExists, "conflict"));
             }
         }
 
-        // Phase 3 — commit, tracking writes for rollback on any failure.
-        let mut written: Vec<&RefEdit> = Vec::new();
-        let mut moved = false;
+        // Phase 3 — commit, tracking writes for rollback. For a move, write the new
+        // file BEFORE removing the old one, so a crash mid-rename duplicates a page
+        // rather than losing it.
+        let mut written: Vec<&Edit> = Vec::new();
         let result: io::Result<()> = (|| {
-            if move_content.is_some() {
-                if let Some(parent) = new_path.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-                // fs::rename preserves the bytes; read them fresh so the self-write
-                // marker matches exactly what lands at new_path.
-                let cur = fs::read_to_string(&old_path)?;
-                self.note_self_write(&new_path, content_rev(&cur));
-                fs::rename(&old_path, &new_path)?;
-                moved = true;
-            }
             for e in &edits {
-                self.note_self_write(&e.path, content_rev(&e.new));
-                atomic_write(&e.path, e.new.as_bytes())?;
+                self.note_self_write(&e.dst, content_rev(&e.new_content));
+                if e.is_move && e.dst != e.src {
+                    if let Some(parent) = e.dst.parent() {
+                        fs::create_dir_all(parent)?;
+                    }
+                }
+                atomic_write(&e.dst, e.new_content.as_bytes())?;
+                if e.is_move && e.dst != e.src {
+                    fs::remove_file(&e.src)?;
+                }
                 written.push(e);
             }
             Ok(())
         })();
         if let Err(err) = result {
+            // Roll back in reverse, and drop the self-write markers for bytes that
+            // won't survive the rollback so they can't later suppress a real
+            // external change (M1).
             for e in written.iter().rev() {
-                let _ = atomic_write(&e.path, e.old.as_bytes());
-            }
-            if moved {
-                let _ = fs::rename(&new_path, &old_path);
+                if e.is_move && e.dst != e.src {
+                    let _ = fs::remove_file(&e.dst);
+                    self.recent_writes.lock().unwrap().remove(&e.dst);
+                    self.note_self_write(&e.src, content_rev(&e.orig));
+                    let _ = atomic_write(&e.src, e.orig.as_bytes());
+                } else {
+                    self.note_self_write(&e.dst, content_rev(&e.orig));
+                    let _ = atomic_write(&e.dst, e.orig.as_bytes());
+                }
             }
             self.invalidate_cache();
             return Err(err);

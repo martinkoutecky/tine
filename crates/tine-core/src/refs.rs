@@ -227,6 +227,69 @@ fn tag_for(to: &str) -> String {
     }
 }
 
+/// Rewrite **bare** page-name refs in `tags::` property values from `from` to
+/// `to`. `page_refs`/`rename_refs` only see inline `[[..]]`/`#..`, so bare
+/// comma-separated tag names (`tags:: Old, Foo`) are invisible to them — yet
+/// Logseq indexes those as real references, so a rename must update them too.
+/// Bracketed (`[[..]]`) and `#`-prefixed values are left to `rename_refs`.
+/// `tags::` lines inside a code fence are skipped (literal text, like inline
+/// refs in code). Whitespace, commas, and the `key::` prefix are preserved
+/// verbatim for byte-exact round-tripping of everything but the matched name.
+pub fn rename_tags_property(raw: &str, from: &str, to: &str) -> String {
+    let target = normalize(from);
+    let code = code_ranges(raw);
+    let mut out = String::with_capacity(raw.len());
+    let mut pos = 0usize;
+    for line in raw.split_inclusive('\n') {
+        let line_start = pos;
+        pos += line.len();
+        let content = line.strip_suffix('\n').unwrap_or(line);
+        if !in_code(line_start, &code) {
+            if let Some(vstart) = tags_value_start(content) {
+                out.push_str(&content[..vstart]);
+                out.push_str(&rewrite_bare_tags(&content[vstart..], &target, to));
+                out.push_str(&line[content.len()..]); // trailing '\n', if any
+                continue;
+            }
+        }
+        out.push_str(line);
+    }
+    out
+}
+
+/// Byte offset where a `tags::` property line's value begins (just after `::`),
+/// or `None` if `line` isn't a `tags::` property line.
+fn tags_value_start(line: &str) -> Option<usize> {
+    let (k, _) = crate::doc::parse_property_line(line)?;
+    if !k.eq_ignore_ascii_case("tags") {
+        return None;
+    }
+    line.find("::").map(|i| i + 2)
+}
+
+/// Rewrite a `tags::` value (the part after `::`): for each comma-separated
+/// segment whose trimmed, **bare** name normalizes to `target`, swap the name
+/// for `to`, keeping the segment's surrounding whitespace.
+fn rewrite_bare_tags(valpart: &str, target: &str, to: &str) -> String {
+    valpart
+        .split(',')
+        .map(|seg| {
+            let trimmed = seg.trim();
+            if trimmed.is_empty() || trimmed.starts_with("[[") || trimmed.starts_with('#') {
+                return seg.to_string(); // empty, or handled by rename_refs
+            }
+            if normalize(trimmed) == *target {
+                let lead = seg.len() - seg.trim_start().len();
+                let trail = seg.trim_end().len();
+                format!("{}{}{}", &seg[..lead], to, &seg[trail..])
+            } else {
+                seg.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -301,5 +364,26 @@ mod tests {
         assert!(got.contains("before [[New]]"), "prose ref renamed: {got}");
         assert!(got.contains("after #New"), "trailing tag renamed: {got}");
         assert!(got.contains("\"[[Old]]\"; // #Old"), "code body untouched: {got}");
+    }
+
+    #[test]
+    fn rename_tags_property_rewrites_bare_values_only() {
+        // bare value matched, sibling + whitespace + commas preserved
+        assert_eq!(
+            rename_tags_property("tags:: Old, keep", "Old", "New"),
+            "tags:: New, keep"
+        );
+        // case-insensitive match; original `to` casing used
+        assert_eq!(rename_tags_property("tags:: old", "Old", "New"), "tags:: New");
+        // bracketed / #-prefixed values are left for rename_refs (no double-rewrite)
+        assert_eq!(
+            rename_tags_property("tags:: [[Old]], #Old", "Old", "New"),
+            "tags:: [[Old]], #Old"
+        );
+        // a non-tags property is untouched
+        assert_eq!(rename_tags_property("author:: Old", "Old", "New"), "author:: Old");
+        // a `tags::` line inside a code fence is literal — not rewritten
+        let raw = "tags:: Old\n```\ntags:: Old\n```\n";
+        assert_eq!(rename_tags_property(raw, "Old", "New"), "tags:: New\n```\ntags:: Old\n```\n");
     }
 }
