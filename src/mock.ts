@@ -187,6 +187,8 @@ export function mockBackend(): Backend {
         block_hidden_properties: [],
         default_journal_template: null,
         favorites: [],
+        journal_page_title_format: "MMM do, yyyy",
+        journal_file_name_format: "yyyy_MM_dd",
       };
     },
     async listPages(): Promise<PageEntry[]> {

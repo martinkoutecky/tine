@@ -79,19 +79,6 @@ impl Default for Config {
 }
 
 impl Config {
-    /// Whether the graph uses Logseq's DEFAULT journal filename + title formats
-    /// (or sets neither). Tine can only round-trip the default formats; a custom
-    /// format must block new-journal synthesis (see `Graph::write_page`).
-    pub fn is_default_journal_format(&self) -> bool {
-        self.journal_file_name_format
-            .as_deref()
-            .map_or(true, |f| f == DEFAULT_JOURNAL_FILE_FORMAT)
-            && self
-                .journal_page_title_format
-                .as_deref()
-                .map_or(true, |f| f == DEFAULT_JOURNAL_TITLE_FORMAT)
-    }
-
     pub fn parse(edn: &str) -> Config {
         // Each key is located independently with the comment/string-aware
         // `find_keyword`, then its value read with the shared scanners — no

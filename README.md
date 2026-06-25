@@ -161,8 +161,10 @@ raw speed. (Where a comparison is made, it's against current Logseq desktop core
   rewrites, so they don't create sync diff churn.
 - **Page rename is transactional** — the page move and every `[[ref]]`/`#tag` rewrite across the
   graph commit all-or-nothing, re-checking each file just before writing and rolling back on
-  conflict, so a rename can't half-apply. A graph with a custom journal file-name format is detected
-  and left untouched rather than getting a duplicate journal.
+  conflict, so a rename can't half-apply.
+- **Custom journal date formats** — reads `:journal/file-name-format` and `:journal/page-title-format`
+  and recognizes/creates journal files in your format (e.g. `dd-MM-yyyy`, `yyyy-MM-dd`, `yyyyMMdd`),
+  falling back to the defaults so old/foreign files still resolve.
 - **Launch snapshots** (configurable keep-count) with a restore UI that takes a safety snapshot
   first; page delete moves to a recoverable **trash**; `atomic_write` + fsync.
 - Open/switch graphs from the app (native folder picker) or via `TINE_GRAPH`.
@@ -258,9 +260,8 @@ without reading note content.
 
 ## Roadmap & non-goals
 
-**Planned / under evaluation:** graph view, configurable typographic auto-replace, **broader
-coverage of advanced Datalog queries** (a scoped subset works today — see above), and full support
-for **custom journal file-name/title formats** (currently detected and guarded against, not written).
+**Planned / under evaluation:** graph view, configurable typographic auto-replace, and **broader
+coverage of advanced Datalog queries** (a scoped subset works today — see above).
 
 **Out of scope (by design):** whiteboards, flashcards, the plugin system, built-in git, and a
 native mobile app — Tine coexists with Logseq mobile over your own sync instead of replacing it.

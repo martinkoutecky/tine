@@ -61,6 +61,8 @@ export interface GraphMeta {
   block_hidden_properties: string[];
   default_journal_template: string | null;
   favorites: string[];
+  journal_page_title_format: string; // :journal/page-title-format (default "MMM do, yyyy")
+  journal_file_name_format: string; // :journal/file-name-format (default "yyyy_MM_dd")
 }
 
 export interface Rect {

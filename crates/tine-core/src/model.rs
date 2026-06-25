@@ -7,7 +7,7 @@
 //! persisted as `id::` once a block is referenced (a later milestone).
 
 use crate::config::Config;
-use crate::date::JournalDate;
+use crate::date::{JournalDate, JournalFormat};
 use crate::doc::{self, DocBlock, Document};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -90,6 +90,10 @@ pub struct PageDto {
 pub struct Graph {
     pub root: PathBuf,
     pub config: Config,
+    /// Journal date formats (filename + title) resolved from `config.edn`, used to
+    /// recognize journal files in the user's format and render new ones. Built once
+    /// at open (config changes need a reopen, as in OG).
+    pub journal_format: JournalFormat,
     /// In-memory cache of every parsed page, keyed implicitly by position.
     /// Built once on first whole-graph query and kept in sync by edits, so
     /// search / backlinks / `{{query}}` scan memory instead of re-reading and
@@ -197,6 +201,12 @@ pub struct GraphMeta {
     pub default_journal_template: Option<String>,
     /// Favorited page names (read from config.edn `:favorites`).
     pub favorites: Vec<String>,
+    /// Effective journal title format (`:journal/page-title-format`, default
+    /// `MMM do, yyyy`) — so the frontend formats "today" to match the backend.
+    pub journal_page_title_format: String,
+    /// Effective journal filename format (`:journal/file-name-format`, default
+    /// `yyyy_MM_dd`).
+    pub journal_file_name_format: String,
 }
 
 impl Graph {
@@ -206,9 +216,14 @@ impl Graph {
         let config = fs::read_to_string(root.join("logseq").join("config.edn"))
             .map(|s| Config::parse(&s))
             .unwrap_or_default();
+        let journal_format = JournalFormat::new(
+            config.journal_file_name_format.as_deref(),
+            config.journal_page_title_format.as_deref(),
+        );
         Graph {
             root,
             config,
+            journal_format,
             cache: RwLock::new(None),
             cache_gen: std::sync::atomic::AtomicU64::new(0),
             build_lock: std::sync::Mutex::new(()),
@@ -252,6 +267,8 @@ impl Graph {
             block_hidden_properties: self.config.block_hidden_properties.clone(),
             default_journal_template: self.config.default_journal_template.clone(),
             favorites: self.config.favorites.clone(),
+            journal_page_title_format: self.journal_format.title_format().to_string(),
+            journal_file_name_format: self.journal_format.file_format().to_string(),
         }
     }
 
@@ -280,8 +297,8 @@ impl Graph {
             }
         }
         let mut entries = Vec::new();
-        entries.extend(list_md(&self.journals_path(), PageKind::Journal));
-        entries.extend(list_md(&self.pages_path(), PageKind::Page));
+        entries.extend(list_md(&self.journals_path(), PageKind::Journal, &self.journal_format));
+        entries.extend(list_md(&self.pages_path(), PageKind::Page, &self.journal_format));
         *self.page_list_cache.write().unwrap() = Some((gen, entries.clone()));
         entries
     }
@@ -364,7 +381,7 @@ impl Graph {
                 .filter(|(e, _)| e.kind == PageKind::Journal && e.date_key.is_some())
                 .map(|(e, _)| e.clone())
                 .collect(),
-            None => list_md(&self.journals_path(), PageKind::Journal)
+            None => list_md(&self.journals_path(), PageKind::Journal, &self.journal_format)
                 .into_iter()
                 .filter(|e| e.date_key.is_some())
                 .collect(),
@@ -402,10 +419,16 @@ impl Graph {
             }
             let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else { continue };
             if JournalDate::from_file_stem(stem).is_some() {
-                continue; // already a valid date stem
+                continue; // already a plausible date stem (yyyy_MM_dd / yyyy-MM-dd) — leave it
             }
-            let Some(d) = JournalDate::from_title(stem) else { continue }; // not a date title
-            let target = dir.join(format!("{}.md", d.file_stem()));
+            // A title-named ("Jun 18th, 2026.md") or otherwise non-stem journal file:
+            // normalize it to the graph's filename format so it round-trips with OG.
+            let Some(d) = self.journal_format.parse(stem) else { continue }; // not a date
+            let want = self.journal_format.file_stem(d);
+            if want == stem {
+                continue; // already in the graph's filename format
+            }
+            let target = dir.join(format!("{want}.md"));
             if target.exists() {
                 continue; // don't clobber an existing stem file
             }
@@ -426,12 +449,14 @@ impl Graph {
                 .find(|e| e.name.eq_ignore_ascii_case(name))
                 .map(|e| e.path)
                 .unwrap_or_else(|| {
-                    // New journal: name it by its date stem ("2026_06_18.md"), not
-                    // the display title — a title-named file ("Jun 18th, 2026.md")
-                    // can't be parsed back to a date, so journals_desc would drop
+                    // New journal: name it by its date stem in the graph's filename
+                    // format ("2026_06_18.md"), not the display title — a title-named
+                    // file can't be parsed back to a date, so journals_desc would drop
                     // it and the day would look empty.
-                    let stem = JournalDate::from_title(name)
-                        .map(|d| d.file_stem())
+                    let stem = self
+                        .journal_format
+                        .parse(name)
+                        .map(|d| self.journal_format.file_stem(d))
                         .unwrap_or_else(|| name.to_string());
                     self.journals_path().join(format!("{stem}.md"))
                 }),
@@ -445,7 +470,7 @@ impl Graph {
             PageKind::Journal => self.journals_path(),
             PageKind::Page => self.pages_path(),
         };
-        list_md(&dir, kind)
+        list_md(&dir, kind, &self.journal_format)
             .into_iter()
             .find(|e| e.name.eq_ignore_ascii_case(name))
     }
@@ -1373,8 +1398,8 @@ impl Graph {
         let stem = path.file_stem().and_then(|s| s.to_str())?;
         let parent = path.parent()?;
         if parent == self.journals_path() {
-            let (name, date_key) = match JournalDate::from_file_stem(stem) {
-                Some(d) => (d.title(), Some(d.ordinal_key())),
+            let (name, date_key) = match self.journal_format.parse(stem) {
+                Some(d) => (self.journal_format.title(d), Some(d.ordinal_key())),
                 None => (stem.to_string(), None),
             };
             Some(PageEntry { name, kind: PageKind::Journal, date_key, path: path.to_path_buf() })
@@ -1573,20 +1598,9 @@ impl Graph {
     /// Write a page, reproducing `existing`'s formatting, and return the new
     /// on-disk content rev (computed from what was written — no extra read).
     fn write_page(&self, page: &PageDto, existing: Option<&str>, recheck: bool) -> io::Result<String> {
-        // A2: never synthesize a NEW journal file on a graph configured with a
-        // non-default journal format — Tine only writes the default `yyyy_MM_dd`
-        // filename, so creating one on a custom-format graph would duplicate /
-        // misplace that day's real journal. Editing an existing journal is fine.
-        if page.kind == PageKind::Journal
-            && existing.is_none()
-            && !self.config.is_default_journal_format()
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "unsupported journal format: this graph uses a custom \
-                 :journal/file-name-format or :journal/page-title-format Tine can't create yet",
-            ));
-        }
+        // (A new journal is written via `path_for`, which names the file using the
+        // graph's `:journal/file-name-format` — so custom-format graphs create the
+        // correct file for the day instead of a misplaced default-named duplicate.)
         let doc = Document {
             pre_block: page.pre_block.clone(),
             roots: page.blocks.iter().map(dto_to_doc).collect(),
@@ -1738,7 +1752,7 @@ fn reserve_asset(assets: &Path, name: &str) -> io::Result<(String, fs::File)> {
     }
 }
 
-fn list_md(dir: &Path, kind: PageKind) -> Vec<PageEntry> {
+fn list_md(dir: &Path, kind: PageKind, fmt: &JournalFormat) -> Vec<PageEntry> {
     let mut out = Vec::new();
     let Ok(rd) = fs::read_dir(dir) else { return out };
     for entry in rd.flatten() {
@@ -1748,8 +1762,8 @@ fn list_md(dir: &Path, kind: PageKind) -> Vec<PageEntry> {
         }
         let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else { continue };
         let (name, date_key) = match kind {
-            PageKind::Journal => match JournalDate::from_file_stem(stem) {
-                Some(d) => (d.title(), Some(d.ordinal_key())),
+            PageKind::Journal => match fmt.parse(stem) {
+                Some(d) => (fmt.title(d), Some(d.ordinal_key())),
                 None => (stem.to_string(), None),
             },
             PageKind::Page => (decode_page_name(stem), None),
@@ -2153,7 +2167,7 @@ mod tests {
     }
 
     #[test]
-    fn custom_journal_format_refuses_new_journal() {
+    fn custom_journal_format_creates_in_user_format() {
         let dir = scratch("jfmt");
         fs::create_dir_all(dir.join("logseq")).unwrap();
         fs::write(
@@ -2162,14 +2176,34 @@ mod tests {
         )
         .unwrap();
         let g = Graph::open(&dir);
-        // Creating "today" must be refused — Tine would otherwise write a default
-        // `yyyy_MM_dd` file that duplicates the user's real `yyyy-MM-dd` journal.
-        assert!(g.save_page(&jdto("Jun 24th, 2026"), None).is_err());
-        assert_eq!(
-            fs::read_dir(dir.join("journals")).unwrap().count(),
-            0,
-            "no journal file synthesized on a custom-format graph"
-        );
+        // A custom filename format now creates today's journal at the CORRECT path
+        // (the user's format) — not a misplaced default `yyyy_MM_dd` duplicate.
+        g.save_page(&jdto("Jun 24th, 2026"), None).unwrap();
+        assert!(dir.join("journals").join("2026-06-24.md").exists());
+        assert!(!dir.join("journals").join("2026_06_24.md").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn custom_format_journal_files_load_and_display() {
+        // THE reported bug: a graph whose journal files use a non-default format
+        // must still load — the files are recognized and titled in the user's
+        // page-title-format.
+        let dir = scratch("jfmt-load");
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::write(
+            dir.join("logseq").join("config.edn"),
+            "{:journal/file-name-format \"dd-MM-yyyy\" :journal/page-title-format \"yyyy-MM-dd\"}\n",
+        )
+        .unwrap();
+        // A real journal file in the user's dd-MM-yyyy filename format.
+        fs::write(dir.join("journals").join("24-06-2026.md"), "- hi\n").unwrap();
+        let g = Graph::open(&dir);
+        let js = g.journals_desc();
+        assert_eq!(js.len(), 1, "custom-format journal must be recognized (was dropped before)");
+        assert_eq!(js[0].date_key, Some(20260624));
+        assert_eq!(js[0].name, "2026-06-24", "title rendered in :journal/page-title-format");
         let _ = fs::remove_dir_all(&dir);
     }
 

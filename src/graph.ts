@@ -6,7 +6,7 @@ import { setGraphMeta, setWorkflow, bumpGraphEpoch, setRightSidebar, graphMeta, 
 import { resetStore, flushAll } from "./store";
 import { clearAssetBlobCache } from "./assetCache";
 import { openJournals } from "./router";
-import { journalTitle } from "./journal";
+import { journalTitle, setJournalTitleFormat } from "./journal";
 import { applyTemplateVars } from "./editor/templateVars";
 import type { BlockDto } from "./types";
 
@@ -46,6 +46,7 @@ export async function loadGraphPath(path: string): Promise<void> {
   if (switching) setRightSidebar([]);
   setGraphMeta(meta ?? null);
   setWorkflow(meta?.preferred_workflow === "todo" ? "todo" : "now");
+  setJournalTitleFormat(meta?.journal_page_title_format); // match this graph's journal titles
   seedFavorites(meta?.favorites ?? []);
   if (path) {
     try {
