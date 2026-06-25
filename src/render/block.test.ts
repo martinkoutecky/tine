@@ -30,10 +30,10 @@ describe("blockView SCHEDULED/DEADLINE", () => {
     expect(v.scheduled).toBe("2026-07-06 Mon");
     expect(v.lines.join("\n")).toBe("ship it");
   });
-  it("does NOT drop trailing text after the timestamp — renders the whole line", () => {
+  it("keeps the badge AND renders trailing text after the timestamp (lenient)", () => {
     const v = blockView("TODO \nSCHEDULED: <2026-07-06 Mon> #email ADS1 students");
-    expect(v.scheduled).toBeNull(); // not a valid planning line → no badge
-    expect(v.lines.join("\n")).toContain("#email ADS1 students");
-    expect(v.lines.join("\n")).toContain("SCHEDULED: <2026-07-06 Mon>");
+    expect(v.scheduled).toBe("2026-07-06 Mon"); // badge kept
+    expect(v.lines.join("\n")).toContain("#email ADS1 students"); // text shown as body
+    expect(v.lines.join("\n")).not.toContain("SCHEDULED:"); // the prefix is hidden
   });
 });

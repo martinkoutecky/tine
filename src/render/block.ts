@@ -54,12 +54,14 @@ export interface BlockView {
   properties: [string, string][];
 }
 
-// A planning line is the timestamp ONLY (org/Logseq semantics). If there's text
-// after the `<…>` (e.g. `SCHEDULED: <2026-07-06 Mon> #email do the thing`), it's
-// NOT a valid planning line, so we don't treat it as a marker — it falls through
-// and renders in full, instead of being silently dropped along with its text.
-const SCHEDULED_RE = /^SCHEDULED:\s*<([^>]+)>\s*$/;
-const DEADLINE_RE = /^DEADLINE:\s*<([^>]+)>\s*$/;
+// A SCHEDULED:/DEADLINE: line yields the date badge (capture group 1). OG treats
+// it as a timestamp-ONLY planning line, but we're intentionally lenient (Martin's
+// call — this is rendering only): if there's text after the `<…>` (e.g.
+// `SCHEDULED: <2026-07-06 Mon> #email do the thing`), keep the badge AND render
+// that trailing text (group 2) as body, instead of dropping the line. Deliberate,
+// visible deviation from OG.
+const SCHEDULED_RE = /^SCHEDULED:\s*<([^>]+)>(.*)$/;
+const DEADLINE_RE = /^DEADLINE:\s*<([^>]+)>(.*)$/;
 
 export function blockView(raw: string): BlockView {
   const allLines = raw.split("\n");
@@ -85,8 +87,12 @@ export function blockView(raw: string): BlockView {
     const dm = DEADLINE_RE.exec(t);
     if (sm) {
       scheduled = sm[1];
+      const rest = sm[2].trim();
+      if (rest) lines.push(rest);
     } else if (dm) {
       deadline = dm[1];
+      const rest = dm[2].trim();
+      if (rest) lines.push(rest);
     } else if (isPropertyLine(line)) {
       const idx = line.indexOf("::");
       properties.push([line.slice(0, idx).trim(), line.slice(idx + 2).trim()]);
