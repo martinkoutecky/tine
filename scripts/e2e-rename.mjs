@@ -17,7 +17,12 @@ function seed() {
   fs.mkdirSync(`${G}/journals`, { recursive: true });
   fs.mkdirSync(`${G}/logseq`, { recursive: true });
   fs.writeFileSync(`${G}/pages/Pokus2.md`, "- Tohle je pokus\n");
-  fs.writeFileSync(`${G}/pages/Tine.md`, "- Tine notes\n\t- ref [[Pokus2]] here\n");
+  // Mirrors the real Tine.md: a ```calc fenced block on a bullet line, then the
+  // ref in a LATER bullet (the case that used to be mis-read as "inside code").
+  fs.writeFileSync(
+    `${G}/pages/Tine.md`,
+    "- ## Tests\n\t- ```calc\n\t  1 + 2\n\t  var = 2+4\n\t  ```\n\t- #+BEGIN_TIP\n\t  a tip\n\t  #+END_TIP\n\t- [[Pokus2]]\n"
+  );
   fs.writeFileSync(`${G}/pages/Testtest2.md`, "- This is a test test page\n- [[Pokus2]]\n");
   fs.writeFileSync(`${G}/journals/2026_06_24.md`, "- journal ref [[Pokus2]]\n");
 }

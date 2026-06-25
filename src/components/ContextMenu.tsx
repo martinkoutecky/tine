@@ -260,7 +260,7 @@ function PageMenu(props: {
               pushToast(`Renamed to “${next}”`, "success");
             });
         })
-        .catch(() => pushToast("Rename failed", "error"));
+        .catch((e) => pushToast(`Rename failed: ${String(e)}`, "error"));
     }
   };
   const remove = async () => {

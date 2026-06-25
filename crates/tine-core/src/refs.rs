@@ -17,6 +17,17 @@ fn is_tag_char(c: char) -> bool {
 /// neither indexed as backlinks nor rewritten on rename, so a code example that
 /// shows `[[Foo]]`/`#Foo` (or a URL fragment inside code) isn't corrupted when
 /// page Foo is renamed. (A bare URL `…#Foo` in prose is a separate case.)
+/// Strip one leading unordered-list bullet (`- `/`* `/`+ `) so a fenced code block
+/// that opens directly on a bullet line (`- ```lang`) is recognized as a fence.
+fn strip_list_bullet(s: &str) -> &str {
+    let b = s.as_bytes();
+    if b.len() >= 2 && matches!(b[0], b'-' | b'*' | b'+') && b[1] == b' ' {
+        &s[2..]
+    } else {
+        s
+    }
+}
+
 fn code_ranges(raw: &str) -> Vec<std::ops::Range<usize>> {
     let mut ranges: Vec<std::ops::Range<usize>> = Vec::new();
     let mut fence: Option<(u8, usize)> = None; // (marker byte, run length) while open
@@ -26,16 +37,25 @@ fn code_ranges(raw: &str) -> Vec<std::ops::Range<usize>> {
         pos += line.len();
         let content = line.strip_suffix('\n').unwrap_or(line);
         let trimmed = content.trim_start();
-        let marker = trimmed.bytes().next().filter(|&c| c == b'`' || c == b'~');
-        let run = marker.map_or(0, |m| trimmed.bytes().take_while(|&c| c == m).count());
         if let Some((fc, fl)) = fence {
             ranges.push(line_start..pos); // whole line (incl. newline) is code
-            // A closing fence is the same marker, >= the opening run, nothing after it.
-            if marker == Some(fc) && run >= fl && trimmed.as_bytes()[run..].iter().all(u8::is_ascii_whitespace) {
+            // A closing fence is the same marker, >= the opening run, nothing after
+            // it. It is a bare line (no bullet) — a Logseq bulleted code block closes
+            // with an aligned `  ``` `, so the close check uses the un-stripped text.
+            let cm = trimmed.bytes().next().filter(|&c| c == b'`' || c == b'~');
+            let cr = cm.map_or(0, |m| trimmed.bytes().take_while(|&c| c == m).count());
+            if cm == Some(fc) && cr >= fl && trimmed.as_bytes()[cr..].iter().all(u8::is_ascii_whitespace) {
                 fence = None;
             }
             continue;
         }
+        // An OPENING fence may sit right after a list bullet (`- ```lang`), so strip
+        // one bullet before testing. Without this, the opener is missed but its bare
+        // closing ``` gets mis-read as an opener, swallowing everything after the
+        // block (e.g. a later `[[ref]]`) as "code".
+        let body = strip_list_bullet(trimmed);
+        let marker = body.bytes().next().filter(|&c| c == b'`' || c == b'~');
+        let run = marker.map_or(0, |m| body.bytes().take_while(|&c| c == m).count());
         if run >= 3 {
             ranges.push(line_start..pos);
             fence = Some((marker.unwrap(), run));
@@ -364,6 +384,20 @@ mod tests {
         assert!(got.contains("before [[New]]"), "prose ref renamed: {got}");
         assert!(got.contains("after #New"), "trailing tag renamed: {got}");
         assert!(got.contains("\"[[Old]]\"; // #Old"), "code body untouched: {got}");
+    }
+
+    #[test]
+    fn rename_rewrites_ref_after_bulleted_code_fence() {
+        // Repro of the reported skip: a `[[ref]]` in a later bullet, AFTER a
+        // ```calc fenced block that OPENS on a bullet line (`- ```calc`). The
+        // bullet prefix used to hide the opener while its bare close (`  ``` `) was
+        // mis-read as an opener, so the later ref looked "inside code" and was
+        // skipped. The whole `## Tests` subtree mirrors Tine.md.
+        let raw = "- ## Tests\n\t- ```calc\n\t  1 + 2\n\t  var = 2+4\n\t  ```\n\t- #+BEGIN_TIP\n\t  a tip\n\t  #+END_TIP\n\t- [[Pokus2]]\n";
+        let out = rename_refs(raw, "Pokus2", "Pokus");
+        assert!(out.contains("[[Pokus]]"), "ref after bulleted fence not rewritten: {out:?}");
+        // the code block body itself is untouched
+        assert!(out.contains("```calc") && out.contains("1 + 2"), "{out:?}");
     }
 
     #[test]
