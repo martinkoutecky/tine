@@ -223,6 +223,13 @@ const BACKUP_KEEP_DEFAULT: usize = 12;
 
 fn backup_async(app: tauri::AppHandle) {
     std::thread::spawn(move || {
+        // Defer the launch snapshot ~1s so its whole-graph file copy doesn't
+        // contend for disk I/O with first-journal paint and the warm-cache parse
+        // at open (felt on slow/NFS disks or a throttled laptop). Safe: the
+        // snapshot guards this session's edits, and the user hasn't edited yet in
+        // the first second — the on-disk files are still intact — so a crash in
+        // that window loses nothing the snapshot would have protected.
+        std::thread::sleep(std::time::Duration::from_millis(1000));
         let _ = do_backup(&app, ""); // launch snapshot is best-effort
     });
 }
