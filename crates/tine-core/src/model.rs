@@ -1665,6 +1665,7 @@ fn dto_to_doc(b: &BlockDto) -> DocBlock {
         raw: b.raw.clone(),
         children: b.children.iter().map(dto_to_doc).collect(),
         uuid: b.id.clone(),
+        proj: std::sync::OnceLock::new(),
     }
 }
 

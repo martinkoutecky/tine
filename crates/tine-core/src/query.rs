@@ -115,7 +115,7 @@ pub fn backlinks(graph: &Graph, target: &str) -> Vec<RefGroup> {
             names.push(a.clone());
         }
     }
-    collect(graph, |b| names.iter().any(|n| refs::references_page(&b.raw, n)), Some(&canonical))
+    collect(graph, |b| names.iter().any(|n| b.projection().refs_contains(n)), Some(&canonical))
 }
 
 fn contains_word(hay: &str, needle: &str) -> bool {
@@ -143,7 +143,7 @@ pub fn unlinked_refs(graph: &Graph, target: &str) -> Vec<RefGroup> {
     let lower = target.to_lowercase();
     collect(
         graph,
-        |b| contains_word(&b.raw.to_lowercase(), &lower) && !refs::references_page(&b.raw, target),
+        |b| contains_word(&b.raw.to_lowercase(), &lower) && !b.projection().refs_contains(target),
         Some(target),
     )
 }
@@ -549,7 +549,7 @@ pub fn search(graph: &Graph, query: &str, limit: usize) -> Vec<RefGroup> {
                 if remaining == 0 {
                     return;
                 }
-                if visible_text(&b.raw).to_lowercase().contains(&q) {
+                if b.projection().visible_lower.contains(&q) {
                     let mut dto = block_to_dto(b);
                     dto.breadcrumb = anc.iter().map(|a| crumb_line(a)).collect();
                     matched.push(dto);
@@ -884,7 +884,7 @@ impl Pred {
 
     fn eval(&self, block: &DocBlock, ctx: &EvalCtx) -> bool {
         match self {
-            Pred::PageRef(name) => refs::references_page(&block.raw, name),
+            Pred::PageRef(name) => block.projection().refs_contains(name),
             Pred::Task(markers) => block
                 .marker()
                 .map(|m| markers.iter().any(|x| x.eq_ignore_ascii_case(m)))
@@ -928,7 +928,7 @@ impl Pred {
             Pred::PageTags(tags) => tags.iter().any(|t| {
                 ctx.page_tags.iter().any(|pt| pt.eq_ignore_ascii_case(t))
             }),
-            Pred::Content(s) => visible_text(&block.raw).to_lowercase().contains(&s.to_lowercase()),
+            Pred::Content(s) => block.projection().visible_lower.contains(&s.to_lowercase()),
             Pred::And(ps) => ps.iter().all(|p| p.eval(block, ctx)),
             Pred::Or(ps) => ps.iter().any(|p| p.eval(block, ctx)),
             Pred::Not(p) => !p.eval(block, ctx),

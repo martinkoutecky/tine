@@ -29,7 +29,7 @@ pub struct Document {
     pub roots: Vec<DocBlock>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct DocBlock {
     /// Dedented block body: first line + continuation lines joined with `\n`.
     pub raw: String,
@@ -42,6 +42,32 @@ pub struct DocBlock {
     /// the conflict guard (`parse(disk) == cached`) would always see a "change".
     #[serde(default)]
     pub uuid: String,
+    /// Lazily-computed, memoized projection of `raw` for the hot read paths
+    /// (see [`DocBlock::projection`]). Derived metadata, not content: excluded
+    /// from equality + serialization, and reset on clone. `pub(crate)` only so
+    /// the constructors in sibling modules can initialize it empty.
+    #[serde(skip)]
+    pub(crate) proj: std::sync::OnceLock<BlockProjection>,
+}
+
+/// Memoized projection of a block's `raw`, so whole-graph scans (full-text
+/// search per keystroke, backlink/page-ref matching, `(content …)`) don't
+/// re-parse every block's `raw` on each run.
+#[derive(Debug, Clone, Default)]
+pub struct BlockProjection {
+    /// Visible (non-property) text, lowercased — for `search` / `(content …)`.
+    pub visible_lower: String,
+    /// Normalized page references (`[[..]]` / `#tag`) — for backlinks / `(page-ref)`.
+    pub refs_norm: Vec<String>,
+}
+
+impl BlockProjection {
+    /// Whether this block references page `name` (case-insensitive). Equivalent
+    /// to `refs::references_page(raw, name)`.
+    pub fn refs_contains(&self, name: &str) -> bool {
+        let n = crate::refs::normalize(name);
+        self.refs_norm.iter().any(|r| *r == n)
+    }
 }
 
 // Identity is metadata, not content: two blocks are equal iff their body and
@@ -54,9 +80,45 @@ impl PartialEq for DocBlock {
 }
 impl Eq for DocBlock {}
 
+// Clone resets the projection memo: the clone recomputes it from its own `raw`
+// on next access, so it can never inherit a projection that a later in-place
+// `raw` edit on either copy would stale.
+impl Clone for DocBlock {
+    fn clone(&self) -> Self {
+        DocBlock {
+            raw: self.raw.clone(),
+            children: self.children.clone(),
+            uuid: self.uuid.clone(),
+            proj: std::sync::OnceLock::new(),
+        }
+    }
+}
+
 impl DocBlock {
     pub fn new(raw: impl Into<String>) -> Self {
-        DocBlock { raw: raw.into(), children: Vec::new(), uuid: String::new() }
+        DocBlock { raw: raw.into(), children: Vec::new(), uuid: String::new(), proj: std::sync::OnceLock::new() }
+    }
+
+    /// Lazily-computed, memoized projection of `raw` (visible lowercased text +
+    /// normalized refs). Safe to memoize because it's a pure function of `raw`
+    /// and a cached DocBlock is REPLACED wholesale (a fresh, empty cell) whenever
+    /// its content changes — cached blocks are never mutated in place — so the
+    /// memo can't outlive the `raw` it was derived from.
+    pub fn projection(&self) -> &BlockProjection {
+        self.proj.get_or_init(|| {
+            let visible_lower = self
+                .raw
+                .lines()
+                .filter(|l| parse_property_line(l).is_none())
+                .collect::<Vec<_>>()
+                .join("\n")
+                .to_lowercase();
+            let refs_norm = crate::refs::page_refs(&self.raw)
+                .iter()
+                .map(|r| crate::refs::normalize(r))
+                .collect();
+            BlockProjection { visible_lower, refs_norm }
+        })
     }
 
     /// `key:: value` properties found in the block body, in order.
@@ -213,7 +275,7 @@ pub fn parse(content: &str) -> Document {
         while let Some(top) = stack.last() {
             if top.col >= keep_above {
                 let f = stack.pop().unwrap();
-                let block = DocBlock { raw: f.raw, children: f.children, uuid: String::new() };
+                let block = DocBlock { raw: f.raw, children: f.children, uuid: String::new(), proj: std::sync::OnceLock::new() };
                 match stack.last_mut() {
                     Some(parent) => parent.children.push(block),
                     None => roots.push(block),
@@ -413,5 +475,26 @@ mod crlf_tests {
         assert_eq!(SerializeOpts::detect(Some("- a\r\n\r\n")).trailing_newlines, 2);
         assert_eq!(SerializeOpts::detect(Some("- a\r\n")).trailing_newlines, 1);
         assert_eq!(SerializeOpts::detect(Some("- a\n\n")).trailing_newlines, 2);
+    }
+}
+
+#[cfg(test)]
+mod projection_tests {
+    use super::*;
+
+    #[test]
+    fn projection_matches_direct_computation() {
+        let b = DocBlock::new("TODO ship [[Foo Bar]] and #tag\nid:: abc\nprop:: secret");
+        let p = b.projection();
+        // visible_lower == visible_text(raw).to_lowercase(): property lines dropped
+        assert_eq!(p.visible_lower, "todo ship [[foo bar]] and #tag");
+        assert!(!p.visible_lower.contains("secret"), "property values excluded");
+        // refs_contains ≡ references_page (case-insensitive, normalized)
+        assert!(p.refs_contains("foo bar"));
+        assert!(p.refs_contains("TAG"));
+        assert!(!p.refs_contains("nope"));
+        // memoized (stable across calls); a clone recomputes to an equal projection
+        assert_eq!(b.projection().visible_lower, p.visible_lower);
+        assert_eq!(b.clone().projection().refs_norm, p.refs_norm);
     }
 }
