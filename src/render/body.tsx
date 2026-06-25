@@ -205,11 +205,12 @@ export function CalcBlock(props: { src: string }): JSX.Element {
   return (
     <div class="calc-block">
       <For each={lines()}>
-        {(ln) => (
-          <div class="calc-row" classList={{ "calc-error": !!ln.error }}>
-            <span class="calc-in">{ln.input || " "}</span>
-            <span class="calc-out">{ln.output ?? ""}</span>
-          </div>
+        {(ln, i) => (
+          <>
+            <div class="calc-lineno">{i() + 1}</div>
+            <div class="calc-in" classList={{ "calc-error": !!ln.error }}>{ln.input || " "}</div>
+            <div class="calc-out" classList={{ "calc-error": !!ln.error }}>{ln.output ?? ""}</div>
+          </>
         )}
       </For>
     </div>

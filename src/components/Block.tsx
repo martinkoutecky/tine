@@ -52,8 +52,8 @@ import {
   type Edit,
 } from "../editor/format";
 import { blockView } from "../render/block";
-import { BodyContent, CalcBlock } from "../render/body";
-import { calcSource } from "../editor/calc";
+import { BodyContent } from "../render/body";
+import { calcSource, wrapCalc, evalCalc } from "../editor/calc";
 import { QueryMacro, EmbedMacro } from "./Macro";
 import { workflow, zoomInto, openContextMenu, openDatePicker, openBlockInSidebar, graphMeta, dataRev, setQueryBuilderAutoOpen, openPageProps } from "../ui";
 import { openPageInNewTab } from "../router";
@@ -543,9 +543,17 @@ export function Editor(props: { id: string }): JSX.Element {
   // panel as the rendered view, recomputed on every keystroke (onInput commits
   // to node().raw live, so editorValue() is current). Matches OG's calculator,
   // which stays live while you type instead of only computing after you exit.
+  // A ```calc block edits like OG: the textarea shows ONLY the fence-stripped
+  // expressions (calcLive), with a line-number gutter + live results beside it,
+  // and the fence is re-added on commit. `calcLive()` is non-null iff this is a
+  // calc block (so isCalc()), and `calcRows()` evaluates each expression line.
   const calcLive = createMemo(() => calcSource(editorValue()));
+  const isCalc = () => calcLive() !== null;
+  const calcRows = createMemo(() => (isCalc() ? evalCalc(calcLive() ?? "") : []));
   const commit = (text: string) => {
-    const next = joinProps(text, splitProps(node().raw, hideFn()).hidden);
+    // For calc, `text` is the bare expressions the user sees — re-fence it.
+    const visible = isCalc() ? wrapCalc(text) : text;
+    const next = joinProps(visible, splitProps(node().raw, hideFn()).hidden);
     // No-op commit (focus/blur with no real edit, or text that reconstructs the
     // identical raw): don't mark the page dirty or push undo — avoids churn and
     // can't rewrite the block's bytes.
@@ -1004,6 +1012,9 @@ export function Editor(props: { id: string }): JSX.Element {
     }
 
     if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      // In a calc block, Enter adds a new expression line (stays in the block) —
+      // let the textarea insert the newline natively, like OG.
+      if (isCalc()) return;
       e.preventDefault();
       commit(raw); // flush current text
       if (isAnnot()) {
@@ -1016,8 +1027,8 @@ export function Editor(props: { id: string }): JSX.Element {
         splitBlock(props.id, start);
       }
     } else if (e.key === "Backspace" && start === 0 && end === 0) {
-      // Never merge a highlight block away (its metadata must stay intact).
-      if (isAnnot()) return;
+      // Never merge a highlight or calc block away (their structure must stay).
+      if (isAnnot() || isCalc()) return;
       commit(raw);
       if (mergeWithPrev(props.id)) e.preventDefault();
     } else if (e.key === "ArrowUp" && !e.shiftKey) {
@@ -1119,12 +1130,17 @@ export function Editor(props: { id: string }): JSX.Element {
   };
 
   return (
-    <div class="editor-wrap">
+    <div class="editor-wrap" classList={{ "calc-wrap": isCalc() }}>
+      <Show when={isCalc()}>
+        <div class="calc-gutter" aria-hidden="true">
+          <For each={calcRows()}>{(_, i) => <div class="calc-lineno">{i() + 1}</div>}</For>
+        </div>
+      </Show>
       <textarea
         ref={ref}
         class="block-editor"
         spellcheck={false}
-        value={editorValue()}
+        value={isCalc() ? (calcLive() ?? "") : editorValue()}
         onInput={onInput}
         onKeyDown={onKeyDown}
         onBlur={onBlur}
@@ -1133,8 +1149,16 @@ export function Editor(props: { id: string }): JSX.Element {
         onMouseUp={updateSel}
         rows={1}
       />
-      <Show when={calcLive() !== null}>
-        <CalcBlock src={calcLive()!} />
+      <Show when={isCalc()}>
+        <div class="calc-results" aria-hidden="true">
+          <For each={calcRows()}>
+            {(r) => (
+              <div class="calc-out" classList={{ "calc-error": !!r.error }}>
+                {r.output ?? ""}
+              </div>
+            )}
+          </For>
+        </div>
       </Show>
       <Show when={hasSel()}>
         <div class="sel-toolbar" onMouseDown={(e) => e.preventDefault()}>

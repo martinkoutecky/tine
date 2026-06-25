@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { calcSource, evalCalc } from "./calc";
+import { calcSource, evalCalc, wrapCalc } from "./calc";
 
 // Just the output column, for terse assertions.
 const out = (src: string) => evalCalc(src).map((l) => l.output);
@@ -55,5 +55,17 @@ describe("calcSource (extract ```calc fence for the live editor preview)", () =>
   it("is null for non-calc text or other code fences", () => {
     expect(calcSource("just text")).toBeNull();
     expect(calcSource("```js\n1+1\n```")).toBeNull();
+  });
+});
+
+describe("wrapCalc / round-trip", () => {
+  it("wrapCalc is the inverse of calcSource (editor edits the inner, re-fences on save)", () => {
+    const raw = "```calc\n1 + 2\n2+4\nx = 12 * 3\nx / 4\n```";
+    const inner = calcSource(raw);
+    expect(inner).toBe("1 + 2\n2+4\nx = 12 * 3\nx / 4");
+    expect(wrapCalc(inner!)).toBe(raw);
+  });
+  it("re-fences edited expressions (incl. a newly added line)", () => {
+    expect(wrapCalc("1 + 2\n100 + 10%")).toBe("```calc\n1 + 2\n100 + 10%\n```");
   });
 });

@@ -44,6 +44,7 @@ const PAGES: PageDto[] = [
       b("A table:\n| Feature | Status |\n| --- | --- |\n| Outliner | done |\n| Queries | partial |"),
       b("DONE Validate round-trip on the real `shui-graph`"),
       b("Inline math works too: $E = mc^2$ and references like ((arch-1))."),
+      b("```calc\n1 + 2\n2+4\n5 + 4\nx = 12 * 3\nx / 4\n```"),
       b("Open tasks across the graph:"),
       b("{{query (todo TODO DOING)}}"),
       b("All todos + Prio A {{query (and (task TODO) (priority A))}}\nid:: 1002fa7a-7164-456c-9e53-3032f783711c"),

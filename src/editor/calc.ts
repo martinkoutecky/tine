@@ -35,6 +35,13 @@ export function calcSource(text: string): string | null {
   return inner.join("\n");
 }
 
+/** Wrap calc expression lines back into a ```calc fenced block — the inverse of
+ *  `calcSource`. The editor shows the user the fence-stripped expressions (like
+ *  OG), so on commit we re-fence what they typed. */
+export function wrapCalc(inner: string): string {
+  return "```calc\n" + inner + "\n```";
+}
+
 type Tok =
   | { t: "num"; v: number }
   | { t: "name"; v: string }

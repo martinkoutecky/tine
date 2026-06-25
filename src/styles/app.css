@@ -2345,30 +2345,63 @@ mark {
 .callout-pinned { --callout-accent: #64748b; --callout-bg: rgba(100,116,139,0.10); }
 
 /* ```calc calculator block: input lines left, evaluated results right. */
-.calc-block {
+/* OG-style calculator: line-number gutter | expression | right-aligned result.
+   Shared by the rendered block (.calc-block) and the in-place editor
+   (.editor-wrap.calc-wrap) so clicking in doesn't shift the layout. The columns
+   share one font + line-height so rows line up. */
+.calc-block,
+.editor-wrap.calc-wrap {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  column-gap: 14px;
   font-family: var(--ls-font-mono);
   font-size: 0.9em;
+  line-height: 1.6;
   background: var(--bg-tertiary);
   border-radius: 6px;
   padding: 6px 10px;
   margin: 4px 0;
 }
-.calc-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 1px 0;
+.calc-lineno {
+  color: var(--text-muted);
+  text-align: right;
+  -webkit-user-select: none;
+  user-select: none;
 }
 .calc-in {
   white-space: pre-wrap;
   color: var(--text-primary);
 }
+.calc-in.calc-error {
+  color: var(--text-muted);
+}
 .calc-out {
   color: var(--link-color);
   font-weight: 600;
+  text-align: right;
+  white-space: nowrap;
 }
-.calc-row.calc-error .calc-in {
+.calc-out.calc-error {
   color: var(--text-muted);
+  font-weight: 400;
+}
+/* Editor: the textarea is the middle (expression) column; the gutter and the
+   live-results column flank it. */
+.calc-wrap .block-editor {
+  grid-column: 2;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  padding: 0;
+  white-space: pre;
+  overflow-x: auto;
+}
+.calc-wrap .calc-gutter {
+  grid-column: 1;
+}
+.calc-wrap .calc-results {
+  grid-column: 3;
 }
 
 /* Sidebar namespace tree */
