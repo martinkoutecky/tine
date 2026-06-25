@@ -1,5 +1,27 @@
 import { describe, it, expect } from "vitest";
-import { segmentBody } from "./body";
+import { segmentBody, parseList } from "./body";
+
+describe("in-block markdown lists (+/* /ordered, NOT - which is the outline bullet)", () => {
+  it("groups + list lines into a list segment, leaves - lines as plain", () => {
+    expect(segmentBody(["here's a list", "+ [ ] a", "+ [x] b"])).toEqual([
+      { kind: "lines", lines: ["here's a list"] },
+      { kind: "list", items: ["+ [ ] a", "+ [x] b"] },
+    ]);
+    // `-` is the outliner's own bullet, never in-content → stays a plain line
+    expect(segmentBody(["- not a list line"])).toEqual([{ kind: "lines", lines: ["- not a list line"] }]);
+  });
+  it("parses checkboxes, ordered-ness and nesting by indent", () => {
+    const n = parseList(["+ [ ] a", "+ [x] b"]);
+    expect(n.ordered).toBe(false);
+    expect(n.items.map((i) => i.checkbox)).toEqual(["unchecked", "checked"]);
+    expect(n.items.map((i) => i.text)).toEqual(["a", "b"]);
+    expect(parseList(["1. one", "2. two"]).ordered).toBe(true);
+    const nested = parseList(["+ groceries", "  + milk", "  + eggs", "+ hardware"]);
+    expect(nested.items.length).toBe(2);
+    expect(nested.items[0].children?.items.map((i) => i.text)).toEqual(["milk", "eggs"]);
+    expect(nested.items[1].children).toBe(null);
+  });
+});
 
 describe("segmentBody block constructs", () => {
   it("blockquote run", () => {

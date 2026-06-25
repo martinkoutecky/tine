@@ -968,19 +968,21 @@ export function toggleBlockProperty(id: string, key: string, value: string) {
   setBlockProperty(id, key, blockProperty(id, key) === value ? null : value);
 }
 
-/** Tick/untick a GFM `[ ]`/`[x]` checkbox at the head of the block's first
- *  content line. A pure text swap — round-trips as standard markdown. */
-export function toggleCheckbox(id: string) {
+/** Tick/untick a checkbox on one line of an in-block `+ [ ]` markdown list,
+ *  identified by its exact source line. Pure `[ ]`↔`[x]` text swap — round-trips
+ *  as standard markdown (and renders/ticks in OG + mobile). */
+export function toggleListItem(id: string, rawLine: string) {
   const node = doc.byId[id];
   if (!node) return;
-  const next = node.raw.startsWith("[ ] ")
-    ? "[x] " + node.raw.slice(4)
-    : /^\[[xX]\] /.test(node.raw)
-      ? "[ ] " + node.raw.slice(4)
-      : null;
-  if (next === null) return;
-  pushUndo(`checkbox:${id}`, [node.page]);
-  setDoc("byId", id, "raw", next);
+  const lines = node.raw.split("\n");
+  const idx = lines.indexOf(rawLine);
+  if (idx < 0) return;
+  const ln = lines[idx];
+  const next = /\[ \]/.test(ln) ? ln.replace(/\[ \]/, "[x]") : ln.replace(/\[[xX]\]/, "[ ]");
+  if (next === ln) return;
+  pushUndo(`listcheck:${id}`, [node.page]);
+  lines[idx] = next;
+  setDoc("byId", id, "raw", lines.join("\n"));
   markDirty(node.page);
 }
 

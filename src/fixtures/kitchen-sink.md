@@ -81,10 +81,10 @@
 - TODO task marker: TODO finish the parity audit
 - DOING task marker: DOING writing the fixture
 - DONE task marker: DONE read the renderer code
-- checklist (GFM checkbox, NOT a task — tick it, no agenda):
-	- [ ] pack toothbrush
-	- [x] pack charger
-	- [ ] pack passport
+- in-block checklist (`+ [ ]` list inside one bullet — round-trips to OG/mobile):
+  + [ ] pack toothbrush
+  + [x] pack charger
+  + [ ] pack passport
 - NOW task marker: NOW focus block
 - LATER task marker: LATER revisit
 - WAITING task marker: WAITING on review

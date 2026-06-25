@@ -128,8 +128,10 @@ raw speed. (Where a comparison is made, it's against current Logseq desktop core
 **Tasks, journals & dates**
 - `TODO/DOING/DONE/NOW/LATER/WAITING/CANCELED`, two configurable workflows, priorities, cycle with
   `Mod+Enter`.
-- **GFM checkboxes** (`[ ]` / `[x]`) for plain checklists that are *not* TODO/agenda tasks — click to
-  tick; `Enter` continues the list (an empty item exits); `/checkbox` or just type `[ ] `.
+- **In-block markdown lists & checklists** — a `+`/`*`/ordered list *inside one bullet's content*
+  renders as a styled list (distinct from outline bullets), with tickable `[ ]`/`[x]` checkboxes that
+  are *not* TODO/agenda tasks. Uses `+` (OG's in-content marker), so a checklist round-trips to OG and
+  Logseq mobile. (`-` stays the outline bullet, exactly like OG.)
 - `SCHEDULED:` / `DEADLINE:` via a calendar **date picker** (`/scheduled`, `/deadline`), including
   **recurring tasks** (`+1w` / `.+1w` / `++1w`) where completing a repeater advances the date.
 - Multi-day **journal feed** (one continuous editable list); today's journal created lazily on

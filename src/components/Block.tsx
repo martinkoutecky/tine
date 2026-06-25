@@ -18,7 +18,6 @@ import {
   setRaw,
   setEditingId,
   splitBlock,
-  toggleCheckbox,
   indentBlock,
   outdentBlock,
   mergeWithPrev,
@@ -371,18 +370,6 @@ function Rendered(props: { id: string; owner?: string }): JSX.Element {
         >
           {view().marker}
         </span>{" "}
-      </Show>
-      <Show when={view().checkbox}>
-        <span
-          class="block-checkbox"
-          classList={{ checked: view().checkbox === "checked" }}
-          role="checkbox"
-          aria-checked={view().checkbox === "checked"}
-          onClick={(e) => {
-            e.stopPropagation();
-            toggleCheckbox(props.id);
-          }}
-        />{" "}
       </Show>
       <Show when={view().priority}>
         <span class={`block-priority priority-${view().priority}`}>[#{view().priority}]</span>{" "}
@@ -1029,28 +1016,6 @@ export function Editor(props: { id: string }): JSX.Element {
       // let the textarea insert the newline natively, like OG.
       if (isCalc()) return;
       e.preventDefault();
-      // Checklist continuation: in a `[ ]`/`[x]` block, Enter on the checkbox line
-      // makes the NEXT item a fresh `[ ]` (and an empty item exits the list) —
-      // standard editor behavior, so a checklist is enter-enter-enter, not
-      // retyping the marker each time. `raw` is the visible editor text.
-      const nl = raw.indexOf("\n");
-      const firstLine = nl === -1 ? raw : raw.slice(0, nl);
-      const restLines = nl === -1 ? "" : raw.slice(nl); // leading "\n" + the rest
-      const cb = /^(\[[ xX]\]) (.*)$/.exec(firstLine);
-      if (cb && start <= firstLine.length && !isAnnot()) {
-        const prefix = cb[1] + " "; // keep the current item's checked state
-        const item = cb[2];
-        if (item.trim() === "") {
-          commit(restLines.replace(/^\n/, "")); // empty item → drop the box, plain block
-          startEditing(props.id, 0);
-        } else {
-          const cin = Math.max(0, start - prefix.length);
-          commit(prefix + item.slice(0, cin) + restLines);
-          const newId = insertOutlineAfter(props.id, [{ raw: "[ ] " + item.slice(cin), children: [] }]);
-          startEditing(newId, 4);
-        }
-        return;
-      }
       commit(raw); // flush current text
       if (isAnnot()) {
         // A highlight block isn't split (that would mangle its metadata); Enter

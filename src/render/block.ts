@@ -44,9 +44,6 @@ export function aliasNames(preBlock: string | null | undefined): string[] {
 export interface BlockView {
   marker: string | null;
   done: boolean;
-  /** GFM checkbox state of a `[ ]`/`[x]` list-item block — independent of the
-   *  TODO/marker system (a tickable checklist item that is NOT an agenda task). */
-  checkbox: "unchecked" | "checked" | null;
   priority: "A" | "B" | "C" | null;
   headingLevel: number | null;
   /** Body lines with marker/priority/heading prefix and SCHEDULED/DEADLINE
@@ -122,18 +119,6 @@ export function blockView(raw: string): BlockView {
     }
   }
 
-  // GFM checkbox `[ ]`/`[x]` at the head of a (non-task) block → a tickable
-  // checklist item. Distinct from TODO markers: no agenda/marker semantics. The
-  // `[ ]`/`[x]` stays verbatim in `raw`; only the badge is rendered.
-  let checkbox: "unchecked" | "checked" | null = null;
-  if (marker === null) {
-    const cm = /^\[([ xX])\] /.exec(first);
-    if (cm) {
-      checkbox = cm[1] === " " ? "unchecked" : "checked";
-      first = first.slice(cm[0].length);
-    }
-  }
-
   let priority: "A" | "B" | "C" | null = null;
   const pm = /^\[#([ABC])\]\s?/.exec(first);
   if (pm) {
@@ -157,7 +142,6 @@ export function blockView(raw: string): BlockView {
   return {
     marker,
     done: marker === "DONE" || marker === "CANCELED" || marker === "CANCELLED",
-    checkbox,
     priority,
     headingLevel,
     lines,

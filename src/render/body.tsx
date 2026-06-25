@@ -2,9 +2,11 @@
 // code blocks (syntax-highlighted), and markdown tables.
 
 import { For, Show, createMemo, createResource, type JSX } from "solid-js";
+import { Dynamic } from "solid-js/web";
 import { InlineText } from "./inline";
 import { backend } from "../backend";
 import { evalCalc } from "../editor/calc";
+import { toggleListItem } from "../store";
 
 type Align = "left" | "center" | "right" | null;
 
@@ -15,7 +17,14 @@ type BodySeg =
   | { kind: "table"; rows: string[][]; aligns: Align[] }
   | { kind: "hr" }
   | { kind: "quote"; lines: string[] }
-  | { kind: "callout"; kind2: string; title: string; lines: string[] };
+  | { kind: "callout"; kind2: string; title: string; lines: string[] }
+  | { kind: "list"; items: string[] };
+
+// An in-block markdown list line: `+`/`*`/ordered marker (NOT `-`, which is the
+// outliner's own block bullet and would be parsed as a child block — matching OG,
+// where only `-`/`*`-in-org are block bullets). This is how a tickable checklist
+// round-trips with OG/mobile: a `+ [ ]` list inside ONE bullet's content.
+const LIST_RE = /^(\s*)([+*]|\d+[.)])\s+(.*)$/;
 
 function isTableRow(line: string): boolean {
   return /^\s*\|.*\|\s*$/.test(line);
@@ -137,10 +146,64 @@ export function segmentBody(lines: string[]): BodySeg[] {
       }
       // no matching END — fall through and treat as an ordinary line
     }
+    // in-block markdown list (`+`/`*`/ordered) — a run of list lines
+    if (LIST_RE.test(line)) {
+      flush();
+      const items: string[] = [];
+      while (i < lines.length && LIST_RE.test(lines[i])) {
+        items.push(lines[i]);
+        i++;
+      }
+      i--; // for-loop will ++
+      segs.push({ kind: "list", items });
+      continue;
+    }
     buf.push(line);
   }
   flush();
   return segs;
+}
+
+interface ListNode {
+  ordered: boolean;
+  items: ListItemNode[];
+}
+interface ListItemNode {
+  raw: string; // the exact source line (for round-trip-safe checkbox toggle)
+  checkbox: "unchecked" | "checked" | null;
+  text: string; // inline text after the marker (+ checkbox)
+  children: ListNode | null;
+}
+
+/** Parse a run of `+`/`*`/ordered list lines into a nested tree by indentation. */
+export function parseList(lines: string[]): ListNode {
+  const parsed = lines.map((raw) => {
+    const m = LIST_RE.exec(raw)!;
+    let rest = m[3];
+    let checkbox: ListItemNode["checkbox"] = null;
+    const cb = /^\[([ xX])\]\s+(.*)$/.exec(rest);
+    if (cb) {
+      checkbox = cb[1] === " " ? "unchecked" : "checked";
+      rest = cb[2];
+    }
+    return { indent: m[1].length, ordered: /\d/.test(m[2]), raw, checkbox, text: rest };
+  });
+  const root: ListNode = { ordered: parsed[0].ordered, items: [] };
+  const stack: { indent: number; list: ListNode }[] = [{ indent: parsed[0].indent, list: root }];
+  for (const p of parsed) {
+    while (stack.length > 1 && p.indent < stack[stack.length - 1].indent) stack.pop();
+    let top = stack[stack.length - 1];
+    if (p.indent > top.indent) {
+      // deeper than the current level → a child list under the last item
+      const parent = top.list.items[top.list.items.length - 1];
+      const child: ListNode = { ordered: p.ordered, items: [] };
+      if (parent) parent.children = child;
+      stack.push({ indent: p.indent, list: child });
+      top = stack[stack.length - 1];
+    }
+    top.list.items.push({ raw: p.raw, checkbox: p.checkbox, text: p.text, children: null });
+  }
+  return root;
 }
 
 function splitRow(line: string): string[] {
@@ -217,6 +280,37 @@ export function CalcBlock(props: { src: string }): JSX.Element {
   );
 }
 
+/** An in-block markdown list (styled distinctly from outline bullets), with
+ *  tickable `[ ]`/`[x]` checkboxes that toggle the matching line in the block. */
+function MdList(props: { node: ListNode; blockId?: string }): JSX.Element {
+  return (
+    <Dynamic component={props.node.ordered ? "ol" : "ul"} class="md-list">
+      <For each={props.node.items}>
+        {(item) => (
+          <li class="md-list-item" classList={{ "has-checkbox": item.checkbox !== null }}>
+            <Show when={item.checkbox !== null}>
+              <span
+                class="block-checkbox"
+                classList={{ checked: item.checkbox === "checked" }}
+                role="checkbox"
+                aria-checked={item.checkbox === "checked"}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (props.blockId) toggleListItem(props.blockId, item.raw);
+                }}
+              />{" "}
+            </Show>
+            <InlineText text={item.text} />
+            <Show when={item.children}>
+              <MdList node={item.children!} blockId={props.blockId} />
+            </Show>
+          </li>
+        )}
+      </For>
+    </Dynamic>
+  );
+}
+
 export function BodyContent(props: { lines: string[]; blockId?: string }): JSX.Element {
   return (
     <For each={segmentBody(props.lines)}>
@@ -248,6 +342,9 @@ export function BodyContent(props: { lines: string[]; blockId?: string }): JSX.E
               </tbody>
             </table>
           );
+        }
+        if (seg.kind === "list") {
+          return <MdList node={parseList(seg.items)} blockId={props.blockId} />;
         }
         if (seg.kind === "hr") {
           return <hr class="md-hr" />;

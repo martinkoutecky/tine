@@ -50,19 +50,4 @@ describe("blockView SCHEDULED/DEADLINE", () => {
     expect(v.lines).toEqual(["pay rent"]);
   });
 
-  it("detects a GFM checkbox and strips the box from the body", () => {
-    const u = blockView("[ ] pack toothbrush");
-    expect(u.checkbox).toBe("unchecked");
-    expect(u.marker).toBe(null); // a checkbox is NOT a task
-    expect(u.lines).toEqual(["pack toothbrush"]);
-    const c = blockView("[x] pack toothbrush");
-    expect(c.checkbox).toBe("checked");
-    expect(c.lines).toEqual(["pack toothbrush"]);
-    expect(blockView("[X] caps")).toMatchObject({ checkbox: "checked", lines: ["caps"] });
-  });
-  it("does not treat a TODO or a non-checkbox bracket as a checkbox", () => {
-    expect(blockView("TODO buy milk").checkbox).toBe(null);
-    expect(blockView("[ todo ] not a box").checkbox).toBe(null);
-    expect(blockView("text [ ] mid-line").checkbox).toBe(null);
-  });
 });

@@ -2356,6 +2356,20 @@ mark {
   border-top: 1px solid var(--border-color);
   margin: 10px 0;
 }
+/* In-block markdown list — deliberately distinct from outline (Tine) bullets:
+   real list markers, indented, no zoom/ref affordance. These live inside ONE
+   block's content (the `+ [ ]` checklist that round-trips with OG/mobile). */
+.md-list {
+  margin: 2px 0;
+  padding-left: 1.5em;
+}
+ul.md-list { list-style: disc; }
+ol.md-list { list-style: decimal; }
+.md-list .md-list-item { margin: 1px 0; }
+.md-list .md-list-item.has-checkbox {
+  list-style: none;
+  margin-left: -1.25em;
+}
 .callout {
   margin: 6px 0;
   padding: 8px 12px;
