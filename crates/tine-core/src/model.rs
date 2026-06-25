@@ -794,32 +794,81 @@ impl Graph {
     /// page (`entry`, `doc`) participates in and re-tag the survivors to `newgen`;
     /// otherwise drop the whole derived cache.
     fn scope_derived_invalidation(&self, entry: &PageEntry, doc: &Document, newgen: u64, scoped: bool) {
-        // Resolve aliases BEFORE locking derived_cache (page_aliases may take the
-        // cache lock); never hold derived while taking cache.
-        let aliases = if scoped { self.page_aliases() } else { Vec::new() };
         let today = crate::date::JournalDate::today().ordinal_key();
-        let mut g = self.derived_cache.write().unwrap();
-        let Some(dc) = g.as_mut() else { return };
-        if !scoped || dc.today != today {
-            *g = None; // full invalidate (alias/page-set/cold-cache, or day rollover)
+        // Non-scoped (alias / page-set / cold cache): drop everything, cheaply.
+        if !scoped {
+            let mut g = self.derived_cache.write().unwrap();
+            if g.is_some() {
+                *g = None;
+            }
             return;
         }
-        let pname = &entry.name;
-        dc.results.retain(|key, result| {
-            // Evict iff this page is already in the result OR now matches the key's
-            // predicate; keep (still correct) otherwise.
-            if result.iter().any(|grp| grp.page.eq_ignore_ascii_case(pname)) {
-                return false;
+        // Snapshot the cached entries under a BRIEF read lock (Arc clones — O(1)
+        // each), then run the expensive per-entry predicate eval with NO derived
+        // lock held. The prior code evaluated under the derived WRITE lock, which
+        // blocked every query reader for the duration; now readers are blocked only
+        // by the short apply below. Safe against a concurrent query because
+        // `cache_gen` was already bumped (in cache_upsert) before we got here, so
+        // until the apply re-tags `dc.gen`, derived_memo sees `dc.gen < cache_gen`
+        // and recomputes rather than serving a not-yet-pruned entry.
+        let snapshot: Vec<(String, Arc<Vec<RefGroup>>)> = {
+            let g = self.derived_cache.read().unwrap();
+            match g.as_ref() {
+                Some(dc) if dc.today == today => {
+                    dc.results.iter().map(|(k, v)| (k.clone(), Arc::clone(v))).collect()
+                }
+                Some(_) => {
+                    drop(g);
+                    *self.derived_cache.write().unwrap() = None; // day rollover → drop
+                    return;
+                }
+                None => return,
             }
-            let affects = match key.split_once('\0') {
-                Some(("b", t)) => crate::query::page_affects_backlinks(&aliases, t, doc),
-                Some(("u", t)) => crate::query::page_affects_unlinked(t, doc),
-                Some(("q", s)) => crate::query::page_affects_query(s, entry, doc),
-                _ => true, // unknown key shape → evict to stay safe
-            };
-            !affects
-        });
-        dc.gen = newgen; // survivors are valid for the post-bump generation
+        };
+        let pname = &entry.name;
+        let mut evict: Vec<&String> = Vec::new();
+        if !snapshot.is_empty() {
+            // Resolve aliases with no derived lock held (page_aliases may take the
+            // cache lock); lock order stays derived-free → cache.
+            let aliases = self.page_aliases();
+            for (key, result) in &snapshot {
+                // Evict iff this page is already in the result OR now matches the
+                // key's predicate; keep (still correct) otherwise.
+                let affected = result.iter().any(|grp| grp.page.eq_ignore_ascii_case(pname))
+                    || match key.split_once('\0') {
+                        Some(("b", t)) => crate::query::page_affects_backlinks(&aliases, t, doc),
+                        Some(("u", t)) => crate::query::page_affects_unlinked(t, doc),
+                        Some(("q", s)) => crate::query::page_affects_query(s, entry, doc),
+                        _ => true, // unknown key shape → evict to stay safe
+                    };
+                if affected {
+                    evict.push(key);
+                }
+            }
+        }
+        // Apply under the write lock (brief): drop the evicted keys and re-tag the
+        // survivors to the post-bump generation. Only remove an entry whose Arc is
+        // still the exact one we judged — if a concurrent query recomputed it, that
+        // result already reflects this edit and must be kept.
+        let snap_map: std::collections::HashMap<&String, &Arc<Vec<RefGroup>>> =
+            snapshot.iter().map(|(k, v)| (k, v)).collect();
+        let mut g = self.derived_cache.write().unwrap();
+        if let Some(dc) = g.as_mut() {
+            if dc.today != today {
+                *g = None;
+                return;
+            }
+            for key in evict {
+                let unchanged = match (dc.results.get(key), snap_map.get(key)) {
+                    (Some(cur), Some(snap)) => Arc::ptr_eq(cur, snap),
+                    _ => false,
+                };
+                if unchanged {
+                    dc.results.remove(key);
+                }
+            }
+            dc.gen = newgen; // survivors are valid for the post-bump generation
+        }
     }
 
     /// Drop one page from the cache after deleting its file.
