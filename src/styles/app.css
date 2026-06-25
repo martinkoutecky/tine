@@ -1287,6 +1287,19 @@ body {
   color: var(--text-secondary);
   cursor: pointer;
 }
+.ctx-rename-form {
+  padding: 6px 12px 8px;
+}
+.ctx-rename-name {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 4px 6px;
+  font-size: 13px;
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
 .ctx-template-submit {
   align-self: flex-start;
   padding: 4px 10px;

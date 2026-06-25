@@ -236,41 +236,19 @@ function PageMenu(props: {
   close: () => void;
 }): JSX.Element {
   const fav = () => isFavorite(props.name);
-  const rename = () => {
-    const next = window.prompt("Rename page to:", props.name)?.trim();
-    if (next && next !== props.name) {
-      // Persist ALL unsaved edits first — the rename transaction reads every
-      // referencing page from disk to rewrite its `[[refs]]`, so a dirty edit on
-      // ANY page (not just the renamed one) would be read stale and lost. Abort if
-      // anything couldn't be saved.
-      void flushAll()
-        .then((ok) => {
-          if (!ok) {
-            pushToast("Couldn't save pending edits — resolve the conflict before renaming.", "error");
-            return;
-          }
-          return backend()
-            .renamePage(props.name, next)
-            .then(() => {
-              // Backend rewrote refs across pages via the self-write guard (no
-              // watcher reload) → in-memory pages are stale; reset + reload so a
-              // stale save can't revert the rename.
-              refreshAfterRename();
-              openPage(next, props.pageKind);
-              pushToast(`Renamed to “${next}”`, "success");
-            });
-        })
-        .catch((e) => pushToast(`Rename failed: ${String(e)}`, "error"));
-    }
-  };
   const remove = async () => {
+    // Snapshot props BEFORE any await/close: the menu's <Show> disposes this
+    // component the instant props.close() runs, after which reading props.* warns
+    // "stale read from <Show>".
+    const name = props.name;
+    const kind = props.pageKind;
     // Native GTK confirm — window.confirm silently returns true here, which would
     // delete the page with no prompt (this is destructive + irreversible).
-    if (!(await backend().confirm(`Delete page "${props.name}"? This cannot be undone.`))) return;
+    if (!(await backend().confirm(`Delete page "${name}"? This cannot be undone.`))) return;
     // Route through the store (not backend directly) so it tombstones the page and
     // cancels any pending save — otherwise a just-typed, never-saved page could be
     // recreated by a queued save right after we delete it.
-    void deletePage(props.name, props.pageKind)
+    void deletePage(name, kind)
       .then((ok) => {
         if (!ok) {
           pushToast("Delete failed", "error");
@@ -279,8 +257,8 @@ function PageMenu(props: {
         const r = route();
         // Deleted the page you're viewing → fall back to journals in place (the
         // page is gone; don't open a new tab even on a pinned tab).
-        if (r.kind === "page" && r.name === props.name) openJournals({ inPlace: true });
-        pushToast(`Deleted “${props.name}”`, "success");
+        if (r.kind === "page" && r.name === name) openJournals({ inPlace: true });
+        pushToast(`Deleted “${name}”`, "success");
       })
       .catch(() => pushToast("Delete failed", "error"));
   };
@@ -305,21 +283,92 @@ function PageMenu(props: {
     ...(props.pageKind === "journal" && props.name !== journalTitle(new Date())
       ? [{ label: "Carry unfinished tasks → today", run: () => void carryDay(props.name) }]
       : []),
-    ...(props.pageKind === "page"
-      ? [
-          { label: "Rename page", run: rename },
-          { label: "Delete page", run: remove, danger: true },
-        ]
-      : []),
   ];
   return (
-    <For each={items}>
-      {(it) => (
-        <div class="ctx-item" classList={{ danger: !!it.danger }} onClick={() => { it.run(); props.close(); }}>
-          {it.label}
+    <>
+      <For each={items}>
+        {(it) => (
+          <div class="ctx-item" classList={{ danger: !!it.danger }} onClick={() => { it.run(); props.close(); }}>
+            {it.label}
+          </div>
+        )}
+      </For>
+      {/* Rename/Delete are page-only. Rename expands into an inline input (like
+          MakeTemplate) — window.prompt is a silent no-op in WebKitGTK. */}
+      <Show when={props.pageKind === "page"}>
+        <RenamePage name={props.name} pageKind={props.pageKind} close={props.close} />
+        <div class="ctx-item danger" onClick={() => { void remove(); props.close(); }}>
+          Delete page
         </div>
-      )}
-    </For>
+      </Show>
+    </>
+  );
+}
+
+// Inline page rename: a context-menu item that expands into a name field (mirrors
+// MakeTemplate), then runs the two-phase rename transaction. window.prompt is a
+// silent no-op in this WebKitGTK build, so we never use it.
+function RenamePage(props: {
+  name: string;
+  pageKind: "journal" | "page";
+  close: () => void;
+}): JSX.Element {
+  const [editing, setEditing] = createSignal(false);
+  const [value, setValue] = createSignal(props.name);
+
+  const submit = async () => {
+    // Snapshot everything we need BEFORE close() disposes this component — reading
+    // props.* afterward warns "stale read from <Show>".
+    const from = props.name;
+    const kind = props.pageKind;
+    const next = value().trim();
+    props.close();
+    if (!next || next === from) return;
+    try {
+      // Persist ALL unsaved edits first — the rename reads every referencing page
+      // from disk to rewrite its `[[refs]]`, so a dirty edit on ANY page would be
+      // read stale and lost.
+      if (!(await flushAll())) {
+        pushToast("Couldn't save pending edits — resolve the conflict before renaming.", "error");
+        return;
+      }
+      await backend().renamePage(from, next);
+      // Backend rewrote refs across pages via the self-write guard (no watcher
+      // reload) → in-memory pages are stale; reset + reload so a stale save can't
+      // revert the rename.
+      refreshAfterRename();
+      openPage(next, kind);
+      pushToast(`Renamed to “${next}”`, "success");
+    } catch (e) {
+      pushToast(`Rename failed: ${String(e)}`, "error");
+    }
+  };
+
+  return (
+    <Show
+      when={editing()}
+      fallback={
+        <div
+          class="ctx-item"
+          onClick={(e) => { e.stopPropagation(); setValue(props.name); setEditing(true); }}
+        >
+          Rename page…
+        </div>
+      }
+    >
+      <div class="ctx-rename-form" onClick={(e) => e.stopPropagation()}>
+        <input
+          class="ctx-rename-name"
+          ref={(el) => queueMicrotask(() => (el.focus(), el.select()))}
+          value={value()}
+          onInput={(e) => setValue(e.currentTarget.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") { e.preventDefault(); void submit(); }
+            else if (e.key === "Escape") { e.preventDefault(); setEditing(false); }
+          }}
+        />
+      </div>
+    </Show>
   );
 }
 

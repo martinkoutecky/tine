@@ -115,28 +115,55 @@ try {
     console.log("!! no Tine reference-page header to click");
   }
 
-  // Trigger rename by dispatching a real dblclick on the title (SolidJS uses
-  // delegated listeners, so a bubbling synthetic event reaches onDblClick).
-  await browser.execute(() => {
-    const t = document.querySelector(".page-title");
-    if (t) t.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, view: window }));
-  });
-  await sleep(500);
-  const input = await browser.$(".page-title-input");
-  try { await input.waitForExist({ timeout: 4000 }); } catch {}
-  if (await input.isExisting()) {
-    console.log("rename input appeared");
-    // Set value + fire input (SolidJS setNewName) + Enter (commitRename).
-    await browser.execute((val) => {
-      const inp = document.querySelector(".page-title-input");
+  const fillAndEnter = (sel, val) =>
+    browser.execute((s, v) => {
+      const inp = document.querySelector(s);
       inp.focus();
-      inp.value = val;
+      inp.value = v;
       inp.dispatchEvent(new Event("input", { bubbles: true }));
       inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-    }, "Pokus");
-    console.log("set name 'Pokus' + Enter via execute");
+    }, sel, val);
+
+  if (process.env.TINE_E2E_RENAME === "ctx") {
+    // Context-menu rename: right-click the title, click "Rename page…", fill, Enter.
+    await browser.execute(() => {
+      const t = document.querySelector(".page-title");
+      const r = t.getBoundingClientRect();
+      t.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: r.left + 6, clientY: r.top + 6, view: window }));
+    });
+    await sleep(700);
+    const clicked = await browser.execute(() => {
+      const it = [...document.querySelectorAll(".ctx-item")].find((e) => e.textContent.trim().startsWith("Rename page"));
+      if (it) { it.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window })); return true; }
+      return false;
+    });
+    console.log("clicked 'Rename page…' item:", clicked);
+    await sleep(500);
+    const ri = await browser.$(".ctx-rename-name");
+    try { await ri.waitForExist({ timeout: 4000 }); } catch {}
+    if (await ri.isExisting()) {
+      console.log("ctx rename input appeared");
+      await fillAndEnter(".ctx-rename-name", "Pokus");
+      console.log("ctx rename: set 'Pokus' + Enter");
+    } else {
+      console.log("!! ctx rename input never appeared");
+    }
   } else {
-    console.log("!! rename input never appeared (dblclick didn't reach startRename)");
+    // Double-click title rename (SolidJS delegated dblclick).
+    await browser.execute(() => {
+      const t = document.querySelector(".page-title");
+      if (t) t.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, view: window }));
+    });
+    await sleep(500);
+    const input = await browser.$(".page-title-input");
+    try { await input.waitForExist({ timeout: 4000 }); } catch {}
+    if (await input.isExisting()) {
+      console.log("rename input appeared");
+      await fillAndEnter(".page-title-input", "Pokus");
+      console.log("set name 'Pokus' + Enter via execute");
+    } else {
+      console.log("!! rename input never appeared (dblclick didn't reach startRename)");
+    }
   }
   await sleep(3000);
   const title2 = await browser.$(".page-title");
