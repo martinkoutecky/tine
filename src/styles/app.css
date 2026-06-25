@@ -1812,6 +1812,37 @@ body {
   vertical-align: 1px;
 }
 
+/* GFM `[ ]`/`[x]` checklist checkbox (distinct from TODO markers). */
+.block-checkbox {
+  display: inline-block;
+  width: 15px;
+  height: 15px;
+  box-sizing: border-box;
+  vertical-align: -2px;
+  border: 1.5px solid color-mix(in srgb, currentColor 45%, transparent);
+  border-radius: 3px;
+  cursor: pointer;
+  position: relative;
+}
+.block-checkbox:hover {
+  border-color: var(--accent, #4c8bf5);
+}
+.block-checkbox.checked {
+  background: var(--accent, #4c8bf5);
+  border-color: var(--accent, #4c8bf5);
+}
+.block-checkbox.checked::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 4px;
+  height: 8px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
 .marker-todo { color: var(--marker-todo); }
 .marker-doing { color: var(--marker-doing); }
 .marker-now { color: var(--marker-now); }

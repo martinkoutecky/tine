@@ -968,6 +968,22 @@ export function toggleBlockProperty(id: string, key: string, value: string) {
   setBlockProperty(id, key, blockProperty(id, key) === value ? null : value);
 }
 
+/** Tick/untick a GFM `[ ]`/`[x]` checkbox at the head of the block's first
+ *  content line. A pure text swap — round-trips as standard markdown. */
+export function toggleCheckbox(id: string) {
+  const node = doc.byId[id];
+  if (!node) return;
+  const next = node.raw.startsWith("[ ] ")
+    ? "[x] " + node.raw.slice(4)
+    : /^\[[xX]\] /.test(node.raw)
+      ? "[ ] " + node.raw.slice(4)
+      : null;
+  if (next === null) return;
+  pushUndo(`checkbox:${id}`, [node.page]);
+  setDoc("byId", id, "raw", next);
+  markDirty(node.page);
+}
+
 /** Set the block's heading level via the markdown `#` prefix (null clears it). */
 export function setHeading(id: string, level: number | null) {
   const node = doc.byId[id];

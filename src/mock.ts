@@ -113,6 +113,11 @@ const NAMED: PageDto[] = [
       b("Display math:\n$$\\int_0^1 x^2 \\, dx = \\tfrac13$$"),
       b("DONE finished task with a logbook drawer\n:LOGBOOK:\nCLOCK: [2026-06-16 Tue 09:00]--[2026-06-16 Tue 09:30] =>  0:30\n:END:"),
       b("Task markers: TODO a, DOING b, NOW c, LATER d, WAIT e, DONE f"),
+      b("checklist (GFM checkbox — tick it, NOT a TODO/agenda task):", [
+        b("[ ] pack toothbrush"),
+        b("[x] pack charger"),
+        b("[ ] pack passport"),
+      ]),
       b("TODO [#A] high-priority task"),
       b("Inline styles: **bold**, *italic*, ~~strike~~, ==highlight==, `code`"),
       b("Footnote reference[^1] in a sentence.\n[^1]: the footnote definition."),

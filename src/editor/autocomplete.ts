@@ -124,6 +124,7 @@ export const COMMANDS: Command[] = [
   { label: "WAIT", insert: "WAIT " },
   { label: "IN-PROGRESS", insert: "IN-PROGRESS " },
   { label: "CANCELED", insert: "CANCELED " },
+  { label: "Checkbox", insert: "[ ] " }, // GFM checklist item (tickable, not a TODO)
   { label: "Priority A", action: "priority-a", key: "A" },
   { label: "Priority B", action: "priority-b", key: "B" },
   { label: "Priority C", action: "priority-c", key: "C" },
