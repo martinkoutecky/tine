@@ -169,6 +169,12 @@ raw speed. (Where a comparison is made, it's against current Logseq desktop core
 - **Custom journal date formats** — reads `:journal/file-name-format` and `:journal/page-title-format`
   and recognizes/creates journal files in your format (e.g. `dd-MM-yyyy`, `yyyy-MM-dd`, `yyyyMMdd`),
   falling back to the defaults so old/foreign files still resolve.
+- **Org-mode graphs** — opens, renders, and edits `.org` pages and journals (headlines as blocks,
+  org inline syntax `*bold*` `/italic/` `_underline_` `~code~` `[[target][desc]]`, TODO markers,
+  `#+BEGIN_SRC`/`QUOTE` blocks). Mixed `.md` + `.org` graphs work; a `New page format` setting
+  (`:preferred-format`) chooses what new pages/journals use. A `.org` file is only ever rewritten
+  when Tine can reproduce it **byte-for-byte** — anything it can't round-trip loads **read-only**, so
+  it can never corrupt an org graph.
 - **Launch snapshots** (configurable keep-count) with a restore UI that takes a safety snapshot
   first; page delete moves to a recoverable **trash**; `atomic_write` + fsync.
 - Open/switch graphs from the app (native folder picker) or via `TINE_GRAPH`.
