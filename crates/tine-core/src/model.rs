@@ -714,12 +714,15 @@ impl Graph {
     /// Discard the cache; it rebuilds on the next whole-graph query. Use when an
     /// external change may have touched many files.
     pub fn invalidate_cache(&self) {
-        // Bump the generation so the gen-keyed block index rebuilds against the
-        // fresh content rather than trusting a hint from the discarded cache.
-        self.cache_gen.fetch_add(1, std::sync::atomic::Ordering::Release);
         let mut guard = self.cache.write().unwrap();
         *guard = None;
         self.disk_revs.write().unwrap().clear(); // under the cache lock (cache → disk_revs)
+        // Bump the generation AFTER discarding the cache (under the cache lock), so
+        // a reader that loads the new gen then reads the cache sees None (and
+        // rebuilds from disk) rather than the stale pre-invalidation content — same
+        // gen-after-content ordering as cache_upsert. The gen-keyed block index
+        // then rebuilds against fresh content too.
+        self.cache_gen.fetch_add(1, std::sync::atomic::Ordering::Release);
         drop(guard);
         *self.alias_cache.write().unwrap() = None;
         *self.block_index.write().unwrap() = None;
@@ -730,11 +733,6 @@ impl Graph {
     /// exact on-disk bytes `doc` was produced from (the freshness key — see
     /// `disk_revs`).
     fn cache_upsert(&self, entry: PageEntry, mut doc: Document, disk_rev: String) {
-        // Signal a mutation so a concurrent lock-free cache build won't install a
-        // snapshot that predates this change (see with_pages). Update the cache
-        // slot BEFORE disk_revs below, so a reader can never observe a fresh rev
-        // paired with a stale cached doc.
-        let newgen = self.cache_gen.fetch_add(1, std::sync::atomic::Ordering::Release) + 1;
         // Fill uuids for any block that lacks one (e.g. PDF-highlight writes);
         // blocks saved from the frontend already carry their ids, which are kept.
         assign_doc_uuids(&mut doc.roots);
@@ -776,6 +774,17 @@ impl Graph {
             // page is actually cached (preserves "entry exists IFF cached").
             self.disk_revs.write().unwrap().insert(key, disk_rev);
         }
+        // Bump cache_gen AFTER publishing the new content (and disk_revs), still
+        // under the cache write lock. A reader loads cache_gen (Acquire) then takes
+        // the cache read lock; because the bump (Release) happens-after the slot
+        // write and before the lock is dropped, observing the new gen guarantees
+        // the new doc is visible. So any derived result computed at gen G reflects
+        // every edit whose gen is <= G — it can never be a stale whole-graph scan
+        // that reads the OLD doc yet gets tagged (and served) at the fresh gen.
+        // (Bumping FIRST left a window where the gen was new but the doc still old.)
+        // The bump is unconditional — even on a cold cache (no slot to update) — so
+        // a concurrent lock-free with_pages build still detects the race and retries.
+        let newgen = self.cache_gen.fetch_add(1, std::sync::atomic::Ordering::Release) + 1;
         drop(guard);
         if alias_touched {
             *self.alias_cache.write().unwrap() = None;
@@ -794,86 +803,45 @@ impl Graph {
     /// page (`entry`, `doc`) participates in and re-tag the survivors to `newgen`;
     /// otherwise drop the whole derived cache.
     fn scope_derived_invalidation(&self, entry: &PageEntry, doc: &Document, newgen: u64, scoped: bool) {
+        // Resolve aliases BEFORE taking the derived lock (page_aliases may take the
+        // cache lock); never hold derived while taking cache.
+        let aliases = if scoped { self.page_aliases() } else { Vec::new() };
         let today = crate::date::JournalDate::today().ordinal_key();
-        // Non-scoped (alias / page-set / cold cache): drop everything, cheaply.
-        if !scoped {
-            let mut g = self.derived_cache.write().unwrap();
-            if g.is_some() {
-                *g = None;
-            }
+        // Hold the derived write lock across the WHOLE prune+re-tag. This is
+        // deliberately atomic: the keep/evict test (page_affects_*) is re-evaluated
+        // against whatever entry is CURRENTLY in the map, so a result a concurrent
+        // query inserted (possibly from an older page-doc) is re-judged and evicted
+        // if this edit affects it — never kept on pointer identity. Combined with
+        // the gen-after-content bump (cache_upsert), an entry that survives the
+        // prune is provably unaffected by this edit and consistent at `newgen`.
+        // (An earlier version evaluated off the lock and kept entries by Arc
+        // ptr_eq; that could bless a stale concurrent recompute — reverted.)
+        let mut g = self.derived_cache.write().unwrap();
+        let Some(dc) = g.as_mut() else { return };
+        if !scoped || dc.today != today {
+            *g = None; // full invalidate (alias/page-set/cold-cache, or day rollover)
             return;
         }
-        // Snapshot the cached entries under a BRIEF read lock (Arc clones — O(1)
-        // each), then run the expensive per-entry predicate eval with NO derived
-        // lock held. The prior code evaluated under the derived WRITE lock, which
-        // blocked every query reader for the duration; now readers are blocked only
-        // by the short apply below. Safe against a concurrent query because
-        // `cache_gen` was already bumped (in cache_upsert) before we got here, so
-        // until the apply re-tags `dc.gen`, derived_memo sees `dc.gen < cache_gen`
-        // and recomputes rather than serving a not-yet-pruned entry.
-        let snapshot: Vec<(String, Arc<Vec<RefGroup>>)> = {
-            let g = self.derived_cache.read().unwrap();
-            match g.as_ref() {
-                Some(dc) if dc.today == today => {
-                    dc.results.iter().map(|(k, v)| (k.clone(), Arc::clone(v))).collect()
-                }
-                Some(_) => {
-                    drop(g);
-                    *self.derived_cache.write().unwrap() = None; // day rollover → drop
-                    return;
-                }
-                None => return,
-            }
-        };
         let pname = &entry.name;
-        let mut evict: Vec<&String> = Vec::new();
-        if !snapshot.is_empty() {
-            // Resolve aliases with no derived lock held (page_aliases may take the
-            // cache lock); lock order stays derived-free → cache.
-            let aliases = self.page_aliases();
-            for (key, result) in &snapshot {
-                // Evict iff this page is already in the result OR now matches the
-                // key's predicate; keep (still correct) otherwise.
-                let affected = result.iter().any(|grp| grp.page.eq_ignore_ascii_case(pname))
-                    || match key.split_once('\0') {
-                        Some(("b", t)) => crate::query::page_affects_backlinks(&aliases, t, doc),
-                        Some(("u", t)) => crate::query::page_affects_unlinked(t, doc),
-                        Some(("q", s)) => crate::query::page_affects_query(s, entry, doc),
-                        _ => true, // unknown key shape → evict to stay safe
-                    };
-                if affected {
-                    evict.push(key);
-                }
+        dc.results.retain(|key, result| {
+            // Evict iff this page is already in the result OR now matches the key's
+            // predicate; keep (still correct) otherwise.
+            if result.iter().any(|grp| grp.page.eq_ignore_ascii_case(pname)) {
+                return false;
             }
-        }
-        // Apply under the write lock (brief): drop the evicted keys and re-tag the
-        // survivors to the post-bump generation. Only remove an entry whose Arc is
-        // still the exact one we judged — if a concurrent query recomputed it, that
-        // result already reflects this edit and must be kept.
-        let snap_map: std::collections::HashMap<&String, &Arc<Vec<RefGroup>>> =
-            snapshot.iter().map(|(k, v)| (k, v)).collect();
-        let mut g = self.derived_cache.write().unwrap();
-        if let Some(dc) = g.as_mut() {
-            if dc.today != today {
-                *g = None;
-                return;
-            }
-            for key in evict {
-                let unchanged = match (dc.results.get(key), snap_map.get(key)) {
-                    (Some(cur), Some(snap)) => Arc::ptr_eq(cur, snap),
-                    _ => false,
-                };
-                if unchanged {
-                    dc.results.remove(key);
-                }
-            }
-            dc.gen = newgen; // survivors are valid for the post-bump generation
-        }
+            let affects = match key.split_once('\0') {
+                Some(("b", t)) => crate::query::page_affects_backlinks(&aliases, t, doc),
+                Some(("u", t)) => crate::query::page_affects_unlinked(t, doc),
+                Some(("q", s)) => crate::query::page_affects_query(s, entry, doc),
+                _ => true, // unknown key shape → evict to stay safe
+            };
+            !affects
+        });
+        dc.gen = newgen; // survivors are valid for the post-bump generation
     }
 
     /// Drop one page from the cache after deleting its file.
     fn cache_remove(&self, name: &str, kind: PageKind) {
-        self.cache_gen.fetch_add(1, std::sync::atomic::Ordering::Release);
         // A page delete is a page-set change (affects namespaces, exists-by-ref,
         // every backlink/query) — drop the whole derived cache.
         *self.derived_cache.write().unwrap() = None;
@@ -890,6 +858,10 @@ impl Graph {
             // cache_upsert) so the two never diverge.
             self.disk_revs.write().unwrap().remove(&rev_key(kind, name));
         }
+        // Bump AFTER the removal is published (under the cache lock), so a reader
+        // that loads the new gen is guaranteed to see the page gone — see the
+        // gen-after-content note in cache_upsert.
+        self.cache_gen.fetch_add(1, std::sync::atomic::Ordering::Release);
         drop(guard);
         if alias_touched {
             *self.alias_cache.write().unwrap() = None;
