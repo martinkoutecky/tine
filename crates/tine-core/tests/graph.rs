@@ -1079,3 +1079,35 @@ fn rename_superstring_rewrites_journal_and_nonjournal_refs() {
     assert!(after.contains(&"MyPage"), "backlinks miss non-journal: {after:?}");
     std::fs::remove_dir_all(&root).ok();
 }
+
+#[test]
+fn rename_rewrites_nested_ref_in_open_page() {
+    use tine_core::PageKind;
+    // Mirror the reported "Tine" page: a NESTED ref (sub-bullet) with a block
+    // id::, the page already LOADED (open/pinned), cache warm + backlinks queried.
+    let root = std::env::temp_dir().join(format!("tine-rename-nested-{}", std::process::id()));
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    std::fs::create_dir_all(root.join("journals")).unwrap();
+    std::fs::write(root.join("pages").join("Testtest.md"), "- the page\n").unwrap();
+    std::fs::write(
+        root.join("pages").join("Tine.md"),
+        "- Tine notes\n\t- see [[Testtest]] in a sub-bullet\n\t  id:: 1111aaaa-bbbb-cccc-dddd-eeeeeeeeeeee\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("journals").join("2026_06_15.md"), "- ref [[Testtest]]\n").unwrap();
+
+    let g = Graph::open(&root);
+    g.warm_cache();
+    let _ = g.load_page(&g.find_entry("Tine", PageKind::Page).unwrap()); // simulate it being open
+    let _ = g.backlinks("Testtest");
+
+    g.rename_page("Testtest", "TesttestTest").unwrap();
+
+    let tine = std::fs::read_to_string(root.join("pages").join("Tine.md")).unwrap();
+    assert!(tine.contains("[[TesttestTest]]"), "nested ref NOT rewritten: {tine:?}");
+    assert!(!tine.contains("[[Testtest]]"), "old ref remains: {tine:?}");
+    let bl = g.backlinks("TesttestTest");
+    let pages: Vec<&str> = bl.iter().map(|x| x.page.as_str()).collect();
+    assert!(pages.contains(&"Tine"), "backlinks miss Tine: {pages:?}");
+    std::fs::remove_dir_all(&root).ok();
+}
