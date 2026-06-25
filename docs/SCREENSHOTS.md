@@ -5,6 +5,17 @@ build, so they drift silently when the UI changes. **When you ship a feature or
 change an existing feature's design, check the table below and regenerate any
 shot it touches** (and update the README prose in the same commit).
 
+## Verify UI work visually before handing it off (project process)
+
+The same harness is how Claude **self-verifies any visual/UI change** — not just
+README shots. For a new or changed UI feature: build, drive the relevant state in
+the mock, screenshot it, look at the image, and iterate until it matches the
+intended (and OG) look *before* asking Martin to test. Martin has OK'd the extra
+token cost — it saves his time, and he shouldn't be the one eyeballing something
+that can be screenshotted here. (No Xvfb needed; it's headless Chromium against
+the real frontend. Xvfb + the real WebKitGTK app is reserved for WebKitGTK-only
+rendering quirks — fonts/emoji — not layout.)
+
 ## How they're made
 
 All shots are **headless Chromium renders of the built frontend against the mock
