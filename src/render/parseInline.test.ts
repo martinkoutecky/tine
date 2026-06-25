@@ -138,4 +138,51 @@ describe("parseInline", () => {
       { t: "pageref", name: "P" },
     ]);
   });
+
+  describe("org format", () => {
+    const org = (s: string) => parseInline(s, "org");
+
+    it("emphasis markers differ from markdown", () => {
+      expect(org("*b*")).toEqual([{ t: "bold", v: [{ t: "text", v: "b" }] }]);
+      expect(org("/i/")).toEqual([{ t: "italic", v: [{ t: "text", v: "i" }] }]);
+      expect(org("_u_")).toEqual([{ t: "underline", v: [{ t: "text", v: "u" }] }]);
+      expect(org("+s+")).toEqual([{ t: "strike", v: [{ t: "text", v: "s" }] }]);
+      expect(org("~c~")).toEqual([{ t: "code", v: "c" }]);
+      expect(org("=v=")).toEqual([{ t: "code", v: "v" }]);
+      expect(org("^^h^^")).toEqual([{ t: "highlight", v: [{ t: "text", v: "h" }] }]);
+    });
+
+    it("boundary rules avoid false positives in plain text", () => {
+      // path slashes, snake_case, arithmetic, ~/home must NOT become emphasis
+      for (const s of ["a/b/c", "snake_case_var", "2*3*4", "~/home/x", "x=y=z"]) {
+        expect(org(s)).toEqual([{ t: "text", v: s }]);
+      }
+    });
+
+    it("emphasis only at word boundaries", () => {
+      expect(org("a *bold* b")).toEqual([
+        { t: "text", v: "a " },
+        { t: "bold", v: [{ t: "text", v: "bold" }] },
+        { t: "text", v: " b" },
+      ]);
+    });
+
+    it("org links: plain, aliased, and external", () => {
+      expect(org("[[Page Name]]")).toEqual([{ t: "pageref", name: "Page Name" }]);
+      expect(org("[[Target][Display]]")).toEqual([
+        { t: "pageref", name: "Target", alias: "Display" },
+      ]);
+      expect(org("[[https://x.com][site]]")).toEqual([
+        { t: "link", label: "site", url: "https://x.com" },
+      ]);
+      expect(org("[[file:./pages/foo.org][Foo]]")).toEqual([
+        { t: "pageref", name: "foo", alias: "Foo" },
+      ]);
+    });
+
+    it("markdown-only inline forms stay literal in org", () => {
+      // backtick code is markdown-only; in org `~code~` is used instead.
+      expect(org("a `code` b")).toEqual([{ t: "text", v: "a `code` b" }]);
+    });
+  });
 });

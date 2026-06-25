@@ -5,7 +5,7 @@
 import { For, Show, createMemo, createResource, createSignal, type JSX } from "solid-js";
 import { openPage, openPageInNewTab } from "../router";
 import { openPdf, openPageInSidebar, openPageContextMenu, setLightbox, graphEpoch } from "../ui";
-import { parseInline, type Seg } from "./parseInline";
+import { parseInline, type Seg, type Format } from "./parseInline";
 import { blockView } from "./block";
 import { backend } from "../backend";
 import { loadAssetBlob } from "../assetCache";
@@ -24,6 +24,8 @@ function renderSeg(s: Seg, blockId?: string): JSX.Element {
       return <strong>{renderSegs(s.v)}</strong>;
     case "italic":
       return <em>{renderSegs(s.v)}</em>;
+    case "underline":
+      return <u>{renderSegs(s.v)}</u>;
     case "strike":
       return <del>{renderSegs(s.v)}</del>;
     case "highlight":
@@ -52,9 +54,9 @@ function renderSeg(s: Seg, blockId?: string): JSX.Element {
             openPageContextMenu(e.clientX, e.clientY, s.name);
           }}
         >
-          <span class="bracket">[[</span>
-          {s.name}
-          <span class="bracket">]]</span>
+          <Show when={s.alias} fallback={<><span class="bracket">[[</span>{s.name}<span class="bracket">]]</span></>}>
+            {s.alias}
+          </Show>
         </a>
       );
     case "tag":
@@ -239,8 +241,8 @@ function AssetImage(props: { url: string; alt: string; width?: string; height?: 
 /** Render a block's body text (already stripped of marker/heading prefix).
  *  `blockId` (the owning block) is threaded to inline `{{query}}` macros so they
  *  can show the editable builder + rewrite that block. */
-export function InlineText(props: { text: string; blockId?: string }): JSX.Element {
-  return <>{renderSegs(parseInline(props.text), props.blockId)}</>;
+export function InlineText(props: { text: string; blockId?: string; format?: Format }): JSX.Element {
+  return <>{renderSegs(parseInline(props.text, props.format ?? "md"), props.blockId)}</>;
 }
 
 // Inline ((block reference)): resolves to the referenced block's first line,

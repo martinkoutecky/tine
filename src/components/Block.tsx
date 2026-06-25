@@ -12,6 +12,7 @@ import {
 } from "../editor/autocomplete";
 import {
   doc,
+  pageByName,
   editingId,
   editingOwner,
   startEditing,
@@ -175,6 +176,9 @@ export function Block(props: { id: string }): JSX.Element {
     editingId() === props.id && (editingOwner() === null || editingOwner() === instanceId);
   const hasChildren = () => node().children.length > 0;
   const collapsed = () => node().collapsed;
+  // An org page Tine can't round-trip is shown but NOT editable (Tine must never
+  // rewrite it). Clicking a block doesn't enter the editor on such a page.
+  const readOnly = () => pageByName(node().page)?.readOnly ?? false;
 
   return (
     <div class="ls-block" classList={{ collapsed: collapsed() }} data-block-id={props.id}>
@@ -232,10 +236,12 @@ export function Block(props: { id: string }): JSX.Element {
 
         <div
           class="block-content-wrapper"
+          classList={{ "read-only": readOnly() }}
           onClick={() => {
             // Click anywhere in the row (not on a link) starts editing — and
-            // claims the editor for THIS instance.
-            if (!editing()) startEditing(props.id, doc.byId[props.id].raw.length, instanceId);
+            // claims the editor for THIS instance. Read-only org pages don't edit.
+            if (!editing() && !readOnly())
+              startEditing(props.id, doc.byId[props.id].raw.length, instanceId);
           }}
         >
           <Show when={editing()} fallback={<Rendered id={props.id} owner={instanceId} />}>
@@ -285,6 +291,8 @@ function renderedCaret(root: Node, container: Node, off: number): { text: string
 function Rendered(props: { id: string; owner?: string }): JSX.Element {
   const node = () => doc.byId[props.id];
   const view = createMemo(() => blockView(node().raw));
+  const fmt = () => pageByName(node().page)?.format ?? "md";
+  const readOnly = () => pageByName(node().page)?.readOnly ?? false;
 
   const macro = createMemo(() => detectMacro(view().lines));
 
@@ -314,6 +322,7 @@ function Rendered(props: { id: string; owner?: string }): JSX.Element {
   // stays hidden); the colored prefix still jumps to the PDF.
   const onClick = (e: MouseEvent) => {
     e.stopPropagation();
+    if (readOnly()) return; // read-only org page — never enter the editor
     startEditing(props.id, clickOffset(e) ?? node().raw.length, props.owner ?? null);
   };
 
@@ -327,7 +336,7 @@ function Rendered(props: { id: string; owner?: string }): JSX.Element {
   };
 
   const body = (
-    <Show when={annotation()} fallback={<BodyContent lines={view().lines} blockId={props.id} />}>
+    <Show when={annotation()} fallback={<BodyContent lines={view().lines} blockId={props.id} format={fmt()} />}>
       <AnnotationBody
         color={annotation()!.color}
         hlPage={annotation()!.hlPage}

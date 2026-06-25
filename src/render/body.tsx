@@ -4,6 +4,7 @@
 import { For, Show, createMemo, createResource, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { InlineText } from "./inline";
+import type { Format } from "./parseInline";
 import { backend } from "../backend";
 import { evalCalc } from "../editor/calc";
 import { toggleListItem } from "../store";
@@ -139,6 +140,9 @@ export function segmentBody(lines: string[]): BodySeg[] {
           segs.push({ kind: "callout", kind2: type, title: beg[2].trim(), lines: inner });
         } else if (type === "quote") {
           segs.push({ kind: "quote", lines: inner });
+        } else if (type === "src" || type === "example") {
+          // org source/example block → fenced code (lang from `#+BEGIN_SRC lang`).
+          segs.push({ kind: "code", lang: type === "src" ? beg[2].trim() : "", code: inner.join("\n") });
         } else {
           segs.push({ kind: "lines", lines: inner }); // center / unknown → plain
         }
@@ -282,7 +286,7 @@ export function CalcBlock(props: { src: string }): JSX.Element {
 
 /** An in-block markdown list (styled distinctly from outline bullets), with
  *  tickable `[ ]`/`[x]` checkboxes that toggle the matching line in the block. */
-function MdList(props: { node: ListNode; blockId?: string }): JSX.Element {
+function MdList(props: { node: ListNode; blockId?: string; format?: Format }): JSX.Element {
   return (
     <Dynamic component={props.node.ordered ? "ol" : "ul"} class="md-list">
       <For each={props.node.items}>
@@ -300,9 +304,9 @@ function MdList(props: { node: ListNode; blockId?: string }): JSX.Element {
                 }}
               />{" "}
             </Show>
-            <InlineText text={item.text} />
+            <InlineText text={item.text} format={props.format} />
             <Show when={item.children}>
-              <MdList node={item.children!} blockId={props.blockId} />
+              <MdList node={item.children!} blockId={props.blockId} format={props.format} />
             </Show>
           </li>
         )}
@@ -311,7 +315,7 @@ function MdList(props: { node: ListNode; blockId?: string }): JSX.Element {
   );
 }
 
-export function BodyContent(props: { lines: string[]; blockId?: string }): JSX.Element {
+export function BodyContent(props: { lines: string[]; blockId?: string; format?: Format }): JSX.Element {
   return (
     <For each={segmentBody(props.lines)}>
       {(seg) => {
@@ -328,14 +332,14 @@ export function BodyContent(props: { lines: string[]; blockId?: string }): JSX.E
             <table class="md-table">
               <thead>
                 <tr>
-                  <For each={head}>{(c, i) => <th style={al(i())}><InlineText text={c} /></th>}</For>
+                  <For each={head}>{(c, i) => <th style={al(i())}><InlineText text={c} format={props.format} /></th>}</For>
                 </tr>
               </thead>
               <tbody>
                 <For each={body}>
                   {(row) => (
                     <tr>
-                      <For each={row}>{(c, i) => <td style={al(i())}><InlineText text={c} /></td>}</For>
+                      <For each={row}>{(c, i) => <td style={al(i())}><InlineText text={c} format={props.format} /></td>}</For>
                     </tr>
                   )}
                 </For>
@@ -344,7 +348,7 @@ export function BodyContent(props: { lines: string[]; blockId?: string }): JSX.E
           );
         }
         if (seg.kind === "list") {
-          return <MdList node={parseList(seg.items)} blockId={props.blockId} />;
+          return <MdList node={parseList(seg.items)} blockId={props.blockId} format={props.format} />;
         }
         if (seg.kind === "hr") {
           return <hr class="md-hr" />;
@@ -358,7 +362,7 @@ export function BodyContent(props: { lines: string[]; blockId?: string }): JSX.E
                     <Show when={i() > 0}>
                       <br />
                     </Show>
-                    <InlineText text={line} />
+                    <InlineText text={line} format={props.format} />
                   </>
                 )}
               </For>
@@ -377,7 +381,7 @@ export function BodyContent(props: { lines: string[]; blockId?: string }): JSX.E
                         <Show when={i() > 0}>
                           <br />
                         </Show>
-                        <InlineText text={line} />
+                        <InlineText text={line} format={props.format} />
                       </>
                     )}
                   </For>
@@ -393,7 +397,7 @@ export function BodyContent(props: { lines: string[]; blockId?: string }): JSX.E
                 <Show when={i() > 0}>
                   <br />
                 </Show>
-                <InlineText text={line} blockId={props.blockId} />
+                <InlineText text={line} blockId={props.blockId} format={props.format} />
               </>
             )}
           </For>

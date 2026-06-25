@@ -8,7 +8,7 @@
 
 import { createStore, produce, unwrap } from "solid-js/store";
 import { createSignal, createMemo, createRoot } from "solid-js";
-import type { BlockDto, PageDto, PageKind } from "./types";
+import type { BlockDto, Format, PageDto, PageKind } from "./types";
 import { parseOutline, type OutlineNode } from "./editor/outline";
 import type { ExportNode } from "./editor/exportText";
 import { backend } from "./backend";
@@ -51,6 +51,10 @@ export interface FeedPage {
   title: string;
   preBlock: string | null;
   roots: string[];
+  /** On-disk format (drives org vs markdown inline rendering). */
+  format: Format;
+  /** True for an org page Tine can't round-trip — shown but not editable. */
+  readOnly: boolean;
 }
 
 interface DocState {
@@ -137,7 +141,15 @@ function flatten(
 
 function toFeedPage(dto: PageDto, byId: Record<string, Node>): FeedPage {
   const roots = flatten(dto.blocks, null, dto.name, byId);
-  return { name: dto.name, kind: dto.kind, title: dto.title, preBlock: dto.pre_block, roots };
+  return {
+    name: dto.name,
+    kind: dto.kind,
+    title: dto.title,
+    preBlock: dto.pre_block,
+    roots,
+    format: dto.format ?? "md",
+    readOnly: dto.read_only ?? false,
+  };
 }
 
 function removeNodeSubtree(s: DocState, id: string) {
@@ -371,6 +383,7 @@ export function pageToDto(pageName: string): PageDto | null {
     title: p.title,
     pre_block: p.preBlock,
     blocks,
+    format: p.format,
   };
 }
 
@@ -547,6 +560,8 @@ function clonePages(src: FeedPage[]): FeedPage[] {
     title: p.title,
     preBlock: p.preBlock,
     roots: p.roots.slice(),
+    format: p.format,
+    readOnly: p.readOnly,
   }));
 }
 function snapEntry(affected?: string[] | null): SnapEntry {

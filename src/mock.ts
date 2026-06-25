@@ -93,6 +93,29 @@ const NAMED: PageDto[] = [
       b("A PDF asset: [sample.pdf](../assets/sample.pdf)"),
     ],
   },
+  // Org-mode rendering parity: same idea as kitchen-sink, but format:"org" so the
+  // org inline rules (*, /, _, +, ~, =, ^^, [[t][d]]) and src/quote blocks render.
+  {
+    name: "org-sink",
+    kind: "page",
+    title: "org-sink",
+    pre_block: null,
+    format: "org",
+    blocks: [
+      b("Inline styles: *bold*, /italic/, _underline_, +strike+, ~code~, =verbatim=, ^^highlight^^"),
+      b("Org links: [[logseq-claude]], [[logseq-claude][the project]], and [[https://orgmode.org][Org website]]"),
+      b("Boundary-safe plain text: a/b/c paths, snake_case_var, and 2*3*4 stay literal"),
+      b("TODO [#A] high-priority org task\nSCHEDULED: <2026-06-25 Thu>"),
+      b("DOING in-progress task referencing [[n-fold IP]]"),
+      b("a parent headline", [
+        b("child block under it with /emphasis/"),
+        b("DONE finished child task"),
+      ]),
+      b("Org source block:\n#+BEGIN_SRC clojure\n(defn hello [] \"world\")\n#+END_SRC"),
+      b("Org quote block:\n#+BEGIN_QUOTE\nto be or not to be\n#+END_QUOTE"),
+      b("A property drawer stays as content:\n:PROPERTIES:\n:key: value\n:END:"),
+    ],
+  },
   // Rendering parity harness: one block per construct, so a screenshot makes any
   // unrendered/mis-rendered syntax obvious at a glance.
   {
@@ -191,6 +214,7 @@ export function mockBackend(): Backend {
         favorites: [],
         journal_page_title_format: "MMM do, yyyy",
         journal_file_name_format: "yyyy_MM_dd",
+        preferred_format: "md",
       };
     },
     async listPages(): Promise<PageEntry[]> {
@@ -264,6 +288,9 @@ export function mockBackend(): Backend {
       // no-op in the browser mock
     },
     async setPreferredWorkflow(): Promise<void> {
+      // no-op in the browser mock
+    },
+    async setPreferredFormat(): Promise<void> {
       // no-op in the browser mock
     },
     async setDefaultJournalTemplate(): Promise<void> {

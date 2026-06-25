@@ -101,6 +101,15 @@ export function changeStartOfWeek(l: number) {
   void backend().setStartOfWeek(n).catch(() => {});
 }
 
+/** Persist the format new pages/journals are created in (`:preferred-format`)
+ *  and update graphMeta optimistically. Existing files keep their own format. */
+export function changePreferredFormat(fmt: "md" | "org") {
+  const m = graphMeta();
+  if (!m || m.preferred_format === fmt) return;
+  setGraphMeta({ ...m, preferred_format: fmt });
+  void backend().setPreferredFormat(fmt).catch(() => {});
+}
+
 // --- which content pane is focused. Drives Ctrl+/- zoom routing (notes → whole
 // interface, pdf → the PDF's own scale). Transient session state, not persisted. ---
 export const [activePane, setActivePane] = createSignal<"notes" | "pdf">("notes");

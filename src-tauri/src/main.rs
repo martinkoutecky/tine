@@ -844,6 +844,17 @@ fn set_start_of_week(n: u32, state: State<'_, AppState>) -> Result<(), String> {
     with_graph(&state, |g| g.set_start_of_week(n).map_err(|e| e.to_string()))
 }
 
+/// Set the graph's `:preferred-format` for new pages/journals ("md" or "org").
+#[tauri::command]
+fn set_preferred_format(format: String, state: State<'_, AppState>) -> Result<(), String> {
+    let fmt = if format.eq_ignore_ascii_case("org") {
+        tine_core::model::Format::Org
+    } else {
+        tine_core::model::Format::Md
+    };
+    with_graph(&state, |g| g.set_preferred_format(fmt).map_err(|e| e.to_string()))
+}
+
 #[tauri::command]
 fn read_custom_css(state: State<'_, AppState>) -> Result<String, String> {
     with_graph(&state, |g| Ok(g.custom_css()))
@@ -1159,6 +1170,7 @@ fn main() {
             page_aliases,
             set_favorites,
             set_preferred_workflow,
+            set_preferred_format,
             set_default_journal_template,
             set_start_of_week,
             read_custom_css,

@@ -435,6 +435,12 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
           </For>
         </div>
       </Show>
+      <Show when={props.page.readOnly}>
+        <div class="page-readonly-banner" title="Tine can't reproduce this .org file byte-for-byte, so it's shown read-only to avoid corrupting it. Edit it in Logseq/Emacs.">
+          Read-only — this <code>.org</code> file uses a structure Tine can't safely
+          round-trip yet, so it won't be edited here.
+        </div>
+      </Show>
       <div class="page-blocks">
         <For each={props.page.roots}>{(id) => <Block id={id} />}</For>
       </div>

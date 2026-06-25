@@ -1397,6 +1397,22 @@ body {
   color: var(--text-secondary);
 }
 
+/* Read-only org page: a quiet banner + a non-text cursor on every block, so it's
+   clear the page is viewable but not editable here. */
+.page-readonly-banner {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  font-size: 13px;
+  border: 1px solid var(--border-color);
+  border-left: 3px solid var(--text-muted);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+}
+.block-content-wrapper.read-only {
+  cursor: default;
+}
+
 /* "aka" chips — a page's aliases (other names that link here), read-only. */
 .page-aliases {
   display: flex;

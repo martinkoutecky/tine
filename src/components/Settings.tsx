@@ -7,6 +7,7 @@ import {
   toggleTheme,
   workflow,
   changeWorkflow,
+  changePreferredFormat,
   graphMeta,
   shortcutOverrides,
   setShortcutOverride,
@@ -430,6 +431,32 @@ function TasksTab(): JSX.Element {
           </button>
           <button classList={{ active: workflow() === "now" }} onClick={() => changeWorkflow("now")}>
             NOW / LATER
+          </button>
+        </div>
+      </Field>
+
+      <Field
+        label="New page format"
+        hint={
+          <>
+            Format for <strong>new</strong> pages and journals. Existing <code>.md</code> and{" "}
+            <code>.org</code> files keep their own format and are edited in place. Saved to{" "}
+            <code>:preferred-format</code> in <code>config.edn</code>.
+          </>
+        }
+      >
+        <div class="settings-segment">
+          <button
+            classList={{ active: (graphMeta()?.preferred_format ?? "md") === "md" }}
+            onClick={() => changePreferredFormat("md")}
+          >
+            Markdown
+          </button>
+          <button
+            classList={{ active: graphMeta()?.preferred_format === "org" }}
+            onClick={() => changePreferredFormat("org")}
+          >
+            Org
           </button>
         </div>
       </Field>
