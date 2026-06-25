@@ -110,5 +110,32 @@ describe("parseInline", () => {
   it("unterminated markup stays literal (no crash)", () => {
     expect(parseInline("a [[ b")).toEqual([{ t: "text", v: "a [[ b" }]);
     expect(parseInline("half **bold")).toEqual([{ t: "text", v: "half **bold" }]);
+    // index-scanner: every other unterminated opener also falls through cleanly
+    expect(parseInline("x `code")).toEqual([{ t: "text", v: "x `code" }]);
+    expect(parseInline("y ((ref")).toEqual([{ t: "text", v: "y ((ref" }]);
+    expect(parseInline("z {{macro")).toEqual([{ t: "text", v: "z {{macro" }]);
+    expect(parseInline("eq $x+1")).toEqual([{ t: "text", v: "eq $x+1" }]);
+  });
+
+  it("adjacent tokens emit no empty text segments (index cursor)", () => {
+    // No text between the two refs, and tokens at both ends → no "" text segs.
+    expect(parseInline("[[A]][[B]]")).toEqual([
+      { t: "pageref", name: "A" },
+      { t: "pageref", name: "B" },
+    ]);
+    expect(parseInline("`c`**b**")).toEqual([
+      { t: "code", v: "c" },
+      { t: "bold", v: [{ t: "text", v: "b" }] },
+    ]);
+  });
+
+  it("long plain run is one text segment", () => {
+    const long = "x".repeat(5000);
+    expect(parseInline(long)).toEqual([{ t: "text", v: long }]);
+    // trailing token after a long run still splits correctly
+    expect(parseInline(long + "[[P]]")).toEqual([
+      { t: "text", v: long },
+      { t: "pageref", name: "P" },
+    ]);
   });
 });
