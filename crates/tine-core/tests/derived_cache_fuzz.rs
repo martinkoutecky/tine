@@ -7,6 +7,7 @@
 //! introduce. This guards both the current (full-invalidation) cache and the
 //! scoped one.
 
+use std::sync::Arc;
 use tine_core::{BlockDto, Graph, PageKind, RefGroup};
 
 // --- deterministic PRNG (xorshift64) so a failure reproduces from its seed ----
@@ -83,7 +84,7 @@ fn gen_pre(r: &mut Rng, page_idx: usize) -> Option<String> {
 // e.g. for sorted queries). uuid-free: compares block first-lines, since the two
 // graphs assign generated uuids independently.
 fn fingerprint(g: &Graph) -> String {
-    let fmt = |label: String, groups: Vec<RefGroup>| {
+    let fmt = |label: String, groups: Arc<Vec<RefGroup>>| {
         let body = groups
             .iter()
             .map(|grp| {

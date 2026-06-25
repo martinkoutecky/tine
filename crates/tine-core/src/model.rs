@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::RwLock;
 use uuid::Uuid;
 
@@ -93,7 +94,9 @@ pub struct Graph {
     /// Built once on first whole-graph query and kept in sync by edits, so
     /// search / backlinks / `{{query}}` scan memory instead of re-reading and
     /// re-parsing the entire tree on every keystroke. `None` = not yet built.
-    cache: RwLock<Option<Vec<(PageEntry, Document)>>>,
+    // `Arc<Document>` so a cache snapshot or a save's scoped-invalidation copy is
+    // an O(1) refcount bump, not a deep clone of the whole page (see cache_upsert).
+    cache: RwLock<Option<Vec<(PageEntry, Arc<Document>)>>>,
     /// Bumped on every cache mutation (upsert/remove). The lock-free cache build
     /// captures this before reading disk and rebuilds if a mutation raced it
     /// (which would otherwise install stale content over a concurrent save).
@@ -173,7 +176,9 @@ fn rev_key(kind: PageKind, name: &str) -> String {
 struct DerivedCache {
     gen: u64,
     today: i64,
-    results: std::collections::HashMap<String, Vec<RefGroup>>,
+    // `Arc<Vec<RefGroup>>` so serving a memoized result (every dataRev re-render)
+    // is a refcount bump, not a deep clone of every matched block (see derived_memo).
+    results: std::collections::HashMap<String, Arc<Vec<RefGroup>>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -611,8 +616,8 @@ impl Graph {
     fn install_built(&self, built: Vec<(PageEntry, Document, String)>) {
         let revs: std::collections::HashMap<String, String> =
             built.iter().map(|(e, _, r)| (rev_key(e.kind, &e.name), r.clone())).collect();
-        let pages: Vec<(PageEntry, Document)> =
-            built.into_iter().map(|(e, d, _)| (e, d)).collect();
+        let pages: Vec<(PageEntry, Arc<Document>)> =
+            built.into_iter().map(|(e, d, _)| (e, Arc::new(d))).collect();
         // Publish cache + revs atomically under the cache lock (cache → disk_revs
         // order), so no reader observes a fresh rev paired with a stale cache.
         let mut guard = self.cache.write().unwrap();
@@ -624,7 +629,7 @@ impl Graph {
     /// Run `f` over every parsed page, building the cache on first use. The
     /// borrow is held for the duration of `f`, so callers get references without
     /// cloning the documents.
-    pub fn with_pages<T>(&self, f: impl FnOnce(&[(PageEntry, Document)]) -> T) -> T {
+    pub fn with_pages<T>(&self, f: impl FnOnce(&[(PageEntry, Arc<Document>)]) -> T) -> T {
         if let Some(pages) = self.cache.read().unwrap().as_ref() {
             return f(pages);
         }
@@ -739,9 +744,10 @@ impl Graph {
         let new_has_alias = doc_has_alias(&doc);
         let mut alias_touched = new_has_alias;
         let key = rev_key(entry.kind, &entry.name);
+        let doc = Arc::new(doc);
         // Keep the new content + identity for the scoped derived-cache pass below
-        // (the originals are moved into the cache slot).
-        let evict_doc = doc.clone();
+        // (the original is moved into the cache slot; this clone is a refcount bump).
+        let evict_doc = Arc::clone(&doc);
         let evict_entry = entry.clone();
         let mut is_new_page = false;
         let mut guard = self.cache.write().unwrap();
@@ -845,7 +851,11 @@ impl Graph {
     /// `key`. On a tag mismatch the whole cache is dropped, so a hit is always
     /// consistent with the current graph. `compute` runs with NO lock held (it
     /// takes the cache read lock itself), so it can't deadlock against `with_pages`.
-    fn derived_memo(&self, key: String, compute: impl FnOnce() -> Vec<RefGroup>) -> Vec<RefGroup> {
+    fn derived_memo(
+        &self,
+        key: String,
+        compute: impl FnOnce() -> Vec<RefGroup>,
+    ) -> Arc<Vec<RefGroup>> {
         use std::sync::atomic::Ordering;
         let gen = self.cache_gen.load(Ordering::Acquire);
         let today = crate::date::JournalDate::today().ordinal_key();
@@ -854,20 +864,20 @@ impl Graph {
             if let Some(dc) = g.as_ref() {
                 if dc.gen == gen && dc.today == today {
                     if let Some(r) = dc.results.get(&key) {
-                        return r.clone();
+                        return Arc::clone(r);
                     }
                 }
             }
         }
-        let result = compute();
+        let result = Arc::new(compute());
         let mut g = self.derived_cache.write().unwrap();
         match g.as_mut() {
             Some(dc) if dc.gen == gen && dc.today == today => {
-                dc.results.insert(key, result.clone());
+                dc.results.insert(key, Arc::clone(&result));
             }
             _ => {
                 let mut results = std::collections::HashMap::new();
-                results.insert(key, result.clone());
+                results.insert(key, Arc::clone(&result));
                 *g = Some(DerivedCache { gen, today, results });
             }
         }
@@ -876,14 +886,14 @@ impl Graph {
 
     /// Backlinks for a page: blocks across the graph that reference it,
     /// grouped by source page. Delegates to the query module (memoized).
-    pub fn backlinks(&self, target: &str) -> Vec<RefGroup> {
+    pub fn backlinks(&self, target: &str) -> Arc<Vec<RefGroup>> {
         self.derived_memo(format!("b\0{}", crate::refs::normalize(target)), || {
             crate::query::backlinks(self, target)
         })
     }
 
     /// Evaluate a `{{query ...}}` body over the graph (memoized).
-    pub fn run_query(&self, query_src: &str) -> Vec<RefGroup> {
+    pub fn run_query(&self, query_src: &str) -> Arc<Vec<RefGroup>> {
         self.derived_memo(format!("q\0{query_src}"), || crate::query::run_query(self, query_src))
     }
 
@@ -899,7 +909,7 @@ impl Graph {
 
     /// Unlinked references: plain-text mentions of a page that aren't links
     /// (memoized).
-    pub fn unlinked_refs(&self, target: &str) -> Vec<RefGroup> {
+    pub fn unlinked_refs(&self, target: &str) -> Arc<Vec<RefGroup>> {
         self.derived_memo(format!("u\0{}", crate::refs::normalize(target)), || {
             crate::query::unlinked_refs(self, target)
         })

@@ -769,12 +769,12 @@ fn save_page(
 }
 
 #[tauri::command]
-fn get_backlinks(name: String, state: State<'_, AppState>) -> Result<Vec<RefGroup>, String> {
+fn get_backlinks(name: String, state: State<'_, AppState>) -> Result<Arc<Vec<RefGroup>>, String> {
     with_graph(&state, |g| Ok(g.backlinks(&name)))
 }
 
 #[tauri::command]
-fn get_unlinked_refs(name: String, state: State<'_, AppState>) -> Result<Vec<RefGroup>, String> {
+fn get_unlinked_refs(name: String, state: State<'_, AppState>) -> Result<Arc<Vec<RefGroup>>, String> {
     with_graph(&state, |g| Ok(g.unlinked_refs(&name)))
 }
 
@@ -794,7 +794,7 @@ fn publish_html(state: State<'_, AppState>) -> Result<(String, usize), String> {
 }
 
 #[tauri::command]
-fn run_query(query: String, state: State<'_, AppState>) -> Result<Vec<RefGroup>, String> {
+fn run_query(query: String, state: State<'_, AppState>) -> Result<Arc<Vec<RefGroup>>, String> {
     with_graph(&state, |g| Ok(g.run_query(&query)))
 }
 
