@@ -54,14 +54,17 @@ export interface BlockView {
   properties: [string, string][];
 }
 
-// A SCHEDULED:/DEADLINE: line yields the date badge (capture group 1). OG treats
-// it as a timestamp-ONLY planning line, but we're intentionally lenient (Martin's
-// call — this is rendering only): if there's text after the `<…>` (e.g.
-// `SCHEDULED: <2026-07-06 Mon> #email do the thing`), keep the badge AND render
-// that trailing text (group 2) as body, instead of dropping the line. Deliberate,
-// visible deviation from OG.
-const SCHEDULED_RE = /^SCHEDULED:\s*<([^>]+)>(.*)$/;
-const DEADLINE_RE = /^DEADLINE:\s*<([^>]+)>(.*)$/;
+// SCHEDULED:/DEADLINE: planning timestamps yield the date badge (capture group 1).
+// OG treats them as timestamp-ONLY lines that must stand alone, but we're
+// intentionally lenient (Martin's call — this is rendering only): match the token
+// ANYWHERE on a line, including inline after the marker (`TODO SCHEDULED: <…> do
+// the thing`) or with text after the `<…>`. We pull the date out for the badge,
+// strip the token (+ its surrounding whitespace), and keep whatever text remains
+// as body. Deliberate, visible deviation from OG.
+const SCHEDULED_RE = /SCHEDULED:\s*<([^>]+)>/;
+const DEADLINE_RE = /DEADLINE:\s*<([^>]+)>/;
+const SCHEDULED_STRIP = /\s*SCHEDULED:\s*<[^>]+>\s*/;
+const DEADLINE_STRIP = /\s*DEADLINE:\s*<[^>]+>\s*/;
 
 export function blockView(raw: string): BlockView {
   const allLines = raw.split("\n");
@@ -83,16 +86,20 @@ export function blockView(raw: string): BlockView {
       continue;
     }
     if (/^CLOCK:\s/i.test(t)) continue;
-    const sm = SCHEDULED_RE.exec(t);
-    const dm = DEADLINE_RE.exec(t);
-    if (sm) {
-      scheduled = sm[1];
-      const rest = sm[2].trim();
-      if (rest) lines.push(rest);
-    } else if (dm) {
-      deadline = dm[1];
-      const rest = dm[2].trim();
-      if (rest) lines.push(rest);
+    const sm = SCHEDULED_RE.exec(line);
+    const dm = DEADLINE_RE.exec(line);
+    if (sm || dm) {
+      let rest = line;
+      if (sm) {
+        scheduled = sm[1];
+        rest = rest.replace(SCHEDULED_STRIP, " ");
+      }
+      if (dm) {
+        deadline = dm[1];
+        rest = rest.replace(DEADLINE_STRIP, " ");
+      }
+      rest = rest.trim();
+      if (rest) lines.push(rest); // keep marker/text that shared the line; date is now a badge
     } else if (isPropertyLine(line)) {
       const idx = line.indexOf("::");
       properties.push([line.slice(0, idx).trim(), line.slice(idx + 2).trim()]);
@@ -127,6 +134,11 @@ export function blockView(raw: string): BlockView {
   }
 
   lines[0] = first;
+  // Drop leading blank body lines so a marker/scheduled-only first line (whose
+  // text became a badge) doesn't render as a spurious blank line above the body —
+  // e.g. `TODO \nSCHEDULED: <…> do the thing` should render the marker, the text,
+  // and the date badge all on one line, not under an empty line.
+  while (lines.length > 1 && lines[0].trim() === "") lines.shift();
   return {
     marker,
     done: marker === "DONE" || marker === "CANCELED" || marker === "CANCELLED",

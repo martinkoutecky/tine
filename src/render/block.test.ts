@@ -33,7 +33,20 @@ describe("blockView SCHEDULED/DEADLINE", () => {
   it("keeps the badge AND renders trailing text after the timestamp (lenient)", () => {
     const v = blockView("TODO \nSCHEDULED: <2026-07-06 Mon> #email ADS1 students");
     expect(v.scheduled).toBe("2026-07-06 Mon"); // badge kept
-    expect(v.lines.join("\n")).toContain("#email ADS1 students"); // text shown as body
+    expect(v.marker).toBe("TODO");
+    // No spurious blank line: the marker-only first line is dropped, body is one line.
+    expect(v.lines).toEqual(["#email ADS1 students"]);
     expect(v.lines.join("\n")).not.toContain("SCHEDULED:"); // the prefix is hidden
+  });
+  it("finds SCHEDULED inline on the same line as the marker (no own line needed)", () => {
+    const v = blockView("TODO SCHEDULED: <2026-07-06 Mon> do the thing");
+    expect(v.scheduled).toBe("2026-07-06 Mon");
+    expect(v.marker).toBe("TODO");
+    expect(v.lines).toEqual(["do the thing"]); // token stripped, text flows after marker
+  });
+  it("finds DEADLINE inline too", () => {
+    const v = blockView("DEADLINE: <2026-07-06 Mon> pay rent");
+    expect(v.deadline).toBe("2026-07-06 Mon");
+    expect(v.lines).toEqual(["pay rent"]);
   });
 });

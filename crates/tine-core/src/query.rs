@@ -901,19 +901,30 @@ fn parse_angle_date(s: &str) -> Option<i64> {
 /// Ordinals from a block's SCHEDULED:/DEADLINE: lines. `only` restricts to one
 /// marker (`"SCHEDULED:"` / `"DEADLINE:"`); `None` returns both.
 fn block_date_ordinals(raw: &str, only: Option<&str>) -> Vec<i64> {
-    raw.lines()
-        .filter_map(|l| {
-            let t = l.trim();
-            let sched = t.strip_prefix("SCHEDULED:");
-            let dead = t.strip_prefix("DEADLINE:");
-            let body = match only {
-                Some("SCHEDULED:") => sched,
-                Some("DEADLINE:") => dead,
-                _ => sched.or(dead),
-            };
-            body.and_then(parse_angle_date)
-        })
-        .collect()
+    // Match the planning marker ANYWHERE on a line (not just at line start), so an
+    // inline `TODO SCHEDULED: <…> do the thing` is found too — consistent with the
+    // lenient render (block.ts) and `Pred::Scheduled`'s `raw.contains`. The angle
+    // date is parsed from just after the marker; trailing text is ignored.
+    let want_sched = !matches!(only, Some("DEADLINE:"));
+    let want_dead = !matches!(only, Some("SCHEDULED:"));
+    let mut out = Vec::new();
+    for line in raw.lines() {
+        if want_sched {
+            if let Some(i) = line.find("SCHEDULED:") {
+                if let Some(o) = parse_angle_date(&line[i + "SCHEDULED:".len()..]) {
+                    out.push(o);
+                }
+            }
+        }
+        if want_dead {
+            if let Some(i) = line.find("DEADLINE:") {
+                if let Some(o) = parse_angle_date(&line[i + "DEADLINE:".len()..]) {
+                    out.push(o);
+                }
+            }
+        }
+    }
+    out
 }
 
 fn block_priority(raw: &str) -> Option<char> {
@@ -1561,5 +1572,22 @@ mod tests {
         pred("(and (task TODO) (sample 5) (sort-by priority desc))").collect_opts(&mut opts);
         assert_eq!(opts.sample, Some(5));
         assert_eq!(opts.sort, Some(("priority".to_string(), false)));
+    }
+
+    #[test]
+    fn block_date_ordinals_finds_planning_markers_anywhere() {
+        let ord = date_ordinal(2026, 7, 6);
+        // own line (after trim)
+        assert_eq!(block_date_ordinals("TODO x\nSCHEDULED: <2026-07-06 Mon>", Some("SCHEDULED:")), vec![ord]);
+        // inline on the marker line (the regressed case)
+        assert_eq!(block_date_ordinals("TODO SCHEDULED: <2026-07-06 Mon> do it", Some("SCHEDULED:")), vec![ord]);
+        // with trailing text after the timestamp
+        assert_eq!(
+            block_date_ordinals(" SCHEDULED: <2026-07-06 Mon> #email students", Some("SCHEDULED:")),
+            vec![ord]
+        );
+        // DEADLINE restricted; SCHEDULED-only query ignores it
+        assert!(block_date_ordinals("DEADLINE: <2026-07-06 Mon>", Some("SCHEDULED:")).is_empty());
+        assert_eq!(block_date_ordinals("DEADLINE: <2026-07-06 Mon>", Some("DEADLINE:")), vec![ord]);
     }
 }
