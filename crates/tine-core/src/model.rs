@@ -24,6 +24,50 @@ pub enum PageKind {
     Page,
 }
 
+/// On-disk file format of a page. Markdown (`.md`) is the default; Logseq org
+/// graphs use `.org`. A graph may mix the two — format is decided per file by
+/// extension, never graph-wide (matching OG, which stores `:block/format` per
+/// page). The graph's `:preferred-format` only chooses the extension for NEW
+/// files (see [`Graph::preferred_format`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Format {
+    #[default]
+    Md,
+    Org,
+}
+
+impl Format {
+    /// Format of a page file by its extension (`.org` → Org, else Md).
+    pub fn from_path(p: &Path) -> Format {
+        match p.extension().and_then(|e| e.to_str()) {
+            Some("org") => Format::Org,
+            _ => Format::Md,
+        }
+    }
+    /// File extension (no dot) for this format.
+    pub fn ext(self) -> &'static str {
+        match self {
+            Format::Md => "md",
+            Format::Org => "org",
+        }
+    }
+}
+
+/// Whether `path` is a page file Tine reads (markdown or org).
+fn is_page_file(path: &Path) -> bool {
+    matches!(path.extension().and_then(|e| e.to_str()), Some("md") | Some("org"))
+}
+
+/// Parse a page file's bytes into a [`Document`] using the parser for its
+/// format (org headlines vs markdown bullets), chosen by the path's extension.
+fn parse_doc(path: &Path, content: &str) -> Document {
+    match Format::from_path(path) {
+        Format::Md => doc::parse(content),
+        Format::Org => crate::org::parse_org(content),
+    }
+}
+
 /// Lightweight entry for the page list / sidebar.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PageEntry {
@@ -85,6 +129,14 @@ pub struct PageDto {
     /// `None` for a page with no file yet.
     #[serde(default)]
     pub rev: Option<String>,
+    /// On-disk format of this page (markdown vs org), so the editor renders org
+    /// inline syntax and shows the right bullet. New pages default to markdown.
+    #[serde(default)]
+    pub format: Format,
+    /// True for an org page Tine can't round-trip byte-for-byte: the editor shows
+    /// it but disables editing, so Tine never rewrites (and risks corrupting) it.
+    #[serde(default)]
+    pub read_only: bool,
 }
 
 pub struct Graph {
@@ -207,6 +259,10 @@ pub struct GraphMeta {
     /// Effective journal filename format (`:journal/file-name-format`, default
     /// `yyyy_MM_dd`).
     pub journal_file_name_format: String,
+    /// Format new pages/journals are created in (`"md"` or `"org"`), from
+    /// `:preferred-format`. The frontend uses it to label the toggle and pick the
+    /// new-page extension.
+    pub preferred_format: String,
 }
 
 impl Graph {
@@ -269,6 +325,7 @@ impl Graph {
             favorites: self.config.favorites.clone(),
             journal_page_title_format: self.journal_format.title_format().to_string(),
             journal_file_name_format: self.journal_format.file_format().to_string(),
+            preferred_format: self.config.preferred_format.ext().to_string(),
         }
     }
 
@@ -286,6 +343,12 @@ impl Graph {
 
     pub fn pages_path(&self) -> PathBuf {
         self.root.join(&self.config.pages_dir)
+    }
+
+    /// The format (`Md`/`Org`) new pages and journals are created in, from
+    /// `config.edn`'s `:preferred-format`. Existing files keep their own format.
+    pub fn preferred_format(&self) -> Format {
+        self.config.preferred_format
     }
 
     /// List all pages and journals in the graph.
@@ -442,6 +505,7 @@ impl Graph {
     /// Resolve a page name to a file path. Journals match by date title;
     /// pages match by filename stem.
     fn path_for(&self, name: &str, kind: PageKind) -> PathBuf {
+        let pref = self.preferred_format();
         match kind {
             PageKind::Journal => self
                 .journals_desc()
@@ -450,17 +514,35 @@ impl Graph {
                 .map(|e| e.path)
                 .unwrap_or_else(|| {
                     // New journal: name it by its date stem in the graph's filename
-                    // format ("2026_06_18.md"), not the display title — a title-named
-                    // file can't be parsed back to a date, so journals_desc would drop
-                    // it and the day would look empty.
+                    // format ("2026_06_18.org"), not the display title — a
+                    // title-named file can't be parsed back to a date, so
+                    // journals_desc would drop it and the day would look empty. The
+                    // extension follows the graph's :preferred-format.
                     let stem = self
                         .journal_format
                         .parse(name)
                         .map(|d| self.journal_format.file_stem(d))
                         .unwrap_or_else(|| name.to_string());
-                    self.journals_path().join(format!("{stem}.md"))
+                    self.journals_path().join(format!("{stem}.{}", pref.ext()))
                 }),
-            PageKind::Page => self.pages_path().join(format!("{}.md", encode_page_name(name))),
+            PageKind::Page => {
+                // Resolve to an EXISTING file (any format) so a save updates it in
+                // place rather than creating a second file in the other extension;
+                // a brand-new page is created in the graph's preferred format.
+                // Cheap `exists()` probes (the common hit needs one), no dir scan.
+                let enc = encode_page_name(name);
+                let dir = self.pages_path();
+                let primary = dir.join(format!("{enc}.{}", pref.ext()));
+                if primary.exists() {
+                    return primary;
+                }
+                let alt_ext = if pref == Format::Org { "md" } else { "org" };
+                let alt = dir.join(format!("{enc}.{alt_ext}"));
+                if alt.exists() {
+                    return alt;
+                }
+                primary
+            }
         }
     }
 
@@ -601,15 +683,19 @@ impl Graph {
         // benign: id:: ref targets are stable, and live-ref views fall back to a
         // read-only render for an unmatched uuid, never losing edits.)
         if let Some(mut dto) = self.peek_cached_page(entry) {
+            if let Ok(c) = &read {
+                dto.read_only = read_only_org(&entry.path, c);
+            }
             dto.rev = rev;
             return Ok(dto);
         }
         // Cache miss: parse the bytes we already read (propagate the original read
         // error if it failed).
         let content = read?;
-        let mut doc = doc::parse(&content);
+        let mut doc = parse_doc(&entry.path, &content);
         assign_doc_uuids(&mut doc.roots);
         let mut dto = page_dto(entry, &doc);
+        dto.read_only = read_only_org(&entry.path, &content);
         dto.rev = rev;
         Ok(dto)
     }
@@ -617,7 +703,7 @@ impl Graph {
     /// Read and parse a page file into a [`Document`].
     pub fn read_document(&self, entry: &PageEntry) -> io::Result<Document> {
         let content = fs::read_to_string(&entry.path)?;
-        Ok(doc::parse(&content))
+        Ok(parse_doc(&entry.path, &content))
     }
 
     /// Read+parse every page from disk (skipping unreadable files). Used to
@@ -628,7 +714,7 @@ impl Graph {
             .filter_map(|e| {
                 let content = fs::read_to_string(&e.path).ok()?;
                 let rev = content_rev(&content);
-                let mut d = doc::parse(&content);
+                let mut d = parse_doc(&e.path, &content);
                 assign_doc_uuids(&mut d.roots);
                 Some((e, d, rev))
             })
@@ -705,7 +791,7 @@ impl Graph {
             let mtime = fs::metadata(&e.path).and_then(|m| m.modified()).ok();
             if let Ok(content) = fs::read_to_string(&e.path) {
                 let rev = content_rev(&content);
-                let mut d = doc::parse(&content);
+                let mut d = parse_doc(&e.path, &content);
                 assign_doc_uuids(&mut d.roots);
                 mtimes.push((e.path.clone(), mtime));
                 built.push((e, d, rev));
@@ -1013,7 +1099,12 @@ impl Graph {
                 let suffix: String = entry.name.chars().skip(skip).collect();
                 format!("{new}{suffix}")
             };
-            let new_path = self.pages_path().join(format!("{}.md", encode_page_name(&new_name)));
+            // Keep the page's own format on rename (an .org page stays .org).
+            let new_path = self.pages_path().join(format!(
+                "{}.{}",
+                encode_page_name(&new_name),
+                Format::from_path(&entry.path).ext()
+            ));
             if new_path != entry.path && new_path.exists() {
                 return Err(io::Error::new(io::ErrorKind::AlreadyExists, "target page exists"));
             }
@@ -1392,7 +1483,7 @@ impl Graph {
     /// Map an on-disk `.md` path to its page entry (journal or page), or None if
     /// it isn't in the graph's journals/pages dirs.
     pub fn entry_for_path(&self, path: &Path) -> Option<PageEntry> {
-        if path.extension().and_then(|e| e.to_str()) != Some("md") {
+        if !is_page_file(path) {
             return None;
         }
         let stem = path.file_stem().and_then(|s| s.to_str())?;
@@ -1494,7 +1585,7 @@ impl Graph {
                 return None;
             }
         }
-        let newdoc = doc::parse(content);
+        let newdoc = parse_doc(path, content);
         {
             let guard = self.cache.read().unwrap();
             let Some(cache) = guard.as_ref() else {
@@ -1517,8 +1608,16 @@ impl Graph {
                 // one of Tine's own writes as an external change. Normalize the
                 // cached doc through the same serialize→parse round-trip the file
                 // went through (both sides then have empty uuids) and compare.
-                let opts = doc::SerializeOpts::detect(Some(content));
-                let cached_norm = doc::parse(&doc::serialize_with(cached, &opts));
+                let cached_norm = match Format::from_path(path) {
+                    Format::Md => {
+                        let opts = doc::SerializeOpts::detect(Some(content));
+                        doc::parse(&doc::serialize_with(cached, &opts))
+                    }
+                    Format::Org => crate::org::parse_org(&crate::org::serialize_org_detect(
+                        cached,
+                        Some(content),
+                    )),
+                };
                 if cached_norm == newdoc {
                     return None; // unchanged / our own write
                 }
@@ -1606,32 +1705,56 @@ impl Graph {
             roots: page.blocks.iter().map(dto_to_doc).collect(),
         };
         let path = self.path_for(&page.name, page.kind);
-        // Reproduce the existing file's formatting (trailing newline, post-property
-        // blank line, indent) so an unchanged save is byte-identical and edits
-        // produce a minimal diff — critical to avoid Syncthing churn against Logseq.
-        let opts = doc::SerializeOpts::detect(existing);
-        let mut content = doc::serialize_with(&doc, &opts);
-        // A5: if the ONLY difference from disk is whitespace trivia the serializer
-        // doesn't round-trip byte-exactly (post-property blank-line count, empty-
-        // bullet spelling `- ` vs `-`, indented blank continuation lines), keep the
-        // existing bytes verbatim. `doc::parse` collapses exactly this trivia (and
-        // ignores uuids), so equal parses ⟹ the user changed nothing of substance →
-        // don't rewrite (avoids needless Syncthing churn). Adopting the disk bytes
-        // makes `changed` below false and the returned rev the on-disk rev — so
-        // every downstream path (cache, baseline) stays correct automatically.
-        if let Some(e) = existing {
-            if e != content && doc::parse(e) == doc::parse(&content) {
-                content = e.to_string();
+        let content = match Format::from_path(&path) {
+            Format::Md => {
+                // Reproduce the existing file's formatting (trailing newline,
+                // post-property blank line, indent) so an unchanged save is
+                // byte-identical and edits produce a minimal diff — critical to
+                // avoid Syncthing churn against Logseq.
+                let opts = doc::SerializeOpts::detect(existing);
+                let mut content = doc::serialize_with(&doc, &opts);
+                // A5: if the ONLY difference from disk is whitespace trivia the
+                // serializer doesn't round-trip byte-exactly (post-property
+                // blank-line count, empty-bullet spelling `- ` vs `-`, indented
+                // blank continuation lines), keep the existing bytes verbatim.
+                // `doc::parse` collapses exactly this trivia (and ignores uuids),
+                // so equal parses ⟹ the user changed nothing of substance → don't
+                // rewrite (avoids needless Syncthing churn). Adopting the disk
+                // bytes makes `changed` below false and the returned rev the
+                // on-disk rev — so every downstream path stays correct.
+                if let Some(e) = existing {
+                    if e != content && doc::parse(e) == doc::parse(&content) {
+                        content = e.to_string();
+                    }
+                }
+                // CRLF preservation: if the existing file uses Windows line
+                // endings, emit them too — so a real edit produces a minimal diff
+                // instead of flipping every line LF (Syncthing churn vs a Windows
+                // editor). No-op saves already kept the existing bytes verbatim
+                // (A5 above), so guard against double-converting. New files = LF.
+                if existing.is_some_and(|e| e.contains("\r\n")) && !content.contains('\r') {
+                    content = content.replace('\n', "\r\n");
+                }
+                content
             }
-        }
-        // CRLF preservation: if the existing file uses Windows line endings, emit
-        // them too — so a real edit produces a minimal diff instead of flipping
-        // every line LF (Syncthing churn vs a Windows editor). No-op saves already
-        // kept the existing bytes verbatim (A5 above, so `content` may already be
-        // CRLF — guard against double-converting). New files stay LF.
-        if existing.is_some_and(|e| e.contains("\r\n")) && !content.contains('\r') {
-            content = content.replace('\n', "\r\n");
-        }
+            Format::Org => {
+                // Corruption firewall: never write a .org file Tine cannot
+                // reproduce byte-for-byte. Such a page is served read-only (the
+                // editor blocks edits), but defend the write path too — a stale
+                // editor or a direct save must not rewrite it. The org serializer
+                // is itself byte-exact (no trivia dance / CRLF rewrite needed):
+                // the block bodies carry their verbatim text, including any `\r`.
+                if let Some(e) = existing {
+                    if !crate::org::org_editable(e) {
+                        return Err(io::Error::new(
+                            io::ErrorKind::PermissionDenied,
+                            "org file is read-only (does not round-trip)",
+                        ));
+                    }
+                }
+                crate::org::serialize_org_detect(&doc, existing)
+            }
+        };
         let rev = content_rev(&content);
         // No-op save: identical bytes already on disk (e.g. focus/blur with no real
         // edit, or a forced flush of an unchanged page). Skip the write, the
@@ -1757,7 +1880,7 @@ fn list_md(dir: &Path, kind: PageKind, fmt: &JournalFormat) -> Vec<PageEntry> {
     let Ok(rd) = fs::read_dir(dir) else { return out };
     for entry in rd.flatten() {
         let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("md") {
+        if !is_page_file(&path) {
             continue;
         }
         let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else { continue };
@@ -1834,7 +1957,9 @@ fn dto_to_doc(b: &BlockDto) -> DocBlock {
     }
 }
 
-/// Build a page DTO from a cached document.
+/// Build a page DTO from a cached document. `read_only` is left false here (the
+/// on-disk bytes aren't known at this point); `load_page` sets it from the file
+/// it reads.
 fn page_dto(entry: &PageEntry, doc: &Document) -> PageDto {
     PageDto {
         name: entry.name.clone(),
@@ -1843,7 +1968,16 @@ fn page_dto(entry: &PageEntry, doc: &Document) -> PageDto {
         pre_block: doc.pre_block.clone(),
         blocks: doc.roots.iter().map(block_to_dto).collect(),
         rev: None,
+        format: Format::from_path(&entry.path),
+        read_only: false,
     }
+}
+
+/// Whether a page should load read-only: an org file whose on-disk bytes don't
+/// round-trip through Tine's org parser/serializer, so Tine must never rewrite
+/// it (lest it corrupt the user's graph). Markdown pages are always editable.
+fn read_only_org(path: &Path, content: &str) -> bool {
+    Format::from_path(path) == Format::Org && !crate::org::org_editable(content)
 }
 
 /// Whether a document declares an `alias::` anywhere — used to decide if a save
@@ -2038,6 +2172,108 @@ mod tests {
     }
 
     #[test]
+    fn org_page_lists_loads_edits_and_round_trips() {
+        let dir = scratch("org-page");
+        let src = "* TODO Buy milk\nSCHEDULED: <2026-06-25 Thu>\n* second block\n";
+        fs::write(dir.join("pages").join("Org Notes.org"), src).unwrap();
+        let g = Graph::open(&dir);
+        g.warm_cache();
+
+        // Listed, recognized as an org page.
+        let entry = g
+            .list_pages()
+            .into_iter()
+            .find(|e| e.name == "Org Notes")
+            .expect("org page listed");
+        assert_eq!(Format::from_path(&entry.path), Format::Org);
+
+        // Loaded: format=org, editable, headlines decomposed into blocks.
+        let dto = g.load_named("Org Notes", PageKind::Page).unwrap().unwrap();
+        assert_eq!(dto.format, Format::Org);
+        assert!(!dto.read_only);
+        assert_eq!(dto.blocks.len(), 2);
+        assert_eq!(dto.blocks[0].raw, "TODO Buy milk\nSCHEDULED: <2026-06-25 Thu>");
+        assert_eq!(dto.blocks[1].raw, "second block");
+
+        // No-op save leaves the file byte-identical (no churn).
+        let rev = g.save_page(&dto, dto.rev.as_deref()).unwrap();
+        assert_eq!(fs::read_to_string(dir.join("pages").join("Org Notes.org")).unwrap(), src);
+
+        // Edit a block and save → file updated, still org, byte-faithful.
+        let mut edited = dto.clone();
+        edited.blocks[1].raw = "second block edited".into();
+        g.save_page(&edited, Some(&rev)).unwrap();
+        let on_disk = fs::read_to_string(dir.join("pages").join("Org Notes.org")).unwrap();
+        assert_eq!(
+            on_disk,
+            "* TODO Buy milk\nSCHEDULED: <2026-06-25 Thu>\n* second block edited\n"
+        );
+        // No stray .md twin was created.
+        assert!(!dir.join("pages").join("Org Notes.md").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn org_journal_recognized_and_listed() {
+        let dir = scratch("org-journal");
+        fs::write(dir.join("journals").join("2026_06_24.org"), "* woke up\n* TODO ship\n").unwrap();
+        let g = Graph::open(&dir);
+        let j = g
+            .journals_desc()
+            .into_iter()
+            .find(|e| e.kind == PageKind::Journal)
+            .expect("org journal listed");
+        assert_eq!(Format::from_path(&j.path), Format::Org);
+        assert!(j.date_key.is_some(), "journal date parsed from .org stem");
+        let dto = g.load_page(&j).unwrap();
+        assert_eq!(dto.blocks.len(), 2);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn non_round_trip_org_is_read_only_and_save_refused() {
+        let dir = scratch("org-ro");
+        // Skipped heading level (`*` then `***`) cannot be reproduced from tree
+        // depth → not round-trip safe → must load read-only and refuse writes.
+        let src = "* a\n*** c\n";
+        fs::write(dir.join("pages").join("Weird.org"), src).unwrap();
+        let g = Graph::open(&dir);
+        let dto = g.load_named("Weird", PageKind::Page).unwrap().unwrap();
+        assert_eq!(dto.format, Format::Org);
+        assert!(dto.read_only, "non-round-tripping org loads read-only");
+        // Even a forced save must refuse (defense in depth) and leave bytes intact.
+        let err = g.force_save_page(&dto).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(fs::read_to_string(dir.join("pages").join("Weird.org")).unwrap(), src);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn new_page_uses_preferred_format_org() {
+        let dir = scratch("org-pref");
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(dir.join("logseq").join("config.edn"), "{:preferred-format \"Org\"}\n").unwrap();
+        let g = Graph::open(&dir);
+        assert_eq!(g.preferred_format(), Format::Org);
+        // Create a brand-new page via save (no baseline) — it must land as .org.
+        let page = PageDto {
+            name: "Fresh".into(),
+            kind: PageKind::Page,
+            title: "Fresh".into(),
+            pre_block: None,
+            blocks: vec![BlockDto { id: "x".into(), raw: "hello org".into(), ..Default::default() }],
+            rev: None,
+            format: Format::Org,
+            read_only: false,
+        };
+        g.save_page(&page, None).unwrap();
+        assert!(dir.join("pages").join("Fresh.org").exists(), "new page created as .org");
+        assert!(!dir.join("pages").join("Fresh.md").exists());
+        assert_eq!(fs::read_to_string(dir.join("pages").join("Fresh.org")).unwrap(), "* hello org\n");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn save_skips_rewrite_when_only_whitespace_trivia_differs() {
         // The file has an empty bullet written `- ` (trailing space); the
         // serializer would re-emit it as `-`. A5: a load→save with no real edit
@@ -2163,6 +2399,8 @@ mod tests {
                 breadcrumb: vec![],
             }],
             rev: None,
+            format: Format::Md,
+            read_only: false,
         }
     }
 

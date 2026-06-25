@@ -44,6 +44,10 @@ pub struct Config {
     /// `:journal/page-title-format` — Logseq's journal TITLE format. `None` = the
     /// default `"MMM do, yyyy"`. See `journal_file_name_format`.
     pub journal_page_title_format: Option<String>,
+    /// `:preferred-format` — the format ("Markdown"/"Org") for NEW pages and
+    /// journals. Existing files keep their own format (decided per-file by
+    /// extension). Default markdown.
+    pub preferred_format: crate::model::Format,
 }
 
 /// Logseq's default journal formats (verified against
@@ -74,6 +78,7 @@ impl Default for Config {
             favorites: Vec::new(),
             journal_file_name_format: None,
             journal_page_title_format: None,
+            preferred_format: crate::model::Format::Md,
         }
     }
 }
@@ -108,6 +113,12 @@ impl Config {
             string_value(edn, ":journal/file-name-format").filter(|s| !s.is_empty());
         cfg.journal_page_title_format =
             string_value(edn, ":journal/page-title-format").filter(|s| !s.is_empty());
+        // OG stores `:preferred-format "Markdown"|"Org"` (a capitalized string).
+        if let Some(v) = string_value(edn, ":preferred-format") {
+            if v.eq_ignore_ascii_case("org") {
+                cfg.preferred_format = crate::model::Format::Org;
+            }
+        }
         cfg
     }
 }
@@ -180,6 +191,39 @@ impl Graph {
             content.insert_str(brace + 1, &format!("\n :preferred-workflow {kw}\n"));
         } else {
             content = format!("{{:preferred-workflow {kw}}}\n");
+        }
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        atomic_write(&path, content.as_bytes())
+    }
+
+    /// Persist the preferred format for new pages/journals as
+    /// `:preferred-format "Markdown"|"Org"` (the capitalized string OG uses),
+    /// replacing the existing value or inserting the key, preserving the rest of
+    /// the file (comments, formatting, other keys).
+    pub fn set_preferred_format(&self, fmt: crate::model::Format) -> io::Result<()> {
+        let val = match fmt {
+            crate::model::Format::Org => "\"Org\"",
+            crate::model::Format::Md => "\"Markdown\"",
+        };
+        let key = ":preferred-format";
+        let path = self.root.join("logseq").join("config.edn");
+        let mut content = fs::read_to_string(&path).unwrap_or_else(|_| "{}\n".to_string());
+
+        if let Some(start) = find_keyword(&content, key) {
+            let after = start + key.len();
+            let vstart = skip_blank(&content, after); // comment-aware
+            if content[vstart..].starts_with('"') {
+                let end = edn_str_end(&content, vstart);
+                content.replace_range(vstart..end, val);
+            } else {
+                content.insert_str(after, &format!(" {val}"));
+            }
+        } else if let Some(brace) = content.find('{') {
+            content.insert_str(brace + 1, &format!("\n {key} {val}\n"));
+        } else {
+            content = format!("{{{key} {val}}}\n");
         }
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
@@ -677,6 +721,39 @@ mod tests {
         let cfg = Config::parse(edn);
         assert_eq!(cfg.shortcuts.get("go/search").map(String::as_str), Some("false"));
         assert_eq!(cfg.shortcuts.get("editor/indent").map(String::as_str), Some("tab"));
+    }
+
+    #[test]
+    fn parses_preferred_format() {
+        use crate::model::Format;
+        assert_eq!(Config::parse(r#"{:preferred-format "Org"}"#).preferred_format, Format::Org);
+        assert_eq!(Config::parse(r#"{:preferred-format "org"}"#).preferred_format, Format::Org);
+        assert_eq!(Config::parse(r#"{:preferred-format "Markdown"}"#).preferred_format, Format::Md);
+        assert_eq!(Config::parse("{}").preferred_format, Format::Md);
+    }
+
+    #[test]
+    fn set_preferred_format_round_trips() {
+        use crate::model::{Format, Graph};
+        let dir = std::env::temp_dir().join(format!("tine-cfgfmt-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq").join("config.edn"),
+            "{:preferred-format \"Markdown\"\n :start-of-week 0}\n",
+        )
+        .unwrap();
+        let g = Graph::open(&dir);
+        g.set_preferred_format(Format::Org).unwrap();
+        let after = fs::read_to_string(dir.join("logseq").join("config.edn")).unwrap();
+        assert!(after.contains(":preferred-format \"Org\""), "value flipped: {after}");
+        assert!(after.contains(":start-of-week 0"), "other keys preserved");
+        assert_eq!(Graph::open(&dir).preferred_format(), Format::Org);
+        // Inserts the key when absent.
+        fs::write(dir.join("logseq").join("config.edn"), "{}\n").unwrap();
+        Graph::open(&dir).set_preferred_format(Format::Org).unwrap();
+        assert_eq!(Graph::open(&dir).preferred_format(), Format::Org);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -103,7 +103,12 @@ pub fn parse_org(content: &str) -> Document {
     for (n, &(start, level)) in heads.iter().enumerate() {
         let end = heads.get(n + 1).map(|h| h.0).unwrap_or(lines.len());
         let seg = &lines[start..end];
-        let first_content = &seg[0][level..]; // strip exactly `level` '*'
+        // Drop the `level` stars and exactly one following space, so a block's raw
+        // is the title text with no leading marker (matching the markdown path,
+        // where `- ` is stripped). A second space, a tab, or no space is kept, so
+        // serialize re-adds one space and still round-trips multi-space headlines.
+        let after = &seg[0][level..];
+        let first_content = after.strip_prefix(' ').unwrap_or(after);
         let raw = if seg.len() == 1 {
             first_content.to_string()
         } else {
@@ -174,13 +179,25 @@ fn emit_org(block: &DocBlock, level: usize, out: &mut Vec<String>) {
     let stars = "*".repeat(level);
     let mut lines = block.raw.split('\n');
     let first = lines.next().unwrap_or("");
-    out.push(format!("{stars}{first}"));
+    // Re-add the single space dropped on parse (an empty title is just the stars).
+    if first.is_empty() {
+        out.push(stars);
+    } else {
+        out.push(format!("{stars} {first}"));
+    }
     for line in lines {
         out.push(line.to_string());
     }
     for child in &block.children {
         emit_org(child, level + 1, out);
     }
+}
+
+/// Serialize a [`Document`] to org text, reproducing `existing`'s
+/// trailing-newline run (default one newline for a new file). The org analogue
+/// of `doc::serialize_with(&doc, &SerializeOpts::detect(existing))`.
+pub fn serialize_org_detect(doc: &Document, existing: Option<&str>) -> String {
+    serialize_org_with(doc, existing.map(trailing_newlines).unwrap_or(1))
 }
 
 /// Whether `serialize_org(parse_org(content))` reproduces `content`
@@ -267,11 +284,11 @@ mod tests {
     fn structure_simple() {
         let doc = parse_org("* parent\n** child\n*** grand\n* sibling\n");
         assert_eq!(doc.roots.len(), 2);
-        assert_eq!(doc.roots[0].raw, " parent");
+        assert_eq!(doc.roots[0].raw, "parent");
         assert_eq!(doc.roots[0].children.len(), 1);
-        assert_eq!(doc.roots[0].children[0].raw, " child");
-        assert_eq!(doc.roots[0].children[0].children[0].raw, " grand");
-        assert_eq!(doc.roots[1].raw, " sibling");
+        assert_eq!(doc.roots[0].children[0].raw, "child");
+        assert_eq!(doc.roots[0].children[0].children[0].raw, "grand");
+        assert_eq!(doc.roots[1].raw, "sibling");
         assert!(doc.roots[1].children.is_empty());
     }
 
@@ -279,7 +296,7 @@ mod tests {
     fn body_kept_verbatim_with_block_text() {
         let doc = parse_org("* TODO task\nSCHEDULED: <2026-06-25 Thu>\nbody line\n");
         assert_eq!(doc.roots.len(), 1);
-        assert_eq!(doc.roots[0].raw, " TODO task\nSCHEDULED: <2026-06-25 Thu>\nbody line");
+        assert_eq!(doc.roots[0].raw, "TODO task\nSCHEDULED: <2026-06-25 Thu>\nbody line");
         // Marker detection (shared with markdown) sees the leading keyword.
         assert_eq!(doc.roots[0].marker(), Some("TODO"));
     }
