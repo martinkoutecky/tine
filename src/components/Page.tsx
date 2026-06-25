@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js";
-import { doc, mainPages, pageByName, reloadPage, loadSingle, loadFeed, appendFeed, isDirty, editingId, setFeedExtender, flushPage, type FeedPage } from "../store";
+import { doc, mainPages, pageByName, reloadPage, loadSingle, loadFeed, appendFeed, isDirty, editingId, setFeedExtender, flushAll, type FeedPage } from "../store";
 import { route, sameRoute, openPage, openJournals, openPageInNewTab } from "../router";
 import {
   zoomedBlock, zoomInto, isFavorite, toggleFavorite,
@@ -300,9 +300,11 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
     setRenaming(false);
     if (!next || next === props.page.name) return;
     try {
-      // Flush unsaved edits before the file is moved on disk and reloaded; abort
-      // the rename if they couldn't be saved (conflict / error).
-      if (!(await flushPage(props.page.name))) {
+      // Flush ALL unsaved edits before the file is moved on disk — the rename
+      // transaction reads every referencing page from disk to rewrite its
+      // `[[refs]]`, so a dirty edit on ANY page (not just the renamed one) would
+      // be read stale and its link left dangling. Abort if anything can't save.
+      if (!(await flushAll())) {
         alert("Couldn't save pending edits — resolve the conflict before renaming.");
         return;
       }
