@@ -48,6 +48,14 @@ export interface PageEntry {
 export interface AssetInfo {
   name: string;
   size: number;
+  /** Last-modified time as Unix seconds (≈ when the file entered the graph). */
+  modified: number | null;
+}
+
+/** Count + total bytes of the recoverable asset trash (logseq/.tine-trash). */
+export interface TrashStats {
+  count: number;
+  bytes: number;
 }
 
 export interface RefGroup {

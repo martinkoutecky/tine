@@ -75,6 +75,18 @@ export function loadAssetBlob(rel: string): Promise<string> {
   return p;
 }
 
+/** Pre-populate the cache for `rel` from in-memory bytes (e.g. a just-pasted
+ *  image) so it renders instantly, before the disk write completes — and so the
+ *  inline loader never races readAsset against a not-yet-written file (which would
+ *  cache an empty result). Revokes any prior URL for this rel. */
+export function seedAssetBlob(rel: string, bytes: Uint8Array): string {
+  const prior = cache.get(rel);
+  if (prior) void prior.then((url) => url && URL.revokeObjectURL(url)).catch(() => {});
+  const url = URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: mimeFromExt(rel) }));
+  cache.set(rel, Promise.resolve(url));
+  return url;
+}
+
 /** Revoke every cached blob URL and empty the cache. Call on graph switch so the
  *  next graph's images aren't served stale blobs from the previous one. */
 export function clearAssetBlobCache(): void {

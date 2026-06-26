@@ -127,11 +127,21 @@ pub struct TemplateDto {
 }
 
 /// An orphaned asset file (no block references it) — surfaced so the user can
-/// review + trash unused media. `size` in bytes.
+/// review + trash unused media. `size` in bytes; `modified` is the file's
+/// last-modified time as Unix seconds (≈ when it entered the graph), or `None`
+/// if the filesystem doesn't report it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssetInfo {
     pub name: String,
     pub size: u64,
+    pub modified: Option<u64>,
+}
+
+/// Count + total bytes of the recoverable asset trash (`logseq/.tine-trash`).
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+pub struct TrashStats {
+    pub count: u64,
+    pub bytes: u64,
 }
 
 /// A full page as sent to / received from the frontend.
@@ -1396,8 +1406,14 @@ impl Graph {
             if referenced.contains(name) {
                 continue;
             }
-            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
-            out.push(AssetInfo { name: name.to_string(), size });
+            let meta = entry.metadata().ok();
+            let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+            let modified = meta
+                .as_ref()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs());
+            out.push(AssetInfo { name: name.to_string(), size, modified });
         }
         out.sort_by(|a, b| a.name.cmp(&b.name));
         out
@@ -1420,6 +1436,47 @@ impl Graph {
             fs::remove_file(&src)?;
         }
         Ok(())
+    }
+
+    /// File count + total bytes currently in the asset trash (`logseq/.tine-trash`).
+    /// Lets the UI show "Empty trash (N)" without listing the directory itself.
+    pub fn asset_trash_stats(&self) -> TrashStats {
+        let trash = self.root.join("logseq").join(".tine-trash");
+        let mut stats = TrashStats::default();
+        if let Ok(rd) = fs::read_dir(&trash) {
+            for entry in rd.flatten() {
+                if entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+                    stats.count += 1;
+                    stats.bytes += entry.metadata().map(|m| m.len()).unwrap_or(0);
+                }
+            }
+        }
+        stats
+    }
+
+    /// Permanently delete everything in the asset trash. Returns the number of
+    /// files removed. The trash lives under `logseq/.tine-trash`, so we only ever
+    /// touch that directory — never `assets/`, `pages/`, or `journals/`.
+    pub fn empty_asset_trash(&self) -> io::Result<u64> {
+        let trash = self.root.join("logseq").join(".tine-trash");
+        let mut removed = 0;
+        match fs::read_dir(&trash) {
+            Ok(rd) => {
+                for entry in rd.flatten() {
+                    let path = entry.path();
+                    let ok = match entry.file_type() {
+                        Ok(ft) if ft.is_dir() => fs::remove_dir_all(&path).is_ok(),
+                        _ => fs::remove_file(&path).is_ok(),
+                    };
+                    if ok {
+                        removed += 1;
+                    }
+                }
+                Ok(removed)
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(0),
+            Err(e) => Err(e),
+        }
     }
 
     /// Read raw bytes of an asset (e.g. a PDF) for the viewer.
@@ -2536,6 +2593,28 @@ mod tests {
         // A name with a separator is refused (can't escape assets/).
         assert!(g.trash_asset("../pages/P.md").is_err());
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn empty_asset_trash_clears_trashed_files() {
+        let dir = scratch("empty-trash");
+        let assets = dir.join("assets");
+        fs::create_dir_all(&assets).unwrap();
+        fs::write(assets.join("junk1.png"), b"xx").unwrap(); // 2 bytes
+        fs::write(assets.join("junk2.png"), b"yyy").unwrap(); // 3 bytes
+        let g = Graph::open(&dir);
+        g.trash_asset("junk1.png").unwrap();
+        g.trash_asset("junk2.png").unwrap();
+        let s = g.asset_trash_stats();
+        assert_eq!(s.count, 2, "two files in trash");
+        assert_eq!(s.bytes, 5, "2 + 3 bytes preserved through the move");
+        assert_eq!(g.empty_asset_trash().unwrap(), 2, "both removed");
+        assert_eq!(g.asset_trash_stats().count, 0, "trash empty afterwards");
+        // Emptying a never-created trash is a no-op, not an error.
+        let dir2 = scratch("empty-trash-missing");
+        assert_eq!(Graph::open(&dir2).empty_asset_trash().unwrap(), 0);
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&dir2);
     }
 
     #[test]

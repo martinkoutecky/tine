@@ -42,7 +42,7 @@ import { commandDefaults, eventToBindingString, setKeybindingsSuspended } from "
 import { switchGraph, loadGraphPath } from "../graph";
 import { flushAll } from "../store";
 import { backend, type BackupInfo } from "../backend";
-import type { AssetInfo } from "../types";
+import type { AssetInfo, TrashStats } from "../types";
 import { formatJournal } from "../journal";
 
 // Journal display-title formats offered in the date-format dropdown — OG's
@@ -754,10 +754,23 @@ function AssetsTab(): JSX.Element {
   const [list, setList] = createSignal<AssetInfo[]>([]);
   const [busy, setBusy] = createSignal(false);
   const [scanned, setScanned] = createSignal(false);
+  const [trashInfo, setTrashInfo] = createSignal<TrashStats>({ count: 0, bytes: 0 });
 
   const fmtSize = (n: number) =>
     n >= 1 << 20 ? `${(n / (1 << 20)).toFixed(1)} MB` : n >= 1024 ? `${Math.round(n / 1024)} KB` : `${n} B`;
+  const fmtDate = (secs: number | null) =>
+    secs == null
+      ? ""
+      : new Date(secs * 1000).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
   const total = () => list().reduce((s, a) => s + a.size, 0);
+
+  const refreshTrash = async () => {
+    try {
+      setTrashInfo(await backend().assetTrashStats());
+    } catch {
+      /* trash stats are best-effort */
+    }
+  };
 
   const refresh = async () => {
     setBusy(true);
@@ -767,10 +780,19 @@ function AssetsTab(): JSX.Element {
       await flushAll();
       setList(await backend().listOrphanAssets());
       setScanned(true);
+      await refreshTrash();
     } catch (e) {
       pushToast(`Scan failed: ${String(e)}`, "error");
     } finally {
       setBusy(false);
+    }
+  };
+
+  const open = async (a: AssetInfo) => {
+    try {
+      await backend().openAsset(a.name);
+    } catch (e) {
+      pushToast(`Couldn’t open ${a.name}: ${String(e)}`, "error");
     }
   };
 
@@ -786,8 +808,28 @@ function AssetsTab(): JSX.Element {
       await backend().trashAsset(a.name);
       setList((l) => l.filter((x) => x.name !== a.name));
       pushToast(`Moved ${a.name} to trash`, "success");
+      await refreshTrash();
     } catch (e) {
       pushToast(`Couldn’t trash: ${String(e)}`, "error");
+    }
+  };
+
+  const emptyTrash = async () => {
+    const info = trashInfo();
+    if (!info.count) return;
+    if (
+      !(await backend().confirm(
+        `Permanently delete ${info.count} file${info.count === 1 ? "" : "s"} (${fmtSize(info.bytes)}) in the trash?\n\n` +
+          `This cannot be undone — the files are removed from logseq/.tine-trash for good.`
+      ))
+    )
+      return;
+    try {
+      const n = await backend().emptyAssetTrash();
+      setTrashInfo({ count: 0, bytes: 0 });
+      pushToast(`Emptied trash (${n} file${n === 1 ? "" : "s"})`, "success");
+    } catch (e) {
+      pushToast(`Couldn’t empty trash: ${String(e)}`, "error");
     }
   };
 
@@ -798,11 +840,22 @@ function AssetsTab(): JSX.Element {
         <button class="settings-btn" style={{ "margin-left": "10px" }} disabled={busy()} onClick={() => void refresh()}>
           {busy() ? "Scanning…" : scanned() ? "Rescan" : "Scan for orphans"}
         </button>
+        <Show when={trashInfo().count > 0}>
+          <button
+            class="settings-btn settings-btn-danger"
+            style={{ "margin-left": "8px" }}
+            onClick={() => void emptyTrash()}
+            title="Permanently delete everything in logseq/.tine-trash"
+          >
+            Empty trash ({trashInfo().count})
+          </button>
+        </Show>
       </div>
       <div class="settings-hint settings-block">
         Files in <code>assets/</code> that no block links to. Deleting a block never
         deletes its media (a safety net), so unused files can accumulate — review and
-        trash them here. Trashed files move to <code>logseq/.tine-trash</code> (recoverable).
+        trash them here. Trashed files move to <code>logseq/.tine-trash</code> (recoverable);
+        click a name to open it in your default app.
       </div>
       <Show when={scanned()}>
         <Show
@@ -815,8 +868,11 @@ function AssetsTab(): JSX.Element {
           <div class="settings-backups">
             <For each={list()}>
               {(a) => (
-                <div class="settings-backup-row">
-                  <span class="settings-backup-when mono">{a.name}</span>
+                <div class="settings-asset-row">
+                  <button class="settings-asset-name mono" title="Open in the default app" onClick={() => void open(a)}>
+                    {a.name}
+                  </button>
+                  <span class="settings-asset-date">{fmtDate(a.modified)}</span>
                   <span class="settings-backup-files mono">{fmtSize(a.size)}</span>
                   <button class="settings-btn" onClick={() => void trash(a)}>
                     Trash

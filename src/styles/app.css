@@ -985,6 +985,44 @@ body {
   color: var(--text-muted);
   font-size: 12px;
 }
+/* Orphaned-media rows: name (clickable) · date · size · Trash. */
+.settings-asset-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+.settings-asset-name {
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: var(--link-color, #4a7);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-asset-name:hover {
+  text-decoration: underline;
+}
+.settings-asset-date {
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.settings-btn-danger {
+  color: #c0392b;
+  border-color: color-mix(in srgb, #c0392b 35%, transparent);
+}
+.settings-btn-danger:hover {
+  background: color-mix(in srgb, #c0392b 12%, transparent);
+}
 /* Carry-over action buttons, right-aligned next to a journal title. */
 .page-carry-actions {
   display: flex;

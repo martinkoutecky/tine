@@ -391,6 +391,9 @@ export function mockBackend(): Backend {
     async pasteImage(): Promise<string | null> {
       return null; // no OS clipboard in the browser mock
     },
+    async readClipboardImage(): Promise<Uint8Array | null> {
+      return null; // no OS clipboard in the browser mock
+    },
     async importAsset(path: string, name?: string): Promise<string> {
       return name ?? path.split("/").pop() ?? path;
     },
@@ -399,12 +402,18 @@ export function mockBackend(): Backend {
     },
     async listOrphanAssets() {
       return [
-        { name: "old_screenshot_20260601_091500.png", size: 184_320 },
-        { name: "unused_clip_20260512_140233.mp4", size: 5_242_880 },
+        { name: "old_screenshot_20260601_091500.png", size: 184_320, modified: 1_748_762_100 },
+        { name: "unused_clip_20260512_140233.mp4", size: 5_242_880, modified: 1_747_051_353 },
       ];
     },
     async trashAsset(): Promise<void> {
       // no-op in the browser mock
+    },
+    async assetTrashStats() {
+      return { count: 3, bytes: 1_572_864 };
+    },
+    async emptyAssetTrash(): Promise<number> {
+      return 3;
     },
     async confirm(message: string): Promise<boolean> {
       // The browser/test env has a working global confirm (unlike the WebKitGTK

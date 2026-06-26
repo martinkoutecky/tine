@@ -981,6 +981,18 @@ fn trash_asset(name: String, state: State<'_, AppState>) -> Result<(), String> {
     with_graph(&state, |g| g.trash_asset(&name).map_err(|e| e.to_string()))
 }
 
+/// Count + total bytes in the recoverable asset trash.
+#[tauri::command]
+fn asset_trash_stats(state: State<'_, AppState>) -> Result<tine_core::model::TrashStats, String> {
+    with_graph(&state, |g| Ok(g.asset_trash_stats()))
+}
+
+/// Permanently delete everything in the asset trash; returns files removed.
+#[tauri::command]
+fn empty_asset_trash(state: State<'_, AppState>) -> Result<u64, String> {
+    with_graph(&state, |g| g.empty_asset_trash().map_err(|e| e.to_string()))
+}
+
 #[tauri::command]
 fn save_asset(name: String, bytes: Vec<u8>, state: State<'_, AppState>) -> Result<String, String> {
     with_graph(&state, |g| g.save_asset(&name, &bytes).map_err(|e| e.to_string()))
@@ -1231,6 +1243,8 @@ fn main() {
             open_asset,
             list_orphan_assets,
             trash_asset,
+            asset_trash_stats,
+            empty_asset_trash,
             search,
             quick_switch,
             list_templates,

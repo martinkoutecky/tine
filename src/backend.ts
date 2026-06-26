@@ -11,6 +11,7 @@ import type {
   PageEntry,
   RefGroup,
   TemplateDto,
+  TrashStats,
 } from "./types";
 import { assetFileName } from "./media";
 import { mockBackend } from "./mock";
@@ -69,6 +70,10 @@ export interface Backend {
   listOrphanAssets(): Promise<AssetInfo[]>;
   /** Move an orphaned asset to the recoverable trash. */
   trashAsset(name: string): Promise<void>;
+  /** Count + total bytes of the recoverable asset trash (logseq/.tine-trash). */
+  assetTrashStats(): Promise<TrashStats>;
+  /** Permanently delete everything in the asset trash; returns files removed. */
+  emptyAssetTrash(): Promise<number>;
   search(query: string, limit: number): Promise<RefGroup[]>;
   quickSwitch(query: string, limit: number): Promise<PageEntry[]>;
   listTemplates(): Promise<TemplateDto[]>;
@@ -79,6 +84,10 @@ export interface Backend {
   /** If the OS clipboard holds an image, save it to assets/ and return the
    *  filename; otherwise null. */
   pasteImage(): Promise<string | null>;
+  /** Decode an image off the OS clipboard to PNG bytes WITHOUT saving (the
+   *  caller seeds the render cache + writes to disk in the background, so the
+   *  pasted image appears instantly). Null if the clipboard has no image. */
+  readClipboardImage(): Promise<Uint8Array | null>;
   /** Copy a file (by absolute path) into assets/, returning the stored name.
    *  `name` (optional) is the desired stored filename (timestamped). */
   importAsset(path: string, name?: string): Promise<string>;
@@ -256,7 +265,7 @@ class TauriBackend implements Backend {
   saveAsset(name: string, bytes: Uint8Array) {
     return this.call<string>("save_asset", { name, bytes: Array.from(bytes) });
   }
-  async pasteImage(): Promise<string | null> {
+  async readClipboardImage(): Promise<Uint8Array | null> {
     try {
       const { readImage } = await import("@tauri-apps/plugin-clipboard-manager");
       const img = await readImage();
@@ -271,11 +280,21 @@ class TauriBackend implements Backend {
       ctx.putImageData(new ImageData(new Uint8ClampedArray(rgba), width, height), 0, 0);
       const blob: Blob | null = await new Promise((res) => canvas.toBlob(res, "image/png"));
       if (!blob) return null;
-      const bytes = new Uint8Array(await blob.arrayBuffer());
-      return await this.saveAsset(assetFileName(), bytes);
+      return new Uint8Array(await blob.arrayBuffer());
     } catch {
       return null; // no image in clipboard, or plugin unavailable
     }
+  }
+  async pasteImage(): Promise<string | null> {
+    const bytes = await this.readClipboardImage();
+    if (!bytes) return null;
+    return await this.saveAsset(assetFileName(), bytes);
+  }
+  assetTrashStats() {
+    return this.call<TrashStats>("asset_trash_stats");
+  }
+  emptyAssetTrash() {
+    return this.call<number>("empty_asset_trash");
   }
   importAsset(path: string, name?: string) {
     return this.call<string>("import_asset", { path, name });

@@ -57,7 +57,8 @@ import { BodyContent } from "../render/body";
 import { assetMarkdown, assetFileName } from "../media";
 import { calcSource, wrapCalc, evalCalc } from "../editor/calc";
 import { QueryMacro, EmbedMacro } from "./Macro";
-import { workflow, zoomInto, openContextMenu, openDatePicker, openBlockInSidebar, graphMeta, dataRev, setQueryBuilderAutoOpen, openPageProps } from "../ui";
+import { workflow, zoomInto, openContextMenu, openDatePicker, openBlockInSidebar, graphMeta, dataRev, setQueryBuilderAutoOpen, openPageProps, pushToast, dismissToast } from "../ui";
+import { seedAssetBlob } from "../assetCache";
 import { openPageInNewTab } from "../router";
 import { editorCommandFor } from "../keybindings";
 import { cycleMarkerSmart } from "../editor/repeat";
@@ -1183,11 +1184,28 @@ export function Editor(props: { id: string }): JSX.Element {
       startEditing(lastId, doc.byId[lastId].raw.length);
       return;
     }
-    // Single-line/no text: maybe an image on the OS clipboard.
+    // Single-line/no text: maybe an image on the OS clipboard. Show an immediate
+    // "Pasting image…" hint when the clipboard clearly holds one (so there's no
+    // dead 1–2s), then render it instantly from the in-memory bytes and write to
+    // disk in the background.
+    const looksImage =
+      Array.from(e.clipboardData?.items ?? []).some((it) => it.type.startsWith("image/")) ||
+      (e.clipboardData?.types ?? []).some((t) => t.startsWith("image/") || t === "Files");
+    const toastId = looksImage ? pushToast("Pasting image…", "info") : 0;
     void (async () => {
-      const saved = await backend().pasteImage();
-      if (!saved) return;
-      const md = assetMarkdown(saved);
+      let bytes: Uint8Array | null = null;
+      try {
+        bytes = await backend().readClipboardImage();
+      } finally {
+        if (toastId) dismissToast(toastId);
+      }
+      if (!bytes) return;
+      const name = assetFileName();
+      // Cache key is the bare filename — assetRelPath() strips the `assets/`
+      // prefix before loadAssetBlob() (see render/inline.tsx). Seed it so the
+      // image renders instantly, before the disk write lands.
+      seedAssetBlob(name, bytes);
+      const md = assetMarkdown(name);
       const start = ref.selectionStart;
       const newRaw = ref.value.slice(0, start) + md + ref.value.slice(ref.selectionEnd);
       commit(newRaw);
@@ -1197,6 +1215,9 @@ export function Editor(props: { id: string }): JSX.Element {
         ref.setSelectionRange(pos, pos);
         autosize();
       });
+      void backend()
+        .saveAsset(name, bytes)
+        .catch(() => pushToast(`Couldn’t save pasted image to assets/`, "error"));
     })();
   };
 

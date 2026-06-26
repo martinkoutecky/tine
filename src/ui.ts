@@ -709,10 +709,11 @@ export interface Toast {
 }
 let toastSeq = 0;
 export const [toasts, setToasts] = createSignal<Toast[]>([]);
-export function pushToast(message: string, kind: Toast["kind"] = "info") {
+export function pushToast(message: string, kind: Toast["kind"] = "info"): number {
   const id = ++toastSeq;
   setToasts([...toasts(), { id, message, kind }]);
   setTimeout(() => dismissToast(id), 3200);
+  return id;
 }
 export function dismissToast(id: number) {
   setToasts(toasts().filter((t) => t.id !== id));
