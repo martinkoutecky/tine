@@ -9,6 +9,7 @@ import {
   killWordForward,
   killWordBackward,
   setPriority,
+  trimBlockTrailingSpace,
 } from "./format";
 
 describe("toggleWrap", () => {
@@ -85,5 +86,36 @@ describe("setPriority", () => {
   });
   it("handles an empty body", () => {
     expect(setPriority("TODO", "A")).toBe("TODO [#A]");
+  });
+});
+
+describe("trimBlockTrailingSpace", () => {
+  it("drops trailing spaces/tabs at the very end (the /priority convenience space)", () => {
+    expect(trimBlockTrailingSpace("TODO [#A] ")).toBe("TODO [#A]");
+    expect(trimBlockTrailingSpace("hello \t ")).toBe("hello");
+  });
+  it("leaves a block with no trailing whitespace unchanged", () => {
+    expect(trimBlockTrailingSpace("TODO [#A]")).toBe("TODO [#A]");
+    expect(trimBlockTrailingSpace("")).toBe("");
+  });
+  it("preserves leading indent, internal spaces, and a trailing newline", () => {
+    // Only the absolute end is trimmed — list continuation lines, internal
+    // spacing, and a trailing newline are untouched.
+    expect(trimBlockTrailingSpace("  - item")).toBe("  - item");
+    expect(trimBlockTrailingSpace("a  b")).toBe("a  b");
+    expect(trimBlockTrailingSpace("a \nb")).toBe("a \nb"); // space before \n is internal
+    expect(trimBlockTrailingSpace("line\n")).toBe("line\n");
+  });
+  it("keeps the required space on an empty trailing list/checkbox item", () => {
+    // The list/checkbox renderers need whitespace after the marker, so a bare
+    // trailing marker must NOT lose its space.
+    expect(trimBlockTrailingSpace("* ")).toBe("* ");
+    expect(trimBlockTrailingSpace("text\n+ ")).toBe("text\n+ ");
+    expect(trimBlockTrailingSpace("1. ")).toBe("1. ");
+    expect(trimBlockTrailingSpace("  - ")).toBe("  - ");
+    expect(trimBlockTrailingSpace("* [ ] ")).toBe("* [ ] ");
+    expect(trimBlockTrailingSpace("* [x] ")).toBe("* [x] ");
+    // …but a list item WITH content still loses its trailing space.
+    expect(trimBlockTrailingSpace("* item ")).toBe("* item");
   });
 });

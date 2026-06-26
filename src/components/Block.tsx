@@ -51,6 +51,7 @@ import {
   killWordForward,
   killWordBackward,
   setPriority,
+  trimBlockTrailingSpace,
   type Edit,
 } from "../editor/format";
 import { blockView } from "../render/block";
@@ -586,7 +587,11 @@ export function Editor(props: { id: string }): JSX.Element {
   const calcRows = createMemo(() => (isCalc() ? evalCalc(calcLive() ?? "") : []));
   const commit = (text: string) => {
     // For calc, `text` is the bare expressions the user sees — re-fence it.
-    const visible = isCalc() ? wrapCalc(text) : text;
+    // Drop any trailing space the user left (or that a `/priority` insert added as
+    // a typing convenience) so it never reaches disk — matches OG, which trims the
+    // block on save. The no-op guard below means a trailing-space-only change never
+    // even marks the page dirty.
+    const visible = trimBlockTrailingSpace(isCalc() ? wrapCalc(text) : text);
     const next = joinProps(visible, splitProps(node().raw, hideFn()).hidden);
     // No-op commit (focus/blur with no real edit, or text that reconstructs the
     // identical raw): don't mark the page dirty or push undo — avoids churn and
@@ -860,11 +865,15 @@ export function Editor(props: { id: string }): JSX.Element {
           item.action === "priority-a" ? "A" : item.action === "priority-b" ? "B" : "C";
         const base = ref.value.slice(0, t.start) + ref.value.slice(t.end);
         const lines = base.split("\n");
-        lines[0] = setPriority(lines[0], level);
+        // OG inserts `[#A] ` with a trailing space and moves the caret past it, so
+        // the next word or `/command` flows without manually adding a space (the
+        // slash menu needs a whitespace boundary before `/`). The space is a
+        // live-editing convenience only — `commit` trims it so it never persists.
+        lines[0] = setPriority(lines[0], level) + " ";
         const next = lines.join("\n");
         commit(next);
         closeAc();
-        const caret = lines[0].length;
+        const caret = lines[0].length; // after the trailing space
         queueMicrotask(() => {
           ref.value = next;
           ref.setSelectionRange(caret, caret);

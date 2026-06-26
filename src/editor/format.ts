@@ -121,3 +121,24 @@ export function setPriority(firstLine: string, level: "A" | "B" | "C"): string {
   const prefix = head ? `${head} ` : "";
   return rest ? `${prefix}[#${level}] ${rest}` : `${prefix}[#${level}]`;
 }
+
+// A trimmed last line that is JUST an (empty) in-block list-item prefix — a bare
+// `*`/`+`/`-`/`1.`/`1)` marker, optionally followed by an empty `[ ]`/`[x]`
+// checkbox. Its trailing space is syntactically required (the list/checkbox
+// renderers need whitespace after the marker), so it must NOT be trimmed away.
+const LIST_ITEM_PREFIX_RE = /^\s*(?:[-+*]|\d+[.)])(?:\s+\[[ xX]\])?$/;
+
+/** Trailing spaces/tabs at the very end of a block's visible text are an editing
+ *  convenience only — e.g. the space left after a `/priority` insert so the next
+ *  word or `/command` flows without manually adding one (the slash menu needs a
+ *  whitespace boundary before `/`). Never persist them, matching OG, which trims
+ *  the block on save. Only the absolute end is trimmed (not internal lines, not
+ *  leading indent, not a trailing newline), so list continuation lines and code
+ *  blocks are untouched — and an empty trailing list/checkbox item keeps the one
+ *  space its marker needs. */
+export function trimBlockTrailingSpace(text: string): string {
+  const trimmed = text.replace(/[ \t]+$/, "");
+  if (trimmed === text) return text;
+  const lastLine = trimmed.slice(trimmed.lastIndexOf("\n") + 1);
+  return LIST_ITEM_PREFIX_RE.test(lastLine) ? `${trimmed} ` : trimmed;
+}
