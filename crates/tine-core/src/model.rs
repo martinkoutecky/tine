@@ -412,6 +412,9 @@ impl Graph {
         let mut entries = Vec::new();
         entries.extend(list_md(&self.journals_path(), PageKind::Journal, &self.journal_format));
         entries.extend(list_md(&self.pages_path(), PageKind::Page, &self.journal_format));
+        // A duplicate-day journal (canonical + leftover title-named file) must show
+        // once in quick-switch / All-Pages, not twice (both resolve to one page).
+        let entries = dedup_journal_days(entries);
         *self.page_list_cache.write().unwrap() = Some((gen, entries.clone()));
         entries
     }
@@ -499,35 +502,11 @@ impl Graph {
                 .filter(|e| e.date_key.is_some())
                 .collect(),
         };
-        // Dedup by date: a day with more than one file (e.g. a leftover
-        // title-named duplicate of a `yyyy_MM_dd` file) must appear ONCE in the
-        // feed, not twice — both files resolve to the same page name, so without
-        // this the same day renders twice (loaded from whichever file path_for
-        // picks). Keep the canonical date-stem file (the one saves resolve to);
-        // the stray stays visible via journal_conflicts() for reconciliation.
-        let is_canonical = |e: &PageEntry| {
-            e.path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .is_some_and(|s| JournalDate::from_file_stem(s).is_some())
-        };
-        let mut by_date: std::collections::BTreeMap<i64, PageEntry> =
-            std::collections::BTreeMap::new();
-        for e in raw {
-            let Some(key) = e.date_key else { continue };
-            use std::collections::btree_map::Entry;
-            match by_date.entry(key) {
-                Entry::Vacant(v) => {
-                    v.insert(e);
-                }
-                Entry::Occupied(mut o) => {
-                    if is_canonical(&e) && !is_canonical(o.get()) {
-                        o.insert(e);
-                    }
-                }
-            }
-        }
-        let mut js: Vec<PageEntry> = by_date.into_values().collect();
+        // A day with more than one file (e.g. a leftover title-named duplicate of
+        // a `yyyy_MM_dd` file) must appear ONCE — both files resolve to the same
+        // page name, so otherwise the day renders twice. The stray stays visible
+        // via journal_conflicts() for reconciliation.
+        let mut js = dedup_journal_days(raw);
         js.sort_by_key(|e| std::cmp::Reverse(e.date_key.unwrap_or(0)));
         js
     }
@@ -2232,6 +2211,37 @@ fn reserve_asset(assets: &Path, name: &str) -> io::Result<(String, fs::File)> {
             _ => i += 1,
         }
     }
+}
+
+/// Collapse journal entries that resolve to the SAME date down to one (the
+/// canonical `yyyy_MM_dd` file) — a leftover title-named duplicate must not show
+/// the day twice in the feed, quick-switch, or All-Pages. Non-journal entries and
+/// the input order are preserved.
+fn dedup_journal_days(entries: Vec<PageEntry>) -> Vec<PageEntry> {
+    let is_canonical = |e: &PageEntry| {
+        e.path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .is_some_and(|s| JournalDate::from_file_stem(s).is_some())
+    };
+    let mut idx_of: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
+    let mut out: Vec<PageEntry> = Vec::new();
+    for e in entries {
+        match e.date_key {
+            Some(k) if e.kind == PageKind::Journal => {
+                if let Some(&i) = idx_of.get(&k) {
+                    if is_canonical(&e) && !is_canonical(&out[i]) {
+                        out[i] = e;
+                    }
+                } else {
+                    idx_of.insert(k, out.len());
+                    out.push(e);
+                }
+            }
+            _ => out.push(e),
+        }
+    }
+    out
 }
 
 fn list_md(dir: &Path, kind: PageKind, fmt: &JournalFormat) -> Vec<PageEntry> {

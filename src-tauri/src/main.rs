@@ -497,7 +497,7 @@ fn count_md_recursive(dir: &std::path::Path) -> usize {
             let p = e.path();
             if p.is_dir() {
                 n += count_md_recursive(&p);
-            } else if p.extension().and_then(|x| x.to_str()) == Some("md") {
+            } else if is_graph_text(&p) {
                 n += 1;
             }
         }
@@ -571,7 +571,7 @@ fn restore_md_dir(src: &std::path::Path, dest: &std::path::Path) -> std::io::Res
     let mut restored: std::collections::HashSet<String> = std::collections::HashSet::new();
     for e in std::fs::read_dir(src)?.flatten() {
         let p = e.path();
-        if p.extension().and_then(|x| x.to_str()) == Some("md") {
+        if is_graph_text(&p) {
             if let Some(name) = p.file_name() {
                 let target = dest.join(name);
                 let tmp = dest.join(format!(".{}.tine-restore", name.to_string_lossy()));
@@ -583,7 +583,7 @@ fn restore_md_dir(src: &std::path::Path, dest: &std::path::Path) -> std::io::Res
     }
     for e in std::fs::read_dir(dest)?.flatten() {
         let p = e.path();
-        if p.extension().and_then(|x| x.to_str()) == Some("md") {
+        if is_graph_text(&p) {
             if let Some(name) = p.file_name() {
                 if !restored.contains(name.to_string_lossy().as_ref()) {
                     let _ = std::fs::remove_file(&p);
@@ -592,6 +592,12 @@ fn restore_md_dir(src: &std::path::Path, dest: &std::path::Path) -> std::io::Res
         }
     }
     Ok(())
+}
+
+/// Page/journal text files Tine snapshots + restores: Markdown and Org. (Assets,
+/// `.edn` sidecars, etc. are intentionally not snapshotted here.)
+fn is_graph_text(p: &std::path::Path) -> bool {
+    matches!(p.extension().and_then(|x| x.to_str()), Some("md") | Some("org"))
 }
 
 fn dir_name(p: &std::path::Path) -> String {
@@ -621,7 +627,7 @@ fn copy_md_dir(src: &std::path::Path, dest: &std::path::Path) -> (usize, usize) 
     let (mut copied, mut failed) = (0usize, 0usize);
     for e in rd.flatten() {
         let p = e.path();
-        if p.extension().and_then(|x| x.to_str()) != Some("md") {
+        if !is_graph_text(&p) {
             continue;
         }
         let Some(name) = p.file_name() else { continue };

@@ -6,6 +6,7 @@ import { For, Show, createMemo, createResource, createSignal, type JSX } from "s
 import { Dynamic } from "solid-js/web";
 import { mediaKind } from "../media";
 import { openPage, openPageInNewTab } from "../router";
+import { isJournalTitle } from "../journal";
 import { openPdf, openPageInSidebar, openPageContextMenu, setLightbox, graphEpoch } from "../ui";
 import { parseInline, type Seg, type Format } from "./parseInline";
 import { blockView } from "./block";
@@ -40,14 +41,18 @@ function renderSeg(s: Seg, blockId?: string): JSX.Element {
           class="page-ref"
           onClick={(e) => {
             e.stopPropagation();
-            if (e.shiftKey) openPageInSidebar(s.name);
-            else openPage(s.name);
+            // A journal-date name (in the graph's title format) routes to the
+            // journal page; otherwise it's a regular page. Without this a
+            // `[[Fri, 26-06-2026]]` link/tag opens as an empty page.
+            const kind = isJournalTitle(s.name) ? "journal" : "page";
+            if (e.shiftKey) openPageInSidebar(s.name, kind);
+            else openPage(s.name, kind);
           }}
           onAuxClick={(e) => {
             if (e.button === 1) {
               e.preventDefault();
               e.stopPropagation();
-              openPageInNewTab(s.name);
+              openPageInNewTab(s.name, isJournalTitle(s.name) ? "journal" : "page");
             }
           }}
           onContextMenu={(e) => {
@@ -67,14 +72,18 @@ function renderSeg(s: Seg, blockId?: string): JSX.Element {
           class="tag"
           onClick={(e) => {
             e.stopPropagation();
-            if (e.shiftKey) openPageInSidebar(s.name);
-            else openPage(s.name);
+            // A journal-date name (in the graph's title format) routes to the
+            // journal page; otherwise it's a regular page. Without this a
+            // `[[Fri, 26-06-2026]]` link/tag opens as an empty page.
+            const kind = isJournalTitle(s.name) ? "journal" : "page";
+            if (e.shiftKey) openPageInSidebar(s.name, kind);
+            else openPage(s.name, kind);
           }}
           onAuxClick={(e) => {
             if (e.button === 1) {
               e.preventDefault();
               e.stopPropagation();
-              openPageInNewTab(s.name);
+              openPageInNewTab(s.name, isJournalTitle(s.name) ? "journal" : "page");
             }
           }}
           onContextMenu={(e) => {

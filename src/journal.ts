@@ -69,3 +69,73 @@ export function formatJournal(d: Date, fmt: string): string {
 export function journalTitle(d: Date): string {
   return formatJournal(d, titleFormat);
 }
+
+/// Try to parse `s` as a date in pattern `fmt` (the inverse of formatJournal, for
+/// the token subset Logseq uses). Mirrors the Rust `Format::parse` so a
+/// `[[journal title]]` link can be routed to the journal page rather than opened
+/// as an empty regular page. Returns true iff the whole string is a valid date.
+function parseJournalWith(s: string, fmt: string): boolean {
+  let i = 0;
+  let f = 0;
+  let y: number | null = null;
+  let mo: number | null = null;
+  let d: number | null = null;
+  const at = (t: string) => fmt.startsWith(t, f);
+  const digits = (max: number): number | null => {
+    const st = i;
+    while (i < s.length && i - st < max && s[i] >= "0" && s[i] <= "9") i++;
+    return i > st ? parseInt(s.slice(st, i), 10) : null;
+  };
+  const matchName = (tables: string[][]): number | null => {
+    for (const tbl of tables) {
+      for (let idx = 0; idx < tbl.length; idx++) {
+        const nm = tbl[idx];
+        if (nm && s.substr(i, nm.length).toLowerCase() === nm.toLowerCase()) {
+          i += nm.length;
+          return idx;
+        }
+      }
+    }
+    return null;
+  };
+  while (f < fmt.length) {
+    if (at("yyyy")) { const v = digits(4); if (v === null) return false; y = v; f += 4; }
+    else if (at("yy")) { const v = digits(2); if (v === null) return false; y = 2000 + v; f += 2; }
+    else if (at("y")) { const v = digits(4); if (v === null) return false; y = v; f += 1; }
+    else if (at("MMMM") || at("MMM")) {
+      const idx = matchName([MONTHS_FULL, MONTHS]);
+      if (idx === null) return false;
+      mo = idx + 1;
+      f += at("MMMM") ? 4 : 3;
+    } else if (at("MM")) { const v = digits(2); if (v === null) return false; mo = v; f += 2; }
+    else if (at("M")) { const v = digits(2); if (v === null) return false; mo = v; f += 1; }
+    else if (at("dd")) { const v = digits(2); if (v === null) return false; d = v; f += 2; }
+    else if (at("do")) {
+      const v = digits(2);
+      if (v === null) return false;
+      d = v;
+      f += 2;
+      if (["st", "nd", "rd", "th"].includes(s.substr(i, 2).toLowerCase())) i += 2;
+    } else if (at("d")) { const v = digits(2); if (v === null) return false; d = v; f += 1; }
+    else if (at("EEEE") || at("EEE") || at("EE") || at("E")) {
+      const tok = at("EEEE") ? 4 : at("EEE") ? 3 : at("EE") ? 2 : 1;
+      if (matchName([WD_FULL, WD_ABBR, WD_2, WD_1]) === null) return false;
+      f += tok;
+    } else {
+      if (s[i] !== fmt[f]) return false;
+      i += 1;
+      f += 1;
+    }
+  }
+  return (
+    i === s.length && y !== null && mo !== null && d !== null && mo >= 1 && mo <= 12 && d >= 1 && d <= 31
+  );
+}
+
+/// Whether `name` is a journal date in the graph's title format (or a common
+/// default) — so a `[[name]]` link / quick-switch pick opens the journal, not an
+/// empty page. Mirrors the backend's `safe-journal-title-formatters` leniency.
+export function isJournalTitle(name: string): boolean {
+  if (!name.trim()) return false;
+  return [titleFormat, DEFAULT_TITLE_FORMAT, "yyyy-MM-dd"].some((f) => parseJournalWith(name, f));
+}
