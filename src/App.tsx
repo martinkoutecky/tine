@@ -54,12 +54,19 @@ import { editingId, flushAll, appendToTodayJournal } from "./store";
 import { backend, isTauri } from "./backend";
 import { warnIfSoftwareRendering } from "./gpu";
 import { initSmoothScroll } from "./smoothScroll";
+import { initDebug, dbg } from "./debug";
 import { WindowControls, ResizeGrips, installWindowChrome, maximized } from "./components/WindowChrome";
 
 export function App(): JSX.Element {
+  // Startup debug trace (TINE_DEBUG=1 / --debug): forward UI milestones + errors
+  // into the backend log so a remote "bad startup" is diagnosable in one file.
+  onMount(() => void initDebug());
+
   onMount(async () => {
     const graphPath = persistedGraphPath() || ((window as any).__GRAPH_PATH__ ?? "");
+    dbg(`loading graph: ${graphPath || "(default/configured)"}`);
     await loadGraphPath(graphPath);
+    dbg("graph load call returned");
   });
 
   // Warn (loudly) if the webview is painting on the CPU — Tine's whole pitch is

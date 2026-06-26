@@ -261,6 +261,24 @@ TINE_GRAPH=/path/to/your/graph ./target/release/tine
   clash with the host GPU and silently drop you to (slow) software rendering. The `.deb`/`.rpm`
   packages use your system's drivers and don't have this problem.
 
+### Troubleshooting a bad startup (debug mode)
+
+If Tine won't start cleanly (e.g. the window never appears), run it with debug logging on. It writes
+a timestamped trace to a file — the environment (renderer, session type, AppImage, graph), every
+startup milestone, any panic (with backtrace), and the frontend's own boot/errors — so one file is
+usually enough to diagnose it:
+
+```bash
+TINE_DEBUG=1 tine                 # or:  tine --debug
+TINE_DEBUG=1 ./Tine-*.AppImage    # AppImage
+```
+
+Tine prints the log path on startup; it defaults to `/tmp/tine-debug.log` (override with
+`TINE_DEBUG_LOG=/path`). Reproduce the problem, then send that file. The log records no note content
+— only startup diagnostics.
+
+**Quick capture** — at the top of the journal feed, a page-title field + a body composer: fill the
+title to capture a **new page**, leave it empty to **append to today**, then `Ctrl-Shift-Enter`.
 **Global quick-capture:** bind your desktop environment's keyboard settings to run
 `tine --capture` (a second launch is routed to the running instance via single-instance).
 

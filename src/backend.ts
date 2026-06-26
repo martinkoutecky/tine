@@ -155,6 +155,16 @@ export interface Backend {
   /** Experimental smooth-scrolling preference (Lenis), app-level, default off. */
   getSmoothScroll(): Promise<boolean>;
   setSmoothScroll(value: boolean): Promise<void>;
+  /** Startup debug logging (TINE_DEBUG=1 / --debug): whether it's on and where the
+   *  log file is, so the UI can forward errors + show the path. */
+  debugInfo(): Promise<DebugInfo>;
+  /** Forward a frontend milestone / error into the backend debug log. */
+  debugLog(line: string): Promise<void>;
+}
+
+export interface DebugInfo {
+  enabled: boolean;
+  path: string;
 }
 
 /** Backend-visible rendering-environment facts (Linux-relevant; all false on
@@ -430,6 +440,12 @@ class TauriBackend implements Backend {
   }
   gpuEnv() {
     return this.call<GpuEnv>("gpu_env");
+  }
+  debugInfo() {
+    return this.call<DebugInfo>("debug_info");
+  }
+  debugLog(line: string) {
+    return this.call<void>("debug_log", { line });
   }
   getSmoothScroll() {
     return this.call<boolean>("get_smooth_scroll");

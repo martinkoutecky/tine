@@ -3,11 +3,146 @@
 
 use tine_core::model::{Graph, GraphMeta, PageDto, PageEntry, PageKind, RefGroup};
 use std::collections::HashMap;
+use std::io::Write as _;
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::{Duration, SystemTime};
 use tauri::{Emitter, Manager, State};
+
+// ---------------------------------------------------------------------------
+// Startup debug logging  (enable with TINE_DEBUG=1  or  the --debug flag)
+// ---------------------------------------------------------------------------
+// A "bad startup" report usually means the window never appeared — so stderr,
+// which a desktop-launched app discards, tells the user nothing. When debug mode
+// is on we ALSO append timestamped milestones to a findable log file (default
+// `<tmp>/tine-debug.log`, override with TINE_DEBUG_LOG), install a panic hook
+// that captures a backtrace, and let the frontend forward its console errors
+// here (the `debug_log` command). One file then tells the whole startup story,
+// so diagnosing a remote user takes a single round-trip: "run this, send me that
+// file." See README → Troubleshooting.
+static DEBUG_LOG: OnceLock<Option<Mutex<std::fs::File>>> = OnceLock::new();
+static DEBUG_START: OnceLock<std::time::Instant> = OnceLock::new();
+
+fn debug_enabled() -> bool {
+    matches!(std::env::var("TINE_DEBUG"), Ok(v) if !v.is_empty() && v != "0")
+        || std::env::args().any(|a| a == "--debug")
+}
+
+fn debug_log_path() -> PathBuf {
+    std::env::var_os("TINE_DEBUG_LOG")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::temp_dir().join("tine-debug.log"))
+}
+
+/// Open (truncating) the debug log once, so each run is a clean trace. No-op when
+/// debug mode is off. Safe to call repeatedly.
+fn debug_init() {
+    DEBUG_START.get_or_init(std::time::Instant::now);
+    DEBUG_LOG.get_or_init(|| {
+        if !debug_enabled() {
+            return None;
+        }
+        let path = debug_log_path();
+        match std::fs::File::create(&path) {
+            Ok(f) => {
+                eprintln!("[tine] DEBUG logging to {}", path.display());
+                Some(Mutex::new(f))
+            }
+            Err(e) => {
+                eprintln!("[tine] could not open debug log {}: {e}", path.display());
+                None
+            }
+        }
+    });
+}
+
+/// Emit one diagnostic line to stderr AND, when debug mode is on, the log file
+/// (prefixed with a +Nms offset from process start).
+fn diag(msg: impl AsRef<str>) {
+    let msg = msg.as_ref();
+    eprintln!("[tine] {msg}");
+    if let Some(Some(lock)) = DEBUG_LOG.get() {
+        let ms = DEBUG_START.get().map(|s| s.elapsed().as_millis()).unwrap_or(0);
+        if let Ok(mut f) = lock.lock() {
+            let _ = writeln!(f, "[+{ms:>7}ms] {msg}");
+            let _ = f.flush();
+        }
+    }
+}
+
+/// Log the environment that most often explains a broken launch (renderer,
+/// session type, AppImage, graph override, preload).
+fn debug_header() {
+    if !debug_enabled() {
+        return;
+    }
+    diag(format!(
+        "Tine {} starting — {}/{}",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    ));
+    let env_of = |k: &str| std::env::var(k).unwrap_or_else(|_| "<unset>".into());
+    for k in [
+        "TINE_GRAPH",
+        "TINE_GPU",
+        "WEBKIT_DISABLE_DMABUF_RENDERER",
+        "WEBKIT_DISABLE_COMPOSITING_MODE",
+        "XDG_SESSION_TYPE",
+        "WAYLAND_DISPLAY",
+        "APPIMAGE",
+        "LD_PRELOAD",
+        "GDK_BACKEND",
+    ] {
+        diag(format!("env {k}={}", env_of(k)));
+    }
+}
+
+/// Install a panic hook that records the panic + a backtrace into the debug log
+/// (RUST_BACKTRACE forced on), then chains to the default hook. Debug mode only.
+fn install_panic_logger() {
+    if !debug_enabled() {
+        return;
+    }
+    if std::env::var_os("RUST_BACKTRACE").is_none() {
+        std::env::set_var("RUST_BACKTRACE", "1");
+    }
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        diag(format!("PANIC: {info}"));
+        diag(format!(
+            "backtrace:\n{}",
+            std::backtrace::Backtrace::force_capture()
+        ));
+        default(info);
+    }));
+}
+
+/// Frontend → backend bridge so the webview's own milestones / errors land in the
+/// same file (e.g. "frontend booted", a window.onerror). No-op unless debugging.
+#[tauri::command]
+fn debug_log(line: String) {
+    if debug_enabled() {
+        diag(format!("[ui] {line}"));
+    }
+}
+
+#[derive(serde::Serialize)]
+struct DebugInfo {
+    enabled: bool,
+    path: String,
+}
+
+/// Lets the frontend learn whether debug mode is on (so it can wire up its error
+/// forwarding) and where the log lives (to surface the path to the user).
+#[tauri::command]
+fn debug_info() -> DebugInfo {
+    DebugInfo {
+        enabled: debug_enabled(),
+        path: debug_log_path().display().to_string(),
+    }
+}
 
 // The graph lives behind an RwLock holding an Arc, so read commands clone the
 // Arc and release the lock immediately — a long read (search / query / asset
@@ -1185,6 +1320,13 @@ fn show_capture(app: &tauri::AppHandle) {
 }
 
 fn main() {
+    // Bring up debug logging FIRST (TINE_DEBUG=1 / --debug), so every later
+    // milestone — and any panic — is captured to the log file from the very start.
+    debug_init();
+    install_panic_logger();
+    debug_header();
+    diag("main() entered");
+
     // AppImages bundle their own libwayland-client.so; on a Wayland session it can
     // mismatch the host compositor and abort WebKitGTK's EGL init ("Could not
     // create default EGL display: EGL_BAD_PARAMETER"). Self-heal by re-exec'ing
@@ -1220,12 +1362,13 @@ fn main() {
             };
             // `exec` only returns on failure; on success it replaces this process
             // (same PID, env + bundled LD_LIBRARY_PATH inherited, host lib preloaded).
+            diag(format!("Wayland AppImage: re-exec with LD_PRELOAD={preload}"));
             let err = std::process::Command::new(exe)
                 .args(std::env::args_os().skip(1))
                 .env("LD_PRELOAD", preload)
                 .env("TINE_WL_PRELOADED", "1")
                 .exec();
-            eprintln!("tine: Wayland libwayland-client preload re-exec failed ({err}); continuing");
+            diag(format!("Wayland libwayland-client preload re-exec failed ({err}); continuing"));
         }
     }
 
@@ -1238,6 +1381,7 @@ fn main() {
         && std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none()
     {
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        diag("TINE_GPU=0 → set WEBKIT_DISABLE_DMABUF_RENDERER=1 (software compositing)");
     }
 
     tauri::Builder::default()
@@ -1283,6 +1427,7 @@ fn main() {
         })
         .manage(AppState { graph: RwLock::new(None), watch_ctl: Mutex::new(None) })
         .setup(|app| {
+            diag("setup() begin");
             // Eagerly open the graph if one was configured at startup.
             if let Some(root) = resolve_root("") {
                 let g = Graph::open(&root);
@@ -1300,24 +1445,24 @@ fn main() {
                         })
                         .ok()
                 };
-                eprintln!("[tine] graph root: {}", meta.root);
-                eprintln!(
-                    "[tine] journals dir: {} (exists={}, .md files={:?})",
+                diag(format!("graph root: {}", meta.root));
+                diag(format!(
+                    "journals dir: {} (exists={}, .md files={:?})",
                     jdir.display(),
                     jdir.is_dir(),
                     count_md(&jdir)
-                );
-                eprintln!(
-                    "[tine] pages dir: {} (exists={}, .md files={:?})",
+                ));
+                diag(format!(
+                    "pages dir: {} (exists={}, .md files={:?})",
                     pdir.display(),
                     pdir.is_dir(),
                     count_md(&pdir)
-                );
-                eprintln!(
-                    "[tine] journals recognized as dates: {} | total page entries: {}",
+                ));
+                diag(format!(
+                    "journals recognized as dates: {} | total page entries: {}",
                     g.journals_desc().len(),
                     g.list_pages().len()
-                );
+                ));
                 if let Ok(rd) = std::fs::read_dir(&jdir) {
                     let sample: Vec<String> = rd
                         .flatten()
@@ -1325,7 +1470,7 @@ fn main() {
                         .filter(|n| n.ends_with(".md"))
                         .take(3)
                         .collect();
-                    eprintln!("[tine] sample journal files: {sample:?}");
+                    diag(format!("sample journal files: {sample:?}"));
                 }
                 let state: State<'_, AppState> = app.state();
                 *state.graph.write().unwrap() = Some(Arc::new(g));
@@ -1336,10 +1481,11 @@ fn main() {
                 // synchronously. First nav slow, second fine; this fixes it.
                 warm_cache_async(app.handle().clone());
             } else {
-                eprintln!("[tine] NO graph root resolved — set TINE_GRAPH=/path/to/graph");
+                diag("NO graph root resolved — set TINE_GRAPH=/path/to/graph");
             }
             // Watch for external changes (reads whichever graph is current).
             start_watcher(app.handle().clone());
+            diag("setup() done — watcher started, handing off to webview");
             // Cold start via `tine --capture` (app wasn't already running): pop
             // the capture window once we're up (the main window loads too).
             if std::env::args().any(|a| a == "--capture") {
@@ -1405,7 +1551,9 @@ fn main() {
             save_session,
             gpu_env,
             get_smooth_scroll,
-            set_smooth_scroll
+            set_smooth_scroll,
+            debug_info,
+            debug_log
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

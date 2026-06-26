@@ -2,7 +2,7 @@
 // outside Tauri (browser dev / Playwright screenshots). Mirrors the real
 // backend's shape so the UI behaves identically.
 
-import type { Backend, GpuEnv } from "./backend";
+import type { Backend, GpuEnv, DebugInfo } from "./backend";
 import type { BlockDto, GraphMeta, Highlight, PageDto, PageEntry, RefGroup } from "./types";
 import { SAMPLE_PDF_B64 } from "./sample-pdf";
 import { hlsPageName } from "./pdf";
@@ -525,6 +525,12 @@ export function mockBackend(): Backend {
       return false;
     },
     async setSmoothScroll(_value: boolean): Promise<void> {
+      // no-op in the browser mock
+    },
+    async debugInfo(): Promise<DebugInfo> {
+      return { enabled: false, path: "" };
+    },
+    async debugLog(_line: string): Promise<void> {
       // no-op in the browser mock
     },
     async readHighlights(pdf: string): Promise<Highlight[]> {
