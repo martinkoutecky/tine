@@ -488,7 +488,7 @@ impl Graph {
         // by cache_upsert/cache_remove, so we avoid a directory read + parse on
         // every infinite-scroll feed append. Fall back to scanning the dir while
         // the cache isn't built yet.
-        let mut js: Vec<PageEntry> = match self.cache.read().unwrap().as_ref() {
+        let raw: Vec<PageEntry> = match self.cache.read().unwrap().as_ref() {
             Some(pages) => pages
                 .iter()
                 .filter(|(e, _)| e.kind == PageKind::Journal && e.date_key.is_some())
@@ -499,6 +499,35 @@ impl Graph {
                 .filter(|e| e.date_key.is_some())
                 .collect(),
         };
+        // Dedup by date: a day with more than one file (e.g. a leftover
+        // title-named duplicate of a `yyyy_MM_dd` file) must appear ONCE in the
+        // feed, not twice — both files resolve to the same page name, so without
+        // this the same day renders twice (loaded from whichever file path_for
+        // picks). Keep the canonical date-stem file (the one saves resolve to);
+        // the stray stays visible via journal_conflicts() for reconciliation.
+        let is_canonical = |e: &PageEntry| {
+            e.path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .is_some_and(|s| JournalDate::from_file_stem(s).is_some())
+        };
+        let mut by_date: std::collections::BTreeMap<i64, PageEntry> =
+            std::collections::BTreeMap::new();
+        for e in raw {
+            let Some(key) = e.date_key else { continue };
+            use std::collections::btree_map::Entry;
+            match by_date.entry(key) {
+                Entry::Vacant(v) => {
+                    v.insert(e);
+                }
+                Entry::Occupied(mut o) => {
+                    if is_canonical(&e) && !is_canonical(o.get()) {
+                        o.insert(e);
+                    }
+                }
+            }
+        }
+        let mut js: Vec<PageEntry> = by_date.into_values().collect();
         js.sort_by_key(|e| std::cmp::Reverse(e.date_key.unwrap_or(0)));
         js
     }
@@ -2573,6 +2602,29 @@ mod tests {
         assert_eq!(c.files[0].preview, "canonical content");
         assert!(!c.files[1].canonical);
         assert_eq!(c.files[1].name, "Friday, 26-06-2026.org");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn journals_desc_dedups_duplicate_day_to_canonical() {
+        // The feed must show a day ONCE even when two files resolve to it — else
+        // the same day renders twice (loaded from whichever file path_for picks).
+        let dir = scratch("journal-dedup");
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq").join("config.edn"),
+            "{:preferred-format \"Org\"\n :journal/page-title-format \"EEEE, dd-MM-yyyy\"}\n",
+        )
+        .unwrap();
+        fs::write(dir.join("journals").join("2026_06_26.org"), "* real day\n").unwrap();
+        fs::write(dir.join("journals").join("Friday, 26-06-2026.org"), "* stray\n").unwrap();
+        fs::write(dir.join("journals").join("2026_06_24.org"), "* other day\n").unwrap();
+
+        let js = Graph::open(&dir).journals_desc();
+        assert_eq!(js.len(), 2, "one entry per day: {:?}", js.iter().map(|e| &e.name).collect::<Vec<_>>());
+        // The deduped 26th keeps the canonical date-stem file (what saves resolve to).
+        let day26 = js.iter().find(|e| e.name == "Friday, 26-06-2026").expect("26th present");
+        assert_eq!(day26.path.file_name().unwrap().to_str().unwrap(), "2026_06_26.org");
         let _ = fs::remove_dir_all(&dir);
     }
 
