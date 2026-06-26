@@ -59,6 +59,18 @@ fn is_page_file(path: &Path) -> bool {
     matches!(path.extension().and_then(|e| e.to_str()), Some("md") | Some("org"))
 }
 
+/// Error for an ambiguous page that exists as both a `.md` and a `.org` file.
+/// Deliberately NOT the `AlreadyExists`/"conflict" signal, so the UI surfaces it
+/// as a plain error (a toast) instead of a keep-mine/use-disk conflict prompt.
+fn twin_error(name: &str) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::Other,
+        format!(
+            "\"{name}\" exists as both a .md and a .org file — remove one (e.g. in Logseq) to edit it in Tine"
+        ),
+    )
+}
+
 /// Parse a page file's bytes into a [`Document`] using the parser for its
 /// format (org headlines vs markdown bullets), chosen by the path's extension.
 fn parse_doc(path: &Path, content: &str) -> Document {
@@ -543,6 +555,29 @@ impl Graph {
                 }
                 primary
             }
+        }
+    }
+
+    /// Whether BOTH a `.md` and a `.org` file exist for the same logical page —
+    /// an ambiguous identity, since Tine keys pages by `(kind, name)`. Writes
+    /// (save/rename/delete) are refused on such a page so a save can't serve one
+    /// twin's content with the other's baseline and clobber the wrong file. This
+    /// is an interim guard; the full fix is path/format in page identity (#21).
+    /// `.org` is probed first so a markdown-only graph short-circuits after one
+    /// stat. A journal whose name doesn't parse to a date stem isn't guarded.
+    fn has_twin(&self, name: &str, kind: PageKind) -> bool {
+        let (dir, stem) = match kind {
+            PageKind::Page => (self.pages_path(), Some(encode_page_name(name))),
+            PageKind::Journal => (
+                self.journals_path(),
+                self.journal_format.parse(name).map(|d| self.journal_format.file_stem(d)),
+            ),
+        };
+        match stem {
+            Some(s) => {
+                dir.join(format!("{s}.org")).exists() && dir.join(format!("{s}.md")).exists()
+            }
+            None => false,
         }
     }
 
@@ -1070,6 +1105,11 @@ impl Graph {
         if old.is_empty() || old.eq_ignore_ascii_case(new) {
             return Ok(()); // nothing to do (case-only rename is intentionally a no-op)
         }
+        // M1: refuse to rename an ambiguous page (both .md and .org on disk) — which
+        // twin moves, and which content is authoritative, is undecidable here.
+        if self.has_twin(old, PageKind::Page) || self.has_twin(new, PageKind::Page) {
+            return Err(twin_error(old));
+        }
         let old_n = crate::refs::normalize(old);
         let ns_prefix = format!("{old_n}/");
         let skip = old.chars().count();
@@ -1251,6 +1291,11 @@ impl Graph {
     /// simple misclick, is recoverable. Best-effort: falls back to removal if the
     /// trash move fails.
     pub fn delete_page(&self, name: &str, kind: PageKind) -> io::Result<()> {
+        // M1: with both a .md and a .org twin, "which file?" is ambiguous — refuse
+        // rather than trash an arbitrary one.
+        if self.has_twin(name, kind) {
+            return Err(twin_error(name));
+        }
         if let Some(entry) = self.find_entry(name, kind) {
             let trash = self.root.join("logseq").join(".tine-trash");
             let fname = entry.path.file_name().and_then(|s| s.to_str()).unwrap_or("page.md");
@@ -1660,6 +1705,11 @@ impl Graph {
     /// wrote it), returns an `AlreadyExists` "conflict" error WITHOUT writing,
     /// so the caller can surface it and keep the in-memory edits.
     pub fn save_page(&self, page: &PageDto, base_rev: Option<&str>) -> io::Result<String> {
+        // M1: refuse to write an ambiguous page (both .md and .org on disk) — we
+        // can't tell which file the editor's content belongs to.
+        if self.has_twin(&page.name, page.kind) {
+            return Err(twin_error(&page.name));
+        }
         let path = self.path_for(&page.name, page.kind);
         // Serialize against any other writer of THIS page (a PDF highlight write
         // of the same `hls__` page, or another save) for the whole
@@ -1703,6 +1753,9 @@ impl Graph {
 
     /// Save a page unconditionally (the user chose "keep mine" over a conflict).
     pub fn force_save_page(&self, page: &PageDto) -> io::Result<String> {
+        if self.has_twin(&page.name, page.kind) {
+            return Err(twin_error(&page.name)); // M1: ambiguous identity — refuse
+        }
         let path = self.path_for(&page.name, page.kind);
         let lock = self.page_lock(&path);
         let _guard = lock.lock().unwrap();
@@ -2290,6 +2343,57 @@ mod tests {
         let err = g.force_save_page(&dto).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
         assert_eq!(fs::read_to_string(dir.join("pages").join("Weird.org")).unwrap(), src);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn twin_md_org_refuses_writes() {
+        // M1: a page that exists as BOTH Foo.md and Foo.org is ambiguous — save,
+        // force-save, rename, and delete must all refuse (no clobber of either).
+        let dir = scratch("org-twin");
+        fs::write(dir.join("pages").join("Foo.md"), "- md body\n").unwrap();
+        fs::write(dir.join("pages").join("Foo.org"), "* org body\n").unwrap();
+        let g = Graph::open(&dir);
+        g.warm_cache();
+        let page = PageDto {
+            name: "Foo".into(),
+            kind: PageKind::Page,
+            title: "Foo".into(),
+            pre_block: None,
+            blocks: vec![BlockDto { id: "x".into(), raw: "edited".into(), ..Default::default() }],
+            rev: None,
+            format: Format::Md,
+            read_only: false,
+        };
+        assert!(g.save_page(&page, None).is_err(), "save refused on twin");
+        assert!(g.force_save_page(&page).is_err(), "force_save refused on twin");
+        assert!(g.rename_page("Foo", "Bar").is_err(), "rename refused on twin");
+        assert!(g.delete_page("Foo", PageKind::Page).is_err(), "delete refused on twin");
+        // Both files are byte-intact (nothing was written/moved/trashed).
+        assert_eq!(fs::read_to_string(dir.join("pages").join("Foo.md")).unwrap(), "- md body\n");
+        assert_eq!(fs::read_to_string(dir.join("pages").join("Foo.org")).unwrap(), "* org body\n");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn readonly_org_unchanged_does_not_reconcile() {
+        // L2 check: an UNCHANGED read-only (non-round-tripping) .org file must not
+        // spuriously reconcile (bump cache_gen) on a watcher tick — the disk_revs
+        // fast path + structural normalize-compare should both treat it as "ours".
+        let dir = scratch("org-ro-l2");
+        let src = "* a\n*** c\n"; // skipped heading level → read-only
+        let path = dir.join("pages").join("RO.org");
+        fs::write(&path, src).unwrap();
+        let g = Graph::open(&dir);
+        g.warm_cache();
+        // Confirm it loaded read-only.
+        let dto = g.load_named("RO", PageKind::Page).unwrap().unwrap();
+        assert!(dto.read_only);
+        let gen0 = g.cache_generation();
+        // Two watcher reconciles of the unchanged file must be no-ops.
+        g.sync_file(&path);
+        g.sync_file(&path);
+        assert_eq!(g.cache_generation(), gen0, "unchanged read-only org reconciled spuriously");
         let _ = fs::remove_dir_all(&dir);
     }
 

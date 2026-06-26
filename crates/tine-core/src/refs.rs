@@ -239,6 +239,19 @@ pub fn rename_refs(raw: &str, from: &str, to: &str, is_org: bool) -> String {
         // Inside a code fence / inline-code span, refs are literal — copy verbatim
         // (one char), never rewrite, so code examples aren't corrupted by a rename.
         if !in_code(i, &code) {
+            // Org file link: `[[file:…/<stem>.org][desc]]` / `[[file:…/<stem>.org]]`.
+            // Its target is a path, not a `[[name]]`, so the generic handler below
+            // can't match it — rewrite the filename stem so the link survives the
+            // rename (L1). Only for org; markdown has no `file:` page links.
+            if is_org && rest.starts_with("[[") {
+                if let Some(end) = rest[2..].find("]]") {
+                    if let Some(rw) = rewrite_org_file_link(&rest[2..2 + end], &target, to) {
+                        out.push_str(&rw);
+                        i += 2 + end + 2;
+                        continue;
+                    }
+                }
+            }
             if let Some(after) = rest.strip_prefix("[[") {
                 if let Some(end) = after.find("]]") {
                     if normalize(&after[..end]) == target {
@@ -282,6 +295,31 @@ pub fn rename_refs(raw: &str, from: &str, to: &str, is_org: bool) -> String {
         i += ch.len_utf8();
     }
     out
+}
+
+/// Rewrite an org `[[file:…]]` link's inner text if its target file's basename
+/// (namespace-decoded `___`→`/`, extension stripped) normalizes to `target`.
+/// Returns the full replacement `[[file:…]]` (preserving dir, extension, and any
+/// `[desc]`), or `None` if it isn't a matching file link. Mirrors the model's
+/// `encode_page_name` (`/`→`___`) so the new stem names the renamed file.
+fn rewrite_org_file_link(inner: &str, target: &str, to: &str) -> Option<String> {
+    let body = inner.strip_prefix("file:")?;
+    let (path_part, desc) = match body.find("][") {
+        Some(s) => (&body[..s], Some(&body[s + 2..])),
+        None => (body, None),
+    };
+    let slash = path_part.rfind('/').map(|p| p + 1).unwrap_or(0);
+    let (dir, file) = path_part.split_at(slash);
+    let (stem, ext) = match file.rsplit_once('.') {
+        Some((s, e)) => (s, format!(".{e}")),
+        None => (file, String::new()),
+    };
+    if normalize(&stem.replace("___", "/")) != *target {
+        return None;
+    }
+    let new_stem = to.replace('/', "___");
+    let desc_part = desc.map(|d| format!("][{d}")).unwrap_or_default();
+    Some(format!("[[file:{dir}{new_stem}{ext}{desc_part}]]"))
 }
 
 /// `#to` if `to` is a bare-tag-safe name, else `#[[to]]`.
@@ -461,6 +499,32 @@ mod tests {
         // awareness) — proving the gate matters.
         let md = rename_refs(raw, "Old", "New", false);
         assert!(md.contains("(def s \"[[New]]\")"), "md path rewrites inside (expected): {md:?}");
+    }
+
+    #[test]
+    fn rename_rewrites_org_file_links() {
+        // L1: org `[[file:…/<stem>.org][desc]]` / `[[file:…]]` targets the renamed
+        // file's stem — rewrite it (org only), preserving dir, extension, and desc.
+        let raw = "[[file:./pages/Old.org][The Old]] and [[file:./pages/Old.org]] and [[Old]]\n";
+        let out = rename_refs(raw, "Old", "New", true);
+        assert_eq!(
+            out,
+            "[[file:./pages/New.org][The Old]] and [[file:./pages/New.org]] and [[New]]\n"
+        );
+        // Namespaced stem (`/`→`___`) and a non-matching file link are handled.
+        assert_eq!(
+            rename_refs("[[file:./pages/a___Old.org][x]]", "a/Old", "New/Sub", true),
+            "[[file:./pages/New___Sub.org][x]]"
+        );
+        assert_eq!(
+            rename_refs("[[file:./pages/Keep.org][k]]", "Old", "New", true),
+            "[[file:./pages/Keep.org][k]]"
+        );
+        // Markdown (is_org=false) leaves file links alone (no org file-page links).
+        assert_eq!(
+            rename_refs("[[file:./pages/Old.org]]", "Old", "New", false),
+            "[[file:./pages/Old.org]]"
+        );
     }
 
     #[test]
