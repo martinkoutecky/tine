@@ -58,6 +58,20 @@ export interface TrashStats {
   bytes: number;
 }
 
+/** One file in a journal-day conflict (duplicate files for the same date). */
+export interface JournalFile {
+  name: string;
+  preview: string;
+  canonical: boolean; // name is the date stem (yyyy_MM_dd) — the one to keep
+}
+
+/** A journal day that resolves to >1 file (e.g. a date-stem file + a title-named
+ *  one), surfaced so the user can reconcile them. */
+export interface JournalConflict {
+  title: string;
+  files: JournalFile[];
+}
+
 export interface RefGroup {
   page: string;
   kind: PageKind;

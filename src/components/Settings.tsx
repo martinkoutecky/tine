@@ -35,6 +35,8 @@ import {
   agendaDaysAhead,
   setAgendaDaysAhead,
   pushToast,
+  journalConflicts,
+  refreshJournalConflicts,
 } from "../ui";
 import { interfaceZoom, zoomIn, zoomOut, zoomReset } from "../zoom";
 import { openPage } from "../router";
@@ -166,6 +168,7 @@ export function Settings(): JSX.Element {
               <Show when={tab() === "backups"}>
                 <BackupsTab />
                 <AssetsTab />
+                <JournalConflictsPanel />
               </Show>
               <Show when={tab() === "graph"}>
                 <GraphTab publishMsg={publishMsg()} doPublish={doPublish} />
@@ -750,6 +753,72 @@ function BackupsTab(): JSX.Element {
 // assets/ files no block links to, and let the user move them to the recoverable
 // trash. Tine never auto-deletes media (a deleted block keeps its files), so this
 // is how unused media gets cleaned up.
+// Duplicate journal days: a date that resolves to >1 file (e.g. a date-stem file
+// plus a title-named one, usually from a date-format change). Tine never
+// auto-merges, so list them with each file's preview + a Trash affordance.
+function JournalConflictsPanel(): JSX.Element {
+  void refreshJournalConflicts(); // refresh when the Backups tab opens
+  const trashFile = async (name: string) => {
+    if (
+      !(await backend().confirm(
+        `Move the journal file “${name}” to the trash?\n\n` +
+          `It's a duplicate of another file for the same day. It moves to logseq/.tine-trash (recoverable).`
+      ))
+    )
+      return;
+    try {
+      await backend().trashJournalFile(name);
+      pushToast(`Moved ${name} to trash`, "success");
+      await refreshJournalConflicts();
+    } catch (e) {
+      pushToast(`Couldn’t trash: ${String(e)}`, "error");
+    }
+  };
+  const openDay = (title: string) => {
+    openPage(title, "journal");
+    closeSettings();
+  };
+  return (
+    <Show when={journalConflicts().length}>
+      <div class="settings-section" style={{ "margin-top": "18px" }}>
+        Duplicate journal days
+      </div>
+      <div class="settings-hint settings-block">
+        These days have more than one file (e.g. a <code>2026_06_26.org</code> and a
+        title-named <code>Friday, 26-06-2026.org</code>) — usually left over from changing the
+        date format. Tine never auto-merges them, so a day can show twice in the feed. Open the
+        day to copy across anything worth keeping, then trash the redundant file (recoverable).
+      </div>
+      <For each={journalConflicts()}>
+        {(c) => (
+          <div class="settings-block">
+            <button class="settings-asset-name" onClick={() => openDay(c.title)}>
+              {c.title} →
+            </button>
+            <For each={c.files}>
+              {(f) => (
+                <div class="settings-asset-row">
+                  <span class="mono">
+                    {f.name}
+                    <Show when={f.canonical}>
+                      <span class="journal-conflict-keep"> · canonical</span>
+                    </Show>
+                  </span>
+                  <span class="settings-asset-date">{f.preview}</span>
+                  <span />
+                  <button class="settings-btn" onClick={() => void trashFile(f.name)}>
+                    Trash
+                  </button>
+                </div>
+              )}
+            </For>
+          </div>
+        )}
+      </For>
+    </Show>
+  );
+}
+
 function AssetsTab(): JSX.Element {
   const [list, setList] = createSignal<AssetInfo[]>([]);
   const [busy, setBusy] = createSignal(false);

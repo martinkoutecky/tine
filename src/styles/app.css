@@ -1016,6 +1016,11 @@ body {
   font-size: 12px;
   white-space: nowrap;
 }
+.journal-conflict-keep {
+  color: #2e7d32;
+  font-size: 11px;
+  font-weight: 600;
+}
 .settings-btn-danger {
   color: #c0392b;
   border-color: color-mix(in srgb, #c0392b 35%, transparent);

@@ -144,6 +144,26 @@ pub struct TrashStats {
     pub bytes: u64,
 }
 
+/// One file participating in a journal-day conflict: its on-disk filename, a
+/// one-line content preview, and whether its name is the canonical date stem
+/// (`yyyy_MM_dd`, the one normally kept).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JournalFile {
+    pub name: String,
+    pub preview: String,
+    pub canonical: bool,
+}
+
+/// A journal day that resolves to more than one file (e.g. a canonical
+/// `2026_06_26.org` plus a title-named `Friday, 26-06-2026.org`, or a `.md`+`.org`
+/// twin). These can't be auto-merged, so they're surfaced for the user to
+/// reconcile (delete the redundant one / copy content across).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JournalConflict {
+    pub title: String,
+    pub files: Vec<JournalFile>,
+}
+
 /// A full page as sent to / received from the frontend.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PageDto {
@@ -533,6 +553,75 @@ impl Graph {
             }
         }
         n
+    }
+
+    /// Journal days that resolve to more than one file — the migration leaves these
+    /// alone (it never clobbers), so they're reported for the user to reconcile.
+    /// Each file gets a one-line preview and a `canonical` flag (date-stem name).
+    pub fn journal_conflicts(&self) -> Vec<JournalConflict> {
+        let dir = self.journals_path();
+        let Ok(rd) = fs::read_dir(&dir) else { return Vec::new() };
+        let mut by_date: std::collections::BTreeMap<i64, Vec<(String, PathBuf, bool)>> =
+            std::collections::BTreeMap::new();
+        for e in rd.flatten() {
+            let p = e.path();
+            let ext = match p.extension().and_then(|x| x.to_str()) {
+                Some(x @ ("md" | "org")) => x.to_string(),
+                _ => continue,
+            };
+            let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else { continue };
+            // A date-stem file is canonical; otherwise try to parse its title.
+            let canonical = JournalDate::from_file_stem(stem).is_some();
+            let date = JournalDate::from_file_stem(stem).or_else(|| self.journal_format.parse(stem));
+            if let Some(d) = date {
+                by_date.entry(d.ordinal_key()).or_default().push((format!("{stem}.{ext}"), p, canonical));
+            }
+        }
+        let mut out = Vec::new();
+        for (key, files) in by_date {
+            if files.len() < 2 {
+                continue;
+            }
+            let date = JournalDate::from_ordinal(key);
+            let mut jfiles: Vec<JournalFile> = files
+                .into_iter()
+                .map(|(name, path, canonical)| {
+                    let preview = fs::read_to_string(&path)
+                        .ok()
+                        .and_then(|c| {
+                            c.lines()
+                                .map(|l| l.trim_start_matches(|ch| ch == '*' || ch == '-' || ch == ' ' || ch == '\t').trim().to_string())
+                                .find(|l| !l.is_empty())
+                        })
+                        .map(|l| l.chars().take(80).collect::<String>())
+                        .unwrap_or_default();
+                    JournalFile { name, preview, canonical }
+                })
+                .collect();
+            // Canonical first (the keeper), then alphabetical.
+            jfiles.sort_by(|a, b| b.canonical.cmp(&a.canonical).then_with(|| a.name.cmp(&b.name)));
+            out.push(JournalConflict { title: self.journal_format.title(date), files: jfiles });
+        }
+        out
+    }
+
+    /// Move ONE journal file (by its exact filename) to the recoverable trash —
+    /// the affordance for reconciling a duplicate day. Refuses a path separator so
+    /// it can't reach outside `journals/`.
+    pub fn trash_journal_file(&self, name: &str) -> io::Result<()> {
+        if name.is_empty() || name.contains('/') || name.contains('\\') {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "bad journal file name"));
+        }
+        let src = self.journals_path().join(name);
+        if !src.is_file() {
+            return Err(io::Error::new(io::ErrorKind::NotFound, "no such journal file"));
+        }
+        let trash = self.root.join("logseq").join(".tine-trash");
+        let dest = trash.join(format!("{}__{name}", trash_stamp()));
+        if fs::create_dir_all(&trash).is_err() || fs::rename(&src, &dest).is_err() {
+            fs::remove_file(&src)?;
+        }
+        Ok(())
     }
 
     /// Resolve a page name to a file path. Journals match by date title;
@@ -2445,6 +2534,35 @@ mod tests {
         // It's now recognized in the feed listing (name via the title format).
         let names: Vec<String> = Graph::open(&dir).journals_desc().into_iter().map(|e| e.name).collect();
         assert!(names.iter().any(|n| n == "Thursday, 25-06-2026"), "listed: {names:?}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn journal_conflicts_reports_duplicate_days() {
+        let dir = scratch("journal-conflicts");
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq").join("config.edn"),
+            "{:preferred-format \"Org\"\n :journal/page-title-format \"EEEE, dd-MM-yyyy\"}\n",
+        )
+        .unwrap();
+        // Same day, two files (canonical stem + title-named) — a conflict.
+        fs::write(dir.join("journals").join("2026_06_26.org"), "* canonical content\n").unwrap();
+        fs::write(dir.join("journals").join("Friday, 26-06-2026.org"), "* stray content\n").unwrap();
+        // A clean day with one file — not a conflict.
+        fs::write(dir.join("journals").join("2026_06_24.org"), "* fine\n").unwrap();
+
+        let conflicts = Graph::open(&dir).journal_conflicts();
+        assert_eq!(conflicts.len(), 1, "exactly one conflicted day: {conflicts:?}");
+        let c = &conflicts[0];
+        assert_eq!(c.title, "Friday, 26-06-2026");
+        assert_eq!(c.files.len(), 2);
+        // Canonical (date-stem) file sorts first and is flagged; preview is the body line.
+        assert_eq!(c.files[0].name, "2026_06_26.org");
+        assert!(c.files[0].canonical);
+        assert_eq!(c.files[0].preview, "canonical content");
+        assert!(!c.files[1].canonical);
+        assert_eq!(c.files[1].name, "Friday, 26-06-2026.org");
         let _ = fs::remove_dir_all(&dir);
     }
 

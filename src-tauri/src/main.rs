@@ -1012,6 +1012,21 @@ fn empty_asset_trash(state: State<'_, AppState>) -> Result<u64, String> {
     with_graph(&state, |g| g.empty_asset_trash().map_err(|e| e.to_string()))
 }
 
+/// Journal days that resolve to more than one file (e.g. a date-stem file plus a
+/// title-named one) — for the user to reconcile.
+#[tauri::command]
+fn list_journal_conflicts(
+    state: State<'_, AppState>,
+) -> Result<Vec<tine_core::model::JournalConflict>, String> {
+    with_graph(&state, |g| Ok(g.journal_conflicts()))
+}
+
+/// Move one journal file (by exact filename) to the recoverable trash.
+#[tauri::command]
+fn trash_journal_file(name: String, state: State<'_, AppState>) -> Result<(), String> {
+    with_graph(&state, |g| g.trash_journal_file(&name).map_err(|e| e.to_string()))
+}
+
 #[tauri::command]
 fn save_asset(name: String, bytes: Vec<u8>, state: State<'_, AppState>) -> Result<String, String> {
     with_graph(&state, |g| g.save_asset(&name, &bytes).map_err(|e| e.to_string()))
@@ -1264,6 +1279,8 @@ fn main() {
             trash_asset,
             asset_trash_stats,
             empty_asset_trash,
+            list_journal_conflicts,
+            trash_journal_file,
             search,
             quick_switch,
             list_templates,

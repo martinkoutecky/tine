@@ -424,6 +424,20 @@ export function mockBackend(): Backend {
     async emptyAssetTrash(): Promise<number> {
       return 3;
     },
+    async listJournalConflicts() {
+      return [
+        {
+          title: "Friday, 26-06-2026",
+          files: [
+            { name: "2026_06_26.org", preview: "Tried out the Org demo graph in Tine today", canonical: true },
+            { name: "Friday, 26-06-2026.org", preview: "something something", canonical: false },
+          ],
+        },
+      ];
+    },
+    async trashJournalFile(): Promise<void> {
+      // no-op in the browser mock
+    },
     async confirm(message: string): Promise<boolean> {
       // The browser/test env has a working global confirm (unlike the WebKitGTK
       // app), so defer to it. Read it off globalThis so test stubs (vi.stubGlobal)

@@ -1,6 +1,6 @@
 // Small global UI state: theme, left sidebar, and the quick-switcher modal.
 import { createSignal } from "solid-js";
-import type { GraphMeta } from "./types";
+import type { GraphMeta, JournalConflict } from "./types";
 import { backend, isTauri } from "./backend";
 // Zoom is route state; these are call-time only, so the ui↔router cycle is safe.
 import { route, focusBlock } from "./router";
@@ -128,8 +128,32 @@ export function changeJournalTitleFormat(fmt: string) {
   // the reopen could re-query the old format.
   void backend()
     .setJournalTitleFormat(next)
-    .then(() => bumpGraphEpoch())
+    .then(() => {
+      bumpGraphEpoch();
+      void refreshJournalConflicts(true); // surface any days the migration couldn't merge
+    })
     .catch(() => {});
+}
+
+// --- duplicate journal days (a date with >1 file, e.g. a date-stem file + a
+// title-named one). The filename migration never clobbers, so these are left for
+// the user to reconcile; we surface them rather than letting a day silently show
+// twice in the feed. ---
+export const [journalConflicts, setJournalConflicts] = createSignal<JournalConflict[]>([]);
+/** Re-fetch the duplicate-journal-day list; with `notify`, toast if any exist. */
+export async function refreshJournalConflicts(notify = false): Promise<void> {
+  try {
+    const c = await backend().listJournalConflicts();
+    setJournalConflicts(c);
+    if (notify && c.length) {
+      pushToast(
+        `${c.length} journal day${c.length === 1 ? "" : "s"} have duplicate files in different formats — reconcile them in Settings → Backups`,
+        "info"
+      );
+    }
+  } catch {
+    /* best-effort */
+  }
 }
 
 // --- which content pane is focused. Drives Ctrl+/- zoom routing (notes → whole

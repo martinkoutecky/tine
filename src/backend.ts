@@ -12,6 +12,7 @@ import type {
   RefGroup,
   TemplateDto,
   TrashStats,
+  JournalConflict,
 } from "./types";
 import { assetFileName } from "./media";
 import { mockBackend } from "./mock";
@@ -74,6 +75,11 @@ export interface Backend {
   assetTrashStats(): Promise<TrashStats>;
   /** Permanently delete everything in the asset trash; returns files removed. */
   emptyAssetTrash(): Promise<number>;
+  /** Journal days that resolve to >1 file (date-stem + title-named, or md/org
+   *  twin) — for the user to reconcile. */
+  listJournalConflicts(): Promise<JournalConflict[]>;
+  /** Move one journal file (by exact filename) to the recoverable trash. */
+  trashJournalFile(name: string): Promise<void>;
   search(query: string, limit: number): Promise<RefGroup[]>;
   quickSwitch(query: string, limit: number): Promise<PageEntry[]>;
   listTemplates(): Promise<TemplateDto[]>;
@@ -295,6 +301,12 @@ class TauriBackend implements Backend {
   }
   emptyAssetTrash() {
     return this.call<number>("empty_asset_trash");
+  }
+  listJournalConflicts() {
+    return this.call<JournalConflict[]>("list_journal_conflicts");
+  }
+  trashJournalFile(name: string) {
+    return this.call<void>("trash_journal_file", { name });
   }
   importAsset(path: string, name?: string) {
     return this.call<string>("import_asset", { path, name });
