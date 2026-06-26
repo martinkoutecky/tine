@@ -295,15 +295,27 @@ function MediaEmbed(props: { url: string; kind: "video" | "audio" }): JSX.Elemen
         </a>
       }
     >
-      <Dynamic
-        component={props.kind}
-        class="media-embed"
-        classList={{ "media-audio": props.kind === "audio" }}
-        controls={true}
-        src={src()!}
-        onError={() => setFailed(true)}
-        onClick={(e: MouseEvent) => e.stopPropagation()}
-      />
+      {/* An EXPLICIT "open in the default player" button is always available (shown
+          on hover), not just the onError fallback: WebKit sometimes renders the
+          <video> as playable but the codec is actually broken, so the user needs
+          a guaranteed escape hatch to the OS player even when no media error fires. */}
+      <span class="media-embed-wrap" classList={{ "media-audio-wrap": props.kind === "audio" }}>
+        <Dynamic
+          component={props.kind}
+          class="media-embed"
+          classList={{ "media-audio": props.kind === "audio" }}
+          controls={true}
+          src={src()!}
+          onError={() => setFailed(true)}
+          onClick={(e: MouseEvent) => e.stopPropagation()}
+        />
+        <button class="media-open-external" onClick={open} title="Open in the default player (if playback here is broken)">
+          <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+            <path d="M14 4h6v6M20 4l-8 8M18 13v6a1 1 0 01-1 1H5a1 1 0 01-1-1V7a1 1 0 011-1h6"
+              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
+      </span>
     </Show>
   );
 }
