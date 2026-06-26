@@ -858,6 +858,13 @@ fn set_preferred_format(format: String, state: State<'_, AppState>) -> Result<()
     with_graph(&state, |g| g.set_preferred_format(fmt).map_err(|e| e.to_string()))
 }
 
+/// Set the graph's `:journal/page-title-format` (journal display-title format,
+/// e.g. "MMM do, yyyy"). Display-only — does not rename journal files.
+#[tauri::command]
+fn set_journal_title_format(format: String, state: State<'_, AppState>) -> Result<(), String> {
+    with_graph(&state, |g| g.set_journal_page_title_format(&format).map_err(|e| e.to_string()))
+}
+
 #[tauri::command]
 fn read_custom_css(state: State<'_, AppState>) -> Result<String, String> {
     with_graph(&state, |g| Ok(g.custom_css()))
@@ -1216,6 +1223,7 @@ fn main() {
             set_favorites,
             set_preferred_workflow,
             set_preferred_format,
+            set_journal_title_format,
             set_default_journal_template,
             set_start_of_week,
             read_custom_css,

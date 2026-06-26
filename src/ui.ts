@@ -4,6 +4,7 @@ import type { GraphMeta } from "./types";
 import { backend, isTauri } from "./backend";
 // Zoom is route state; these are call-time only, so the ui↔router cycle is safe.
 import { route, focusBlock } from "./router";
+import { setJournalTitleFormat } from "./journal";
 
 const THEME_KEY = "logseq-claude.theme";
 function loadTheme(): "light" | "dark" {
@@ -108,6 +109,20 @@ export function changePreferredFormat(fmt: "md" | "org") {
   if (!m || m.preferred_format === fmt) return;
   setGraphMeta({ ...m, preferred_format: fmt });
   void backend().setPreferredFormat(fmt).catch(() => {});
+}
+
+/** Change the journal display-title format (`:journal/page-title-format`).
+ *  Optimistically updates the in-memory formatter + meta and bumps the graph
+ *  epoch so open journal titles re-render; persists to config.edn. Display-only
+ *  — journal file names (`:journal/file-name-format`) are unaffected. */
+export function changeJournalTitleFormat(fmt: string) {
+  const next = fmt.trim() || "MMM do, yyyy";
+  const m = graphMeta();
+  if (!m || m.journal_page_title_format === next) return;
+  setGraphMeta({ ...m, journal_page_title_format: next });
+  setJournalTitleFormat(next);
+  bumpGraphEpoch();
+  void backend().setJournalTitleFormat(next).catch(() => {});
 }
 
 // --- which content pane is focused. Drives Ctrl+/- zoom routing (notes → whole
@@ -229,11 +244,17 @@ export function setAgendaDaysAhead(n: number) {
  * [today − back, today + ahead] — keyed off the date itself, not the page's
  * journal day, so a stale-deadline item on a recent day no longer shows and an
  * overdue item on an old page still does.
+ *
+ * Finished tasks are excluded: OG's `get-date-scheduled-or-deadlines` drops
+ * DONE/CANCELED/CANCELLED markers (db/model.cljs), so the agenda only lists work
+ * still to do. A scheduled item with no marker at all is kept (matches OG's
+ * `:block/marker "NIL"` default).
  */
 export function agendaQuery(): string {
   const lo = `-${agendaDaysBack()}d`;
   const hi = `+${agendaDaysAhead()}d`;
-  return `query (or (between scheduled ${lo} ${hi}) (between deadline ${lo} ${hi}))`;
+  const window = `(or (between scheduled ${lo} ${hi}) (between deadline ${lo} ${hi}))`;
+  return `query (and ${window} (not (task DONE CANCELED CANCELLED)))`;
 }
 
 // When a query block is created via the "/Query (visual builder)" command, hold

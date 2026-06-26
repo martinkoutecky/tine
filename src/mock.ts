@@ -297,6 +297,9 @@ export function mockBackend(): Backend {
     async setPreferredFormat(): Promise<void> {
       // no-op in the browser mock
     },
+    async setJournalTitleFormat(): Promise<void> {
+      // no-op in the browser mock
+    },
     async setDefaultJournalTemplate(): Promise<void> {
       // no-op in the browser mock
     },

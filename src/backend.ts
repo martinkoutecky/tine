@@ -48,6 +48,10 @@ export interface Backend {
   /** Persist the format new pages/journals are created in to config.edn
    *  `:preferred-format` ("md" | "org"). */
   setPreferredFormat(format: "md" | "org"): Promise<void>;
+  /** Persist the journal display-title format to config.edn
+   *  `:journal/page-title-format` (e.g. "MMM do, yyyy"). Display-only — does not
+   *  rename journal files (`:journal/file-name-format` is separate). */
+  setJournalTitleFormat(format: string): Promise<void>;
   /** Set (or clear, with null) the new-journal default template in config.edn
    *  `:default-templates {:journals "Name"}`. */
   setDefaultJournalTemplate(name: string | null): Promise<void>;
@@ -203,6 +207,9 @@ class TauriBackend implements Backend {
   }
   setPreferredFormat(format: "md" | "org") {
     return this.call<void>("set_preferred_format", { format });
+  }
+  setJournalTitleFormat(format: string) {
+    return this.call<void>("set_journal_title_format", { format });
   }
   setDefaultJournalTemplate(name: string | null) {
     return this.call<void>("set_default_journal_template", { name });

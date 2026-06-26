@@ -141,8 +141,9 @@ raw speed. (Where a comparison is made, it's against current Logseq desktop core
 - `SCHEDULED:` / `DEADLINE:` via a calendar **date picker** (`/scheduled`, `/deadline`), including
   **recurring tasks** (`+1w` / `.+1w` / `++1w`) where completing a repeater advances the date.
 - Multi-day **journal feed** (one continuous editable list); today's journal created lazily on
-  first edit; move blocks across days; an **agenda** of scheduled/deadline items in a configurable
-  look-back/-ahead window; journal **templates**; a calendar with content markers whose **first day
+  first edit; move blocks across days; an **agenda** of *open* scheduled/deadline items (DONE and
+  CANCELED are hidden, like OG) in a configurable look-back/-ahead window; journal **templates**; a
+  calendar with content markers whose **first day
   of week** follows your `config.edn :start-of-week` (any of the seven days, settable in-app).
 
 **PDF annotation**
@@ -174,11 +175,12 @@ raw speed. (Where a comparison is made, it's against current Logseq desktop core
   conflict, so a rename can't half-apply.
 - **Custom journal date formats** — reads `:journal/file-name-format` and `:journal/page-title-format`
   and recognizes/creates journal files in your format (e.g. `dd-MM-yyyy`, `yyyy-MM-dd`, `yyyyMMdd`),
-  falling back to the defaults so old/foreign files still resolve.
+  falling back to the defaults so old/foreign files still resolve. The display-title format is
+  pickable in Settings → *Journals & tasks* → **Journal date format** (file names are left as-is).
 - **Org-mode graphs** — opens, renders, and edits `.org` pages and journals (headlines as blocks,
   org inline syntax `*bold*` `/italic/` `_underline_` `~code~` `[[target][desc]]`, TODO markers,
-  `#+BEGIN_SRC`/`QUOTE` blocks). Mixed `.md` + `.org` graphs work; a `New page format` setting
-  (`:preferred-format`) chooses what new pages/journals use. A `.org` file is only ever rewritten
+  `#+BEGIN_SRC`/`QUOTE` blocks). Mixed `.md` + `.org` graphs work; the **File format** setting
+  (Settings → *Journals & tasks*, `:preferred-format`) chooses what new pages/journals use. A `.org` file is only ever rewritten
   when Tine can reproduce it **byte-for-byte** — anything it can't round-trip loads **read-only**, so
   it can never corrupt an org graph.
 - **Launch snapshots** (configurable keep-count) with a restore UI that takes a safety snapshot

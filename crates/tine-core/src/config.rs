@@ -237,6 +237,36 @@ impl Graph {
         atomic_write(&path, content.as_bytes())
     }
 
+    /// `:journal/page-title-format "<pattern>"` — the journal *display* title
+    /// format (e.g. `MMM do, yyyy`). Affects how journal dates render and how new
+    /// journal titles/`[[date]]` references are written; the on-disk file name
+    /// (governed by `:journal/file-name-format`, default `yyyy_MM_dd`) is left
+    /// untouched, so existing journal files keep working. Replaces the existing
+    /// value or inserts the key, preserving the rest of the file.
+    pub fn set_journal_page_title_format(&self, fmt: &str) -> io::Result<()> {
+        let escaped = fmt.replace('\\', "\\\\").replace('"', "\\\"");
+        let val = format!("\"{escaped}\"");
+        let key = ":journal/page-title-format";
+        let path = self.root.join("logseq").join("config.edn");
+        let mut content = fs::read_to_string(&path).unwrap_or_else(|_| "{}\n".to_string());
+
+        if let Some(start) = find_keyword(&content, key) {
+            let after = start + key.len();
+            match next_value_span(&content, after, content.len()) {
+                Some((vstart, vend, _)) if vend > vstart => content.replace_range(vstart..vend, &val),
+                _ => content.insert_str(after, &format!(" {val}")),
+            }
+        } else if let Some(brace) = content.find('{') {
+            content.insert_str(brace + 1, &format!("\n {key} {val}\n"));
+        } else {
+            content = format!("{{{key} {val}}}\n");
+        }
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        atomic_write(&path, content.as_bytes())
+    }
+
     /// Persist the new-journal default template as `:default-templates {:journals
     /// "Name"}`. `Some` sets/replaces the `:journals` entry; `None` removes it.
     /// Other keys in `:default-templates`, the rest of the file, and comments are
@@ -786,6 +816,34 @@ mod tests {
         fs::write(dir.join("logseq").join("config.edn"), "{}\n").unwrap();
         Graph::open(&dir).set_preferred_format(Format::Org).unwrap();
         assert_eq!(Graph::open(&dir).preferred_format(), Format::Org);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn set_journal_page_title_format_round_trips() {
+        use crate::model::Graph;
+        let dir = std::env::temp_dir().join(format!("tine-cfgdate-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq").join("config.edn"),
+            "{:preferred-format \"Markdown\"\n :start-of-week 0}\n",
+        )
+        .unwrap();
+        let g = Graph::open(&dir);
+        g.set_journal_page_title_format("yyyy-MM-dd").unwrap();
+        let after = fs::read_to_string(dir.join("logseq").join("config.edn")).unwrap();
+        assert!(after.contains(":journal/page-title-format \"yyyy-MM-dd\""), "not written: {after}");
+        assert!(after.contains(":preferred-format \"Markdown\""), "other keys clobbered: {after}");
+        assert_eq!(Config::parse(&after).journal_page_title_format.as_deref(), Some("yyyy-MM-dd"));
+        // A second set replaces the value wholesale (no stale leftover).
+        g.set_journal_page_title_format("MMMM do, yyyy").unwrap();
+        let after2 = fs::read_to_string(dir.join("logseq").join("config.edn")).unwrap();
+        assert!(
+            after2.contains(":journal/page-title-format \"MMMM do, yyyy\""),
+            "value not replaced: {after2}"
+        );
+        assert!(!after2.contains("\"yyyy-MM-dd\""), "stale value left behind: {after2}");
         let _ = fs::remove_dir_all(&dir);
     }
 

@@ -8,6 +8,7 @@ import {
   workflow,
   changeWorkflow,
   changePreferredFormat,
+  changeJournalTitleFormat,
   graphMeta,
   shortcutOverrides,
   setShortcutOverride,
@@ -42,6 +43,32 @@ import { switchGraph, loadGraphPath } from "../graph";
 import { flushAll } from "../store";
 import { backend, type BackupInfo } from "../backend";
 import type { AssetInfo } from "../types";
+import { formatJournal } from "../journal";
+
+// Journal display-title formats offered in the date-format dropdown — OG's
+// `journal-title-formatters` set (frontend/date.cljs). Display-only; the on-disk
+// journal file name is governed separately by `:journal/file-name-format`.
+const DATE_FORMATS = [
+  "MMM do, yyyy",
+  "MMMM do, yyyy",
+  "do MMM yyyy",
+  "do MMMM yyyy",
+  "E, dd-MM-yyyy",
+  "EEE, dd-MM-yyyy",
+  "EEEE, dd-MM-yyyy",
+  "EEE, MM/dd/yyyy",
+  "EEEE, MM/dd/yyyy",
+  "EEE, yyyy/MM/dd",
+  "dd-MM-yyyy",
+  "MM/dd/yyyy",
+  "MM-dd-yyyy",
+  "MM_dd_yyyy",
+  "yyyy/MM/dd",
+  "yyyy-MM-dd",
+  "yyyy-MM-dd EEEE",
+  "yyyy_MM_dd",
+  "yyyyMMdd",
+];
 
 type Tab = "appearance" | "tasks" | "backups" | "graph" | "shortcuts";
 const TABS: { id: Tab; label: string }[] = [
@@ -368,6 +395,26 @@ function JournalTemplateField(): JSX.Element {
   );
 }
 
+/** Journal display-title format picker. Shows each pattern with a live example
+ *  (today rendered in it). Includes the graph's current value even if it isn't
+ *  one of the presets, so a hand-edited config.edn round-trips. */
+function DateFormatSelect(): JSX.Element {
+  const today = new Date();
+  const current = () => graphMeta()?.journal_page_title_format || "MMM do, yyyy";
+  const options = () => (DATE_FORMATS.includes(current()) ? DATE_FORMATS : [current(), ...DATE_FORMATS]);
+  return (
+    <select
+      class="settings-select"
+      value={current()}
+      onChange={(e) => changeJournalTitleFormat(e.currentTarget.value)}
+    >
+      <For each={options()}>
+        {(fmt) => <option value={fmt}>{`${fmt}  —  ${formatJournal(today, fmt)}`}</option>}
+      </For>
+    </select>
+  );
+}
+
 function TasksTab(): JSX.Element {
   // Quick-capture Enter behaviour (app-level setting, read by the capture window).
   const [captureEnterFiles, setCaptureEnterFiles] = createSignal(false);
@@ -382,6 +429,45 @@ function TasksTab(): JSX.Element {
   };
   return (
     <>
+      <Field
+        label="File format"
+        hint={
+          <>
+            Format for <strong>new</strong> pages and journals — Markdown or Org. Existing{" "}
+            <code>.md</code> and <code>.org</code> files keep their own format and are edited in
+            place. Saved to <code>:preferred-format</code> in <code>config.edn</code>.
+          </>
+        }
+      >
+        <div class="settings-segment">
+          <button
+            classList={{ active: (graphMeta()?.preferred_format ?? "md") === "md" }}
+            onClick={() => changePreferredFormat("md")}
+          >
+            Markdown
+          </button>
+          <button
+            classList={{ active: graphMeta()?.preferred_format === "org" }}
+            onClick={() => changePreferredFormat("org")}
+          >
+            Org
+          </button>
+        </div>
+      </Field>
+
+      <Field
+        label="Journal date format"
+        hint={
+          <>
+            How journal dates are displayed and how new <code>[[date]]</code> titles are written.
+            Display-only — your journal <em>file names</em> are untouched and existing journals keep
+            working. Saved to <code>:journal/page-title-format</code>.
+          </>
+        }
+      >
+        <DateFormatSelect />
+      </Field>
+
       <Field
         label="Show carry-over buttons"
         hint="Show the carry buttons next to journal titles. Off → use the right-click menu instead."
@@ -433,32 +519,6 @@ function TasksTab(): JSX.Element {
           </button>
           <button classList={{ active: workflow() === "now" }} onClick={() => changeWorkflow("now")}>
             NOW / LATER
-          </button>
-        </div>
-      </Field>
-
-      <Field
-        label="New page format"
-        hint={
-          <>
-            Format for <strong>new</strong> pages and journals. Existing <code>.md</code> and{" "}
-            <code>.org</code> files keep their own format and are edited in place. Saved to{" "}
-            <code>:preferred-format</code> in <code>config.edn</code>.
-          </>
-        }
-      >
-        <div class="settings-segment">
-          <button
-            classList={{ active: (graphMeta()?.preferred_format ?? "md") === "md" }}
-            onClick={() => changePreferredFormat("md")}
-          >
-            Markdown
-          </button>
-          <button
-            classList={{ active: graphMeta()?.preferred_format === "org" }}
-            onClick={() => changePreferredFormat("org")}
-          >
-            Org
           </button>
         </div>
       </Field>

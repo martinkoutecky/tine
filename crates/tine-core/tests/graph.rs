@@ -1067,6 +1067,37 @@ fn query_open_tasks() {
 }
 
 #[test]
+fn agenda_query_excludes_finished_tasks() {
+    // The journal "Scheduled & Deadline" agenda (ui.ts::agendaQuery) must hide
+    // DONE/CANCELED/CANCELLED items — matching OG's get-date-scheduled-or-deadlines
+    // — while keeping open tasks AND marker-less scheduled blocks. A ±100y window
+    // keeps the test robust against the real-clock `today` the engine resolves.
+    let root = std::env::temp_dir().join(format!("tine-agenda-{}", std::process::id()));
+    std::fs::create_dir_all(root.join("journals")).unwrap();
+    std::fs::write(
+        root.join("journals").join("2026_06_26.md"),
+        "- TODO open task\n  SCHEDULED: <2026-06-27 Sat>\n\
+         - DONE finished task\n  SCHEDULED: <2026-06-27 Sat>\n\
+         - CANCELED dropped task\n  DEADLINE: <2026-06-27 Sat>\n\
+         - CANCELLED british drop\n  DEADLINE: <2026-06-27 Sat>\n\
+         - plain meeting\n  SCHEDULED: <2026-06-27 Sat>\n",
+    )
+    .unwrap();
+    let g = Graph::open(&root);
+    g.warm_cache();
+    let q = "(and (or (between scheduled -36500d +36500d) (between deadline -36500d +36500d)) \
+             (not (task DONE CANCELED CANCELLED)))";
+    let raws: Vec<String> =
+        g.run_query(q).iter().flat_map(|gr| gr.blocks.iter().map(|b| b.raw.clone())).collect();
+    assert!(raws.iter().any(|r| r.starts_with("TODO open task")), "open task missing: {raws:?}");
+    assert!(raws.iter().any(|r| r.starts_with("plain meeting")), "marker-less missing: {raws:?}");
+    assert!(!raws.iter().any(|r| r.contains("DONE finished")), "DONE leaked: {raws:?}");
+    assert!(!raws.iter().any(|r| r.contains("CANCELED dropped")), "CANCELED leaked: {raws:?}");
+    assert!(!raws.iter().any(|r| r.contains("CANCELLED british")), "CANCELLED leaked: {raws:?}");
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn rename_superstring_rewrites_journal_and_nonjournal_refs() {
     // Regression for the reported case: the new name CONTAINS the old name, and
     // the old name is referenced from BOTH a non-journal page and a journal, with
