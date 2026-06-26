@@ -134,6 +134,16 @@ function renderSeg(s: Seg, blockId?: string): JSX.Element {
       return <AssetImage url={s.url} alt={s.alt} width={s.width} height={s.height} />;
     case "footnote":
       return <sup class="footnote-ref">{s.id}</sup>;
+    case "timestamp":
+      // Org date/time stamp: active `<…>` vs inactive `[…]` (styled, like OG;
+      // inline Date stamps aren't journal links in OG, so neither are these).
+      return (
+        <span class="org-timestamp" classList={{ inactive: !s.active }}>
+          {s.active ? "<" : "["}
+          {s.raw}
+          {s.active ? ">" : "]"}
+        </span>
+      );
     case "iframe":
       return (
         <span class="embed-iframe-wrap" style={{ ...(s.width ? { width: s.width } : {}), ...(s.height ? { "aspect-ratio": "auto", height: s.height } : {}) }}>

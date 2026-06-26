@@ -184,5 +184,20 @@ describe("parseInline", () => {
       // backtick code is markdown-only; in org `~code~` is used instead.
       expect(org("a `code` b")).toEqual([{ t: "text", v: "a `code` b" }]);
     });
+
+    it("org timestamps: active <…> and inactive […]", () => {
+      expect(org("met on <2026-06-26 Fri>")).toEqual([
+        { t: "text", v: "met on " },
+        { t: "timestamp", raw: "2026-06-26 Fri", active: true },
+      ]);
+      expect(org("logged [2026-06-20 Sat] ok")).toEqual([
+        { t: "text", v: "logged " },
+        { t: "timestamp", raw: "2026-06-20 Sat", active: false },
+        { t: "text", v: " ok" },
+      ]);
+      // a non-date bracket is NOT a timestamp (stays a page ref / literal)
+      expect(org("[[Page]]")).toEqual([{ t: "pageref", name: "Page" }]);
+      expect(org("a [note] b")).toEqual([{ t: "text", v: "a [note] b" }]);
+    });
   });
 });

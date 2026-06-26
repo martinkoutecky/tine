@@ -14,7 +14,7 @@ import { LinkedReferences } from "./LinkedReferences";
 import { UnlinkedReferences } from "./UnlinkedReferences";
 import { QueryMacro } from "./Macro";
 import { NamespaceCrumb, NamespaceChildren } from "./Namespace";
-import { isPropertyLine, aliasNames, blockView } from "../render/block";
+import { pageProperties, aliasNames, blockView } from "../render/block";
 import { InlineText } from "../render/inline";
 import { journalTitle } from "../journal";
 import type { PageDto } from "../types";
@@ -405,33 +405,26 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
           </svg>
         </button>
       </div>
-      <Show when={aliasNames(props.page.preBlock).length}>
+      <Show when={aliasNames(props.page.preBlock, props.page.format).length}>
         <div class="page-aliases" title="Also known as — other names that link here">
           <span class="page-aliases-label">aka</span>
-          <For each={aliasNames(props.page.preBlock)}>
+          <For each={aliasNames(props.page.preBlock, props.page.format)}>
             {(a) => <span class="alias-chip">{a}</span>}
           </For>
         </div>
       </Show>
-      <Show when={props.page.preBlock}>
+      <Show when={pageProperties(props.page.preBlock, props.page.format).filter(([k]) => k.toLowerCase() !== "alias").length}>
         <div class="page-properties">
-          {/* `alias` is surfaced as chips above, so drop it from the raw property list. */}
-          <For
-            each={props.page
-              .preBlock!.split("\n")
-              .filter((l) => isPropertyLine(l) && l.slice(0, l.indexOf("::")).trim().toLowerCase() !== "alias")}
-          >
-            {(line) => {
-              const idx = line.indexOf("::");
-              return (
-                <div class="prop-row">
-                  <span class="prop-key">{line.slice(0, idx).trim()}</span>
-                  <span class="prop-value">
-                    <InlineText text={line.slice(idx + 2).trim()} />
-                  </span>
-                </div>
-              );
-            }}
+          {/* `alias` is surfaced as chips above, so drop it from the property list. */}
+          <For each={pageProperties(props.page.preBlock, props.page.format).filter(([k]) => k.toLowerCase() !== "alias")}>
+            {([key, value]) => (
+              <div class="prop-row">
+                <span class="prop-key">{key}</span>
+                <span class="prop-value">
+                  <InlineText text={value} format={props.page.format} />
+                </span>
+              </div>
+            )}
           </For>
         </div>
       </Show>

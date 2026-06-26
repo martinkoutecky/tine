@@ -19,6 +19,7 @@ export type Seg =
   | { t: "link"; label: string; url: string }
   | { t: "image"; alt: string; url: string; width?: string; height?: string }
   | { t: "footnote"; id: string }
+  | { t: "timestamp"; raw: string; active: boolean }
   | { t: "iframe"; src: string; width?: string; height?: string };
 
 /** Parse a Logseq image-metadata brace like `{:width 200, :height 100}`. */
@@ -129,6 +130,23 @@ export function parseInline(input: string, format: Format = "md"): Seg[] {
       continue;
     }
     const c = input[i];
+    // Org timestamp: active `<YYYY-MM-DD …>` or inactive `[YYYY-MM-DD …]`. The
+    // leading-date check keeps `[[Page]]`, `[note]`, `<https://…>` (already
+    // consumed above) from matching.
+    if (org && (c === "<" || c === "[")) {
+      const close = c === "<" ? ">" : "]";
+      const end = input.indexOf(close, i + 1);
+      if (end !== -1) {
+        const inner = input.slice(i + 1, end);
+        if (/^\d{4}-\d{2}-\d{2}/.test(inner)) {
+          flush(i);
+          out.push({ t: "timestamp", raw: inner, active: c === "<" });
+          i = end + 1;
+          plainStart = i;
+          continue;
+        }
+      }
+    }
     if (c === "[" && input.startsWith("[[", i)) {
       const end = input.indexOf("]]", i + 2);
       if (end !== -1) {

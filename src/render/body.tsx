@@ -31,7 +31,8 @@ function isTableRow(line: string): boolean {
   return /^\s*\|.*\|\s*$/.test(line);
 }
 function isTableSep(line: string): boolean {
-  return /^\s*\|?[\s:|-]+\|?\s*$/.test(line) && line.includes("-");
+  // Accept org's column-junction `+` (`|---+---|`) as well as markdown's `|---|`.
+  return /^\s*\|?[\s:|+-]+\|?\s*$/.test(line) && line.includes("-");
 }
 function isHr(line: string): boolean {
   return /^\s*([-*_])\1{2,}\s*$/.test(line);

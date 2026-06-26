@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aliasNames, isPropertyLine, blockView } from "./block";
+import { aliasNames, isPropertyLine, pageProperties, blockView } from "./block";
 
 describe("aliasNames", () => {
   it("parses a comma-separated alias:: line", () => {
@@ -13,6 +13,26 @@ describe("aliasNames", () => {
     expect(aliasNames("")).toEqual([]);
     expect(aliasNames(null)).toEqual([]);
     expect(aliasNames("alias:: , ,")).toEqual([]);
+  });
+  it("reads org #+ALIAS: / :alias: drawer", () => {
+    expect(aliasNames("#+TITLE: P\n#+ALIAS: foo, bar", "org")).toEqual(["foo", "bar"]);
+    expect(aliasNames(":PROPERTIES:\n:alias: baz\n:END:", "org")).toEqual(["baz"]);
+  });
+});
+
+describe("pageProperties", () => {
+  it("markdown key:: value lines", () => {
+    expect(pageProperties("title:: P\ntags:: a, b")).toEqual([
+      ["title", "P"],
+      ["tags", "a, b"],
+    ]);
+  });
+  it("org #+KEY: directives and :PROPERTIES: drawer (keys lowercased)", () => {
+    expect(pageProperties("#+TITLE: org-sink\n#+FILETAGS: :demo:org:", "org")).toEqual([
+      ["title", "org-sink"],
+      ["filetags", ":demo:org:"],
+    ]);
+    expect(pageProperties(":PROPERTIES:\n:key: value\n:END:", "org")).toEqual([["key", "value"]]);
   });
 });
 

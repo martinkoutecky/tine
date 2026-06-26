@@ -1,6 +1,8 @@
 // Helpers to derive a block's *rendered* view from its raw text. Raw stays
 // authoritative (round-trip); these are computed projections.
 
+import type { Format } from "./parseInline";
+
 export const MARKERS = [
   "TODO",
   "DOING",
@@ -23,16 +25,58 @@ export function isPropertyLine(line: string): boolean {
   return key.length > 0 && /^[A-Za-z0-9_./-]+$/.test(key) && PROP_RE.test(line);
 }
 
-/** The alias names declared by a page's `alias::` pre-block property
- *  (comma-separated, as Logseq stores them). Empty array if there are none. */
-export function aliasNames(preBlock: string | null | undefined): string[] {
+/** A page's pre-block properties as `[key, value]` pairs. Markdown reads
+ *  `key:: value` lines; org reads `#+KEY: value` file directives plus a top
+ *  `:PROPERTIES:` … `:END:` drawer's `:key: value` lines (org keys lowercased,
+ *  as OG/mldoc stores them). Order preserved. */
+export function pageProperties(
+  preBlock: string | null | undefined,
+  format: Format = "md"
+): [string, string][] {
   if (!preBlock) return [];
-  for (const line of preBlock.split("\n")) {
-    const idx = line.indexOf("::");
-    if (idx <= 0) continue;
-    if (line.slice(0, idx).trim().toLowerCase() === "alias") {
-      return line
-        .slice(idx + 2)
+  const out: [string, string][] = [];
+  if (format === "org") {
+    let inDrawer = false;
+    for (const line of preBlock.split("\n")) {
+      const t = line.trim();
+      if (/^:PROPERTIES:$/i.test(t)) {
+        inDrawer = true;
+        continue;
+      }
+      if (/^:END:$/i.test(t)) {
+        inDrawer = false;
+        continue;
+      }
+      const dir = /^#\+([A-Za-z0-9_-]+):\s*(.*)$/.exec(t);
+      if (dir) {
+        out.push([dir[1].toLowerCase(), dir[2].trim()]);
+        continue;
+      }
+      if (inDrawer) {
+        const d = /^:([A-Za-z0-9_-]+):\s*(.*)$/.exec(t);
+        if (d) out.push([d[1].toLowerCase(), d[2].trim()]);
+      }
+    }
+  } else {
+    for (const line of preBlock.split("\n")) {
+      if (isPropertyLine(line)) {
+        const idx = line.indexOf("::");
+        out.push([line.slice(0, idx).trim(), line.slice(idx + 2).trim()]);
+      }
+    }
+  }
+  return out;
+}
+
+/** The alias names declared by a page's pre-block (`alias::` in markdown,
+ *  `#+ALIAS:` / `:alias:` in org), comma-separated. Empty if none. */
+export function aliasNames(
+  preBlock: string | null | undefined,
+  format: Format = "md"
+): string[] {
+  for (const [k, v] of pageProperties(preBlock, format)) {
+    if (k.toLowerCase() === "alias") {
+      return v
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean);

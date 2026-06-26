@@ -99,7 +99,7 @@ const NAMED: PageDto[] = [
     name: "org-sink",
     kind: "page",
     title: "org-sink",
-    pre_block: null,
+    pre_block: "#+TITLE: org-sink\n#+FILETAGS: :demo:org:\n#+ALIAS: org parity",
     format: "org",
     blocks: [
       b("Inline styles: *bold*, /italic/, _underline_, +strike+, ~code~, =verbatim=, ^^highlight^^"),
@@ -107,10 +107,12 @@ const NAMED: PageDto[] = [
       b("Boundary-safe plain text: a/b/c paths, snake_case_var, and 2*3*4 stay literal"),
       b("TODO [#A] high-priority org task\nSCHEDULED: <2026-06-25 Thu>"),
       b("DOING in-progress task referencing [[n-fold IP]]"),
+      b("Inline timestamps: met on <2026-06-26 Fri> (active), logged [2026-06-20 Sat] (inactive)"),
       b("a parent headline", [
         b("child block under it with /emphasis/"),
         b("DONE finished child task"),
       ]),
+      b("Org table:\n| Feature | Status |\n|---------+--------|\n| Outliner | done |\n| Queries | partial |"),
       b("Org source block:\n#+BEGIN_SRC clojure\n(defn hello [] \"world\")\n#+END_SRC"),
       b("Org quote block:\n#+BEGIN_QUOTE\nto be or not to be\n#+END_QUOTE"),
       b("A property drawer stays as content:\n:PROPERTIES:\n:key: value\n:END:"),
