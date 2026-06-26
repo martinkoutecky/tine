@@ -122,7 +122,10 @@ fn start_watcher(app: tauri::AppHandle) {
                     if let Ok(rd) = std::fs::read_dir(dir) {
                         for e in rd.flatten() {
                             let p = e.path();
-                            if p.extension().and_then(|x| x.to_str()) != Some("md") {
+                            // Watch markdown AND org page files (mirror the core's
+                            // is_page_file), so external .org edits/creates/deletes
+                            // are reconciled like .md ones.
+                            if !matches!(p.extension().and_then(|x| x.to_str()), Some("md") | Some("org")) {
                                 continue;
                             }
                             if let Ok(m) = e.metadata().and_then(|md| md.modified()) {

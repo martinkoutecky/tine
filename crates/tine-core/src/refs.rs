@@ -106,6 +106,52 @@ fn in_code(pos: usize, ranges: &[std::ops::Range<usize>]) -> bool {
     ranges.iter().any(|r| r.contains(&pos))
 }
 
+/// Ranges to protect from ref rewriting: markdown fenced/inline code always, plus
+/// — for an org file — `#+BEGIN_…#+END_…` blocks (whose `[[..]]`/`#..` are literal
+/// source, not references). `is_org` is gated so a literal `#+BEGIN_` in a real
+/// markdown file is never mistaken for a block.
+fn code_ranges_for(raw: &str, is_org: bool) -> Vec<std::ops::Range<usize>> {
+    let mut r = code_ranges(raw);
+    if is_org {
+        r.extend(org_block_ranges(raw));
+    }
+    r
+}
+
+/// Byte ranges (whole lines, inclusive) of org `#+BEGIN_x … #+END_x` blocks.
+/// Mirrors `org.rs`'s headline-scanner block tracking; an unclosed block extends
+/// to end-of-text (so a stray ref after it is treated conservatively as literal).
+fn org_block_ranges(raw: &str) -> Vec<std::ops::Range<usize>> {
+    let mut ranges = Vec::new();
+    let mut pos = 0usize;
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    for line in raw.split_inclusive('\n') {
+        let line_start = pos;
+        pos += line.len();
+        let kw = line.trim_start_matches([' ', '\t']).strip_prefix("#+");
+        let is_begin = kw.is_some_and(|k| k.len() >= 6 && k[..6].eq_ignore_ascii_case("begin_"));
+        let is_end = kw.is_some_and(|k| k.len() >= 4 && k[..4].eq_ignore_ascii_case("end_"));
+        if depth == 0 {
+            if is_begin {
+                depth = 1;
+                start = line_start;
+            }
+        } else if is_begin {
+            depth += 1;
+        } else if is_end {
+            depth -= 1;
+            if depth == 0 {
+                ranges.push(start..pos);
+            }
+        }
+    }
+    if depth > 0 {
+        ranges.push(start..pos);
+    }
+    ranges
+}
+
 /// A `#tag` is only a tag at a word boundary: `#` at the start, or preceded by a
 /// char that isn't itself tag-body material. So `word#x`, `ex.com#x`, `path/#x`
 /// (URL fragments) are NOT tags — matching OG — while ` #x`, `(#x`, `]#x` are.
@@ -183,9 +229,9 @@ pub fn references_page(raw: &str, target: &str) -> bool {
 /// the new text. Handles `[[from]]`, `#from`, and `#[[from]]`. A `#tag` becomes
 /// `#[[to]]` when `to` contains characters that aren't valid in a bare tag
 /// (e.g. spaces), matching Logseq.
-pub fn rename_refs(raw: &str, from: &str, to: &str) -> String {
+pub fn rename_refs(raw: &str, from: &str, to: &str, is_org: bool) -> String {
     let target = normalize(from);
-    let code = code_ranges(raw);
+    let code = code_ranges_for(raw, is_org);
     let mut out = String::with_capacity(raw.len());
     let mut i = 0;
     while i < raw.len() {
@@ -255,9 +301,9 @@ fn tag_for(to: &str) -> String {
 /// `tags::` lines inside a code fence are skipped (literal text, like inline
 /// refs in code). Whitespace, commas, and the `key::` prefix are preserved
 /// verbatim for byte-exact round-tripping of everything but the matched name.
-pub fn rename_tags_property(raw: &str, from: &str, to: &str) -> String {
+pub fn rename_tags_property(raw: &str, from: &str, to: &str, is_org: bool) -> String {
     let target = normalize(from);
-    let code = code_ranges(raw);
+    let code = code_ranges_for(raw, is_org);
     let mut out = String::with_capacity(raw.len());
     let mut pos = 0usize;
     for line in raw.split_inclusive('\n') {
@@ -366,7 +412,7 @@ mod tests {
     fn rename_leaves_url_fragments_alone() {
         // `#Old` inside a URL isn't a tag → untouched; the real tag is renamed
         assert_eq!(
-            rename_refs("visit https://ex.com/docs#Old and tag #Old", "Old", "New"),
+            rename_refs("visit https://ex.com/docs#Old and tag #Old", "Old", "New", false),
             "visit https://ex.com/docs#Old and tag #New"
         );
     }
@@ -375,12 +421,12 @@ mod tests {
     fn rename_skips_refs_in_code() {
         // inline code is preserved verbatim; the prose ref is renamed
         assert_eq!(
-            rename_refs("see [[Old]] and `[[Old]]`", "Old", "New"),
+            rename_refs("see [[Old]] and `[[Old]]`", "Old", "New", false),
             "see [[New]] and `[[Old]]`"
         );
         // fenced code is preserved verbatim; refs outside are renamed
         let raw = "before [[Old]]\n```js\nconst x = \"[[Old]]\"; // #Old\n```\nafter #Old";
-        let got = rename_refs(raw, "Old", "New");
+        let got = rename_refs(raw, "Old", "New", false);
         assert!(got.contains("before [[New]]"), "prose ref renamed: {got}");
         assert!(got.contains("after #New"), "trailing tag renamed: {got}");
         assert!(got.contains("\"[[Old]]\"; // #Old"), "code body untouched: {got}");
@@ -394,30 +440,47 @@ mod tests {
         // mis-read as an opener, so the later ref looked "inside code" and was
         // skipped. The whole `## Tests` subtree mirrors Tine.md.
         let raw = "- ## Tests\n\t- ```calc\n\t  1 + 2\n\t  var = 2+4\n\t  ```\n\t- #+BEGIN_TIP\n\t  a tip\n\t  #+END_TIP\n\t- [[Pokus2]]\n";
-        let out = rename_refs(raw, "Pokus2", "Pokus");
+        let out = rename_refs(raw, "Pokus2", "Pokus", false);
         assert!(out.contains("[[Pokus]]"), "ref after bulleted fence not rewritten: {out:?}");
         // the code block body itself is untouched
         assert!(out.contains("```calc") && out.contains("1 + 2"), "{out:?}");
     }
 
     #[test]
+    fn rename_skips_refs_inside_org_begin_blocks() {
+        // H2: with is_org=true, a `[[Old]]`/`#Old` literal inside an org
+        // `#+BEGIN_SRC … #+END_SRC` block must NOT be rewritten (it's source text),
+        // while a real ref outside the block still is.
+        let raw = "see [[Old]] here\n#+BEGIN_SRC clojure\n(def s \"[[Old]]\") ; #Old\n#+END_SRC\nand [[Old]] again\n";
+        let out = rename_refs(raw, "Old", "New", true);
+        assert_eq!(
+            out,
+            "see [[New]] here\n#+BEGIN_SRC clojure\n(def s \"[[Old]]\") ; #Old\n#+END_SRC\nand [[New]] again\n"
+        );
+        // Same input as markdown (is_org=false) WOULD rewrite inside (no org fence
+        // awareness) — proving the gate matters.
+        let md = rename_refs(raw, "Old", "New", false);
+        assert!(md.contains("(def s \"[[New]]\")"), "md path rewrites inside (expected): {md:?}");
+    }
+
+    #[test]
     fn rename_tags_property_rewrites_bare_values_only() {
         // bare value matched, sibling + whitespace + commas preserved
         assert_eq!(
-            rename_tags_property("tags:: Old, keep", "Old", "New"),
+            rename_tags_property("tags:: Old, keep", "Old", "New", false),
             "tags:: New, keep"
         );
         // case-insensitive match; original `to` casing used
-        assert_eq!(rename_tags_property("tags:: old", "Old", "New"), "tags:: New");
+        assert_eq!(rename_tags_property("tags:: old", "Old", "New", false), "tags:: New");
         // bracketed / #-prefixed values are left for rename_refs (no double-rewrite)
         assert_eq!(
-            rename_tags_property("tags:: [[Old]], #Old", "Old", "New"),
+            rename_tags_property("tags:: [[Old]], #Old", "Old", "New", false),
             "tags:: [[Old]], #Old"
         );
         // a non-tags property is untouched
-        assert_eq!(rename_tags_property("author:: Old", "Old", "New"), "author:: Old");
+        assert_eq!(rename_tags_property("author:: Old", "Old", "New", false), "author:: Old");
         // a `tags::` line inside a code fence is literal — not rewritten
         let raw = "tags:: Old\n```\ntags:: Old\n```\n";
-        assert_eq!(rename_tags_property(raw, "Old", "New"), "tags:: New\n```\ntags:: Old\n```\n");
+        assert_eq!(rename_tags_property(raw, "Old", "New", false), "tags:: New\n```\ntags:: Old\n```\n");
     }
 }

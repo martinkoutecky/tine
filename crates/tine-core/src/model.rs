@@ -1135,10 +1135,24 @@ impl Graph {
         let mut edits: Vec<Edit> = Vec::new();
         for entry in &entries {
             let Ok(content) = fs::read_to_string(&entry.path) else { continue };
+            let is_org = Format::from_path(&entry.path) == Format::Org;
             let mut updated = content.clone();
             for (o, n) in &rename_pairs {
-                updated = crate::refs::rename_refs(&updated, o, n);
-                updated = crate::refs::rename_tags_property(&updated, o, n);
+                updated = crate::refs::rename_refs(&updated, o, n, is_org);
+                updated = crate::refs::rename_tags_property(&updated, o, n, is_org);
+            }
+            // H1: a rename must never rewrite a read-only (non-round-tripping) .org
+            // file. Abort the whole rename (all-or-nothing) so the user resolves it
+            // in Logseq first. A pure file move with no content change (updated ==
+            // content) is still allowed — it preserves bytes exactly.
+            if is_org && updated != content && !crate::org::org_editable(&content) {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!(
+                        "cannot rename: {} is a read-only .org file (does not round-trip)",
+                        entry.path.display()
+                    ),
+                ));
             }
             match move_dst.get(&entry.path) {
                 Some(dst) => edits.push(Edit {
@@ -1681,7 +1695,10 @@ impl Graph {
         // recheck = true: re-verify the file hasn't changed on disk in the instant
         // before the write, to narrow the inherent race against a NON-cooperating
         // external writer (OG/Syncthing) that doesn't take our page lock.
-        self.write_page(page, existing.as_deref(), true)
+        // M2: write to the SAME path we locked + read the baseline from — never
+        // re-resolve `path_for` under the lock (an `exists()`-probe could otherwise
+        // pick a different extension if a twin appears mid-save).
+        self.write_page(page, &path, existing.as_deref(), true)
     }
 
     /// Save a page unconditionally (the user chose "keep mine" over a conflict).
@@ -1690,21 +1707,30 @@ impl Graph {
         let lock = self.page_lock(&path);
         let _guard = lock.lock().unwrap();
         let existing = fs::read_to_string(&path).ok();
-        // recheck = false: "keep mine" overwrites unconditionally.
-        self.write_page(page, existing.as_deref(), false)
+        // recheck = false: "keep mine" overwrites unconditionally. Same locked path
+        // is threaded into write_page (M2) so a forced save can't land on a twin.
+        self.write_page(page, &path, existing.as_deref(), false)
     }
 
-    /// Write a page, reproducing `existing`'s formatting, and return the new
-    /// on-disk content rev (computed from what was written — no extra read).
-    fn write_page(&self, page: &PageDto, existing: Option<&str>, recheck: bool) -> io::Result<String> {
-        // (A new journal is written via `path_for`, which names the file using the
-        // graph's `:journal/file-name-format` — so custom-format graphs create the
-        // correct file for the day instead of a misplaced default-named duplicate.)
+    /// Write a page to `path` (already resolved + locked by the caller), reproducing
+    /// `existing`'s formatting, and return the new on-disk content rev (computed from
+    /// what was written — no extra read).
+    fn write_page(
+        &self,
+        page: &PageDto,
+        path: &Path,
+        existing: Option<&str>,
+        recheck: bool,
+    ) -> io::Result<String> {
+        // (A new journal's `path` was named by `path_for` using the graph's
+        // `:journal/file-name-format` — so custom-format graphs create the correct
+        // file for the day instead of a misplaced default-named duplicate.)
         let doc = Document {
             pre_block: page.pre_block.clone(),
             roots: page.blocks.iter().map(dto_to_doc).collect(),
         };
-        let path = self.path_for(&page.name, page.kind);
+        // Own the caller's resolved+locked path (M2: never re-resolve path_for here).
+        let path = path.to_path_buf();
         let content = match Format::from_path(&path) {
             Format::Md => {
                 // Reproduce the existing file's formatting (trailing newline,
@@ -1819,7 +1845,26 @@ impl Graph {
                 };
                 PageEntry { name: page.name.clone(), kind: page.kind, date_key, path: path.clone() }
             });
-            self.cache_upsert(entry, doc, rev.clone());
+            // H4: for org, the on-disk bytes are authoritative. If the user typed a
+            // structural marker (a column-0 `* ` line, or an unbalanced #+BEGIN_)
+            // into a block body, `content` re-parses to a DIFFERENT tree than the
+            // frontend `doc` — cache what's actually on disk so the next load shows
+            // the real structure instead of a cache that silently disagrees. Common
+            // case: structures match → keep `doc` (block uuids stay stable). Markdown
+            // continuation lines are indented, so they can't re-read differently.
+            let cache_doc = if Format::from_path(&path) == Format::Org {
+                let reparsed = crate::org::parse_org(&content);
+                if reparsed == doc {
+                    doc
+                } else {
+                    let mut d = reparsed;
+                    assign_doc_uuids(&mut d.roots);
+                    d
+                }
+            } else {
+                doc
+            };
+            self.cache_upsert(entry, cache_doc, rev.clone());
         }
         // Drop the self-write marker now that the write is published. It only had
         // to cover the window between the atomic write above and the cache_upsert
@@ -2245,6 +2290,66 @@ mod tests {
         let err = g.force_save_page(&dto).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
         assert_eq!(fs::read_to_string(dir.join("pages").join("Weird.org")).unwrap(), src);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rename_aborts_on_readonly_org_referrer() {
+        // H1: a rename must NOT rewrite a read-only (non-round-tripping) .org file.
+        let dir = scratch("org-rename-ro");
+        fs::write(dir.join("pages").join("Alpha.md"), "- alpha\n").unwrap();
+        // `* a\n*** c` skips a heading level → not round-trip-safe → read-only.
+        let ro = "* a\n*** c referencing [[Alpha]]\n";
+        fs::write(dir.join("pages").join("Weird.org"), ro).unwrap();
+        let g = Graph::open(&dir);
+        g.warm_cache();
+        let err = g.rename_page("Alpha", "Beta").unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+        // All-or-nothing: neither file moved/changed.
+        assert!(dir.join("pages").join("Alpha.md").exists(), "rename rolled back");
+        assert_eq!(fs::read_to_string(dir.join("pages").join("Weird.org")).unwrap(), ro);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rename_org_skips_refs_in_src_block() {
+        // H2 end-to-end: renaming a page leaves a `[[Old]]` literal inside an org
+        // src block untouched while rewriting a real ref outside it.
+        let dir = scratch("org-rename-src");
+        fs::write(dir.join("pages").join("Old.md"), "- old body\n").unwrap();
+        let org = "* note\nsee [[Old]]\n#+BEGIN_SRC clojure\n\"[[Old]]\"\n#+END_SRC\n";
+        fs::write(dir.join("pages").join("Ref.org"), org).unwrap();
+        let g = Graph::open(&dir);
+        g.warm_cache();
+        g.rename_page("Old", "New").unwrap();
+        let got = fs::read_to_string(dir.join("pages").join("Ref.org")).unwrap();
+        assert_eq!(got, "* note\nsee [[New]]\n#+BEGIN_SRC clojure\n\"[[Old]]\"\n#+END_SRC\n");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn org_save_with_typed_headline_caches_disk_tree() {
+        // H4: typing a column-0 `* ` line into a block body makes the saved bytes
+        // re-parse to a DIFFERENT tree; the cache must reflect what's on disk, not
+        // the (now-stale) frontend doc — so reads after the save see the real shape.
+        let dir = scratch("org-h4");
+        fs::write(dir.join("pages").join("P.org"), "* one\n* two\n").unwrap();
+        let g = Graph::open(&dir);
+        g.warm_cache();
+        let dto = g.load_named("P", PageKind::Page).unwrap().unwrap();
+        assert_eq!(dto.blocks.len(), 2);
+        // Edit block 0's body to contain a column-0 headline marker.
+        let mut edited = dto.clone();
+        edited.blocks[0].raw = "one\n* injected".into();
+        let rev = g.save_page(&edited, dto.rev.as_deref()).unwrap();
+        // Disk now has THREE headlines.
+        let disk = fs::read_to_string(dir.join("pages").join("P.org")).unwrap();
+        assert_eq!(disk, "* one\n* injected\n* two\n");
+        // A fresh load (served from cache) must reflect the 3-block disk structure,
+        // not the 2-block frontend doc that produced it.
+        let again = g.load_named("P", PageKind::Page).unwrap().unwrap();
+        assert_eq!(again.blocks.len(), 3, "cache reflects disk structure after H4 reparse");
+        assert_eq!(again.rev.as_deref(), Some(rev.as_str()));
         let _ = fs::remove_dir_all(&dir);
     }
 

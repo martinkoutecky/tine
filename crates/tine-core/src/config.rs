@@ -113,8 +113,12 @@ impl Config {
             string_value(edn, ":journal/file-name-format").filter(|s| !s.is_empty());
         cfg.journal_page_title_format =
             string_value(edn, ":journal/page-title-format").filter(|s| !s.is_empty());
-        // OG stores `:preferred-format "Markdown"|"Org"` (a capitalized string).
-        if let Some(v) = string_value(edn, ":preferred-format") {
+        // OG stores `:preferred-format "Markdown"|"Org"` (a capitalized string), but
+        // its schema also accepts the keyword form `:preferred-format :org` — read
+        // both so a keyword-configured graph isn't silently treated as markdown.
+        if let Some(v) = string_value(edn, ":preferred-format")
+            .or_else(|| keyword_value(edn, ":preferred-format"))
+        {
             if v.eq_ignore_ascii_case("org") {
                 cfg.preferred_format = crate::model::Format::Org;
             }
@@ -213,12 +217,14 @@ impl Graph {
 
         if let Some(start) = find_keyword(&content, key) {
             let after = start + key.len();
-            let vstart = skip_blank(&content, after); // comment-aware
-            if content[vstart..].starts_with('"') {
-                let end = edn_str_end(&content, vstart);
-                content.replace_range(vstart..end, val);
-            } else {
-                content.insert_str(after, &format!(" {val}"));
+            // Replace the FULL existing value span — whether it's a string
+            // (`"Markdown"`) or a keyword (`:org`) — so a keyword value isn't left
+            // dangling beside the new string (which would corrupt the map).
+            match next_value_span(&content, after, content.len()) {
+                Some((vstart, vend, _)) if vend > vstart => {
+                    content.replace_range(vstart..vend, val)
+                }
+                _ => content.insert_str(after, &format!(" {val}")),
             }
         } else if let Some(brace) = content.find('{') {
             content.insert_str(brace + 1, &format!("\n {key} {val}\n"));
@@ -730,6 +736,33 @@ mod tests {
         assert_eq!(Config::parse(r#"{:preferred-format "org"}"#).preferred_format, Format::Org);
         assert_eq!(Config::parse(r#"{:preferred-format "Markdown"}"#).preferred_format, Format::Md);
         assert_eq!(Config::parse("{}").preferred_format, Format::Md);
+    }
+
+    #[test]
+    fn parses_preferred_format_keyword_form() {
+        use crate::model::Format;
+        // M3: OG's schema also allows the keyword form `:preferred-format :org`.
+        assert_eq!(Config::parse("{:preferred-format :org}").preferred_format, Format::Org);
+        assert_eq!(Config::parse("{:preferred-format :markdown}").preferred_format, Format::Md);
+    }
+
+    #[test]
+    fn set_preferred_format_replaces_keyword_value() {
+        use crate::model::{Format, Graph};
+        // M3: the writer must replace a keyword value wholesale, not leave it
+        // dangling beside the new string (which would corrupt the EDN map).
+        let dir = std::env::temp_dir().join(format!("tine-cfgkw-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(dir.join("logseq").join("config.edn"), "{:preferred-format :markdown\n :start-of-week 0}\n").unwrap();
+        let g = Graph::open(&dir);
+        g.set_preferred_format(Format::Org).unwrap();
+        let after = fs::read_to_string(dir.join("logseq").join("config.edn")).unwrap();
+        assert!(after.contains(":preferred-format \"Org\""), "keyword not replaced: {after}");
+        assert!(!after.contains(":markdown"), "stale keyword left behind: {after}");
+        assert!(after.contains(":start-of-week 0"), "other keys preserved");
+        assert_eq!(Graph::open(&dir).preferred_format(), Format::Org);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
