@@ -18,6 +18,7 @@ import { DatePicker } from "./components/DatePicker";
 import { PageProps } from "./components/PageProps";
 import { ExportModal } from "./components/ExportModal";
 import { installKeybindings } from "./keybindings";
+import { installFileDrop } from "./filedrop";
 import { installBlockSelectionDrag } from "./blockDrag";
 import { loadGraphPath, persistedGraphPath, refreshAliases } from "./graph";
 import { goBack, goForward, canGoBack, canGoForward, flushSession } from "./router";
@@ -154,6 +155,14 @@ export function App(): JSX.Element {
       });
     })();
     onCleanup(() => unlisten());
+  });
+
+  // OS file drag-and-drop → insert dropped files as assets at the drop target.
+  onMount(() => {
+    if (!isTauri()) return;
+    let uninstall = () => {};
+    void installFileDrop().then((u) => (uninstall = u));
+    onCleanup(() => uninstall());
   });
   createEffect(() => {
     const t = theme();

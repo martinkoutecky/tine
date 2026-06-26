@@ -2009,6 +2009,24 @@ mark {
   font-size: 0.95em;
 }
 
+/* OS file drag-over hint: a dashed overlay while dragging a file onto the window. */
+body.file-drop-active::after {
+  content: "Drop to insert as an asset";
+  position: fixed;
+  inset: 8px;
+  z-index: 9999;
+  pointer-events: none;
+  border: 2px dashed var(--link-color, #4a7);
+  border-radius: 8px;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 14px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--link-color, #4a7) 6%, transparent);
+}
+
 /* priorities + date chips */
 .block-priority {
   font-size: 0.74em;
