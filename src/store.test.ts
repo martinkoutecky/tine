@@ -43,6 +43,7 @@ import {
   nextVisible,
   orderedListMarker,
   blockProperty,
+  pageToDto,
 } from "./store";
 import { exportOutline, DEFAULT_EXPORT_OPTIONS } from "./editor/exportText";
 import { splitProps, joinProps, isBuiltinHidden, hideAll } from "./editor/properties";
@@ -317,6 +318,29 @@ describe("property splitting is fence-aware", () => {
     expect(visible).toBe("highlight text\n```\nkey:: not-a-prop\n```");
     expect(hidden).toBe("ls-type:: annotation\nhl-page:: 3");
     expect(joinProps(visible, hidden)).toBe(raw);
+  });
+});
+
+describe("trailing space: kept in the editor buffer, trimmed only on save", () => {
+  // Regression for the "backspace eats the preceding space" bug: the live buffer
+  // (doc.byId[].raw — what the reactive textarea mirrors) must KEEP a trailing
+  // space the user left, so deleting a word back to "this is a " doesn't pull the
+  // space out from under the caret. OG trims on save, not on every keystroke — so
+  // the disk DTO (pageToDto) is the only place the space is dropped.
+  it("setRaw keeps a trailing space in the buffer; pageToDto trims it", () => {
+    const dto = load([blk("this is a test")]);
+    const id = dto.blocks[0].id;
+    setRaw(id, "this is a "); // backspaced "test" away, trailing space remains
+    expect(doc.byId[id].raw).toBe("this is a "); // buffer keeps the space
+    const out = pageToDto("Test")!;
+    expect(out.blocks[0].raw).toBe("this is a"); // disk DTO trims it
+  });
+
+  it("a block with nothing to trim serializes byte-identically (no churn)", () => {
+    load([blk("plain"), blk("with id\nid:: 5462a76e-8aa4-4362-896e-9af769e5df77")]);
+    const out = pageToDto("Test")!;
+    expect(out.blocks[0].raw).toBe("plain");
+    expect(out.blocks[1].raw).toBe("with id\nid:: 5462a76e-8aa4-4362-896e-9af769e5df77");
   });
 });
 

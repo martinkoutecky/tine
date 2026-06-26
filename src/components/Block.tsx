@@ -1,8 +1,10 @@
 import { Show, Switch, Match, For, createMemo, createSignal, createContext, useContext, createUniqueId, createEffect, onMount, onCleanup, type JSX } from "solid-js";
+import { Portal } from "solid-js/web";
 import { backend } from "../backend";
 import {
   detectTrigger,
   applyCompletion,
+  autoPairEdit,
   pageInsert,
   tagInsert,
   COMMANDS,
@@ -39,6 +41,9 @@ import {
   isBlockMoving,
   setBlockMoving,
   orderedListMarker,
+  setActiveSurface,
+  focusSurfaceFor,
+  clearFocusSurface,
 } from "../store";
 import { parseOutline } from "../editor/outline";
 import {
@@ -51,7 +56,6 @@ import {
   killWordForward,
   killWordBackward,
   setPriority,
-  trimBlockTrailingSpace,
   type Edit,
 } from "../editor/format";
 import { blockView } from "../render/block";
@@ -169,6 +173,12 @@ export interface CaptureApi {
   enterFiles: () => boolean;
 }
 export const CaptureCtx = createContext<CaptureApi | null>(null);
+
+// Identifies the editing SURFACE a block is rendered in (the main pane vs a
+// specific right-sidebar item). Defaults to "main"; RightSidebar overrides it per
+// item. Used to arbitrate edit-focus when one block uuid renders in several
+// surfaces at once (see startEditing's surface stamping).
+export const SurfaceContext = createContext<string>("main");
 
 export function Block(props: { id: string }): JSX.Element {
   const node = () => doc.byId[props.id];
@@ -557,6 +567,9 @@ function templateToOutline(
 export function Editor(props: { id: string }): JSX.Element {
   // Non-null only inside the quick-capture window (see CaptureCtx).
   const cap = useContext(CaptureCtx);
+  // Which surface (main pane / a specific sidebar item) this editor lives in —
+  // drives edit-focus arbitration when the same block renders in several surfaces.
+  const surfaceKey = useContext(SurfaceContext);
   let ref!: HTMLTextAreaElement;
   // Caret/selection stashed when the *window* (not this block) loses focus, so
   // returning to Tine resumes editing exactly where you left off.
@@ -587,11 +600,14 @@ export function Editor(props: { id: string }): JSX.Element {
   const calcRows = createMemo(() => (isCalc() ? evalCalc(calcLive() ?? "") : []));
   const commit = (text: string) => {
     // For calc, `text` is the bare expressions the user sees — re-fence it.
-    // Drop any trailing space the user left (or that a `/priority` insert added as
-    // a typing convenience) so it never reaches disk — matches OG, which trims the
-    // block on save. The no-op guard below means a trailing-space-only change never
-    // even marks the page dirty.
-    const visible = trimBlockTrailingSpace(isCalc() ? wrapCalc(text) : text);
+    // Keep any trailing space the user left (or that a `/priority` insert added as
+    // a typing convenience) in the live buffer — OG keeps it while you edit and
+    // only trims when the block is written to disk. We do the SAME: the trailing
+    // trim now lives at the save boundary (toDto in store.ts), not here. Trimming
+    // here re-synced the reactive textarea (`value={editorValue()}`) to the
+    // trimmed text on every keystroke, so backspacing to a trailing space ate the
+    // space out from under the caret — the block-eats-the-space bug.
+    const visible = isCalc() ? wrapCalc(text) : text;
     const next = joinProps(visible, splitProps(node().raw, hideFn()).hidden);
     // No-op commit (focus/blur with no real edit, or text that reconstructs the
     // identical raw): don't mark the page dirty or push undo — avoids churn and
@@ -625,6 +641,42 @@ export function Editor(props: { id: string }): JSX.Element {
     queueMicrotask(() =>
       acListRef?.querySelector(".ac-item.active")?.scrollIntoView({ block: "nearest" })
     );
+  });
+
+  // The autocomplete popup is rendered through a Portal (fixed-positioned), so a
+  // clipping ancestor — the right sidebar's `overflow:auto`, a modal — can't cut
+  // it off. We anchor it to the textarea's viewport rect and recompute while it's
+  // open (the editor grows as you type) and on scroll/resize.
+  const [acRect, setAcRect] = createSignal<{ left: number; top: number; bottom: number } | null>(null);
+  const updateAcRect = () => {
+    if (ref) {
+      const r = ref.getBoundingClientRect();
+      setAcRect({ left: r.left, top: r.top, bottom: r.bottom });
+    }
+  };
+  createEffect(() => {
+    if (ac() && acItems().length > 0) updateAcRect(); // re-anchor on open / each keystroke
+  });
+  // Flip the popup above the line when there isn't room below (near the viewport
+  // bottom), so it stays fully visible — matches OG's caret-aware placement.
+  const acStyle = (): Record<string, string> => {
+    const r = acRect();
+    if (!r) return {};
+    const below = window.innerHeight - r.bottom;
+    const openUp = below < 300 && r.top > below;
+    return openUp
+      ? { left: `${r.left}px`, bottom: `${window.innerHeight - r.top + 2}px` }
+      : { left: `${r.left}px`, top: `${r.bottom + 2}px` };
+  };
+  onMount(() => {
+    const reanchor = () => { if (ac()) updateAcRect(); };
+    // capture phase so an inner scroller (the feed, the sidebar body) also fires.
+    window.addEventListener("scroll", reanchor, true);
+    window.addEventListener("resize", reanchor);
+    onCleanup(() => {
+      window.removeEventListener("scroll", reanchor, true);
+      window.removeEventListener("resize", reanchor);
+    });
   });
 
   const closeAc = () => {
@@ -904,16 +956,53 @@ export function Editor(props: { id: string }): JSX.Element {
     });
   };
 
-  onMount(() => {
+  const focusNow = () => {
     const offset = takeCaretFor(props.id) ?? editorValue().length;
     ref.focus();
     const o = Math.min(offset, ref.value.length);
     ref.setSelectionRange(o, o);
+  };
+  onMount(() => {
+    // If this block is rendered in several surfaces at once (main pane + sidebar),
+    // an unscoped edit (split / keyboard nav) mounts an editor in each. Only the
+    // surface that was stamped (the one that had the caret) focuses; the others
+    // must NOT steal it. `want === undefined` means "no constraint" → focus as
+    // usual (the normal single-surface case — unchanged behaviour).
+    const want = focusSurfaceFor(props.id);
+    if (want === undefined || want === surfaceKey) {
+      focusNow();
+      // Clear AFTER this synchronous render flush, so sibling instances mounting
+      // in the same flush still see the stamp and stand down.
+      queueMicrotask(() => clearFocusSurface(props.id));
+    } else {
+      // Another surface owns the caret. Safety net against a stale stamp pointing
+      // at a surface that doesn't actually render this block: if nothing has taken
+      // focus by the next microtask, take it ourselves so the caret never vanishes.
+      queueMicrotask(() => {
+        if (!ref.isConnected || editingId() !== props.id) return;
+        const ae = document.activeElement;
+        const taken = ae instanceof HTMLTextAreaElement && ae.classList.contains("block-editor");
+        if (!taken) {
+          focusNow();
+          clearFocusSurface(props.id);
+        }
+      });
+    }
     resizeNow();
   });
 
   let acTimer: ReturnType<typeof setTimeout> | undefined;
-  const onInput = () => {
+  const onInput = (e: InputEvent) => {
+    // OG-style page-ref bracket auto-pairing: `[[` → `[[]]`, and type-through a
+    // manually typed `]`. Only fires on a single typed `[`/`]` (not paste/IME/
+    // delete), and edits ref.value BEFORE commit so the store sees the paired text.
+    if (e.inputType === "insertText" && (e.data === "[" || e.data === "]")) {
+      const paired = autoPairEdit(ref.value, ref.selectionStart, e.data);
+      if (paired) {
+        ref.value = paired.value;
+        ref.setSelectionRange(paired.caret, paired.caret);
+      }
+    }
     commit(ref.value);
     autosize();
     // Close the popup synchronously when the trigger ends (instant), but debounce
@@ -1265,6 +1354,7 @@ export function Editor(props: { id: string }): JSX.Element {
         value={isCalc() ? (calcLive() ?? "") : editorValue()}
         onInput={onInput}
         onKeyDown={onKeyDown}
+        onFocus={() => setActiveSurface(surfaceKey)}
         onBlur={onBlur}
         onPaste={onPaste}
         onSelect={updateSel}
@@ -1296,28 +1386,31 @@ export function Editor(props: { id: string }): JSX.Element {
           </button>
         </div>
       </Show>
-      <Show when={ac() && acItems().length > 0}>
-        {/* data-lenis-prevent: when smooth scrolling is on, let this dropdown
-            scroll natively instead of moving the whole feed. */}
-        <div class="autocomplete" ref={acListRef} data-lenis-prevent>
-          <For each={acItems()}>
-            {(item, i) => (
-              <div
-                class="ac-item"
-                classList={{ active: i() === acIndex() }}
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  selectAc(item);
-                }}
-              >
-                <span class="ac-label">{item.label}</span>
-                <Show when={item.sub}>
-                  <span class="ac-sub">{item.sub}</span>
-                </Show>
-              </div>
-            )}
-          </For>
-        </div>
+      <Show when={ac() && acItems().length > 0 && acRect()}>
+        {/* Portaled to <body> + position:fixed so the right sidebar's overflow
+            (or any clipping ancestor) can't cut the dropdown off.
+            data-lenis-prevent: with smooth scrolling on, scroll it natively. */}
+        <Portal>
+          <div class="autocomplete" ref={acListRef} data-lenis-prevent style={acStyle()}>
+            <For each={acItems()}>
+              {(item, i) => (
+                <div
+                  class="ac-item"
+                  classList={{ active: i() === acIndex() }}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    selectAc(item);
+                  }}
+                >
+                  <span class="ac-label">{item.label}</span>
+                  <Show when={item.sub}>
+                    <span class="ac-sub">{item.sub}</span>
+                  </Show>
+                </div>
+              )}
+            </For>
+          </div>
+        </Portal>
       </Show>
     </div>
   );

@@ -60,6 +60,35 @@ export function detectTrigger(raw: string, caret: number): Trigger | null {
   return null;
 }
 
+/** OG-style bracket auto-pairing for page refs, run AFTER the browser has
+ *  applied a single typed character. `value`/`caret` are the post-input textarea
+ *  state; `typed` is the inserted char. Returns the adjusted `{value, caret}`, or
+ *  null when nothing should change.
+ *
+ *  Two behaviours, both scoped to `]`/`[` so we don't auto-pair every bracket:
+ *  - Typing the second `[` of a `[[` auto-inserts the matching `]]` (caret stays
+ *    between → `[[|]]`), so a page ref is pre-closed like OG. Skipped if a `]`
+ *    already follows (editing inside an existing ref).
+ *  - Typing a `]` immediately before an existing `]` types THROUGH it instead of
+ *    stacking a new one — so manually closing an auto-paired `[[…]]` can never
+ *    pile up to `]]]]`. (The autocomplete-picker path is handled separately in
+ *    Block.tsx's replaceTrigger, which swallows a trailing `]]`.) */
+export function autoPairEdit(
+  value: string,
+  caret: number,
+  typed: string
+): { value: string; caret: number } | null {
+  if (typed === "[" && caret >= 2 && value.slice(caret - 2, caret) === "[[" && value[caret] !== "]") {
+    return { value: value.slice(0, caret) + "]]" + value.slice(caret), caret };
+  }
+  if (typed === "]" && value[caret] === "]") {
+    // The char at caret-1 is the `]` we just typed; drop it and step over the
+    // pre-existing `]` so the closer isn't duplicated.
+    return { value: value.slice(0, caret - 1) + value.slice(caret), caret };
+  }
+  return null;
+}
+
 /** Replace [start,end) in `raw` with `insert`; caret lands at
  *  `start + caretInInsert` (defaults to end of the inserted text). */
 export function applyCompletion(

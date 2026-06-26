@@ -494,6 +494,52 @@ body {
   width: 100%;
   font-family: inherit;
 }
+
+/* Journal-top quick capture (QuickCapture.tsx). A page-title-styled field + a
+   body composer; subtle so it doesn't crowd the feed, with grey-italic hints. */
+.quick-capture {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 0 18px;
+  padding: 0 0 12px;
+  border-bottom: 1px dashed var(--border-color);
+}
+.quick-capture.busy {
+  opacity: 0.6;
+  pointer-events: none;
+}
+.qc-title {
+  font-size: var(--ls-page-title-size);
+  font-weight: 600;
+  color: var(--text-title);
+  line-height: 1.2;
+  border: none;
+  background: transparent;
+  outline: none;
+  width: 100%;
+  font-family: inherit;
+  padding: 2px 0;
+}
+.qc-body {
+  font-size: 1em;
+  color: var(--text-primary);
+  line-height: 1.6;
+  border: none;
+  background: transparent;
+  outline: none;
+  width: 100%;
+  font-family: inherit;
+  resize: none;
+  overflow: hidden;
+  padding: 2px 0;
+}
+.qc-title::placeholder,
+.qc-body::placeholder {
+  color: var(--text-muted);
+  font-style: italic;
+  opacity: 0.85;
+}
 .title-cal {
   width: 0.8em;
   height: 0.8em;
@@ -1769,6 +1815,11 @@ body {
   flex: 1;
   min-width: 0;
   cursor: text;
+  /* Stretch to the full row height (block-main is align-items:flex-start, which
+     would otherwise size this to just the text). So a click anywhere on the row —
+     including the empty space beside or below a short line — lands on this
+     wrapper and enters the editor (its onClick places the caret). Matches OG. */
+  align-self: stretch;
 }
 
 .block-content {
@@ -1833,9 +1884,9 @@ body {
 }
 
 .autocomplete {
-  position: absolute;
-  top: 100%;
-  left: 0;
+  /* Portaled to <body>; coordinates come from an inline style (the textarea's
+     viewport rect) so a clipping ancestor (sidebar overflow) can't cut it off. */
+  position: fixed;
   z-index: 50;
   min-width: 240px;
   max-height: 280px;
@@ -2084,6 +2135,52 @@ mark {
 .media-embed.media-audio {
   width: 320px;
   max-width: 100%;
+}
+/* Wrapper hosting the inline player + an always-available "open externally"
+   button (shown on hover) for when WebKit renders the player but can't actually
+   play the codec. */
+.media-embed-wrap {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+}
+.media-embed-wrap.media-audio-wrap {
+  display: block;
+  width: 320px;
+  max-width: 100%;
+}
+.media-open-external {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.media-embed-wrap:hover .media-open-external,
+.media-open-external:focus-visible {
+  opacity: 1;
+}
+.media-open-external:hover {
+  background: rgba(0, 0, 0, 0.75);
+}
+/* Audio players are short — float the button just outside the controls bar. */
+.media-audio-wrap .media-open-external {
+  top: 50%;
+  transform: translateY(-50%);
+  right: -34px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
 }
 .media-chip {
   display: inline-flex;

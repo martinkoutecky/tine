@@ -2,11 +2,48 @@ import { describe, it, expect } from "vitest";
 import {
   detectTrigger,
   applyCompletion,
+  autoPairEdit,
   pageInsert,
   tagInsert,
   filterCommands,
   fuzzyScore,
 } from "./autocomplete";
+
+describe("autoPairEdit (OG-style [[ ]] auto-pairing)", () => {
+  // `value`/`caret` are the POST-input textarea state; `typed` is the char.
+  it("auto-closes [[ → [[]] with caret left between", () => {
+    // user typed the 2nd '[' so value is "[[" caret 2
+    expect(autoPairEdit("[[", 2, "[")).toEqual({ value: "[[]]", caret: 2 });
+  });
+
+  it("auto-closes [[ mid-text", () => {
+    // "see [[" caret 6
+    expect(autoPairEdit("see [[", 6, "[")).toEqual({ value: "see [[]]", caret: 6 });
+  });
+
+  it("does NOT auto-close a lone [ (first bracket)", () => {
+    expect(autoPairEdit("a[", 2, "[")).toBeNull();
+  });
+
+  it("does NOT auto-close when a ] already follows (editing inside an existing ref)", () => {
+    // caret between the brackets of "[[]]" then typed '[' → "[[[]]" — guard off
+    expect(autoPairEdit("[[[]]", 3, "[")).toBeNull();
+  });
+
+  it("types THROUGH a ] typed right before an existing ] (no doubling)", () => {
+    // "[[Foo]]" caret 5, user types ']' → browser yields "[[Foo]]]" caret 6
+    expect(autoPairEdit("[[Foo]]]", 6, "]")).toEqual({ value: "[[Foo]]", caret: 6 });
+  });
+
+  it("type-through is idempotent over a full manual ]] close", () => {
+    // second ']' keystroke: "[[Foo]]" caret 6 → browser "[[Foo]]]" caret 7
+    expect(autoPairEdit("[[Foo]]]", 7, "]")).toEqual({ value: "[[Foo]]", caret: 7 });
+  });
+
+  it("leaves a literal ] alone when no ] follows", () => {
+    expect(autoPairEdit("a]", 2, "]")).toBeNull();
+  });
+});
 
 describe("detectTrigger", () => {
   it("detects [[ page trigger", () => {

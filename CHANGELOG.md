@@ -10,6 +10,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Quick capture at the top of the journal.** A page-title field + a body
+  composer pinned above today's feed: fill the title to capture a **new page**,
+  leave it empty to **append to today's journal**, then `Ctrl-Shift-Enter`.
+- **`[[` auto-closes its brackets** (`[[` → `[[]]`, caret between) like Logseq,
+  and typing the closing `]]` types through them so you never end up with `]]]]`.
+- **Open media in the default player.** Inline video/audio now has an
+  always-available "open externally" button (shown on hover) — for when WebKit
+  renders the player but can't actually decode the file.
+- **Startup debug mode.** Run `TINE_DEBUG=1 tine` (or `tine --debug`) to write a
+  timestamped startup trace — environment, milestones, panics (with backtrace),
+  and the frontend's own boot/errors — to a file (default `/tmp/tine-debug.log`).
+  Makes diagnosing a "won't start" report a single round-trip. See the README.
 - **Software-rendering warning.** If Tine detects it's painting on the CPU
   (GPU acceleration unavailable — most often an AppImage whose bundled graphics
   libraries don't match your system), it shows a banner explaining why scrolling
@@ -24,6 +36,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - **`/priority` now leaves a trailing space** so the next word or `/command`
   flows without manually adding one. The convenience space is never saved
   (trailing whitespace is trimmed, matching Logseq).
+
+### Fixed
+
+- **Backspace no longer eats the space before a word.** Deleting the last letter
+  of a word kept removing the preceding space too (so you had to retype it);
+  the editor now keeps the trailing space while you type and only trims it on
+  save, matching Logseq.
+- **Sidebar editing.** The caret no longer vanishes after pressing Enter in a
+  right-sidebar block (it stays in the surface you're editing), and the
+  `[[`/`#`/`/` autocomplete dropdown is no longer clipped by the sidebar — it now
+  renders above everything.
+- **Click anywhere on a block row** — including the empty space beside or below a
+  short line — now reliably places the caret in that block.
 
 ## [0.2.0] — 2026-06-26
 

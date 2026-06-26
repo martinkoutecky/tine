@@ -14,7 +14,7 @@ import { openPage } from "../router";
 import { backend } from "../backend";
 import { doc, ensurePageLoaded, pageByName } from "../store";
 import { blockView } from "../render/block";
-import { Block } from "./Block";
+import { Block, SurfaceContext } from "./Block";
 
 // Right sidebar: a stack of pages/blocks opened for reference. Each item is a
 // LIVE reference — it loads its page into the shared working set and renders the
@@ -57,7 +57,13 @@ export function RightSidebar(): JSX.Element {
             }
           >
             <For each={rightSidebar()}>
-              {(item, i) => <SidebarItemView item={item} onClose={() => closeRightSidebarItem(i())} />}
+              {(item, i) => (
+                // Each sidebar item is its own editing surface, so a block that
+                // also shows in the main pane doesn't fight it for the caret.
+                <SurfaceContext.Provider value={`sidebar:${i()}`}>
+                  <SidebarItemView item={item} onClose={() => closeRightSidebarItem(i())} />
+                </SurfaceContext.Provider>
+              )}
             </For>
           </Show>
         </div>

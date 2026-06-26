@@ -16,6 +16,7 @@ import { isConflicted, clearConflict, rightSidebar, conflicts, pushToast } from 
 import { blockView } from "./render/block";
 import { journalTitle } from "./journal";
 import { upsertPropertyLine, readPropertyValue, splitProps, joinProps, isBuiltinHidden } from "./editor/properties";
+import { trimBlockTrailingSpace } from "./editor/format";
 import {
   markDirty,
   isDirty,
@@ -396,7 +397,13 @@ export function appendFeed(dtos: PageDto[]) {
 
 function toDto(id: string): BlockDto {
   const n = doc.byId[id];
-  return { id: n.id, raw: n.raw, collapsed: n.collapsed, children: n.children.map(toDto) };
+  // Trim a block's trailing space only here, at the disk-write boundary — OG
+  // keeps the space while you edit and trims on save. (The live editor buffer
+  // keeps it so backspacing to a trailing space doesn't eat the space out from
+  // under the caret.) `trimBlockTrailingSpace` is idempotent and only touches
+  // whitespace at the very end of the block, so a block with nothing to trim
+  // serializes byte-identically — no churn, no property reordering.
+  return { id: n.id, raw: trimBlockTrailingSpace(n.raw), collapsed: n.collapsed, children: n.children.map(toDto) };
 }
 
 export function pageToDto(pageName: string): PageDto | null {
@@ -728,10 +735,41 @@ export function setRaw(id: string, raw: string) {
   markDirty(doc.byId[id].page);
 }
 
+// Surface-aware edit focus. A block uuid can render in SEVERAL surfaces at once
+// (the main pane and each right-sidebar item). `activeSurface` tracks which
+// surface's editor currently holds the caret (set on textarea focus). An UNSCOPED
+// edit (owner=null — a split or keyboard nav) mounts an editor in EVERY surface
+// that renders the new block, and each one's onMount would call focus(); without
+// arbitration the main pane wins and the caret "disappears" out of the sidebar.
+// So we stamp the new block id with the surface that had the caret, and only that
+// surface focuses it (see Block's onMount). Scoped edits (owner set on click) only
+// ever mount one instance, so they need no stamp.
+export const [activeSurface, setActiveSurface] = createSignal<string | null>(null);
+const pendingFocusSurface = new Map<string, string>();
+/** The surface that should take the caret for `id`, or undefined for "no
+ *  constraint" (single-surface edit → focus normally). */
+export function focusSurfaceFor(id: string): string | undefined {
+  return pendingFocusSurface.get(id);
+}
+export function clearFocusSurface(id: string) {
+  pendingFocusSurface.delete(id);
+}
+
 export function startEditing(id: string, offset: number, owner: string | null = null) {
   setSelAnchor(null);
   setSelFocus(null);
   setCaretTarget({ id, offset });
+  if (owner === null) {
+    // Unscoped: pin the caret to the surface that currently has it, so the new
+    // block doesn't get its focus stolen by another surface rendering the same id.
+    const s = activeSurface();
+    if (s) pendingFocusSurface.set(id, s);
+    else pendingFocusSurface.delete(id);
+  } else {
+    // Scoped to one rendered instance (a click) → exactly one editor mounts; drop
+    // any stale stamp so it focuses immediately.
+    pendingFocusSurface.delete(id);
+  }
   setEditingId(id);
   setEditingOwner(owner);
 }
@@ -941,37 +979,53 @@ export function insertOutlineAfter(afterId: string, nodes: OutlineNode[]): strin
  *  (`ensurePageLoaded` is a no-op when already loaded). Returns whether the write
  *  reached disk. */
 export async function appendToTodayJournal(markdown: string): Promise<boolean> {
-  const nodes = parseOutline(markdown);
+  return captureOutlineInto(journalTitle(new Date()), "journal", parseOutline(markdown));
+}
+
+/** In-app quick capture into a (new or existing) named PAGE — the heading-filled
+ *  branch of the journal-top capture bar. Same single-writer guarantees as
+ *  {@link appendToTodayJournal}: routes through the live store + immediate flush,
+ *  so it can't race a main-view edit of the same page into a conflict. */
+export async function captureToPage(title: string, markdown: string): Promise<boolean> {
+  const name = title.trim();
+  if (!name) return false;
+  return captureOutlineInto(name, "page", parseOutline(markdown));
+}
+
+/** Append outline `nodes` at the END of the named page (loaded — or synthesized
+ *  if it has no file yet — first), then flush immediately. Shared by the journal
+ *  append and the new-page capture; never clobbers in-progress edits
+ *  (`ensurePageLoaded` is a no-op when already loaded). Returns whether it landed. */
+async function captureOutlineInto(name: string, kind: PageKind, nodes: OutlineNode[]): Promise<boolean> {
   if (!nodes.length) return false;
-  const title = journalTitle(new Date());
-  if (!pageByName(title)) {
+  if (!pageByName(name)) {
     const dto: PageDto =
-      (await backend().getPage(title, "journal")) ??
-      { name: title, kind: "journal", title, pre_block: null, blocks: [], rev: null };
+      (await backend().getPage(name, kind)) ??
+      { name, kind, title: name, pre_block: null, blocks: [], rev: null };
     ensurePageLoaded(dto);
   }
-  const page = pageByName(title);
+  const page = pageByName(name);
   if (!page) return false;
   if (page.roots.length) {
-    // Append after the last top-level block (end of the journal).
+    // Append after the last top-level block (end of the page).
     insertOutlineAfter(page.roots[page.roots.length - 1], nodes);
   } else {
-    // Empty (or brand-new) journal: seed an empty anchor root, append after it,
-    // then drop the anchor — reuses insertOutlineAfter's subtree creation rather
-    // than a bespoke root builder.
-    pushUndo("capture", [title]);
+    // Empty (or brand-new) page: seed an empty anchor root, append after it, then
+    // drop the anchor — reuses insertOutlineAfter's subtree creation rather than a
+    // bespoke root builder.
+    pushUndo("capture", [name]);
     const anchor = freshId();
     setDoc(
       produce((s) => {
-        s.byId[anchor] = { id: anchor, raw: "", collapsed: false, parent: null, page: title, children: [] };
-        s.pages[s.pages.findIndex((p) => p.name === title)].roots.push(anchor);
+        s.byId[anchor] = { id: anchor, raw: "", collapsed: false, parent: null, page: name, children: [] };
+        s.pages[s.pages.findIndex((p) => p.name === name)].roots.push(anchor);
       })
     );
-    markDirty(title);
+    markDirty(name);
     insertOutlineAfter(anchor, nodes);
     deleteBlock(anchor);
   }
-  return await flushPage(title);
+  return await flushPage(name);
 }
 
 const PROP_LINE = /^([A-Za-z0-9_./-]+):: ?(.*)$/;
