@@ -797,13 +797,8 @@ function AssetsTab(): JSX.Element {
   };
 
   const trash = async (a: AssetInfo) => {
-    if (
-      !(await backend().confirm(
-        `Move “${a.name}” to the trash?\n\n` +
-          `No block links to it. It moves to logseq/.tine-trash (recoverable), not a permanent delete.`
-      ))
-    )
-      return;
+    // No confirm: the file only moves to the recoverable logseq/.tine-trash, so
+    // trashing a batch stays fast. (Empty-trash, which is permanent, still asks.)
     try {
       await backend().trashAsset(a.name);
       setList((l) => l.filter((x) => x.name !== a.name));
