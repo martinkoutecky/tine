@@ -429,8 +429,8 @@ export function mockBackend(): Backend {
         {
           title: "Friday, 26-06-2026",
           files: [
-            { name: "2026_06_26.org", preview: "Tried out the Org demo graph in Tine today", canonical: true },
-            { name: "Friday, 26-06-2026.org", preview: "something something", canonical: false },
+            { name: "2026_06_26.org", path: "journals/2026_06_26.org", preview: "Tried out the Org demo graph in Tine today", canonical: true },
+            { name: "Friday, 26-06-2026.org", path: "journals/Friday, 26-06-2026.org", preview: "something something", canonical: false },
           ],
         },
       ];
@@ -442,6 +442,28 @@ export function mockBackend(): Backend {
       return name.startsWith("Friday")
         ? "* something something\n*\n"
         : "* Tried out the Org demo graph in Tine today\n* TODO follow up on the [[kitchen-sink]] feature tour\nSCHEDULED: <2026-06-27 Sat>\n* DONE loaded the graph and clicked around\n";
+    },
+    async getPageByPath(path: string): Promise<PageDto | null> {
+      // The duplicate-day stray opens to its own content (#21); other paths fall
+      // back to the canonical page by name.
+      const stray = path.includes("Friday");
+      return {
+        name: "Friday, 26-06-2026",
+        kind: "journal",
+        title: "Friday, 26-06-2026",
+        pre_block: null,
+        blocks: [{ id: "stray-1", raw: stray ? "something something" : "Tried out the Org demo graph in Tine today", collapsed: false, children: [] }],
+        rev: "mock-rev",
+        format: "org",
+        read_only: false,
+        path,
+      };
+    },
+    async mergePages(): Promise<void> {
+      // no-op in the browser mock
+    },
+    async renameFileToPage(): Promise<void> {
+      // no-op in the browser mock
     },
     async confirm(message: string): Promise<boolean> {
       // The browser/test env has a working global confirm (unlike the WebKitGTK

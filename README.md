@@ -177,6 +177,11 @@ raw speed. (Where a comparison is made, it's against current Logseq desktop core
   and recognizes/creates journal files in your format (e.g. `dd-MM-yyyy`, `yyyy-MM-dd`, `yyyyMMdd`),
   falling back to the defaults so old/foreign files still resolve. The display-title format is
   pickable in Settings → *Journals & tasks* → **Journal date format** (file names are left as-is).
+- **Duplicate-day reconcile** — if two files ever resolve to the same day (e.g. a `2026_06_26.org`
+  plus a title-named `Friday, 26-06-2026.org` left over from a date-format change), Tine keeps
+  **both** rather than silently dropping one, and Settings → *Backups* → **Duplicate journal days**
+  lets you reach each file individually: **Open** it (editable, saves back to itself), **Merge** a
+  stray into the canonical day, **Rename** it to a normal page, or **Trash** the redundant one.
 - **Org-mode graphs** — opens, renders, and edits `.org` pages and journals (headlines as blocks,
   org inline syntax `*bold*` `/italic/` `_underline_` `~code~` `[[target][desc]]`, TODO markers,
   `#+BEGIN_SRC`/`QUOTE` blocks). Mixed `.md` + `.org` graphs work; the **File format** setting

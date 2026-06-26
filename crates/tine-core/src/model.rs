@@ -71,6 +71,12 @@ fn twin_error(name: &str) -> io::Error {
     )
 }
 
+/// The error for a path-addressed op (#21) whose graph-root-relative path is
+/// invalid — outside `journals/`/`pages/`, a traversal, or the wrong extension.
+fn bad_path() -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidInput, "invalid file path")
+}
+
 /// Parse a page file's bytes into a [`Document`] using the parser for its
 /// format (org headlines vs markdown bullets), chosen by the path's extension.
 fn parse_doc(path: &Path, content: &str) -> Document {
@@ -145,11 +151,14 @@ pub struct TrashStats {
 }
 
 /// One file participating in a journal-day conflict: its on-disk filename, a
-/// one-line content preview, and whether its name is the canonical date stem
-/// (`yyyy_MM_dd`, the one normally kept).
+/// graph-root-relative path (so the UI can navigate straight to THIS file even
+/// when it shares a date with the canonical one, #21), a one-line content
+/// preview, and whether its name is the canonical date stem (`yyyy_MM_dd`, the
+/// one normally kept).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JournalFile {
     pub name: String,
+    pub path: String,
     pub preview: String,
     pub canonical: bool,
 }
@@ -187,6 +196,14 @@ pub struct PageDto {
     /// it but disables editing, so Tine never rewrites (and risks corrupting) it.
     #[serde(default)]
     pub read_only: bool,
+    /// Graph-root-relative path of the file this page was loaded from
+    /// (`journals/2026_06_26.org`), forward-slashed. Echoed back on save so a page
+    /// pinned to a SPECIFIC file — a duplicate-day stray that shares a `(kind,name)`
+    /// with the canonical file — saves to its own file instead of being re-resolved
+    /// by name to the canonical one (#21). Empty for a brand-new page with no file
+    /// yet; then save resolves the path by name, exactly as before.
+    #[serde(default)]
+    pub path: String,
 }
 
 pub struct Graph {
@@ -393,6 +410,74 @@ impl Graph {
 
     pub fn pages_path(&self) -> PathBuf {
         self.root.join(&self.config.pages_dir)
+    }
+
+    /// Graph-root-relative, forward-slashed path for an absolute file path inside
+    /// the graph (`…/journals/2026_06_26.org` → `journals/2026_06_26.org`). The
+    /// stable, machine-portable id Tine hands the frontend so a page can be pinned
+    /// to a SPECIFIC file (#21). Falls back to the input lossily if it's somehow
+    /// outside the root (shouldn't happen for graph files).
+    pub fn rel_path(&self, abs: &Path) -> String {
+        abs.strip_prefix(&self.root)
+            .unwrap_or(abs)
+            .to_string_lossy()
+            .replace('\\', "/")
+    }
+
+    /// Resolve a graph-root-relative path (as produced by [`rel_path`]) back to an
+    /// absolute file path, validating it points at a real graph text file. This is
+    /// the security gate for every path-addressed command (#21): it accepts ONLY
+    /// `<journals-dir>/<file>` or `<pages-dir>/<file>` — one path segment under a
+    /// known dir, no `..`/`.`/absolute/extra separators — with a `.md`/`.org`
+    /// extension. Anything else (traversal, a nested subdir, a stray extension)
+    /// returns `None`, so a path-addressed read/save can never escape the graph.
+    pub fn resolve_rel(&self, rel: &str) -> Option<PathBuf> {
+        let rel = rel.trim();
+        if rel.is_empty() || rel.starts_with('/') || rel.contains('\\') {
+            return None;
+        }
+        let mut parts = rel.split('/');
+        let dir = parts.next()?;
+        let file = parts.next()?;
+        if parts.next().is_some() {
+            return None; // more than one separator → nested/traversal
+        }
+        if file.is_empty() || dir == ".." || dir == "." || file == ".." || file == "." {
+            return None;
+        }
+        let base = if dir == self.config.journals_dir {
+            self.journals_path()
+        } else if dir == self.config.pages_dir {
+            self.pages_path()
+        } else {
+            return None;
+        };
+        let abs = base.join(file);
+        match abs.extension().and_then(|e| e.to_str()) {
+            Some("md") | Some("org") => Some(abs),
+            _ => None,
+        }
+    }
+
+    /// Whether a journal file is a "shadow": a non-date-stem file (e.g. a leftover
+    /// title-named `Friday, 26-06-2026.org`) that coexists with a canonical
+    /// date-stem file (`2026_06_26.{md,org}`) for the SAME day. The `(kind,name)`
+    /// cache slot belongs to the canonical file, so a shadow must never be folded
+    /// into it (that would make name-resolution serve the shadow's content). A
+    /// shadow is loaded fresh by path on demand instead (#21). Twins (two date-stem
+    /// files of the same day in different extensions) are deliberately NOT shadows —
+    /// that case keeps its existing `has_twin`/dedup handling.
+    fn is_shadow_journal(&self, path: &Path, date: crate::date::JournalDate) -> bool {
+        let is_date_stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .is_some_and(|s| crate::date::JournalDate::from_file_stem(s).is_some());
+        if is_date_stem {
+            return false;
+        }
+        let canon = self.journal_format.file_stem(date);
+        let dir = self.journals_path();
+        dir.join(format!("{canon}.md")).is_file() || dir.join(format!("{canon}.org")).is_file()
     }
 
     /// The format (`Md`/`Org`) new pages and journals are created in, from
@@ -603,7 +688,8 @@ impl Graph {
                         })
                         .map(|l| l.chars().take(80).collect::<String>())
                         .unwrap_or_default();
-                    JournalFile { name, preview, canonical }
+                    let rel = self.rel_path(&path);
+                    JournalFile { name, path: rel, preview, canonical }
                 })
                 .collect();
             // Canonical first (the keeper), then alphabetical.
@@ -639,6 +725,111 @@ impl Graph {
         if fs::create_dir_all(&trash).is_err() || fs::rename(&src, &dest).is_err() {
             fs::remove_file(&src)?;
         }
+        Ok(())
+    }
+
+    /// Move an absolute graph file to the recoverable trash (`logseq/.tine-trash`),
+    /// timestamp-prefixed so same-named files don't collide. Falls back to a hard
+    /// delete only if the move can't be staged. Shared by the duplicate-day
+    /// reconcile ops (#21).
+    fn move_to_trash(&self, src: &Path) -> io::Result<()> {
+        let name = src.file_name().and_then(|s| s.to_str()).unwrap_or("file");
+        let trash = self.root.join("logseq").join(".tine-trash");
+        let dest = trash.join(format!("{}__{name}", trash_stamp()));
+        if fs::create_dir_all(&trash).is_err() || fs::rename(src, &dest).is_err() {
+            fs::remove_file(src)?;
+        }
+        Ok(())
+    }
+
+    /// Whether a file participates in the `(kind,name)` page cache. False only for a
+    /// shadow journal (a title-named duplicate of a canonical date-stem file, #21),
+    /// whose cache slot belongs to the canonical file.
+    fn path_is_cacheable(&self, path: &Path) -> bool {
+        if let Some(entry) = self.entry_for_path(path) {
+            if entry.kind == PageKind::Journal {
+                if let Some(date) = entry.date_key.map(crate::date::JournalDate::from_ordinal) {
+                    return !self.is_shadow_journal(path, date);
+                }
+            }
+        }
+        true
+    }
+
+    /// Reconcile a duplicate-day pair: append every block of `src_rel` to the end of
+    /// `dst_rel`, then move `src_rel` to the recoverable trash (#21). Both must be
+    /// real graph text files of the SAME format (we don't transcode md⇄org), and an
+    /// org file that can't be round-tripped is refused so the merge can never
+    /// corrupt it (both files are left untouched on any error). `src`'s page
+    /// properties (its pre-block) are dropped — only its block tree is carried over.
+    /// The src is trashed ONLY after `dst` is durably written.
+    pub fn merge_pages(&self, src_rel: &str, dst_rel: &str) -> io::Result<()> {
+        let src = self.resolve_rel(src_rel).ok_or_else(bad_path)?;
+        let dst = self.resolve_rel(dst_rel).ok_or_else(bad_path)?;
+        if src == dst {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "cannot merge a file into itself"));
+        }
+        if Format::from_path(&src) != Format::from_path(&dst) {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "files are in different formats"));
+        }
+        let dst_entry = self.entry_for_path(&dst).ok_or_else(bad_path)?;
+        // Write `dst` under its page lock so a concurrent editor/PDF write can't
+        // race the merge; read both files inside the lock (the dst baseline must be
+        // current for write_page's recheck).
+        let lock = self.page_lock(&dst);
+        let _guard = lock.lock().unwrap();
+        let src_content = fs::read_to_string(&src)?;
+        let dst_content = fs::read_to_string(&dst)?;
+        if Format::from_path(&dst) == Format::Org
+            && (!crate::org::org_editable(&dst_content) || !crate::org::org_editable(&src_content))
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "an org file in this pair does not round-trip; not merging",
+            ));
+        }
+        let src_doc = parse_doc(&src, &src_content);
+        let mut merged = parse_doc(&dst, &dst_content);
+        merged.roots.extend(src_doc.roots);
+        assign_doc_uuids(&mut merged.roots);
+        let dto = page_dto(&dst_entry, &merged);
+        // recheck = false: we just read dst_content under the lock and pass it as the
+        // baseline, so there's no external-writer window to guard here.
+        self.write_page(&dto, &dst, Some(&dst_content), false, self.path_is_cacheable(&dst))?;
+        self.move_to_trash(&src)?;
+        Ok(())
+    }
+
+    /// Turn a stray file into a normal, uniquely-named page by moving it to
+    /// `pages/<encoded new_name>.<its ext>` (#21) — the way to rescue a duplicate-day
+    /// leftover whose name collides with the canonical day. Refuses if a page for
+    /// `new_name` already exists in EITHER extension (never clobbers) or the name is
+    /// empty. Inbound references are NOT rewritten (a stray rarely has any); the
+    /// file's own content is unchanged.
+    pub fn rename_file_to_page(&self, src_rel: &str, new_name: &str) -> io::Result<()> {
+        let src = self.resolve_rel(src_rel).ok_or_else(bad_path)?;
+        let name = new_name.trim();
+        if name.is_empty() {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "empty page name"));
+        }
+        let ext = match src.extension().and_then(|e| e.to_str()) {
+            Some(e @ ("md" | "org")) => e.to_string(),
+            _ => return Err(bad_path()),
+        };
+        let enc = encode_page_name(name);
+        let dir = self.pages_path();
+        if dir.join(format!("{enc}.md")).exists() || dir.join(format!("{enc}.org")).exists() {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "a page with that name already exists",
+            ));
+        }
+        fs::create_dir_all(&dir)?;
+        fs::rename(&src, dir.join(format!("{enc}.{ext}")))?;
+        // The page SET changed — drop the list memo so the new page (and the stray's
+        // disappearance from journals/) show up immediately; the parsed-doc cache
+        // folds the new file in on its next load / the watcher's create event.
+        *self.page_list_cache.write().unwrap() = None;
         Ok(())
     }
 
@@ -709,15 +900,33 @@ impl Graph {
         }
     }
 
-    /// Find a page/journal entry by display name.
+    /// Find a page/journal entry by display name. When several files share the
+    /// name — a duplicate journal day, a canonical `2026_06_26.org` plus a
+    /// title-named stray `Friday, 26-06-2026.org` (#21) — prefer the canonical
+    /// date-stem file, so opening the day by name (a `[[link]]`, quick-switch, or
+    /// `get_page`) is deterministic AND lands on the same file a save resolves to
+    /// (`path_for`), instead of whichever the directory listing happened to yield
+    /// first (which could mismatch the save target and raise a phantom conflict).
+    /// The stray is reached by path via `load_by_path`.
     pub fn find_entry(&self, name: &str, kind: PageKind) -> Option<PageEntry> {
         let dir = match kind {
             PageKind::Journal => self.journals_path(),
             PageKind::Page => self.pages_path(),
         };
-        list_md(&dir, kind, &self.journal_format)
+        let matches: Vec<PageEntry> = list_md(&dir, kind, &self.journal_format)
             .into_iter()
-            .find(|e| e.name.eq_ignore_ascii_case(name))
+            .filter(|e| e.name.eq_ignore_ascii_case(name))
+            .collect();
+        matches
+            .iter()
+            .find(|e| {
+                e.path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .is_some_and(|s| crate::date::JournalDate::from_file_stem(s).is_some())
+            })
+            .or_else(|| matches.first())
+            .cloned()
     }
 
     /// Load a page by name; returns `None` if it doesn't exist on disk. Falls
@@ -850,6 +1059,7 @@ impl Graph {
                 dto.read_only = read_only_org(&entry.path, c);
             }
             dto.rev = rev;
+            dto.path = self.rel_path(&entry.path);
             return Ok(dto);
         }
         // Cache miss: parse the bytes we already read (propagate the original read
@@ -860,7 +1070,37 @@ impl Graph {
         let mut dto = page_dto(entry, &doc);
         dto.read_only = read_only_org(&entry.path, &content);
         dto.rev = rev;
+        dto.path = self.rel_path(&entry.path);
         Ok(dto)
+    }
+
+    /// Load a page from a SPECIFIC file by its graph-root-relative path, parsing it
+    /// directly and bypassing the `(kind,name)` page cache + `disk_revs`. This is
+    /// how a duplicate-day stray (`journals/Friday, 26-06-2026.org`) — which shares
+    /// a `(kind,name)` with the canonical `2026_06_26.org` and so is unreachable by
+    /// name — gets opened and edited (#21). The direct parse is deliberate: the
+    /// cache slot for that `(kind,name)` holds the CANONICAL file, so a cache lookup
+    /// here would serve the wrong file's content. Returns `Ok(None)` if the path is
+    /// invalid (see [`resolve_rel`]) or the file is gone.
+    pub fn load_by_path(&self, rel: &str) -> io::Result<Option<PageDto>> {
+        let Some(abs) = self.resolve_rel(rel) else {
+            return Ok(None);
+        };
+        let Some(entry) = self.entry_for_path(&abs) else {
+            return Ok(None);
+        };
+        let content = match fs::read_to_string(&abs) {
+            Ok(c) => c,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        let mut doc = parse_doc(&abs, &content);
+        assign_doc_uuids(&mut doc.roots);
+        let mut dto = page_dto(&entry, &doc);
+        dto.read_only = read_only_org(&abs, &content);
+        dto.rev = Some(content_rev(&content));
+        dto.path = self.rel_path(&abs);
+        Ok(Some(dto))
     }
 
     /// Read and parse a page file into a [`Document`].
@@ -1839,6 +2079,19 @@ impl Graph {
     /// false "changed on disk".
     fn sync_file_content(&self, path: &Path, content: &str, consume_self_write: bool) -> Option<PageEntry> {
         let entry = self.entry_for_path(path)?;
+        // A shadow journal file (a title-named leftover coexisting with a canonical
+        // date-stem file for the same day, #21) must never be reconciled into the
+        // `(kind,name)` cache — that slot belongs to the canonical file, and caching
+        // the shadow there would make name-resolution serve the wrong file. A
+        // shadow's own external edits are picked up by a fresh path-addressed load
+        // (`load_by_path`), so there's nothing to reconcile here.
+        if entry.kind == PageKind::Journal {
+            if let Some(date) = entry.date_key.map(crate::date::JournalDate::from_ordinal) {
+                if self.is_shadow_journal(path, date) {
+                    return None;
+                }
+            }
+        }
         // Our own write: if the bytes on disk are exactly what Tine last wrote
         // here, this is not an external change — suppress it even if the parse
         // cache hasn't folded in the write yet (the rename→cache_upsert gap the
@@ -1940,17 +2193,41 @@ impl Graph {
         was_cached.then_some(entry)
     }
 
-    /// Save a page, refusing to clobber an external change. If the file on disk
-    /// no longer matches what Tine last knew (another app or a Syncthing pull
-    /// wrote it), returns an `AlreadyExists` "conflict" error WITHOUT writing,
-    /// so the caller can surface it and keep the in-memory edits.
-    pub fn save_page(&self, page: &PageDto, base_rev: Option<&str>) -> io::Result<String> {
+    /// Resolve the file a save writes to, and whether it participates in the
+    /// `(kind,name)` page cache. A page pinned to a specific file (`page.path` set
+    /// — a duplicate-day stray, #21) writes to THAT exact file and stays OUT of the
+    /// cache (the `(kind,name)` slot belongs to the canonical file; caching the
+    /// stray there would make name-resolution serve it). A normal page resolves its
+    /// path by name and caches as before. Errors on an invalid pinned path (escapes
+    /// the graph) or a `.md`+`.org` twin (ambiguous identity, M1).
+    fn save_target(&self, page: &PageDto) -> io::Result<(PathBuf, bool)> {
+        if !page.path.is_empty() {
+            // The page knows its own file (every loaded page carries its path).
+            // Write THERE — that's how a duplicate-day stray saves to its own file
+            // instead of being re-resolved by name to the canonical one. It still
+            // participates in the `(kind,name)` cache UNLESS it's a shadow (a
+            // title-named journal coexisting with a canonical date-stem file): a
+            // shadow's cache slot belongs to the canonical, so it stays out.
+            let path = self
+                .resolve_rel(&page.path)
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid page path"))?;
+            let cache = self.path_is_cacheable(&path);
+            return Ok((path, cache));
+        }
         // M1: refuse to write an ambiguous page (both .md and .org on disk) — we
         // can't tell which file the editor's content belongs to.
         if self.has_twin(&page.name, page.kind) {
             return Err(twin_error(&page.name));
         }
-        let path = self.path_for(&page.name, page.kind);
+        Ok((self.path_for(&page.name, page.kind), true))
+    }
+
+    /// Save a page, refusing to clobber an external change. If the file on disk
+    /// no longer matches what Tine last knew (another app or a Syncthing pull
+    /// wrote it), returns an `AlreadyExists` "conflict" error WITHOUT writing,
+    /// so the caller can surface it and keep the in-memory edits.
+    pub fn save_page(&self, page: &PageDto, base_rev: Option<&str>) -> io::Result<String> {
+        let (path, cache) = self.save_target(page)?;
         // Serialize against any other writer of THIS page (a PDF highlight write
         // of the same `hls__` page, or another save) for the whole
         // read→conflict-check→write→cache_upsert, so neither can clobber the other
@@ -1988,21 +2265,18 @@ impl Graph {
         // M2: write to the SAME path we locked + read the baseline from — never
         // re-resolve `path_for` under the lock (an `exists()`-probe could otherwise
         // pick a different extension if a twin appears mid-save).
-        self.write_page(page, &path, existing.as_deref(), true)
+        self.write_page(page, &path, existing.as_deref(), true, cache)
     }
 
     /// Save a page unconditionally (the user chose "keep mine" over a conflict).
     pub fn force_save_page(&self, page: &PageDto) -> io::Result<String> {
-        if self.has_twin(&page.name, page.kind) {
-            return Err(twin_error(&page.name)); // M1: ambiguous identity — refuse
-        }
-        let path = self.path_for(&page.name, page.kind);
+        let (path, cache) = self.save_target(page)?;
         let lock = self.page_lock(&path);
         let _guard = lock.lock().unwrap();
         let existing = fs::read_to_string(&path).ok();
         // recheck = false: "keep mine" overwrites unconditionally. Same locked path
         // is threaded into write_page (M2) so a forced save can't land on a twin.
-        self.write_page(page, &path, existing.as_deref(), false)
+        self.write_page(page, &path, existing.as_deref(), false, cache)
     }
 
     /// Write a page to `path` (already resolved + locked by the caller), reproducing
@@ -2014,6 +2288,7 @@ impl Graph {
         path: &Path,
         existing: Option<&str>,
         recheck: bool,
+        cache: bool,
     ) -> io::Result<String> {
         // (A new journal's `path` was named by `path_for` using the graph's
         // `:journal/file-name-format` — so custom-format graphs create the correct
@@ -2118,14 +2393,19 @@ impl Graph {
         // already-cached page MUST NOT call cache_upsert: it bumps `cache_gen`,
         // which keys every memoized query/backlink/derived result — so an unchanged
         // re-save would force a whole-graph requery on every open dashboard.
-        let need_cache_update = changed || {
-            let guard = self.cache.read().unwrap();
-            guard.as_ref().is_some_and(|pages| {
-                !pages
-                    .iter()
-                    .any(|(e, _)| e.kind == page.kind && e.name.eq_ignore_ascii_case(&page.name))
-            })
-        };
+        // A path-pinned save (`cache == false`, a duplicate-day stray, #21) NEVER
+        // touches the `(kind,name)` cache: that slot belongs to the canonical file,
+        // and folding the stray's content in would make name-resolution serve it.
+        // The stray is re-parsed from disk on its next path-addressed load.
+        let need_cache_update = cache
+            && (changed || {
+                let guard = self.cache.read().unwrap();
+                guard.as_ref().is_some_and(|pages| {
+                    !pages.iter().any(|(e, _)| {
+                        e.kind == page.kind && e.name.eq_ignore_ascii_case(&page.name)
+                    })
+                })
+            });
         if need_cache_update {
             // For a brand-new journal, derive its date_key from the name so it's
             // recognized as a dated journal by `journals_desc` (which reads this
@@ -2339,6 +2619,7 @@ fn page_dto(entry: &PageEntry, doc: &Document) -> PageDto {
         rev: None,
         format: Format::from_path(&entry.path),
         read_only: false,
+        path: String::new(),
     }
 }
 
@@ -2751,6 +3032,7 @@ mod tests {
             rev: None,
             format: Format::Md,
             read_only: false,
+            path: String::new(),
         };
         assert!(g.save_page(&page, None).is_err(), "save refused on twin");
         assert!(g.force_save_page(&page).is_err(), "force_save refused on twin");
@@ -2928,6 +3210,7 @@ mod tests {
             rev: None,
             format: Format::Org,
             read_only: false,
+            path: String::new(),
         };
         g.save_page(&page, None).unwrap();
         assert!(dir.join("pages").join("Fresh.org").exists(), "new page created as .org");
@@ -3064,6 +3347,7 @@ mod tests {
             rev: None,
             format: Format::Md,
             read_only: false,
+            path: String::new(),
         }
     }
 
@@ -3135,6 +3419,171 @@ mod tests {
         let u = g.run_advanced_query("[:find ?b :where [?b :block/foo ?v]]", None);
         assert!(!u.supported);
         assert!(u.groups.is_empty());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ---- #21: path-pinned pages + duplicate-day reconcile ----
+
+    /// A graph with a canonical day file AND a title-named stray for the same day,
+    /// in the user's `EEEE, dd-MM-yyyy` title format. Both resolve to the journal
+    /// name "Friday, 26-06-2026" — the collision #21 makes addressable by path.
+    fn dup_day_graph(tag: &str) -> PathBuf {
+        let dir = scratch(tag);
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq").join("config.edn"),
+            "{:preferred-format \"Org\"\n :journal/page-title-format \"EEEE, dd-MM-yyyy\"}\n",
+        )
+        .unwrap();
+        fs::write(dir.join("journals").join("2026_06_26.org"), "* canonical body\n").unwrap();
+        fs::write(dir.join("journals").join("Friday, 26-06-2026.org"), "* stray body\n").unwrap();
+        dir
+    }
+
+    #[test]
+    fn resolve_rel_accepts_graph_files_and_rejects_escapes() {
+        let dir = scratch("resolve-rel");
+        let g = Graph::open(&dir);
+        // Valid: one segment under journals/ or pages/, md/org extension.
+        assert_eq!(
+            g.resolve_rel("journals/2026_06_26.org"),
+            Some(dir.join("journals").join("2026_06_26.org"))
+        );
+        assert_eq!(g.resolve_rel("pages/Note.md"), Some(dir.join("pages").join("Note.md")));
+        // Rejections: traversal, absolute, nesting, wrong dir, wrong/no extension.
+        for bad in [
+            "../secrets.md",
+            "journals/../../etc/passwd.md",
+            "/etc/passwd.md",
+            "journals/sub/deep.md",
+            "assets/pic.png",
+            "journals/note.txt",
+            "journals/",
+            "Note.md",
+            "",
+        ] {
+            assert_eq!(g.resolve_rel(bad), None, "should reject {bad:?}");
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_by_path_serves_the_stray_not_the_canonical() {
+        let dir = dup_day_graph("loadbypath");
+        let g = Graph::open(&dir);
+        g.warm_cache(); // canonical is what name-resolution caches
+
+        // By name → canonical.
+        let by_name = g.load_named("Friday, 26-06-2026", PageKind::Journal).unwrap().unwrap();
+        assert_eq!(by_name.blocks[0].raw, "canonical body");
+        assert_eq!(by_name.path, "journals/2026_06_26.org");
+
+        // By path → the STRAY's own content, even though it shares the (kind,name).
+        let stray = g.load_by_path("journals/Friday, 26-06-2026.org").unwrap().unwrap();
+        assert_eq!(stray.blocks[0].raw, "stray body");
+        assert_eq!(stray.path, "journals/Friday, 26-06-2026.org");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_with_path_writes_the_pinned_file_and_leaves_canonical_intact() {
+        // The core regression for #21: editing a path-pinned stray must save to the
+        // stray file, NOT be re-resolved by name onto the canonical one.
+        let dir = dup_day_graph("savepinned");
+        let g = Graph::open(&dir);
+        g.warm_cache();
+
+        let mut stray = g.load_by_path("journals/Friday, 26-06-2026.org").unwrap().unwrap();
+        stray.blocks[0].raw = "stray body edited".into();
+        let rev = g.save_page(&stray, stray.rev.as_deref()).unwrap();
+        assert_eq!(
+            rev,
+            content_rev(&fs::read_to_string(dir.join("journals").join("Friday, 26-06-2026.org")).unwrap())
+        );
+
+        // The stray file got the edit; the canonical file is byte-for-byte untouched.
+        assert_eq!(
+            fs::read_to_string(dir.join("journals").join("Friday, 26-06-2026.org")).unwrap(),
+            "* stray body edited\n"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("journals").join("2026_06_26.org")).unwrap(),
+            "* canonical body\n"
+        );
+        // And name-resolution still serves the canonical (the stray didn't poison
+        // the (kind,name) cache slot).
+        let by_name = g.load_named("Friday, 26-06-2026", PageKind::Journal).unwrap().unwrap();
+        assert_eq!(by_name.blocks[0].raw, "canonical body");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_rejects_pinned_path_that_escapes_the_graph() {
+        let dir = dup_day_graph("savebadpath");
+        let g = Graph::open(&dir);
+        let mut p = g.load_by_path("journals/Friday, 26-06-2026.org").unwrap().unwrap();
+        p.path = "../escape.md".into();
+        assert!(g.save_page(&p, p.rev.as_deref()).is_err(), "save must refuse an out-of-graph path");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn merge_pages_appends_stray_into_canonical_and_trashes_stray() {
+        let dir = dup_day_graph("merge");
+        let g = Graph::open(&dir);
+        g.warm_cache();
+        g.merge_pages("journals/Friday, 26-06-2026.org", "journals/2026_06_26.org").unwrap();
+
+        // Canonical now holds both bodies; the stray is gone (moved to trash).
+        let merged = fs::read_to_string(dir.join("journals").join("2026_06_26.org")).unwrap();
+        assert!(merged.contains("canonical body"), "canonical kept: {merged:?}");
+        assert!(merged.contains("stray body"), "stray appended: {merged:?}");
+        assert!(!dir.join("journals").join("Friday, 26-06-2026.org").exists(), "stray trashed");
+        // Recoverable, not hard-deleted.
+        let trash = dir.join("logseq").join(".tine-trash");
+        let kept = fs::read_dir(&trash).unwrap().flatten().count();
+        assert_eq!(kept, 1, "stray sits in the recoverable trash");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rename_file_to_page_rescues_stray_and_refuses_collision() {
+        let dir = dup_day_graph("renamefile");
+        let g = Graph::open(&dir);
+        g.warm_cache();
+        g.rename_file_to_page("journals/Friday, 26-06-2026.org", "Old Friday").unwrap();
+
+        // The stray became a normal page, reachable by its new unique name.
+        assert!(!dir.join("journals").join("Friday, 26-06-2026.org").exists());
+        let page = g.load_named("Old Friday", PageKind::Page).unwrap().unwrap();
+        assert_eq!(page.blocks[0].raw, "stray body");
+        assert_eq!(page.kind, PageKind::Page);
+
+        // A second rescue onto an existing page name is refused (never clobbers).
+        fs::write(dir.join("journals").join("Saturday, 27-06-2026.org"), "* s\n").unwrap();
+        assert!(
+            g.rename_file_to_page("journals/Saturday, 27-06-2026.org", "Old Friday").is_err(),
+            "collision refused"
+        );
+        assert!(dir.join("journals").join("Saturday, 27-06-2026.org").exists(), "source left intact on refusal");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn journal_conflicts_expose_a_routable_path_per_file() {
+        let dir = dup_day_graph("conflictpath");
+        let g = Graph::open(&dir);
+        let conflicts = g.journal_conflicts();
+        assert_eq!(conflicts.len(), 1, "one duplicated day");
+        let files = &conflicts[0].files;
+        assert_eq!(files.len(), 2);
+        // Canonical first; both carry a graph-root-relative, resolvable path.
+        assert!(files[0].canonical);
+        assert_eq!(files[0].path, "journals/2026_06_26.org");
+        assert_eq!(files[1].path, "journals/Friday, 26-06-2026.org");
+        for f in files {
+            assert!(g.resolve_rel(&f.path).is_some(), "conflict path resolves: {}", f.path);
+        }
         let _ = fs::remove_dir_all(&dir);
     }
 }

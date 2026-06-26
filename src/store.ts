@@ -55,6 +55,11 @@ export interface FeedPage {
   format: Format;
   /** True for an org page Tine can't round-trip — shown but not editable. */
   readOnly: boolean;
+  /** Graph-root-relative file this page was loaded from. Sent back on save so a
+   *  page pinned to a SPECIFIC file (a duplicate-day stray, #21) saves to its own
+   *  file, not the canonical one. Empty/absent for a brand-new page (resolved by
+   *  name). */
+  path?: string;
 }
 
 interface DocState {
@@ -149,6 +154,7 @@ function toFeedPage(dto: PageDto, byId: Record<string, Node>): FeedPage {
     roots,
     format: dto.format ?? "md",
     readOnly: dto.read_only ?? false,
+    path: dto.path,
   };
 }
 
@@ -412,6 +418,9 @@ export function pageToDto(pageName: string): PageDto | null {
     pre_block: p.preBlock,
     blocks,
     format: p.format,
+    // Pin the save to the exact file this page came from (#21). Absent for a
+    // brand-new page → the backend resolves the file by name, as before.
+    path: p.path,
   };
 }
 

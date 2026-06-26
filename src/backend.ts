@@ -83,6 +83,15 @@ export interface Backend {
   /** Raw contents of one journal file (by exact filename), for inspecting a
    *  duplicate day's files before reconciling. */
   readJournalFile(name: string): Promise<string>;
+  /** Load a page from a SPECIFIC file by its graph-root-relative path — reaches a
+   *  duplicate-day stray that shares a (kind,name) with the canonical file (#21). */
+  getPageByPath(path: string): Promise<PageDto | null>;
+  /** Append the blocks of `src` (graph-root-relative path) onto `dst`, then trash
+   *  `src` — fold a duplicate-day stray into the canonical day (#21). */
+  mergePages(src: string, dst: string): Promise<void>;
+  /** Move a stray file (graph-root-relative path) to a uniquely-named page so it
+   *  stops colliding and becomes normally navigable (#21). */
+  renameFileToPage(path: string, newName: string): Promise<void>;
   search(query: string, limit: number): Promise<RefGroup[]>;
   quickSwitch(query: string, limit: number): Promise<PageEntry[]>;
   listTemplates(): Promise<TemplateDto[]>;
@@ -313,6 +322,15 @@ class TauriBackend implements Backend {
   }
   readJournalFile(name: string) {
     return this.call<string>("read_journal_file", { name });
+  }
+  getPageByPath(path: string) {
+    return this.call<PageDto | null>("get_page_by_path", { path });
+  }
+  mergePages(src: string, dst: string) {
+    return this.call<void>("merge_pages", { src, dst });
+  }
+  renameFileToPage(path: string, newName: string) {
+    return this.call<void>("rename_file_to_page", { path, newName });
   }
   importAsset(path: string, name?: string) {
     return this.call<string>("import_asset", { path, name });

@@ -12,7 +12,16 @@ import { backend } from "./backend";
 
 export type Route =
   | { kind: "journals" }
-  | { kind: "page"; name: string; pageKind: "journal" | "page"; block?: string };
+  | {
+      kind: "page";
+      name: string;
+      pageKind: "journal" | "page";
+      block?: string;
+      /** Graph-root-relative file to pin this view to — set ONLY to reach a
+       *  duplicate-day stray that shares a (kind,name) with the canonical file
+       *  (#21). Absent for normal pages, which resolve by name. */
+      path?: string;
+    };
 
 export interface Tab {
   id: string;
@@ -59,7 +68,9 @@ export function sameRoute(a: Route, b: Route): boolean {
   if (a.kind !== b.kind) return false;
   if (a.kind === "journals") return true;
   const bb = b as typeof a;
-  return a.name === bb.name && a.pageKind === bb.pageKind && a.block === bb.block;
+  return (
+    a.name === bb.name && a.pageKind === bb.pageKind && a.block === bb.block && a.path === bb.path
+  );
 }
 
 // Navigate the active tab to a new route, pushing it onto the history stack
@@ -102,6 +113,21 @@ export function openPage(
 
 export function openJournals(opts: { inPlace?: boolean } = {}) {
   navigate({ kind: "journals" }, { sticky: !opts.inPlace });
+}
+
+/** Open a SPECIFIC file by its graph-root-relative path — the way to reach a
+ *  duplicate-day stray (`journals/Friday, 26-06-2026.org`) that shares a
+ *  (kind,name) with the canonical day and so isn't reachable by name (#21).
+ *  `name`/`pageKind` drive the title + routing; `path` pins the file the loader
+ *  fetches and the editor saves back to. */
+export function openFile(
+  path: string,
+  name: string,
+  pageKind: "journal" | "page" = "journal",
+  opts: { inPlace?: boolean } = {}
+) {
+  navigate({ kind: "page", name, pageKind, path }, { sticky: !opts.inPlace });
+  pushRecent(name, pageKind);
 }
 
 /** Zoom the active tab into a block (or back out, when null). Zoom is part of the

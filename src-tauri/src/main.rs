@@ -1040,6 +1040,29 @@ fn read_journal_file(name: String, state: State<'_, AppState>) -> Result<String,
     with_graph(&state, |g| g.read_journal_file(&name).map_err(|e| e.to_string()))
 }
 
+/// Load a page from a SPECIFIC file by its graph-root-relative path — lets the UI
+/// navigate to a duplicate-day stray that shares a (kind,name) with the canonical
+/// file and so is unreachable by name (#21).
+#[tauri::command]
+fn get_page_by_path(path: String, state: State<'_, AppState>) -> Result<Option<PageDto>, String> {
+    with_graph(&state, |g| g.load_by_path(&path).map_err(|e| e.to_string()))
+}
+
+/// Reconcile a duplicate-day pair: append the blocks of `src` to `dst`, then trash
+/// `src` (both graph-root-relative paths). The merged `dst` is written through the
+/// normal round-tripping save path (#21).
+#[tauri::command]
+fn merge_pages(src: String, dst: String, state: State<'_, AppState>) -> Result<(), String> {
+    with_graph(&state, |g| g.merge_pages(&src, &dst).map_err(|e| e.to_string()))
+}
+
+/// Rescue a duplicate-day stray by moving it to a uniquely-named page
+/// (`pages/<new_name>`), so it stops colliding and becomes normally navigable (#21).
+#[tauri::command]
+fn rename_file_to_page(path: String, new_name: String, state: State<'_, AppState>) -> Result<(), String> {
+    with_graph(&state, |g| g.rename_file_to_page(&path, &new_name).map_err(|e| e.to_string()))
+}
+
 #[tauri::command]
 fn save_asset(name: String, bytes: Vec<u8>, state: State<'_, AppState>) -> Result<String, String> {
     with_graph(&state, |g| g.save_asset(&name, &bytes).map_err(|e| e.to_string()))
@@ -1295,6 +1318,9 @@ fn main() {
             list_journal_conflicts,
             trash_journal_file,
             read_journal_file,
+            get_page_by_path,
+            merge_pages,
+            rename_file_to_page,
             search,
             quick_switch,
             list_templates,

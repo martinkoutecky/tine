@@ -28,6 +28,11 @@ export interface PageDto {
   /** True for an org page Tine can't round-trip byte-for-byte: shown but not
    *  editable, so Tine never rewrites (and risks corrupting) it. */
   read_only?: boolean;
+  /** Graph-root-relative path of the file this page was loaded from
+   *  (`journals/2026_06_26.org`). Echoed back on save so a page pinned to a
+   *  SPECIFIC file (a duplicate-day stray, #21) saves to its own file rather than
+   *  being re-resolved by name to the canonical one. Empty for a brand-new page. */
+  path?: string;
 }
 
 export interface TemplateDto {
@@ -61,6 +66,9 @@ export interface TrashStats {
 /** One file in a journal-day conflict (duplicate files for the same date). */
 export interface JournalFile {
   name: string;
+  /** Graph-root-relative path — lets the UI navigate straight to THIS file even
+   *  when it shares a date with the canonical one (#21). */
+  path: string;
   preview: string;
   canonical: boolean; // name is the date stem (yyyy_MM_dd) — the one to keep
 }

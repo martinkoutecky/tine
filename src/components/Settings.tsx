@@ -39,7 +39,7 @@ import {
   refreshJournalConflicts,
 } from "../ui";
 import { interfaceZoom, zoomIn, zoomOut, zoomReset } from "../zoom";
-import { openPage } from "../router";
+import { openPage, openFile } from "../router";
 import { commandDefaults, eventToBindingString, setKeybindingsSuspended } from "../keybindings";
 import { switchGraph, loadGraphPath } from "../graph";
 import { flushAll } from "../store";
@@ -753,18 +753,34 @@ function BackupsTab(): JSX.Element {
 // assets/ files no block links to, and let the user move them to the recoverable
 // trash. Tine never auto-deletes media (a deleted block keeps its files), so this
 // is how unused media gets cleaned up.
-// One file in a duplicate-day conflict: click the name to reveal its full
-// contents (these files share a page name, so they can't be opened separately in
-// the editor — this read-only view is how you inspect the stray before trashing).
-function ConflictFileRow(props: { file: JournalFile; onTrash: () => void }): JSX.Element {
+// One file in a duplicate-day conflict. Click the name to reveal its full
+// contents; the action buttons let you reach and reconcile it (#21): Open
+// navigates to THIS specific file (editable, saves back to itself), Merge folds a
+// stray into the canonical day, Rename rescues it as a normal page, Trash removes
+// the redundant one (recoverable).
+function ConflictFileRow(props: {
+  file: JournalFile;
+  onOpen: () => void;
+  onMerge?: () => void;
+  onRename: (newName: string) => void;
+  onTrash: () => void;
+}): JSX.Element {
   const [open, setOpen] = createSignal(false);
+  const [renaming, setRenaming] = createSignal(false);
+  const [newName, setNewName] = createSignal("");
   const [content] = createResource(
     () => (open() ? props.file.name : null),
     async (name) => (name ? backend().readJournalFile(name).catch((e) => `(couldn’t read: ${String(e)})`) : "")
   );
+  const submitRename = () => {
+    const n = newName().trim();
+    if (n) props.onRename(n);
+    setRenaming(false);
+    setNewName("");
+  };
   return (
     <>
-      <div class="settings-asset-row">
+      <div class="journal-conflict-row">
         <button class="settings-asset-name mono" title="Show this file's contents" onClick={() => setOpen(!open())}>
           {open() ? "▾ " : "▸ "}
           {props.file.name}
@@ -772,12 +788,40 @@ function ConflictFileRow(props: { file: JournalFile; onTrash: () => void }): JSX
             <span class="journal-conflict-keep"> · canonical</span>
           </Show>
         </button>
-        <span class="settings-asset-date">{props.file.preview}</span>
-        <span />
-        <button class="settings-btn" onClick={props.onTrash}>
-          Trash
-        </button>
+        <span class="journal-conflict-actions">
+          <button class="settings-btn" title="Open this exact file (editable)" onClick={props.onOpen}>
+            Open
+          </button>
+          <Show when={props.onMerge}>
+            <button class="settings-btn" title="Append this file's blocks to the canonical day, then trash it" onClick={props.onMerge}>
+              Merge
+            </button>
+          </Show>
+          <button class="settings-btn" title="Move this file to a uniquely-named page" onClick={() => { setRenaming(true); setNewName(""); }}>
+            Rename…
+          </button>
+          <button class="settings-btn settings-btn-danger" onClick={props.onTrash}>
+            Trash
+          </button>
+        </span>
       </div>
+      <div class="journal-conflict-preview">{props.file.preview}</div>
+      <Show when={renaming()}>
+        <div class="journal-conflict-rename">
+          <input
+            class="settings-input"
+            placeholder="New page name"
+            value={newName()}
+            onInput={(e) => setNewName(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") submitRename();
+              else if (e.key === "Escape") setRenaming(false);
+            }}
+          />
+          <button class="settings-btn" onClick={submitRename}>Save</button>
+          <button class="settings-btn" onClick={() => setRenaming(false)}>Cancel</button>
+        </div>
+      </Show>
       <Show when={open()}>
         <pre class="journal-conflict-content">{content.loading ? "…" : content() || "(empty file)"}</pre>
       </Show>
@@ -787,9 +831,19 @@ function ConflictFileRow(props: { file: JournalFile; onTrash: () => void }): JSX
 
 // Duplicate journal days: a date that resolves to >1 file (e.g. a date-stem file
 // plus a title-named one, usually from a date-format change). Tine never
-// auto-merges, so list them with each file's preview + a Trash affordance.
+// auto-merges, so list each file with reconcile actions (Open/Merge/Rename/Trash).
 function JournalConflictsPanel(): JSX.Element {
   void refreshJournalConflicts(); // refresh when the Backups tab opens
+  // Run a reconcile op, toast the outcome, and refresh the (now-changed) list.
+  const reconcile = async (op: () => Promise<void>, ok: string) => {
+    try {
+      await op();
+      pushToast(ok, "success");
+      await refreshJournalConflicts(true);
+    } catch (e) {
+      pushToast(`Couldn’t do that: ${String(e)}`, "error");
+    }
+  };
   const trashFile = async (name: string) => {
     if (
       !(await backend().confirm(
@@ -798,13 +852,11 @@ function JournalConflictsPanel(): JSX.Element {
       ))
     )
       return;
-    try {
-      await backend().trashJournalFile(name);
-      pushToast(`Moved ${name} to trash`, "success");
-      await refreshJournalConflicts();
-    } catch (e) {
-      pushToast(`Couldn’t trash: ${String(e)}`, "error");
-    }
+    await reconcile(() => backend().trashJournalFile(name), `Moved ${name} to trash`);
+  };
+  const openFileRow = (file: JournalFile, title: string) => {
+    openFile(file.path, title, "journal");
+    closeSettings();
   };
   const openDay = (title: string) => {
     openPage(title, "journal");
@@ -818,20 +870,39 @@ function JournalConflictsPanel(): JSX.Element {
       <div class="settings-hint settings-block">
         These days have more than one file (e.g. a <code>2026_06_26.org</code> and a
         title-named <code>Friday, 26-06-2026.org</code>) — usually left over from changing the
-        date format. Tine never auto-merges them, so a day can show twice in the feed. Open the
-        day to copy across anything worth keeping, then trash the redundant file (recoverable).
+        date format. <strong>Open</strong> reaches a file directly (it's editable and saves back
+        to itself); <strong>Merge</strong> folds a stray into the canonical day;{" "}
+        <strong>Rename</strong> turns it into a normal page; <strong>Trash</strong> removes the
+        redundant one (recoverable).
       </div>
       <For each={journalConflicts()}>
-        {(c) => (
-          <div class="settings-block">
-            <button class="settings-asset-name" onClick={() => openDay(c.title)}>
-              {c.title} →
-            </button>
-            <For each={c.files}>
-              {(f) => <ConflictFileRow file={f} onTrash={() => void trashFile(f.name)} />}
-            </For>
-          </div>
-        )}
+        {(c) => {
+          const canonical = c.files.find((f) => f.canonical);
+          return (
+            <div class="settings-block">
+              <button class="settings-asset-name" onClick={() => openDay(c.title)}>
+                {c.title} →
+              </button>
+              <For each={c.files}>
+                {(f) => (
+                  <ConflictFileRow
+                    file={f}
+                    onOpen={() => openFileRow(f, c.title)}
+                    onMerge={!f.canonical && canonical ? () => void reconcile(
+                      () => backend().mergePages(f.path, canonical.path),
+                      `Merged ${f.name} into ${canonical.name}`
+                    ) : undefined}
+                    onRename={(n) => void reconcile(
+                      () => backend().renameFileToPage(f.path, n),
+                      `Renamed ${f.name} → ${n}`
+                    )}
+                    onTrash={() => void trashFile(f.name)}
+                  />
+                )}
+              </For>
+            </div>
+          );
+        }}
       </For>
     </Show>
   );

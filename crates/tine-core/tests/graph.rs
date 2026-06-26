@@ -92,6 +92,7 @@ fn search_cache_reflects_saves_and_deletes() {
         rev: None,
         format: Default::default(),
         read_only: false,
+        path: String::new(),
     };
     g.save_page(&page, None).unwrap();
     let hits = g.search("zonkwort", 10);
@@ -129,6 +130,7 @@ fn search_ignores_hidden_property_metadata() {
         rev: None,
         format: Default::default(),
         read_only: false,
+        path: String::new(),
     };
     g.save_page(&page, None).unwrap();
     assert_eq!(
@@ -264,6 +266,7 @@ fn consecutive_self_saves_do_not_conflict() {
         rev: None,
         format: Default::default(),
         read_only: false,
+        path: String::new(),
     };
     // 1) date picker inserts a SCHEDULED line (page is new — no baseline yet).
     let r1 = g.save_page(&mk("TODO task\nSCHEDULED: <2026-06-16 Tue>"), None).unwrap();
@@ -333,6 +336,7 @@ fn noop_save_does_not_bump_cache_generation() {
         rev: None,
         format: Default::default(),
         read_only: false,
+        path: String::new(),
     };
     let r1 = g.save_page(&mk("hello"), None).unwrap();
     let gen1 = g.cache_generation();
@@ -370,6 +374,7 @@ fn self_write_marker_does_not_outlive_its_save() {
         rev: None,
         format: Default::default(),
         read_only: false,
+        path: String::new(),
     };
     g.save_page(&page, None).unwrap(); // sets, then self-removes, the marker
     let path = root.join("pages").join("C.md");
@@ -404,6 +409,7 @@ fn disk_rev_fast_path_is_fresh_and_detects_external_change() {
         rev: None,
         format: Default::default(),
         read_only: false,
+        path: String::new(),
     };
     g.save_page(&page, None).unwrap(); // populates disk_revs[R] (marker self-removed)
     let path = root.join("pages").join("R.md");
@@ -445,6 +451,7 @@ fn self_write_is_not_reported_as_external_change() {
         rev: None,
         format: Default::default(),
         read_only: false,
+        path: String::new(),
     };
     g.save_page(&page, None).unwrap();
 

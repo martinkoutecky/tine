@@ -76,7 +76,12 @@ export function PageView(): JSX.Element {
           if (js.length < FEED_PAGE) feedDone = true;
           loadFeed(withToday(js));
         } else {
-          const dto = await backend().getPage(r.name, r.pageKind);
+          // A path-pinned route (#21) loads that SPECIFIC file — the way to reach a
+          // duplicate-day stray that shares a (kind,name) with the canonical day;
+          // everything else resolves by name as before.
+          const dto = r.path
+            ? await backend().getPageByPath(r.path)
+            : await backend().getPage(r.name, r.pageKind);
           if (epoch !== graphEpoch()) return; // graph switched mid-load — drop it
           // null = page doesn't exist yet → start a fresh empty page. A failed
           // read throws and is caught below, so we never overwrite a page whose

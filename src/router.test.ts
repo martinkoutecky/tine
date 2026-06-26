@@ -6,11 +6,13 @@ import {
   route,
   tabRoute,
   openPage,
+  openFile,
   openJournals,
   openInNewTab,
   togglePin,
   closeTab,
   setActiveTab,
+  sameRoute,
 } from "./router";
 
 // The router holds singleton tab state, so reset to a single unpinned journals
@@ -75,6 +77,39 @@ describe("sticky (pinned) tabs", () => {
     vi.stubGlobal("confirm", () => true);
     await closeTab(id);
     expect(tabs().some((t) => t.id === id)).toBe(false); // confirmed → closed
+  });
+});
+
+describe("path-pinned routes (#21 — reach a duplicate-day stray)", () => {
+  it("openFile pins the route to a specific file path", () => {
+    openFile("journals/Friday, 26-06-2026.org", "Friday, 26-06-2026", "journal");
+    expect(route()).toEqual({
+      kind: "page",
+      name: "Friday, 26-06-2026",
+      pageKind: "journal",
+      path: "journals/Friday, 26-06-2026.org",
+    });
+  });
+
+  it("sameRoute distinguishes two same-name pages pinned to different files", () => {
+    const canonical = {
+      kind: "page" as const,
+      name: "Friday, 26-06-2026",
+      pageKind: "journal" as const,
+    };
+    const stray = { ...canonical, path: "journals/Friday, 26-06-2026.org" };
+    const strayB = { ...canonical, path: "journals/2026_06_26.org" };
+    expect(sameRoute(stray, stray)).toBe(true);
+    expect(sameRoute(stray, canonical)).toBe(false); // path-pinned ≠ by-name
+    expect(sameRoute(stray, strayB)).toBe(false); // two distinct files
+  });
+
+  it("navigating from a name route to the same name pinned to a file is NOT a no-op", () => {
+    openPage("Friday, 26-06-2026", "journal");
+    expect(route().kind).toBe("page");
+    openFile("journals/Friday, 26-06-2026.org", "Friday, 26-06-2026", "journal");
+    // The path-pinned route is distinct, so it actually navigates (new history entry).
+    expect((route() as { path?: string }).path).toBe("journals/Friday, 26-06-2026.org");
   });
 });
 

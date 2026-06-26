@@ -1035,6 +1035,39 @@ body {
   border: 1px solid var(--border-color);
   border-radius: 6px;
 }
+/* One file row in a duplicate-day conflict: the filename on the left, the
+   reconcile actions (Open / Merge / Rename / Trash) flush right. */
+.journal-conflict-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 5px 0 1px;
+}
+.journal-conflict-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.journal-conflict-preview {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin: 0 0 4px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid var(--border-color);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.journal-conflict-rename {
+  display: flex;
+  gap: 6px;
+  margin: 4px 0 8px;
+}
+.journal-conflict-rename input {
+  flex: 1;
+}
 .settings-btn-danger {
   color: #c0392b;
   border-color: color-mix(in srgb, #c0392b 35%, transparent);
@@ -1211,6 +1244,14 @@ body {
 .settings-num {
   width: 64px;
   padding: 3px 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+.settings-input {
+  padding: 4px 8px;
   border: 1px solid var(--border-color);
   border-radius: 5px;
   background: var(--bg-primary);
