@@ -34,18 +34,39 @@ jobs:
     outputs:
       release_id: ${{ steps.create.outputs.result }}
     steps:
+      # Checkout so the step can read CHANGELOG.md for the release notes.
+      - uses: actions/checkout@v4
       - name: Create draft release
         id: create
         uses: actions/github-script@v7
         with:
           script: |
+            const fs = require('fs');
             const tag = context.ref.replace('refs/tags/', '');
+            const version = tag.replace(/^v/, '');
+            const fallback = 'Download an installer for your platform below. macOS/Windows builds are currently unsigned (right-click → Open on macOS; More info → Run anyway on Windows).';
+            // Pull THIS version's section out of CHANGELOG.md so the GitHub release
+            // notes match the changelog: everything between `## [x.y.z]` and the
+            // next version heading (or the trailing link-reference block).
+            let notes = '';
+            try {
+              const lines = fs.readFileSync('CHANGELOG.md', 'utf8').split('\n');
+              const start = lines.findIndex((l) => l.startsWith(`## [${version}]`));
+              if (start !== -1) {
+                let end = lines.length;
+                for (let i = start + 1; i < lines.length; i++) {
+                  if (lines[i].startsWith('## [') || /^\[[^\]]+\]:\s/.test(lines[i])) { end = i; break; }
+                }
+                notes = lines.slice(start + 1, end).join('\n').trim();
+              }
+            } catch (e) {}
+            const body = notes ? `${notes}\n\n---\n\n${fallback}` : fallback;
             const { data } = await github.rest.repos.createRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
               tag_name: tag,
               name: `Tine ${tag}`,
-              body: 'Download an installer for your platform below. macOS/Windows builds are currently unsigned (right-click → Open on macOS; More info → Run anyway on Windows).',
+              body,
               draft: true,
               prerelease: false,
             });
