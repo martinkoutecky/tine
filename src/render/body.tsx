@@ -25,7 +25,15 @@ type BodySeg =
 // outliner's own block bullet and would be parsed as a child block — matching OG,
 // where only `-`/`*`-in-org are block bullets). This is how a tickable checklist
 // round-trips with OG/mobile: a `+ [ ]` list inside ONE bullet's content.
-const LIST_RE = /^(\s*)([+*]|\d+[.)])\s+(.*)$/;
+// In-block plain-list bullets are format-specific, because the unusable marker
+// differs: in Markdown a leading `-` is the OUTLINE bullet (its own block), so
+// in-block lists use `+`/`*`; in Org a leading `*` is a HEADLINE, so org plain
+// lists use `-`/`+` (org-mode + Logseq). Numbered (`1.`/`1)`) works in both.
+const LIST_RE_MD = /^(\s*)([+*]|\d+[.)])\s+(.*)$/;
+const LIST_RE_ORG = /^(\s*)([-+]|\d+[.)])\s+(.*)$/;
+function listRe(format?: Format): RegExp {
+  return format === "org" ? LIST_RE_ORG : LIST_RE_MD;
+}
 
 function isTableRow(line: string): boolean {
   return /^\s*\|.*\|\s*$/.test(line);
@@ -55,7 +63,8 @@ function parseAligns(sep: string): Align[] {
   });
 }
 
-export function segmentBody(lines: string[]): BodySeg[] {
+export function segmentBody(lines: string[], format?: Format): BodySeg[] {
+  const LIST_RE = listRe(format);
   const segs: BodySeg[] = [];
   let buf: string[] = [];
   const flush = () => {
@@ -181,7 +190,8 @@ interface ListItemNode {
 }
 
 /** Parse a run of `+`/`*`/ordered list lines into a nested tree by indentation. */
-export function parseList(lines: string[]): ListNode {
+export function parseList(lines: string[], format?: Format): ListNode {
+  const LIST_RE = listRe(format);
   const parsed = lines.map((raw) => {
     const m = LIST_RE.exec(raw)!;
     let rest = m[3];
@@ -318,7 +328,7 @@ function MdList(props: { node: ListNode; blockId?: string; format?: Format }): J
 
 export function BodyContent(props: { lines: string[]; blockId?: string; format?: Format }): JSX.Element {
   return (
-    <For each={segmentBody(props.lines)}>
+    <For each={segmentBody(props.lines, props.format)}>
       {(seg) => {
         if (seg.kind === "code") {
           return <CodeBlock code={seg.code} lang={seg.lang} />;
@@ -349,7 +359,7 @@ export function BodyContent(props: { lines: string[]; blockId?: string; format?:
           );
         }
         if (seg.kind === "list") {
-          return <MdList node={parseList(seg.items)} blockId={props.blockId} format={props.format} />;
+          return <MdList node={parseList(seg.items, props.format)} blockId={props.blockId} format={props.format} />;
         }
         if (seg.kind === "hr") {
           return <hr class="md-hr" />;

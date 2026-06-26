@@ -467,14 +467,21 @@ function blockFirstLine(raw: string): string {
 
 /** If the caret sits on an in-block markdown list line (`+`/`*`/ordered — NOT the
  *  outline bullet `-`), return its parts, for caret-context list editing. */
+// In-block list markers differ by format (see body.tsx): Markdown uses `+`/`*`
+// (a leading `-` is the outline bullet), Org uses `-`/`+` (a leading `*` is a
+// headline). Numbered works in both.
+const LIST_LINE_MD = /^(\s*)([+*]|\d+[.)])(\s+)(\[[ xX]\]\s+)?/;
+const LIST_LINE_ORG = /^(\s*)([-+]|\d+[.)])(\s+)(\[[ xX]\]\s+)?/;
 function listLineAt(
   text: string,
   caret: number,
+  format: "md" | "org" = "md",
 ): { indent: string; marker: string; hasCheckbox: boolean; lineStart: number; prefixLen: number } | null {
   const lineStart = text.lastIndexOf("\n", caret - 1) + 1;
   let lineEnd = text.indexOf("\n", caret);
   if (lineEnd === -1) lineEnd = text.length;
-  const m = /^(\s*)([+*]|\d+[.)])(\s+)(\[[ xX]\]\s+)?/.exec(text.slice(lineStart, lineEnd));
+  const re = format === "org" ? LIST_LINE_ORG : LIST_LINE_MD;
+  const m = re.exec(text.slice(lineStart, lineEnd));
   if (!m) return null;
   return { indent: m[1], marker: m[2], hasCheckbox: !!m[4], lineStart, prefixLen: m[0].length };
 }
@@ -554,6 +561,8 @@ export function Editor(props: { id: string }): JSX.Element {
   // returning to Tine resumes editing exactly where you left off.
   let savedSel: { start: number; end: number } | null = null;
   const node = () => doc.byId[props.id];
+  // Page format drives in-block list markers (`-` is an org bullet, not md).
+  const pageFmt = (): "md" | "org" => (pageByName(node().page)?.format === "org" ? "org" : "md");
 
   // What the textarea shows. Annotation (PDF highlight) blocks expose only their
   // highlight text (all metadata hidden); every other block hides just the
@@ -992,13 +1001,13 @@ export function Editor(props: { id: string }): JSX.Element {
     "editor/indent": (e) => {
       e.preventDefault();
       // On an in-block list line, Tab nests the LIST ITEM (intra-block), not the block.
-      const ll = listLineAt(ref.value, ref.selectionStart);
+      const ll = listLineAt(ref.value, ref.selectionStart, pageFmt());
       if (ll) { nudgeListItem(ll, +2); return true; }
       commit(ref.value); indentBlock(props.id, ref.selectionStart); return true;
     },
     "editor/outdent": (e) => {
       e.preventDefault();
-      const ll = listLineAt(ref.value, ref.selectionStart);
+      const ll = listLineAt(ref.value, ref.selectionStart, pageFmt());
       if (ll && ll.indent.length > 0) { nudgeListItem(ll, -2); return true; }
       commit(ref.value); outdentBlock(props.id, ref.selectionStart); return true;
     },
@@ -1079,7 +1088,7 @@ export function Editor(props: { id: string }): JSX.Element {
       // (new item below, same marker/indent; a checkbox item starts a fresh `[ ]`)
       // instead of splitting the block. To exit, Backspace the empty item down to a
       // blank line, then Enter on that non-list line makes a new bullet.
-      const ll = !isAnnot() ? listLineAt(raw, start) : null;
+      const ll = !isAnnot() ? listLineAt(raw, start, pageFmt()) : null;
       if (ll) {
         const ordered = /\d/.test(ll.marker);
         const nextMarker = ordered ? parseInt(ll.marker) + 1 + ll.marker.replace(/\d+/, "") : ll.marker;
@@ -1103,7 +1112,7 @@ export function Editor(props: { id: string }): JSX.Element {
     } else if (e.key === "Backspace" && end === start) {
       // In-block list: Backspace at the head of a list item's text removes the
       // marker (turns it into a blank/plain line) — the way to exit the list.
-      const ll = listLineAt(raw, start);
+      const ll = listLineAt(raw, start, pageFmt());
       if (ll && start === ll.lineStart + ll.prefixLen) {
         e.preventDefault();
         applyEdit({ text: raw.slice(0, ll.lineStart) + raw.slice(start), start: ll.lineStart, end: ll.lineStart });

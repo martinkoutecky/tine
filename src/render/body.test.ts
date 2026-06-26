@@ -10,6 +10,19 @@ describe("in-block markdown lists (+/* /ordered, NOT - which is the outline bull
     // `-` is the outliner's own bullet, never in-content → stays a plain line
     expect(segmentBody(["- not a list line"])).toEqual([{ kind: "lines", lines: ["- not a list line"] }]);
   });
+  it("on Org pages, `-` IS a plain-list bullet and `*` is NOT (it's a headline)", () => {
+    // Org plain lists use - / + (org-mode + Logseq); * at line start is a headline.
+    expect(segmentBody(["- milk", "- eggs", "+ also"], "org")).toEqual([
+      { kind: "list", items: ["- milk", "- eggs", "+ also"] },
+    ]);
+    expect(parseList(["- milk", "- eggs"], "org").items.map((i) => i.text)).toEqual(["milk", "eggs"]);
+    // A leading `*` is not an in-block bullet in org.
+    expect(segmentBody(["* not a bullet in org"], "org")).toEqual([
+      { kind: "lines", lines: ["* not a bullet in org"] },
+    ]);
+    // Markdown is unchanged: `-` stays plain there.
+    expect(segmentBody(["- milk"], "md")).toEqual([{ kind: "lines", lines: ["- milk"] }]);
+  });
   it("parses checkboxes, ordered-ness and nesting by indent", () => {
     const n = parseList(["+ [ ] a", "+ [x] b"]);
     expect(n.ordered).toBe(false);

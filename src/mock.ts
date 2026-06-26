@@ -116,6 +116,7 @@ const NAMED: PageDto[] = [
       b("Org source block:\n#+BEGIN_SRC clojure\n(defn hello [] \"world\")\n#+END_SRC"),
       b("Org quote block:\n#+BEGIN_QUOTE\nto be or not to be\n#+END_QUOTE"),
       b("A property drawer stays as content:\n:PROPERTIES:\n:key: value\n:END:"),
+      b("A plain list — org bullets are - and + (in md, - is the outline bullet):\n- milk\n- eggs\n+ also fine"),
     ],
   },
   // Rendering parity harness: one block per construct, so a screenshot makes any
