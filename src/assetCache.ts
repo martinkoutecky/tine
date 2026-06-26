@@ -24,6 +24,34 @@ function mimeFromExt(path: string): string {
       return "image/svg+xml";
     case "webp":
       return "image/webp";
+    // Video — so a blob-URL <video> gets a playable type (codec permitting).
+    case "mp4":
+    case "m4v":
+      return "video/mp4";
+    case "webm":
+      return "video/webm";
+    case "ogv":
+      return "video/ogg";
+    case "mov":
+      return "video/quicktime";
+    case "mkv":
+      return "video/x-matroska";
+    // Audio.
+    case "mp3":
+    case "mpeg":
+      return "audio/mpeg";
+    case "m4a":
+    case "aac":
+      return "audio/mp4";
+    case "wav":
+      return "audio/wav";
+    case "ogg":
+    case "oga":
+      return "audio/ogg";
+    case "opus":
+      return "audio/opus";
+    case "flac":
+      return "audio/flac";
     default:
       return "application/octet-stream";
   }

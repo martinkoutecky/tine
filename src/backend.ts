@@ -4,6 +4,7 @@
 
 import type {
   AdvancedQueryResult,
+  AssetInfo,
   GraphMeta,
   Highlight,
   PageDto,
@@ -11,6 +12,7 @@ import type {
   RefGroup,
   TemplateDto,
 } from "./types";
+import { assetFileName } from "./media";
 import { mockBackend } from "./mock";
 
 export interface Backend {
@@ -56,6 +58,13 @@ export interface Backend {
   readCustomCss(): Promise<string>;
   /** Open an http(s)/mailto URL in the OS default app. */
   openExternal(url: string): Promise<void>;
+  /** Open a graph asset (by its `assets/`-relative name) in the OS default app —
+   *  e.g. a video/audio file in the system player. */
+  openAsset(name: string): Promise<void>;
+  /** Top-level `assets/` files no block references (orphans), for cleanup. */
+  listOrphanAssets(): Promise<AssetInfo[]>;
+  /** Move an orphaned asset to the recoverable trash. */
+  trashAsset(name: string): Promise<void>;
   search(query: string, limit: number): Promise<RefGroup[]>;
   quickSwitch(query: string, limit: number): Promise<PageEntry[]>;
   listTemplates(): Promise<TemplateDto[]>;
@@ -66,8 +75,9 @@ export interface Backend {
   /** If the OS clipboard holds an image, save it to assets/ and return the
    *  filename; otherwise null. */
   pasteImage(): Promise<string | null>;
-  /** Copy a file (by absolute path) into assets/, returning the stored name. */
-  importAsset(path: string): Promise<string>;
+  /** Copy a file (by absolute path) into assets/, returning the stored name.
+   *  `name` (optional) is the desired stored filename (timestamped). */
+  importAsset(path: string, name?: string): Promise<string>;
   /** Native yes/no confirmation dialog. Returns true if the user confirms.
    *  Uses the GTK dialog plugin, NOT window.confirm — the latter silently
    *  returns true without showing anything in this WebKitGTK build, which would
@@ -206,6 +216,15 @@ class TauriBackend implements Backend {
   openExternal(url: string) {
     return this.call<void>("open_external", { url });
   }
+  openAsset(name: string) {
+    return this.call<void>("open_asset", { name });
+  }
+  listOrphanAssets() {
+    return this.call<AssetInfo[]>("list_orphan_assets");
+  }
+  trashAsset(name: string) {
+    return this.call<void>("trash_asset", { name });
+  }
   search(query: string, limit: number) {
     return this.call<RefGroup[]>("search", { query, limit });
   }
@@ -246,13 +265,13 @@ class TauriBackend implements Backend {
       const blob: Blob | null = await new Promise((res) => canvas.toBlob(res, "image/png"));
       if (!blob) return null;
       const bytes = new Uint8Array(await blob.arrayBuffer());
-      return await this.saveAsset(`image_${Date.now()}.png`, bytes);
+      return await this.saveAsset(assetFileName(), bytes);
     } catch {
       return null; // no image in clipboard, or plugin unavailable
     }
   }
-  importAsset(path: string) {
-    return this.call<string>("import_asset", { path });
+  importAsset(path: string, name?: string) {
+    return this.call<string>("import_asset", { path, name });
   }
   async confirm(message: string, title?: string): Promise<boolean> {
     const { ask } = await import("@tauri-apps/plugin-dialog");

@@ -142,6 +142,8 @@ const NAMED: PageDto[] = [
       b("in-block nested list:\n+ groceries\n  + milk\n  + eggs\n+ hardware"),
       b("TODO [#A] high-priority task"),
       b("Inline styles: **bold**, *italic*, ~~strike~~, ==highlight==, `code`"),
+      b("Video asset (plays inline where the codec is supported; otherwise a click-to-open chip):\n![](../assets/demo_clip.mp4)"),
+      b("Audio asset:\n![](../assets/voice_memo.mp3)"),
       b("Footnote reference[^1] in a sentence.\n[^1]: the footnote definition."),
       b("Video embed: {{video https://www.youtube.com/watch?v=dQw4w9WgXcQ}}"),
       b("Tweet embed: {{tweet https://twitter.com/logseq/status/123}}"),
@@ -386,8 +388,20 @@ export function mockBackend(): Backend {
     async pasteImage(): Promise<string | null> {
       return null; // no OS clipboard in the browser mock
     },
-    async importAsset(path: string): Promise<string> {
-      return path.split("/").pop() ?? path;
+    async importAsset(path: string, name?: string): Promise<string> {
+      return name ?? path.split("/").pop() ?? path;
+    },
+    async openAsset(): Promise<void> {
+      // no OS opener in the browser mock
+    },
+    async listOrphanAssets() {
+      return [
+        { name: "old_screenshot_20260601_091500.png", size: 184_320 },
+        { name: "unused_clip_20260512_140233.mp4", size: 5_242_880 },
+      ];
+    },
+    async trashAsset(): Promise<void> {
+      // no-op in the browser mock
     },
     async confirm(message: string): Promise<boolean> {
       // The browser/test env has a working global confirm (unlike the WebKitGTK

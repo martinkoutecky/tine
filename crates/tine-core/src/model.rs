@@ -126,6 +126,14 @@ pub struct TemplateDto {
     pub kind: PageKind,
 }
 
+/// An orphaned asset file (no block references it) — surfaced so the user can
+/// review + trash unused media. `size` in bytes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssetInfo {
+    pub name: String,
+    pub size: u64,
+}
+
 /// A full page as sent to / received from the frontend.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PageDto {
@@ -1354,6 +1362,66 @@ impl Graph {
         self.root.join("assets")
     }
 
+    /// Top-level `assets/` files that NO block references — orphans the user may
+    /// want to trash. Tine never auto-deletes assets (a deleted block keeps its
+    /// media as a safety net), so this is the discovery half of "find unused
+    /// media". Conservative: scans every block's `raw` + page `pre_block` for any
+    /// `assets/<name>` mention; skips subdirectories (PDF area-image stores) and
+    /// `.edn`/dotfiles (sidecars, not media) so nothing in use is ever flagged.
+    pub fn orphan_assets(&self) -> Vec<AssetInfo> {
+        let mut referenced: std::collections::HashSet<String> = std::collections::HashSet::new();
+        self.with_pages(|pages| {
+            for (_e, doc) in pages {
+                if let Some(pre) = &doc.pre_block {
+                    collect_asset_refs(pre, &mut referenced);
+                }
+                for b in &doc.roots {
+                    collect_block_asset_refs(b, &mut referenced);
+                }
+            }
+        });
+        let mut out = Vec::new();
+        let Ok(rd) = fs::read_dir(self.assets_path()) else { return out };
+        for entry in rd.flatten() {
+            let Ok(ft) = entry.file_type() else { continue };
+            if !ft.is_file() {
+                continue; // skip subdirs (PDF area-image stores, tied to a PDF)
+            }
+            let path = entry.path();
+            let Some(name) = path.file_name().and_then(|s| s.to_str()) else { continue };
+            // Sidecars/hidden files aren't user media; never flag them as orphans.
+            if name.starts_with('.') || name.ends_with(".edn") {
+                continue;
+            }
+            if referenced.contains(name) {
+                continue;
+            }
+            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            out.push(AssetInfo { name: name.to_string(), size });
+        }
+        out.sort_by(|a, b| a.name.cmp(&b.name));
+        out
+    }
+
+    /// Move an asset file to `logseq/.tine-trash` (recoverable), never a hard
+    /// delete by default. Refuses any name with a path separator (top-level
+    /// assets only) so it can't reach outside `assets/`.
+    pub fn trash_asset(&self, name: &str) -> io::Result<()> {
+        if name.is_empty() || name.contains('/') || name.contains('\\') {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "bad asset name"));
+        }
+        let src = self.assets_path().join(name);
+        if !src.is_file() {
+            return Err(io::Error::new(io::ErrorKind::NotFound, "no such asset"));
+        }
+        let trash = self.root.join("logseq").join(".tine-trash");
+        let dest = trash.join(format!("{}__{name}", trash_stamp()));
+        if fs::create_dir_all(&trash).is_err() || fs::rename(&src, &dest).is_err() {
+            fs::remove_file(&src)?;
+        }
+        Ok(())
+    }
+
     /// Read raw bytes of an asset (e.g. a PDF) for the viewer.
     pub fn read_asset(&self, name: &str) -> io::Result<Vec<u8>> {
         fs::read(self.assets_path().join(name))
@@ -1372,12 +1440,17 @@ impl Graph {
 
     /// Copy a file into `assets/`, returning the stored filename. De-duplicates
     /// against existing assets (never overwrites one already referenced by notes).
-    pub fn import_asset(&self, src: &Path) -> io::Result<String> {
-        let name = src
-            .file_name()
-            .and_then(|s| s.to_str())
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "bad source filename"))?
-            .to_string();
+    pub fn import_asset(&self, src: &Path, name: Option<&str>) -> io::Result<String> {
+        // Desired stored name (a timestamped name from the frontend), else the
+        // source basename. `reserve_asset` still dedups same-name collisions.
+        let name = match name {
+            Some(n) if !n.is_empty() => n.to_string(),
+            _ => src
+                .file_name()
+                .and_then(|s| s.to_str())
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "bad source filename"))?
+                .to_string(),
+        };
         let assets = self.assets_path();
         fs::create_dir_all(&assets)?;
         // Reserve the name (creating an empty placeholder so no concurrent writer
@@ -2118,6 +2191,41 @@ fn decode_page_name(stem: &str) -> String {
 
 /// A unique-ish label (epoch millis + process-local sequence) for trashed files,
 /// so deleting two pages with the same name doesn't collide in the trash.
+/// Collect every `assets/<name>` reference in `text` into `into`. Captures both
+/// markdown (`![](../assets/x.png)`, `[f](../assets/x.pdf)`) and org
+/// (`[[file:../assets/x.png]]`) forms — the name runs from after `assets/` to the
+/// next markup closer (`)`/`]`/quote/etc.) or line break. Crucially it does NOT
+/// stop at a space, so a referenced filename containing spaces is matched in full
+/// (mis-truncating it would make `orphan_assets` flag a file that IS in use). The
+/// first path segment is added too, so a PDF area-image ref (`assets/<key>/p.png`)
+/// marks `<key>` as in use.
+fn collect_asset_refs(text: &str, into: &mut std::collections::HashSet<String>) {
+    let mut rest = text;
+    while let Some(i) = rest.find("assets/") {
+        let after = &rest[i + "assets/".len()..];
+        let end = after
+            .find(|c: char| matches!(c, ')' | ']' | '"' | '\'' | '<' | '>' | '|' | '\n' | '\r' | '\t'))
+            .unwrap_or(after.len());
+        let name = &after[..end];
+        if !name.is_empty() {
+            into.insert(name.to_string());
+            if let Some(seg) = name.split('/').next() {
+                if seg != name {
+                    into.insert(seg.to_string());
+                }
+            }
+        }
+        rest = &after[end..];
+    }
+}
+
+fn collect_block_asset_refs(b: &DocBlock, into: &mut std::collections::HashSet<String>) {
+    collect_asset_refs(&b.raw, into);
+    for c in &b.children {
+        collect_block_asset_refs(c, into);
+    }
+}
+
 fn trash_stamp() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -2394,6 +2502,51 @@ mod tests {
         g.sync_file(&path);
         g.sync_file(&path);
         assert_eq!(g.cache_generation(), gen0, "unchanged read-only org reconciled spuriously");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn orphan_assets_lists_only_unreferenced_media() {
+        let dir = scratch("orphans");
+        let assets = dir.join("assets");
+        fs::create_dir_all(&assets).unwrap();
+        // Referenced by blocks (kept): an image, a pdf, a spaced-name clip.
+        fs::write(assets.join("used.png"), b"x").unwrap();
+        fs::write(assets.join("paper.pdf"), b"x").unwrap();
+        fs::write(assets.join("my clip.mp4"), b"x").unwrap();
+        // Not referenced (orphans).
+        fs::write(assets.join("stray.png"), b"x").unwrap();
+        fs::write(assets.join("old_video.webm"), b"x").unwrap();
+        // Sidecars / non-media — never flagged.
+        fs::write(assets.join("paper.edn"), b"{}").unwrap();
+        fs::create_dir_all(assets.join("paper")).unwrap(); // PDF area-image dir
+        fs::write(assets.join("paper").join("1_a_2.png"), b"x").unwrap();
+        fs::write(
+            dir.join("pages").join("P.md"),
+            "- ![](../assets/used.png)\n- [paper](../assets/paper.pdf)\n- ![](../assets/my clip.mp4)\n",
+        )
+        .unwrap();
+        let g = Graph::open(&dir);
+        let orphans: Vec<String> = g.orphan_assets().into_iter().map(|a| a.name).collect();
+        assert_eq!(orphans, vec!["old_video.webm".to_string(), "stray.png".to_string()]);
+        // Trash one → it moves out of assets/ into the recoverable trash.
+        g.trash_asset("stray.png").unwrap();
+        assert!(!assets.join("stray.png").exists());
+        assert!(dir.join("logseq").join(".tine-trash").exists());
+        // A name with a separator is refused (can't escape assets/).
+        assert!(g.trash_asset("../pages/P.md").is_err());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn import_asset_uses_given_name() {
+        let dir = scratch("import-name");
+        let src = dir.join("source.png");
+        fs::write(&src, b"img").unwrap();
+        let g = Graph::open(&dir);
+        let saved = g.import_asset(&src, Some("source_20260626_120000.png")).unwrap();
+        assert_eq!(saved, "source_20260626_120000.png");
+        assert!(dir.join("assets").join(&saved).exists());
         let _ = fs::remove_dir_all(&dir);
     }
 

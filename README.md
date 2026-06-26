@@ -102,6 +102,12 @@ raw speed. (Where a comparison is made, it's against current Logseq desktop core
   (`Alt+Shift+↑/↓`), multi-block selection → move / indent / cut / copy.
 - Multi-line blocks, syntax-highlighted code blocks, markdown tables; paste an indented outline →
   real block tree; paste clipboard images → graph assets.
+- **Media** — paste/import images, **video, and audio** (`/upload`); stored as `![](../assets/…)`
+  with a `name_yyyymmdd_hhmmss` filename (keeps the origin + a sortable insert time). Video/audio
+  play inline where the codec is supported, else fall back to a click-to-open chip that launches the
+  OS default player. **Orphaned-media cleanup** (Settings → Backups): scan for `assets/` files no
+  block references and move them to the recoverable trash — deleting a block never deletes its media,
+  so this is how unused files get reclaimed.
 - Inline formatting (`Mod+B/I`, strike, ==highlight==, link) with a floating selection toolbar, plus
   Emacs-style word/line kill motions.
 - **Callouts/admonitions** — both Obsidian-style `> [!note] …` and org `#+BEGIN_NOTE … #+END_NOTE`

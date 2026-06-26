@@ -926,10 +926,52 @@ fn read_asset(name: String, state: State<'_, AppState>) -> Result<tauri::ipc::Re
 }
 
 #[tauri::command]
-fn import_asset(path: String, state: State<'_, AppState>) -> Result<String, String> {
+fn import_asset(
+    path: String,
+    name: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
     with_graph(&state, |g| {
-        g.import_asset(std::path::Path::new(&path)).map_err(|e| e.to_string())
+        g.import_asset(std::path::Path::new(&path), name.as_deref()).map_err(|e| e.to_string())
     })
+}
+
+/// Open a graph asset (by its `assets/`-relative name) in the OS default app,
+/// e.g. a video/audio file in the system player. Path-gated to the assets dir
+/// (canonicalized) so a crafted name can't open a file outside the graph.
+#[tauri::command]
+fn open_asset(name: String, state: State<'_, AppState>) -> Result<(), String> {
+    let target = with_graph(&state, |g| {
+        let assets = g.assets_path();
+        let canon_assets = assets.canonicalize().map_err(|e| e.to_string())?;
+        let canon = assets.join(&name).canonicalize().map_err(|e| e.to_string())?;
+        if !canon.starts_with(&canon_assets) {
+            return Err("asset path escapes assets dir".to_string());
+        }
+        Ok(canon)
+    })?;
+    #[cfg(target_os = "linux")]
+    let prog = "xdg-open";
+    #[cfg(target_os = "macos")]
+    let prog = "open";
+    #[cfg(target_os = "windows")]
+    let prog = "explorer";
+    std::process::Command::new(prog).arg(&target).spawn().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Orphaned `assets/` files (no block references them) for the cleanup UI.
+#[tauri::command]
+fn list_orphan_assets(
+    state: State<'_, AppState>,
+) -> Result<Vec<tine_core::model::AssetInfo>, String> {
+    with_graph(&state, |g| Ok(g.orphan_assets()))
+}
+
+/// Move an orphaned asset to the recoverable trash.
+#[tauri::command]
+fn trash_asset(name: String, state: State<'_, AppState>) -> Result<(), String> {
+    with_graph(&state, |g| g.trash_asset(&name).map_err(|e| e.to_string()))
 }
 
 #[tauri::command]
@@ -1178,6 +1220,9 @@ fn main() {
             set_start_of_week,
             read_custom_css,
             open_external,
+            open_asset,
+            list_orphan_assets,
+            trash_asset,
             search,
             quick_switch,
             list_templates,

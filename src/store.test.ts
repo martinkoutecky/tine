@@ -19,6 +19,7 @@ import {
   indentBlock,
   outdentBlock,
   mergeWithPrev,
+  deleteBlock,
   toggleCollapse,
   takeCaretFor,
   visibleOrder,
@@ -777,5 +778,35 @@ describe("save engine (persistence)", () => {
     saveSpy.mockResolvedValue("rev3");
     expect(await forceSave("Test")).toBe(true);
     expect(saveSpy.mock.calls.at(-1)![2]).toBe(true); // force flag
+  });
+});
+
+describe("undo survives a self-write reload echo (Ctrl+Z of a delete)", () => {
+  const echo = (blocks: BlockDto[]): PageDto => ({
+    name: "Test",
+    kind: "page",
+    title: "Test",
+    pre_block: null,
+    blocks,
+  });
+
+  it("keeps the delete-undo entry when a reload's content matches memory", () => {
+    load([blk("keep"), blk("victim")]);
+    deleteBlock(doc.pages[0].roots[1]);
+    expect(shape()).toEqual([["keep"]]);
+    // The watcher re-reports our OWN just-saved content (identical) — this must NOT
+    // drop the undo entry we pushed for the delete.
+    reloadPage(echo([{ id: "x", raw: "keep", collapsed: false, children: [] }]));
+    undo();
+    expect(shape()).toEqual([["keep"], ["victim"]]); // deletion undone
+  });
+
+  it("still invalidates undo on a GENUINE external change", () => {
+    load([blk("keep"), blk("victim")]);
+    deleteBlock(doc.pages[0].roots[1]);
+    // Different content on disk → a real external edit → undo is (correctly) dropped.
+    reloadPage(echo([{ id: "x", raw: "changed elsewhere", collapsed: false, children: [] }]));
+    undo();
+    expect(shape()).toEqual([["changed elsewhere"]]); // undo was a no-op; external content kept
   });
 });

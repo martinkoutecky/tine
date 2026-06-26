@@ -175,11 +175,24 @@ function upsertPage(dto: PageDto) {
   // A real page with this name exists again → lift any delete tombstone so edits
   // to the freshly-(re)created page save normally.
   untombstone(dto.name);
+  const existing = doc.pages.find((p) => p.name === dto.name);
+  // Self-write echo: the watcher re-reported our OWN just-saved content (Tine's
+  // save normally suppresses this, but a synced/polled graph or a self-write-marker
+  // gap can still surface it). A reload here rebuilds the page AND calls
+  // invalidateUndoForPage, which would drop the undo entry we just pushed for the
+  // edit that produced this exact content — that's the "delete a line, Ctrl+Z does
+  // nothing" bug. If the incoming content is identical to what we already have, just
+  // refresh the save baseline and keep the working copy + undo intact. A GENUINE
+  // external change (content differs) still reloads + invalidates (data-safety #42).
+  if (existing && pageContentMatches(dto, existing)) {
+    setBaseRev(dto.name, dto.rev ?? null);
+    return;
+  }
   // Replacing an already-loaded copy means the page's content changed under us
   // (a conflict-resolution / watcher reload). Any undo entry predating this reload
   // is stale — replaying it would clobber the just-loaded (external) version, so
   // drop those entries. (A first load has no prior entries → no-op.)
-  const replacing = doc.pages.some((p) => p.name === dto.name);
+  const replacing = !!existing;
   // Record the load baseline (the on-disk rev) so saves conflict against it.
   setBaseRev(dto.name, dto.rev ?? null);
   setDoc(
@@ -192,6 +205,21 @@ function upsertPage(dto: PageDto) {
     })
   );
   if (replacing) invalidateUndoForPage(dto.name);
+}
+
+/** Whether a reload DTO carries the SAME content (page-property pre-block + every
+ *  block's raw + tree shape, ignoring block ids) as the page already in memory —
+ *  i.e. a self-write echo, not a real external change. Lets `upsertPage` skip a
+ *  needless reload that would otherwise reset block identities and invalidate the
+ *  undo history for content we already hold. */
+function pageContentMatches(dto: PageDto, page: FeedPage): boolean {
+  if ((dto.pre_block ?? null) !== (page.preBlock ?? null)) return false;
+  const eq = (b: BlockDto, id: string): boolean => {
+    const n = doc.byId[id];
+    if (!n || n.raw !== b.raw || n.children.length !== b.children.length) return false;
+    return b.children.every((cb, i) => eq(cb, n.children[i]));
+  };
+  return dto.blocks.length === page.roots.length && dto.blocks.every((b, i) => eq(b, page.roots[i]));
 }
 
 /** Load a page into the working set if it isn't already there (used by

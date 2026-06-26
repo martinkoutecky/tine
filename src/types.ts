@@ -44,6 +44,12 @@ export interface PageEntry {
   date_key: number | null;
 }
 
+/** An orphaned asset file (no block references it) — for the cleanup UI. */
+export interface AssetInfo {
+  name: string;
+  size: number;
+}
+
 export interface RefGroup {
   page: string;
   kind: PageKind;

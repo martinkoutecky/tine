@@ -54,6 +54,7 @@ import {
 } from "../editor/format";
 import { blockView } from "../render/block";
 import { BodyContent } from "../render/body";
+import { assetMarkdown, assetFileName } from "../media";
 import { calcSource, wrapCalc, evalCalc } from "../editor/calc";
 import { QueryMacro, EmbedMacro } from "./Macro";
 import { workflow, zoomInto, openContextMenu, openDatePicker, openBlockInSidebar, graphMeta, dataRev, setQueryBuilderAutoOpen, openPageProps } from "../ui";
@@ -533,12 +534,6 @@ function templateToOutline(
 // Markdown for a freshly saved asset: images embed inline, everything else
 // (PDFs included) becomes a link — a .pdf link renders as a clickable chip that
 // opens the PDF pane.
-function assetMarkdown(name: string): string {
-  return /\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i.test(name)
-    ? `![](../assets/${name})`
-    : `[${name}](../assets/${name})`;
-}
-
 // `onSubmit`/`onCancel` (set only by the quick-capture window) repurpose a plain
 // Enter / Escape when the autocomplete popup is closed: Enter commits the capture
 // instead of splitting the block, Escape dismisses instead of entering
@@ -757,7 +752,9 @@ export function Editor(props: { id: string }): JSX.Element {
     const path = await backend().pickFile();
     if (!path) return;
     try {
-      const saved = await backend().importAsset(path);
+      // Store with a timestamped name (keeps the original + a sortable insert time).
+      const orig = path.split(/[\\/]/).pop() || undefined;
+      const saved = await backend().importAsset(path, assetFileName(orig));
       const md = assetMarkdown(saved);
       const pos = ref.selectionStart;
       const nr = ref.value.slice(0, pos) + md + ref.value.slice(pos);
@@ -1190,7 +1187,7 @@ export function Editor(props: { id: string }): JSX.Element {
     void (async () => {
       const saved = await backend().pasteImage();
       if (!saved) return;
-      const md = `![](../assets/${saved})`;
+      const md = assetMarkdown(saved);
       const start = ref.selectionStart;
       const newRaw = ref.value.slice(0, start) + md + ref.value.slice(ref.selectionEnd);
       commit(newRaw);

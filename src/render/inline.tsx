@@ -3,6 +3,8 @@
 // is not being edited.
 
 import { For, Show, createMemo, createResource, createSignal, type JSX } from "solid-js";
+import { Dynamic } from "solid-js/web";
+import { mediaKind } from "../media";
 import { openPage, openPageInNewTab } from "../router";
 import { openPdf, openPageInSidebar, openPageContextMenu, setLightbox, graphEpoch } from "../ui";
 import { parseInline, type Seg, type Format } from "./parseInline";
@@ -130,8 +132,12 @@ function renderSeg(s: Seg, blockId?: string): JSX.Element {
         </a>
       );
     }
-    case "image":
+    case "image": {
+      // `![](…)` is reused for video/audio (like OG) — route those to a player.
+      const k = mediaKind(s.url);
+      if (k === "video" || k === "audio") return <MediaEmbed url={s.url} kind={k} />;
       return <AssetImage url={s.url} alt={s.alt} width={s.width} height={s.height} />;
+    }
     case "footnote":
       return <sup class="footnote-ref">{s.id}</sup>;
     case "timestamp":
@@ -243,6 +249,51 @@ function AssetImage(props: { url: string; alt: string; width?: string; height?: 
         alt={props.alt}
         style={dim()}
         onClick={(e) => { e.stopPropagation(); setLightbox(src()!); }}
+      />
+    </Show>
+  );
+}
+
+// Video/audio asset: try inline playback (a streaming-ish blob-URL <video>/<audio
+// controls>), and on a media error — typically WebKitGTK lacking the mp4/h264
+// codec — fall back to a click-to-open chip that launches the OS default player.
+// Matches the user's "inline when it works, otherwise open externally" intent.
+function MediaEmbed(props: { url: string; kind: "video" | "audio" }): JSX.Element {
+  const [failed, setFailed] = createSignal(false);
+  const external = /^(https?:|data:|blob:)/.test(props.url);
+  const rel = () => assetRelPath(props.url);
+  // Graph assets load over IPC into a blob URL (lazy); external URLs play directly.
+  const [blob] = createResource(
+    () => (external ? null : rel()),
+    async (r) => (r ? await loadAssetBlob(r) : "")
+  );
+  const src = () => (external ? props.url : blob());
+  const label = () =>
+    decodeURIComponent((rel() || props.url).split("/").pop() || props.url);
+  const open = (e: MouseEvent) => {
+    e.stopPropagation();
+    const r = rel();
+    if (r && !external) void backend().openAsset(r);
+    else void backend().openExternal(props.url);
+  };
+  return (
+    <Show
+      when={!failed() && src()}
+      fallback={
+        <a class="media-chip" classList={{ audio: props.kind === "audio" }} onClick={open} title="Open in the default player">
+          <span class="media-chip-icon">{props.kind === "audio" ? "♪" : "▶"}</span>
+          {label()}
+        </a>
+      }
+    >
+      <Dynamic
+        component={props.kind}
+        class="media-embed"
+        classList={{ "media-audio": props.kind === "audio" }}
+        controls={true}
+        src={src()!}
+        onError={() => setFailed(true)}
+        onClick={(e: MouseEvent) => e.stopPropagation()}
       />
     </Show>
   );

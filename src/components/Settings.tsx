@@ -41,6 +41,7 @@ import { commandDefaults, eventToBindingString, setKeybindingsSuspended } from "
 import { switchGraph, loadGraphPath } from "../graph";
 import { flushAll } from "../store";
 import { backend, type BackupInfo } from "../backend";
+import type { AssetInfo } from "../types";
 
 type Tab = "appearance" | "tasks" | "backups" | "graph" | "shortcuts";
 const TABS: { id: Tab; label: string }[] = [
@@ -137,6 +138,7 @@ export function Settings(): JSX.Element {
               </Show>
               <Show when={tab() === "backups"}>
                 <BackupsTab />
+                <AssetsTab />
               </Show>
               <Show when={tab() === "graph"}>
                 <GraphTab publishMsg={publishMsg()} doPublish={doPublish} />
@@ -679,6 +681,91 @@ function BackupsTab(): JSX.Element {
             )}
           </For>
         </div>
+      </Show>
+    </>
+  );
+}
+
+// Orphaned-media cleanup: scan (on demand — it parses the whole graph) for
+// assets/ files no block links to, and let the user move them to the recoverable
+// trash. Tine never auto-deletes media (a deleted block keeps its files), so this
+// is how unused media gets cleaned up.
+function AssetsTab(): JSX.Element {
+  const [list, setList] = createSignal<AssetInfo[]>([]);
+  const [busy, setBusy] = createSignal(false);
+  const [scanned, setScanned] = createSignal(false);
+
+  const fmtSize = (n: number) =>
+    n >= 1 << 20 ? `${(n / (1 << 20)).toFixed(1)} MB` : n >= 1024 ? `${Math.round(n / 1024)} KB` : `${n} B`;
+  const total = () => list().reduce((s, a) => s + a.size, 0);
+
+  const refresh = async () => {
+    setBusy(true);
+    try {
+      // Persist edits first so a just-deleted block's media counts as orphaned
+      // (and a just-inserted one counts as referenced).
+      await flushAll();
+      setList(await backend().listOrphanAssets());
+      setScanned(true);
+    } catch (e) {
+      pushToast(`Scan failed: ${String(e)}`, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const trash = async (a: AssetInfo) => {
+    if (
+      !(await backend().confirm(
+        `Move “${a.name}” to the trash?\n\n` +
+          `No block links to it. It moves to logseq/.tine-trash (recoverable), not a permanent delete.`
+      ))
+    )
+      return;
+    try {
+      await backend().trashAsset(a.name);
+      setList((l) => l.filter((x) => x.name !== a.name));
+      pushToast(`Moved ${a.name} to trash`, "success");
+    } catch (e) {
+      pushToast(`Couldn’t trash: ${String(e)}`, "error");
+    }
+  };
+
+  return (
+    <>
+      <div class="settings-section" style={{ "margin-top": "18px" }}>
+        Orphaned media
+        <button class="settings-btn" style={{ "margin-left": "10px" }} disabled={busy()} onClick={() => void refresh()}>
+          {busy() ? "Scanning…" : scanned() ? "Rescan" : "Scan for orphans"}
+        </button>
+      </div>
+      <div class="settings-hint settings-block">
+        Files in <code>assets/</code> that no block links to. Deleting a block never
+        deletes its media (a safety net), so unused files can accumulate — review and
+        trash them here. Trashed files move to <code>logseq/.tine-trash</code> (recoverable).
+      </div>
+      <Show when={scanned()}>
+        <Show
+          when={list().length}
+          fallback={<div class="settings-hint settings-block">No orphaned media — every asset is referenced. 🎉</div>}
+        >
+          <div class="settings-hint settings-block">
+            {list().length} orphan{list().length === 1 ? "" : "s"} · {fmtSize(total())} reclaimable
+          </div>
+          <div class="settings-backups">
+            <For each={list()}>
+              {(a) => (
+                <div class="settings-backup-row">
+                  <span class="settings-backup-when mono">{a.name}</span>
+                  <span class="settings-backup-files mono">{fmtSize(a.size)}</span>
+                  <button class="settings-btn" onClick={() => void trash(a)}>
+                    Trash
+                  </button>
+                </div>
+              )}
+            </For>
+          </div>
+        </Show>
       </Show>
     </>
   );
