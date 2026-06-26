@@ -140,6 +140,14 @@ const NAMED: PageDto[] = [
       b("Task markers: TODO a, DOING b, NOW c, LATER d, WAIT e, DONE f"),
       b("in-block checklist (+ list inside one bullet — ticks in OG/mobile):\n+ [ ] pack toothbrush\n+ [x] pack charger\n+ [ ] pack passport"),
       b("in-block nested list:\n+ groceries\n  + milk\n  + eggs\n+ hardware"),
+      b("Numbered list (logseq.order-list-type — the block itself is numbered):", [
+        b("Bump the version\nlogseq.order-list-type:: number"),
+        b("Tag and push\nlogseq.order-list-type:: number", [
+          b("run the test suite\nlogseq.order-list-type:: number"),
+          b("build the installers\nlogseq.order-list-type:: number"),
+        ]),
+        b("Announce on Discord\nlogseq.order-list-type:: number"),
+      ]),
       b("TODO [#A] high-priority task"),
       b("Inline styles: **bold**, *italic*, ~~strike~~, ==highlight==, `code`"),
       b("Video asset (plays inline where the codec is supported; otherwise a click-to-open chip):\n![](../assets/demo_clip.mp4)"),

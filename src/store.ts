@@ -739,6 +739,11 @@ export function splitBlock(id: string, offset: number) {
   const before = visible.slice(0, offset);
   const after = visible.slice(offset);
   const pageName = node.page;
+  // Ordered-list items propagate: a block split off an ordered item is itself
+  // ordered (OG inherits `:logseq.order-list-type`), toggleable per-block later.
+  const ordered = isOrdered(id);
+  const orderedAfter = ordered ? joinProps(after, `${ORDER_KEY}:: number`) : after;
+  const orderedEmpty = ordered ? `${ORDER_KEY}:: number` : "";
 
   // Caret-at-start case (blank before, content after): create a NEW EMPTY block
   // *before* the current one. The current block keeps its uuid, its content, and
@@ -752,7 +757,7 @@ export function splitBlock(id: string, offset: number) {
     setDoc(
       produce((s) => {
         s.byId[emptyId] = {
-          id: emptyId, raw: "", collapsed: false, parent: node.parent, page: pageName, children: [],
+          id: emptyId, raw: orderedEmpty, collapsed: false, parent: node.parent, page: pageName, children: [],
         };
         const sibs = node.parent === null
           ? s.pages[s.pages.findIndex((p) => p.name === pageName)].roots
@@ -773,12 +778,12 @@ export function splitBlock(id: string, offset: number) {
       const hasVisibleChildren = node.children.length > 0 && !node.collapsed;
       if (hasVisibleChildren) {
         s.byId[newId] = {
-          id: newId, raw: after, collapsed: false, parent: id, page: pageName, children: [],
+          id: newId, raw: orderedAfter, collapsed: false, parent: id, page: pageName, children: [],
         };
         s.byId[id].children.unshift(newId);
       } else {
         s.byId[newId] = {
-          id: newId, raw: after, collapsed: false, parent: node.parent, page: pageName, children: [],
+          id: newId, raw: orderedAfter, collapsed: false, parent: node.parent, page: pageName, children: [],
         };
         const sibs = node.parent === null
           ? s.pages[s.pages.findIndex((p) => p.name === pageName)].roots
@@ -1009,6 +1014,50 @@ export function setPageProperty(pageName: string, key: string, value: string | n
 /** Toggle a property: set it to `value`, or remove it if already that value. */
 export function toggleBlockProperty(id: string, key: string, value: string) {
   setBlockProperty(id, key, blockProperty(id, key) === value ? null : value);
+}
+
+const ORDER_KEY = "logseq.order-list-type";
+function isOrdered(id: string | null | undefined): boolean {
+  return !!id && blockProperty(id, ORDER_KEY) === "number";
+}
+function toLetters(n: number): string {
+  let s = "";
+  while (n > 0) {
+    const r = (n - 1) % 26;
+    s = String.fromCharCode(97 + r) + s;
+    n = Math.floor((n - 1) / 26);
+  }
+  return s || "a";
+}
+function toRoman(n: number): string {
+  const map: [number, string][] = [
+    [1000, "m"], [900, "cm"], [500, "d"], [400, "cd"], [100, "c"], [90, "xc"],
+    [50, "l"], [40, "xl"], [10, "x"], [9, "ix"], [5, "v"], [4, "iv"], [1, "i"],
+  ];
+  let s = "";
+  for (const [v, sym] of map) while (n >= v) { s += sym; n -= v; }
+  return s || "i";
+}
+
+/** The ordered-list label for a block whose `logseq.order-list-type` is `number`
+ *  (else null) — the block's OWN bullet, like OG. The index counts this block
+ *  plus the run of consecutive ordered siblings immediately before it; the glyph
+ *  cycles number → letter → roman by the depth of consecutive ordered ancestors
+ *  (mod 3), so nested ordered lists read 1. → a. → i. like OG. */
+export function orderedListMarker(id: string): string | null {
+  const node = doc.byId[id];
+  if (!node || !isOrdered(id)) return null;
+  const siblings = node.parent
+    ? doc.byId[node.parent]?.children
+    : doc.pages.find((p) => p.name === node.page)?.roots;
+  let idx = 1;
+  if (siblings) {
+    for (let i = siblings.indexOf(id) - 1; i >= 0 && isOrdered(siblings[i]); i--) idx++;
+  }
+  let depth = 0;
+  for (let p = node.parent; isOrdered(p); p = doc.byId[p!]?.parent ?? null) depth++;
+  const delta = depth % 3;
+  return delta === 0 ? String(idx) : delta === 1 ? toLetters(idx) : toRoman(idx);
 }
 
 /** Tick/untick a checkbox on one line of an in-block `+ [ ]` markdown list,

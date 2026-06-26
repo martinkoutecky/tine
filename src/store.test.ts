@@ -41,6 +41,8 @@ import {
   exportNodesFor,
   prevVisible,
   nextVisible,
+  orderedListMarker,
+  blockProperty,
 } from "./store";
 import { exportOutline, DEFAULT_EXPORT_OPTIONS } from "./editor/exportText";
 import { splitProps, joinProps, isBuiltinHidden, hideAll } from "./editor/properties";
@@ -70,6 +72,34 @@ function shape(ids: string[] = doc.pages[0].roots): any[] {
 beforeEach(() => {
   counter = 0;
   resetStore();
+});
+
+describe("ordered list (logseq.order-list-type)", () => {
+  const ORD = "logseq.order-list-type:: number";
+  it("numbers the block itself across consecutive ordered siblings", () => {
+    load([blk(`one\n${ORD}`), blk(`two\n${ORD}`), blk("plain"), blk(`three\n${ORD}`)]);
+    const [a, b, c, d] = doc.pages[0].roots;
+    expect(orderedListMarker(a)).toBe("1");
+    expect(orderedListMarker(b)).toBe("2");
+    expect(orderedListMarker(c)).toBe(null);
+    expect(orderedListMarker(d)).toBe("1"); // the run restarts after the plain block
+  });
+
+  it("uses letters for a nested ordered list (ordered-ancestor depth 1)", () => {
+    load([blk(`parent\n${ORD}`, [blk(`child\n${ORD}`)])]);
+    const parent = doc.pages[0].roots[0];
+    const child = doc.byId[parent].children[0];
+    expect(orderedListMarker(parent)).toBe("1");
+    expect(orderedListMarker(child)).toBe("a");
+  });
+
+  it("Enter on an ordered item makes the new sibling ordered too", () => {
+    const dto = load([blk(`item\n${ORD}`)]);
+    splitBlock(dto.blocks[0].id, 4); // caret after "item"
+    const newId = doc.pages[0].roots[1];
+    expect(blockProperty(newId, "logseq.order-list-type")).toBe("number");
+    expect(orderedListMarker(newId)).toBe("2");
+  });
 });
 
 describe("split (Enter)", () => {

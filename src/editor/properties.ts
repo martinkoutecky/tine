@@ -3,11 +3,12 @@
 
 export const PROP_LINE = /^([A-Za-z0-9_./-]+):: ?(.*)$/;
 
-// Built-in properties hidden from the editor by default (like OG): `id::` and
-// `collapsed::` are kept in the file for persistence but never shown in the edit
-// textarea. Annotation (PDF highlight) blocks instead hide ALL properties and
-// edit only their text.
-const BUILTIN_HIDDEN = new Set(["id", "collapsed"]);
+// Built-in properties hidden from the editor by default (like OG): `id::`,
+// `collapsed::`, and `logseq.order-list-type::` (the numbered-list marker) are
+// kept in the file for persistence but never shown in the edit textarea.
+// Annotation (PDF highlight) blocks instead hide ALL properties and edit only
+// their text.
+const BUILTIN_HIDDEN = new Set(["id", "collapsed", "logseq.order-list-type"]);
 /** Hide just the built-in `id::`/`collapsed::` properties (normal blocks). */
 export const isBuiltinHidden = (key: string): boolean => BUILTIN_HIDDEN.has(key);
 /** Hide every property (annotation blocks edit only their text). */

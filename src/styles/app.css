@@ -1403,21 +1403,20 @@ body {
   margin: -1px -6px;
 }
 
-/* Numbered list: replace the bullet dot with a CSS counter. */
-.block-children.ordered {
-  counter-reset: ol;
+/* Numbered list: the block's OWN bullet becomes its ordinal (OG numbers the
+   block itself, computed per-sibling in store.ts — not a CSS counter on the
+   children). The label replaces the dot but keeps the bullet's click target. */
+.bullet-container.ordered {
+  width: auto;
+  min-width: 18px;
 }
-.block-children.ordered > .ls-block > .block-main > .block-controls {
-  counter-increment: ol;
-}
-.block-children.ordered > .ls-block > .block-main > .block-controls .bullet {
-  display: none;
-}
-.block-children.ordered > .ls-block > .block-main > .block-controls .bullet-container::after {
-  content: counter(ol) ".";
+.bullet-order {
   color: var(--text-secondary);
   font-size: 14px;
+  line-height: 1;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: pointer;
 }
 
 .journal-title {

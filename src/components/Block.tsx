@@ -38,6 +38,7 @@ import {
   persistBlockRefTarget,
   isBlockMoving,
   setBlockMoving,
+  orderedListMarker,
 } from "../store";
 import { parseOutline } from "../editor/outline";
 import {
@@ -178,6 +179,9 @@ export function Block(props: { id: string }): JSX.Element {
     editingId() === props.id && (editingOwner() === null || editingOwner() === instanceId);
   const hasChildren = () => node().children.length > 0;
   const collapsed = () => node().collapsed;
+  // Ordered-list label for THIS block's own bullet (OG numbers the block itself,
+  // not its children); null for a normal bullet.
+  const orderMarker = () => orderedListMarker(props.id);
   // An org page Tine can't round-trip is shown but NOT editable (Tine must never
   // rewrite it). Clicking a block doesn't enter the editor on such a page.
   const readOnly = () => pageByName(node().page)?.readOnly ?? false;
@@ -213,7 +217,7 @@ export function Block(props: { id: string }): JSX.Element {
           </span>
           <span
             class="bullet-container"
-            classList={{ "bullet-closed": collapsed() && hasChildren() }}
+            classList={{ "bullet-closed": collapsed() && hasChildren(), ordered: !!orderMarker() }}
             title="Click to zoom; shift-click → sidebar; middle-click → new tab; drag to move"
             onMouseDown={(e) => {
               if (e.button === 0) beginDrag(props.id, e);
@@ -232,7 +236,9 @@ export function Block(props: { id: string }): JSX.Element {
               openPageInNewTab(ref.page, ref.pageKind, ref.uuid);
             }}
           >
-            <span class="bullet" />
+            <Show when={orderMarker()} fallback={<span class="bullet" />}>
+              <span class="bullet-order">{orderMarker()}.</span>
+            </Show>
           </span>
         </div>
 
@@ -255,7 +261,7 @@ export function Block(props: { id: string }): JSX.Element {
       <Show when={hasChildren() && !collapsed()}>
         <div class="block-children-container">
           <div class="block-children-left-border" />
-          <div class="block-children" classList={{ ordered: /(?:^|\n)logseq\.order-list-type:: ?number/.test(node().raw) }}>
+          <div class="block-children">
             <For each={node().children}>{(cid) => <Block id={cid} />}</For>
           </div>
         </div>
@@ -929,12 +935,18 @@ export function Editor(props: { id: string }): JSX.Element {
   // wrapped line isn't treated as one line). Off the edge → return false so the
   // textarea extends the selection by a wrapped line natively.
   const selectBlockCmd = (e: KeyboardEvent, dir: 1 | -1): boolean => {
-    const start = ref.selectionStart;
     const raw = ref.value;
+    // Test the ACTIVE end of the selection (the one Shift+Arrow moves), not the
+    // anchor: when a selection is extended down through a multiline block, the
+    // caret is at selectionEnd while selectionStart stays put up top — using the
+    // anchor meant a multiline block never reached the "last row" test, so it
+    // never switched from text-selection to block-selection (a single-line block
+    // happened to work because anchor == caret).
+    const caret = ref.selectionDirection === "backward" ? ref.selectionStart : ref.selectionEnd;
     const atEdge =
       dir > 0
-        ? !raw.slice(start).includes("\n") && caretAtLastRow(ref, start)
-        : !raw.slice(0, start).includes("\n") && caretAtFirstRow(ref, start);
+        ? !raw.slice(caret).includes("\n") && caretAtLastRow(ref, caret)
+        : !raw.slice(0, caret).includes("\n") && caretAtFirstRow(ref, caret);
     if (!atEdge) return false;
     e.preventDefault();
     commit(raw);
