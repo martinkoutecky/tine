@@ -14,6 +14,7 @@ import { LinkedReferences } from "./LinkedReferences";
 import { UnlinkedReferences } from "./UnlinkedReferences";
 import { QueryMacro } from "./Macro";
 import { NamespaceCrumb, NamespaceChildren } from "./Namespace";
+import { QuickCapture } from "./QuickCapture";
 import { pageProperties, aliasNames, blockView } from "../render/block";
 import { InlineText } from "../render/inline";
 import { journalTitle } from "../journal";
@@ -202,6 +203,11 @@ export function PageView(): JSX.Element {
     <Show when={ready() && doc.loaded} fallback={<div class="page-loading" />}>
       <Show when={zoomValid()} fallback={
         <div class="page">
+          {/* Journal-top quick capture: new page (title filled) or appended to
+              today (title empty), Ctrl-Shift-Enter to submit. */}
+          <Show when={route().kind === "journals"}>
+            <QuickCapture />
+          </Show>
           <For each={mainPages()}>
             {(p, i) => (
               <>
