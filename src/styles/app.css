@@ -1623,25 +1623,6 @@ body {
 
 .page-section {
   padding-bottom: 18px;
-  /* Skip layout/paint of off-screen journal days so deep scrolling stays cheap
-     (the feed never unmounts — it only grows — so without this every loaded day
-     repaints on every frame). `auto` lets WebKit remember each day's real height
-     once rendered, so the scrollbar doesn't jump; 600px is the first guess for a
-     never-yet-seen day. No-ops on WebKitGTK < ~2.46 (degrades safely). */
-  content-visibility: auto;
-  contain-intrinsic-size: auto 600px;
-}
-
-/* content-visibility's paint containment CLIPS overflow. The editor popups
-   (autocomplete, slash menu, block-ref preview, format toolbar) are
-   position:absolute INSIDE a block and hang past the section box, so a clipped
-   section would cut them off when you edit/hover the last block of a day. The
-   section you're actually interacting with is on-screen regardless, so drop the
-   optimization whenever it's focused or hovered — we keep the off-screen skip
-   (the real win) and never clip a live popup. */
-.page-section:focus-within,
-.page-section:hover {
-  content-visibility: visible;
 }
 
 .page-section + .page-section {

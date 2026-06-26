@@ -21,8 +21,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
-- **Smoother deep scrolling.** Off-screen journal days are no longer repainted
-  every frame, so scrolling a long feed stays cheap as more days load.
 - **`/priority` now leaves a trailing space** so the next word or `/command`
   flows without manually adding one. The convenience space is never saved
   (trailing whitespace is trimmed, matching Logseq).
