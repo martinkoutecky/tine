@@ -248,15 +248,18 @@ npm install                  # first time
 npx tauri build --no-bundle
 
 # Run it against your graph:
-TINE_GPU=1 TINE_GRAPH=/path/to/your/graph ./target/release/tine
+TINE_GRAPH=/path/to/your/graph ./target/release/tine
 ```
 
 - Point `TINE_GRAPH` at the same `journals/` + `pages/` + `logseq/config.edn` tree you use with
   Logseq. **Run one app at a time** on a given graph.
-- `TINE_GPU=1` enables GPU compositing (smooth scrolling). It's off by default because some
-  GPU/compositor combos abort WebKitGTK's DMABUF renderer; leave it unset if the window fails to
-  appear.
-- Prefer the **raw binary** over an AppImage on Linux — a bundled Mesa can clash with the host GPU.
+- **GPU compositing (smooth scrolling) is on by default.** On the rare GPU/compositor combo where
+  WebKitGTK's DMABUF renderer aborts (the window fails to appear, or you see
+  `EGL_BAD_PARAMETER` on the console), set `TINE_GPU=0` to fall back to software rendering — slower,
+  but it always starts. If Tine detects it's painting on the CPU it now says so with a banner.
+- Prefer the **raw binary** over an AppImage on Linux — an AppImage's bundled graphics libraries can
+  clash with the host GPU and silently drop you to (slow) software rendering. The `.deb`/`.rpm`
+  packages use your system's drivers and don't have this problem.
 
 **Global quick-capture:** bind your desktop environment's keyboard settings to run
 `tine --capture` (a second launch is routed to the running instance via single-instance).

@@ -737,7 +737,7 @@ export function closeSettings() {
 export interface Toast {
   id: number;
   message: string;
-  kind: "info" | "success" | "error";
+  kind: "info" | "success" | "warn" | "error";
   sticky?: boolean; // stays until the user closes it (✕); no auto-dismiss
 }
 let toastSeq = 0;

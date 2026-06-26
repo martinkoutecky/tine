@@ -148,6 +148,21 @@ export interface Backend {
   loadSession(): Promise<string | null>;
   /** Persist the UI session JSON. */
   saveSession(data: string): Promise<void>;
+  /** What the backend knows about the rendering path, for the CPU-rendering
+   *  warning (see `gpu.ts`). A silent driver fallback is detected in the webview
+   *  (WebGL renderer); this just supplies why/where context for the message. */
+  gpuEnv(): Promise<GpuEnv>;
+}
+
+/** Backend-visible rendering-environment facts (Linux-relevant; all false on
+ *  macOS/Windows where the env vars don't exist). */
+export interface GpuEnv {
+  /** GPU compositing is off because an env var disabled it (TINE_GPU=0 or
+   *  WEBKIT_DISABLE_DMABUF_RENDERER / WEBKIT_DISABLE_COMPOSITING_MODE). */
+  software_forced: boolean;
+  /** Running from an AppImage (`$APPIMAGE` set) — its bundled GL stack is the
+   *  usual culprit for a silent CPU fallback; steer the user to the deb/rpm. */
+  appimage: boolean;
 }
 
 export interface BackupInfo {
@@ -409,6 +424,9 @@ class TauriBackend implements Backend {
   }
   saveSession(data: string) {
     return this.call<void>("save_session", { data });
+  }
+  gpuEnv() {
+    return this.call<GpuEnv>("gpu_env");
   }
 }
 

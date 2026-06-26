@@ -52,6 +52,7 @@ import {
 import { applyZoom, installInterfaceZoomKeys, installInterfaceZoomWheel } from "./zoom";
 import { editingId, flushAll, appendToTodayJournal } from "./store";
 import { backend, isTauri } from "./backend";
+import { warnIfSoftwareRendering } from "./gpu";
 import { WindowControls, ResizeGrips, installWindowChrome, maximized } from "./components/WindowChrome";
 
 export function App(): JSX.Element {
@@ -59,6 +60,11 @@ export function App(): JSX.Element {
     const graphPath = persistedGraphPath() || ((window as any).__GRAPH_PATH__ ?? "");
     await loadGraphPath(graphPath);
   });
+
+  // Warn (loudly) if the webview is painting on the CPU — Tine's whole pitch is
+  // speed, so a silent software-rendering fallback shouldn't read as "Tine is
+  // slow". Fire-and-forget; the probe is Tauri-gated and never throws.
+  onMount(() => void warnIfSoftwareRendering());
 
   // Persist pending edits before the window closes — the 400ms save debounce
   // would otherwise drop the last keystrokes typed right before quitting.

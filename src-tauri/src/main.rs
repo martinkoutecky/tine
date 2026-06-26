@@ -387,6 +387,35 @@ fn set_capture_enter_files(value: bool, app: tauri::AppHandle) -> Result<(), Str
     Ok(())
 }
 
+/// What the backend knows about the rendering path, so the UI can warn — loudly
+/// — when Tine is painting on the CPU. Speed is the whole pitch, and a silent
+/// software-rendering fallback makes scrolling feel sluggish; better to say so.
+/// `software_forced` is true only when we *know* GPU compositing is off because
+/// an env var disabled it: TINE_GPU=0 (we then set WEBKIT_DISABLE_DMABUF_RENDERER
+/// just above in `main`), or the user set WEBKIT_DISABLE_DMABUF_RENDERER /
+/// WEBKIT_DISABLE_COMPOSITING_MODE themselves. A *silent* driver/EGL fallback
+/// (DMABUF requested but EGL init failed) does NOT show up here — that's detected
+/// in the webview from the WebGL renderer string (llvmpipe/swrast ⇒ software).
+/// `appimage` lets the message steer AppImage users to the deb/rpm, which use the
+/// host graphics stack instead of the bundled one. Env reads are cross-platform
+/// (these vars are simply absent on macOS/Windows ⇒ both false).
+#[derive(serde::Serialize)]
+struct GpuEnv {
+    software_forced: bool,
+    appimage: bool,
+}
+
+#[tauri::command]
+fn gpu_env() -> GpuEnv {
+    let set = |k: &str| std::env::var_os(k).is_some();
+    GpuEnv {
+        software_forced: set("WEBKIT_DISABLE_DMABUF_RENDERER")
+            || set("WEBKIT_DISABLE_COMPOSITING_MODE")
+            || std::env::var("TINE_GPU").as_deref() == Ok("0"),
+        appimage: set("APPIMAGE"),
+    }
+}
+
 /// How the file-watcher detects external changes (device-local, in
 /// tine-settings.json): "inotify" (default) → a real OS watcher, no idle
 /// wakeups; "poll" → a 3s mtime scan for filesystems where inotify is flaky
@@ -1342,7 +1371,8 @@ fn main() {
             list_backups,
             restore_backup,
             load_session,
-            save_session
+            save_session,
+            gpu_env
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

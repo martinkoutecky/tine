@@ -6,6 +6,24 @@ outliner that reads and writes a real Logseq Markdown (and now Org) graph.
 The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Software-rendering warning.** If Tine detects it's painting on the CPU
+  (GPU acceleration unavailable — most often an AppImage whose bundled graphics
+  libraries don't match your system), it shows a banner explaining why scrolling
+  may feel slow and how to get the fast path back. Speed is the whole point; a
+  silent fallback shouldn't read as "Tine is slow."
+
+### Changed
+
+- **Smoother deep scrolling.** Off-screen journal days are no longer repainted
+  every frame, so scrolling a long feed stays cheap as more days load.
+- **`/priority` now leaves a trailing space** so the next word or `/command`
+  flows without manually adding one. The convenience space is never saved
+  (trailing whitespace is trimmed, matching Logseq).
+
 ## [0.2.0] — 2026-06-26
 
 The big one: **Tine now opens, renders, and edits Org-mode graphs**, gets real
@@ -93,5 +111,6 @@ takes over your graph.
 - macOS and Windows installers are currently **unsigned** — on macOS right-click →
   Open; on Windows choose *More info → Run anyway*.
 
+[Unreleased]: https://github.com/martinkoutecky/tine/compare/v0.2.0...HEAD
 [0.2.0]: https://github.com/martinkoutecky/tine/releases/tag/v0.2.0
 [0.1.0]: https://github.com/martinkoutecky/tine/releases/tag/v0.1.0
