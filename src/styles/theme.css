@@ -1,8 +1,8 @@
 /* Theme tokens ported from Logseq's classic light/dark. */
 
 :root {
-  --ls-font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-    "Helvetica Neue", Arial, sans-serif;
+  --ls-font-family: "Inter", "Noto Color Emoji", -apple-system, BlinkMacSystemFont,
+    "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --ls-font-mono: "MonoLisa", "Fira Code", "JetBrains Mono", Menlo, Monaco, Consolas,
     "Courier New", monospace;
 
@@ -24,6 +24,9 @@
 }
 
 html[data-theme="light"] {
+  /* Make native form controls (number-input spinners, default scrollbars, etc.)
+     follow the theme — a light theme keeps light spinners. */
+  color-scheme: light;
   --bg-primary: #ffffff;
   --bg-secondary: #f7f7f7;
   --bg-tertiary: #eaeaea;
@@ -56,6 +59,9 @@ html[data-theme="light"] {
 }
 
 html[data-theme="dark"] {
+  /* Dark spinners/scrollbars on the native form controls (e.g. the number-input
+     up/down arrows in Settings) instead of white-on-dark. */
+  color-scheme: dark;
   --bg-primary: #1a1b1e;
   --bg-secondary: #25262b;
   --bg-tertiary: #2f3035;

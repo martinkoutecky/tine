@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@fontsource/inter": "^5.2.8",
+    "@fontsource/noto-color-emoji": "^5.2.12",
     "@tauri-apps/api": "^2.1.1",
     "@tauri-apps/plugin-clipboard-manager": "^2.3.2",
     "@tauri-apps/plugin-dialog": "^2.7.1",
