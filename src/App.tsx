@@ -388,14 +388,17 @@ export function App(): JSX.Element {
           </div>
         </header>
         <ConflictBar />
-        <main class="main-content">
-          <div class="main-content-inner">
-            <PageView />
-          </div>
-        </main>
-      </div>
-      <RightSidebar />
-      <Show when={pdfTarget()}>
+        {/* Everything below the topbar lives in this row, so the topbar (and its
+            window controls at the far right) spans the full window width and the
+            right sidebar / PDF pane sit UNDER it — not beside the close button. */}
+        <div class="content-row">
+          <main class="main-content">
+            <div class="main-content-inner">
+              <PageView />
+            </div>
+          </main>
+          <RightSidebar />
+          <Show when={pdfTarget()}>
         <div class="pdf-pane" style={{ flex: `0 0 ${pdfPaneWidth()}px`, width: `${pdfPaneWidth()}px` }}>
           <div
             class="pdf-pane-resizer"
@@ -422,7 +425,9 @@ export function App(): JSX.Element {
             />
           </Suspense>
         </div>
-      </Show>
+          </Show>
+        </div>
+      </div>
       <Show when={focusMode()}>
         <button class="focus-exit" title="Exit focus (Esc)" onClick={() => void exitFocusMode()}>
           <svg viewBox="0 0 24 24" class="nav-icon">

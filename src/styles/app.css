@@ -75,6 +75,17 @@ body {
   overflow: hidden;
 }
 
+/* The horizontal row UNDER the topbar: main content + right sidebar + PDF pane.
+   Keeping these below the topbar (instead of beside main-container) means the
+   topbar's window controls reach the window's right edge — the close button is
+   the rightmost thing, not the sidebar's close. */
+.content-row {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .topbar {
   height: var(--ls-headbar-height);
   flex: 0 0 var(--ls-headbar-height);
@@ -217,6 +228,7 @@ body {
 
 .main-content {
   flex: 1;
+  min-width: 0; /* shrink horizontally when the right sidebar/PDF pane is open */
   overflow-y: auto;
 }
 
