@@ -102,6 +102,62 @@ export function NamespaceTree(): JSX.Element {
   );
 }
 
+// --- {{namespace X}} macro --------------------------------------------------
+
+function collectFulls(nodes: NsNode[], acc: string[]) {
+  for (const n of nodes) {
+    acc.push(n.full);
+    collectFulls(n.children, acc);
+  }
+}
+
+function NsMacroNode(props: { node: NsNode; depth: number; icons: Record<string, string> }): JSX.Element {
+  return (
+    <div class="ns-macro-node">
+      <div class="ns-macro-row" style={{ "padding-left": `${props.depth * 18}px` }}>
+        <Show when={props.icons[props.node.full]}>
+          <span class="page-icon">{props.icons[props.node.full]}</span>
+        </Show>
+        <a class="page-ref" onClick={(e) => { e.stopPropagation(); openPage(props.node.full, "page"); }}>
+          {props.node.seg}
+        </a>
+      </div>
+      <For each={props.node.children}>
+        {(c) => <NsMacroNode node={c} depth={props.depth + 1} icons={props.icons} />}
+      </For>
+    </div>
+  );
+}
+
+/** `{{namespace X}}` — the full nested descendant tree of namespace `X`, each
+ *  page showing its `icon::` (like OG's namespace macro). */
+export function NamespaceMacro(props: { root: string }): JSX.Element {
+  const [data] = createResource(
+    () => ({ r: props.root, e: graphEpoch() }),
+    async ({ r }) => {
+      const prefix = `${r}/`.toLowerCase();
+      const names = (await backend().listPages())
+        .map((p) => p.name)
+        .filter((n) => n.toLowerCase().startsWith(prefix));
+      const tree = buildNamespaceTree(names);
+      const fulls: string[] = [];
+      collectFulls(tree, fulls);
+      const icons = fulls.length ? await backend().pageIcons(fulls) : {};
+      return { tree, icons };
+    }
+  );
+  return (
+    <Show
+      when={(data()?.tree ?? []).length > 0}
+      fallback={<span class="macro">{`{{namespace ${props.root}}}`}</span>}
+    >
+      <div class="ns-macro">
+        <For each={data()!.tree}>{(n) => <NsMacroNode node={n} depth={0} icons={data()!.icons} />}</For>
+      </div>
+    </Show>
+  );
+}
+
 /** Direct child pages of a namespace (pages named `<name>/<segment>`). */
 export function NamespaceChildren(props: { name: string }): JSX.Element {
   const [children] = createResource(

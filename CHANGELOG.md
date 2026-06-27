@@ -8,8 +8,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Added
+
+- **`{{namespace X}}` macro.** Renders the full nested descendant tree of a
+  namespace (like Logseq), each page showing its `icon::`. Previously it was
+  printed as literal text.
+- **Page icons.** A page's `icon::` property now renders as an icon next to the
+  page title and beside each page in the `{{namespace}}` tree, matching Logseq.
+- **Bundled color-emoji font.** Tine now ships **Noto Color Emoji**, so emoji
+  (page icons, emoji in notes) render in color instead of as ▯ tofu boxes on
+  systems/WebKitGTK builds without an emoji font. (Adds ~10 MB to the bundle.)
+
 ### Fixed
 
+- **Dark theme: native form controls follow the theme** (`color-scheme`), so the
+  number-input spinners (e.g. *Carry last N days*, the agenda window) are dark in
+  dark mode instead of white.
 - **“Open in external player” works for video, not just audio.** Tine launched
   the OS player inheriting the environment it sets for its *own* WebKitGTK
   rendering (`LD_PRELOAD`, `WEBKIT_DISABLE_*`, `GDK_BACKEND`); under those a

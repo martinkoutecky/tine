@@ -2815,6 +2815,36 @@ ol.md-list { list-style: decimal; }
   text-decoration: underline;
 }
 
+/* {{namespace X}} macro — the full nested descendant tree. Each row indents by
+   depth (inline style) and shows the page's icon:: then a clickable segment. */
+.ns-macro {
+  margin: 4px 0;
+}
+.ns-macro-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  line-height: 1.5;
+}
+.ns-macro-row .page-ref {
+  color: var(--link-color);
+}
+
+/* Page-property `icon::` rendered as an icon (next to a title, in the namespace
+   tree). Sized relative to context so the title icon is large, tree icons normal.
+   Color-emoji fonts ignore `color`, so this just reserves space + spacing. */
+.page-icon {
+  display: inline-block;
+  line-height: 1;
+  font-family: "Noto Color Emoji", var(--ls-font-family);
+}
+.page-title-icon {
+  margin-right: 0.4em;
+  font-size: 0.8em;
+  vertical-align: 0.06em;
+}
+
 /* Calendar jump popup: anchored under the topbar calendar button. */
 .calendar-jump-pop {
   top: 46px;

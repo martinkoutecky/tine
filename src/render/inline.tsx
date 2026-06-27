@@ -15,6 +15,7 @@ import { loadAssetBlob } from "../assetCache";
 import { resolveBlockBatched } from "../resolveBatch";
 import { doc, setRaw } from "../store";
 import { QueryMacro, EmbedMacro, VideoMacro, TweetMacro } from "../components/Macro";
+import { NamespaceMacro } from "../components/Namespace";
 
 function renderSegs(segs: Seg[], blockId?: string): JSX.Element {
   return <For each={segs}>{(s) => renderSeg(s, blockId)}</For>;
@@ -106,6 +107,10 @@ function renderSeg(s: Seg, blockId?: string): JSX.Element {
       if (/^embed\b/i.test(body)) return <EmbedMacro body={body} />;
       if (/^(video|youtube)\b/i.test(body)) return <VideoMacro body={body} />;
       if (/^tweet\b/i.test(body)) return <TweetMacro body={body} />;
+      if (/^namespace\b/i.test(body)) {
+        const root = body.replace(/^namespace\s+/i, "").trim();
+        if (root) return <NamespaceMacro root={root} />;
+      }
       return <span class="macro">{`{{${s.body}}}`}</span>;
     }
     case "math":

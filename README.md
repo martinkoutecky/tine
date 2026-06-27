@@ -163,7 +163,10 @@ raw speed. (Where a comparison is made, it's against current Logseq desktop core
 - `Ctrl+K` quick switcher: page titles + full-text content hits (visible text only — no false hits
   on hidden properties/uuids), with block breadcrumbs and middle-click → background tab.
 - Command palette (`Mod+Shift+P`), favorites, recent pages, a collapsible **namespace tree** in the
-  sidebar, and read-only **"aka" alias chips** on pages reachable by another name.
+  sidebar, the **`{{namespace X}}`** macro (nested descendant tree), and read-only **"aka" alias
+  chips** on pages reachable by another name.
+- **Page icons** — a page's `icon::` emoji shows next to its title and in the namespace tree (Tine
+  bundles a color-emoji font so they render even where the system has none).
 - **Page rename** (double-click a title) rewrites every `[[ref]]`/`#tag` across the graph in one
   transaction (see data-safety, below).
 

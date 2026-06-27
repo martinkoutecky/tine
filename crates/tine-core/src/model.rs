@@ -961,6 +961,27 @@ impl Graph {
         Ok(None)
     }
 
+    /// The `icon::` property value of each named page that has one (for rendering
+    /// page icons next to titles / in the namespace tree, like OG). Loads each
+    /// page (cached) and reads its pre-block; only pages WITH an icon appear in
+    /// the result. On-demand (e.g. a `{{namespace}}` macro), not at index time.
+    pub fn page_icons(
+        &self,
+        names: &[String],
+    ) -> std::collections::HashMap<String, String> {
+        let mut out = std::collections::HashMap::new();
+        for name in names {
+            if let Ok(Some(dto)) = self.load_named(name, PageKind::Page) {
+                if let Some(pre) = &dto.pre_block {
+                    if let Some(icon) = pre_block_icon(pre) {
+                        out.insert(name.clone(), icon);
+                    }
+                }
+            }
+        }
+        out
+    }
+
     /// Alias → canonical-page-name pairs (for the UI to resolve links/navigation).
     pub fn page_aliases(&self) -> Vec<(String, String)> {
         if let Some(a) = self.alias_cache.read().unwrap().as_ref() {
@@ -2653,6 +2674,32 @@ fn doc_has_alias(doc: &Document) -> bool {
 }
 fn block_has_alias(b: &DocBlock) -> bool {
     has_alias_prop(&b.raw) || b.children.iter().any(block_has_alias)
+}
+
+/// A page's `icon::` property value from its pre-block, handling markdown
+/// (`icon:: 🏁`), org property drawers (`:icon: 🏁`) and org `#+ICON:` directives.
+/// None if absent or blank.
+fn pre_block_icon(pre: &str) -> Option<String> {
+    for line in pre.lines() {
+        // Markdown `icon:: value` (single shared parser; needs the `::`).
+        if let Some((k, v)) = crate::doc::parse_property_line(line) {
+            let v = v.trim();
+            if k.eq_ignore_ascii_case("icon") && !v.is_empty() {
+                return Some(v.to_string());
+            }
+        }
+        let t = line.trim();
+        // Org property drawer `:icon: value` or directive `#+ICON: value`.
+        for stripped in [t.strip_prefix(':'), t.strip_prefix("#+")].into_iter().flatten() {
+            if let Some(idx) = stripped.find(':') {
+                let (k, v) = (&stripped[..idx], stripped[idx + 1..].trim());
+                if k.eq_ignore_ascii_case("icon") && !v.is_empty() {
+                    return Some(v.to_string());
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Stable (deterministic, seed-free) content hash — FNV-1a/64 as hex. Used as a

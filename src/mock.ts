@@ -158,6 +158,24 @@ const NAMED: PageDto[] = [
       b("Tweet embed: {{tweet https://twitter.com/logseq/status/123}}"),
     ],
   },
+  // Namespace + page-icon demo: {{namespace}} renders the nested descendant tree,
+  // each page showing its `icon::`.
+  {
+    name: "Formula1",
+    kind: "page",
+    title: "Formula1",
+    pre_block: "icon:: 🏁\ncolor:: steelblue",
+    blocks: [b("{{namespace Formula1}}"), b("2024 overview [[joplin]]")],
+  },
+  { name: "Formula1/2023", kind: "page", title: "Formula1/2023", pre_block: "icon:: 🏁", blocks: [b("Season 2023")] },
+  { name: "Formula1/2024", kind: "page", title: "Formula1/2024", pre_block: "icon:: 🏁", blocks: [b("Season 2024")] },
+  {
+    name: "Formula1/2024/Bahrain GP",
+    kind: "page",
+    title: "Formula1/2024/Bahrain GP",
+    pre_block: "icon:: 🏁",
+    blocks: [b("Race notes")],
+  },
 ];
 
 const mockHighlights: Record<string, { label: string; highlights: Highlight[] }> = {};
@@ -297,6 +315,14 @@ export function mockBackend(): Backend {
     },
     async pageAliases(): Promise<[string, string][]> {
       return [];
+    },
+    async pageIcons(names: string[]): Promise<Record<string, string>> {
+      const out: Record<string, string> = {};
+      for (const name of names) {
+        const m = all.find((p) => p.name === name)?.pre_block?.match(/^icon::\s*(.+)$/m);
+        if (m) out[name] = m[1].trim();
+      }
+      return out;
     },
     async setFavorites(): Promise<void> {
       // no-op in the browser mock

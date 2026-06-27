@@ -1068,6 +1068,14 @@ fn page_aliases(state: State<'_, AppState>) -> Result<Vec<(String, String)>, Str
 }
 
 #[tauri::command]
+fn page_icons(
+    names: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<std::collections::HashMap<String, String>, String> {
+    with_graph(&state, |g| Ok(g.page_icons(&names)))
+}
+
+#[tauri::command]
 fn set_favorites(names: Vec<String>, state: State<'_, AppState>) -> Result<(), String> {
     with_graph(&state, |g| g.set_favorites(&names).map_err(|e| e.to_string()))
 }
@@ -1569,6 +1577,7 @@ fn main() {
             run_advanced_query,
             query_facets,
             page_aliases,
+            page_icons,
             set_favorites,
             set_preferred_workflow,
             set_preferred_format,

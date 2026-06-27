@@ -374,6 +374,13 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
                 <line x1="15.5" y1="3" x2="15.5" y2="7" stroke="currentColor" stroke-width="1.7" />
               </svg>
             </Show>
+            <Show
+              when={pageProperties(props.page.preBlock, props.page.format)
+                .find(([k]) => k.toLowerCase() === "icon")?.[1]
+                ?.trim()}
+            >
+              {(icon) => <span class="page-icon page-title-icon">{icon()}</span>}
+            </Show>
             {props.page.title}
           </h1>
         </Show>
