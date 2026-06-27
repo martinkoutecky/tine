@@ -10,6 +10,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Drag-to-resize images.** Hover an image and drag the corner grip to resize
+  it. The width is stored as a **percentage of the column** (so it stays right
+  when the window or sidebar width changes) using Logseq's own image-metadata
+  brace — `![](img){:width "40%"}` — written as a quoted EDN string so the same
+  file renders at that width in Logseq too. (Logseq's own resize writes raw
+  pixels; both round-trip.)
 - **Quick-capture: optional page title.** The capture window now has a page-title
   field at the top — fill it to file the capture as a **new page**, leave it empty
   to **append to today's journal**. The "…to submit" hint shows your actual
@@ -43,6 +49,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Namespaces round-trip with Logseq's default filename format.** Tine now
+  honors `:file/name-format`: a graph without that key (Logseq's `:legacy`
+  default) encodes the namespace `/` as `%2F`, and `:triple-lowbar` graphs use
+  `___`. Before, Tine always used `___` and never decoded `%2F`, so a namespace
+  page created in Logseq on a legacy graph showed up as a literal `a%2Fb` page
+  (and vice-versa). Both formats now read and write the way Logseq does.
+- **Switching graphs fully resets the workspace.** Opening a different graph now
+  closes the previous graph's tabs (back to a fresh Journals tab) and clears its
+  recents and right-sidebar items, so stale pages from the old graph no longer
+  linger in tabs or the quick switcher — matching Logseq, which keeps one graph
+  open at a time.
+- **Quick-capture window is no longer too tall.** Its auto-grow is now capped at
+  half the screen height (was 80%); short captures still size to their content.
 - **Backspace no longer eats the space before a word.** Deleting the last letter
   of a word kept removing the preceding space too (so you had to retype it);
   the editor now keeps the trailing space while you type and only trims it on
