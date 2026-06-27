@@ -10,15 +10,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
-- **Pinned-tab icon is an SVG again.** Bundling the color-emoji font made
-  WebKitGTK paint the `📌` pin as a blank glyph (an empty gap on pinned tabs).
-  UI chrome no longer depends on an emoji font — the pin is now an inline SVG
-  thumbtack that renders everywhere.
+- **The pinned-tab pin is back (the red 📌).** Bundling a color-emoji *font* made
+  WebKitGTK paint the `📌` as a blank glyph (an empty gap on pinned tabs); emoji
+  now render as Twemoji SVG images, so the red pushpin shows everywhere again.
 - **Labeled block references resolve.** The `[label](((block-id)))` form — a link
   whose target is a block — now renders as a clickable block reference showing
   *label* (and navigates to the block, with a hover preview), instead of a dead
   link that tried to open `((id))` as a URL. The bare `((id))` form already
   worked; this is the labeled variant Logseq writes for *"copy as link"*.
+- **Clicking a block reference jumps to the block.** A block ref now scrolls to
+  and briefly highlights the referenced block (even when it's on the *same* page,
+  where it previously appeared to do nothing) instead of only opening the page.
+- **Block references export correctly.** The static HTML export now resolves
+  `((block ref))`s (bare and `[label](((id)))`) to a link to the target block's
+  anchor on its exported page, with the block's text/label — instead of the old
+  broken `publish/((5cfb…` link with a stray `))`. Unresolved refs render as plain
+  text, never a broken link. (The export parser is now paren-balanced too.)
 - **Inline link/image targets are paren-balanced.** The `[..](..)` / `![..](..)`
   parser now counts parentheses when reading the target, so a URL that itself
   contains parentheses is captured whole — fixing not just block-ref links but

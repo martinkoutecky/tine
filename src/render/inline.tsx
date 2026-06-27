@@ -5,7 +5,7 @@
 import { For, Show, createMemo, createResource, createSignal, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { mediaKind } from "../media";
-import { openPage, openPageInNewTab } from "../router";
+import { openPage, openPageInNewTab, openPageAtBlock } from "../router";
 import { isJournalTitle } from "../journal";
 import { openPdf, openPageInSidebar, openPageContextMenu, setLightbox, graphEpoch } from "../ui";
 import { parseInline, type Seg, type Format } from "./parseInline";
@@ -425,7 +425,9 @@ function BlockRefView(props: { id: string; label?: string }): JSX.Element {
       onClick={(e) => {
         e.stopPropagation();
         const g = grp();
-        if (g) openPage(g.page, g.kind);
+        // Navigate to the referenced BLOCK (scroll + flash it), not just the page —
+        // so a same-page ref visibly jumps to its target instead of doing nothing.
+        if (g) openPageAtBlock(g.page, g.kind, props.id);
       }}
     >
       <Show when={text() !== undefined} fallback={<>(({props.id.slice(0, 8)}))</>}>

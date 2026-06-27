@@ -164,8 +164,10 @@ body {
 
 .tab-pin {
   flex: none;
-  color: var(--text-secondary);
-  vertical-align: -1px;
+  display: inline-flex;
+  align-items: center;
+  /* sizes the 📌 emoji <img> (height:1em) — keep it clearly visible. */
+  font-size: 13px;
 }
 
 .tab-close {

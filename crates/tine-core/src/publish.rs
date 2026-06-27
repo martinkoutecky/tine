@@ -27,8 +27,108 @@ fn esc(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
 
-/// Render a single line of inline markdown to HTML.
-fn render_inline(input: &str) -> String {
+/// Where a block lives — its target page slug + its first content line — keyed by
+/// the block's `id::` uuid, built from the exported (public) pages so that
+/// `((block refs))` can link to the actual block (`<slug>.html#<uuid>`).
+struct RefTarget {
+    slug: String,
+    text: String,
+}
+type RefIndex = std::collections::HashMap<String, RefTarget>;
+
+/// A block's `id::` property value (its uuid), if any.
+fn block_id(raw: &str) -> Option<String> {
+    raw.lines().find_map(|l| {
+        crate::doc::parse_property_line(l)
+            .and_then(|(k, v)| k.eq_ignore_ascii_case("id").then(|| v.trim().to_string()))
+    })
+}
+
+/// First non-property / non-scheduling / non-blank line of a block (its text).
+fn first_content_line(raw: &str) -> String {
+    raw.lines()
+        .find(|l| {
+            let t = l.trim();
+            !is_property_line(l)
+                && !t.starts_with("SCHEDULED:")
+                && !t.starts_with("DEADLINE:")
+                && !t.is_empty()
+        })
+        .unwrap_or("")
+        .to_string()
+}
+
+fn collect_block_refs(blocks: &[DocBlock], slug: &str, refs: &mut RefIndex) {
+    for b in blocks {
+        if let Some(id) = block_id(&b.raw) {
+            refs.insert(id, RefTarget { slug: slug.to_string(), text: first_content_line(&b.raw) });
+        }
+        collect_block_refs(&b.children, slug, refs);
+    }
+}
+
+/// Read a `[label](target)` starting at the leading `[`. The target is read with
+/// BALANCED parens, so a URL that contains parens — `((uuid))`, `…/Foo_(bar)` — is
+/// captured whole instead of stopping at the first `)`. Returns (label, target,
+/// bytes consumed); only ASCII brackets are matched, so byte slicing is safe.
+fn read_bracket_link(rest: &str) -> Option<(&str, &str, usize)> {
+    let bytes = rest.as_bytes();
+    if bytes.first() != Some(&b'[') {
+        return None;
+    }
+    let label_end = rest.find(']')?;
+    if bytes.get(label_end + 1) != Some(&b'(') {
+        return None;
+    }
+    let url_start = label_end + 2;
+    let mut depth = 1usize;
+    let mut j = url_start;
+    while j < bytes.len() {
+        match bytes[j] {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            _ => {}
+        }
+        j += 1;
+    }
+    if depth != 0 || j == url_start {
+        return None;
+    }
+    Some((&rest[1..label_end], &rest[url_start..j], j + 1))
+}
+
+/// The inner uuid if `url` is exactly a `((uuid))` block-ref target.
+fn as_block_ref(url: &str) -> Option<&str> {
+    url.trim().strip_prefix("((").and_then(|s| s.strip_suffix("))")).map(str::trim)
+}
+
+/// Emit a block reference: a link to its target block showing the label (else the
+/// target's text). An unresolved ref (target not public / missing) renders as
+/// muted text — never the broken link the old `[^)]` parse produced.
+fn emit_block_ref(refs: &RefIndex, id: &str, label: Option<&str>, out: &mut String) {
+    match refs.get(id) {
+        Some(t) => {
+            let text = label.map(esc).unwrap_or_else(|| esc(&t.text));
+            out.push_str(&format!(
+                "<a class=\"ref block-ref\" href=\"{}.html#{}\">{}</a>",
+                t.slug, id, text
+            ));
+        }
+        None => {
+            let text = label.map(esc).unwrap_or_else(|| esc(&format!("(({id}))")));
+            out.push_str(&format!("<span class=\"block-ref\">{text}</span>"));
+        }
+    }
+}
+
+/// Render a single line of inline markdown to HTML. `refs` resolves `((block ref))`
+/// targets to their exported page + anchor.
+fn render_inline(input: &str, refs: &RefIndex) -> String {
     let mut out = String::new();
     let mut i = 0;
     let mut plain = String::new();
@@ -63,6 +163,15 @@ fn render_inline(input: &str) -> String {
                 }
             }
         }
+        // ((block ref)) — link to the target block (or muted text if unresolved).
+        if let Some(after) = rest.strip_prefix("((") {
+            if let Some(end) = after.find("))") {
+                flush(&mut plain, &mut out);
+                emit_block_ref(refs, after[..end].trim(), None, &mut out);
+                i += 2 + end + 2;
+                continue;
+            }
+        }
         // [[page]]
         if let Some(after) = rest.strip_prefix("[[") {
             if let Some(end) = after.find("]]") {
@@ -73,30 +182,25 @@ fn render_inline(input: &str) -> String {
                 continue;
             }
         }
-        // ![alt](url)
+        // ![alt](url) — paren-balanced target (URLs may contain parens).
         if rest.starts_with("![") {
-            if let (Some(open), Some(close)) = (rest.find("]("), rest.find(')')) {
-                if open < close {
-                    let alt = &rest[2..open];
-                    let url = &rest[open + 2..close];
-                    flush(&mut plain, &mut out);
-                    out.push_str(&format!("<img alt=\"{}\" src=\"{}\">", esc(alt), esc(url)));
-                    i += close + 1;
-                    continue;
-                }
+            if let Some((alt, url, len)) = read_bracket_link(&rest[1..]) {
+                flush(&mut plain, &mut out);
+                out.push_str(&format!("<img alt=\"{}\" src=\"{}\">", esc(alt), esc(url)));
+                i += 1 + len;
+                continue;
             }
         }
-        // [label](url)
+        // [label](url) — paren-balanced; `[label](((uuid)))` is a block ref.
         if rest.starts_with('[') {
-            if let (Some(mid), Some(close)) = (rest.find("]("), rest.find(')')) {
-                if mid < close {
-                    let label = &rest[1..mid];
-                    let url = &rest[mid + 2..close];
-                    flush(&mut plain, &mut out);
-                    out.push_str(&format!("<a href=\"{}\">{}</a>", esc(url), esc(label)));
-                    i += close + 1;
-                    continue;
+            if let Some((label, url, len)) = read_bracket_link(rest) {
+                flush(&mut plain, &mut out);
+                match as_block_ref(url) {
+                    Some(id) => emit_block_ref(refs, id, Some(label), &mut out),
+                    None => out.push_str(&format!("<a href=\"{}\">{}</a>", esc(url), esc(label))),
                 }
+                i += len;
+                continue;
             }
         }
         // #tag
@@ -120,7 +224,7 @@ fn render_inline(input: &str) -> String {
                     let inner = &rest[delim.len()..delim.len() + end];
                     if !inner.is_empty() {
                         flush(&mut plain, &mut out);
-                        out.push_str(&format!("<{tag}>{}</{tag}>", render_inline(inner)));
+                        out.push_str(&format!("<{tag}>{}</{tag}>", render_inline(inner, refs)));
                         i += delim.len() * 2 + end;
                         continue 'outer;
                     }
@@ -155,7 +259,7 @@ fn is_property_line(l: &str) -> bool {
     }
 }
 
-fn render_block(b: &DocBlock, out: &mut String) {
+fn render_block(b: &DocBlock, out: &mut String, refs: &RefIndex) {
     // strip property / SCHEDULED / DEADLINE lines from the displayed body
     let lines: Vec<&str> = b
         .raw
@@ -166,32 +270,36 @@ fn render_block(b: &DocBlock, out: &mut String) {
         })
         .collect();
     let first = lines.first().copied().unwrap_or("");
-    out.push_str("<li>");
+    // A block with an `id::` gets an anchor so `((block refs))` can link to it.
+    match block_id(&b.raw) {
+        Some(id) => out.push_str(&format!("<li id=\"{id}\">")),
+        None => out.push_str("<li>"),
+    }
     // heading?
     let hashes = first.chars().take_while(|c| *c == '#').count();
     if (1..=6).contains(&hashes) && first[hashes..].starts_with(' ') {
-        out.push_str(&format!("<h{0}>{1}</h{0}>", hashes, render_inline(&first[hashes + 1..])));
+        out.push_str(&format!("<h{0}>{1}</h{0}>", hashes, render_inline(&first[hashes + 1..], refs)));
     } else {
-        out.push_str(&format!("<div class=\"b\">{}</div>", render_inline(first)));
+        out.push_str(&format!("<div class=\"b\">{}</div>", render_inline(first, refs)));
     }
     for line in lines.iter().skip(1) {
-        out.push_str(&format!("<div class=\"b\">{}</div>", render_inline(line)));
+        out.push_str(&format!("<div class=\"b\">{}</div>", render_inline(line, refs)));
     }
     if !b.children.is_empty() {
         out.push_str("<ul>");
         for c in &b.children {
-            render_block(c, out);
+            render_block(c, out, refs);
         }
         out.push_str("</ul>");
     }
     out.push_str("</li>");
 }
 
-fn page_html(title: &str, doc: &doc::Document, kind: PageKind) -> String {
+fn page_html(title: &str, doc: &doc::Document, kind: PageKind, refs: &RefIndex) -> String {
     let mut body = String::new();
     body.push_str("<ul class=\"outline\">");
     for b in &doc.roots {
-        render_block(b, &mut body);
+        render_block(b, &mut body, refs);
     }
     body.push_str("</ul>");
     // Journal titles get a leading calendar glyph, like Logseq.
@@ -247,6 +355,10 @@ h1,h2,h3,h4,h5,h6{line-height:1.3;margin:.5rem 0 .2rem;letter-spacing:-.01em}
 h2{font-size:1.4rem}h3{font-size:1.18rem}h4{font-size:1.04rem}
 a.ref,a.tag{color:var(--link);text-decoration:none}
 a.ref:hover,a.tag:hover{text-decoration:underline}
+a.block-ref,span.block-ref{background:var(--code);border-radius:4px;padding:0 .28em;font-size:.95em}
+a.block-ref{color:var(--link);text-decoration:none}
+a.block-ref:hover{text-decoration:underline}
+span.block-ref{color:var(--muted)}
 a.tag{font-size:.92em}
 a[href^="http"]{color:var(--link)}
 code{background:var(--code);border-radius:4px;padding:.05em .35em;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em}
@@ -286,16 +398,29 @@ pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
     let mut count = 0;
     let mut entries: Vec<_> = pages.iter().collect();
     entries.sort_by(|a, b| a.name.cmp(&b.name));
+
+    // Pass 1: parse every page, keep only the public ones, and build the block-ref
+    // index from them (a `((ref))` only resolves to a block that's actually
+    // exported). Slug + kind are captured here so pass 2 can render + link.
+    let mut public: Vec<(&str, String, PageKind, doc::Document)> = Vec::new();
+    let mut refs = RefIndex::new();
     for e in entries {
         let Ok(content) = fs::read_to_string(&e.path) else { continue };
         let parsed = doc::parse(&content);
         if !all_public && !page_is_public(parsed.pre_block.as_deref()) {
             continue;
         }
-        let file = format!("{}.html", slug(&e.name));
-        fs::write(out.join(&file), page_html(&e.name, &parsed, e.kind))?;
-        let tag = if e.kind == PageKind::Journal { "<span class=\"k\">journal</span>" } else { "" };
-        index.push_str(&format!("<li><a class=\"ref\" href=\"{}\">{}</a>{}</li>", file, esc(&e.name), tag));
+        let slug = slug(&e.name);
+        collect_block_refs(&parsed.roots, &slug, &mut refs);
+        public.push((e.name.as_str(), slug, e.kind, parsed));
+    }
+
+    // Pass 2: render each public page with the ref index, and list it on the index.
+    for (name, slug, kind, parsed) in &public {
+        let file = format!("{slug}.html");
+        fs::write(out.join(&file), page_html(name, parsed, *kind, &refs))?;
+        let tag = if *kind == PageKind::Journal { "<span class=\"k\">journal</span>" } else { "" };
+        index.push_str(&format!("<li><a class=\"ref\" href=\"{}\">{}</a>{}</li>", file, esc(name), tag));
         count += 1;
     }
     index.push_str("</ul><footer>Published with Tine</footer></body></html>");
@@ -307,6 +432,10 @@ pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
 mod tests {
     use super::*;
 
+    fn no_refs() -> RefIndex {
+        RefIndex::new()
+    }
+
     #[test]
     fn slugify() {
         assert_eq!(slug("Foo Bar"), "foo-bar");
@@ -315,7 +444,7 @@ mod tests {
 
     #[test]
     fn inline_html() {
-        let h = render_inline("see [[Foo Bar]] and **bold** and `x` and #tag");
+        let h = render_inline("see [[Foo Bar]] and **bold** and `x` and #tag", &no_refs());
         assert!(h.contains("<a class=\"ref\" href=\"foo-bar.html\">Foo Bar</a>"));
         assert!(h.contains("<strong>bold</strong>"));
         assert!(h.contains("<code>x</code>"));
@@ -324,20 +453,46 @@ mod tests {
 
     #[test]
     fn escapes_html() {
-        assert!(render_inline("a < b & c").contains("a &lt; b &amp; c"));
+        assert!(render_inline("a < b & c", &no_refs()).contains("a &lt; b &amp; c"));
     }
 
     #[test]
     fn math_emits_katex_delimiters() {
         // Inline $..$ → \(..\); display $$..$$ → \[..\]; both protected from the
         // emphasis/code rules and left for KaTeX auto-render to typeset.
-        let h = render_inline(r"Euler $e^{i\pi}+1=0$ and $$\int_0^1 x\,dx$$");
+        let h = render_inline(r"Euler $e^{i\pi}+1=0$ and $$\int_0^1 x\,dx$$", &no_refs());
         assert!(h.contains(r#"<span class="math">\(e^{i\pi}+1=0\)</span>"#), "{h}");
         assert!(
             h.contains(r#"<span class="math math-display">\[\int_0^1 x\,dx\]</span>"#),
             "{h}"
         );
         // Underscores inside math must NOT become italics.
-        assert!(!render_inline(r"$a_1 + b_2$").contains("<em>"));
+        assert!(!render_inline(r"$a_1 + b_2$", &no_refs()).contains("<em>"));
+    }
+
+    #[test]
+    fn block_refs_resolve_and_paren_urls_survive() {
+        let mut refs = RefIndex::new();
+        refs.insert(
+            "5cfb2cc4-2f18-4b6e-b4c0-dcf657179204".into(),
+            RefTarget { slug: "related-work".into(), text: "Related Work section".into() },
+        );
+        // Labeled block ref → a link to the target block's anchor, showing the label.
+        let h = render_inline("see [Related Work](((5cfb2cc4-2f18-4b6e-b4c0-dcf657179204)))", &refs);
+        assert!(
+            h.contains(r#"<a class="ref block-ref" href="related-work.html#5cfb2cc4-2f18-4b6e-b4c0-dcf657179204">Related Work</a>"#),
+            "{h}"
+        );
+        // Bare block ref → the target's text, linked.
+        let b = render_inline("((5cfb2cc4-2f18-4b6e-b4c0-dcf657179204))", &refs);
+        assert!(b.contains("related-work.html#5cfb2cc4-2f18-4b6e-b4c0-dcf657179204"), "{b}");
+        assert!(b.contains("Related Work section"), "{b}");
+        // Unresolved ref → muted text, no broken link / no stray `))`.
+        let u = render_inline("[X](((deadbeef-0000-0000-0000-000000000000)))", &refs);
+        assert!(u.contains(r#"<span class="block-ref">X</span>"#), "{u}");
+        assert!(!u.contains("((deadbeef"), "{u}");
+        // A real URL with parentheses is captured whole (no truncation at first ')').
+        let w = render_inline("[wiki](https://en.wikipedia.org/wiki/Foo_(bar))", &no_refs());
+        assert!(w.contains(r#"<a href="https://en.wikipedia.org/wiki/Foo_(bar)">wiki</a>"#), "{w}");
     }
 }

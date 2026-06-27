@@ -12,6 +12,7 @@ import {
 } from "../router";
 import { doc } from "../store";
 import { splitProps, isBuiltinHidden } from "../editor/properties";
+import { EmojiText } from "../render/emoji";
 
 const MAX_TITLE = 32;
 
@@ -113,23 +114,12 @@ export function TabBar(): JSX.Element {
             }
           >
             <Show when={t.pinned}>
-              {/* SVG, not the 📌 emoji: UI chrome must not depend on an emoji
-                  font (WebKitGTK paints the bundled color emoji as a blank glyph). */}
-              <svg
-                class="tab-pin"
-                viewBox="0 0 24 24"
-                width="11"
-                height="11"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                aria-hidden="true"
-              >
-                <path d="M12 17v5" />
-                <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
-              </svg>
+              {/* The red 📌 — now a Twemoji SVG <img> (render/emoji.tsx), so it
+                  shows everywhere, including WebKitGTK where the emoji *font*
+                  painted it blank. */}
+              <span class="tab-pin">
+                <EmojiText text="📌" />
+              </span>
             </Show>
             <span class="tab-title">{tabTitle(tabRoute(t))}</span>
             {/* The last tab can't be closed (closeTab keeps one), so hide its ✕. */}
