@@ -2093,6 +2093,32 @@ mark {
   border-radius: 4px;
 }
 
+/* Drag-to-resize wrapper: the grip sits in the image's bottom-right corner and
+   appears on hover. `line-height: 0` keeps the inline wrapper from adding a
+   descender gap below the image. */
+.inline-image-wrap {
+  position: relative;
+  display: inline-block;
+  line-height: 0;
+  max-width: 100%;
+}
+.img-resize-grip {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  touch-action: none;
+  background: linear-gradient(135deg, transparent 45%, var(--text-muted, #888) 45%, var(--text-muted, #888) 78%, transparent 78%);
+  border-bottom-right-radius: 4px;
+}
+.inline-image-wrap:hover .img-resize-grip {
+  opacity: 0.85;
+}
+
 /* Inline video/audio asset players + the click-to-open fallback chip. */
 .media-embed {
   max-width: 100%;

@@ -40,6 +40,11 @@ describe("parseInline", () => {
     expect(parseInline("![a](x.png){:height 50%}")).toEqual([
       { t: "image", alt: "a", url: "x.png", height: "50%" },
     ]);
+    // Quoted percentage — the form Tine writes from the resize grip (valid EDN,
+    // so OG reads it too).
+    expect(parseInline('![a](x.png){:width "40%"}')).toEqual([
+      { t: "image", alt: "a", url: "x.png", width: "40%" },
+    ]);
   });
 
   it("autolinks (bare url + angle)", () => {

@@ -22,12 +22,16 @@ export type Seg =
   | { t: "timestamp"; raw: string; active: boolean }
   | { t: "iframe"; src: string; width?: string; height?: string };
 
-/** Parse a Logseq image-metadata brace like `{:width 200, :height 100}`. */
+/** Parse a Logseq image-metadata brace like `{:width 200, :height 100}`. The
+ *  value may be a bare number/`%`/`px` (OG writes raw px integers) OR a quoted
+ *  string (`{:width "40%"}`) — the form Tine writes for a percentage so it stays
+ *  valid EDN that OG can also read (`"40%"` is a valid EDN string; a bare `40%`
+ *  is not). */
 function parseImageMeta(brace: string | undefined): { width?: string; height?: string } {
   if (!brace) return {};
   const out: { width?: string; height?: string } = {};
-  const w = /:width\s+([0-9]+%?|[0-9]+px)/.exec(brace);
-  const h = /:height\s+([0-9]+%?|[0-9]+px)/.exec(brace);
+  const w = /:width\s+"?([0-9]+%?|[0-9]+px)"?/.exec(brace);
+  const h = /:height\s+"?([0-9]+%?|[0-9]+px)"?/.exec(brace);
   if (w) out.width = /^\d+$/.test(w[1]) ? `${w[1]}px` : w[1];
   if (h) out.height = /^\d+$/.test(h[1]) ? `${h[1]}px` : h[1];
   return out;

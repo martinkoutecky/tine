@@ -13,6 +13,7 @@ import { blockView } from "./block";
 import { backend } from "../backend";
 import { loadAssetBlob } from "../assetCache";
 import { resolveBlockBatched } from "../resolveBatch";
+import { doc, setRaw } from "../store";
 import { QueryMacro, EmbedMacro, VideoMacro, TweetMacro } from "../components/Macro";
 
 function renderSegs(segs: Seg[], blockId?: string): JSX.Element {
@@ -145,7 +146,9 @@ function renderSeg(s: Seg, blockId?: string): JSX.Element {
       // `![](…)` is reused for video/audio (like OG) — route those to a player.
       const k = mediaKind(s.url);
       if (k === "video" || k === "audio") return <MediaEmbed url={s.url} kind={k} />;
-      return <AssetImage url={s.url} alt={s.alt} width={s.width} height={s.height} />;
+      return (
+        <AssetImage url={s.url} alt={s.alt} width={s.width} height={s.height} blockId={blockId} />
+      );
     }
     case "footnote":
       return <sup class="footnote-ref">{s.id}</sup>;
@@ -218,47 +221,104 @@ function assetRelPath(url: string): string | null {
   return i === -1 ? null : url.slice(i + "assets/".length);
 }
 
+// The width `%` CSS resolves against is the nearest BLOCK-level ancestor's
+// content box, so a drag-resize must measure that (not the inline image itself)
+// to turn a pixel drag into a meaningful percentage.
+function blockRefWidth(el: HTMLElement): number {
+  let p = el.parentElement;
+  while (p) {
+    const d = getComputedStyle(p).display;
+    if (d !== "inline" && d !== "inline-block" && d !== "contents") {
+      return p.clientWidth || p.getBoundingClientRect().width;
+    }
+    p = p.parentElement;
+  }
+  return el.getBoundingClientRect().width;
+}
+
+// Persist a resized image width back into its block's raw text as the OG-native
+// `{:width "N%"}` brace. We rewrite THIS image token's trailing `{...}` only
+// (matched by its exact alt+url), so other text/images in the block are
+// untouched; width is stored as a percentage (Martin's choice — survives column
+// width changes) and as a quoted string so it stays valid EDN OG can also read.
+function writeImageWidth(blockId: string, alt: string, url: string, pct: number) {
+  const node = doc.byId[blockId];
+  if (!node) return;
+  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(`(!\\[${esc(alt)}\\]\\(${esc(url)}\\))(\\{[^}]*\\})?`);
+  const next = node.raw.replace(re, `$1{:width "${pct}%"}`);
+  if (next !== node.raw) setRaw(blockId, next);
+}
+
 // Image embed: external URLs load directly; graph assets (`../assets/x.png`)
-// are read from disk via the backend and shown as a blob URL.
-function AssetImage(props: { url: string; alt: string; width?: string; height?: string }): JSX.Element {
+// are read from disk via the backend and shown as a blob URL. When rendered
+// inside a real block (`blockId` set, not the lightbox/capture scratch), a
+// corner grip lets you drag-resize; the result is written back as a width %.
+function AssetImage(props: {
+  url: string;
+  alt: string;
+  width?: string;
+  height?: string;
+  blockId?: string;
+}): JSX.Element {
   const dim = () => ({
     ...(props.width ? { width: props.width } : {}),
     ...(props.height ? { height: props.height } : {}),
   });
-  if (/^(https?:|data:|blob:)/.test(props.url)) {
-    return (
-      <img
-        class="inline-image"
-        src={props.url}
-        alt={props.alt}
-        style={dim()}
-        onClick={(e) => { e.stopPropagation(); setLightbox(props.url); }}
-      />
-    );
-  }
+  const external = /^(https?:|data:|blob:)/.test(props.url);
   // Served from a shared, graph-scoped blob cache so repeated references and
   // re-mounts don't re-read the file or mint duplicate blob URLs. The cache owns
   // the URL's lifetime (cleared on graph switch), so we don't revoke on unmount.
-  const [src] = createResource(
-    () => props.url,
+  const [diskSrc] = createResource(
+    () => (external ? null : props.url),
     async (url) => {
       const rel = assetRelPath(url);
-      if (!rel) return "";
-      return loadAssetBlob(rel);
+      return rel ? await loadAssetBlob(rel) : "";
     }
   );
+  const src = () => (external ? props.url : diskSrc());
+
+  let imgEl: HTMLImageElement | undefined;
+  const onGripDown = (e: PointerEvent) => {
+    if (!imgEl || !props.blockId) return;
+    e.preventDefault();
+    e.stopPropagation(); // don't start a block drag / open the lightbox
+    const refW = blockRefWidth(imgEl);
+    const startX = e.clientX;
+    const startW = imgEl.getBoundingClientRect().width;
+    const move = (me: PointerEvent) => {
+      const w = Math.max(24, Math.min(refW, startW + (me.clientX - startX)));
+      if (imgEl) imgEl.style.width = `${w}px`; // live feedback during the drag
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      const w = imgEl ? imgEl.getBoundingClientRect().width : startW;
+      const pct = Math.max(5, Math.min(100, Math.round((w / refW) * 100)));
+      writeImageWidth(props.blockId!, props.alt, props.url, pct);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+
   return (
     <Show
-      when={src()}
+      when={external || src()}
       fallback={<span class="inline-image-missing">🖼 {props.alt || assetRelPath(props.url)}</span>}
     >
-      <img
-        class="inline-image"
-        src={src()!}
-        alt={props.alt}
-        style={dim()}
-        onClick={(e) => { e.stopPropagation(); setLightbox(src()!); }}
-      />
+      <span class="inline-image-wrap">
+        <img
+          ref={imgEl}
+          class="inline-image"
+          src={src()!}
+          alt={props.alt}
+          style={dim()}
+          onClick={(e) => { e.stopPropagation(); setLightbox(src()!); }}
+        />
+        <Show when={props.blockId}>
+          <span class="img-resize-grip" title="Drag to resize" onPointerDown={onGripDown} />
+        </Show>
+      </span>
     </Show>
   );
 }
