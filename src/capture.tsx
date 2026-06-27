@@ -108,7 +108,7 @@ function Capture() {
   // on each show, so this only ever grows from the small base.
   let lastH = 0;
   const measureHeight = (): number => {
-    const PAD = 14; // breathing room below the content
+    const PAD = 18; // breathing room below the content
     const shell = document.querySelector<HTMLElement>(".capture-shell");
     let h = shell ? shell.getBoundingClientRect().bottom : 72;
     const popup = document.querySelector<HTMLElement>(".autocomplete");
@@ -135,7 +135,10 @@ function Capture() {
       // logical pixels — so `0.5 * availHeight` could exceed the real screen).
       const screenMax = Math.round((window.screen?.availHeight ?? 1000) * 0.5);
       const measured = measureHeight();
-      const h = Math.max(64, Math.min(measured, screenMax, 700));
+      // Floor of 140px: a touch taller than the bare title+first-bullet content,
+      // so the page-title field and the "…to submit" hint are always fully
+      // visible with breathing room (Martin: the tight fit clipped the hint).
+      const h = Math.max(140, Math.min(measured, screenMax, 700));
       // Diagnostic (visible when launched from a terminal): if the window is ever
       // mis-sized, this shows whether the fault is the measurement or setSize.
       console.log("[capture] fit", { measured, screenMax, h, lastH });

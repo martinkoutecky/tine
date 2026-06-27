@@ -38,6 +38,10 @@ body {
   font-style: italic;
   font-weight: 400;
   opacity: 0.85;
+  /* The placeholder is informational, not a heading — render it at a normal
+     size so the full hint ("…if empty → appended to Today") fits the 600px
+     window. The user's TYPED title still uses the big page-heading size above. */
+  font-size: 1rem;
 }
 /* The format toolbar defaults to floating 34px ABOVE the line, which clips at
    the window's top edge for the first block in this compact window. Drop it just
