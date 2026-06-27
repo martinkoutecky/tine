@@ -261,8 +261,17 @@ function AssetImage(props: {
   height?: string;
   blockId?: string;
 }): JSX.Element {
-  const dim = () => ({
+  // Width sizes the WRAPPER, not the <img>: an inline-block sized by a
+  // percentage child doesn't shrink to it, so the grip (positioned against the
+  // wrapper) would otherwise stay at full column width after a resize. With the
+  // width on the wrapper and the image filling it (width:100%), the wrapper is
+  // exactly the image's box and the grip sits at the image's real corner. No
+  // width set → the wrapper shrink-wraps the image's natural size.
+  const wrapStyle = () => ({
     ...(props.width ? { width: props.width } : {}),
+  });
+  const imgStyle = () => ({
+    ...(props.width ? { width: "100%" } : {}),
     ...(props.height ? { height: props.height } : {}),
   });
   const external = /^(https?:|data:|blob:)/.test(props.url);
@@ -278,22 +287,24 @@ function AssetImage(props: {
   );
   const src = () => (external ? props.url : diskSrc());
 
+  let wrapEl: HTMLSpanElement | undefined;
   let imgEl: HTMLImageElement | undefined;
   const onGripDown = (e: PointerEvent) => {
-    if (!imgEl || !props.blockId) return;
+    if (!wrapEl || !props.blockId) return;
     e.preventDefault();
     e.stopPropagation(); // don't start a block drag / open the lightbox
-    const refW = blockRefWidth(imgEl);
+    const refW = blockRefWidth(wrapEl);
     const startX = e.clientX;
-    const startW = imgEl.getBoundingClientRect().width;
+    const startW = wrapEl.getBoundingClientRect().width;
+    if (imgEl) imgEl.style.width = "100%"; // make the image track the wrapper during the drag
     const move = (me: PointerEvent) => {
       const w = Math.max(24, Math.min(refW, startW + (me.clientX - startX)));
-      if (imgEl) imgEl.style.width = `${w}px`; // live feedback during the drag
+      if (wrapEl) wrapEl.style.width = `${w}px`; // live feedback during the drag
     };
     const up = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
-      const w = imgEl ? imgEl.getBoundingClientRect().width : startW;
+      const w = wrapEl ? wrapEl.getBoundingClientRect().width : startW;
       const pct = Math.max(5, Math.min(100, Math.round((w / refW) * 100)));
       writeImageWidth(props.blockId!, props.alt, props.url, pct);
     };
@@ -306,13 +317,13 @@ function AssetImage(props: {
       when={external || src()}
       fallback={<span class="inline-image-missing">🖼 {props.alt || assetRelPath(props.url)}</span>}
     >
-      <span class="inline-image-wrap">
+      <span ref={wrapEl} class="inline-image-wrap" style={wrapStyle()}>
         <img
           ref={imgEl}
           class="inline-image"
           src={src()!}
           alt={props.alt}
-          style={dim()}
+          style={imgStyle()}
           onClick={(e) => { e.stopPropagation(); setLightbox(src()!); }}
         />
         <Show when={props.blockId}>
