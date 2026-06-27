@@ -21,7 +21,7 @@ import {
   setRaw,
   doc,
 } from "./store";
-import { installKeybindings } from "./keybindings";
+import { installKeybindings, eventToBindingString } from "./keybindings";
 import { backend } from "./backend";
 // theme.css MUST come first: it defines every CSS variable (--bg-primary,
 // --bullet-color, --ls-block-bullet-size, --selection-bg) AND the
@@ -34,9 +34,32 @@ import "./styles/capture.css";
 
 const SCRATCH = "·capture·";
 
+// Pretty-print a binding string ("mod+shift+enter") for a hint ("Ctrl-Shift-Enter").
+// "mod" is Ctrl on Linux/Windows (Cmd on macOS — but this app targets Linux).
+function formatBinding(binding: string): string {
+  const label: Record<string, string> = {
+    mod: "Ctrl", ctrl: "Ctrl", control: "Ctrl", cmd: "Cmd", meta: "Cmd",
+    super: "Super", shift: "Shift", alt: "Alt", enter: "Enter", esc: "Esc",
+    space: "Space", tab: "Tab", up: "↑", down: "↓", left: "←", right: "→",
+  };
+  return binding
+    .split("+")
+    .map((k) => label[k.toLowerCase()] ?? (k.length === 1 ? k.toUpperCase() : k[0].toUpperCase() + k.slice(1)))
+    .join("-");
+}
+
 function Capture() {
   const [ready, setReady] = createSignal(false);
   const [enterFiles, setEnterFiles] = createSignal(false);
+  // Optional page title: filled → the capture becomes a NEW page; empty → it's
+  // appended to today's journal. Plus the live merged shortcut map (from the main
+  // window) so the hint text shows the user's ACTUAL submit shortcut.
+  const [title, setTitle] = createSignal("");
+  const [shortcuts, setShortcuts] = createSignal<Record<string, string>>({});
+  const submitShortcut = () =>
+    formatBinding(shortcuts()["editor/quick-capture-file"] || "mod+shift+enter");
+  const bulletHint = () => `Edit as usual, ${submitShortcut()} to submit`;
+  let titleRef: HTMLInputElement | undefined;
 
   const roots = () => pageByName(SCRATCH)?.roots ?? [];
 
@@ -170,26 +193,30 @@ function Capture() {
 
   const submit = () => {
     const md = roots().map((r) => blockSubtreeMarkdown(r)).join("\n").trim();
+    const pageTitle = title().trim();
     void (async () => {
       if (md) {
         try {
           const { emit } = await import("@tauri-apps/api/event");
-          await emit("quick-capture", { text: md });
+          // `title` set → the main window files this as a NEW page; empty → today.
+          await emit("quick-capture", { text: md, title: pageTitle });
         } catch {
           // ignore — emit only works inside Tauri
         }
       }
       clearScratch();
+      setTitle(""); // reset for the next capture — don't carry over the filed text
       await hideWindow();
     })();
   };
 
   const cancel = () => {
     clearScratch();
+    setTitle("");
     void hideWindow();
   };
 
-  const captureApi: CaptureApi = { submit, cancel, enterFiles };
+  const captureApi: CaptureApi = { submit, cancel, enterFiles, bulletHint };
 
   // Grow/shrink the window whenever the rendered content changes: new/removed
   // blocks and popups (childList), or a textarea autosizing (inline `style`).
@@ -231,6 +258,7 @@ function Capture() {
         const unKeys = await listen<Record<string, string>>("capture-apply-shortcuts", (e) => {
           disposeKeys();
           disposeKeys = installKeybindings(e.payload ?? {});
+          setShortcuts(e.payload ?? {}); // keep the hint's submit shortcut current
         });
         onCleanup(() => {
           unTheme();
@@ -276,6 +304,30 @@ function Capture() {
     <CaptureCtx.Provider value={captureApi}>
       <div class="capture-shell">
         <Show when={ready()}>
+          {/* Optional page title. Filled → the capture becomes a NEW page; empty →
+              appended to today. Plain Enter drops into the bullet; the submit
+              shortcut / Esc work here too. */}
+          <input
+            ref={titleRef}
+            class="capture-title"
+            type="text"
+            value={title()}
+            placeholder="Page Title (optional, if empty → appended to Today)"
+            onInput={(e) => setTitle(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              const want = shortcuts()["editor/quick-capture-file"] || "mod+shift+enter";
+              if (eventToBindingString(e) === want) {
+                e.preventDefault();
+                submit();
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                cancel();
+              } else if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+                e.preventDefault();
+                document.querySelector<HTMLTextAreaElement>(".capture-shell .page-blocks textarea")?.focus();
+              }
+            }}
+          />
           <div class="page-blocks">
             <For each={roots()}>{(rid) => <Block id={rid} />}</For>
           </div>

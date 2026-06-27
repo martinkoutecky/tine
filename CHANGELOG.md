@@ -10,9 +10,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
-- **Quick capture at the top of the journal.** A page-title field + a body
-  composer pinned above today's feed: fill the title to capture a **new page**,
-  leave it empty to **append to today's journal**, then `Ctrl-Shift-Enter`.
+- **Quick-capture: optional page title.** The capture window now has a page-title
+  field at the top — fill it to file the capture as a **new page**, leave it empty
+  to **append to today's journal**. The "…to submit" hint shows your actual
+  configured shortcut.
+- **Sidebars are remembered across launches.** The left/right sidebar open/closed
+  state and the right sidebar's items now persist (in the session file, since
+  WebKitGTK doesn't keep localStorage), so Tine reopens exactly as you left it.
 - **`[[` auto-closes its brackets** (`[[` → `[[]]`, caret between) like Logseq,
   and typing the closing `]]` types through them so you never end up with `]]]]`.
 - **Open media in the default player.** Inline video/audio now has an

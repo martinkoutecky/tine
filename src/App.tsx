@@ -50,7 +50,7 @@ import {
   pushToast,
 } from "./ui";
 import { applyZoom, installInterfaceZoomKeys, installInterfaceZoomWheel } from "./zoom";
-import { editingId, flushAll, appendToTodayJournal } from "./store";
+import { editingId, flushAll, appendToTodayJournal, captureToPage } from "./store";
 import { backend, isTauri } from "./backend";
 import { warnIfSoftwareRendering } from "./gpu";
 import { initSmoothScroll } from "./smoothScroll";
@@ -146,12 +146,18 @@ export function App(): JSX.Element {
     let unlisten = () => {};
     void (async () => {
       const { listen } = await import("@tauri-apps/api/event");
-      unlisten = await listen<{ text: string }>("quick-capture", async (e) => {
+      unlisten = await listen<{ text: string; title?: string }>("quick-capture", async (e) => {
         const text = e.payload?.text ?? "";
         if (!text.trim()) return;
-        const ok = await appendToTodayJournal(text);
+        // A title routes the capture to a NEW (or existing) page; empty → today.
+        const title = (e.payload?.title ?? "").trim();
+        const ok = title ? await captureToPage(title, text) : await appendToTodayJournal(text);
         pushToast(
-          ok ? "Captured to today's journal" : "Capture couldn't be saved",
+          ok
+            ? title
+              ? `Captured to “${title}”`
+              : "Captured to today's journal"
+            : "Capture couldn't be saved",
           ok ? "info" : "error"
         );
       });

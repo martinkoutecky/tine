@@ -16,6 +16,29 @@ body {
 .capture-shell {
   padding: 12px 14px;
 }
+/* Optional page-title field at the top of the capture window — styled like a page
+   heading, with a subtle grey-italic placeholder. Empty → the note appends to
+   today; filled → it becomes a new page. */
+.capture-title {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 0 6px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  outline: none;
+  font-family: inherit;
+  font-size: var(--ls-page-title-size, 1.6em);
+  font-weight: 600;
+  color: var(--text-title, inherit);
+  line-height: 1.2;
+}
+.capture-title::placeholder {
+  color: var(--text-muted);
+  font-style: italic;
+  font-weight: 400;
+  opacity: 0.85;
+}
 /* The format toolbar defaults to floating 34px ABOVE the line, which clips at
    the window's top edge for the first block in this compact window. Drop it just
    below the line instead; fitWindow() grows the window so it stays fully

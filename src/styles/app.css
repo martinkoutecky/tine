@@ -507,51 +507,6 @@ body {
   font-family: inherit;
 }
 
-/* Journal-top quick capture (QuickCapture.tsx). A page-title-styled field + a
-   body composer; subtle so it doesn't crowd the feed, with grey-italic hints. */
-.quick-capture {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin: 0 0 18px;
-  padding: 0 0 12px;
-  border-bottom: 1px dashed var(--border-color);
-}
-.quick-capture.busy {
-  opacity: 0.6;
-  pointer-events: none;
-}
-.qc-title {
-  font-size: var(--ls-page-title-size);
-  font-weight: 600;
-  color: var(--text-title);
-  line-height: 1.2;
-  border: none;
-  background: transparent;
-  outline: none;
-  width: 100%;
-  font-family: inherit;
-  padding: 2px 0;
-}
-.qc-body {
-  font-size: 1em;
-  color: var(--text-primary);
-  line-height: 1.6;
-  border: none;
-  background: transparent;
-  outline: none;
-  width: 100%;
-  font-family: inherit;
-  resize: none;
-  overflow: hidden;
-  padding: 2px 0;
-}
-.qc-title::placeholder,
-.qc-body::placeholder {
-  color: var(--text-muted);
-  font-style: italic;
-  opacity: 0.85;
-}
 .title-cal {
   width: 0.8em;
   height: 0.8em;

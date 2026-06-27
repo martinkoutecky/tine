@@ -171,6 +171,9 @@ export interface CaptureApi {
   cancel: () => void;
   /** true → a plain Enter files; false → Enter is a new block, Cmd/Ctrl+Enter files. */
   enterFiles: () => boolean;
+  /** Grey-italic placeholder for an empty capture bullet (e.g. "Edit as usual,
+   *  Ctrl-Shift-Enter to submit"), with the live, configured submit shortcut. */
+  bulletHint?: () => string;
 }
 export const CaptureCtx = createContext<CaptureApi | null>(null);
 
@@ -1352,6 +1355,7 @@ export function Editor(props: { id: string }): JSX.Element {
         class="block-editor"
         spellcheck={false}
         value={isCalc() ? (calcLive() ?? "") : editorValue()}
+        placeholder={cap?.bulletHint?.()}
         onInput={onInput}
         onKeyDown={onKeyDown}
         onFocus={() => setActiveSurface(surfaceKey)}
