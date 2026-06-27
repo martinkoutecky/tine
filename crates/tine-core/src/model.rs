@@ -6,7 +6,7 @@
 //! editing tree (see plan). UUIDs are assigned fresh per load and only
 //! persisted as `id::` once a block is referenced (a later milestone).
 
-use crate::config::Config;
+use crate::config::{Config, FileNameFormat};
 use crate::date::{JournalDate, JournalFormat};
 use crate::doc::{self, DocBlock, Document};
 use serde::{Deserialize, Serialize};
@@ -495,8 +495,9 @@ impl Graph {
             }
         }
         let mut entries = Vec::new();
-        entries.extend(list_md(&self.journals_path(), PageKind::Journal, &self.journal_format));
-        entries.extend(list_md(&self.pages_path(), PageKind::Page, &self.journal_format));
+        let nf = self.config.file_name_format;
+        entries.extend(list_md(&self.journals_path(), PageKind::Journal, &self.journal_format, nf));
+        entries.extend(list_md(&self.pages_path(), PageKind::Page, &self.journal_format, nf));
         // A duplicate-day journal (canonical + leftover title-named file) must show
         // once in quick-switch / All-Pages, not twice (both resolve to one page).
         let entries = dedup_journal_days(entries);
@@ -582,7 +583,7 @@ impl Graph {
                 .filter(|(e, _)| e.kind == PageKind::Journal && e.date_key.is_some())
                 .map(|(e, _)| e.clone())
                 .collect(),
-            None => list_md(&self.journals_path(), PageKind::Journal, &self.journal_format)
+            None => list_md(&self.journals_path(), PageKind::Journal, &self.journal_format, self.config.file_name_format)
                 .into_iter()
                 .filter(|e| e.date_key.is_some())
                 .collect(),
@@ -816,7 +817,7 @@ impl Graph {
             Some(e @ ("md" | "org")) => e.to_string(),
             _ => return Err(bad_path()),
         };
-        let enc = encode_page_name(name);
+        let enc = encode_page_name(name, self.config.file_name_format);
         let dir = self.pages_path();
         if dir.join(format!("{enc}.md")).exists() || dir.join(format!("{enc}.org")).exists() {
             return Err(io::Error::new(
@@ -861,7 +862,7 @@ impl Graph {
                 // place rather than creating a second file in the other extension;
                 // a brand-new page is created in the graph's preferred format.
                 // Cheap `exists()` probes (the common hit needs one), no dir scan.
-                let enc = encode_page_name(name);
+                let enc = encode_page_name(name, self.config.file_name_format);
                 let dir = self.pages_path();
                 let primary = dir.join(format!("{enc}.{}", pref.ext()));
                 if primary.exists() {
@@ -886,7 +887,10 @@ impl Graph {
     /// stat. A journal whose name doesn't parse to a date stem isn't guarded.
     fn has_twin(&self, name: &str, kind: PageKind) -> bool {
         let (dir, stem) = match kind {
-            PageKind::Page => (self.pages_path(), Some(encode_page_name(name))),
+            PageKind::Page => (
+                self.pages_path(),
+                Some(encode_page_name(name, self.config.file_name_format)),
+            ),
             PageKind::Journal => (
                 self.journals_path(),
                 self.journal_format.parse(name).map(|d| self.journal_format.file_stem(d)),
@@ -913,7 +917,7 @@ impl Graph {
             PageKind::Journal => self.journals_path(),
             PageKind::Page => self.pages_path(),
         };
-        let matches: Vec<PageEntry> = list_md(&dir, kind, &self.journal_format)
+        let matches: Vec<PageEntry> = list_md(&dir, kind, &self.journal_format, self.config.file_name_format)
             .into_iter()
             .filter(|e| e.name.eq_ignore_ascii_case(name))
             .collect();
@@ -1510,7 +1514,7 @@ impl Graph {
             // Keep the page's own format on rename (an .org page stays .org).
             let new_path = self.pages_path().join(format!(
                 "{}.{}",
-                encode_page_name(&new_name),
+                encode_page_name(&new_name, self.config.file_name_format),
                 Format::from_path(&entry.path).ext()
             ));
             if new_path != entry.path && new_path.exists() {
@@ -2035,7 +2039,7 @@ impl Graph {
             Some(PageEntry { name, kind: PageKind::Journal, date_key, path: path.to_path_buf() })
         } else if parent == self.pages_path() {
             Some(PageEntry {
-                name: decode_page_name(stem),
+                name: decode_page_name(stem, self.config.file_name_format),
                 kind: PageKind::Page,
                 date_key: None,
                 path: path.to_path_buf(),
@@ -2524,7 +2528,12 @@ fn dedup_journal_days(entries: Vec<PageEntry>) -> Vec<PageEntry> {
     out
 }
 
-fn list_md(dir: &Path, kind: PageKind, fmt: &JournalFormat) -> Vec<PageEntry> {
+fn list_md(
+    dir: &Path,
+    kind: PageKind,
+    fmt: &JournalFormat,
+    name_fmt: FileNameFormat,
+) -> Vec<PageEntry> {
     let mut out = Vec::new();
     let Ok(rd) = fs::read_dir(dir) else { return out };
     for entry in rd.flatten() {
@@ -2538,7 +2547,7 @@ fn list_md(dir: &Path, kind: PageKind, fmt: &JournalFormat) -> Vec<PageEntry> {
                 Some(d) => (fmt.title(d), Some(d.ordinal_key())),
                 None => (stem.to_string(), None),
             },
-            PageKind::Page => (decode_page_name(stem), None),
+            PageKind::Page => (decode_page_name(stem, name_fmt), None),
         };
         out.push(PageEntry { name, kind, date_key, path });
     }
@@ -2658,14 +2667,67 @@ pub fn content_rev(s: &str) -> String {
     format!("{h:016x}")
 }
 
-/// Logseq encodes some characters in page filenames. We handle the common
-/// namespace separator (`/` <-> `___`, the `:triple-lowbar` default).
-fn encode_page_name(name: &str) -> String {
-    name.replace('/', "___")
+/// Encode a page name to its on-disk filename stem, honoring the graph's
+/// `:file/name-format` (so Tine round-trips namespaces with OG on BOTH legacy
+/// `%2F` graphs and modern `___` graphs). Mirrors OG's `legacy-url-file-name-sanity`
+/// (legacy) and `tri-lb-file-name-sanity`/`escape-namespace-slashes-and-multilowbars`
+/// (triple-lowbar) for the high-frequency case: the namespace `/` separator and
+/// the `_`-adjacency / literal-`___` disambiguation. Exotic reserved-char and
+/// Windows-reserved-name rules are not yet mirrored (rare).
+fn encode_page_name(name: &str, fmt: FileNameFormat) -> String {
+    match fmt {
+        FileNameFormat::Legacy => name.replace('/', "%2F"),
+        FileNameFormat::TripleLowbar => name
+            // Disambiguate underscores that would otherwise be ambiguous after
+            // `/`→`___` (OG `fs.cljs:99-103`), THEN map the separator.
+            .replace("___", "%5F%5F%5F")
+            .replace("_/", "%5F/")
+            .replace("/_", "/%5F")
+            .replace('/', "___"),
+    }
 }
 
-fn decode_page_name(stem: &str) -> String {
-    stem.replace("___", "/")
+/// Inverse of [`encode_page_name`]. Legacy: percent-decode (`%2F`→`/`).
+/// Triple-lowbar: `___`→`/` FIRST, then percent-decode — the OG order
+/// (`util.cljs:153-160`), so an encoded literal `___` (stored `%5F%5F%5F`)
+/// survives instead of being turned into a separator.
+fn decode_page_name(stem: &str, fmt: FileNameFormat) -> String {
+    match fmt {
+        FileNameFormat::Legacy => percent_decode(stem),
+        FileNameFormat::TripleLowbar => percent_decode(&stem.replace("___", "/")),
+    }
+}
+
+/// Decode `%XX` percent-escapes (UTF-8 aware, like JS `decodeURIComponent`). An
+/// invalid or truncated escape is left literal rather than dropped.
+fn percent_decode(s: &str) -> String {
+    if !s.contains('%') {
+        return s.to_string();
+    }
+    let b = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let (Some(h), Some(l)) = (hex_nibble(b[i + 1]), hex_nibble(b[i + 2])) {
+                out.push((h << 4) | l);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn hex_nibble(c: u8) -> Option<u8> {
+    match c {
+        b'0'..=b'9' => Some(c - b'0'),
+        b'a'..=b'f' => Some(c - b'a' + 10),
+        b'A'..=b'F' => Some(c - b'A' + 10),
+        _ => None,
+    }
 }
 
 /// A unique-ish label (epoch millis + process-local sequence) for trashed files,
@@ -2746,6 +2808,35 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn page_name_encoding_round_trips_both_formats() {
+        // Legacy: `/` ↔ `%2F`; a literal `___` is NOT a separator (stays put).
+        let leg = FileNameFormat::Legacy;
+        assert_eq!(encode_page_name("a/b/c", leg), "a%2Fb%2Fc");
+        assert_eq!(decode_page_name("a%2Fb%2Fc", leg), "a/b/c");
+        assert_eq!(encode_page_name("a___b", leg), "a___b");
+        assert_eq!(decode_page_name("a___b", leg), "a___b");
+
+        // Triple-lowbar: `/` ↔ `___`; a literal `___` is disambiguated via `%5F`
+        // so it survives the round-trip (and isn't read back as a separator).
+        let tlb = FileNameFormat::TripleLowbar;
+        assert_eq!(encode_page_name("a/b/c", tlb), "a___b___c");
+        assert_eq!(decode_page_name("a___b___c", tlb), "a/b/c");
+        assert_eq!(encode_page_name("a___b", tlb), "a%5F%5F%5Fb");
+        assert_eq!(decode_page_name("a%5F%5F%5Fb", tlb), "a___b");
+        // `_` adjacent to the separator round-trips too.
+        assert_eq!(decode_page_name(&encode_page_name("a_/b", tlb), tlb), "a_/b");
+        assert_eq!(decode_page_name(&encode_page_name("x/_y", tlb), tlb), "x/_y");
+
+        // The cross-format hazard the fix addresses: a legacy `%2F` file is read
+        // as a namespace ONLY under legacy; a triple-lowbar `___` file ONLY under
+        // triple-lowbar — each matching its OG counterpart.
+        assert_eq!(decode_page_name("math%2Falgebra", leg), "math/algebra");
+        assert_eq!(decode_page_name("math___algebra", tlb), "math/algebra");
+        // A unicode percent-escape decodes (UTF-8 aware), like OG.
+        assert_eq!(decode_page_name("caf%C3%A9", leg), "café");
+    }
 
     #[test]
     fn assign_doc_uuids_dedups_duplicate_ids() {

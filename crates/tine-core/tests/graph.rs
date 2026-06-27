@@ -519,6 +519,11 @@ fn rename_cascades_namespace_and_rewrites_self_refs() {
     let root = std::env::temp_dir().join(format!("tine-ns-rename-{}", std::process::id()));
     std::fs::create_dir_all(root.join("pages")).unwrap();
     std::fs::create_dir_all(root.join("journals")).unwrap();
+    std::fs::create_dir_all(root.join("logseq")).unwrap();
+    // These namespace pages use the `___` separator, so the graph must be pinned
+    // to :triple-lowbar (the modern format) — otherwise (legacy default) `___`
+    // isn't a separator and the cascade wouldn't see them as `Proj/*` children.
+    std::fs::write(root.join("logseq").join("config.edn"), "{:file/name-format :triple-lowbar}\n").unwrap();
     std::fs::write(root.join("pages").join("Proj.md"), "- root, see [[Proj]] self\n").unwrap();
     std::fs::write(root.join("pages").join("Proj___Child.md"), "- child of [[Proj]]\n").unwrap();
     std::fs::write(root.join("pages").join("Proj___Child___Deep.md"), "- deep\n").unwrap();
@@ -548,6 +553,35 @@ fn rename_cascades_namespace_and_rewrites_self_refs() {
     assert!(!other.contains("Proj"), "{other}");
     let journal = std::fs::read_to_string(root.join("journals").join("2026_06_15.md")).unwrap();
     assert!(journal.contains("[[Renamed/Child/Deep]]"), "{journal}");
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn legacy_namespace_file_round_trips() {
+    // No :file/name-format ⇒ legacy (OG's default). A `%2F`-encoded namespace
+    // file (what OG writes on a legacy graph) must be discoverable under its
+    // slashed name and save back to the SAME file — never silently forked into a
+    // `___` twin. This is the G1/G2 fix: Tine used to always use/expect `___`.
+    let root = std::env::temp_dir().join(format!("tine-ns-legacy-{}", std::process::id()));
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    std::fs::create_dir_all(root.join("journals")).unwrap();
+    std::fs::write(root.join("pages").join("math%2Falgebra.md"), "- legacy ns page\n").unwrap();
+
+    let g = Graph::open(&root);
+    // Discoverable under the decoded, slashed name.
+    let entry = g
+        .find_entry("math/algebra", tine_core::PageKind::Page)
+        .expect("legacy %2F file should resolve under its slashed name");
+    assert_eq!(entry.name, "math/algebra");
+    let dto = g.load_page(&entry).unwrap();
+    // An edited save round-trips to the SAME file; no `___` twin appears.
+    g.save_page(&dto, dto.rev.as_deref()).unwrap();
+    assert!(root.join("pages").join("math%2Falgebra.md").exists());
+    assert!(
+        !root.join("pages").join("math___algebra.md").exists(),
+        "must not fork a triple-lowbar twin"
+    );
 
     std::fs::remove_dir_all(&root).ok();
 }

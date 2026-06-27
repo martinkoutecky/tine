@@ -48,6 +48,10 @@ pub struct Config {
     /// journals. Existing files keep their own format (decided per-file by
     /// extension). Default markdown.
     pub preferred_format: crate::model::Format,
+    /// `:file/name-format` — namespace-separator encoding in page filenames.
+    /// Default (absent key) is `Legacy` (`%2F`), matching OG; modern graphs pin
+    /// `:triple-lowbar` (`___`). See [`FileNameFormat`].
+    pub file_name_format: FileNameFormat,
 }
 
 /// Logseq's default journal formats (verified against
@@ -62,6 +66,21 @@ pub enum Workflow {
     Now,
     /// TODO / DOING
     Todo,
+}
+
+/// `:file/name-format` — how a page name's namespace separator `/` (and reserved
+/// characters) are encoded in the on-disk FILENAME. Logseq's two formats:
+///
+/// - `Legacy` — `/` → `%2F` (URL-encoded). **This is OG's default when the key is
+///   absent** (`graph_parser/cli.cljs`: `(or (:file/name-format config) :legacy)`).
+/// - `TripleLowbar` — `/` → `___` (triple underscore). What modern Logseq writes
+///   into a freshly-created graph's config template.
+///
+/// Both decode percent-escapes on read; triple-lowbar additionally maps `___`↔`/`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileNameFormat {
+    Legacy,
+    TripleLowbar,
 }
 
 impl Default for Config {
@@ -79,6 +98,7 @@ impl Default for Config {
             journal_file_name_format: None,
             journal_page_title_format: None,
             preferred_format: crate::model::Format::Md,
+            file_name_format: FileNameFormat::Legacy,
         }
     }
 }
@@ -123,6 +143,12 @@ impl Config {
                 cfg.preferred_format = crate::model::Format::Org;
             }
         }
+        // `:file/name-format` is a keyword (`:triple-lowbar` | `:legacy`). Absent
+        // ⇒ legacy, matching OG's `(or (:file/name-format config) :legacy)`.
+        cfg.file_name_format = match keyword_value(edn, ":file/name-format").as_deref() {
+            Some("triple-lowbar") => FileNameFormat::TripleLowbar,
+            _ => FileNameFormat::Legacy,
+        };
         cfg
     }
 }
@@ -845,6 +871,20 @@ mod tests {
         );
         assert!(!after2.contains("\"yyyy-MM-dd\""), "stale value left behind: {after2}");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn parses_file_name_format() {
+        assert_eq!(
+            Config::parse("{:file/name-format :triple-lowbar}").file_name_format,
+            FileNameFormat::TripleLowbar
+        );
+        assert_eq!(
+            Config::parse("{:file/name-format :legacy}").file_name_format,
+            FileNameFormat::Legacy
+        );
+        // Absent ⇒ legacy (OG's default), NOT triple-lowbar.
+        assert_eq!(Config::parse("{}").file_name_format, FileNameFormat::Legacy);
     }
 
     #[test]
