@@ -163,7 +163,9 @@ body {
 }
 
 .tab-pin {
-  font-size: 10px;
+  flex: none;
+  color: var(--text-secondary);
+  vertical-align: -1px;
 }
 
 .tab-close {

@@ -10,6 +10,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Pinned-tab icon is an SVG again.** Bundling the color-emoji font made
+  WebKitGTK paint the `📌` pin as a blank glyph (an empty gap on pinned tabs).
+  UI chrome no longer depends on an emoji font — the pin is now an inline SVG
+  thumbtack that renders everywhere.
 - **Labeled block references resolve.** The `[label](((block-id)))` form — a link
   whose target is a block — now renders as a clickable block reference showing
   *label* (and navigates to the block, with a hover preview), instead of a dead
