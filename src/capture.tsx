@@ -104,7 +104,7 @@ function Capture() {
   // The capture window starts tiny (one line). As you add blocks, wrap lines, or
   // open an autocomplete popup / date picker, paint would overflow the OS window
   // and get clipped — so we measure what's actually rendered and resize the
-  // window to fit (capped at 80% of the screen). Rust resets it to the base size
+  // window to fit (capped at HALF the screen). Rust resets it to the base size
   // on each show, so this only ever grows from the small base.
   let lastH = 0;
   const measureHeight = (): number => {
@@ -129,7 +129,10 @@ function Capture() {
       const { getCurrentWindow, LogicalSize } = await import("@tauri-apps/api/window");
       const win = getCurrentWindow();
       if (!(await win.isVisible())) return;
-      const screenMax = Math.round((window.screen?.availHeight ?? 1000) * 0.8);
+      // Cap the auto-grow at HALF the screen. A taller capture window is
+      // unwieldy (Martin's feedback: ~80% spanned too much). Content shorter
+      // than the cap still sizes exactly to its content.
+      const screenMax = Math.round((window.screen?.availHeight ?? 1000) * 0.5);
       const h = Math.max(64, Math.min(measureHeight(), screenMax));
       if (Math.abs(h - lastH) < 2) return; // avoid churn / feedback loops
       lastH = h;
