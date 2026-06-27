@@ -1039,6 +1039,23 @@ fn get_unlinked_refs(name: String, state: State<'_, AppState>) -> Result<Arc<Vec
     with_graph(&state, |g| Ok(g.unlinked_refs(&name)))
 }
 
+/// `block uuid → # of referrers` over the whole graph (drives the per-block
+/// reference-count badge). Small map (only referenced uuids); fetched once per
+/// graph generation by the frontend.
+#[tauri::command]
+fn block_ref_counts(
+    state: State<'_, AppState>,
+) -> Result<Arc<std::collections::HashMap<String, usize>>, String> {
+    with_graph(&state, |g| Ok(g.block_ref_counts()))
+}
+
+/// The blocks that reference block `uuid`, grouped by page (the badge's referrers
+/// panel). Lazy: called only when a badge is clicked open.
+#[tauri::command]
+fn block_referrers(uuid: String, state: State<'_, AppState>) -> Result<Arc<Vec<RefGroup>>, String> {
+    with_graph(&state, |g| Ok(g.block_referrers(&uuid)))
+}
+
 #[tauri::command]
 fn delete_page(name: String, kind: PageKind, state: State<'_, AppState>) -> Result<(), String> {
     with_graph(&state, |g| g.delete_page(&name, kind).map_err(|e| e.to_string()))
@@ -1581,6 +1598,8 @@ fn main() {
             save_page,
             get_backlinks,
             get_unlinked_refs,
+            block_ref_counts,
+            block_referrers,
             delete_page,
             rename_page,
             publish_html,

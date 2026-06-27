@@ -15,4 +15,21 @@ describe("mock backend", () => {
     const groups = await b.getBacklinks("logseq-claude");
     expect(groups.some((g) => g.page === "Jun 14th, 2026")).toBe(true);
   });
+
+  it("block ref counts cover bare + labeled forms", async () => {
+    const b = mockBackend();
+    const counts = await b.getBlockRefCounts();
+    // kitchen-sink target 64b9c0e2… is referenced by a bare AND a labeled ref → 2.
+    expect(counts["64b9c0e2-0000-0000-0000-000000000000"]).toBe(2);
+    // arch-1 is referenced once from the Jun 14th journal.
+    expect(counts["arch-1"]).toBe(1);
+  });
+
+  it("block referrers list the referencing blocks (same page included)", async () => {
+    const b = mockBackend();
+    const groups = await b.getBlockReferrers("64b9c0e2-0000-0000-0000-000000000000");
+    const raws = groups.flatMap((g) => g.blocks.map((bl) => bl.raw));
+    expect(raws.some((r) => r.includes("Block reference (bare)"))).toBe(true);
+    expect(raws.some((r) => r.includes("Labeled block reference"))).toBe(true);
+  });
 });

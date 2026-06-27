@@ -219,6 +219,99 @@ pub fn block_refs(raw: &str) -> Vec<String> {
     out
 }
 
+/// A block's `id::` property value (its uuid), if any.
+pub fn block_id(raw: &str) -> Option<String> {
+    raw.lines().find_map(|l| {
+        crate::doc::parse_property_line(l)
+            .and_then(|(k, v)| k.eq_ignore_ascii_case("id").then(|| v.trim().to_string()))
+    })
+}
+
+/// Read a `[label](target)` starting at the leading `[`. The target is read with
+/// BALANCED parens, so a URL that contains parens — `((uuid))`, `…/Foo_(bar)` — is
+/// captured whole instead of stopping at the first `)`. Returns (label, target,
+/// bytes consumed); only ASCII brackets are matched, so byte slicing is safe.
+pub fn read_bracket_link(rest: &str) -> Option<(&str, &str, usize)> {
+    let bytes = rest.as_bytes();
+    if bytes.first() != Some(&b'[') {
+        return None;
+    }
+    let label_end = rest.find(']')?;
+    if bytes.get(label_end + 1) != Some(&b'(') {
+        return None;
+    }
+    let url_start = label_end + 2;
+    let mut depth = 1usize;
+    let mut j = url_start;
+    while j < bytes.len() {
+        match bytes[j] {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            _ => {}
+        }
+        j += 1;
+    }
+    if depth != 0 || j == url_start {
+        return None;
+    }
+    Some((&rest[1..label_end], &rest[url_start..j], j + 1))
+}
+
+/// The inner uuid if `url` is exactly a `((uuid))` block-ref target.
+pub fn as_block_ref(url: &str) -> Option<&str> {
+    url.trim().strip_prefix("((").and_then(|s| s.strip_suffix("))")).map(str::trim)
+}
+
+/// Every block uuid `raw` references, deduped and code-aware. Covers all three OG
+/// block-ref forms: bare `((uuid))`, labeled `[label](((uuid)))`, and
+/// `{{embed ((uuid))}}` (the embed's `((uuid))` is caught by the bare scan). The
+/// labeled form is consumed as a whole link FIRST — otherwise the bare-`((` scan
+/// mis-parses its triple paren (capturing `(uuid` instead of `uuid`). Refs inside
+/// code are ignored (literal), matching `block_refs`/`page_refs`.
+pub fn block_ref_ids(raw: &str) -> Vec<String> {
+    let code = code_ranges(raw);
+    let mut out: Vec<String> = Vec::new();
+    let push = |id: &str, out: &mut Vec<String>| {
+        let id = id.trim();
+        if !id.is_empty() && !out.iter().any(|x| x == id) {
+            out.push(id.to_string());
+        }
+    };
+    let mut i = 0;
+    while i < raw.len() {
+        let rest = &raw[i..];
+        if !in_code(i, &code) {
+            // Labeled `[label](((uuid)))` — consume the whole link first. A normal
+            // `[text](url)` is consumed too (its url isn't a block ref → nothing
+            // pushed), so the bare scan never peeks inside a markdown link's url.
+            if rest.starts_with('[') {
+                if let Some((_, url, len)) = read_bracket_link(rest) {
+                    if let Some(id) = as_block_ref(url) {
+                        push(id, &mut out);
+                    }
+                    i += len;
+                    continue;
+                }
+            }
+            // Bare `((uuid))` (also matches the body of `{{embed ((uuid))}}`).
+            if let Some(after) = rest.strip_prefix("((") {
+                if let Some(end) = after.find("))") {
+                    push(&after[..end], &mut out);
+                    i += 2 + end + 2;
+                    continue;
+                }
+            }
+        }
+        i += rest.chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+    }
+    out
+}
+
 /// Does `raw` reference page `target` (by `[[...]]` or `#tag`)?
 pub fn references_page(raw: &str, target: &str) -> bool {
     let t = normalize(target);
@@ -410,6 +503,45 @@ mod tests {
             block_refs("ref ((628953c1-8d75-49fe-a648-f4c612109098)) here"),
             vec!["628953c1-8d75-49fe-a648-f4c612109098"]
         );
+    }
+
+    #[test]
+    fn block_ref_ids_all_forms_deduped_and_code_aware() {
+        // bare
+        assert_eq!(block_ref_ids("see ((aaa)) end"), vec!["aaa"]);
+        // labeled `[label](((uuid)))` — the triple paren must be captured whole
+        assert_eq!(block_ref_ids("(see [Related Work](((bbb))))"), vec!["bbb"]);
+        // embed macro body
+        assert_eq!(block_ref_ids("{{embed ((ccc))}}"), vec!["ccc"]);
+        // mixed + dedupe (same uuid twice → once)
+        assert_eq!(
+            block_ref_ids("((ddd)) and [x](((eee))) and ((ddd)) again"),
+            vec!["ddd", "eee"]
+        );
+        // a normal markdown link is consumed whole, never mined for `((`
+        assert_eq!(block_ref_ids("[text](https://ex.com/a)"), Vec::<String>::new());
+        // refs inside code are literal → ignored
+        assert_eq!(block_ref_ids("real ((fff)) but `((ggg))` literal"), vec!["fff"]);
+        let fenced = "intro ((hhh))\n```\n((iii))\n```\nout ((jjj))";
+        assert_eq!(block_ref_ids(fenced), vec!["hhh", "jjj"]);
+    }
+
+    #[test]
+    fn read_bracket_link_balances_parens() {
+        // url with parens (block ref) captured whole, not stopped at first `)`
+        assert_eq!(read_bracket_link("[L](((u)))rest"), Some(("L", "((u))", 10)));
+        assert_eq!(as_block_ref("((u))"), Some("u"));
+        // a paren-bearing normal url survives too
+        assert_eq!(read_bracket_link("[a](/Foo_(bar)) x").map(|t| t.1), Some("/Foo_(bar)"));
+        // not a link
+        assert!(read_bracket_link("[a] (b)").is_none());
+    }
+
+    #[test]
+    fn block_id_reads_id_property() {
+        assert_eq!(block_id("text\nid:: 1234-abcd"), Some("1234-abcd".to_string()));
+        assert_eq!(block_id("ID:: Xyz"), Some("Xyz".to_string())); // case-insensitive key
+        assert_eq!(block_id("no props here"), None);
     }
 
     #[test]

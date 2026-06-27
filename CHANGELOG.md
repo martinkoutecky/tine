@@ -8,6 +8,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Added
+
+- **Per-block reference count + referrers panel.** A block that's referenced
+  elsewhere now shows a small count badge to its right (matching Logseq): click it
+  to expand the list of blocks that reference it (grouped by page, same-page
+  referrers included), or shift-click to open the block in the right sidebar. The
+  count covers bare `((id))`, labeled `[text](((id)))`, and `{{embed ((id))}}`
+  references. (Like the page-level linked references, it refreshes when the graph
+  changes, not on every keystroke.)
+
 ### Fixed
 
 - **“Copy image” from the image viewer works now.** Click an image to open it,

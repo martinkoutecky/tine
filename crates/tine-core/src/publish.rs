@@ -4,6 +4,7 @@
 
 use crate::doc::{self, DocBlock};
 use crate::model::{Graph, PageKind};
+use crate::refs::{as_block_ref, block_id, read_bracket_link};
 use std::fs;
 use std::io;
 
@@ -36,14 +37,6 @@ struct RefTarget {
 }
 type RefIndex = std::collections::HashMap<String, RefTarget>;
 
-/// A block's `id::` property value (its uuid), if any.
-fn block_id(raw: &str) -> Option<String> {
-    raw.lines().find_map(|l| {
-        crate::doc::parse_property_line(l)
-            .and_then(|(k, v)| k.eq_ignore_ascii_case("id").then(|| v.trim().to_string()))
-    })
-}
-
 /// First non-property / non-scheduling / non-blank line of a block (its text).
 fn first_content_line(raw: &str) -> String {
     raw.lines()
@@ -65,46 +58,6 @@ fn collect_block_refs(blocks: &[DocBlock], slug: &str, refs: &mut RefIndex) {
         }
         collect_block_refs(&b.children, slug, refs);
     }
-}
-
-/// Read a `[label](target)` starting at the leading `[`. The target is read with
-/// BALANCED parens, so a URL that contains parens — `((uuid))`, `…/Foo_(bar)` — is
-/// captured whole instead of stopping at the first `)`. Returns (label, target,
-/// bytes consumed); only ASCII brackets are matched, so byte slicing is safe.
-fn read_bracket_link(rest: &str) -> Option<(&str, &str, usize)> {
-    let bytes = rest.as_bytes();
-    if bytes.first() != Some(&b'[') {
-        return None;
-    }
-    let label_end = rest.find(']')?;
-    if bytes.get(label_end + 1) != Some(&b'(') {
-        return None;
-    }
-    let url_start = label_end + 2;
-    let mut depth = 1usize;
-    let mut j = url_start;
-    while j < bytes.len() {
-        match bytes[j] {
-            b'(' => depth += 1,
-            b')' => {
-                depth -= 1;
-                if depth == 0 {
-                    break;
-                }
-            }
-            _ => {}
-        }
-        j += 1;
-    }
-    if depth != 0 || j == url_start {
-        return None;
-    }
-    Some((&rest[1..label_end], &rest[url_start..j], j + 1))
-}
-
-/// The inner uuid if `url` is exactly a `((uuid))` block-ref target.
-fn as_block_ref(url: &str) -> Option<&str> {
-    url.trim().strip_prefix("((").and_then(|s| s.strip_suffix("))")).map(str::trim)
 }
 
 /// Emit a block reference: a link to its target block showing the label (else the

@@ -40,6 +40,55 @@ fn backlinks_to_parameterized_complexity() {
 }
 
 #[test]
+fn block_ref_counts_and_referrers() {
+    // Isolated temp graph: a target block (id:: tgt-0001) referenced by a same-page
+    // block and three blocks on another page (labeled, embed, and a double ref that
+    // must dedupe to one). Exercises all three OG block-ref forms + same-page
+    // inclusion.
+    let root = std::env::temp_dir().join(format!("tine-blockref-test-{}", std::process::id()));
+    std::fs::create_dir_all(root.join("journals")).unwrap();
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    std::fs::write(
+        root.join("pages").join("Target.md"),
+        "- the target block\n  id:: tgt-0001\n- see ((tgt-0001)) on this page\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("pages").join("Other.md"),
+        "- ref via [label](((tgt-0001)))\n- embedded {{embed ((tgt-0001))}}\n- two ((tgt-0001)) and ((tgt-0001)) here\n",
+    )
+    .unwrap();
+
+    let g = Graph::open(&root);
+
+    // Count = distinct referrer blocks: 1 (same page) + 3 (Other) = 4. The double
+    // ref on the last Other block counts once.
+    let counts = g.block_ref_counts();
+    assert_eq!(counts.get("tgt-0001").copied(), Some(4), "counts: {counts:?}");
+
+    // Referrers grouped by page, and the same-page referrer IS included (unlike
+    // page backlinks).
+    let groups = g.block_referrers("tgt-0001");
+    let mut by_page: std::collections::HashMap<&str, usize> =
+        std::collections::HashMap::new();
+    for gr in groups.iter() {
+        by_page.insert(gr.page.as_str(), gr.blocks.len());
+    }
+    assert_eq!(by_page.get("Target").copied(), Some(1), "same-page referrer included");
+    assert_eq!(by_page.get("Other").copied(), Some(3), "all 3 Other referrers");
+
+    // The target block itself is not a referrer of itself.
+    let target_refs: Vec<&str> = groups
+        .iter()
+        .find(|gr| gr.page == "Target")
+        .map(|gr| gr.blocks.iter().map(|b| b.raw.as_str()).collect())
+        .unwrap_or_default();
+    assert!(target_refs.iter().all(|r| r.contains("see ((tgt-0001))")), "{target_refs:?}");
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn publishes_only_public_pages() {
     let root = std::env::temp_dir().join(format!("tine-publish-test-{}", std::process::id()));
     std::fs::create_dir_all(root.join("pages")).unwrap();

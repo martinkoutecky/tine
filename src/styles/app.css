@@ -2963,6 +2963,45 @@ img.emoji {
   text-decoration: underline;
 }
 
+/* Per-block reference-count badge (OG's `.open-block-ref-link`): a small pill
+   right after the block content. Plain click opens the referrers panel below the
+   block; shift-click opens the block in the sidebar. */
+.block-refs-count {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  color: var(--text-muted);
+  background: var(--bg-tertiary);
+  border-radius: 7px;
+  cursor: pointer;
+  vertical-align: middle;
+  user-select: none;
+}
+.block-refs-count:hover,
+.block-refs-count.open {
+  color: var(--link-color);
+}
+
+/* The inline block-level "Linked References" panel revealed by the badge. Indented
+   to sit under the block content, set off by a left rule. */
+.block-references {
+  margin: 2px 0 6px 28px;
+}
+.block-references-inner {
+  border-left: 2px solid var(--border-color);
+  padding: 4px 0 4px 12px;
+}
+.block-references-header {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
 /* Sorted query: a flat global list, so each result carries a small page
    breadcrumb instead of a full page header, and rows sit tight together. */
 .query-group-flat {

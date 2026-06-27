@@ -30,6 +30,10 @@ export interface Backend {
   savePage(page: PageDto, baseRev: string | null, force?: boolean): Promise<string>;
   getBacklinks(name: string): Promise<RefGroup[]>;
   getUnlinkedRefs(name: string): Promise<RefGroup[]>;
+  /** Map of block uuid → number of blocks that reference it (the count badge). */
+  getBlockRefCounts(): Promise<Record<string, number>>;
+  /** Blocks that reference block `uuid`, grouped by page (the referrers panel). */
+  getBlockReferrers(uuid: string): Promise<RefGroup[]>;
   deletePage(name: string, kind: "journal" | "page"): Promise<void>;
   /** Rename a page and update all [[refs]]/#tags across the graph. */
   renamePage(old: string, next: string): Promise<void>;
@@ -242,6 +246,12 @@ class TauriBackend implements Backend {
   }
   getUnlinkedRefs(name: string) {
     return this.call<RefGroup[]>("get_unlinked_refs", { name });
+  }
+  getBlockRefCounts() {
+    return this.call<Record<string, number>>("block_ref_counts", {});
+  }
+  getBlockReferrers(uuid: string) {
+    return this.call<RefGroup[]>("block_referrers", { uuid });
   }
   deletePage(name: string, kind: "journal" | "page") {
     return this.call<void>("delete_page", { name, kind });

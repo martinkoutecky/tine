@@ -239,6 +239,13 @@ pub struct Graph {
     /// owning page instead of walking every block of every page. A stale hint is
     /// harmless: resolution falls back to a full scan when the block isn't found.
     block_index: RwLock<Option<(u64, std::collections::HashMap<String, String>)>>,
+    /// `block uuid → # of distinct blocks that reference it` (`((uuid))`, labeled
+    /// `[..](((uuid)))`, `{{embed ((uuid))}}`), keyed by `cache_gen` so it self-
+    /// invalidates on any cache mutation (same pattern as `block_index`). Drives the
+    /// per-block reference-count badge; `Arc` so handing the whole map to the
+    /// frontend is a refcount bump, not a clone. Only referenced uuids appear, so
+    /// the map is small.
+    block_ref_count_cache: RwLock<Option<(u64, Arc<std::collections::HashMap<String, usize>>)>>,
     /// Memoized results of the pervasive whole-graph scans (run_query / backlinks /
     /// unlinked_refs), keyed by `(cache_gen, today)` so it self-invalidates on ANY
     /// cache mutation and on a date rollover (relative-date queries depend on
@@ -352,6 +359,7 @@ impl Graph {
             build_lock: std::sync::Mutex::new(()),
             alias_cache: RwLock::new(None),
             block_index: RwLock::new(None),
+            block_ref_count_cache: RwLock::new(None),
             derived_cache: RwLock::new(None),
             page_list_cache: RwLock::new(None),
             recent_writes: std::sync::Mutex::new(std::collections::HashMap::new()),
@@ -1032,6 +1040,41 @@ impl Graph {
         result
     }
 
+    /// `block uuid → # of distinct referrer blocks`, over the whole graph, via a
+    /// `cache_gen`-keyed index (same pattern as `block_page_hint`). A referrer is a
+    /// block whose text references the uuid (`((uuid))`, `[..](((uuid)))`, or
+    /// `{{embed ((uuid))}}`); multiple refs from one block count once (OG semantics).
+    /// O(graph) to (re)build once per cache change, then O(1) refcount bump.
+    pub fn block_ref_counts(&self) -> Arc<std::collections::HashMap<String, usize>> {
+        use std::sync::atomic::Ordering;
+        let gen = self.cache_gen.load(Ordering::Acquire);
+        if let Some((idx_gen, map)) = self.block_ref_count_cache.read().unwrap().as_ref() {
+            if *idx_gen == gen {
+                return Arc::clone(map);
+            }
+        }
+        fn walk_counts(blocks: &[DocBlock], m: &mut std::collections::HashMap<String, usize>) {
+            for b in blocks {
+                // Dedupe per referrer block: block_ref_ids already returns a
+                // de-duplicated list, so each distinct target gets +1 per referrer.
+                for id in crate::refs::block_ref_ids(&b.raw) {
+                    *m.entry(id).or_insert(0) += 1;
+                }
+                walk_counts(&b.children, m);
+            }
+        }
+        let map = self.with_pages(|pages| {
+            let mut m = std::collections::HashMap::new();
+            for (_entry, doc) in pages {
+                walk_counts(&doc.roots, &mut m);
+            }
+            m
+        });
+        let arc = Arc::new(map);
+        *self.block_ref_count_cache.write().unwrap() = Some((gen, Arc::clone(&arc)));
+        arc
+    }
+
     /// A page DTO from the cache ONLY if the cache is already built — never
     /// triggers a (synchronous, whole-graph) build. `None` on a cold cache or a
     /// page not yet cached, so latency-path callers can parse just one file.
@@ -1265,6 +1308,7 @@ impl Graph {
         drop(guard);
         *self.alias_cache.write().unwrap() = None;
         *self.block_index.write().unwrap() = None;
+        *self.block_ref_count_cache.write().unwrap() = None;
     }
 
     /// Update one page in the cache after we write it (no full rebuild). A no-op
@@ -1449,6 +1493,15 @@ impl Graph {
     pub fn backlinks(&self, target: &str) -> Arc<Vec<RefGroup>> {
         self.derived_memo(format!("b\0{}", crate::refs::normalize(target)), || {
             crate::query::backlinks(self, target)
+        })
+    }
+
+    /// Block-level referrers for a block uuid: every block across the graph that
+    /// references it, grouped by source page (memoized). Includes same-page
+    /// referrers (see `query::block_referrers`).
+    pub fn block_referrers(&self, uuid: &str) -> Arc<Vec<RefGroup>> {
+        self.derived_memo(format!("br\0{}", uuid.trim()), || {
+            crate::query::block_referrers(self, uuid)
         })
     }
 

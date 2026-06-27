@@ -118,6 +118,19 @@ pub fn backlinks(graph: &Graph, target: &str) -> Vec<RefGroup> {
     collect(graph, |b| names.iter().any(|n| b.projection().refs_contains(n)), Some(&canonical))
 }
 
+/// Block-level referrers: every block across the graph that references the block
+/// with `id:: uuid` (via `((uuid))`, `[..](((uuid)))`, or `{{embed ((uuid))}}`),
+/// grouped by source page. Unlike page `backlinks`, this passes `exclude: None`,
+/// so a referrer on the *same page* as the target is included — matching OG's
+/// `get-block-referenced-blocks` (no self-page exclusion at the block level).
+pub fn block_referrers(graph: &Graph, uuid: &str) -> Vec<RefGroup> {
+    let u = uuid.trim();
+    if u.is_empty() {
+        return Vec::new();
+    }
+    collect(graph, |b| refs::block_ref_ids(&b.raw).iter().any(|r| r == u), None)
+}
+
 fn contains_word(hay: &str, needle: &str) -> bool {
     if needle.is_empty() {
         return false;

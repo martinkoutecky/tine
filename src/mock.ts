@@ -14,6 +14,23 @@ function pageRefs(raw: string): string[] {
   while ((m = re.exec(raw))) out.push(m[1] ?? m[2] ?? m[3]);
   return out;
 }
+// Block uuids `raw` references, deduped. Mirrors refs::block_ref_ids: labeled
+// `[label](((uuid)))` is matched (and removed) FIRST so the bare `((uuid))` scan
+// doesn't mis-read the triple paren; the bare scan also covers `{{embed ((uuid))}}`.
+function blockRefIds(raw: string): string[] {
+  const out: string[] = [];
+  const push = (id: string) => {
+    id = id.trim();
+    if (id && !out.includes(id)) out.push(id);
+  };
+  const labeled = /\[[^\]]*\]\(\(\(([^)]+)\)\)\)/g;
+  let m: RegExpExecArray | null;
+  while ((m = labeled.exec(raw))) push(m[1]);
+  const bare = /\(\(([^)]+)\)\)/g;
+  const rest = raw.replace(labeled, "");
+  while ((m = bare.exec(rest))) push(m[1]);
+  return out;
+}
 function leadingMarker(raw: string): string | null {
   const m = /^(TODO|DOING|DONE|NOW|LATER|WAITING|WAIT|CANCELED|CANCELLED|IN-PROGRESS)\b/.exec(raw);
   return m ? m[1] : null;
@@ -23,7 +40,10 @@ let _id = 0;
 const nid = () => `mock-${_id++}`;
 
 function b(raw: string, children: BlockDto[] = [], collapsed = false): BlockDto {
-  return { id: nid(), raw, collapsed, children };
+  // Mirror the real backend: a block carrying an `id::` property uses that uuid as
+  // its store id (so block refs resolve to it and the count badge keys correctly).
+  const m = raw.match(/^\s*id::\s*(.+)$/m);
+  return { id: m ? m[1].trim() : nid(), raw, collapsed, children };
 }
 
 const PAGES: PageDto[] = [
@@ -279,6 +299,20 @@ export function mockBackend(): Backend {
         (b) => re.test(b.raw.toLowerCase()) && !pageRefs(b.raw).some((r) => r.toLowerCase() === n),
         name
       );
+    },
+    async getBlockRefCounts(): Promise<Record<string, number>> {
+      const counts: Record<string, number> = {};
+      const walk = (bs: BlockDto[]) =>
+        bs.forEach((b) => {
+          for (const id of blockRefIds(b.raw)) counts[id] = (counts[id] ?? 0) + 1;
+          walk(b.children);
+        });
+      for (const p of all) walk(p.blocks);
+      return counts;
+    },
+    async getBlockReferrers(uuid: string): Promise<RefGroup[]> {
+      // No exclude → same-page referrers included (matches the backend).
+      return collect((b) => blockRefIds(b.raw).includes(uuid));
     },
     async deletePage(): Promise<void> {
       // no-op in mock

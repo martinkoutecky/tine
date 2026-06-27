@@ -68,6 +68,8 @@ import { QueryMacro, EmbedMacro } from "./Macro";
 import { workflow, zoomInto, openContextMenu, openDatePicker, openBlockInSidebar, graphMeta, dataRev, setQueryBuilderAutoOpen, openPageProps, pushToast, dismissToast } from "../ui";
 import { seedAssetBlob } from "../assetCache";
 import { openPageInNewTab } from "../router";
+import { blockRefCount } from "../blockRefCounts";
+import { BlockReferences } from "./BlockReferences";
 import { editorCommandFor } from "../keybindings";
 import { cycleMarkerSmart } from "../editor/repeat";
 import { applyTemplateVars } from "../editor/templateVars";
@@ -195,6 +197,8 @@ export function Block(props: { id: string }): JSX.Element {
     editingId() === props.id && (editingOwner() === null || editingOwner() === instanceId);
   const hasChildren = () => node().children.length > 0;
   const collapsed = () => node().collapsed;
+  // Block-level "linked references" panel toggled by the reference-count badge.
+  const [showRefs, setShowRefs] = createSignal(false);
   // Ordered-list label for THIS block's own bullet (OG numbers the block itself,
   // not its children); null for a normal bullet.
   const orderMarker = () => orderedListMarker(props.id);
@@ -268,11 +272,45 @@ export function Block(props: { id: string }): JSX.Element {
               startEditing(props.id, doc.byId[props.id].raw.length, instanceId);
           }}
         >
-          <Show when={editing()} fallback={<Rendered id={props.id} owner={instanceId} />}>
+          <Show
+            when={editing()}
+            fallback={
+              <Rendered
+                id={props.id}
+                owner={instanceId}
+                trailing={
+                  // OG's per-block reference-count badge: shown only when the block
+                  // is referenced. Plain click toggles the referrers panel below;
+                  // shift-click opens the block in the sidebar (matching OG and the
+                  // bullet's shift-click).
+                  <Show when={blockRefCount(props.id) > 0}>
+                    <a
+                      class="block-refs-count"
+                      classList={{ open: showRefs() }}
+                      title="Open block references (shift-click → sidebar)"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (e.shiftKey) openBlockInSidebar(persistentBlockRef(props.id));
+                        else setShowRefs((v) => !v);
+                      }}
+                    >
+                      {blockRefCount(props.id)}
+                    </a>
+                  </Show>
+                }
+              />
+            }
+          >
             <Editor id={props.id} />
           </Show>
         </div>
       </div>
+
+      <Show when={showRefs()}>
+        <div class="block-references">
+          <BlockReferences id={props.id} />
+        </div>
+      </Show>
 
       <Show when={hasChildren() && !collapsed()}>
         <div class="block-children-container">
@@ -312,7 +350,7 @@ function renderedCaret(root: Node, container: Node, off: number): { text: string
   return { text, caret };
 }
 
-function Rendered(props: { id: string; owner?: string }): JSX.Element {
+function Rendered(props: { id: string; owner?: string; trailing?: JSX.Element }): JSX.Element {
   const node = () => doc.byId[props.id];
   const view = createMemo(() => blockView(node().raw));
   const fmt = () => pageByName(node().page)?.format ?? "md";
@@ -449,6 +487,7 @@ function Rendered(props: { id: string; owner?: string }): JSX.Element {
           </For>
         </span>
       </Show>
+      {props.trailing}
     </div>
     </Show>
   );

@@ -126,6 +126,8 @@ raw speed. (Where a comparison is made, it's against current Logseq desktop core
   Logseq) or link-the-first-match.
 - Linked & unlinked references on every page (live/editable), with co-reference filtering and hover
   previews.
+- Per-block **reference count**: a referenced block shows a small count badge — click it to reveal
+  the blocks that reference it (grouped by page), or shift-click to open the block in the sidebar.
 - `{{query}}` engine (inline or whole-block): boolean and/or/not, `(task …)`, `(priority …)`,
   `(property …)`, `(page-property …)`, `(page-tags …)`, `(scheduled)`, `(deadline)`, `(journal)`,
   `(namespace …)`, `(between START END)` with a field selector, `(sort-by …)`. Results render as a
