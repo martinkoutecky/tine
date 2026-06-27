@@ -3986,7 +3986,7 @@ dependencies = [
 
 [[package]]
 name = "tine"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "notify",
  "serde",
@@ -4002,7 +4002,7 @@ dependencies = [
 
 [[package]]
 name = "tine-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "pretty_assertions",
  "serde",

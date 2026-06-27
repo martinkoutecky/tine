@@ -8,6 +8,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-06-27
+
+A maintenance release: **namespaces round-trip with Logseq's default filename
+format**, **graph switching fully resets the workspace**, **images are
+drag-resizable**, and a batch of editor/sidebar/quick-capture fixes.
+
 ### Added
 
 - **Drag-to-resize images.** Hover an image and drag the corner grip to resize
@@ -160,6 +166,7 @@ takes over your graph.
 - macOS and Windows installers are currently **unsigned** — on macOS right-click →
   Open; on Windows choose *More info → Run anyway*.
 
-[Unreleased]: https://github.com/martinkoutecky/tine/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/martinkoutecky/tine/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/martinkoutecky/tine/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/martinkoutecky/tine/releases/tag/v0.2.0
 [0.1.0]: https://github.com/martinkoutecky/tine/releases/tag/v0.1.0
