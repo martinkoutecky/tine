@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildNamespaceTree } from "./Namespace";
+import { buildNamespaceTree, namespaceHierarchyRows } from "./Namespace";
 
 describe("buildNamespaceTree", () => {
   it("nests pages by '/' segments, ignoring non-namespaced names", () => {
@@ -19,5 +19,44 @@ describe("buildNamespaceTree", () => {
     expect(tree[0].seg).toBe("x");
     expect(tree[0].children[0].seg).toBe("y");
     expect(tree[0].children[0].children[0].full).toBe("x/y/z");
+  });
+});
+
+describe("namespaceHierarchyRows", () => {
+  const all = [
+    "Formula1",
+    "Formula1/2026",
+    "Formula1/2026/08 Austrian Grand Prix",
+    "Formula1/2026/09 Italian Grand Prix",
+    "Formula1/2025/12 Abu Dhabi Grand Prix", // no "Formula1/2025" page of its own
+    "Other",
+  ];
+
+  it("emits one row per descendant LEVEL, synthesizing missing intermediates", () => {
+    const rows = namespaceHierarchyRows(all, "Formula1").map((r) => r.join("/"));
+    expect(rows).toEqual([
+      "Formula1/2025", // synthesized — no file of its own
+      "Formula1/2025/12 Abu Dhabi Grand Prix",
+      "Formula1/2026",
+      "Formula1/2026/08 Austrian Grand Prix",
+      "Formula1/2026/09 Italian Grand Prix",
+    ]);
+  });
+
+  it("does not include the page itself, only descendants", () => {
+    const rows = namespaceHierarchyRows(all, "Formula1/2026").map((r) => r.join("/"));
+    expect(rows).toEqual([
+      "Formula1/2026/08 Austrian Grand Prix",
+      "Formula1/2026/09 Italian Grand Prix",
+    ]);
+  });
+
+  it("a namespaced leaf with no descendants shows its parent path", () => {
+    const rows = namespaceHierarchyRows(all, "Formula1/2026/08 Austrian Grand Prix");
+    expect(rows).toEqual([["Formula1", "2026"]]);
+  });
+
+  it("a plain (non-namespaced) page with no descendants → nothing", () => {
+    expect(namespaceHierarchyRows(all, "Other")).toEqual([]);
   });
 });

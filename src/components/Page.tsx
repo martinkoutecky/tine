@@ -22,6 +22,11 @@ import type { PageDto } from "../types";
 
 const FEED_PAGE = 3;
 
+// Page properties NOT shown in the under-title property list: `alias` is surfaced
+// as "aka" chips above, and `icon` is consumed as the page icon next to the title
+// (OG hides it too). Other internal/metadata page props could be added here.
+const PAGE_PROPS_HIDDEN = new Set(["alias", "icon"]);
+
 function emptyPage(name: string, kind: "journal" | "page"): PageDto {
   return {
     name,
@@ -430,10 +435,10 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
           </For>
         </div>
       </Show>
-      <Show when={pageProperties(props.page.preBlock, props.page.format).filter(([k]) => k.toLowerCase() !== "alias").length}>
+      <Show when={pageProperties(props.page.preBlock, props.page.format).filter(([k]) => !PAGE_PROPS_HIDDEN.has(k.toLowerCase())).length}>
         <div class="page-properties">
-          {/* `alias` is surfaced as chips above, so drop it from the property list. */}
-          <For each={pageProperties(props.page.preBlock, props.page.format).filter(([k]) => k.toLowerCase() !== "alias")}>
+          {/* `alias`/`icon` are surfaced elsewhere (chips / title icon) — see PAGE_PROPS_HIDDEN. */}
+          <For each={pageProperties(props.page.preBlock, props.page.format).filter(([k]) => !PAGE_PROPS_HIDDEN.has(k.toLowerCase()))}>
             {([key, value]) => (
               <div class="prop-row">
                 <span class="prop-key">{key}</span>

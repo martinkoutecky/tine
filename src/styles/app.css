@@ -2855,16 +2855,19 @@ ol.md-list { list-style: decimal; }
   margin: 0 4px;
   opacity: 0.6;
 }
-/* OG's automatic "Hierarchy" section: breadcrumb paths of descendant pages. */
+/* OG's automatic "Hierarchy" section: a bulleted list of breadcrumb paths, one
+   row per descendant namespace level. */
 .page-hierarchy {
   margin-top: 32px;
 }
 .ns-hierarchy {
   list-style: none;
   margin: 8px 0 0;
-  padding: 0;
+  padding: 0 0 0 12px;
 }
-.ns-hierarchy li {
+.ns-hier-row {
+  display: flex;
+  align-items: baseline;
   margin: 6px 0;
   line-height: 1.6;
 }
@@ -2876,11 +2879,26 @@ ol.md-list { list-style: decimal; }
   opacity: 0.3;
 }
 
+/* Outline-style bullet shared by the namespace macro tree and the Hierarchy rows
+   (mirrors OG, which renders both as bulleted lists). */
+.ns-bullet {
+  flex: none;
+  width: var(--ls-block-bullet-size, 6px);
+  height: var(--ls-block-bullet-size, 6px);
+  border-radius: 50%;
+  background: var(--bullet-color);
+  margin-right: 8px;
+  transform: translateY(-1px);
+}
+
 /* {{namespace X}} macro — a bold "Namespace" label + the root page link as a
    header (OG `namespace-hierarchy`), then the descendant tree below. Each row
    indents by depth (inline style) and shows the page's icon:: then a segment. */
 .ns-macro {
   margin: 4px 0;
+}
+.ns-macro-tree {
+  padding-left: 4px;
 }
 .ns-macro-head {
   display: flex;

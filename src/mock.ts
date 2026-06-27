@@ -198,6 +198,22 @@ const NAMED: PageDto[] = [
     pre_block: "icon:: 🏁",
     blocks: [b("Race notes")],
   },
+  {
+    name: "Formula1/2026/09 Italian Grand Prix",
+    kind: "page",
+    title: "Formula1/2026/09 Italian Grand Prix",
+    pre_block: "icon:: 🏁",
+    blocks: [b("Race notes")],
+  },
+  // No "Formula1/2025" page of its own — only this leaf. The Hierarchy must still
+  // synthesize a "Formula1 / 2025" level row (OG parity).
+  {
+    name: "Formula1/2025/12 Abu Dhabi Grand Prix",
+    kind: "page",
+    title: "Formula1/2025/12 Abu Dhabi Grand Prix",
+    pre_block: "icon:: 🏁",
+    blocks: [b("Race notes")],
+  },
 ];
 
 const mockHighlights: Record<string, { label: string; highlights: Highlight[] }> = {};

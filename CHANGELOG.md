@@ -11,11 +11,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ### Added
 
 - **Namespace pages match OG.** The `{{namespace}}` macro now renders the bold
-  **"Namespace"** label + root link header (then the descendant tree), and every
-  non-journal page that's part of a namespace gets OG's automatic **"Hierarchy"**
-  section below its blocks — breadcrumb paths of the descendant pages
-  (`[[Formula1]] / [[2026]] / …`), each segment a link to its cumulative path.
-  This replaces the earlier non-OG "Namespace (direct children)" list.
+  **"Namespace"** label + root link header (then the bulleted descendant tree), and
+  every non-journal page that's part of a namespace gets OG's automatic
+  **"Hierarchy"** section below its blocks — a bulleted list with **one breadcrumb
+  row per namespace level** (`[[Formula1]] / [[2026]] / …`), each segment a link to
+  its cumulative path. Intermediate levels are synthesized, so a namespace with no
+  file of its own (e.g. `Formula1/2025` when only `Formula1/2025/…` exists) still
+  gets its own row — like OG's recursive listing. Replaces the earlier non-OG
+  "Namespace (direct children)" list.
+- **Page `icon::` is hidden from the property list** (it's shown as the title icon),
+  matching OG.
 
 - **Per-block reference count + referrers panel.** A block that's referenced
   elsewhere now shows a small count badge to its right (matching Logseq): click it

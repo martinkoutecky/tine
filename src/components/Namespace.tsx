@@ -116,6 +116,7 @@ function NsMacroNode(props: { node: NsNode; depth: number; icons: Record<string,
   return (
     <div class="ns-macro-node">
       <div class="ns-macro-row" style={{ "padding-left": `${props.depth * 18}px` }}>
+        <span class="ns-bullet" />
         <Show when={props.icons[props.node.full]}>
           <span class="page-icon">
             <EmojiText text={props.icons[props.node.full]} />
@@ -171,9 +172,11 @@ export function NamespaceMacro(props: { root: string }): JSX.Element {
                 <EmojiText text={root.seg} />
               </a>
             </div>
-            <For each={root.children}>
-              {(c) => <NsMacroNode node={c} depth={0} icons={data()!.icons} />}
-            </For>
+            <div class="ns-macro-tree">
+              <For each={root.children}>
+                {(c) => <NsMacroNode node={c} depth={0} icons={data()!.icons} />}
+              </For>
+            </div>
           </div>
         )}
       </For>
@@ -181,27 +184,44 @@ export function NamespaceMacro(props: { root: string }): JSX.Element {
   );
 }
 
+/** Breadcrumb rows for OG's "Hierarchy" section of page `name`: ONE row per
+ *  descendant namespace LEVEL, each row the segment list of a cumulative path.
+ *  Levels are synthesized from descendant page NAMES (every prefix below `name`),
+ *  so an intermediate namespace with no file of its own still gets a row — matching
+ *  OG, where creating `a/b/c` makes page entities for `a/b` and `a`, so its
+ *  `get-namespace-pages` returns a row for each level (not just the deepest leaf).
+ *  A namespaced leaf with no descendants → one row: its parent namespace path. */
+export function namespaceHierarchyRows(allNames: string[], name: string): string[][] {
+  const pSegs = name.split("/");
+  const prefix = `${name}/`.toLowerCase();
+  const byLower = new Map<string, string[]>(); // cumulative-path (lc) → original segs
+  for (const n of allNames) {
+    if (!n.toLowerCase().startsWith(prefix)) continue;
+    const segs = n.split("/");
+    for (let k = pSegs.length + 1; k <= segs.length; k++) {
+      const sub = segs.slice(0, k);
+      const key = sub.join("/").toLowerCase();
+      if (!byLower.has(key)) byLower.set(key, sub);
+    }
+  }
+  if (byLower.size) {
+    return [...byLower.values()].sort((a, b) =>
+      a.join("/").toLowerCase().localeCompare(b.join("/").toLowerCase())
+    );
+  }
+  // Namespaced leaf with no descendants → the parent namespace's path.
+  if (name.includes("/")) return [pSegs.slice(0, -1)];
+  return [];
+}
+
 /** OG's automatic "Hierarchy" section (components/hierarchy.cljs `structures`):
- *  rendered below any non-journal page that participates in a namespace. It lists
- *  breadcrumb PATHS — every transitive descendant page as a `/`-joined chain of
- *  clickable page links (each link targets the cumulative path), sorted by name.
- *  Matching OG's `get-relation`: for an existing page, `parent-routes` is empty,
- *  so the set is exactly the descendants; a namespaced LEAF (no descendants) shows
- *  one row — the path of its parent namespace. */
+ *  rendered below any non-journal page that participates in a namespace, as a
+ *  bulleted list of breadcrumb paths — one per namespace level (see
+ *  `namespaceHierarchyRows`). Each segment links to its cumulative path. */
 export function NamespaceHierarchy(props: { name: string }): JSX.Element {
   const [rows] = createResource(
     () => ({ n: props.name, e: graphEpoch() }),
-    async ({ n }): Promise<string[][]> => {
-      const all = (await backend().listPages()).map((p) => p.name);
-      const prefix = `${n}/`.toLowerCase();
-      const descendants = all
-        .filter((name) => name.toLowerCase().startsWith(prefix))
-        .sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
-      if (descendants.length) return descendants.map((name) => name.split("/"));
-      // Namespaced leaf with no descendants → the parent namespace's path.
-      if (n.includes("/")) return [n.split("/").slice(0, -1)];
-      return [];
-    }
+    async ({ n }) => namespaceHierarchyRows((await backend().listPages()).map((p) => p.name), n)
   );
   return (
     <Show when={(rows() ?? []).length > 0}>
@@ -210,27 +230,30 @@ export function NamespaceHierarchy(props: { name: string }): JSX.Element {
         <ul class="ns-hierarchy">
           <For each={rows()}>
             {(segs) => (
-              <li>
-                <For each={segs}>
-                  {(seg, i) => {
-                    const full = () => segs.slice(0, i() + 1).join("/");
-                    return (
-                      <>
-                        <Show when={i() > 0}>
-                          <span class="ns-hier-sep">/</span>
-                        </Show>
-                        <a
-                          class="page-ref"
-                          onClick={(e) => { e.stopPropagation(); openPage(full(), "page"); }}
-                        >
-                          <span class="bracket">[[</span>
-                          {seg}
-                          <span class="bracket">]]</span>
-                        </a>
-                      </>
-                    );
-                  }}
-                </For>
+              <li class="ns-hier-row">
+                <span class="ns-bullet" />
+                <span class="ns-hier-path">
+                  <For each={segs}>
+                    {(seg, i) => {
+                      const full = () => segs.slice(0, i() + 1).join("/");
+                      return (
+                        <>
+                          <Show when={i() > 0}>
+                            <span class="ns-hier-sep">/</span>
+                          </Show>
+                          <a
+                            class="page-ref"
+                            onClick={(e) => { e.stopPropagation(); openPage(full(), "page"); }}
+                          >
+                            <span class="bracket">[[</span>
+                            {seg}
+                            <span class="bracket">]]</span>
+                          </a>
+                        </>
+                      );
+                    }}
+                  </For>
+                </span>
               </li>
             )}
           </For>
