@@ -2071,6 +2071,13 @@ mark {
   border-radius: 3px;
   padding: 0 3px;
   font-size: 0.92em;
+  cursor: pointer;
+}
+/* A block ref whose target id resolves to nothing (dangling) — dimmed, no pointer. */
+.block-ref-missing {
+  color: var(--text-muted);
+  font-style: italic;
+  cursor: default;
 }
 
 .macro {

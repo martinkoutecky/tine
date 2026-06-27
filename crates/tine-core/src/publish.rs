@@ -40,6 +40,29 @@ fn render_inline(input: &str) -> String {
     }
     'outer: while i < input.len() {
         let rest = &input[i..];
+        // $$display$$ / $inline$ math — emit the TeX wrapped in `\[..\]` / `\(..\)`
+        // delimiters (escaped as text) for KaTeX's auto-render to typeset in the
+        // browser. Parsed before every other rule so emphasis/code/link handling
+        // can't mangle the TeX; mirrors the in-app parser (parseInline.ts): `$$` is
+        // display, and the body must be non-empty.
+        if rest.starts_with('$') {
+            let dbl = rest.starts_with("$$");
+            let delim = if dbl { "$$" } else { "$" };
+            if let Some(end) = rest[delim.len()..].find(delim) {
+                if end > 0 {
+                    let tex = &rest[delim.len()..delim.len() + end];
+                    flush(&mut plain, &mut out);
+                    let (l, r, cls) = if dbl {
+                        ("\\[", "\\]", "math math-display")
+                    } else {
+                        ("\\(", "\\)", "math")
+                    };
+                    out.push_str(&format!("<span class=\"{cls}\">{l}{}{r}</span>", esc(tex)));
+                    i += delim.len() * 2 + end;
+                    continue;
+                }
+            }
+        }
         // [[page]]
         if let Some(after) = rest.strip_prefix("[[") {
             if let Some(end) = after.find("]]") {
@@ -184,13 +207,21 @@ stroke=\"currentColor\" stroke-width=\"1.7\"><rect x=\"4\" y=\"5\" width=\"16\" 
     format!(
         "<!doctype html><html><head><meta charset=\"utf-8\">\
 <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{}</title>\
-<link rel=\"stylesheet\" href=\"style.css\"></head><body>\
+<link rel=\"stylesheet\" href=\"style.css\">{}</head><body>\
 <a class=\"home\" href=\"index.html\">\u{2190} index</a>{}{}</body></html>",
         esc(title),
+        KATEX_HEAD,
         heading,
         body
     )
 }
+
+// KaTeX (from CDN) typesets the `\(..\)` / `\[..\]` math emitted by render_inline,
+// client-side in the published pages. mhchem (\ce{…}) must register before
+// auto-render runs; `defer` preserves script order, so auto-render's onload fires
+// only after katex.min.js and mhchem have executed. Math therefore typesets when
+// the page is viewed online; an offline viewer shows the raw TeX.
+const KATEX_HEAD: &str = r#"<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.47/dist/katex.min.css"><script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.47/dist/katex.min.js"></script><script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.47/dist/contrib/mhchem.min.js"></script><script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.47/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false}],throwOnError:false})"></script>"#;
 
 const STYLE: &str = r#":root{
   --bg:#fff;--fg:#2e2e2e;--muted:#8a8f98;--line:#e9e9ec;--accent:#10b981;--link:#0b6ec9;--code:#f4f5f7;
@@ -220,6 +251,7 @@ a.tag{font-size:.92em}
 a[href^="http"]{color:var(--link)}
 code{background:var(--code);border-radius:4px;padding:.05em .35em;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em}
 img{max-width:100%;border-radius:6px;margin:.3rem 0}
+.math-display{display:block;text-align:center;margin:.5rem 0}
 strong{font-weight:650}
 .index-list li{margin:.15rem 0}
 .index-list .k{color:var(--muted);font-size:.8rem;margin-left:.4rem}
@@ -293,5 +325,19 @@ mod tests {
     #[test]
     fn escapes_html() {
         assert!(render_inline("a < b & c").contains("a &lt; b &amp; c"));
+    }
+
+    #[test]
+    fn math_emits_katex_delimiters() {
+        // Inline $..$ → \(..\); display $$..$$ → \[..\]; both protected from the
+        // emphasis/code rules and left for KaTeX auto-render to typeset.
+        let h = render_inline(r"Euler $e^{i\pi}+1=0$ and $$\int_0^1 x\,dx$$");
+        assert!(h.contains(r#"<span class="math">\(e^{i\pi}+1=0\)</span>"#), "{h}");
+        assert!(
+            h.contains(r#"<span class="math math-display">\[\int_0^1 x\,dx\]</span>"#),
+            "{h}"
+        );
+        // Underscores inside math must NOT become italics.
+        assert!(!render_inline(r"$a_1 + b_2$").contains("<em>"));
     }
 }

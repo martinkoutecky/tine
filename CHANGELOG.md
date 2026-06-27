@@ -8,6 +8,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- **Labeled block references resolve.** The `[label](((block-id)))` form — a link
+  whose target is a block — now renders as a clickable block reference showing
+  *label* (and navigates to the block, with a hover preview), instead of a dead
+  link that tried to open `((id))` as a URL. The bare `((id))` form already
+  worked; this is the labeled variant Logseq writes for *"copy as link"*.
+- **Inline link/image targets are paren-balanced.** The `[..](..)` / `![..](..)`
+  parser now counts parentheses when reading the target, so a URL that itself
+  contains parentheses is captured whole — fixing not just block-ref links but
+  any link/image whose URL has a `(`, e.g. `…/wiki/Foo_(bar)` or `img_(1).png`.
+- **Math renders in the HTML export.** Exported pages now load KaTeX (and mhchem
+  for `\ce{…}`) and wrap `$…$` / `$$…$$` as `\(…\)` / `\[…\]`, so equations
+  typeset client-side instead of showing raw TeX. (Typesetting fetches KaTeX from
+  a CDN, so it needs a network connection when the page is viewed.)
+
 ### Added
 
 - **`{{namespace X}}` macro.** Renders the full nested descendant tree of a

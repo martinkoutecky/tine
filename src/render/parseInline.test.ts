@@ -33,6 +33,28 @@ describe("parseInline", () => {
     expect(parseInline("![alt](a.png)")).toEqual([{ t: "image", alt: "alt", url: "a.png" }]);
   });
 
+  it("labeled block reference [label](((uuid)))", () => {
+    expect(parseInline("[Related Work](((64b9c0e2-2f18-4b6e-b4c0-dcf657179204)))")).toEqual([
+      { t: "blockref", id: "64b9c0e2-2f18-4b6e-b4c0-dcf657179204", label: "Related Work" },
+    ]);
+    // In a sentence, mixed with surrounding text.
+    expect(parseInline("see [RW](((abc-123))) now")).toEqual([
+      { t: "text", v: "see " },
+      { t: "blockref", id: "abc-123", label: "RW" },
+      { t: "text", v: " now" },
+    ]);
+  });
+
+  it("paren-balanced link/image targets (URLs containing parentheses)", () => {
+    // The whole URL is captured, not truncated at the first ')'.
+    expect(parseInline("[wiki](https://en.wikipedia.org/wiki/Foo_(bar))")).toEqual([
+      { t: "link", label: "wiki", url: "https://en.wikipedia.org/wiki/Foo_(bar)" },
+    ]);
+    expect(parseInline("![a](../assets/img_(1).png)")).toEqual([
+      { t: "image", alt: "a", url: "../assets/img_(1).png" },
+    ]);
+  });
+
   it("image sizing metadata", () => {
     expect(parseInline("![a](x.png){:width 200}")).toEqual([
       { t: "image", alt: "a", url: "x.png", width: "200px" },

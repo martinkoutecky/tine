@@ -98,7 +98,7 @@ function renderSeg(s: Seg, blockId?: string): JSX.Element {
         </a>
       );
     case "blockref":
-      return <BlockRefView id={s.id} />;
+      return <BlockRefView id={s.id} label={s.label} />;
     case "macro": {
       // Render {{query}} / {{embed}} wherever they appear — including inline
       // after a label, e.g. `All todos {{query (task TODO)}}` (Logseq dashboards).
@@ -403,18 +403,22 @@ export function InlineText(props: { text: string; blockId?: string; format?: For
   return <>{renderSegs(parseInline(props.text, props.format ?? "md"), props.blockId)}</>;
 }
 
-// Inline ((block reference)): resolves to the referenced block's first line,
-// navigates to its source page on click, and shows a hover preview of the full
-// referenced block (mirrors OG's block-ref tooltip).
-function BlockRefView(props: { id: string }): JSX.Element {
+// Inline block reference. Bare `((uuid))` shows the referenced block's first
+// line; the labeled form `[label](((uuid)))` shows the label instead. Both
+// navigate to the source page on click and show a hover preview of the full
+// referenced block (mirrors OG); a missing target falls back to a short id.
+function BlockRefView(props: { id: string; label?: string }): JSX.Element {
   const [grp] = createResource(
     () => `${props.id} ${graphEpoch()}`, // resolve once per open graph; batched + cached
     () => resolveBlockBatched(props.id)
   );
   const [hover, setHover] = createSignal(false);
+  // Visible text: an explicit label wins; otherwise the target's first line.
+  const text = () => props.label ?? (grp() ? blockView(grp()!.blocks[0].raw).lines[0] : undefined);
   return (
     <span
       class="block-ref"
+      classList={{ "block-ref-missing": !grp() }}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       onClick={(e) => {
@@ -423,20 +427,20 @@ function BlockRefView(props: { id: string }): JSX.Element {
         if (g) openPage(g.page, g.kind);
       }}
     >
-      <Show when={grp()} fallback={<>(({props.id.slice(0, 8)}))</>}>
-        <InlineText text={blockView(grp()!.blocks[0].raw).lines[0]} />
-        <Show when={hover()}>
-          <span class="block-ref-preview">
-            <span class="block-ref-preview-page">{grp()!.page}</span>
-            <For each={grp()!.blocks}>
-              {(b) => (
-                <span class="block-ref-preview-line">
-                  <InlineText text={blockView(b.raw).lines.join(" ")} />
-                </span>
-              )}
-            </For>
-          </span>
-        </Show>
+      <Show when={text() !== undefined} fallback={<>(({props.id.slice(0, 8)}))</>}>
+        <InlineText text={text()!} />
+      </Show>
+      <Show when={hover() && grp()}>
+        <span class="block-ref-preview">
+          <span class="block-ref-preview-page">{grp()!.page}</span>
+          <For each={grp()!.blocks}>
+            {(b) => (
+              <span class="block-ref-preview-line">
+                <InlineText text={blockView(b.raw).lines.join(" ")} />
+              </span>
+            )}
+          </For>
+        </span>
       </Show>
     </span>
   );

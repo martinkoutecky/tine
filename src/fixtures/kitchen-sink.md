@@ -24,7 +24,10 @@
 - page reference: link to [[Some Page]]
 - tag (word): a #tagword here
 - tag (bracketed): a #[[Tag With Spaces]] here
-- block reference: see ((64b9c0e2-0000-0000-0000-000000000000))
+- block reference (bare): see ((64b9c0e2-0000-0000-0000-000000000000))
+- block reference (labeled): see [Related Work](((64b9c0e2-0000-0000-0000-000000000000)))
+- block reference target (gives the two refs above something to resolve): the **Related Work** section
+  id:: 64b9c0e2-0000-0000-0000-000000000000
 - ## IMAGES
 - image (external): ![alt text](https://www.gstatic.com/webp/gallery/1.png)
 - image (asset): ![local asset](../assets/sample.png)

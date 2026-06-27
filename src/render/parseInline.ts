@@ -13,7 +13,7 @@ export type Seg =
   | { t: "code"; v: string }
   | { t: "pageref"; name: string; alias?: string }
   | { t: "tag"; name: string }
-  | { t: "blockref"; id: string }
+  | { t: "blockref"; id: string; label?: string }
   | { t: "macro"; body: string }
   | { t: "math"; tex: string; display: boolean }
   | { t: "link"; label: string; url: string }
@@ -40,9 +40,7 @@ function parseImageMeta(brace: string | undefined): { width?: string; height?: s
 // Sticky (`y`) regexes match at exactly `re.lastIndex`, so we scan the full
 // input by index instead of allocating `input.slice(i)` every iteration (the old
 // approach was O(n²) — a fresh suffix string plus a per-character `plain +=`).
-const RE_IMAGE = /!\[([^\]]*)\]\(([^)]+)\)(\{[^}]*\})?/y;
 const RE_FOOTNOTE = /\[\^([^\]]+)\]/y;
-const RE_LINK = /\[([^\]]*)\]\(([^)]+)\)/y;
 const RE_IFRAME = /<iframe\b([^>]*)>(?:\s*<\/iframe>)?/iy;
 const RE_ANGLE = /<((?:https?:\/\/|mailto:)[^>\s]+)>/y;
 const RE_BAREURL = /https?:\/\/[^\s<]+/y;
@@ -51,6 +49,42 @@ const RE_TAG = /#([\w/_-]+)/y;
 function stickyExec(re: RegExp, input: string, i: number): RegExpExecArray | null {
   re.lastIndex = i;
   return re.exec(input);
+}
+
+// Parse a bracketed link/image starting at `open` (the index of its `[`). The
+// `(target)` is read with PAREN BALANCING, so a URL that itself contains parens
+// — a block ref `((uuid))`, a wiki URL `…/Foo_(bar)` — is captured whole instead
+// of a regex stopping at the first `)`. Returns the label (alt text), url, any
+// trailing `{…}` image-meta brace, and the index one past the construct; null if
+// it isn't a well-formed non-empty `[..](..)`.
+function readBracketLink(
+  input: string,
+  open: number
+): { label: string; url: string; brace?: string; end: number } | null {
+  if (input[open] !== "[") return null;
+  const labelEnd = input.indexOf("]", open + 1);
+  if (labelEnd === -1 || input[labelEnd + 1] !== "(") return null;
+  const label = input.slice(open + 1, labelEnd);
+  const urlStart = labelEnd + 2;
+  let j = urlStart;
+  let depth = 1;
+  for (; j < input.length; j++) {
+    const ch = input[j];
+    if (ch === "(") depth++;
+    else if (ch === ")" && --depth === 0) break;
+  }
+  if (depth !== 0 || j === urlStart) return null; // unbalanced or empty url
+  const url = input.slice(urlStart, j);
+  let end = j + 1;
+  let brace: string | undefined;
+  if (input[end] === "{") {
+    const close = input.indexOf("}", end + 1);
+    if (close !== -1) {
+      brace = input.slice(end, close + 1);
+      end = close + 1;
+    }
+  }
+  return { label, url, brace, end };
 }
 
 export function parseInline(input: string, format: Format = "md"): Seg[] {
@@ -71,13 +105,16 @@ export function parseInline(input: string, format: Format = "md"): Seg[] {
     // delimiters stay literal in org text.
     let m: RegExpExecArray | null = null;
     if (!org) {
-      m = stickyExec(RE_IMAGE, input, i);
-      if (m) {
-        flush(i);
-        out.push({ t: "image", alt: m[1], url: m[2], ...parseImageMeta(m[3]) });
-        i += m[0].length;
-        plainStart = i;
-        continue;
+      // Image `![alt](url){meta}` — the target is paren-balanced (see readBracketLink).
+      if (input[i] === "!" && input[i + 1] === "[") {
+        const r = readBracketLink(input, i + 1);
+        if (r) {
+          flush(i);
+          out.push({ t: "image", alt: r.label, url: r.url, ...parseImageMeta(r.brace) });
+          i = r.end;
+          plainStart = i;
+          continue;
+        }
       }
       // Footnote reference `[^id]` (before the link rule; `[^id]` has no `(url)`).
       m = stickyExec(RE_FOOTNOTE, input, i);
@@ -88,13 +125,20 @@ export function parseInline(input: string, format: Format = "md"): Seg[] {
         plainStart = i;
         continue;
       }
-      m = stickyExec(RE_LINK, input, i);
-      if (m) {
-        flush(i);
-        out.push({ t: "link", label: m[1], url: m[2] });
-        i += m[0].length;
-        plainStart = i;
-        continue;
+      if (input[i] === "[") {
+        const r = readBracketLink(input, i);
+        if (r) {
+          flush(i);
+          // `[label](((uuid)))` is a LINK whose target is a block reference — OG
+          // renders the label, clickable to the block. Detect the `((…))` target
+          // and emit a labeled blockref; everything else is an ordinary link.
+          const bref = /^\(\((.+?)\)\)$/s.exec(r.url.trim());
+          if (bref) out.push({ t: "blockref", id: bref[1].trim(), label: r.label });
+          else out.push({ t: "link", label: r.label, url: r.url });
+          i = r.end;
+          plainStart = i;
+          continue;
+        }
       }
     }
     // Raw <iframe> embed (the safe subset of raw HTML): only an http(s) src is

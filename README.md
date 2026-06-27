@@ -118,9 +118,10 @@ raw speed. (Where a comparison is made, it's against current Logseq desktop core
   variables across lines, a running result).
 
 **Linking, references & queries**
-- `[[page]]`, `#tags`, `#[[multi word]]`, `((block ref))`, `{{embed}}` — all clickable, with
-  autocomplete on `[[`, `#`, `((`, and `/`. The `((` popup full-text-searches blocks and inserts a
-  *durable* reference (writes a stable `id::` first). The `[[`/`#` Enter default is configurable
+- `[[page]]`, `#tags`, `#[[multi word]]`, `((block ref))` — including the labeled form
+  `[text](((id)))` — and `{{embed}}` — all clickable, with autocomplete on `[[`, `#`, `((`, and `/`.
+  The `((` popup full-text-searches blocks and inserts a *durable* reference (writes a stable `id::`
+  first). The `[[`/`#` Enter default is configurable
   (Settings → *Journals & tasks* → **Link autocomplete default**): create-a-new-page (default, like
   Logseq) or link-the-first-match.
 - Linked & unlinked references on every page (live/editable), with co-reference filtering and hover
@@ -202,8 +203,8 @@ raw speed. (Where a comparison is made, it's against current Logseq desktop core
 **Customization & output**
 - **Fully remappable keyboard shortcuts** — in the Settings modal or via `config.edn :shortcuts`.
 - Light/dark themes, accent color, custom CSS, wide mode (`t w`) and document mode (`t d`).
-- One-click **static HTML export** (`public:: true` pages); **"copy/export as"** for a block subtree
-  or page as Markdown; a slash menu for headings, code, calculator, quote, callouts, divider, embed,
+- One-click **static HTML export** (`public:: true` pages), with math typeset by KaTeX;
+  **"copy/export as"** for a block subtree or page as Markdown; a slash menu for headings, code, calculator, quote, callouts, divider, embed,
   query (raw or visual builder), template, asset upload, and dates.
 
 <p align="center">
