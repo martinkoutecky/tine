@@ -16,6 +16,7 @@ import { QueryMacro } from "./Macro";
 import { NamespaceCrumb, NamespaceChildren } from "./Namespace";
 import { pageProperties, aliasNames, blockView } from "../render/block";
 import { InlineText } from "../render/inline";
+import { EmojiText } from "../render/emoji";
 import { journalTitle } from "../journal";
 import type { PageDto } from "../types";
 
@@ -379,9 +380,13 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
                 .find(([k]) => k.toLowerCase() === "icon")?.[1]
                 ?.trim()}
             >
-              {(icon) => <span class="page-icon page-title-icon">{icon()}</span>}
+              {(icon) => (
+                <span class="page-icon page-title-icon">
+                  <EmojiText text={icon()} />
+                </span>
+              )}
             </Show>
-            {props.page.title}
+            <EmojiText text={props.page.title} />
           </h1>
         </Show>
         <CarryActions page={props.page} />

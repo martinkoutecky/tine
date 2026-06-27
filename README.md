@@ -166,8 +166,9 @@ raw speed. (Where a comparison is made, it's against current Logseq desktop core
 - Command palette (`Mod+Shift+P`), favorites, recent pages, a collapsible **namespace tree** in the
   sidebar, the **`{{namespace X}}`** macro (nested descendant tree), and read-only **"aka" alias
   chips** on pages reachable by another name.
-- **Page icons** — a page's `icon::` emoji shows next to its title and in the namespace tree (Tine
-  bundles a color-emoji font so they render even where the system has none).
+- **Page icons** — a page's `icon::` emoji shows next to its title and in the namespace tree. Emoji
+  render as bundled Twemoji SVG images (not a font), so they show in every engine — including
+  WebKitGTK, which paints color-emoji webfonts blank — and work offline.
 - **Page rename** (double-click a title) rewrites every `[[ref]]`/`#tag` across the graph in one
   transaction (see data-safety, below).
 

@@ -9,6 +9,7 @@ import { openPage, openPageInNewTab } from "../router";
 import { isJournalTitle } from "../journal";
 import { openPdf, openPageInSidebar, openPageContextMenu, setLightbox, graphEpoch } from "../ui";
 import { parseInline, type Seg, type Format } from "./parseInline";
+import { EmojiText } from "./emoji";
 import { blockView } from "./block";
 import { backend } from "../backend";
 import { loadAssetBlob } from "../assetCache";
@@ -24,7 +25,7 @@ function renderSegs(segs: Seg[], blockId?: string): JSX.Element {
 function renderSeg(s: Seg, blockId?: string): JSX.Element {
   switch (s.t) {
     case "text":
-      return <>{s.v}</>;
+      return <EmojiText text={s.v} />;
     case "bold":
       return <strong>{renderSegs(s.v)}</strong>;
     case "italic":

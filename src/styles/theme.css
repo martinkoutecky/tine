@@ -1,7 +1,7 @@
 /* Theme tokens ported from Logseq's classic light/dark. */
 
 :root {
-  --ls-font-family: "Inter", "Noto Color Emoji", -apple-system, BlinkMacSystemFont,
+  --ls-font-family: "Inter", -apple-system, BlinkMacSystemFont,
     "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --ls-font-mono: "MonoLisa", "Fira Code", "JetBrains Mono", Menlo, Monaco, Consolas,
     "Courier New", monospace;

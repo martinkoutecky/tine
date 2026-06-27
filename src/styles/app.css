@@ -2846,12 +2846,22 @@ ol.md-list { list-style: decimal; }
 .page-icon {
   display: inline-block;
   line-height: 1;
-  font-family: "Noto Color Emoji", var(--ls-font-family);
 }
 .page-title-icon {
   margin-right: 0.4em;
   font-size: 0.8em;
   vertical-align: 0.06em;
+}
+/* Emoji rendered as a Twemoji SVG <img> (font-independent; see render/emoji.tsx).
+   Sized in em so it tracks the surrounding text / icon font-size. */
+img.emoji {
+  display: inline-block;
+  height: 1em;
+  width: 1em;
+  margin: 0 0.05em;
+  vertical-align: -0.1em;
+  border-radius: 0;
+  object-fit: contain;
 }
 
 /* Calendar jump popup: anchored under the topbar calendar button. */

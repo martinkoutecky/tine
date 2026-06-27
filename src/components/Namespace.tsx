@@ -2,6 +2,7 @@ import { For, Show, createResource, createSignal, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { openPage } from "../router";
 import { graphEpoch } from "../ui";
+import { EmojiText } from "../render/emoji";
 
 // Namespace hierarchy for a page named `a/b/c`: a clickable breadcrumb of the
 // ancestor namespaces (shown above the title) and a list of direct child pages
@@ -116,10 +117,12 @@ function NsMacroNode(props: { node: NsNode; depth: number; icons: Record<string,
     <div class="ns-macro-node">
       <div class="ns-macro-row" style={{ "padding-left": `${props.depth * 18}px` }}>
         <Show when={props.icons[props.node.full]}>
-          <span class="page-icon">{props.icons[props.node.full]}</span>
+          <span class="page-icon">
+            <EmojiText text={props.icons[props.node.full]} />
+          </span>
         </Show>
         <a class="page-ref" onClick={(e) => { e.stopPropagation(); openPage(props.node.full, "page"); }}>
-          {props.node.seg}
+          <EmojiText text={props.node.seg} />
         </a>
       </div>
       <For each={props.node.children}>

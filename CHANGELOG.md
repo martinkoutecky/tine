@@ -35,9 +35,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   printed as literal text.
 - **Page icons.** A page's `icon::` property now renders as an icon next to the
   page title and beside each page in the `{{namespace}}` tree, matching Logseq.
-- **Bundled color-emoji font.** Tine now ships **Noto Color Emoji**, so emoji
-  (page icons, emoji in notes) render in color instead of as ▯ tofu boxes on
-  systems/WebKitGTK builds without an emoji font. (Adds ~10 MB to the bundle.)
+- **Emoji render everywhere (Twemoji SVGs).** Emoji — page `icon::`s, emoji in
+  notes — now render as bundled **Twemoji SVG images** instead of relying on an
+  emoji *font*. WebKitGTK paints a color-emoji webfont as a blank glyph (page
+  icons showed as empty gaps), but an `<img>` renders in every engine. The SVGs
+  are bundled locally, so it works offline.
 
 ### Fixed
 
