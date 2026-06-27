@@ -1135,8 +1135,31 @@ fn open_external(url: String) -> Result<(), String> {
     let prog = "open";
     #[cfg(target_os = "windows")]
     let prog = "explorer";
-    std::process::Command::new(prog).arg(&url).spawn().map_err(|e| e.to_string())?;
+    opener_command(prog).arg(&url).spawn().map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// Build the OS "open" command, scrubbing the env vars Tine (or its AppImage
+/// wrapper) sets for ITS OWN WebKitGTK rendering before it launches a SEPARATE
+/// GUI app. `LD_PRELOAD` (the Wayland libwayland-client self-heal),
+/// `WEBKIT_DISABLE_*`, and `GDK_BACKEND` are inherited by `spawn()` and can break a
+/// launched player's VIDEO output — e.g. VLC opens then exits immediately — while
+/// audio-only playback (no GL/window) is unaffected. A clean env is both the fix
+/// and good hygiene; no-op on non-Linux.
+fn opener_command(prog: &str) -> std::process::Command {
+    let mut cmd = std::process::Command::new(prog);
+    #[cfg(target_os = "linux")]
+    {
+        for k in [
+            "LD_PRELOAD",
+            "WEBKIT_DISABLE_DMABUF_RENDERER",
+            "WEBKIT_DISABLE_COMPOSITING_MODE",
+            "GDK_BACKEND",
+        ] {
+            cmd.env_remove(k);
+        }
+    }
+    cmd
 }
 
 #[tauri::command]
@@ -1214,7 +1237,8 @@ fn open_asset(name: String, state: State<'_, AppState>) -> Result<(), String> {
     let prog = "open";
     #[cfg(target_os = "windows")]
     let prog = "explorer";
-    std::process::Command::new(prog).arg(&target).spawn().map_err(|e| e.to_string())?;
+    diag(format!("open_asset: {name} -> {} ({prog})", target.display()));
+    opener_command(prog).arg(&target).spawn().map_err(|e| e.to_string())?;
     Ok(())
 }
 

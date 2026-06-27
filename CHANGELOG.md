@@ -8,6 +8,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- **“Open in external player” works for video, not just audio.** Tine launched
+  the OS player inheriting the environment it sets for its *own* WebKitGTK
+  rendering (`LD_PRELOAD`, `WEBKIT_DISABLE_*`, `GDK_BACKEND`); under those a
+  player’s video output could fail — e.g. VLC opened and closed immediately —
+  while audio (no video output) was unaffected. The external opener now runs
+  with those variables scrubbed.
+
 ### Added
 
 - **Configurable `[[`/`#` autocomplete default.** Settings → *Journals & tasks* →
