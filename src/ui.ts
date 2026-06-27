@@ -530,6 +530,16 @@ function loadRecent(): FavItem[] {
   }
 }
 export const [recentPages, setRecentPages] = createSignal<FavItem[]>(loadRecent());
+/** Drop the recent-pages list. Called on a graph SWITCH so the previous graph's
+ *  pages don't linger in quick-switch (Ctrl-K) / the sidebar "recent" list. */
+export function clearRecent() {
+  setRecentPages([]);
+  try {
+    localStorage.removeItem(RECENT_KEY);
+  } catch {
+    // ignore
+  }
+}
 export function pushRecent(name: string, kind: "page" | "journal" = "page") {
   const cur = recentPages().filter((r) => !(r.name === name && r.kind === kind));
   const next = [{ name, kind }, ...cur].slice(0, 20);

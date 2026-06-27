@@ -123,6 +123,18 @@ export function openJournals(opts: { inPlace?: boolean } = {}) {
   navigate({ kind: "journals" }, { sticky: !opts.inPlace });
 }
 
+/** Collapse the whole tab session down to a single fresh Journals tab and focus
+ *  it. Used on a genuine graph SWITCH: every existing tab's history (and any
+ *  pin/zoom) points at pages from the OLD graph that don't exist in the new one,
+ *  so they're discarded wholesale rather than remapped — mirroring OG, which
+ *  keeps one graph open at a time and reloads the whole workspace on switch. */
+export function resetTabsToJournals() {
+  const id = newId();
+  setTabs([{ id, history: [{ kind: "journals" }], pos: 0, pinned: false }]);
+  setActiveId(id);
+  persist();
+}
+
 /** Open a SPECIFIC file by its graph-root-relative path — the way to reach a
  *  duplicate-day stray (`journals/Friday, 26-06-2026.org`) that shares a
  *  (kind,name) with the canonical day and so isn't reachable by name (#21).

@@ -2,10 +2,10 @@
 // persisting the choice so it reopens next launch.
 
 import { backend } from "./backend";
-import { setGraphMeta, setWorkflow, bumpGraphEpoch, setRightSidebar, graphMeta, graphEpoch, setAliasMap, seedFavorites, pruneSidebarBlocks, pushToast, refreshJournalConflicts } from "./ui";
+import { setGraphMeta, setWorkflow, bumpGraphEpoch, setRightSidebar, graphMeta, graphEpoch, setAliasMap, seedFavorites, pruneSidebarBlocks, pushToast, refreshJournalConflicts, clearRecent } from "./ui";
 import { resetStore, flushAll } from "./store";
 import { clearAssetBlobCache } from "./assetCache";
-import { openJournals } from "./router";
+import { resetTabsToJournals } from "./router";
 import { journalTitle, setJournalTitleFormat } from "./journal";
 import { applyTemplateVars } from "./editor/templateVars";
 import type { BlockDto } from "./types";
@@ -43,7 +43,13 @@ export async function loadGraphPath(path: string): Promise<void> {
   const meta = await backend().loadGraph(path);
   resetStore();
   clearAssetBlobCache(); // old graph's image blob URLs must not leak into the new one
-  if (switching) setRightSidebar([]);
+  if (switching) {
+    // A graph switch is a full workspace reset (OG opens one graph at a time):
+    // drop the old graph's right-sidebar items and its recent-pages list so they
+    // don't linger in the sidebar / quick-switch. Tabs are reset further below.
+    setRightSidebar([]);
+    clearRecent();
+  }
   setGraphMeta(meta ?? null);
   setWorkflow(meta?.preferred_workflow === "todo" ? "todo" : "now");
   setJournalTitleFormat(meta?.journal_page_title_format); // match this graph's journal titles
@@ -61,14 +67,12 @@ export async function loadGraphPath(path: string): Promise<void> {
   void loadAliases();
   if (!switching) void pruneSidebarBlocks();
   await ensureJournalTemplate();
-  // Land on the journals feed only when this is a genuine graph SWITCH (the old
-  // tabs point at pages that don't exist in the new graph). On the initial
-  // startup load of the same graph, `restoreSession()` has already set up the
-  // tabs and focused one — forcing journals here would clobber that restored
-  // active tab (e.g. a pinned page tab reverting to Journals after relaunch).
-  // inPlace: a graph switch resets the active tab even if it's pinned/sticky
-  // (the old pinned content is gone), rather than spawning a new tab.
-  if (switching) openJournals({ inPlace: true });
+  // On a genuine graph SWITCH, close ALL the old graph's tabs (their histories
+  // point at pages that don't exist in the new graph) and land on a single fresh
+  // Journals tab. On the initial startup load of the same graph, `restoreSession()`
+  // has already set up the tabs and focused one — leave that untouched, else a
+  // restored pinned page tab would revert to Journals after every relaunch.
+  if (switching) resetTabsToJournals();
 }
 
 /** Load the graph's alias:: index so link/navigation can resolve aliases.

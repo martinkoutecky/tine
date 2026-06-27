@@ -13,6 +13,7 @@ import {
   closeTab,
   setActiveTab,
   sameRoute,
+  resetTabsToJournals,
 } from "./router";
 
 // The router holds singleton tab state, so reset to a single unpinned journals
@@ -141,5 +142,21 @@ describe("pinned-left ordering", () => {
     togglePin(xId); // unpin → boundary = first unpinned slot (index 0 here, journals follows)
     expect(tabs()[0].id).toBe(xId);
     expect(tabs()[0].pinned).toBe(false);
+  });
+});
+
+describe("graph switch tab reset", () => {
+  it("collapses every tab to a single fresh journals tab", () => {
+    openPage("Page A");
+    openInNewTab({ kind: "page", name: "Page B", pageKind: "page" });
+    pinActive(); // pin one for good measure
+    expect(tabs().length).toBeGreaterThan(1);
+
+    resetTabsToJournals();
+
+    expect(tabs().length).toBe(1);
+    expect(tabs()[0].pinned).toBe(false);
+    expect(route()).toEqual({ kind: "journals" });
+    expect(activeId()).toBe(tabs()[0].id);
   });
 });
