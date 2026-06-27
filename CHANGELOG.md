@@ -10,6 +10,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **“Copy image” from the image viewer works now.** Click an image to open it,
+  then right-click → **Copy image** (or the **Copy** button) to put it on the OS
+  clipboard. WebKitGTK's *native* right-click "Copy Image" doesn't actually
+  populate the clipboard (paste yielded nothing); Tine now encodes the image and
+  writes it through the Rust clipboard path instead.
+
 - **The pinned-tab pin is back (the red 📌).** Bundling a color-emoji *font* made
   WebKitGTK paint the `📌` as a blank glyph (an empty gap on pinned tabs); emoji
   now render as Twemoji SVG images, so the red pushpin shows everywhere again.

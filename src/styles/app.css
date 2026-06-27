@@ -2569,6 +2569,47 @@ body.file-drop-active::after {
   max-height: 92vh;
   border-radius: 6px;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  cursor: default;
+}
+/* Copy-to-clipboard affordance for the lightbox image. */
+.lightbox-copy {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 211;
+  cursor: pointer;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(4px);
+}
+.lightbox-copy:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+.lightbox-menu {
+  position: fixed;
+  z-index: 212;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.28);
+  padding: 4px;
+}
+.lightbox-menu button {
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  padding: 6px 14px;
+  border-radius: 5px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.lightbox-menu button:hover {
+  background: var(--block-highlight);
 }
 .inline-image {
   cursor: zoom-in;

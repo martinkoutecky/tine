@@ -491,6 +491,17 @@ fn set_backup_keep(keep: usize, app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Write a PNG image to the OS clipboard. The lightbox encodes the shown image to
+/// PNG and sends the bytes; we decode (tauri `image-png`) and write via the
+/// clipboard plugin — which talks to the OS clipboard directly, unlike WebKitGTK's
+/// native "Copy Image" that doesn't actually populate it (so paste yielded nothing).
+#[tauri::command]
+fn copy_image_to_clipboard(app: tauri::AppHandle, bytes: Vec<u8>) -> Result<(), String> {
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+    let img = tauri::image::Image::from_bytes(&bytes).map_err(|e| e.to_string())?;
+    app.clipboard().write_image(&img).map_err(|e| e.to_string())
+}
+
 /// Quick-capture Enter behaviour (app-level, in tine-settings.json): true → a
 /// plain Enter files the capture; false (default) → Enter makes a new block and
 /// Cmd/Ctrl+Enter files.
@@ -1586,6 +1597,7 @@ fn main() {
             set_start_of_week,
             read_custom_css,
             open_external,
+            copy_image_to_clipboard,
             open_asset,
             list_orphan_assets,
             trash_asset,

@@ -121,6 +121,10 @@ export interface Backend {
   /** Native file picker (asset upload). Null if cancelled / unsupported. */
   pickFile(): Promise<string | null>;
   writeText(text: string): Promise<void>;
+  /** Write a PNG image (bytes) to the OS clipboard. Goes through the Rust
+   *  clipboard plugin, not WebKitGTK's native "Copy Image" (which doesn't
+   *  actually populate the clipboard, so paste yielded nothing). */
+  copyImageToClipboard(bytes: Uint8Array): Promise<void>;
   readHighlights(pdf: string): Promise<Highlight[]>;
   writeHighlights(pdf: string, label: string, highlights: Highlight[], baseIds: string[]): Promise<void>;
   /** Save a cropped area-highlight PNG to OG's layout `assets/<key>/<page>_<id>_<stamp>.png`
@@ -397,6 +401,9 @@ class TauriBackend implements Backend {
         // ignore
       }
     }
+  }
+  copyImageToClipboard(bytes: Uint8Array): Promise<void> {
+    return this.call<void>("copy_image_to_clipboard", { bytes: Array.from(bytes) });
   }
   readHighlights(pdf: string) {
     return this.call<Highlight[]>("read_highlights", { pdf });

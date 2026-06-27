@@ -16,7 +16,9 @@ tauri-build = { version = "2", features = [] }
 custom-protocol = ["tauri/custom-protocol"]
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# `image-png` lets `tauri::image::Image::from_bytes` decode the PNG the lightbox
+# sends, so `copy_image_to_clipboard` can write it to the OS clipboard.
+tauri = { version = "2", features = ["image-png"] }
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-window-state = "2"

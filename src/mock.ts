@@ -515,6 +515,9 @@ export function mockBackend(): Backend {
         // ignore
       }
     },
+    async copyImageToClipboard(): Promise<void> {
+      // no OS clipboard image write in the browser mock
+    },
     async onGraphChanged(): Promise<() => void> {
       return () => {}; // no external watcher in the browser mock
     },
