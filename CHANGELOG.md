@@ -8,6 +8,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Added
+
+- **Configurable `[[`/`#` autocomplete default.** Settings → *Journals & tasks* →
+  **Link autocomplete default**: ON makes Enter **link the first match**; OFF
+  (default, matching Logseq) makes Enter **create a new page/tag** unless an exact
+  match exists. The other options stay one arrow-key away either way.
+
 ## [0.2.1] — 2026-06-27
 
 A maintenance release: **namespaces round-trip with Logseq's default filename

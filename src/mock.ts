@@ -163,6 +163,7 @@ const NAMED: PageDto[] = [
 const mockHighlights: Record<string, { label: string; highlights: Highlight[] }> = {};
 // In-memory UI session for the browser mock (no backend file).
 let mockSession: string | null = null;
+let mockLinkFirstMatch = false;
 const mockAssets: Record<string, Uint8Array> = {};
 
 // Synthesize an hls__ page DTO from stored highlights (mirrors the Rust
@@ -499,6 +500,12 @@ export function mockBackend(): Backend {
     },
     async setCaptureEnterFiles(): Promise<void> {
       // no-op in the browser mock
+    },
+    async getLinkFirstMatch(): Promise<boolean> {
+      return mockLinkFirstMatch;
+    },
+    async setLinkFirstMatch(value: boolean): Promise<void> {
+      mockLinkFirstMatch = value;
     },
     async getWatchMode(): Promise<string> {
       return "inotify";

@@ -522,6 +522,37 @@ fn set_capture_enter_files(value: bool, app: tauri::AppHandle) -> Result<(), Str
     Ok(())
 }
 
+/// `[[`/`#` autocomplete default action (app-level, in tine-settings.json):
+/// true → Enter links the first match; false (default, OG) → Enter creates a new
+/// page/tag unless an exact match exists. A workflow preference, device-local.
+fn link_first_match(app: &tauri::AppHandle) -> bool {
+    settings_path(app)
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v.get("link_first_match").and_then(|x| x.as_bool()))
+        .unwrap_or(false)
+}
+
+#[tauri::command]
+fn get_link_first_match(app: tauri::AppHandle) -> bool {
+    link_first_match(&app)
+}
+
+#[tauri::command]
+fn set_link_first_match(value: bool, app: tauri::AppHandle) -> Result<(), String> {
+    let p = settings_path(&app).ok_or("no app-data dir")?;
+    if let Some(parent) = p.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let mut json = std::fs::read_to_string(&p)
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    json["link_first_match"] = serde_json::Value::Bool(value);
+    std::fs::write(&p, serde_json::to_string_pretty(&json).unwrap()).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Smooth-scrolling preference (app-level, in tine-settings.json). Experimental,
 /// default false. Read at startup by the frontend to (re-)install Lenis. Device-
 /// local because it's a feel preference, not graph data.
@@ -1549,6 +1580,8 @@ fn main() {
             set_backup_keep,
             get_capture_enter_files,
             set_capture_enter_files,
+            get_link_first_match,
+            set_link_first_match,
             get_watch_mode,
             set_watch_mode,
             list_backups,

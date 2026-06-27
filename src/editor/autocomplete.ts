@@ -114,6 +114,20 @@ export function tagInsert(name: string): string {
   return /\s/.test(name) ? `#[[${name}]]` : `#${name}`;
 }
 
+/** Order the `[[`/`#` completion list, deciding which item is the DEFAULT (first,
+ *  Enter) action. A blank query or an exact existing match shows the matches with
+ *  no "Create" option. Otherwise `linkFirst` chooses the default: false (OG) →
+ *  "Create" leads (Enter makes a new page/tag); true → the first match leads
+ *  (Enter links it) and "Create" trails. The other items stay reachable by arrow. */
+export function orderAcItems<T>(
+  matches: T[],
+  createItem: T,
+  opts: { hasQuery: boolean; exact: boolean; linkFirst: boolean }
+): T[] {
+  if (!opts.hasQuery || opts.exact) return matches;
+  return opts.linkFirst ? [...matches, createItem] : [createItem, ...matches];
+}
+
 /** Action commands need runtime behaviour (date stamps, file picker) rather
  *  than a fixed insertion; the editor resolves these when chosen. */
 export type CommandAction =

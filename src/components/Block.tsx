@@ -7,11 +7,13 @@ import {
   autoPairEdit,
   pageInsert,
   tagInsert,
+  orderAcItems,
   COMMANDS,
   commandScore,
   fuzzyScore,
   type Trigger,
 } from "../editor/autocomplete";
+import { linkFirstMatch } from "../editor/linkDefault";
 import {
   doc,
   pageByName,
@@ -746,12 +748,13 @@ export function Editor(props: { id: string }): JSX.Element {
     const pages = await backend().quickSwitch(t.query, 8);
     const cur = ac();
     if (!cur || cur.start !== t.start) return; // trigger changed while awaiting
-    // "Create <typed>" is the DEFAULT (first) item whenever the query isn't an
-    // exact existing page. So typing a fresh #tag and pressing Enter makes that
-    // tag — even when it prefix- or fuzzy-matches an existing page, which would
-    // otherwise be silently selected (e.g. #book completing to a "Books" page).
-    // The matches still follow, so arrowing down + Enter completes to an existing
-    // page instead. No create option for a blank query or an exact match.
+    // Default (first / Enter) item when the query is neither blank nor an exact
+    // existing page. OG behavior (linkFirstMatch OFF): "Create <typed>" leads, so
+    // a fresh #tag or [[page]] + Enter MAKES it — even when it prefix-/fuzzy-
+    // matches an existing page (e.g. #book → a "Books" page) — and the matches
+    // follow (arrow down to link instead). With linkFirstMatch ON: the first
+    // match leads (Enter LINKS) and "Create" goes to the end. Either way, no
+    // create option for a blank query or an exact match.
     const q = t.query.trim();
     const pageItem = (name: string): AcItem =>
       t.kind === "page"
@@ -761,12 +764,11 @@ export function Editor(props: { id: string }): JSX.Element {
       t.kind === "page"
         ? { label: `Create "${q}"`, insert: pageInsert(q) }
         : { label: `Create #${q}`, insert: tagInsert(q) };
+    const matches = pages.map((p) => pageItem(p.name));
     const exact = pages.some((p) => p.name.toLowerCase() === q.toLowerCase());
-    const items: AcItem[] =
-      !q || exact
-        ? pages.map((p) => pageItem(p.name)) // exact/blank → no create option
-        : [createItem, ...pages.map((p) => pageItem(p.name))]; // else create leads
-    setAcItems(items);
+    setAcItems(
+      orderAcItems(matches, createItem, { hasQuery: !!q, exact, linkFirst: linkFirstMatch() })
+    );
   };
 
   // Apply a pure text edit (format toggle / kill motion) to the textarea and

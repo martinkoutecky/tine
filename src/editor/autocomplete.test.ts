@@ -7,6 +7,7 @@ import {
   tagInsert,
   filterCommands,
   fuzzyScore,
+  orderAcItems,
 } from "./autocomplete";
 
 describe("autoPairEdit (OG-style [[ ]] auto-pairing)", () => {
@@ -42,6 +43,39 @@ describe("autoPairEdit (OG-style [[ ]] auto-pairing)", () => {
 
   it("leaves a literal ] alone when no ] follows", () => {
     expect(autoPairEdit("a]", 2, "]")).toBeNull();
+  });
+});
+
+describe("orderAcItems (autocomplete default action)", () => {
+  const matches = ["m1", "m2"];
+  const create = "CREATE";
+
+  it("OG default (linkFirst off): Create leads, matches follow", () => {
+    expect(orderAcItems(matches, create, { hasQuery: true, exact: false, linkFirst: false })).toEqual([
+      "CREATE",
+      "m1",
+      "m2",
+    ]);
+  });
+
+  it("linkFirst on: first match leads, Create trails", () => {
+    expect(orderAcItems(matches, create, { hasQuery: true, exact: false, linkFirst: true })).toEqual([
+      "m1",
+      "m2",
+      "CREATE",
+    ]);
+  });
+
+  it("no Create option for a blank query or an exact match (either mode)", () => {
+    for (const linkFirst of [false, true]) {
+      expect(orderAcItems(matches, create, { hasQuery: false, exact: false, linkFirst })).toEqual(matches);
+      expect(orderAcItems(matches, create, { hasQuery: true, exact: true, linkFirst })).toEqual(matches);
+    }
+  });
+
+  it("no matches → just Create (so Enter still works), either mode", () => {
+    expect(orderAcItems([], create, { hasQuery: true, exact: false, linkFirst: false })).toEqual(["CREATE"]);
+    expect(orderAcItems([], create, { hasQuery: true, exact: false, linkFirst: true })).toEqual(["CREATE"]);
   });
 });
 

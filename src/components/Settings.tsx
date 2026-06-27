@@ -40,6 +40,7 @@ import {
 } from "../ui";
 import { interfaceZoom, zoomIn, zoomOut, zoomReset } from "../zoom";
 import { smoothScrollEnabled, setSmoothScroll } from "../smoothScroll";
+import { linkFirstMatch, setLinkFirstMatch } from "../editor/linkDefault";
 import { openPage, openFile } from "../router";
 import { commandDefaults, eventToBindingString, setKeybindingsSuspended } from "../keybindings";
 import { switchGraph, loadGraphPath } from "../graph";
@@ -541,6 +542,13 @@ function TasksTab(): JSX.Element {
         hint={`In the quick-capture window: ON → Enter files the capture. OFF → Enter starts a new block; the “Quick-capture: file to today’s journal” shortcut files (default Ctrl+Shift+Enter, remappable under Keyboard shortcuts). Ctrl+Enter stays free for cycling the task marker.`}
       >
         <Toggle on={captureEnterFiles()} onClick={toggleCaptureEnter} />
+      </Field>
+
+      <Field
+        label="Link autocomplete default"
+        hint={`When you type [[name (or #name) that isn’t an exact existing page: ON → Enter LINKS to the first match (and “Create…” moves to the end of the list); OFF (default, like Logseq) → Enter CREATES a new page/tag unless an exact match exists. Either way the arrow keys reach the other options.`}
+      >
+        <Toggle on={linkFirstMatch()} onClick={() => setLinkFirstMatch(!linkFirstMatch())} />
       </Field>
 
       <Field

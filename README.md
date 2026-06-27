@@ -120,7 +120,9 @@ raw speed. (Where a comparison is made, it's against current Logseq desktop core
 **Linking, references & queries**
 - `[[page]]`, `#tags`, `#[[multi word]]`, `((block ref))`, `{{embed}}` — all clickable, with
   autocomplete on `[[`, `#`, `((`, and `/`. The `((` popup full-text-searches blocks and inserts a
-  *durable* reference (writes a stable `id::` first).
+  *durable* reference (writes a stable `id::` first). The `[[`/`#` Enter default is configurable
+  (Settings → *Journals & tasks* → **Link autocomplete default**): create-a-new-page (default, like
+  Logseq) or link-the-first-match.
 - Linked & unlinked references on every page (live/editable), with co-reference filtering and hover
   previews.
 - `{{query}}` engine (inline or whole-block): boolean and/or/not, `(task …)`, `(priority …)`,
