@@ -13,8 +13,12 @@ The static landing page for Tine, served by **GitHub Pages** from this folder.
 ## Deploying
 
 `.github/workflows/pages.yml` deploys this folder on every push that touches
-`website/**`. The first run auto-enables Pages (source = GitHub Actions), so there
-is no manual toggle. You can also trigger it from the Actions tab (workflow_dispatch).
+`website/**` (or via the Actions tab → Run workflow).
+
+**One-time setup:** repo Settings → Pages → "Build and deployment" → Source:
+**GitHub Actions**. The workflow token can deploy to Pages but can't *enable* it
+(that needs repo-admin scope it lacks — the symptom is a "Resource not accessible
+by integration" failure), so this toggle must be flipped by hand once.
 
 ## Custom domain
 
