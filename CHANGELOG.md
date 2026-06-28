@@ -10,6 +10,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Scroll position restored on back/forward.** Navigating away from a long page
+  and pressing back (Alt+←) now returns you to where you were scrolled, like a
+  browser — and switching tabs restores each tab's scroll too. A new page still
+  opens at the top.
 - **First-run onboarding + "create a new graph".** Starting Tine with no graph
   configured now shows a **Welcome** screen instead of a blank window: *open an
   existing Logseq graph*, or *create a new graph* scaffolded with a small narrated

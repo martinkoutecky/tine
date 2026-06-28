@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { doc, mainPages, pageByName, reloadPage, loadSingle, loadFeed, appendFeed, isDirty, editingId, setFeedExtender, flushAll, type FeedPage } from "../store";
-import { route, sameRoute, openPage, openJournals, openPageInNewTab } from "../router";
+import { route, sameRoute, openPage, openJournals, openPageInNewTab, restoreScrollFor } from "../router";
 import {
   zoomedBlock, zoomInto, isFavorite, toggleFavorite,
   markConflict, isConflicted, graphEpoch, openPageInSidebar, openPageContextMenu, carryDays, showCarryButtons,
@@ -95,6 +95,9 @@ export function PageView(): JSX.Element {
           loadSingle(dto ? toLoadable(dto, r.name) : emptyPage(r.name, r.pageKind));
         }
         setReady(true);
+        // Put the scroll back where it was when we last left this entry (back/
+        // forward, or returning to this tab). A new page has no saved offset → top.
+        restoreScrollFor(r);
       } catch (e) {
         if (epoch !== graphEpoch()) return;
         setLoadError(String(e));

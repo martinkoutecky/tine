@@ -81,6 +81,49 @@ export function sameRoute(a: Route, b: Route): boolean {
   );
 }
 
+// ---- per-route scroll restoration (Firefox-style) --------------------------
+//
+// Remember where the main content was scrolled when we LEAVE a history entry,
+// and put it back when that entry is shown again (Alt+back/forward, or switching
+// tabs). Keyed by the route OBJECT in the tab's history array: that reference is
+// stable across goBack/goForward (only `pos` moves), while a freshly-pushed route
+// has no saved offset — so a forward navigation to a new page still starts at the
+// top, and only a return to a previously-seen entry restores its scroll.
+const scrollByRoute = new WeakMap<Route, number>();
+
+function mainScroller(): HTMLElement | null {
+  if (typeof document === "undefined") return null; // no-DOM (unit tests)
+  return document.querySelector(".main-content");
+}
+
+/** Record the current scroll offset against the active tab's current route.
+ *  Called right before any navigation that leaves the current entry. */
+function rememberScroll() {
+  const el = mainScroller();
+  if (el) scrollByRoute.set(tabRoute(activeTab()), el.scrollTop);
+}
+
+/** Restore the saved scroll for a route once its content has rendered. A route
+ *  with no saved offset (a new page) goes to the top. Retries for ~1s while the
+ *  page is still growing toward a deep offset (blocks / linked refs render and
+ *  measure asynchronously, so the target height isn't there on the first frame). */
+export function restoreScrollFor(r: Route) {
+  if (typeof requestAnimationFrame === "undefined") return; // no-DOM (unit tests)
+  const target = scrollByRoute.get(r) ?? 0;
+  let tries = 0;
+  // Defer to a frame so the new page's content is laid out first — otherwise a
+  // synchronous reset races the content swap (a new page wouldn't actually land
+  // at the top). Then for a deep offset keep nudging while the page grows.
+  const tick = () => {
+    const el = mainScroller();
+    if (!el) return;
+    const max = Math.max(0, el.scrollHeight - el.clientHeight);
+    el.scrollTop = Math.min(target, max);
+    if (target > 0 && el.scrollTop < target - 1 && tries++ < 60) requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+
 // Navigate the active tab to a new route, pushing it onto the history stack
 // (dropping any forward entries — standard browser behaviour). Re-navigating to
 // the current route is a no-op so the back stack doesn't fill with duplicates.
@@ -92,6 +135,7 @@ export function sameRoute(a: Route, b: Route): boolean {
 // doesn't pass `sticky`. Programmatic resets (graph switch, post-delete) pass
 // `inPlace` to force the active tab regardless of pin.
 function navigate(r: Route, opts: { sticky?: boolean } = {}) {
+  rememberScroll(); // capture where we are before leaving this entry
   const active = activeTab();
   if (opts.sticky && active.pinned && !sameRoute(tabRoute(active), r)) {
     openInNewTab(r, true);
@@ -224,17 +268,20 @@ export function canGoForward(): boolean {
 
 export function goBack() {
   if (!canGoBack()) return;
+  rememberScroll(); // save this entry's scroll before stepping back
   setTabs(tabs().map((t) => (t.id === activeId() ? { ...t, pos: t.pos - 1 } : t)));
   persist();
 }
 
 export function goForward() {
   if (!canGoForward()) return;
+  rememberScroll(); // save this entry's scroll before stepping forward
   setTabs(tabs().map((t) => (t.id === activeId() ? { ...t, pos: t.pos + 1 } : t)));
   persist();
 }
 
 export function setActiveTab(id: string) {
+  rememberScroll(); // save the outgoing tab's scroll so switching back restores it
   setActiveId(id);
   persist();
 }
