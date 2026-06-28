@@ -19,8 +19,9 @@ describe("mock backend", () => {
   it("block ref counts cover bare + labeled forms", async () => {
     const b = mockBackend();
     const counts = await b.getBlockRefCounts();
-    // kitchen-sink target 64b9c0e2… is referenced by a bare AND a labeled ref → 2.
-    expect(counts["64b9c0e2-0000-0000-0000-000000000000"]).toBe(2);
+    // kitchen-sink target 64b9c0e2… is referenced by a bare ref, a labeled ref,
+    // AND an {{embed}} (the embed arg is a block ref too, like OG) → 3.
+    expect(counts["64b9c0e2-0000-0000-0000-000000000000"]).toBe(3);
     // arch-1 is referenced once from the Jun 14th journal.
     expect(counts["arch-1"]).toBe(1);
   });
