@@ -171,7 +171,10 @@ pub fn page_refs(raw: &str) -> Vec<String> {
         if !in_code(i, &code) {
             if let Some(after) = rest.strip_prefix("[[") {
                 if let Some(end) = after.find("]]") {
-                    out.push(after[..end].to_string());
+                    // `[[]]` (empty) is not a page ref in OG — consume but don't index.
+                    if !after[..end].trim().is_empty() {
+                        out.push(after[..end].to_string());
+                    }
                     i += 2 + end + 2;
                     continue;
                 }
@@ -179,7 +182,9 @@ pub fn page_refs(raw: &str) -> Vec<String> {
             if rest.starts_with('#') && tag_boundary(raw, i) {
                 if let Some(after) = rest.strip_prefix("#[[") {
                     if let Some(end) = after.find("]]") {
-                        out.push(after[..end].to_string());
+                        if !after[..end].trim().is_empty() {
+                            out.push(after[..end].to_string());
+                        }
                         i += 3 + end + 2;
                         continue;
                     }
@@ -510,6 +515,16 @@ mod tests {
     fn extracts_page_refs_and_tags() {
         let raw = "see [[Foo Bar]] and #tag and #[[multi word]] end";
         assert_eq!(page_refs(raw), vec!["Foo Bar", "tag", "multi word"]);
+    }
+
+    #[test]
+    fn empty_brackets_are_not_refs() {
+        // `[[]]` / `#[[]]` (empty) are not page refs in OG — consumed, not indexed;
+        // a real ref afterward is still found.
+        assert_eq!(page_refs("[[]]"), Vec::<String>::new());
+        assert_eq!(page_refs("#[[]]"), Vec::<String>::new());
+        assert_eq!(page_refs("[[ ]]"), Vec::<String>::new()); // whitespace-only
+        assert_eq!(page_refs("[[]] then [[Real]]"), vec!["Real"]);
     }
 
     #[test]

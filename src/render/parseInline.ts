@@ -44,7 +44,10 @@ const RE_FOOTNOTE = /\[\^([^\]]+)\]/y;
 const RE_IFRAME = /<iframe\b([^>]*)>(?:\s*<\/iframe>)?/iy;
 const RE_ANGLE = /<((?:https?:\/\/|mailto:)[^>\s]+)>/y;
 const RE_BAREURL = /https?:\/\/[^\s<]+/y;
-const RE_TAG = /#([\w/_-]+)/y;
+// Unicode-aware tag body (letters/numbers of any script + `/ _ -`), matching
+// `refs.rs::is_tag_char` so the rendered tag links to the page the index recorded
+// (`#café` → `café`, not `caf`). Boundary/dot nuances are left to the new parser.
+const RE_TAG = /#([\p{L}\p{N}/_-]+)/uy;
 
 function stickyExec(re: RegExp, input: string, i: number): RegExpExecArray | null {
   re.lastIndex = i;
@@ -197,7 +200,8 @@ export function parseInline(input: string, format: Format = "md"): Seg[] {
     }
     if (c === "[" && input.startsWith("[[", i)) {
       const end = input.indexOf("]]", i + 2);
-      if (end !== -1) {
+      // `[[]]` (empty) is not a page ref in OG — fall through to literal text.
+      if (end !== -1 && input.slice(i + 2, end).trim() !== "") {
         flush(i);
         const inner = input.slice(i + 2, end);
         if (org) {
@@ -241,7 +245,7 @@ export function parseInline(input: string, format: Format = "md"): Seg[] {
     if (c === "#") {
       if (input.startsWith("#[[", i)) {
         const end = input.indexOf("]]", i + 3);
-        if (end !== -1) {
+        if (end !== -1 && input.slice(i + 3, end).trim() !== "") {
           flush(i);
           out.push({ t: "tag", name: input.slice(i + 3, end) });
           i = end + 2;

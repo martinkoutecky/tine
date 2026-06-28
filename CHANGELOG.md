@@ -8,6 +8,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- **Accented & non-Latin tags render correctly.** `#café`, `#škola/úkol`, `#中文`
+  and the like now render and link with their full name, matching how they're
+  indexed — previously the renderer truncated at the first non-ASCII character, so
+  `#café` linked to `caf`.
+- **Empty `[[]]` is no longer a page reference.** `[[]]` / `#[[]]` stay literal
+  text (as in Logseq) instead of creating a blank-named page, so the brackets from
+  `[[`-autocomplete don't momentarily add an empty page to the index.
+
 ## [0.2.2] — 2026-06-28
 
 ### Added

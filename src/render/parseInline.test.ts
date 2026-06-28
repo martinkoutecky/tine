@@ -18,6 +18,13 @@ describe("parseInline", () => {
     expect(parseInline("[[Foo Bar]]")).toEqual([{ t: "pageref", name: "Foo Bar" }]);
     expect(parseInline("#tag")).toEqual([{ t: "tag", name: "tag" }]);
     expect(parseInline("#[[multi word]]")).toEqual([{ t: "tag", name: "multi word" }]);
+    // Unicode tag bodies match the index (refs.rs), not ASCII-truncated.
+    expect(parseInline("#café")).toEqual([{ t: "tag", name: "café" }]);
+    expect(parseInline("#中文")).toEqual([{ t: "tag", name: "中文" }]);
+    expect(parseInline("#škola/úkol")).toEqual([{ t: "tag", name: "škola/úkol" }]);
+    // empty `[[]]` / `#[[]]` are literal text, not refs
+    expect(parseInline("[[]]")).toEqual([{ t: "text", v: "[[]]" }]);
+    expect(parseInline("#[[]]")).toEqual([{ t: "text", v: "#[[]]" }]);
   });
 
   it("block ref, macro, math", () => {
