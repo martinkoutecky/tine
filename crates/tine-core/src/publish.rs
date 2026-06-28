@@ -5,6 +5,8 @@
 use crate::doc::{self, DocBlock};
 use crate::model::{Graph, PageKind};
 use crate::refs::{as_block_ref, block_id, read_bracket_link};
+use serde_json::json;
+use std::collections::HashSet;
 use std::fs;
 use std::io;
 
@@ -212,7 +214,99 @@ fn is_property_line(l: &str) -> bool {
     }
 }
 
-fn render_block(b: &DocBlock, out: &mut String, refs: &RefIndex) {
+/// Reduce one inline-markdown line to readable plain text for the search index +
+/// snippets: drop heading hashes and emphasis/code markers, unwrap `[[Page]]`,
+/// keep `[label](url)` / `![alt](url)` labels, drop `((block refs))`. This is a
+/// deliberately small helper — NOT the full `render_inline` (a faithful AST-driven
+/// strip will come with the lsdoc migration); it only needs to read well enough to
+/// match and preview.
+fn strip_inline_markup(line: &str) -> String {
+    let mut s = line.trim_start();
+    let h = s.chars().take_while(|c| *c == '#').count();
+    if (1..=6).contains(&h) && s.as_bytes().get(h) == Some(&b' ') {
+        s = s[h + 1..].trim_start();
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    'scan: while i < s.len() {
+        let rest = &s[i..];
+        // [[Page]] → Page
+        if let Some(after) = rest.strip_prefix("[[") {
+            if let Some(end) = after.find("]]") {
+                out.push_str(after[..end].trim());
+                i += 2 + end + 2;
+                continue;
+            }
+        }
+        // ((uuid)) → dropped (an opaque id reads as noise)
+        if let Some(after) = rest.strip_prefix("((") {
+            if let Some(end) = after.find("))") {
+                i += 2 + end + 2;
+                continue;
+            }
+        }
+        // ![alt](url) → alt ; [label](url) → label (paren-balanced URLs survive)
+        if rest.starts_with("![") {
+            if let Some((alt, _url, len)) = read_bracket_link(&rest[1..]) {
+                out.push_str(alt);
+                i += 1 + len;
+                continue;
+            }
+        }
+        if rest.starts_with('[') {
+            if let Some((label, _url, len)) = read_bracket_link(rest) {
+                out.push_str(label);
+                i += len;
+                continue;
+            }
+        }
+        // emphasis / code markers → dropped (keep the inner text)
+        for d in ["**", "__", "*", "`", "_"] {
+            if rest.starts_with(d) {
+                i += d.len();
+                continue 'scan;
+            }
+        }
+        let ch = rest.chars().next().unwrap();
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
+}
+
+/// Plain text of a whole block's body (its displayed lines, no property /
+/// SCHEDULED / DEADLINE lines), markup-stripped and space-joined — the unit that
+/// goes into the search index. Empty for structural-only blocks.
+fn block_plain_text(raw: &str) -> String {
+    let mut out = String::new();
+    for l in raw.lines() {
+        let t = l.trim();
+        if t.is_empty() || is_property_line(l) || t.starts_with("SCHEDULED:") || t.starts_with("DEADLINE:")
+        {
+            continue;
+        }
+        let stripped = strip_inline_markup(t);
+        let stripped = stripped.trim();
+        if stripped.is_empty() {
+            continue;
+        }
+        if !out.is_empty() {
+            out.push(' ');
+        }
+        out.push_str(stripped);
+    }
+    out
+}
+
+fn render_block(
+    b: &DocBlock,
+    out: &mut String,
+    refs: &RefIndex,
+    slug: &str,
+    title: &str,
+    counter: &mut u32,
+    blocks: &mut Vec<serde_json::Value>,
+) {
     // strip property / SCHEDULED / DEADLINE lines from the displayed body
     let lines: Vec<&str> = b
         .raw
@@ -223,10 +317,22 @@ fn render_block(b: &DocBlock, out: &mut String, refs: &RefIndex) {
         })
         .collect();
     let first = lines.first().copied().unwrap_or("");
-    // A block with an `id::` gets an anchor so `((block refs))` can link to it.
-    match block_id(&b.raw) {
-        Some(id) => out.push_str(&format!("<li id=\"{id}\">")),
-        None => out.push_str("<li>"),
+    // Every block gets a stable anchor so a search hit can deep-link straight to it:
+    // its `id::` uuid when present, else a generated per-page `b{n}` (these never
+    // collide with 36-char uuids). Emitting the `<li id>` and recording the search
+    // index entry in the SAME place keeps the HTML anchor and the index in lock-step.
+    let anchor = match block_id(&b.raw) {
+        Some(id) => id,
+        None => {
+            let a = format!("b{}", *counter);
+            *counter += 1;
+            a
+        }
+    };
+    out.push_str(&format!("<li id=\"{anchor}\">"));
+    let text = block_plain_text(&b.raw);
+    if !text.is_empty() {
+        blocks.push(json!({"slug": slug, "title": title, "anchor": anchor, "text": text}));
     }
     // heading?
     let hashes = first.chars().take_while(|c| *c == '#').count();
@@ -241,18 +347,26 @@ fn render_block(b: &DocBlock, out: &mut String, refs: &RefIndex) {
     if !b.children.is_empty() {
         out.push_str("<ul>");
         for c in &b.children {
-            render_block(c, out, refs);
+            render_block(c, out, refs, slug, title, counter, blocks);
         }
         out.push_str("</ul>");
     }
     out.push_str("</li>");
 }
 
-fn page_html(title: &str, doc: &doc::Document, kind: PageKind, refs: &RefIndex) -> String {
+fn page_html(
+    title: &str,
+    slug: &str,
+    doc: &doc::Document,
+    kind: PageKind,
+    refs: &RefIndex,
+    blocks: &mut Vec<serde_json::Value>,
+) -> String {
     let mut body = String::new();
     body.push_str("<ul class=\"outline\">");
+    let mut counter = 0u32;
     for b in &doc.roots {
-        render_block(b, &mut body, refs);
+        render_block(b, &mut body, refs, slug, title, &mut counter, blocks);
     }
     body.push_str("</ul>");
     // Journal titles get a leading calendar glyph, like Logseq.
@@ -265,15 +379,32 @@ stroke=\"currentColor\" stroke-width=\"1.7\"><rect x=\"4\" y=\"5\" width=\"16\" 
     } else {
         format!("<h1 class=\"page\">{}</h1>", esc(title))
     };
+    shell(title, &format!("{heading}{body}"))
+}
+
+/// The shared two-column document shell used by every generated page: `<head>` +
+/// the persistent sidebar (home link, search box, and a `#tine-pages` list filled
+/// by `app.js`) + the page's `<main>` + the export scripts. The sidebar markup is
+/// identical on every page; `app.js` reads the embedded `search-index.js` globals
+/// (`window.__tinePages` / `__tineBlocks`) — read as `<script>` globals, never
+/// `fetch`ed — so navigation and search work offline / opened straight off disk
+/// (`file://`, where `fetch` of a sibling file is blocked but `<script src>` is not).
+fn shell(title: &str, main: &str) -> String {
     format!(
         "<!doctype html><html><head><meta charset=\"utf-8\">\
-<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{}</title>\
-<link rel=\"stylesheet\" href=\"style.css\">{}</head><body>\
-<a class=\"home\" href=\"index.html\">\u{2190} index</a>{}{}</body></html>",
-        esc(title),
-        KATEX_HEAD,
-        heading,
-        body
+<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{title}</title>\
+<link rel=\"stylesheet\" href=\"style.css\">{katex}</head><body>\
+<aside class=\"sidebar\">\
+<a class=\"home\" href=\"index.html\">\u{2302} Home</a>\
+<input id=\"tine-search\" type=\"search\" placeholder=\"Search\u{2026}\" autocomplete=\"off\" spellcheck=\"false\">\
+<div id=\"tine-results\" hidden></div>\
+<nav id=\"tine-pages\"></nav>\
+</aside><main>{main}</main>\
+<script src=\"search-index.js\"></script><script src=\"fuse.min.js\"></script><script src=\"app.js\"></script>\
+</body></html>",
+        title = esc(title),
+        katex = KATEX_HEAD,
+        main = main,
     )
 }
 
@@ -290,10 +421,41 @@ const STYLE: &str = r#":root{
 @media (prefers-color-scheme:dark){:root{--bg:#1b1c1d;--fg:#d8dadd;--muted:#7a7f87;--line:#2d2f31;--link:#5aa9ef;--code:#26282a;}}
 *{box-sizing:border-box}
 body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
-  background:var(--bg);color:var(--fg);max-width:740px;margin:0 auto;padding:48px 24px 96px;line-height:1.6;
-  -webkit-font-smoothing:antialiased;font-size:16px}
-a.home{color:var(--muted);font-size:.82rem;text-decoration:none}
-a.home:hover{color:var(--fg)}
+  background:var(--bg);color:var(--fg);margin:0;line-height:1.6;
+  -webkit-font-smoothing:antialiased;font-size:16px;display:flex;align-items:flex-start}
+main{flex:1 1 0;min-width:0;max-width:740px;margin:0 auto;padding:48px 24px 96px}
+/* sidebar */
+.sidebar{flex:0 0 260px;width:260px;position:sticky;top:0;align-self:stretch;height:100vh;overflow-y:auto;
+  border-right:1px solid var(--line);padding:22px 14px;font-size:.9rem}
+.sidebar a.home{display:block;color:var(--fg);font-size:.95rem;font-weight:650;text-decoration:none;margin:0 4px 12px}
+.sidebar a.home:hover{color:var(--link)}
+#tine-search{width:100%;padding:7px 10px;border:1px solid var(--line);border-radius:7px;background:var(--bg);
+  color:var(--fg);font-size:.9rem;outline:none;font-family:inherit}
+#tine-search:focus{border-color:var(--link)}
+#tine-results{margin-top:10px}
+#tine-results .res{display:block;padding:6px 8px;border-radius:6px;text-decoration:none;color:var(--fg)}
+#tine-results .res:hover{background:var(--code)}
+#tine-results .res-title{display:block;font-weight:650;font-size:.84rem;color:var(--link)}
+#tine-results .res-snip{display:block;font-size:.8rem;color:var(--muted);line-height:1.4;margin-top:1px}
+#tine-results mark{background:rgba(245,196,66,.38);color:inherit;border-radius:2px;padding:0 1px}
+#tine-results .empty{color:var(--muted);font-size:.85rem;padding:6px 8px}
+#tine-pages{margin-top:14px}
+#tine-pages .sec{margin-bottom:14px}
+#tine-pages h3{font-size:.68rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);
+  margin:0 0 4px 8px;font-weight:700}
+#tine-pages ul{list-style:none;margin:0;padding:0}
+#tine-pages li{margin:0;position:static}
+#tine-pages li::before{display:none}
+#tine-pages a{display:block;padding:3px 8px;border-radius:5px;text-decoration:none;color:var(--fg);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#tine-pages a:hover{background:var(--code)}
+#tine-pages a.active{background:var(--code);font-weight:650;color:var(--link)}
+@media (max-width:720px){
+  body{flex-direction:column}
+  .sidebar{position:static;height:auto;width:100%;flex-basis:auto;align-self:auto;
+    border-right:none;border-bottom:1px solid var(--line)}
+  main{padding:24px 18px 64px}
+}
 h1.page{font-size:1.9rem;font-weight:700;letter-spacing:-.02em;margin:.4rem 0 1.4rem}
 h1.page .cal{color:var(--muted);margin-right:.45rem;vertical-align:-3px;opacity:.7}
 ul.outline,ul.outline ul{list-style:none}
@@ -324,6 +486,121 @@ hr{border:none;border-top:1px solid var(--line);margin:1.2rem 0}
 footer{margin-top:64px;color:var(--muted);font-size:.78rem;border-top:1px solid var(--line);padding-top:12px}
 "#;
 
+// Sidebar + search behaviour for the published site. Vanilla JS, no build step; the
+// only dependency is the vendored Fuse.js (loaded separately). Reads the embedded
+// `window.__tinePages` / `__tineBlocks` globals (never `fetch`ed) so it works offline
+// and over `file://`. Fuse is configured to mirror OG's published block search
+// (threshold 0.35, block-level content). Search hits deep-link to `slug.html#anchor`.
+const APP_JS: &str = r#"(function () {
+  'use strict';
+  var pages = window.__tinePages || [];
+  var blocks = window.__tineBlocks || [];
+
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function basename(p) {
+    var parts = String(p).split('/');
+    return decodeURIComponent(parts[parts.length - 1] || '');
+  }
+  var here = basename(location.pathname);
+
+  var input = document.getElementById('tine-search');
+  var results = document.getElementById('tine-results');
+  var nav = document.getElementById('tine-pages');
+
+  // ---- sidebar page list ----
+  function section(title, items) {
+    if (!items.length) return '';
+    var lis = items.map(function (p) {
+      var file = p.slug + '.html';
+      var cls = basename(file) === here ? ' class="active"' : '';
+      return '<li><a href="' + file + '"' + cls + '>' + esc(p.title) + '</a></li>';
+    }).join('');
+    return '<div class="sec"><h3>' + esc(title) + '</h3><ul>' + lis + '</ul></div>';
+  }
+  function byTitleAsc(a, b) { return a.title < b.title ? -1 : a.title > b.title ? 1 : 0; }
+  function byTitleDesc(a, b) { return a.title < b.title ? 1 : a.title > b.title ? -1 : 0; }
+  function renderPages() {
+    if (!nav) return;
+    var favs = pages.filter(function (p) { return p.favorite; });
+    var journals = pages.filter(function (p) { return p.journal; }).slice().sort(byTitleDesc);
+    var plain = pages.filter(function (p) { return !p.journal; }).slice().sort(byTitleAsc);
+    nav.innerHTML = section('Favorites', favs) + section('Journals', journals) + section('Pages', plain);
+  }
+
+  // ---- fuzzy search (Fuse, OG params) ----
+  var fuse = window.Fuse ? new window.Fuse(blocks, {
+    keys: ['text', 'title'],
+    threshold: 0.35,
+    ignoreLocation: true,
+    minMatchCharLength: 1,
+    includeMatches: true
+  }) : null;
+
+  function snippet(entry, matches) {
+    var text = entry.text || '';
+    var at = -1, len = 0;
+    if (matches) {
+      for (var i = 0; i < matches.length; i++) {
+        var m = matches[i];
+        if (m.key === 'text' && m.indices && m.indices.length) {
+          at = m.indices[0][0];
+          len = m.indices[0][1] - at + 1;
+          break;
+        }
+      }
+    }
+    if (at < 0) {
+      return esc(text.slice(0, 100)) + (text.length > 100 ? '…' : '');
+    }
+    var start = Math.max(0, at - 28);
+    var pre = (start > 0 ? '…' : '') + text.slice(start, at);
+    var hit = text.slice(at, at + len);
+    var rest = at + len;
+    var post = text.slice(rest, rest + 52) + (text.length > rest + 52 ? '…' : '');
+    return esc(pre) + '<mark>' + esc(hit) + '</mark>' + esc(post);
+  }
+
+  function showList() {
+    if (results) { results.hidden = true; results.innerHTML = ''; }
+    if (nav) nav.hidden = false;
+  }
+  function run(q) {
+    q = (q || '').trim();
+    if (!fuse || !q) { showList(); return; }
+    var hits = fuse.search(q, { limit: 20 });
+    if (!results) return;
+    if (!hits.length) {
+      results.innerHTML = '<div class="empty">No matches</div>';
+    } else {
+      results.innerHTML = hits.map(function (h) {
+        var e = h.item;
+        var href = e.slug + '.html#' + e.anchor;
+        return '<a class="res" href="' + href + '">' +
+          '<span class="res-title">' + esc(e.title) + '</span>' +
+          '<span class="res-snip">' + snippet(e, h.matches) + '</span></a>';
+      }).join('');
+    }
+    results.hidden = false;
+    if (nav) nav.hidden = true;
+  }
+
+  if (input) {
+    input.addEventListener('input', function () { run(input.value); });
+    input.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Escape') { input.value = ''; showList(); input.blur(); }
+      else if (ev.key === 'Enter') {
+        var first = results && results.querySelector('a.res');
+        if (first) { ev.preventDefault(); location.href = first.getAttribute('href'); }
+      }
+    });
+  }
+
+  renderPages();
+})();
+"#;
+
 /// True if a page's property pre-block marks it `public:: true`.
 fn page_is_public(pre_block: Option<&str>) -> bool {
     let Some(pre) = pre_block else { return false };
@@ -340,15 +617,14 @@ pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
     let out = graph.root.join("publish");
     fs::create_dir_all(&out)?;
     fs::write(out.join("style.css"), STYLE)?;
+    // Sidebar + fuzzy search are JS-driven: Fuse (vendored, OG's version) + our tiny
+    // app.js, both loaded as `<script src>` so they work offline / over file://.
+    fs::write(out.join("fuse.min.js"), include_str!("../assets/fuse.min.js"))?;
+    fs::write(out.join("app.js"), APP_JS)?;
     let all_public = graph.config.all_pages_public;
+    let favorites: HashSet<&str> = graph.config.favorites.iter().map(|s| s.as_str()).collect();
 
     let pages = graph.list_pages();
-    let mut index = String::from(
-        "<!doctype html><html><head><meta charset=\"utf-8\">\
-<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Index</title>\
-<link rel=\"stylesheet\" href=\"style.css\"></head><body><h1 class=\"page\">Pages</h1><ul class=\"outline index-list\">",
-    );
-    let mut count = 0;
     let mut entries: Vec<_> = pages.iter().collect();
     entries.sort_by(|a, b| a.name.cmp(&b.name));
 
@@ -368,16 +644,46 @@ pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
         public.push((e.name.as_str(), slug, e.kind, parsed));
     }
 
-    // Pass 2: render each public page with the ref index, and list it on the index.
+    // Pass 2: render each public page (collecting the per-block search index along
+    // the way), accumulate the sidebar page index (`__tinePages`) and the static
+    // no-JS all-pages list shown in the index page's <main>.
+    let mut index_list = String::new();
+    let mut all_blocks: Vec<serde_json::Value> = Vec::new();
+    let mut sidebar_pages: Vec<serde_json::Value> = Vec::new();
+    let mut count = 0;
     for (name, slug, kind, parsed) in &public {
         let file = format!("{slug}.html");
-        fs::write(out.join(&file), page_html(name, parsed, *kind, &refs))?;
-        let tag = if *kind == PageKind::Journal { "<span class=\"k\">journal</span>" } else { "" };
-        index.push_str(&format!("<li><a class=\"ref\" href=\"{}\">{}</a>{}</li>", file, esc(name), tag));
+        fs::write(out.join(&file), page_html(name, slug, parsed, *kind, &refs, &mut all_blocks))?;
+        let journal = *kind == PageKind::Journal;
+        let tag = if journal { "<span class=\"k\">journal</span>" } else { "" };
+        index_list.push_str(&format!("<li><a class=\"ref\" href=\"{}\">{}</a>{}</li>", file, esc(name), tag));
+        sidebar_pages.push(json!({
+            "title": *name,
+            "slug": slug,
+            "journal": journal,
+            "favorite": favorites.contains(*name),
+        }));
         count += 1;
     }
-    index.push_str("</ul><footer>Published with Tine</footer></body></html>");
-    fs::write(out.join("index.html"), index)?;
+
+    // Embedded search data, read by app.js as `<script>` globals (never fetched, so
+    // the site works offline / over file://). External .js ⇒ serde escaping +
+    // no `</script>`-in-content break.
+    let data = format!(
+        "window.__tinePages={};\nwindow.__tineBlocks={};\n",
+        serde_json::to_string(&sidebar_pages).unwrap_or_else(|_| "[]".into()),
+        serde_json::to_string(&all_blocks).unwrap_or_else(|_| "[]".into()),
+    );
+    fs::write(out.join("search-index.js"), data)?;
+
+    // Index page <main>: the alphabetical all-pages list — the no-JS fallback / home
+    // — wrapped in the same sidebar shell as every page.
+    let main = format!(
+        "<h1 class=\"page\">Pages</h1><ul class=\"outline index-list\">{}</ul>\
+<footer>Published with Tine</footer>",
+        index_list
+    );
+    fs::write(out.join("index.html"), shell("Index", &main))?;
     Ok((out.display().to_string(), count))
 }
 
@@ -447,5 +753,123 @@ mod tests {
         // A real URL with parentheses is captured whole (no truncation at first ')').
         let w = render_inline("[wiki](https://en.wikipedia.org/wiki/Foo_(bar))", &no_refs());
         assert!(w.contains(r#"<a href="https://en.wikipedia.org/wiki/Foo_(bar)">wiki</a>"#), "{w}");
+    }
+
+    #[test]
+    fn strips_markup_for_search_index() {
+        // headings, emphasis/code, [[wiki]], [label](url), ![alt](url), ((ref)).
+        assert_eq!(strip_inline_markup("## Heading **bold** _it_ `c`"), "Heading bold it c");
+        assert_eq!(strip_inline_markup("see [[Foo Bar]] and [lbl](http://x)"), "see Foo Bar and lbl");
+        assert_eq!(strip_inline_markup("img ![cat](cat.png) end"), "img cat end");
+        // labeled block ref keeps the label, drops the uuid; bare ref drops entirely.
+        assert_eq!(strip_inline_markup("[See](((1234)))"), "See");
+        assert_eq!(strip_inline_markup("ref ((1111-2222)) gone"), "ref  gone");
+    }
+
+    #[test]
+    fn block_text_drops_props_and_scheduling() {
+        // `raw` is the dedented block body (no leading bullet). Property / SCHEDULED /
+        // DEADLINE lines are not searchable content; the rest is markup-stripped.
+        let raw = "task **important** [[Page]]\nSCHEDULED: <2026-01-01 Thu>\nid:: 1111\nkey:: val\ncontinued bit";
+        assert_eq!(block_plain_text(raw), "task important Page continued bit");
+        // structural-only block → empty (won't be indexed)
+        assert_eq!(block_plain_text("id:: abc\ncollapsed:: true"), "");
+    }
+
+    #[test]
+    fn publish_emits_sidebar_search_and_block_anchors() {
+        let dir = std::env::temp_dir().join(format!("tine-publish-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(dir.join("logseq").join("config.edn"), "{:favorites [\"Alpha\"]}\n").unwrap();
+        fs::write(
+            dir.join("pages").join("Alpha.md"),
+            "public:: true\n- # Intro to [[Beta]] and **bold** text\n  id:: 11111111-1111-1111-1111-111111111111\n- a unique searchwidget term\n",
+        )
+        .unwrap();
+        fs::write(dir.join("pages").join("Beta.md"), "public:: true\n- linking back to [[Alpha]]\n").unwrap();
+        // A non-public page must NOT be exported.
+        fs::write(dir.join("pages").join("Secret.md"), "- private stuff\n").unwrap();
+
+        let g = Graph::open(&dir);
+        let (outdir, count) = publish_graph(&g).unwrap();
+        assert_eq!(count, 2, "only the two public pages");
+        let out = std::path::Path::new(&outdir);
+
+        // assets emitted alongside the pages
+        assert!(out.join("fuse.min.js").exists(), "vendored Fuse shipped");
+        assert!(out.join("app.js").exists(), "app.js shipped");
+
+        // embedded search data: pages + blocks globals, favorite flag, stripped text
+        let sidx = fs::read_to_string(out.join("search-index.js")).unwrap();
+        assert!(sidx.starts_with("window.__tinePages="), "{}", &sidx[..60.min(sidx.len())]);
+        assert!(sidx.contains("window.__tineBlocks="));
+        assert!(sidx.contains("\"favorite\":true"), "Alpha is a favorite: {sidx}");
+        assert!(sidx.contains("searchwidget"), "block content indexed");
+        assert!(sidx.contains("Intro to Beta and bold text"), "markup stripped in index: {sidx}");
+        assert!(!sidx.contains("[[Beta]]"), "no raw wiki brackets in index");
+
+        // page html: EVERY block carries an anchor (id:: uuid or generated b{n}); the
+        // sidebar + scripts are present; no anchorless <li>.
+        let alpha = fs::read_to_string(out.join("alpha.html")).unwrap();
+        assert!(alpha.contains("id=\"11111111-1111-1111-1111-111111111111\""), "id:: anchor kept");
+        assert!(alpha.contains("id=\"b0\""), "id-less block got a generated anchor: {alpha}");
+        assert!(!alpha.contains("<li>"), "no anchorless <li>");
+        assert!(alpha.contains("<aside class=\"sidebar\">"), "sidebar present");
+        assert!(alpha.contains("id=\"tine-search\""), "search box present");
+        assert!(alpha.contains("src=\"app.js\""), "app.js linked");
+
+        // index lists public pages, excludes the private one, and uses the shell.
+        let index = fs::read_to_string(out.join("index.html")).unwrap();
+        assert!(index.contains("alpha.html") && index.contains("beta.html"));
+        assert!(!index.contains("secret.html"), "private page excluded");
+        assert!(index.contains("<aside class=\"sidebar\">"), "index uses the sidebar shell");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Dev utility (not run by default): materialize a richer sample export at a
+    /// stable path so the published sidebar + search can be screenshot-verified.
+    /// `cargo test -p tine-core --lib -- --ignored gen_sample_export --nocapture`
+    /// then open `file://$TMPDIR/tine-sample-export/publish/index.html`.
+    #[test]
+    #[ignore]
+    fn gen_sample_export() {
+        let dir = std::env::temp_dir().join("tine-sample-export");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq").join("config.edn"),
+            "{:publishing/all-pages-public? true\n :favorites [\"Welcome\" \"Parameterized IP\"]}\n",
+        )
+        .unwrap();
+        let write = |name: &str, body: &str| fs::write(dir.join("pages").join(name), body).unwrap();
+        write(
+            "Welcome.md",
+            "- # Welcome to the published graph\n  id:: aaaaaaaa-0000-0000-0000-000000000001\n- This is a static export with a **sidebar** and fuzzy [[search]].\n- See [[Parameterized IP]] and the [[ILP Survey]].\n",
+        );
+        write(
+            "Parameterized IP.md",
+            "- # Parameterized IP\n- Fixed-parameter tractability of integer programming; **parameterized complexity** of ILPs.\n  id:: aaaaaaaa-0000-0000-0000-000000000002\n- Related to [[ILP Survey]].\n",
+        );
+        write(
+            "ILP Survey.md",
+            "- # ILP Survey\n- A survey of integer linear programming techniques and n-fold IP.\n- Back to [[Welcome]].\n",
+        );
+        write("Search.md", "- Notes on full-text search and ranking.\n");
+        write("Project Ideas.md", "- # Project Ideas\n- A grab-bag of ideas, including continuous bribery and opinion diffusion.\n");
+        fs::write(
+            dir.join("journals").join("2026_06_28.md"),
+            "- Worked on the **published export**: sidebar + search.\n- Linked [[Parameterized IP]].\n",
+        )
+        .unwrap();
+
+        let g = Graph::open(&dir);
+        let (outdir, count) = publish_graph(&g).unwrap();
+        println!("SAMPLE_EXPORT_DIR={outdir} pages={count}");
     }
 }

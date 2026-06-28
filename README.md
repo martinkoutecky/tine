@@ -235,9 +235,14 @@ raw speed. (Where a comparison is made, it's against current Logseq desktop core
 **Customization & output**
 - **Fully remappable keyboard shortcuts** — in the Settings modal or via `config.edn :shortcuts`.
 - Light/dark themes, accent color, custom CSS, wide mode (`t w`) and document mode (`t d`).
-- One-click **static HTML export** (`public:: true` pages), with math typeset by KaTeX;
-  **"copy/export as"** for a block subtree or page as Markdown; a slash menu for headings, code, calculator, quote, callouts, divider, embed,
-  query (raw or visual builder), template, asset upload, and dates.
+- One-click **static HTML export** (`public:: true` pages) — like Logseq's published graphs,
+  each page gets a **left sidebar** (Favorites / Journals / Pages) and a **fuzzy full-text
+  search** box (block-level; results deep-link straight to the block). Search and the page
+  list are driven by a small embedded index + a vendored Fuse.js, so the exported site works
+  offline / opened straight off disk; math is typeset by KaTeX. (No interactive graph view yet.)
+  Also **"copy/export as"** for a block subtree or page as Markdown; a slash menu for headings,
+  code, calculator, quote, callouts, divider, embed, query (raw or visual builder), template,
+  asset upload, and dates.
 
 <p align="center">
   <img src="docs/img/pdf.png" alt="PDF text + area (image) highlighting with a notes page" width="49%">

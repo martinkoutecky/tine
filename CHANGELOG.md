@@ -8,6 +8,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Added
+
+- **Richer static HTML export — sidebar + fuzzy full-text search** (closer to Logseq's
+  published graphs). Every exported page now carries a persistent **left sidebar** with
+  **Favorites** (from `config.edn :favorites`), **Journals**, and **Pages** sections and
+  an active-page highlight, plus a **search box** that does **fuzzy full-text** matching
+  over block content (vendored Fuse.js, tuned to Logseq's published-search params). Results
+  show a page title + snippet and **deep-link to the matching block** (`page.html#anchor`) —
+  every exported block now gets a stable anchor for this. The search index and page list are
+  embedded as `<script>` globals and read locally (never fetched), so the exported site —
+  including search — works **offline / opened straight off disk** (`file://`). Not yet
+  included: Logseq's interactive graph view (a separate follow-up).
+
 ## [0.2.3] — 2026-06-28
 
 ### Changed
