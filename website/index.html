@@ -92,7 +92,9 @@
         <li>Edit in either app — one at a time — on the very same files.</li>
         <li>Saves are byte-compatible Markdown that preserve your formatting, so they don't create
           sync churn.</li>
-        <li>Keeps working alongside the Logseq mobile app over your own Syncthing/Dropbox sync.</li>
+        <li>Keeps working alongside the Logseq mobile app (or
+          <a href="https://codeberg.org/siddharthagolu/fastlog">fastlog</a>) over your own
+          Syncthing/Dropbox sync.</li>
         <li>Not affiliated with or endorsed by Logseq — just compatible with it, on purpose.</li>
       </ul>
     </div>
@@ -150,11 +152,24 @@
     <div class="shots">
       <figure><img src="img/tabs.png" alt="Built-in tabs across the top of the window" loading="lazy"><figcaption>Built-in tabs</figcaption></figure>
       <figure><img src="img/focus.png" alt="Focus mode with inactive blocks dimmed" loading="lazy"><figcaption>Focus &amp; dim</figcaption></figure>
-      <figure><img src="img/quick-capture.png" alt="The global quick-capture mini window" loading="lazy"><figcaption>Global quick-capture</figcaption></figure>
+      <figure><img src="img/quick-capture-empty.png" alt="The global quick-capture window before typing, showing the optional page-title hint" loading="lazy"><figcaption>Quick-capture</figcaption></figure>
+      <figure><img src="img/quick-capture.png" alt="Quick-capture with a page title filled in, capturing to a new page" loading="lazy"><figcaption>…or capture to a new page</figcaption></figure>
       <figure><img src="img/carry.png" alt="Carry unfinished tasks forward to today" loading="lazy"><figcaption>Carry tasks forward</figcaption></figure>
       <figure><img src="img/query.png" alt="Query results and the visual query builder" loading="lazy"><figcaption>Queries &amp; visual builder</figcaption></figure>
       <figure><img src="img/pdf.png" alt="PDF text and area highlighting with a notes page" loading="lazy"><figcaption>PDF annotation</figcaption></figure>
     </div>
+  </section>
+
+  <!-- DARK MODE -->
+  <section id="dark" class="wrap">
+    <h2 class="center-h">Light or dark — it follows your system</h2>
+    <p class="section-lede center">
+      Tine ships a polished dark theme and switches with your OS, or you can toggle it yourself.
+      Your custom Logseq CSS and themes apply just the same.
+    </p>
+    <figure class="solo-shot">
+      <img src="img/dark.png" alt="Tine's journals feed in dark mode" loading="lazy">
+    </figure>
   </section>
 
   <!-- CONFIGURABLE / OG DEFAULTS -->
@@ -210,7 +225,9 @@
       </div>
       <div class="scope-item">
         <h3>A native mobile app</h3>
-        <p>Tine is desktop. Use the Logseq mobile app on the same synced graph.</p>
+        <p>Tine is desktop. On the go, use the Logseq mobile app — or
+          <a href="https://codeberg.org/siddharthagolu/fastlog">fastlog</a> — on the same
+          synced graph.</p>
       </div>
     </div>
     <p class="scope-note">
@@ -224,8 +241,8 @@
     <div class="band-inner">
       <h2>Built by AI, in the open</h2>
       <p class="section-lede">
-        Tine is <strong>vibe-coded</strong> — built by <strong>Claude Opus</strong> (Anthropic's
-        coding model), with help from <strong>Codex</strong>, under human direction and review.
+        Tine is <strong>vibe-coded</strong> — built by <strong>Claude Opus</strong>, with help
+        from <strong>Codex</strong>, under human direction and review.
         We're not hiding that, and we're not making a thing of it either; it's simply how Tine is
         made.
       </p>
@@ -287,6 +304,30 @@
     <p class="foot-copy">© 2026 Martin Koutecký · Built as a faster, file-compatible companion to Logseq.</p>
   </div>
 </footer>
+
+<!-- Lightbox: click any screenshot to view it full-size -->
+<div class="lightbox" id="lightbox" hidden>
+  <img id="lightbox-img" alt="">
+</div>
+<script>
+(function () {
+  var box = document.getElementById("lightbox");
+  var bimg = document.getElementById("lightbox-img");
+  function close() { box.hidden = true; bimg.removeAttribute("src"); document.body.style.overflow = ""; }
+  function open(img) {
+    bimg.src = img.currentSrc || img.src;
+    bimg.alt = img.alt || "";
+    box.hidden = false;
+    document.body.style.overflow = "hidden";
+  }
+  document.querySelectorAll(".hero-shot img, .shots img, .band-shot img, .solo-shot img").forEach(function (img) {
+    img.classList.add("zoomable");
+    img.addEventListener("click", function () { open(img); });
+  });
+  box.addEventListener("click", close);
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape" && !box.hidden) close(); });
+})();
+</script>
 
 </body>
 </html>

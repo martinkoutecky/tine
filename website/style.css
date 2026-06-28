@@ -247,3 +247,25 @@ h2 + .section-lede { margin-top: 1.1rem; }
 .foot-note { color: var(--ink-faint); font-size: .82rem; max-width: 760px; margin: 1rem 0 0; }
 .foot-note a { color: var(--ink-soft); }
 .foot-copy { color: var(--ink-faint); font-size: .82rem; margin: 1.1rem 0 0; }
+
+/* ---------- dark-mode showcase ---------- */
+.center-h { text-align: center; }
+.solo-shot { margin: 2.6rem auto 0; max-width: 920px; }
+.solo-shot img {
+  width: 100%; border-radius: var(--radius); border: 1px solid var(--line);
+  box-shadow: var(--shadow-lg);
+}
+
+/* ---------- lightbox (click any screenshot to expand) ---------- */
+.zoomable { cursor: zoom-in; }
+.lightbox {
+  position: fixed; inset: 0; z-index: 100;
+  display: flex; align-items: center; justify-content: center;
+  padding: clamp(1rem, 4vw, 3rem);
+  background: rgba(6, 18, 14, .82); cursor: zoom-out;
+}
+.lightbox[hidden] { display: none; }
+.lightbox img {
+  max-width: 100%; max-height: 100%; width: auto; height: auto;
+  border-radius: 10px; box-shadow: var(--shadow-lg); cursor: zoom-out;
+}
