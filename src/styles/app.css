@@ -2248,6 +2248,8 @@ mark {
 .media-embed.media-audio {
   width: 320px;
   max-width: 100%;
+  flex: 0 1 auto; /* shrink to share the row with the Expand button if the column is narrow */
+  min-width: 0;
 }
 /* Wrapper hosting the inline player + an always-available "open externally"
    button (shown on hover) for when WebKit renders the player but can't actually
@@ -2258,8 +2260,10 @@ mark {
   max-width: 100%;
 }
 .media-embed-wrap.media-audio-wrap {
-  display: block;
-  width: 320px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: auto;
   max-width: 100%;
 }
 /* Asset-name format helper row: preset buttons on their own line, then the live
@@ -2285,8 +2289,9 @@ mark {
    (audio has no fullscreen, so this is how you get a big waveform scrubber). */
 .media-audio-widen {
   display: inline-block;
-  margin-top: 4px;
+  flex: none; /* sits on the same line as the audio control, not below it */
   padding: 1px 8px;
+  white-space: nowrap;
   font-size: 0.78em;
   line-height: 1.5;
   border: 1px solid var(--border-color);
