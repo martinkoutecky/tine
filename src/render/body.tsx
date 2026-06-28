@@ -505,8 +505,14 @@ function renderQuote(b: Extract<AstBlock, { kind: "quote" }>, blockId?: string):
       const m = /^\[!(\w+)\]\s*(.*)$/.exec(lead.text);
       if (m) {
         const type = m[1].toLowerCase();
-        const rest = [{ k: "plain" as const, text: m[2] }, ...first.inline.slice(1)];
-        const bodyChildren: AstBlock[] = [{ kind: "paragraph", inline: rest }, ...b.children.slice(1)];
+        // The title is `m[2]` (the text after `[!TYPE]` on the first line); the
+        // body is everything AFTER that first line — drop the lead `[!TYPE] …`
+        // plain node and a following soft break so the title isn't repeated.
+        let rest = first.inline.slice(1);
+        if (rest[0]?.k === "break") rest = rest.slice(1);
+        const bodyChildren: AstBlock[] = rest.length
+          ? [{ kind: "paragraph", inline: rest }, ...b.children.slice(1)]
+          : b.children.slice(1);
         return (
           <div class={`callout callout-${type}`}>
             <div class="callout-title">{m[2].trim() || type.toUpperCase()}</div>

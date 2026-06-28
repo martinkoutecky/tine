@@ -105,10 +105,27 @@ describe("renderBlocks", () => {
     expect(h).toContain("1");
   });
 
-  it("md [!NOTE] callout re-detected from a quote", () => {
-    const h = blk([{ kind: "quote", children: [{ kind: "paragraph", inline: [{ k: "plain", text: "[!NOTE] Heads up" }] }] }]);
+  it("md [!NOTE] callout: title once, body separate (no dup)", () => {
+    const h = blk([
+      {
+        kind: "quote",
+        children: [
+          {
+            kind: "paragraph",
+            inline: [
+              { k: "plain", text: "[!NOTE] Heads up" },
+              { k: "break" },
+              { k: "plain", text: "body line" },
+            ],
+          },
+        ],
+      },
+    ]);
     expect(h).toContain("callout-note");
     expect(h).toContain("Heads up");
+    expect(h).toContain("body line");
+    // The title text must NOT be duplicated into the body.
+    expect(h.split("Heads up").length - 1).toBe(1);
   });
 
   it("org custom callout", () => {
