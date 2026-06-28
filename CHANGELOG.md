@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.2.2] — 2026-06-28
+
 ### Added
 
 - **Scroll position restored on back/forward.** Navigating away from a long page
