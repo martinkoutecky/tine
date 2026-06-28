@@ -806,10 +806,10 @@ fn apply_spellcheck(enabled: bool, languages: Vec<String>, app: tauri::AppHandle
     apply_spellcheck_all(&app, enabled, &languages);
 }
 
-/// Looks like a locale/dictionary code: "en", "en_US", "cs_CZ", "sr_Latn".
+/// Looks like a locale/dictionary code: "en", "en_US", "cs_CZ", "ca_ES_valencia".
 fn is_locale_code(s: &str) -> bool {
     !s.is_empty()
-        && s.len() <= 12
+        && s.len() <= 24
         && s.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
         && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
@@ -860,11 +860,20 @@ fn discover_dictionaries() -> Vec<String> {
         if let Ok(rd) = std::fs::read_dir(&d) {
             for e in rd.flatten() {
                 let p = e.path();
-                if p.extension().and_then(|x| x.to_str()) == Some("dic") {
-                    if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
-                        if is_locale_code(stem) {
-                            found.insert(stem.to_string());
-                        }
+                if p.extension().and_then(|x| x.to_str()) != Some("dic") {
+                    continue;
+                }
+                // A real hunspell SPELL dictionary always ships a matching `.aff`
+                // (affix-rules) file. Hyphenation dictionaries (hyph_*.dic) — which
+                // also use the .dic extension and sit in the same dir — do NOT, so
+                // requiring a sibling .aff cleanly excludes them (while keeping
+                // genuine dicts like Thai th_TH that a prefix filter would mis-drop).
+                if !p.with_extension("aff").exists() {
+                    continue;
+                }
+                if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
+                    if is_locale_code(stem) {
+                        found.insert(stem.to_string());
                     }
                 }
             }
