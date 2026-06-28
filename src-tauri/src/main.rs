@@ -1721,6 +1721,21 @@ fn save_pdf_area_image(
     })
 }
 
+/// Parse one block's `raw` body into lsdoc's render AST (the frontend renders from
+/// this, replacing the TS inline parser). Pure — no graph state. `is_org` selects
+/// the Org parser + `*` block pattern (else Markdown + `-`).
+#[tauri::command]
+fn parse_block(raw: String, is_org: bool) -> Vec<tine_core::lsdoc::ast::Block> {
+    tine_core::render::parse_block(&raw, is_org)
+}
+
+/// Batch form of [`parse_block`] — one AST per input `raw`, in order. Used to parse
+/// a whole page's blocks in a single call on open (the format is per-page).
+#[tauri::command]
+fn parse_blocks(raws: Vec<String>, is_org: bool) -> Vec<Vec<tine_core::lsdoc::ast::Block>> {
+    raws.iter().map(|r| tine_core::render::parse_block(r, is_org)).collect()
+}
+
 /// Show + focus the always-on-top quick-capture mini window (created hidden at
 /// startup). Each show resets it to the small base size and anchors it near the
 /// top of the screen so the frontend can grow it downward (multiple blocks, an
@@ -1986,6 +2001,8 @@ fn main() {
             read_highlights,
             write_highlights,
             save_pdf_area_image,
+            parse_block,
+            parse_blocks,
             get_backup_keep,
             set_backup_keep,
             get_capture_enter_files,
