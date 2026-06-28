@@ -217,6 +217,23 @@ h2 + .section-lede { margin-top: 1.1rem; }
 .band-shot { margin: 2.6rem 0 0; }
 .band-shot img { width: 100%; border-radius: var(--radius); border: 1px solid var(--line); box-shadow: var(--shadow-lg); }
 
+/* ---------- out of scope ---------- */
+.scope-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 1rem; margin: 2.6rem 0 0;
+}
+.scope-item {
+  background: var(--card); border: 1px dashed var(--line); border-radius: var(--radius);
+  padding: 1.15rem 1.3rem;
+}
+.scope-item h3 { font-size: 1rem; margin-bottom: .3rem; color: var(--ink); }
+.scope-item p { margin: 0; color: var(--ink-faint); font-size: .92rem; }
+.scope-item code { color: var(--ink-soft); background: var(--bg-tint); }
+.scope-note {
+  text-align: center; color: var(--ink-faint); font-size: .9rem;
+  margin: 2.2rem auto 0; max-width: 660px;
+}
+
 /* ---------- closer ---------- */
 .closer { text-align: center; }
 .closer .section-lede { margin-left: auto; margin-right: auto; }

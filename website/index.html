@@ -183,6 +183,68 @@
     </div>
   </section>
 
+  <!-- OUT OF SCOPE -->
+  <section id="scope" class="wrap">
+    <h2>What Tine doesn't do — for now</h2>
+    <p class="section-lede center">
+      Tine is a faster outliner, not a wholesale replacement for Logseq. A few things are
+      deliberately out of scope. For those, just keep using Logseq on the same graph — running
+      both is the whole idea.
+    </p>
+    <div class="scope-grid">
+      <div class="scope-item">
+        <h3>Whiteboards</h3>
+        <p>The spatial canvas isn't part of Tine.</p>
+      </div>
+      <div class="scope-item">
+        <h3>Flashcards / spaced repetition</h3>
+        <p>No SRS review. Your <code>#card</code> blocks are preserved in the files, just not drilled.</p>
+      </div>
+      <div class="scope-item">
+        <h3>Plugins &amp; the marketplace</h3>
+        <p>No <code>@logseq/libs</code> plugin runtime. Custom CSS and themes do work.</p>
+      </div>
+      <div class="scope-item">
+        <h3>Built-in git / sync</h3>
+        <p>Bring your own — Syncthing, Dropbox, git. Tine just reads and writes the files.</p>
+      </div>
+      <div class="scope-item">
+        <h3>A native mobile app</h3>
+        <p>Tine is desktop. Use the Logseq mobile app on the same synced graph.</p>
+      </div>
+    </div>
+    <p class="scope-note">
+      On the radar, not yet shipped: a graph view, configurable typographic auto-replace, and
+      broader coverage of advanced (Datalog) queries.
+    </p>
+  </section>
+
+  <!-- HOW IT'S BUILT -->
+  <section id="build" class="band">
+    <div class="band-inner">
+      <h2>Built by AI, in the open</h2>
+      <p class="section-lede">
+        Tine is <strong>vibe-coded</strong> — built by <strong>Claude Opus</strong> (Anthropic's
+        coding model), with help from <strong>Codex</strong>, under human direction and review.
+        We're not hiding that, and we're not making a thing of it either; it's simply how Tine is
+        made.
+      </p>
+      <p class="section-lede">
+        AI-built software makes some people wary — fair enough. So Tine is made to be
+        <em>checked, not taken on faith</em>:
+      </p>
+      <ul class="checks">
+        <li><strong>Open source (AGPL-3.0)</strong> — every line is on GitHub to read or audit.</li>
+        <li><strong>Your files, your graph</strong> — it only ever touches plain Markdown you already own.</li>
+        <li><strong>Deliberately careful with your data</strong> — it detects outside changes and flags
+          conflicts instead of overwriting, keeps launch snapshots, and deletes to a recoverable trash.</li>
+        <li><strong>No lock-in</strong> — it round-trips byte-for-byte with Logseq, so you can walk away
+          at any time and lose nothing.</li>
+      </ul>
+      <p class="section-lede">Point it at a copy of your graph and judge it by how it behaves.</p>
+    </div>
+  </section>
+
   <!-- CTA -->
   <section class="wrap closer">
     <h2>Try it on a copy of your graph</h2>
