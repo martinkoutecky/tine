@@ -8,6 +8,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Changed
+
+- **Settings reorganized into clearer categories** (modeled on Logseq's own
+  General / Editor / … grouping). New **Editor** tab (file format, link-autocomplete
+  default, copy-sub-blocks, strip-collapsed, click-ref-to-zoom) and **Files** tab
+  (asset-name format, watch-for-external-edits, orphaned-media cleanup); "Journals
+  & tasks" → **Journals** (now also holds first-day-of-week and the duplicate-day
+  reconciler); **Backups** is now just snapshots/restore. The asset-name format
+  field moved out of "Backups" and its preset/preview layout is tidied.
+
 ### Added
 
 - **Expanded audio player.** An ⤢ Expand button on an inline audio embed opens a

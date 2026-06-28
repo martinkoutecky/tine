@@ -2262,6 +2262,25 @@ mark {
   width: 320px;
   max-width: 100%;
 }
+/* Asset-name format helper row: preset buttons on their own line, then the live
+   "drag → / paste →" examples stacked below (each on its own line). */
+.asset-name-extras {
+  margin: 6px 0 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.asset-name-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.asset-name-preview code {
+  font-size: 0.95em;
+}
+
 /* The "Expand" button on an inline audio embed → opens the wide overlay player
    (audio has no fullscreen, so this is how you get a big waveform scrubber). */
 .media-audio-widen {

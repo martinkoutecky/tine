@@ -89,10 +89,12 @@ const DATE_FORMATS = [
   "yyyyMMdd",
 ];
 
-type Tab = "appearance" | "tasks" | "backups" | "graph" | "shortcuts";
+type Tab = "appearance" | "editor" | "journals" | "files" | "backups" | "graph" | "shortcuts";
 const TABS: { id: Tab; label: string }[] = [
   { id: "appearance", label: "Appearance" },
-  { id: "tasks", label: "Journals & tasks" },
+  { id: "editor", label: "Editor" },
+  { id: "journals", label: "Journals" },
+  { id: "files", label: "Files" },
   { id: "backups", label: "Backups" },
   { id: "graph", label: "Graph" },
   { id: "shortcuts", label: "Keyboard shortcuts" },
@@ -179,13 +181,17 @@ export function Settings(): JSX.Element {
               <Show when={tab() === "appearance"}>
                 <AppearanceTab />
               </Show>
-              <Show when={tab() === "tasks"}>
-                <TasksTab />
+              <Show when={tab() === "editor"}>
+                <EditorTab />
+              </Show>
+              <Show when={tab() === "journals"}>
+                <JournalsTab />
+              </Show>
+              <Show when={tab() === "files"}>
+                <FilesTab />
               </Show>
               <Show when={tab() === "backups"}>
                 <BackupsTab />
-                <AssetsTab />
-                <JournalConflictsPanel />
               </Show>
               <Show when={tab() === "graph"}>
                 <GraphTab publishMsg={publishMsg()} doPublish={doPublish} />
@@ -380,31 +386,6 @@ function AppearanceTab(): JSX.Element {
         <Toggle on={smoothScrollEnabled()} onClick={() => setSmoothScroll(!smoothScrollEnabled())} />
       </Field>
 
-      <Field
-        label="First day of week"
-        hint={
-          <>
-            Starting column of the calendar and the scheduled/deadline date
-            pickers. Saved to <code>:start-of-week</code> in <code>config.edn</code>
-            (Logseq’s setting), so it travels with the graph.
-          </>
-        }
-      >
-        <select
-          class="settings-select"
-          value={String(graphMeta()?.start_of_week ?? 6)}
-          onChange={(e) => changeStartOfWeek(Number(e.currentTarget.value))}
-        >
-          {/* Logseq convention: 0=Monday … 6=Sunday. */}
-          <option value="0">Monday</option>
-          <option value="1">Tuesday</option>
-          <option value="2">Wednesday</option>
-          <option value="3">Thursday</option>
-          <option value="4">Friday</option>
-          <option value="5">Saturday</option>
-          <option value="6">Sunday</option>
-        </select>
-      </Field>
     </>
   );
 }
@@ -482,18 +463,7 @@ function DateFormatSelect(): JSX.Element {
   );
 }
 
-function TasksTab(): JSX.Element {
-  // Quick-capture Enter behaviour (app-level setting, read by the capture window).
-  const [captureEnterFiles, setCaptureEnterFiles] = createSignal(false);
-  void backend()
-    .getCaptureEnterFiles()
-    .then(setCaptureEnterFiles)
-    .catch(() => {});
-  const toggleCaptureEnter = () => {
-    const v = !captureEnterFiles();
-    setCaptureEnterFiles(v);
-    void backend().setCaptureEnterFiles(v).catch(() => {});
-  };
+function EditorTab(): JSX.Element {
   return (
     <>
       <Field
@@ -523,6 +493,57 @@ function TasksTab(): JSX.Element {
       </Field>
 
       <Field
+        label="Link autocomplete default"
+        hint={`When you type [[name (or #name) that isn’t an exact existing page: ON → Enter LINKS to the first match (and “Create…” moves to the end of the list); OFF (default, like Logseq) → Enter CREATES a new page/tag unless an exact match exists. Either way the arrow keys reach the other options.`}
+      >
+        <Toggle on={linkFirstMatch()} onClick={() => setLinkFirstMatch(!linkFirstMatch())} />
+      </Field>
+
+      <OgField
+        label="Copy a parent block's sub-blocks"
+        hint="When you copy/cut a selected block that has children: ON copies the whole sub-tree; OFF copies only the block(s) you actually selected. Tine defaults to OFF because selecting just the parent and getting its entire tree is surprising."
+        ogNote="always copies a selected block's whole sub-tree."
+        ogValue={true}
+        on={copyIncludeSubtree()}
+        onToggle={() => setCopyIncludeSubtree(!copyIncludeSubtree())}
+      />
+
+      <OgField
+        label="Strip collapsed:: when copying"
+        hint="A collapsed block carries a hidden collapsed:: true property (view state, not content). Tine defaults to ON (drops it from copied text for a cleaner paste); OFF keeps it. (id:: is always stripped from copies, like Logseq.)"
+        ogNote="keeps collapsed:: in the copied text (only id:: is stripped)."
+        ogValue={false}
+        on={copyStripCollapsed()}
+        onToggle={() => setCopyStripCollapsed(!copyStripCollapsed())}
+      />
+
+      <OgField
+        label="Click a block reference to zoom in"
+        hint="Plain-clicking an inline ((block reference)): ON zooms into the referenced block (opens it as its own page, like Logseq); OFF (Tine default) scrolls to it in place and flashes it. Shift-click always opens it in the sidebar."
+        ogNote="zooms into the referenced block on click."
+        ogValue={true}
+        on={refClickZoom()}
+        onToggle={() => setRefClickZoom(!refClickZoom())}
+      />
+    </>
+  );
+}
+
+function JournalsTab(): JSX.Element {
+  // Quick-capture Enter behaviour (app-level setting, read by the capture window).
+  const [captureEnterFiles, setCaptureEnterFiles] = createSignal(false);
+  void backend()
+    .getCaptureEnterFiles()
+    .then(setCaptureEnterFiles)
+    .catch(() => {});
+  const toggleCaptureEnter = () => {
+    const v = !captureEnterFiles();
+    setCaptureEnterFiles(v);
+    void backend().setCaptureEnterFiles(v).catch(() => {});
+  };
+  return (
+    <>
+      <Field
         label="Journal date format"
         hint={
           <>
@@ -533,6 +554,32 @@ function TasksTab(): JSX.Element {
         }
       >
         <DateFormatSelect />
+      </Field>
+
+      <Field
+        label="First day of week"
+        hint={
+          <>
+            Starting column of the calendar and the scheduled/deadline date
+            pickers. Saved to <code>:start-of-week</code> in <code>config.edn</code>
+            (Logseq’s setting), so it travels with the graph.
+          </>
+        }
+      >
+        <select
+          class="settings-select"
+          value={String(graphMeta()?.start_of_week ?? 6)}
+          onChange={(e) => changeStartOfWeek(Number(e.currentTarget.value))}
+        >
+          {/* Logseq convention: 0=Monday … 6=Sunday. */}
+          <option value="0">Monday</option>
+          <option value="1">Tuesday</option>
+          <option value="2">Wednesday</option>
+          <option value="3">Thursday</option>
+          <option value="4">Friday</option>
+          <option value="5">Saturday</option>
+          <option value="6">Sunday</option>
+        </select>
       </Field>
 
       <Field
@@ -600,40 +647,6 @@ function TasksTab(): JSX.Element {
       </Field>
 
       <Field
-        label="Link autocomplete default"
-        hint={`When you type [[name (or #name) that isn’t an exact existing page: ON → Enter LINKS to the first match (and “Create…” moves to the end of the list); OFF (default, like Logseq) → Enter CREATES a new page/tag unless an exact match exists. Either way the arrow keys reach the other options.`}
-      >
-        <Toggle on={linkFirstMatch()} onClick={() => setLinkFirstMatch(!linkFirstMatch())} />
-      </Field>
-
-      <OgField
-        label="Copy a parent block's sub-blocks"
-        hint="When you copy/cut a selected block that has children: ON copies the whole sub-tree; OFF copies only the block(s) you actually selected. Tine defaults to OFF because selecting just the parent and getting its entire tree is surprising."
-        ogNote="always copies a selected block's whole sub-tree."
-        ogValue={true}
-        on={copyIncludeSubtree()}
-        onToggle={() => setCopyIncludeSubtree(!copyIncludeSubtree())}
-      />
-
-      <OgField
-        label="Strip collapsed:: when copying"
-        hint="A collapsed block carries a hidden collapsed:: true property (view state, not content). Tine defaults to ON (drops it from copied text for a cleaner paste); OFF keeps it. (id:: is always stripped from copies, like Logseq.)"
-        ogNote="keeps collapsed:: in the copied text (only id:: is stripped)."
-        ogValue={false}
-        on={copyStripCollapsed()}
-        onToggle={() => setCopyStripCollapsed(!copyStripCollapsed())}
-      />
-
-      <OgField
-        label="Click a block reference to zoom in"
-        hint="Plain-clicking an inline ((block reference)): ON zooms into the referenced block (opens it as its own page, like Logseq); OFF (Tine default) scrolls to it in place and flashes it. Shift-click always opens it in the sidebar."
-        ogNote="zooms into the referenced block on click."
-        ogValue={true}
-        on={refClickZoom()}
-        onToggle={() => setRefClickZoom(!refClickZoom())}
-      />
-
-      <Field
         label="Agenda window"
         hint={
           <>
@@ -661,22 +674,13 @@ function TasksTab(): JSX.Element {
         />
         <span class="settings-hint">days ahead</span>
       </Field>
+
+      <JournalConflictsPanel />
     </>
   );
 }
 
 function GraphTab(props: { publishMsg: string; doPublish: () => void }): JSX.Element {
-  // File-watch mechanism (device-local). Loaded from the backend on mount.
-  const [watchMode, setWatchMode] = createSignal<"inotify" | "poll">("inotify");
-  void backend()
-    .getWatchMode()
-    .then((m) => setWatchMode(m === "poll" ? "poll" : "inotify"))
-    .catch(() => {});
-  const changeWatchMode = (m: "inotify" | "poll") => {
-    if (m === watchMode()) return;
-    setWatchMode(m);
-    void backend().setWatchMode(m).catch(() => {});
-  };
   return (
     <>
       <div class="settings-row">
@@ -690,34 +694,6 @@ function GraphTab(props: { publishMsg: string; doPublish: () => void }): JSX.Ele
           </div>
         </div>
       </div>
-
-      <Field
-        label="Watch for external edits"
-        hint={
-          <>
-            How Tine notices changes made outside it (OG Logseq, Syncthing, an
-            editor). <b>Live</b> uses the OS file watcher (inotify) — no idle CPU
-            wakeups; the right choice on a normal local disk. <b>Poll</b> rescans
-            every 3 seconds — only needed on filesystems where inotify is
-            unreliable (some network/NFS mounts). Saved per device.
-          </>
-        }
-      >
-        <div class="settings-segment">
-          <button
-            classList={{ active: watchMode() === "inotify" }}
-            onClick={() => changeWatchMode("inotify")}
-          >
-            Live (inotify)
-          </button>
-          <button
-            classList={{ active: watchMode() === "poll" }}
-            onClick={() => changeWatchMode("poll")}
-          >
-            Poll (3s)
-          </button>
-        </div>
-      </Field>
 
       <div class="settings-row">
         <span class="settings-label">Publish</span>
@@ -1006,6 +982,108 @@ function JournalConflictsPanel(): JSX.Element {
   );
 }
 
+function FilesTab(): JSX.Element {
+  // Live preview of the asset-name template, on a fixed sample so every token is
+  // visible (and the example doesn't jitter by the second). Shows both a named
+  // drag/insert and a clipboard paste (which has no name → timestamp fallback).
+  const sampleDate = new Date(2030, 0, 2, 3, 4, 5);
+  const dragExample = () => formatAssetName(assetNameFormat(), "Holiday Photo.JPG", sampleDate);
+  const pasteExample = () => formatAssetName(assetNameFormat(), undefined, sampleDate);
+  // File-watch mechanism (device-local). Loaded from the backend on mount.
+  const [watchMode, setWatchMode] = createSignal<"inotify" | "poll">("inotify");
+  void backend()
+    .getWatchMode()
+    .then((m) => setWatchMode(m === "poll" ? "poll" : "inotify"))
+    .catch(() => {});
+  const changeWatchMode = (m: "inotify" | "poll") => {
+    if (m === watchMode()) return;
+    setWatchMode(m);
+    void backend().setWatchMode(m).catch(() => {});
+  };
+  return (
+    <>
+      <div class="settings-section">Asset names</div>
+      <Field
+        label="New asset filename"
+        hint={
+          <>
+            How files are named when you paste, drag, or insert media into{" "}
+            <code>assets/</code>. Tokens: <code>%assetname</code> (the original file’s name),{" "}
+            <code>%ext</code>, <code>%yyyymmdd</code>, <code>%hhmmss</code> — also granular{" "}
+            <code>%yyyy</code> <code>%MM</code> <code>%dd</code> <code>%HH</code> <code>%mm</code>{" "}
+            <code>%ss</code>. Anything else is literal. A clipboard paste has no name, so{" "}
+            <code>%assetname</code> falls back to a timestamp. Device-local; Logseq keeps the
+            original name for dragged files.
+          </>
+        }
+      >
+        <input
+          type="text"
+          class="settings-input mono"
+          value={assetNameFormat()}
+          spellcheck={false}
+          onChange={(e) => setAssetNameFormat(e.currentTarget.value)}
+        />
+      </Field>
+      <div class="asset-name-extras">
+        <div class="settings-segment">
+          <button
+            classList={{ active: assetNameFormat() === DEFAULT_ASSET_NAME_FORMAT }}
+            onClick={() => setAssetNameFormat(DEFAULT_ASSET_NAME_FORMAT)}
+          >
+            Original name
+          </button>
+          <button
+            classList={{ active: assetNameFormat() === STAMPED_ASSET_NAME_FORMAT }}
+            onClick={() => setAssetNameFormat(STAMPED_ASSET_NAME_FORMAT)}
+          >
+            Date + name
+          </button>
+        </div>
+        <div class="asset-name-preview">
+          <div>
+            Drag <code class="mono">Holiday Photo.JPG</code> →{" "}
+            <code class="mono">{dragExample()}</code>
+          </div>
+          <div>
+            Paste an image → <code class="mono">{pasteExample()}</code>
+          </div>
+        </div>
+      </div>
+
+      <Field
+        label="Watch for external edits"
+        hint={
+          <>
+            How Tine notices changes made outside it (OG Logseq, Syncthing, an
+            editor). <b>Live</b> uses the OS file watcher (inotify) — no idle CPU
+            wakeups; the right choice on a normal local disk. <b>Poll</b> rescans
+            every 3 seconds — only needed on filesystems where inotify is
+            unreliable (some network/NFS mounts). Saved per device.
+          </>
+        }
+      >
+        <div class="settings-segment">
+          <button
+            classList={{ active: watchMode() === "inotify" }}
+            onClick={() => changeWatchMode("inotify")}
+          >
+            Live (inotify)
+          </button>
+          <button
+            classList={{ active: watchMode() === "poll" }}
+            onClick={() => changeWatchMode("poll")}
+          >
+            Poll (3s)
+          </button>
+        </div>
+      </Field>
+
+      <AssetsTab />
+    </>
+  );
+}
+
 function AssetsTab(): JSX.Element {
   const [list, setList] = createSignal<AssetInfo[]>([]);
   const [busy, setBusy] = createSignal(false);
@@ -1084,59 +1162,9 @@ function AssetsTab(): JSX.Element {
     }
   };
 
-  // Live preview of the asset-name template, on a fixed sample so every token is
-  // visible (and the example doesn't jitter by the second). Shows both a named
-  // drag/insert and a clipboard paste (which has no name → timestamp fallback).
-  const sampleDate = new Date(2030, 0, 2, 3, 4, 5);
-  const dragExample = () => formatAssetName(assetNameFormat(), "Holiday Photo.JPG", sampleDate);
-  const pasteExample = () => formatAssetName(assetNameFormat(), undefined, sampleDate);
-
   return (
     <>
-      <div class="settings-section">Asset names</div>
-      <Field
-        label="New asset filename"
-        hint={
-          <>
-            How files are named when you paste, drag, or insert media into{" "}
-            <code>assets/</code>. Tokens: <code>%assetname</code> (the original file’s name),{" "}
-            <code>%ext</code>, <code>%yyyymmdd</code>, <code>%hhmmss</code> — also granular{" "}
-            <code>%yyyy</code> <code>%MM</code> <code>%dd</code> <code>%HH</code> <code>%mm</code>{" "}
-            <code>%ss</code>. Anything else is literal. A clipboard paste has no name, so{" "}
-            <code>%assetname</code> falls back to a timestamp. Device-local; Logseq keeps the
-            original name for dragged files.
-          </>
-        }
-      >
-        <input
-          type="text"
-          class="settings-input mono"
-          value={assetNameFormat()}
-          spellcheck={false}
-          onChange={(e) => setAssetNameFormat(e.currentTarget.value)}
-        />
-      </Field>
-      <div class="settings-hint settings-field-hint" style={{ "margin-top": "-6px" }}>
-        <div class="settings-segment" style={{ "margin-bottom": "8px" }}>
-          <button
-            classList={{ active: assetNameFormat() === DEFAULT_ASSET_NAME_FORMAT }}
-            onClick={() => setAssetNameFormat(DEFAULT_ASSET_NAME_FORMAT)}
-          >
-            Original name
-          </button>
-          <button
-            classList={{ active: assetNameFormat() === STAMPED_ASSET_NAME_FORMAT }}
-            onClick={() => setAssetNameFormat(STAMPED_ASSET_NAME_FORMAT)}
-          >
-            Date + name
-          </button>
-        </div>
-        Drag <code>Holiday Photo.JPG</code> → <code class="mono">{dragExample()}</code>
-        <br />
-        Paste an image → <code class="mono">{pasteExample()}</code>
-      </div>
-
-      <div class="settings-section" style={{ "margin-top": "18px" }}>
+      <div class="settings-section">
         Orphaned media
         <button class="settings-btn" style={{ "margin-left": "10px" }} disabled={busy()} onClick={() => void refresh()}>
           {busy() ? "Scanning…" : scanned() ? "Rescan" : "Scan for orphans"}
