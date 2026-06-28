@@ -316,14 +316,24 @@ body {
   opacity: 1;
 }
 
-/* Dim inactive blocks: fade every block's own content line, full opacity on the
-   one being edited (its children stay dimmed — spotlight the active line).
-   Gated by the `dim-mode` container class, which is only applied while a block
-   is actually being edited. */
-.dim-mode .block-content-wrapper {
+/* Dim inactive blocks: when `dim-mode` is on, the whole reading surface — every
+   block's content line, the page/journal titles (dates), and the agenda
+   (Scheduled & Deadline) panel — fades to a calm wash. The block being edited
+   pops back to full opacity (its children stay dimmed): the typewriter
+   "spotlight the line". When nothing is being edited the surface sits uniformly
+   dimmed, so toggling dim (t b) or entering focus (t f) is visible at once. */
+.dim-mode .block-content-wrapper,
+.dim-mode .page-title-row,
+.dim-mode .agenda-block {
   opacity: 0.32;
   transition: opacity 0.15s ease;
 }
+/* The agenda dims as a single unit; keep its inner block lines from compounding
+   the fade (0.32 × 0.32) down to near-invisible. */
+.dim-mode .agenda-block .block-content-wrapper {
+  opacity: 1;
+}
+/* Spotlight the line being edited. */
 .dim-mode .block-main.editing > .block-content-wrapper {
   opacity: 1;
 }

@@ -10,6 +10,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Dim-inactive-blocks (`t b`) now actually dims.** The fade previously only
+  applied while a block was being edited, so toggling dim — or entering focus
+  mode (`t f`), which turns dim on — looked like it did nothing. Dim now applies
+  whenever it's on (the surface sits in a calm wash; the line you're editing pops
+  to full opacity), and it now also fades the page/journal titles and the
+  Scheduled & Deadline agenda, not just block content lines.
 - **Accented & non-Latin tags render correctly.** `#café`, `#škola/úkol`, `#中文`
   and the like now render and link with their full name, matching how they're
   indexed — previously the renderer truncated at the first non-ASCII character, so

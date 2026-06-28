@@ -53,7 +53,7 @@ import {
   pushToast,
 } from "./ui";
 import { applyZoom, installInterfaceZoomKeys, installInterfaceZoomWheel } from "./zoom";
-import { editingId, flushAll, appendToTodayJournal, captureToPage } from "./store";
+import { flushAll, appendToTodayJournal, captureToPage } from "./store";
 import { backend, isTauri } from "./backend";
 import { warnIfSoftwareRendering } from "./gpu";
 import { initSmoothScroll } from "./smoothScroll";
@@ -280,9 +280,11 @@ export function App(): JSX.Element {
         "wide-mode": wideMode(),
         "document-mode": documentMode(),
         "focus-mode": focusMode(),
-        // Dim only kicks in while a block is being edited — otherwise the whole
-        // page would sit faded. This gives the typewriter "spotlight the line".
-        "dim-mode": dimInactiveBlocks() && !!editingId(),
+        // When on, the whole reading surface fades to a calm wash; the block
+        // you're editing pops back to full opacity (the typewriter "spotlight the
+        // line"). Applied whenever dim is on — not only while editing — so that
+        // toggling dim (t b) or entering focus (t f) is visible immediately.
+        "dim-mode": dimInactiveBlocks(),
       }}
     >
       <Show when={sidebarOpen()}>
