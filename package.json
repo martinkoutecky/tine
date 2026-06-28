@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "app": "tauri dev",
-    "test": "vitest run",
+    "test": "vitest run && vitest run --config vitest.render.config.ts",
+    "test:render": "vitest run --config vitest.render.config.ts",
     "screenshot": "node scripts/screenshot.mjs"
   },
   "dependencies": {
@@ -29,6 +30,7 @@
   "devDependencies": {
     "@tauri-apps/cli": "^2.1.0",
     "@types/katex": "^0.16.8",
+    "jsdom": "^29.1.1",
     "playwright": "^1.49.1",
     "typescript": "^5.6.3",
     "vite": "^5.4.11",

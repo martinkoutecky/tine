@@ -4,6 +4,7 @@
 
 import type { Backend, GpuEnv, DebugInfo } from "./backend";
 import type { BlockDto, GraphMeta, Highlight, PageDto, PageEntry, RefGroup } from "./types";
+import type { Block as AstBlock } from "./render/ast";
 import { SAMPLE_PDF_B64 } from "./sample-pdf";
 import { hlsPageName } from "./pdf";
 
@@ -497,6 +498,12 @@ export function mockBackend(): Backend {
     },
     async resolveBlocks(uuids: string[]): Promise<(RefGroup | null)[]> {
       return Promise.all(uuids.map((u) => this.resolveBlock(u)));
+    },
+    // The mock can't run lsdoc (Rust); return empty ASTs so the renderer falls
+    // back to its legacy parseInline path in the mock screenshot harness. The
+    // AST render path is verified against the real backend.
+    async parseBlocks(raws: string[]): Promise<AstBlock[][]> {
+      return raws.map(() => []);
     },
     async readAsset(name: string): Promise<Uint8Array> {
       if (mockAssets[name]) return mockAssets[name];

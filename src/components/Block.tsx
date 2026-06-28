@@ -63,7 +63,7 @@ import {
   type Edit,
 } from "../editor/format";
 import { blockView } from "../render/block";
-import { BodyContent } from "../render/body";
+import { AstBody } from "../render/body";
 import { assetMarkdown, assetFileName } from "../media";
 import { calcSource, wrapCalc, evalCalc } from "../editor/calc";
 import { QueryMacro, EmbedMacro } from "./Macro";
@@ -400,7 +400,7 @@ function Rendered(props: { id: string; owner?: string; trailing?: JSX.Element })
   };
 
   const body = (
-    <Show when={annotation()} fallback={<BodyContent lines={view().lines} blockId={props.id} format={fmt()} />}>
+    <Show when={annotation()} fallback={<AstBody lines={view().lines} blockId={props.id} format={fmt()} />}>
       <AnnotationBody
         color={annotation()!.color}
         hlPage={annotation()!.hlPage}

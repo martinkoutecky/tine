@@ -3,11 +3,13 @@
 
 import { For, Show, createMemo, createResource, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
-import { InlineText } from "./inline";
+import { InlineText, renderInlines, renderRawHtml, MathView, astText } from "./inline";
 import type { Format } from "./parseInline";
+import type { Block as AstBlock, ListItem as AstListItem } from "./ast";
 import { backend } from "../backend";
 import { evalCalc } from "../editor/calc";
-import { toggleListItem } from "../store";
+import { toggleListItem, doc } from "../store";
+import { parseBlockBatched } from "./astParse";
 
 type Align = "left" | "center" | "right" | null;
 
@@ -416,4 +418,224 @@ export function BodyContent(props: { lines: string[]; blockId?: string; format?:
       }}
     </For>
   );
+}
+
+// ===========================================================================
+// AST block renderer (lsdoc). Renders a Tine block's parsed `Block[]` — the
+// replacement for segmentBody. The FIRST node is the header (bullet/heading);
+// Block.tsx wraps it with marker/priority/heading chrome, so here we just render
+// each block's content. See subagent-tasks/notes/ast-render-contract.md.
+// ===========================================================================
+
+const CALLOUT_TYPES = ["note", "tip", "important", "caution", "warning", "pinned"];
+// Block properties never shown as chips (id/uuid/collapsed + Logseq internals).
+const HIDDEN_PROPS = new Set(["id", "collapsed", "heading", "logseq.order-list-type"]);
+
+function isInlineFlow(b: AstBlock): boolean {
+  return b.kind === "paragraph" || b.kind === "bullet" || b.kind === "heading";
+}
+
+/** Render a Tine block's parsed content (`Block[]`). Consecutive inline-flow
+ *  blocks (header + continuation paragraphs) are `<br>`-joined to match the old
+ *  line-stacked look; block-level constructs render standalone. */
+export function renderBlocks(blocks: AstBlock[], blockId?: string): JSX.Element {
+  return (
+    <For each={blocks}>
+      {(b, i) => (
+        <>
+          <Show when={i() > 0 && isInlineFlow(b) && isInlineFlow(blocks[i() - 1])}>
+            <br />
+          </Show>
+          {renderBlock(b, blockId)}
+        </>
+      )}
+    </For>
+  );
+}
+
+function renderBlock(b: AstBlock, blockId?: string): JSX.Element {
+  switch (b.kind) {
+    case "paragraph":
+    case "bullet":
+    case "heading":
+      return renderInlines(b.inline, blockId);
+    case "src":
+      return b.lang === "calc" ? <CalcBlock src={b.code} /> : <CodeBlock code={b.code} lang={b.lang} />;
+    case "example":
+      return <CodeBlock code={b.code} lang="" />;
+    case "quote":
+      return renderQuote(b, blockId);
+    case "custom":
+      return renderCustom(b, blockId);
+    case "list":
+      return <AstList items={b.items} blockId={blockId} />;
+    case "table":
+      return renderTable(b, blockId);
+    case "properties":
+      return renderProps(b);
+    case "hr":
+      return <hr class="md-hr" />;
+    case "displayed_math":
+      return <MathView tex={b.text} display={true} />;
+    case "latex_env":
+      return <MathView tex={`\\begin{${b.name}}${b.content}\\end{${b.name}}`} display={true} />;
+    case "raw_html":
+      return renderRawHtml(b.text);
+    case "footnote_def":
+      return (
+        <div class="footnote-def">
+          <sup class="footnote-ref">{b.name}</sup> {renderInlines(b.inline, blockId)}
+        </div>
+      );
+    case "drawer":
+    case "directive":
+    case "comment":
+      return null; // org drawers / `#+KEY:` keywords / `# comment` — not rendered
+  }
+}
+
+// A `> [!NOTE]` callout (GitHub-flavoured) arrives as a `quote` whose first
+// paragraph's leading plain text is `[!TYPE] …` — re-detect it. (Org `#+BEGIN_NOTE`
+// is a `custom` block, handled in renderCustom.) Otherwise render a blockquote.
+function renderQuote(b: Extract<AstBlock, { kind: "quote" }>, blockId?: string): JSX.Element {
+  const first = b.children[0];
+  if (first && first.kind === "paragraph") {
+    const lead = first.inline[0];
+    if (lead && lead.k === "plain") {
+      const m = /^\[!(\w+)\]\s*(.*)$/.exec(lead.text);
+      if (m) {
+        const type = m[1].toLowerCase();
+        const rest = [{ k: "plain" as const, text: m[2] }, ...first.inline.slice(1)];
+        const bodyChildren: AstBlock[] = [{ kind: "paragraph", inline: rest }, ...b.children.slice(1)];
+        return (
+          <div class={`callout callout-${type}`}>
+            <div class="callout-title">{m[2].trim() || type.toUpperCase()}</div>
+            <div class="callout-body">{renderBlocks(bodyChildren, blockId)}</div>
+          </div>
+        );
+      }
+    }
+  }
+  return <blockquote class="md-quote">{renderBlocks(b.children, blockId)}</blockquote>;
+}
+
+function renderCustom(b: Extract<AstBlock, { kind: "custom" }>, blockId?: string): JSX.Element {
+  const type = b.name.toLowerCase();
+  if (CALLOUT_TYPES.includes(type)) {
+    return (
+      <div class={`callout callout-${type}`}>
+        <div class="callout-title">{type.toUpperCase()}</div>
+        <Show when={b.children.length > 0}>
+          <div class="callout-body">{renderBlocks(b.children, blockId)}</div>
+        </Show>
+      </div>
+    );
+  }
+  if (type === "quote") return <blockquote class="md-quote">{renderBlocks(b.children, blockId)}</blockquote>;
+  return <>{renderBlocks(b.children, blockId)}</>;
+}
+
+function renderTable(b: Extract<AstBlock, { kind: "table" }>, blockId?: string): JSX.Element {
+  return (
+    <table class="md-table">
+      <Show when={b.header}>
+        <thead>
+          <tr>
+            <For each={b.header!}>{(cell) => <th>{renderInlines(cell, blockId)}</th>}</For>
+          </tr>
+        </thead>
+      </Show>
+      <tbody>
+        <For each={b.rows}>
+          {(row) => (
+            <tr>
+              <For each={row}>{(cell) => <td>{renderInlines(cell, blockId)}</td>}</For>
+            </tr>
+          )}
+        </For>
+      </tbody>
+    </table>
+  );
+}
+
+function renderProps(b: Extract<AstBlock, { kind: "properties" }>): JSX.Element {
+  const visible = b.props.filter(([k]) => !HIDDEN_PROPS.has(k.toLowerCase()));
+  return (
+    <Show when={visible.length > 0}>
+      <span class="block-properties">
+        <For each={visible}>
+          {([k, v]) => (
+            <span class="block-property">
+              <span class="block-property-key">{k}</span>{" "}
+              <span class="block-property-val"><InlineText text={v} /></span>
+            </span>
+          )}
+        </For>
+      </span>
+    </Show>
+  );
+}
+
+// An in-block list from the AST (`ListItem[]`). The checkbox toggle still operates
+// on the block's raw text — the AST carries no source line (contract R12): match
+// the item's flattened text to its `[ ]`/`[x]` line in `raw` and flip that.
+function AstList(props: { items: AstListItem[]; blockId?: string }): JSX.Element {
+  const ordered = props.items[0]?.ordered ?? false;
+  return (
+    <Dynamic component={ordered ? "ol" : "ul"} class="md-list">
+      <For each={props.items}>
+        {(item) => (
+          <li class="md-list-item" classList={{ "has-checkbox": item.checkbox !== undefined }}>
+            <Show when={item.checkbox !== undefined}>
+              <span
+                class="block-checkbox"
+                classList={{ checked: item.checkbox === true }}
+                role="checkbox"
+                aria-checked={item.checkbox === true}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (props.blockId) toggleAstCheckbox(props.blockId, item);
+                }}
+              />{" "}
+            </Show>
+            {renderBlocks(item.content, props.blockId)}
+            <Show when={item.items.length > 0}>
+              <AstList items={item.items} blockId={props.blockId} />
+            </Show>
+          </li>
+        )}
+      </For>
+    </Dynamic>
+  );
+}
+
+/** Render a block's body. Parses the (header-stripped) body text into lsdoc's AST
+ *  and renders from it (renderBlocks); until the async parse lands — and in the
+ *  mock harness, which can't run lsdoc — it falls back to the legacy line-scanning
+ *  BodyContent so content is always visible. Input is `view.lines` (marker /
+ *  scheduled / properties already stripped by blockView), so the AST renders only
+ *  the visible body and block-header chrome stays in blockView/Block.tsx. */
+export function AstBody(props: { lines: string[]; blockId?: string; format?: Format }): JSX.Element {
+  const text = createMemo(() => props.lines.join("\n"));
+  const [ast] = createResource(text, (t) => parseBlockBatched(t, props.format === "org"));
+  return (
+    <Show
+      when={ast() && ast()!.length > 0}
+      fallback={<BodyContent lines={props.lines} blockId={props.blockId} format={props.format} />}
+    >
+      {renderBlocks(ast()!, props.blockId)}
+    </Show>
+  );
+}
+
+function toggleAstCheckbox(blockId: string, item: AstListItem) {
+  const para = item.content[0];
+  const text = para && para.kind === "paragraph" ? astText(para.inline).trim() : "";
+  const node = doc.byId[blockId];
+  if (!node) return;
+  const line = node.raw.split("\n").find((l) => {
+    const m = /^\s*(?:[-+*]|\d+[.)])\s+\[[ xX]\]\s+(.*)$/.exec(l);
+    return m != null && m[1].trim() === text;
+  });
+  if (line) toggleListItem(blockId, line);
 }

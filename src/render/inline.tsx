@@ -10,6 +10,7 @@ import { refClickZoom } from "../copySettings";
 import { isJournalTitle } from "../journal";
 import { openPdf, openPageInSidebar, openBlockInSidebar, openPageContextMenu, openBlockRefContextMenu, setLightbox, setAudioPlayer, graphEpoch, graphMeta } from "../ui";
 import { parseInline, type Seg, type Format } from "./parseInline";
+import type { Inline, Url, MacroInline, TimestampInline, TimestampPoint, EmailValue } from "./ast";
 import { EmojiText } from "./emoji";
 import { blockView } from "./block";
 import { backend } from "../backend";
@@ -101,35 +102,8 @@ function renderSeg(s: Seg, blockId?: string): JSX.Element {
       );
     case "blockref":
       return <BlockRefView id={s.id} label={s.label} />;
-    case "macro": {
-      // Render {{query}} / {{embed}} wherever they appear — including inline
-      // after a label, e.g. `All todos {{query (task TODO)}}` (Logseq dashboards).
-      const body = s.body.trimStart();
-      if (/^query\b/i.test(body)) return <QueryMacro body={body} blockId={blockId} />;
-      if (/^embed\b/i.test(body)) return <EmbedMacro body={body} />;
-      // youtube-timestamp BEFORE video/youtube: `/^youtube\b/` also matches the
-      // hyphenated `youtube-timestamp` (a word boundary sits before the `-`).
-      if (/^youtube-timestamp\b/i.test(body)) return <YoutubeTimestamp body={body} />;
-      if (/^(video|youtube|vimeo|bilibili)\b/i.test(body)) return <VideoMacro body={body} />;
-      if (/^(tweet|twitter)\b/i.test(body)) return <TweetMacro body={body} />;
-      if (/^img\b/i.test(body)) return renderImgMacro(body);
-      if (/^cloze\b/i.test(body)) return <ClozeMacro body={body} />;
-      if (/^zotero-(imported|linked)-file\b/i.test(body)) return <ZoteroMacro body={body} />;
-      if (/^namespace\b/i.test(body)) {
-        const root = body.replace(/^namespace\s+/i, "").trim();
-        if (root) return <NamespaceMacro root={root} />;
-      }
-      // User-defined `:macros` (config.edn): substitute the comma-separated args
-      // into the template's `$1..$N` placeholders, then render the result as
-      // markdown (so a macro can expand to [[links]], **bold**, other macros…).
-      const um = /^(\S+)\s*([\s\S]*)$/.exec(body);
-      const userMacros = graphMeta()?.macros;
-      if (um && userMacros && Object.prototype.hasOwnProperty.call(userMacros, um[1])) {
-        const args = um[2].trim() ? um[2].split(",").map((a) => a.trim()) : [];
-        return <UserMacroView name={um[1]} template={userMacros[um[1]]} args={args} blockId={blockId} />;
-      }
-      return <span class="macro">{`{{${s.body}}}`}</span>;
-    }
+    case "macro":
+      return renderMacroBody(s.body, blockId);
     case "math":
       return <MathView tex={s.tex} display={s.display} />;
     case "link": {
@@ -200,6 +174,291 @@ function renderSeg(s: Seg, blockId?: string): JSX.Element {
   }
 }
 
+// ===========================================================================
+// AST renderer (lsdoc). Renders an `Inline[]` produced by the Rust parser to
+// interactive DOM — the replacement for the parseInline → renderSeg path.
+// Reuses every component above (EmojiText, MathView, BlockRefView, AssetImage,
+// MediaEmbed, the macros). See subagent-tasks/notes/ast-render-contract.md.
+// ===========================================================================
+
+// Shared `{{macro}}` dispatch, keyed off a reconstructed body string so the
+// legacy Seg path and the AST path render macros identically.
+function renderMacroBody(raw: string, blockId?: string): JSX.Element {
+  const body = raw.trimStart();
+  if (/^query\b/i.test(body)) return <QueryMacro body={body} blockId={blockId} />;
+  if (/^embed\b/i.test(body)) return <EmbedMacro body={body} />;
+  if (/^youtube-timestamp\b/i.test(body)) return <YoutubeTimestamp body={body} />;
+  if (/^(video|youtube|vimeo|bilibili)\b/i.test(body)) return <VideoMacro body={body} />;
+  if (/^(tweet|twitter)\b/i.test(body)) return <TweetMacro body={body} />;
+  if (/^img\b/i.test(body)) return renderImgMacro(body);
+  if (/^cloze\b/i.test(body)) return <ClozeMacro body={body} />;
+  if (/^zotero-(imported|linked)-file\b/i.test(body)) return <ZoteroMacro body={body} />;
+  if (/^namespace\b/i.test(body)) {
+    const root = body.replace(/^namespace\s+/i, "").trim();
+    if (root) return <NamespaceMacro root={root} />;
+  }
+  const um = /^(\S+)\s*([\s\S]*)$/.exec(body);
+  const userMacros = graphMeta()?.macros;
+  if (um && userMacros && Object.prototype.hasOwnProperty.call(userMacros, um[1])) {
+    const args = um[2].trim() ? um[2].split(",").map((a) => a.trim()) : [];
+    return <UserMacroView name={um[1]} template={userMacros[um[1]]} args={args} blockId={blockId} />;
+  }
+  return <span class="macro">{`{{${raw}}}`}</span>;
+}
+
+/** Render a parsed inline run (lsdoc `Inline[]`) to interactive DOM. */
+export function renderInlines(inlines: Inline[], blockId?: string): JSX.Element {
+  return <For each={inlines}>{(s) => renderInline(s, blockId)}</For>;
+}
+
+function renderInline(s: Inline, blockId?: string): JSX.Element {
+  switch (s.k) {
+    case "plain":
+      return <EmojiText text={s.text} />;
+    case "code":
+    case "verbatim":
+      return <code class="inline-code">{s.text}</code>;
+    case "break":
+    case "hardbreak":
+      // Both render as <br>: today body.tsx joins every in-block line with <br>,
+      // and a soft `break` is exactly such an in-block newline — match that look.
+      return <br />;
+    case "emphasis": {
+      const inner = renderInlines(s.children, blockId);
+      switch (s.emph) {
+        case "Bold": return <strong>{inner}</strong>;
+        case "Italic": return <em>{inner}</em>;
+        case "Strike_through": return <del>{inner}</del>;
+        case "Highlight": return <mark>{inner}</mark>;
+        case "Underline": return <u>{inner}</u>;
+      }
+      return inner;
+    }
+    case "subscript":
+      return <sub>{renderInlines(s.children, blockId)}</sub>;
+    case "superscript":
+      return <sup>{renderInlines(s.children, blockId)}</sup>;
+    case "link":
+      return renderLink(s, blockId);
+    case "nested_link":
+      // Logseq `[[a [[b]] c]]` — best-effort: route the whole inner as a page ref.
+      return <PageRef name={s.content} />;
+    case "target":
+      return <span class="org-target">{s.text}</span>;
+    case "tag":
+      return <PageRef name={astText(s.children)} tag />;
+    case "macro":
+      return renderMacroBody(macroBody(s), blockId);
+    case "latex":
+      return <MathView tex={s.body} display={s.mode === "Displayed"} />;
+    case "timestamp":
+      return renderTimestamp(s);
+    case "fnref":
+      return <sup class="footnote-ref">{s.name}</sup>;
+    case "inline_html":
+      return renderRawHtml(s.text);
+    case "email":
+      return renderEmail(s.text);
+    case "entity":
+      return <>{s.unicode}</>;
+  }
+}
+
+// Flatten an inline run to plain text (tag names, link/block-ref labels, and the
+// page-ref name fallback) — mirrors refs.rs `tag_text` / OG `get-tag`.
+export function astText(inlines: Inline[]): string {
+  let out = "";
+  for (const s of inlines) {
+    switch (s.k) {
+      case "plain": case "code": case "verbatim": out += s.text; break;
+      case "emphasis": case "subscript": case "superscript": out += astText(s.children); break;
+      case "tag": out += "#" + astText(s.children); break;
+      case "link": out += s.label && s.label.length ? astText(s.label) : urlDest(s.url); break;
+      case "nested_link": out += s.content; break;
+      case "target": out += s.text; break;
+      case "entity": out += s.unicode; break;
+      case "latex": out += s.body; break;
+    }
+  }
+  return out;
+}
+
+// The destination string of a link/image `url`.
+function urlDest(url: Url): string {
+  switch (url.type) {
+    case "page_ref":
+    case "block_ref":
+    case "search":
+    case "file":
+      return url.v;
+    case "complex":
+      return url.protocol && url.link != null ? `${url.protocol}://${url.link}` : url.link ?? "";
+  }
+}
+
+function macroBody(s: MacroInline): string {
+  return s.args.length ? `${s.name} ${s.args.join(", ")}` : s.name;
+}
+
+// A `[[page]]` / `#tag` anchor — shared by page_ref links, bare refs, and #tags.
+function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolean }): JSX.Element {
+  const open = (e: MouseEvent) => {
+    e.stopPropagation();
+    const kind = isJournalTitle(props.name) ? "journal" : "page";
+    if (e.shiftKey) openPageInSidebar(props.name, kind);
+    else openPage(props.name, kind);
+  };
+  return (
+    <a
+      class={props.tag ? "tag" : "page-ref"}
+      onClick={open}
+      onAuxClick={(e) => {
+        if (e.button === 1) {
+          e.preventDefault();
+          e.stopPropagation();
+          openPageInNewTab(props.name, isJournalTitle(props.name) ? "journal" : "page");
+        }
+      }}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openPageContextMenu(e.clientX, e.clientY, props.name);
+      }}
+    >
+      <Show when={props.tag} fallback={
+        <Show when={props.alias} fallback={<><span class="bracket">[[</span>{props.name}<span class="bracket">]]</span></>}>
+          {props.alias}
+        </Show>
+      }>
+        #{props.name}
+      </Show>
+    </a>
+  );
+}
+
+function renderLink(s: Extract<Inline, { k: "link" }>, blockId?: string): JSX.Element {
+  const url = s.url;
+  if (url.type === "page_ref") {
+    const alias = s.label && s.label.length ? renderInlines(s.label, blockId) : undefined;
+    return <PageRef name={url.v} alias={alias} />;
+  }
+  if (url.type === "block_ref") {
+    const label = s.label && s.label.length ? astText(s.label) : undefined;
+    return <BlockRefView id={url.v} label={label} />;
+  }
+  const dest = urlDest(url);
+  if (s.image) {
+    const { width, height } = parseImageMetaBrace(s.metadata);
+    const alt = s.label && s.label.length ? astText(s.label) : "";
+    const k = mediaKind(dest);
+    if (k === "video" || k === "audio")
+      return <MediaEmbed url={dest} kind={k} alt={alt} width={width} blockId={blockId} />;
+    return <AssetImage url={dest} alt={alt} width={width} height={height} blockId={blockId} />;
+  }
+  if (/\.pdf$/i.test(dest)) {
+    const filename = dest.split("/").pop() ?? dest;
+    const labelStr = s.label && s.label.length ? astText(s.label) : filename;
+    return (
+      <a class="external-link pdf-link" onClick={(e) => { e.stopPropagation(); openPdf(filename, labelStr || filename); }}>
+        📄 {labelStr || filename}
+      </a>
+    );
+  }
+  return (
+    <a
+      class="external-link"
+      href={dest}
+      onClick={(e) => { e.preventDefault(); e.stopPropagation(); void backend().openExternal(dest); }}
+    >
+      <Show when={s.label && s.label.length} fallback={dest}>{renderInlines(s.label!, blockId)}</Show>
+    </a>
+  );
+}
+
+// Logseq image-metadata brace reader (`{:width 200, :height 100}` or
+// `{:width "40%"}`) — same logic the old parseInline used; kept here so it
+// survives parseInline.ts's eventual removal.
+function parseImageMetaBrace(brace: string | undefined): { width?: string; height?: string } {
+  if (!brace) return {};
+  const out: { width?: string; height?: string } = {};
+  const w = /:width\s+"?([0-9]+%?|[0-9]+px)"?/.exec(brace);
+  const h = /:height\s+"?([0-9]+%?|[0-9]+px)"?/.exec(brace);
+  if (w) out.width = /^\d+$/.test(w[1]) ? `${w[1]}px` : w[1];
+  if (h) out.height = /^\d+$/.test(h[1]) ? `${h[1]}px` : h[1];
+  return out;
+}
+
+// Org timestamp inline → the styled `<…>`(active)/`[…]`(inactive) badge. The AST
+// carries only the structured date, so format the display string ourselves.
+function pad2(n: number): string { return String(n).padStart(2, "0"); }
+function fmtTsPoint(p: TimestampPoint): string {
+  const d = p.date;
+  let s = `${d.year}-${pad2(d.month)}-${pad2(d.day)}`;
+  if (p.wday) s += ` ${p.wday}`;
+  if (p.time) s += ` ${pad2(p.time.hour)}:${pad2(p.time.min)}`;
+  return s;
+}
+function renderTimestamp(s: TimestampInline): JSX.Element {
+  const v = s.date as Record<string, unknown>;
+  let active = true;
+  let text: string;
+  if (s.ts === "Range" && v.start && v.stop) {
+    const start = v.start as TimestampPoint;
+    active = start.active ?? true;
+    text = `${fmtTsPoint(start)}--${fmtTsPoint(v.stop as TimestampPoint)}`;
+  } else {
+    const p = v as unknown as TimestampPoint;
+    active = p.active ?? true;
+    text = fmtTsPoint(p);
+  }
+  return (
+    <span class="org-timestamp" classList={{ inactive: !active }}>
+      {active ? "<" : "["}{text}{active ? ">" : "]"}
+    </span>
+  );
+}
+
+// Sandboxed-iframe rendering, reused for inline `inline_html` and block `raw_html`.
+function renderIframe(src: string, width?: string, height?: string): JSX.Element {
+  return (
+    <span class="embed-iframe-wrap" style={{ ...(width ? { width } : {}), ...(height ? { "aspect-ratio": "auto", height } : {}) }}>
+      <iframe class="embed-iframe" src={src} sandbox="allow-scripts allow-same-origin allow-popups allow-forms" referrerpolicy="no-referrer" title="embed" />
+    </span>
+  );
+}
+// Raw HTML (inline_html / raw_html): honour ONLY the https `<iframe>` subset
+// (sandboxed); any OTHER raw HTML renders as PLAIN TEXT (no innerHTML — XSS-safe,
+// matches today's behavior).
+export function renderRawHtml(text: string): JSX.Element {
+  const m = /<iframe\b([^>]*)>/i.exec(text);
+  if (m) {
+    const attrs = m[1];
+    const src = /src\s*=\s*["']([^"']+)["']/i.exec(attrs)?.[1];
+    if (src && /^https?:\/\//i.test(src)) {
+      const width = /width\s*=\s*["']?(\d+%?|\d+px)["']?/i.exec(attrs)?.[1];
+      const height = /height\s*=\s*["']?(\d+%?|\d+px)["']?/i.exec(attrs)?.[1];
+      return renderIframe(src, width, height);
+    }
+  }
+  return <EmojiText text={text} />;
+}
+
+function renderEmail(text: EmailValue): JSX.Element {
+  let addr = "";
+  if (typeof text === "string") addr = text;
+  else if (text && typeof text === "object") {
+    const lp = (text as Record<string, unknown>).local_part;
+    const dom = (text as Record<string, unknown>).domain;
+    if (typeof lp === "string" && typeof dom === "string") addr = `${lp}@${dom}`;
+  }
+  const href = `mailto:${addr}`;
+  return (
+    <a class="external-link" href={href} onClick={(e) => { e.preventDefault(); e.stopPropagation(); void backend().openExternal(href); }}>
+      {addr}
+    </a>
+  );
+}
+
 // KaTeX is heavy (hundreds of KB) — load it on first actual math, not eagerly
 // into the initial bundle, and cache the module promise so it loads once.
 let katexMod: Promise<typeof import("katex").default> | null = null;
@@ -218,7 +477,7 @@ function loadKatex() {
 // KaTeX-typeset math. KaTeX output is trusted HTML, so innerHTML is safe here.
 // Shows the raw TeX until KaTeX has loaded, then upgrades. The typeset result is
 // memoized so re-renders of this span don't re-run the (non-trivial) typesetter.
-function MathView(props: { tex: string; display: boolean }): JSX.Element {
+export function MathView(props: { tex: string; display: boolean }): JSX.Element {
   const [katex] = createResource(loadKatex);
   const html = createMemo(() => {
     const k = katex();

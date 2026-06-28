@@ -14,6 +14,7 @@ import type {
   TrashStats,
   JournalConflict,
 } from "./types";
+import type { Block as AstBlock } from "./render/ast";
 import { assetFileName } from "./media";
 import { mockBackend } from "./mock";
 
@@ -107,6 +108,9 @@ export interface Backend {
   listTemplates(): Promise<TemplateDto[]>;
   resolveBlock(uuid: string): Promise<RefGroup | null>;
   resolveBlocks(uuids: string[]): Promise<(RefGroup | null)[]>;
+  /** Parse block bodies into lsdoc's render AST (one `Block[]` per input `raw`,
+   *  in order). `isOrg` selects the Org parser + `*` block pattern. */
+  parseBlocks(raws: string[], isOrg: boolean): Promise<AstBlock[][]>;
   readAsset(name: string): Promise<Uint8Array>;
   saveAsset(name: string, bytes: Uint8Array): Promise<string>;
   /** If the OS clipboard holds an image, save it to assets/ and return the
@@ -349,6 +353,9 @@ class TauriBackend implements Backend {
   }
   resolveBlocks(uuids: string[]) {
     return this.call<(RefGroup | null)[]>("resolve_blocks", { uuids });
+  }
+  parseBlocks(raws: string[], isOrg: boolean) {
+    return this.call<AstBlock[][]>("parse_blocks", { raws, isOrg });
   }
   async readAsset(name: string) {
     // read_asset now returns raw bytes (tauri::ipc::Response) → an ArrayBuffer,
