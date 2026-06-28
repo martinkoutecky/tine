@@ -45,6 +45,8 @@ import {
   setCopyIncludeSubtree,
   copyStripCollapsed,
   setCopyStripCollapsed,
+  refClickZoom,
+  setRefClickZoom,
 } from "../copySettings";
 import { linkFirstMatch, setLinkFirstMatch } from "../editor/linkDefault";
 import { openPage, openFile } from "../router";
@@ -613,6 +615,15 @@ function TasksTab(): JSX.Element {
         ogValue={false}
         on={copyStripCollapsed()}
         onToggle={() => setCopyStripCollapsed(!copyStripCollapsed())}
+      />
+
+      <OgField
+        label="Click a block reference to zoom in"
+        hint="Plain-clicking an inline ((block reference)): ON zooms into the referenced block (opens it as its own page, like Logseq); OFF (Tine default) scrolls to it in place and flashes it. Shift-click always opens it in the sidebar."
+        ogNote="zooms into the referenced block on click."
+        ogValue={true}
+        on={refClickZoom()}
+        onToggle={() => setRefClickZoom(!refClickZoom())}
       />
 
       <Field

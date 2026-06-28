@@ -1,4 +1,4 @@
-import { For, Show, createSignal, type JSX } from "solid-js";
+import { For, Show, Switch, Match, createSignal, type JSX } from "solid-js";
 import {
   contextMenu,
   closeContextMenu,
@@ -13,7 +13,7 @@ import {
   openPageProps,
   openExportModal,
 } from "../ui";
-import { openPage, openPageInNewTab, openJournals, route } from "../router";
+import { openPage, openPageInNewTab, openPageAtBlock, openJournals, route } from "../router";
 import { refreshAfterRename } from "../graph";
 import { backend } from "../backend";
 import { carryDay } from "../carry";
@@ -35,6 +35,7 @@ import {
   selectedIds,
 } from "../store";
 import { copyStripCollapsed } from "../copySettings";
+import { copyOutline } from "../clipboard";
 
 // Copy a block reference/embed — but only after the block's id:: is durably on
 // disk. ensureBlockId returns null if the save couldn't land (conflict/error), in
@@ -78,9 +79,19 @@ export function ContextMenu(): JSX.Element {
             style={{ left: `${m().x}px`, top: `${m().y}px` }}
             onClick={(e) => e.stopPropagation()}
           >
-            <Show
-              when={m().kind === "block"}
-              fallback={
+            <Switch>
+              <Match when={m().kind === "block"}>
+                <BlockMenu id={(m() as { blockId: string }).blockId} close={close} />
+              </Match>
+              <Match when={m().kind === "blockref"}>
+                <BlockRefMenu
+                  uuid={(m() as { uuid: string }).uuid}
+                  page={(m() as { page: string }).page}
+                  pageKind={(m() as { pageKind: "journal" | "page" }).pageKind}
+                  close={close}
+                />
+              </Match>
+              <Match when={m().kind === "page"}>
                 <PageMenu
                   name={(m() as { name: string }).name}
                   pageKind={(m() as { pageKind: "journal" | "page" }).pageKind}
@@ -88,10 +99,8 @@ export function ContextMenu(): JSX.Element {
                   y={m().y}
                   close={close}
                 />
-              }
-            >
-              <BlockMenu id={(m() as { blockId: string }).blockId} close={close} />
-            </Show>
+              </Match>
+            </Switch>
           </div>
         </div>
       )}
@@ -154,6 +163,42 @@ function BlockMenu(props: { id: string; close: () => void }): JSX.Element {
       <div class="ctx-sep" />
       <MakeTemplate id={props.id} close={props.close} />
     </>
+  );
+}
+
+// Right-click menu for an INLINE block ref `((uuid))` — acts on the referenced
+// (target) block: open it in the sidebar, jump to it, or copy a ref/embed. (OG's
+// menu also has delete/replace, which edit the containing block's text — those are
+// just a normal edit of the block here, so they're left off this menu.)
+function BlockRefMenu(props: {
+  uuid: string;
+  page: string;
+  pageKind: "journal" | "page";
+  close: () => void;
+}): JSX.Element {
+  const items = [
+    {
+      label: "Open in sidebar",
+      run: () => openBlockInSidebar({ uuid: props.uuid, page: props.page, pageKind: props.pageKind }),
+    },
+    { label: "Go to block", run: () => openPageAtBlock(props.page, props.pageKind, props.uuid) },
+    {
+      label: "Copy block ref",
+      run: () => { void backend().writeText(`((${props.uuid}))`); pushToast("Copied block ref", "success"); },
+    },
+    {
+      label: "Copy block embed",
+      run: () => { void backend().writeText(`{{embed ((${props.uuid}))}}`); pushToast("Copied block embed", "success"); },
+    },
+  ];
+  return (
+    <For each={items}>
+      {(it) => (
+        <div class="ctx-item" onClick={() => { it.run(); props.close(); }}>
+          {it.label}
+        </div>
+      )}
+    </For>
   );
 }
 
@@ -384,7 +429,7 @@ function blockActions(id: string): { label: string; run: () => void; danger?: bo
     { label: "Zoom into block", run: () => zoomInto(id) },
     { label: "Copy block ref", run: () => void copyBlockRef(id, (u) => `((${u}))`, "Copied block ref") },
     { label: "Copy block embed", run: () => void copyBlockRef(id, (u) => `{{embed ((${u}))}}`, "Copied block embed") },
-    { label: "Copy block", run: () => { void backend().writeText(blockSubtreeMarkdown(id, 0, true, copyStripCollapsed())); pushToast("Copied block", "success"); } },
+    { label: "Copy block", run: () => { void copyOutline(blockSubtreeMarkdown(id, 0, true, copyStripCollapsed())); pushToast("Copied block", "success"); } },
     // Open the export modal for the whole selection (if this block is part of a
     // multi-selection) or just this block's subtree — preview + indent/remove opts.
     {
@@ -397,7 +442,7 @@ function blockActions(id: string): { label: string; run: () => void; danger?: bo
     {
       label: "Cut block",
       run: () => {
-        void backend().writeText(blockSubtreeMarkdown(id, 0, true, copyStripCollapsed()));
+        void copyOutline(blockSubtreeMarkdown(id, 0, true, copyStripCollapsed()));
         deleteBlock(id);
       },
     },

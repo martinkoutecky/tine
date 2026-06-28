@@ -728,7 +728,8 @@ export async function pruneSidebarBlocks(): Promise<void> {
 // mirroring the sidebar's two reference kinds.
 export type CtxTarget =
   | { kind: "block"; blockId: string }
-  | { kind: "page"; name: string; pageKind: "journal" | "page" };
+  | { kind: "page"; name: string; pageKind: "journal" | "page" }
+  | { kind: "blockref"; uuid: string; page: string; pageKind: "journal" | "page" };
 export const [contextMenu, setContextMenu] = createSignal<
   ({ x: number; y: number } & CtxTarget) | null
 >(null);
@@ -742,6 +743,15 @@ export function openPageContextMenu(
   pageKind: "journal" | "page" = "page"
 ) {
   setContextMenu({ x, y, kind: "page", name, pageKind });
+}
+export function openBlockRefContextMenu(
+  x: number,
+  y: number,
+  uuid: string,
+  page: string,
+  pageKind: "journal" | "page" = "page"
+) {
+  setContextMenu({ x, y, kind: "blockref", uuid, page, pageKind });
 }
 export function closeContextMenu() {
   setContextMenu(null);

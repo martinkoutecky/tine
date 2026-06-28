@@ -130,7 +130,10 @@ raw speed. (Where a comparison is made, it's against current Logseq desktop core
   previews — and they appear in the **right-sidebar** page view too (shift-click a page to open it
   there), matching OG.
 - Per-block **reference count**: a referenced block shows a small count badge — click it to reveal
-  the blocks that reference it (grouped by page), or shift-click to open the block in the sidebar.
+  the blocks that reference it (grouped by page, each with its **ancestor breadcrumb**), or
+  shift-click to open the block in the sidebar. **Right-click an inline `((ref))`** for a menu
+  (open in sidebar / go to block / copy ref / copy embed); in the editor, **`Mod+C` with nothing
+  selected copies a reference** to the current block.
   Inline block refs render as **link-styled text** (full-strength colour + accent underline, like OG —
   not a grey chip). Copying a block **strips `id::`** from the clipboard text (like OG) so it never
   leaks into a paste — even though the `id::` stays in the file so sidebar/tab/zoom spots persist a

@@ -267,6 +267,20 @@ pub fn as_block_ref(url: &str) -> Option<&str> {
     url.trim().strip_prefix("((").and_then(|s| s.strip_suffix("))")).map(str::trim)
 }
 
+/// A canonical block uuid (8-4-4-4-12 hex). OG only treats `((x))` as a block ref
+/// when `x` parses as a UUID (`graph_parser/util/block_ref`), so a stray `((foo))`
+/// in prose isn't counted as a reference or inflates a target's badge.
+pub fn is_block_uuid(s: &str) -> bool {
+    let b = s.as_bytes();
+    if b.len() != 36 {
+        return false;
+    }
+    b.iter().enumerate().all(|(i, &c)| match i {
+        8 | 13 | 18 | 23 => c == b'-',
+        _ => c.is_ascii_hexdigit(),
+    })
+}
+
 /// Every block uuid `raw` references, deduped and code-aware. Covers all three OG
 /// block-ref forms: bare `((uuid))`, labeled `[label](((uuid)))`, and
 /// `{{embed ((uuid))}}` (the embed's `((uuid))` is caught by the bare scan). The
@@ -278,7 +292,8 @@ pub fn block_ref_ids(raw: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let push = |id: &str, out: &mut Vec<String>| {
         let id = id.trim();
-        if !id.is_empty() && !out.iter().any(|x| x == id) {
+        // Only a real UUID is a block ref (OG parse-uuid), so `((foo))` doesn't count.
+        if is_block_uuid(id) && !out.iter().any(|x| x == id) {
             out.push(id.to_string());
         }
     };
@@ -507,23 +522,42 @@ mod tests {
 
     #[test]
     fn block_ref_ids_all_forms_deduped_and_code_aware() {
+        // Real UUIDs (block refs are only counted when the inner id is a UUID).
+        let a = "11111111-1111-1111-1111-111111111111";
+        let b = "22222222-2222-2222-2222-222222222222";
+        let c = "33333333-3333-3333-3333-333333333333";
+        let d = "44444444-4444-4444-4444-444444444444";
+        let e = "55555555-5555-5555-5555-555555555555";
         // bare
-        assert_eq!(block_ref_ids("see ((aaa)) end"), vec!["aaa"]);
+        assert_eq!(block_ref_ids(&format!("see (({a})) end")), vec![a]);
         // labeled `[label](((uuid)))` — the triple paren must be captured whole
-        assert_eq!(block_ref_ids("(see [Related Work](((bbb))))"), vec!["bbb"]);
+        assert_eq!(block_ref_ids(&format!("(see [Related Work]((({b})))) ")), vec![b]);
         // embed macro body
-        assert_eq!(block_ref_ids("{{embed ((ccc))}}"), vec!["ccc"]);
+        assert_eq!(block_ref_ids(&format!("{{{{embed (({c}))}}}}")), vec![c]);
         // mixed + dedupe (same uuid twice → once)
         assert_eq!(
-            block_ref_ids("((ddd)) and [x](((eee))) and ((ddd)) again"),
-            vec!["ddd", "eee"]
+            block_ref_ids(&format!("(({d})) and [x]((({e}))) and (({d})) again")),
+            vec![d, e]
         );
         // a normal markdown link is consumed whole, never mined for `((`
         assert_eq!(block_ref_ids("[text](https://ex.com/a)"), Vec::<String>::new());
         // refs inside code are literal → ignored
-        assert_eq!(block_ref_ids("real ((fff)) but `((ggg))` literal"), vec!["fff"]);
-        let fenced = "intro ((hhh))\n```\n((iii))\n```\nout ((jjj))";
-        assert_eq!(block_ref_ids(fenced), vec!["hhh", "jjj"]);
+        assert_eq!(
+            block_ref_ids(&format!("real (({a})) but `(({b}))` literal")),
+            vec![a]
+        );
+        let fenced = format!("intro (({a}))\n```\n(({b}))\n```\nout (({c}))");
+        assert_eq!(block_ref_ids(&fenced), vec![a, c]);
+    }
+
+    #[test]
+    fn block_ref_ids_rejects_non_uuid() {
+        // A `((word))` in prose is NOT a block ref (OG requires a UUID) — so it
+        // doesn't inflate a count or create a phantom referrer.
+        assert_eq!(block_ref_ids("see ((Related Work)) and ((foo))"), Vec::<String>::new());
+        assert!(is_block_uuid("11111111-1111-1111-1111-111111111111"));
+        assert!(!is_block_uuid("not-a-uuid"));
+        assert!(!is_block_uuid("11111111111111111111111111111111"));
     }
 
     #[test]

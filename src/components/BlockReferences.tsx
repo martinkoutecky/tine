@@ -46,7 +46,9 @@ export function BlockReferences(props: { id: string }): JSX.Element {
                 {g.page}
               </div>
               <div class="reference-blocks">
-                <LiveRefGroup page={g.page} kind={g.kind} blocks={g.blocks} />
+                {/* OG shows each referrer's ancestor breadcrumb in the block-ref
+                    panel (:breadcrumb-show? true) for "where does this live" context. */}
+                <LiveRefGroup page={g.page} kind={g.kind} blocks={g.blocks} showBreadcrumb />
               </div>
             </div>
           )}

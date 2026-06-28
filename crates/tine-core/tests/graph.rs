@@ -41,7 +41,7 @@ fn backlinks_to_parameterized_complexity() {
 
 #[test]
 fn block_ref_counts_and_referrers() {
-    // Isolated temp graph: a target block (id:: tgt-0001) referenced by a same-page
+    // Isolated temp graph: a target block (id:: aaaaaaaa-0000-0000-0000-000000000001) referenced by a same-page
     // block and three blocks on another page (labeled, embed, and a double ref that
     // must dedupe to one). Exercises all three OG block-ref forms + same-page
     // inclusion.
@@ -50,12 +50,12 @@ fn block_ref_counts_and_referrers() {
     std::fs::create_dir_all(root.join("pages")).unwrap();
     std::fs::write(
         root.join("pages").join("Target.md"),
-        "- the target block\n  id:: tgt-0001\n- see ((tgt-0001)) on this page\n",
+        "- the target block\n  id:: aaaaaaaa-0000-0000-0000-000000000001\n- see ((aaaaaaaa-0000-0000-0000-000000000001)) on this page\n",
     )
     .unwrap();
     std::fs::write(
         root.join("pages").join("Other.md"),
-        "- ref via [label](((tgt-0001)))\n- embedded {{embed ((tgt-0001))}}\n- two ((tgt-0001)) and ((tgt-0001)) here\n",
+        "- ref via [label](((aaaaaaaa-0000-0000-0000-000000000001)))\n- embedded {{embed ((aaaaaaaa-0000-0000-0000-000000000001))}}\n- two ((aaaaaaaa-0000-0000-0000-000000000001)) and ((aaaaaaaa-0000-0000-0000-000000000001)) here\n",
     )
     .unwrap();
 
@@ -64,11 +64,11 @@ fn block_ref_counts_and_referrers() {
     // Count = distinct referrer blocks: 1 (same page) + 3 (Other) = 4. The double
     // ref on the last Other block counts once.
     let counts = g.block_ref_counts();
-    assert_eq!(counts.get("tgt-0001").copied(), Some(4), "counts: {counts:?}");
+    assert_eq!(counts.get("aaaaaaaa-0000-0000-0000-000000000001").copied(), Some(4), "counts: {counts:?}");
 
     // Referrers grouped by page, and the same-page referrer IS included (unlike
     // page backlinks).
-    let groups = g.block_referrers("tgt-0001");
+    let groups = g.block_referrers("aaaaaaaa-0000-0000-0000-000000000001");
     let mut by_page: std::collections::HashMap<&str, usize> =
         std::collections::HashMap::new();
     for gr in groups.iter() {
@@ -83,7 +83,7 @@ fn block_ref_counts_and_referrers() {
         .find(|gr| gr.page == "Target")
         .map(|gr| gr.blocks.iter().map(|b| b.raw.as_str()).collect())
         .unwrap_or_default();
-    assert!(target_refs.iter().all(|r| r.contains("see ((tgt-0001))")), "{target_refs:?}");
+    assert!(target_refs.iter().all(|r| r.contains("see ((aaaaaaaa-0000-0000-0000-000000000001))")), "{target_refs:?}");
 
     std::fs::remove_dir_all(&root).ok();
 }

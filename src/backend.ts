@@ -125,6 +125,8 @@ export interface Backend {
   /** Native file picker (asset upload). Null if cancelled / unsupported. */
   pickFile(): Promise<string | null>;
   writeText(text: string): Promise<void>;
+  /** Copy with text/plain (markdown) + text/html flavors; degrades to text/plain. */
+  writeRich(text: string, html: string): Promise<void>;
   /** Write a PNG image (bytes) to the OS clipboard. Goes through the Rust
    *  clipboard plugin, not WebKitGTK's native "Copy Image" (which doesn't
    *  actually populate the clipboard, so paste yielded nothing). */
@@ -415,6 +417,31 @@ class TauriBackend implements Backend {
         // ignore
       }
     }
+  }
+  async writeRich(text: string, html: string): Promise<void> {
+    // Multi-flavor (text/plain + text/html) ONLY where the async Clipboard API +
+    // ClipboardItem exist in a secure context — so a WebKitGTK build lacking them
+    // safely uses the reliable text/plain path below (never a regression). Any
+    // failure also falls through to text/plain.
+    try {
+      if (
+        typeof window !== "undefined" &&
+        window.isSecureContext &&
+        typeof ClipboardItem !== "undefined" &&
+        navigator.clipboard?.write
+      ) {
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            "text/plain": new Blob([text], { type: "text/plain" }),
+            "text/html": new Blob([html], { type: "text/html" }),
+          }),
+        ]);
+        return;
+      }
+    } catch {
+      // fall through to the reliable text/plain path
+    }
+    await this.writeText(text);
   }
   copyImageToClipboard(bytes: Uint8Array): Promise<void> {
     return this.call<void>("copy_image_to_clipboard", { bytes: Array.from(bytes) });

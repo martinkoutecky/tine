@@ -42,7 +42,7 @@ import {
   selectedIds,
   startEditing,
 } from "./store";
-import { backend } from "./backend";
+import { copyOutline } from "./clipboard";
 
 interface Chord {
   mod: boolean;
@@ -300,9 +300,9 @@ function handleSelectionKey(e: KeyboardEvent): boolean {
   if (e.key === "ArrowUp") return moveSelection(-1, e.shiftKey), true;
   if (e.key === "Backspace" || e.key === "Delete") return deleteSelection(), true;
   const mod = isMac ? e.metaKey : e.ctrlKey;
-  if (mod && e.key.toLowerCase() === "c") return void backend().writeText(selectionMarkdown()), true;
+  if (mod && e.key.toLowerCase() === "c") return void copyOutline(selectionMarkdown()), true;
   if (mod && e.key.toLowerCase() === "x") {
-    void backend().writeText(selectionMarkdown());
+    void copyOutline(selectionMarkdown());
     deleteSelection();
     return true;
   }

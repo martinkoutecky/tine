@@ -15,9 +15,11 @@ import { backend } from "./backend";
 
 const KEY_SUBTREE = "copy_include_subtree";
 const KEY_COLLAPSED = "copy_strip_collapsed";
+const KEY_REF_ZOOM = "ref_click_zoom";
 
 const [includeSubtree, setIncludeSubtreeSig] = createSignal(false);
 const [stripCollapsed, setStripCollapsedSig] = createSignal(true);
+const [refZoom, setRefZoomSig] = createSignal(false);
 
 /** Reactive: when copying a parent, also include its sub-blocks? OFF = Tine default
  *  (only the selected blocks); ON = Logseq behavior (whole sub-tree). */
@@ -25,6 +27,14 @@ export const copyIncludeSubtree = includeSubtree;
 /** Reactive: strip `collapsed::` from copied text? ON = Tine default (cleaner
  *  paste); OFF = Logseq (keeps it). `id::` is always stripped regardless. */
 export const copyStripCollapsed = stripCollapsed;
+/** Reactive: plain-click an inline block ref → zoom into it (OG) vs scroll to it
+ *  in context (Tine default OFF). */
+export const refClickZoom = refZoom;
+
+export function setRefClickZoom(on: boolean): void {
+  setRefZoomSig(on);
+  void backend().setAppBool(KEY_REF_ZOOM, on).catch(() => {});
+}
 
 export function setCopyIncludeSubtree(on: boolean): void {
   setIncludeSubtreeSig(on);
@@ -47,5 +57,10 @@ export async function initCopySettings(): Promise<void> {
     setStripCollapsedSig(await backend().getAppBool(KEY_COLLAPSED, true));
   } catch {
     /* default on */
+  }
+  try {
+    setRefZoomSig(await backend().getAppBool(KEY_REF_ZOOM, false));
+  } catch {
+    /* default off */
   }
 }

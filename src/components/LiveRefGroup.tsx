@@ -47,7 +47,7 @@ function unobserveNear(el: Element) {
 // Each block is the same component the main view uses, so editing a result edits
 // the real block and saves to its page. Keyed by uuid so a reactive refresh
 // reuses existing rows and never yanks the caret out of a block being edited.
-export function LiveRefGroup(props: { page: string; kind: PageKind; blocks: BlockDto[] }): JSX.Element {
+export function LiveRefGroup(props: { page: string; kind: PageKind; blocks: BlockDto[]; embedId?: string; showBreadcrumb?: boolean }): JSX.Element {
   const [near, setNear] = createSignal(false);
   let el: HTMLDivElement | undefined;
   onMount(() => {
@@ -79,18 +79,37 @@ export function LiveRefGroup(props: { page: string; kind: PageKind; blocks: Bloc
     >
       <Show when={near()}>
         <For each={props.blocks.map((b) => b.id)}>
-          {(id) => (
-            <Show
-              when={ready() && doc.byId[id]}
-              fallback={
-                <Show when={dtoById(id)}>
-                  {(d) => <RefBlocks blocks={[d()]} page={props.page} pageKind={props.kind} />}
+          {(id) => {
+            const crumb = () => dtoById(id)?.breadcrumb ?? [];
+            return (
+              <>
+                <Show when={props.showBreadcrumb && crumb().length > 0}>
+                  <div class="ref-breadcrumb">
+                    <For each={crumb()}>
+                      {(c, i) => (
+                        <>
+                          <Show when={i() > 0}>
+                            <span class="ref-crumb-sep">›</span>
+                          </Show>
+                          <span class="ref-crumb">{c}</span>
+                        </>
+                      )}
+                    </For>
+                  </div>
                 </Show>
-              }
-            >
-              <Block id={id} />
-            </Show>
-          )}
+                <Show
+                  when={ready() && doc.byId[id]}
+                  fallback={
+                    <Show when={dtoById(id)}>
+                      {(d) => <RefBlocks blocks={[d()]} page={props.page} pageKind={props.kind} />}
+                    </Show>
+                  }
+                >
+                  <Block id={id} hideRefCount={!!props.embedId && id === props.embedId} />
+                </Show>
+              </>
+            );
+          }}
         </For>
       </Show>
     </div>

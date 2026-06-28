@@ -10,6 +10,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Block-reference parity round 2.** Right-click an inline `((block ref))` for a
+  context menu (open in sidebar / go to block / copy ref / copy embed). The
+  per-block references panel now shows each referrer's **ancestor breadcrumb** (like
+  OG). In the editor, **`Mod+C` with no text selected copies a reference** to the
+  current block. Copying blocks now also puts a **`text/html`** flavor on the
+  clipboard (best-effort) so a paste into a rich editor keeps the outline nesting. A
+  block embedded via `{{embed ((self))}}` no longer shows its own ref-count badge,
+  and a `((non-uuid))` in prose is no longer counted as a reference (both match OG).
+  New option (Settings → Journals & tasks): *click a block reference to zoom in*
+  (Logseq) vs scroll-to-it-in-place (Tine default).
 - **More OG macros.** `{{twitter}}` (alias of `{{tweet}}`), `{{vimeo}}` and
   `{{bilibili}}` (iframe embeds, accept a bare id or a URL), `{{img url [w h]
   [left|right|center]}}` (sized/aligned image), and **user-defined `:macros`** from

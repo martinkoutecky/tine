@@ -38,6 +38,7 @@ import {
   selectBlock,
   moveSelection,
   isSelected,
+  ensureBlockId,
   persistentBlockRef,
   persistBlockRefTarget,
   isBlockMoving,
@@ -187,7 +188,7 @@ export const CaptureCtx = createContext<CaptureApi | null>(null);
 // surfaces at once (see startEditing's surface stamping).
 export const SurfaceContext = createContext<string>("main");
 
-export function Block(props: { id: string }): JSX.Element {
+export function Block(props: { id: string; hideRefCount?: boolean }): JSX.Element {
   const node = () => doc.byId[props.id];
   // Unique per rendered instance, so when one block uuid appears in several
   // surfaces only the instance that was clicked mounts the editor (the rest stay
@@ -283,7 +284,7 @@ export function Block(props: { id: string }): JSX.Element {
                   // is referenced. Plain click toggles the referrers panel below;
                   // shift-click opens the block in the sidebar (matching OG and the
                   // bullet's shift-click).
-                  <Show when={blockRefCount(props.id) > 0}>
+                  <Show when={blockRefCount(props.id) > 0 && !props.hideRefCount}>
                     <a
                       class="block-refs-count"
                       classList={{ open: showRefs() }}
@@ -1183,6 +1184,29 @@ export function Editor(props: { id: string }): JSX.Element {
         closeAc();
         return;
       }
+    }
+
+    // Edit-mode Mod+C with NO text selected → copy a reference to this block
+    // (`((uuid))`), matching OG. With a selection, fall through to the browser's
+    // normal text copy. Persist current edits first so the id:: lands durably.
+    if (
+      (e.ctrlKey || e.metaKey) &&
+      !e.shiftKey &&
+      !e.altKey &&
+      e.key.toLowerCase() === "c" &&
+      start === end
+    ) {
+      e.preventDefault();
+      commit(raw);
+      void ensureBlockId(props.id).then((uuid) => {
+        if (uuid) {
+          void backend().writeText(`((${uuid}))`);
+          pushToast("Copied block ref", "success");
+        } else {
+          pushToast("Couldn't save the block id — reference not copied.", "error");
+        }
+      });
+      return;
     }
 
     // Configurable editor commands → one dispatch through the handler table

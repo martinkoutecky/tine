@@ -181,6 +181,11 @@ const NAMED: PageDto[] = [
       b("User macro (config.edn :macros): {{poem red, blue}} and {{hi Martin, kitchen-sink}}"),
       b("Block reference (bare): see ((64b9c0e2-0000-0000-0000-000000000000)) inline"),
       b("Labeled block reference: see [Related Work](((64b9c0e2-0000-0000-0000-000000000000))) inline"),
+      b("Project notes", [
+        b("Methods", [
+          b("a nested reference: see ((64b9c0e2-0000-0000-0000-000000000000)) here"),
+        ]),
+      ]),
       b("Block-ref target: the **Related Work** section\nid:: 64b9c0e2-0000-0000-0000-000000000000"),
     ],
   },
@@ -274,8 +279,14 @@ export function mockBackend(): Backend {
     for (const p of all) {
       if (exclude && p.name.toLowerCase() === exclude.toLowerCase()) continue;
       const matched: BlockDto[] = [];
-      const walk = (bs: BlockDto[]) => bs.forEach((b) => (keep(b) && matched.push(b), walk(b.children)));
-      walk(p.blocks);
+      // Track the ancestor chain so a matched nested block carries a breadcrumb
+      // (like the real backend's query::collect), exercising the block-ref panel.
+      const walk = (bs: BlockDto[], anc: string[]) =>
+        bs.forEach((b) => {
+          if (keep(b)) matched.push({ ...b, breadcrumb: anc });
+          walk(b.children, [...anc, b.raw.split("\n")[0] ?? ""]);
+        });
+      walk(p.blocks, []);
       if (matched.length) groups.push({ page: p.name, kind: p.kind, blocks: matched });
     }
     return groups;
@@ -575,6 +586,13 @@ export function mockBackend(): Backend {
       return null;
     },
     async writeText(text: string): Promise<void> {
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        // ignore
+      }
+    },
+    async writeRich(text: string, _html: string): Promise<void> {
       try {
         await navigator.clipboard.writeText(text);
       } catch {

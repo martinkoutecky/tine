@@ -2129,6 +2129,19 @@ mark {
   font-style: italic;
   cursor: default;
 }
+/* Per-referrer ancestor breadcrumb in the block-ref panel (OG :breadcrumb-show?). */
+.ref-breadcrumb {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin: 2px 0 0 2px;
+  font-size: 0.78em;
+  color: var(--text-muted);
+}
+.ref-crumb-sep {
+  opacity: 0.6;
+}
 
 /* {{youtube-timestamp}} (degraded: no on-page player to seek). */
 .youtube-ts {

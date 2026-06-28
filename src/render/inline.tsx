@@ -5,9 +5,10 @@
 import { For, Show, createMemo, createResource, createSignal, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { mediaKind } from "../media";
-import { openPage, openPageInNewTab, openPageAtBlock } from "../router";
+import { openPage, openPageInNewTab, openPageAtBlock, focusBlock } from "../router";
+import { refClickZoom } from "../copySettings";
 import { isJournalTitle } from "../journal";
-import { openPdf, openPageInSidebar, openBlockInSidebar, openPageContextMenu, setLightbox, graphEpoch, graphMeta } from "../ui";
+import { openPdf, openPageInSidebar, openBlockInSidebar, openPageContextMenu, openBlockRefContextMenu, setLightbox, graphEpoch, graphMeta } from "../ui";
 import { parseInline, type Seg, type Format } from "./parseInline";
 import { EmojiText } from "./emoji";
 import { blockView } from "./block";
@@ -556,18 +557,25 @@ function BlockRefView(props: { id: string; label?: string }): JSX.Element {
     <span
       class="block-ref"
       classList={{ "block-ref-missing": !grp() }}
-      title="Click to go to the block; shift-click → sidebar"
+      title="Click to go to the block; shift-click → sidebar; right-click for more"
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
+      onContextMenu={(e) => {
+        const g = grp();
+        if (!g) return; // missing target → let the default menu through
+        e.preventDefault();
+        e.stopPropagation();
+        openBlockRefContextMenu(e.clientX, e.clientY, props.id, g.page, g.kind);
+      }}
       onClick={(e) => {
         e.stopPropagation();
         const g = grp();
         if (!g) return;
-        // Shift-click opens the referenced block in the right sidebar (the target
-        // already carries an id::, so the ref is durable as-is). A plain click
-        // navigates to the block — scroll + flash it — so a same-page ref visibly
-        // jumps to its target instead of doing nothing.
+        // Shift-click opens the referenced block in the right sidebar. Plain click:
+        // Tine scrolls + flashes the block in context (default); the OG behavior —
+        // zoom into the block as its own page — is opt-in (Settings → ref-click-zoom).
         if (e.shiftKey) openBlockInSidebar({ uuid: props.id, page: g.page, pageKind: g.kind });
+        else if (refClickZoom()) focusBlock(props.id);
         else openPageAtBlock(g.page, g.kind, props.id);
       }}
     >
