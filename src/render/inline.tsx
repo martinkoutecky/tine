@@ -8,7 +8,7 @@ import { mediaKind } from "../media";
 import { openPage, openPageInNewTab, openPageAtBlock, focusBlock } from "../router";
 import { refClickZoom } from "../copySettings";
 import { isJournalTitle } from "../journal";
-import { openPdf, openPageInSidebar, openBlockInSidebar, openPageContextMenu, openBlockRefContextMenu, setLightbox, graphEpoch, graphMeta } from "../ui";
+import { openPdf, openPageInSidebar, openBlockInSidebar, openPageContextMenu, openBlockRefContextMenu, setLightbox, setAudioPlayer, graphEpoch, graphMeta } from "../ui";
 import { parseInline, type Seg, type Format } from "./parseInline";
 import { EmojiText } from "./emoji";
 import { blockView } from "./block";
@@ -402,10 +402,8 @@ function MediaEmbed(props: {
   blockId?: string;
 }): JSX.Element {
   const [failed, setFailed] = createSignal(false);
-  // Audio has no fullscreen, so a 320px controls bar makes precise seeking hard.
-  // A widen toggle stretches it to the full column width (session-only, like a
-  // zoom — not written back to the file, since OG has no such state).
-  const [wide, setWide] = createSignal(false);
+  // Audio has no fullscreen; the "Expand" button (below) opens a wide overlay
+  // player with a waveform scrubber instead of stretching the inline control.
   const external = /^(https?:|data:|blob:)/.test(props.url);
   const rel = () => assetRelPath(props.url);
   // Graph assets load over IPC into a blob URL (lazy); external URLs play directly.
@@ -473,7 +471,7 @@ function MediaEmbed(props: {
       <span
         ref={wrapEl}
         class="media-embed-wrap"
-        classList={{ "media-audio-wrap": props.kind === "audio", "media-audio-wide": wide() }}
+        classList={{ "media-audio-wrap": props.kind === "audio" }}
         style={wrapStyle()}
       >
         <Dynamic
@@ -499,10 +497,10 @@ function MediaEmbed(props: {
         <Show when={props.kind === "audio"}>
           <button
             class="media-audio-widen"
-            onClick={(e) => { e.stopPropagation(); setWide((v) => !v); }}
-            title={wide() ? "Shrink the seek bar" : "Widen the seek bar for precise seeking"}
+            onClick={(e) => { e.stopPropagation(); setAudioPlayer({ url: props.url, name: label() }); }}
+            title="Open the expanded player — waveform + precise seeking"
           >
-            {wide() ? "⇔ Narrow" : "⇔ Widen"}
+            ⤢ Expand
           </button>
         </Show>
       </span>

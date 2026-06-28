@@ -180,6 +180,10 @@ export interface Backend {
    *  the key + default. Used by the copy-behavior options. */
   getAppBool(key: string, fallback: boolean): Promise<boolean>;
   setAppBool(key: string, value: boolean): Promise<void>;
+  /** Generic device-local STRING preference (tine-settings.json); caller supplies
+   *  the key + default. Used by the asset-filename format template. */
+  getAppString(key: string, fallback: string): Promise<string>;
+  setAppString(key: string, value: string): Promise<void>;
   /** Startup debug logging (TINE_DEBUG=1 / --debug): whether it's on and where the
    *  log file is, so the UI can forward errors + show the path. */
   debugInfo(): Promise<DebugInfo>;
@@ -526,6 +530,12 @@ class TauriBackend implements Backend {
   }
   setAppBool(key: string, value: boolean) {
     return this.call<void>("set_app_bool", { key, value });
+  }
+  getAppString(key: string, fallback: string) {
+    return this.call<string>("get_app_string", { key, default: fallback });
+  }
+  setAppString(key: string, value: string) {
+    return this.call<void>("set_app_string", { key, value });
   }
   setSmoothScroll(value: boolean) {
     return this.call<void>("set_smooth_scroll", { value });

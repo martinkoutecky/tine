@@ -49,6 +49,13 @@ import {
   setRefClickZoom,
 } from "../copySettings";
 import { linkFirstMatch, setLinkFirstMatch } from "../editor/linkDefault";
+import {
+  assetNameFormat,
+  setAssetNameFormat,
+  DEFAULT_ASSET_NAME_FORMAT,
+  STAMPED_ASSET_NAME_FORMAT,
+} from "../assetSettings";
+import { formatAssetName } from "../media";
 import { openPage, openFile } from "../router";
 import { commandDefaults, eventToBindingString, setKeybindingsSuspended } from "../keybindings";
 import { switchGraph, loadGraphPath } from "../graph";
@@ -1077,8 +1084,58 @@ function AssetsTab(): JSX.Element {
     }
   };
 
+  // Live preview of the asset-name template, on a fixed sample so every token is
+  // visible (and the example doesn't jitter by the second). Shows both a named
+  // drag/insert and a clipboard paste (which has no name → timestamp fallback).
+  const sampleDate = new Date(2030, 0, 2, 3, 4, 5);
+  const dragExample = () => formatAssetName(assetNameFormat(), "Holiday Photo.JPG", sampleDate);
+  const pasteExample = () => formatAssetName(assetNameFormat(), undefined, sampleDate);
+
   return (
     <>
+      <div class="settings-section">Asset names</div>
+      <Field
+        label="New asset filename"
+        hint={
+          <>
+            How files are named when you paste, drag, or insert media into{" "}
+            <code>assets/</code>. Tokens: <code>%assetname</code> (the original file’s name),{" "}
+            <code>%ext</code>, <code>%yyyymmdd</code>, <code>%hhmmss</code> — also granular{" "}
+            <code>%yyyy</code> <code>%MM</code> <code>%dd</code> <code>%HH</code> <code>%mm</code>{" "}
+            <code>%ss</code>. Anything else is literal. A clipboard paste has no name, so{" "}
+            <code>%assetname</code> falls back to a timestamp. Device-local; Logseq keeps the
+            original name for dragged files.
+          </>
+        }
+      >
+        <input
+          type="text"
+          class="settings-input mono"
+          value={assetNameFormat()}
+          spellcheck={false}
+          onChange={(e) => setAssetNameFormat(e.currentTarget.value)}
+        />
+      </Field>
+      <div class="settings-hint settings-field-hint" style={{ "margin-top": "-6px" }}>
+        <div class="settings-segment" style={{ "margin-bottom": "8px" }}>
+          <button
+            classList={{ active: assetNameFormat() === DEFAULT_ASSET_NAME_FORMAT }}
+            onClick={() => setAssetNameFormat(DEFAULT_ASSET_NAME_FORMAT)}
+          >
+            Original name
+          </button>
+          <button
+            classList={{ active: assetNameFormat() === STAMPED_ASSET_NAME_FORMAT }}
+            onClick={() => setAssetNameFormat(STAMPED_ASSET_NAME_FORMAT)}
+          >
+            Date + name
+          </button>
+        </div>
+        Drag <code>Holiday Photo.JPG</code> → <code class="mono">{dragExample()}</code>
+        <br />
+        Paste an image → <code class="mono">{pasteExample()}</code>
+      </div>
+
       <div class="settings-section" style={{ "margin-top": "18px" }}>
         Orphaned media
         <button class="settings-btn" style={{ "margin-left": "10px" }} disabled={busy()} onClick={() => void refresh()}>

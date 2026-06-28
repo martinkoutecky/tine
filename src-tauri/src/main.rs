@@ -724,6 +724,33 @@ fn set_app_bool(key: String, value: bool, app: tauri::AppHandle) -> Result<(), S
     Ok(())
 }
 
+/// Generic device-local STRING preference (tine-settings.json) — the string twin of
+/// `get_app_bool`. Used for the asset-filename format template (a personal naming
+/// preference, read once at startup and applied in the frontend tokenizer).
+#[tauri::command]
+fn get_app_string(key: String, default: String, app: tauri::AppHandle) -> String {
+    settings_path(&app)
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v.get(&key).and_then(|x| x.as_str().map(str::to_string)))
+        .unwrap_or(default)
+}
+
+#[tauri::command]
+fn set_app_string(key: String, value: String, app: tauri::AppHandle) -> Result<(), String> {
+    let p = settings_path(&app).ok_or("no app-data dir")?;
+    if let Some(parent) = p.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let mut json = std::fs::read_to_string(&p)
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    json[&key] = serde_json::Value::String(value);
+    std::fs::write(&p, serde_json::to_string_pretty(&json).unwrap()).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// What the backend knows about the rendering path, so the UI can warn — loudly
 /// — when Tine is painting on the CPU. Speed is the whole pitch, and a silent
 /// software-rendering fallback makes scrolling feel sluggish; better to say so.
@@ -1315,14 +1342,44 @@ fn opener_command(prog: &str) -> std::process::Command {
     let mut cmd = std::process::Command::new(prog);
     #[cfg(target_os = "linux")]
     {
+        use std::os::unix::process::CommandExt;
+        // 1. Scrub the env Tine (or its AppImage wrapper) sets for ITS OWN
+        //    WebKitGTK rendering before launching a SEPARATE GUI app. Several of
+        //    these break a launched player's VIDEO output — VLC opens then exits
+        //    immediately. The WEBKIT_*/GDK_BACKEND/LD_PRELOAD set is what Tine
+        //    itself may set; the LD_LIBRARY_PATH/GST_*/GTK_*/GIO_* set is what an
+        //    AppImage bundle injects so a child loads bundled libs/plugins that
+        //    mismatch the host player. Removing an unset var is a no-op, so this
+        //    is safe on the raw binary too.
         for k in [
             "LD_PRELOAD",
+            "LD_LIBRARY_PATH",
             "WEBKIT_DISABLE_DMABUF_RENDERER",
             "WEBKIT_DISABLE_COMPOSITING_MODE",
             "GDK_BACKEND",
+            "GST_PLUGIN_SYSTEM_PATH",
+            "GST_PLUGIN_SYSTEM_PATH_1_0",
+            "GST_PLUGIN_PATH",
+            "GST_PLUGIN_PATH_1_0",
+            "GIO_MODULE_DIR",
+            "GTK_PATH",
+            "GTK_EXE_PREFIX",
+            "GDK_PIXBUF_MODULE_FILE",
+            "GTK_IM_MODULE_FILE",
+            "FONTCONFIG_FILE",
+            "FONTCONFIG_PATH",
         ] {
             cmd.env_remove(k);
         }
+        // 2. Detach: own process group + no inherited stdio. A player whose
+        //    lifetime is tied to Tine's process group, or that probes a stdio it
+        //    inherited from a GUI parent, can "open then close immediately" even
+        //    on the raw binary where no bundle env vars are set. Giving it its
+        //    own session-ish group and /dev/null stdio is the robust fix.
+        cmd.process_group(0)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
     }
     cmd
 }
@@ -1787,6 +1844,8 @@ fn main() {
             set_smooth_scroll,
             get_app_bool,
             set_app_bool,
+            get_app_string,
+            set_app_string,
             debug_info,
             debug_log
         ])

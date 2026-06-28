@@ -3,6 +3,8 @@
 // insert paths (paste / file-picker) and the renderer agree on what counts as
 // image vs video vs audio.
 
+import { assetNameFormat } from "./assetSettings";
+
 // Image extensions Tine renders as <img> (unchanged from the prior inline check).
 export const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"];
 // OG's media format sets (deps/.../config.cljs): reused so a clone graph stays
@@ -36,31 +38,64 @@ export function assetMarkdown(name: string): string {
   return mediaKind(name) ? `![](../assets/${name})` : `[${name}](../assets/${name})`;
 }
 
-/** `yyyymmdd-hhmmss` local-time stamp — sortable AND human-readable. */
-function stamp(): string {
-  const d = new Date();
-  const p = (n: number) => String(n).padStart(2, "0");
-  return (
-    `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}` +
-    `-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
-  );
+/** Sanitize a filename STEM like OG: spaces/%/slashes → `_`, collapse + trim. */
+function sanitizeStem(s: string): string {
+  return s.replace(/[ %/\\]+/g, "_").replace(/_+/g, "_").replace(/^_+|_+$/g, "");
 }
 
-/** On-disk name for a newly-inserted asset: `<yyyymmdd-hhmmss>-<stem>.<ext>` —
- *  timestamp FIRST so a plain name-sort in `assets/` is also a chronological
- *  sort (newest/oldest grouped together), then the original filename so the file
- *  is still recognizable. A nameless paste becomes `<stamp>.png`.
- *  Sanitized like OG (spaces/%/slashes → `_`). The backend's `reserve_asset` still
- *  appends `_N` for the rare same-second collision. New inserts only — existing
- *  files are never renamed. */
+/** Substitute the `%`-tokens of an asset-name template (see assetSettings.ts).
+ *  PURE — the date is injected — so the Settings live-preview and tests can call
+ *  it without touching the clock. `original` is the source filename (absent for a
+ *  clipboard paste). Always returns a non-empty, separator-free name that ends in
+ *  an extension: an empty stem (paste with the default `%assetname` template)
+ *  falls back to a `yyyymmdd-hhmmss` stamp, and a paste with no extension defaults
+ *  to `.png` (clipboard images are PNG). The backend's `reserve_asset` still
+ *  appends `_N` on a same-name collision, so bare-name templates stay safe. */
+export function formatAssetName(template: string, original: string | undefined, now: Date): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  const yyyy = String(now.getFullYear());
+  const MM = p(now.getMonth() + 1);
+  const dd = p(now.getDate());
+  const HH = p(now.getHours());
+  const mm = p(now.getMinutes());
+  const ss = p(now.getSeconds());
+  const dot = original ? original.lastIndexOf(".") : -1;
+  // A named file keeps its real extension (case preserved — "just the filename");
+  // a clipboard paste has none → png. An empty stem (paste) falls back to a
+  // sortable stamp, so %assetname is never blank.
+  const ext = dot > 0 ? original!.slice(dot + 1) : original ? "" : "png";
+  const stamp = `${yyyy}${MM}${dd}-${HH}${mm}${ss}`;
+  const stem = sanitizeStem(dot > 0 ? original!.slice(0, dot) : original ?? "") || stamp;
+  const tokens: Record<string, string> = {
+    "%yyyymmdd": `${yyyy}${MM}${dd}`,
+    "%hhmmss": `${HH}${mm}${ss}`,
+    "%yyyy": yyyy,
+    "%yy": yyyy.slice(2),
+    "%MM": MM,
+    "%dd": dd,
+    "%HH": HH,
+    "%mm": mm,
+    "%ss": ss,
+    "%assetname": stem,
+    "%ext": ext,
+  };
+  let out = template.replace(
+    /%yyyymmdd|%hhmmss|%yyyy|%yy|%MM|%dd|%HH|%mm|%ss|%assetname|%ext/g,
+    (m) => tokens[m] ?? m
+  );
+  // A filename is joined onto assets/ directly, so no separators may survive;
+  // collapse accidental `..`; drop leading/trailing dots (an empty %ext leaves a
+  // trailing ".") so a template can't yield a hidden or traversal name.
+  out = out.replace(/[/\\]+/g, "_").replace(/\.{2,}/g, ".").replace(/^\.+|\.+$/g, "");
+  // Never drop the real extension, even if the template omits %ext — a media file
+  // with no extension wouldn't render. (If %ext is present, it already ends here.)
+  if (ext && !out.toLowerCase().endsWith(`.${ext.toLowerCase()}`)) out = `${out}.${ext}`;
+  return out || `${stamp}.png`; // last-ditch guard (template was all separators)
+}
+
+/** On-disk name for a newly-inserted asset, per the user's format template
+ *  (Settings → Backups → Asset names; default = the plain original filename).
+ *  New inserts only — existing files are never renamed. */
 export function assetFileName(original?: string): string {
-  const ts = stamp();
-  if (!original) return `${ts}.png`;
-  const dot = original.lastIndexOf(".");
-  const ext = dot > 0 ? original.slice(dot) : "";
-  const stem = (dot > 0 ? original.slice(0, dot) : original)
-    .replace(/[ %/\\]+/g, "_")
-    .replace(/_+/g, "_")
-    .replace(/^_+|_+$/g, "");
-  return `${ts}${stem ? "-" + stem : ""}${ext}`;
+  return formatAssetName(assetNameFormat(), original, new Date());
 }

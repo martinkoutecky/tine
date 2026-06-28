@@ -105,16 +105,21 @@ raw speed. (Where a comparison is made, it's against current Logseq desktop core
   `Shift+Tab` / `Backspace` / arrows with correct Logseq semantics and caret preservation (no
   reflow on indent/outdent); arrow nav respects *visual* wrapped rows.
 - Collapse/expand, zoom into a block (with breadcrumb), drag-to-reorder, move up/down
-  (`Alt+Shift+↑/↓`), multi-block selection → move / indent / cut / copy.
+  (`Alt+Shift+↑/↓`), multi-block selection → move / indent / cut / copy (the viewport follows the
+  active end as you extend the selection past the top/bottom edge).
 - Multi-line blocks, syntax-highlighted code blocks, markdown tables; paste an indented outline →
   real block tree; paste clipboard images → graph assets.
-- **Media** — paste/import images, **video, and audio** (`/upload`); stored as `![](../assets/…)`
-  with a `yyyymmdd-hhmmss-name` filename (timestamp first, so a plain name-sort is also chronological).
-  **Drag the corner grip to resize an image *or a video*** (stored as a width % in Logseq's
-  `{:width …}` brace, so it round-trips); **audio has a ⇔ Widen toggle** that stretches the seek bar
-  to the full column for precise scrubbing. Click an image to open a **lightbox** (Esc or click-away
-  to close; right-click / Copy to put it on the clipboard). Video/audio play inline where the codec is
-  supported, else fall back to a click-to-open chip that launches the OS default player.
+- **Media** — paste/import images, **video, and audio** (`/upload`); stored as `![](../assets/…)`.
+  **Configurable asset filenames** (Settings → Backups → *Asset names*): a `%`-token template —
+  `%assetname %ext %yyyymmdd %hhmmss` (and granular `%yyyy %MM %dd %HH %mm %ss`) — defaulting to the
+  plain original name, with a one-click *Date + name* preset. **Drag the corner grip to resize an
+  image *or a video*** (stored as a width % in Logseq's `{:width …}` brace, so it round-trips);
+  **audio has an ⤢ Expand button** that opens a wide overlay player — a **waveform scrubber** with
+  ±5s / ±15s skip, play/pause, speed, and a time read-out. Click an image to open a **lightbox** (Esc
+  or click-away to close; right-click / Copy to put it on the clipboard). Video/audio play inline where
+  the codec is supported, else fall back to a click-to-open chip that launches the OS default player
+  (Tine scrubs its own render env + detaches the child so the player doesn't inherit a broken video
+  context).
   **Orphaned-media cleanup** (Settings → Backups): scan for `assets/` files no
   block references and move them to the recoverable trash — deleting a block never deletes its media,
   so this is how unused files get reclaimed.

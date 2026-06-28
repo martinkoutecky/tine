@@ -2262,12 +2262,8 @@ mark {
   width: 320px;
   max-width: 100%;
 }
-/* Widened audio: stretch the controls bar to the full column for precise seeking. */
-.media-embed-wrap.media-audio-wrap.media-audio-wide,
-.media-audio-wide .media-embed.media-audio {
-  width: 100%;
-}
-/* Toggle that widens/narrows the audio seek bar (audio has no fullscreen). */
+/* The "Expand" button on an inline audio embed → opens the wide overlay player
+   (audio has no fullscreen, so this is how you get a big waveform scrubber). */
 .media-audio-widen {
   display: inline-block;
   margin-top: 4px;
@@ -2343,6 +2339,109 @@ mark {
 .media-chip-icon {
   color: var(--link-color, #4a7);
   font-size: 0.95em;
+}
+
+/* Expanded audio player overlay (the "Expand" button on an inline audio embed):
+   a dimmed full-app backdrop with a wide centered panel + waveform scrubber. */
+.audio-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 210;
+  background: rgba(0, 0, 0, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.audio-panel {
+  width: 90vw;
+  max-width: 1100px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45);
+  padding: 18px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.audio-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.audio-title {
+  font-size: 0.92em;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.audio-close {
+  flex: none;
+  border: none;
+  background: transparent;
+  color: var(--text-muted, #999);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+.audio-close:hover {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+.audio-wave {
+  display: block;
+  width: 100%;
+  height: 132px;
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  cursor: pointer;
+  touch-action: none;
+}
+.audio-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.audio-btn {
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 0.86em;
+  padding: 5px 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.audio-btn:hover {
+  background: var(--bg-tertiary);
+}
+.audio-play {
+  font-size: 1.05em;
+  min-width: 52px;
+  background: var(--accent, #4c8bf5);
+  color: #fff;
+  border-color: transparent;
+}
+.audio-play:hover {
+  filter: brightness(1.06);
+  background: var(--accent, #4c8bf5);
+}
+.audio-time {
+  margin-left: 6px;
+  font-size: 0.86em;
+  color: var(--text-secondary);
+  min-width: 92px;
+  text-align: center;
+}
+.audio-rate {
+  margin-left: 4px;
 }
 
 /* OS file drag-over hint: a dashed overlay while dragging a file onto the window. */

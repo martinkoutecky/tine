@@ -1468,8 +1468,27 @@ export function moveSelection(dir: 1 | -1, extend: boolean) {
   const i = order.indexOf(f);
   const ni = i + dir;
   if (ni < 0 || ni >= order.length) return;
-  setSelFocus(order[ni]);
-  if (!extend) setSelAnchor(order[ni]);
+  const next = order[ni];
+  setSelFocus(next);
+  if (!extend) setSelAnchor(next);
+  scrollBlockRowIntoView(next);
+}
+
+/** Keep the active end of a keyboard selection on screen: as the user holds
+ *  Arrow / Shift+Arrow past the top or bottom edge, reveal the newly-focused
+ *  block. Targets the block's own row (`.block-main`), not the whole `.ls-block`
+ *  (which spans its children and could be taller than the viewport), and uses
+ *  `block: "nearest"` so it's a no-op while the row is already visible — it only
+ *  scrolls when the row crosses an edge, and never recenters mid-page. Run on the
+ *  next frame so the focus class is on the DOM before we measure. */
+function scrollBlockRowIntoView(id: string) {
+  // No-op under the test/headless runtime (no rAF/DOM); only the real webview scrolls.
+  if (typeof requestAnimationFrame !== "function" || typeof document === "undefined") return;
+  requestAnimationFrame(() => {
+    const sel = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(id) : id;
+    const row = document.querySelector(`.ls-block[data-block-id="${sel}"] > .block-main`);
+    row?.scrollIntoView({ block: "nearest" });
+  });
 }
 
 /** Top-level selected blocks (exclude those whose parent is also selected). */

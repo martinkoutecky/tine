@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { mediaKind, assetMarkdown, assetFileName } from "./media";
+import { mediaKind, assetMarkdown, assetFileName, formatAssetName } from "./media";
+import { DEFAULT_ASSET_NAME_FORMAT, STAMPED_ASSET_NAME_FORMAT } from "./assetSettings";
 
 describe("media helpers", () => {
   it("mediaKind by extension (case-insensitive, query-tolerant)", () => {
@@ -18,10 +19,47 @@ describe("media helpers", () => {
     expect(assetMarkdown("paper.pdf")).toBe("[paper.pdf](../assets/paper.pdf)");
   });
 
-  it("assetFileName: <yyyymmdd-hhmmss>-<stem>.<ext>, sanitized; paste → <stamp>.png", () => {
-    expect(assetFileName("My Holiday Clip.MP4")).toMatch(/^\d{8}-\d{6}-My_Holiday_Clip\.MP4$/);
-    expect(assetFileName("a/b%c.png")).toMatch(/^\d{8}-\d{6}-a_b_c\.png$/);
-    expect(assetFileName()).toMatch(/^\d{8}-\d{6}\.png$/);
-    expect(assetFileName("noext")).toMatch(/^\d{8}-\d{6}-noext$/);
+  it("assetFileName: default = plain (sanitized) original name; paste → stamp.png", () => {
+    // Default template is %assetname.%ext (the bare original name), ext case kept.
+    expect(assetFileName("My Holiday Clip.MP4")).toBe("My_Holiday_Clip.MP4");
+    expect(assetFileName("a/b%c.png")).toBe("a_b_c.png");
+    expect(assetFileName()).toMatch(/^\d{8}-\d{6}\.png$/); // paste has no name → stamp
+    expect(assetFileName("noext")).toBe("noext");
+  });
+
+  const D = new Date(2030, 0, 2, 3, 4, 5); // 2030-01-02 03:04:05 → every token distinct
+
+  it("formatAssetName: default template = sanitized original name", () => {
+    expect(formatAssetName(DEFAULT_ASSET_NAME_FORMAT, "Holiday Photo.JPG", D)).toBe("Holiday_Photo.JPG");
+    // A paste (no original) → the %assetname falls back to a sortable stamp.
+    expect(formatAssetName(DEFAULT_ASSET_NAME_FORMAT, undefined, D)).toBe("20300102-030405.png");
+  });
+
+  it("formatAssetName: stamped preset prefixes date+time", () => {
+    expect(formatAssetName(STAMPED_ASSET_NAME_FORMAT, "Holiday Photo.JPG", D)).toBe(
+      "20300102-030405-Holiday_Photo.JPG"
+    );
+  });
+
+  it("formatAssetName: granular + combined tokens substitute", () => {
+    expect(formatAssetName("%yyyy-%MM-%dd_%HH%mm%ss-%assetname.%ext", "cat.png", D)).toBe(
+      "2030-01-02_030405-cat.png"
+    );
+    expect(formatAssetName("%yyyymmdd.%ext", "cat.png", D)).toBe("20300102.png");
+    expect(formatAssetName("%yy", "cat.png", D)).toBe("30.png"); // omitted %ext → ext kept
+  });
+
+  it("formatAssetName: never drops the extension, sanitizes separators, no hidden/traversal", () => {
+    // Template without %ext still keeps the real extension (else media won't render).
+    expect(formatAssetName("%assetname", "movie.mp4", D)).toBe("movie.mp4");
+    // No extension on the source → no extension forced.
+    expect(formatAssetName("%assetname.%ext", "README", D)).toBe("README");
+    // A path-traversal-ish source name can't yield separators, `..`, or a hidden
+    // leading dot — it stays a single safe filename ending in the real extension.
+    const danger = formatAssetName("%assetname.%ext", "../../etc/passwd.png", D);
+    expect(danger).not.toMatch(/[/\\]/);
+    expect(danger).not.toContain("..");
+    expect(danger.startsWith(".")).toBe(false);
+    expect(danger.endsWith(".png")).toBe(true);
   });
 });

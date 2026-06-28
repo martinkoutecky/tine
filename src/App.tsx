@@ -10,6 +10,7 @@ const PdfViewer = lazy(() =>
 import { TabBar } from "./components/TabBar";
 import { ContextMenu } from "./components/ContextMenu";
 import { Toasts, Lightbox } from "./components/Toasts";
+import { AudioOverlay } from "./components/AudioOverlay";
 import { CalendarJump } from "./components/CalendarJump";
 import { ConflictBar } from "./components/ConflictBar";
 import { RightSidebar } from "./components/RightSidebar";
@@ -58,6 +59,7 @@ import { backend, isTauri } from "./backend";
 import { warnIfSoftwareRendering } from "./gpu";
 import { initSmoothScroll } from "./smoothScroll";
 import { initCopySettings } from "./copySettings";
+import { initAssetSettings } from "./assetSettings";
 import { initLinkDefault } from "./editor/linkDefault";
 import { initDebug, dbg } from "./debug";
 import { WindowControls, ResizeGrips, installWindowChrome, maximized } from "./components/WindowChrome";
@@ -92,6 +94,8 @@ export function App(): JSX.Element {
   // (`.main-content`) is mounted by now (onMount runs after first render).
   onMount(() => void initSmoothScroll());
   onMount(() => void initCopySettings());
+  // Load the asset-filename format template (Settings → Backups → Asset names).
+  onMount(() => void initAssetSettings());
 
   // Load the `[[`/`#` autocomplete default-action preference (link-first vs create).
   onMount(() => void initLinkDefault());
@@ -474,6 +478,7 @@ export function App(): JSX.Element {
       </Show>
       <Toasts />
       <Lightbox />
+      <AudioOverlay />
       {/* Resize grips for the frameless window — hidden while maximized (no edge
           to drag, and they'd otherwise overlap the content scrollbar). */}
       <Show when={isTauri() && !maximized()}>

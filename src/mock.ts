@@ -230,6 +230,7 @@ let mockSession: string | null = null;
 let mockLinkFirstMatch = false;
 const mockAssets: Record<string, Uint8Array> = {};
 const mockAppBools: Record<string, boolean> = {};
+const mockAppStrings: Record<string, string> = {};
 
 // A tiny valid silent WAV (0.2s, 8kHz/8-bit mono) so the mock audio asset actually
 // renders the <audio> player — WAV is natively decodable in headless Chromium,
@@ -659,6 +660,13 @@ export function mockBackend(): Backend {
     },
     async setAppBool(key: string, value: boolean): Promise<void> {
       mockAppBools[key] = value;
+    },
+    async getAppString(key: string, fallback: string): Promise<string> {
+      const v = mockAppStrings[key];
+      return v === undefined ? fallback : v;
+    },
+    async setAppString(key: string, value: string): Promise<void> {
+      mockAppStrings[key] = value;
     },
     async debugInfo(): Promise<DebugInfo> {
       return { enabled: false, path: "" };

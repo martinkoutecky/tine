@@ -8,8 +8,30 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Added
+
+- **Expanded audio player.** An ⤢ Expand button on an inline audio embed opens a
+  wide, dimmed overlay player: a **waveform scrubber** (click/drag to seek) with
+  ±5s / ±15s skip, play/pause, playback speed, and a time read-out. Esc or
+  click-away closes. (Replaces the old inline “⇔ Widen” seek-bar toggle.)
+- **Configurable asset filenames** (Settings → Backups → *Asset names*). A
+  `%`-token template controls how pasted/dragged/imported media is named in
+  `assets/`: `%assetname %ext %yyyymmdd %hhmmss` (plus granular `%yyyy %MM %dd
+  %HH %mm %ss`). The default is now the **plain original filename** (closest to
+  Logseq for dragged files; collisions still get a `_N` suffix); a one-click
+  *Date + name* preset reproduces the previous timestamp-prefixed scheme. A
+  clipboard paste (no filename) falls back to a timestamp.
+- **Selection follows the viewport.** Holding Arrow / Shift+Arrow in multi-block
+  selection now scrolls the active end into view as it crosses the top/bottom
+  edge (it never recenters while the block is already visible).
+
 ### Fixed
 
+- **External media player no longer “opens then closes immediately.”** When Tine
+  hands a video/audio file to the OS default player (e.g. VLC) it now scrubs a
+  broader set of its own render env vars (`LD_LIBRARY_PATH`, `GST_*`, `GTK_*`,
+  `GIO_*`, …) and detaches the child into its own process group with null stdio —
+  so the player no longer inherits a broken GL/video context from Tine.
 - **Dim-inactive-blocks (`t b`) now actually dims.** The fade previously only
   applied while a block was being edited, so toggling dim — or entering focus
   mode (`t f`), which turns dim on — looked like it did nothing. Dim now applies

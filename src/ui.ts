@@ -797,6 +797,13 @@ export function dismissToast(id: number) {
 // Full-screen image lightbox (click an inline image to zoom).
 export const [lightbox, setLightbox] = createSignal<string | null>(null);
 
+// Expanded audio player overlay (the "Expand" button on an inline audio embed):
+// a dimmed, ~90%-wide panel with a waveform scrubber + skip controls. `url` is the
+// markdown asset URL (resolved to a blob like the inline embed); `name` is the
+// display filename. Null = closed.
+export const [audioPlayer, setAudioPlayer] =
+  createSignal<{ url: string; name: string } | null>(null);
+
 // Page aliases (alias:: → canonical), keyed by normalized alias; loaded per graph.
 export const [aliasMap, setAliasMap] = createSignal<Record<string, string>>({});
 /** Resolve a page name through `alias::` to its canonical page (else unchanged). */
