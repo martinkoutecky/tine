@@ -103,11 +103,13 @@ raw speed. (Where a comparison is made, it's against current Logseq desktop core
 - Multi-line blocks, syntax-highlighted code blocks, markdown tables; paste an indented outline →
   real block tree; paste clipboard images → graph assets.
 - **Media** — paste/import images, **video, and audio** (`/upload`); stored as `![](../assets/…)`
-  with a `name_yyyymmdd_hhmmss` filename (keeps the origin + a sortable insert time). **Drag the
-  corner grip to resize an image** (stored as a width % in Logseq's `{:width …}` brace, so it
-  round-trips). Video/audio play inline where the codec is supported, else fall back to a
-  click-to-open chip that launches the OS default player. **Orphaned-media cleanup** (Settings →
-  Backups): scan for `assets/` files no
+  with a `yyyymmdd-hhmmss-name` filename (timestamp first, so a plain name-sort is also chronological).
+  **Drag the corner grip to resize an image *or a video*** (stored as a width % in Logseq's
+  `{:width …}` brace, so it round-trips); **audio has a ⇔ Widen toggle** that stretches the seek bar
+  to the full column for precise scrubbing. Click an image to open a **lightbox** (Esc or click-away
+  to close; right-click / Copy to put it on the clipboard). Video/audio play inline where the codec is
+  supported, else fall back to a click-to-open chip that launches the OS default player.
+  **Orphaned-media cleanup** (Settings → Backups): scan for `assets/` files no
   block references and move them to the recoverable trash — deleting a block never deletes its media,
   so this is how unused files get reclaimed.
 - Inline formatting (`Mod+B/I`, strike, ==highlight==, link) with a floating selection toolbar, plus
@@ -125,9 +127,19 @@ raw speed. (Where a comparison is made, it's against current Logseq desktop core
   (Settings → *Journals & tasks* → **Link autocomplete default**): create-a-new-page (default, like
   Logseq) or link-the-first-match.
 - Linked & unlinked references on every page (live/editable), with co-reference filtering and hover
-  previews.
+  previews — and they appear in the **right-sidebar** page view too (shift-click a page to open it
+  there), matching OG.
 - Per-block **reference count**: a referenced block shows a small count badge — click it to reveal
   the blocks that reference it (grouped by page), or shift-click to open the block in the sidebar.
+  Inline block refs render as **link-styled text** (full-strength colour + accent underline, like OG —
+  not a grey chip). Opening a block in the sidebar / zooming **doesn't** write `id::` to the file
+  (only creating a real reference does, like OG), and copying a block **strips `id::`** so it never
+  leaks into pasted text.
+- **Macros**: `{{query}}`, `{{embed}}`, `{{video}}`/`{{youtube}}`/`{{vimeo}}`/`{{bilibili}}`,
+  `{{tweet}}`/`{{twitter}}`, `{{img url [w h] [left|right|center]}}`, `{{namespace}}`, and
+  **user-defined `:macros`** from `config.edn` (`$1..$N` substitution, rendered as markdown).
+  `{{youtube-timestamp}}`, `{{cloze}}` (click-to-reveal) and `{{zotero-*}}` render in a degraded form
+  (no on-page-player seek / SRS / Zotero connector — flagged inline).
 - `{{query}}` engine (inline or whole-block): boolean and/or/not, `(task …)`, `(priority …)`,
   `(property …)`, `(page-property …)`, `(page-tags …)`, `(scheduled)`, `(deadline)`, `(journal)`,
   `(namespace …)`, `(between START END)` with a field selector, `(sort-by …)`. Results render as a

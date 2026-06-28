@@ -10,6 +10,46 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **More OG macros.** `{{twitter}}` (alias of `{{tweet}}`), `{{vimeo}}` and
+  `{{bilibili}}` (iframe embeds, accept a bare id or a URL), `{{img url [w h]
+  [left|right|center]}}` (sized/aligned image), and **user-defined `:macros`** from
+  `config.edn` — `{{name a, b}}` substitutes the comma-separated args into the
+  template's `$1..$N` placeholders and renders the result as markdown (so a macro can
+  expand to `[[links]]`, **bold**, other macros…). `{{youtube-timestamp}}`,
+  `{{cloze}}` (degrades to click-to-reveal) and `{{zotero-*}}` render in a degraded
+  form and say so (no on-page-player seek / SRS engine / Zotero connector).
+- **Video drag-resize + audio "⇔ Widen" toggle.** Video now has the same corner
+  resize grip as images (persisted as a `{:width N%}` brace). Audio — which has no
+  fullscreen — gets a toggle that stretches the seek bar to the full column for
+  precise scrubbing.
+- **Image lightbox closes on Esc** (previously click-away only).
+- **Linked/Unlinked references in the right sidebar.** Opening a page in the sidebar
+  now shows its Linked & Unlinked References sections too, like OG (not just the page
+  body).
+
+### Changed
+
+- **Asset filenames are now `yyyymmdd-hhmmss-name`** (timestamp first, human-readable),
+  so a plain name-sort in `assets/` is also chronological. (Was `name_yyyymmddhhmmss`.)
+- **Inline block refs are link-styled, not a grey chip.** They keep the full-strength
+  text colour with a thin accent-coloured underline and a link-coloured hover (OG's
+  `.block-ref`), instead of the previous grey-text-on-grey-fill that was easy to miss.
+
+### Fixed
+
+- **Copy/cut no longer leaks `id::` into pasted text.** A referenced block carries an
+  `id::` property; OG strips it when copying to the clipboard and now Tine does too
+  (the block content and `collapsed::` are kept, matching OG). Quick-capture still
+  keeps `id::` (it writes to a file, not the clipboard).
+- **Navigation no longer writes `id::` to your files.** Opening a block in the
+  sidebar, zooming into it, or opening it in a new tab used to stamp a stable `id::`
+  onto the block (to survive a restart) — which silently mutated the graph and was the
+  source of the copy-leak above. Like OG, `id::` is now written **only** when you
+  actually create a reference (`((` autocomplete, Copy block ref/embed).
+- **Left sidebar "All pages" works on large graphs.** The page-count and the
+  expandable list keyed off a one-shot fetch that raced a slow-loading graph and never
+  retried; it now refetches when the graph finishes loading.
+
 - **Namespace pages match OG.** The `{{namespace}}` macro now renders the bold
   **"Namespace"** label + root link header (then the bulleted descendant tree), and
   every non-journal page that's part of a namespace gets OG's automatic

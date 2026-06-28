@@ -21,7 +21,7 @@ import { journalTitle } from "../journal";
 import {
   doc,
   ensureBlockId,
-  persistentBlockRef,
+  blockRef,
   blockSubtreeMarkdown,
   deleteBlock,
   setBlockProperty,
@@ -379,11 +379,11 @@ function blockActions(id: string): { label: string; run: () => void; danger?: bo
   const tmplName = blockProperty(id, "template");
   const isJournalTmpl = !!tmplName && graphMeta()?.default_journal_template === tmplName;
   return [
-    { label: "Open in sidebar", run: () => openBlockInSidebar(persistentBlockRef(id)) },
+    { label: "Open in sidebar", run: () => openBlockInSidebar(blockRef(id)) },
     { label: "Zoom into block", run: () => zoomInto(id) },
     { label: "Copy block ref", run: () => void copyBlockRef(id, (u) => `((${u}))`, "Copied block ref") },
     { label: "Copy block embed", run: () => void copyBlockRef(id, (u) => `{{embed ((${u}))}}`, "Copied block embed") },
-    { label: "Copy block", run: () => { void backend().writeText(blockSubtreeMarkdown(id)); pushToast("Copied block", "success"); } },
+    { label: "Copy block", run: () => { void backend().writeText(blockSubtreeMarkdown(id, 0, true)); pushToast("Copied block", "success"); } },
     // Open the export modal for the whole selection (if this block is part of a
     // multi-selection) or just this block's subtree — preview + indent/remove opts.
     {
@@ -396,7 +396,7 @@ function blockActions(id: string): { label: string; run: () => void; danger?: bo
     {
       label: "Cut block",
       run: () => {
-        void backend().writeText(blockSubtreeMarkdown(id));
+        void backend().writeText(blockSubtreeMarkdown(id, 0, true));
         deleteBlock(id);
       },
     },

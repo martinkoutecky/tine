@@ -36,19 +36,20 @@ export function assetMarkdown(name: string): string {
   return mediaKind(name) ? `![](../assets/${name})` : `[${name}](../assets/${name})`;
 }
 
-/** `yyyymmdd_hhmmss` local-time stamp — sortable AND human-readable. */
+/** `yyyymmdd-hhmmss` local-time stamp — sortable AND human-readable. */
 function stamp(): string {
   const d = new Date();
   const p = (n: number) => String(n).padStart(2, "0");
   return (
     `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}` +
-    `_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
+    `-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
   );
 }
 
-/** On-disk name for a newly-inserted asset: `<stem>_<yyyymmdd_hhmmss>.<ext>` —
- *  keeps the original filename AND a sortable, readable insert time so recent
- *  files are easy to spot in `assets/`. A nameless paste becomes `<stamp>.png`.
+/** On-disk name for a newly-inserted asset: `<yyyymmdd-hhmmss>-<stem>.<ext>` —
+ *  timestamp FIRST so a plain name-sort in `assets/` is also a chronological
+ *  sort (newest/oldest grouped together), then the original filename so the file
+ *  is still recognizable. A nameless paste becomes `<stamp>.png`.
  *  Sanitized like OG (spaces/%/slashes → `_`). The backend's `reserve_asset` still
  *  appends `_N` for the rare same-second collision. New inserts only — existing
  *  files are never renamed. */
@@ -61,5 +62,5 @@ export function assetFileName(original?: string): string {
     .replace(/[ %/\\]+/g, "_")
     .replace(/_+/g, "_")
     .replace(/^_+|_+$/g, "");
-  return `${stem ? stem + "_" : ""}${ts}${ext}`;
+  return `${ts}${stem ? "-" + stem : ""}${ext}`;
 }

@@ -44,6 +44,8 @@ import {
   orderedListMarker,
   blockProperty,
   pageToDto,
+  blockSubtreeMarkdown,
+  selectionMarkdown,
 } from "./store";
 import { exportOutline, DEFAULT_EXPORT_OPTIONS } from "./editor/exportText";
 import { splitProps, joinProps, isBuiltinHidden, hideAll } from "./editor/properties";
@@ -288,6 +290,44 @@ describe("exportNodesFor (Copy / export selection)", () => {
     const b = blk("b");
     load([a, b]);
     expect(exportOutline(exportNodesFor([a.id, b.id]), DEFAULT_EXPORT_OPTIONS)).toBe("- a\n- b");
+  });
+});
+
+describe("clipboard copy strips id:: (OG parity)", () => {
+  it("blockSubtreeMarkdown(stripId) drops id:: but keeps content + collapsed::", () => {
+    // OG's copy-to-clipboard-without-id-property! strips only id::, not collapsed::.
+    const b = blk("referenced block\ncollapsed:: true\nid:: 5462a76e-8aa4-4362-896e-9af769e5df77");
+    load([b]);
+    const copied = blockSubtreeMarkdown(b.id, 0, true);
+    expect(copied).not.toContain("id::");
+    expect(copied).toContain("referenced block");
+    expect(copied).toContain("collapsed:: true");
+  });
+
+  it("default (no strip) keeps id:: — e.g. quick-capture writing to a journal file", () => {
+    const b = blk("note\nid:: 5462a76e-8aa4-4362-896e-9af769e5df77");
+    load([b]);
+    expect(blockSubtreeMarkdown(b.id)).toContain("id:: 5462a76e-8aa4-4362-896e-9af769e5df77");
+  });
+
+  it("id:: inside a code fence is NOT stripped (fence-aware)", () => {
+    const b = blk("```\nid:: literal-in-code\n```\nid:: 5462a76e-8aa4-4362-896e-9af769e5df77");
+    load([b]);
+    const copied = blockSubtreeMarkdown(b.id, 0, true);
+    expect(copied).toContain("id:: literal-in-code"); // fenced content survives
+    expect(copied).not.toContain("id:: 5462a76e"); // the real property is gone
+  });
+
+  it("selectionMarkdown strips id:: across the whole selected subtree", () => {
+    const parent = blk("parent\nid:: 11111111-1111-1111-1111-111111111111", [
+      blk("child\nid:: 22222222-2222-2222-2222-222222222222"),
+    ]);
+    load([parent]);
+    selectBlock(parent.id);
+    const md = selectionMarkdown();
+    expect(md).not.toContain("id::");
+    expect(md).toContain("- parent");
+    expect(md).toContain("\t- child");
   });
 });
 

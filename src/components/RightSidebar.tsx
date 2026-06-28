@@ -15,6 +15,8 @@ import { backend } from "../backend";
 import { doc, ensurePageLoaded, pageByName } from "../store";
 import { blockView } from "../render/block";
 import { Block, SurfaceContext } from "./Block";
+import { LinkedReferences } from "./LinkedReferences";
+import { UnlinkedReferences } from "./UnlinkedReferences";
 
 // Right sidebar: a stack of pages/blocks opened for reference. Each item is a
 // LIVE reference — it loads its page into the shared working set and renders the
@@ -128,6 +130,10 @@ function PageItem(props: {
       <Show when={page()} fallback={<div class="rs-item-body rs-item-loading" />}>
         <div class="rs-item-body">
           <For each={page()!.roots}>{(id) => <Block id={id} />}</For>
+          {/* OG shows a page's Linked/Unlinked References in the sidebar view too,
+              not just the main pane. Same lazy components, so this stays cheap. */}
+          <LinkedReferences name={props.item.name} />
+          <UnlinkedReferences name={props.item.name} />
         </div>
       </Show>
     </div>

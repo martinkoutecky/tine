@@ -491,13 +491,77 @@ fn set_backup_keep(keep: usize, app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// On Linux, hand a PNG to the OS clipboard via `wl-copy` (Wayland) or `xclip`/
+/// `xsel` (X11). These tools FORK a daemon that serves the selection until it's
+/// replaced — which is exactly what an image clipboard needs. `arboard` (what the
+/// Tauri plugin uses) tries to do this in-process and frequently drops the image
+/// on WebKitGTK, so we prefer the native tools and only fall back to the plugin.
+#[cfg(target_os = "linux")]
+fn linux_copy_image(bytes: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    // Prefer the tool matching the active session, but try all — a Wayland session
+    // under Xwayland may have only xclip, and vice versa.
+    let mut order: Vec<(&str, Vec<&str>)> = Vec::new();
+    let push = |o: &mut Vec<(&str, Vec<&str>)>, prog: &'static str| {
+        let args: Vec<&str> = match prog {
+            "wl-copy" => vec!["--type", "image/png"],
+            "xclip" => vec!["-selection", "clipboard", "-t", "image/png"],
+            "xsel" => vec!["--clipboard", "--input"],
+            _ => vec![],
+        };
+        o.push((prog, args));
+    };
+    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        push(&mut order, "wl-copy");
+        push(&mut order, "xclip");
+        push(&mut order, "xsel");
+    } else {
+        push(&mut order, "xclip");
+        push(&mut order, "xsel");
+        push(&mut order, "wl-copy");
+    }
+    let mut last_err = String::from("no clipboard tool found (install wl-clipboard or xclip)");
+    for (prog, args) in order {
+        let child = Command::new(prog)
+            .args(&args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn();
+        let mut child = match child {
+            Ok(c) => c,
+            Err(e) => {
+                last_err = format!("{prog}: {e}");
+                continue;
+            }
+        };
+        if let Some(mut stdin) = child.stdin.take() {
+            if let Err(e) = stdin.write_all(bytes) {
+                last_err = format!("{prog}: write stdin: {e}");
+                continue;
+            }
+        }
+        // wl-copy/xclip fork a server and the foreground process exits promptly;
+        // reap it on a thread so we neither block here nor leak a zombie.
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+        return Ok(());
+    }
+    Err(last_err)
+}
+
 /// Write a PNG image to the OS clipboard. The lightbox encodes the shown image to
-/// PNG and sends the bytes; we decode (tauri `image-png`) and write via the
-/// clipboard plugin — which talks to the OS clipboard directly, unlike WebKitGTK's
-/// native "Copy Image" that doesn't actually populate it (so paste yielded nothing).
+/// PNG and sends the bytes. On Linux we prefer `wl-copy`/`xclip` (see above) and
+/// fall back to the Tauri clipboard plugin; elsewhere the plugin is reliable.
 #[tauri::command]
 fn copy_image_to_clipboard(app: tauri::AppHandle, bytes: Vec<u8>) -> Result<(), String> {
     use tauri_plugin_clipboard_manager::ClipboardExt;
+    #[cfg(target_os = "linux")]
+    if linux_copy_image(&bytes).is_ok() {
+        return Ok(());
+    }
     let img = tauri::image::Image::from_bytes(&bytes).map_err(|e| e.to_string())?;
     app.clipboard().write_image(&img).map_err(|e| e.to_string())
 }

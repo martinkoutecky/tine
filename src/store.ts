@@ -1283,7 +1283,11 @@ export function ensureStableBlockId(id: string): void {
 }
 
 /** Like `blockRef`, but first persists the block's `id::` so the reference
- *  resolves after a restart. Used when parking a block in the right sidebar. */
+ *  resolves after a restart. NOTE: writing `id::` mutates the user's file, so this
+ *  must only be used when *creating a durable reference* — never for plain
+ *  navigation (sidebar/zoom/new-tab), which OG does without stamping `id::`
+ *  (that polluted files and leaked into copies). Currently unused; kept for a
+ *  future "pin block" that genuinely needs cross-restart durability. */
 export function persistentBlockRef(id: string): { uuid: string; page: string; pageKind: PageKind } {
   ensureStableBlockId(id);
   return blockRef(id);
@@ -1310,18 +1314,23 @@ export async function persistBlockRefTarget(
   if (doc.byId[uuid]) ensureStableBlockId(uuid);
 }
 
-/** Serialize a block and its subtree to Logseq markdown. */
-export function blockSubtreeMarkdown(id: string, level = 0): string {
+/** Serialize a block and its subtree to Logseq markdown. When `stripId` is set,
+ *  drop the internal `id::` property line from each block (fence-aware) — OG does
+ *  this when copying to the clipboard (`copy-to-clipboard-without-id-property!`)
+ *  so a referenced block doesn't leak `id:: <uuid>` into the pasted text. Other
+ *  callers (e.g. quick-capture writing to a journal file) keep `id::`. */
+export function blockSubtreeMarkdown(id: string, level = 0, stripId = false): string {
   const n = doc.byId[id];
   if (!n) return "";
   const tabs = "\t".repeat(level);
-  const lines = n.raw.split("\n");
+  const raw = stripId ? splitProps(n.raw, (k) => k === "id").visible : n.raw;
+  const lines = raw.split("\n");
   const out: string[] = [];
   out.push(`${tabs}- ${lines[0] ?? ""}`.replace(/\s+$/, ""));
   for (const line of lines.slice(1)) {
     out.push(line === "" ? "" : `${tabs}  ${line}`);
   }
-  for (const c of n.children) out.push(blockSubtreeMarkdown(c, level + 1));
+  for (const c of n.children) out.push(blockSubtreeMarkdown(c, level + 1, stripId));
   return out.join("\n");
 }
 
@@ -1538,7 +1547,7 @@ export function deleteSelection() {
 
 export function selectionMarkdown(): string {
   return topSelected()
-    .map((id) => blockSubtreeMarkdown(id))
+    .map((id) => blockSubtreeMarkdown(id, 0, true)) // clipboard → strip id:: (OG parity)
     .join("\n");
 }
 

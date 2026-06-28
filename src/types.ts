@@ -108,6 +108,7 @@ export interface GraphMeta {
   journal_page_title_format: string; // :journal/page-title-format (default "MMM do, yyyy")
   journal_file_name_format: string; // :journal/file-name-format (default "yyyy_MM_dd")
   preferred_format: Format; // :preferred-format — new pages/journals ("md" | "org")
+  macros: Record<string, string>; // :macros — user text-substitution macros ($1..$N)
 }
 
 export interface Rect {

@@ -2068,20 +2068,64 @@ mark {
   border-radius: 2px;
 }
 
+/* Block ref = link-like, NOT a chip (OG `.block-ref`, block.css:264-273): the text
+   keeps the full-strength foreground colour, with a thin link-coloured underline and
+   a link-coloured hover — no grey fill, no grey text (the old "grey on grey" that
+   made refs easy to miss). */
 .block-ref {
-  color: var(--text-secondary);
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border-color);
-  border-radius: 3px;
-  padding: 0 3px;
-  font-size: 0.92em;
+  color: inherit;
+  border-bottom: 1px solid var(--link-color);
+  padding: 0 0 1px;
   cursor: pointer;
+}
+.block-ref:hover {
+  color: var(--link-color);
 }
 /* A block ref whose target id resolves to nothing (dangling) — dimmed, no pointer. */
 .block-ref-missing {
   color: var(--text-muted);
   font-style: italic;
   cursor: default;
+}
+
+/* {{youtube-timestamp}} (degraded: no on-page player to seek). */
+.youtube-ts {
+  color: var(--link-color);
+  cursor: default;
+  font-variant-numeric: tabular-nums;
+}
+/* {{cloze}} (degraded: click-to-reveal, no SRS). Cue/"[...]" until clicked. */
+.cloze {
+  background: var(--bg-tertiary);
+  border-bottom: 1px dashed var(--text-muted);
+  border-radius: 3px;
+  padding: 0 4px;
+  cursor: pointer;
+}
+.cloze.revealed {
+  background: transparent;
+  border-bottom-color: var(--link-color);
+}
+/* {{zotero-*}} (degraded: no Zotero connector — muted, non-navigating label). */
+.zotero-ref {
+  color: var(--text-muted);
+  cursor: default;
+}
+/* {{img url … left|right|center}} alignment wrappers. */
+.img-align-left {
+  float: left;
+  margin: 0 12px 8px 0;
+}
+.img-align-right {
+  float: right;
+  margin: 0 0 8px 12px;
+}
+.img-align-center {
+  display: block;
+  text-align: center;
+}
+.img-align-center .inline-image-wrap {
+  margin: 0 auto;
 }
 
 .macro {
@@ -2152,6 +2196,35 @@ mark {
   display: block;
   width: 320px;
   max-width: 100%;
+}
+/* Widened audio: stretch the controls bar to the full column for precise seeking. */
+.media-embed-wrap.media-audio-wrap.media-audio-wide,
+.media-audio-wide .media-embed.media-audio {
+  width: 100%;
+}
+/* Toggle that widens/narrows the audio seek bar (audio has no fullscreen). */
+.media-audio-widen {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 1px 8px;
+  font-size: 0.78em;
+  line-height: 1.5;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text-muted, #888);
+  cursor: pointer;
+}
+.media-audio-widen:hover {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+/* The video resize grip needs to sit above the <video> controls to stay grabbable. */
+.media-resize-grip {
+  z-index: 2;
+}
+.media-embed-wrap:hover .media-resize-grip {
+  opacity: 0.85;
 }
 .media-open-external {
   position: absolute;

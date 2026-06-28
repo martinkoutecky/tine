@@ -337,6 +337,9 @@ pub struct GraphMeta {
     /// `:preferred-format`. The frontend uses it to label the toggle and pick the
     /// new-page extension.
     pub preferred_format: String,
+    /// User-defined `:macros {"name" "template"}` — the frontend substitutes
+    /// `$1..$N` args into the template and renders the result as markdown.
+    pub macros: std::collections::HashMap<String, String>,
 }
 
 impl Graph {
@@ -401,6 +404,7 @@ impl Graph {
             journal_page_title_format: self.journal_format.title_format().to_string(),
             journal_file_name_format: self.journal_format.file_format().to_string(),
             preferred_format: self.config.preferred_format.ext().to_string(),
+            macros: self.config.macros.clone(),
         }
     }
 

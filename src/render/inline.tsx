@@ -7,7 +7,7 @@ import { Dynamic } from "solid-js/web";
 import { mediaKind } from "../media";
 import { openPage, openPageInNewTab, openPageAtBlock } from "../router";
 import { isJournalTitle } from "../journal";
-import { openPdf, openPageInSidebar, openBlockInSidebar, openPageContextMenu, setLightbox, graphEpoch } from "../ui";
+import { openPdf, openPageInSidebar, openBlockInSidebar, openPageContextMenu, setLightbox, graphEpoch, graphMeta } from "../ui";
 import { parseInline, type Seg, type Format } from "./parseInline";
 import { EmojiText } from "./emoji";
 import { blockView } from "./block";
@@ -15,7 +15,7 @@ import { backend } from "../backend";
 import { loadAssetBlob } from "../assetCache";
 import { resolveBlockBatched } from "../resolveBatch";
 import { doc, setRaw } from "../store";
-import { QueryMacro, EmbedMacro, VideoMacro, TweetMacro } from "../components/Macro";
+import { QueryMacro, EmbedMacro, VideoMacro, TweetMacro, YoutubeTimestamp, ClozeMacro, ZoteroMacro } from "../components/Macro";
 import { NamespaceMacro } from "../components/Namespace";
 
 function renderSegs(segs: Seg[], blockId?: string): JSX.Element {
@@ -106,11 +106,26 @@ function renderSeg(s: Seg, blockId?: string): JSX.Element {
       const body = s.body.trimStart();
       if (/^query\b/i.test(body)) return <QueryMacro body={body} blockId={blockId} />;
       if (/^embed\b/i.test(body)) return <EmbedMacro body={body} />;
-      if (/^(video|youtube)\b/i.test(body)) return <VideoMacro body={body} />;
-      if (/^tweet\b/i.test(body)) return <TweetMacro body={body} />;
+      // youtube-timestamp BEFORE video/youtube: `/^youtube\b/` also matches the
+      // hyphenated `youtube-timestamp` (a word boundary sits before the `-`).
+      if (/^youtube-timestamp\b/i.test(body)) return <YoutubeTimestamp body={body} />;
+      if (/^(video|youtube|vimeo|bilibili)\b/i.test(body)) return <VideoMacro body={body} />;
+      if (/^(tweet|twitter)\b/i.test(body)) return <TweetMacro body={body} />;
+      if (/^img\b/i.test(body)) return renderImgMacro(body);
+      if (/^cloze\b/i.test(body)) return <ClozeMacro body={body} />;
+      if (/^zotero-(imported|linked)-file\b/i.test(body)) return <ZoteroMacro body={body} />;
       if (/^namespace\b/i.test(body)) {
         const root = body.replace(/^namespace\s+/i, "").trim();
         if (root) return <NamespaceMacro root={root} />;
+      }
+      // User-defined `:macros` (config.edn): substitute the comma-separated args
+      // into the template's `$1..$N` placeholders, then render the result as
+      // markdown (so a macro can expand to [[links]], **bold**, other macros…).
+      const um = /^(\S+)\s*([\s\S]*)$/.exec(body);
+      const userMacros = graphMeta()?.macros;
+      if (um && userMacros && Object.prototype.hasOwnProperty.call(userMacros, um[1])) {
+        const args = um[2].trim() ? um[2].split(",").map((a) => a.trim()) : [];
+        return <UserMacroView name={um[1]} template={userMacros[um[1]]} args={args} blockId={blockId} />;
       }
       return <span class="macro">{`{{${s.body}}}`}</span>;
     }
@@ -151,7 +166,8 @@ function renderSeg(s: Seg, blockId?: string): JSX.Element {
     case "image": {
       // `![](…)` is reused for video/audio (like OG) — route those to a player.
       const k = mediaKind(s.url);
-      if (k === "video" || k === "audio") return <MediaEmbed url={s.url} kind={k} />;
+      if (k === "video" || k === "audio")
+        return <MediaEmbed url={s.url} kind={k} alt={s.alt} width={s.width} blockId={blockId} />;
       return (
         <AssetImage url={s.url} alt={s.alt} width={s.width} height={s.height} blockId={blockId} />
       );
@@ -242,12 +258,13 @@ function blockRefWidth(el: HTMLElement): number {
   return el.getBoundingClientRect().width;
 }
 
-// Persist a resized image width back into its block's raw text as the OG-native
-// `{:width "N%"}` brace. We rewrite THIS image token's trailing `{...}` only
-// (matched by its exact alt+url), so other text/images in the block are
-// untouched; width is stored as a percentage (Martin's choice — survives column
-// width changes) and as a quoted string so it stays valid EDN OG can also read.
-function writeImageWidth(blockId: string, alt: string, url: string, pct: number) {
+// Persist a resized media width back into its block's raw text as the OG-native
+// `{:width "N%"}` brace. Works for images AND video/audio — all use the
+// `![alt](url)` form. We rewrite THIS token's trailing `{...}` only (matched by
+// its exact alt+url), so other text/media in the block are untouched; width is
+// stored as a percentage (Martin's choice — survives column width changes) and
+// as a quoted string so it stays valid EDN OG can also read.
+function writeMediaWidth(blockId: string, alt: string, url: string, pct: number) {
   const node = doc.byId[blockId];
   if (!node) return;
   const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -312,7 +329,7 @@ function AssetImage(props: {
       window.removeEventListener("pointerup", up);
       const w = wrapEl ? wrapEl.getBoundingClientRect().width : startW;
       const pct = Math.max(5, Math.min(100, Math.round((w / refW) * 100)));
-      writeImageWidth(props.blockId!, props.alt, props.url, pct);
+      writeMediaWidth(props.blockId!, props.alt, props.url, pct);
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
@@ -340,12 +357,54 @@ function AssetImage(props: {
   );
 }
 
+// `{{img url}}`, `{{img url W H}}`, `{{img url W H class}}`, or
+// `{{img url left|right|center}}` (OG). Numeric W/H → px; left/right/center wrap
+// the image in an alignment span (float / centered block); a 4th non-align token is
+// treated as a user CSS class. Reuses AssetImage (graph assets + external URLs).
+function renderImgMacro(body: string): JSX.Element {
+  const toks = body.replace(/^img\s*/i, "").trim().split(/\s+/).filter(Boolean);
+  const url = toks[0] ?? "";
+  const ALIGN = new Set(["left", "right", "center"]);
+  let width: string | undefined;
+  let height: string | undefined;
+  let align: string | undefined;
+  let cls: string | undefined;
+  if (toks.length === 2 && ALIGN.has(toks[1].toLowerCase())) {
+    align = toks[1].toLowerCase();
+  } else {
+    width = toks[1];
+    height = toks[2];
+    if (toks[3]) (ALIGN.has(toks[3].toLowerCase()) ? (align = toks[3].toLowerCase()) : (cls = toks[3]));
+  }
+  const px = (v?: string) => (v ? (/^\d+$/.test(v) ? `${v}px` : v) : undefined);
+  const img = <AssetImage url={url} alt="" width={px(width)} height={px(height)} />;
+  if (!align && !cls) return img;
+  const classes: Record<string, boolean> = {};
+  if (align) classes[`img-align-${align}`] = true;
+  if (cls) classes[cls] = true;
+  return (
+    <span class="img-macro" classList={classes}>
+      {img}
+    </span>
+  );
+}
+
 // Video/audio asset: try inline playback (a streaming-ish blob-URL <video>/<audio
 // controls>), and on a media error — typically WebKitGTK lacking the mp4/h264
 // codec — fall back to a click-to-open chip that launches the OS default player.
 // Matches the user's "inline when it works, otherwise open externally" intent.
-function MediaEmbed(props: { url: string; kind: "video" | "audio" }): JSX.Element {
+function MediaEmbed(props: {
+  url: string;
+  kind: "video" | "audio";
+  alt?: string;
+  width?: string;
+  blockId?: string;
+}): JSX.Element {
   const [failed, setFailed] = createSignal(false);
+  // Audio has no fullscreen, so a 320px controls bar makes precise seeking hard.
+  // A widen toggle stretches it to the full column width (session-only, like a
+  // zoom — not written back to the file, since OG has no such state).
+  const [wide, setWide] = createSignal(false);
   const external = /^(https?:|data:|blob:)/.test(props.url);
   const rel = () => assetRelPath(props.url);
   // Graph assets load over IPC into a blob URL (lazy); external URLs play directly.
@@ -362,6 +421,40 @@ function MediaEmbed(props: { url: string; kind: "video" | "audio" }): JSX.Elemen
     if (r && !external) void backend().openAsset(r);
     else void backend().openExternal(props.url);
   };
+
+  // Video drag-resize: identical mechanic to images (size the WRAPPER, persist a
+  // width %). Audio uses the widen toggle instead, so no grip there.
+  let wrapEl: HTMLSpanElement | undefined;
+  let mediaEl: HTMLVideoElement | HTMLAudioElement | undefined;
+  const onGripDown = (e: PointerEvent) => {
+    if (!wrapEl || !props.blockId) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const refW = blockRefWidth(wrapEl);
+    const startX = e.clientX;
+    const startW = wrapEl.getBoundingClientRect().width;
+    if (mediaEl) mediaEl.style.width = "100%";
+    const move = (me: PointerEvent) => {
+      const w = Math.max(80, Math.min(refW, startW + (me.clientX - startX)));
+      if (wrapEl) wrapEl.style.width = `${w}px`;
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      const w = wrapEl ? wrapEl.getBoundingClientRect().width : startW;
+      const pct = Math.max(5, Math.min(100, Math.round((w / refW) * 100)));
+      writeMediaWidth(props.blockId!, props.alt ?? "", props.url, pct);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+
+  // A persisted `{:width N%}` sizes the video wrapper (image fills it at 100%).
+  const wrapStyle = () =>
+    props.kind === "video" && props.width ? { width: props.width } : {};
+  const mediaStyle = () =>
+    props.kind === "video" && props.width ? { width: "100%" } : {};
+
   return (
     <Show
       when={!failed() && src()}
@@ -376,13 +469,20 @@ function MediaEmbed(props: { url: string; kind: "video" | "audio" }): JSX.Elemen
           on hover), not just the onError fallback: WebKit sometimes renders the
           <video> as playable but the codec is actually broken, so the user needs
           a guaranteed escape hatch to the OS player even when no media error fires. */}
-      <span class="media-embed-wrap" classList={{ "media-audio-wrap": props.kind === "audio" }}>
+      <span
+        ref={wrapEl}
+        class="media-embed-wrap"
+        classList={{ "media-audio-wrap": props.kind === "audio", "media-audio-wide": wide() }}
+        style={wrapStyle()}
+      >
         <Dynamic
           component={props.kind}
+          ref={(el: HTMLVideoElement | HTMLAudioElement) => (mediaEl = el)}
           class="media-embed"
           classList={{ "media-audio": props.kind === "audio" }}
           controls={true}
           src={src()!}
+          style={mediaStyle()}
           onError={() => setFailed(true)}
           onClick={(e: MouseEvent) => e.stopPropagation()}
         />
@@ -392,6 +492,18 @@ function MediaEmbed(props: { url: string; kind: "video" | "audio" }): JSX.Elemen
               fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
         </button>
+        <Show when={props.kind === "video" && props.blockId}>
+          <span class="img-resize-grip media-resize-grip" title="Drag to resize" onPointerDown={onGripDown} />
+        </Show>
+        <Show when={props.kind === "audio"}>
+          <button
+            class="media-audio-widen"
+            onClick={(e) => { e.stopPropagation(); setWide((v) => !v); }}
+            title={wide() ? "Shrink the seek bar" : "Widen the seek bar for precise seeking"}
+          >
+            {wide() ? "⇔ Narrow" : "⇔ Widen"}
+          </button>
+        </Show>
       </span>
     </Show>
   );
@@ -402,6 +514,30 @@ function MediaEmbed(props: { url: string; kind: "video" | "audio" }): JSX.Elemen
  *  can show the editable builder + rewrite that block. */
 export function InlineText(props: { text: string; blockId?: string; format?: Format }): JSX.Element {
   return <>{renderSegs(parseInline(props.text, props.format ?? "md"), props.blockId)}</>;
+}
+
+// Recursion depth guard for user `:macros` expansion. renderSegs uses <For>, which
+// evaluates synchronously on creation, so a macro that expands to itself (or a
+// mutually-recursive pair) would render forever. We cap nesting and bail to a grey
+// literal past the cap — cheap and bulletproof against both direct and mutual loops.
+let userMacroDepth = 0;
+const MAX_USER_MACRO_DEPTH = 12;
+
+// `{{name a, b}}` where `name` is a user-defined `:macros` key: fill `$1..$N` with
+// the args, render the result as inline markdown. Block-level expansions degrade to
+// inline (we only have an inline renderer here) — fine for the common link/format
+// macros; a documented limitation for multi-line templates.
+function UserMacroView(props: { name: string; template: string; args: string[]; blockId?: string }): JSX.Element {
+  if (userMacroDepth >= MAX_USER_MACRO_DEPTH) {
+    return <span class="macro">{`{{${props.name}}}`}</span>;
+  }
+  const expanded = props.template.replace(/\$(\d+)/g, (_, d) => props.args[Number(d) - 1] ?? "");
+  userMacroDepth++;
+  try {
+    return <InlineText text={expanded} blockId={props.blockId} />;
+  } finally {
+    userMacroDepth--;
+  }
 }
 
 // Inline block reference. Bare `((uuid))` shows the referenced block's first

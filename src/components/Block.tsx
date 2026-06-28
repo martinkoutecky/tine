@@ -38,7 +38,7 @@ import {
   selectBlock,
   moveSelection,
   isSelected,
-  persistentBlockRef,
+  blockRef,
   persistBlockRefTarget,
   isBlockMoving,
   setBlockMoving,
@@ -245,14 +245,17 @@ export function Block(props: { id: string }): JSX.Element {
             onClick={(e) => {
               e.stopPropagation();
               if (dragMoved) return; // was a drag, not a click
-              if (e.shiftKey) openBlockInSidebar(persistentBlockRef(props.id));
+              if (e.shiftKey) openBlockInSidebar(blockRef(props.id));
               else zoomInto(props.id);
             }}
             onAuxClick={(e) => {
               if (e.button !== 1) return; // middle-click → open the zoom in a new tab
               e.preventDefault();
               e.stopPropagation();
-              const ref = persistentBlockRef(props.id); // writes id:: so the tab survives a restart
+              // Navigation only — do NOT write id:: (OG never stamps a block just
+              // because it was opened/zoomed; that pollutes the file and leaks into
+              // copies). In-session this resolves via the in-memory uuid.
+              const ref = blockRef(props.id);
               openPageInNewTab(ref.page, ref.pageKind, ref.uuid);
             }}
           >
@@ -290,7 +293,7 @@ export function Block(props: { id: string }): JSX.Element {
                       title="Open block references (shift-click → sidebar)"
                       onClick={(e) => {
                         e.stopPropagation();
-                        if (e.shiftKey) openBlockInSidebar(persistentBlockRef(props.id));
+                        if (e.shiftKey) openBlockInSidebar(blockRef(props.id));
                         else setShowRefs((v) => !v);
                       }}
                     >

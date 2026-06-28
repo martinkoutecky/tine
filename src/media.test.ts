@@ -18,10 +18,10 @@ describe("media helpers", () => {
     expect(assetMarkdown("paper.pdf")).toBe("[paper.pdf](../assets/paper.pdf)");
   });
 
-  it("assetFileName: <stem>_<yyyymmdd_hhmmss>.<ext>, sanitized; paste → <stamp>.png", () => {
-    expect(assetFileName("My Holiday Clip.MP4")).toMatch(/^My_Holiday_Clip_\d{8}_\d{6}\.MP4$/);
-    expect(assetFileName("a/b%c.png")).toMatch(/^a_b_c_\d{8}_\d{6}\.png$/);
-    expect(assetFileName()).toMatch(/^\d{8}_\d{6}\.png$/);
-    expect(assetFileName("noext")).toMatch(/^noext_\d{8}_\d{6}$/);
+  it("assetFileName: <yyyymmdd-hhmmss>-<stem>.<ext>, sanitized; paste → <stamp>.png", () => {
+    expect(assetFileName("My Holiday Clip.MP4")).toMatch(/^\d{8}-\d{6}-My_Holiday_Clip\.MP4$/);
+    expect(assetFileName("a/b%c.png")).toMatch(/^\d{8}-\d{6}-a_b_c\.png$/);
+    expect(assetFileName()).toMatch(/^\d{8}-\d{6}\.png$/);
+    expect(assetFileName("noext")).toMatch(/^\d{8}-\d{6}-noext$/);
   });
 });

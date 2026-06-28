@@ -52,6 +52,12 @@ pub struct Config {
     /// Default (absent key) is `Legacy` (`%2F`), matching OG; modern graphs pin
     /// `:triple-lowbar` (`___`). See [`FileNameFormat`].
     pub file_name_format: FileNameFormat,
+    /// `:macros {"name" "template" …}` — user-defined text-substitution macros.
+    /// `$1..$N` (and `$ARG`) placeholders in the template are filled with the
+    /// macro's comma-separated args at render time, then the result is rendered as
+    /// markdown. We only collect the string→string pairs; the frontend substitutes
+    /// and recurses.
+    pub macros: HashMap<String, String>,
 }
 
 /// Logseq's default journal formats (verified against
@@ -99,6 +105,7 @@ impl Default for Config {
             journal_page_title_format: None,
             preferred_format: crate::model::Format::Md,
             file_name_format: FileNameFormat::Legacy,
+            macros: HashMap::new(),
         }
     }
 }
@@ -149,6 +156,7 @@ impl Config {
             Some("triple-lowbar") => FileNameFormat::TripleLowbar,
             _ => FileNameFormat::Legacy,
         };
+        cfg.macros = parse_macros(edn);
         cfg
     }
 }
@@ -756,9 +764,58 @@ fn parse_shortcuts(edn: &str) -> HashMap<String, String> {
     map
 }
 
+/// `:macros {"name" "template" …}` — string→string map. Mirrors `parse_shortcuts`
+/// but with STRING keys (macro names) rather than keyword keys. Values are template
+/// strings (with `$1..$N` placeholders the frontend fills in). Stops cleanly on the
+/// first non-string key/value rather than desyncing on unexpected EDN.
+fn parse_macros(edn: &str) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    let Some(start) = find_keyword(edn, ":macros") else { return map };
+    let from = skip_blank(edn, start + ":macros".len());
+    let b = edn.as_bytes();
+    if b.get(from) != Some(&b'{') {
+        return map;
+    }
+    let close = match_close_brace(edn, from);
+    let mut i = from + 1;
+    while i < close {
+        i = skip_blank(edn, i);
+        if i >= close || b[i] != b'"' {
+            break; // key must be a string
+        }
+        let key = read_string_at(edn, i);
+        i = edn_str_end(edn, i);
+        let vfrom = skip_blank(edn, i);
+        if vfrom >= close || b[vfrom] != b'"' {
+            break; // value must be a string
+        }
+        let val = read_string_at(edn, vfrom);
+        i = edn_str_end(edn, vfrom);
+        if !key.is_empty() {
+            map.insert(key, val);
+        }
+    }
+    map
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_macros_map() {
+        let edn = r#"{:preferred-format "Markdown"
+                      :macros {"poem" "Roses are $1, violets are $2"
+                               "greet" "Hello, **$1**! See [[$2]]"}}"#;
+        let cfg = Config::parse(edn);
+        assert_eq!(cfg.macros.get("poem").map(String::as_str), Some("Roses are $1, violets are $2"));
+        assert_eq!(cfg.macros.get("greet").map(String::as_str), Some("Hello, **$1**! See [[$2]]"));
+    }
+
+    #[test]
+    fn no_macros_section_is_empty() {
+        assert!(Config::parse(r#"{:preferred-format "Markdown"}"#).macros.is_empty());
+    }
 
     #[test]
     fn parses_shortcuts_map() {
