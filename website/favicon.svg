@@ -1,0 +1,12 @@
+<svg width="1024" height="1024" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Tine">
+  <!-- App icon: the fork mark (three tines merging into a stem) in white on a
+       green rounded square. Mirrors docs/logo.svg's mark. -->
+  <rect x="0" y="0" width="256" height="256" rx="56" fill="#10b981"/>
+  <g stroke="#ffffff" stroke-width="18" stroke-linecap="round" fill="none">
+    <path d="M96 72 V128"/>
+    <path d="M128 72 V128"/>
+    <path d="M160 72 V128"/>
+    <path d="M96 128 H160"/>
+    <path d="M128 128 V188"/>
+  </g>
+</svg>

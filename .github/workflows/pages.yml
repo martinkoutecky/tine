@@ -1,0 +1,48 @@
+# Deploy the static marketing site in website/ to GitHub Pages.
+#
+# Zero-setup: configure-pages has `enablement: true`, so the first run turns Pages
+# on (source = GitHub Actions) automatically — no manual toggle, no failed run.
+# Until a custom domain is set it serves at https://<user>.github.io/tine/.
+#
+# Custom domain: add a `website/CNAME` file containing the bare domain (e.g.
+# `usetine.com`). With Actions-based Pages the CNAME must live IN the published
+# artifact — setting it only in the repo's Pages UI gets wiped on the next deploy.
+#
+# Only runs when the site (or this workflow) changes, so it never competes with
+# the app's CI/release builds.
+name: pages
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'website/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+# Allow one concurrent deployment; let an in-progress run finish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-22.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: website
+      - id: deployment
+        uses: actions/deploy-pages@v4

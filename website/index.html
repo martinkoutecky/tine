@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tine — a fast, local, Logseq-compatible outliner</title>
+<meta name="description" content="Tine is a fast, local outliner that reads and writes the same Markdown graph as Logseq. Swap between the two on the same files — no import, no export, no lock-in.">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+
+<!-- Social preview -->
+<meta property="og:type" content="website">
+<meta property="og:title" content="Tine — a fast, local, Logseq-compatible outliner">
+<meta property="og:description" content="The same Markdown graph as Logseq, in a faster outliner. Swap freely between the two — no import, no export, no lock-in.">
+<meta property="og:image" content="img/hero.png">
+<meta name="twitter:card" content="summary_large_image">
+</head>
+<body>
+
+<header class="nav">
+  <a class="brand" href="#top" aria-label="Tine — home">
+    <svg class="mark" width="34" height="34" viewBox="0 0 64 80" aria-hidden="true">
+      <g stroke="currentColor" stroke-width="6" stroke-linecap="round" fill="none">
+        <path d="M16 14 V36"/><path d="M32 14 V36"/><path d="M48 14 V36"/>
+        <path d="M16 36 H48"/><path d="M32 36 V70"/>
+      </g>
+    </svg>
+    <span class="brand-word">Tine</span>
+  </a>
+  <nav class="nav-links">
+    <a href="#why">Same graph</a>
+    <a href="#adds">What's new</a>
+    <a href="#config">Configurable</a>
+    <a class="nav-cta" href="https://github.com/martinkoutecky/tine/releases">Download</a>
+  </nav>
+</header>
+
+<main id="top">
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="hero-glow" aria-hidden="true"></div>
+    <div class="hero-inner">
+      <p class="eyebrow">Local-first · open source · works on your Logseq graph</p>
+      <h1>The same graph.<br><span class="accent">A faster outliner.</span></h1>
+      <p class="lede">
+        Tine is a fast, local, <strong>Logseq-compatible</strong> outliner. It reads and writes the
+        <em>same</em> Markdown files Logseq does — so you can switch between the two whenever you
+        like, with no import, no export, and no lock-in.
+      </p>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="https://github.com/martinkoutecky/tine/releases">
+          Download Tine
+        </a>
+        <a class="btn btn-ghost" href="https://github.com/martinkoutecky/tine">
+          View source on GitHub
+        </a>
+      </div>
+      <p class="fineprint">
+        Free &amp; open source (AGPL-3.0). Linux is the primary, best-tested platform today;
+        macOS &amp; Windows builds are newer. Not yet 1.0.
+      </p>
+    </div>
+    <figure class="hero-shot">
+      <img src="img/hero.png" alt="Tine showing a multi-day journal feed" width="820" loading="eager">
+    </figure>
+  </section>
+
+  <!-- RESPECT / SAME GRAPH -->
+  <section id="why" class="band">
+    <div class="band-inner">
+      <h2>Built to sit <em>beside</em> Logseq — not replace it</h2>
+      <p class="section-lede">
+        We're long-time Logseq users and we have a lot of respect for what that project pioneered.
+        Tine isn't a fork and it isn't a clone trying to pull you away. It's an independent
+        reimplementation that deliberately targets Logseq's on-disk format, so your notes stay
+        exactly where they are — plain Markdown files you fully own.
+      </p>
+
+      <div class="swap">
+        <div class="swap-app">Logseq</div>
+        <div class="swap-pipe" aria-hidden="true">
+          <span class="swap-arrows">⇄</span>
+          <code>your-graph/<small>journals/ · pages/ · assets/ · config.edn</small></code>
+        </div>
+        <div class="swap-app">Tine</div>
+      </div>
+
+      <ul class="checks">
+        <li>Point Tine at the <code>journals/</code>, <code>pages/</code>, <code>assets/</code> and
+          <code>logseq/config.edn</code> you already use.</li>
+        <li>Edit in either app — one at a time — on the very same files.</li>
+        <li>Saves are byte-compatible Markdown that preserve your formatting, so they don't create
+          sync churn.</li>
+        <li>Keeps working alongside the Logseq mobile app over your own Syncthing/Dropbox sync.</li>
+        <li>Not affiliated with or endorsed by Logseq — just compatible with it, on purpose.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- WHAT TINE ADDS -->
+  <section id="adds" class="wrap">
+    <h2>What Tine adds on top</h2>
+    <p class="section-lede center">
+      These started as <em>"I wish Logseq did this."</em> They're the reasons Tine exists beyond raw
+      speed — and you get them without giving up a single feature of your file format.
+    </p>
+
+    <div class="grid">
+      <article class="card">
+        <div class="card-ic">⚡</div>
+        <h3>Native speed</h3>
+        <p>A pure-Rust core and fine-grained SolidJS reactivity in a tiny Tauri/WebKit runtime —
+          no Electron, no virtual-DOM churn. Typing stays in the frontend; whole-graph reads hit an
+          in-memory index. It stays quick on large graphs.</p>
+      </article>
+      <article class="card">
+        <div class="card-ic">🗂️</div>
+        <h3>Built-in tabs</h3>
+        <p>Middle-click any bullet, page, or search hit to open it in a background tab. Pin,
+          drag-reorder, <kbd>Mod</kbd>+<kbd>W</kbd> to close. Pins survive a restart.</p>
+      </article>
+      <article class="card">
+        <div class="card-ic">🎯</div>
+        <h3>Focus mode &amp; dim</h3>
+        <p>Hide the chrome and fade everything but the block you're working on, with layered
+          <kbd>Esc</kbd>. A calmer way to write a long note.</p>
+      </article>
+      <article class="card">
+        <div class="card-ic">⚡</div>
+        <h3>Global quick-capture</h3>
+        <p>Bind a desktop hotkey and a small always-on-top box pops from <em>any</em> app — with the
+          full editor — and files a bullet to today's journal. Even when Tine isn't focused.</p>
+      </article>
+      <article class="card">
+        <div class="card-ic">🔁</div>
+        <h3>Carry tasks forward</h3>
+        <p>Roll unfinished tasks into today (last 7 / 30 / 365 days or a custom window), optionally
+          keeping their ancestor context.</p>
+      </article>
+      <article class="card">
+        <div class="card-ic">🛟</div>
+        <h3>A real data-safety story</h3>
+        <p>Conflict detection instead of silent overwrites, launch snapshots with one-click restore,
+          delete-to-trash, and transactional renames. Built to live safely on a graph you also edit
+          from your phone.</p>
+      </article>
+    </div>
+
+    <div class="shots">
+      <figure><img src="img/tabs.png" alt="Built-in tabs across the top of the window" loading="lazy"><figcaption>Built-in tabs</figcaption></figure>
+      <figure><img src="img/focus.png" alt="Focus mode with inactive blocks dimmed" loading="lazy"><figcaption>Focus &amp; dim</figcaption></figure>
+      <figure><img src="img/quick-capture.png" alt="The global quick-capture mini window" loading="lazy"><figcaption>Global quick-capture</figcaption></figure>
+      <figure><img src="img/carry.png" alt="Carry unfinished tasks forward to today" loading="lazy"><figcaption>Carry tasks forward</figcaption></figure>
+      <figure><img src="img/query.png" alt="Query results and the visual query builder" loading="lazy"><figcaption>Queries &amp; visual builder</figcaption></figure>
+      <figure><img src="img/pdf.png" alt="PDF text and area highlighting with a notes page" loading="lazy"><figcaption>PDF annotation</figcaption></figure>
+    </div>
+  </section>
+
+  <!-- CONFIGURABLE / OG DEFAULTS -->
+  <section id="config" class="band">
+    <div class="band-inner">
+      <h2>Better defaults — always one click back to Logseq</h2>
+      <p class="section-lede">
+        Where we think a default can be improved, we change it — but we never take the choice away.
+        Anything Tine does differently from Logseq is clearly badged
+        <span class="og-chip">Differs from Logseq</span> in Settings, with a one-click
+        <strong>↩ Match Logseq</strong> button. Your muscle memory is safe.
+      </p>
+      <ul class="config-list">
+        <li><strong>Copy only the selected blocks</strong> — selecting just a parent no longer
+          copies its whole subtree. <span class="muted">(Logseq copies the subtree — one click to restore.)</span></li>
+        <li><strong>Strip <code>collapsed::</code> on copy</strong> so a paste into a text editor is clean. <span class="muted">(Toggle off to match Logseq.)</span></li>
+        <li><strong>Click a block reference to scroll to it</strong> in place, or switch back to Logseq's zoom-in behavior.</li>
+        <li><strong>Link-autocomplete default</strong> — create a new page (like Logseq) or link the first match.</li>
+        <li><strong>Fully remappable keyboard shortcuts</strong> — in Settings or via <code>config.edn :shortcuts</code>.</li>
+        <li><strong>Journal date format, file-format, and watcher mode</strong> — all read from your
+          <code>config.edn</code> and adjustable in-app.</li>
+      </ul>
+      <figure class="band-shot">
+        <img src="img/settings.png" alt="Settings panel showing remappable shortcuts and revertable options" loading="lazy">
+      </figure>
+    </div>
+  </section>
+
+  <!-- CTA -->
+  <section class="wrap closer">
+    <h2>Try it on a copy of your graph</h2>
+    <p class="section-lede center">
+      Because Tine works on standard Logseq files, the safest way to try it is to point it at a copy
+      of your graph and see how it feels. Nothing to import, nothing to migrate.
+    </p>
+    <div class="cta-row center">
+      <a class="btn btn-primary" href="https://github.com/martinkoutecky/tine/releases">Download a build</a>
+      <a class="btn btn-ghost" href="https://github.com/martinkoutecky/tine#readme">Read the docs</a>
+    </div>
+  </section>
+
+</main>
+
+<footer class="foot">
+  <div class="foot-inner">
+    <div class="foot-brand">
+      <svg class="mark" width="26" height="26" viewBox="0 0 64 80" aria-hidden="true">
+        <g stroke="currentColor" stroke-width="6" stroke-linecap="round" fill="none">
+          <path d="M16 14 V36"/><path d="M32 14 V36"/><path d="M48 14 V36"/>
+          <path d="M16 36 H48"/><path d="M32 36 V70"/>
+        </g>
+      </svg>
+      <span>Tine</span>
+    </div>
+    <nav class="foot-links">
+      <a href="https://github.com/martinkoutecky/tine">GitHub</a>
+      <a href="https://github.com/martinkoutecky/tine/releases">Releases</a>
+      <a href="https://github.com/martinkoutecky/tine#readme">Docs</a>
+      <a href="https://www.gnu.org/licenses/agpl-3.0.html">AGPL-3.0</a>
+    </nav>
+    <p class="foot-note">
+      Tine is an independent reimplementation, not a fork — original Rust + SolidJS, no Logseq
+      source. It targets Logseq's on-disk format and adapts parts of Logseq's outliner CSS, so it is
+      a derivative work and is released under the same license.
+      <a href="https://logseq.com">Logseq</a> is © its authors. Tine is <strong>not affiliated with
+      or endorsed by Logseq.</strong>
+    </p>
+    <p class="foot-copy">© 2026 Martin Koutecký · Built as a faster, file-compatible companion to Logseq.</p>
+  </div>
+</footer>
+
+</body>
+</html>
