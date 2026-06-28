@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.2.3] — 2026-06-28
+
 ### Changed
 
 - **Settings reorganized into clearer categories** (modeled on Logseq's own
