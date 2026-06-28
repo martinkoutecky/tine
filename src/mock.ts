@@ -668,6 +668,9 @@ export function mockBackend(): Backend {
     async setAppString(key: string, value: string): Promise<void> {
       mockAppStrings[key] = value;
     },
+    async applySpellcheck(): Promise<void> {
+      /* no native webview in the mock */
+    },
     async debugInfo(): Promise<DebugInfo> {
       return { enabled: false, path: "" };
     },

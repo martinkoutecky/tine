@@ -3999,6 +3999,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tauri-plugin-window-state",
  "tine-core",
+ "webkit2gtk",
 ]
 
 [[package]]

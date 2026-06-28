@@ -184,6 +184,10 @@ export interface Backend {
    *  the key + default. Used by the asset-filename format template. */
   getAppString(key: string, fallback: string): Promise<string>;
   setAppString(key: string, value: string): Promise<void>;
+  /** Push the spellcheck prefs onto the native webview(s) live (no restart):
+   *  `enabled` toggles WebKitGTK's checker; `languages` (locale codes, empty ⇒ OS
+   *  locale) sets the dictionaries checked simultaneously. */
+  applySpellcheck(enabled: boolean, languages: string[]): Promise<void>;
   /** Startup debug logging (TINE_DEBUG=1 / --debug): whether it's on and where the
    *  log file is, so the UI can forward errors + show the path. */
   debugInfo(): Promise<DebugInfo>;
@@ -536,6 +540,9 @@ class TauriBackend implements Backend {
   }
   setAppString(key: string, value: string) {
     return this.call<void>("set_app_string", { key, value });
+  }
+  applySpellcheck(enabled: boolean, languages: string[]) {
+    return this.call<void>("apply_spellcheck", { enabled, languages });
   }
   setSmoothScroll(value: boolean) {
     return this.call<void>("set_smooth_scroll", { value });

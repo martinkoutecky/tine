@@ -23,6 +23,7 @@ import {
 } from "./store";
 import { installKeybindings, eventToBindingString } from "./keybindings";
 import { backend } from "./backend";
+import { initSpellcheckSettings } from "./spellcheckSettings";
 // theme.css MUST come first: it defines every CSS variable (--bg-primary,
 // --bullet-color, --ls-block-bullet-size, --selection-bg) AND the
 // html[data-theme="dark"] overrides. Without it the capture webview had no
@@ -260,6 +261,8 @@ function Capture() {
     disposeKeys = installKeybindings();
     onCleanup(() => disposeKeys());
     loadPref();
+    // Mirror the main window's spellcheck pref in this separate webview context.
+    void initSpellcheckSettings();
     seed();
 
     const root = document.getElementById("capture-root");

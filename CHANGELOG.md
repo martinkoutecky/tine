@@ -10,6 +10,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Spell checking in the editor** (WebKitGTK's native checker). On by default, like
+  Logseq: red squiggles while editing, with right-click suggestions and “add to
+  dictionary”, using the system `hunspell` dictionaries. **Beyond Logseq:** set
+  **multiple languages** in Settings → Editor → *Spellcheck languages* (e.g.
+  `en_US, cs_CZ`) — every dictionary is checked at once, so a word valid in any listed
+  language isn’t flagged (bilingual editing); empty follows your OS locale. The toggle and
+  languages apply **live, without a restart** (Logseq needs a relaunch). Each language
+  needs its dictionary installed (`hunspell-en-us`, `hunspell-cs`, …); a missing one is
+  silently skipped.
+
 - **Richer static HTML export — sidebar + fuzzy full-text search** (closer to Logseq's
   published graphs). Every exported page now carries a persistent **left sidebar** with
   **Favorites** (from `config.edn :favorites`), **Journals**, and **Pages** sections and

@@ -751,6 +751,61 @@ fn set_app_string(key: String, value: String, app: tauri::AppHandle) -> Result<(
     Ok(())
 }
 
+/// Split a user-entered language string (e.g. "en_US, cs_CZ") into locale codes.
+fn parse_spellcheck_langs(s: &str) -> Vec<String> {
+    s.split([',', ';', ' ', '\t', '\n'])
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// Enable/disable WebKitGTK spell checking on one webview and set its languages.
+/// `langs` empty ⇒ leave WebKitGTK's default (the user's OS locale, like Logseq).
+/// WebKitGTK checks a word against ALL given dictionaries, so listing several
+/// (e.g. `en_US` + `cs_CZ`) accepts words from any of them — bilingual editing.
+/// (Each language needs its hunspell dictionary installed; missing ones are
+/// silently ignored.) The per-block `<textarea spellcheck>` attribute is the
+/// other gate, so even an enabled context shows squiggles only while editing.
+#[cfg(target_os = "linux")]
+fn apply_spellcheck_to(window: &tauri::WebviewWindow, enabled: bool, langs: &[String]) {
+    let langs: Vec<String> = langs.to_vec();
+    let _ = window.with_webview(move |wv| {
+        use webkit2gtk::{WebContextExt, WebViewExt};
+        let webview = wv.inner();
+        if let Some(ctx) = webview.web_context() {
+            ctx.set_spell_checking_enabled(enabled);
+            if enabled && !langs.is_empty() {
+                let refs: Vec<&str> = langs.iter().map(String::as_str).collect();
+                ctx.set_spell_checking_languages(&refs);
+            }
+        }
+    });
+}
+
+#[cfg(not(target_os = "linux"))]
+fn apply_spellcheck_to(_window: &tauri::WebviewWindow, _enabled: bool, _langs: &[String]) {
+    // Windows (WebView2) and macOS (WKWebView) honour the textarea `spellcheck`
+    // attribute with their own native checker; no context call is needed there.
+}
+
+/// Apply the spellcheck prefs to every window (main + capture). Called at startup
+/// and live on every Settings change, so toggling/relanguaging takes effect
+/// without a restart (Logseq needs a relaunch).
+fn apply_spellcheck_all(app: &tauri::AppHandle, enabled: bool, langs: &[String]) {
+    for (_label, window) in app.webview_windows() {
+        apply_spellcheck_to(&window, enabled, langs);
+    }
+}
+
+/// Live re-apply from the frontend (the Settings toggle / languages field). The
+/// frontend persists the values itself via set_app_bool/_string; this just pushes
+/// the current values onto the live webviews.
+#[tauri::command]
+fn apply_spellcheck(enabled: bool, languages: Vec<String>, app: tauri::AppHandle) {
+    apply_spellcheck_all(&app, enabled, &languages);
+}
+
 /// What the backend knows about the rendering path, so the UI can warn — loudly
 /// — when Tine is painting on the CPU. Speed is the whole pitch, and a silent
 /// software-rendering fallback makes scrolling feel sluggish; better to say so.
@@ -1769,6 +1824,19 @@ fn main() {
             // Watch for external changes (reads whichever graph is current).
             start_watcher(app.handle().clone());
             diag("setup() done — watcher started, handing off to webview");
+            // Spell checking (WebKitGTK): apply the persisted prefs to every window.
+            // Default ON (matches Logseq); languages empty ⇒ OS locale; listing
+            // several ⇒ bilingual. The frontend re-applies after its own init too.
+            {
+                let h = app.handle();
+                let enabled = get_app_bool("spellcheck_enabled".to_string(), true, h.clone());
+                let langs = parse_spellcheck_langs(&get_app_string(
+                    "spellcheck_languages".to_string(),
+                    String::new(),
+                    h.clone(),
+                ));
+                apply_spellcheck_all(h, enabled, &langs);
+            }
             // Cold start via `tine --capture` (app wasn't already running): pop
             // the capture window once we're up (the main window loads too).
             if std::env::args().any(|a| a == "--capture") {
@@ -1846,6 +1914,7 @@ fn main() {
             set_app_bool,
             get_app_string,
             set_app_string,
+            apply_spellcheck,
             debug_info,
             debug_log
         ])

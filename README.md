@@ -235,6 +235,11 @@ raw speed. (Where a comparison is made, it's against current Logseq desktop core
 **Customization & output**
 - **Fully remappable keyboard shortcuts** — in the Settings modal or via `config.edn :shortcuts`.
 - Light/dark themes, accent color, custom CSS, wide mode (`t w`) and document mode (`t d`).
+- **Spell checking** in the editor (on by default, like Logseq) with red squiggles +
+  right-click suggestions, using the system dictionaries. Unlike Logseq you can set
+  **multiple languages at once** (Settings → Editor → *Spellcheck languages*, e.g.
+  `en_US, cs_CZ`) so bilingual notes aren't flagged; empty follows your OS locale. Each
+  language needs its `hunspell` dictionary installed.
 - One-click **static HTML export** (`public:: true` pages) — like Logseq's published graphs,
   each page gets a **left sidebar** (Favorites / Journals / Pages) and a **fuzzy full-text
   search** box (block-level; results deep-link straight to the block). Search and the page

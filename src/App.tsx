@@ -60,6 +60,7 @@ import { warnIfSoftwareRendering } from "./gpu";
 import { initSmoothScroll } from "./smoothScroll";
 import { initCopySettings } from "./copySettings";
 import { initAssetSettings } from "./assetSettings";
+import { initSpellcheckSettings } from "./spellcheckSettings";
 import { initLinkDefault } from "./editor/linkDefault";
 import { initDebug, dbg } from "./debug";
 import { WindowControls, ResizeGrips, installWindowChrome, maximized } from "./components/WindowChrome";
@@ -96,6 +97,8 @@ export function App(): JSX.Element {
   onMount(() => void initCopySettings());
   // Load the asset-filename format template (Settings → Backups → Asset names).
   onMount(() => void initAssetSettings());
+  // Load spellcheck prefs (toggle + languages) and apply them to the webview.
+  onMount(() => void initSpellcheckSettings());
 
   // Load the `[[`/`#` autocomplete default-action preference (link-first vs create).
   onMount(() => void initLinkDefault());

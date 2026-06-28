@@ -50,6 +50,12 @@ import {
 } from "../copySettings";
 import { linkFirstMatch, setLinkFirstMatch } from "../editor/linkDefault";
 import {
+  spellcheckEnabled,
+  setSpellcheckEnabled,
+  spellcheckLanguages,
+  setSpellcheckLanguages,
+} from "../spellcheckSettings";
+import {
   assetNameFormat,
   setAssetNameFormat,
   DEFAULT_ASSET_NAME_FORMAT,
@@ -498,6 +504,43 @@ function EditorTab(): JSX.Element {
       >
         <Toggle on={linkFirstMatch()} onClick={() => setLinkFirstMatch(!linkFirstMatch())} />
       </Field>
+
+      <Field
+        label="Spell checker"
+        hint={
+          <>
+            Underline misspelled words while editing, with right-click suggestions and
+            “add to dictionary” (uses the system spell checker). <strong>On by default</strong>,
+            like Logseq. Applies live — no restart needed.
+          </>
+        }
+      >
+        <Toggle on={spellcheckEnabled()} onClick={() => setSpellcheckEnabled(!spellcheckEnabled())} />
+      </Field>
+
+      <Show when={spellcheckEnabled()}>
+        <Field
+          label="Spellcheck languages"
+          hint={
+            <>
+              Comma-separated locale codes checked <em>simultaneously</em>, e.g.{" "}
+              <code>en_US, cs_CZ</code> — a word valid in <em>any</em> listed language isn’t
+              flagged, so bilingual notes don’t squiggle. Leave empty to follow your OS locale
+              (Logseq only ever does that). Each language needs its hunspell dictionary installed
+              (e.g. <code>hunspell-en-us</code>, <code>hunspell-cs</code>); a missing one is
+              silently skipped.
+            </>
+          }
+        >
+          <input
+            type="text"
+            class="settings-input mono"
+            placeholder="OS locale"
+            value={spellcheckLanguages()}
+            onChange={(e) => setSpellcheckLanguages(e.currentTarget.value)}
+          />
+        </Field>
+      </Show>
 
       <OgField
         label="Copy a parent block's sub-blocks"

@@ -14,6 +14,7 @@ import {
   type Trigger,
 } from "../editor/autocomplete";
 import { linkFirstMatch } from "../editor/linkDefault";
+import { spellcheckEnabled } from "../spellcheckSettings";
 import {
   doc,
   pageByName,
@@ -1418,7 +1419,7 @@ export function Editor(props: { id: string }): JSX.Element {
       <textarea
         ref={ref}
         class="block-editor"
-        spellcheck={false}
+        spellcheck={spellcheckEnabled()}
         value={isCalc() ? (calcLive() ?? "") : editorValue()}
         placeholder={cap?.bulletHint?.()}
         onInput={onInput}
