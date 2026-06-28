@@ -4174,3 +4174,76 @@ img.emoji {
   color: #e44;
   border-color: #e44;
 }
+
+/* ── Onboarding Welcome screen ────────────────────────────────────────────
+   First run with no graph configured: a full-cover layer offering "open an
+   existing graph" or "create a new (demo) graph". Below toasts (z 9999) so a
+   "couldn't create" toast still shows on top. */
+.welcome-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--bg-primary);
+  overflow: auto;
+}
+.welcome-card {
+  width: 100%;
+  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+.welcome-mark { color: var(--link-color); margin-bottom: 14px; }
+.welcome-title {
+  font-size: 1.9rem;
+  font-weight: 700;
+  color: var(--text-title);
+  margin: 0 0 10px;
+}
+.welcome-lede {
+  font-size: 1.02rem;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  margin: 0 0 26px;
+  max-width: 460px;
+}
+.welcome-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+}
+.welcome-choice {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  text-align: left;
+  padding: 16px 18px;
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: inherit;
+  cursor: pointer;
+  transition: border-color .12s, background .12s, transform .04s;
+}
+.welcome-choice:hover { border-color: var(--link-color); background: var(--bg-tertiary); }
+.welcome-choice:active { transform: translateY(1px); }
+.welcome-choice:disabled { opacity: .55; cursor: default; }
+.welcome-choice-primary { border-color: var(--link-color); }
+.welcome-choice-ic {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  color: var(--link-color);
+}
+.welcome-choice-text { display: flex; flex-direction: column; gap: 3px; }
+.welcome-choice-title { font-weight: 600; color: var(--text-primary); font-size: 1.02rem; }
+.welcome-choice-sub { color: var(--text-muted); font-size: .88rem; line-height: 1.4; }
+.welcome-busy { color: var(--text-muted); font-size: .9rem; margin: 16px 0 0; }
+.welcome-foot { color: var(--text-muted); font-size: .82rem; margin: 26px 0 0; }

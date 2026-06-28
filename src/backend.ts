@@ -19,6 +19,10 @@ import { mockBackend } from "./mock";
 
 export interface Backend {
   loadGraph(path: string): Promise<GraphMeta>;
+  /** Scaffold a brand-new demo graph (onboarding "create new graph"); returns
+   *  the created graph's root path to then `loadGraph`. Creates the graph in
+   *  `dir` if empty, else in a fresh `tine-demo` subfolder. */
+  createGraph(dir: string): Promise<string>;
   listPages(): Promise<PageEntry[]>;
   journalsDesc(limit: number, offset: number): Promise<PageDto[]>;
   /** Journal date-keys (yyyymmdd) whose page has real content. */
@@ -120,8 +124,9 @@ export interface Backend {
    *  returns true without showing anything in this WebKitGTK build, which would
    *  bypass destructive-action and close-tab prompts. */
   confirm(message: string, title?: string): Promise<boolean>;
-  /** Native folder picker (graph open). Null if cancelled / unsupported. */
-  pickFolder(): Promise<string | null>;
+  /** Native folder picker (graph open). Null if cancelled / unsupported.
+   *  `title` overrides the dialog title (e.g. for "create new graph"). */
+  pickFolder(title?: string): Promise<string | null>;
   /** Native file picker (asset upload). Null if cancelled / unsupported. */
   pickFile(): Promise<string | null>;
   writeText(text: string): Promise<void>;
@@ -231,6 +236,9 @@ class TauriBackend implements Backend {
 
   loadGraph(path: string) {
     return this.call<GraphMeta>("load_graph", { path });
+  }
+  createGraph(dir: string) {
+    return this.call<string>("create_graph", { dir });
   }
   listPages() {
     return this.call<PageEntry[]>("list_pages");
@@ -396,9 +404,9 @@ class TauriBackend implements Backend {
     const { ask } = await import("@tauri-apps/plugin-dialog");
     return ask(message, { title: title ?? "Tine", kind: "warning" });
   }
-  async pickFolder(): Promise<string | null> {
+  async pickFolder(title?: string): Promise<string | null> {
     const { open } = await import("@tauri-apps/plugin-dialog");
-    const res = await open({ directory: true, multiple: false, title: "Open graph folder" });
+    const res = await open({ directory: true, multiple: false, title: title ?? "Open graph folder" });
     return typeof res === "string" ? res : null;
   }
   async pickFile(): Promise<string | null> {

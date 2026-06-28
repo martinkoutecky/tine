@@ -1,0 +1,21 @@
+icon:: 👋
+
+- # Welcome to Tine 👋
+- Tine is a fast, local outliner that reads and writes the **same Markdown files as Logseq** — the very folder you point it at. Edit here or in Logseq; it's one graph, no import, no export. We have a lot of respect for Logseq — Tine just tries to improve a few things.
+- **Everything you see here is a real Markdown file** in this graph's `pages/` folder. Open that folder in your file manager and look — nothing is locked away.
+- ## Try the basics right now
+- Click any bullet to edit it. **Enter** makes a new bullet, **Tab** indents, **Shift+Tab** outdents. Drag a bullet's dot to move it (and everything under it).
+- Tasks — type `TODO` / `DOING` / `DONE` at the start of a bullet, or press **Ctrl+Enter** to cycle one:
+	- TODO Click this checkbox to complete me
+	- DONE This one is already done
+- Rich text: **bold**, *italic*, ==highlight==, `inline code`, and even math like $e^{i\pi} + 1 = 0$.
+- Links: type `[[` to link a page or `#` for a #tag. Here's a link to [[Project/Roadmap]] — click it.
+- ## Block references & embeds
+- Every bullet has a hidden id, so you can point at *one specific bullet* from anywhere. This is a live **reference** to a bullet over on the Roadmap: ((7a1c0f5e-0000-4000-8000-000000000001))
+- And here is that same bullet **embedded** inline — it stays in sync with the original:
+- {{embed ((7a1c0f5e-0000-4000-8000-000000000001))}}
+- ## Keep exploring
+- [[Features/Quick capture]] — drop a thought into your graph from **any** app with a global hotkey. (Set this one up — it's genuinely good.)
+- [[Features/Tips & shortcuts]] — slash commands, the command palette, tabs, the sidebar, and focus mode.
+- [[Features/PDF annotation]] — highlight PDFs and turn them into linked notes.
+- When you're ready, point Tine at your **own** Logseq graph: open Settings (**t s**) and pick a different folder. Your notes stay exactly where they are.

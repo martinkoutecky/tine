@@ -7,6 +7,7 @@ pub mod date;
 pub mod doc;
 pub mod edn;
 pub mod model;
+pub mod onboarding;
 pub mod org;
 pub mod pdf;
 pub mod publish;

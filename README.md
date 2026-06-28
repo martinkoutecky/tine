@@ -83,6 +83,12 @@ raw speed. (Where a comparison is made, it's against current Logseq desktop core
 - **🛟 A real data-safety story** (see below) — conflict detection instead of silent overwrites,
   launch snapshots with one-click restore, and delete-to-trash. Built to live safely on a graph
   you also edit from Logseq mobile over Syncthing.
+- **👋 First-run onboarding.** Launch Tine with no graph configured and you get a Welcome screen:
+  open an existing Logseq graph, or **create a new one** that comes pre-loaded with a short, narrated
+  demo graph — a *Welcome to Tine* tour plus `Features/…` and `Project/…` pages that exercise block
+  references, embeds, namespaces and tasks, and walk through the less-obvious features (quick-capture,
+  slash commands, the command palette, the sidebar, PDF annotation, tabs). It's ordinary Logseq
+  Markdown, so it opens in Logseq too.
 
 <p align="center">
   <img src="docs/img/quick-capture.png" alt="Global quick-capture mini-window" width="32%">

@@ -10,6 +10,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **First-run onboarding + "create a new graph".** Starting Tine with no graph
+  configured now shows a **Welcome** screen instead of a blank window: *open an
+  existing Logseq graph*, or *create a new graph* scaffolded with a small narrated
+  demo — a "Welcome to Tine" tour plus `Features/…` and `Project/…` pages that
+  exercise block references, embeds, namespaces and tasks, and walk a newcomer
+  through quick-capture (with how to bind the hotkey), slash commands, the command
+  palette, the sidebar, PDF annotation and tabs. The new graph is ordinary Logseq
+  Markdown (triple-lowbar namespace filenames) — it opens in Logseq too.
 - **Block-reference parity round 2.** Right-click an inline `((block ref))` for a
   context menu (open in sidebar / go to block / copy ref / copy embed). The
   per-block references panel now shows each referrer's **ancestor breadcrumb** (like

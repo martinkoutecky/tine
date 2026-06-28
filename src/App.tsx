@@ -21,6 +21,7 @@ import { installKeybindings } from "./keybindings";
 import { installFileDrop } from "./filedrop";
 import { installBlockSelectionDrag } from "./blockDrag";
 import { loadGraphPath, persistedGraphPath, refreshAliases } from "./graph";
+import { Welcome } from "./components/Welcome";
 import { goBack, goForward, canGoBack, canGoForward, flushSession } from "./router";
 import {
   theme,
@@ -38,6 +39,8 @@ import {
   setSidebarWidth,
   persistSidebarWidth,
   graphMeta,
+  firstLoadDone,
+  setFirstLoadDone,
   openSettings,
   shortcutOverrides,
   wideMode,
@@ -67,8 +70,17 @@ export function App(): JSX.Element {
   onMount(async () => {
     const graphPath = persistedGraphPath() || ((window as any).__GRAPH_PATH__ ?? "");
     dbg(`loading graph: ${graphPath || "(default/configured)"}`);
-    await loadGraphPath(graphPath);
-    dbg("graph load call returned");
+    try {
+      await loadGraphPath(graphPath);
+      dbg("graph load call returned");
+    } catch (e) {
+      // No graph configured (fresh install), or it failed to open. Fall through to
+      // the onboarding Welcome screen instead of leaving a blank app; don't toast
+      // on first run (the empty/`""` path legitimately has no graph yet).
+      dbg(`graph load failed: ${String(e)}`);
+    } finally {
+      setFirstLoadDone(true);
+    }
   });
 
   // Warn (loudly) if the webview is painting on the CPU — Tine's whole pitch is
@@ -453,6 +465,11 @@ export function App(): JSX.Element {
       <PageProps />
       <ExportModal />
       <Settings />
+      {/* First-run onboarding: covers the (empty) app when no graph is configured.
+          Rendered before Toasts so a "couldn't create graph" toast still shows on top. */}
+      <Show when={(globalThis as any).__FORCE_WELCOME__ === true || (firstLoadDone() && !graphMeta())}>
+        <Welcome />
+      </Show>
       <Toasts />
       <Lightbox />
       {/* Resize grips for the frameless window — hidden while maximized (no edge

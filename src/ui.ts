@@ -355,6 +355,12 @@ export async function exitFocusMode() {
 // Loaded graph metadata (root path, dirs, shortcut overrides), for Settings.
 export const [graphMeta, setGraphMeta] = createSignal<GraphMeta | null>(null);
 
+// True once the startup graph-load attempt has finished (success OR failure). The
+// onboarding Welcome screen shows only when this is set AND no graph loaded — so a
+// fresh install with no configured graph gets the wizard, but a normal startup
+// never flashes it while the graph is still loading.
+export const [firstLoadDone, setFirstLoadDone] = createSignal(false);
+
 /** Set (or clear, with null) the template applied to new journal days, persisting
  *  it to config.edn `:default-templates {:journals "Name"}` and updating the live
  *  meta so the UI reflects it immediately. */

@@ -4,7 +4,7 @@
 use tine_core::model::{Graph, GraphMeta, PageDto, PageEntry, PageKind, RefGroup};
 use std::collections::HashMap;
 use std::io::Write as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::{Duration, SystemTime};
@@ -351,6 +351,44 @@ fn load_graph(
     backup_async(app.clone());
     warm_cache_async(app);
     Ok(meta)
+}
+
+fn dir_is_empty(p: &Path) -> bool {
+    std::fs::read_dir(p)
+        .map(|mut it| it.next().is_none())
+        .unwrap_or(false)
+}
+
+/// Create a brand-new demo graph (the onboarding "Create a new graph" path) and
+/// return its root path for the frontend to open. Scaffolds in `dir` if that
+/// folder is empty; otherwise creates a fresh `tine-demo` subfolder so we never
+/// write into a user's existing files. Does NOT load the graph — the frontend
+/// calls `load_graph` with the returned path (matching the "open existing" flow).
+#[tauri::command]
+fn create_graph(dir: String) -> Result<String, String> {
+    let dir = dir.trim();
+    if dir.is_empty() {
+        return Err("no folder was chosen".into());
+    }
+    let base = Path::new(dir);
+    if !base.is_dir() {
+        return Err(format!("{dir} is not a folder"));
+    }
+    let root = if dir_is_empty(base) {
+        base.to_path_buf()
+    } else {
+        let mut cand = base.join("tine-demo");
+        let mut n = 2;
+        while cand.exists() {
+            cand = base.join(format!("tine-demo-{n}"));
+            n += 1;
+        }
+        std::fs::create_dir(&cand).map_err(|e| format!("couldn't create folder: {e}"))?;
+        cand
+    };
+    tine_core::onboarding::create_demo_graph(&root)
+        .map_err(|e| format!("couldn't create the demo graph: {e}"))?;
+    Ok(root.display().to_string())
 }
 
 // Snapshot the graph's markdown into the OS app-data dir on open, keeping the
@@ -1683,6 +1721,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             load_graph,
+            create_graph,
             list_pages,
             journals_desc,
             get_page,

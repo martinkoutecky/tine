@@ -1,0 +1,19 @@
+icon:: ⌨️
+
+- # Tips & shortcuts
+- A quick tour of the things that aren't obvious on day one. (Shortcuts are remappable in Settings.)
+- ## Find anything — Ctrl+K
+- **Ctrl+K** opens the quick switcher: jump to a page, search the text of any block, or run a command — all from one box. **Ctrl+Shift+P** opens the command palette (commands only).
+- ## Slash commands — /
+- Type **/** at the start of a bullet for a menu: tasks, headings, a code block, a `/calc` live calculator, dates (Scheduled / Deadline), callouts, queries, a math block, asset upload, and more.
+- ## Tabs
+- **Middle-click** any bullet, page, or search result to open it in a background tab. **Double-click** a tab to pin it, **drag** to reorder, **Ctrl+W** to close. Your tabs come back next launch.
+- ## The sidebars
+- **t l** toggles the left sidebar — journals, favorites, recents, all pages, and a namespace tree. **t r** toggles the right sidebar; **Shift-click** any bullet's dot to open it there and keep it beside your work.
+- ## Focus mode — t f
+- **t f** hides the chrome and dims everything but the bullet you're editing — a calm, typewriter-style way to write a long note. Press **Esc** to step back out.
+- ## A few more worth knowing
+- **Carry unfinished tasks** forward into today (from the command palette) — the last 7 / 30 / 365 days, optionally with their context.
+- **Namespaces**: name a page `Project/Roadmap` and it nests under `Project` in the sidebar. This page lives under `Features`.
+- **Page icons**: add a property like `icon:: 📚` at the very top of a page — that's where the ⌨️ on this one comes from.
+- **Interface zoom** with **Ctrl + / - / 0**, and PDFs, images, and audio all have their own controls.

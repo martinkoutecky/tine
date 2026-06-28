@@ -848,7 +848,7 @@ impl Graph {
 
     /// Resolve a page name to a file path. Journals match by date title;
     /// pages match by filename stem.
-    fn path_for(&self, name: &str, kind: PageKind) -> PathBuf {
+    pub(crate) fn path_for(&self, name: &str, kind: PageKind) -> PathBuf {
         let pref = self.preferred_format();
         match kind {
             PageKind::Journal => self

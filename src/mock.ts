@@ -330,6 +330,9 @@ export function mockBackend(): Backend {
     async savePage(_page: PageDto, _baseRev: string | null, _force?: boolean): Promise<string> {
       return "mock-rev"; // no-op in mock
     },
+    async createGraph(_dir: string): Promise<string> {
+      return "/mock/new-graph"; // no real scaffolding in the browser mock
+    },
     async getBacklinks(name: string): Promise<RefGroup[]> {
       const n = name.toLowerCase();
       return collect((b) => pageRefs(b.raw).some((r) => r.toLowerCase() === n), name);
@@ -579,7 +582,7 @@ export function mockBackend(): Backend {
       const c = (globalThis as { confirm?: (m?: string) => boolean }).confirm;
       return typeof c === "function" ? c(message) : true;
     },
-    async pickFolder(): Promise<string | null> {
+    async pickFolder(_title?: string): Promise<string | null> {
       return null; // no native dialog in the browser mock
     },
     async pickFile(): Promise<string | null> {

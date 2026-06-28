@@ -5,7 +5,7 @@ import { backend } from "./backend";
 import { setGraphMeta, setWorkflow, bumpGraphEpoch, setRightSidebar, graphMeta, graphEpoch, setAliasMap, seedFavorites, pruneSidebarBlocks, pushToast, refreshJournalConflicts, clearRecent } from "./ui";
 import { resetStore, flushAll } from "./store";
 import { clearAssetBlobCache } from "./assetCache";
-import { resetTabsToJournals } from "./router";
+import { resetTabsToJournals, openPage } from "./router";
 import { journalTitle, setJournalTitleFormat } from "./journal";
 import { applyTemplateVars } from "./editor/templateVars";
 import type { BlockDto } from "./types";
@@ -156,4 +156,52 @@ async function injectCustomCss(): Promise<void> {
 export async function switchGraph(): Promise<void> {
   const path = await backend().pickFolder();
   if (path) await loadGraphPath(path);
+}
+
+/** Onboarding "create a new graph": pick where to put it, scaffold a small
+ *  narrated demo graph there, open it, and land on the "Welcome to Tine" tour.
+ *  No-op if the folder picker is cancelled. */
+export async function createNewGraph(): Promise<void> {
+  const dir = await backend().pickFolder("Choose where to create your new graph");
+  if (!dir) return;
+  let root: string;
+  try {
+    root = await backend().createGraph(dir);
+  } catch (e) {
+    pushToast(`Couldn't create the graph. (${String(e)})`, "error");
+    return;
+  }
+  await loadGraphPath(root);
+  await seedTodayJournal();
+  openPage("Welcome to Tine", "page"); // land on the tour, not the empty journal feed
+}
+
+/** Give a freshly-created demo graph a friendly today's-journal entry so the
+ *  Journals view isn't empty on first open. Best-effort; never blocks. */
+async function seedTodayJournal(): Promise<void> {
+  try {
+    const title = journalTitle(new Date());
+    const existing = await backend().getPage(title, "journal");
+    if (existing && existing.blocks.some((b) => b.raw.trim() !== "")) return;
+    await backend().savePage(
+      {
+        name: title,
+        kind: "journal",
+        title,
+        pre_block: null,
+        blocks: [
+          {
+            id: "",
+            raw: "👋 This is **today's journal** — your daily notes land here. Try your quick-capture hotkey, or open [[Welcome to Tine]] for the tour.",
+            collapsed: false,
+            children: [],
+          },
+        ],
+      },
+      null,
+      false
+    );
+  } catch {
+    // best-effort — never block opening the new graph on the seed
+  }
 }
