@@ -806,6 +806,88 @@ fn apply_spellcheck(enabled: bool, languages: Vec<String>, app: tauri::AppHandle
     apply_spellcheck_all(&app, enabled, &languages);
 }
 
+/// Looks like a locale/dictionary code: "en", "en_US", "cs_CZ", "sr_Latn".
+fn is_locale_code(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 12
+        && s.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+/// Discover the spell-check dictionaries installed on this machine, so the UI can
+/// offer them instead of making the user remember locale codes. Authoritative
+/// source is enchant's own listing (it knows every backend + search path WebKitGTK
+/// will actually use); if that CLI isn't present we scan the standard hunspell /
+/// myspell directories for `*.dic`. Returns sorted, de-duplicated codes.
+#[cfg(target_os = "linux")]
+fn discover_dictionaries() -> Vec<String> {
+    use std::collections::BTreeSet;
+    let mut found: BTreeSet<String> = BTreeSet::new();
+
+    // 1) `enchant-lsmod-2 -list-dicts` → lines like "en_US (hunspell)".
+    for tool in ["enchant-lsmod-2", "enchant-lsmod"] {
+        if let Ok(out) = std::process::Command::new(tool).arg("-list-dicts").output() {
+            if out.status.success() {
+                for line in String::from_utf8_lossy(&out.stdout).lines() {
+                    if let Some(code) = line.split_whitespace().next() {
+                        if is_locale_code(code) {
+                            found.insert(code.to_string());
+                        }
+                    }
+                }
+                if !found.is_empty() {
+                    return found.into_iter().collect();
+                }
+            }
+        }
+    }
+
+    // 2) Fallback: scan the standard hunspell / myspell dictionary dirs for *.dic.
+    let mut dirs = vec![
+        "/usr/share/hunspell".to_string(),
+        "/usr/share/myspell/dicts".to_string(),
+        "/usr/share/myspell".to_string(),
+    ];
+    if let Some(home) = std::env::var_os("HOME") {
+        dirs.push(format!("{}/.local/share/hunspell", home.to_string_lossy()));
+    }
+    if let Some(dicpath) = std::env::var_os("DICPATH") {
+        for p in std::env::split_paths(&dicpath) {
+            dirs.push(p.to_string_lossy().into_owned());
+        }
+    }
+    for d in dirs {
+        if let Ok(rd) = std::fs::read_dir(&d) {
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.extension().and_then(|x| x.to_str()) == Some("dic") {
+                    if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
+                        if is_locale_code(stem) {
+                            found.insert(stem.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    found.into_iter().collect()
+}
+
+/// Installed spell-check dictionary codes (e.g. ["cs_CZ", "en_GB", "en_US"]). Empty
+/// on non-Linux (those webviews use the OS checker, which the frontend handles by
+/// falling back to a free-text language field).
+#[tauri::command]
+fn list_spellcheck_dictionaries() -> Vec<String> {
+    #[cfg(target_os = "linux")]
+    {
+        discover_dictionaries()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Vec::new()
+    }
+}
+
 /// What the backend knows about the rendering path, so the UI can warn — loudly
 /// — when Tine is painting on the CPU. Speed is the whole pitch, and a silent
 /// software-rendering fallback makes scrolling feel sluggish; better to say so.
@@ -1915,6 +1997,7 @@ fn main() {
             get_app_string,
             set_app_string,
             apply_spellcheck,
+            list_spellcheck_dictionaries,
             debug_info,
             debug_log
         ])

@@ -188,6 +188,9 @@ export interface Backend {
    *  `enabled` toggles WebKitGTK's checker; `languages` (locale codes, empty ⇒ OS
    *  locale) sets the dictionaries checked simultaneously. */
   applySpellcheck(enabled: boolean, languages: string[]): Promise<void>;
+  /** Locale codes of the spell-check dictionaries installed on this machine, so
+   *  the UI can offer them instead of asking the user to type codes. */
+  listSpellcheckDictionaries(): Promise<string[]>;
   /** Startup debug logging (TINE_DEBUG=1 / --debug): whether it's on and where the
    *  log file is, so the UI can forward errors + show the path. */
   debugInfo(): Promise<DebugInfo>;
@@ -543,6 +546,9 @@ class TauriBackend implements Backend {
   }
   applySpellcheck(enabled: boolean, languages: string[]) {
     return this.call<void>("apply_spellcheck", { enabled, languages });
+  }
+  listSpellcheckDictionaries() {
+    return this.call<string[]>("list_spellcheck_dictionaries", {});
   }
   setSmoothScroll(value: boolean) {
     return this.call<void>("set_smooth_scroll", { value });

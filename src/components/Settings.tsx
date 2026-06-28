@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createResource, createSignal, onCleanup, type JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import {
   settingsOpen,
   closeSettings,
@@ -53,7 +53,11 @@ import {
   spellcheckEnabled,
   setSpellcheckEnabled,
   spellcheckLanguages,
-  setSpellcheckLanguages,
+  spellcheckDictionaries,
+  toggleSpellcheckLanguage,
+  languageDisplayName,
+  loadDictionaries,
+  parseLanguages,
 } from "../spellcheckSettings";
 import {
   assetNameFormat,
@@ -470,6 +474,24 @@ function DateFormatSelect(): JSX.Element {
 }
 
 function EditorTab(): JSX.Element {
+  // Re-scan installed dictionaries each time Settings opens (the user may have
+  // just installed one). The rows are the union of installed ∪ already-selected,
+  // so a selected-but-uninstalled language still shows (flagged) instead of
+  // silently vanishing.
+  onMount(() => void loadDictionaries());
+  const dictRows = createMemo(() => {
+    const installed = new Set(spellcheckDictionaries());
+    const selected = new Set(parseLanguages(spellcheckLanguages()));
+    const codes = [...new Set([...installed, ...selected])].sort((a, b) =>
+      languageDisplayName(a).localeCompare(languageDisplayName(b)),
+    );
+    return codes.map((code) => ({
+      code,
+      name: languageDisplayName(code),
+      selected: selected.has(code),
+      installed: installed.has(code),
+    }));
+  });
   return (
     <>
       <Field
@@ -523,22 +545,40 @@ function EditorTab(): JSX.Element {
           label="Spellcheck languages"
           hint={
             <>
-              Comma-separated locale codes checked <em>simultaneously</em>, e.g.{" "}
-              <code>en_US, cs_CZ</code> — a word valid in <em>any</em> listed language isn’t
-              flagged, so bilingual notes don’t squiggle. Leave empty to follow your OS locale
-              (Logseq only ever does that). Each language needs its hunspell dictionary installed
-              (e.g. <code>hunspell-en-us</code>, <code>hunspell-cs</code>); a missing one is
-              silently skipped.
+              Tick the dictionaries to check — several at once is fine (e.g. English + Czech),
+              and a word valid in <em>any</em> ticked language isn’t flagged, so bilingual notes
+              don’t squiggle. <strong>None ticked → follows your OS locale</strong> (all Logseq
+              can do). Dictionaries are discovered from the system; install more with your
+              package manager (e.g. <code>hunspell-cs</code>), then Rescan.
             </>
           }
         >
-          <input
-            type="text"
-            class="settings-input mono"
-            placeholder="OS locale"
-            value={spellcheckLanguages()}
-            onChange={(e) => setSpellcheckLanguages(e.currentTarget.value)}
-          />
+          <div class="spellcheck-dicts">
+            <For each={dictRows()}>
+              {(row) => (
+                <label class="spellcheck-dict">
+                  <input
+                    type="checkbox"
+                    checked={row.selected}
+                    onChange={(e) => toggleSpellcheckLanguage(row.code, e.currentTarget.checked)}
+                  />
+                  <span class="spellcheck-dict-name">{row.name}</span>
+                  <code>{row.code}</code>
+                  <Show when={!row.installed}>
+                    <span class="spellcheck-dict-missing">not installed</span>
+                  </Show>
+                </label>
+              )}
+            </For>
+            <Show when={dictRows().length === 0}>
+              <div class="spellcheck-empty">
+                No dictionaries found. Install one (e.g. <code>hunspell-en-us</code>), then Rescan.
+              </div>
+            </Show>
+            <button class="spellcheck-rescan" type="button" onClick={() => void loadDictionaries()}>
+              ↻ Rescan
+            </button>
+          </div>
         </Field>
       </Show>
 

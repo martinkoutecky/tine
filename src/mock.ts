@@ -671,6 +671,10 @@ export function mockBackend(): Backend {
     async applySpellcheck(): Promise<void> {
       /* no native webview in the mock */
     },
+    async listSpellcheckDictionaries(): Promise<string[]> {
+      // A representative set so the picker renders in the browser mock / harness.
+      return ["cs_CZ", "de_DE", "en_GB", "en_US", "fr_FR", "sk_SK"];
+    },
     async debugInfo(): Promise<DebugInfo> {
       return { enabled: false, path: "" };
     },

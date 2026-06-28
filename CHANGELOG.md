@@ -12,13 +12,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 - **Spell checking in the editor** (WebKitGTK's native checker). On by default, like
   Logseq: red squiggles while editing, with right-click suggestions and “add to
-  dictionary”, using the system `hunspell` dictionaries. **Beyond Logseq:** set
-  **multiple languages** in Settings → Editor → *Spellcheck languages* (e.g.
-  `en_US, cs_CZ`) — every dictionary is checked at once, so a word valid in any listed
-  language isn’t flagged (bilingual editing); empty follows your OS locale. The toggle and
-  languages apply **live, without a restart** (Logseq needs a relaunch). Each language
-  needs its dictionary installed (`hunspell-en-us`, `hunspell-cs`, …); a missing one is
-  silently skipped.
+  dictionary”, using the system `hunspell` dictionaries. **Beyond Logseq:** check
+  **multiple languages at once** — Settings → Editor *discovers the dictionaries installed
+  on your machine* and offers them as a tick-list (with human-readable names; no locale
+  codes to memorize), and every ticked dictionary is checked simultaneously, so a word
+  valid in any of them isn’t flagged (bilingual editing). None ticked follows your OS
+  locale. The toggle and selection apply **live, without a restart** (Logseq needs a
+  relaunch). Install more dictionaries with your package manager (`hunspell-cs`, …) and hit
+  Rescan.
 
 - **Richer static HTML export — sidebar + fuzzy full-text search** (closer to Logseq's
   published graphs). Every exported page now carries a persistent **left sidebar** with
