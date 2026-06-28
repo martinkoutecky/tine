@@ -40,6 +40,12 @@ import {
 } from "../ui";
 import { interfaceZoom, zoomIn, zoomOut, zoomReset } from "../zoom";
 import { smoothScrollEnabled, setSmoothScroll } from "../smoothScroll";
+import {
+  copyIncludeSubtree,
+  setCopyIncludeSubtree,
+  copyStripCollapsed,
+  setCopyStripCollapsed,
+} from "../copySettings";
 import { linkFirstMatch, setLinkFirstMatch } from "../editor/linkDefault";
 import { openPage, openFile } from "../router";
 import { commandDefaults, eventToBindingString, setKeybindingsSuspended } from "../keybindings";
@@ -246,6 +252,46 @@ function Toggle(props: { on: boolean; onClick: () => void }): JSX.Element {
     >
       <span class="settings-toggle-knob" />
     </button>
+  );
+}
+
+// A settings row for an option where Tine's behavior can DIFFER from Logseq. Shows
+// a "Differs from Logseq" chip + a one-line note on what Logseq does whenever the
+// current value isn't the OG one, plus a "Match Logseq" button to flip back. Use
+// this (instead of a plain Field) so non-OG defaults are always visible and one
+// click from reverting. `ogValue` is the toggle state that matches Logseq.
+function OgField(props: {
+  label: string;
+  hint?: JSX.Element;
+  ogNote: string;
+  ogValue: boolean;
+  on: boolean;
+  onToggle: () => void;
+}): JSX.Element {
+  const diverges = () => props.on !== props.ogValue;
+  return (
+    <div class="settings-field og-field" classList={{ "og-diverges": diverges() }}>
+      <div class="settings-field-row">
+        <span class="settings-label">
+          {props.label}
+          <Show when={diverges()}>
+            <span class="og-badge" title="Tine's default differs from Logseq here">Differs from Logseq</span>
+          </Show>
+        </span>
+        <div class="settings-field-control">
+          <Toggle on={props.on} onClick={props.onToggle} />
+        </div>
+      </div>
+      <Show when={props.hint}>
+        <div class="settings-hint settings-field-hint">{props.hint}</div>
+      </Show>
+      <div class="og-note">
+        <span class="og-logseq">Logseq: {props.ogNote}</span>
+        <Show when={diverges()}>
+          <button class="og-revert" onClick={props.onToggle}>↩ Match Logseq</button>
+        </Show>
+      </div>
+    </div>
   );
 }
 
@@ -550,6 +596,24 @@ function TasksTab(): JSX.Element {
       >
         <Toggle on={linkFirstMatch()} onClick={() => setLinkFirstMatch(!linkFirstMatch())} />
       </Field>
+
+      <OgField
+        label="Copy a parent block's sub-blocks"
+        hint="When you copy/cut a selected block that has children: ON copies the whole sub-tree; OFF copies only the block(s) you actually selected. Tine defaults to OFF because selecting just the parent and getting its entire tree is surprising."
+        ogNote="always copies a selected block's whole sub-tree."
+        ogValue={true}
+        on={copyIncludeSubtree()}
+        onToggle={() => setCopyIncludeSubtree(!copyIncludeSubtree())}
+      />
+
+      <OgField
+        label="Strip collapsed:: when copying"
+        hint="A collapsed block carries a hidden collapsed:: true property (view state, not content). Tine defaults to ON (drops it from copied text for a cleaner paste); OFF keeps it. (id:: is always stripped from copies, like Logseq.)"
+        ogNote="keeps collapsed:: in the copied text (only id:: is stripped)."
+        ogValue={false}
+        on={copyStripCollapsed()}
+        onToggle={() => setCopyStripCollapsed(!copyStripCollapsed())}
+      />
 
       <Field
         label="Agenda window"

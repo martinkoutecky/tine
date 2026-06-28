@@ -26,6 +26,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - **Linked/Unlinked references in the right sidebar.** Opening a page in the sidebar
   now shows its Linked & Unlinked References sections too, like OG (not just the page
   body).
+- **Configurable copy behavior** (Settings → Journals & tasks), with a new
+  "Differs from Logseq" row style — an amber badge + a one-line "Logseq behavior"
+  note + a "↩ Match Logseq" button — for options whose Tine default intentionally
+  diverges from Logseq:
+  - *Copy a parent block's sub-blocks* — **default OFF** (Tine copies only the
+    blocks you actually selected; selecting just a parent no longer drags its whole
+    tree into the clipboard). Turn ON for Logseq's "always copy the sub-tree".
+  - *Strip `collapsed::` when copying* — **default ON** (Tine drops this view-state
+    property from copied text; `id::` is always stripped too). Turn OFF to match
+    Logseq, which keeps `collapsed::`.
 
 ### Changed
 
@@ -38,14 +48,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 ### Fixed
 
 - **Copy/cut no longer leaks `id::` into pasted text.** A referenced block carries an
-  `id::` property; OG strips it when copying to the clipboard and now Tine does too
-  (the block content and `collapsed::` are kept, matching OG). Quick-capture still
-  keeps `id::` (it writes to a file, not the clipboard).
-- **Navigation no longer writes `id::` to your files.** Opening a block in the
-  sidebar, zooming into it, or opening it in a new tab used to stamp a stable `id::`
-  onto the block (to survive a restart) — which silently mutated the graph and was the
-  source of the copy-leak above. Like OG, `id::` is now written **only** when you
-  actually create a reference (`((` autocomplete, Copy block ref/embed).
+  `id::` property; OG strips it when copying to the clipboard and now Tine does too.
+  (The `id::` stays in the file — opening a block in the sidebar/new tab/zoom still
+  stamps one so those spots survive a restart — it's just removed from the clipboard
+  copy, exactly like Logseq.) Quick-capture keeps `id::` (it writes to a file).
 - **Left sidebar "All pages" works on large graphs.** The page-count and the
   expandable list keyed off a one-shot fetch that raced a slow-loading graph and never
   retried; it now refetches when the graph finishes loading.

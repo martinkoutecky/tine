@@ -15,7 +15,7 @@ import {
   applySidebarSession,
   type SidebarItem,
 } from "./ui";
-import { doc, blockRef } from "./store";
+import { doc, persistentBlockRef } from "./store";
 import { backend } from "./backend";
 
 export type Route =
@@ -157,10 +157,8 @@ export function openFile(
  *  Zooming navigates to the block's OWN page (not whichever route you're on), so
  *  it works from the journals feed, a linked-reference, or the command palette —
  *  not only when you're already on that page. Same destination as a middle-click,
- *  just in the current tab. Navigation only — like OG, zooming does NOT write
- *  `id::` to the file (that pollutes the graph and leaks into copies); a zoom of a
- *  never-referenced block resolves via its in-memory uuid and so doesn't survive a
- *  reload, matching OG (blocks without `id::` get a fresh uuid each parse). */
+ *  just in the current tab. persistentBlockRef pins the uuid (writes id:: once)
+ *  so a zoomed tab survives a reload/restart, exactly like the new-tab path. */
 export function focusBlock(id: string | null) {
   if (id === null) {
     // Zoom out: stay on the current page, drop the block. (No-op off a page.)
@@ -169,7 +167,7 @@ export function focusBlock(id: string | null) {
     return;
   }
   if (!doc.byId[id]) return; // block no longer loaded — nothing to zoom into
-  const ref = blockRef(id);
+  const ref = persistentBlockRef(id);
   navigate({ kind: "page", name: ref.page, pageKind: ref.pageKind, block: ref.uuid });
 }
 

@@ -169,6 +169,10 @@ export interface Backend {
   /** Experimental smooth-scrolling preference (Lenis), app-level, default off. */
   getSmoothScroll(): Promise<boolean>;
   setSmoothScroll(value: boolean): Promise<void>;
+  /** Generic device-local boolean preference (tine-settings.json); caller supplies
+   *  the key + default. Used by the copy-behavior options. */
+  getAppBool(key: string, fallback: boolean): Promise<boolean>;
+  setAppBool(key: string, value: boolean): Promise<void>;
   /** Startup debug logging (TINE_DEBUG=1 / --debug): whether it's on and where the
    *  log file is, so the UI can forward errors + show the path. */
   debugInfo(): Promise<DebugInfo>;
@@ -481,6 +485,12 @@ class TauriBackend implements Backend {
   }
   getSmoothScroll() {
     return this.call<boolean>("get_smooth_scroll");
+  }
+  getAppBool(key: string, fallback: boolean) {
+    return this.call<boolean>("get_app_bool", { key, default: fallback });
+  }
+  setAppBool(key: string, value: boolean) {
+    return this.call<void>("set_app_bool", { key, value });
   }
   setSmoothScroll(value: boolean) {
     return this.call<void>("set_smooth_scroll", { value });

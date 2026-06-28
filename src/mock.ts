@@ -224,6 +224,7 @@ const mockHighlights: Record<string, { label: string; highlights: Highlight[] }>
 let mockSession: string | null = null;
 let mockLinkFirstMatch = false;
 const mockAssets: Record<string, Uint8Array> = {};
+const mockAppBools: Record<string, boolean> = {};
 
 // A tiny valid silent WAV (0.2s, 8kHz/8-bit mono) so the mock audio asset actually
 // renders the <audio> player — WAV is natively decodable in headless Chromium,
@@ -630,6 +631,13 @@ export function mockBackend(): Backend {
     },
     async setSmoothScroll(_value: boolean): Promise<void> {
       // no-op in the browser mock
+    },
+    async getAppBool(key: string, fallback: boolean): Promise<boolean> {
+      const v = mockAppBools[key];
+      return v === undefined ? fallback : v;
+    },
+    async setAppBool(key: string, value: boolean): Promise<void> {
+      mockAppBools[key] = value;
     },
     async debugInfo(): Promise<DebugInfo> {
       return { enabled: false, path: "" };

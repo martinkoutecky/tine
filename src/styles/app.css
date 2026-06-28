@@ -908,6 +908,48 @@ body {
   padding: 9px 0;
   border-bottom: 1px solid var(--border-color);
 }
+/* Option where Tine's behavior can diverge from Logseq. A left accent bar + the
+   note line make it scannable; the accent turns amber while it actually differs. */
+.og-field {
+  border-left: 3px solid var(--border-color);
+  padding-left: 10px;
+  margin-left: -13px;
+}
+.og-field.og-diverges {
+  border-left-color: #d9930a;
+}
+.og-badge {
+  margin-left: 8px;
+  padding: 0 7px;
+  font-size: 0.72em;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border-radius: 999px;
+  color: #8a5a00;
+  background: rgba(217, 147, 10, 0.16);
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.og-note {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.og-revert {
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  padding: 1px 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.og-revert:hover {
+  background: var(--bg-tertiary);
+}
 .settings-field-row {
   display: flex;
   align-items: center;

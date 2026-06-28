@@ -132,9 +132,11 @@ raw speed. (Where a comparison is made, it's against current Logseq desktop core
 - Per-block **reference count**: a referenced block shows a small count badge — click it to reveal
   the blocks that reference it (grouped by page), or shift-click to open the block in the sidebar.
   Inline block refs render as **link-styled text** (full-strength colour + accent underline, like OG —
-  not a grey chip). Opening a block in the sidebar / zooming **doesn't** write `id::` to the file
-  (only creating a real reference does, like OG), and copying a block **strips `id::`** so it never
-  leaks into pasted text.
+  not a grey chip). Copying a block **strips `id::`** from the clipboard text (like OG) so it never
+  leaks into a paste — even though the `id::` stays in the file so sidebar/tab/zoom spots persist a
+  restart. Copy behavior is configurable (Settings → Journals & tasks), with two Tine defaults that
+  differ from Logseq (one click to revert): *copy only the selected blocks* (vs Logseq's whole
+  sub-tree) and *strip `collapsed::`* from copied text.
 - **Macros**: `{{query}}`, `{{embed}}`, `{{video}}`/`{{youtube}}`/`{{vimeo}}`/`{{bilibili}}`,
   `{{tweet}}`/`{{twitter}}`, `{{img url [w h] [left|right|center]}}`, `{{namespace}}`, and
   **user-defined `:macros`** from `config.edn` (`$1..$N` substitution, rendered as markdown).

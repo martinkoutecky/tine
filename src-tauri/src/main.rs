@@ -659,6 +659,33 @@ fn set_smooth_scroll(value: bool, app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Generic device-local boolean preference (tine-settings.json). For simple
+/// behavior toggles that don't each warrant bespoke read/get/set code — the caller
+/// supplies the key and the default. (Used by the copy-behavior options.)
+#[tauri::command]
+fn get_app_bool(key: String, default: bool, app: tauri::AppHandle) -> bool {
+    settings_path(&app)
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v.get(&key).and_then(|x| x.as_bool()))
+        .unwrap_or(default)
+}
+
+#[tauri::command]
+fn set_app_bool(key: String, value: bool, app: tauri::AppHandle) -> Result<(), String> {
+    let p = settings_path(&app).ok_or("no app-data dir")?;
+    if let Some(parent) = p.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let mut json = std::fs::read_to_string(&p)
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    json[&key] = serde_json::Value::Bool(value);
+    std::fs::write(&p, serde_json::to_string_pretty(&json).unwrap()).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// What the backend knows about the rendering path, so the UI can warn — loudly
 /// — when Tine is painting on the CPU. Speed is the whole pitch, and a silent
 /// software-rendering fallback makes scrolling feel sluggish; better to say so.
@@ -1719,6 +1746,8 @@ fn main() {
             gpu_env,
             get_smooth_scroll,
             set_smooth_scroll,
+            get_app_bool,
+            set_app_bool,
             debug_info,
             debug_log
         ])

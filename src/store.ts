@@ -16,6 +16,7 @@ import { isConflicted, clearConflict, rightSidebar, conflicts, pushToast } from 
 import { blockView } from "./render/block";
 import { journalTitle } from "./journal";
 import { upsertPropertyLine, readPropertyValue, splitProps, joinProps, isBuiltinHidden } from "./editor/properties";
+import { copyIncludeSubtree, copyStripCollapsed } from "./copySettings";
 import { trimBlockTrailingSpace } from "./editor/format";
 import {
   markDirty,
@@ -1283,11 +1284,10 @@ export function ensureStableBlockId(id: string): void {
 }
 
 /** Like `blockRef`, but first persists the block's `id::` so the reference
- *  resolves after a restart. NOTE: writing `id::` mutates the user's file, so this
- *  must only be used when *creating a durable reference* — never for plain
- *  navigation (sidebar/zoom/new-tab), which OG does without stamping `id::`
- *  (that polluted files and leaked into copies). Currently unused; kept for a
- *  future "pin block" that genuinely needs cross-restart durability. */
+ *  resolves after a restart. Used for parking a block durably: the right sidebar,
+ *  a new tab, and zoom all stamp `id::` so the spot survives a relaunch (Martin's
+ *  call — he wants these to persist; the `id::` is harmless in the file and is
+ *  stripped from clipboard copies anyway, see `blockSubtreeMarkdown`). */
 export function persistentBlockRef(id: string): { uuid: string; page: string; pageKind: PageKind } {
   ensureStableBlockId(id);
   return blockRef(id);
@@ -1314,23 +1314,38 @@ export async function persistBlockRefTarget(
   if (doc.byId[uuid]) ensureStableBlockId(uuid);
 }
 
-/** Serialize a block and its subtree to Logseq markdown. When `stripId` is set,
- *  drop the internal `id::` property line from each block (fence-aware) — OG does
- *  this when copying to the clipboard (`copy-to-clipboard-without-id-property!`)
- *  so a referenced block doesn't leak `id:: <uuid>` into the pasted text. Other
- *  callers (e.g. quick-capture writing to a journal file) keep `id::`. */
-export function blockSubtreeMarkdown(id: string, level = 0, stripId = false): string {
+/** Serialize a block (and, normally, its subtree) to Logseq markdown.
+ *  - `stripId`: drop the internal `id::` property line (fence-aware) — OG does this
+ *    when copying to the clipboard (`copy-to-clipboard-without-id-property!`) so a
+ *    referenced block doesn't leak `id:: <uuid>` into pasted text. (Quick-capture
+ *    writing to a journal FILE passes false to keep `id::`.)
+ *  - `stripCollapsed`: also drop `collapsed::` (OG keeps it; opt-in cleaner copy).
+ *  - `onlySelected`: when a Set is passed, recurse only into children that are in it
+ *    (used by the "copy only the selected blocks, not the whole sub-tree" mode). */
+export function blockSubtreeMarkdown(
+  id: string,
+  level = 0,
+  stripId = false,
+  stripCollapsed = false,
+  onlySelected?: Set<string>
+): string {
   const n = doc.byId[id];
   if (!n) return "";
   const tabs = "\t".repeat(level);
-  const raw = stripId ? splitProps(n.raw, (k) => k === "id").visible : n.raw;
+  const strip = stripId || stripCollapsed;
+  const raw = strip
+    ? splitProps(n.raw, (k) => (stripId && k === "id") || (stripCollapsed && k === "collapsed")).visible
+    : n.raw;
   const lines = raw.split("\n");
   const out: string[] = [];
   out.push(`${tabs}- ${lines[0] ?? ""}`.replace(/\s+$/, ""));
   for (const line of lines.slice(1)) {
     out.push(line === "" ? "" : `${tabs}  ${line}`);
   }
-  for (const c of n.children) out.push(blockSubtreeMarkdown(c, level + 1, stripId));
+  for (const c of n.children) {
+    if (onlySelected && !onlySelected.has(c)) continue;
+    out.push(blockSubtreeMarkdown(c, level + 1, stripId, stripCollapsed, onlySelected));
+  }
   return out.join("\n");
 }
 
@@ -1546,8 +1561,13 @@ export function deleteSelection() {
 }
 
 export function selectionMarkdown(): string {
+  // Clipboard → always strip id:: (OG parity). collapsed:: and whole-subtree vs
+  // selected-only are user-configurable (see copySettings): OG copies the full
+  // sub-tree of a selected parent; Tine's default copies only the selected blocks.
+  const stripCollapsed = copyStripCollapsed();
+  const onlySel = copyIncludeSubtree() ? undefined : new Set(selectedIds());
   return topSelected()
-    .map((id) => blockSubtreeMarkdown(id, 0, true)) // clipboard → strip id:: (OG parity)
+    .map((id) => blockSubtreeMarkdown(id, 0, true, stripCollapsed, onlySel))
     .join("\n");
 }
 

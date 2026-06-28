@@ -54,6 +54,7 @@ import { editingId, flushAll, appendToTodayJournal, captureToPage } from "./stor
 import { backend, isTauri } from "./backend";
 import { warnIfSoftwareRendering } from "./gpu";
 import { initSmoothScroll } from "./smoothScroll";
+import { initCopySettings } from "./copySettings";
 import { initLinkDefault } from "./editor/linkDefault";
 import { initDebug, dbg } from "./debug";
 import { WindowControls, ResizeGrips, installWindowChrome, maximized } from "./components/WindowChrome";
@@ -78,6 +79,7 @@ export function App(): JSX.Element {
   // Re-install experimental smooth scrolling (Lenis) if it was left on. The feed
   // (`.main-content`) is mounted by now (onMount runs after first render).
   onMount(() => void initSmoothScroll());
+  onMount(() => void initCopySettings());
 
   // Load the `[[`/`#` autocomplete default-action preference (link-first vs create).
   onMount(() => void initLinkDefault());

@@ -49,6 +49,7 @@ import {
 } from "./store";
 import { exportOutline, DEFAULT_EXPORT_OPTIONS } from "./editor/exportText";
 import { splitProps, joinProps, isBuiltinHidden, hideAll } from "./editor/properties";
+import { setCopyIncludeSubtree, setCopyStripCollapsed } from "./copySettings";
 import { backend, type Backend } from "./backend";
 import { isConflicted, conflicts, clearConflict } from "./ui";
 import { journalTitle } from "./journal";
@@ -75,6 +76,8 @@ function shape(ids: string[] = doc.pages[0].roots): any[] {
 beforeEach(() => {
   counter = 0;
   resetStore();
+  setCopyIncludeSubtree(false); // copy prefs default OFF; reset so tests don't leak
+  setCopyStripCollapsed(false);
 });
 
 describe("ordered list (logseq.order-list-type)", () => {
@@ -318,16 +321,35 @@ describe("clipboard copy strips id:: (OG parity)", () => {
     expect(copied).not.toContain("id:: 5462a76e"); // the real property is gone
   });
 
-  it("selectionMarkdown strips id:: across the whole selected subtree", () => {
+  it("selectionMarkdown: default copies ONLY the selected block (not unselected children)", () => {
+    setCopyIncludeSubtree(false); // Tine default
     const parent = blk("parent\nid:: 11111111-1111-1111-1111-111111111111", [
       blk("child\nid:: 22222222-2222-2222-2222-222222222222"),
     ]);
     load([parent]);
-    selectBlock(parent.id);
+    selectBlock(parent.id); // only the parent
     const md = selectionMarkdown();
     expect(md).not.toContain("id::");
     expect(md).toContain("- parent");
+    expect(md).not.toContain("child"); // child wasn't selected → excluded
+  });
+
+  it("selectionMarkdown: include-subtree mode (OG) copies the whole sub-tree", () => {
+    setCopyIncludeSubtree(true); // = Logseq behavior
+    const parent = blk("parent", [blk("child")]);
+    load([parent]);
+    selectBlock(parent.id);
+    const md = selectionMarkdown();
+    expect(md).toContain("- parent");
     expect(md).toContain("\t- child");
+    setCopyIncludeSubtree(false); // restore default for other tests
+  });
+
+  it("collapsed:: kept by default (OG), stripped when the option is on", () => {
+    const b = blk("note\ncollapsed:: true\nid:: 33333333-3333-3333-3333-333333333333");
+    load([b]);
+    expect(blockSubtreeMarkdown(b.id, 0, true)).toContain("collapsed:: true");
+    expect(blockSubtreeMarkdown(b.id, 0, true, true)).not.toContain("collapsed::");
   });
 });
 
