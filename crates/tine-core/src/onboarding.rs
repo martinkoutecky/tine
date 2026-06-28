@@ -97,6 +97,15 @@ mod tests {
         let counts = graph.block_ref_counts();
         assert_eq!(counts.get(TARGET_ID).copied(), Some(2), "expected 2 referrers of the demo block");
 
+        // Good outliner structure: a heading bullet actually PARENTS the body that
+        // belongs to it (proper indentation), rather than leaving it as flat
+        // siblings. Verify on the Welcome page.
+        let welcome = entries.iter().find(|e| e.name == "Welcome to Tine").unwrap();
+        let dto = graph.load_page(welcome).unwrap();
+        let parents = |needle: &str| dto.blocks.iter().any(|b| b.raw.starts_with(needle) && !b.children.is_empty());
+        assert!(parents("## Try the basics"), "section heading should parent its body");
+        assert!(parents("# Welcome to Tine"), "page heading should parent its intro");
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
