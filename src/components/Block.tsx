@@ -199,6 +199,12 @@ export function Block(props: { id: string; hideRefCount?: boolean }): JSX.Elemen
     editingId() === props.id && (editingOwner() === null || editingOwner() === instanceId);
   const hasChildren = () => node().children.length > 0;
   const collapsed = () => node().collapsed;
+  // Heading level of THIS block's first line, so the bullet column can match the
+  // (taller) heading line box and the bullet stays centered on it.
+  const headingLevel = createMemo(() => {
+    const n = node();
+    return n ? blockView(n.raw).headingLevel : null;
+  });
   // Block-level "linked references" panel toggled by the reference-count badge.
   const [showRefs, setShowRefs] = createSignal(false);
   // Ordered-list label for THIS block's own bullet (OG numbers the block itself,
@@ -213,6 +219,9 @@ export function Block(props: { id: string; hideRefCount?: boolean }): JSX.Elemen
       <div
         class="block-main"
         classList={{
+          // Heading level on the row so the bullet column can match the (taller)
+          // heading line box and the bullet stays centered on the first line.
+          [`bullet-h${headingLevel()}`]: headingLevel() != null,
           "drop-before": dropInd()?.id === props.id && dropInd()?.before === true,
           "drop-after": dropInd()?.id === props.id && dropInd()?.before === false,
           dragging: dragId() === props.id,

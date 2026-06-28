@@ -541,13 +541,32 @@ function renderCustom(b: Extract<AstBlock, { kind: "custom" }>, blockId?: string
   return <>{renderBlocks(b.children, blockId)}</>;
 }
 
+// mldoc/lsdoc discards table column alignment, but Tine renders `:--`/`--:`
+// alignment (a beyond-OG feature). Re-derive it from the block's raw separator
+// row (matched by column count) so aligned tables don't regress.
+function tableAligns(blockId: string | undefined, ncols: number): Align[] {
+  if (!blockId) return [];
+  const node = doc.byId[blockId];
+  if (!node) return [];
+  for (const line of node.raw.split("\n")) {
+    if (isTableSep(line)) {
+      const a = parseAligns(line);
+      if (a.length === ncols) return a;
+    }
+  }
+  return [];
+}
+
 function renderTable(b: Extract<AstBlock, { kind: "table" }>, blockId?: string): JSX.Element {
+  const ncols = b.header?.length ?? b.rows[0]?.length ?? 0;
+  const aligns = tableAligns(blockId, ncols);
+  const al = (i: number) => (aligns[i] ? { "text-align": aligns[i]! } : undefined);
   return (
     <table class="md-table">
       <Show when={b.header}>
         <thead>
           <tr>
-            <For each={b.header!}>{(cell) => <th>{renderInlines(cell, blockId)}</th>}</For>
+            <For each={b.header!}>{(cell, i) => <th style={al(i())}>{renderInlines(cell, blockId)}</th>}</For>
           </tr>
         </thead>
       </Show>
@@ -555,7 +574,7 @@ function renderTable(b: Extract<AstBlock, { kind: "table" }>, blockId?: string):
         <For each={b.rows}>
           {(row) => (
             <tr>
-              <For each={row}>{(cell) => <td>{renderInlines(cell, blockId)}</td>}</For>
+              <For each={row}>{(cell, i) => <td style={al(i())}>{renderInlines(cell, blockId)}</td>}</For>
             </tr>
           )}
         </For>

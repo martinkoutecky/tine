@@ -1806,6 +1806,16 @@ body {
   flex: 0 0 auto;
 }
 
+/* A heading block's first line is taller than the normal 26px line box, so grow
+   the bullet column to match per level — keeps the bullet centered on the
+   heading line instead of floating above it. (em is the base font; the heading
+   text is 1.7em–0.9em, so its line box scales with the level.) */
+/* height = heading line box = heading font-size (1.7/1.4/1.2em) × the 1.6
+   .block-content line-height, so the bullet centers exactly on the line. */
+.block-main.bullet-h1 > .block-controls { height: 2.72em; }
+.block-main.bullet-h2 > .block-controls { height: 2.24em; }
+.block-main.bullet-h3 > .block-controls { height: 1.92em; }
+
 .collapse-toggle {
   width: 18px;
   height: 26px;
