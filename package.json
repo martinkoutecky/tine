@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "node scripts/check-wasm-pin.mjs && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
     "app": "tauri dev",

@@ -3,11 +3,11 @@
 
 import { For, Show, createMemo, createResource, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
-import { InlineText, renderInlines, renderRawHtml, MathView, astText } from "./inline";
+import { InlineText, renderInlines, renderRawHtml, MathView } from "./inline";
 import type { Block as AstBlock, ListItem as AstListItem, Format } from "./ast";
 import { backend } from "../backend";
 import { evalCalc } from "../editor/calc";
-import { toggleListItem, doc } from "../store";
+import { toggleListItemAtIndex, doc } from "../store";
 import { parseBlock, parserReady } from "./parse";
 
 type Align = "left" | "center" | "right" | null;
@@ -148,7 +148,7 @@ function renderBlock(b: AstBlock, blockId?: string): JSX.Element {
     case "custom":
       return renderCustom(b, blockId);
     case "list":
-      return <AstList items={b.items} blockId={blockId} />;
+      return <AstList items={b.items} blockId={blockId} cbItems={flattenCheckboxItems(b.items)} />;
     case "table":
       return renderTable(b, blockId);
     case "properties":
@@ -281,10 +281,27 @@ function renderProps(b: Extract<AstBlock, { kind: "properties" }>): JSX.Element 
   );
 }
 
-// An in-block list from the AST (`ListItem[]`). The checkbox toggle still operates
-// on the block's raw text — the AST carries no source line (contract R12): match
-// the item's flattened text to its `[ ]`/`[x]` line in `raw` and flip that.
-function AstList(props: { items: AstListItem[]; blockId?: string }): JSX.Element {
+// The AST carries no source line (contract R12), so to toggle a checkbox we map the
+// clicked item to its `[ ]`/`[x]` line in `raw` BY DOCUMENT POSITION, not by text:
+// `flattenCheckboxItems` lists every checkbox item depth-first (the same order the
+// `[ ]` lines appear in `raw`), and the click flips the Nth such raw line. Positional
+// targeting is what makes two items with the same label toggle independently.
+function flattenCheckboxItems(items: AstListItem[]): AstListItem[] {
+  const out: AstListItem[] = [];
+  const walk = (xs: AstListItem[]) => {
+    for (const it of xs) {
+      if (it.checkbox !== undefined) out.push(it);
+      if (it.items.length) walk(it.items);
+    }
+  };
+  walk(items);
+  return out;
+}
+
+// An in-block list from the AST (`ListItem[]`). `cbItems` is the block-wide
+// depth-first list of checkbox items, shared across nested AstLists so each
+// checkbox knows its global index.
+function AstList(props: { items: AstListItem[]; blockId?: string; cbItems: AstListItem[] }): JSX.Element {
   const ordered = props.items[0]?.ordered ?? false;
   return (
     <Dynamic component={ordered ? "ol" : "ul"} class="md-list">
@@ -299,13 +316,13 @@ function AstList(props: { items: AstListItem[]; blockId?: string }): JSX.Element
                 aria-checked={item.checkbox === true}
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (props.blockId) toggleAstCheckbox(props.blockId, item);
+                  if (props.blockId) toggleAstCheckbox(props.blockId, props.cbItems.indexOf(item));
                 }}
               />{" "}
             </Show>
             {renderBlocks(item.content, props.blockId)}
             <Show when={item.items.length > 0}>
-              <AstList items={item.items} blockId={props.blockId} />
+              <AstList items={item.items} blockId={props.blockId} cbItems={props.cbItems} />
             </Show>
           </li>
         )}
@@ -334,14 +351,22 @@ export function AstBody(props: { lines: string[]; blockId?: string; format?: For
   );
 }
 
-function toggleAstCheckbox(blockId: string, item: AstListItem) {
-  const para = item.content[0];
-  const text = para && para.kind === "paragraph" ? astText(para.inline).trim() : "";
+// Flip the `cbIndex`-th checkbox of the block: find the cbIndex-th `[ ]`/`[x]`
+// list line in `raw` (document order) and toggle exactly that line. No text match,
+// so duplicate labels and `**markup**` in the item never mis-target.
+function toggleAstCheckbox(blockId: string, cbIndex: number) {
+  if (cbIndex < 0) return;
   const node = doc.byId[blockId];
   if (!node) return;
-  const line = node.raw.split("\n").find((l) => {
-    const m = /^\s*(?:[-+*]|\d+[.)])\s+\[[ xX]\]\s+(.*)$/.exec(l);
-    return m != null && m[1].trim() === text;
-  });
-  if (line) toggleListItem(blockId, line);
+  const lines = node.raw.split("\n");
+  const re = /^\s*(?:[-+*]|\d+[.)])\s+\[[ xX]\]\s+/;
+  let seen = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (re.test(lines[i])) {
+      if (++seen === cbIndex) {
+        toggleListItemAtIndex(blockId, i);
+        return;
+      }
+    }
+  }
 }

@@ -370,10 +370,10 @@ function Capture() {
   );
 }
 
-// Init the wasm parser before first paint (blocks render synchronously from the
-// lsdoc AST). The capture window opens to an empty new block, so this ~tens-of-ms
-// init overlaps the user reaching for the keyboard and shouldn't be perceptible.
-// Caught so a parser-init failure can't leave the capture window blank.
-void initParser()
-  .catch((e) => console.error("lsdoc-wasm init failed:", e))
-  .finally(() => render(() => <Capture />, document.getElementById("capture-root")!));
+// Render the capture window IMMEDIATELY — it opens to an empty editing block, which
+// needs no parser for first paint, so we must NOT gate capture-open latency on the
+// wasm init. The parser loads in the background; any block that renders before it's
+// ready falls back to raw text (AstBody/InlineText) and swaps in once `parserReady`
+// flips (typically tens of ms, well before you finish typing the first block).
+void initParser().catch((e) => console.error("lsdoc-wasm init failed:", e));
+render(() => <Capture />, document.getElementById("capture-root")!);

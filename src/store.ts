@@ -1130,14 +1130,22 @@ export function orderedListMarker(id: string): string | null {
 export function toggleListItem(id: string, rawLine: string) {
   const node = doc.byId[id];
   if (!node) return;
+  toggleListItemAtIndex(id, node.raw.split("\n").indexOf(rawLine));
+}
+
+/** Flip the `[ ]`/`[x]` checkbox on a SPECIFIC raw line index. Targeting by index
+ *  (not line text) is what makes the AST list checkbox toggle safe when two items
+ *  share the same label — see toggleAstCheckbox in render/body.tsx. */
+export function toggleListItemAtIndex(id: string, lineIndex: number) {
+  const node = doc.byId[id];
+  if (!node) return;
   const lines = node.raw.split("\n");
-  const idx = lines.indexOf(rawLine);
-  if (idx < 0) return;
-  const ln = lines[idx];
+  const ln = lines[lineIndex];
+  if (ln === undefined || !/\[[ xX]\]/.test(ln)) return;
   const next = /\[ \]/.test(ln) ? ln.replace(/\[ \]/, "[x]") : ln.replace(/\[[xX]\]/, "[ ]");
   if (next === ln) return;
   pushUndo(`listcheck:${id}`, [node.page]);
-  lines[idx] = next;
+  lines[lineIndex] = next;
   setDoc("byId", id, "raw", lines.join("\n"));
   markDirty(node.page);
 }

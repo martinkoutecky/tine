@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { render } from "solid-js/web";
-import { renderInlines } from "./inline";
+import { renderInlines, InlineText } from "./inline";
 import { renderBlocks } from "./body";
 import { initParser } from "./parse";
 import type { JSX } from "solid-js";
@@ -154,5 +154,33 @@ describe("renderBlocks", () => {
 
   it("drawer/comment render nothing", () => {
     expect(blk([{ kind: "comment", text: "c" }])).not.toContain("c");
+  });
+});
+
+// InlineText is the inline-only renderer for property values, breadcrumbs,
+// ref-preview lines, etc. It parses via wasm; audit fix C1: a line that lsdoc
+// parses as a BLOCK construct (and so has no inline-flow content) must fall back
+// to the literal text, never render blank.
+describe("InlineText", () => {
+  const txt = (s: string, fmt?: "md" | "org") =>
+    html(() => InlineText({ text: s, format: fmt }) as JSX.Element);
+  // strip tags + un-escape the few entities the renderer emits, to read visible text
+  const visible = (h: string) =>
+    h.replace(/<[^>]*>/g, "").replace(/&gt;/g, ">").replace(/&lt;/g, "<").replace(/&amp;/g, "&");
+
+  it("renders normal inline markup", () => {
+    expect(txt("a **b**")).toContain("<strong>");
+  });
+
+  it.each([
+    ["> quote", "quote"],
+    ["---", "---"],
+    ["| a | b |", "a"],
+    ["[^1]: def", "def"],
+    ["$$E=mc^2$$", "mc"],
+  ])("falls back to literal text for block-construct line %j (never blank)", (line, token) => {
+    const text = visible(txt(line));
+    expect(text.trim().length).toBeGreaterThan(0);
+    expect(text).toContain(token);
   });
 });

@@ -80,8 +80,11 @@ export function parserFailed(): boolean {
 }
 
 // Pure parse cache: text+format fully determine the AST (independent of graph
-// state), so a plain bounded Map suffices — no epoch invalidation needed.
+// state), so a plain bounded LRU suffices — no epoch invalidation needed. Bounded
+// by insertion-order eviction (NOT a wholesale clear), so a working set larger
+// than the cap degrades to partial hits instead of dropping to a 0% hit rate.
 const cache = new Map<string, Block[]>();
+const CACHE_MAX = 8000;
 
 /** Parse one block body (the blockView-stripped `view.lines.join("\n")`) into
  *  lsdoc's render AST. Synchronous — `initParser()` must have resolved first. */
@@ -91,9 +94,14 @@ export function parseBlock(text: string, isOrg: boolean): Block[] {
   }
   const key = (isOrg ? "o\n" : "m\n") + text;
   const hit = cache.get(key);
-  if (hit) return hit;
-  if (cache.size > 8000) cache.clear();
+  if (hit !== undefined) {
+    // Refresh recency: re-insert so hot entries survive eviction.
+    cache.delete(key);
+    cache.set(key, hit);
+    return hit;
+  }
   const blocks = JSON.parse(parse_block_json(text, isOrg)) as Block[];
+  if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value!);
   cache.set(key, blocks);
   return blocks;
 }

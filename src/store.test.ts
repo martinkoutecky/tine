@@ -46,6 +46,7 @@ import {
   pageToDto,
   blockSubtreeMarkdown,
   selectionMarkdown,
+  toggleListItemAtIndex,
 } from "./store";
 import { exportOutline, DEFAULT_EXPORT_OPTIONS } from "./editor/exportText";
 import { splitProps, joinProps, isBuiltinHidden, hideAll } from "./editor/properties";
@@ -924,5 +925,24 @@ describe("undo survives a self-write reload echo (Ctrl+Z of a delete)", () => {
     reloadPage(echo([{ id: "x", raw: "changed elsewhere", collapsed: false, children: [] }]));
     undo();
     expect(shape()).toEqual([["changed elsewhere"]]); // undo was a no-op; external content kept
+  });
+});
+
+// Audit fix C3 (data-safety): the AST list checkbox toggle targets the source line
+// by document POSITION, so two items with the same label flip independently — the
+// old text-match toggled the first matching raw line regardless of which was clicked.
+describe("toggleListItemAtIndex (positional checkbox toggle)", () => {
+  it("flips the exact line among identical checkbox labels", () => {
+    const b = blk("Title\n+ [ ] same\n+ [ ] same");
+    load([b]);
+    toggleListItemAtIndex(b.id, 2); // line index 2 = the SECOND "+ [ ] same"
+    expect(doc.byId[b.id].raw).toBe("Title\n+ [ ] same\n+ [x] same");
+  });
+
+  it("ignores a non-checkbox line index (no-op, no corruption)", () => {
+    const b = blk("Title\n+ [ ] a");
+    load([b]);
+    toggleListItemAtIndex(b.id, 0); // "Title" is not a checkbox line
+    expect(doc.byId[b.id].raw).toBe("Title\n+ [ ] a");
   });
 });

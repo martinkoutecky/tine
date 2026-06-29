@@ -9,7 +9,7 @@ import { openPage, openPageInNewTab, openPageAtBlock, focusBlock } from "../rout
 import { refClickZoom } from "../copySettings";
 import { isJournalTitle } from "../journal";
 import { openPdf, openPageInSidebar, openBlockInSidebar, openPageContextMenu, openBlockRefContextMenu, setLightbox, setAudioPlayer, graphEpoch, graphMeta } from "../ui";
-import { parseBlock } from "./parse";
+import { parseBlock, parserReady } from "./parse";
 import type { Inline, Url, MacroInline, TimestampInline, TimestampPoint, EmailValue, Block as AstBlock, Format } from "./ast";
 import { EmojiText } from "./emoji";
 import { blockView } from "./block";
@@ -630,8 +630,20 @@ function blockInlines(blocks: AstBlock[]): Inline[] {
  *  wasm parser (src/render/parse.ts) and renders the inline run; `blockId` is
  *  threaded to inline `{{query}}` macros so they can rewrite the owning block. */
 export function InlineText(props: { text: string; blockId?: string; format?: Format }): JSX.Element {
-  const inlines = createMemo(() => blockInlines(parseBlock(props.text, props.format === "org")));
-  return <>{renderInlines(inlines(), props.blockId)}</>;
+  // Only parse once the wasm parser is ready — `parseBlock` THROWS otherwise, and
+  // unlike AstBody these callers (property values, breadcrumbs, ref previews, PDF
+  // annotations) have no error boundary. When the parser isn't ready, OR when the
+  // line is a block construct that yields no inline-flow content (`> quote`, `---`,
+  // `| a | b |`, `[^1]: …`, `$$…$$`, …), fall back to the literal text so the
+  // content is never dropped — matching the old inline-only renderer.
+  const inlines = createMemo(() =>
+    parserReady() ? blockInlines(parseBlock(props.text, props.format === "org")) : null,
+  );
+  return (
+    <Show when={inlines() && inlines()!.length > 0} fallback={<EmojiText text={props.text} />}>
+      {renderInlines(inlines()!, props.blockId)}
+    </Show>
+  );
 }
 
 // Recursion depth guard for user `:macros` expansion. renderSegs uses <For>, which
