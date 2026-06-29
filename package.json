@@ -12,6 +12,7 @@
     "app": "tauri dev",
     "test": "vitest run && vitest run --config vitest.render.config.ts",
     "test:render": "vitest run --config vitest.render.config.ts",
+    "build:wasm": "node scripts/build-wasm.mjs",
     "screenshot": "node scripts/screenshot.mjs"
   },
   "dependencies": {

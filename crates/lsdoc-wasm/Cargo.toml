@@ -1,0 +1,31 @@
+# WASM wrapper around `lsdoc` for in-browser block parsing in Tine's frontend.
+#
+# This crate is deliberately EXCLUDED from the root workspace (see ../../Cargo.toml):
+# it is compiled ONLY to `wasm32-unknown-unknown` by `npm run build:wasm`, never as
+# part of the normal host build. It git-deps `lsdoc` DIRECTLY (not `tine-core`) so it
+# does not drag in `uuid`/`getrandom`/`slotmap`, which complicate a wasm build.
+#
+# To regenerate the vendored artifacts under ../../src/render/wasm/, run:
+#   npm run build:wasm
+[package]
+name = "lsdoc-wasm"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# Keep this tag IN SYNC with crates/tine-core/Cargo.toml's lsdoc pin.
+lsdoc = { git = "https://github.com/martinkoutecky/lsdoc", tag = "v0.1.3" }
+serde_json = "1"
+wasm-bindgen = "0.2"
+
+# Smallest possible wasm: optimize for size, strip panics to abort.
+[profile.release]
+opt-level = "z"
+lto = true
+panic = "abort"
+codegen-units = 1
