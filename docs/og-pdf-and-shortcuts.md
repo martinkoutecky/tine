@@ -375,22 +375,22 @@ From **line 278-294** (persistence):
 ## Key File Paths (OG)
 
 ### PDF
-- `/aux/koutecky/logseq/og/src/main/frontend/extensions/pdf/core.cljs` (500+ lines, 45KB)
-- `/aux/koutecky/logseq/og/src/main/frontend/extensions/pdf/assets.cljs` (298 lines)
-- `/aux/koutecky/logseq/og/src/main/frontend/extensions/pdf/utils.cljs` (203 lines)
-- `/aux/koutecky/logseq/og/src/main/frontend/extensions/pdf/toolbar.cljs` (500+ lines)
-- `/aux/koutecky/logseq/og/src/test/frontend/extensions/pdf/assets_test.cljs`
+- `og/src/main/frontend/extensions/pdf/core.cljs` (500+ lines, 45KB)
+- `og/src/main/frontend/extensions/pdf/assets.cljs` (298 lines)
+- `og/src/main/frontend/extensions/pdf/utils.cljs` (203 lines)
+- `og/src/main/frontend/extensions/pdf/toolbar.cljs` (500+ lines)
+- `og/src/test/frontend/extensions/pdf/assets_test.cljs`
 
 ### Shortcuts
-- `/aux/koutecky/logseq/og/src/main/frontend/modules/shortcut/config.cljs` (967 lines, all defaults + categories)
-- `/aux/koutecky/logseq/og/src/main/frontend/modules/shortcut/core.cljs` (295 lines, dispatch/installation)
-- `/aux/koutecky/logseq/og/src/main/frontend/modules/shortcut/data_helper.cljs` (253 lines, config merging/lookup)
-- `/aux/koutecky/logseq/og/src/main/frontend/modules/shortcut/utils.cljs` (decorator/parser utilities)
+- `og/src/main/frontend/modules/shortcut/config.cljs` (967 lines, all defaults + categories)
+- `og/src/main/frontend/modules/shortcut/core.cljs` (295 lines, dispatch/installation)
+- `og/src/main/frontend/modules/shortcut/data_helper.cljs` (253 lines, config merging/lookup)
+- `og/src/main/frontend/modules/shortcut/utils.cljs` (decorator/parser utilities)
 
 ### State/Config
-- `/aux/koutecky/logseq/og/src/main/frontend/state.cljs` (contains `shortcuts()`, `get-config()`, `merge-configs()`)
-- `/aux/koutecky/logseq/og/src/main/frontend/handler/config.cljs` (config read/write handlers)
+- `og/src/main/frontend/state.cljs` (contains `shortcuts()`, `get-config()`, `merge-configs()`)
+- `og/src/main/frontend/handler/config.cljs` (config read/write handlers)
 
 ### C++ Prior Art (not used in OG, but reference for PDF extraction)
-- `/aux/koutecky/logseq/logseq-native/src/pdf_worker/main.cpp` (uses PyMuPDF for metadata extraction)
+- `logseq-native/src/pdf_worker/main.cpp` (uses PyMuPDF for metadata extraction)
 

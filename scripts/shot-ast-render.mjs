@@ -8,9 +8,11 @@ import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
 
 const G = "/tmp/tgraph-ast";
-const APP = "/home/koutecky/research/tine";
-const TD = "/aux/koutecky/logseq/.toolchain/cargo/bin/tauri-driver";
-const OUT = process.argv[2] || "/tmp/claude-3042/-aux-koutecky-logseq/2e921412-0c07-49c5-87de-46be358044a0/scratchpad/ast-render.png";
+const APP = process.env.TINE_APP || `${process.env.HOME}/research/tine`;
+const TD =
+  process.env.TAURI_DRIVER ||
+  (process.env.CARGO_HOME ? `${process.env.CARGO_HOME}/bin/tauri-driver` : "tauri-driver");
+const OUT = process.argv[2] || "/tmp/tine-ast-render.png";
 const PAGE = process.argv[3] || "Kitchen";
 
 const KITCHEN = [

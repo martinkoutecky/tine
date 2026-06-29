@@ -4,8 +4,8 @@
 // for deserializing what the Rust backend (`tine-core`) sends per block. The
 // authoritative sources, in priority order, are:
 //
-//   1. /aux/koutecky/logseq/lsdoc/AST.md          — the render contract + vocab
-//   2. /aux/koutecky/logseq/lsdoc/src/projection.rs — the Rust types (serde attrs)
+//   1. the lsdoc repo's AST.md          — the render contract + vocab
+//   2. the lsdoc repo's src/projection.rs — the Rust types (serde attrs)
 //
 // If either changes, THIS FILE MUST BE UPDATED BY HAND. There is no codegen.
 // The contract is "frozen" only in the sense that every field is gated 0-diff

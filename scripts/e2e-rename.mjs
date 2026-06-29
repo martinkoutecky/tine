@@ -8,8 +8,10 @@ import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
 
 const G = "/tmp/tgraph";
-const APP = "/home/koutecky/research/tine";
-const TD = "/aux/koutecky/logseq/.toolchain/cargo/bin/tauri-driver";
+const APP = process.env.TINE_APP || `${process.env.HOME}/research/tine`;
+const TD =
+  process.env.TAURI_DRIVER ||
+  (process.env.CARGO_HOME ? `${process.env.CARGO_HOME}/bin/tauri-driver` : "tauri-driver");
 
 function seed() {
   fs.rmSync(G, { recursive: true, force: true });
