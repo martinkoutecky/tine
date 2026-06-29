@@ -1,0 +1,31 @@
+name: Feature request / proposal
+description: Suggest something Tine should do.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Every field is optional.** If you have a concrete change in mind, the more
+        you can describe *what it should do* and *how it should behave*, the more
+        likely it is to get built — Tine accepts contributions as proposals/specs that
+        the maintainer implements (see [CONTRIBUTING](https://github.com/martinkoutecky/tine/blob/master/CONTRIBUTING.md)),
+        so a clear description here *is* the contribution.
+  - type: textarea
+    id: what
+    attributes:
+      label: What would you like Tine to do?
+    validations:
+      required: false
+  - type: textarea
+    id: og
+    attributes:
+      label: Does Logseq do this? How?
+      description: Tine matches Logseq by default. If this mirrors a Logseq behavior, describing how Logseq does it helps a lot.
+    validations:
+      required: false
+  - type: textarea
+    id: why
+    attributes:
+      label: Why — what's the use case?
+    validations:
+      required: false

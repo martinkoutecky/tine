@@ -1,0 +1,69 @@
+name: Bug report
+description: Something in Tine is broken or behaves differently from Logseq.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. **Every field below is optional** — fill in what you
+        can. If the form doesn't fit, [open a blank issue](https://github.com/martinkoutecky/tine/issues/new)
+        instead. The single most useful thing for a startup/crash problem is the
+        debug log (last field).
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you did and what went wrong.
+    validations:
+      required: false
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect instead?
+      description: If it differs from Logseq, say so — Tine aims to match Logseq by default.
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: Tine version
+      description: From the Releases page / the title bar / `tine --version`.
+    validations:
+      required: false
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - macOS
+        - Windows
+        - Other
+    validations:
+      required: false
+  - type: dropdown
+    id: install
+    attributes:
+      label: How did you install it?
+      options:
+        - Linux AppImage
+        - Linux .deb
+        - Linux .rpm
+        - macOS .dmg
+        - Windows .exe
+        - Built from source
+        - Other
+    validations:
+      required: false
+  - type: textarea
+    id: debug-log
+    attributes:
+      label: Debug log
+      description: |
+        For startup/crash problems especially: run `TINE_DEBUG=1 tine` (or
+        `tine --debug`), reproduce, and paste the log it prints the path to
+        (defaults to `/tmp/tine-debug.log`). It records startup diagnostics only —
+        no note content.
+      render: text
+    validations:
+      required: false

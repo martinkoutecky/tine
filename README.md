@@ -81,34 +81,22 @@ builds.)
 ## What Tine adds on top of Logseq
 
 These are the things that started as *"I wish Logseq did this"* — Tine's reasons to exist beyond
-raw speed. (Where a comparison is made, it's against current Logseq desktop core, no plugins.)
+raw speed. (Comparisons are against current Logseq desktop core, no plugins.)
 
-- **⚡ Native speed.** Pure-Rust core + SolidJS fine-grained reactivity (no virtual-DOM diffing) +
-  a tiny Tauri/WebKitGTK runtime instead of Electron. Typing stays in the frontend tree; reads hit
-  an in-memory index.
-- **🗂️ Built-in tabs.** Middle-click any bullet, page title, query result, or switcher row to open
-  it in a background tab; pin (persisted), drag-reorder, `Mod+W` to close. Logseq core has no tabs
-  (only a right sidebar or a whole separate window).
-- **⏯️ Browser-style back/forward**, bound to **`Alt+Left` / `Alt+Right`** by default (per-tab
-  history; works mid-edit). *(Logseq has back/forward too, but defaults to `Ctrl/Cmd+[` and `]`.)*
-- **🎯 Focus mode + dim-inactive-blocks** (`t f` / `t b`): hide the chrome and fade everything but
-  the block you're working on, with Logseq-style layered `Esc` (editing → block-select → exit
-  focus). No Logseq-core equivalent.
+- **⚡ Native speed.** Pure-Rust core + SolidJS fine-grained reactivity + a tiny Tauri/WebKitGTK
+  runtime instead of Electron — typing stays in the frontend tree, reads hit an in-memory index.
+- **🗂️ Built-in tabs.** Middle-click anything to open it in a background tab; pin, drag-reorder,
+  `Mod+W` to close. (Logseq core has none.)
+- **⏯️ Browser-style back/forward** — `Alt+Left` / `Alt+Right`, per-tab history, works mid-edit.
+- **🎯 Focus mode + dim-inactive-blocks** (`t f` / `t b`) — fade everything but the block you're on.
 - **⚡ Global quick-capture** — bind `tine --capture` to a desktop hotkey and a small always-on-top
-  box pops from *any* app, with the full editor (autocomplete, slash commands, the date picker,
-  nested blocks), and files a bullet to today's journal. Logseq's quick-add only works when the app
-  is already focused.
-- **🔁 Carry unfinished tasks forward** to today (presets for the last 7 / 30 / 365 days or a
-  configurable N), optionally keeping ancestor context.
-- **🛟 A real data-safety story** (see below) — conflict detection instead of silent overwrites,
-  launch snapshots with one-click restore, and delete-to-trash. Built to live safely on a graph
-  you also edit from Logseq mobile over Syncthing.
-- **👋 First-run onboarding.** Launch Tine with no graph configured and you get a Welcome screen:
-  open an existing Logseq graph, or **create a new one** that comes pre-loaded with a short, narrated
-  demo graph — a *Welcome to Tine* tour plus `Features/…` and `Project/…` pages that exercise block
-  references, embeds, namespaces and tasks, and walk through the less-obvious features (quick-capture,
-  slash commands, the command palette, the sidebar, PDF annotation, tabs). It's ordinary Logseq
-  Markdown, so it opens in Logseq too.
+  box pops from *any* app with the full editor, filing a bullet to today's journal.
+- **🔁 Carry unfinished tasks forward** to today (last 7 / 30 / 365 days, or a configurable N).
+- **🛟 A real data-safety story** — conflict detection instead of silent overwrites, launch
+  snapshots with one-click restore, and delete-to-trash; built to live safely on a graph you also
+  edit from Logseq mobile over Syncthing.
+- **👋 First-run onboarding** — a Welcome screen that opens an existing graph or creates a new one
+  pre-loaded with a short, narrated demo graph (which opens in Logseq too).
 
 <p align="center">
   <img src="docs/img/quick-capture.png" alt="Global quick-capture mini-window" width="32%">
@@ -120,167 +108,20 @@ raw speed. (Where a comparison is made, it's against current Logseq desktop core
 
 ## Features
 
-**Outliner**
-- Click-to-edit blocks; the click lands the caret exactly where you clicked. `Enter` / `Tab` /
-  `Shift+Tab` / `Backspace` / arrows with correct Logseq semantics and caret preservation (no
-  reflow on indent/outdent); arrow nav respects *visual* wrapped rows.
-- Collapse/expand, zoom into a block (with breadcrumb), drag-to-reorder, move up/down
-  (`Alt+Shift+↑/↓`), multi-block selection → move / indent / cut / copy (the viewport follows the
-  active end as you extend the selection past the top/bottom edge).
-- Multi-line blocks, syntax-highlighted code blocks, markdown tables; paste an indented outline →
-  real block tree; paste clipboard images → graph assets.
-- **Media** — paste/import images, **video, and audio** (`/upload`); stored as `![](../assets/…)`.
-  **Configurable asset filenames** (Settings → Backups → *Asset names*): a `%`-token template —
-  `%assetname %ext %yyyymmdd %hhmmss` (and granular `%yyyy %MM %dd %HH %mm %ss`) — defaulting to the
-  plain original name, with a one-click *Date + name* preset. **Drag the corner grip to resize an
-  image *or a video*** (stored as a width % in Logseq's `{:width …}` brace, so it round-trips);
-  **audio has an ⤢ Expand button** that opens a wide overlay player — a **waveform scrubber** with
-  ±5s / ±15s skip, play/pause, speed, and a time read-out. Click an image to open a **lightbox** (Esc
-  or click-away to close; right-click / Copy to put it on the clipboard). Video/audio play inline where
-  the codec is supported, else fall back to a click-to-open chip that launches the OS default player
-  (Tine scrubs its own render env + detaches the child so the player doesn't inherit a broken video
-  context).
-  **Orphaned-media cleanup** (Settings → Backups): scan for `assets/` files no
-  block references and move them to the recoverable trash — deleting a block never deletes its media,
-  so this is how unused files get reclaimed.
-- Inline formatting (`Mod+B/I`, strike, ==highlight==, link) with a floating selection toolbar, plus
-  Emacs-style word/line kill motions.
-- **Callouts/admonitions** — both Obsidian-style `> [!note] …` and org `#+BEGIN_NOTE … #+END_NOTE`
-  blocks render as colored callouts (`QUOTE` stays a plain blockquote) — and a live **`/calc`
-  block** that evaluates arithmetic as you type (`+ - * / ^ %`, parentheses, `name = expr`
-  variables across lines, a running result).
+A quick map of what's in the box — the **[full feature list lives in docs/FEATURES.md](docs/FEATURES.md)**.
 
-**Linking, references & queries**
-- `[[page]]`, `#tags`, `#[[multi word]]`, `((block ref))` — including the labeled form
-  `[text](((id)))` — and `{{embed}}` — all clickable, with autocomplete on `[[`, `#`, `((`, and `/`.
-  The `((` popup full-text-searches blocks and inserts a *durable* reference (writes a stable `id::`
-  first). The `[[`/`#` Enter default is configurable
-  (Settings → *Journals & tasks* → **Link autocomplete default**): create-a-new-page (default, like
-  Logseq) or link-the-first-match.
-- Linked & unlinked references on every page (live/editable), with co-reference filtering and hover
-  previews — and they appear in the **right-sidebar** page view too (shift-click a page to open it
-  there), matching OG.
-- Per-block **reference count**: a referenced block shows a small count badge — click it to reveal
-  the blocks that reference it (grouped by page, each with its **ancestor breadcrumb**), or
-  shift-click to open the block in the sidebar. **Right-click an inline `((ref))`** for a menu
-  (open in sidebar / go to block / copy ref / copy embed); in the editor, **`Mod+C` with nothing
-  selected copies a reference** to the current block.
-  Inline block refs render as **link-styled text** (full-strength colour + accent underline, like OG —
-  not a grey chip). Copying a block **strips `id::`** from the clipboard text (like OG) so it never
-  leaks into a paste — even though the `id::` stays in the file so sidebar/tab/zoom spots persist a
-  restart. Copy behavior is configurable (Settings → Journals & tasks), with two Tine defaults that
-  differ from Logseq (one click to revert): *copy only the selected blocks* (vs Logseq's whole
-  sub-tree) and *strip `collapsed::`* from copied text.
-- **Macros**: `{{query}}`, `{{embed}}`, `{{video}}`/`{{youtube}}`/`{{vimeo}}`/`{{bilibili}}`,
-  `{{tweet}}`/`{{twitter}}`, `{{img url [w h] [left|right|center]}}`, `{{namespace}}`, and
-  **user-defined `:macros`** from `config.edn` (`$1..$N` substitution, rendered as markdown).
-  `{{youtube-timestamp}}`, `{{cloze}}` (click-to-reveal) and `{{zotero-*}}` render in a degraded form
-  (no on-page-player seek / SRS / Zotero connector — flagged inline).
-- `{{query}}` engine (inline or whole-block): boolean and/or/not, `(task …)`, `(priority …)`,
-  `(property …)`, `(page-property …)`, `(page-tags …)`, `(scheduled)`, `(deadline)`, `(journal)`,
-  `(namespace …)`, `(between START END)` with a field selector, `(sort-by …)`. Results render as a
-  list or a sortable **table**; an interactive **visual query builder** (chip/clause bar) builds them
-  without writing the DSL.
-- A scoped compatibility path for Logseq's **advanced (Datalog) queries**: recognized clauses
-  (`task`, `between`, `property`, `page-property`, `priority`, page-refs, boolean `or/and/not`, and
-  `:today`/`:current-page`-style inputs) map onto the same engine, and any unsupported part is
-  flagged in the result rather than silently dropped or wrongly answered.
+| Area | Highlights |
+|------|-----------|
+| **Outliner** | Click-to-edit with exact caret landing, Logseq keyboard semantics, zoom, drag-reorder, multi-block select; in-block lists & checklists; callouts; a live `/calc` block. |
+| **Media** | Paste/import images, video & audio; configurable asset names; drag-resize images *and* video; an audio waveform overlay player; image lightbox; orphaned-media cleanup. |
+| **Links, refs & queries** | `[[page]]` · `#tag` · `((block ref))` · `{{embed}}` with autocomplete; live linked/unlinked references; per-block ref counts; the macro set; a `{{query}}` engine with a visual builder; a scoped Datalog path. |
+| **Tasks, journals & dates** | Task workflows + priorities, scheduled/deadline with a date picker, recurring tasks, carry-forward, a multi-day journal feed, agenda, and a calendar. |
+| **PDF** | Zoomable virtualized viewer, in-PDF find, text + area (image) highlights stored Logseq-compatibly, each a bullet you can annotate. |
+| **Search & nav** | `Ctrl+K` switcher (titles + full text), command palette, namespace tree, tabs, back/forward, focus mode, global quick-capture, page icons. |
+| **Your files** | Safe to run alongside Logseq mobile over Syncthing — conflict detection, format-preserving atomic saves, transactional rename, org-mode (byte-faithful or read-only), snapshots + trash. |
+| **Customize & export** | Remappable shortcuts, themes + custom CSS, multi-language spell check, static HTML export with offline search, copy/export as Markdown. |
 
-**Tasks, journals & dates**
-- `TODO/DOING/DONE/NOW/LATER/WAITING/CANCELED`, two configurable workflows, priorities, cycle with
-  `Mod+Enter`.
-- **In-block markdown lists & checklists** — a `+`/`*`/ordered list *inside one bullet's content*
-  renders as a styled list (distinct from outline bullets), with tickable `[ ]`/`[x]` checkboxes that
-  are *not* TODO/agenda tasks. Uses `+` (OG's in-content marker), so a checklist round-trips to OG and
-  Logseq mobile. (`-` stays the outline bullet, exactly like OG.)
-- `SCHEDULED:` / `DEADLINE:` via a calendar **date picker** (`/scheduled`, `/deadline`), including
-  **recurring tasks** (`+1w` / `.+1w` / `++1w`) where completing a repeater advances the date.
-- Multi-day **journal feed** (one continuous editable list); today's journal created lazily on
-  first edit; move blocks across days; an **agenda** of *open* scheduled/deadline items (DONE and
-  CANCELED are hidden, like OG) in a configurable look-back/-ahead window; journal **templates**; a
-  calendar with content markers whose **first day
-  of week** follows your `config.edn :start-of-week` (any of the seven days, settable in-app).
-
-**PDF annotation**
-- Open PDFs in a resizable, zoomable pane (instant zoom, HiDPI, per-page virtualization); in-PDF
-  `Ctrl+F` find with a page jump box.
-- Select text → colored **highlights**, or drag a rectangle (area mode / `Ctrl`-drag) to clip an
-  **area (image) highlight** — both stored Logseq-compatibly (`assets/<key>.edn` + `hls__` pages,
-  area crops as PNG assets). Each highlight becomes a clean bullet you can nest notes under; writes
-  **merge with disk** so an externally-added highlight or your top-level notes are never dropped, and
-  recoloring a highlight updates its note-page badge to match.
-
-**Search & navigation**
-- `Ctrl+K` quick switcher: page titles + full-text content hits (visible text only — no false hits
-  on hidden properties/uuids), with block breadcrumbs and middle-click → background tab.
-- Command palette (`Mod+Shift+P`), favorites, recent pages, a collapsible **namespace tree** in the
-  sidebar, the **`{{namespace X}}`** macro (a bold "Namespace" header + nested descendant tree), an
-  automatic **"Hierarchy"** section (breadcrumb paths of descendant pages) on any namespaced page,
-  and read-only **"aka" alias chips** on pages reachable by another name.
-- **Page icons** — a page's `icon::` emoji shows next to its title and in the namespace tree. Emoji
-  render as bundled Twemoji SVG images (not a font), so they show in every engine — including
-  WebKitGTK, which paints color-emoji webfonts blank — and work offline.
-- **Page rename** (double-click a title) rewrites every `[[ref]]`/`#tag` across the graph in one
-  transaction (see data-safety, below).
-
-**Works with your existing setup**
-- **Edit safely alongside Logseq mobile over Syncthing.** A filesystem watcher — **inotify by
-  default** (zero idle wakeups), with a polling fallback for filesystems where inotify misses edits,
-  switchable in Settings — reconciles changes synced in from other devices, and Tine **never
-  silently overwrites a file that changed on disk — it surfaces a conflict** instead. Saves preserve
-  each file's exact formatting (tabs vs spaces, comments, compact EDN) and skip byte-identical
-  rewrites, so they don't create sync diff churn.
-- **Page rename is transactional** — the page move and every `[[ref]]`/`#tag` rewrite across the
-  graph commit all-or-nothing, re-checking each file just before writing and rolling back on
-  conflict, so a rename can't half-apply.
-- **Custom journal date formats** — reads `:journal/file-name-format` and `:journal/page-title-format`
-  and recognizes/creates journal files in your format (e.g. `dd-MM-yyyy`, `yyyy-MM-dd`, `yyyyMMdd`),
-  falling back to the defaults so old/foreign files still resolve. The display-title format is
-  pickable in Settings → *Journals & tasks* → **Journal date format** (file names are left as-is).
-- **Duplicate-day reconcile** — if two files ever resolve to the same day (e.g. a `2026_06_26.org`
-  plus a title-named `Friday, 26-06-2026.org` left over from a date-format change), Tine keeps
-  **both** rather than silently dropping one, and Settings → *Backups* → **Duplicate journal days**
-  lets you reach each file individually: **Open** it (editable, saves back to itself), **Merge** a
-  stray into the canonical day, **Rename** it to a normal page, or **Trash** the redundant one.
-- **Org-mode graphs** — opens, renders, and edits `.org` pages and journals (headlines as blocks,
-  org inline syntax `*bold*` `/italic/` `_underline_` `~code~` `[[target][desc]]`, TODO markers,
-  `#+BEGIN_SRC`/`QUOTE` blocks). Mixed `.md` + `.org` graphs work; the **File format** setting
-  (Settings → *Journals & tasks*, `:preferred-format`) chooses what new pages/journals use. A `.org` file is only ever rewritten
-  when Tine can reproduce it **byte-for-byte** — anything it can't round-trip loads **read-only**, so
-  it can never corrupt an org graph.
-- **Launch snapshots** (configurable keep-count) with a restore UI that takes a safety snapshot
-  first; page delete moves to a recoverable **trash**; `atomic_write` + fsync.
-- Open/switch graphs from the app (native folder picker) or via `TINE_GRAPH`.
-
-**Customization & output**
-- **Fully remappable keyboard shortcuts** — in the Settings modal or via `config.edn :shortcuts`.
-- Light/dark themes, accent color, custom CSS, wide mode (`t w`) and document mode (`t d`).
-- **Spell checking** in the editor (on by default, like Logseq) with red squiggles +
-  right-click suggestions, using the system dictionaries. Unlike Logseq you can check
-  **multiple languages at once** — Settings → Editor lists the dictionaries installed on
-  your machine, so you just **tick** the ones you want (no locale codes to remember), and
-  a word valid in any ticked language isn't flagged (bilingual notes). None ticked follows
-  your OS locale. Install more dictionaries with your package manager (e.g. `hunspell-cs`)
-  and hit Rescan.
-- One-click **static HTML export** (`public:: true` pages) — like Logseq's published graphs,
-  each page gets a **left sidebar** (Favorites / Journals / Pages) and a **fuzzy full-text
-  search** box (block-level; results deep-link straight to the block). Search and the page
-  list are driven by a small embedded index + a vendored Fuse.js, so the exported site works
-  offline / opened straight off disk; math is typeset by KaTeX. (No interactive graph view yet.)
-  Also **"copy/export as"** for a block subtree or page as Markdown; a slash menu for headings,
-  code, calculator, quote, callouts, divider, embed, query (raw or visual builder), template,
-  asset upload, and dates.
-
-<p align="center">
-  <img src="docs/img/pdf.png" alt="PDF text + area (image) highlighting with a notes page" width="49%">
-  <img src="docs/img/settings.png" alt="Remappable shortcuts" width="49%">
-</p>
-
-<p align="center">
-  <img src="docs/img/dim.png" alt="Dim inactive blocks — spotlight the one you're working on" width="32%">
-  <img src="docs/img/carry.png" alt="Carry unfinished tasks forward to today" width="32%">
-  <img src="docs/img/query.png" alt="Query results + the visual query builder chip bar" width="32%">
-</p>
+→ **[See every feature, with the details, in docs/FEATURES.md.](docs/FEATURES.md)**
 
 ---
 
@@ -298,6 +139,10 @@ commands over it. The frontend owns the live editing tree (normalized store) and
 format-preserving saves; whole-graph reads hit an in-memory page cache (`RwLock<Arc<Graph>>` — read
 commands clone the Arc and release the lock immediately) keyed by a graph generation counter.
 
+The bigger architectural choices — Tauri/WebKitGTK over Electron, the pure-Rust core, in-browser
+WASM parsing, the data-safety invariants — are written up as short decision records in
+[`docs/adr/`](docs/adr/).
+
 ## Project layout
 
 ```
@@ -305,7 +150,7 @@ crates/tine-core/    Rust core: parse/serialize, model, config, dates, refs, que
 src-tauri/           Tauri app — IPC commands + windows (main + quick-capture)
 src/                 SolidJS frontend (components, store, render pipeline, keybindings)
 scripts/             env.sh (toolchain paths), screenshot generators
-docs/                Logo, images, feature notes
+docs/                Logo, images, FEATURES.md, ADRs, feature notes
 samples/             Demo graph used by tests/screenshots
 ```
 
@@ -373,6 +218,13 @@ npm test                     # Frontend: Vitest (editor ops, outline, autocomple
 Round-trip parsing is validated against a real Logseq graph (0 structural diffs beyond accepted
 canonicalization); `tine-check` is a privacy-safe profiler that proves byte-faithful serialization
 without reading note content.
+
+## Contributing
+
+Tine is a single-maintainer project with an unusual contribution model: **the most valuable thing
+you can send is testing and bug reports**, and code changes come in as **proposals/specs the
+maintainer implements** rather than merged patches (docs/typo PRs excepted). The why, and how to
+file a good report, are in **[CONTRIBUTING.md](CONTRIBUTING.md)**.
 
 ## Roadmap & non-goals
 
