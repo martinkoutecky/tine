@@ -1,7 +1,7 @@
 // Helpers to derive a block's *rendered* view from its raw text. Raw stays
 // authoritative (round-trip); these are computed projections.
 
-import type { Format } from "./parseInline";
+import type { Format } from "./ast";
 
 export const MARKERS = [
   "TODO",

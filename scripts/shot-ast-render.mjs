@@ -109,10 +109,14 @@ try {
     const el = await browser.$(sel);
     if (await el.isExisting()) { await el.click(); break; }
   }
-  // Let blocks parse (parse_blocks IPC) + KaTeX/hljs load.
+  // Let blocks parse (in-browser wasm) + KaTeX/hljs load.
   await sleep(4000);
   const title = await browser.$(".page-title");
   console.log("PAGE TITLE:", (await title.isExisting()) ? await title.getText() : "(none)");
+  // Confirm the wasm parser actually loaded in WebKitGTK — "ready" means the AST
+  // is wasm-rendered, NOT silently masked by the legacy fallback. (Plan §7E.)
+  const parser = await browser.execute(() => document.documentElement.dataset.lsdocParser || "(unset)");
+  console.log("LSDOC PARSER:", parser);
   await browser.saveScreenshot(OUT);
   console.log("screenshot →", OUT);
 } catch (e) {

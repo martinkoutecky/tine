@@ -56,6 +56,7 @@ import {
 import { applyZoom, installInterfaceZoomKeys, installInterfaceZoomWheel } from "./zoom";
 import { flushAll, appendToTodayJournal, captureToPage } from "./store";
 import { backend, isTauri } from "./backend";
+import { parserFailed } from "./render/parse";
 import { warnIfSoftwareRendering } from "./gpu";
 import { initSmoothScroll } from "./smoothScroll";
 import { initCopySettings } from "./copySettings";
@@ -294,6 +295,12 @@ export function App(): JSX.Element {
         "dim-mode": dimInactiveBlocks(),
       }}
     >
+      <Show when={parserFailed()}>
+        <div class="parser-error-banner" role="alert">
+          The block renderer failed to load — text is shown unformatted. Please reload Tine;
+          if this persists, report it.
+        </div>
+      </Show>
       <Show when={sidebarOpen()}>
         <div class="left-sidebar" style={{ flex: `0 0 ${sidebarWidth()}px`, width: `${sidebarWidth()}px` }}>
           <div class="left-sidebar-scroll">

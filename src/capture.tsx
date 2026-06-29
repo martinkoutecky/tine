@@ -9,6 +9,7 @@
 // persistence engine's saves are no-ops here).
 import { render } from "solid-js/web";
 import { For, Show, createSignal, createEffect, onCleanup, onMount } from "solid-js";
+import { initParser } from "./render/parse";
 import { Block, CaptureCtx, type CaptureApi } from "./components/Block";
 import { DatePicker } from "./components/DatePicker";
 import { datePicker } from "./ui";
@@ -369,4 +370,10 @@ function Capture() {
   );
 }
 
-render(() => <Capture />, document.getElementById("capture-root")!);
+// Init the wasm parser before first paint (blocks render synchronously from the
+// lsdoc AST). The capture window opens to an empty new block, so this ~tens-of-ms
+// init overlaps the user reaching for the keyboard and shouldn't be perceptible.
+// Caught so a parser-init failure can't leave the capture window blank.
+void initParser()
+  .catch((e) => console.error("lsdoc-wasm init failed:", e))
+  .finally(() => render(() => <Capture />, document.getElementById("capture-root")!));

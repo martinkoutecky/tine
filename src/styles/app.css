@@ -35,6 +35,24 @@ body {
   overflow: hidden;
 }
 
+/* Shown only if the wasm block renderer fails to load (degraded mode). */
+.parser-error-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 9999;
+  padding: 8px 14px;
+  font-size: 13px;
+  background: #b91c1c;
+  color: #fff;
+  text-align: center;
+}
+/* Raw block text shown when the parser isn't ready (paired with the banner). */
+.ast-fallback {
+  white-space: pre-wrap;
+}
+
 .left-sidebar {
   position: relative;
   width: var(--ls-left-sidebar-width);

@@ -1,9 +1,18 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll } from "vitest";
 import { render } from "solid-js/web";
 import { renderInlines } from "./inline";
 import { renderBlocks } from "./body";
+import { initParser } from "./parse";
 import type { JSX } from "solid-js";
 import type { Block, Inline } from "./ast";
+
+// A few render paths reach back into the wasm parser (e.g. a properties block
+// renders each value via InlineText → parseBlock). Node supports WebAssembly +
+// atob, so we load the real vendored parser once — this doubles as a wasm smoke
+// test (it must instantiate cleanly outside WebKitGTK too).
+beforeAll(async () => {
+  await initParser();
+});
 
 function html(node: () => JSX.Element): string {
   const div = document.createElement("div");

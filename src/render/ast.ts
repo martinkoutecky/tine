@@ -79,6 +79,9 @@ export type Span = [number, number];
 // table, quote, list, properties, …). See ast-render-contract.md §"Block-header".
 // ---------------------------------------------------------------------------
 
+/** Block format selector — picks the parser (Markdown `-` / Org `*` bullet). */
+export type Format = "md" | "org";
+
 export type Block =
   | ParagraphBlock
   | HeadingBlock

@@ -9,8 +9,8 @@ import { openPage, openPageInNewTab, openPageAtBlock, focusBlock } from "../rout
 import { refClickZoom } from "../copySettings";
 import { isJournalTitle } from "../journal";
 import { openPdf, openPageInSidebar, openBlockInSidebar, openPageContextMenu, openBlockRefContextMenu, setLightbox, setAudioPlayer, graphEpoch, graphMeta } from "../ui";
-import { parseInline, type Seg, type Format } from "./parseInline";
-import type { Inline, Url, MacroInline, TimestampInline, TimestampPoint, EmailValue } from "./ast";
+import { parseBlock } from "./parse";
+import type { Inline, Url, MacroInline, TimestampInline, TimestampPoint, EmailValue, Block as AstBlock, Format } from "./ast";
 import { EmojiText } from "./emoji";
 import { blockView } from "./block";
 import { backend } from "../backend";
@@ -20,159 +20,6 @@ import { doc, setRaw } from "../store";
 import { QueryMacro, EmbedMacro, VideoMacro, TweetMacro, YoutubeTimestamp, ClozeMacro, ZoteroMacro } from "../components/Macro";
 import { NamespaceMacro } from "../components/Namespace";
 
-function renderSegs(segs: Seg[], blockId?: string): JSX.Element {
-  return <For each={segs}>{(s) => renderSeg(s, blockId)}</For>;
-}
-
-function renderSeg(s: Seg, blockId?: string): JSX.Element {
-  switch (s.t) {
-    case "text":
-      return <EmojiText text={s.v} />;
-    case "bold":
-      return <strong>{renderSegs(s.v)}</strong>;
-    case "italic":
-      return <em>{renderSegs(s.v)}</em>;
-    case "underline":
-      return <u>{renderSegs(s.v)}</u>;
-    case "strike":
-      return <del>{renderSegs(s.v)}</del>;
-    case "highlight":
-      return <mark>{renderSegs(s.v)}</mark>;
-    case "code":
-      return <code class="inline-code">{s.v}</code>;
-    case "pageref":
-      return (
-        <a
-          class="page-ref"
-          onClick={(e) => {
-            e.stopPropagation();
-            // A journal-date name (in the graph's title format) routes to the
-            // journal page; otherwise it's a regular page. Without this a
-            // `[[Fri, 26-06-2026]]` link/tag opens as an empty page.
-            const kind = isJournalTitle(s.name) ? "journal" : "page";
-            if (e.shiftKey) openPageInSidebar(s.name, kind);
-            else openPage(s.name, kind);
-          }}
-          onAuxClick={(e) => {
-            if (e.button === 1) {
-              e.preventDefault();
-              e.stopPropagation();
-              openPageInNewTab(s.name, isJournalTitle(s.name) ? "journal" : "page");
-            }
-          }}
-          onContextMenu={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            openPageContextMenu(e.clientX, e.clientY, s.name);
-          }}
-        >
-          <Show when={s.alias} fallback={<><span class="bracket">[[</span>{s.name}<span class="bracket">]]</span></>}>
-            {s.alias}
-          </Show>
-        </a>
-      );
-    case "tag":
-      return (
-        <a
-          class="tag"
-          onClick={(e) => {
-            e.stopPropagation();
-            // A journal-date name (in the graph's title format) routes to the
-            // journal page; otherwise it's a regular page. Without this a
-            // `[[Fri, 26-06-2026]]` link/tag opens as an empty page.
-            const kind = isJournalTitle(s.name) ? "journal" : "page";
-            if (e.shiftKey) openPageInSidebar(s.name, kind);
-            else openPage(s.name, kind);
-          }}
-          onAuxClick={(e) => {
-            if (e.button === 1) {
-              e.preventDefault();
-              e.stopPropagation();
-              openPageInNewTab(s.name, isJournalTitle(s.name) ? "journal" : "page");
-            }
-          }}
-          onContextMenu={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            openPageContextMenu(e.clientX, e.clientY, s.name);
-          }}
-        >
-          #{s.name}
-        </a>
-      );
-    case "blockref":
-      return <BlockRefView id={s.id} label={s.label} />;
-    case "macro":
-      return renderMacroBody(s.body, blockId);
-    case "math":
-      return <MathView tex={s.tex} display={s.display} />;
-    case "link": {
-      // PDF assets open in the side viewer instead of navigating away.
-      if (/\.pdf$/i.test(s.url)) {
-        const filename = s.url.split("/").pop() ?? s.url;
-        return (
-          <a
-            class="external-link pdf-link"
-            onClick={(e) => {
-              e.stopPropagation();
-              openPdf(filename, s.label || filename);
-            }}
-          >
-            📄 {s.label || filename}
-          </a>
-        );
-      }
-      return (
-        <a
-          class="external-link"
-          href={s.url}
-          onClick={(e) => {
-            // Open externally; don't navigate the webview or fall through to the
-            // row's click-to-edit.
-            e.preventDefault();
-            e.stopPropagation();
-            void backend().openExternal(s.url);
-          }}
-        >
-          {s.label || s.url}
-        </a>
-      );
-    }
-    case "image": {
-      // `![](…)` is reused for video/audio (like OG) — route those to a player.
-      const k = mediaKind(s.url);
-      if (k === "video" || k === "audio")
-        return <MediaEmbed url={s.url} kind={k} alt={s.alt} width={s.width} blockId={blockId} />;
-      return (
-        <AssetImage url={s.url} alt={s.alt} width={s.width} height={s.height} blockId={blockId} />
-      );
-    }
-    case "footnote":
-      return <sup class="footnote-ref">{s.id}</sup>;
-    case "timestamp":
-      // Org date/time stamp: active `<…>` vs inactive `[…]` (styled, like OG;
-      // inline Date stamps aren't journal links in OG, so neither are these).
-      return (
-        <span class="org-timestamp" classList={{ inactive: !s.active }}>
-          {s.active ? "<" : "["}
-          {s.raw}
-          {s.active ? ">" : "]"}
-        </span>
-      );
-    case "iframe":
-      return (
-        <span class="embed-iframe-wrap" style={{ ...(s.width ? { width: s.width } : {}), ...(s.height ? { "aspect-ratio": "auto", height: s.height } : {}) }}>
-          <iframe
-            class="embed-iframe"
-            src={s.src}
-            sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
-            referrerpolicy="no-referrer"
-            title="embed"
-          />
-        </span>
-      );
-  }
-}
 
 // ===========================================================================
 // AST renderer (lsdoc). Renders an `Inline[]` produced by the Rust parser to
@@ -767,11 +614,24 @@ function MediaEmbed(props: {
   );
 }
 
-/** Render a block's body text (already stripped of marker/heading prefix).
- *  `blockId` (the owning block) is threaded to inline `{{query}}` macros so they
- *  can show the editable builder + rewrite that block. */
+/** The inline run of a parsed block: the concatenated `inline` of its inline-flow
+ *  blocks (paragraph/bullet/heading). `InlineText` callers pass a single line of
+ *  inline markup, so this is normally one block's inlines. */
+function blockInlines(blocks: AstBlock[]): Inline[] {
+  const out: Inline[] = [];
+  for (const b of blocks) {
+    if (b.kind === "paragraph" || b.kind === "bullet" || b.kind === "heading") out.push(...b.inline);
+  }
+  return out;
+}
+
+/** Render a single line of inline markup (a property value, breadcrumb, ref-block
+ *  preview line, …) — anything NOT a full block body. Parses via the in-browser
+ *  wasm parser (src/render/parse.ts) and renders the inline run; `blockId` is
+ *  threaded to inline `{{query}}` macros so they can rewrite the owning block. */
 export function InlineText(props: { text: string; blockId?: string; format?: Format }): JSX.Element {
-  return <>{renderSegs(parseInline(props.text, props.format ?? "md"), props.blockId)}</>;
+  const inlines = createMemo(() => blockInlines(parseBlock(props.text, props.format === "org")));
+  return <>{renderInlines(inlines(), props.blockId)}</>;
 }
 
 // Recursion depth guard for user `:macros` expansion. renderSegs uses <For>, which

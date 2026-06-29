@@ -4,57 +4,18 @@
 import { For, Show, createMemo, createResource, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { InlineText, renderInlines, renderRawHtml, MathView, astText } from "./inline";
-import type { Format } from "./parseInline";
-import type { Block as AstBlock, ListItem as AstListItem } from "./ast";
+import type { Block as AstBlock, ListItem as AstListItem, Format } from "./ast";
 import { backend } from "../backend";
 import { evalCalc } from "../editor/calc";
 import { toggleListItem, doc } from "../store";
-import { parseBlockBatched } from "./astParse";
+import { parseBlock, parserReady } from "./parse";
 
 type Align = "left" | "center" | "right" | null;
 
-type BodySeg =
-  | { kind: "lines"; lines: string[] }
-  | { kind: "code"; lang: string; code: string }
-  | { kind: "calc"; code: string }
-  | { kind: "table"; rows: string[][]; aligns: Align[] }
-  | { kind: "hr" }
-  | { kind: "quote"; lines: string[] }
-  | { kind: "callout"; kind2: string; title: string; lines: string[] }
-  | { kind: "list"; items: string[] };
-
-// An in-block markdown list line: `+`/`*`/ordered marker (NOT `-`, which is the
-// outliner's own block bullet and would be parsed as a child block — matching OG,
-// where only `-`/`*`-in-org are block bullets). This is how a tickable checklist
-// round-trips with OG/mobile: a `+ [ ]` list inside ONE bullet's content.
-// In-block plain-list bullets are format-specific, because the unusable marker
-// differs: in Markdown a leading `-` is the OUTLINE bullet (its own block), so
-// in-block lists use `+`/`*`; in Org a leading `*` is a HEADLINE, so org plain
-// lists use `-`/`+` (org-mode + Logseq). Numbered (`1.`/`1)`) works in both.
-const LIST_RE_MD = /^(\s*)([+*]|\d+[.)])\s+(.*)$/;
-const LIST_RE_ORG = /^(\s*)([-+]|\d+[.)])\s+(.*)$/;
-function listRe(format?: Format): RegExp {
-  return format === "org" ? LIST_RE_ORG : LIST_RE_MD;
-}
-
-function isTableRow(line: string): boolean {
-  return /^\s*\|.*\|\s*$/.test(line);
-}
 function isTableSep(line: string): boolean {
   // Accept org's column-junction `+` (`|---+---|`) as well as markdown's `|---|`.
   return /^\s*\|?[\s:|+-]+\|?\s*$/.test(line) && line.includes("-");
 }
-function isHr(line: string): boolean {
-  return /^\s*([-*_])\1{2,}\s*$/.test(line);
-}
-function isQuote(line: string): boolean {
-  return /^\s*>\s?/.test(line);
-}
-function stripQuote(line: string): string {
-  return line.replace(/^\s*>\s?/, "");
-}
-// `> [!NOTE] optional title` opens a callout; type is lowercased.
-const CALLOUT_RE = /^\[!(\w+)\]\s*(.*)$/;
 
 /** Per-column alignment from a table separator row (`:--`, `--:`, `:-:`). */
 function parseAligns(sep: string): Align[] {
@@ -63,164 +24,6 @@ function parseAligns(sep: string): Align[] {
     const r = c.endsWith(":");
     return l && r ? "center" : r ? "right" : l ? "left" : null;
   });
-}
-
-export function segmentBody(lines: string[], format?: Format): BodySeg[] {
-  const LIST_RE = listRe(format);
-  const segs: BodySeg[] = [];
-  let buf: string[] = [];
-  const flush = () => {
-    if (buf.length) segs.push({ kind: "lines", lines: buf });
-    buf = [];
-  };
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const fence = /^```(\S*)\s*$/.exec(line.trim());
-    if (fence) {
-      flush();
-      const lang = fence[1] || "";
-      const code: string[] = [];
-      i++;
-      while (i < lines.length && !/^```\s*$/.test(lines[i].trim())) {
-        code.push(lines[i]);
-        i++;
-      }
-      const joined = code.join("\n");
-      segs.push(lang === "calc" ? { kind: "calc", code: joined } : { kind: "code", lang, code: joined });
-      continue;
-    }
-    // table: a run of pipe rows
-    if (isTableRow(line) && i + 1 < lines.length && isTableSep(lines[i + 1])) {
-      flush();
-      const rows: string[][] = [];
-      const header = splitRow(line);
-      const aligns = parseAligns(lines[i + 1]);
-      i++; // skip separator
-      const body: string[][] = [];
-      while (i + 1 < lines.length && isTableRow(lines[i + 1])) {
-        body.push(splitRow(lines[i + 1]));
-        i++;
-      }
-      rows.push(header, ...body);
-      segs.push({ kind: "table", rows, aligns });
-      continue;
-    }
-    // horizontal rule
-    if (isHr(line)) {
-      flush();
-      segs.push({ kind: "hr" });
-      continue;
-    }
-    // blockquote / callout: a run of `>`-prefixed lines
-    if (isQuote(line)) {
-      flush();
-      const qlines: string[] = [];
-      while (i < lines.length && isQuote(lines[i])) {
-        qlines.push(stripQuote(lines[i]));
-        i++;
-      }
-      i--; // for-loop will ++
-      const co = CALLOUT_RE.exec(qlines[0] ?? "");
-      if (co) {
-        segs.push({ kind: "callout", kind2: co[1].toLowerCase(), title: co[2].trim(), lines: qlines.slice(1) });
-      } else {
-        segs.push({ kind: "quote", lines: qlines });
-      }
-      continue;
-    }
-    // org-mode admonition block: `#+BEGIN_X` … `#+END_X` (one multi-line block,
-    // line-leading, type case-insensitive). Logseq renders note/tip/important/
-    // caution/warning/pinned as colored callouts, QUOTE as a plain blockquote, and
-    // anything else (center, …) as plain content. The raw `#+BEGIN/#+END` stay in
-    // the block's `raw`, so this is render-only and round-trips byte-for-byte.
-    const beg = /^\s*#\+begin_(\w+)\s*(.*)$/i.exec(line);
-    if (beg) {
-      const type = beg[1].toLowerCase();
-      const endRe = new RegExp(`^\\s*#\\+end_${type}\\s*$`, "i");
-      const inner: string[] = [];
-      let j = i + 1;
-      while (j < lines.length && !endRe.test(lines[j])) {
-        inner.push(lines[j]);
-        j++;
-      }
-      if (j < lines.length) {
-        // matched `#+END_<type>` — consume the whole block
-        flush();
-        i = j; // for-loop ++ steps past the END line
-        if (["note", "tip", "important", "caution", "warning", "pinned"].includes(type)) {
-          segs.push({ kind: "callout", kind2: type, title: beg[2].trim(), lines: inner });
-        } else if (type === "quote") {
-          segs.push({ kind: "quote", lines: inner });
-        } else if (type === "src" || type === "example") {
-          // org source/example block → fenced code (lang from `#+BEGIN_SRC lang`).
-          segs.push({ kind: "code", lang: type === "src" ? beg[2].trim() : "", code: inner.join("\n") });
-        } else {
-          segs.push({ kind: "lines", lines: inner }); // center / unknown → plain
-        }
-        continue;
-      }
-      // no matching END — fall through and treat as an ordinary line
-    }
-    // in-block markdown list (`+`/`*`/ordered) — a run of list lines
-    if (LIST_RE.test(line)) {
-      flush();
-      const items: string[] = [];
-      while (i < lines.length && LIST_RE.test(lines[i])) {
-        items.push(lines[i]);
-        i++;
-      }
-      i--; // for-loop will ++
-      segs.push({ kind: "list", items });
-      continue;
-    }
-    buf.push(line);
-  }
-  flush();
-  return segs;
-}
-
-interface ListNode {
-  ordered: boolean;
-  items: ListItemNode[];
-}
-interface ListItemNode {
-  raw: string; // the exact source line (for round-trip-safe checkbox toggle)
-  checkbox: "unchecked" | "checked" | null;
-  text: string; // inline text after the marker (+ checkbox)
-  children: ListNode | null;
-}
-
-/** Parse a run of `+`/`*`/ordered list lines into a nested tree by indentation. */
-export function parseList(lines: string[], format?: Format): ListNode {
-  const LIST_RE = listRe(format);
-  const parsed = lines.map((raw) => {
-    const m = LIST_RE.exec(raw)!;
-    let rest = m[3];
-    let checkbox: ListItemNode["checkbox"] = null;
-    const cb = /^\[([ xX])\]\s+(.*)$/.exec(rest);
-    if (cb) {
-      checkbox = cb[1] === " " ? "unchecked" : "checked";
-      rest = cb[2];
-    }
-    return { indent: m[1].length, ordered: /\d/.test(m[2]), raw, checkbox, text: rest };
-  });
-  const root: ListNode = { ordered: parsed[0].ordered, items: [] };
-  const stack: { indent: number; list: ListNode }[] = [{ indent: parsed[0].indent, list: root }];
-  for (const p of parsed) {
-    while (stack.length > 1 && p.indent < stack[stack.length - 1].indent) stack.pop();
-    let top = stack[stack.length - 1];
-    if (p.indent > top.indent) {
-      // deeper than the current level → a child list under the last item
-      const parent = top.list.items[top.list.items.length - 1];
-      const child: ListNode = { ordered: p.ordered, items: [] };
-      if (parent) parent.children = child;
-      stack.push({ indent: p.indent, list: child });
-      top = stack[stack.length - 1];
-    }
-    top.list.items.push({ raw: p.raw, checkbox: p.checkbox, text: p.text, children: null });
-  }
-  return root;
 }
 
 function splitRow(line: string): string[] {
@@ -297,134 +100,11 @@ export function CalcBlock(props: { src: string }): JSX.Element {
   );
 }
 
-/** An in-block markdown list (styled distinctly from outline bullets), with
- *  tickable `[ ]`/`[x]` checkboxes that toggle the matching line in the block. */
-function MdList(props: { node: ListNode; blockId?: string; format?: Format }): JSX.Element {
-  return (
-    <Dynamic component={props.node.ordered ? "ol" : "ul"} class="md-list">
-      <For each={props.node.items}>
-        {(item) => (
-          <li class="md-list-item" classList={{ "has-checkbox": item.checkbox !== null }}>
-            <Show when={item.checkbox !== null}>
-              <span
-                class="block-checkbox"
-                classList={{ checked: item.checkbox === "checked" }}
-                role="checkbox"
-                aria-checked={item.checkbox === "checked"}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (props.blockId) toggleListItem(props.blockId, item.raw);
-                }}
-              />{" "}
-            </Show>
-            <InlineText text={item.text} format={props.format} />
-            <Show when={item.children}>
-              <MdList node={item.children!} blockId={props.blockId} format={props.format} />
-            </Show>
-          </li>
-        )}
-      </For>
-    </Dynamic>
-  );
-}
-
-export function BodyContent(props: { lines: string[]; blockId?: string; format?: Format }): JSX.Element {
-  return (
-    <For each={segmentBody(props.lines, props.format)}>
-      {(seg) => {
-        if (seg.kind === "code") {
-          return <CodeBlock code={seg.code} lang={seg.lang} />;
-        }
-        if (seg.kind === "calc") {
-          return <CalcBlock src={seg.code} />;
-        }
-        if (seg.kind === "table") {
-          const [head, ...body] = seg.rows;
-          const al = (i: number) => (seg.aligns[i] ? { "text-align": seg.aligns[i]! } : undefined);
-          return (
-            <table class="md-table">
-              <thead>
-                <tr>
-                  <For each={head}>{(c, i) => <th style={al(i())}><InlineText text={c} format={props.format} /></th>}</For>
-                </tr>
-              </thead>
-              <tbody>
-                <For each={body}>
-                  {(row) => (
-                    <tr>
-                      <For each={row}>{(c, i) => <td style={al(i())}><InlineText text={c} format={props.format} /></td>}</For>
-                    </tr>
-                  )}
-                </For>
-              </tbody>
-            </table>
-          );
-        }
-        if (seg.kind === "list") {
-          return <MdList node={parseList(seg.items, props.format)} blockId={props.blockId} format={props.format} />;
-        }
-        if (seg.kind === "hr") {
-          return <hr class="md-hr" />;
-        }
-        if (seg.kind === "quote") {
-          return (
-            <blockquote class="md-quote">
-              <For each={seg.lines}>
-                {(line, i) => (
-                  <>
-                    <Show when={i() > 0}>
-                      <br />
-                    </Show>
-                    <InlineText text={line} format={props.format} />
-                  </>
-                )}
-              </For>
-            </blockquote>
-          );
-        }
-        if (seg.kind === "callout") {
-          return (
-            <div class={`callout callout-${seg.kind2}`}>
-              <div class="callout-title">{seg.title || seg.kind2.toUpperCase()}</div>
-              <Show when={seg.lines.length > 0}>
-                <div class="callout-body">
-                  <For each={seg.lines}>
-                    {(line, i) => (
-                      <>
-                        <Show when={i() > 0}>
-                          <br />
-                        </Show>
-                        <InlineText text={line} format={props.format} />
-                      </>
-                    )}
-                  </For>
-                </div>
-              </Show>
-            </div>
-          );
-        }
-        return (
-          <For each={seg.lines}>
-            {(line, i) => (
-              <>
-                <Show when={i() > 0}>
-                  <br />
-                </Show>
-                <InlineText text={line} blockId={props.blockId} format={props.format} />
-              </>
-            )}
-          </For>
-        );
-      }}
-    </For>
-  );
-}
-
 // ===========================================================================
-// AST block renderer (lsdoc). Renders a Tine block's parsed `Block[]` — the
-// replacement for segmentBody. The FIRST node is the header (bullet/heading);
-// Block.tsx wraps it with marker/priority/heading chrome, so here we just render
-// each block's content. See subagent-tasks/notes/ast-render-contract.md.
+// AST block renderer (lsdoc). Renders a Tine block's parsed `Block[]`. The FIRST
+// node is the header (bullet/heading); Block.tsx wraps it with marker/priority/
+// heading chrome, so here we just render each block's content.
+// See subagent-tasks/notes/ast-render-contract.md.
 // ===========================================================================
 
 const CALLOUT_TYPES = ["note", "tip", "important", "caution", "warning", "pinned"];
@@ -635,20 +315,21 @@ function AstList(props: { items: AstListItem[]; blockId?: string }): JSX.Element
 }
 
 /** Render a block's body. Parses the (header-stripped) body text into lsdoc's AST
- *  and renders from it (renderBlocks); until the async parse lands — and in the
- *  mock harness, which can't run lsdoc — it falls back to the legacy line-scanning
- *  BodyContent so content is always visible. Input is `view.lines` (marker /
- *  scheduled / properties already stripped by blockView), so the AST renders only
- *  the visible body and block-header chrome stays in blockView/Block.tsx. */
+ *  SYNCHRONOUSLY (via the in-browser wasm parser, src/render/parse.ts) and renders
+ *  from it (renderBlocks). Input is `view.lines` (marker / scheduled / properties
+ *  already stripped by blockView), so the AST renders only the visible body and
+ *  block-header chrome stays in blockView/Block.tsx.
+ *
+ *  The parser is initialized once before first paint (main.tsx / capture.tsx), so
+ *  `parserReady()` is true by the time any block renders — no flash, no fallback.
+ *  The `<Show>` fallback renders the raw text literally and only triggers if the
+ *  wasm parser failed to load (degraded mode; paired with the app-level
+ *  "renderer failed" banner — plan §7C), so content is never silently blank. */
 export function AstBody(props: { lines: string[]; blockId?: string; format?: Format }): JSX.Element {
   const text = createMemo(() => props.lines.join("\n"));
-  const [ast] = createResource(text, (t) => parseBlockBatched(t, props.format === "org"));
   return (
-    <Show
-      when={ast() && ast()!.length > 0}
-      fallback={<BodyContent lines={props.lines} blockId={props.blockId} format={props.format} />}
-    >
-      {renderBlocks(ast()!, props.blockId)}
+    <Show when={parserReady()} fallback={<span class="ast-fallback">{text()}</span>}>
+      {renderBlocks(parseBlock(text(), props.format === "org"), props.blockId)}
     </Show>
   );
 }
