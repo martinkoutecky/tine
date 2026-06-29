@@ -118,7 +118,7 @@ function isInlineFlow(b: AstBlock): boolean {
 /** Render a Tine block's parsed content (`Block[]`). Consecutive inline-flow
  *  blocks (header + continuation paragraphs) are `<br>`-joined to match the old
  *  line-stacked look; block-level constructs render standalone. */
-export function renderBlocks(blocks: AstBlock[], blockId?: string): JSX.Element {
+export function renderBlocks(blocks: AstBlock[], blockId?: string, headingLevel?: number | null): JSX.Element {
   return (
     <For each={blocks}>
       {(b, i) => (
@@ -126,7 +126,13 @@ export function renderBlocks(blocks: AstBlock[], blockId?: string): JSX.Element 
           <Show when={i() > 0 && isInlineFlow(b) && isInlineFlow(blocks[i() - 1])}>
             <br />
           </Show>
-          {renderBlock(b, blockId)}
+          {/* A `# heading` block's size applies ONLY to the heading's own line (the
+              first inline-flow node), NOT to continuation constructs in the same block
+              (e.g. a `> quote` under it) — matching OG. blockView strips the `#` and
+              passes the level down; we wrap just block 0. */}
+          <Show when={i() === 0 && headingLevel && isInlineFlow(b)} fallback={renderBlock(b, blockId)}>
+            <span class={`heading-text h${headingLevel}`}>{renderBlock(b, blockId)}</span>
+          </Show>
         </>
       )}
     </For>
@@ -347,11 +353,11 @@ function AstList(props: { items: AstListItem[]; blockId?: string; cbItems: AstLi
  *  The `<Show>` fallback renders the raw text literally and only triggers if the
  *  wasm parser failed to load (degraded mode; paired with the app-level
  *  "renderer failed" banner — plan §7C), so content is never silently blank. */
-export function AstBody(props: { lines: string[]; blockId?: string; format?: Format }): JSX.Element {
+export function AstBody(props: { lines: string[]; blockId?: string; format?: Format; headingLevel?: number | null }): JSX.Element {
   const text = createMemo(() => props.lines.join("\n"));
   return (
     <Show when={parserReady()} fallback={<span class="ast-fallback">{text()}</span>}>
-      {renderBlocks(parseBlock(text(), props.format === "org"), props.blockId)}
+      {renderBlocks(parseBlock(text(), props.format === "org"), props.blockId, props.headingLevel)}
     </Show>
   );
 }

@@ -220,8 +220,11 @@ export function Block(props: { id: string; hideRefCount?: boolean }): JSX.Elemen
         class="block-main"
         classList={{
           // Heading level on the row so the bullet column can match the (taller)
-          // heading line box and the bullet stays centered on the first line.
-          [`bullet-h${headingLevel()}`]: headingLevel() != null,
+          // heading line box and the bullet stays centered on the first line. NOT
+          // while editing: the editor textarea is plain (standard height, no heading
+          // size), so the taller bullet column would make the bullet jump the moment
+          // you type `#`. Apply the offset only in the rendered (heading-sized) view.
+          [`bullet-h${headingLevel()}`]: headingLevel() != null && !editing(),
           "drop-before": dropInd()?.id === props.id && dropInd()?.before === true,
           "drop-after": dropInd()?.id === props.id && dropInd()?.before === false,
           dragging: dragId() === props.id,
@@ -409,7 +412,7 @@ function Rendered(props: { id: string; owner?: string; trailing?: JSX.Element })
   };
 
   const body = (
-    <Show when={annotation()} fallback={<AstBody lines={view().lines} blockId={props.id} format={fmt()} />}>
+    <Show when={annotation()} fallback={<AstBody lines={view().lines} blockId={props.id} format={fmt()} headingLevel={view().headingLevel} />}>
       <AnnotationBody
         color={annotation()!.color}
         hlPage={annotation()!.hlPage}
@@ -456,12 +459,10 @@ function Rendered(props: { id: string; owner?: string; trailing?: JSX.Element })
       <Show when={view().priority}>
         <span class={`block-priority priority-${view().priority}`}>[#{view().priority}]</span>{" "}
       </Show>
-      <Show when={view().headingLevel} fallback={body}>
-        {(() => {
-          const H = `h${view().headingLevel}`;
-          return <span class={`heading-text ${H}`}>{body}</span>;
-        })()}
-      </Show>
+      {/* Heading size is applied inside AstBody to ONLY the heading's first line
+          (see renderBlocks headingLevel), so a `> quote`/table/etc. continuation in
+          the same block renders at normal size — matching OG. */}
+      {body}
       <Show when={view().scheduled}>
         <span
           class="date-chip scheduled"

@@ -10,6 +10,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Hover an image → copy / trash** (matches Logseq). Hovering an embedded asset now shows
+  a small action bar (top-right): **copy** the image to the clipboard, or **trash** it —
+  which removes the `![](…)` reference from the block and moves the file to the recoverable
+  trash (`logseq/.tine-trash`), after a confirm. Graph assets only.
+
 - **Native window controls** — Tine's window now fits in on each OS. On **macOS** the
   window gets real rounded corners and traffic-light buttons (a transparent overlay title
   bar) while keeping Tine's compact, single-row layout — no wasted title-bar row. On
@@ -49,6 +54,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   how anything looks or round-trips.
 
 ### Fixed
+
+- **Headings render more like Logseq.** A `# heading` block's larger font now applies to
+  the heading's *own* line only — a `> quote` (or table, list, …) continuation in the same
+  block renders at normal size again. And the bullet no longer **jumps** when you start a
+  heading: while editing, the bullet stays put (the editor is plain-height); it only shifts
+  to align with the larger text once rendered.
 
 - **Parser upgraded to lsdoc v0.1.4** — closer Logseq parity and hardened against
   pathological input. Corrected: lone-`\r`/CRLF left in content (Windows or pasted

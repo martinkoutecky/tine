@@ -2343,6 +2343,40 @@ mark {
 .inline-image-wrap:hover .img-resize-grip {
   opacity: 0.85;
 }
+/* Asset hover actions (copy / trash), top-right — revealed on hover like the grip. */
+.asset-action-bar {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  gap: 4px;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.inline-image-wrap:hover .asset-action-bar {
+  opacity: 1;
+}
+.asset-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(2px);
+}
+.asset-action-btn:hover {
+  background: rgba(0, 0, 0, 0.75);
+}
+.asset-action-btn.asset-action-trash:hover {
+  background: var(--danger, #c0392b);
+}
 
 /* Inline video/audio asset players + the click-to-open fallback chip. */
 .media-embed {

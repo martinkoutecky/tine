@@ -1,24 +1,6 @@
 import { For, Show, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { toasts, dismissToast, lightbox, setLightbox, pushToast } from "../ui";
-import { backend } from "../backend";
-
-// Re-encode the shown image to PNG bytes (canvas), then hand them to the Rust
-// clipboard writer. WebKitGTK's native "Copy Image" doesn't populate the OS
-// clipboard, so we go through the backend instead.
-async function copyLightboxImage(src: string): Promise<void> {
-  const img = new Image();
-  img.src = src;
-  await img.decode();
-  const canvas = document.createElement("canvas");
-  canvas.width = img.naturalWidth;
-  canvas.height = img.naturalHeight;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("no 2d context");
-  ctx.drawImage(img, 0, 0);
-  const blob: Blob | null = await new Promise((r) => canvas.toBlob(r, "image/png"));
-  if (!blob) throw new Error("encode failed");
-  await backend().copyImageToClipboard(new Uint8Array(await blob.arrayBuffer()));
-}
+import { copyImageFromSrc as copyLightboxImage } from "../copyImage";
 
 // Bottom-right transient notifications.
 export function Toasts(): JSX.Element {

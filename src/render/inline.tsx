@@ -8,7 +8,8 @@ import { mediaKind } from "../media";
 import { openPage, openPageInNewTab, openPageAtBlock, focusBlock } from "../router";
 import { refClickZoom } from "../copySettings";
 import { isJournalTitle } from "../journal";
-import { openPdf, openPageInSidebar, openBlockInSidebar, openPageContextMenu, openBlockRefContextMenu, setLightbox, setAudioPlayer, graphEpoch, graphMeta } from "../ui";
+import { openPdf, openPageInSidebar, openBlockInSidebar, openPageContextMenu, openBlockRefContextMenu, setLightbox, setAudioPlayer, graphEpoch, graphMeta, pushToast } from "../ui";
+import { copyImageFromSrc } from "../copyImage";
 import { parseBlock, parserReady } from "./parse";
 import type { Inline, Url, MacroInline, TimestampInline, TimestampPoint, EmailValue, Block as AstBlock, Format } from "./ast";
 import { EmojiText } from "./emoji";
@@ -384,6 +385,19 @@ function writeMediaWidth(blockId: string, alt: string, url: string, pct: number)
   if (next !== node.raw) setRaw(blockId, next);
 }
 
+// Remove THIS media token (`![alt](url){...}`) from its block's raw — the "trash"
+// affordance drops the reference (OG's delete-asset-of-block! also rewrites the
+// block, then unlinks the file). Eats one adjacent space so we don't leave a
+// double space behind. Matched by exact alt+url, like writeMediaWidth.
+function removeMediaToken(blockId: string, alt: string, url: string) {
+  const node = doc.byId[blockId];
+  if (!node) return;
+  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(` ?!\\[${esc(alt)}\\]\\(${esc(url)}\\)(\\{[^}]*\\})?`);
+  const next = node.raw.replace(re, "");
+  if (next !== node.raw) setRaw(blockId, next);
+}
+
 // Image embed: external URLs load directly; graph assets (`../assets/x.png`)
 // are read from disk via the backend and shown as a blob URL. When rendered
 // inside a real block (`blockId` set, not the lightbox/capture scratch), a
@@ -446,6 +460,36 @@ function AssetImage(props: {
     window.addEventListener("pointerup", up);
   };
 
+  // Hover actions (graph assets in a real block only — like OG's asset action bar):
+  // copy the image to the OS clipboard, and trash it (drop the block reference + move
+  // the file to the recoverable trash).
+  const assetActions = () => !external && !!props.blockId;
+  const onCopyAsset = (e: MouseEvent) => {
+    e.stopPropagation();
+    const s = src();
+    if (!s) return;
+    copyImageFromSrc(s)
+      .then(() => pushToast("Image copied to clipboard", "success"))
+      .catch(() => pushToast("Couldn't copy the image", "error"));
+  };
+  const onTrashAsset = async (e: MouseEvent) => {
+    e.stopPropagation();
+    const name = assetRelPath(props.url);
+    if (!name || !props.blockId) return;
+    const ok = await backend().confirm(
+      `Move "${name}" to the trash and remove it from this block? It stays recoverable in logseq/.tine-trash.`,
+      "Trash asset",
+    );
+    if (!ok) return;
+    removeMediaToken(props.blockId, props.alt, props.url); // drop the reference first (saves the block)
+    try {
+      await backend().trashAsset(name);
+      pushToast("Asset moved to trash", "success");
+    } catch (err) {
+      pushToast(`Couldn't trash the asset (${String(err)})`, "error");
+    }
+  };
+
   return (
     <Show
       when={external || src()}
@@ -460,6 +504,21 @@ function AssetImage(props: {
           style={imgStyle()}
           onClick={(e) => { e.stopPropagation(); setLightbox(src()!); }}
         />
+        <Show when={assetActions()}>
+          <span class="asset-action-bar" aria-hidden="true">
+            <button class="asset-action-btn" title="Copy image" onClick={onCopyAsset}>
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="9" y="9" width="11" height="11" rx="2" />
+                <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+              </svg>
+            </button>
+            <button class="asset-action-btn asset-action-trash" title="Trash image" onClick={onTrashAsset}>
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+              </svg>
+            </button>
+          </span>
+        </Show>
         <Show when={props.blockId}>
           <span class="img-resize-grip" title="Drag to resize" onPointerDown={onGripDown} />
         </Show>

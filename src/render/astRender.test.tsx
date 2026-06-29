@@ -167,6 +167,25 @@ describe("renderBlocks", () => {
     expect(h).toContain("ast-hiccup");
     expect(h).toContain("[:div.note");
   });
+
+  // A `# heading` block's size applies ONLY to its first (heading) line — a `> quote`
+  // continuation in the same block stays normal-size (OG parity, not h1). The heading
+  // level is passed to renderBlocks; only block 0 is wrapped in heading-text.
+  it("heading size wraps only the first block, not a continuation quote", () => {
+    const h = html(() =>
+      renderBlocks(
+        [
+          { kind: "paragraph", inline: [{ k: "plain", text: "Title" }] },
+          { kind: "quote", children: [{ kind: "paragraph", inline: [{ k: "plain", text: "quoted" }] }] },
+        ],
+        undefined,
+        1,
+      ),
+    );
+    const headingSpan = /<span class="heading-text h1">.*?<\/span>/s.exec(h)?.[0] ?? "";
+    expect(headingSpan).toContain("Title"); // heading line is h1
+    expect(headingSpan).not.toContain("quoted"); // the quote is OUTSIDE the heading span
+  });
 });
 
 // InlineText is the inline-only renderer for property values, breadcrumbs,
