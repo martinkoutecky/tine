@@ -1,8 +1,25 @@
 # Plan: parse in-browser via lsdoc-WASM (option A)
 
-**Status:** PLAN — not started. Authored 2026-06-29 right after the IPC-based
-render cutover shipped, while the render path is fresh. For a dedicated "go"
-session (plan → compact → go).
+**Status: SHIPPED (2026-06-29).** Implemented as planned with these concrete
+choices: vendor a prebuilt `.wasm` (zero CI change); a `crates/lsdoc-wasm`
+wrapper crate that git-deps `lsdoc` directly (excluded from the workspace);
+base64-inline the bytes + async `WebAssembly.instantiate` (no `fetch`, no Vite
+wasm plugins); the wasm returns a JSON string that JS `JSON.parse`s (identical to
+the old IPC `serde_json` encoding). Regenerate with `npm run build:wasm`.
+
+What shipped vs the original deletion list: the legacy block renderers
+(`segmentBody`/`BodyContent`/`parseList`/`MdList`/`BodySeg`), `parseInline.ts`(+test),
+`astParse.ts`, `renderSeg`/`renderSegs`, and the IPC `parse_block`/`parse_blocks`
+(+ backend/mock bindings) were all deleted (~1,300 lines). `InlineText` was NOT
+deleted — it has live non-block callers (property values, breadcrumbs, ref
+previews, PDF-annotation lines) and was **reimplemented** on the wasm parser.
+Verified: a 99-block wasm-vs-Rust diff oracle (0 mismatches), the real-app
+WebKitGTK screenshots (md + org, `data-lsdoc-parser="ready"`, no flash), 264 unit
++ 20 render tests (the render suite now also smoke-tests wasm init in Node).
+
+---
+
+_Original plan (for reference):_
 
 ## Goal
 

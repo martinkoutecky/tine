@@ -32,6 +32,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   including search — works **offline / opened straight off disk** (`file://`). Not yet
   included: Logseq's interactive graph view (a separate follow-up).
 
+### Changed
+
+- **Block rendering now parses Markdown/Org in-browser via WebAssembly** (the same
+  `lsdoc` parser the backend uses, compiled to wasm). Rendering is synchronous, so
+  there's **no more first-paint flicker** on opening a page, and the hand-rolled
+  TypeScript inline/markdown renderer (~1,300 lines) is gone — one parser now drives
+  both the on-disk index and the on-screen render, so they can't drift. No change to
+  how anything looks or round-trips.
+
 ## [0.2.3] — 2026-06-28
 
 ### Changed
