@@ -42,6 +42,12 @@ pub struct DocBlock {
     /// the conflict guard (`parse(disk) == cached`) would always see a "change".
     #[serde(default)]
     pub uuid: String,
+    /// Whether this block's page is Org (vs Markdown) — the format lsdoc needs to
+    /// parse inline refs correctly (e.g. org `[[target][alias]]`). Page-level
+    /// metadata, not content, so excluded from equality (like `uuid`); set at
+    /// parse time. `#[serde(default)]` → false on any legacy deserialize.
+    #[serde(default)]
+    pub is_org: bool,
     /// Lazily-computed, memoized projection of `raw` for the hot read paths
     /// (see [`DocBlock::projection`]). Derived metadata, not content: excluded
     /// from equality + serialization, and reset on clone. `pub(crate)` only so
@@ -59,6 +65,10 @@ pub struct BlockProjection {
     pub visible_lower: String,
     /// Normalized page references (`[[..]]` / `#tag`) — for backlinks / `(page-ref)`.
     pub refs_norm: Vec<String>,
+    /// Block references (`((uuid))` / `[l](((uuid)))` / `{{embed ((uuid))}}`),
+    /// UUID-gated — for the block-referrers / ref-count scans. From the same
+    /// lsdoc parse as `refs_norm`.
+    pub block_refs: Vec<String>,
 }
 
 impl BlockProjection {
@@ -89,6 +99,7 @@ impl Clone for DocBlock {
             raw: self.raw.clone(),
             children: self.children.clone(),
             uuid: self.uuid.clone(),
+            is_org: self.is_org,
             proj: std::sync::OnceLock::new(),
         }
     }
@@ -96,7 +107,7 @@ impl Clone for DocBlock {
 
 impl DocBlock {
     pub fn new(raw: impl Into<String>) -> Self {
-        DocBlock { raw: raw.into(), children: Vec::new(), uuid: String::new(), proj: std::sync::OnceLock::new() }
+        DocBlock { raw: raw.into(), children: Vec::new(), uuid: String::new(), is_org: false, proj: std::sync::OnceLock::new() }
     }
 
     /// Lazily-computed, memoized projection of `raw` (visible lowercased text +
@@ -113,11 +124,12 @@ impl DocBlock {
                 .collect::<Vec<_>>()
                 .join("\n")
                 .to_lowercase();
-            let refs_norm = crate::refs::page_refs(&self.raw)
-                .iter()
-                .map(|r| crate::refs::normalize(r))
-                .collect();
-            BlockProjection { visible_lower, refs_norm }
+            // OG-faithful inline refs via lsdoc, fed the re-bulleted block body
+            // (like OG) so markers/priority aren't mis-read as tags. One parse
+            // yields both page refs (normalized, for backlinks) and block refs.
+            let refs = crate::render::block_refs(&self.raw, self.is_org);
+            let refs_norm = refs.page.iter().map(|r| crate::refs::normalize(r)).collect();
+            BlockProjection { visible_lower, refs_norm, block_refs: refs.block }
         })
     }
 
@@ -275,7 +287,7 @@ pub fn parse(content: &str) -> Document {
         while let Some(top) = stack.last() {
             if top.col >= keep_above {
                 let f = stack.pop().unwrap();
-                let block = DocBlock { raw: f.raw, children: f.children, uuid: String::new(), proj: std::sync::OnceLock::new() };
+                let block = DocBlock { raw: f.raw, children: f.children, uuid: String::new(), is_org: false, proj: std::sync::OnceLock::new() };
                 match stack.last_mut() {
                     Some(parent) => parent.children.push(block),
                     None => roots.push(block),

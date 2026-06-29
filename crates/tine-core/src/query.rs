@@ -128,7 +128,7 @@ pub fn block_referrers(graph: &Graph, uuid: &str) -> Vec<RefGroup> {
     if u.is_empty() {
         return Vec::new();
     }
-    collect(graph, |b| refs::block_ref_ids(&b.raw).iter().any(|r| r == u), None)
+    collect(graph, |b| b.projection().block_refs.iter().any(|r| r == u), None)
 }
 
 fn contains_word(hay: &str, needle: &str) -> bool {

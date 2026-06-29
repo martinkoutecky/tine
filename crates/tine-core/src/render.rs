@@ -24,6 +24,17 @@ pub fn parse_block(raw: &str, is_org: bool) -> Vec<Block> {
     lsdoc::parse(&input, fmt)
 }
 
+/// OG-faithful inline references for one block body — the index path. Fed the
+/// re-bulleted form (like OG) so a `TODO [#A]` marker/priority isn't mis-read as
+/// a `#A` tag. Returns page names (original case) + UUID-gated block ids, each
+/// sorted+deduped (`lsdoc::refs`). Tine layers tags::/alias::/namespace + rename
+/// on top of this; `refs.rs` keeps that app-layer.
+pub fn block_refs(raw: &str, is_org: bool) -> lsdoc::ast::Refs {
+    let (pattern, fmt) = if is_org { ("*", "org") } else { ("-", "md") };
+    let input = format!("{pattern} {}", raw.trim_start());
+    lsdoc::refs(&input, fmt)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

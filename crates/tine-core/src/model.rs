@@ -560,7 +560,7 @@ impl Graph {
             }
         }
         fn visit(b: &DocBlock, seen: &mut std::collections::HashMap<String, String>) {
-            for name in crate::refs::page_refs(&b.raw) {
+            for name in crate::render::block_refs(&b.raw, b.is_org).page {
                 add(seen, name);
             }
             add_property_refs(seen, &b.raw); // block-level tags::/alias::
@@ -1059,10 +1059,10 @@ impl Graph {
         }
         fn walk_counts(blocks: &[DocBlock], m: &mut std::collections::HashMap<String, usize>) {
             for b in blocks {
-                // Dedupe per referrer block: block_ref_ids already returns a
+                // Dedupe per referrer block: the projection's block_refs is a
                 // de-duplicated list, so each distinct target gets +1 per referrer.
-                for id in crate::refs::block_ref_ids(&b.raw) {
-                    *m.entry(id).or_insert(0) += 1;
+                for id in &b.projection().block_refs {
+                    *m.entry(id.clone()).or_insert(0) += 1;
                 }
                 walk_counts(&b.children, m);
             }
@@ -2375,9 +2375,10 @@ impl Graph {
         // (A new journal's `path` was named by `path_for` using the graph's
         // `:journal/file-name-format` — so custom-format graphs create the correct
         // file for the day instead of a misplaced default-named duplicate.)
+        let dto_is_org = matches!(Format::from_path(path), Format::Org);
         let doc = Document {
             pre_block: page.pre_block.clone(),
-            roots: page.blocks.iter().map(dto_to_doc).collect(),
+            roots: page.blocks.iter().map(|b| dto_to_doc(b, dto_is_org)).collect(),
         };
         // Own the caller's resolved+locked path (M2: never re-resolve path_for here).
         let path = path.to_path_buf();
@@ -2684,11 +2685,12 @@ pub fn block_to_dto(b: &DocBlock) -> BlockDto {
 
 /// Convert a frontend DTO subtree back to a doc block, preserving the frontend's
 /// block id as the node uuid so the cache and the frontend agree on identity.
-fn dto_to_doc(b: &BlockDto) -> DocBlock {
+fn dto_to_doc(b: &BlockDto, is_org: bool) -> DocBlock {
     DocBlock {
         raw: b.raw.clone(),
-        children: b.children.iter().map(dto_to_doc).collect(),
+        children: b.children.iter().map(|c| dto_to_doc(c, is_org)).collect(),
         uuid: b.id.clone(),
+        is_org,
         proj: std::sync::OnceLock::new(),
     }
 }

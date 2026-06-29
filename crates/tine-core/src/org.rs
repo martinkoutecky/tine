@@ -120,7 +120,9 @@ pub fn parse_org(content: &str) -> Document {
             }
             s
         };
-        flat.push((level, DocBlock::new(raw)));
+        let mut b = DocBlock::new(raw);
+        b.is_org = true; // org-format block → lsdoc parses inline refs in org mode
+        flat.push((level, b));
     }
 
     Document { pre_block, roots: build_tree(flat) }

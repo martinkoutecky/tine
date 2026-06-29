@@ -317,7 +317,7 @@ fn highlight_block(h: &Highlight) -> DocBlock {
     }
     lines.push("ls-type:: annotation".to_string());
     lines.push(format!("id:: {}", h.id));
-    DocBlock { raw: lines.join("\n"), children: Vec::new(), uuid: String::new(), proj: std::sync::OnceLock::new() }
+    DocBlock { raw: lines.join("\n"), children: Vec::new(), uuid: String::new(), is_org: false, proj: std::sync::OnceLock::new() }
 }
 
 #[cfg(test)]
