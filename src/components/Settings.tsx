@@ -40,6 +40,7 @@ import {
 } from "../ui";
 import { interfaceZoom, zoomIn, zoomOut, zoomReset } from "../zoom";
 import { smoothScrollEnabled, setSmoothScroll } from "../smoothScroll";
+import { isMac, nativeFrameEnabled, setNativeFrame } from "../nativeChrome";
 import {
   copyIncludeSubtree,
   setCopyIncludeSubtree,
@@ -70,7 +71,7 @@ import { openPage, openFile } from "../router";
 import { commandDefaults, eventToBindingString, setKeybindingsSuspended } from "../keybindings";
 import { switchGraph, loadGraphPath } from "../graph";
 import { flushAll } from "../store";
-import { backend, type BackupInfo } from "../backend";
+import { backend, isTauri, type BackupInfo } from "../backend";
 import type { AssetInfo, TrashStats, JournalFile } from "../types";
 import { formatJournal } from "../journal";
 
@@ -395,6 +396,26 @@ function AppearanceTab(): JSX.Element {
       >
         <Toggle on={smoothScrollEnabled()} onClick={() => setSmoothScroll(!smoothScrollEnabled())} />
       </Field>
+
+      {/* Window chrome. macOS always uses its native frame (rounded corners +
+          traffic lights, via the build-time Overlay title bar), so the toggle is
+          only meaningful — and only shown — on Linux/Windows. */}
+      <Show when={isTauri() && !isMac}>
+        <Field
+          label="System title bar & window controls"
+          hint="Use your OS's native window frame (title bar, minimize/maximize/close, rounded corners) instead of Tine's compact built-in controls. Off by default — the built-in controls save a row of vertical space."
+        >
+          <Toggle on={nativeFrameEnabled()} onClick={() => setNativeFrame(!nativeFrameEnabled())} />
+        </Field>
+      </Show>
+      <Show when={isTauri() && isMac}>
+        <Field
+          label="Window controls"
+          hint="macOS draws Tine with native rounded corners and traffic-light buttons."
+        >
+          <span style={{ color: "var(--text-muted)", "font-size": "12px" }}>Native (macOS)</span>
+        </Field>
+      </Show>
 
     </>
   );

@@ -120,6 +120,19 @@ body {
   gap: 2px;
   flex: 0 0 auto;
 }
+
+/* macOS: the native traffic-light buttons float in the window's top-left, over our
+   content (the Overlay title bar — see nativeChrome.ts). Reserve room so they don't
+   sit on top of interactive chrome:
+   - sidebar open  → the lights overlay the SIDEBAR's top-left, so push its header down;
+   - sidebar closed → the main column is leftmost, so pad the toolbar's left instead.
+   The toolbar is 48px tall (> the ~28px title bar), so only horizontal room is needed. */
+.mac-overlay .sidebar-header {
+  padding-top: 28px;
+}
+.mac-overlay.sidebar-collapsed .topbar {
+  padding-left: 78px;
+}
 /* Thin divider that sets the far-right Settings cog apart from the action icons. */
 .settings-build {
   margin-top: 18px;

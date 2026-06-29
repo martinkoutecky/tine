@@ -65,6 +65,7 @@ import { initSpellcheckSettings } from "./spellcheckSettings";
 import { initLinkDefault } from "./editor/linkDefault";
 import { initDebug, dbg } from "./debug";
 import { WindowControls, ResizeGrips, installWindowChrome, maximized } from "./components/WindowChrome";
+import { initNativeChrome, isMac, osDrawsWindowControls } from "./nativeChrome";
 
 export function App(): JSX.Element {
   // Startup debug trace (TINE_DEBUG=1 / --debug): forward UI milestones + errors
@@ -275,8 +276,11 @@ export function App(): JSX.Element {
 
   // Frameless window: the toolbar doubles as the title bar (decorations are off),
   // so track maximized state to drive our custom max/restore glyph + resize grips.
+  // Also apply the persisted native-frame preference (Linux/Windows; macOS uses its
+  // build-time Overlay title bar — see nativeChrome.ts).
   onMount(() => {
     if (!isTauri()) return;
+    void initNativeChrome();
     onCleanup(installWindowChrome());
   });
 
@@ -288,6 +292,10 @@ export function App(): JSX.Element {
         "wide-mode": wideMode(),
         "document-mode": documentMode(),
         "focus-mode": focusMode(),
+        // macOS draws a transparent Overlay title bar over our content (rounded
+        // corners + traffic lights); reserve the top-left so the lights don't sit
+        // on the sidebar header / sidebar-toggle button. See nativeChrome.ts + app.css.
+        "mac-overlay": isMac && isTauri(),
         // When on, the whole reading surface fades to a calm wash; the block
         // you're editing pops back to full opacity (the typewriter "spotlight the
         // line"). Applied whenever dim is on — not only while editing — so that
@@ -420,8 +428,10 @@ export function App(): JSX.Element {
               </svg>
             </button>
             {/* Frameless-window controls live at the very right, where the native
-                title bar's buttons used to be (Tauri/desktop only). */}
-            <Show when={isTauri()}>
+                title bar's buttons used to be. Hidden when the OS draws its own
+                (macOS Overlay always; Linux/Windows when the native-frame toggle
+                is on). */}
+            <Show when={isTauri() && !osDrawsWindowControls()}>
               <span class="topbar-sep" />
               <WindowControls />
             </Show>
@@ -490,8 +500,9 @@ export function App(): JSX.Element {
       <Lightbox />
       <AudioOverlay />
       {/* Resize grips for the frameless window — hidden while maximized (no edge
-          to drag, and they'd otherwise overlap the content scrollbar). */}
-      <Show when={isTauri() && !maximized()}>
+          to drag, and they'd otherwise overlap the content scrollbar) and whenever
+          the OS draws its own frame (it provides resize borders). */}
+      <Show when={isTauri() && !osDrawsWindowControls() && !maximized()}>
         <ResizeGrips />
       </Show>
     </div>

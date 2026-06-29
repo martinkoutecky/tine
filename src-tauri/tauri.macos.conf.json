@@ -1,0 +1,32 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Tine",
+        "width": 1200,
+        "height": 820,
+        "minWidth": 640,
+        "minHeight": 480,
+        "decorations": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
+      },
+      {
+        "label": "capture",
+        "url": "capture.html",
+        "title": "Quick Capture",
+        "width": 600,
+        "height": 92,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": true,
+        "center": true,
+        "visible": false,
+        "focus": false
+      }
+    ]
+  }
+}

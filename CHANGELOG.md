@@ -10,6 +10,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Native window controls** — Tine's window now fits in on each OS. On **macOS** the
+  window gets real rounded corners and traffic-light buttons (a transparent overlay title
+  bar) while keeping Tine's compact, single-row layout — no wasted title-bar row. On
+  **Linux/Windows** a new Settings → Appearance toggle, *“System title bar & window
+  controls”*, switches between Tine's built-in compact controls (default) and your OS's
+  native window frame.
+
 - **Spell checking in the editor** (WebKitGTK's native checker). On by default, like
   Logseq: red squiggles while editing, with right-click suggestions and “add to
   dictionary”, using the system `hunspell` dictionaries. **Beyond Logseq:** check
