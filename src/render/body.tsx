@@ -171,6 +171,10 @@ function renderBlock(b: AstBlock, blockId?: string): JSX.Element {
     case "directive":
     case "comment":
       return null; // org drawers / `#+KEY:` keywords / `# comment` — not rendered
+    case "hiccup":
+      // Clojure-hiccup `[:tag …]` — render the raw bracket text literally (OG turns
+      // it into HTML; a hiccup→HTML transform is a possible later upgrade). Edge case.
+      return <span class="ast-hiccup">{b.v}</span>;
   }
 }
 

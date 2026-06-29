@@ -108,6 +108,9 @@ function renderInline(s: Inline, blockId?: string): JSX.Element {
       return renderEmail(s.text);
     case "entity":
       return <>{s.unicode}</>;
+    case "hiccup":
+      // Inline Clojure-hiccup `[:tag …]` — literal text for now (see ast.ts). Edge case.
+      return <>{s.v}</>;
   }
 }
 
@@ -125,6 +128,7 @@ export function astText(inlines: Inline[]): string {
       case "target": out += s.text; break;
       case "entity": out += s.unicode; break;
       case "latex": out += s.body; break;
+      case "hiccup": out += s.v; break;
     }
   }
   return out;

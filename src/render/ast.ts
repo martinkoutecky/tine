@@ -100,7 +100,8 @@ export type Block =
   | PropertiesBlock
   | HrBlock
   | TableBlock
-  | FootnoteDefBlock;
+  | FootnoteDefBlock
+  | HiccupBlock;
 
 /** The discriminant string union, handy for exhaustive `switch` checks. */
 export type BlockKind = Block["kind"];
@@ -293,6 +294,17 @@ export interface FootnoteDefBlock {
   span?: Span;
 }
 
+/** A Clojure-hiccup block `[:tag …]` (lsdoc v0.1.4). `v` is the raw bracket text,
+ *  verbatim — children are NOT parsed (opaque), and no refs come from it. We render
+ *  it as literal text for now (OG renders it as real HTML — a faithful hiccup→HTML
+ *  transform is a possible later upgrade). Absent from every real graph; an edge
+ *  construct. */
+export interface HiccupBlock {
+  kind: "hiccup";
+  v: string;
+  span?: Span;
+}
+
 // ===========================================================================
 // ListItem — an element of ListBlock.items
 // ===========================================================================
@@ -338,7 +350,8 @@ export type Inline =
   | FnrefInline
   | InlineHtmlInline
   | EmailInline
-  | EntityInline;
+  | EntityInline
+  | HiccupInline;
 
 /** The discriminant string union, handy for exhaustive `switch` checks. */
 export type InlineKind = Inline["k"];
@@ -555,6 +568,14 @@ export interface EntityInline {
   ascii: string;
   /** The resolved Unicode glyph, e.g. "Δ" — the usual thing to render. */
   unicode: string;
+}
+
+/** An inline Clojure-hiccup `[:tag …]` (lsdoc v0.1.4). `v` is the raw bracket text,
+ *  verbatim (children unparsed, no refs). Rendered as literal text for now — see
+ *  [[HiccupBlock]] for the OG-HTML upgrade note. Edge construct, absent from real graphs. */
+export interface HiccupInline {
+  k: "hiccup";
+  v: string;
 }
 
 // ===========================================================================

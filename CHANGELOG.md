@@ -48,6 +48,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   both the on-disk index and the on-screen render, so they can't drift. No change to
   how anything looks or round-trips.
 
+### Fixed
+
+- **Parser upgraded to lsdoc v0.1.4** — closer Logseq parity and hardened against
+  pathological input. Corrected: lone-`\r`/CRLF left in content (Windows or pasted
+  text), blockquote-with-marker text loss, a stray leading `|` being mis-read as a
+  table (and inventing phantom block-refs), an org tag backslash-unescape, and an org
+  property value mistaken for a page reference. Also fixes multi-second hangs and a
+  couple of crashes on adversarial block content (e.g. long `[`/`>` runs). New
+  Clojure-hiccup `[:tag …]` nodes render as literal text for now (an edge construct,
+  absent from real graphs).
+
 ## [0.2.3] — 2026-06-28
 
 ### Changed

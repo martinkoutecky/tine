@@ -92,6 +92,11 @@ describe("renderInlines", () => {
   it("footnote ref", () => {
     expect(inl([{ k: "fnref", name: "1" }])).toContain('class="footnote-ref"');
   });
+
+  // lsdoc v0.1.4: inline Clojure-hiccup renders its raw bracket text literally.
+  it("inline hiccup renders raw text literally", () => {
+    expect(inl([{ k: "hiccup", v: "[:span \"y\"]" }])).toContain("[:span");
+  });
 });
 
 describe("renderBlocks", () => {
@@ -154,6 +159,13 @@ describe("renderBlocks", () => {
 
   it("drawer/comment render nothing", () => {
     expect(blk([{ kind: "comment", text: "c" }])).not.toContain("c");
+  });
+
+  // lsdoc v0.1.4: Clojure-hiccup blocks render their raw bracket text literally.
+  it("hiccup block renders raw text literally", () => {
+    const h = blk([{ kind: "hiccup", v: "[:div.note \"hi\"]" }]);
+    expect(h).toContain("ast-hiccup");
+    expect(h).toContain("[:div.note");
   });
 });
 
