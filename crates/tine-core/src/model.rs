@@ -577,8 +577,12 @@ impl Graph {
             }
         }
         fn visit(b: &DocBlock, seen: &mut std::collections::HashMap<String, String>) {
-            for name in crate::render::block_refs(&b.raw, b.is_org).page {
-                add(seen, name);
+            // Read the memoized projection's original-case page refs instead of a fresh
+            // `block_refs` parse — this runs over the WHOLE graph on every `[[`/`#`/Ctrl-K
+            // keystroke after a save (each bumps cache_gen), so re-parsing every block was
+            // a ~0.5s keystroke stall on a large graph (audit F1).
+            for name in &b.projection().refs_page {
+                add(seen, name.clone());
             }
             add_property_refs(seen, &b.raw); // block-level tags::/alias::
             for c in &b.children {
@@ -2042,6 +2046,10 @@ impl Graph {
         let dir = self.assets_path().join(&key);
         fs::create_dir_all(&dir)?;
         let name = format!("{page}_{id}_{stamp}.png");
+        // The highlight `id` round-trips through the graph `.edn`, so a synced/hand-edited
+        // file can control it — reject any path separator so it can't escape the assets
+        // dir and write a `.png` anywhere (audit M3, path traversal).
+        top_level_asset_name(&name)?;
         atomic_write(&dir.join(&name), bytes)?;
         Ok(format!("{key}/{name}"))
     }

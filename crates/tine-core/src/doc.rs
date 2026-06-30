@@ -69,6 +69,11 @@ pub struct BlockProjection {
     pub visible_lower: String,
     /// Normalized page references (`[[..]]` / `#tag`) — for backlinks / `(page-ref)`.
     pub refs_norm: Vec<String>,
+    /// The SAME page references in lsdoc's original case — for `referenced_page_names`
+    /// (the virtual-page list behind `[[`/`#`/Ctrl-K autocomplete), which needs display
+    /// case. Kept on the projection so that hot path reads the memoized parse instead of
+    /// re-parsing every block on each cache generation (audit F1).
+    pub refs_page: Vec<String>,
     /// Block references (`((uuid))` / `[l](((uuid)))` / `{{embed ((uuid))}}`),
     /// UUID-gated — for the block-referrers / ref-count scans. From the same
     /// lsdoc parse as `refs_norm`.
@@ -150,11 +155,13 @@ impl DocBlock {
             let (scheduled, deadline) = planning_dates(&proj.blocks, &self.raw);
             let visible = visible_minus_properties(&self.raw, &proj.blocks);
             let visible_lower = visible.to_lowercase();
-            let refs_norm = proj.refs.page.iter().map(|r| crate::refs::normalize(r)).collect();
+            let refs_page = proj.refs.page;
+            let refs_norm = refs_page.iter().map(|r| crate::refs::normalize(r)).collect();
             BlockProjection {
                 visible,
                 visible_lower,
                 refs_norm,
+                refs_page,
                 block_refs: proj.refs.block,
                 marker,
                 priority,
