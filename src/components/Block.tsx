@@ -62,7 +62,7 @@ import {
   setPriority,
   type Edit,
 } from "../editor/format";
-import { blockView } from "../render/block";
+import { blockView, isRenderHiddenProp } from "../render/block";
 import { AstBody } from "../render/body";
 import { assetMarkdown, assetFileName } from "../media";
 import { calcSource, wrapCalc, evalCalc } from "../editor/calc";
@@ -88,14 +88,8 @@ function detectMacro(lines: string[]): { kind: "query" | "embed"; inner: string 
   return { kind: m[1] as "query" | "embed", inner: `${m[1]}${m[2]}` };
 }
 
-// Internal/metadata properties hidden from the rendered properties area.
-const INTERNAL_PROPS = new Set([
-  "id", "collapsed", "hl-page", "hl-color", "hl-type", "ls-type",
-  "background-color", "logseq.order-list-type",
-  // OG hidden-built-in-properties (don't render these in the properties area).
-  "heading", "title", "filters", "created-at", "updated-at", "last-modified-at",
-  "query-table", "query-properties", "query-sort-by", "query-sort-desc", "logseq.tldraw.shape",
-]);
+// (Rendered-property hidden set lives in render/block.ts as RENDER_HIDDEN_PROPS /
+// isRenderHiddenProp, shared with body.tsx's renderProps.)
 
 // Logseq's built-in block background colors → a soft tint for rendering.
 const BLOCK_BG: Record<string, string> = {
@@ -404,7 +398,7 @@ function Rendered(props: { id: string; owner?: string; trailing?: JSX.Element })
 
   const displayProps = () => {
     const extra = graphMeta()?.block_hidden_properties ?? [];
-    return view().properties.filter(([k]) => !INTERNAL_PROPS.has(k) && !extra.includes(k));
+    return view().properties.filter(([k]) => !isRenderHiddenProp(k, extra));
   };
   const bgColor = () => {
     const v = view().properties.find(([k]) => k === "background-color")?.[1];

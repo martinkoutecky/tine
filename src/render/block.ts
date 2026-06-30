@@ -6,6 +6,28 @@ import { MARKERS, DONE_MARKERS } from "../markers";
 
 export { MARKERS };
 
+// Property keys NOT shown as rendered chips (id/uuid/collapsed + Logseq internals
+// + display-only keys). Single source for the two render paths — Block.tsx's live
+// chip filter and body.tsx's renderProps — which had drifted ~15 keys apart, and
+// only Block.tsx honored the user's `:block-hidden-properties`. Lowercased; compare
+// via isRenderHiddenProp so the match is case-insensitive (OG treats keys so).
+//
+// Deliberately SEPARATE (different concepts — do not merge): editor/properties.ts
+// BUILTIN_HIDDEN (hide from the edit textarea), query.rs INTERNAL_PROPS (don't
+// offer as a query filter), components/Page.tsx PAGE_PROPS_HIDDEN (page-prop area).
+export const RENDER_HIDDEN_PROPS: ReadonlySet<string> = new Set([
+  "id", "collapsed", "hl-page", "hl-color", "hl-type", "ls-type",
+  "background-color", "logseq.order-list-type",
+  "heading", "title", "filters", "created-at", "updated-at", "last-modified-at",
+  "query-table", "query-properties", "query-sort-by", "query-sort-desc", "logseq.tldraw.shape",
+]);
+
+/** Whether a property key is hidden from the rendered chips: a built-in internal
+ *  key (case-insensitive) OR one the user listed in `:block-hidden-properties`. */
+export function isRenderHiddenProp(key: string, userHidden: readonly string[] = []): boolean {
+  return RENDER_HIDDEN_PROPS.has(key.toLowerCase()) || userHidden.includes(key);
+}
+
 const PROP_RE = /^[A-Za-z0-9_./-]+::\s?.*$/;
 
 export function isPropertyLine(line: string): boolean {

@@ -8,6 +8,8 @@ import type { Block as AstBlock, ListItem as AstListItem, Format } from "./ast";
 import { backend } from "../backend";
 import { evalCalc } from "../editor/calc";
 import { toggleListItemAtIndex, doc, formatForBlock } from "../store";
+import { graphMeta } from "../ui";
+import { isRenderHiddenProp } from "./block";
 import { parseBlock, parserReady } from "./parse";
 import { observeNear, unobserveNear, renderedBlocks } from "../lazyObserve";
 
@@ -109,8 +111,6 @@ export function CalcBlock(props: { src: string }): JSX.Element {
 // ===========================================================================
 
 const CALLOUT_TYPES = ["note", "tip", "important", "caution", "warning", "pinned"];
-// Block properties never shown as chips (id/uuid/collapsed + Logseq internals).
-const HIDDEN_PROPS = new Set(["id", "collapsed", "heading", "logseq.order-list-type"]);
 
 function isInlineFlow(b: AstBlock): boolean {
   return b.kind === "paragraph" || b.kind === "bullet" || b.kind === "heading";
@@ -275,7 +275,7 @@ function renderTable(b: Extract<AstBlock, { kind: "table" }>, blockId?: string):
 }
 
 function renderProps(b: Extract<AstBlock, { kind: "properties" }>, blockId?: string): JSX.Element {
-  const visible = b.props.filter(([k]) => !HIDDEN_PROPS.has(k.toLowerCase()));
+  const visible = b.props.filter(([k]) => !isRenderHiddenProp(k, graphMeta()?.block_hidden_properties ?? []));
   const fmt = formatForBlock(blockId); // parse org property values as org
   return (
     <Show when={visible.length > 0}>
