@@ -38,7 +38,7 @@ import {
 } from "./persistence";
 // The debounced persistence engine lives in persistence.ts; re-exported here so
 // the rest of the app keeps importing the save API from the store.
-export { markDirty, isDirty, scheduleSave, flushPage, flushAll, forceSave };
+export { markDirty, isDirty, isSaving, scheduleSave, flushPage, flushAll, forceSave };
 
 export interface Node {
   id: string;
@@ -417,7 +417,9 @@ export function resetStore() {
 // it, silently dropping the edit. (reloadPage / "use disk version" still replace
 // explicitly via upsertPage.)
 function upsertUnlessDirty(dto: PageDto) {
-  if (pageByName(dto.name) && (isDirty(dto.name) || isConflicted(dto.name))) return;
+  // `isSaving` too — an in-flight save's edit isn't durable yet (audit H1).
+  if (pageByName(dto.name) && (isDirty(dto.name) || isConflicted(dto.name) || isSaving(dto.name)))
+    return;
   upsertPage(dto);
 }
 
@@ -433,7 +435,12 @@ export type ReloadDisposition = "reload" | "conflict" | "skip";
  *  (Navigation/flush-first paths — upsertUnlessDirty, reloadHlsIfLoaded — use a
  *  simpler dirty-only guard on purpose and do not go through this.) */
 export function reloadDisposition(name: string): ReloadDisposition {
-  if (isDirty(name) || isConflicted(name)) return "conflict";
+  // `isSaving` too: `doSave` clears `dirty` BEFORE the `await savePage`, so during the
+  // save IPC the page is no longer dirty but its edit isn't durable. Reloading then
+  // would clobber the in-memory edit + drop its undo, and the in-flight save would
+  // conflict — silent loss (audit H1). The in-flight save's baseRev check surfaces the
+  // real conflict.
+  if (isDirty(name) || isConflicted(name) || isSaving(name)) return "conflict";
   const ed = editingId();
   if ((ed && doc.byId[ed]?.page === name) || isBlockMoving()) return "skip";
   return "reload";

@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js";
-import { doc, mainPages, pageByName, reloadPage, loadSingle, loadFeed, appendFeed, isDirty, reloadDisposition, setFeedExtender, flushAll, formatForBlock, type FeedPage } from "../store";
+import { doc, mainPages, pageByName, reloadPage, loadSingle, loadFeed, appendFeed, isDirty, isSaving, reloadDisposition, setFeedExtender, flushAll, formatForBlock, type FeedPage } from "../store";
 import { route, sameRoute, openPage, openJournals, openPageInNewTab, restoreScrollFor } from "../router";
 import {
   zoomedBlock, zoomInto, isFavorite, toggleFavorite,
@@ -149,7 +149,7 @@ export function PageView(): JSX.Element {
             }
             // A new journal file appeared (e.g. today created elsewhere): pull
             // the feed to include it, but only if no OTHER loaded day is dirty.
-            if (doc.feed.some((n) => isDirty(n) || isConflicted(n))) return;
+            if (doc.feed.some((n) => isDirty(n) || isConflicted(n) || isSaving(n))) return;
             const js = await backend().journalsDesc(FEED_PAGE, 0);
             journalOffset = js.length;
             feedDone = js.length < FEED_PAGE;
