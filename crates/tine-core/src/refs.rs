@@ -2,10 +2,25 @@
 //! word]]`), and `((block-uuid))`. Used for the backlink index and queries.
 //! UTF-8 safe (advances by char boundaries).
 
-/// Normalize a page name for indexing/matching: trim + lowercase. Display uses
-/// the original.
-pub fn normalize(name: &str) -> String {
+/// The ONE page-name identity key: trimmed + **Unicode** lowercase (the OG/Logseq
+/// fold). Use this — never a bare `to_ascii_lowercase`/`eq_ignore_ascii_case` on a
+/// page name — so the ref/backlink index and the file/cache resolution agree on
+/// identity (a non-ASCII name like `Über` must resolve the same everywhere). Display
+/// uses the original casing.
+pub fn page_key(name: &str) -> String {
     name.trim().to_lowercase()
+}
+
+/// `page_key(a) == page_key(b)` without allocating — the comparison form for hot
+/// cache scans. Unicode case fold (matches `page_key`), NOT `eq_ignore_ascii_case`.
+pub fn same_page(a: &str, b: &str) -> bool {
+    a.trim().chars().flat_map(char::to_lowercase).eq(b.trim().chars().flat_map(char::to_lowercase))
+}
+
+/// Historical name for the page-identity fold used throughout ref extraction;
+/// identical to [`page_key`] (kept so existing ref code reads naturally).
+pub fn normalize(name: &str) -> String {
+    page_key(name)
 }
 
 fn is_tag_char(c: char) -> bool {
@@ -509,6 +524,21 @@ mod tests {
             rename_refs("[[file:./pages/Old.org]]", "Old", "New", false),
             "[[file:./pages/Old.org]]"
         );
+    }
+
+    #[test]
+    fn page_key_folds_case_only_never_diacritics() {
+        // Case-variants of the SAME name fold together (one page, OG behavior)...
+        assert!(same_page("Über", "über"));
+        assert!(same_page("  Foo Bar ", "foo bar")); // trims too
+        assert_eq!(page_key("Über"), page_key("über"));
+        // ...but diacritics are NEVER stripped: distinct names stay distinct pages.
+        assert!(!same_page("Uber", "Über")); // u != ü
+        assert_ne!(page_key("Uber"), page_key("Über"));
+        assert!(!same_page("Cafe", "Café"));
+        assert_ne!(page_key("Σ"), page_key("S")); // Greek sigma is not Latin S
+        // normalize is the same fold as page_key (single source).
+        assert_eq!(normalize("Über"), page_key("Über"));
     }
 
     #[test]

@@ -297,7 +297,7 @@ pub struct Graph {
 /// case-insensitive name, scoped by kind so a page and a journal of the same
 /// title never collide.
 fn rev_key(kind: PageKind, name: &str) -> String {
-    format!("{kind:?}\u{1}{}", name.to_ascii_lowercase())
+    format!("{kind:?}\u{1}{}", crate::refs::page_key(name))
 }
 
 /// Gen+today-tagged cache of derived scan results. Reset wholesale whenever the
@@ -539,7 +539,7 @@ impl Graph {
         };
         fn add(seen: &mut std::collections::HashMap<String, String>, name: String) {
             if !name.is_empty() {
-                seen.entry(name.to_lowercase()).or_insert(name);
+                seen.entry(crate::refs::page_key(&name)).or_insert(name);
             }
         }
         // `tags::` / `alias::` property values are page references in OG too —
@@ -887,7 +887,7 @@ impl Graph {
             PageKind::Journal => self
                 .journals_desc()
                 .into_iter()
-                .find(|e| e.name.eq_ignore_ascii_case(name))
+                .find(|e| crate::refs::same_page(&e.name, name))
                 .map(|e| e.path)
                 .unwrap_or_else(|| {
                     // New journal: name it by its date stem in the graph's filename
@@ -964,7 +964,7 @@ impl Graph {
         };
         let matches: Vec<PageEntry> = list_md(&dir, kind, &self.journal_format, self.config.file_name_format)
             .into_iter()
-            .filter(|e| e.name.eq_ignore_ascii_case(name))
+            .filter(|e| crate::refs::same_page(&e.name, name))
             .collect();
         matches
             .iter()
@@ -1120,7 +1120,7 @@ impl Graph {
         guard
             .as_ref()?
             .iter()
-            .find(|(e, _)| e.kind == entry.kind && e.name.eq_ignore_ascii_case(&entry.name))
+            .find(|(e, _)| e.kind == entry.kind && crate::refs::same_page(&e.name, &entry.name))
             .map(|(e, d)| page_dto(e, d))
     }
 
@@ -1393,7 +1393,7 @@ impl Graph {
         let cache_built = guard.is_some();
         if let Some(pages) = guard.as_mut() {
             match pages.iter_mut().find(|(e, _)| {
-                e.kind == entry.kind && e.name.eq_ignore_ascii_case(&entry.name)
+                e.kind == entry.kind && crate::refs::same_page(&e.name, &entry.name)
             }) {
                 Some(slot) => {
                     alias_touched = new_has_alias || doc_has_alias(&slot.1);
@@ -1467,7 +1467,7 @@ impl Graph {
         dc.results.retain(|key, result| {
             // Evict iff this page is already in the result OR now matches the key's
             // predicate; keep (still correct) otherwise.
-            if result.iter().any(|grp| grp.page.eq_ignore_ascii_case(pname)) {
+            if result.iter().any(|grp| crate::refs::same_page(&grp.page, pname)) {
                 return false;
             }
             let affects = match key.split_once('\0') {
@@ -1490,11 +1490,11 @@ impl Graph {
         let mut alias_touched = false;
         if let Some(pages) = guard.as_mut() {
             if let Some((_, d)) =
-                pages.iter().find(|(e, _)| e.kind == kind && e.name.eq_ignore_ascii_case(name))
+                pages.iter().find(|(e, _)| e.kind == kind && crate::refs::same_page(&e.name, name))
             {
                 alias_touched = doc_has_alias(d);
             }
-            pages.retain(|(e, _)| !(e.kind == kind && e.name.eq_ignore_ascii_case(name)));
+            pages.retain(|(e, _)| !(e.kind == kind && crate::refs::same_page(&e.name, name)));
             // Drop the rev under the cache lock (same cache → disk_revs order as
             // cache_upsert) so the two never diverge.
             self.disk_revs.write().unwrap().remove(&rev_key(kind, name));
@@ -1606,7 +1606,7 @@ impl Graph {
         if new.is_empty() {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "empty name"));
         }
-        if old.is_empty() || old.eq_ignore_ascii_case(new) {
+        if old.is_empty() || crate::refs::same_page(old, new) {
             return Ok(()); // nothing to do (case-only rename is intentionally a no-op)
         }
         // M1: refuse to rename an ambiguous page (both .md and .org on disk) — which
@@ -2332,7 +2332,7 @@ impl Graph {
             };
             if let Some((_, cached)) = cache
                 .iter()
-                .find(|(e, _)| e.kind == entry.kind && e.name.eq_ignore_ascii_case(&entry.name))
+                .find(|(e, _)| e.kind == entry.kind && crate::refs::same_page(&e.name, &entry.name))
             {
                 // Compare CONTENT, not the in-memory uuids: cached blocks carry
                 // generated uuids (assigned at cache build / upsert), while a
@@ -2367,7 +2367,7 @@ impl Graph {
         let was_cached = {
             let guard = self.cache.read().unwrap();
             guard.as_ref().is_some_and(|c| {
-                c.iter().any(|(e, _)| e.kind == entry.kind && e.name.eq_ignore_ascii_case(&entry.name))
+                c.iter().any(|(e, _)| e.kind == entry.kind && crate::refs::same_page(&e.name, &entry.name))
             })
         };
         self.cache_remove(&entry.name, entry.kind);
@@ -2553,7 +2553,7 @@ impl Graph {
                 let guard = self.cache.read().unwrap();
                 guard.as_ref().is_some_and(|pages| {
                     !pages.iter().any(|(e, _)| {
-                        e.kind == page.kind && e.name.eq_ignore_ascii_case(&page.name)
+                        e.kind == page.kind && crate::refs::same_page(&e.name, &page.name)
                     })
                 })
             });
@@ -3153,7 +3153,7 @@ mod tests {
         g.warm_cache(); // referenced names come from the whole-graph cache
 
         let has = |q: &str, name: &str| {
-            g.quick_switch(q, 8).iter().any(|e| e.name.eq_ignore_ascii_case(name))
+            g.quick_switch(q, 8).iter().any(|e| crate::refs::same_page(&e.name, name))
         };
         assert!(has("thistag", "thistag"), "referenced #thistag should appear");
         assert!(has("some page", "Some Page"), "referenced [[Some Page]] should appear");

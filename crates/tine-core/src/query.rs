@@ -759,9 +759,9 @@ pub fn quick_switch(graph: &Graph, query: &str, limit: usize) -> Vec<PageEntry> 
     // authoritative) so a tag already used elsewhere shows as the page rather than
     // a misleading "Create …" in autocomplete.
     let have: std::collections::HashSet<String> =
-        file_pages.iter().map(|e| e.name.to_lowercase()).collect();
+        file_pages.iter().map(|e| refs::page_key(&e.name)).collect();
     for name in graph.referenced_page_names() {
-        let lower = name.to_lowercase();
+        let lower = refs::page_key(&name);
         if have.contains(&lower) {
             continue;
         }
