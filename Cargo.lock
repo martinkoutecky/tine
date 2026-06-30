@@ -3996,7 +3996,7 @@ dependencies = [
 
 [[package]]
 name = "tine"
-version = "0.2.3"
+version = "0.3.0"
 dependencies = [
  "base64 0.22.1",
  "notify",
@@ -4014,7 +4014,7 @@ dependencies = [
 
 [[package]]
 name = "tine-core"
-version = "0.2.3"
+version = "0.3.0"
 dependencies = [
  "lsdoc",
  "pretty_assertions",

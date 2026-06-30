@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-06-30
+
 ### Added
 
 - **Hover an image → copy / trash** (matches Logseq). Hovering an embedded asset now shows
@@ -44,6 +46,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   including search — works **offline / opened straight off disk** (`file://`). Not yet
   included: Logseq's interactive graph view (a separate follow-up).
 
+- **Org-style callouts on Markdown pages.** `#+BEGIN_NOTE / TIP / WARNING / …`
+  admonitions now render as colored callouts on `.md` pages, not only `.org` ones
+  (on Markdown they were previously mis-read as a stray `#tag`). Both the
+  Obsidian-style `> [!NOTE] …` and the org `#+BEGIN_… … #+END_…` forms now render
+  as callouts in either file format.
+
 ### Changed
 
 - **Block rendering now parses Markdown/Org in-browser via WebAssembly** (the same
@@ -53,6 +61,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   both the on-disk index and the on-screen render, so they can't drift. No change to
   how anything looks or round-trips.
 
+- **The HTML export renders through the same parser, too.** The static-export
+  renderer now consumes lsdoc's canonical HTML skeleton instead of a second,
+  hand-rolled Markdown renderer in the exporter — so exported pages match the app:
+  code blocks, tables (with column alignment), callouts, and in-block lists all
+  render faithfully, kept in lock-step with the live renderer by an anti-drift test.
+
 ### Fixed
 
 - **Headings render more like Logseq.** A `# heading` block's larger font now applies to
@@ -61,7 +75,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   heading: while editing, the bullet stays put (the editor is plain-height); it only shifts
   to align with the larger text once rendered.
 
-- **Parser upgraded to lsdoc v0.1.4** — closer Logseq parity and hardened against
+- **Parser rebuilt and upgraded (now lsdoc v0.2.5).** The Markdown/Org parser was
+  re-architected into a proper single-pass parser — an explicit container stack, no
+  phase worse than `O(n log n)`, gated byte-exact against Logseq's mldoc — replacing
+  the earlier "optimistic" scanner that was quadratic on some inputs. Along the way,
+  closer Logseq parity and hardened against
   pathological input. Corrected: lone-`\r`/CRLF left in content (Windows or pasted
   text), blockquote-with-marker text loss, a stray leading `|` being mis-read as a
   table (and inventing phantom block-refs), an org tag backslash-unescape, and an org
@@ -436,7 +454,10 @@ takes over your graph.
 - macOS and Windows installers are currently **unsigned** — on macOS right-click →
   Open; on Windows choose *More info → Run anyway*.
 
-[Unreleased]: https://github.com/martinkoutecky/tine/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/martinkoutecky/tine/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/martinkoutecky/tine/compare/v0.2.3...v0.3.0
+[0.2.3]: https://github.com/martinkoutecky/tine/compare/v0.2.2...v0.2.3
+[0.2.2]: https://github.com/martinkoutecky/tine/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/martinkoutecky/tine/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/martinkoutecky/tine/releases/tag/v0.2.0
 [0.1.0]: https://github.com/martinkoutecky/tine/releases/tag/v0.1.0
