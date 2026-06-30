@@ -187,7 +187,12 @@ fn start_watcher(app: tauri::AppHandle) {
         *slot = Some(tx.clone());
     }
     std::thread::spawn(move || {
-        let mut snap: HashMap<PathBuf, SystemTime> = HashMap::new();
+        // (mtime, size) per file — not mtime alone: on coarse-mtime mounts (some
+        // NFS, FAT) an external write landing in the same tick Tine already recorded
+        // would otherwise read as "unchanged" and never reconcile, leaving stale
+        // backlinks/queries. Size catches the overwhelmingly common case (content
+        // length changed) even when the clock didn't move.
+        let mut snap: HashMap<PathBuf, (SystemTime, u64)> = HashMap::new();
         let mut baseline = false;
         let mut watcher: Option<notify::RecommendedWatcher> = None;
         let mut watched: Vec<PathBuf> = Vec::new();
@@ -252,7 +257,7 @@ fn start_watcher(app: tauri::AppHandle) {
 
             // --- reconcile (identical in both modes) ---
             if let (Some(ds), Some(graph)) = (dirs.as_ref(), graph.as_ref()) {
-                let mut current: HashMap<PathBuf, SystemTime> = HashMap::new();
+                let mut current: HashMap<PathBuf, (SystemTime, u64)> = HashMap::new();
                 for dir in ds {
                     if let Ok(rd) = std::fs::read_dir(dir) {
                         for e in rd.flatten() {
@@ -263,8 +268,10 @@ fn start_watcher(app: tauri::AppHandle) {
                             if !matches!(p.extension().and_then(|x| x.to_str()), Some("md") | Some("org")) {
                                 continue;
                             }
-                            if let Ok(m) = e.metadata().and_then(|md| md.modified()) {
-                                current.insert(p, m);
+                            if let Ok(md) = e.metadata() {
+                                if let Ok(m) = md.modified() {
+                                    current.insert(p, (m, md.len()));
+                                }
                             }
                         }
                     }

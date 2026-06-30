@@ -774,8 +774,10 @@ impl Graph {
     /// real graph text files of the SAME format (we don't transcode md⇄org), and an
     /// org file that can't be round-tripped is refused so the merge can never
     /// corrupt it (both files are left untouched on any error). `src`'s page
-    /// properties (its pre-block) are dropped — only its block tree is carried over.
-    /// The src is trashed ONLY after `dst` is durably written.
+    /// PROPERTIES that `dst` doesn't already define are carried into `dst` (md only;
+    /// dst wins on a clash) so an alias/tags/icon isn't silently lost; src free-text
+    /// in the pre-block is dropped. The src is trashed ONLY after `dst` is durably
+    /// written.
     pub fn merge_pages(&self, src_rel: &str, dst_rel: &str) -> io::Result<()> {
         let src = self.resolve_rel(src_rel).ok_or_else(bad_path)?;
         let dst = self.resolve_rel(dst_rel).ok_or_else(bad_path)?;
@@ -803,6 +805,37 @@ impl Graph {
         }
         let src_doc = parse_doc(&src, &src_content);
         let mut merged = parse_doc(&dst, &dst_content);
+        // Preserve src's page PROPERTIES that dst doesn't already define
+        // (alias::/tags::/icon::/…). Dropping them silently is real data loss — a
+        // lost `alias::` breaks every inbound link that used the alias. dst's value
+        // wins on a key clash (no duplicate property line); markdown only (org
+        // pre-blocks are header/drawer-structured and gated by the round-trip
+        // firewall, so we don't risk a non-round-tripping merge there). Free text in
+        // src's pre-block is still dropped — rare, and src is trashed-recoverable.
+        if Format::from_path(&dst) == Format::Md {
+            if let Some(src_pre) = src_doc.pre_block.as_deref() {
+                let dst_pre = merged.pre_block.clone().unwrap_or_default();
+                let dst_keys: std::collections::HashSet<String> = dst_pre
+                    .lines()
+                    .filter_map(|l| doc::parse_property_line(l).map(|(k, _)| k.to_ascii_lowercase()))
+                    .collect();
+                let extra: Vec<&str> = src_pre
+                    .lines()
+                    .filter(|l| {
+                        doc::parse_property_line(l)
+                            .is_some_and(|(k, _)| !dst_keys.contains(&k.to_ascii_lowercase()))
+                    })
+                    .collect();
+                if !extra.is_empty() {
+                    let mut pre = dst_pre;
+                    if !pre.is_empty() && !pre.ends_with('\n') {
+                        pre.push('\n');
+                    }
+                    pre.push_str(&extra.join("\n"));
+                    merged.pre_block = Some(pre);
+                }
+            }
+        }
         merged.roots.extend(src_doc.roots);
         assign_doc_uuids(&mut merged.roots);
         let dto = page_dto(&dst_entry, &merged);
@@ -1913,6 +1946,7 @@ impl Graph {
 
     /// Read raw bytes of an asset (e.g. a PDF) for the viewer.
     pub fn read_asset(&self, name: &str) -> io::Result<Vec<u8>> {
+        top_level_asset_name(name)?;
         fs::read(self.assets_path().join(name))
     }
 
@@ -2571,7 +2605,25 @@ impl Graph {
 /// races between the name check and our write can't claim the same name and get
 /// silently overwritten — whoever loses the create retries the next candidate.
 /// Returns the chosen name and the open (empty) file handle.
+/// Reject an asset name that isn't a plain top-level filename — a path separator
+/// or a `.`/`..` component — so a frontend-supplied name can't reach outside
+/// `assets/` (defense-in-depth; mirrors `trash_asset`). `create_new` already
+/// blocks overwriting an existing file, so the realistic pre-guard outcome was a
+/// stray file, not corruption — but reject it outright anyway.
+fn top_level_asset_name(name: &str) -> io::Result<()> {
+    if name.is_empty()
+        || name == "."
+        || name == ".."
+        || name.contains('/')
+        || name.contains('\\')
+    {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "bad asset name"));
+    }
+    Ok(())
+}
+
 fn reserve_asset(assets: &Path, name: &str) -> io::Result<(String, fs::File)> {
+    top_level_asset_name(name)?;
     let create_new = |n: &str| {
         fs::OpenOptions::new()
             .write(true)
@@ -3006,6 +3058,43 @@ mod tests {
         for n in ["paper.pdf", "paper_1.pdf", "paper_2.pdf", "NOTES", "NOTES_1"] {
             assert!(dir.join(n).exists(), "{n} reserved");
         }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reserve_asset_rejects_path_traversal() {
+        // F5: a frontend-supplied asset name with a separator or `..`/`.` component
+        // must not reach outside assets/. (read_asset shares the same guard.)
+        let dir = std::env::temp_dir().join(format!("tine-asset-trav-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        for bad in ["../evil.md", "..", ".", "a/b.png", "a\\b.png", ""] {
+            assert!(reserve_asset(&dir, bad).is_err(), "must reject {bad:?}");
+        }
+        // A plain top-level name still works.
+        assert_eq!(reserve_asset(&dir, "ok.png").unwrap().0, "ok.png");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn merge_pages_preserves_src_page_properties() {
+        // F2: reconciling a duplicate page must not silently drop src's page
+        // properties (alias/tags/icon). dst wins on a key clash (no duplicate line).
+        let dir = std::env::temp_dir().join(format!("tine-merge-props-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::write(dir.join("pages").join("dst.md"), "tags:: Keep\n- dst body\n").unwrap();
+        fs::write(dir.join("pages").join("src.md"), "alias:: Foo\ntags:: Other\n- src body\n").unwrap();
+        let g = Graph::open(&dir);
+        g.warm_cache();
+        g.merge_pages("pages/src.md", "pages/dst.md").unwrap();
+        let merged = fs::read_to_string(dir.join("pages").join("dst.md")).unwrap();
+        assert!(merged.contains("alias:: Foo"), "src alias:: preserved: {merged:?}");
+        assert!(merged.contains("tags:: Keep"), "dst tags:: kept: {merged:?}");
+        assert!(!merged.contains("tags:: Other"), "src tags:: must not duplicate dst's key: {merged:?}");
+        assert!(merged.contains("dst body") && merged.contains("src body"), "both bodies merged: {merged:?}");
+        assert!(!dir.join("pages").join("src.md").exists(), "src moved to trash");
         let _ = fs::remove_dir_all(&dir);
     }
 
