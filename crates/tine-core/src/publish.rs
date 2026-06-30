@@ -42,13 +42,7 @@ type RefIndex = std::collections::HashMap<String, RefTarget>;
 /// First non-property / non-scheduling / non-blank line of a block (its text).
 fn first_content_line(raw: &str) -> String {
     raw.lines()
-        .find(|l| {
-            let t = l.trim();
-            !is_property_line(l)
-                && !t.starts_with("SCHEDULED:")
-                && !t.starts_with("DEADLINE:")
-                && !t.is_empty()
-        })
+        .find(|l| !is_meta_line(l) && !l.trim().is_empty())
         .unwrap_or("")
         .to_string()
 }
@@ -204,14 +198,19 @@ fn render_inline(input: &str, refs: &RefIndex) -> String {
     out
 }
 
-fn is_property_line(l: &str) -> bool {
-    match l.find("::") {
-        Some(idx) if idx > 0 => {
-            let key = l[..idx].trim();
-            !key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/'))
-        }
-        _ => false,
-    }
+/// A block line that is metadata, not displayed body text: a `key:: value` property
+/// (recognized by the ONE shared recognizer, `doc::parse_property_line` — not a
+/// fourth copy) or a `SCHEDULED:`/`DEADLINE:` planning line.
+///
+/// NOTE: the planning check is a plain line-prefix and is NOT fence-aware, so a
+/// `SCHEDULED:` line inside a fenced code block is wrongly dropped from the export.
+/// The export still uses its own markup renderer + search-text path; routing it
+/// through the lsdoc AST (the ADR 0009 follow-up) is what would make this robust.
+fn is_meta_line(l: &str) -> bool {
+    let t = l.trim();
+    crate::doc::parse_property_line(l).is_some()
+        || t.starts_with("SCHEDULED:")
+        || t.starts_with("DEADLINE:")
 }
 
 /// Reduce one inline-markdown line to readable plain text for the search index +
@@ -281,8 +280,7 @@ fn block_plain_text(raw: &str) -> String {
     let mut out = String::new();
     for l in raw.lines() {
         let t = l.trim();
-        if t.is_empty() || is_property_line(l) || t.starts_with("SCHEDULED:") || t.starts_with("DEADLINE:")
-        {
+        if t.is_empty() || is_meta_line(l) {
             continue;
         }
         let stripped = strip_inline_markup(t);
@@ -311,10 +309,7 @@ fn render_block(
     let lines: Vec<&str> = b
         .raw
         .lines()
-        .filter(|l| {
-            let t = l.trim();
-            !is_property_line(l) && !t.starts_with("SCHEDULED:") && !t.starts_with("DEADLINE:")
-        })
+        .filter(|l| !is_meta_line(l))
         .collect();
     let first = lines.first().copied().unwrap_or("");
     // Every block gets a stable anchor so a search hit can deep-link straight to it:
