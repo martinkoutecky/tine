@@ -35,6 +35,16 @@ pub fn block_refs(raw: &str, is_org: bool) -> lsdoc::ast::Refs {
     lsdoc::refs(&input, fmt)
 }
 
+/// One block body → the FULL lsdoc projection (`{ blocks, refs }`) in a SINGLE parse.
+/// `lsdoc::parse` and `lsdoc::refs` each call `parse_format` internally, so calling
+/// both (as `projection()` did) parses the same block twice; this parses once and the
+/// caller takes `.blocks` (facets / visible / body) and `.refs` (backlinks).
+pub fn parse_projection(raw: &str, is_org: bool) -> lsdoc::ast::Projection {
+    let (pattern, fmt) = if is_org { ("*", "org") } else { ("-", "md") };
+    let input = format!("{pattern} {}", raw.trim_start());
+    lsdoc::parse_format(&input, fmt)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

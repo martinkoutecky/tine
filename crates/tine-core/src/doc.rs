@@ -76,6 +76,10 @@ pub struct BlockProjection {
     /// Block-header task marker (`TODO`, `DOING`, …) off lsdoc's first node — the
     /// ONE marker recognizer (no more `doc.rs`/`blockView`/lsdoc disagreement).
     pub marker: Option<String>,
+    /// Block-header `[#A]` priority off lsdoc's first node — header-position only, so a
+    /// mid-text/inline-code `[#A]` is NOT a priority (the old `[#A]`-anywhere scanner
+    /// disagreed with the chip — audit C3).
+    pub priority: Option<String>,
     /// ATX heading level (1..=6) when the block body is a heading, else `None`.
     pub heading_level: Option<u8>,
     /// `key:: value` block properties (md trailer / org `:PROPERTIES:` drawer) as
@@ -138,21 +142,22 @@ impl DocBlock {
             // heading level, properties, scheduled/deadline) AND the visible text —
             // so `doc.rs`, the TS `blockView`, and lsdoc can no longer disagree
             // about a block's grammar.
-            let blocks = crate::render::parse_block(&self.raw, self.is_org);
-            let (marker, heading_level, properties) = header_facets(&blocks);
-            let (scheduled, deadline) = planning_dates(&blocks, &self.raw);
-            let visible = visible_minus_properties(&self.raw, &blocks);
+            // ONE lsdoc parse yields BOTH the block AST (facets/visible) AND the refs
+            // (`block_refs`/`block_priority` used to parse the same block a 2nd time —
+            // audit P1). `proj.refs` is a cheap walk over the already-built blocks.
+            let proj = crate::render::parse_projection(&self.raw, self.is_org);
+            let (marker, priority, heading_level, properties) = header_facets(&proj.blocks);
+            let (scheduled, deadline) = planning_dates(&proj.blocks, &self.raw);
+            let visible = visible_minus_properties(&self.raw, &proj.blocks);
             let visible_lower = visible.to_lowercase();
-            // OG-faithful inline refs via lsdoc (a second, refs-only parse): both are
-            // lsdoc over the same re-bulleted body, so they agree by construction.
-            let refs = crate::render::block_refs(&self.raw, self.is_org);
-            let refs_norm = refs.page.iter().map(|r| crate::refs::normalize(r)).collect();
+            let refs_norm = proj.refs.page.iter().map(|r| crate::refs::normalize(r)).collect();
             BlockProjection {
                 visible,
                 visible_lower,
                 refs_norm,
-                block_refs: refs.block,
+                block_refs: proj.refs.block,
                 marker,
+                priority,
                 heading_level,
                 properties,
                 scheduled,
@@ -184,6 +189,12 @@ impl DocBlock {
         self.projection().marker.as_deref()
     }
 
+    /// The block-header `[#A]` priority (`"A"`/`"B"`/`"C"`), off lsdoc's first node —
+    /// header position only (a mid-text `[#A]` is not a priority).
+    pub fn priority(&self) -> Option<&str> {
+        self.projection().priority.as_deref()
+    }
+
     /// Heading level (1..=6) if the block body is an ATX heading, else `None`.
     pub fn heading_level(&self) -> Option<u8> {
         self.projection().heading_level
@@ -209,18 +220,22 @@ impl DocBlock {
 /// for a block's grammar (replaces the hand-rolled marker / heading / property
 /// scanners that could disagree with lsdoc and the TS renderer). Returns
 /// `(marker, heading_level, properties)`.
-fn header_facets(blocks: &[lsdoc::ast::Block]) -> (Option<String>, Option<u8>, Vec<(String, String)>) {
+fn header_facets(
+    blocks: &[lsdoc::ast::Block],
+) -> (Option<String>, Option<String>, Option<u8>, Vec<(String, String)>) {
     use lsdoc::ast::Block;
-    let (marker, heading_level) = match blocks.first() {
-        Some(Block::Bullet { marker, size, .. }) => (
+    let (marker, priority, heading_level) = match blocks.first() {
+        Some(Block::Bullet { marker, priority, size, .. }) => (
             marker.clone(),
+            priority.clone(),
             size.and_then(|s| (1..=6).contains(&s).then_some(s as u8)),
         ),
-        Some(Block::Heading { marker, level, .. }) => (
+        Some(Block::Heading { marker, priority, level, .. }) => (
             marker.clone(),
+            priority.clone(),
             (1..=6u32).contains(level).then_some(*level as u8),
         ),
-        _ => (None, None),
+        _ => (None, None, None),
     };
     let mut properties = Vec::new();
     for b in blocks {
@@ -228,7 +243,7 @@ fn header_facets(blocks: &[lsdoc::ast::Block]) -> (Option<String>, Option<u8>, V
             properties.extend(props.iter().cloned());
         }
     }
-    (marker, heading_level, properties)
+    (marker, priority, heading_level, properties)
 }
 
 /// SCHEDULED / DEADLINE display text (`<…>` content) for whichever top-level block
@@ -307,7 +322,7 @@ fn angle_after(slice: &str, ts: &str) -> Option<String> {
 /// the old line-scan was. Call once per block (decorate-sort), never per compare.
 pub(crate) fn block_sort_facets(raw: &str) -> (Vec<(String, String)>, String) {
     let blocks = crate::render::parse_block(raw, false);
-    let (_, _, properties) = header_facets(&blocks);
+    let (_, _, _, properties) = header_facets(&blocks);
     let visible = visible_minus_properties(raw, &blocks);
     (properties, visible)
 }
@@ -732,6 +747,15 @@ mod projection_tests {
         // ATX-heading bullet → level off lsdoc `Bullet.size`.
         assert_eq!(DocBlock::new("## A heading").heading_level(), Some(2));
         assert_eq!(DocBlock::new("plain text").heading_level(), None);
+    }
+
+    #[test]
+    fn priority_is_header_position_only() {
+        // audit C3: lsdoc only treats a header-position `[#A]` as priority; the old
+        // `[#A]`-anywhere scanner disagreed with the chip on load.
+        assert_eq!(DocBlock::new("TODO [#A] task").priority(), Some("A"));
+        assert_eq!(DocBlock::new("Discuss [#A] tags").priority(), None); // mid-text
+        assert_eq!(DocBlock::new("TODO task [#A] later").priority(), None); // not after marker
     }
 
     #[test]

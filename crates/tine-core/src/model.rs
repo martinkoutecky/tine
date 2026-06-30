@@ -2800,10 +2800,11 @@ pub fn block_to_dto(b: &DocBlock) -> BlockDto {
         collapsed: b.collapsed(),
         children: b.children.iter().map(block_to_dto).collect(),
         breadcrumb: Vec::new(),
-        // Facets off the one lsdoc projection (marker/heading/properties/scheduled/
-        // deadline); priority stays the existing `[#A]` recognizer (one source).
+        // All header facets off the one lsdoc projection (marker/priority/heading/
+        // properties/scheduled/deadline) — priority is header-position only, matching
+        // the chip, so a loaded block never shows a priority the edit path wouldn't.
         marker: b.marker().map(str::to_string),
-        priority: crate::query::block_priority(&b.raw).map(|c| c.to_string()),
+        priority: b.priority().map(str::to_string),
         heading_level: b.heading_level(),
         scheduled: b.scheduled().map(str::to_string),
         deadline: b.deadline().map(str::to_string),

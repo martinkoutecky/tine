@@ -587,20 +587,20 @@ fn sort_key(b: &BlockDto, page: &str, field: &str) -> String {
         // Task priority is the `[#A]` marker, NOT a `priority::` property — map it
         // to A<B<C and sort unprioritized blocks last (so ascending floats A to the
         // top). Descending naturally reverses (A sinks to the bottom).
-        "priority" => match block_priority(&b.raw) {
-            Some(c) => c.to_ascii_uppercase().to_string(),
-            None => "Z".to_string(),
-        },
+        // Priority off the DTO's lsdoc-derived facet (header-position `[#A]`, matching
+        // the chip) — no reparse, no `[#A]`-anywhere false positive (audit C3/P4).
+        "priority" => b.priority.as_deref().map_or_else(|| "Z".to_string(), |c| c.to_ascii_uppercase()),
         // Sort by the source page name.
         "page" => page.to_lowercase(),
-        // Otherwise: a block property value if present, else the block's text —
-        // both off the one lsdoc recognizer (one parse per result block; `sort_key`
-        // runs once per block via `sort_by_cached_key`, never per comparison).
+        // Otherwise: a block property value (off the DTO's lsdoc properties — no
+        // reparse, format-correct, audit P4), else the block's visible first line.
         _ => {
-            let (props, visible) = crate::doc::block_sort_facets(&b.raw);
-            if let Some((_, v)) = props.iter().find(|(k, _)| k.eq_ignore_ascii_case(field)) {
+            if let Some((_, v)) = b.properties.iter().find(|(k, _)| k.eq_ignore_ascii_case(field)) {
                 return v.to_lowercase();
             }
+            // Fallback: visible text (the DTO carries no visible text; reparse, bounded
+            // to sorted-result blocks via `sort_by_cached_key`).
+            let (_, visible) = crate::doc::block_sort_facets(&b.raw);
             visible.lines().next().unwrap_or("").to_lowercase()
         }
     }
@@ -940,17 +940,6 @@ fn block_date_ordinals(raw: &str, only: Option<&str>) -> Vec<i64> {
     out
 }
 
-pub(crate) fn block_priority(raw: &str) -> Option<char> {
-    let first = raw.lines().next().unwrap_or("");
-    let i = first.find("[#")?;
-    let rest = &first[i + 2..];
-    let c = rest.chars().next()?;
-    if matches!(c, 'A' | 'B' | 'C') && rest[c.len_utf8()..].starts_with(']') {
-        Some(c)
-    } else {
-        None
-    }
-}
 
 impl Pred {
     fn parse(src: &str, today: JournalDate) -> Option<Pred> {
@@ -981,8 +970,9 @@ impl Pred {
                 .marker()
                 .map(|m| markers.iter().any(|x| x.eq_ignore_ascii_case(m)))
                 .unwrap_or(false),
-            Pred::Priority(ps) => block_priority(&block.raw)
-                .map(|c| ps.iter().any(|x| x.eq_ignore_ascii_case(&c.to_string())))
+            Pred::Priority(ps) => block
+                .priority()
+                .map(|p| ps.iter().any(|x| x.eq_ignore_ascii_case(p)))
                 .unwrap_or(false),
             Pred::Property(key, val) => block
                 .properties()
