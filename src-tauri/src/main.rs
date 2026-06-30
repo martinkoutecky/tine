@@ -1860,46 +1860,53 @@ fn main() {
             // Eagerly open the graph if one was configured at startup.
             if let Some(root) = resolve_root("") {
                 let g = Graph::open(&root);
-                let meta = g.meta();
-                let jdir = g.journals_path();
-                let pdir = g.pages_path();
-                let count_md = |d: &std::path::Path| {
-                    std::fs::read_dir(d)
-                        .map(|rd| {
-                            rd.flatten()
-                                .filter(|e| {
-                                    e.path().extension().and_then(|x| x.to_str()) == Some("md")
-                                })
-                                .count()
-                        })
-                        .ok()
-                };
-                diag(format!("graph root: {}", meta.root));
-                diag(format!(
-                    "journals dir: {} (exists={}, .md files={:?})",
-                    jdir.display(),
-                    jdir.is_dir(),
-                    count_md(&jdir)
-                ));
-                diag(format!(
-                    "pages dir: {} (exists={}, .md files={:?})",
-                    pdir.display(),
-                    pdir.is_dir(),
-                    count_md(&pdir)
-                ));
-                diag(format!(
-                    "journals recognized as dates: {} | total page entries: {}",
-                    g.journals_desc().len(),
-                    g.list_pages().len()
-                ));
-                if let Ok(rd) = std::fs::read_dir(&jdir) {
-                    let sample: Vec<String> = rd
-                        .flatten()
-                        .filter_map(|e| e.file_name().into_string().ok())
-                        .filter(|n| n.ends_with(".md"))
-                        .take(3)
-                        .collect();
-                    diag(format!("sample journal files: {sample:?}"));
+                // These diagnostics enumerate dirs AND force a whole-graph cache
+                // build (journals_desc()/list_pages()) — on the cold-cache critical
+                // path to first paint, before warm_cache_async. The format! args
+                // are evaluated regardless of whether diag() ends up writing, so
+                // gate the whole block on debug to keep it off the 99% hot launch.
+                if debug_enabled() {
+                    let meta = g.meta();
+                    let jdir = g.journals_path();
+                    let pdir = g.pages_path();
+                    let count_md = |d: &std::path::Path| {
+                        std::fs::read_dir(d)
+                            .map(|rd| {
+                                rd.flatten()
+                                    .filter(|e| {
+                                        e.path().extension().and_then(|x| x.to_str()) == Some("md")
+                                    })
+                                    .count()
+                            })
+                            .ok()
+                    };
+                    diag(format!("graph root: {}", meta.root));
+                    diag(format!(
+                        "journals dir: {} (exists={}, .md files={:?})",
+                        jdir.display(),
+                        jdir.is_dir(),
+                        count_md(&jdir)
+                    ));
+                    diag(format!(
+                        "pages dir: {} (exists={}, .md files={:?})",
+                        pdir.display(),
+                        pdir.is_dir(),
+                        count_md(&pdir)
+                    ));
+                    diag(format!(
+                        "journals recognized as dates: {} | total page entries: {}",
+                        g.journals_desc().len(),
+                        g.list_pages().len()
+                    ));
+                    if let Ok(rd) = std::fs::read_dir(&jdir) {
+                        let sample: Vec<String> = rd
+                            .flatten()
+                            .filter_map(|e| e.file_name().into_string().ok())
+                            .filter(|n| n.ends_with(".md"))
+                            .take(3)
+                            .collect();
+                        diag(format!("sample journal files: {sample:?}"));
+                    }
                 }
                 let state: State<'_, AppState> = app.state();
                 *state.graph.write().unwrap() = Some(Arc::new(g));

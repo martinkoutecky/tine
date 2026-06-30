@@ -154,7 +154,11 @@ impl DocBlock {
     pub fn marker(&self) -> Option<&'static str> {
         let first = self.raw.trim_start();
         for m in MARKERS {
-            if first == *m || first.starts_with(&format!("{m} ")) {
+            // Zero-alloc: the prior `starts_with(&format!("{m} "))` heap-allocated
+            // a String per marker candidate on every call, and marker() runs in
+            // the query predicate path over the whole graph (up to ~10×N_blocks
+            // throwaway allocations per task/marker query).
+            if first == *m || first.strip_prefix(*m).is_some_and(|r| r.starts_with(' ')) {
                 return Some(m);
             }
         }

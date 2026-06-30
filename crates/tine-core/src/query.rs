@@ -115,7 +115,19 @@ pub fn backlinks(graph: &Graph, target: &str) -> Vec<RefGroup> {
             names.push(a.clone());
         }
     }
-    collect(graph, |b| names.iter().any(|n| b.projection().refs_contains(n)), Some(&canonical))
+    // Pre-normalize the target names ONCE, not once per block per name:
+    // `refs_contains` re-`normalize`d its argument for every block, so a hub
+    // page on a large graph allocated O(blocks × names) throwaway normalized
+    // strings. Compare the already-normalized projection refs directly.
+    let names_norm: Vec<String> = names.iter().map(|n| refs::normalize(n)).collect();
+    collect(
+        graph,
+        |b| {
+            let refs = &b.projection().refs_norm;
+            names_norm.iter().any(|n| refs.iter().any(|r| r == n))
+        },
+        Some(&canonical),
+    )
 }
 
 /// Block-level referrers: every block across the graph that references the block
