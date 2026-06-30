@@ -414,6 +414,24 @@ function upsertUnlessDirty(dto: PageDto) {
   upsertPage(dto);
 }
 
+export type ReloadDisposition = "reload" | "conflict" | "skip";
+/** What to do when page `name` changed on disk (external editor / Syncthing),
+ *  for the file-watcher reload sites. One rule so the (formerly 4 hand-coded)
+ *  branches in Page.tsx can't diverge:
+ *  - `"conflict"` — it has unsaved edits / an open conflict: surface a conflict,
+ *    NEVER clobber the in-memory edit with the disk version.
+ *  - `"skip"` — a block on it is being edited (don't yank the caret) or a block
+ *    move is mid-flight (the textarea is transiently blurred): leave it alone.
+ *  - `"reload"` — safe to replace the loaded copy with the disk version.
+ *  (Navigation/flush-first paths — upsertUnlessDirty, reloadHlsIfLoaded — use a
+ *  simpler dirty-only guard on purpose and do not go through this.) */
+export function reloadDisposition(name: string): ReloadDisposition {
+  if (isDirty(name) || isConflicted(name)) return "conflict";
+  const ed = editingId();
+  if ((ed && doc.byId[ed]?.page === name) || isBlockMoving()) return "skip";
+  return "reload";
+}
+
 /** Load a single page and make it the main view. */
 export function loadSingle(dto: PageDto) {
   upsertUnlessDirty(dto);

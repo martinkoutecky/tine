@@ -15,6 +15,8 @@ import {
   isDirty,
   deletePage,
   editingId,
+  reloadDisposition,
+  setBlockMoving,
   splitBlock,
   indentBlock,
   outdentBlock,
@@ -445,6 +447,27 @@ describe("cross-page duplicate id::", () => {
     expect(doc.byId[aRoot].raw).toContain("alpha");
     expect(doc.byId[aRoot].page).toBe("A");
     expect(doc.byId[bRoot].page).toBe("B");
+  });
+});
+
+describe("reloadDisposition (watcher reload guard)", () => {
+  const j = (name: string, blocks: BlockDto[]): PageDto => ({
+    name, kind: "journal", title: name, pre_block: null, blocks,
+  });
+  it("reload when clean; skip while editing a block on it or mid block-move", () => {
+    loadFeed([j("Today", [blk("t1")])]);
+    expect(reloadDisposition("Today")).toBe("reload");
+    setBlockMoving(true);
+    expect(reloadDisposition("Today")).toBe("skip"); // a move is mid-flight
+    setBlockMoving(false);
+    expect(reloadDisposition("Today")).toBe("reload");
+    startEditing(pageByName("Today")!.roots[0], 0, null);
+    expect(reloadDisposition("Today")).toBe("skip"); // a block on it is focused
+  });
+  it("conflict when the page has unsaved edits (never clobber)", () => {
+    loadFeed([j("D", [blk("d1")])]);
+    markDirty("D");
+    expect(reloadDisposition("D")).toBe("conflict");
   });
 });
 

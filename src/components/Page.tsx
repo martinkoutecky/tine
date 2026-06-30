@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js";
-import { doc, mainPages, pageByName, reloadPage, loadSingle, loadFeed, appendFeed, isDirty, editingId, setFeedExtender, flushAll, formatForBlock, type FeedPage } from "../store";
+import { doc, mainPages, pageByName, reloadPage, loadSingle, loadFeed, appendFeed, isDirty, reloadDisposition, setFeedExtender, flushAll, formatForBlock, type FeedPage } from "../store";
 import { route, sameRoute, openPage, openJournals, openPageInNewTab, restoreScrollFor } from "../router";
 import {
   zoomedBlock, zoomInto, isFavorite, toggleFavorite,
@@ -114,21 +114,24 @@ export function PageView(): JSX.Element {
     void backend()
       .onGraphChanged((c) => {
         const r = route();
-        // Only suppress an auto-reload if the user is editing a block ON the
-        // changed page (don't yank that caret); editing elsewhere is fine.
-        const editingThis = () => {
-          const ed = editingId();
-          return !!ed && doc.byId[ed]?.page === c.name;
-        };
         if (c.removed) {
           // Page deleted externally while open → reload journals in place (not a
           // new tab, even on a pinned tab — the page no longer exists).
           if (r.kind === "page" && r.name === c.name) openJournals({ inPlace: true });
           return;
         }
+        // One rule for "the changed page should/shouldn't be reloaded from disk"
+        // (reloadDisposition, src/store.ts): "conflict" = has unsaved edits → never
+        // clobber; "skip" = a block on it is being edited or a move is mid-flight →
+        // leave the caret alone; "reload" = safe to take the disk version. This used
+        // to be hand-coded (and could drift) in each of the branches below.
+        const disp = reloadDisposition(c.name);
+        if (disp === "skip") return;
+        if (disp === "conflict") {
+          markConflict(c.name);
+          return;
+        }
         if (r.kind === "page" && r.name === c.name) {
-          if (isDirty(c.name) || isConflicted(c.name)) return void markConflict(c.name);
-          if (editingThis()) return;
           void (async () => {
             const dto = await backend().getPage(c.name, c.kind);
             if (dto) loadSingle(toLoadable(dto, c.name));
@@ -136,11 +139,6 @@ export function PageView(): JSX.Element {
           return;
         }
         if (r.kind === "journals" && c.kind === "journal") {
-          // Never let an external change clobber an unsaved edit: if the changed
-          // day has pending edits, surface a conflict instead of reloading; if a
-          // block on it is being edited, leave the caret alone.
-          if (isDirty(c.name) || isConflicted(c.name)) return void markConflict(c.name);
-          if (editingThis()) return;
           void (async () => {
             if (pageByName(c.name)) {
               // Refresh just the changed day in place — a full feed reload would
@@ -150,20 +148,18 @@ export function PageView(): JSX.Element {
               return;
             }
             // A new journal file appeared (e.g. today created elsewhere): pull
-            // the feed to include it, but only if no loaded day is dirty.
+            // the feed to include it, but only if no OTHER loaded day is dirty.
             if (doc.feed.some((n) => isDirty(n) || isConflicted(n))) return;
             const js = await backend().journalsDesc(FEED_PAGE, 0);
             journalOffset = js.length;
             feedDone = js.length < FEED_PAGE;
             loadFeed(withToday(js));
           })();
+          return;
         }
         // Satellite page (open only in the sidebar / as a query result) changed
-        // on disk: keep its live copy fresh, unless it has unsaved edits (→
-        // conflict) or a block on it is being edited.
+        // on disk: keep its live copy fresh.
         if (pageByName(c.name) && !doc.feed.includes(c.name)) {
-          if (isDirty(c.name) || isConflicted(c.name)) return void markConflict(c.name);
-          if (editingThis()) return;
           void (async () => {
             const dto = await backend().getPage(c.name, c.kind);
             if (dto) reloadPage(dto);
