@@ -108,6 +108,11 @@ raw speed. (Comparisons are against current Logseq desktop core, no plugins.)
   <img src="docs/img/tabs.png" alt="Built-in tabs" width="32%">
 </p>
 
+<p align="center">
+  <img src="docs/img/waveform.png" alt="Audio waveform overlay player with skip and speed controls" width="640"><br>
+  <sub>Paste audio, then <b>⤢ Expand</b> to a waveform scrubber (±5s / ±15s skip, speed, time read-out) — no Logseq-core equivalent.</sub>
+</p>
+
 ---
 
 ## Features

@@ -10,6 +10,40 @@ import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 
+// Build a short, voice-memo-shaped WAV (16-bit mono) as a data: URL, so the
+// overlay's WebAudio decode draws a REAL waveform instead of the flat no-audio
+// fallback. `isExternal` matches `data:`, so it's used directly (no asset serving).
+function makeWavDataUrl({ seconds = 5, rate = 16000 } = {}) {
+  const n = Math.floor(seconds * rate);
+  const bumps = [
+    [0.35, 0.9], [0.55, 0.7], [0.8, 0.85],
+    [1.25, 0.6], [1.45, 0.95], [1.7, 0.5],
+    [2.2, 0.8], [2.45, 0.65],
+    [2.95, 0.9], [3.2, 0.75], [3.45, 0.55],
+    [3.95, 0.85], [4.2, 0.6], [4.5, 0.92],
+  ];
+  const w = 0.075;
+  const data = Buffer.alloc(n * 2);
+  for (let i = 0; i < n; i++) {
+    const t = i / rate;
+    let env = 0;
+    for (const [c, a] of bumps) { const d = (t - c) / w; env += a * Math.exp(-d * d); }
+    env = Math.min(1, env);
+    const carrier =
+      0.6 * Math.sin(2 * Math.PI * 200 * t) +
+      0.3 * Math.sin(2 * Math.PI * 400 * t) +
+      0.35 * Math.sin(2 * Math.PI * 90 * t);
+    const s = Math.max(-1, Math.min(1, env * carrier * 0.85));
+    data.writeInt16LE((s * 32767) | 0, i * 2);
+  }
+  const h = Buffer.alloc(44);
+  h.write("RIFF", 0); h.writeUInt32LE(36 + data.length, 4); h.write("WAVE", 8);
+  h.write("fmt ", 12); h.writeUInt32LE(16, 16); h.writeUInt16LE(1, 20); h.writeUInt16LE(1, 22);
+  h.writeUInt32LE(rate, 24); h.writeUInt32LE(rate * 2, 28); h.writeUInt16LE(2, 32); h.writeUInt16LE(16, 34);
+  h.write("data", 36); h.writeUInt32LE(data.length, 40);
+  return "data:audio/wav;base64," + Buffer.concat([h, data]).toString("base64");
+}
+
 const PORT = 5198;
 const server = spawn("npx", ["vite", "preview", "--port", String(PORT), "--strictPort"], { stdio: "ignore" });
 async function waitForServer(url, tries = 60) {
@@ -33,11 +67,18 @@ try {
     await page.goto(`http://localhost:${PORT}/`);
     await page.waitForSelector(".ls-block", { timeout: 8000 });
     await sleep(300);
-    // Headless WebKit can't decode the fixture media inline (it falls back to the
-    // open-external chip), so open the overlay via the web harness hook.
-    await page.evaluate(() => window.__tineOpenAudio("../assets/voice_memo.wav", "voice_memo.wav"));
+    // Open the overlay via the web harness hook, feeding a real synthetic WAV
+    // (data: URL) so the waveform actually decodes and renders.
+    const wav = makeWavDataUrl();
+    await page.evaluate((u) => window.__tineOpenAudio(u, "voice_memo.wav"), wav);
     await page.waitForSelector(".audio-overlay", { timeout: 4000 });
-    await sleep(900); // decode + autoplay so the playhead/time advance
+    await sleep(1300); // decode peaks + load metadata
+    // Park the playhead mid-track so the played/unplayed split is visible.
+    await page.evaluate(() => {
+      const a = document.querySelector(".audio-overlay audio");
+      if (a && a.duration) { a.pause(); a.currentTime = a.duration * 0.42; }
+    });
+    await sleep(500);
     await page.screenshot({ path: "screenshots/audio-overlay.png" });
     console.log("OK    audio-overlay");
     await ctx.close();

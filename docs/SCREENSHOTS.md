@@ -49,6 +49,7 @@ Scripts write to the gitignored `screenshots/` dir; the README set is then
 | `settings.png`       | Settings modal (shortcuts shown)                   | settings shot (curated)                          | Settings modal gains/loses controls (**watch mode, first-day-of-week**, themes, snapshots) |
 | `calc.png`           | Live `/calc` block (inputs, results, a variable)   | `shot-stills.mjs` → `feat-calc.png`              | calc rendering (line numbers, result column) changes |
 | `callouts.png`       | Colored note / warning / tip callouts              | `shot-stills.mjs` → `feat-callouts.png`          | callout colors/title/body styling changes |
+| `waveform.png`       | Audio waveform overlay player (decoded waveform)   | `shot-media.mjs` → `audio-overlay.png`           | audio overlay / waveform rendering changes (shot synthesizes a real WAV so the waveform draws) |
 
 ## Known limitations / honest caveats
 
