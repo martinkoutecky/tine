@@ -117,13 +117,7 @@ impl DocBlock {
     /// memo can't outlive the `raw` it was derived from.
     pub fn projection(&self) -> &BlockProjection {
         self.proj.get_or_init(|| {
-            let visible_lower = self
-                .raw
-                .lines()
-                .filter(|l| parse_property_line(l).is_none())
-                .collect::<Vec<_>>()
-                .join("\n")
-                .to_lowercase();
+            let visible_lower = visible_lines(&self.raw).join("\n").to_lowercase();
             // OG-faithful inline refs via lsdoc, fed the re-bulleted block body
             // (like OG) so markers/priority aren't mis-read as tags. One parse
             // yields both page refs (normalized, for backlinks) and block refs.
@@ -133,15 +127,15 @@ impl DocBlock {
         })
     }
 
-    /// `key:: value` properties found in the block body, in order.
+    /// `key:: value` properties found in the block body, in order (fence-aware: a
+    /// `key::` inside a code fence is literal content, not a property).
     pub fn properties(&self) -> Vec<(String, String)> {
-        self.raw.lines().filter_map(parse_property_line).collect()
+        property_lines(&self.raw)
     }
 
     pub fn property(&self, key: &str) -> Option<String> {
-        self.raw
-            .lines()
-            .filter_map(parse_property_line)
+        property_lines(&self.raw)
+            .into_iter()
             .find(|(k, _)| k.eq_ignore_ascii_case(key))
             .map(|(_, v)| v)
     }
@@ -216,6 +210,70 @@ fn bullet(line: &str) -> Option<(usize, &str)> {
 }
 
 /// Parse a file's contents into a [`Document`].
+/// The fence marker at the start of a line: `(char, run-length)` for a run of >=3
+/// backticks or tildes (leading whitespace ignored); else `None`.
+pub(crate) fn fence_marker(text: &str) -> Option<(char, usize)> {
+    let t = text.trim_start();
+    let c = t.chars().next()?;
+    if c != '`' && c != '~' {
+        return None;
+    }
+    let n = t.chars().take_while(|&x| x == c).count();
+    (n >= 3).then_some((c, n))
+}
+
+/// Given the current open fence (if any) and a line, return the new fence state:
+/// open on the first valid marker, close only on a matching one (same char, >=
+/// the opener's length). Shared by the block parser, `property_lines`, and
+/// `visible_lines` so "inside a code fence?" is decided one way.
+pub(crate) fn next_fence(cur: Option<(char, usize)>, line: &str) -> Option<(char, usize)> {
+    match cur {
+        None => fence_marker(line),
+        Some((c, n)) => match fence_marker(line) {
+            Some((c2, n2)) if c2 == c && n2 >= n => None, // closing fence
+            _ => Some((c, n)),                            // still inside
+        },
+    }
+}
+
+/// `key:: value` property lines in `raw`, FENCE-AWARE: a `key::` line inside a
+/// fenced code block is literal content, not a property (so it isn't shown as a
+/// chip or matched by a `(property …)` query / `property()` lookup). A line is a
+/// property only when it's outside any fence and not a fence delimiter itself.
+pub(crate) fn property_lines(raw: &str) -> Vec<(String, String)> {
+    let mut fence: Option<(char, usize)> = None;
+    let mut out = Vec::new();
+    for line in raw.lines() {
+        let was_inside = fence.is_some();
+        fence = next_fence(fence, line);
+        // candidate iff outside a fence before AND not a fence opener (opener →
+        // fence now Some). closers/content are skipped because was_inside is true.
+        if !was_inside && fence.is_none() {
+            if let Some(kv) = parse_property_line(line) {
+                out.push(kv);
+            }
+        }
+    }
+    out
+}
+
+/// Lines of `raw` that are *visible* (not a fence-aware property line) — the body
+/// the reader sees, for search / `visible_lower`. A `key::` inside a code fence
+/// stays visible (it's code), unlike a real property line.
+pub(crate) fn visible_lines(raw: &str) -> Vec<&str> {
+    let mut fence: Option<(char, usize)> = None;
+    let mut out = Vec::new();
+    for line in raw.lines() {
+        let was_inside = fence.is_some();
+        fence = next_fence(fence, line);
+        let is_prop = !was_inside && fence.is_none() && parse_property_line(line).is_some();
+        if !is_prop {
+            out.push(line);
+        }
+    }
+    out
+}
+
 pub fn parse(content: &str) -> Document {
     // Normalize CRLF / lone CR to LF so the in-memory model never carries a stray
     // `\r` (which would otherwise pollute property / `id::` values and break
@@ -261,28 +319,8 @@ pub fn parse(content: &str) -> Document {
         /// fence containing ``` (or `~~~`) round-trips correctly.
         fence: Option<(char, usize)>,
     }
-    // The fence marker at the start of a content line: `(char, run-length)` for a
-    // run of >=3 backticks or tildes, ignoring leading whitespace; else None.
-    fn fence_marker(text: &str) -> Option<(char, usize)> {
-        let t = text.trim_start();
-        let c = t.chars().next()?;
-        if c != '`' && c != '~' {
-            return None;
-        }
-        let n = t.chars().take_while(|&x| x == c).count();
-        (n >= 3).then_some((c, n))
-    }
-    // Given the current open fence (if any) and a content line, return the new
-    // fence state: open on the first valid marker, close only on a matching one.
-    fn next_fence(cur: Option<(char, usize)>, line: &str) -> Option<(char, usize)> {
-        match cur {
-            None => fence_marker(line),
-            Some((c, n)) => match fence_marker(line) {
-                Some((c2, n2)) if c2 == c && n2 >= n => None, // closing fence
-                _ => Some((c, n)),                            // still inside
-            },
-        }
-    }
+    // fence_marker / next_fence are module-level (shared with property_lines /
+    // visible_lines so "is this line inside a code fence" has ONE implementation).
     let mut stack: Vec<Frame> = Vec::new();
     let mut roots: Vec<DocBlock> = Vec::new();
 
@@ -469,8 +507,25 @@ fn emit_block(block: &DocBlock, level: usize, unit: &str, out: &mut Vec<String>)
 }
 
 #[cfg(test)]
-mod crlf_tests {
+mod property_fence_tests {
     use super::*;
+
+    #[test]
+    fn property_lines_skip_fenced_key_colons() {
+        // A `key:: value` line inside a code fence is literal content, not a block
+        // property — it must not become a chip / match a (property …) query, and it
+        // must stay in the visible (searchable) text.
+        let b = DocBlock::new("title:: Real\n```\nlang:: rust\nlet x = 1;\n```\nfoo:: bar");
+        let props = b.properties();
+        assert!(props.iter().any(|(k, _)| k == "title"));
+        assert!(props.iter().any(|(k, _)| k == "foo"));
+        assert!(!props.iter().any(|(k, _)| k == "lang"), "fenced lang:: is not a property: {props:?}");
+        assert_eq!(b.property("lang"), None);
+        // The fenced property line stays visible (it's code); real props are dropped.
+        let vis = b.projection().visible_lower.clone();
+        assert!(vis.contains("lang:: rust"), "fenced line searchable: {vis:?}");
+        assert!(!vis.contains("title:: real"), "real property dropped from visible text");
+    }
 
     #[test]
     fn parse_normalizes_crlf_to_lf() {

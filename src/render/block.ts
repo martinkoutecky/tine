@@ -131,7 +131,23 @@ export function blockView(raw: string): BlockView {
   // Skip org drawers (`:LOGBOOK:`/`:PROPERTIES:` … `:END:`) and bare CLOCK lines
   // so they don't render as literal text. Their content stays in `raw`.
   let inDrawer = false;
+  // Track code fences so a `key:: value` line INSIDE a fence stays literal content
+  // (not pulled out as a phantom property chip). Same rule as the editor's
+  // splitProps, so render and edit agree on what's a property.
+  let fence: string | null = null;
   for (const line of allLines) {
+    const fm = /^\s*(`{3,}|~{3,})/.exec(line);
+    if (fm) {
+      const ch = fm[1][0];
+      if (fence === null) fence = ch;
+      else if (ch === fence) fence = null;
+      lines.push(line); // the fence delimiter is literal content
+      continue;
+    }
+    if (fence !== null) {
+      lines.push(line); // inside a code fence — never a property/drawer/date
+      continue;
+    }
     const t = line.trim();
     if (inDrawer) {
       if (/^:END:$/i.test(t)) inDrawer = false;

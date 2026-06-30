@@ -613,10 +613,9 @@ fn blockview_property(raw: &str, key: &str) -> Option<(String, String)> {
 /// markdown avoids false positives where the query only appears in hidden
 /// metadata (e.g. a uuid fragment or a property value).
 pub fn visible_text(raw: &str) -> String {
-    raw.lines()
-        .filter(|l| crate::doc::parse_property_line(l).is_none())
-        .collect::<Vec<_>>()
-        .join("\n")
+    // Fence-aware (crate::doc::visible_lines): a `key::` inside a code fence stays
+    // searchable code text, only real property lines are dropped.
+    crate::doc::visible_lines(raw).join("\n")
 }
 
 /// Full-text search: blocks whose visible text contains `query`

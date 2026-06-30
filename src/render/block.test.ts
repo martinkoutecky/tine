@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { aliasNames, isPropertyLine, pageProperties, blockView } from "./block";
 
+describe("blockView is fence-aware for properties", () => {
+  it("a key:: line inside a code fence is content, not a phantom chip", () => {
+    const v = blockView("title:: Real\n```\nlang:: rust\nlet x = 1;\n```\nfoo:: bar");
+    const keys = v.properties.map(([k]) => k);
+    expect(keys).toContain("title");
+    expect(keys).toContain("foo");
+    expect(keys).not.toContain("lang"); // fenced — stays in the rendered code body
+    expect(v.lines.join("\n")).toContain("lang:: rust");
+  });
+});
+
 describe("aliasNames", () => {
   it("parses a comma-separated alias:: line", () => {
     expect(aliasNames("alias:: Foo, Bar Baz, qux")).toEqual(["Foo", "Bar Baz", "qux"]);
