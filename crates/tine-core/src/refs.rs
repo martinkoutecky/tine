@@ -160,69 +160,13 @@ fn tag_boundary(raw: &str, i: usize) -> bool {
     i == 0 || raw[..i].chars().next_back().map_or(true, |c| !is_tag_char(c))
 }
 
-/// All page references in `raw`: `[[name]]`, `#tag`, and `#[[name]]`. Tags are
-/// included because Logseq treats `#foo` as a reference to page `foo`.
-pub fn page_refs(raw: &str) -> Vec<String> {
-    let code = code_ranges(raw);
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i < raw.len() {
-        let rest = &raw[i..];
-        if !in_code(i, &code) {
-            if let Some(after) = rest.strip_prefix("[[") {
-                if let Some(end) = after.find("]]") {
-                    // `[[]]` (empty) is not a page ref in OG — consume but don't index.
-                    if !after[..end].trim().is_empty() {
-                        out.push(after[..end].to_string());
-                    }
-                    i += 2 + end + 2;
-                    continue;
-                }
-            }
-            if rest.starts_with('#') && tag_boundary(raw, i) {
-                if let Some(after) = rest.strip_prefix("#[[") {
-                    if let Some(end) = after.find("]]") {
-                        if !after[..end].trim().is_empty() {
-                            out.push(after[..end].to_string());
-                        }
-                        i += 3 + end + 2;
-                        continue;
-                    }
-                }
-                let after = &rest[1..];
-                let len = after.find(|c: char| !is_tag_char(c)).unwrap_or(after.len());
-                if len > 0 {
-                    out.push(after[..len].to_string());
-                    i += 1 + len;
-                    continue;
-                }
-            }
-        }
-        i += rest.chars().next().map(|c| c.len_utf8()).unwrap_or(1);
-    }
-    out
-}
-
-/// All block references `((uuid))` in `raw`.
-pub fn block_refs(raw: &str) -> Vec<String> {
-    let code = code_ranges(raw);
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i < raw.len() {
-        let rest = &raw[i..];
-        if !in_code(i, &code) {
-            if let Some(after) = rest.strip_prefix("((") {
-                if let Some(end) = after.find("))") {
-                    out.push(after[..end].trim().to_string());
-                    i += 2 + end + 2;
-                    continue;
-                }
-            }
-        }
-        i += rest.chars().next().map(|c| c.len_utf8()).unwrap_or(1);
-    }
-    out
-}
+// NOTE: the OG-faithful page/block ref EXTRACTORS live in lsdoc (see
+// `render::block_refs` → `doc.rs` `projection()`, consumed by every query/backlink).
+// The hand-rolled `page_refs`/`block_refs`/`block_ref_ids`/`references_page` that
+// used to sit here were a dead second copy (only tests called them) — a "fix the
+// wrong file" trap — and were removed. What remains in this file is the LIVE half:
+// `normalize`, `rename_*`, `block_id`, the bracket-link/block-ref helpers (shared
+// with `publish.rs`), and the code/org fence machinery.
 
 /// A block's `id::` property value (its uuid), if any.
 pub fn block_id(raw: &str) -> Option<String> {
@@ -270,72 +214,6 @@ pub fn read_bracket_link(rest: &str) -> Option<(&str, &str, usize)> {
 /// The inner uuid if `url` is exactly a `((uuid))` block-ref target.
 pub fn as_block_ref(url: &str) -> Option<&str> {
     url.trim().strip_prefix("((").and_then(|s| s.strip_suffix("))")).map(str::trim)
-}
-
-/// A canonical block uuid (8-4-4-4-12 hex). OG only treats `((x))` as a block ref
-/// when `x` parses as a UUID (`graph_parser/util/block_ref`), so a stray `((foo))`
-/// in prose isn't counted as a reference or inflates a target's badge.
-pub fn is_block_uuid(s: &str) -> bool {
-    let b = s.as_bytes();
-    if b.len() != 36 {
-        return false;
-    }
-    b.iter().enumerate().all(|(i, &c)| match i {
-        8 | 13 | 18 | 23 => c == b'-',
-        _ => c.is_ascii_hexdigit(),
-    })
-}
-
-/// Every block uuid `raw` references, deduped and code-aware. Covers all three OG
-/// block-ref forms: bare `((uuid))`, labeled `[label](((uuid)))`, and
-/// `{{embed ((uuid))}}` (the embed's `((uuid))` is caught by the bare scan). The
-/// labeled form is consumed as a whole link FIRST — otherwise the bare-`((` scan
-/// mis-parses its triple paren (capturing `(uuid` instead of `uuid`). Refs inside
-/// code are ignored (literal), matching `block_refs`/`page_refs`.
-pub fn block_ref_ids(raw: &str) -> Vec<String> {
-    let code = code_ranges(raw);
-    let mut out: Vec<String> = Vec::new();
-    let push = |id: &str, out: &mut Vec<String>| {
-        let id = id.trim();
-        // Only a real UUID is a block ref (OG parse-uuid), so `((foo))` doesn't count.
-        if is_block_uuid(id) && !out.iter().any(|x| x == id) {
-            out.push(id.to_string());
-        }
-    };
-    let mut i = 0;
-    while i < raw.len() {
-        let rest = &raw[i..];
-        if !in_code(i, &code) {
-            // Labeled `[label](((uuid)))` — consume the whole link first. A normal
-            // `[text](url)` is consumed too (its url isn't a block ref → nothing
-            // pushed), so the bare scan never peeks inside a markdown link's url.
-            if rest.starts_with('[') {
-                if let Some((_, url, len)) = read_bracket_link(rest) {
-                    if let Some(id) = as_block_ref(url) {
-                        push(id, &mut out);
-                    }
-                    i += len;
-                    continue;
-                }
-            }
-            // Bare `((uuid))` (also matches the body of `{{embed ((uuid))}}`).
-            if let Some(after) = rest.strip_prefix("((") {
-                if let Some(end) = after.find("))") {
-                    push(&after[..end], &mut out);
-                    i += 2 + end + 2;
-                    continue;
-                }
-            }
-        }
-        i += rest.chars().next().map(|c| c.len_utf8()).unwrap_or(1);
-    }
-    out
-}
-
-/// Does `raw` reference page `target` (by `[[...]]` or `#tag`)?
-pub fn references_page(raw: &str, target: &str) -> bool {
-    let t = normalize(target);
-    page_refs(raw).iter().any(|r| normalize(r) == t)
 }
 
 /// Rewrite every reference to page `from` (case-insensitive) as `to`, returning
@@ -512,70 +390,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn extracts_page_refs_and_tags() {
-        let raw = "see [[Foo Bar]] and #tag and #[[multi word]] end";
-        assert_eq!(page_refs(raw), vec!["Foo Bar", "tag", "multi word"]);
-    }
-
-    #[test]
-    fn empty_brackets_are_not_refs() {
-        // `[[]]` / `#[[]]` (empty) are not page refs in OG — consumed, not indexed;
-        // a real ref afterward is still found.
-        assert_eq!(page_refs("[[]]"), Vec::<String>::new());
-        assert_eq!(page_refs("#[[]]"), Vec::<String>::new());
-        assert_eq!(page_refs("[[ ]]"), Vec::<String>::new()); // whitespace-only
-        assert_eq!(page_refs("[[]] then [[Real]]"), vec!["Real"]);
-    }
-
-    #[test]
-    fn extracts_block_refs() {
-        assert_eq!(
-            block_refs("ref ((628953c1-8d75-49fe-a648-f4c612109098)) here"),
-            vec!["628953c1-8d75-49fe-a648-f4c612109098"]
-        );
-    }
-
-    #[test]
-    fn block_ref_ids_all_forms_deduped_and_code_aware() {
-        // Real UUIDs (block refs are only counted when the inner id is a UUID).
-        let a = "11111111-1111-1111-1111-111111111111";
-        let b = "22222222-2222-2222-2222-222222222222";
-        let c = "33333333-3333-3333-3333-333333333333";
-        let d = "44444444-4444-4444-4444-444444444444";
-        let e = "55555555-5555-5555-5555-555555555555";
-        // bare
-        assert_eq!(block_ref_ids(&format!("see (({a})) end")), vec![a]);
-        // labeled `[label](((uuid)))` — the triple paren must be captured whole
-        assert_eq!(block_ref_ids(&format!("(see [Related Work]((({b})))) ")), vec![b]);
-        // embed macro body
-        assert_eq!(block_ref_ids(&format!("{{{{embed (({c}))}}}}")), vec![c]);
-        // mixed + dedupe (same uuid twice → once)
-        assert_eq!(
-            block_ref_ids(&format!("(({d})) and [x]((({e}))) and (({d})) again")),
-            vec![d, e]
-        );
-        // a normal markdown link is consumed whole, never mined for `((`
-        assert_eq!(block_ref_ids("[text](https://ex.com/a)"), Vec::<String>::new());
-        // refs inside code are literal → ignored
-        assert_eq!(
-            block_ref_ids(&format!("real (({a})) but `(({b}))` literal")),
-            vec![a]
-        );
-        let fenced = format!("intro (({a}))\n```\n(({b}))\n```\nout (({c}))");
-        assert_eq!(block_ref_ids(&fenced), vec![a, c]);
-    }
-
-    #[test]
-    fn block_ref_ids_rejects_non_uuid() {
-        // A `((word))` in prose is NOT a block ref (OG requires a UUID) — so it
-        // doesn't inflate a count or create a phantom referrer.
-        assert_eq!(block_ref_ids("see ((Related Work)) and ((foo))"), Vec::<String>::new());
-        assert!(is_block_uuid("11111111-1111-1111-1111-111111111111"));
-        assert!(!is_block_uuid("not-a-uuid"));
-        assert!(!is_block_uuid("11111111111111111111111111111111"));
-    }
-
-    #[test]
     fn read_bracket_link_balances_parens() {
         // url with parens (block ref) captured whole, not stopped at first `)`
         assert_eq!(read_bracket_link("[L](((u)))rest"), Some(("L", "((u))", 10)));
@@ -591,40 +405,6 @@ mod tests {
         assert_eq!(block_id("text\nid:: 1234-abcd"), Some("1234-abcd".to_string()));
         assert_eq!(block_id("ID:: Xyz"), Some("Xyz".to_string())); // case-insensitive key
         assert_eq!(block_id("no props here"), None);
-    }
-
-    #[test]
-    fn references_page_is_case_insensitive() {
-        assert!(references_page("link to [[Logseq]]", "logseq"));
-        assert!(references_page("a #project tag", "Project"));
-        assert!(!references_page("no refs here", "logseq"));
-    }
-
-    #[test]
-    fn utf8_safe() {
-        let raw = "café [[naïve]] θ #tag";
-        assert_eq!(page_refs(raw), vec!["naïve", "tag"]);
-    }
-
-    #[test]
-    fn refs_in_code_are_ignored() {
-        // inline code
-        assert_eq!(page_refs("real [[Foo]] but `[[Foo]]` literal"), vec!["Foo"]);
-        // fenced block (multi-line)
-        let raw = "intro [[A]]\n```\nuse [[A]] and #A here\n```\noutro [[A]]";
-        assert_eq!(page_refs(raw), vec!["A", "A"]); // the two outside the fence
-        // a tag inside inline code isn't a ref
-        assert_eq!(page_refs("`#nope` yes #yep"), vec!["yep"]);
-    }
-
-    #[test]
-    fn hash_needs_a_word_boundary() {
-        // bare-URL fragment is NOT a tag; the real tag after a space is
-        assert_eq!(page_refs("see https://ex.com/p#Old then #real"), vec!["real"]);
-        // glued to a word → not a tag
-        assert_eq!(page_refs("a c#sharp note"), Vec::<String>::new());
-        // legit boundaries still produce tags
-        assert_eq!(page_refs("[[Foo]]#bar (#baz) ,#qux"), vec!["Foo", "bar", "baz", "qux"]);
     }
 
     #[test]

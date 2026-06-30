@@ -72,8 +72,8 @@ pub struct BlockProjection {
 }
 
 impl BlockProjection {
-    /// Whether this block references page `name` (case-insensitive). Equivalent
-    /// to `refs::references_page(raw, name)`.
+    /// Whether this block references page `name` (case-insensitive) — checks the
+    /// lsdoc-extracted normalized refs (`refs_norm`), the live ref index.
     pub fn refs_contains(&self, name: &str) -> bool {
         let n = crate::refs::normalize(name);
         self.refs_norm.iter().any(|r| *r == n)
