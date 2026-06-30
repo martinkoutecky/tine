@@ -1,7 +1,7 @@
 // Read-only rendering of a BlockDto tree. Shared by Linked References, query
 // results, and embeds. Mirrors the rendered (non-editing) block look.
 
-import { For, Show, type JSX } from "solid-js";
+import { For, Show, createMemo, type JSX } from "solid-js";
 import type { BlockDto } from "../types";
 import { blockView } from "../render/block";
 import { InlineText } from "../render/inline";
@@ -27,7 +27,11 @@ function RefBlock(props: {
   page?: string;
   pageKind?: "journal" | "page";
 }): JSX.Element {
-  const view = () => blockView(props.block.raw);
+  // Memoized: `view()` is read ~5× in the markup below (done / marker ×2 / lines).
+  // As a plain thunk that re-ran `blockView` (drawer-skip loop + per-line regex +
+  // marker/property scan) on each read — ~4× wasted per rendered ref block, and
+  // RefBlocks renders the unlinked/linked panels with hundreds of rows.
+  const view = createMemo(() => blockView(props.block.raw));
   return (
     <div class="ls-block ref-block">
       <div class="block-main">

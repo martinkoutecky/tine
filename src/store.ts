@@ -82,14 +82,39 @@ interface DocState {
 
 export const [doc, setDoc] = createStore<DocState>({ byId: {}, pages: [], feed: [], loaded: false });
 
-/** The pages shown in the main content area, in feed order. */
-export function mainPages(): FeedPage[] {
-  return doc.feed.map((n) => doc.pages.find((p) => p.name === n)).filter(Boolean) as FeedPage[];
-}
+// name → index into `doc.pages`, rebuilt only when the working set's membership
+// changes (add / remove / rename / evict), NOT on a keystroke. Turns the O(pages)
+// linear `find` in `pageByName`/`formatForPage`/`mainPages` — which run in the
+// per-block render hot path and ~7×/page render — into an O(1) lookup. We map to
+// the index (not the proxy) and read `doc.pages[idx]` live, so a property change
+// (roots/preBlock/format) stays fine-grained-reactive and the index never goes
+// stale: the memo re-derives whenever any page's `name` or the array length moves.
+const pageIndexByName = createRoot(() =>
+  createMemo(() => {
+    const m = new Map<string, number>();
+    doc.pages.forEach((p, i) => m.set(p.name, i));
+    return m;
+  })
+);
+
+/** The pages shown in the main content area, in feed order. Memoized: the O(feed)
+ *  resolve runs once per structural change, not on each of its ~7 calls per render. */
+export const mainPages = createRoot(() =>
+  createMemo((): FeedPage[] => {
+    const idx = pageIndexByName();
+    return doc.feed
+      .map((n) => {
+        const i = idx.get(n);
+        return i === undefined ? undefined : doc.pages[i];
+      })
+      .filter(Boolean) as FeedPage[];
+  })
+);
 
 /** A loaded page record by name (anywhere in the working set), or undefined. */
 export function pageByName(name: string): FeedPage | undefined {
-  return doc.pages.find((p) => p.name === name);
+  const i = pageIndexByName().get(name);
+  return i === undefined ? undefined : doc.pages[i];
 }
 
 /** The format ("md"/"org") to parse a page's inline content with. Exact for a

@@ -1,4 +1,4 @@
-import { For, Show, createResource, createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { For, Show, createMemo, createResource, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { doc, ensurePageLoaded, pageByName } from "../store";
 import { Block } from "./Block";
@@ -41,7 +41,10 @@ export function LiveRefGroup(props: { page: string; kind: PageKind; blocks: Bloc
     }
   );
 
-  const dtoById = (id: string) => props.blocks.find((b) => b.id === id);
+  // O(1) id → dto. The prior `props.blocks.find` inside the per-row <For> was
+  // O(N) per row → O(N²) per group (250k iterations on a 500-block hub group).
+  const byId = createMemo(() => new Map(props.blocks.map((b) => [b.id, b] as const)));
+  const dtoById = (id: string) => byId().get(id);
   return (
     <div
       ref={el}
