@@ -1,7 +1,7 @@
-import { For, Show, createMemo, createResource, createSignal, type JSX } from "solid-js";
-import { backend } from "../backend";
+import { For, Show, createMemo, createSignal, type JSX } from "solid-js";
 import { openJournals, openPage, openPageInNewTab, openInNewTab, route } from "../router";
-import { openSwitcher, favorites, recentPages, graphEpoch } from "../ui";
+import { openSwitcher, favorites, recentPages } from "../ui";
+import { allPages as allGraphPages } from "../pages";
 import { NamespaceTree } from "./Namespace";
 
 // Cap the rendered "All pages" list. Beyond this, rendering every row (each
@@ -11,19 +11,18 @@ import { NamespaceTree } from "./Namespace";
 const ALL_PAGES_CAP = 300;
 
 export function Sidebar(): JSX.Element {
-  // Key the fetch on graphEpoch (bumps when a graph loads/switches), NOT a bare
-  // one-shot fetch at mount: a large graph is still loading when the Sidebar
-  // mounts, so a mount-time fetch raced the open, returned nothing (or errored),
-  // and never retried — leaving "All pages" with no count and nothing to expand.
-  // Re-fetching on each epoch bump means we get the list once the graph is ready.
-  const [pages] = createResource(() => graphEpoch(), () => backend().listPages());
+  // The whole-graph page list is the shared, graph-epoch-keyed resource (see
+  // src/pages.ts) — fetched once per graph generation and shared with the
+  // namespace tree/macro/hierarchy, not a sidebar-private fetch. Epoch keying
+  // still fixes the old "graph still loading at mount" race (it refetches when
+  // the graph becomes ready).
   const [showAll, setShowAll] = createSignal(false);
   const [showNs, setShowNs] = createSignal(false);
 
   // Filter + sort ONCE per page-list change (memoized), not on every render /
   // navigation as the inline `.filter().sort()` in JSX did.
   const allPages = createMemo(() =>
-    (pages() ?? [])
+    (allGraphPages() ?? [])
       .filter((p) => p.kind === "page")
       .sort((a, b) => a.name.localeCompare(b.name))
   );
@@ -118,11 +117,11 @@ export function Sidebar(): JSX.Element {
           >
             <span class="nav-toggle-caret" classList={{ open: showAll() }}>▸</span>
             ALL PAGES
-            <Show when={pages()}>
+            <Show when={allGraphPages()}>
               <span class="nav-section-count">{allPages().length}</span>
             </Show>
           </div>
-          <Show when={showAll() && pages()}>
+          <Show when={showAll() && allGraphPages()}>
             <For each={allPages().slice(0, ALL_PAGES_CAP)}>
               {(p) => (
                 <div
