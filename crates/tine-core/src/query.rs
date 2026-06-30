@@ -166,9 +166,15 @@ fn contains_word(hay: &str, needle: &str) -> bool {
 /// but do NOT link it via `[[..]]`/`#tag`.
 pub fn unlinked_refs(graph: &Graph, target: &str) -> Vec<RefGroup> {
     let lower = target.to_lowercase();
+    // Hoist the loop-invariant ref normalization out of the per-block closure
+    // (was re-normalized inside `refs_contains` for every block — F3/Codex#5).
+    let target_norm = refs::normalize(target);
     collect(
         graph,
-        |b| contains_word(&b.raw.to_lowercase(), &lower) && !b.projection().refs_contains(target),
+        |b| {
+            contains_word(&b.raw.to_lowercase(), &lower)
+                && !b.projection().refs_contains_norm(&target_norm)
+        },
         Some(target),
     )
 }
@@ -326,11 +332,12 @@ pub(crate) fn page_affects_backlinks(aliases: &[(String, String)], target: &str,
 /// `unlinked_refs(target)`. Mirrors `unlinked_refs`'s matcher.
 pub(crate) fn page_affects_unlinked(target: &str, doc: &Document) -> bool {
     let lower = target.to_lowercase();
+    let target_norm = refs::normalize(target); // hoisted (F3/Codex#5)
     let mut hit = false;
     walk(&doc.roots, &mut |b| {
         if !hit
             && contains_word(&b.raw.to_lowercase(), &lower)
-            && !b.projection().refs_contains(target)
+            && !b.projection().refs_contains_norm(&target_norm)
         {
             hit = true;
         }
@@ -738,10 +745,24 @@ pub fn property_facets(graph: &Graph) -> Vec<(String, Vec<String>)> {
 /// subsequence, then by name length.
 pub fn quick_switch(graph: &Graph, query: &str, limit: usize) -> Vec<PageEntry> {
     let q = query.trim().to_lowercase();
+    // `list_pages` / `referenced_page_names` are `cache_gen`-memoized and return a
+    // clone-on-read snapshot ON PURPOSE (so a keystroke never holds the cache lock
+    // across this scoring work) — those single snapshot clones stay. What we DO
+    // drop: scoring file pages by INDEX so a match isn't cloned mid-score. An
+    // empty/short query (the switcher's just-opened state) matches every page, so
+    // the old `e.clone()` per match was a second whole-list copy each keystroke;
+    // now only the `limit` winners are materialized. (perf F4)
     let file_pages = graph.list_pages();
-    let mut scored: Vec<(i32, PageEntry)> = file_pages
+    enum Cand {
+        File(usize),
+        Ref(PageEntry), // referenced-only page (no file entry to index into)
+    }
+    let mut scored: Vec<(i32, Cand)> = file_pages
         .iter()
-        .filter_map(|e| score_name(&e.name.to_lowercase(), &q).map(|s| (s - e.name.len() as i32, e.clone())))
+        .enumerate()
+        .filter_map(|(i, e)| {
+            score_name(&e.name.to_lowercase(), &q).map(|s| (s - e.name.len() as i32, Cand::File(i)))
+        })
         .collect();
     // Pages referenced by `#tag` / `[[link]]` but with no file of their own still
     // "exist" (OG semantics): include them (deduped against file pages, which are
@@ -758,12 +779,24 @@ pub fn quick_switch(graph: &Graph, query: &str, limit: usize) -> Vec<PageEntry> 
             let len = name.len() as i32;
             scored.push((
                 s - len,
-                PageEntry { name, kind: PageKind::Page, date_key: None, path: std::path::PathBuf::new() },
+                Cand::Ref(PageEntry {
+                    name,
+                    kind: PageKind::Page,
+                    date_key: None,
+                    path: std::path::PathBuf::new(),
+                }),
             ));
         }
     }
     scored.sort_by(|a, b| b.0.cmp(&a.0));
-    scored.into_iter().take(limit).map(|(_, e)| e).collect()
+    scored
+        .into_iter()
+        .take(limit)
+        .map(|(_, c)| match c {
+            Cand::File(i) => file_pages[i].clone(),
+            Cand::Ref(e) => e,
+        })
+        .collect()
 }
 
 fn score_name(name: &str, q: &str) -> Option<i32> {
@@ -822,6 +855,92 @@ pub fn resolve_block(graph: &Graph, uuid: &str) -> Option<RefGroup> {
         }
         None
     })
+}
+
+/// Resolve many `((uuid))` block references in a single graph pass — the real
+/// batch behind `Graph::resolve_blocks` (a page full of refs/embeds is one IPC,
+/// and now one scan rather than U independent `resolve_block` calls, each of which
+/// could whole-graph-scan on a hint miss). Hinted ids are grouped by page and each
+/// hinted page is walked ONCE for all of its ids; whatever a hint missed (stale or
+/// absent) falls back to a SINGLE whole-graph scan. Match semantics + first-block-
+/// wins ordering are identical to `resolve_block`. Output is positional and
+/// per-input (duplicate input uuids each get their own `Some(..)`/`None`).
+pub fn resolve_blocks(graph: &Graph, uuids: &[String]) -> Vec<Option<RefGroup>> {
+    use std::collections::{HashMap, HashSet};
+    // Distinct requested ids (a page often refs the same uuid repeatedly).
+    let distinct: HashSet<&str> = uuids.iter().map(String::as_str).collect();
+    if distinct.is_empty() {
+        return uuids.iter().map(|_| None).collect();
+    }
+    // Bucket each distinct id under its page hint (O(1) per id off the cached
+    // uuid index); unhinted ids go straight to the whole-graph fallback.
+    let mut by_page: HashMap<String, Vec<&str>> = HashMap::new();
+    let mut unhinted: Vec<&str> = Vec::new();
+    for &id in &distinct {
+        match graph.block_page_hint(id) {
+            Some(page) => by_page.entry(page).or_default().push(id),
+            None => unhinted.push(id),
+        }
+    }
+
+    let mut resolved: HashMap<&str, RefGroup> = HashMap::new();
+    graph.with_pages(|pages| {
+        // 1) Each hinted page: ONE walk resolving all of its hinted ids.
+        for (page, ids) in &by_page {
+            if let Some((entry, doc)) = pages.iter().find(|(e, _)| &e.name == page) {
+                let want: HashSet<&str> = ids.iter().copied().collect();
+                resolve_ids_in_page(entry, doc, &want, &mut resolved);
+            }
+        }
+        // 2) Remaining ids (no hint, or the hinted page didn't actually hold the
+        //    block) get ONE whole-graph scan — never one-scan-per-id.
+        let mut remaining: HashSet<&str> = unhinted.into_iter().collect();
+        for &id in &distinct {
+            if !resolved.contains_key(id) {
+                remaining.insert(id);
+            }
+        }
+        if !remaining.is_empty() {
+            for (entry, doc) in pages {
+                if resolved.len() == distinct.len() {
+                    break; // everything found
+                }
+                resolve_ids_in_page(entry, doc, &remaining, &mut resolved);
+            }
+        }
+    });
+
+    uuids.iter().map(|u| resolved.get(u.as_str()).cloned()).collect()
+}
+
+/// Walk `doc` once, resolving any block whose uuid (or persisted `id::`) is a
+/// still-unresolved id in `want`. First block in walk order wins per id (matches
+/// `resolve_block`).
+fn resolve_ids_in_page<'a>(
+    entry: &PageEntry,
+    doc: &Document,
+    want: &std::collections::HashSet<&'a str>,
+    resolved: &mut std::collections::HashMap<&'a str, RefGroup>,
+) {
+    walk(&doc.roots, &mut |b| {
+        // A block's identity is its uuid OR its persisted `id::`; check both
+        // against the wanted set with O(1) lookups (no per-id rescan).
+        let hit: Option<&'a str> = want
+            .get(b.uuid.as_str())
+            .copied()
+            .filter(|id| !resolved.contains_key(id))
+            .or_else(|| {
+                b.property("id")
+                    .and_then(|id| want.get(id.as_str()).copied())
+                    .filter(|id| !resolved.contains_key(id))
+            });
+        if let Some(id) = hit {
+            resolved.insert(
+                id,
+                RefGroup { page: entry.name.clone(), kind: entry.kind, blocks: vec![block_to_dto(b)] },
+            );
+        }
+    });
 }
 
 /// Is this query body an advanced datalog query we don't support?
@@ -1010,7 +1129,9 @@ impl Pred {
             Pred::PageTags(tags) => tags.iter().any(|t| {
                 ctx.page_tags.iter().any(|pt| pt.eq_ignore_ascii_case(t))
             }),
-            Pred::Content(s) => block.projection().visible_lower.contains(&s.to_lowercase()),
+            // `s` is already lowercased at parse time; `visible_lower` is the
+            // block's lowercased visible text — a direct substring test.
+            Pred::Content(s) => block.projection().visible_lower.contains(s.as_str()),
             Pred::And(ps) => ps.iter().all(|p| p.eval(block, ctx)),
             Pred::Or(ps) => ps.iter().any(|p| p.eval(block, ctx)),
             Pred::Not(p) => !p.eval(block, ctx),
@@ -1178,10 +1299,13 @@ fn parse_expr(toks: &[Tok], pos: &mut usize, today: JournalDate) -> Option<Pred>
             *pos += 1;
             Some(Pred::PageRef(name))
         }
-        // A bare quoted string is a full-text content filter.
+        // A bare quoted string is a full-text content filter. Fold to lowercase
+        // ONCE here (the match is case-insensitive) so the per-block evaluator
+        // compares against an already-lowered term instead of re-lowering the
+        // constant query string for every candidate block (perf Codex#7).
         Tok::Str(s) => {
             *pos += 1;
-            Some(Pred::Content(s))
+            Some(Pred::Content(s.to_lowercase()))
         }
         Tok::LParen => {
             *pos += 1; // consume (
@@ -1396,9 +1520,10 @@ mod tests {
         assert_eq!(pred("\"foo \\\"bar\\\"\""), Pred::Content("foo \"bar\"".into()));
         assert_eq!(pred("\"a\\\\b\""), Pred::Content("a\\b".into()));
         // Only `\"`/`\\` are escapes: a hand-authored backslash before another
-        // char is literal, so `"C:\tmp"` stays `C:\tmp` (not `C:tmp`).
+        // char is literal, so `"C:\tmp"` stays `C:\tmp` (not `C:tmp`). The term
+        // is case-folded at parse time (the content match is case-insensitive).
         assert_eq!(pred("\"a\\q\""), Pred::Content("a\\q".into()));
-        assert_eq!(pred("\"C:\\tmp\""), Pred::Content("C:\\tmp".into()));
+        assert_eq!(pred("\"C:\\tmp\""), Pred::Content("c:\\tmp".into()));
         // End-to-end: the term still matches a block whose text contains the quote.
         let none = ctx_named();
         let b = DocBlock::new("note: foo \"bar\" baz");

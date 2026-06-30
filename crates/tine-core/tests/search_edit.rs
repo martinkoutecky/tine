@@ -354,6 +354,52 @@ fn resolve_block_index_refreshes_after_cache_change() {
 }
 
 #[test]
+fn resolve_blocks_batch_resolves_across_pages_with_duplicates() {
+    // The batch resolver groups hinted ids by page (each hinted page scanned
+    // once) and falls back to a single whole-graph scan for the rest. It must:
+    //  - resolve ids that live on different pages,
+    //  - resolve several ids on the SAME page,
+    //  - resolve an id via its persisted `id::` as well as its assigned uuid,
+    //  - return None (not a panic) for an unknown id,
+    //  - be positional & per-input (a repeated input uuid resolves each time).
+    let root = mk("resolvebatch");
+    std::fs::write(
+        root.join("pages").join("A.md"),
+        "- alpha one\n  id:: aaaa-1111\n- alpha two\n  id:: aaaa-2222\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("pages").join("B.md"), "- beta\n  id:: bbbb-3333\n").unwrap();
+    let g = Graph::open(&root);
+    g.warm_cache();
+
+    let req = vec![
+        "aaaa-1111".to_string(), // page A
+        "bbbb-3333".to_string(), // page B
+        "aaaa-2222".to_string(), // page A again (same page, second id)
+        "nope-0000".to_string(), // unknown
+        "aaaa-1111".to_string(), // duplicate input
+    ];
+    let out = g.resolve_blocks(&req);
+    assert_eq!(out.len(), req.len(), "one result slot per input");
+    assert_eq!(out[0].as_ref().unwrap().page, "A");
+    assert_eq!(out[0].as_ref().unwrap().blocks[0].raw, "alpha one\nid:: aaaa-1111");
+    assert_eq!(out[1].as_ref().unwrap().page, "B");
+    assert_eq!(out[2].as_ref().unwrap().page, "A");
+    assert_eq!(out[2].as_ref().unwrap().blocks[0].raw, "alpha two\nid:: aaaa-2222");
+    assert!(out[3].is_none(), "unknown id resolves to None, not a panic");
+    assert_eq!(out[4].as_ref().unwrap().page, "A", "duplicate input resolves again");
+
+    // Batch agrees with N single resolves (same semantics, just one pass).
+    for u in &req {
+        assert_eq!(
+            g.resolve_blocks(std::slice::from_ref(u)).into_iter().next().unwrap().map(|r| r.page),
+            g.resolve_block(u).map(|r| r.page),
+        );
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn new_journal_saved_with_date_stem_not_title() {
     let root = mk("journalname");
     let g = Graph::open(&root);

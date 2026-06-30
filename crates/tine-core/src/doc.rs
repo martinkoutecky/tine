@@ -101,8 +101,14 @@ impl BlockProjection {
     /// Whether this block references page `name` (case-insensitive) — checks the
     /// lsdoc-extracted normalized refs (`refs_norm`), the live ref index.
     pub fn refs_contains(&self, name: &str) -> bool {
-        let n = crate::refs::normalize(name);
-        self.refs_norm.iter().any(|r| *r == n)
+        self.refs_contains_norm(&crate::refs::normalize(name))
+    }
+
+    /// Like [`refs_contains`] but takes an already-[`crate::refs::normalize`]d
+    /// target — for hot loops testing ONE target against every block, so the
+    /// normalize is hoisted out of the per-block loop instead of repeated.
+    pub fn refs_contains_norm(&self, normalized: &str) -> bool {
+        self.refs_norm.iter().any(|r| r == normalized)
     }
 }
 

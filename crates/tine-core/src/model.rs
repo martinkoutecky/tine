@@ -762,20 +762,6 @@ impl Graph {
         Ok(())
     }
 
-    /// Move an absolute graph file to the recoverable trash (`logseq/.tine-trash`),
-    /// timestamp-prefixed so same-named files don't collide. Falls back to a hard
-    /// delete only if the move can't be staged. Shared by the duplicate-day
-    /// reconcile ops (#21).
-    fn move_to_trash(&self, src: &Path) -> io::Result<()> {
-        let name = src.file_name().and_then(|s| s.to_str()).unwrap_or("file");
-        let trash = self.root.join("logseq").join(".tine-trash");
-        let dest = trash.join(format!("{}__{name}", trash_stamp()));
-        if fs::create_dir_all(&trash).is_err() || fs::rename(src, &dest).is_err() {
-            fs::remove_file(src)?;
-        }
-        Ok(())
-    }
-
     /// Whether a file participates in the `(kind,name)` page cache. False only for a
     /// shadow journal (a title-named duplicate of a canonical date-stem file, #21),
     /// whose cache slot belongs to the canonical file.
@@ -860,10 +846,25 @@ impl Graph {
         merged.roots.extend(src_doc.roots);
         assign_doc_uuids(&mut merged.roots);
         let dto = page_dto(&dst_entry, &merged);
-        // recheck = false: we just read dst_content under the lock and pass it as the
+        let dst_cacheable = self.path_is_cacheable(&dst);
+        // L5: stage `src` into the trash BEFORE committing the merged `dst`. The old
+        // order (write dst, then trash src) duplicated blocks on a retry when
+        // trashing failed: dst already held src's blocks while src survived on disk,
+        // so a second merge re-appended them. Now we move src out first — a staging
+        // failure aborts the merge cleanly before any write — and if the dst write
+        // then fails we roll the move back, so neither the merge nor the source is
+        // lost. On success src sits in the recoverable trash.
+        let trash = self.root.join("logseq").join(".tine-trash");
+        fs::create_dir_all(&trash)?;
+        let src_name = src.file_name().and_then(|s| s.to_str()).unwrap_or("file");
+        let staged = trash.join(format!("{}__{src_name}", trash_stamp()));
+        fs::rename(&src, &staged)?;
+        // recheck = false: we read dst_content under the lock and pass it as the
         // baseline, so there's no external-writer window to guard here.
-        self.write_page(&dto, &dst, Some(&dst_content), false, self.path_is_cacheable(&dst))?;
-        self.move_to_trash(&src)?;
+        if let Err(e) = self.write_page(&dto, &dst, Some(&dst_content), false, dst_cacheable) {
+            let _ = fs::rename(&staged, &src); // rollback: restore the source file
+            return Err(e);
+        }
         Ok(())
     }
 
@@ -1697,15 +1698,25 @@ impl Graph {
             is_move: bool,
         }
         let move_dst: std::collections::HashMap<PathBuf, PathBuf> = moves.into_iter().collect();
+        // The whole rename SET as a normalized(old) -> new map, so each graph file
+        // is rewritten ONCE against every descendant in a single pass — not K passes
+        // (one per `(old,new)` pair), which made a namespace rename O(graph_text * K)
+        // and recomputed code ranges twice per pair per file (perf Codex#2).
+        let rename_map: std::collections::HashMap<String, String> = rename_pairs
+            .iter()
+            .map(|(o, n)| (crate::refs::normalize(o), n.clone()))
+            .collect();
         let mut edits: Vec<Edit> = Vec::new();
         for entry in &entries {
             let Ok(content) = fs::read_to_string(&entry.path) else { continue };
             let is_org = Format::from_path(&entry.path) == Format::Org;
-            let mut updated = content.clone();
-            for (o, n) in &rename_pairs {
-                updated = crate::refs::rename_refs(&updated, o, n, is_org);
-                updated = crate::refs::rename_tags_property(&updated, o, n, is_org);
-            }
+            // One inline-ref pass + one `tags::` pass per file (each computes code
+            // ranges once), regardless of how many descendants are being renamed.
+            let updated = crate::refs::rename_tags_property_multi(
+                &crate::refs::rename_refs_multi(&content, &rename_map, is_org),
+                &rename_map,
+                is_org,
+            );
             // H1: a rename must never rewrite a read-only (non-round-tripping) .org
             // file. Abort the whole rename (all-or-nothing) so the user resolves it
             // in Logseq first. A pure file move with no content change (updated ==
@@ -1855,10 +1866,11 @@ impl Graph {
     }
 
     /// Resolve many block references in one call (for a page full of `((uuid))`
-    /// refs / embeds) — one IPC instead of N. The uuid index is built once and
-    /// reused across the batch.
+    /// refs / embeds) — one IPC instead of N, and one graph pass instead of N:
+    /// hinted ids are grouped + each hinted page scanned once, with a single
+    /// whole-graph fallback for hint misses.
     pub fn resolve_blocks(&self, uuids: &[String]) -> Vec<Option<RefGroup>> {
-        uuids.iter().map(|u| crate::query::resolve_block(self, u)).collect()
+        crate::query::resolve_blocks(self, uuids)
     }
 
     /// The graph's `logseq/custom.css`, if present (for user theming).
@@ -1995,11 +2007,21 @@ impl Graph {
     /// Write raw bytes (e.g. a pasted image) into `assets/`, returning the
     /// stored filename (de-duplicated if it already exists).
     pub fn save_asset(&self, name: &str, bytes: &[u8]) -> io::Result<String> {
-        use std::io::Write;
         let assets = self.assets_path();
         fs::create_dir_all(&assets)?;
-        let (final_name, mut file) = reserve_asset(&assets, name)?;
-        file.write_all(bytes)?;
+        // Reserve the (deduped) name with an empty placeholder so a concurrent
+        // writer can't claim it, then write the real bytes ATOMICALLY (temp +
+        // fsync + rename) over that placeholder. A crash mid-write can therefore
+        // never expose partial/corrupt bytes as the final asset — the path the
+        // frontend already linked holds either the empty reservation or the
+        // complete file, never a torn one (DS Codex#6).
+        let (final_name, file) = reserve_asset(&assets, name)?;
+        drop(file); // release the placeholder handle; atomic_write renames over it
+        let final_path = assets.join(&final_name);
+        if let Err(e) = atomic_write(&final_path, bytes) {
+            let _ = fs::remove_file(&final_path); // don't leave an empty orphan
+            return Err(e);
+        }
         Ok(final_name)
     }
 
@@ -2018,11 +2040,17 @@ impl Graph {
         };
         let assets = self.assets_path();
         fs::create_dir_all(&assets)?;
-        // Reserve the name (creating an empty placeholder so no concurrent writer
-        // can claim it), then copy the source over our own placeholder.
-        let (final_name, _file) = reserve_asset(&assets, &name)?;
-        drop(_file);
-        fs::copy(src, assets.join(&final_name))?;
+        // Reserve the name (empty placeholder so no concurrent writer can claim
+        // it), then copy the source over it ATOMICALLY (temp + fsync + rename) so
+        // an interrupted import never leaves a partial final-name file referencing
+        // half a PDF/image (DS Codex#6). The placeholder is cleaned up on failure.
+        let (final_name, file) = reserve_asset(&assets, &name)?;
+        drop(file);
+        let final_path = assets.join(&final_name);
+        if let Err(e) = atomic_copy(src, &final_path) {
+            let _ = fs::remove_file(&final_path); // don't leave an empty orphan
+            return Err(e);
+        }
         Ok(final_name)
     }
 
@@ -3012,15 +3040,28 @@ fn collect_asset_refs(text: &str, into: &mut std::collections::HashSet<String>) 
             .unwrap_or(after.len());
         let name = &after[..end];
         if !name.is_empty() {
-            into.insert(name.to_string());
+            insert_asset_ref(into, name);
             if let Some(seg) = name.split('/').next() {
                 if seg != name {
-                    into.insert(seg.to_string());
+                    insert_asset_ref(into, seg);
                 }
             }
         }
         rest = &after[end..];
     }
+}
+
+/// Record an asset reference under BOTH its raw form AND its percent-decoded form.
+/// A link like `../assets/my%20file.png` names the on-disk file `my file.png`, so
+/// comparing the raw URL substring against directory entries would miss the real
+/// file and let `orphan_assets` offer an IN-USE asset for trashing (DS Codex#7).
+/// Keeping the raw form too covers a file literally named with a `%` escape.
+fn insert_asset_ref(into: &mut std::collections::HashSet<String>, raw: &str) {
+    let decoded = percent_decode(raw);
+    if decoded != raw {
+        into.insert(decoded);
+    }
+    into.insert(raw.to_string());
 }
 
 fn collect_block_asset_refs(b: &DocBlock, into: &mut std::collections::HashSet<String>) {
@@ -3063,6 +3104,33 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
         // Persist the rename itself: fsync the directory so a crash right after the
         // write can't lose the new directory entry (the rename) on some
         // filesystems. Best-effort — not all platforms allow fsync on a dir.
+        let _ = fs::File::open(dir).and_then(|d| d.sync_all());
+    }
+    res
+}
+
+/// Like [`atomic_write`] but the payload is COPIED from `src` (so a large import —
+/// a PDF, a big image — isn't slurped fully into memory): copy into a unique temp
+/// in the destination dir, fsync it, then atomically rename into place. The temp
+/// is removed on any failure, and the directory entry is fsynced on success. The
+/// temp name is hidden (`.`-prefixed) so the orphan-asset scanner never lists it.
+fn atomic_copy(src: &Path, dst: &Path) -> io::Result<()> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+    let dir = dst.parent().unwrap_or_else(|| Path::new("."));
+    let fname = dst.file_name().and_then(|s| s.to_str()).unwrap_or("asset");
+    let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+    let tmp = dir.join(format!(".{fname}.{}.{seq}.import.tmp", std::process::id()));
+    let res = (|| {
+        fs::copy(src, &tmp)?;
+        let f = fs::File::open(&tmp)?;
+        f.sync_all()?;
+        drop(f);
+        fs::rename(&tmp, dst)
+    })();
+    if res.is_err() {
+        let _ = fs::remove_file(&tmp);
+    } else {
         let _ = fs::File::open(dir).and_then(|d| d.sync_all());
     }
     res
@@ -3357,6 +3425,57 @@ mod tests {
     }
 
     #[test]
+    fn rename_namespace_rewrites_all_descendant_refs_in_one_pass() {
+        // A namespace rename (`Project` -> `Archive`) moves the primary page AND
+        // every file-backed descendant, and rewrites every reference to ANY of
+        // them across the graph in a SINGLE multi-target pass per file (perf
+        // Codex#2). Default file-name format is Legacy, so `Project/Alpha` lives
+        // on disk as `Project%2FAlpha.md`.
+        let dir = scratch("rename-ns");
+        fs::write(dir.join("pages").join("Project.md"), "- project body\n").unwrap();
+        fs::write(dir.join("pages").join("Project%2FAlpha.md"), "- alpha body\n").unwrap();
+        fs::write(dir.join("pages").join("Project%2FBeta.md"), "- beta body\n").unwrap();
+        // One file references the primary AND both descendants (inline) plus two
+        // bare `tags::` values — all rewritten in the single multi-target pass.
+        fs::write(
+            dir.join("pages").join("Refs.md"),
+            "tags:: Project, Project/Beta\n- see [[Project]], [[Project/Alpha]] and #[[Project/Beta]]\n",
+        )
+        .unwrap();
+        let g = Graph::open(&dir);
+        g.warm_cache();
+        g.rename_page("Project", "Archive").unwrap();
+
+        // Primary + every descendant file moved (content preserved), old names gone.
+        assert!(!dir.join("pages").join("Project.md").exists());
+        assert!(!dir.join("pages").join("Project%2FAlpha.md").exists());
+        assert!(!dir.join("pages").join("Project%2FBeta.md").exists());
+        assert_eq!(
+            fs::read_to_string(dir.join("pages").join("Archive.md")).unwrap(),
+            "- project body\n"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("pages").join("Archive%2FAlpha.md")).unwrap(),
+            "- alpha body\n"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("pages").join("Archive%2FBeta.md")).unwrap(),
+            "- beta body\n"
+        );
+
+        // Every inline ref AND both bare tag values rewritten; no stale `Project`.
+        let refs = fs::read_to_string(dir.join("pages").join("Refs.md")).unwrap();
+        assert!(refs.contains("[[Archive]]"), "primary inline ref: {refs:?}");
+        assert!(refs.contains("[[Archive/Alpha]]"), "descendant inline ref: {refs:?}");
+        // `Archive/Beta` is bare-tag-safe (`/` is a tag char), so `#[[..]]`
+        // collapses to the bare `#Archive/Beta` form, matching Logseq.
+        assert!(refs.contains("#Archive/Beta"), "descendant tag ref: {refs:?}");
+        assert!(refs.contains("tags:: Archive, Archive/Beta"), "bare tags rewritten: {refs:?}");
+        assert!(!refs.contains("Project"), "no stale Project anywhere: {refs:?}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn org_page_lists_loads_edits_and_round_trips() {
         let dir = scratch("org-page");
         let src = "* TODO Buy milk\nSCHEDULED: <2026-06-25 Thu>\n* second block\n";
@@ -3515,6 +3634,28 @@ mod tests {
         assert!(dir.join("logseq").join(".tine-trash").exists());
         // A name with a separator is refused (can't escape assets/).
         assert!(g.trash_asset("../pages/P.md").is_err());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn orphan_assets_does_not_flag_percent_encoded_in_use_asset() {
+        // A block links `../assets/my%20file.png` but the file on disk is named
+        // `my file.png` (the space percent-encoded in the URL, valid Markdown).
+        // The scanner must percent-decode the reference before comparing, so the
+        // in-use file is NOT offered for trashing (DS Codex#7).
+        let dir = scratch("orphan-pct");
+        let assets = dir.join("assets");
+        fs::create_dir_all(&assets).unwrap();
+        fs::write(assets.join("my file.png"), b"x").unwrap(); // referenced via %20
+        fs::write(assets.join("real orphan.png"), b"x").unwrap(); // genuinely unused
+        fs::write(dir.join("pages").join("P.md"), "- ![pic](../assets/my%20file.png)\n").unwrap();
+        let g = Graph::open(&dir);
+        let orphans: Vec<String> = g.orphan_assets().into_iter().map(|a| a.name).collect();
+        assert_eq!(
+            orphans,
+            vec!["real orphan.png".to_string()],
+            "the percent-encoded in-use asset must not be flagged orphan"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 

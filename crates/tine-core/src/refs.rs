@@ -257,7 +257,26 @@ pub fn as_block_ref(url: &str) -> Option<&str> {
 /// `#[[to]]` when `to` contains characters that aren't valid in a bare tag
 /// (e.g. spaces), matching Logseq.
 pub fn rename_refs(raw: &str, from: &str, to: &str, is_org: bool) -> String {
-    let target = normalize(from);
+    // Single-target is just the one-entry multi case — keep ONE rewriter so the
+    // single- and multi-target callers can never drift on matching/escaping rules.
+    let mut map = std::collections::HashMap::with_capacity(1);
+    map.insert(normalize(from), to.to_string());
+    rename_refs_multi(raw, &map, is_org)
+}
+
+/// Rewrite every reference to ANY page in `renames` (keyed by `normalize(from)`,
+/// valued by the display `to`) in a SINGLE left-to-right pass, computing the
+/// code/fence ranges ONCE. This is the namespace-rename hot path: a primary page
+/// with K file-backed descendants used to rescan every graph file K times (once
+/// per `(old,new)` pair); now each file is scanned once against the whole rename
+/// set. Each matched ref is mapped by its own normalized name (no chaining — a
+/// reference to `A` always becomes `renames[A]`, even if some other pair renames
+/// to `A`).
+pub fn rename_refs_multi(
+    raw: &str,
+    renames: &std::collections::HashMap<String, String>,
+    is_org: bool,
+) -> String {
     let code = code_ranges_for(raw, is_org);
     let mut code_cur = 0usize; // monotone cursor into `code` (i only increases)
     let mut out = String::with_capacity(raw.len());
@@ -273,7 +292,7 @@ pub fn rename_refs(raw: &str, from: &str, to: &str, is_org: bool) -> String {
             // rename (L1). Only for org; markdown has no `file:` page links.
             if is_org && rest.starts_with("[[") {
                 if let Some(end) = rest[2..].find("]]") {
-                    if let Some(rw) = rewrite_org_file_link(&rest[2..2 + end], &target, to) {
+                    if let Some(rw) = rewrite_org_file_link(&rest[2..2 + end], renames) {
                         out.push_str(&rw);
                         i += 2 + end + 2;
                         continue;
@@ -282,7 +301,7 @@ pub fn rename_refs(raw: &str, from: &str, to: &str, is_org: bool) -> String {
             }
             if let Some(after) = rest.strip_prefix("[[") {
                 if let Some(end) = after.find("]]") {
-                    if normalize(&after[..end]) == target {
+                    if let Some(to) = renames.get(&normalize(&after[..end])) {
                         out.push_str(&format!("[[{to}]]"));
                     } else {
                         out.push_str(&raw[i..i + 2 + end + 2]);
@@ -294,7 +313,7 @@ pub fn rename_refs(raw: &str, from: &str, to: &str, is_org: bool) -> String {
             if tag_boundary(raw, i) {
                 if let Some(after) = rest.strip_prefix("#[[") {
                     if let Some(end) = after.find("]]") {
-                        if normalize(&after[..end]) == target {
+                        if let Some(to) = renames.get(&normalize(&after[..end])) {
                             out.push_str(&tag_for(to));
                         } else {
                             out.push_str(&raw[i..i + 3 + end + 2]);
@@ -308,7 +327,7 @@ pub fn rename_refs(raw: &str, from: &str, to: &str, is_org: bool) -> String {
                 let after = &rest[1..];
                 let len = after.find(|c: char| !is_tag_char(c)).unwrap_or(after.len());
                 if len > 0 {
-                    if normalize(&after[..len]) == target {
+                    if let Some(to) = renames.get(&normalize(&after[..len])) {
                         out.push_str(&tag_for(to));
                     } else {
                         out.push_str(&raw[i..i + 1 + len]);
@@ -326,11 +345,15 @@ pub fn rename_refs(raw: &str, from: &str, to: &str, is_org: bool) -> String {
 }
 
 /// Rewrite an org `[[file:…]]` link's inner text if its target file's basename
-/// (namespace-decoded `___`→`/`, extension stripped) normalizes to `target`.
-/// Returns the full replacement `[[file:…]]` (preserving dir, extension, and any
-/// `[desc]`), or `None` if it isn't a matching file link. Mirrors the model's
-/// `encode_page_name` (`/`→`___`) so the new stem names the renamed file.
-fn rewrite_org_file_link(inner: &str, target: &str, to: &str) -> Option<String> {
+/// (namespace-decoded `___`→`/`, extension stripped) normalizes to a key in
+/// `renames`. Returns the full replacement `[[file:…]]` (preserving dir,
+/// extension, and any `[desc]`), or `None` if it isn't a matching file link.
+/// Mirrors the model's `encode_page_name` (`/`→`___`) so the new stem names the
+/// renamed file.
+fn rewrite_org_file_link(
+    inner: &str,
+    renames: &std::collections::HashMap<String, String>,
+) -> Option<String> {
     let body = inner.strip_prefix("file:")?;
     let (path_part, desc) = match body.find("][") {
         Some(s) => (&body[..s], Some(&body[s + 2..])),
@@ -342,9 +365,7 @@ fn rewrite_org_file_link(inner: &str, target: &str, to: &str) -> Option<String> 
         Some((s, e)) => (s, format!(".{e}")),
         None => (file, String::new()),
     };
-    if normalize(&stem.replace("___", "/")) != *target {
-        return None;
-    }
+    let to = renames.get(&normalize(&stem.replace("___", "/")))?;
     let new_stem = to.replace('/', "___");
     let desc_part = desc.map(|d| format!("][{d}")).unwrap_or_default();
     Some(format!("[[file:{dir}{new_stem}{ext}{desc_part}]]"))
@@ -368,7 +389,19 @@ fn tag_for(to: &str) -> String {
 /// refs in code). Whitespace, commas, and the `key::` prefix are preserved
 /// verbatim for byte-exact round-tripping of everything but the matched name.
 pub fn rename_tags_property(raw: &str, from: &str, to: &str, is_org: bool) -> String {
-    let target = normalize(from);
+    let mut map = std::collections::HashMap::with_capacity(1);
+    map.insert(normalize(from), to.to_string());
+    rename_tags_property_multi(raw, &map, is_org)
+}
+
+/// Multi-target `rename_tags_property`: rewrite bare `tags::` values that
+/// normalize to ANY key in `renames` in a single pass (code ranges computed once).
+/// The namespace-rename companion to [`rename_refs_multi`].
+pub fn rename_tags_property_multi(
+    raw: &str,
+    renames: &std::collections::HashMap<String, String>,
+    is_org: bool,
+) -> String {
     let code = code_ranges_for(raw, is_org);
     let mut code_cur = 0usize; // monotone cursor (line_start only increases)
     let mut out = String::with_capacity(raw.len());
@@ -380,7 +413,7 @@ pub fn rename_tags_property(raw: &str, from: &str, to: &str, is_org: bool) -> St
         if !in_code_at(line_start, &code, &mut code_cur) {
             if let Some(vstart) = tags_value_start(content) {
                 out.push_str(&content[..vstart]);
-                out.push_str(&rewrite_bare_tags(&content[vstart..], &target, to));
+                out.push_str(&rewrite_bare_tags(&content[vstart..], renames));
                 out.push_str(&line[content.len()..]); // trailing '\n', if any
                 continue;
             }
@@ -403,7 +436,10 @@ fn tags_value_start(line: &str) -> Option<usize> {
 /// Rewrite a `tags::` value (the part after `::`): for each comma-separated
 /// segment whose trimmed, **bare** name normalizes to `target`, swap the name
 /// for `to`, keeping the segment's surrounding whitespace.
-fn rewrite_bare_tags(valpart: &str, target: &str, to: &str) -> String {
+fn rewrite_bare_tags(
+    valpart: &str,
+    renames: &std::collections::HashMap<String, String>,
+) -> String {
     valpart
         .split(',')
         .map(|seg| {
@@ -411,7 +447,7 @@ fn rewrite_bare_tags(valpart: &str, target: &str, to: &str) -> String {
             if trimmed.is_empty() || trimmed.starts_with("[[") || trimmed.starts_with('#') {
                 return seg.to_string(); // empty, or handled by rename_refs
             }
-            if normalize(trimmed) == *target {
+            if let Some(to) = renames.get(&normalize(trimmed)) {
                 let lead = seg.len() - seg.trim_start().len();
                 let trail = seg.trim_end().len();
                 format!("{}{}{}", &seg[..lead], to, &seg[trail..])
