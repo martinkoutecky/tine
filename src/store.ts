@@ -13,7 +13,7 @@ import { parseOutline, type OutlineNode } from "./editor/outline";
 import type { ExportNode } from "./editor/exportText";
 import { backend } from "./backend";
 import { isConflicted, clearConflict, rightSidebar, conflicts, pushToast, graphMeta } from "./ui";
-import { seedFacets, facetsFromDto } from "./render/facets";
+import { seedFacets, facetsFromDto, clearSeededFacets } from "./render/facets";
 import { journalTitle } from "./journal";
 import { upsertPropertyLine, readPropertyValue, splitProps, joinProps, isBuiltinHidden } from "./editor/properties";
 import { copyIncludeSubtree, copyStripCollapsed } from "./copySettings";
@@ -403,6 +403,9 @@ export function resetStore() {
   // after a graph switch would otherwise restore (and save) those into the new
   // graph, even creating a foreign page there.
   clearUndoHistory();
+  // Drop the old graph's seeded facets (the never-evicted tier) so they don't linger
+  // across the switch (audit P2).
+  clearSeededFacets();
   setDoc({ byId: {}, pages: [], feed: [], loaded: false });
   setEditingId(null);
 }

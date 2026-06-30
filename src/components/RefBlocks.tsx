@@ -4,7 +4,7 @@
 import { For, Show, createMemo, type JSX } from "solid-js";
 import type { BlockDto } from "../types";
 import { visibleBody } from "../render/block";
-import { facetsOf } from "../render/facets";
+import { facetsFromDto } from "../render/facets";
 import { InlineText } from "../render/inline";
 import { formatForPage } from "../store";
 import { openBlockInSidebar } from "../ui";
@@ -32,7 +32,10 @@ function RefBlock(props: {
   // DTOs were seeded); the visible body lines via the shared body-text extractor.
   // Memoized — read several times in the markup, and the ref panels render hundreds
   // of rows.
-  const facets = createMemo(() => facetsOf(props.block.raw, formatForPage(props.page)));
+  // Off the DTO's shipped facet fields — NO frontend parse (the backend already
+  // computed these). Ref/linked/unlinked panels render hundreds of rows; parsing each
+  // was a real hot-path cost and churned the facet cache (audit P3).
+  const facets = createMemo(() => facetsFromDto(props.block));
   const lines = createMemo(() => visibleBody(props.block.raw));
   return (
     <div class="ls-block ref-block">

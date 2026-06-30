@@ -44,8 +44,17 @@ export function parseBody(raw: string, format: Format): Block[] {
   return parseBlock(raw, format === "org");
 }
 
-const cache = new Map<string, Facets>();
-const MAX = 4096;
+// Two tiers so a page bigger than any cap can't thrash the cache into parse-all-on-
+// load (audit P2 — a 4097-block page evicted its own seeds before they were read):
+//  - `seeded`: backend-shipped facets for the CURRENTLY-LOADED blocks. NEVER LRU-
+//    evicted (so an arbitrarily large page is still all hits); cleared wholesale on
+//    graph switch / store reset (`clearSeededFacets`). Bounded by the loaded graph,
+//    which is already in memory.
+//  - `derived`: facets computed locally for a raw the backend hasn't shipped (the
+//    block being edited). Small LRU — transient.
+const seeded = new Map<string, Facets>();
+const derived = new Map<string, Facets>();
+const DERIVED_MAX = 1024;
 const keyOf = (raw: string, format: Format) => format + "\0" + raw;
 
 /** Build a `Facets` from a backend BlockDto's shipped fields (no parse). */
@@ -70,27 +79,32 @@ export function facetsFromDto(d: {
   };
 }
 
-/** Seed the cache from the backend-computed facets — no parse. */
+/** Seed the never-evicted tier from the backend-computed facets — no parse. */
 export function seedFacets(raw: string, format: Format, f: Facets): void {
-  const k = keyOf(raw, format);
-  cache.delete(k);
-  if (cache.size >= MAX) cache.delete(cache.keys().next().value!);
-  cache.set(k, f);
+  seeded.set(keyOf(raw, format), f);
 }
 
-/** A block's header facets. Cache hit (backend-seeded or already derived) ⇒ no
- *  parse; miss ⇒ one wasm lsdoc parse. */
+/** Drop all backend-seeded facets — call on graph switch / full store reset so the
+ *  previous graph's blocks don't linger (store `resetStore`). */
+export function clearSeededFacets(): void {
+  seeded.clear();
+}
+
+/** A block's header facets. Seeded (loaded) blocks and recently-derived edits ⇒ no
+ *  parse; a never-seen raw ⇒ one wasm lsdoc parse (cached in the small `derived` LRU). */
 export function facetsOf(raw: string, format: Format): Facets {
   const k = keyOf(raw, format);
-  const hit = cache.get(k);
-  if (hit) {
-    cache.delete(k); // LRU bump
-    cache.set(k, hit);
-    return hit;
+  const s = seeded.get(k);
+  if (s) return s;
+  const d = derived.get(k);
+  if (d) {
+    derived.delete(k); // LRU bump
+    derived.set(k, d);
+    return d;
   }
   const f = deriveFacets(raw, format);
-  if (cache.size >= MAX) cache.delete(cache.keys().next().value!);
-  cache.set(k, f);
+  if (derived.size >= DERIVED_MAX) derived.delete(derived.keys().next().value!);
+  derived.set(k, f);
   return f;
 }
 
