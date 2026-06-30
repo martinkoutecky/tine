@@ -26,6 +26,9 @@ tauri-plugin-single-instance = "2"
 serde = { workspace = true }
 serde_json = { workspace = true }
 notify = "6"
+# Asset write commands receive bytes as base64 (a single compact string) instead
+# of a JSON number[] (~4-5x payload + a giant per-element parse on the UI thread).
+base64 = "0.22"
 tine-core = { path = "../crates/tine-core" }
 
 # Linux/WebKitGTK only: enable the webview's native spell checker (enchant +

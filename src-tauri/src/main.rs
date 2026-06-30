@@ -600,9 +600,20 @@ fn linux_copy_image(bytes: &[u8]) -> Result<(), String> {
 /// Write a PNG image to the OS clipboard. The lightbox encodes the shown image to
 /// PNG and sends the bytes. On Linux we prefer `wl-copy`/`xclip` (see above) and
 /// fall back to the Tauri clipboard plugin; elsewhere the plugin is reliable.
+/// Decode a base64 asset payload. The frontend sends bytes as one base64 string
+/// rather than a JSON number[] (which inflated the IPC payload ~4-5x and forced a
+/// per-element parse + a giant throwaway array on the webview thread).
+fn decode_asset_b64(b64: &str) -> Result<Vec<u8>, String> {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .map_err(|e| format!("bad base64 asset payload: {e}"))
+}
+
 #[tauri::command]
-fn copy_image_to_clipboard(app: tauri::AppHandle, bytes: Vec<u8>) -> Result<(), String> {
+fn copy_image_to_clipboard(app: tauri::AppHandle, bytes_b64: String) -> Result<(), String> {
     use tauri_plugin_clipboard_manager::ClipboardExt;
+    let bytes = decode_asset_b64(&bytes_b64)?;
     #[cfg(target_os = "linux")]
     if linux_copy_image(&bytes).is_ok() {
         return Ok(());
@@ -1689,7 +1700,8 @@ fn rename_file_to_page(path: String, new_name: String, state: State<'_, AppState
 }
 
 #[tauri::command]
-fn save_asset(name: String, bytes: Vec<u8>, state: State<'_, AppState>) -> Result<String, String> {
+fn save_asset(name: String, bytes_b64: String, state: State<'_, AppState>) -> Result<String, String> {
+    let bytes = decode_asset_b64(&bytes_b64)?;
     with_graph(&state, |g| g.save_asset(&name, &bytes).map_err(|e| e.to_string()))
 }
 
@@ -1720,9 +1732,10 @@ fn save_pdf_area_image(
     page: i64,
     id: String,
     stamp: i64,
-    bytes: Vec<u8>,
+    bytes_b64: String,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
+    let bytes = decode_asset_b64(&bytes_b64)?;
     with_graph(&state, |g| {
         g.write_pdf_area_image(&pdf, page, &id, stamp, &bytes).map_err(|e| e.to_string())
     })

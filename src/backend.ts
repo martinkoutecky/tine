@@ -17,6 +17,21 @@ import type {
 import { assetFileName } from "./media";
 import { mockBackend } from "./mock";
 
+// Encode asset bytes as one base64 string for the save_*/copy_image IPC. The old
+// `Array.from(bytes)` produced a JSON number[] — ~4-5x the payload + a multi-MB
+// per-element parse and a giant throwaway array on the webview thread for every
+// image paste / PDF crop. base64 is ~1.33x the byte size, a single string the
+// backend decodes in one pass. Chunked so `String.fromCharCode(...)` never blows
+// the argument-count limit on a multi-MB buffer.
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const CHUNK = 0x8000; // 32K args/call — safely under the spread/apply limit
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
+
 export interface Backend {
   loadGraph(path: string): Promise<GraphMeta>;
   /** Scaffold a brand-new demo graph (onboarding "create new graph"); returns
@@ -357,7 +372,7 @@ class TauriBackend implements Backend {
     return new Uint8Array(buf);
   }
   saveAsset(name: string, bytes: Uint8Array) {
-    return this.call<string>("save_asset", { name, bytes: Array.from(bytes) });
+    return this.call<string>("save_asset", { name, bytesB64: bytesToBase64(bytes) });
   }
   async readClipboardImage(): Promise<Uint8Array | null> {
     try {
@@ -463,7 +478,7 @@ class TauriBackend implements Backend {
     await this.writeText(text);
   }
   copyImageToClipboard(bytes: Uint8Array): Promise<void> {
-    return this.call<void>("copy_image_to_clipboard", { bytes: Array.from(bytes) });
+    return this.call<void>("copy_image_to_clipboard", { bytesB64: bytesToBase64(bytes) });
   }
   readHighlights(pdf: string) {
     return this.call<Highlight[]>("read_highlights", { pdf });
@@ -477,7 +492,7 @@ class TauriBackend implements Backend {
       page,
       id,
       stamp,
-      bytes: Array.from(bytes),
+      bytesB64: bytesToBase64(bytes),
     });
   }
   async onGraphChanged(cb: (c: GraphChange) => void): Promise<() => void> {
