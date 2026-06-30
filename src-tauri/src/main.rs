@@ -513,22 +513,40 @@ fn get_backup_keep(app: tauri::AppHandle) -> usize {
     backup_keep(&app)
 }
 
+/// Serializes ALL device-settings (tine-settings.json) writers; every `set_*` below
+/// goes through `update_settings`, which routes to the shared `tine_core` atomic_update
+/// (audit M1): the JSON is read-modify-written under this lock + atomically (temp +
+/// fsync + rename), so a crash can't truncate it, a concurrent `set_*` can't clobber
+/// another's key, and a transient read error aborts instead of resetting all prefs.
+static SETTINGS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Merge one or more keys into the device-settings JSON, durably. `mutate` edits the
+/// parsed object (an unparseable existing file is treated as `{}`, the prior behavior).
+fn update_settings(
+    app: &tauri::AppHandle,
+    mutate: impl FnOnce(&mut serde_json::Value),
+) -> Result<(), String> {
+    let p = settings_path(app).ok_or("no app-data dir")?;
+    tine_core::model::atomic_update(&p, &SETTINGS_LOCK, |content| {
+        let mut json: serde_json::Value =
+            serde_json::from_str(content).unwrap_or_else(|_| serde_json::json!({}));
+        mutate(&mut json);
+        serde_json::to_string_pretty(&json)
+            .map(|mut s| {
+                s.push('\n');
+                s
+            })
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+    })
+    .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn set_backup_keep(keep: usize, app: tauri::AppHandle) -> Result<(), String> {
     let keep = keep.clamp(1, 1000);
-    let p = settings_path(&app).ok_or("no app-data dir")?;
-    if let Some(parent) = p.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    // Merge into the existing settings (don't clobber other keys, e.g.
-    // capture_enter_files).
-    let mut json = std::fs::read_to_string(&p)
-        .ok()
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        .unwrap_or_else(|| serde_json::json!({}));
-    json["backup_keep"] = serde_json::json!(keep);
-    std::fs::write(&p, serde_json::to_string_pretty(&json).unwrap())
-        .map_err(|e| e.to_string())?;
+    update_settings(&app, |json| {
+        json["backup_keep"] = serde_json::json!(keep);
+    })?;
     // Apply the new (possibly lower) cap to the current graph's snapshots now.
     if let Some(base) = backup_base(&app) {
         prune_backups(&base, keep);
@@ -640,17 +658,9 @@ fn get_capture_enter_files(app: tauri::AppHandle) -> bool {
 
 #[tauri::command]
 fn set_capture_enter_files(value: bool, app: tauri::AppHandle) -> Result<(), String> {
-    let p = settings_path(&app).ok_or("no app-data dir")?;
-    if let Some(parent) = p.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    let mut json = std::fs::read_to_string(&p)
-        .ok()
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        .unwrap_or_else(|| serde_json::json!({}));
-    json["capture_enter_files"] = serde_json::Value::Bool(value);
-    std::fs::write(&p, serde_json::to_string_pretty(&json).unwrap()).map_err(|e| e.to_string())?;
-    Ok(())
+    update_settings(&app, |json| {
+        json["capture_enter_files"] = serde_json::Value::Bool(value);
+    })
 }
 
 /// `[[`/`#` autocomplete default action (app-level, in tine-settings.json):
@@ -671,17 +681,9 @@ fn get_link_first_match(app: tauri::AppHandle) -> bool {
 
 #[tauri::command]
 fn set_link_first_match(value: bool, app: tauri::AppHandle) -> Result<(), String> {
-    let p = settings_path(&app).ok_or("no app-data dir")?;
-    if let Some(parent) = p.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    let mut json = std::fs::read_to_string(&p)
-        .ok()
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        .unwrap_or_else(|| serde_json::json!({}));
-    json["link_first_match"] = serde_json::Value::Bool(value);
-    std::fs::write(&p, serde_json::to_string_pretty(&json).unwrap()).map_err(|e| e.to_string())?;
-    Ok(())
+    update_settings(&app, |json| {
+        json["link_first_match"] = serde_json::Value::Bool(value);
+    })
 }
 
 /// Smooth-scrolling preference (app-level, in tine-settings.json). Experimental,
@@ -702,17 +704,9 @@ fn get_smooth_scroll(app: tauri::AppHandle) -> bool {
 
 #[tauri::command]
 fn set_smooth_scroll(value: bool, app: tauri::AppHandle) -> Result<(), String> {
-    let p = settings_path(&app).ok_or("no app-data dir")?;
-    if let Some(parent) = p.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    let mut json = std::fs::read_to_string(&p)
-        .ok()
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        .unwrap_or_else(|| serde_json::json!({}));
-    json["smooth_scroll"] = serde_json::Value::Bool(value);
-    std::fs::write(&p, serde_json::to_string_pretty(&json).unwrap()).map_err(|e| e.to_string())?;
-    Ok(())
+    update_settings(&app, |json| {
+        json["smooth_scroll"] = serde_json::Value::Bool(value);
+    })
 }
 
 /// Generic device-local boolean preference (tine-settings.json). For simple
@@ -729,17 +723,9 @@ fn get_app_bool(key: String, default: bool, app: tauri::AppHandle) -> bool {
 
 #[tauri::command]
 fn set_app_bool(key: String, value: bool, app: tauri::AppHandle) -> Result<(), String> {
-    let p = settings_path(&app).ok_or("no app-data dir")?;
-    if let Some(parent) = p.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    let mut json = std::fs::read_to_string(&p)
-        .ok()
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        .unwrap_or_else(|| serde_json::json!({}));
-    json[&key] = serde_json::Value::Bool(value);
-    std::fs::write(&p, serde_json::to_string_pretty(&json).unwrap()).map_err(|e| e.to_string())?;
-    Ok(())
+    update_settings(&app, |json| {
+        json[&key] = serde_json::Value::Bool(value);
+    })
 }
 
 /// Generic device-local STRING preference (tine-settings.json) — the string twin of
@@ -756,17 +742,9 @@ fn get_app_string(key: String, default: String, app: tauri::AppHandle) -> String
 
 #[tauri::command]
 fn set_app_string(key: String, value: String, app: tauri::AppHandle) -> Result<(), String> {
-    let p = settings_path(&app).ok_or("no app-data dir")?;
-    if let Some(parent) = p.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    let mut json = std::fs::read_to_string(&p)
-        .ok()
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        .unwrap_or_else(|| serde_json::json!({}));
-    json[&key] = serde_json::Value::String(value);
-    std::fs::write(&p, serde_json::to_string_pretty(&json).unwrap()).map_err(|e| e.to_string())?;
-    Ok(())
+    update_settings(&app, |json| {
+        json[&key] = serde_json::Value::String(value);
+    })
 }
 
 /// Split a user-entered language string (e.g. "en_US, cs_CZ") into locale codes.
@@ -965,16 +943,9 @@ fn get_watch_mode(app: tauri::AppHandle) -> String {
 #[tauri::command]
 fn set_watch_mode(mode: String, app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let mode = if mode == "poll" { "poll" } else { "inotify" };
-    let p = settings_path(&app).ok_or("no app-data dir")?;
-    if let Some(parent) = p.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-    let mut json = std::fs::read_to_string(&p)
-        .ok()
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        .unwrap_or_else(|| serde_json::json!({}));
-    json["watch_mode"] = serde_json::json!(mode);
-    std::fs::write(&p, serde_json::to_string_pretty(&json).unwrap()).map_err(|e| e.to_string())?;
+    update_settings(&app, |json| {
+        json["watch_mode"] = serde_json::json!(mode);
+    })?;
     // Wake the watcher so it switches mechanism right away.
     if let Some(tx) = state.watch_ctl.lock().unwrap().as_ref() {
         let _ = tx.send(());

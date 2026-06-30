@@ -3040,6 +3040,34 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
     res
 }
 
+/// Read–modify–write a small text file (config.edn, device settings) under a lock,
+/// committed via [`atomic_write`]. The ONE guarded path every settings writer goes
+/// through, so the discipline is uniform rather than re-derived per call site:
+///   - a MISSING file is the empty document `{}`, but any OTHER read error
+///     (permission, NFS stale handle, transient I/O) ABORTS — otherwise `edit` would
+///     rebuild the whole file from `{}` and destroy every other key (audit H2);
+///   - the `lock` serializes concurrent writers to the same logical file so a
+///     read-modify-write can't clobber a concurrent one (audit M1/M2);
+///   - `edit` returns the new full contents, or an `Err` to abort without writing;
+///   - the commit is atomic (temp + fsync + rename), so a crash can't truncate it.
+pub fn atomic_update(
+    path: &Path,
+    lock: &std::sync::Mutex<()>,
+    edit: impl FnOnce(&str) -> io::Result<String>,
+) -> io::Result<()> {
+    let _guard = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let content = match fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => "{}\n".to_string(),
+        Err(e) => return Err(e),
+    };
+    let next = edit(&content)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    atomic_write(path, next.as_bytes())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

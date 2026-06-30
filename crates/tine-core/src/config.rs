@@ -8,9 +8,10 @@
 //! values surgically — so writes preserve comments + formatting + unrelated keys,
 //! and reads are immune to whatever else the file contains.
 
-use crate::model::{atomic_write, Graph};
+use crate::model::Graph;
 use std::collections::HashMap;
-use std::fs;
+#[cfg(test)]
+use std::fs; // only the tests touch the filesystem directly now (writers go via atomic_update)
 use std::io;
 
 #[derive(Debug, Clone)]
@@ -166,12 +167,21 @@ impl Config {
 // (Graph.root is pub; atomic_write is pub(crate); both reachable from here.)
 // ---------------------------------------------------------------------------
 
+/// Serializes ALL config.edn writers so two concurrent setting changes (or one
+/// racing a read-modify-write) can't clobber each other (audit M2). Process-global:
+/// config writes are rare and there's one config per running app. Every writer below
+/// goes through `crate::model::atomic_update(&path, &CONFIG_LOCK, …)`, which also
+/// makes the read NFS-safe (NotFound→`{}`, other errors abort — audit H2) and the
+/// commit atomic.
+static CONFIG_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 impl Graph {
     /// Persist the favorites list to `:favorites [...]`, replacing the existing
     /// vector or inserting one, preserving the rest of the file.
     pub fn set_favorites(&self, names: &[String]) -> io::Result<()> {
         let path = self.root.join("logseq").join("config.edn");
-        let mut content = fs::read_to_string(&path).unwrap_or_else(|_| "{}\n".to_string());
+        crate::model::atomic_update(&path, &CONFIG_LOCK, |content| {
+            let mut content = content.to_string();
         let vec_str = format!(
             "[{}]",
             names
@@ -198,10 +208,8 @@ impl Graph {
         } else {
             content = format!("{{:favorites {vec_str}}}\n");
         }
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        atomic_write(&path, content.as_bytes())
+            Ok(content)
+        })
     }
 
     /// Persist the task workflow to `:preferred-workflow :todo`/`:now`, replacing
@@ -211,7 +219,8 @@ impl Graph {
         let kw = if wf == "todo" { ":todo" } else { ":now" };
         let key = ":preferred-workflow";
         let path = self.root.join("logseq").join("config.edn");
-        let mut content = fs::read_to_string(&path).unwrap_or_else(|_| "{}\n".to_string());
+        crate::model::atomic_update(&path, &CONFIG_LOCK, |content| {
+            let mut content = content.to_string();
 
         if let Some(start) = find_keyword(&content, key) {
             let after = start + key.len();
@@ -230,10 +239,8 @@ impl Graph {
         } else {
             content = format!("{{:preferred-workflow {kw}}}\n");
         }
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        atomic_write(&path, content.as_bytes())
+            Ok(content)
+        })
     }
 
     /// Persist the preferred format for new pages/journals as
@@ -247,7 +254,8 @@ impl Graph {
         };
         let key = ":preferred-format";
         let path = self.root.join("logseq").join("config.edn");
-        let mut content = fs::read_to_string(&path).unwrap_or_else(|_| "{}\n".to_string());
+        crate::model::atomic_update(&path, &CONFIG_LOCK, |content| {
+            let mut content = content.to_string();
 
         if let Some(start) = find_keyword(&content, key) {
             let after = start + key.len();
@@ -265,10 +273,8 @@ impl Graph {
         } else {
             content = format!("{{{key} {val}}}\n");
         }
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        atomic_write(&path, content.as_bytes())
+            Ok(content)
+        })
     }
 
     /// `:journal/page-title-format "<pattern>"` — the journal *display* title
@@ -282,7 +288,8 @@ impl Graph {
         let val = format!("\"{escaped}\"");
         let key = ":journal/page-title-format";
         let path = self.root.join("logseq").join("config.edn");
-        let mut content = fs::read_to_string(&path).unwrap_or_else(|_| "{}\n".to_string());
+        crate::model::atomic_update(&path, &CONFIG_LOCK, |content| {
+            let mut content = content.to_string();
 
         if let Some(start) = find_keyword(&content, key) {
             let after = start + key.len();
@@ -295,10 +302,8 @@ impl Graph {
         } else {
             content = format!("{{{key} {val}}}\n");
         }
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        atomic_write(&path, content.as_bytes())
+            Ok(content)
+        })
     }
 
     /// Persist the new-journal default template as `:default-templates {:journals
@@ -307,7 +312,8 @@ impl Graph {
     /// preserved.
     pub fn set_default_journal_template(&self, name: Option<&str>) -> io::Result<()> {
         let path = self.root.join("logseq").join("config.edn");
-        let mut content = fs::read_to_string(&path).unwrap_or_else(|_| "{}\n".to_string());
+        crate::model::atomic_update(&path, &CONFIG_LOCK, |content| {
+            let mut content = content.to_string();
 
         // Locate a real `:default-templates` whose value is a map literal `{ … }`.
         let dt = find_keyword(&content, ":default-templates").and_then(|start| {
@@ -367,10 +373,8 @@ impl Graph {
                 }
             }
         }
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        atomic_write(&path, content.as_bytes())
+            Ok(content)
+        })
     }
 
     /// Persist the first day of week to `:start-of-week N` (Logseq convention:
@@ -381,7 +385,8 @@ impl Graph {
         let n = n.min(6);
         let key = ":start-of-week";
         let path = self.root.join("logseq").join("config.edn");
-        let mut content = fs::read_to_string(&path).unwrap_or_else(|_| "{}\n".to_string());
+        crate::model::atomic_update(&path, &CONFIG_LOCK, |content| {
+            let mut content = content.to_string();
 
         if let Some(start) = find_keyword(&content, key) {
             let after = start + key.len();
@@ -400,10 +405,8 @@ impl Graph {
         } else {
             content = format!("{{:start-of-week {n}}}\n");
         }
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        atomic_write(&path, content.as_bytes())
+            Ok(content)
+        })
     }
 }
 
