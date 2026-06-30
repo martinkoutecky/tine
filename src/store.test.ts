@@ -474,6 +474,23 @@ describe("page-scoped structural undo", () => {
     expect(raws("Older")).toEqual(["o1", "o2"]);
   });
 
+  it("undo preserves a path-pinned page's `path` (a #21 stray must not misroute its save)", () => {
+    // `path` pins the save to the exact file the page came from (a duplicate-day
+    // stray). The undo clone used to drop it, so undoing an edit re-routed the
+    // next save to the CANONICAL file. Snapshot → edit → undo must keep `path`.
+    const stray: PageDto = {
+      name: "Today", kind: "journal", title: "Today", pre_block: null,
+      blocks: [blk("t1")], path: "journals/Friday, 26-06-2026.md",
+    };
+    loadFeed([stray]);
+    expect(pageByName("Today")!.path).toBe("journals/Friday, 26-06-2026.md");
+    splitBlock(stray.blocks[0].id, 1); // structural op → snapshots this page
+    undo();
+    expect(pageByName("Today")!.path).toBe("journals/Friday, 26-06-2026.md");
+    redo();
+    expect(pageByName("Today")!.path).toBe("journals/Friday, 26-06-2026.md");
+  });
+
   it("undo removes an op-added node from byId entirely (root-walk purge, no leak)", () => {
     const today = journal("Today", [blk("t1")]);
     loadFeed([today]);

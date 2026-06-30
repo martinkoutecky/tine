@@ -633,26 +633,16 @@ export function invalidateUndoForPage(name: string) {
 // tailored copy is far cheaper than structuredClone (which probes types and
 // walks for cycles). This runs on EVERY structural op (split/merge/indent/move/
 // delete) for undo, so its cost is felt as general editor latency.
+// Spread-based so a newly-added FeedPage/Node field can't be silently dropped from
+// an undo snapshot (the trap that lost `path` — added for the #21 duplicate-day
+// stray and read by pageToDto to pin the save to the exact file — so an undo/redo
+// of a path-pinned page misrouted its next save to the canonical file). The only
+// per-field work is deep-copying the one array each carries.
 function cloneNode(n: Node): Node {
-  return {
-    id: n.id,
-    raw: n.raw,
-    collapsed: n.collapsed,
-    parent: n.parent,
-    page: n.page,
-    children: n.children.slice(),
-  };
+  return { ...n, children: n.children.slice() };
 }
 function clonePages(src: FeedPage[]): FeedPage[] {
-  return src.map((p) => ({
-    name: p.name,
-    kind: p.kind,
-    title: p.title,
-    preBlock: p.preBlock,
-    roots: p.roots.slice(),
-    format: p.format,
-    readOnly: p.readOnly,
-  }));
+  return src.map((p) => ({ ...p, roots: p.roots.slice() }));
 }
 function snapEntry(affected?: string[] | null): SnapEntry {
   // null/omitted → snapshot the whole working set (safe fallback). Otherwise just
