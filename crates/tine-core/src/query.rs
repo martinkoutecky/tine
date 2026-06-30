@@ -689,6 +689,7 @@ fn template_dto(b: &DocBlock, strip_template: bool) -> BlockDto {
         collapsed: false,
         children: b.children.iter().map(|c| template_dto(c, false)).collect(),
         breadcrumb: Vec::new(),
+        ..Default::default()
     }
 }
 
@@ -939,7 +940,7 @@ fn block_date_ordinals(raw: &str, only: Option<&str>) -> Vec<i64> {
     out
 }
 
-fn block_priority(raw: &str) -> Option<char> {
+pub(crate) fn block_priority(raw: &str) -> Option<char> {
     let first = raw.lines().next().unwrap_or("");
     let i = first.find("[#")?;
     let rest = &first[i + 2..];

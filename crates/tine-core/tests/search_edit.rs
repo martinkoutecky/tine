@@ -370,6 +370,7 @@ fn new_journal_saved_with_date_stem_not_title() {
             collapsed: false,
             children: vec![],
             breadcrumb: vec![],
+            ..Default::default()
         }],
         rev: None,
         format: Default::default(),

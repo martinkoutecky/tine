@@ -81,6 +81,11 @@ pub struct BlockProjection {
     /// `key:: value` block properties (md trailer / org `:PROPERTIES:` drawer) as
     /// lsdoc projects them — the ONE property recognizer for the read path.
     pub properties: Vec<(String, String)>,
+    /// SCHEDULED / DEADLINE planning date text (the `<…>` content) when lsdoc emits
+    /// a real `Timestamp` for it — code/fence-robust by construction (a `SCHEDULED:`
+    /// inside inline code is NOT a Timestamp, so never badged). `None` otherwise.
+    pub scheduled: Option<String>,
+    pub deadline: Option<String>,
 }
 
 impl BlockProjection {
@@ -130,9 +135,13 @@ impl DocBlock {
     pub fn projection(&self) -> &BlockProjection {
         self.proj.get_or_init(|| {
             // ONE lsdoc parse of the block body yields every header facet (marker,
-            // heading level, properties) AND the visible text — so `doc.rs`, the TS
-            // `blockView`, and lsdoc can no longer disagree about a block's grammar.
-            let (marker, heading_level, properties, visible) = block_facets(&self.raw, self.is_org);
+            // heading level, properties, scheduled/deadline) AND the visible text —
+            // so `doc.rs`, the TS `blockView`, and lsdoc can no longer disagree
+            // about a block's grammar.
+            let blocks = crate::render::parse_block(&self.raw, self.is_org);
+            let (marker, heading_level, properties) = header_facets(&blocks);
+            let (scheduled, deadline) = planning_dates(&blocks, &self.raw);
+            let visible = visible_minus_properties(&self.raw, &blocks);
             let visible_lower = visible.to_lowercase();
             // OG-faithful inline refs via lsdoc (a second, refs-only parse): both are
             // lsdoc over the same re-bulleted body, so they agree by construction.
@@ -146,6 +155,8 @@ impl DocBlock {
                 marker,
                 heading_level,
                 properties,
+                scheduled,
+                deadline,
             }
         })
     }
@@ -183,15 +194,23 @@ impl DocBlock {
     pub fn visible_text(&self) -> &str {
         &self.projection().visible
     }
+
+    /// SCHEDULED / DEADLINE planning date text, when lsdoc emits a real `Timestamp`
+    /// (code/fence-robust). For the render badge + agenda.
+    pub fn scheduled(&self) -> Option<&str> {
+        self.projection().scheduled.as_deref()
+    }
+    pub fn deadline(&self) -> Option<&str> {
+        self.projection().deadline.as_deref()
+    }
 }
 
-/// Block-header facets + visible text, all read off ONE lsdoc parse of the block —
-/// the single source of truth for a block's grammar (replaces the hand-rolled
-/// marker / heading / property / visible scanners that could disagree with lsdoc
-/// and the TS renderer). Returns `(marker, heading_level, properties, visible)`.
-fn block_facets(raw: &str, is_org: bool) -> (Option<String>, Option<u8>, Vec<(String, String)>, String) {
+/// Block-header facets read off lsdoc's parsed blocks — the single source of truth
+/// for a block's grammar (replaces the hand-rolled marker / heading / property
+/// scanners that could disagree with lsdoc and the TS renderer). Returns
+/// `(marker, heading_level, properties)`.
+fn header_facets(blocks: &[lsdoc::ast::Block]) -> (Option<String>, Option<u8>, Vec<(String, String)>) {
     use lsdoc::ast::Block;
-    let blocks = crate::render::parse_block(raw, is_org);
     let (marker, heading_level) = match blocks.first() {
         Some(Block::Bullet { marker, size, .. }) => (
             marker.clone(),
@@ -204,13 +223,59 @@ fn block_facets(raw: &str, is_org: bool) -> (Option<String>, Option<u8>, Vec<(St
         _ => (None, None),
     };
     let mut properties = Vec::new();
-    for b in &blocks {
+    for b in blocks {
         if let Block::Properties { props, .. } = b {
             properties.extend(props.iter().cloned());
         }
     }
-    let visible = visible_minus_properties(raw, &blocks);
-    (marker, heading_level, properties, visible)
+    (marker, heading_level, properties)
+}
+
+/// SCHEDULED / DEADLINE display text (`<…>` content) for whichever top-level block
+/// lsdoc tagged with a real `Scheduled`/`Deadline` `Timestamp` — so a `SCHEDULED:`
+/// inside inline code (which lsdoc parses as `Code`, not a Timestamp) is never
+/// badged. The display is sliced faithfully from that block's span in `raw` (exact
+/// original text); the lsdoc input is `"- " + raw.trim_start()`, so a span `[s,e)`
+/// maps to raw `[s-2+lead, e-2+lead)`.
+fn planning_dates(blocks: &[lsdoc::ast::Block], raw: &str) -> (Option<String>, Option<String>) {
+    use lsdoc::ast::{Block, Inline};
+    let lead = raw.len() - raw.trim_start().len();
+    let mut scheduled = None;
+    let mut deadline = None;
+    for b in blocks {
+        let (inlines, span) = match b {
+            Block::Bullet { inline, span, .. }
+            | Block::Heading { inline, span, .. }
+            | Block::Paragraph { inline, span, .. } => (inline, span),
+            _ => continue,
+        };
+        for i in inlines {
+            let Inline::Timestamp { ts, .. } = i else { continue };
+            let slot = match ts.as_str() {
+                "Scheduled" => &mut scheduled,
+                "Deadline" => &mut deadline,
+                _ => continue,
+            };
+            if slot.is_some() {
+                continue;
+            }
+            if let Some(sp) = span {
+                let rs = (sp.0.saturating_sub(2) + lead).min(raw.len());
+                let re = (sp.1.saturating_sub(2) + lead).min(raw.len());
+                *slot = angle_after(&raw[rs..re.max(rs)], ts);
+            }
+        }
+    }
+    (scheduled, deadline)
+}
+
+/// The `<…>` content following a `SCHEDULED:` / `DEADLINE:` keyword in `slice`.
+fn angle_after(slice: &str, ts: &str) -> Option<String> {
+    let kw = if ts == "Scheduled" { "SCHEDULED:" } else { "DEADLINE:" };
+    let after = &slice[slice.find(kw)? + kw.len()..];
+    let lt = after.find('<')?;
+    let gt = after[lt + 1..].find('>')?;
+    Some(after[lt + 1..lt + 1 + gt].to_string())
 }
 
 /// Properties + visible text for a block we only have `raw` for (a query-result
@@ -218,7 +283,9 @@ fn block_facets(raw: &str, is_org: bool) -> (Option<String>, Option<u8>, Vec<(St
 /// sort keys are cosmetic, and an org `key::` here is format-agnostic exactly as
 /// the old line-scan was. Call once per block (decorate-sort), never per compare.
 pub(crate) fn block_sort_facets(raw: &str) -> (Vec<(String, String)>, String) {
-    let (_, _, properties, visible) = block_facets(raw, false);
+    let blocks = crate::render::parse_block(raw, false);
+    let (_, _, properties) = header_facets(&blocks);
+    let visible = visible_minus_properties(raw, &blocks);
     (properties, visible)
 }
 
@@ -654,6 +721,19 @@ mod projection_tests {
         // leading whitespace in raw (lead > 0) still maps correctly.
         let b2 = DocBlock::new("  héllo\nid:: 9");
         assert_eq!(b2.visible_text().trim(), "héllo");
+    }
+
+    #[test]
+    fn planning_dates_off_lsdoc_timestamp_code_robust() {
+        // Real planning lines → faithful `<…>` date text off lsdoc's Timestamp.
+        let b = DocBlock::new("TODO ship it\nSCHEDULED: <2026-06-28 Sun>\nDEADLINE: <2026-07-01 Wed>");
+        assert_eq!(b.scheduled(), Some("2026-06-28 Sun"));
+        assert_eq!(b.deadline(), Some("2026-07-01 Wed"));
+        // The robustness fix: a `DEADLINE:` inside inline code is `Code`, not a
+        // Timestamp — so it is NEVER badged (the old regex wrongly badged it).
+        let code = DocBlock::new("look at `DEADLINE: <2026-06-28 Sun>` here");
+        assert_eq!(code.deadline(), None, "code-embedded planning is not badged");
+        assert_eq!(DocBlock::new("plain block").scheduled(), None);
     }
 
     #[test]

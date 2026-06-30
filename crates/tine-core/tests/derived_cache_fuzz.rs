@@ -46,7 +46,7 @@ const QUERIES: &[&str] = &[
 ];
 
 fn b(raw: impl Into<String>) -> BlockDto {
-    BlockDto { id: String::new(), raw: raw.into(), collapsed: false, children: vec![], breadcrumb: vec![] }
+    BlockDto { id: String::new(), raw: raw.into(), collapsed: false, children: vec![], breadcrumb: vec![], ..Default::default() }
 }
 
 // One random block body, drawing from every shape the queries/backlinks key off.

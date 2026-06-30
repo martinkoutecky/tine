@@ -110,6 +110,23 @@ pub struct BlockDto {
     /// empty for normal page loads. Lets the UI show a "parent › child" trail.
     #[serde(default)]
     pub breadcrumb: Vec<String>,
+    // --- M1: block-header facets, computed ONCE off the lsdoc projection (the one
+    // grammar source) and shipped so the frontend never re-derives them with its
+    // own scanner. Derived (not authoritative — `raw` round-trips); the frontend
+    // recomputes locally only for the block it is actively editing. Omitted from the
+    // wire when empty to keep the payload small (most blocks have no marker/dates).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub marker: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heading_level: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scheduled: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deadline: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub properties: Vec<(String, String)>,
 }
 
 /// A group of blocks from one source page — used for both Linked References
@@ -2783,6 +2800,14 @@ pub fn block_to_dto(b: &DocBlock) -> BlockDto {
         collapsed: b.collapsed(),
         children: b.children.iter().map(block_to_dto).collect(),
         breadcrumb: Vec::new(),
+        // Facets off the one lsdoc projection (marker/heading/properties/scheduled/
+        // deadline); priority stays the existing `[#A]` recognizer (one source).
+        marker: b.marker().map(str::to_string),
+        priority: crate::query::block_priority(&b.raw).map(|c| c.to_string()),
+        heading_level: b.heading_level(),
+        scheduled: b.scheduled().map(str::to_string),
+        deadline: b.deadline().map(str::to_string),
+        properties: b.properties(),
     }
 }
 
@@ -3680,6 +3705,7 @@ mod tests {
                 collapsed: false,
                 children: vec![],
                 breadcrumb: vec![],
+                ..Default::default()
             }],
             rev: None,
             format: Format::Md,
