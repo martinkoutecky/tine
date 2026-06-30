@@ -14,6 +14,7 @@ import type { ExportNode } from "./editor/exportText";
 import { backend } from "./backend";
 import { isConflicted, clearConflict, rightSidebar, conflicts, pushToast, graphMeta } from "./ui";
 import { blockView } from "./render/block";
+import { seedFacets, facetsFromDto } from "./render/facets";
 import { journalTitle } from "./journal";
 import { upsertPropertyLine, readPropertyValue, splitProps, joinProps, isBuiltinHidden } from "./editor/properties";
 import { copyIncludeSubtree, copyStripCollapsed } from "./copySettings";
@@ -167,9 +168,13 @@ function flatten(
   dtos: BlockDto[],
   parent: string | null,
   pageName: string,
-  byId: Record<string, Node>
+  byId: Record<string, Node>,
+  format: Format
 ): string[] {
   return dtos.map((d) => {
+    // Seed the header-facet cache from the backend (one Rust lsdoc parse, shipped) so
+    // the rendered chip reads off the DTO — zero frontend parse on load (M1 / P1).
+    seedFacets(d.raw, format, facetsFromDto(d));
     // Cross-page id:: collision guard: if another LOADED page already owns this
     // id (two files share a persisted `id::` — copy-pasted raw, or a sync hiccup),
     // give this block a fresh store key instead of overwriting the other page's
@@ -179,7 +184,7 @@ function flatten(
     // so this only fires across pages.
     const existing = byId[d.id];
     const key = existing && existing.page !== pageName ? `dup~${crypto.randomUUID()}` : d.id;
-    const childIds = flatten(d.children, key, pageName, byId);
+    const childIds = flatten(d.children, key, pageName, byId, format);
     byId[key] = {
       id: key,
       raw: d.raw,
@@ -193,7 +198,7 @@ function flatten(
 }
 
 function toFeedPage(dto: PageDto, byId: Record<string, Node>): FeedPage {
-  const roots = flatten(dto.blocks, null, dto.name, byId);
+  const roots = flatten(dto.blocks, null, dto.name, byId, dto.format ?? "md");
   return {
     name: dto.name,
     kind: dto.kind,

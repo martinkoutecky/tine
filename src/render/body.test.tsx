@@ -27,14 +27,16 @@ async function htmlOf(el: () => unknown): Promise<string> {
 
 describe("AstBody (no-IO degrade path)", () => {
   it("renders the parsed body, not a deferred placeholder", async () => {
-    const h = await htmlOf(() => AstBody({ lines: ["a **bold** b"], blockId: "blk-1" }));
+    const h = await htmlOf(() => AstBody({ raw: "a **bold** b", blockId: "blk-1" }));
     expect(h).toContain("<strong>");
     expect(h).not.toContain("ast-deferred");
   });
 
   it("output equals direct renderBlocks(parseBlock(...)) — gate is WHEN not WHAT", async () => {
-    for (const text of ["plain text", "a **b** _c_ `d`", "# Heading", "| A | B |\n| --- | --- |\n| 1 | 2 |", "$$E=mc^2$$"]) {
-      const viaAst = await htmlOf(() => AstBody({ lines: [text], blockId: "x" }));
+    // AstBody parses the WHOLE block raw; `parseBlock` re-bullets internally (wasm
+    // parse_block_json), so for property/planning-free bodies it equals a direct call.
+    for (const text of ["plain text", "a **b** _c_ `d`", "| A | B |\n| --- | --- |\n| 1 | 2 |", "$$E=mc^2$$"]) {
+      const viaAst = await htmlOf(() => AstBody({ raw: text, blockId: "x" }));
       const direct = await htmlOf(() => renderBlocks(parseBlock(text, false), "x", null));
       expect(viaAst).toBe(direct);
     }
@@ -42,7 +44,7 @@ describe("AstBody (no-IO degrade path)", () => {
 
   it("latches the block id after it has rendered once", async () => {
     expect(renderedBlocks.has("blk-latch")).toBe(false);
-    await htmlOf(() => AstBody({ lines: ["hello"], blockId: "blk-latch" }));
+    await htmlOf(() => AstBody({ raw: "hello", blockId: "blk-latch" }));
     expect(renderedBlocks.has("blk-latch")).toBe(true);
   });
 });

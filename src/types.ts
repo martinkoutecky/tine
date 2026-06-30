@@ -9,6 +9,15 @@ export interface BlockDto {
   children: BlockDto[];
   /** Ancestor first-lines (search/reference results only). */
   breadcrumb?: string[];
+  // M1 block-header facets, computed once off the Rust lsdoc projection and shipped
+  // so the frontend reads them off the DTO (no parse on load) instead of re-deriving
+  // with its own scanner. Omitted by the backend when empty (see model.rs BlockDto).
+  marker?: string;
+  priority?: string;
+  heading_level?: number;
+  scheduled?: string;
+  deadline?: string;
+  properties?: [string, string][];
 }
 
 /** On-disk page format: markdown (default) or org. */

@@ -62,7 +62,8 @@ import {
   setPriority,
   type Edit,
 } from "../editor/format";
-import { blockView, isRenderHiddenProp } from "../render/block";
+import { isRenderHiddenProp, isPropertyLine } from "../render/block";
+import { facetsOf } from "../render/facets";
 import { AstBody } from "../render/body";
 import { assetMarkdown, assetFileName } from "../media";
 import { calcSource, wrapCalc, evalCalc } from "../editor/calc";
@@ -81,8 +82,10 @@ import { isAnnotationBlock, annotationInfo } from "../editor/annotation";
 import { AnnotationBody } from "./AnnotationBody";
 
 // Detect a block whose entire body is a single {{query}} / {{embed}} macro.
-function detectMacro(lines: string[]): { kind: "query" | "embed"; inner: string } | null {
-  const text = lines.join("\n").trim();
+function detectMacro(raw: string): { kind: "query" | "embed"; inner: string } | null {
+  // The macro is the block's visible body — strip property lines (the shared line
+  // recognizer) so a `{{query}}\nid:: …` block still matches. Cheap: no parse.
+  const text = raw.split("\n").filter((l) => !isPropertyLine(l)).join("\n").trim();
   const m = /^\{\{(query|embed)\b([\s\S]*)\}\}$/.exec(text);
   if (!m) return null;
   return { kind: m[1] as "query" | "embed", inner: `${m[1]}${m[2]}` };
@@ -197,7 +200,7 @@ export function Block(props: { id: string; hideRefCount?: boolean }): JSX.Elemen
   // (taller) heading line box and the bullet stays centered on it.
   const headingLevel = createMemo(() => {
     const n = node();
-    return n ? blockView(n.raw).headingLevel : null;
+    return n ? facetsOf(n.raw, pageByName(n.page)?.format ?? "md").headingLevel : null;
   });
   // Block-level "linked references" panel toggled by the reference-count badge.
   const [showRefs, setShowRefs] = createSignal(false);
@@ -360,17 +363,23 @@ function renderedCaret(root: Node, container: Node, off: number): { text: string
 
 function Rendered(props: { id: string; owner?: string; trailing?: JSX.Element }): JSX.Element {
   const node = () => doc.byId[props.id];
-  const view = createMemo(() => blockView(node().raw));
   const fmt = () => pageByName(node().page)?.format ?? "md";
+  // Header facets (marker/priority/heading/scheduled/deadline/properties) off the
+  // ONE lsdoc parse — read from the cache the store seeded from the backend DTO (no
+  // parse on load), recomputed from a single wasm parse only for the edited block.
+  const facets = createMemo(() => facetsOf(node().raw, fmt()));
   const readOnly = () => pageByName(node().page)?.readOnly ?? false;
 
-  const macro = createMemo(() => detectMacro(view().lines));
+  const macro = createMemo(() => detectMacro(node().raw));
 
   // PDF highlight (annotation) blocks render a colored, clickable swatch
   // (AnnotationBody) that opens the PDF at the highlight's page; notes go in
   // child blocks. The detection + rendering live in editor/annotation +
   // components/AnnotationBody.
-  const annotation = createMemo(() => annotationInfo(view().properties));
+  const annotation = createMemo(() => annotationInfo(facets().properties));
+  // The highlight text shown in the annotation swatch = the first visible (non-
+  // property) line of the block (cheap; the shared line recognizer).
+  const annotationLine = () => node().raw.split("\n").find((l) => !isPropertyLine(l) && l.trim() !== "") ?? "";
 
   // Click edits the block, placing the caret WHERE you clicked (not at the end).
   // We map the click to the editor text via caretRangeFromPoint, but only trust
@@ -398,19 +407,19 @@ function Rendered(props: { id: string; owner?: string; trailing?: JSX.Element })
 
   const displayProps = () => {
     const extra = graphMeta()?.block_hidden_properties ?? [];
-    return view().properties.filter(([k]) => !isRenderHiddenProp(k, extra));
+    return facets().properties.filter(([k]) => !isRenderHiddenProp(k, extra));
   };
   const bgColor = () => {
-    const v = view().properties.find(([k]) => k === "background-color")?.[1];
+    const v = facets().properties.find(([k]) => k === "background-color")?.[1];
     return v ? BLOCK_BG[v] ?? v : undefined;
   };
 
   const body = (
-    <Show when={annotation()} fallback={<AstBody lines={view().lines} blockId={props.id} format={fmt()} headingLevel={view().headingLevel} />}>
+    <Show when={annotation()} fallback={<AstBody raw={node().raw} blockId={props.id} format={fmt()} headingLevel={facets().headingLevel} />}>
       <AnnotationBody
         color={annotation()!.color}
         hlPage={annotation()!.hlPage}
-        line={view().lines[0]}
+        line={annotationLine()}
         page={node().page}
       />
     </Show>
@@ -435,29 +444,29 @@ function Rendered(props: { id: string; owner?: string; trailing?: JSX.Element })
     <div
       ref={contentRef}
       class="block-content"
-      classList={{ done: view().done, "has-bg": !!bgColor(), [`heading h${view().headingLevel ?? ""}`]: view().headingLevel != null }}
+      classList={{ done: facets().done, "has-bg": !!bgColor(), [`heading h${facets().headingLevel ?? ""}`]: facets().headingLevel != null }}
       style={bgColor() ? { background: bgColor() } : undefined}
       onClick={onClick}
     >
-      <Show when={view().marker}>
+      <Show when={facets().marker}>
         <span
-          class={`block-marker marker-${view().marker?.toLowerCase()}`}
+          class={`block-marker marker-${facets().marker?.toLowerCase()}`}
           onClick={(e) => {
             e.stopPropagation();
             cycleBlockMarker(props.id);
           }}
         >
-          {view().marker}
+          {facets().marker}
         </span>{" "}
       </Show>
-      <Show when={view().priority}>
-        <span class={`block-priority priority-${view().priority}`}>[#{view().priority}]</span>{" "}
+      <Show when={facets().priority}>
+        <span class={`block-priority priority-${facets().priority}`}>[#{facets().priority}]</span>{" "}
       </Show>
       {/* Heading size is applied inside AstBody to ONLY the heading's first line
           (see renderBlocks headingLevel), so a `> quote`/table/etc. continuation in
           the same block renders at normal size — matching OG. */}
       {body}
-      <Show when={view().scheduled}>
+      <Show when={facets().scheduled}>
         <span
           class="date-chip scheduled"
           title="Scheduled — click to change"
@@ -466,10 +475,10 @@ function Rendered(props: { id: string; owner?: string; trailing?: JSX.Element })
             openDatePicker(props.id, "scheduled", e.clientX, e.clientY);
           }}
         >
-          <CalGlyph /> {view().scheduled}
+          <CalGlyph /> {facets().scheduled}
         </span>
       </Show>
-      <Show when={view().deadline}>
+      <Show when={facets().deadline}>
         <span
           class="date-chip deadline"
           title="Deadline — click to change"
@@ -478,7 +487,7 @@ function Rendered(props: { id: string; owner?: string; trailing?: JSX.Element })
             openDatePicker(props.id, "deadline", e.clientX, e.clientY);
           }}
         >
-          <CalGlyph /> {view().deadline}
+          <CalGlyph /> {facets().deadline}
         </span>
       </Show>
       <Show when={displayProps().length > 0}>

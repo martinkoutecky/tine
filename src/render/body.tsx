@@ -9,8 +9,9 @@ import { backend } from "../backend";
 import { evalCalc } from "../editor/calc";
 import { toggleListItemAtIndex, doc, formatForBlock } from "../store";
 import { graphMeta } from "../ui";
-import { isRenderHiddenProp } from "./block";
-import { parseBlock, parserReady } from "./parse";
+import { isRenderHiddenProp, isPropertyLine } from "./block";
+import { parserReady } from "./parse";
+import { parseBody } from "./facets";
 import { observeNear, unobserveNear, renderedBlocks } from "../lazyObserve";
 
 type Align = "left" | "center" | "right" | null;
@@ -343,26 +344,43 @@ function AstList(props: { items: AstListItem[]; blockId?: string; cbItems: AstLi
   );
 }
 
-/** Render a block's body. Parses the (header-stripped) body text into lsdoc's AST
- *  SYNCHRONOUSLY (via the in-browser wasm parser, src/render/parse.ts) and renders
- *  from it (renderBlocks). Input is `view.lines` (marker / scheduled / properties
- *  already stripped by blockView), so the AST renders only the visible body and
- *  block-header chrome stays in blockView/Block.tsx.
+/** The body's render blocks: the WHOLE re-bulleted raw parsed by lsdoc (one parse,
+ *  shared with the facet cache), MINUS the nodes whose chrome Block.tsx draws —
+ *  `properties` (chips) and standalone SCHEDULED/DEADLINE lines (date badges). The
+ *  marker/priority/heading are facet FIELDS on `blocks[0]` (not inline), so the body
+ *  renders markerless automatically. A planning `Timestamp` only ever appears on a
+ *  standalone planning line (lsdoc never makes one mid-text), so dropping any block
+ *  that contains one drops exactly the badge lines. */
+function bodyBlocks(raw: string, isOrg: boolean): AstBlock[] {
+  return parseBody(raw, isOrg ? "org" : "md").filter((b) => {
+    if (b.kind === "properties") return false;
+    if (
+      "inline" in b &&
+      Array.isArray(b.inline) &&
+      b.inline.some((i) => i.k === "timestamp" && (i.ts === "Scheduled" || i.ts === "Deadline"))
+    )
+      return false;
+    return true;
+  });
+}
+
+/** Render a block's body. Parses the WHOLE block's `raw` (re-bulleted like OG, via
+ *  `parseBody`) SYNCHRONOUSLY into lsdoc's AST and renders it (`bodyBlocks` →
+ *  `renderBlocks`), skipping the property/planning nodes that Block.tsx renders as
+ *  chrome. So lsdoc is the single source for the body AND (via the facet cache) the
+ *  header chrome — no `blockView` re-derivation.
  *
- *  The parser is initialized once before first paint (main.tsx / capture.tsx), so
- *  `parserReady()` is true by the time any block renders — no flash, no fallback.
- *  The `<Show>` fallback renders the raw text literally and only triggers if the
- *  wasm parser failed to load (degraded mode; paired with the app-level
- *  "renderer failed" banner — plan §7C), so content is never silently blank. */
-export function AstBody(props: { lines: string[]; blockId?: string; format?: Format; headingLevel?: number | null }): JSX.Element {
-  const text = createMemo(() => props.lines.join("\n"));
+ *  The parser is initialized once before first paint (main.tsx / capture.tsx). The
+ *  `<Show>` fallback renders the raw text literally and only triggers if the wasm
+ *  parser failed to load (degraded mode), so content is never silently blank. */
+export function AstBody(props: { raw: string; blockId?: string; format?: Format; headingLevel?: number | null }): JSX.Element {
+  // Deferred (off-screen) placeholder text: raw minus property lines (cheap, no
+  // parse) — a good height proxy, replaced by the real render once near.
+  const placeholder = createMemo(() => props.raw.split("\n").filter((l) => !isPropertyLine(l)).join("\n"));
   // P1 block-render virtualization (see docs/adr): defer the synchronous parse +
-  // AST→DOM build until the block is near the viewport. Until then, show the raw
-  // text in the SAME `.ast-fallback` span the parser-not-ready path uses (a good
-  // height proxy for prose). Render-once-keep: once a block has rendered (latched
-  // by id in `renderedBlocks`) it renders eagerly forever — no second
-  // placeholder↔real transition, so zero scroll-height churn (the content-visibility
-  // flicker trap). A block with no id (not the body path) renders eagerly.
+  // AST→DOM build until the block is near the viewport. Render-once-keep: once a
+  // block has rendered (latched by id in `renderedBlocks`) it renders eagerly
+  // forever — no second placeholder↔real transition, so zero scroll-height churn.
   const id = props.blockId;
   const [near, setNear] = createSignal(id == null || renderedBlocks.has(id));
   let deferredEl: Element | undefined;
@@ -373,10 +391,6 @@ export function AstBody(props: { lines: string[]; blockId?: string; format?: For
       setNear(true);
     });
   };
-  // Robust cleanup: if the block unmounts (page/tab switch, collapse, zoom) while
-  // still deferred, stop observing so the IntersectionObserver doesn't pin the
-  // detached element. Once `near`, observeNear already unobserved (one-shot), so
-  // this is a no-op.
   onCleanup(() => {
     if (deferredEl) unobserveNear(deferredEl);
   });
@@ -386,15 +400,15 @@ export function AstBody(props: { lines: string[]; blockId?: string; format?: For
       fallback={
         <span
           class="ast-fallback ast-deferred"
-          style={estimateBodyReserve(props.lines, props.headingLevel ?? null)}
+          style={estimateBodyReserve(placeholder().split("\n"), props.headingLevel ?? null)}
           ref={observe}
         >
-          {text()}
+          {placeholder()}
         </span>
       }
     >
-      <Show when={parserReady()} fallback={<span class="ast-fallback">{text()}</span>}>
-        {renderBlocks(parseBlock(text(), props.format === "org"), props.blockId, props.headingLevel)}
+      <Show when={parserReady()} fallback={<span class="ast-fallback">{placeholder()}</span>}>
+        {renderBlocks(bodyBlocks(props.raw, props.format === "org"), props.blockId, props.headingLevel)}
       </Show>
     </Show>
   );
