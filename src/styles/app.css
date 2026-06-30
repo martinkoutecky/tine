@@ -1958,8 +1958,12 @@ body {
   white-space: pre-wrap;
   word-break: break-word;
   padding: 2px 0;
-  line-height: 1.6;
-  min-height: 1.6em; /* empty blocks stay clickable */
+  /* Integer-px line-height (not unitless 1.6) so each line box is a whole number of
+     px and the rendered box height equals the editor textarea's integer scrollHeight
+     EXACTLY — otherwise the 25.6px fractional line rounds up on focus and the block
+     shifts ~0.4px on every click (issue #12). Headings re-assert their own ratio below. */
+  line-height: 26px;
+  min-height: 26px; /* empty blocks stay clickable; matches .block-editor (issue #12) */
   /* Inter's contextual ligatures (calt) draw `->`/`<-`/`<->`/`=>` as arrow
      glyphs while leaving the underlying ASCII unchanged — exactly how OG Logseq
      shows arrows (it's the font, not a text substitution; the .md keeps `->`).
@@ -1972,7 +1976,9 @@ body {
   text-decoration: line-through;
 }
 
-/* headings */
+/* headings — re-assert a ratio line-height (the block uses a fixed 26px; without this
+   the heading glyph would be cramped in a 26px line box). */
+.heading-text { line-height: 1.3; }
 .heading-text.h1 { font-size: 1.7em; font-weight: 600; }
 .heading-text.h2 { font-size: 1.4em; font-weight: 600; }
 .heading-text.h3 { font-size: 1.2em; font-weight: 600; }
@@ -2097,7 +2103,10 @@ body {
   background: transparent;
   font-family: inherit;
   font-size: inherit;
-  line-height: 1.6;
+  /* Match .block-content's integer line-height + min-height so the editor occupies the
+     IDENTICAL box as the rendered body — no shift on focus (issue #12). */
+  line-height: 26px;
+  min-height: 26px;
   color: var(--text-primary);
   padding: 2px 0;
   margin: 0;

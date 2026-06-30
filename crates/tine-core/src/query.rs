@@ -51,7 +51,9 @@ fn crumb_line(b: &DocBlock) -> String {
 fn collect(graph: &Graph, mut keep: impl FnMut(&DocBlock) -> bool, exclude: Option<&str>) -> Vec<RefGroup> {
     let ex = exclude.map(refs::normalize);
     graph.with_pages(|pages| {
-        let mut groups: Vec<RefGroup> = Vec::new();
+        // Pair each group with the referring page's journal `date_key` so the result
+        // can be ordered like OG (the page cache itself is in arbitrary read_dir order).
+        let mut groups: Vec<(Option<i64>, RefGroup)> = Vec::new();
         for (entry, doc) in pages {
             if ex.as_deref() == Some(&refs::normalize(&entry.name)) {
                 continue;
@@ -66,10 +68,15 @@ fn collect(graph: &Graph, mut keep: impl FnMut(&DocBlock) -> bool, exclude: Opti
                 }
             });
             if !matched.is_empty() {
-                groups.push(RefGroup { page: entry.name.clone(), kind: entry.kind, blocks: matched });
+                groups.push((entry.date_key, RefGroup { page: entry.name.clone(), kind: entry.kind, blocks: matched }));
             }
         }
-        groups
+        // OG parity (components/block.cljs:3521 `sort-by :block/journal-day >`): order the
+        // reference groups by the referring page's journal day DESCENDING — newest journal
+        // day first, non-journal pages (date_key None → i64::MIN) last. `sort_by` is stable,
+        // so ties keep cache order, matching OG's stable sort.
+        groups.sort_by(|a, b| b.0.unwrap_or(i64::MIN).cmp(&a.0.unwrap_or(i64::MIN)));
+        groups.into_iter().map(|(_, g)| g).collect()
     })
 }
 
@@ -1717,5 +1724,39 @@ mod tests {
         // DEADLINE restricted; SCHEDULED-only query ignores it
         assert!(block_date_ordinals("DEADLINE: <2026-07-06 Mon>", Some("SCHEDULED:")).is_empty());
         assert_eq!(block_date_ordinals("DEADLINE: <2026-07-06 Mon>", Some("DEADLINE:")), vec![ord]);
+    }
+
+    /// Issue #9: linked references are grouped by referring page, ordered by the
+    /// referrer's journal day DESCENDING (newest journal first), with non-journal
+    /// referrers last — matching OG (`components/block.cljs` `sort-by :block/journal-day >`).
+    #[test]
+    fn backlinks_ordered_by_referrer_journal_date_desc() {
+        use std::fs;
+        let dir = std::env::temp_dir().join(format!("tine-backlinks-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        // Three journals referencing [[Common]], written OUT of date order; one plain page.
+        fs::write(dir.join("journals").join("1897_07_24.md"), "- oldestref [[Common]]\n").unwrap();
+        fs::write(dir.join("journals").join("2026_06_29.md"), "- newestref [[Common]]\n").unwrap();
+        fs::write(dir.join("journals").join("1927_07_02.md"), "- middleref [[Common]]\n").unwrap();
+        fs::write(dir.join("pages").join("Notes.md"), "- plainref [[Common]]\n").unwrap();
+
+        let g = crate::model::Graph::open(&dir);
+        let groups = g.backlinks("Common");
+        // Identify each group by its block text (robust to the journal title format).
+        let tags: Vec<&str> = groups
+            .iter()
+            .map(|gr| {
+                let raw = gr.blocks[0].raw.as_str();
+                ["newestref", "middleref", "oldestref", "plainref"]
+                    .into_iter()
+                    .find(|t| raw.contains(t))
+                    .unwrap_or("?")
+            })
+            .collect();
+        assert_eq!(tags, vec!["newestref", "middleref", "oldestref", "plainref"], "{tags:?}");
+        let _ = fs::remove_dir_all(&dir);
     }
 }

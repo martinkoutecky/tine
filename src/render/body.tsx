@@ -117,6 +117,19 @@ function isInlineFlow(b: AstBlock): boolean {
   return b.kind === "paragraph" || b.kind === "bullet" || b.kind === "heading";
 }
 
+/** An inline-flow block with NO visible content — empty inlines or only whitespace /
+ *  line breaks. An empty block body (`- `) parses to `[empty bullet, paragraph " "]`,
+ *  which `renderBlocks` would `<br>`-join into a stray second line box (≈2 lines tall) —
+ *  making an empty/spacer bullet ~25px taller than its editor and jump on click (issue
+ *  #12). Dropping these renders an empty block as one empty line (min-height keeps it
+ *  clickable), matching the editor's height. */
+function isEmptyInlineFlow(b: AstBlock): boolean {
+  if (b.kind !== "paragraph" && b.kind !== "bullet" && b.kind !== "heading") return false;
+  return b.inline.every(
+    (i) => (i.k === "plain" && i.text.trim() === "") || i.k === "break" || i.k === "hardbreak"
+  );
+}
+
 /** Render a Tine block's parsed content (`Block[]`). Consecutive inline-flow
  *  blocks (header + continuation paragraphs) are `<br>`-joined to match the old
  *  line-stacked look; block-level constructs render standalone. */
@@ -368,7 +381,7 @@ function bodyBlocks(raw: string, isOrg: boolean): AstBlock[] {
   // keep it whole so its body text renders (the old `.some(timestamp)` dropped the
   // entire bullet, silently eating the text — audit C1).
   return parseBody(raw, isOrg ? "org" : "md").filter(
-    (b) => b.kind !== "properties" && !isStandalonePlanning(b)
+    (b) => b.kind !== "properties" && !isStandalonePlanning(b) && !isEmptyInlineFlow(b)
   );
 }
 

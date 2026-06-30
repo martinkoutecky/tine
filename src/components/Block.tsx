@@ -65,6 +65,7 @@ import {
 import { isRenderHiddenProp, isPropertyLine } from "../render/block";
 import { facetsOf } from "../render/facets";
 import { AstBody } from "../render/body";
+import { InlineText } from "../render/inline";
 import { assetMarkdown, assetFileName } from "../media";
 import { calcSource, wrapCalc, evalCalc } from "../editor/calc";
 import { QueryMacro, EmbedMacro } from "./Macro";
@@ -497,7 +498,10 @@ function Rendered(props: { id: string; owner?: string; trailing?: JSX.Element })
             {([k, v]) => (
               <span class="prop">
                 <span class="prop-key">{k}</span>
-                <span class="prop-value"> {v}</span>
+                {/* Render the value through the inline parser so a `[[wiki]]`/`#tag`
+                    property value becomes a clickable link, matching OG and the
+                    page-property path (Page.tsx). Issue #10. */}
+                <span class="prop-value"><InlineText text={v} format={fmt()} /></span>
               </span>
             )}
           </For>

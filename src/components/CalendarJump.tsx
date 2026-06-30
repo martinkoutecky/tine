@@ -15,9 +15,21 @@ const DOW_BASE = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
 // honours :start-of-week, matching the scheduled/deadline picker.
 export function CalendarJump(): JSX.Element {
   const [open, setOpen] = createSignal(false);
-  const today = new Date();
-  const [view, setView] = createSignal({ y: today.getFullYear(), m: today.getMonth() });
+  // "today" is REFRESHED each time the popup opens (see `toggle`), not captured once:
+  // CalendarJump is mounted permanently in the topbar, so a plain `new Date()` would
+  // freeze at the app-launch day and never roll over (issue #11).
+  const [today, setToday] = createSignal(new Date());
+  const [view, setView] = createSignal({ y: today().getFullYear(), m: today().getMonth() });
   const sow = () => firstDayOfWeek();
+  // Open/close the popup; on OPEN, snap "today" + the viewed month to the real now.
+  const toggle = () => {
+    if (!open()) {
+      const now = new Date();
+      setToday(now);
+      setView({ y: now.getFullYear(), m: now.getMonth() });
+    }
+    setOpen(!open());
+  };
   const dow = () => DOW_BASE.slice(sow()).concat(DOW_BASE.slice(0, sow()));
 
   const grid = createMemo(() => {
@@ -38,7 +50,7 @@ export function CalendarJump(): JSX.Element {
     setOpen(false);
   };
   const isToday = (d: number) =>
-    view().y === today.getFullYear() && view().m === today.getMonth() && d === today.getDate();
+    view().y === today().getFullYear() && view().m === today().getMonth() && d === today().getDate();
 
   // Journal days that have content, fetched while the popup is open (re-fetched
   // on dataRev so adding content updates the dots). yyyymmdd keys, month 1-based.
@@ -52,7 +64,7 @@ export function CalendarJump(): JSX.Element {
 
   return (
     <>
-      <button class="icon-btn" title="Go to date" onClick={() => setOpen(!open())}>
+      <button class="icon-btn" title="Go to date" onClick={toggle}>
         <svg viewBox="0 0 24 24" class="nav-icon" aria-hidden="true">
           <rect x="4" y="5" width="16" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.7" />
           <line x1="4" y1="9.5" x2="20" y2="9.5" stroke="currentColor" stroke-width="1.7" />
@@ -88,7 +100,7 @@ export function CalendarJump(): JSX.Element {
               </For>
             </div>
             <div class="dp-foot">
-              <button class="dp-today" onClick={() => pick(today.getDate())}>Today</button>
+              <button class="dp-today" onClick={() => { openPage(journalTitle(today()), "journal"); setOpen(false); }}>Today</button>
             </div>
           </div>
         </div>
