@@ -2047,8 +2047,12 @@ impl Graph {
         // (`page_path` + its lock were taken at the top of this fn.) Prefer the
         // new-key page; fall back to the legacy-key page so its user notes are
         // carried over during migration.
-        let existing_raw = fs::read_to_string(&page_path)
-            .ok()
+        // Read the hls page's OWN bytes (its write baseline) separately from the
+        // legacy-key fallback (used only as a migration merge source). The A3-style
+        // recheck below compares the page against THIS baseline.
+        let page_baseline = fs::read_to_string(&page_path).ok();
+        let existing_raw = page_baseline
+            .clone()
             .or_else(|| legacy_page.as_ref().and_then(|p| fs::read_to_string(p).ok()));
         let existing = existing_raw.as_deref().map(doc::parse);
         let page_doc = crate::pdf::merge_hls_page(existing.as_ref(), pdf_filename, label, &merged);
@@ -2065,6 +2069,24 @@ impl Graph {
         // sync_file_content). The .edn lives under assets/ which isn't watched.
         let page_rev = content_rev(&page_md);
         self.note_self_write(&page_path, page_rev.clone());
+        // A3-style last-moment recheck (mirror write_page): we hold the page lock,
+        // so no Tine writer raced us — but a non-cooperating external writer (OG /
+        // Syncthing) could have added a note to the hls page between `page_baseline`
+        // above and now. `merge_hls_page` only carried notes from the bytes we read,
+        // so writing would clobber that external note. Re-read and, if it changed,
+        // abort with a conflict (dropping our self-write marker) rather than
+        // overwrite. The caller (PdfViewer.persist) toasts + reverts; a retry
+        // re-reads the now-current page and merges it cleanly. The .edn was already
+        // written 3-way-merged above, so no highlight is lost — only the page-note
+        // mirror is deferred to the retry.
+        let now = fs::read_to_string(&page_path).ok();
+        if now.as_deref() != page_baseline.as_deref() {
+            let mut recent = self.recent_writes.lock().unwrap();
+            if recent.get(&page_path).is_some_and(|r| *r == page_rev) {
+                recent.remove(&page_path);
+            }
+            return Err(io::Error::new(io::ErrorKind::AlreadyExists, "conflict"));
+        }
         atomic_write(&page_path, page_md.as_bytes())?;
         // The hls page is a real page; reflect it in the search cache.
         let name = crate::pdf::hls_page_name(&key);
