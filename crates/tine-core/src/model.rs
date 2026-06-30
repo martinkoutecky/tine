@@ -2102,8 +2102,12 @@ impl Graph {
         let have: std::collections::HashSet<&str> = highlights.iter().map(|h| h.id.as_str()).collect();
         let base: std::collections::HashSet<&str> = base_ids.iter().map(|s| s.as_str()).collect();
         let mut merged: Vec<crate::pdf::Highlight> = highlights.to_vec();
-        let existing_edn = fs::read_to_string(&edn_path)
-            .ok()
+        // `edn_baseline` = the new-key file's OWN prior bytes (None = it didn't exist),
+        // kept as the rollback point. `existing_edn` (baseline, else legacy) is both the
+        // 3-way merge source AND the foreign-data the writer must preserve.
+        let edn_baseline = fs::read_to_string(&edn_path).ok();
+        let existing_edn = edn_baseline
+            .clone()
             .or_else(|| legacy_edn.as_ref().and_then(|p| fs::read_to_string(p).ok()));
         if let Some(s) = &existing_edn {
             for h in crate::pdf::parse_highlights(s) {
@@ -2112,7 +2116,7 @@ impl Graph {
                 }
             }
         }
-        let edn = crate::pdf::write_highlights(&merged);
+        let edn = crate::pdf::write_highlights(&merged, existing_edn.as_deref().unwrap_or(""));
         atomic_write(&edn_path, edn.as_bytes())?;
 
         // Upsert into the existing hls page, preserving note children by id.
@@ -2137,7 +2141,23 @@ impl Graph {
         // On mismatch → conflict; PdfViewer.persist toasts + reverts and a retry merges
         // cleanly (the .edn was already 3-way-merged, so no highlight is lost).
         let page_md = preserve_crlf(doc::serialize(&page_doc), existing_raw.as_deref());
-        let page_rev = self.commit_write(&page_path, &page_md, page_baseline.as_deref(), true)?;
+        let page_rev = match self.commit_write(&page_path, &page_md, page_baseline.as_deref(), true) {
+            Ok(rev) => rev,
+            Err(e) => {
+                // The .edn sidecar was already written; the page commit failed (conflict
+                // / IO). Roll the sidecar back to its prior bytes so the two artifacts
+                // can't diverge (audit C#3) — a retry then re-merges cleanly.
+                match &edn_baseline {
+                    Some(orig) => {
+                        let _ = atomic_write(&edn_path, orig.as_bytes());
+                    }
+                    None => {
+                        let _ = fs::remove_file(&edn_path);
+                    }
+                }
+                return Err(e);
+            }
+        };
         // The hls page is a real page; reflect it in the search cache.
         let name = crate::pdf::hls_page_name(&key);
         let entry = self.find_entry(&name, PageKind::Page).unwrap_or(PageEntry {
@@ -3658,7 +3678,7 @@ mod tests {
         let assets = dir.join("assets");
         fs::create_dir_all(&assets).unwrap();
         let h1 = mkhl("11111111-1111-1111-1111-111111111111", 3, Some("legacy text"));
-        fs::write(assets.join(format!("{legacy_key}.edn")), crate::pdf::write_highlights(&[h1.clone()]))
+        fs::write(assets.join(format!("{legacy_key}.edn")), crate::pdf::write_highlights(&[h1.clone()], ""))
             .unwrap();
         let legacy_page = crate::pdf::hls_page_document(pdf, "My Paper", &[h1.clone()]);
         fs::write(dir.join("pages").join(format!("hls__{legacy_key}.md")), doc::serialize(&legacy_page))

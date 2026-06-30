@@ -239,7 +239,7 @@ fn write_highlights_preserves_externally_added_ones() {
     let edn_path = root.join("assets").join(format!("{}.edn", tine_core::pdf::asset_key("paper.pdf")));
     let mut both = tine_core::pdf::parse_highlights(&std::fs::read_to_string(&edn_path).unwrap());
     both.push(mk_hl("H2", "two"));
-    std::fs::write(&edn_path, tine_core::pdf::write_highlights(&both)).unwrap();
+    std::fs::write(&edn_path, tine_core::pdf::write_highlights(&both, "")).unwrap();
     // Tine, baseline [H1], adds H3 and writes — H2 (external) must NOT be dropped.
     g.write_highlights("paper.pdf", "Paper", &[mk_hl("H1", "one"), mk_hl("H3", "three")], &["H1".into()]).unwrap();
     assert!(ids(&g).is_superset(&["H1", "H2", "H3"].map(String::from).into_iter().collect()), "got {:?}", ids(&g));

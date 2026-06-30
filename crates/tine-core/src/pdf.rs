@@ -116,13 +116,85 @@ pub fn parse_highlights(edn_str: &str) -> Vec<Highlight> {
         .unwrap_or_default()
 }
 
-/// Serialize highlights to `assets/<key>.edn` contents.
-pub fn write_highlights(highlights: &[Highlight]) -> String {
-    let root = Edn::Map(vec![
-        (kw("highlights"), Edn::Vec(highlights.iter().map(highlight_to).collect())),
-        (kw("extra"), Edn::Map(vec![])),
-    ]);
-    let mut s = edn::to_string(&root);
+/// Recursively merge `new` pairs onto `old` (in place): a key present in both whose
+/// values are BOTH maps is merged deeper; otherwise `new` overwrites. Keys only in
+/// `old` are kept. This is how foreign EDN (data Tine doesn't model) round-trips.
+fn deep_merge(old: &mut Vec<(Edn, Edn)>, new: Vec<(Edn, Edn)>) {
+    for (k, nv) in new {
+        if let Some(pos) = old.iter().position(|(ek, _)| *ek == k) {
+            match (&mut old[pos].1, nv) {
+                (Edn::Map(om), Edn::Map(nm)) => deep_merge(om, nm),
+                (slot, nv) => *slot = nv,
+            }
+        } else {
+            old.push((k, nv));
+        }
+    }
+}
+
+/// Tine's fields for one highlight, merged ONTO its existing EDN map (matched by id)
+/// so any keys the user/Logseq added — at the top level or inside content/properties —
+/// survive a highlight edit. A brand-new highlight has no existing map → just ours.
+fn merge_highlight(existing: Option<&Edn>, h: &Highlight) -> Edn {
+    match (existing, highlight_to(h)) {
+        (Some(Edn::Map(old)), Edn::Map(new)) => {
+            let mut merged = old.clone();
+            deep_merge(&mut merged, new);
+            Edn::Map(merged)
+        }
+        (_, ours) => ours,
+    }
+}
+
+/// Serialize highlights to `assets/<key>.edn`, PRESERVING the foreign content of the
+/// existing file: only the `:highlights` Tine owns are replaced (each deep-merged onto
+/// its prior map), while root `:extra`, any other root keys, and unknown per-highlight
+/// fields round-trip untouched. Rebuilding from our model alone dropped all of it (audit
+/// C#4: Logseq's `:extra`/metadata was silently erased on every highlight edit).
+pub fn write_highlights(highlights: &[Highlight], existing_edn: &str) -> String {
+    let root = edn::parse(existing_edn);
+    let existing_by_id: HashMap<String, Edn> = root
+        .as_ref()
+        .and_then(|r| r.get("highlights"))
+        .and_then(Edn::as_vec)
+        .map(|v| {
+            v.iter()
+                .filter_map(|h| Some((h.get("id")?.as_str()?.to_string(), h.clone())))
+                .collect()
+        })
+        .unwrap_or_default();
+    let hl_vec = Edn::Vec(
+        highlights
+            .iter()
+            .map(|h| merge_highlight(existing_by_id.get(&h.id), h))
+            .collect(),
+    );
+
+    // Keep every existing root key; replace only `:highlights`; ensure `:extra` exists
+    // (OG canonical). A new/empty/unparseable file yields the canonical skeleton.
+    let mut pairs: Vec<(Edn, Edn)> = match root {
+        Some(Edn::Map(p)) => p,
+        _ => Vec::new(),
+    };
+    let mut had_highlights = false;
+    let mut had_extra = false;
+    for (k, v) in pairs.iter_mut() {
+        match k {
+            Edn::Keyword(s) if s == "highlights" => {
+                *v = hl_vec.clone();
+                had_highlights = true;
+            }
+            Edn::Keyword(s) if s == "extra" => had_extra = true,
+            _ => {}
+        }
+    }
+    if !had_highlights {
+        pairs.push((kw("highlights"), hl_vec));
+    }
+    if !had_extra {
+        pairs.push((kw("extra"), Edn::Map(vec![])));
+    }
+    let mut s = edn::to_string(&Edn::Map(pairs));
     s.push('\n');
     s
 }
@@ -342,9 +414,32 @@ mod tests {
     #[test]
     fn highlights_edn_roundtrip() {
         let hs = vec![sample()];
-        let edn_str = write_highlights(&hs);
+        let edn_str = write_highlights(&hs, "");
         let parsed = parse_highlights(&edn_str);
         assert_eq!(parsed, hs);
+    }
+
+    #[test]
+    fn write_preserves_foreign_edn() {
+        // audit C#4: editing a highlight must NOT drop Logseq's root :extra / other root
+        // keys / unknown per-highlight fields.
+        let existing = r#"{:highlights [{:id "abc" :page 3
+            :position {:page 3 :bounding {:top 10 :left 20 :width 30 :height 40} :rects []}
+            :content {:text "hi"} :properties {:color "green"}
+            :ls-mystery "keep-me"}]
+            :extra {:zoom 1.5} :future-root-key 42}"#;
+        let mut h = sample();
+        h.id = "abc".into();
+        h.color = "red".into(); // an edit Tine owns
+        let out = write_highlights(&[h], existing);
+        let root = crate::edn::parse(&out).unwrap();
+        // root :extra and the unknown root key survive
+        assert_eq!(root.get("extra").and_then(|e| e.get("zoom")).and_then(crate::edn::Edn::as_f64), Some(1.5));
+        assert_eq!(root.get("future-root-key").and_then(crate::edn::Edn::as_i64), Some(42));
+        // the unknown per-highlight field survives, and Tine's edit applied
+        let hl = &root.get("highlights").and_then(crate::edn::Edn::as_vec).unwrap()[0];
+        assert_eq!(hl.get("ls-mystery").and_then(crate::edn::Edn::as_str), Some("keep-me"));
+        assert_eq!(hl.get("properties").and_then(|p| p.get("color")).and_then(crate::edn::Edn::as_str), Some("red"));
     }
 
     #[test]
