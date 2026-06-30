@@ -201,8 +201,10 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   graphs, each page gets a **left sidebar** (Favorites / Journals / Pages) and a
   **fuzzy full-text search** box (block-level; results deep-link straight to the
   block). Driven by a small embedded index + a vendored Fuse.js, so the exported site
-  works offline / off disk; math is typeset by KaTeX. (No interactive graph view
-  yet.)
+  works offline / off disk. Pages render from the **same parser the app uses** (lsdoc's
+  canonical HTML), so the export matches what you see: syntax-highlighted code blocks
+  (highlight.js), aligned tables, callouts, KaTeX math, lists and task checkboxes, and
+  page/block links. (No interactive graph view yet.)
 - **Copy/export as** Markdown for a block subtree or a whole page; a slash menu for
   headings, code, calculator, quote, callouts, divider, embed, query (raw or visual
   builder), template, asset upload, and dates.

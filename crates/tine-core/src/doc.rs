@@ -320,6 +320,21 @@ fn is_standalone_planning(inlines: &[lsdoc::ast::Inline]) -> bool {
     planning
 }
 
+/// True if `b` is a STANDALONE planning block — an inline-flow block whose only
+/// inline content is a SCHEDULED/DEADLINE timestamp (the line the editor draws as a
+/// date badge and the renderer drops from the body). Public for the static HTML
+/// export (`publish.rs`), which mirrors the frontend `bodyBlocks` filter (drop
+/// `Properties` + standalone-planning) so the published body matches the app.
+pub(crate) fn block_is_standalone_planning(b: &lsdoc::ast::Block) -> bool {
+    use lsdoc::ast::Block;
+    match b {
+        Block::Paragraph { inline, .. } | Block::Bullet { inline, .. } | Block::Heading { inline, .. } => {
+            is_standalone_planning(inline)
+        }
+        _ => false,
+    }
+}
+
 /// The `<…>` content following a `SCHEDULED:` / `DEADLINE:` keyword in `slice`.
 fn angle_after(slice: &str, ts: &str) -> Option<String> {
     let kw = if ts == "Scheduled" { "SCHEDULED:" } else { "DEADLINE:" };

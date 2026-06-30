@@ -51,6 +51,36 @@ export function parse_block_json(raw, is_org) {
         wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
     }
 }
+
+/**
+ * Render one de-bulleted block body to lsdoc's CANONICAL HTML skeleton (M3 render
+ * contract — `lsdoc::render_html`): structural tags + classes + `data-*` hooks, no
+ * ref/asset/math/macro resolution. Re-bullets EXACTLY like `parse_block_json` so the
+ * rendered AST is identical, then renders it.
+ *
+ * NOT on the app's render path — the frontend renders the AST reactively (interactive
+ * DOM, resolved refs/assets), never lsdoc's HTML string. This exists ONLY so the
+ * anti-drift gate (`src/render/skeleton-drift.test.tsx`) can compare lsdoc's canonical
+ * skeleton against the frontend's reactive skeleton, from the SAME wasm the app ships —
+ * catching drift between the two renderers (Option C2: both conform to one skeleton).
+ * @param {string} raw
+ * @param {boolean} is_org
+ * @returns {string}
+ */
+export function render_block_html(raw, is_org) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.render_block_html(ptr0, len0, is_org);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,

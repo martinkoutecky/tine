@@ -25,12 +25,27 @@ export function lsdoc_tag(): string;
  */
 export function parse_block_json(raw: string, is_org: boolean): string;
 
+/**
+ * Render one de-bulleted block body to lsdoc's CANONICAL HTML skeleton (M3 render
+ * contract — `lsdoc::render_html`): structural tags + classes + `data-*` hooks, no
+ * ref/asset/math/macro resolution. Re-bullets EXACTLY like `parse_block_json` so the
+ * rendered AST is identical, then renders it.
+ *
+ * NOT on the app's render path — the frontend renders the AST reactively (interactive
+ * DOM, resolved refs/assets), never lsdoc's HTML string. This exists ONLY so the
+ * anti-drift gate (`src/render/skeleton-drift.test.tsx`) can compare lsdoc's canonical
+ * skeleton against the frontend's reactive skeleton, from the SAME wasm the app ships —
+ * catching drift between the two renderers (Option C2: both conform to one skeleton).
+ */
+export function render_block_html(raw: string, is_org: boolean): string;
+
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly lsdoc_tag: () => [number, number];
     readonly parse_block_json: (a: number, b: number, c: number) => [number, number];
+    readonly render_block_html: (a: number, b: number, c: number) => [number, number];
     readonly __wbindgen_externrefs: WebAssembly.Table;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;

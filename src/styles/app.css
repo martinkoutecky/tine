@@ -3117,6 +3117,10 @@ ol.md-list { list-style: decimal; }
   list-style: none;
   margin-left: -1.25em;
 }
+/* Markdown definition-list term (`term` / `: def`) — the item's label (lsdoc render
+   contract). Rendered inline before its definition body. */
+.md-list .md-list-item.has-term { list-style: none; }
+.md-list-term { font-weight: 600; }
 .callout {
   margin: 6px 0;
   padding: 8px 12px;

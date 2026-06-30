@@ -4,7 +4,8 @@
 
 use crate::doc::{self, DocBlock};
 use crate::model::{Graph, PageKind};
-use crate::refs::{as_block_ref, block_id, read_bracket_link};
+use crate::refs::block_id;
+use lsdoc::ast::{Block, Inline, Url};
 use serde_json::json;
 use std::collections::HashSet;
 use std::fs;
@@ -39,261 +40,355 @@ struct RefTarget {
 }
 type RefIndex = std::collections::HashMap<String, RefTarget>;
 
-/// First non-property / non-scheduling / non-blank line of a block (its text).
-fn first_content_line(raw: &str) -> String {
-    raw.lines()
-        .find(|l| !is_meta_line(l) && !l.trim().is_empty())
-        .unwrap_or("")
-        .to_string()
-}
-
 fn collect_block_refs(blocks: &[DocBlock], slug: &str, refs: &mut RefIndex) {
     for b in blocks {
         if let Some(id) = block_id(&b.raw) {
-            refs.insert(id, RefTarget { slug: slug.to_string(), text: first_content_line(&b.raw) });
+            refs.insert(id, RefTarget { slug: slug.to_string(), text: ref_target_text(&b.raw) });
         }
         collect_block_refs(&b.children, slug, refs);
     }
 }
 
-/// Emit a block reference: a link to its target block showing the label (else the
-/// target's text). An unresolved ref (target not public / missing) renders as
-/// muted text — never the broken link the old `[^)]` parse produced.
-fn emit_block_ref(refs: &RefIndex, id: &str, label: Option<&str>, out: &mut String) {
-    match refs.get(id) {
-        Some(t) => {
-            let text = label.map(esc).unwrap_or_else(|| esc(&t.text));
-            out.push_str(&format!(
-                "<a class=\"ref block-ref\" href=\"{}.html#{}\">{}</a>",
-                t.slug, id, text
-            ));
+/// Append `s` HTML-escaped for an ATTRIBUTE value (`& < > " '`) — matches lsdoc's
+/// `esc_attr`, so a re-emitted attribute (asset src, alt) round-trips identically.
+fn esc_attr(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
+/// Reverse lsdoc's HTML escaping for a `data-*` payload we re-emit elsewhere (e.g.
+/// `data-tex` → visible KaTeX text, `data-asset` → an `src`). `&amp;` decodes LAST so
+/// an escaped `&amp;lt;` becomes `&lt;`, not `<`.
+fn unescape(s: &str) -> String {
+    s.replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
+}
+
+/// The value of attribute `name` in a start-tag's inner text (`a class="x" data-page="y"`).
+/// lsdoc always double-quotes and attribute-escapes values, so the value runs to the next
+/// `"` (an interior quote is `&quot;`).
+fn tag_attr<'a>(inner: &'a str, name: &str) -> Option<&'a str> {
+    let pat = format!("{name}=\"");
+    let start = inner.find(&pat)? + pat.len();
+    let end = inner[start..].find('"')? + start;
+    Some(&inner[start..end])
+}
+
+/// True if the tag's `class` attribute (space-separated) contains `cls`.
+fn has_class(inner: &str, cls: &str) -> bool {
+    tag_attr(inner, "class").is_some_and(|c| c.split_whitespace().any(|x| x == cls))
+}
+
+/// Consume `html` from `*i` up to and INCLUDING the next `</tag>`, returning the inner
+/// text. For elements whose body lsdoc emits as plain text (block-ref) or leaves empty
+/// (math / macro / raw-html / media).
+fn take_to_close(html: &str, i: &mut usize, tag: &str) -> String {
+    let close = format!("</{tag}>");
+    match html[*i..].find(&close) {
+        Some(rel) => {
+            let body = html[*i..*i + rel].to_string();
+            *i += rel + close.len();
+            body
         }
         None => {
-            let text = label.map(esc).unwrap_or_else(|| esc(&format!("(({id}))")));
-            out.push_str(&format!("<span class=\"block-ref\">{text}</span>"));
+            let body = html[*i..].to_string();
+            *i = html.len();
+            body
         }
     }
 }
 
-/// Render a single line of inline markdown to HTML. `refs` resolves `((block ref))`
-/// targets to their exported page + anchor.
-fn render_inline(input: &str, refs: &RefIndex) -> String {
-    let mut out = String::new();
+/// Decorate lsdoc's canonical skeleton (`render_html`) for the STATIC export: resolve
+/// the `data-*` hooks lsdoc leaves to the consumer. lsdoc owns structure + classes +
+/// escaping; the export owns link resolution:
+/// - page ref  → `<a class="ref" href="slug.html">name</a>` (brackets dropped)
+/// - tag       → `<a class="tag" href="slug.html">#name</a>`
+/// - block ref → in-page anchor via `refs` (muted text if the target isn't public)
+/// - `data-tex`   → KaTeX `\(..\)` / `\[..\]` delimiters (typeset client-side)
+/// - `data-asset` → the asset's path as `src`
+/// - `data-lang`  → a `language-X` class for highlight.js
+/// - `data-raw`   → the escaped literal (raw HTML is never live in the export)
+/// - macros       → dropped (a static page can't run them)
+/// Everything else (tags, classes, escaped text, nesting, `td`/`th` `data-align`) passes
+/// through verbatim.
+///
+/// O(n) single pass: lsdoc escapes every text + attribute value, so the only raw `<` in
+/// its output opens a tag — a `<`-delimited scan is exact and can't be fooled by content.
+fn decorate(html: &str, refs: &RefIndex) -> String {
+    let b = html.as_bytes();
+    let mut out = String::with_capacity(html.len() + 64);
     let mut i = 0;
-    let mut plain = String::new();
-    fn flush(plain: &mut String, out: &mut String) {
-        if !plain.is_empty() {
-            out.push_str(&esc(plain));
-            plain.clear();
-        }
-    }
-    'outer: while i < input.len() {
-        let rest = &input[i..];
-        // $$display$$ / $inline$ math — emit the TeX wrapped in `\[..\]` / `\(..\)`
-        // delimiters (escaped as text) for KaTeX's auto-render to typeset in the
-        // browser. Parsed before every other rule so emphasis/code/link handling
-        // can't mangle the TeX; mirrors the in-app parser (parseInline.ts): `$$` is
-        // display, and the body must be non-empty.
-        if rest.starts_with('$') {
-            let dbl = rest.starts_with("$$");
-            let delim = if dbl { "$$" } else { "$" };
-            if let Some(end) = rest[delim.len()..].find(delim) {
-                if end > 0 {
-                    let tex = &rest[delim.len()..delim.len() + end];
-                    flush(&mut plain, &mut out);
-                    let (l, r, cls) = if dbl {
-                        ("\\[", "\\]", "math math-display")
-                    } else {
-                        ("\\(", "\\)", "math")
-                    };
-                    out.push_str(&format!("<span class=\"{cls}\">{l}{}{r}</span>", esc(tex)));
-                    i += delim.len() * 2 + end;
+    // After a page-ref open tag, the next text node is the link body: strip a surrounding
+    // `[[ ]]` (unlabeled `[[name]]`). A labeled ref's body starts with a tag, so the flag
+    // is cleared without stripping.
+    let mut strip_brackets = false;
+    while i < b.len() {
+        if b[i] != b'<' {
+            let start = i;
+            while i < b.len() && b[i] != b'<' {
+                i += 1;
+            }
+            let text = &html[start..i];
+            if strip_brackets {
+                strip_brackets = false;
+                let t = text.trim();
+                if let Some(inner) = t.strip_prefix("[[").and_then(|x| x.strip_suffix("]]")) {
+                    out.push_str(inner);
                     continue;
                 }
             }
+            out.push_str(text);
+            continue;
         }
-        // ((block ref)) — link to the target block (or muted text if unresolved).
-        if let Some(after) = rest.strip_prefix("((") {
-            if let Some(end) = after.find("))") {
-                flush(&mut plain, &mut out);
-                emit_block_ref(refs, after[..end].trim(), None, &mut out);
-                i += 2 + end + 2;
+        let close = match html[i..].find('>') {
+            Some(rel) => i + rel,
+            None => {
+                out.push_str(&html[i..]); // malformed tail — emit verbatim
+                break;
+            }
+        };
+        let inner = &html[i + 1..close];
+        i = close + 1;
+        // A labeled page-ref body that opened with a tag → not the `[[name]]` form.
+        if strip_brackets && !inner.starts_with('/') {
+            strip_brackets = false;
+        }
+        let name = inner.split([' ', '\t', '/']).next().unwrap_or("");
+
+        if name == "a" && has_class(inner, "page-ref") {
+            if let Some(page) = tag_attr(inner, "data-page") {
+                out.push_str(&format!("<a class=\"ref\" href=\"{}.html\">", slug(&unescape(page))));
+                strip_brackets = true;
                 continue;
             }
         }
-        // [[page]]
-        if let Some(after) = rest.strip_prefix("[[") {
-            if let Some(end) = after.find("]]") {
-                flush(&mut plain, &mut out);
-                let name = &after[..end];
-                out.push_str(&format!("<a class=\"ref\" href=\"{}.html\">{}</a>", slug(name), esc(name)));
-                i += 2 + end + 2;
+        if name == "a" && has_class(inner, "tag") {
+            if let Some(page) = tag_attr(inner, "data-page") {
+                out.push_str(&format!("<a class=\"tag\" href=\"{}.html\">", slug(&unescape(page))));
                 continue;
             }
         }
-        // ![alt](url) — paren-balanced target (URLs may contain parens).
-        if rest.starts_with("![") {
-            if let Some((alt, url, len)) = read_bracket_link(&rest[1..]) {
-                flush(&mut plain, &mut out);
-                out.push_str(&format!("<img alt=\"{}\" src=\"{}\">", esc(alt), esc(url)));
-                i += 1 + len;
-                continue;
-            }
-        }
-        // [label](url) — paren-balanced; `[label](((uuid)))` is a block ref.
-        if rest.starts_with('[') {
-            if let Some((label, url, len)) = read_bracket_link(rest) {
-                flush(&mut plain, &mut out);
-                match as_block_ref(url) {
-                    Some(id) => emit_block_ref(refs, id, Some(label), &mut out),
-                    None => out.push_str(&format!("<a href=\"{}\">{}</a>", esc(url), esc(label))),
+        if name == "span" && has_class(inner, "block-ref") {
+            if let Some(id_esc) = tag_attr(inner, "data-block") {
+                let id = unescape(id_esc);
+                let body = take_to_close(html, &mut i, "span"); // body is plain text
+                let auto = format!("(({}))", id.chars().take(8).collect::<String>());
+                match refs.get(&id) {
+                    Some(t) => {
+                        let text = if body == auto { esc(&t.text) } else { body };
+                        out.push_str(&format!(
+                            "<a class=\"ref block-ref\" href=\"{}.html#{}\">{}</a>",
+                            t.slug, id, text
+                        ));
+                    }
+                    None => out.push_str(&format!("<span class=\"block-ref\">{body}</span>")),
                 }
-                i += len;
                 continue;
             }
         }
-        // #tag
-        if rest.starts_with('#') {
-            let after = &rest[1..];
-            let len = after
-                .find(|c: char| !(c.is_alphanumeric() || matches!(c, '-' | '_' | '/')))
-                .unwrap_or(after.len());
-            if len > 0 {
-                flush(&mut plain, &mut out);
-                let tag = &after[..len];
-                out.push_str(&format!("<a class=\"tag\" href=\"{}.html\">#{}</a>", slug(tag), esc(tag)));
-                i += 1 + len;
+        if name == "span" && has_class(inner, "math") {
+            if let Some(tex_esc) = tag_attr(inner, "data-tex") {
+                let _ = take_to_close(html, &mut i, "span"); // empty body
+                let tex = esc(&unescape(tex_esc));
+                let (l, r, cls) = if has_class(inner, "math-display") {
+                    ("\\[", "\\]", "math math-display")
+                } else {
+                    ("\\(", "\\)", "math")
+                };
+                out.push_str(&format!("<span class=\"{cls}\">{l}{tex}{r}</span>"));
                 continue;
             }
         }
-        // **bold** / __bold__ / *italic* / _italic_
-        for (delim, tag) in [("**", "strong"), ("__", "strong"), ("*", "em"), ("_", "em")] {
-            if rest.starts_with(delim) {
-                if let Some(end) = rest[delim.len()..].find(delim) {
-                    let inner = &rest[delim.len()..delim.len() + end];
-                    if !inner.is_empty() {
-                        flush(&mut plain, &mut out);
-                        out.push_str(&format!("<{tag}>{}</{tag}>", render_inline(inner, refs)));
-                        i += delim.len() * 2 + end;
-                        continue 'outer;
+        if name == "span" && has_class(inner, "macro") {
+            let _ = take_to_close(html, &mut i, "span"); // drop (static page can't run it)
+            continue;
+        }
+        if name == "span" && has_class(inner, "raw-html") {
+            let _ = take_to_close(html, &mut i, "span");
+            if let Some(raw_esc) = tag_attr(inner, "data-raw") {
+                // Never live in the export — render the escaped HTML as literal text.
+                out.push_str(&format!("<span class=\"raw-html\">{}</span>", esc(&unescape(raw_esc))));
+            }
+            continue;
+        }
+        if name == "img" && has_class(inner, "inline-image") {
+            if let Some(asset) = tag_attr(inner, "data-asset") {
+                let alt = tag_attr(inner, "alt").map(unescape).unwrap_or_default();
+                out.push_str(&format!(
+                    "<img class=\"inline-image\" src=\"{}\" alt=\"{}\">",
+                    esc_attr(&unescape(asset)),
+                    esc_attr(&alt)
+                ));
+                continue;
+            }
+        }
+        if (name == "video" || name == "audio") && has_class(inner, "media-embed") {
+            if let Some(asset) = tag_attr(inner, "data-asset") {
+                let _ = take_to_close(html, &mut i, name); // empty element
+                out.push_str(&format!(
+                    "<{name} class=\"media-embed\" controls src=\"{}\"></{name}>",
+                    esc_attr(&unescape(asset))
+                ));
+                continue;
+            }
+        }
+        if name == "code" && has_class(inner, "hljs") {
+            // data-lang → highlight.js's `language-X` class; body (escaped code) + the
+            // `</code>` close pass through as the default text/close-tag.
+            let lang = tag_attr(inner, "data-lang").map(unescape).unwrap_or_default();
+            if lang.is_empty() {
+                out.push_str("<code class=\"hljs\">");
+            } else {
+                out.push_str(&format!("<code class=\"hljs language-{}\">", esc_attr(&lang)));
+            }
+            continue;
+        }
+        // default: verbatim (incl. `th`/`td` keeping `data-align` for the export CSS)
+        out.push('<');
+        out.push_str(inner);
+        out.push('>');
+    }
+    out
+}
+
+/// The destination string of a link `url` (mirrors the frontend `urlDest`).
+fn url_dest(url: &Url) -> String {
+    match url {
+        Url::PageRef { v } | Url::BlockRef { v } | Url::Search { v } | Url::File { v } => v.clone(),
+        Url::Complex { protocol, link } => match (protocol, link) {
+            (Some(p), Some(l)) => format!("{p}://{l}"),
+            (_, l) => l.clone().unwrap_or_default(),
+        },
+    }
+}
+
+/// Flatten an inline run to plain SEARCH text (mirrors lsdoc's `flatten_text` / the
+/// frontend `astText`): keep plain/code text, emphasis children, `#tag`, page-ref names,
+/// link labels; drop block-ref uuids, timestamps, macros, breaks (noise in an index).
+fn flatten_inlines(inlines: &[Inline], out: &mut String) {
+    for s in inlines {
+        match s {
+            Inline::Plain { text } | Inline::Code { text } | Inline::Verbatim { text } => out.push_str(text),
+            Inline::Emphasis { children, .. }
+            | Inline::Subscript { children }
+            | Inline::Superscript { children } => flatten_inlines(children, out),
+            Inline::Tag { children } => {
+                out.push('#');
+                flatten_inlines(children, out);
+            }
+            Inline::Link { url, label, .. } => match url {
+                Url::BlockRef { .. } => {} // opaque uuid reads as noise
+                _ if label.is_empty() => out.push_str(&url_dest(url)),
+                _ => flatten_inlines(label, out),
+            },
+            Inline::NestedLink { content } => out.push_str(content),
+            Inline::Target { text } => out.push_str(text),
+            Inline::Entity { unicode, .. } => out.push_str(unicode),
+            Inline::Latex { body, .. } => out.push_str(body),
+            Inline::Hiccup { v } => out.push_str(v),
+            _ => {}
+        }
+    }
+}
+
+fn push_inlines(inlines: &[Inline], out: &mut String) {
+    out.push(' ');
+    flatten_inlines(inlines, out);
+}
+
+fn flatten_list(items: &[lsdoc::ast::ListItem], out: &mut String) {
+    for it in items {
+        if !it.name.is_empty() {
+            push_inlines(&it.name, out);
+        }
+        flatten_blocks(&it.content, out);
+        flatten_list(&it.items, out);
+    }
+}
+
+/// Walk a block tree, accumulating its displayed text (the recursive analogue of
+/// `flatten_inlines`). Properties / standalone-planning blocks are filtered by the
+/// caller, so they never reach here.
+fn flatten_blocks(blocks: &[Block], out: &mut String) {
+    for b in blocks {
+        match b {
+            Block::Paragraph { inline, .. }
+            | Block::Bullet { inline, .. }
+            | Block::Heading { inline, .. }
+            | Block::FootnoteDef { inline, .. } => push_inlines(inline, out),
+            Block::List { items, .. } => flatten_list(items, out),
+            Block::Src { code, .. } | Block::Example { code, .. } => {
+                out.push(' ');
+                out.push_str(code);
+            }
+            Block::Quote { children, .. } | Block::Custom { children, .. } => flatten_blocks(children, out),
+            Block::Table { header, rows, .. } => {
+                if let Some(h) = header {
+                    for cell in h {
+                        push_inlines(cell, out);
+                    }
+                }
+                for row in rows {
+                    for cell in row {
+                        push_inlines(cell, out);
                     }
                 }
             }
-        }
-        // `code`
-        if rest.starts_with('`') {
-            if let Some(end) = rest[1..].find('`') {
-                flush(&mut plain, &mut out);
-                out.push_str(&format!("<code>{}</code>", esc(&rest[1..1 + end])));
-                i += 2 + end;
-                continue;
+            Block::DisplayedMath { text, .. } => {
+                out.push(' ');
+                out.push_str(text);
             }
+            Block::LatexEnv { content, .. } => {
+                out.push(' ');
+                out.push_str(content);
+            }
+            _ => {}
         }
-        // default: copy one char
-        let ch = input[i..].chars().next().unwrap();
-        plain.push(ch);
-        i += ch.len_utf8();
     }
-    flush(&mut plain, &mut out);
-    out
 }
 
-/// A block line that is metadata, not displayed body text: a `key:: value` property
-/// (recognized by the ONE shared recognizer, `doc::parse_property_line` — not a
-/// fourth copy) or a `SCHEDULED:`/`DEADLINE:` planning line.
-///
-/// NOTE: the planning check is a plain line-prefix and is NOT fence-aware, so a
-/// `SCHEDULED:` line inside a fenced code block is wrongly dropped from the export.
-/// The export still uses its own markup renderer + search-text path; routing it
-/// through the lsdoc AST (the ADR 0009 follow-up) is what would make this robust.
-fn is_meta_line(l: &str) -> bool {
-    let t = l.trim();
-    crate::doc::parse_property_line(l).is_some()
-        || t.starts_with("SCHEDULED:")
-        || t.starts_with("DEADLINE:")
-}
-
-/// Reduce one inline-markdown line to readable plain text for the search index +
-/// snippets: drop heading hashes and emphasis/code markers, unwrap `[[Page]]`,
-/// keep `[label](url)` / `![alt](url)` labels, drop `((block refs))`. This is a
-/// deliberately small helper — NOT the full `render_inline` (a faithful AST-driven
-/// strip will come with the lsdoc migration); it only needs to read well enough to
-/// match and preview.
-fn strip_inline_markup(line: &str) -> String {
-    let mut s = line.trim_start();
-    let h = s.chars().take_while(|c| *c == '#').count();
-    if (1..=6).contains(&h) && s.as_bytes().get(h) == Some(&b' ') {
-        s = s[h + 1..].trim_start();
-    }
-    let mut out = String::with_capacity(s.len());
-    let mut i = 0;
-    'scan: while i < s.len() {
-        let rest = &s[i..];
-        // [[Page]] → Page
-        if let Some(after) = rest.strip_prefix("[[") {
-            if let Some(end) = after.find("]]") {
-                out.push_str(after[..end].trim());
-                i += 2 + end + 2;
-                continue;
-            }
-        }
-        // ((uuid)) → dropped (an opaque id reads as noise)
-        if let Some(after) = rest.strip_prefix("((") {
-            if let Some(end) = after.find("))") {
-                i += 2 + end + 2;
-                continue;
-            }
-        }
-        // ![alt](url) → alt ; [label](url) → label (paren-balanced URLs survive)
-        if rest.starts_with("![") {
-            if let Some((alt, _url, len)) = read_bracket_link(&rest[1..]) {
-                out.push_str(alt);
-                i += 1 + len;
-                continue;
-            }
-        }
-        if rest.starts_with('[') {
-            if let Some((label, _url, len)) = read_bracket_link(rest) {
-                out.push_str(label);
-                i += len;
-                continue;
-            }
-        }
-        // emphasis / code markers → dropped (keep the inner text)
-        for d in ["**", "__", "*", "`", "_"] {
-            if rest.starts_with(d) {
-                i += d.len();
-                continue 'scan;
-            }
-        }
-        let ch = rest.chars().next().unwrap();
-        out.push(ch);
-        i += ch.len_utf8();
-    }
-    out
-}
-
-/// Plain text of a whole block's body (its displayed lines, no property /
-/// SCHEDULED / DEADLINE lines), markup-stripped and space-joined — the unit that
-/// goes into the search index. Empty for structural-only blocks.
-fn block_plain_text(raw: &str) -> String {
+/// Plain text of a block's (already property/planning-filtered) body, off the same
+/// lsdoc AST the renderer uses — the unit indexed for search + snippets. Whitespace is
+/// collapsed; empty for a structural-only block. NO second markup stripper.
+fn ast_plain_text(blocks: &[Block]) -> String {
     let mut out = String::new();
-    for l in raw.lines() {
-        let t = l.trim();
-        if t.is_empty() || is_meta_line(l) {
-            continue;
+    flatten_blocks(blocks, &mut out);
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Parse + property/planning-filter one block body the way `render_block` does — the
+/// shared front of the render and search-index paths (one lsdoc parse per call).
+fn body_blocks(raw: &str) -> Vec<Block> {
+    crate::render::parse_block(raw, false)
+        .into_iter()
+        .filter(|b| !matches!(b, Block::Properties { .. }) && !crate::doc::block_is_standalone_planning(b))
+        .collect()
+}
+
+/// The first visible block's plain text — a `((block ref))`'s shown label when it has none.
+fn ref_target_text(raw: &str) -> String {
+    let first: Vec<Block> = body_blocks(raw).into_iter().take(1).collect();
+    ast_plain_text(&first)
+}
+
+/// The displayed heading level (1–6) of a block whose head is a heading bullet
+/// (`### x` → 3). lsdoc renders a bullet's inlines bare and leaves the `size` to the
+/// consumer as chrome, so the export wraps the head line in `<h{n}>`. `None` ⇒ not a heading.
+fn heading_level(blocks: &[Block]) -> Option<u32> {
+    match blocks.first()? {
+        Block::Bullet { size: Some(n), .. } if (1..=6).contains(n) => Some(*n),
+        Block::Heading { size, level, .. } => {
+            let n = (*size).unwrap_or(*level);
+            (1..=6).contains(&n).then_some(n)
         }
-        let stripped = strip_inline_markup(t);
-        let stripped = stripped.trim();
-        if stripped.is_empty() {
-            continue;
-        }
-        if !out.is_empty() {
-            out.push(' ');
-        }
-        out.push_str(stripped);
+        _ => None,
     }
-    out
 }
 
 fn render_block(
@@ -303,19 +398,16 @@ fn render_block(
     slug: &str,
     title: &str,
     counter: &mut u32,
-    blocks: &mut Vec<serde_json::Value>,
+    index: &mut Vec<serde_json::Value>,
 ) {
-    // strip property / SCHEDULED / DEADLINE lines from the displayed body
-    let lines: Vec<&str> = b
-        .raw
-        .lines()
-        .filter(|l| !is_meta_line(l))
-        .collect();
-    let first = lines.first().copied().unwrap_or("");
-    // Every block gets a stable anchor so a search hit can deep-link straight to it:
-    // its `id::` uuid when present, else a generated per-page `b{n}` (these never
-    // collide with 36-char uuids). Emitting the `<li id>` and recording the search
-    // index entry in the SAME place keeps the HTML anchor and the index in lock-step.
+    // ONE lsdoc parse → the canonical body skeleton (M3), property/planning-filtered like
+    // the app's `bodyBlocks`. No second hand-rolled inline parser (the old `render_inline`).
+    let blocks = body_blocks(&b.raw);
+
+    // Every block gets a stable anchor so a search hit can deep-link straight to it: its
+    // `id::` uuid when present, else a generated per-page `b{n}` (never collides with a
+    // 36-char uuid). Emitting the `<li id>` and the search-index entry in the SAME place
+    // keeps the HTML anchor and the index in lock-step.
     let anchor = match block_id(&b.raw) {
         Some(id) => id,
         None => {
@@ -325,24 +417,33 @@ fn render_block(
         }
     };
     out.push_str(&format!("<li id=\"{anchor}\">"));
-    let text = block_plain_text(&b.raw);
+    let text = ast_plain_text(&blocks);
     if !text.is_empty() {
-        blocks.push(json!({"slug": slug, "title": title, "anchor": anchor, "text": text}));
+        index.push(json!({"slug": slug, "title": title, "anchor": anchor, "text": text}));
     }
-    // heading?
-    let hashes = first.chars().take_while(|c| *c == '#').count();
-    if (1..=6).contains(&hashes) && first[hashes..].starts_with(' ') {
-        out.push_str(&format!("<h{0}>{1}</h{0}>", hashes, render_inline(&first[hashes + 1..], refs)));
+
+    let opts = lsdoc::RenderOpts { format: lsdoc::Format::Md };
+    // A heading block: the displayed `size` is consumer chrome (lsdoc renders the bullet's
+    // inlines bare), so wrap the head line in `<h{n}>` and render any continuation blocks
+    // below it — matching the app's renderBlocks.
+    if let Some(n) = heading_level(&blocks) {
+        let head = decorate(&lsdoc::render_html(&blocks[..1], &opts), refs);
+        out.push_str(&format!("<h{n}>{head}</h{n}>"));
+        if blocks.len() > 1 {
+            let rest = decorate(&lsdoc::render_html(&blocks[1..], &opts), refs);
+            if !rest.is_empty() {
+                out.push_str(&format!("<div class=\"b\">{rest}</div>"));
+            }
+        }
     } else {
-        out.push_str(&format!("<div class=\"b\">{}</div>", render_inline(first, refs)));
+        let body = decorate(&lsdoc::render_html(&blocks, &opts), refs);
+        out.push_str(&format!("<div class=\"b\">{body}</div>"));
     }
-    for line in lines.iter().skip(1) {
-        out.push_str(&format!("<div class=\"b\">{}</div>", render_inline(line, refs)));
-    }
+
     if !b.children.is_empty() {
         out.push_str("<ul>");
         for c in &b.children {
-            render_block(c, out, refs, slug, title, counter, blocks);
+            render_block(c, out, refs, slug, title, counter, index);
         }
         out.push_str("</ul>");
     }
@@ -388,7 +489,7 @@ fn shell(title: &str, main: &str) -> String {
     format!(
         "<!doctype html><html><head><meta charset=\"utf-8\">\
 <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{title}</title>\
-<link rel=\"stylesheet\" href=\"style.css\">{katex}</head><body>\
+<link rel=\"stylesheet\" href=\"style.css\">{katex}{hljs}</head><body>\
 <aside class=\"sidebar\">\
 <a class=\"home\" href=\"index.html\">\u{2302} Home</a>\
 <input id=\"tine-search\" type=\"search\" placeholder=\"Search\u{2026}\" autocomplete=\"off\" spellcheck=\"false\">\
@@ -399,16 +500,23 @@ fn shell(title: &str, main: &str) -> String {
 </body></html>",
         title = esc(title),
         katex = KATEX_HEAD,
+        hljs = HLJS_HEAD,
         main = main,
     )
 }
 
-// KaTeX (from CDN) typesets the `\(..\)` / `\[..\]` math emitted by render_inline,
-// client-side in the published pages. mhchem (\ce{…}) must register before
-// auto-render runs; `defer` preserves script order, so auto-render's onload fires
-// only after katex.min.js and mhchem have executed. Math therefore typesets when
-// the page is viewed online; an offline viewer shows the raw TeX.
+// KaTeX (from CDN) typesets the `\(..\)` / `\[..\]` math the decorator emits from
+// lsdoc's `data-tex` hook, client-side in the published pages. mhchem (\ce{…}) must
+// register before auto-render runs; `defer` preserves script order, so auto-render's
+// onload fires only after katex.min.js and mhchem have executed. Math therefore
+// typesets when the page is viewed online; an offline viewer shows the raw TeX.
 const KATEX_HEAD: &str = r#"<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.47/dist/katex.min.css"><script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.47/dist/katex.min.js"></script><script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.47/dist/contrib/mhchem.min.js"></script><script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.47/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false}],throwOnError:false})"></script>"#;
+
+// highlight.js (from CDN) syntax-highlights the `<pre class="code-block"><code
+// class="hljs language-X">` blocks lsdoc emits (the export's `data-lang` → `language-X`).
+// `highlightAll()` reads the `language-X` class; `defer` + onload runs it after the body
+// parses. Offline / no network → plain (already-escaped) code, never broken.
+const HLJS_HEAD: &str = r#"<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/styles/github.min.css"><script defer src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/highlight.min.js" onload="hljs.highlightAll()"></script>"#;
 
 const STYLE: &str = r#":root{
   --bg:#fff;--fg:#2e2e2e;--muted:#8a8f98;--line:#e9e9ec;--accent:#10b981;--link:#0b6ec9;--code:#f4f5f7;
@@ -471,13 +579,41 @@ a.block-ref:hover{text-decoration:underline}
 span.block-ref{color:var(--muted)}
 a.tag{font-size:.92em}
 a[href^="http"]{color:var(--link)}
-code{background:var(--code);border-radius:4px;padding:.05em .35em;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em}
-img{max-width:100%;border-radius:6px;margin:.3rem 0}
+code,.inline-code{background:var(--code);border-radius:4px;padding:.05em .35em;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em}
+/* fenced code blocks (highlight.js) — not the inline pill */
+pre.code-block{background:var(--code);border:1px solid var(--line);border-radius:8px;padding:.7em .9em;overflow:auto;margin:.4rem 0}
+pre.code-block code,pre.code-block code.hljs{background:none;border:0;padding:0;font-size:.86em;display:block}
+img,.inline-image{max-width:100%;border-radius:6px;margin:.3rem 0}
+.inline-image-wrap{display:inline-block;max-width:100%}
+.media-embed{max-width:100%;border-radius:6px;margin:.3rem 0}
 .math-display{display:block;text-align:center;margin:.5rem 0}
 strong{font-weight:650}
+/* in-block markdown lists (.b-scoped so they win over the outline ul rules) */
+.b ul.md-list,.b ol.md-list{margin:.2rem 0;padding-left:1.3rem;border-left:none}
+.b ul.md-list{list-style:disc}.b ol.md-list{list-style:decimal}
+.b li.md-list-item{margin:.1rem 0;position:static}
+.b li.md-list-item::before{display:none}
+.md-list-term{font-weight:650}
+.block-checkbox{display:inline-block;width:.95em;height:.95em;border:1.5px solid var(--muted);border-radius:3px;vertical-align:-2px;margin-right:.15em}
+.block-checkbox.checked{background:var(--accent);border-color:var(--accent)}
+/* tables (data-align is the export's beyond-OG column alignment) */
+table.md-table{border-collapse:collapse;margin:.5rem 0;font-size:.94em}
+table.md-table th,table.md-table td{border:1px solid var(--line);padding:.3em .6em;text-align:left}
+table.md-table th{background:var(--code);font-weight:650}
+table.md-table [data-align="center"]{text-align:center}
+table.md-table [data-align="right"]{text-align:right}
+/* blockquote + callouts */
+blockquote.md-quote{margin:.5rem 0;padding:.2rem 0 .2rem .9rem;border-left:3px solid var(--line);color:var(--muted)}
+.callout{margin:.5rem 0;padding:.5rem .8rem;border-radius:8px;border-left:3px solid var(--accent);background:var(--code)}
+.callout-title{font-weight:700;font-size:.82rem;text-transform:uppercase;letter-spacing:.04em;color:var(--accent);margin-bottom:.2rem}
+/* org timestamps + footnotes */
+.org-timestamp{color:var(--muted);font-size:.92em;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.org-timestamp.inactive{opacity:.6}
+.footnote-def{font-size:.9em;color:var(--muted);margin:.2rem 0}
+.footnote-ref{color:var(--link);font-size:.85em}
 .index-list li{margin:.15rem 0}
 .index-list .k{color:var(--muted);font-size:.8rem;margin-left:.4rem}
-hr{border:none;border-top:1px solid var(--line);margin:1.2rem 0}
+.md-hr,hr{border:none;border-top:1px solid var(--line);margin:1.2rem 0}
 footer{margin-top:64px;color:var(--muted);font-size:.78rem;border-top:1px solid var(--line);padding-top:12px}
 "#;
 
@@ -696,79 +832,98 @@ mod tests {
         assert_eq!(slug("n-fold IP"), "n-fold-ip");
     }
 
+    /// Render a block body the way `render_block` does: one lsdoc parse → canonical
+    /// skeleton (`render_html`) → export decoration. The unit the decorator tests drive.
+    fn render_body(raw: &str, refs: &RefIndex) -> String {
+        let opts = lsdoc::RenderOpts { format: lsdoc::Format::Md };
+        decorate(&lsdoc::render_html(&body_blocks(raw), &opts), refs)
+    }
+    fn search_text(raw: &str) -> String {
+        ast_plain_text(&body_blocks(raw))
+    }
+
     #[test]
     fn inline_html() {
-        let h = render_inline("see [[Foo Bar]] and **bold** and `x` and #tag", &no_refs());
-        assert!(h.contains("<a class=\"ref\" href=\"foo-bar.html\">Foo Bar</a>"));
-        assert!(h.contains("<strong>bold</strong>"));
-        assert!(h.contains("<code>x</code>"));
-        assert!(h.contains("<a class=\"tag\" href=\"tag.html\">#tag</a>"));
+        let h = render_body("see [[Foo Bar]] and **bold** and `x` and #tag", &no_refs());
+        // page ref → `.html` link, brackets dropped (the decorator); #tag → page link.
+        assert!(h.contains("<a class=\"ref\" href=\"foo-bar.html\">Foo Bar</a>"), "{h}");
+        assert!(h.contains("<strong>bold</strong>"), "{h}");
+        assert!(h.contains("class=\"inline-code\">x</code>"), "{h}");
+        assert!(h.contains("<a class=\"tag\" href=\"tag.html\">#tag</a>"), "{h}");
     }
 
     #[test]
     fn escapes_html() {
-        assert!(render_inline("a < b & c", &no_refs()).contains("a &lt; b &amp; c"));
+        // lsdoc owns text escaping; the decorator never un-escapes body text.
+        assert!(render_body("a < b & c", &no_refs()).contains("a &lt; b &amp; c"));
     }
 
     #[test]
-    fn math_emits_katex_delimiters() {
-        // Inline $..$ → \(..\); display $$..$$ → \[..\]; both protected from the
-        // emphasis/code rules and left for KaTeX auto-render to typeset.
-        let h = render_inline(r"Euler $e^{i\pi}+1=0$ and $$\int_0^1 x\,dx$$", &no_refs());
+    fn math_decorates_katex_delimiters() {
+        // The decorator turns lsdoc's `data-tex` hook into KaTeX `\(..\)` / `\[..\]`.
+        let h = render_body(r"Euler $e^{i\pi}+1=0$ and $$\int_0^1 x\,dx$$", &no_refs());
         assert!(h.contains(r#"<span class="math">\(e^{i\pi}+1=0\)</span>"#), "{h}");
-        assert!(
-            h.contains(r#"<span class="math math-display">\[\int_0^1 x\,dx\]</span>"#),
-            "{h}"
-        );
+        assert!(h.contains(r#"<span class="math math-display">\[\int_0^1 x\,dx\]</span>"#), "{h}");
         // Underscores inside math must NOT become italics.
-        assert!(!render_inline(r"$a_1 + b_2$", &no_refs()).contains("<em>"));
+        assert!(!render_body(r"$a_1 + b_2$", &no_refs()).contains("<em>"));
     }
 
     #[test]
-    fn block_refs_resolve_and_paren_urls_survive() {
+    fn block_refs_resolve_via_decoration() {
         let mut refs = RefIndex::new();
         refs.insert(
             "5cfb2cc4-2f18-4b6e-b4c0-dcf657179204".into(),
             RefTarget { slug: "related-work".into(), text: "Related Work section".into() },
         );
         // Labeled block ref → a link to the target block's anchor, showing the label.
-        let h = render_inline("see [Related Work](((5cfb2cc4-2f18-4b6e-b4c0-dcf657179204)))", &refs);
+        let h = render_body("see [Related Work](((5cfb2cc4-2f18-4b6e-b4c0-dcf657179204)))", &refs);
         assert!(
             h.contains(r#"<a class="ref block-ref" href="related-work.html#5cfb2cc4-2f18-4b6e-b4c0-dcf657179204">Related Work</a>"#),
             "{h}"
         );
         // Bare block ref → the target's text, linked.
-        let b = render_inline("((5cfb2cc4-2f18-4b6e-b4c0-dcf657179204))", &refs);
+        let b = render_body("((5cfb2cc4-2f18-4b6e-b4c0-dcf657179204))", &refs);
         assert!(b.contains("related-work.html#5cfb2cc4-2f18-4b6e-b4c0-dcf657179204"), "{b}");
         assert!(b.contains("Related Work section"), "{b}");
         // Unresolved ref → muted text, no broken link / no stray `))`.
-        let u = render_inline("[X](((deadbeef-0000-0000-0000-000000000000)))", &refs);
+        let u = render_body("[X](((deadbeef-0000-0000-0000-000000000000)))", &refs);
         assert!(u.contains(r#"<span class="block-ref">X</span>"#), "{u}");
         assert!(!u.contains("((deadbeef"), "{u}");
         // A real URL with parentheses is captured whole (no truncation at first ')').
-        let w = render_inline("[wiki](https://en.wikipedia.org/wiki/Foo_(bar))", &no_refs());
-        assert!(w.contains(r#"<a href="https://en.wikipedia.org/wiki/Foo_(bar)">wiki</a>"#), "{w}");
+        let w = render_body("[wiki](https://en.wikipedia.org/wiki/Foo_(bar))", &no_refs());
+        assert!(w.contains(r#"href="https://en.wikipedia.org/wiki/Foo_(bar)""#), "{w}");
     }
 
     #[test]
-    fn strips_markup_for_search_index() {
-        // headings, emphasis/code, [[wiki]], [label](url), ![alt](url), ((ref)).
-        assert_eq!(strip_inline_markup("## Heading **bold** _it_ `c`"), "Heading bold it c");
-        assert_eq!(strip_inline_markup("see [[Foo Bar]] and [lbl](http://x)"), "see Foo Bar and lbl");
-        assert_eq!(strip_inline_markup("img ![cat](cat.png) end"), "img cat end");
-        // labeled block ref keeps the label, drops the uuid; bare ref drops entirely.
-        assert_eq!(strip_inline_markup("[See](((1234)))"), "See");
-        assert_eq!(strip_inline_markup("ref ((1111-2222)) gone"), "ref  gone");
+    fn decorates_image_and_code_block() {
+        // image: `data-asset` → src; the inline-image skeleton survives.
+        let h = render_body("![cat](../assets/cat.png)", &no_refs());
+        assert!(h.contains(r#"<img class="inline-image" src="../assets/cat.png" alt="cat">"#), "{h}");
+        // fenced code: data-lang → highlight.js `language-X` class, body escaped (not the
+        // old per-line `<div class="b">` that leaked the ``` fences).
+        let c = render_body("```rust\nlet x = 1 < 2;\n```", &no_refs());
+        assert!(c.contains(r#"<pre class="code-block"><code class="hljs language-rust">"#), "{c}");
+        assert!(c.contains("1 &lt; 2"), "code body escaped: {c}");
+        assert!(!c.contains("```"), "no raw fence in output: {c}");
     }
 
     #[test]
-    fn block_text_drops_props_and_scheduling() {
-        // `raw` is the dedented block body (no leading bullet). Property / SCHEDULED /
-        // DEADLINE lines are not searchable content; the rest is markup-stripped.
+    fn search_text_off_the_ast() {
+        // headings, emphasis/code, [[wiki]], [label](url), ![alt](url) → readable text.
+        assert_eq!(search_text("## Heading **bold** _it_ `c`"), "Heading bold it c");
+        assert_eq!(search_text("see [[Foo Bar]] and [lbl](http://x)"), "see Foo Bar and lbl");
+        assert_eq!(search_text("img ![cat](cat.png) end"), "img cat end");
+        // a bare block ref → dropped from the index (an opaque uuid reads as noise).
+        assert_eq!(search_text("ref ((5cfb2cc4-2f18-4b6e-b4c0-dcf657179204)) gone"), "ref gone");
+    }
+
+    #[test]
+    fn search_text_drops_props_and_scheduling() {
+        // Property / SCHEDULED / DEADLINE lines are chrome, not searchable content.
         let raw = "task **important** [[Page]]\nSCHEDULED: <2026-01-01 Thu>\nid:: 1111\nkey:: val\ncontinued bit";
-        assert_eq!(block_plain_text(raw), "task important Page continued bit");
+        assert_eq!(search_text(raw), "task important Page continued bit");
         // structural-only block → empty (won't be indexed)
-        assert_eq!(block_plain_text("id:: abc\ncollapsed:: true"), "");
+        assert_eq!(search_text("id:: abc\ncollapsed:: true"), "");
     }
 
     #[test]
@@ -857,6 +1012,25 @@ mod tests {
         );
         write("Search.md", "- Notes on full-text search and ranking.\n");
         write("Project Ideas.md", "- # Project Ideas\n- A grab-bag of ideas, including continuous bribery and opinion diffusion.\n");
+        // Exercises every construct the M3 render_html rewrite added to the export:
+        // fenced code (highlight.js), tables (data-align), callouts, inline/display math,
+        // lists (incl. checkboxes + def-list term), blockquote, org timestamps.
+        write(
+            "Rendering Showcase.md",
+            "- # Rendering Showcase\n\
+             - A paragraph with **bold**, *italic*, `inline code`, a [[Welcome]] link and a #demo tag.\n\
+             - ```rust\n  fn solve(n: usize) -> usize {\n      (0..n).filter(|x| x & 1 == 0).count()\n  }\n  ```\n\
+             - | Method | Time | Note |\n  | :--- | :---: | ---: |\n  | n-fold IP | fast | linear |\n  | brute force | slow | exp |\n\
+             - > [!NOTE] Heads up\n  > Callouts now render straight from the AST.\n\
+             - > [!WARNING]\n  > Macros are dropped in a static export (they can't run).\n\
+             - Inline math $e^{i\\pi}+1=0$ and a display block:\n\
+             - $$\\int_0^1 x^2\\,dx = \\tfrac{1}{3}$$\n\
+             - Unordered:\n  * first\n  * second\n      * nested\n\
+             - Tasks:\n  * [ ] open item\n  * [x] done item\n\
+             - Coffee\n  : A hot drink brewed from beans.\n\
+             - > A plain blockquote over\n  > two lines.\n\
+             - A meeting <2026-06-30 Tue 14:00> and a deadline.\n",
+        );
         fs::write(
             dir.join("journals").join("2026_06_28.md"),
             "- Worked on the **published export**: sidebar + search.\n- Linked [[Parameterized IP]].\n",

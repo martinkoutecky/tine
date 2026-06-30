@@ -36,3 +36,4 @@ see the project `CLAUDE.md`.
 | [0007](0007-data-safety-invariants.md) | Data-safety invariants: never silently overwrite | Accepted |
 | [0008](0008-lazy-block-body-rendering.md) | Lazy block-body rendering (render-once-keep), not windowing | Accepted |
 | [0009](0009-one-block-facet-source-on-the-dto.md) | One source for block-header facets: the lsdoc parse, shipped on the DTO | Accepted |
+| [0010](0010-lsdoc-canonical-html-skeleton.md) | lsdoc owns the canonical HTML skeleton; the export consumes it, the frontend conforms | Accepted |

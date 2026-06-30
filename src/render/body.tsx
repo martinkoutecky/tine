@@ -320,7 +320,13 @@ function AstList(props: { items: AstListItem[]; blockId?: string; cbItems: AstLi
     <Dynamic component={ordered ? "ol" : "ul"} class="md-list">
       <For each={props.items}>
         {(item) => (
-          <li class="md-list-item" classList={{ "has-checkbox": item.checkbox !== undefined }}>
+          <li
+            class="md-list-item"
+            classList={{
+              "has-checkbox": item.checkbox !== undefined,
+              "has-term": !!item.name && item.name.length > 0,
+            }}
+          >
             <Show when={item.checkbox !== undefined}>
               <span
                 class="block-checkbox"
@@ -332,6 +338,11 @@ function AstList(props: { items: AstListItem[]; blockId?: string; cbItems: AstLi
                   if (props.blockId) toggleAstCheckbox(props.blockId, props.cbItems.indexOf(item));
                 }}
               />{" "}
+            </Show>
+            {/* Markdown definition-list term (`term\n: def`): the item's label,
+                rendered inline before its definition body (lsdoc render contract). */}
+            <Show when={item.name && item.name.length > 0}>
+              <span class="md-list-term">{renderInlines(item.name!, props.blockId)}</span>{" "}
             </Show>
             {renderBlocks(item.content, props.blockId)}
             <Show when={item.items.length > 0}>
