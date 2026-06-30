@@ -116,6 +116,10 @@ const FIXTURES: Record<string, string> = {
   "markdown table": "| Name | Age |\n| --- | --- |\n| Ann | 30 |\n| Bob | 25 |",
   "github callout (delta 5)": "> [!NOTE] Heads up\n> the body of the note\n> second body line",
   "github callout markup title": "> [!TIP] Use **bold** and `code`\n> body line",
+  // lsdoc v0.2.4: org-style `#+BEGIN_<TYPE>` admonitions parse as callouts in MD
+  // mode too (not just org), matching org. Locks that md↔frontend parity.
+  "md org-admonition callout": "#+BEGIN_NOTE\nbody of the note\n#+END_NOTE",
+  "md org-admonition tip": "#+BEGIN_TIP\nthis is a tip\n#+END_TIP",
   "github callout no title": "> [!WARNING]\n> be careful here",
   "plain blockquote": "> just a quote\n> over two lines",
   "horizontal rule": "text above\n\n---\n\ntext below",
