@@ -61,7 +61,11 @@ pub struct DocBlock {
 /// re-parse every block's `raw` on each run.
 #[derive(Debug, Clone, Default)]
 pub struct BlockProjection {
-    /// Visible (non-property) text, lowercased — for `search` / `(content …)`.
+    /// Visible (non-property) text, original case — the body the reader sees,
+    /// for breadcrumb labels / display. `raw` minus the byte ranges lsdoc
+    /// recognized as `Properties` blocks (see `visible_minus_properties`).
+    pub visible: String,
+    /// `visible`, lowercased — for `search` / `(content …)` (hot path, pre-lowered).
     pub visible_lower: String,
     /// Normalized page references (`[[..]]` / `#tag`) — for backlinks / `(page-ref)`.
     pub refs_norm: Vec<String>,
@@ -69,6 +73,14 @@ pub struct BlockProjection {
     /// UUID-gated — for the block-referrers / ref-count scans. From the same
     /// lsdoc parse as `refs_norm`.
     pub block_refs: Vec<String>,
+    /// Block-header task marker (`TODO`, `DOING`, …) off lsdoc's first node — the
+    /// ONE marker recognizer (no more `doc.rs`/`blockView`/lsdoc disagreement).
+    pub marker: Option<String>,
+    /// ATX heading level (1..=6) when the block body is a heading, else `None`.
+    pub heading_level: Option<u8>,
+    /// `key:: value` block properties (md trailer / org `:PROPERTIES:` drawer) as
+    /// lsdoc projects them — the ONE property recognizer for the read path.
+    pub properties: Vec<(String, String)>,
 }
 
 impl BlockProjection {
@@ -117,58 +129,144 @@ impl DocBlock {
     /// memo can't outlive the `raw` it was derived from.
     pub fn projection(&self) -> &BlockProjection {
         self.proj.get_or_init(|| {
-            let visible_lower = visible_lines(&self.raw).join("\n").to_lowercase();
-            // OG-faithful inline refs via lsdoc, fed the re-bulleted block body
-            // (like OG) so markers/priority aren't mis-read as tags. One parse
-            // yields both page refs (normalized, for backlinks) and block refs.
+            // ONE lsdoc parse of the block body yields every header facet (marker,
+            // heading level, properties) AND the visible text — so `doc.rs`, the TS
+            // `blockView`, and lsdoc can no longer disagree about a block's grammar.
+            let (marker, heading_level, properties, visible) = block_facets(&self.raw, self.is_org);
+            let visible_lower = visible.to_lowercase();
+            // OG-faithful inline refs via lsdoc (a second, refs-only parse): both are
+            // lsdoc over the same re-bulleted body, so they agree by construction.
             let refs = crate::render::block_refs(&self.raw, self.is_org);
             let refs_norm = refs.page.iter().map(|r| crate::refs::normalize(r)).collect();
-            BlockProjection { visible_lower, refs_norm, block_refs: refs.block }
+            BlockProjection {
+                visible,
+                visible_lower,
+                refs_norm,
+                block_refs: refs.block,
+                marker,
+                heading_level,
+                properties,
+            }
         })
     }
 
-    /// `key:: value` properties found in the block body, in order (fence-aware: a
-    /// `key::` inside a code fence is literal content, not a property).
+    /// `key:: value` block properties as lsdoc projects them (md trailer / org
+    /// `:PROPERTIES:` drawer; fence-aware — a `key::` inside a code fence is content).
     pub fn properties(&self) -> Vec<(String, String)> {
-        property_lines(&self.raw)
+        self.projection().properties.clone()
     }
 
     pub fn property(&self, key: &str) -> Option<String> {
-        property_lines(&self.raw)
-            .into_iter()
+        self.projection()
+            .properties
+            .iter()
             .find(|(k, _)| k.eq_ignore_ascii_case(key))
-            .map(|(_, v)| v)
+            .map(|(_, v)| v.clone())
     }
 
     pub fn collapsed(&self) -> bool {
         self.property("collapsed").as_deref() == Some("true")
     }
 
-    /// The leading task marker, if any (`TODO`, `DOING`, ...).
-    pub fn marker(&self) -> Option<&'static str> {
-        let first = self.raw.trim_start();
-        for m in MARKERS {
-            // Zero-alloc: the prior `starts_with(&format!("{m} "))` heap-allocated
-            // a String per marker candidate on every call, and marker() runs in
-            // the query predicate path over the whole graph (up to ~10×N_blocks
-            // throwaway allocations per task/marker query).
-            if first == *m || first.strip_prefix(*m).is_some_and(|r| r.starts_with(' ')) {
-                return Some(m);
-            }
-        }
-        None
+    /// The leading task marker, if any (`TODO`, `DOING`, ...), off lsdoc's first node.
+    pub fn marker(&self) -> Option<&str> {
+        self.projection().marker.as_deref()
     }
 
-    /// Heading level if the block body is an ATX heading (`# ` .. `###### `).
+    /// Heading level (1..=6) if the block body is an ATX heading, else `None`.
     pub fn heading_level(&self) -> Option<u8> {
-        let first = self.raw.lines().next().unwrap_or("");
-        let hashes = first.chars().take_while(|c| *c == '#').count();
-        if (1..=6).contains(&hashes) && first[hashes..].starts_with(' ') {
-            Some(hashes as u8)
-        } else {
-            None
+        self.projection().heading_level
+    }
+
+    /// The block's *visible* text (original case): `raw` minus property/drawer
+    /// ranges. The body a reader sees — for breadcrumb labels and sort keys.
+    pub fn visible_text(&self) -> &str {
+        &self.projection().visible
+    }
+}
+
+/// Block-header facets + visible text, all read off ONE lsdoc parse of the block —
+/// the single source of truth for a block's grammar (replaces the hand-rolled
+/// marker / heading / property / visible scanners that could disagree with lsdoc
+/// and the TS renderer). Returns `(marker, heading_level, properties, visible)`.
+fn block_facets(raw: &str, is_org: bool) -> (Option<String>, Option<u8>, Vec<(String, String)>, String) {
+    use lsdoc::ast::Block;
+    let blocks = crate::render::parse_block(raw, is_org);
+    let (marker, heading_level) = match blocks.first() {
+        Some(Block::Bullet { marker, size, .. }) => (
+            marker.clone(),
+            size.and_then(|s| (1..=6).contains(&s).then_some(s as u8)),
+        ),
+        Some(Block::Heading { marker, level, .. }) => (
+            marker.clone(),
+            (1..=6u32).contains(level).then_some(*level as u8),
+        ),
+        _ => (None, None),
+    };
+    let mut properties = Vec::new();
+    for b in &blocks {
+        if let Block::Properties { props, .. } = b {
+            properties.extend(props.iter().cloned());
         }
     }
+    let visible = visible_minus_properties(raw, &blocks);
+    (marker, heading_level, properties, visible)
+}
+
+/// Properties + visible text for a block we only have `raw` for (a query-result
+/// DTO has no projection), off the one lsdoc recognizer. md mode: query-result
+/// sort keys are cosmetic, and an org `key::` here is format-agnostic exactly as
+/// the old line-scan was. Call once per block (decorate-sort), never per compare.
+pub(crate) fn block_sort_facets(raw: &str) -> (Vec<(String, String)>, String) {
+    let (_, _, properties, visible) = block_facets(raw, false);
+    (properties, visible)
+}
+
+/// `raw` with the byte ranges lsdoc recognized as `Properties` blocks removed,
+/// whole-line (so no blank line remains). The lsdoc input is `"{prefix} {raw_trimmed}"`
+/// where prefix is the 2-byte `"- "`/`"* "`, so `input[2..] == raw[lead..]` byte-for-byte
+/// (`lead` = leading whitespace trimmed) and a span `[s,e)` maps to raw `[s-2+lead, e-2+lead)`.
+/// Drawers (`:LOGBOOK:`) are intentionally KEPT (searchable, as before); only
+/// `Properties` (md `key::` / org `:PROPERTIES:`) are dropped — exactly the lines
+/// the old `visible_lines` dropped, now decided by the one property recognizer.
+fn visible_minus_properties(raw: &str, blocks: &[lsdoc::ast::Block]) -> String {
+    use lsdoc::ast::Block;
+    let lead = raw.len() - raw.trim_start().len();
+    let bytes = raw.as_bytes();
+    let mut cuts: Vec<(usize, usize)> = Vec::new();
+    for b in blocks {
+        if let Block::Properties { span: Some(sp), .. } = b {
+            let mut rs = (sp.0.saturating_sub(2) + lead).min(raw.len());
+            let mut re = (sp.1.saturating_sub(2) + lead).min(raw.len());
+            if rs >= re {
+                continue;
+            }
+            // Extend to whole lines (newlines are char boundaries → slices stay UTF-8 valid).
+            while rs > 0 && bytes[rs - 1] != b'\n' {
+                rs -= 1;
+            }
+            while re < raw.len() && bytes[re - 1] != b'\n' {
+                re += 1;
+            }
+            cuts.push((rs, re));
+        }
+    }
+    if cuts.is_empty() {
+        return raw.to_string();
+    }
+    cuts.sort_by_key(|c| c.0);
+    let mut out = String::with_capacity(raw.len());
+    let mut pos = 0usize;
+    for (s, e) in cuts {
+        if s < pos {
+            pos = pos.max(e); // overlapping/adjacent property ranges
+            continue;
+        }
+        out.push_str(&raw[pos..s]);
+        pos = e;
+    }
+    out.push_str(&raw[pos..]);
+    out.trim_end_matches('\n').to_string()
 }
 
 pub(crate) fn parse_property_line(line: &str) -> Option<(String, String)> {
@@ -234,44 +332,6 @@ pub(crate) fn next_fence(cur: Option<(char, usize)>, line: &str) -> Option<(char
             _ => Some((c, n)),                            // still inside
         },
     }
-}
-
-/// `key:: value` property lines in `raw`, FENCE-AWARE: a `key::` line inside a
-/// fenced code block is literal content, not a property (so it isn't shown as a
-/// chip or matched by a `(property …)` query / `property()` lookup). A line is a
-/// property only when it's outside any fence and not a fence delimiter itself.
-pub(crate) fn property_lines(raw: &str) -> Vec<(String, String)> {
-    let mut fence: Option<(char, usize)> = None;
-    let mut out = Vec::new();
-    for line in raw.lines() {
-        let was_inside = fence.is_some();
-        fence = next_fence(fence, line);
-        // candidate iff outside a fence before AND not a fence opener (opener →
-        // fence now Some). closers/content are skipped because was_inside is true.
-        if !was_inside && fence.is_none() {
-            if let Some(kv) = parse_property_line(line) {
-                out.push(kv);
-            }
-        }
-    }
-    out
-}
-
-/// Lines of `raw` that are *visible* (not a fence-aware property line) — the body
-/// the reader sees, for search / `visible_lower`. A `key::` inside a code fence
-/// stays visible (it's code), unlike a real property line.
-pub(crate) fn visible_lines(raw: &str) -> Vec<&str> {
-    let mut fence: Option<(char, usize)> = None;
-    let mut out = Vec::new();
-    for line in raw.lines() {
-        let was_inside = fence.is_some();
-        fence = next_fence(fence, line);
-        let is_prop = !was_inside && fence.is_none() && parse_property_line(line).is_some();
-        if !is_prop {
-            out.push(line);
-        }
-    }
-    out
 }
 
 pub fn parse(content: &str) -> Document {
@@ -567,5 +627,46 @@ mod projection_tests {
         // memoized (stable across calls); a clone recomputes to an equal projection
         assert_eq!(b.projection().visible_lower, p.visible_lower);
         assert_eq!(b.clone().projection().refs_norm, p.refs_norm);
+    }
+
+    #[test]
+    fn facets_read_off_one_lsdoc_parse() {
+        // marker / heading / properties all come off lsdoc's single parse now.
+        let b = DocBlock::new("TODO finish it\nfoo:: bar\nid:: 123");
+        assert_eq!(b.marker(), Some("TODO"));
+        assert_eq!(b.property("foo").as_deref(), Some("bar"));
+        assert_eq!(b.property("id").as_deref(), Some("123"));
+        assert_eq!(b.heading_level(), None);
+        // STARTED is an mldoc/lsdoc marker (in the recognized set).
+        assert_eq!(DocBlock::new("STARTED x").marker(), Some("STARTED"));
+        // ATX-heading bullet → level off lsdoc `Bullet.size`.
+        assert_eq!(DocBlock::new("## A heading").heading_level(), Some(2));
+        assert_eq!(DocBlock::new("plain text").heading_level(), None);
+    }
+
+    #[test]
+    fn visible_text_drops_properties_utf8_safe() {
+        // Multi-byte body before a trailing property block: the span→raw byte
+        // mapping (`span - 2 + lead`) must land on char boundaries, not split UTF-8.
+        let b = DocBlock::new("Über café résumé\nid:: 123\nkey:: v");
+        assert_eq!(b.visible_text(), "Über café résumé");
+        assert_eq!(b.projection().visible_lower, "über café résumé");
+        // leading whitespace in raw (lead > 0) still maps correctly.
+        let b2 = DocBlock::new("  héllo\nid:: 9");
+        assert_eq!(b2.visible_text().trim(), "héllo");
+    }
+
+    #[test]
+    fn org_properties_from_drawer_not_key_colons() {
+        // lsdoc correction: in ORG, `key:: val` is plain text (NOT a property);
+        // org properties live in a `:PROPERTIES:` drawer. Tine's old line-scan
+        // wrongly read org `key::` as a property — routing through lsdoc fixes it.
+        let mut drawer = DocBlock::new("task\n:PROPERTIES:\n:id: 6679-abc\n:END:");
+        drawer.is_org = true;
+        assert_eq!(drawer.property("id").as_deref(), Some("6679-abc"));
+        let mut plain = DocBlock::new("note\nfoo:: bar");
+        plain.is_org = true;
+        assert_eq!(plain.property("foo"), None, "org key:: is not a property");
+        assert!(plain.visible_text().contains("foo:: bar"), "org key:: stays visible");
     }
 }

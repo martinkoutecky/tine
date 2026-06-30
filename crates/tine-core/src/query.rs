@@ -37,7 +37,7 @@ fn walk_path<'a>(
 
 /// A short, single-line label for a block in a breadcrumb trail.
 fn crumb_line(b: &DocBlock) -> String {
-    let line = visible_text(&b.raw).lines().next().unwrap_or("").trim().to_string();
+    let line = b.visible_text().lines().next().unwrap_or("").trim().to_string();
     if line.chars().count() > 60 {
         format!("{}…", line.chars().take(60).collect::<String>())
     } else {
@@ -244,11 +244,12 @@ fn run_pred(graph: &Graph, pred: &Pred, opts: &QueryOpts) -> Vec<RefGroup> {
                 flat.push(RefGroup { page: page.clone(), kind, blocks: vec![b] });
             }
         }
-        flat.sort_by(|a, b| {
-            let ka = sort_key(&a.blocks[0], &a.page, field);
-            let kb = sort_key(&b.blocks[0], &b.page, field);
-            if *asc { ka.cmp(&kb) } else { kb.cmp(&ka) }
-        });
+        // Decorate-sort: compute each block's key ONCE (an lsdoc parse per result
+        // block), not per comparison — `sort_by` would re-derive it O(n log n) times.
+        flat.sort_by_cached_key(|g| sort_key(&g.blocks[0], &g.page, field));
+        if !*asc {
+            flat.reverse();
+        }
         groups = flat;
     }
 
@@ -592,30 +593,17 @@ fn sort_key(b: &BlockDto, page: &str, field: &str) -> String {
         },
         // Sort by the source page name.
         "page" => page.to_lowercase(),
-        // Otherwise: a block property value if present, else the block's text.
+        // Otherwise: a block property value if present, else the block's text —
+        // both off the one lsdoc recognizer (one parse per result block; `sort_key`
+        // runs once per block via `sort_by_cached_key`, never per comparison).
         _ => {
-            if let Some((_, v)) = blockview_property(&b.raw, field) {
+            let (props, visible) = crate::doc::block_sort_facets(&b.raw);
+            if let Some((_, v)) = props.iter().find(|(k, _)| k.eq_ignore_ascii_case(field)) {
                 return v.to_lowercase();
             }
-            visible_text(&b.raw).lines().next().unwrap_or("").to_lowercase()
+            visible.lines().next().unwrap_or("").to_lowercase()
         }
     }
-}
-fn blockview_property(raw: &str, key: &str) -> Option<(String, String)> {
-    raw.lines()
-        .filter_map(crate::doc::parse_property_line)
-        .find(|(k, _)| k.eq_ignore_ascii_case(key))
-}
-
-/// A block's *visible* text for search: the body the user actually reads, with
-/// `key:: value` property lines (block ids, `ls-type`, `hl-color`, user props,
-/// `collapsed`, …) removed. Matching the rendered text instead of the raw
-/// markdown avoids false positives where the query only appears in hidden
-/// metadata (e.g. a uuid fragment or a property value).
-pub fn visible_text(raw: &str) -> String {
-    // Fence-aware (crate::doc::visible_lines): a `key::` inside a code fence stays
-    // searchable code text, only real property lines are dropped.
-    crate::doc::visible_lines(raw).join("\n")
 }
 
 /// Full-text search: blocks whose visible text contains `query`
