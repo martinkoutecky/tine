@@ -102,8 +102,16 @@ fn inline_code_spans(line: &str, base: usize, out: &mut Vec<std::ops::Range<usiz
     }
 }
 
-fn in_code(pos: usize, ranges: &[std::ops::Range<usize>]) -> bool {
-    ranges.iter().any(|r| r.contains(&pos))
+/// Whether byte `pos` is inside a code range, using a monotone cursor. The callers
+/// (`rename_refs`, `rename_tags_property`) scan left-to-right with a monotonically
+/// increasing `pos`, and `ranges` are ascending + non-overlapping (see
+/// `code_ranges_for`), so we advance `cursor` past spent ranges instead of scanning
+/// ALL ranges for every byte — making rename O(n) instead of O(n·ranges).
+fn in_code_at(pos: usize, ranges: &[std::ops::Range<usize>], cursor: &mut usize) -> bool {
+    while *cursor < ranges.len() && ranges[*cursor].end <= pos {
+        *cursor += 1;
+    }
+    ranges.get(*cursor).is_some_and(|r| r.contains(&pos))
 }
 
 /// Ranges to protect from ref rewriting: markdown fenced/inline code always, plus
@@ -113,7 +121,20 @@ fn in_code(pos: usize, ranges: &[std::ops::Range<usize>]) -> bool {
 fn code_ranges_for(raw: &str, is_org: bool) -> Vec<std::ops::Range<usize>> {
     let mut r = code_ranges(raw);
     if is_org {
+        // `code_ranges` is already ascending+non-overlapping; `org_block_ranges` is
+        // appended out of byte-order, so re-sort + coalesce to restore the invariant
+        // the monotone-cursor `in_code_at` relies on. R = #code regions (tiny), and
+        // this runs once per rename — the per-byte scan stays O(n).
         r.extend(org_block_ranges(raw));
+        r.sort_unstable_by_key(|x| x.start);
+        let mut merged: Vec<std::ops::Range<usize>> = Vec::with_capacity(r.len());
+        for cur in r {
+            match merged.last_mut() {
+                Some(prev) if cur.start <= prev.end => prev.end = prev.end.max(cur.end),
+                _ => merged.push(cur),
+            }
+        }
+        return merged;
     }
     r
 }
@@ -223,13 +244,14 @@ pub fn as_block_ref(url: &str) -> Option<&str> {
 pub fn rename_refs(raw: &str, from: &str, to: &str, is_org: bool) -> String {
     let target = normalize(from);
     let code = code_ranges_for(raw, is_org);
+    let mut code_cur = 0usize; // monotone cursor into `code` (i only increases)
     let mut out = String::with_capacity(raw.len());
     let mut i = 0;
     while i < raw.len() {
         let rest = &raw[i..];
         // Inside a code fence / inline-code span, refs are literal — copy verbatim
         // (one char), never rewrite, so code examples aren't corrupted by a rename.
-        if !in_code(i, &code) {
+        if !in_code_at(i, &code, &mut code_cur) {
             // Org file link: `[[file:…/<stem>.org][desc]]` / `[[file:…/<stem>.org]]`.
             // Its target is a path, not a `[[name]]`, so the generic handler below
             // can't match it — rewrite the filename stem so the link survives the
@@ -333,13 +355,14 @@ fn tag_for(to: &str) -> String {
 pub fn rename_tags_property(raw: &str, from: &str, to: &str, is_org: bool) -> String {
     let target = normalize(from);
     let code = code_ranges_for(raw, is_org);
+    let mut code_cur = 0usize; // monotone cursor (line_start only increases)
     let mut out = String::with_capacity(raw.len());
     let mut pos = 0usize;
     for line in raw.split_inclusive('\n') {
         let line_start = pos;
         pos += line.len();
         let content = line.strip_suffix('\n').unwrap_or(line);
-        if !in_code(line_start, &code) {
+        if !in_code_at(line_start, &code, &mut code_cur) {
             if let Some(vstart) = tags_value_start(content) {
                 out.push_str(&content[..vstart]);
                 out.push_str(&rewrite_bare_tags(&content[vstart..], &target, to));
@@ -485,6 +508,18 @@ mod tests {
         assert_eq!(
             rename_refs("[[file:./pages/Old.org]]", "Old", "New", false),
             "[[file:./pages/Old.org]]"
+        );
+    }
+
+    #[test]
+    fn rename_monotone_cursor_handles_many_interleaved_code_spans() {
+        // 3 real refs (renamed) interleaved with 2 inline-code spans (literal). The
+        // O(n) monotone cursor must advance past each spent code span without losing
+        // a later real ref or wrongly rewriting one inside code.
+        let raw = "[[Old]] `[[Old]]` mid [[Old]] `x [[Old]]` end [[Old]]";
+        assert_eq!(
+            rename_refs(raw, "Old", "New", false),
+            "[[New]] `[[Old]]` mid [[New]] `x [[Old]]` end [[New]]"
         );
     }
 
