@@ -22,8 +22,8 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "lsdoc"
-version = "0.1.0"
-source = "git+https://github.com/martinkoutecky/lsdoc?tag=v0.1.4#289e75222700ffb2183de71b7048edc231fc3b74"
+version = "0.2.0"
+source = "git+https://github.com/martinkoutecky/lsdoc?tag=v0.2.0#68e51a1b2a373a9cf865f67dbe4a210107a18a44"
 dependencies = [
  "serde",
  "serde_json",
