@@ -405,6 +405,10 @@ export function reorderTab(dragId: string, targetId: string) {
 interface PersistedSession {
   tabs: { history: Route[]; pos: number; pinned: boolean }[];
   activeIndex: number;
+  // Per-tab scroll offset of each tab's CURRENT route, so a relaunch reopens each
+  // page scrolled where you left it (not just at the top). Parallel to `tabs`;
+  // optional for back-compat with older session files.
+  scrolls?: (number | null)[];
   // Sidebar open/closed + the right sidebar's items — persisted here (the durable
   // session file) rather than localStorage, which WebKitGTK doesn't keep across
   // launches, so Tine reopens with the sidebars exactly as you left them.
@@ -417,9 +421,13 @@ let saveTimer: ReturnType<typeof setTimeout> | undefined;
 
 function buildSession(): PersistedSession {
   const list = tabs();
+  // Refresh the active tab's live scroll before snapshotting; background tabs keep
+  // their last-active offset (rememberScroll saved it when we left them).
+  rememberScroll();
   return {
     tabs: list.map((t) => ({ history: t.history, pos: t.pos, pinned: t.pinned })),
     activeIndex: Math.max(0, list.findIndex((t) => t.id === activeId())),
+    scrolls: list.map((t) => scrollByRoute.get(t.history[t.pos]) ?? null),
     leftSidebar: sidebarOpen(),
     rightSidebar: rightSidebarOpen(),
     rightSidebarItems: rightSidebar(),
@@ -443,14 +451,20 @@ export const scheduleSessionSave = persist;
 function parseSession(raw: string): { tabs: Tab[]; active: number } | null {
   try {
     const s = JSON.parse(raw) as PersistedSession;
-    const restored: Tab[] = (s?.tabs ?? [])
-      .filter((t) => t && Array.isArray(t.history) && t.history.length > 0)
-      .map((t) => ({
-        id: newId(),
-        history: t.history,
-        pos: Math.min(Math.max(0, t.pos | 0), t.history.length - 1),
-        pinned: !!t.pinned,
-      }));
+    const scrolls = Array.isArray(s?.scrolls) ? s.scrolls : [];
+    const restored: Tab[] = [];
+    // Index by the ORIGINAL position so a dropped (invalid) tab can't misalign the
+    // parallel `scrolls` array.
+    (s?.tabs ?? []).forEach((t, i) => {
+      if (!t || !Array.isArray(t.history) || t.history.length === 0) return;
+      const pos = Math.min(Math.max(0, t.pos | 0), t.history.length - 1);
+      const tab: Tab = { id: newId(), history: t.history, pos, pinned: !!t.pinned };
+      restored.push(tab);
+      // Re-seed the scroll for this tab's current route so restoreScrollFor (fired by
+      // the page view on show) lands it where it was, not at the top.
+      const sc = scrolls[i];
+      if (typeof sc === "number" && sc > 0) scrollByRoute.set(tab.history[pos], sc);
+    });
     if (!restored.length) return null;
     // Keep the active tab pointing at the same tab after we re-sort pinned-left
     // (older sessions may have a mixed order).
