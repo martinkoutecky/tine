@@ -80,6 +80,25 @@ export function toggleDocumentMode() {
   saveStr(DOC_KEY, v ? "1" : null);
 }
 
+// --- typographic replacements (a "Differs from Logseq" opinion): render `->` as
+// `→`, `--` as `–`, `---` as `—`, etc. "render" = source keeps the ASCII, only the
+// rendered view shows glyphs (default; mirrors how \Delta→Δ works). "off" = leave
+// the ASCII everywhere. ("type" — rewrite the source as you type — ships with the
+// editor auto-pairing work.) Local appearance pref, like wide/document mode. ---
+export type TypographyMode = "off" | "render";
+const TYPO_KEY = "logseq-claude.typography";
+function loadTypographyMode(): TypographyMode {
+  return loadStr(TYPO_KEY) === "off" ? "off" : "render";
+}
+export const [typographyMode, setTypographyModeSig] =
+  createSignal<TypographyMode>(loadTypographyMode());
+export function setTypographyMode(m: TypographyMode) {
+  setTypographyModeSig(m);
+  // Persist only the non-default; absent key ⇒ "render".
+  saveStr(TYPO_KEY, m === "render" ? null : m);
+  bumpGraphEpoch(); // re-render open pages so the change is immediate
+}
+
 // --- first day of week (calendar + scheduled/deadline date pickers) ---
 // Sourced from config.edn `:start-of-week` (Logseq's convention: 0=Monday …
 // 6=Sunday, default 6=Sunday), so it round-trips with Logseq. The earlier

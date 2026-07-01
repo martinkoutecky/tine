@@ -18,6 +18,7 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { render } from "solid-js/web";
 import { renderBlocks } from "./body";
+import { typographic } from "./typography";
 import { initParser, parseBlock } from "./parse";
 import { render_block_html } from "./wasm/lsdoc_wasm.js";
 
@@ -55,7 +56,12 @@ function norm(node: Node): string {
   let out = "";
   for (const child of Array.from(node.childNodes)) {
     if (child.nodeType === 3) {
-      out += child.textContent;
+      // Normalize the sanctioned Tine typographic replacement (render/typography.ts)
+      // on TEXT nodes only (safe — never HTML attrs/comments): the frontend renders
+      // `->`→`→` etc., lsdoc's reference is raw ASCII, so map both to glyphs. It's
+      // idempotent on the already-transformed frontend side; a no-op for text with
+      // no arrow/dash triggers (all current fixtures).
+      out += typographic(child.textContent ?? "");
       continue;
     }
     if (child.nodeType !== 1) continue;

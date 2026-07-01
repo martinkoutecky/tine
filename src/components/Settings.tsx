@@ -19,6 +19,8 @@ import {
   toggleWideMode,
   documentMode,
   toggleDocumentMode,
+  typographyMode,
+  setTypographyMode,
   dimInFocus,
   setDimInFocus,
   changeStartOfWeek,
@@ -381,6 +383,20 @@ function AppearanceTab(): JSX.Element {
 
       <Field label="Document mode" hint="Hides bullets and indent guides for a cleaner prose view.">
         <Toggle on={documentMode()} onClick={toggleDocumentMode} />
+      </Field>
+
+      <Field
+        label="Typographic replacements"
+        hint="Render arrows and dashes as glyphs — `->`→→, `<->`→↔, `--`→– (en), `---`→— (em). Your Markdown keeps the ASCII; only the rendered view changes (like how `\Delta` shows as Δ). A Tine touch, not Logseq."
+      >
+        <select
+          class="settings-select"
+          value={typographyMode()}
+          onChange={(e) => setTypographyMode(e.currentTarget.value === "off" ? "off" : "render")}
+        >
+          <option value="render">On (while reading)</option>
+          <option value="off">Off</option>
+        </select>
       </Field>
 
       <Field

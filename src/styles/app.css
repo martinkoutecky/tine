@@ -1964,11 +1964,13 @@ body {
      shifts ~0.4px on every click (issue #12). Headings re-assert their own ratio below. */
   line-height: 26px;
   min-height: 26px; /* empty blocks stay clickable; matches .block-editor (issue #12) */
-  /* Inter's contextual ligatures (calt) draw `->`/`<-`/`<->`/`=>` as arrow
-     glyphs while leaving the underlying ASCII unchanged — exactly how OG Logseq
-     shows arrows (it's the font, not a text substitution; the .md keeps `->`).
-     WebKitGTK leaves calt off by default, so enable it explicitly. */
-  font-variant-ligatures: contextual;
+  /* calt OFF. Inter's contextual alternates (calt) drew `->` as an arrow, but the
+     SAME feature contextually re-positions the asterisk (`*(` centered vs `)*`
+     raised — a visible glitch while editing `*(…)*`). Arrows now come from an
+     explicit render-time replacement (render/typography.ts), which also works in
+     export, so we don't need the font feature. `no-contextual` disables calt while
+     keeping normal (fi/fl) ligatures. */
+  font-variant-ligatures: no-contextual;
 }
 
 .block-content.done {
@@ -2110,8 +2112,9 @@ body {
   color: var(--text-primary);
   padding: 2px 0;
   margin: 0;
-  /* Match OG: show the arrow ligatures while editing too (see .block-content). */
-  font-variant-ligatures: contextual;
+  /* calt OFF while editing too (see .block-content): consistent asterisk heights,
+     and the raw `->` stays raw in the textarea (the arrow glyph appears on render). */
+  font-variant-ligatures: no-contextual;
   overflow: hidden;
   display: block;
 }

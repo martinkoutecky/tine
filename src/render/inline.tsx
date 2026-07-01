@@ -13,6 +13,8 @@ import { copyImageFromSrc } from "../copyImage";
 import { parseBlock, parserReady } from "./parse";
 import type { Inline, Url, MacroInline, TimestampInline, TimestampPoint, EmailValue, Block as AstBlock, Format } from "./ast";
 import { EmojiText } from "./emoji";
+import { typographic } from "./typography";
+import { typographyMode } from "../ui";
 import { visibleBody } from "./block";
 import { backend } from "../backend";
 import { loadAssetBlob } from "../assetCache";
@@ -62,7 +64,10 @@ export function renderInlines(inlines: Inline[], blockId?: string): JSX.Element 
 function renderInline(s: Inline, blockId?: string): JSX.Element {
   switch (s.k) {
     case "plain":
-      return <EmojiText text={s.text} />;
+      // Render-time typographic replacement (`->`→`→`, `--`→`–`, …) is a Tine
+      // opinion applied ONLY to plain text — code/links/math/tags are other node
+      // kinds, so they're excluded for free. Source keeps the ASCII.
+      return <EmojiText text={typographyMode() === "render" ? typographic(s.text) : s.text} />;
     case "code":
     case "verbatim":
       return <code class="inline-code">{s.text}</code>;
