@@ -19,7 +19,6 @@ move them between categories in place.
 
 | Item | Where |
 |---|---|
-| **[#14](https://github.com/martinkoutecky/tine/issues/14) — Backspace can't delete an empty top node.** Fallback in the `start===0` Backspace branch: visually-empty + childless + a next block exists → delete it, caret to next. | `src/components/Block.tsx` |
 | **[#13](https://github.com/martinkoutecky/tine/issues/13) — paste multiline into a code block makes bullets.** Guard the `onPaste` multiline→outline branch: inside a fenced/calc block, insert raw text at the caret. | `src/components/Block.tsx` |
 | **[#15](https://github.com/martinkoutecky/tine/issues/15) — templates: finds 1 of 4, can't pick.** `templates()` only sees cached pages → whole-graph discovery; confirm slash-list is scrollable. | `crates/tine-core/src/query.rs` |
 
