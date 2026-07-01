@@ -1963,7 +1963,12 @@ body {
      EXACTLY — otherwise the 25.6px fractional line rounds up on focus and the block
      shifts ~0.4px on every click (issue #12). Headings re-assert their own ratio below. */
   line-height: 26px;
-  min-height: 26px; /* empty blocks stay clickable; matches .block-editor (issue #12) */
+  /* Full 1-line box height = line-height 26 + padding (2+2). An EMPTY block has no
+     line box, so without this it collapses to a 26px border-box (padding only) — 4px
+     SHORTER than the editor textarea, which always reserves one line (30px). That gap
+     made a blank block jump +4px on click (issue #12 residual). Match 30px so the
+     rendered box == the editor box whether or not the block has content. */
+  min-height: 30px;
   /* calt OFF. Inter's contextual alternates (calt) drew `->` as an arrow, but the
      SAME feature contextually re-positions the asterisk (`*(` centered vs `)*`
      raised — a visible glitch while editing `*(…)*`). Arrows now come from an
@@ -2106,9 +2111,12 @@ body {
   font-family: inherit;
   font-size: inherit;
   /* Match .block-content's integer line-height + min-height so the editor occupies the
-     IDENTICAL box as the rendered body — no shift on focus (issue #12). */
+     IDENTICAL box as the rendered body — no shift on focus (issue #12). 30px = the
+     full 1-line box (line-height 26 + padding 4); it floors the empty-value editor at
+     the same height as the rendered empty block so entering/leaving edit on a blank
+     block never changes height (and the editor can't shrink below the block). */
   line-height: 26px;
-  min-height: 26px;
+  min-height: 30px;
   color: var(--text-primary);
   padding: 2px 0;
   margin: 0;
