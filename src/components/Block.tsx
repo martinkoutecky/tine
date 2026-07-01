@@ -1024,9 +1024,28 @@ export function Editor(props: { id: string }): JSX.Element {
   };
 
   const focusNow = () => {
-    const offset = takeCaretFor(props.id) ?? editorValue().length;
+    const want = takeCaretFor(props.id);
     ref.focus();
-    const o = Math.min(offset, ref.value.length);
+    const v = ref.value;
+    let offset: number;
+    if (want == null) {
+      offset = editorValue().length;
+    } else if (typeof want === "number") {
+      offset = want;
+    } else {
+      // Cross-block Up/Down: land `col` chars into this (target) block's FIRST
+      // (Down) or LAST (Up) source line, clamped to that line — OG parity. Resolved
+      // here against the target's real value, so multi-line planning blocks work.
+      if (want.edge === "first") {
+        const nl = v.indexOf("\n");
+        const lineLen = nl === -1 ? v.length : nl;
+        offset = Math.min(want.col, lineLen);
+      } else {
+        const lineStart = v.lastIndexOf("\n") + 1;
+        offset = lineStart + Math.min(want.col, v.length - lineStart);
+      }
+    }
+    const o = Math.min(offset, v.length);
     ref.setSelectionRange(o, o);
   };
   onMount(() => {
@@ -1372,16 +1391,22 @@ export function Editor(props: { id: string }): JSX.Element {
         const prev = prevVisible(props.id);
         if (prev) {
           e.preventDefault();
-          startEditing(prev, doc.byId[prev].raw.length);
+          // OG parity: keep the caret's column — land it that many chars into the
+          // LAST source line of the previous block (clamped). No sticky goal column.
+          startEditing(prev, { col: start - (before.lastIndexOf("\n") + 1), edge: "last" });
         }
       }
     } else if (e.key === "ArrowDown" && !e.shiftKey) {
       const after = raw.slice(start);
       if (!after.includes("\n") && caretAtLastRow(ref, start)) {
+        // OG parity: keep the caret's column — land it that many chars into the
+        // FIRST source line of the next block (clamped). Column is measured within
+        // the CURRENT (last) source line, so multi-line planning blocks work too.
+        const col = start - (raw.slice(0, start).lastIndexOf("\n") + 1);
         const next = nextVisible(props.id);
         if (next) {
           e.preventDefault();
-          startEditing(next, 0);
+          startEditing(next, { col, edge: "first" });
         } else {
           // No next LOADED block. In the journal feed, pull in the next day so
           // Down-arrow keeps going past the loaded window (previously only a
@@ -1389,7 +1414,7 @@ export function Editor(props: { id: string }): JSX.Element {
           // harmless no-op. Async: flush first, then step into the new day.
           e.preventDefault();
           commit(raw);
-          void nextVisibleOrExtend(props.id).then((n) => n && startEditing(n, 0));
+          void nextVisibleOrExtend(props.id).then((n) => n && startEditing(n, { col, edge: "first" }));
         }
       }
     } else if (e.key === "Escape") {

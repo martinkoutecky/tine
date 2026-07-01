@@ -1,7 +1,7 @@
-import { For, Show, createMemo, createResource, createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { For, Show, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { doc, ensurePageLoaded, pageByName } from "../store";
-import { Block } from "./Block";
+import { Block, SurfaceContext } from "./Block";
 import { RefBlocks } from "./RefBlocks";
 import { observeNear, unobserveNear } from "../lazyObserve";
 import type { BlockDto, PageKind } from "../types";
@@ -45,6 +45,14 @@ export function LiveRefGroup(props: { page: string; kind: PageKind; blocks: Bloc
   // O(N) per row → O(N²) per group (250k iterations on a 500-block hub group).
   const byId = createMemo(() => new Map(props.blocks.map((b) => [b.id, b] as const)));
   const dtoById = (id: string) => byId().get(id);
+  // A ref/query/embed group can render a block that ALSO lives in the main outline
+  // of the same page (e.g. the journal agenda re-lists today's scheduled/deadline
+  // bullets). Give this group its own edit "surface" so an UNSCOPED keyboard nav
+  // (Up/Down) into such a block focuses the MAIN-outline instance, not this copy —
+  // otherwise both instances (same "main" surface) call focus() and the off-screen
+  // copy wins, stealing the caret and scrolling the viewport to it. Same mechanism
+  // as the right sidebar (see startEditing / focusSurfaceFor). One key per group.
+  const surface = "ref:" + createUniqueId();
   return (
     <div
       ref={el}
@@ -53,6 +61,7 @@ export function LiveRefGroup(props: { page: string; kind: PageKind; blocks: Bloc
       style={!near() ? { "min-height": `${Math.max(1, props.blocks.length) * 1.9}em` } : undefined}
     >
       <Show when={near()}>
+        <SurfaceContext.Provider value={surface}>
         <For each={props.blocks.map((b) => b.id)}>
           {(id) => {
             const crumb = () => dtoById(id)?.breadcrumb ?? [];
@@ -86,6 +95,7 @@ export function LiveRefGroup(props: { page: string; kind: PageKind; blocks: Bloc
             );
           }}
         </For>
+        </SurfaceContext.Provider>
       </Show>
     </div>
   );

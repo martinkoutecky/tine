@@ -144,9 +144,15 @@ export const [editingId, setEditingId] = createSignal<string | null>(null);
 // this they'd all mount a textarea for the same node and fight over its value.
 // null = unscoped (e.g. keyboard nav) — any instance of editingId may edit.
 export const [editingOwner, setEditingOwner] = createSignal<string | null>(null);
-const [caretTarget, setCaretTarget] = createSignal<{ id: string; offset: number } | null>(null);
+// Where to put the caret when a block starts editing. Either a concrete offset
+// (clicks, splits, most callers) OR a column descriptor for cross-block Up/Down
+// navigation: land `col` chars into the target's FIRST (Down) or LAST (Up) source
+// line, resolved against the TARGET's own editor value (so hidden props / calc /
+// annotation blocks land correctly). Matches OG's cross-boundary caret algorithm.
+export type CaretPos = number | { col: number; edge: "first" | "last" };
+const [caretTarget, setCaretTarget] = createSignal<{ id: string; offset: CaretPos } | null>(null);
 
-export function takeCaretFor(id: string): number | null {
+export function takeCaretFor(id: string): CaretPos | null {
   const t = caretTarget();
   if (t && t.id === id) {
     setCaretTarget(null);
@@ -825,7 +831,7 @@ export function clearFocusSurface(id: string) {
   pendingFocusSurface.delete(id);
 }
 
-export function startEditing(id: string, offset: number, owner: string | null = null) {
+export function startEditing(id: string, offset: CaretPos = 0, owner: string | null = null) {
   // Latch the block so that when editing ends its body renders eagerly (no
   // deferred raw-text placeholder frame on blur). A just-created block goes
   // straight to the editor and is never rendered through AstBody first, so without
