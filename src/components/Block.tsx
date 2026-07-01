@@ -34,6 +34,7 @@ import {
   takeCaretFor,
   prevVisible,
   nextVisible,
+  nextVisibleOrExtend,
   insertOutlineAfter,
   deleteBlock,
   moveBlock,
@@ -1390,6 +1391,14 @@ export function Editor(props: { id: string }): JSX.Element {
         if (next) {
           e.preventDefault();
           startEditing(next, 0);
+        } else {
+          // No next LOADED block. In the journal feed, pull in the next day so
+          // Down-arrow keeps going past the loaded window (previously only a
+          // mouse-wheel scroll grew the feed). Non-feed pages resolve to null → a
+          // harmless no-op. Async: flush first, then step into the new day.
+          e.preventDefault();
+          commit(raw);
+          void nextVisibleOrExtend(props.id).then((n) => n && startEditing(n, 0));
         }
       }
     } else if (e.key === "Escape") {

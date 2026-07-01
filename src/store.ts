@@ -1906,6 +1906,21 @@ async function feedNeighbor(page: string, dir: 1 | -1): Promise<string | null> {
   return doc.feed[ti];
 }
 
+/** Like `nextVisible`, but when we're at the last LOADED block of the journal feed
+ *  it pulls in the next day first (via the feed extender) and returns that day's
+ *  first block. This lets Down-arrow keep going past the loaded window — previously
+ *  only mouse-wheel scrolling (the LoadMore sentinel) grew the feed, so keyboard nav
+ *  dead-ended at the last loaded bullet. Resolves to null when there's genuinely
+ *  nothing below (a non-feed page, or the feed is exhausted). */
+export async function nextVisibleOrExtend(id: string): Promise<string | null> {
+  const direct = nextVisible(id);
+  if (direct) return direct;
+  const node = doc.byId[id];
+  if (!node || doc.feed.indexOf(node.page) < 0) return null; // not a feed day → nothing to load
+  if (!feedExtender || !(await feedExtender())) return null; // feed exhausted / no extender
+  return nextVisible(id); // the newly-appended day's first block is now loaded
+}
+
 /** Move a single block one slot, crossing into the adjacent day at a page
  *  boundary. Returns how it moved so the caller can restore the caret. */
 export async function moveBlockFeed(id: string, dir: 1 | -1): Promise<"within" | "crossed" | "none"> {
