@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1" name="viewport"/>
+<title>Tine — The Human's Blog</title>
+<meta content="Why I built a faster, file-compatible Logseq in a week and a half without being a software engineer — and the first reactions from r/logseq." name="description"/>
+<link href="../favicon.svg" rel="icon" type="image/svg+xml"/>
+<link href="../style.css" rel="stylesheet"/>
+<link href="blog.css" rel="stylesheet"/>
+<meta content="article" property="og:type"/>
+<meta content="Tine — drop-in faster Logseq OG replacement" property="og:title"/>
+<meta content="Why I built a faster, file-compatible Logseq in a week and a half, and the first reactions." property="og:description"/>
+</head>
+<body>
+<header class="nav">
+<a aria-label="Tine — home" class="brand" href="../">
+<svg aria-hidden="true" class="mark" height="34" viewBox="0 0 64 80" width="34">
+<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="6">
+<path d="M16 14 V36"></path><path d="M32 14 V36"></path><path d="M48 14 V36"></path>
+<path d="M16 36 H48"></path><path d="M32 36 V70"></path>
+</g>
+</svg>
+<span class="brand-word">Tine</span>
+</a>
+<nav class="nav-links">
+<a href="../">Home</a>
+<a href="../demo/">Demo</a>
+<a href="index.html">Blog</a>
+<a class="nav-cta" href="https://github.com/martinkoutecky/tine/releases">Download</a>
+</nav>
+</header>
+<main id="top">
+<article class="post">
+<header class="post-head">
+<div class="card-meta">
+<span class="ver-chip">v0.1.0</span>
+<span class="dateline">June 24, 2026</span>
+<a class="dateline" href="https://www.reddit.com/r/logseq/comments/1uetnyn/tine_dropin_faster_logseq_og_replacement/" style="color:var(--accent-deep)">· original r/logseq thread ↗</a>
+</div>
+<h1>Tine — drop-in faster Logseq OG replacement</h1>
+<p class="dek">The first release. Here's what I wrote when I announced it — unedited.</p>
+</header>
+<div class="prose">
+<p>Hi! I vibecoded <a href="https://github.com/martinkoutecky/tine">Tine</a>, a drop-in Logseq OG
+        replacement mainly built to be faster, but also with some features I missed.</p>
+<p><strong>The why:</strong> I loved using Logseq, but at some point realized I can't use queries
+        because they are slow / make logseq use a lot of CPU even when idle (yeah weird). Then every
+        summer my laptop starts overheating and it is partially because of the electron apps. When CPU
+        throttles, the apps get slow. Surely there must be a way to do this faster.</p>
+<p><strong>The what:</strong></p>
+<ul>
+<li>I first just wanted logseq, but faster. I don't use whiteboards, flashcards etc., so these
+          are currently unavailable. I focused on features that I use.</li>
+<li>It just works over your OG graph — reads and writes the same files. It should be safe and
+          compatible but it was only ever tested by one person, on one platform, one graph, so be warned.
+          (On the other hand yes, I am actually using this on my real graph worth 5 years of life, and
+          I'm syncthing-ing it to my Android phone and there editing it using the logseq app, and nothing
+          has broken yet.) Also, there are automatic backups.</li>
+<li>I added some features that I liked — some I knew from OG plugins (tabs), some just seemed like
+          a (really) nice thing to have: tabs, focus+dim mode, quick-capture, carry tasks to today, etc.
+          Look at the readme.</li>
+</ul>
+<p class="pull">AI: full disclosure, everything except this text is completely vibecoded,
+        including the README.</p>
+<p>Let me know what you think / any ideas for changes / features etc. If you find bugs, let me
+        know via github issues. This is still beta at best, so bugs are expected.</p>
+</div>
+<div class="post-links">
+<a href="https://github.com/martinkoutecky/tine/releases/tag/v0.1.0">📦 v0.1.0 release &amp; changelog ↗</a>
+<a href="https://www.reddit.com/r/logseq/comments/1uetnyn/tine_dropin_faster_logseq_og_replacement/">💬 Full discussion on r/logseq ↗</a>
+</div>
+</article>
+<section class="convos">
+<h2>From the discussion</h2>
+<p class="section-lede">The thread ran from delight to well-earned skepticism. A few exchanges I
+      keep thinking about — Claude tries to summarize the others faithfully and generously; the originals are linked, so you can check; my own are quoted in full.</p>
+<!-- convo 1 -->
+<div class="convo">
+<p class="convo-topic">“You're not even a developer?”</p>
+<div class="turn turn-them">
+<div class="by"><a href="https://www.reddit.com/user/secretBuffetHero">secretBuffetHero</a>
+<a class="permalink" href="https://www.reddit.com/r/logseq/comments/1uetnyn/tine_dropin_faster_logseq_og_replacement/otmmdqz/">full comment ↗</a></div>
+<p class="said">Desperate for a Logseq replacement. He'd considered vibe-coding one himself but
+          was sure it would take too long, and is genuinely curious how much effort this took. He's
+          relieved I picked “a normal language” instead of Clojure — and slips in a wishlist item:
+          more standard Markdown (he was never thrilled Logseq spun its own flavor).</p>
+</div>
+<div class="turn turn-me">
+<div class="by">Me <span class="op-badge">OP</span>
+<a class="permalink" href="https://www.reddit.com/r/logseq/comments/1uetnyn/tine_dropin_faster_logseq_og_replacement/otmmsg5/">↗</a></div>
+<div class="said"><p>I'm just a user, but AI coding is currently good enough for the task I needed, so I let AI code it up for me. (I'm currently building up the release on github, so it should be available in the next few hours after I iron out the kinks.)</p> <p>My goal was not a replacement - I think the design is fantastic - just a version which works quickly (and does a few more things).</p></div>
+</div>
+<div class="turn turn-them">
+<div class="by"><a href="https://www.reddit.com/user/secretBuffetHero">secretBuffetHero</a>
+<a class="permalink" href="https://www.reddit.com/r/logseq/comments/1uetnyn/tine_dropin_faster_logseq_og_replacement/otmo65y/">full comment ↗</a></div>
+<p class="said">Floored: you're not even a developer, and you built a clone in a few weeks? “The
+          world is freaking insane now.”</p>
+</div>
+<div class="turn turn-me">
+<div class="by">Me <span class="op-badge">OP</span>
+<a class="permalink" href="https://www.reddit.com/r/logseq/comments/1uetnyn/tine_dropin_faster_logseq_og_replacement/otmos30/">↗</a></div>
+<div class="said"><p>A week and a half. It does not have feature-parity, just all the features I ever needed. But yes, the world is insane (and more is coming). It was built with Opus 4.8 + Claude Code but I'm pretty sure other SotA models would be able to do it too (GPT-5.5 for instance). Claude is just the most comfortable to work with right now.</p></div>
+</div>
+</div>
+<!-- convo 2 -->
+<div class="convo">
+<p class="convo-topic">Would you trust a vibe-coded app with your data?</p>
+<div class="turn turn-them">
+<div class="by"><a href="https://www.reddit.com/user/micalm">micalm</a>
+<a class="permalink" href="https://www.reddit.com/r/logseq/comments/1uetnyn/tine_dropin_faster_logseq_og_replacement/otragze/">full comment ↗</a></div>
+<p class="said">Wouldn't ever trust a vibed app with his data — but calls it the best LLM-use
+          disclosure he's seen so far, and wishes me luck.</p>
+</div>
+<div class="turn turn-me">
+<div class="by">Me <span class="op-badge">OP</span>
+<a class="permalink" href="https://www.reddit.com/r/logseq/comments/1uetnyn/tine_dropin_faster_logseq_og_replacement/otrv4f2/">↗</a></div>
+<div class="said"><p>Hehe. I understand. But things are changing fast with LLMs; if you are coming from an experience 6 months back, claude code / codex are a pretty different experience (part because the harnesses got better, mainly because the models got vastly better).</p></div>
+</div>
+<div class="turn turn-them">
+<div class="by"><a href="https://www.reddit.com/user/runs11trails">runs11trails</a>
+<a class="permalink" href="https://www.reddit.com/r/logseq/comments/1uetnyn/tine_dropin_faster_logseq_og_replacement/ou1e7tq/">full comment ↗</a></div>
+<p class="said">Wonders whether being open source makes Tine — vibe-coded or not — actually more
+          trustworthy than Logseq.</p>
+</div>
+<div class="turn turn-them">
+<div class="by"><a href="https://www.reddit.com/user/micalm">micalm</a>
+<a class="permalink" href="https://www.reddit.com/r/logseq/comments/1uetnyn/tine_dropin_faster_logseq_og_replacement/ou2n28p/">full comment ↗</a></div>
+<p class="said">Both are open source, he answers — but that in itself means nothing until someone
+          actually audits the code, and he doesn't have the time. If Tine grows enough that someone
+          qualified takes a look (or he gets a chance to try it in a safe environment), he will. He's not
+          writing it off just for being vibe-coded.</p>
+</div>
+</div>
+<!-- convo 3 -->
+<div class="convo">
+<p class="convo-topic">The honest state of the stack</p>
+<div class="turn turn-them">
+<div class="by"><a href="https://www.reddit.com/user/pereira_alex">pereira_alex</a>
+<a class="permalink" href="https://www.reddit.com/r/logseq/comments/1uetnyn/tine_dropin_faster_logseq_og_replacement/otmytcj/">full comment ↗</a></div>
+<p class="said">On Linux the AppImage crashed under Wayland (<code>EGL_BAD_PARAMETER</code>); he
+          found an <code>LD_PRELOAD</code> workaround. He warns that Tauri/WebKitGTK on Linux is “a very
+          bad story” next to Windows and Mac — and pushes back on my framing: Electron is <em>not</em> a
+          reason Logseq is slow. With Tauri you'll always hit “the CSS rule that doesn't quite work on all
+          platforms”; with Electron everything is the same everywhere. Still — great work, and great
+          dedication to scratch your own itch.</p>
+</div>
+<div class="turn turn-me">
+<div class="by">Me <span class="op-badge">OP</span>
+<a class="permalink" href="https://www.reddit.com/r/logseq/comments/1uetnyn/tine_dropin_faster_logseq_og_replacement/ou0pgng/">↗</a></div>
+<div class="said"><p>Hi - just to say you were right - I hit some scrolling bug which turns out to essentially be "webkitgtk is crap". It is kind of minor, but annoying. Hopefully nothing more serious will come up.</p></div>
+</div>
+<div class="turn turn-me">
+<div class="by">Me <span class="op-badge">OP</span>
+<a class="permalink" href="https://www.reddit.com/r/logseq/comments/1uetnyn/tine_dropin_faster_logseq_og_replacement/ou4qv3i/">↗</a></div>
+<div class="said"><p>Yes - I think you're right that a smaller change was necessary (instead of clojure + datascript just have the rust backend + chromium frontend); but I'm not a software engineer, don't understand the stack, so I just went with what Claude proposed. Oh well, it's not terrible.</p></div>
+</div>
+</div>
+</section>
+<nav class="post-nav">
+<a class="to-index" href="index.html">← All notes</a>
+<a href="v0.2.0.html">Next: v0.2.0 →</a>
+</nav>
+<p class="method-note">
+    How to read this: comments by other people are Claude's summaries — it tries to be faithful and generous — and the originals are
+    linked on Reddit, so you can check; my own replies are quoted verbatim. Usernames link to their Reddit profiles.
+  </p>
+</main>
+<footer class="foot">
+<div class="foot-inner">
+<div class="foot-brand">
+<svg aria-hidden="true" class="mark" height="26" viewBox="0 0 64 80" width="26">
+<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="6">
+<path d="M16 14 V36"></path><path d="M32 14 V36"></path><path d="M48 14 V36"></path>
+<path d="M16 36 H48"></path><path d="M32 36 V70"></path>
+</g>
+</svg>
+<span>Tine</span>
+</div>
+<nav class="foot-links">
+<a href="../">Home</a>
+<a href="index.html">Blog</a>
+<a href="https://github.com/martinkoutecky/tine">GitHub</a>
+<a href="https://github.com/martinkoutecky/tine/releases">Releases</a>
+</nav>
+<p class="foot-copy">© 2026 Martin Koutecký · Built as a faster, file-compatible companion to Logseq.</p>
+</div>
+</footer>
+</body>
+</html>

@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1" name="viewport"/>
+<title>Tine v0.2.0 — The Human's Blog</title>
+<meta content="Org-mode, in-block Markdown lists, media embeds, custom date formats — and a few good conversations about product philosophy, asset naming, and split-view." name="description"/>
+<link href="../favicon.svg" rel="icon" type="image/svg+xml"/>
+<link href="../style.css" rel="stylesheet"/>
+<link href="blog.css" rel="stylesheet"/>
+<meta content="article" property="og:type"/>
+<meta content="Tine v0.2.0 — drop-in faster Logseq OG replacement" property="og:title"/>
+<meta content="What shipped two days after launch, and the discussions that shaped it." property="og:description"/>
+</head>
+<body>
+<header class="nav">
+<a aria-label="Tine — home" class="brand" href="../">
+<svg aria-hidden="true" class="mark" height="34" viewBox="0 0 64 80" width="34">
+<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="6">
+<path d="M16 14 V36"></path><path d="M32 14 V36"></path><path d="M48 14 V36"></path>
+<path d="M16 36 H48"></path><path d="M32 36 V70"></path>
+</g>
+</svg>
+<span class="brand-word">Tine</span>
+</a>
+<nav class="nav-links">
+<a href="../">Home</a>
+<a href="../demo/">Demo</a>
+<a href="index.html">Blog</a>
+<a class="nav-cta" href="https://github.com/martinkoutecky/tine/releases">Download</a>
+</nav>
+</header>
+<main id="top">
+<article class="post">
+<header class="post-head">
+<div class="card-meta">
+<span class="ver-chip">v0.2.0</span>
+<span class="dateline">June 26, 2026</span>
+<a class="dateline" href="https://www.reddit.com/r/logseq/comments/1ug79my/tine_v020_dropin_faster_logseq_og_replacement/" style="color:var(--accent-deep)">· original r/logseq thread ↗</a>
+</div>
+<h1>Tine v0.2.0 — drop-in faster Logseq OG replacement</h1>
+<p class="dek">Two days after launch. My announcement, unedited — the AI-written changelog is linked, not pasted.</p>
+</header>
+<div class="prose">
+<p>Two days ago I <a href="v0.1.0.html">announced Tine</a>. Thanks for the support and for everyone
+        who reported bugs + feature requests. I tried to make progress on them — org-mode support, custom
+        date formats and many others. See the (AI generated)
+        <a href="https://github.com/martinkoutecky/tine/releases/tag/v0.2.0">changelog</a>, hence v0.2.0.</p>
+<p>I still have some items on my backlog from what you shared:</p>
+<ul>
+<li>look into plugin support (I'm definitely not hopeful for full plugin support but maybe
+          something can be done)</li>
+<li>somebody mentioned something with namespaces</li>
+</ul>
+<p>Then I have some ideas of my own. But feel free to give feedback, especially:</p>
+<ul>
+<li>bugs</li>
+<li>OG features that are missing / don't work as they should</li>
+<li>features OG doesn't have but you wish it did (and are compatible with the on-disk format)</li>
+</ul>
+</div>
+<div class="post-links">
+<a href="https://github.com/martinkoutecky/tine/releases/tag/v0.2.0">📦 v0.2.0 release &amp; full changelog ↗</a>
+<a href="https://www.reddit.com/r/logseq/comments/1ug79my/tine_v020_dropin_faster_logseq_og_replacement/">💬 Full discussion on r/logseq ↗</a>
+</div>
+</article>
+<section class="convos">
+<h2>From the discussion</h2>
+<p class="section-lede">Three exchanges that shaped how I think about Tine — a product philosophy, a
+      design decision worked out in public, and a feature request I had to really understand before
+      answering.</p>
+<!-- convo 1 -->
+<div class="convo">
+<p class="convo-topic">“If it works, don't fix it”</p>
+<div class="turn turn-them">
+<div class="by"><a href="https://www.reddit.com/user/Petrush">Petrush</a>
+<a class="permalink" href="https://www.reddit.com/r/logseq/comments/1ug79my/tine_v020_dropin_faster_logseq_og_replacement/otxq8oc/">full comment ↗</a></div>
+<p class="said">Thinks this is a very interesting development: feature-wise Logseq is very good,
+          but its performance and maintenance aren't convincing anymore.</p>
+</div>
+<div class="turn turn-me">
+<div class="by">Me <span class="op-badge">OP</span>
+<a class="permalink" href="https://www.reddit.com/r/logseq/comments/1ug79my/tine_v020_dropin_faster_logseq_og_replacement/otxs3ce/">↗</a></div>
+<div class="said"><p>Thanks. I think (also based on my experience) that people have negative feelings when software "does not keep evolving". But I think this is a bad instinct - if it works, don't fix it. So Tine might disappoint - I hope to get it to a place where it serves my needs well and then only add features that bring genuine value, which might mean long stretches of time when nothing apparently changes (just bug fixes). We shall see of course.</p></div>
+</div>
+</div>
+<!-- convo 2 -->
+<div class="convo">
+<p class="convo-topic">Designing asset naming, out loud</p>
+<div class="turn turn-them">
+<div class="by"><a href="https://www.reddit.com/user/MrAiupov">MrAiupov</a>
+<a class="permalink" href="https://www.reddit.com/r/logseq/comments/1ug79my/tine_v020_dropin_faster_logseq_og_replacement/ou1dv9x/">full comment ↗</a></div>
+<p class="said">Wants one unified asset-filename scheme — a pure <code>yyyymmddhhmmss</code>
+          timestamp. His reasoning is careful: he switches between Windows and Linux, where file-creation
+          metadata isn't reliably preserved, so putting the timestamp <em>in the name</em> is portable and
+          means sorting by name always equals sorting by time. It also removes the small friction of
+          thinking about names at all. He'd keep original names only where they carry meaning (PDFs,
+          documents) — so maybe timestamp by default, keep-original as an option.</p>
+</div>
+<div class="turn turn-me">
+<div class="by">Me <span class="op-badge">OP</span>
+<a class="permalink" href="https://www.reddit.com/r/logseq/comments/1ug79my/tine_v020_dropin_faster_logseq_og_replacement/ou4plfy/">↗</a></div>
+<div class="said"><p>It feels like you must be using a very different flow than me..?</p> <p>So: I never name assets explicitly. How do assets get into my graph:</p> <ul> <li>pasted images, or</li> <li>the /upload asset command which I use for PDFs mainly (but possibly audio, video)</li> </ul> <p>The pasted images I don't name and it seems that they fget just timestamped by default. The uploaded PDFs etc are exactly where I would like to preserve the name somewhere because it tells me what's in the pdf.</p> <p>For sorting it should be enough if I did timestamp_assetname.ext - no?</p></div>
+</div>
+<div class="turn turn-them">
+<div class="by"><a href="https://www.reddit.com/user/MrAiupov">MrAiupov</a>
+<a class="permalink" href="https://www.reddit.com/r/logseq/comments/1ug79my/tine_v020_dropin_faster_logseq_og_replacement/ou6hic2/">full comment ↗</a></div>
+<p class="said"><code>timestamp_assetname.ext</code> — good idea 😳</p>
+</div>
+</div>
+<!-- convo 3 -->
+<div class="convo">
+<p class="convo-topic">Do you really need split view?</p>
+<div class="turn turn-them">
+<div class="by"><a href="https://www.reddit.com/user/cons_ssj">cons_ssj</a>
+<a class="permalink" href="https://www.reddit.com/r/logseq/comments/1ug79my/tine_v020_dropin_faster_logseq_og_replacement/ou5o462/">full comment ↗</a></div>
+<p class="said">Wants true split view like VSCode/Obsidian — several long notes open side by side,
+          each pane with its own tabs, so he can read, edit, and reorganize between them. He knows about
+          Tine's sidebar but finds it uncomfortable for long notes: for him one “note” can be a whole
+          project, and he can't keep several of those open at once.</p>
+</div>
+<div class="turn turn-me">
+<div class="by">Me <span class="op-badge">OP</span>
+<a class="permalink" href="https://www.reddit.com/r/logseq/comments/1ug79my/tine_v020_dropin_faster_logseq_og_replacement/ou0jxlc/">↗</a></div>
+<div class="said"><p>Not right now, the thought crossed my mind though. But are you aware of the sidebar? This is already an OG feature, it's just one of those that made it very slow and not comfortable to use for me, which is why I created Tine.</p> <p>You can shift-click any bullet or page link, and it will open that block/page in the sidebar (you can open multiple at the same time and they will be stacked on top of each other in the order you opened them). They are fully live &amp; editable in the sidebar. Do you think you need true split view - i.e. you use e.g. three-way splits, horizontal splits etc.?</p></div>
+</div>
+<div class="turn turn-me">
+<div class="by">Me <span class="op-badge">OP</span>
+<a class="permalink" href="https://www.reddit.com/r/logseq/comments/1ug79my/tine_v020_dropin_faster_logseq_og_replacement/ou7vksi/">↗</a></div>
+<div class="said"><p>Thanks! I think it explains well what you want. I think mainly I was confused by you writing that even side by side reading would be great when the sidebar already supports that, but both the links show functionality that goes well beyond the sidebar. I'm not sure I'd ever use that but I think it makes some sense to have it if I can get it right. I'll focus on fixing bugs and adding easier features for now but keep this in the backlog.</p></div>
+</div>
+</div>
+</section>
+<nav class="post-nav">
+<a href="v0.1.0.html">← Previous: v0.1.0</a>
+<a class="to-index" href="index.html">All notes</a>
+<a href="v0.3.0.html">Next: v0.3.0 →</a>
+</nav>
+<p class="method-note">
+    How to read this: comments by other people are Claude's summaries — it tries to be faithful and generous — and the originals are
+    linked on Reddit, so you can check; my own replies are quoted verbatim.
+  </p>
+</main>
+<footer class="foot">
+<div class="foot-inner">
+<div class="foot-brand">
+<svg aria-hidden="true" class="mark" height="26" viewBox="0 0 64 80" width="26">
+<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="6">
+<path d="M16 14 V36"></path><path d="M32 14 V36"></path><path d="M48 14 V36"></path>
+<path d="M16 36 H48"></path><path d="M32 36 V70"></path>
+</g>
+</svg>
+<span>Tine</span>
+</div>
+<nav class="foot-links">
+<a href="../">Home</a>
+<a href="index.html">Blog</a>
+<a href="https://github.com/martinkoutecky/tine">GitHub</a>
+<a href="https://github.com/martinkoutecky/tine/releases">Releases</a>
+</nav>
+<p class="foot-copy">© 2026 Martin Koutecký · Built as a faster, file-compatible companion to Logseq.</p>
+</div>
+</footer>
+</body>
+</html>

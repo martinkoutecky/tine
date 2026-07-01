@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Human's Blog — Tine</title>
+<meta name="description" content="Tine's code is written by AI. This is where the human writes about it — one note per release, plus the conversations that shaped it.">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../style.css">
+<link rel="stylesheet" href="blog.css">
+
+<meta property="og:type" content="website">
+<meta property="og:title" content="The Human's Blog — Tine">
+<meta property="og:description" content="AI writes the code; the human writes the reflections. One note per Tine release, plus the discussions that shaped it.">
+</head>
+<body>
+
+<header class="nav">
+  <a class="brand" href="../" aria-label="Tine — home">
+    <svg class="mark" width="34" height="34" viewBox="0 0 64 80" aria-hidden="true">
+      <g stroke="currentColor" stroke-width="6" stroke-linecap="round" fill="none">
+        <path d="M16 14 V36"/><path d="M32 14 V36"/><path d="M48 14 V36"/>
+        <path d="M16 36 H48"/><path d="M32 36 V70"/>
+      </g>
+    </svg>
+    <span class="brand-word">Tine</span>
+  </a>
+  <nav class="nav-links">
+    <a href="../">Home</a>
+    <a href="../demo/">Demo</a>
+    <a href="index.html" aria-current="page">Blog</a>
+    <a class="nav-cta" href="https://github.com/martinkoutecky/tine/releases">Download</a>
+  </nav>
+</header>
+
+<main id="top">
+
+  <section class="blog-hero">
+    <div class="hero-glow" aria-hidden="true"></div>
+    <div class="blog-hero-inner">
+      <p class="eyebrow">The counterpart to “Built by AI, in the open”</p>
+      <h1>The Human's Blog</h1>
+      <p class="lede">
+        Tine's code, docs, and even this website are written by AI. The one thing that isn't
+        is the thinking behind it. So this is where <strong>the human</strong> writes — one short
+        note per release, in my own words, plus a fully-linked look at the conversations each release
+        started on <a href="https://old.reddit.com/r/logseq/">r/logseq</a>.
+      </p>
+    </div>
+  </section>
+
+  <div class="post-list">
+
+    <a class="post-card" href="v0.3.0.html">
+      <div class="card-meta"><span class="ver-chip">v0.3.0</span><span class="dateline">June 30, 2026</span></div>
+      <h2>Tine v0.3.0 — drop-in faster Logseq OG — more parity + goodies</h2>
+      <p class="dek">
+        An audit loop turned up a bad smell — Tine was parsing Markdown with something like a pile
+        of regexes — so I had Claude build <em>lsdoc</em>, a real linear-time, mldoc-compatible parser.
+        The release also sparked the sharpest exchange yet about whether you should trust software
+        built this way. I think it's worth reading in full.
+      </p>
+      <span class="more">Read the note →</span>
+    </a>
+
+    <a class="post-card" href="v0.2.0.html">
+      <div class="card-meta"><span class="ver-chip">v0.2.0</span><span class="dateline">June 26, 2026</span></div>
+      <h2>Tine v0.2.0 — drop-in faster Logseq OG replacement</h2>
+      <p class="dek">
+        Two days after launch: org-mode graphs, real Markdown checklists, media embeds, custom
+        journal date formats. And a few good back-and-forths — on why “stagnant” software isn't the
+        problem people think, on how to name assets, and on split-view.
+      </p>
+      <span class="more">Read the note →</span>
+    </a>
+
+    <a class="post-card" href="v0.1.0.html">
+      <div class="card-meta"><span class="ver-chip">v0.1.0</span><span class="dateline">June 24, 2026</span></div>
+      <h2>Tine — drop-in faster Logseq OG replacement</h2>
+      <p class="dek">
+        The first release. Why I built a faster, file-compatible Logseq in a week and a half without
+        being a software engineer — and the first reactions, from delight to well-earned skepticism
+        about trusting a vibe-coded app with five years of notes.
+      </p>
+      <span class="more">Read the note →</span>
+    </a>
+
+  </div>
+
+  <p class="method-note" style="text-align:center; max-width:640px; margin-top:2.4rem;">
+    In each note, <strong>Claude tries to</strong> summarize other people's comments faithfully and generously; the
+    originals are linked, so you can check. My own replies are quoted <strong>in full</strong>, and I've tried to leave the
+    criticism in rather than edit it out.
+  </p>
+
+</main>
+
+<footer class="foot">
+  <div class="foot-inner">
+    <div class="foot-brand">
+      <svg class="mark" width="26" height="26" viewBox="0 0 64 80" aria-hidden="true">
+        <g stroke="currentColor" stroke-width="6" stroke-linecap="round" fill="none">
+          <path d="M16 14 V36"/><path d="M32 14 V36"/><path d="M48 14 V36"/>
+          <path d="M16 36 H48"/><path d="M32 36 V70"/>
+        </g>
+      </svg>
+      <span>Tine</span>
+    </div>
+    <nav class="foot-links">
+      <a href="../">Home</a>
+      <a href="https://github.com/martinkoutecky/tine">GitHub</a>
+      <a href="https://github.com/martinkoutecky/tine/releases">Releases</a>
+      <a href="https://github.com/martinkoutecky/tine/blob/master/CHANGELOG.md">Changelog</a>
+    </nav>
+    <p class="foot-copy">© 2026 Martin Koutecký · Built as a faster, file-compatible companion to Logseq.</p>
+  </div>
+</footer>
+
+</body>
+</html>

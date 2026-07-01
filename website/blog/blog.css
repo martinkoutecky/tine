@@ -1,0 +1,147 @@
+/* Tine — "Notes from the human" blog. Loads AFTER ../style.css and reuses its
+   tokens. AI writes the code; this is where the human writes about it. */
+
+/* ---------- blog masthead ---------- */
+.blog-hero {
+  position: relative; text-align: center;
+  padding: clamp(2.6rem, 6vw, 4.4rem) 1.2rem clamp(1.4rem, 3vw, 2rem);
+  overflow: hidden;
+}
+.blog-hero .hero-glow { height: 420px; }
+.blog-hero-inner { position: relative; max-width: 680px; margin: 0 auto; }
+.blog-hero h1 { font-size: clamp(2rem, 5vw, 3rem); font-weight: 820; }
+.blog-hero .lede { margin-top: 1.1rem; }
+
+/* ---------- index: list of releases ---------- */
+.post-list {
+  max-width: 760px; margin: clamp(1.5rem, 4vw, 2.6rem) auto 0;
+  padding: 0 clamp(1rem, 4vw, 2rem); display: grid; gap: 1.1rem;
+}
+.post-card {
+  display: block; background: var(--card); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 1.4rem 1.5rem; box-shadow: var(--shadow);
+  transition: transform .12s ease, border-color .12s ease; color: inherit;
+}
+.post-card:hover {
+  text-decoration: none; transform: translateY(-3px);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+}
+.post-card .card-meta { display: flex; align-items: center; gap: .7rem; margin-bottom: .55rem; }
+.post-card h2 { font-size: 1.3rem; letter-spacing: -.01em; }
+.post-card .dek { margin: .5rem 0 0; color: var(--ink-soft); font-size: 1rem; }
+.post-card .more { display: inline-block; margin-top: .8rem; color: var(--accent-deep); font-weight: 700; font-size: .92rem; }
+
+/* ---------- version chip + dateline ---------- */
+.ver-chip {
+  display: inline-block; font-size: .74rem; font-weight: 800; letter-spacing: .02em;
+  color: #042b20; background: var(--accent); padding: .12em .6em; border-radius: 999px;
+  white-space: nowrap;
+}
+.dateline { color: var(--ink-faint); font-size: .84rem; font-weight: 600; }
+
+/* ---------- a single post ---------- */
+.post { max-width: 46rem; margin: 0 auto; padding: clamp(2rem, 5vw, 3.2rem) clamp(1rem, 4vw, 1.6rem) 1rem; }
+.post-head { margin-bottom: 1.8rem; }
+.post-head .card-meta { display: flex; align-items: center; gap: .8rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.post-head h1 { font-size: clamp(1.8rem, 4.4vw, 2.6rem); font-weight: 820; }
+.post-head .dek { margin: 1rem 0 0; color: var(--ink-soft); font-size: 1.12rem; }
+
+/* prose: the human's own words */
+.prose { color: var(--ink); font-size: 1.06rem; }
+.prose > p { margin: 1.1rem 0; color: var(--ink-soft); }
+.prose > p:first-child { margin-top: 0; }
+.prose strong { color: var(--ink); }
+.prose ul { margin: 1.1rem 0; padding-left: 1.3rem; color: var(--ink-soft); }
+.prose ul li { margin: .4rem 0; }
+.prose ul li::marker { color: var(--accent); }
+.prose a { color: var(--accent-deep); font-weight: 600; }
+
+.pull {
+  margin: 1.6rem 0; padding: .2rem 0 .2rem 1.2rem; border-left: 3px solid var(--accent);
+  font-size: 1.18rem; line-height: 1.5; color: var(--ink); font-weight: 600;
+}
+
+/* release / thread link row */
+.post-links {
+  display: flex; flex-wrap: wrap; gap: .7rem; margin: 2rem 0 0;
+  padding-top: 1.4rem; border-top: 1px solid var(--line);
+}
+.post-links a {
+  display: inline-flex; align-items: center; gap: .4rem; font-size: .9rem; font-weight: 600;
+  color: var(--ink-soft); border: 1px solid var(--line); border-radius: 9px; padding: .45rem .85rem;
+  background: var(--card);
+}
+.post-links a:hover { text-decoration: none; border-color: var(--accent); color: var(--accent-deep); }
+
+/* ---------- the discussion ---------- */
+.convos { max-width: 46rem; margin: 0 auto; padding: clamp(1.4rem, 4vw, 2.4rem) clamp(1rem, 4vw, 1.6rem) 0; }
+.convos > h2 { margin-bottom: .4rem; }
+.convos > .section-lede { margin-bottom: 2.2rem; }
+
+.convo {
+  margin: 0 0 2.2rem; padding: 0 0 0 0;
+}
+.convo + .convo { border-top: 1px solid var(--line); padding-top: 2rem; }
+.convo-topic {
+  font-size: .74rem; font-weight: 800; letter-spacing: .09em; text-transform: uppercase;
+  color: var(--accent-deep); margin: 0 0 1rem;
+}
+
+.turn { margin: 0 0 1rem; }
+.turn .by { font-weight: 700; font-size: .92rem; color: var(--ink); }
+.turn .by a { color: var(--ink); }
+.turn .op-badge {
+  display: inline-block; margin-left: .45rem; font-size: .64rem; font-weight: 800; letter-spacing: .04em;
+  color: #042b20; background: var(--accent); border-radius: 999px; padding: .06em .5em; vertical-align: .1em;
+}
+.turn .permalink { margin-left: .5rem; font-size: .8rem; font-weight: 600; color: var(--ink-faint); }
+
+/* summary of someone else's comment (faithful paraphrase) */
+.turn-them .said {
+  margin: .4rem 0 0; padding: .85rem 1.05rem; background: var(--bg-band);
+  border: 1px solid var(--line); border-radius: 12px; color: var(--ink-soft); font-size: .98rem;
+}
+.turn-them .said em.para { font-style: italic; color: var(--ink-faint); }
+
+/* Martin's own words, verbatim */
+.turn-me .said {
+  margin: .4rem 0 0; padding: .3rem 0 .3rem 1.1rem; border-left: 3px solid var(--accent);
+  color: var(--ink); font-size: 1rem;
+}
+.turn-me .said p { margin: .6rem 0; }
+.turn-me .said p:first-child { margin-top: 0; }
+.turn-me .said p:last-child { margin-bottom: 0; }
+.turn-me .said blockquote {
+  margin: .6rem 0; padding-left: .8rem; border-left: 2px solid var(--line);
+  color: var(--ink-faint); font-style: italic;
+}
+.turn-me .said blockquote p { margin: 0; }
+.turn-me .said ul, .turn-me .said ol { margin: .6rem 0; padding-left: 1.4rem; }
+.turn-me .said li { margin: .3rem 0; }
+.turn-me .said li::marker { color: var(--accent); }
+.turn-me .said a { color: var(--accent-deep); font-weight: 600; }
+
+/* short reaction quotes strip */
+.reactions { margin: 1.4rem 0 0; display: grid; gap: .7rem; }
+.reaction {
+  padding: .7rem 1rem; border: 1px dashed var(--line); border-radius: 11px;
+  color: var(--ink-soft); font-size: .96rem; background: var(--card);
+}
+.reaction .who { color: var(--ink-faint); font-weight: 700; font-size: .82rem; }
+
+/* ---------- post footer nav ---------- */
+.post-nav {
+  max-width: 46rem; margin: clamp(2rem, 5vw, 3rem) auto 0;
+  padding: 1.4rem clamp(1rem, 4vw, 1.6rem) 0; border-top: 1px solid var(--line);
+  display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap;
+}
+.post-nav a { color: var(--ink-soft); font-weight: 600; font-size: .95rem; }
+.post-nav a:hover { color: var(--accent-deep); }
+.post-nav .to-index { color: var(--ink); }
+
+/* a small note explaining how the discussion is presented */
+.method-note {
+  max-width: 46rem; margin: 2.4rem auto 0; padding: 1rem clamp(1rem, 4vw, 1.6rem);
+  color: var(--ink-faint); font-size: .86rem;
+}
+.method-note code { font-size: .82em; }

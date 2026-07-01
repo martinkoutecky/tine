@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1" name="viewport"/>
+<title>Tine v0.3.0 — The Human's Blog</title>
+<meta content="An audit loop caught Tine parsing Markdown with regexes, so I had Claude build a real linear-time parser (lsdoc). Plus the sharpest exchange yet about trusting software built by AI." name="description"/>
+<link href="../favicon.svg" rel="icon" type="image/svg+xml"/>
+<link href="../style.css" rel="stylesheet"/>
+<link href="blog.css" rel="stylesheet"/>
+<meta content="article" property="og:type"/>
+<meta content="Tine v0.3.0 — drop-in faster Logseq OG — more parity + goodies" property="og:title"/>
+<meta content="Building lsdoc, and the sharpest exchange yet about whether you should trust software built this way." property="og:description"/>
+</head>
+<body>
+<header class="nav">
+<a aria-label="Tine — home" class="brand" href="../">
+<svg aria-hidden="true" class="mark" height="34" viewBox="0 0 64 80" width="34">
+<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="6">
+<path d="M16 14 V36"></path><path d="M32 14 V36"></path><path d="M48 14 V36"></path>
+<path d="M16 36 H48"></path><path d="M32 36 V70"></path>
+</g>
+</svg>
+<span class="brand-word">Tine</span>
+</a>
+<nav class="nav-links">
+<a href="../">Home</a>
+<a href="../demo/">Demo</a>
+<a href="index.html">Blog</a>
+<a class="nav-cta" href="https://github.com/martinkoutecky/tine/releases">Download</a>
+</nav>
+</header>
+<main id="top">
+<article class="post">
+<header class="post-head">
+<div class="card-meta">
+<span class="ver-chip">v0.3.0</span>
+<span class="dateline">June 30, 2026</span>
+<a class="dateline" href="https://www.reddit.com/r/logseq/comments/1uk4v3w/tine_v030_dropin_faster_logseq_og_more_parity/" style="color:var(--accent-deep)">· original r/logseq thread ↗</a>
+</div>
+<h1>Tine v0.3.0 — drop-in faster Logseq OG — more parity + goodies</h1>
+<p class="dek">My announcement, unedited — followed by the sharpest conversation the project has had.</p>
+</header>
+<div class="prose">
+<p>I'm releasing <a href="https://github.com/martinkoutecky/tine/releases/tag/v0.3.0">Tine v0.3.0</a>.
+        This one took longer than I wanted, but I hope it's worth it. There are many nice small
+        improvements and bug fixes, see my take on it below, and the full changelog after that, as usual.</p>
+<p>But the big change was this. I periodically run an audit loop on Tine: have Claude+Codex look for
+        places where data safety is in danger, or where performance is hit. During one of those I started
+        to smell something fishy: I realized there's a bunch of bugs that look like the way Tine is parsing
+        markdown is … just a bunch of regexes, or something like that? This turned out to be true; while OG
+        has a proper parser (mldoc), Tine had something either slow, incorrect, or both. After some
+        consideration, I decided to have Claude build a mldoc-compatible parser for Tine, which I'm calling
+        <a href="https://github.com/martinkoutecky/lsdoc">lsdoc</a> (for “logseq doc”).</p>
+<p>Anyway, this was the idea: the first iteration Claude came up with, despite the clear motivation,
+        turned out to be… not quite a regex mess, but also not a properly designed, linear-time parser. It
+        was, mostly, compatible — a lot of the work went into quite serious differential testing wrt mldoc;
+        and on “typical inputs” quadratic time may not bite you. But that's not what a computer scientist
+        does, so I kept pushing Claude to do it right. That's what v0.3.0 was waiting for, and I think it's
+        mostly done, so here goes. (On my very short subjective experience, I think it IS noticeably faster?
+        but I'm not sure, and this is probably attributable to several other performance fixes, too.)</p>
+<p>Other notable items:</p>
+<ul>
+<li>media niceties — waveform view for easy audio navigation, draggable corners for images and
+          videos, etc.</li>
+<li>web: <a href="https://tine.page">tine.page</a></li>
+<li>native window controls</li>
+<li>multi-language spellcheck</li>
+<li>configurable asset name templates</li>
+</ul>
+<p>…and many others.</p>
+<p>If you want to contribute, I'm very thankful for anyone who tests and reports bugs on github! You
+        can also take a look at
+        <a href="https://github.com/martinkoutecky/tine/blob/master/CONTRIBUTING.md">CONTRIBUTING.md</a>.</p>
+<p class="pull">The usual AI disclaimer: the only non-AI generated text is the above, everything else
+        (code, docs, web) is AI. Take it or hate it :)</p>
+</div>
+<div class="post-links">
+<a href="https://github.com/martinkoutecky/tine/releases/tag/v0.3.0">📦 v0.3.0 release ↗</a>
+<a href="https://github.com/martinkoutecky/tine/blob/master/CHANGELOG.md">📋 Full CHANGELOG.md ↗</a>
+<a href="https://github.com/martinkoutecky/lsdoc">🧩 lsdoc parser ↗</a>
+<a href="https://www.reddit.com/r/logseq/comments/1uk4v3w/tine_v030_dropin_faster_logseq_og_more_parity/">💬 Full discussion on r/logseq ↗</a>
+</div>
+</article>
+<section class="convos">
+<h2>From the discussion</h2>
+<p class="section-lede">This release drew the sharpest, most interesting conversation Tine has had —
+      about whether you should trust software built this way at all. I've included it nearly whole:
+      Claude tries to summarize the others faithfully and generously; every comment is linked, so you can check; mine are quoted in full; I've kept the criticism in.</p>
+<!-- convo 1: constructive -->
+<div class="convo">
+<p class="convo-topic">On vibe-coding, done with guardrails</p>
+<div class="turn turn-them">
+<div class="by"><a href="https://www.reddit.com/user/Hour-Seaworthiness43">Hour-Seaworthiness43</a>
+<a class="permalink" href="https://www.reddit.com/r/logseq/comments/1uk4v3w/tine_v030_dropin_faster_logseq_og_more_parity/ouwkp8x/">full comment ↗</a></div>
+<p class="said">Doesn't care that it's vibe-coded, as long as the right tests are in place to keep
+          quality up — “people definitely overestimate code quality for humans and underestimate how much
+          you can get done with the right repo structure, workflows and constraints.” The out-of-the-gate
+          speed is mindblowing. He can't move his primary graph over yet (he depends on Excalidraw,
+          logseq-jira, and some task queries), but offers to help — and later offers to take a stab at
+          integrating Excalidraw himself.</p>
+</div>
+<div class="turn turn-me">
+<div class="by">Me <span class="op-badge">OP</span>
+<a class="permalink" href="https://www.reddit.com/r/logseq/comments/1uk4v3w/tine_v030_dropin_faster_logseq_og_more_parity/oux0c9d/">↗</a></div>
+<div class="said"><p>Thanks!</p> <ul> <li>excalidraw -- I thought about it, and it seems fairly difficult. But you're not the first person to ask so I'll come back to it again.</li> <li>I'll make <code>?</code> open the keyboard shortcuts config</li> <li>the last point is something OG already does -- you can easily use queries for it, and Tine already has a visual query builder. Type /Query and select the builder and then pick "Add filter" -&gt; "Task marker" etc. You can filter by other things, sort, etc. It doesn't have exact full compatibility with OG but should be enough for most people's needs.</li> </ul> <p>(Actually OG queries were part of the reason I started using it, and their slowness was the reason I stopped using them, and why I built Tine.)</p></div>
+</div>
+</div>
+<!-- convo 2: the debate -->
+<div class="convo">
+<p class="convo-topic">The long argument: can you trust software built this way?</p>
+<div class="turn turn-them">
+<div class="by"><a href="https://www.reddit.com/user/atava">atava</a>
+<a class="permalink" href="https://www.reddit.com/r/logseq/comments/1uk4v3w/tine_v030_dropin_faster_logseq_og_more_parity/ouum9li/">full comment ↗</a></div>
+<p class="said">As a developer, he doesn't see how you can trust vibe-coding to produce a safe
+          environment for personal notes — especially since I'm not reviewing the code myself. The
+          update's own hints (regex-ish parsing, “certainly still bugs”) reinforce that the surface can
+          look fine while the inside conceals who-knows-what. He says it neutrally, and grants that it
+          comes from real frustration with Logseq's slow development. He also suspects a lot of the
+          enthusiasm comes from people who don't code and just want something new.</p>
+</div>
+<div class="turn turn-them">
+<div class="by"><a href="https://www.reddit.com/user/NickK-">NickK-</a>
+<a class="permalink" href="https://www.reddit.com/r/logseq/comments/1uk4v3w/tine_v030_dropin_faster_logseq_og_more_parity/ouuxina/">full comment ↗</a></div>
+<p class="said">No AI evangelist himself — and no fan of the “techbroligarchy” — but notes that with
+          only slight modification the same arguments apply to hand-written code too. In the end it's the
+          user who decides which approach they trust, and OP is very transparent. He adds that he does know
+          agentic engineering, can code, and does engineering management.</p>
+</div>
+<div class="turn turn-them">
+<div class="by"><a href="https://www.reddit.com/user/atava">atava</a>
+<a class="permalink" href="https://www.reddit.com/r/logseq/comments/1uk4v3w/tine_v030_dropin_faster_logseq_og_more_parity/ouv05us/">full comment ↗</a></div>
+<p class="said">The comparison doesn't quite hold, he argues: human-written bugs still come with
+          understanding and intent, and are trackable. A full-AI project is like a team of robots building
+          a house — a door won't open and nobody knows why, so you set more robots to fix it. He names a
+          specific danger: agents assume the user always means something sensible, so if you tell one
+          there's a bug where there isn't, it will “fix” code that was fine and almost certainly introduce
+          real bugs. He's not against AI coding — he thinks it should stay a help under human direction.</p>
+</div>
+<div class="turn turn-them">
+<div class="by"><a href="https://www.reddit.com/user/NickK-">NickK-</a>
+<a class="permalink" href="https://www.reddit.com/r/logseq/comments/1uk4v3w/tine_v030_dropin_faster_logseq_og_more_parity/ouv1dlv/">full comment ↗</a></div>
+<p class="said">Suggests distinguishing sheer “vibe coding” from “agentic engineering” with
+          competent guardrails — and that they clearly both want to avoid “dark factories.” He's following
+          one agentic-engineering project that addresses exactly these concerns, because its developer has
+          30 years as a developer, architect, and engineering lead. Intent, experience, architecture
+          understanding, and taste matter more than ever. Let's see how Tine fares.</p>
+</div>
+<div class="turn turn-me">
+<div class="by">Me <span class="op-badge">OP</span>
+<a class="permalink" href="https://www.reddit.com/r/logseq/comments/1uk4v3w/tine_v030_dropin_faster_logseq_og_more_parity/ouvfqkf/">↗</a></div>
+<div class="said"><p>Hey! Thanks for engaging. I think it is a good opportunity to say where I'm coming from on this.</p> <p>My primary use of AI is for theoretical CS research (<a href="https://research.koutecky.name/">this is me</a>). o3 was impressive, it started saying stuff that kinda made sense, and I was able to drive it to often break its arguments before I had to wreck my brain on it. That was ONE year ago. Now GPT-5.5 routinely proves new stuff; see <a href="https://arxiv.org/abs/2604.16989">our paper</a> and <a href="https://bolzano.app">bolzano.app</a>.</p> <p>For TCS/math research, AI is currently more helpful than an average PhD student. They are of course incomparable, but if I could only pick one, I'd pick AI.</p> <p>Also, I have seen how helpful AI is in reviewing math/TCS papers and it's not even close. When you are reviewing a paper if you are not the absolute expert on the field, you have to take some things on faith; only the best of the best really understand with enough breadth to spot subtle bugs. AI is already, on the technical level, a better reviewer than most people.</p> <p>So I'm just trying this. AI makes mistakes when coding, but when you give it a sufficiently strong harness so it can detect its bugs, and if you run audit -&gt; fix loops, I think the situation is not bad, for this kind of app at least.</p> <p>Put differently, I think there are two things going on which are both true:</p> <ol> <li>AI is better than most people think,</li> <li>People are worse than most people think.</li> </ol> <p>But I will always disclose my approach to AI so that people can choose.</p></div>
+</div>
+<div class="turn turn-them">
+<div class="by"><a href="https://www.reddit.com/user/atava">atava</a>
+<a class="permalink" href="https://www.reddit.com/r/logseq/comments/1uk4v3w/tine_v030_dropin_faster_logseq_og_more_parity/ouvk549/">full comment ↗</a></div>
+<p class="said">Don't assume that because AI is god-like at math research it'll be as reliable at
+          coding — for an LLM the two are very different. Its ability comes only from training data; it has
+          no real “sense” of what coding or Markdown or an outline <em>is</em>. Math has established
+          principles and clear patterns; coding is paradoxically more chaotic, constantly needs novel
+          application, and now risks new models being trained on buggy code written by older ones. Powerful
+          and impressive — but not therefore an infallible programmer.</p>
+</div>
+<div class="turn turn-me">
+<div class="by">Me <span class="op-badge">OP</span>
+<a class="permalink" href="https://www.reddit.com/r/logseq/comments/1uk4v3w/tine_v030_dropin_faster_logseq_og_more_parity/oux2uxa/">↗</a></div>
+<div class="said"><p>I would disagree, but not too forcefully. I suppose you have more experience with programming than I do (I know how to "program" - after all I have a CS degree - but I know I'm not a software engineer), OTOH I suppose I have more TCS research than you.</p> <p>I think you've got it backwards. For coding you can do RLVR well precisely because you have this huge dataset from SO and GH, you have software tests, etc. Math has historically not been done formally, it was written by people and checked by people in natural language. There is of course a huge shift now towards formalization precisely to allow RLVR on math, but it is not as mature as coding by a long shot.</p> <p>Also in math, when I want to prove a theorem, the LLM can try various approaches, generate ideas, but it is not at all guaranteed to give me a proof or a disproof. Proving is not mechanical, there aren't actually many "patterns" or anything. It is uncertain and weird creative work.</p> <p>On the other hand when you take something like Tine, it is absolutely obvious that it can be done (especially because it just tries to replicate an existing app). A slightly above average human programmer is guaranteed to be able to pull it off given enough time. This is absolutely not the case for theory research. </p> <p>Also I think my greater point is that for both math research and programming what you need in humans is a similar kind of IQ / reasoning rigor. So when I see impressive performance in math I do expect the same for coding, and AFAIK the coding performance is indeed impressive. This doesn't disprove the jagged AI frontier, of course there are many areas where AI is surprisingly stupid etc. It's a weird thing.</p> <p>One more example: I described the messy experience developing lsdoc. Fine. But this is all weird only because I actually know the difference between O(n2) and O(n), and because I know something about languages, regexes, grammars, parsers etc. So I could smell something was off. What Claude discovered in the course of trying to break lsdoc was that you can break mldoc. It has n2 subcases and more critically, it has cases where it gets a stack overflow. So it's not like human code is not messy and buggy; my complaint is more that Claude in this case was not able to follow my instruction consistently and one-shot a truly linear parser for two pretty difficult grammars (md and org). I would say most people would not be able to do that either.</p></div>
+</div>
+<div class="turn turn-them">
+<div class="by"><a href="https://www.reddit.com/user/atava">atava</a>
+<a class="permalink" href="https://www.reddit.com/r/logseq/comments/1uk4v3w/tine_v030_dropin_faster_logseq_og_more_parity/ouxg4do/">full comment ↗</a></div>
+<p class="said">He relied on my own comments for the “AI is great at math” premise, and grants he
+          may have assumed too much; by “patterns” he meant the tools of mathematical discourse (proof by
+          contradiction, etc.), not at the expense of inventiveness. He notes that huge amounts of modern
+          math — sometimes scraped illegally — are in training data, which naturally produces high
+          mathematical prowess. A note app is easy because similar code is readily available; genuinely
+          novel, no-consensus work is where an agent may struggle. He cites the Italian “Emma” chatbot as a
+          cautionary undertrained case, and lands on: human supervision should always be a thing.</p>
+</div>
+<div class="turn turn-me">
+<div class="by">Me <span class="op-badge">OP</span>
+<a class="permalink" href="https://www.reddit.com/r/logseq/comments/1uk4v3w/tine_v030_dropin_faster_logseq_og_more_parity/ouxmnt1/">↗</a></div>
+<div class="said"><blockquote> <p>Yes, formal math is a thing only ever since Descartes,</p> </blockquote> <p>I think you are misunderstanding what I meant. Formal math means something like <a href="https://lean-lang.org/">Lean</a>. A proof is valid if you can transcribe it into Lean and it compiles. Any math result you may have heard about was written in natural language in a math paper published in a journal where it was reviewed by humans, and often papers with bugs got in; either the bugs were non-fatal and a new non-buggy proof was later found, or the result was genuinely wrong and a counterexample was found; or, as is probably the most likely case, the result was so narrow that nobody looked at it very much further and it is to this day assumed correct in the literature. Math is not done in a programming language, it is done in natural language. That's a huge difference for how well can an agent catch itself making a mistake vs programming.</p> <blockquote> <p>To a LLM, it counts little if you express the same concept in a very formal way (e.g. with almost no text between formulas) or in a more natural way, if enough instances of a thing are found to be sure that it's always the same concept.</p> </blockquote> <p>It counts very much for RLVR, which is what drives a lot of current progress. And because math is written by humans for humans and it is very specialized and depends on context, which the AI often does not have, it is much harder to get right than coding.</p> <p>On the Emma chatbot - I haven't heard about it, I can imagine, anything I'm saying applies only to frontier models.</p> <blockquote> <p>but this doesn't make them neither infallible programmers nor mathematicians</p> </blockquote> <p>Sure, no disagreement there, but what I'm trying to point out is that humans are neither infallible programmers and mathematicians, so using that as a bar misses the point. The human programmer who wrote mldoc already made the same mistakes I criticized; the human mathematicians whose papers I reviewed already made the mistakes that LLMs caught. We also need to keep this in mind.</p> <blockquote> <p>Human supervision should always be a thing, imho.</p> </blockquote> <p>I think that "should" or "shouldn't" also unfortunately misses the point. It is clear to me we are headed in a direction where human supervision is less and less a thing, and not much can be done about that. So the thing I'd focus on is alignment; in some sense, that's the only objective that can save us (meaning anything from the banal "save us from bad software" to "save us from existential risk").</p></div>
+</div>
+<div class="turn turn-them">
+<div class="by"><a href="https://www.reddit.com/user/atava">atava</a>
+<a class="permalink" href="https://www.reddit.com/r/logseq/comments/1uk4v3w/tine_v030_dropin_faster_logseq_og_more_parity/ouz80g7/">full comment ↗</a></div>
+<p class="said">He concedes humans aren't infallible either (already less reliable than LLMs for
+          many tasks) — but says that wasn't the point that started this: a project like Tine should go
+          through its developer's supervision to be really solid, and there may be subtle bugs visible only
+          in special circumstances. Am I even writing tests? Fine for a personal/passion project, but no
+          critical software — bank, lab, hospital — will ever be built entirely by AI; it won't happen. He
+          adds that less supervision also makes humans less proficient, and recommends Asimov's short story
+          <em>The Feeling of Power</em>.</p>
+</div>
+<div class="turn turn-me">
+<div class="by">Me <span class="op-badge">OP</span>
+<a class="permalink" href="https://www.reddit.com/r/logseq/comments/1uk4v3w/tine_v030_dropin_faster_logseq_og_more_parity/ouzpgym/">↗</a></div>
+<div class="said"><p>Thanks for the suggestion, I liked Asimov back when I got to read books :)</p> <p>My bet is that in 10 years (and I'm leaning sooner) there will be critical software ran which is made completely with AI. But who knows.</p> <p>Tests for the app - well, Claude is writing tests - when I hit a bug and it fixes it, it of course writes a test to prevent regressions etc. This is by no means infallible.</p> <p>As someone else wrote above, I'm having fun and I'm inviting anyone for the ride, but of course people have to make a decision about what app they want to trust with their data. Of course there are bugs.</p> <p>It's good for me to hear other voices, so thanks for sharing yours.</p></div>
+</div>
+<div class="turn turn-them">
+<div class="by"><a href="https://www.reddit.com/user/pereira_alex">pereira_alex</a>
+<a class="permalink" href="https://www.reddit.com/r/logseq/comments/1uk4v3w/tine_v030_dropin_faster_logseq_og_more_parity/ouvwxr7/">full comment ↗</a></div>
+<p class="said">Thirty years of coding, and he uses AI only for documentation and git commit
+          messages — but he upvotes, for a simple reason: the author is clearly having fun, never lied
+          about his experience or leaned on “AI will replace all devs.” An honest, fun, scratch-my-itch
+          project — the best kind.</p>
+</div>
+<div class="turn turn-me">
+<div class="by">Me <span class="op-badge">OP</span>
+<a class="permalink" href="https://www.reddit.com/r/logseq/comments/1uk4v3w/tine_v030_dropin_faster_logseq_og_more_parity/ouxtjrp/">↗</a></div>
+<div class="said"><p>Thanks! I am having fun!</p></div>
+</div>
+</div>
+<!-- reactions -->
+<div class="convo">
+<p class="convo-topic">And the rest of the room — the whole spectrum</p>
+<div class="reactions">
+<div class="reaction"><span class="who">JustBrowsing1989z —</span> “Hate it! What a vibe-coded
+          mess. Why would anyone waste time or trust something built this way. Kudos for the dev to be open
+          about it though!”
+          <a class="permalink" href="https://www.reddit.com/r/logseq/comments/1uk4v3w/tine_v030_dropin_faster_logseq_og_more_parity/ouv75xy/">↗</a></div>
+<div class="reaction"><span class="who">mdelanno —</span> “Good job. It really is smoother than
+          LogSeq.”
+          <a class="permalink" href="https://www.reddit.com/r/logseq/comments/1uk4v3w/tine_v030_dropin_faster_logseq_og_more_parity/ouv7z70/">↗</a></div>
+<div class="reaction"><span class="who">GreenerThanFF —</span> “Step 1: make an almost usable
+          version of the software you actually want. Step 2: cater to investors while degrading
+          performance. Step 3: wait for a community member to be annoyed enough to make the software you
+          actually want. Genius.”
+          <a class="permalink" href="https://www.reddit.com/r/logseq/comments/1uk4v3w/tine_v030_dropin_faster_logseq_og_more_parity/ouyfmj9/">↗</a></div>
+</div>
+</div>
+</section>
+<nav class="post-nav">
+<a href="v0.2.0.html">← Previous: v0.2.0</a>
+<a class="to-index" href="index.html">All notes</a>
+<span></span>
+</nav>
+<p class="method-note">
+    How to read this: comments by other people are Claude's summaries — it tries to be faithful and generous — and the originals are
+    linked on Reddit, so you can check; my own replies are quoted verbatim. Short reactions above are quoted directly.
+  </p>
+</main>
+<footer class="foot">
+<div class="foot-inner">
+<div class="foot-brand">
+<svg aria-hidden="true" class="mark" height="26" viewBox="0 0 64 80" width="26">
+<g fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="6">
+<path d="M16 14 V36"></path><path d="M32 14 V36"></path><path d="M48 14 V36"></path>
+<path d="M16 36 H48"></path><path d="M32 36 V70"></path>
+</g>
+</svg>
+<span>Tine</span>
+</div>
+<nav class="foot-links">
+<a href="../">Home</a>
+<a href="index.html">Blog</a>
+<a href="https://github.com/martinkoutecky/tine">GitHub</a>
+<a href="https://github.com/martinkoutecky/tine/releases">Releases</a>
+</nav>
+<p class="foot-copy">© 2026 Martin Koutecký · Built as a faster, file-compatible companion to Logseq.</p>
+</div>
+</footer>
+</body>
+</html>
