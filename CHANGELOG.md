@@ -8,6 +8,39 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-07-01
+
+### Added
+
+- **Automatic updates (Windows & Linux).** Tine now checks for a newer version on launch
+  and can download and install it in place (Tauri's signed updater); a one-time *“a newer
+  Tine is available”* toast appears when an update is found. macOS stays a manual download
+  for now (unsigned builds). This is the first release with the updater built in — update
+  to 0.3.1 once by hand, and future versions can update themselves.
+
+- **Tab conveniences.** **Reopen the last closed tab** with `Ctrl+Shift+T`, and **cycle
+  tabs** with `Ctrl+PgUp` / `Ctrl+PgDn` (all remappable in Settings → Keymap). Reopening a
+  page — or relaunching Tine — now **restores each tab's scroll position**.
+
+- **Editor typing polish (opt-in).** Optional **auto-pairing** of brackets and quotes, and
+  **“on-type” typographic replacement** (`->`→→, `--`→–, `---`→—) with an Off / on-render /
+  on-type switch (Settings → Editor). Inter's `calt` ligatures are turned off so asterisks
+  and arrows keep a consistent height while you edit.
+
+### Fixed
+
+- **Up/Down caret navigation.** Arrowing into a `SCHEDULED`/`DEADLINE` bullet that also
+  shows up in the journal **agenda** no longer loses the caret: the agenda copy stays
+  *rendered* (it no longer steals focus or flips into an editor) while you edit the real
+  bullet. Up/Down now also **preserve the caret's column** across blocks, matching Logseq,
+  instead of snapping to the start or end of the line.
+
+- **Journal feed navigation.** Pressing Down past the last loaded day pulls in the next
+  journal day, and returning to a page loads enough of the feed to **restore your saved
+  scroll position**.
+
+- **Clicking into an empty block** no longer nudges it down a couple of pixels.
+
 ## [0.3.0] — 2026-06-30
 
 ### Added
