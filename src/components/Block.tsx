@@ -1025,18 +1025,9 @@ export function Editor(props: { id: string }): JSX.Element {
 
   const focusNow = () => {
     const offset = takeCaretFor(props.id) ?? editorValue().length;
-    // `preventScroll` suppresses the GTK focus scroll-into-view. On a plain click
-    // the block is already visible, so that scroll is a no-op the GPU compositor
-    // still presents as a 1-frame viewport nudge — the "blocks below jump down then
-    // snap back" of issue #12 (measured: the block heights are stable; it's a
-    // viewport artifact, not a layout shift). Keyboard nav to an off-screen block
-    // DID rely on the focus scroll, so re-scroll explicitly only when the block is
-    // actually outside the viewport (never the case for a click → no jitter).
-    ref.focus({ preventScroll: true });
+    ref.focus();
     const o = Math.min(offset, ref.value.length);
     ref.setSelectionRange(o, o);
-    const r = ref.getBoundingClientRect();
-    if (r.top < 0 || r.bottom > window.innerHeight) ref.scrollIntoView({ block: "nearest" });
   };
   onMount(() => {
     // If this block is rendered in several surfaces at once (main pane + sidebar),
