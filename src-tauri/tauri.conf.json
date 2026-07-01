@@ -42,6 +42,7 @@
   "bundle": {
     "active": true,
     "targets": ["appimage", "deb", "rpm", "nsis", "dmg"],
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -49,5 +50,14 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/martinkoutecky/tine/releases/latest/download/latest.json"
+      ],
+      "pubkey": "PASTE_TAURI_UPDATER_PUBKEY_HERE",
+      "windows": { "installMode": "passive" }
+    }
   }
 }

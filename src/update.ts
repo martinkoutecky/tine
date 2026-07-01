@@ -1,17 +1,22 @@
 // "A newer Tine is available" check — best-effort, once per launch.
 //
-// Tine doesn't auto-update (the full Tauri updater needs signing keys + a
-// per-platform install story, including macOS notarization — deferred). This is
-// the cheap, high-value half: ask GitHub for the latest *published* release and,
-// if it's newer than the running build, show a sticky toast with a one-click
-// "Download" that opens the releases page in the system browser.
+// Notifier: ask GitHub for the latest *published* release and, if it's newer than
+// the running build, show a sticky toast. This is the cross-platform half and is
+// always the way a user LEARNS an update exists.
 //
-// Deliberately quiet: Tauri-only (the browser mock has no real version and no
-// business phoning home), and silent on ANY failure (offline, rate-limited,
-// blocked) — it must never block startup or nag with an error.
+// Installer (the toast's action): on **Windows/Linux** in the packaged app, run the
+// Tauri v2 updater — `check()` → `downloadAndInstall()` → `relaunch()` — so the
+// update applies in place. On **macOS** (bundle is unsigned → Gatekeeper would
+// reject a self-replaced app) and outside Tauri, fall back to opening the releases
+// page in the browser. The updater is inert until a signed release with a
+// `latest.json` exists; any failure (no manifest yet, bad signature, offline) is
+// caught and also falls back to the releases page — it can never brick the app.
+//
+// Deliberately quiet: Tauri-only check, silent on ANY failure (offline, rate-
+// limited, blocked) — it must never block startup or nag with an error.
 
 import { isTauri, backend } from "./backend";
-import { pushToast } from "./ui";
+import { pushToast, dismissToast } from "./ui";
 
 const REPO = "martinkoutecky/tine";
 const RELEASES_PAGE = `https://github.com/${REPO}/releases/latest`;
@@ -29,6 +34,45 @@ function isNewer(a: [number, number, number], b: [number, number, number]): bool
     if (a[i] !== b[i]) return a[i] > b[i];
   }
   return false;
+}
+
+/** True only where an in-place self-update is safe: the packaged Tauri app on a
+ *  non-macOS OS. (macOS bundles are unsigned; replacing one re-triggers Gatekeeper
+ *  quarantine, so those get the manual download path instead.) */
+function canSelfUpdate(): boolean {
+  return isTauri() && !/\bMac/i.test(typeof navigator !== "undefined" ? navigator.userAgent : "");
+}
+
+/** Open the GitHub releases page in the system browser (the manual fallback). */
+function openReleases(): void {
+  void backend().openExternal(RELEASES_PAGE).catch(() => {});
+}
+
+/** The toast's "Download" action. Win/Linux packaged app → run the Tauri updater
+ *  in place and relaunch; everything else (macOS, browser, or any failure) → open
+ *  the releases page. Never throws. */
+async function applyUpdateOrOpen(): Promise<void> {
+  if (!canSelfUpdate()) {
+    openReleases();
+    return;
+  }
+  let progressId: number | null = null;
+  try {
+    const { check } = await import("@tauri-apps/plugin-updater");
+    const update = await check();
+    if (!update) {
+      // No signed `latest.json` yet (or already current) → manual path.
+      openReleases();
+      return;
+    }
+    progressId = pushToast(`Downloading Tine ${update.version}…`, "info", { sticky: true });
+    await update.downloadAndInstall();
+    const { relaunch } = await import("@tauri-apps/plugin-process");
+    await relaunch(); // process restarts into the new version (this toast goes with it)
+  } catch {
+    if (progressId != null) dismissToast(progressId);
+    openReleases(); // signature/verify/network failure → never brick, just offer the page
+  }
 }
 
 /** Check GitHub for a newer published release; toast if there is one. Resolves
@@ -57,7 +101,7 @@ export async function checkForUpdate(): Promise<void> {
         sticky: true,
         action: {
           label: "Download",
-          run: () => void backend().openExternal(RELEASES_PAGE).catch(() => {}),
+          run: () => void applyUpdateOrOpen(),
         },
       }
     );

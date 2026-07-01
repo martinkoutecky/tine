@@ -21,6 +21,8 @@
     "@tauri-apps/api": "^2.1.1",
     "@tauri-apps/plugin-clipboard-manager": "^2.3.2",
     "@tauri-apps/plugin-dialog": "^2.7.1",
+    "@tauri-apps/plugin-process": "^2.3.1",
+    "@tauri-apps/plugin-updater": "^2.10.1",
     "@twemoji/svg": "^15.0.0",
     "emoji-regex": "^10.6.0",
     "highlight.js": "^11.11.1",

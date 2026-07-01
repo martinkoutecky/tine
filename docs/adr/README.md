@@ -37,3 +37,4 @@ see the project `CLAUDE.md`.
 | [0008](0008-lazy-block-body-rendering.md) | Lazy block-body rendering (render-once-keep), not windowing | Accepted |
 | [0009](0009-one-block-facet-source-on-the-dto.md) | One source for block-header facets: the lsdoc parse, shipped on the DTO | Accepted |
 | [0010](0010-lsdoc-canonical-html-skeleton.md) | lsdoc owns the canonical HTML skeleton; the export consumes it, the frontend conforms | Accepted |
+| [0011](0011-in-app-self-update.md) | In-app self-update on Windows/Linux via the Tauri v2 updater (macOS manual) | Accepted |

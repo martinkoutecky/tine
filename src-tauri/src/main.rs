@@ -1820,6 +1820,13 @@ fn main() {
         }))
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
+        // In-app self-update. The updater reads `plugins.updater` from
+        // tauri.conf.json (endpoints + minisign pubkey); process powers the
+        // frontend's post-install `relaunch()`. Inert until a signed release with
+        // a `latest.json` exists — the frontend catches any check() error and
+        // falls back to opening the releases page (see src/update.ts).
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         // Remember window size/position/maximized across launches (Wayland
         // compositors don't restore this per-app). Exclude FULLSCREEN so it
         // doesn't conflict with focus mode, which is intentionally not persisted.

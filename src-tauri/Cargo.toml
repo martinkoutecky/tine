@@ -23,6 +23,11 @@ tauri-plugin-clipboard-manager = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-window-state = "2"
 tauri-plugin-single-instance = "2"
+# In-app self-update (Win/Linux; macOS stays manual — unsigned). The updater
+# verifies each artifact against `plugins.updater.pubkey` (minisign); process lets
+# the frontend relaunch after `downloadAndInstall()`. See docs/adr + release.yml.
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 serde = { workspace = true }
 serde_json = { workspace = true }
 notify = "6"

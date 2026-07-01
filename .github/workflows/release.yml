@@ -124,11 +124,21 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # macOS/Windows builds are UNSIGNED for now. Do NOT set the APPLE_*
-          # signing env vars here while the secrets are empty — tauri-action sees
-          # an (empty) APPLE_CERTIFICATE as "signing requested" and fails on
-          # `security import`. To enable notarized macOS builds later, add these
-          # repo secrets AND re-add the matching env lines:
+          # Updater signing (minisign) — the app-update root of trust, SEPARATE from
+          # OS code-signing. REQUIRED once `bundle.createUpdaterArtifacts` is true:
+          # the bundler signs each updater artifact with this key, and the installed
+          # app verifies against `plugins.updater.pubkey` in tauri.conf.json. Add the
+          # two repo secrets (see docs/adr/0011) BEFORE tagging the next release, or
+          # the signing step fails. Empty ⇒ signing skipped (fine only while no
+          # updater artifacts are produced).
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # macOS/Windows builds are UNSIGNED for now (that's OS code-signing, not
+          # the updater key above). Do NOT set the APPLE_* signing env vars here
+          # while the secrets are empty — tauri-action sees an (empty)
+          # APPLE_CERTIFICATE as "signing requested" and fails on `security import`.
+          # To enable notarized macOS builds later, add these repo secrets AND
+          # re-add the matching env lines:
           #   APPLE_CERTIFICATE (base64 .p12), APPLE_CERTIFICATE_PASSWORD,
           #   APPLE_SIGNING_IDENTITY, APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID.
         with:
@@ -136,6 +146,10 @@ jobs:
           # tauri-action just builds (no release touched).
           releaseId: ${{ needs.create-release.outputs.release_id }}
           args: ${{ matrix.args }}
+          # Tine ships the NSIS installer on Windows → point latest.json at it (not
+          # the MSI). tauri-action auto-generates + uploads latest.json + the .sig
+          # files (uploadUpdaterJson / uploadUpdaterSignatures default true).
+          updaterJsonPreferNsis: true
 
   # 3) All platforms built → flip the draft to a published release. Skipped if any
   #    build failed (the draft stays unpublished) or on a manual dispatch.
