@@ -21,6 +21,8 @@ import {
   toggleDocumentMode,
   typographyMode,
   setTypographyMode,
+  autoPairing,
+  setAutoPairing,
   dimInFocus,
   setDimInFocus,
   changeStartOfWeek,
@@ -387,16 +389,27 @@ function AppearanceTab(): JSX.Element {
 
       <Field
         label="Typographic replacements"
-        hint="Render arrows and dashes as glyphs — `->`→→, `<->`→↔, `--`→– (en), `---`→— (em). Your Markdown keeps the ASCII; only the rendered view changes (like how `\Delta` shows as Δ). A Tine touch, not Logseq."
+        hint="Show arrows and dashes as glyphs — `->` → →, `-->` → ⟶, `--` → – (en dash), `---` → — (em dash). “While reading” keeps your Markdown as ASCII and only changes the rendered view (like `\Delta` → Δ); “While typing” rewrites the source itself as you type. A Tine touch, not Logseq."
       >
         <select
           class="settings-select"
           value={typographyMode()}
-          onChange={(e) => setTypographyMode(e.currentTarget.value === "off" ? "off" : "render")}
+          onChange={(e) => {
+            const v = e.currentTarget.value;
+            setTypographyMode(v === "off" ? "off" : v === "type" ? "type" : "render");
+          }}
         >
           <option value="render">On (while reading)</option>
+          <option value="type">On (while typing)</option>
           <option value="off">Off</option>
         </select>
+      </Field>
+
+      <Field
+        label="Auto-pair brackets & quotes"
+        hint="Typing ( [ { &quot; ` inserts the matching closer with the caret between, wraps a selection, types through a closer, and Backspace on an empty pair clears both. (Page-ref `[[ ]]` always auto-closes.) Off by default — turn it on if you like it."
+      >
+        <Toggle on={autoPairing()} onClick={() => setAutoPairing(!autoPairing())} />
       </Field>
 
       <Field

@@ -21,6 +21,15 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   asset.
 - Inline formatting (`Mod+B/I`, strike, `==highlight==`, link) via a floating
   selection toolbar, plus Emacs-style word/line kill motions.
+- ⊕ **Optional auto-pairing** (Settings → Appearance) — typing `(` `[` `{` `"`
+  `` ` `` inserts the matching closer with the caret between, wraps a selection,
+  types through a closer, and `Backspace` on an empty pair clears both. **Off by
+  default** (turn it on if you like it); page-ref `[[…]]` always auto-closes.
+- ⊕ **Typographic replacements** (Settings → Appearance) — show `->` → `→`,
+  `-->` → `⟶`, `--` → `–` (en), `---` → `—` (em) and friends as real glyphs,
+  either *while reading* (your Markdown stays ASCII, only the rendered view
+  changes — like `\Delta` → Δ) or *while typing* (rewrites the source itself). A
+  Tine touch, not Logseq; default *while reading*, or turn it off.
 - **In-block lists & checklists** — a `+`/`*`/ordered list *inside one bullet's
   content* renders as a styled list (distinct from outline bullets), with tickable
   `[ ]`/`[x]` checkboxes that are *not* TODO/agenda tasks. Uses `+` (OG's in-content

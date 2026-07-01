@@ -81,14 +81,18 @@ export function toggleDocumentMode() {
 }
 
 // --- typographic replacements (a "Differs from Logseq" opinion): render `->` as
-// `→`, `--` as `–`, `---` as `—`, etc. "render" = source keeps the ASCII, only the
-// rendered view shows glyphs (default; mirrors how \Delta→Δ works). "off" = leave
-// the ASCII everywhere. ("type" — rewrite the source as you type — ships with the
-// editor auto-pairing work.) Local appearance pref, like wide/document mode. ---
-export type TypographyMode = "off" | "render";
+// `→`, `--` as `–`, `---` as `—`, etc.
+//   "render" = source keeps the ASCII, only the rendered view shows glyphs
+//              (default; mirrors how \Delta→Δ works).
+//   "type"   = rewrite the SOURCE as you type (the .md itself gets the glyphs);
+//              the render pass is then off since the source already holds them.
+//   "off"    = leave the ASCII everywhere.
+// Local appearance pref, like wide/document mode. ---
+export type TypographyMode = "off" | "render" | "type";
 const TYPO_KEY = "logseq-claude.typography";
 function loadTypographyMode(): TypographyMode {
-  return loadStr(TYPO_KEY) === "off" ? "off" : "render";
+  const v = loadStr(TYPO_KEY);
+  return v === "off" ? "off" : v === "type" ? "type" : "render";
 }
 export const [typographyMode, setTypographyModeSig] =
   createSignal<TypographyMode>(loadTypographyMode());
@@ -97,6 +101,18 @@ export function setTypographyMode(m: TypographyMode) {
   // Persist only the non-default; absent key ⇒ "render".
   saveStr(TYPO_KEY, m === "render" ? null : m);
   bumpGraphEpoch(); // re-render open pages so the change is immediate
+}
+
+// --- editor auto-pairing (a Tine convenience, OFF by default): typing `(`/`[`/
+// `{`/`"`/backtick inserts the matching closer (caret between), wraps a selection,
+// types-through a closer, and Backspace deletes an empty pair. The always-on
+// OG-style `[[`→`[[]]` page-ref pairing is separate (autoPairEdit) and unaffected.
+// Local editor pref, persisted like the others. ---
+const AUTOPAIR_KEY = "logseq-claude.autopair";
+export const [autoPairing, setAutoPairingSig] = createSignal(loadStr(AUTOPAIR_KEY) === "1");
+export function setAutoPairing(v: boolean) {
+  setAutoPairingSig(v);
+  saveStr(AUTOPAIR_KEY, v ? "1" : null);
 }
 
 // --- first day of week (calendar + scheduled/deadline date pickers) ---

@@ -13,6 +13,8 @@ import {
   fuzzyScore,
   type Trigger,
 } from "../editor/autocomplete";
+import { autoPairInsertOnInput, wrapSelectionEdit, backspacePairEdit, PAIRS } from "../editor/autopair";
+import { typoTypeReplace } from "../render/typography";
 import { linkFirstMatch } from "../editor/linkDefault";
 import { spellcheckEnabled } from "../spellcheckSettings";
 import {
@@ -69,7 +71,7 @@ import { InlineText } from "../render/inline";
 import { assetMarkdown, assetFileName } from "../media";
 import { calcSource, wrapCalc, evalCalc } from "../editor/calc";
 import { QueryMacro, EmbedMacro } from "./Macro";
-import { workflow, zoomInto, openContextMenu, openDatePicker, openBlockInSidebar, graphMeta, dataRev, setQueryBuilderAutoOpen, openPageProps, pushToast, dismissToast } from "../ui";
+import { workflow, zoomInto, openContextMenu, openDatePicker, openBlockInSidebar, graphMeta, dataRev, setQueryBuilderAutoOpen, openPageProps, pushToast, dismissToast, autoPairing, typographyMode } from "../ui";
 import { seedAssetBlob } from "../assetCache";
 import { openPageInNewTab } from "../router";
 import { blockRefCount } from "../blockRefCounts";
@@ -1057,14 +1059,37 @@ export function Editor(props: { id: string }): JSX.Element {
 
   let acTimer: ReturnType<typeof setTimeout> | undefined;
   const onInput = (e: InputEvent) => {
-    // OG-style page-ref bracket auto-pairing: `[[` → `[[]]`, and type-through a
-    // manually typed `]`. Only fires on a single typed `[`/`]` (not paste/IME/
-    // delete), and edits ref.value BEFORE commit so the store sees the paired text.
-    if (e.inputType === "insertText" && (e.data === "[" || e.data === "]")) {
-      const paired = autoPairEdit(ref.value, ref.selectionStart, e.data);
-      if (paired) {
-        ref.value = paired.value;
-        ref.setSelectionRange(paired.caret, paired.caret);
+    // Editor keystroke post-processing on a single inserted char (not paste/IME/
+    // delete). All branches edit ref.value BEFORE commit so the store sees it.
+    if (e.inputType === "insertText" && e.data && e.data.length === 1 && !e.isComposing) {
+      const ch = e.data;
+      let handled = false;
+      if (autoPairing()) {
+        // Opt-in general auto-pairing (brackets/quotes), which also folds in the
+        // `[[`/`((`/`{{` doubling so it composes with — not fights — page-ref pairing.
+        const r = autoPairInsertOnInput(ref.value, ref.selectionStart, ch);
+        if (r) {
+          ref.value = r.value;
+          ref.setSelectionRange(r.caret, r.caret);
+          handled = true;
+        }
+      } else if (ch === "[" || ch === "]") {
+        // Always-on OG-style page-ref pairing: `[[` → `[[]]`, type-through a `]`.
+        const paired = autoPairEdit(ref.value, ref.selectionStart, ch);
+        if (paired) {
+          ref.value = paired.value;
+          ref.setSelectionRange(paired.caret, paired.caret);
+          handled = true;
+        }
+      }
+      // "On type" typographic replacement (source gets the glyph). Pair chars and
+      // typo triggers don't overlap, but skip if a pair op already consumed the char.
+      if (!handled && typographyMode() === "type") {
+        const r = typoTypeReplace(ref.value, ref.selectionStart, ch);
+        if (r) {
+          ref.value = r.value;
+          ref.setSelectionRange(r.caret, r.caret);
+        }
       }
     }
     commit(ref.value);
@@ -1205,6 +1230,23 @@ export function Editor(props: { id: string }): JSX.Element {
       }
     }
 
+    // Auto-pair wrap (opt-in): typing an opener with a non-empty selection wraps
+    // it in the pair (`(sel)`), keeping the selection. Modifier-free single chars
+    // only, so it never shadows Ctrl/Cmd editor commands or IME composition.
+    if (
+      autoPairing() &&
+      start !== end &&
+      !e.ctrlKey && !e.metaKey && !e.altKey && !e.isComposing &&
+      e.key.length === 1 && Object.prototype.hasOwnProperty.call(PAIRS, e.key)
+    ) {
+      const ed = wrapSelectionEdit(raw, start, end, e.key);
+      if (ed) {
+        e.preventDefault();
+        applyEdit(ed);
+        return;
+      }
+    }
+
     // Edit-mode Mod+C with NO text selected → copy a reference to this block
     // (`((uuid))`), matching OG. With a selection, fall through to the browser's
     // normal text copy. Persist current edits first so the id:: lands durably.
@@ -1295,6 +1337,16 @@ export function Editor(props: { id: string }): JSX.Element {
         splitBlock(props.id, start);
       }
     } else if (e.key === "Backspace" && end === start) {
+      // Auto-pair (opt-in): Backspace with the caret between an empty pair (`(|)`)
+      // deletes both chars, so an unwanted auto-inserted closer clears in one press.
+      if (autoPairing()) {
+        const ed = backspacePairEdit(raw, start);
+        if (ed) {
+          e.preventDefault();
+          applyEdit(ed);
+          return;
+        }
+      }
       // In-block list: Backspace at the head of a list item's text removes the
       // marker (turns it into a blank/plain line) — the way to exit the list.
       const ll = listLineAt(raw, start, pageFmt());
