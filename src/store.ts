@@ -7,7 +7,7 @@
 // each with its own roots. A single-page route is just a feed of length one.
 
 import { createStore, produce, unwrap } from "solid-js/store";
-import { createSignal, createMemo, createRoot } from "solid-js";
+import { createSignal, createMemo, createRoot, batch } from "solid-js";
 import type { BlockDto, Format, PageDto, PageKind } from "./types";
 import { parseOutline, type OutlineNode } from "./editor/outline";
 import type { ExportNode } from "./editor/exportText";
@@ -846,8 +846,18 @@ export function startEditing(id: string, offset: number, owner: string | null = 
     // any stale stamp so it focuses immediately.
     pendingFocusSurface.delete(id);
   }
-  setEditingId(id);
-  setEditingOwner(owner);
+  // Set both editing signals atomically. `editing()` (Block.tsx) depends on BOTH
+  // editingId AND editingOwner; without batching, an unscoped nav (owner=null) from a
+  // previously-clicked block (editingOwner non-null) leaves a one-flush intermediate
+  // window where the target's editing() is still false — so it renders its Rendered
+  // view (incl. a SCHEDULED/DEADLINE date chip) for a frame before the editor mounts.
+  // In WebKitGTK that intermediate chip-bearing state drops focus, so ArrowDown/Up into
+  // a scheduled block lost the caret. batch() collapses both setters into one flush so
+  // the target goes Rendered→Editor directly, matching the working direct-click path.
+  batch(() => {
+    setEditingId(id);
+    setEditingOwner(owner);
+  });
 }
 
 /** Enter: split the block at `offset`. Built-in `id::`/`collapsed::` props are
