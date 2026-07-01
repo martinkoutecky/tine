@@ -680,6 +680,27 @@ describe("merge (Backspace at 0)", () => {
     expect(mergeWithPrev(dto.blocks[0].id)).toBe(false);
   });
 
+  it("supports deleting a visually empty leading block and focusing the next block", () => {
+    const dto = load([
+      blk("id:: 11111111-1111-4111-8111-111111111111"),
+      blk("next"),
+    ]);
+    const first = dto.blocks[0].id;
+    const next = nextVisible(first);
+
+    expect(mergeWithPrev(first)).toBe(false);
+    expect(splitProps(doc.byId[first].raw, isBuiltinHidden).visible.trim()).toBe("");
+    expect(doc.byId[first].children).toHaveLength(0);
+    expect(next).toBe(dto.blocks[1].id);
+
+    deleteBlock(first);
+    startEditing(next!, 0);
+
+    expect(shape()).toEqual([["next"]]);
+    expect(editingId()).toBe(next);
+    expect(takeCaretFor(next!)).toBe(0);
+  });
+
   // The quick-capture window edits a scratch page that's never part of the main
   // routed view (mainPages()), so visibleData() doesn't index its blocks.
   // prevVisible/nextVisible must fall back to the block's own page — otherwise

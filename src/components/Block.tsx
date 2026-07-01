@@ -1395,7 +1395,17 @@ export function Editor(props: { id: string }): JSX.Element {
         // Never merge a highlight or calc block away (their structure must stay).
         if (isAnnot() || isCalc()) return;
         commit(raw);
-        if (mergeWithPrev(props.id)) e.preventDefault();
+        if (mergeWithPrev(props.id)) {
+          e.preventDefault();
+          return;
+        }
+        const n = doc.byId[props.id];
+        const next = nextVisible(props.id);
+        if (n && splitProps(n.raw, hideFn()).visible.trim() === "" && n.children.length === 0 && next) {
+          e.preventDefault();
+          deleteBlock(props.id);
+          startEditing(next, 0);
+        }
       }
     } else if (e.key === "ArrowUp" && !e.shiftKey) {
       // Leave for the previous block only from the FIRST visual row; otherwise
