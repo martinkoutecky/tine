@@ -23,11 +23,9 @@ _Nothing actively in flight._
 
 ## P1 — do next (high value, bounded scope)
 
-| Item | Notes |
-|---|---|
-| **Table column-alignment render** | The parser already carries column alignment; the renderer + HTML export don't emit it yet. Small, pure OG-parity gap. |
-| **User-defined `:macros` text substitution** | Honor the graph's `:macros` config map at render time — highest user-facing payoff in the macro cluster. Medium effort. |
-| **Easy embed macros** — twitter, vimeo, bilibili, `img` | Quick OG-parity wins, self-contained. |
+_Nothing currently queued — the previous three entries (table column-alignment,
+user-defined `:macros`, easy embed macros) were already implemented and shipped;
+removed as stale. Next candidates are in P2._
 
 ---
 
