@@ -48,8 +48,8 @@ import {
   selectionMarkdown,
   clearSelection,
   selectedIds,
-  startEditing,
 } from "./store";
+import { startEditing } from "./editorController";
 import { copyOutline } from "./clipboard";
 
 interface Chord {

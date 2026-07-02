@@ -14,7 +14,6 @@ import {
   forceSave,
   isDirty,
   deletePage,
-  editingId,
   reloadDisposition,
   setBlockMoving,
   splitBlock,
@@ -23,9 +22,7 @@ import {
   mergeWithPrev,
   deleteBlock,
   toggleCollapse,
-  takeCaretFor,
   visibleOrder,
-  startEditing,
   setRaw,
   undo,
   redo,
@@ -50,6 +47,7 @@ import {
   selectionMarkdown,
   toggleListItemAtIndex,
 } from "./store";
+import { editingId, startEditing, takeCaretFor } from "./editorController";
 import { exportOutline, DEFAULT_EXPORT_OPTIONS } from "./editor/exportText";
 import { splitProps, joinProps, isBuiltinHidden, hideAll } from "./editor/properties";
 import { setCopyIncludeSubtree, setCopyStripCollapsed } from "./copySettings";

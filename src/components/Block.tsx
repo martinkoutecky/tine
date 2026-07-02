@@ -20,18 +20,13 @@ import { spellcheckEnabled } from "../spellcheckSettings";
 import {
   doc,
   pageByName,
-  editingId,
-  editingOwner,
-  startEditing,
   setRaw,
-  setEditingId,
   splitBlock,
   indentBlock,
   outdentBlock,
   mergeWithPrev,
   toggleCollapse,
   setCollapsed,
-  takeCaretFor,
   prevVisible,
   nextVisible,
   nextVisibleOrExtend,
@@ -48,10 +43,17 @@ import {
   isBlockMoving,
   setBlockMoving,
   orderedListMarker,
-  setActiveSurface,
-  focusSurfaceFor,
-  clearFocusSurface,
 } from "../store";
+import {
+  clearFocusSurface,
+  editingId,
+  editingOwner,
+  endEdit,
+  focusSurfaceFor,
+  noteSurfaceFocused,
+  startEditing,
+  takeCaretFor,
+} from "../editorController";
 import { parseOutline } from "../editor/outline";
 import {
   toggleWrap,
@@ -135,7 +137,7 @@ function beginDrag(id: string, e: MouseEvent) {
     if (!dragMoved) {
       dragMoved = true;
       setDragId(id);
-      setEditingId(null);
+      endEdit("drag-start");
     }
     const el = (document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null)?.closest(
       ".ls-block"
@@ -978,7 +980,7 @@ export function Editor(props: { id: string }): JSX.Element {
         commit(r.raw);
         closeAc();
         setQueryBuilderAutoOpen(props.id);
-        setEditingId(null);
+        endEdit("query-builder");
         return;
       }
       case "page-props": {
@@ -1475,7 +1477,7 @@ export function Editor(props: { id: string }): JSX.Element {
     // closing, so there is no caret to preserve.
     commit(normalizePlanning(ref.value, pageFmt()));
     // Only clear if no other block grabbed editing focus.
-    if (editingId() === props.id) setEditingId(null);
+    if (editingId() === props.id) endEdit("blur");
   };
 
   // When the window regains focus, re-focus this block's editor and restore the
@@ -1595,7 +1597,7 @@ export function Editor(props: { id: string }): JSX.Element {
         placeholder={cap?.bulletHint?.()}
         onInput={onInput}
         onKeyDown={onKeyDown}
-        onFocus={() => setActiveSurface(surfaceKey)}
+        onFocus={() => noteSurfaceFocused(surfaceKey)}
         onBlur={onBlur}
         onPaste={onPaste}
         onSelect={updateSel}

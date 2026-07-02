@@ -40,3 +40,12 @@ and the store's five signals coordinate them with these invariants:
   invariant test) is the missing guard this ADR calls for.
 - Longer-term, an extracted `editorController` as the sole writer of these
   signals would turn the convention into structure.
+
+## Status update (2026-07-02, later the same day)
+
+Both consequences are now built: `npm run e2e:caret` is the two-surface
+invariant guard (release-required), and `src/editorController.ts` is the sole
+writer — the raw setters are module-private, every caller goes through the
+intent API (`startEditing` / `endEdit(reason)` / `noteSurfaceFocused`), and
+`src/editorController.contract.test.ts` fails CI if any other file under `src/`
+references a raw setter again.

@@ -7,7 +7,7 @@
 // each with its own roots. A single-page route is just a feed of length one.
 
 import { createStore, produce, unwrap } from "solid-js/store";
-import { createSignal, createMemo, createRoot, batch } from "solid-js";
+import { createSignal, createMemo, createRoot } from "solid-js";
 import type { BlockDto, Format, PageDto, PageKind } from "./types";
 import { parseOutline, type OutlineNode } from "./editor/outline";
 import type { ExportNode } from "./editor/exportText";
@@ -18,8 +18,8 @@ import { journalTitle } from "./journal";
 import { upsertPropertyLine, readPropertyValue, splitProps, joinProps, isBuiltinHidden } from "./editor/properties";
 import { copyIncludeSubtree, copyStripCollapsed } from "./copySettings";
 import { trimBlockTrailingSpace } from "./editor/format";
-import { renderedBlocks } from "./lazyObserve";
 import { OPEN_MARKERS, MARKER_RE } from "./markers";
+import { editingId, endEdit, startEditing } from "./editorController";
 import {
   markDirty,
   isDirty,
@@ -136,29 +136,6 @@ export function formatForPage(name: string | undefined): Format {
 /** Like {@link formatForPage} but keyed by a block id (→ its page). */
 export function formatForBlock(id: string | undefined): Format {
   return formatForPage(id ? doc.byId[id]?.page : undefined);
-}
-
-export const [editingId, setEditingId] = createSignal<string | null>(null);
-// Which on-screen <Block> instance owns the active editor. One block uuid can
-// render in several places at once (main view + sidebar + query result); without
-// this they'd all mount a textarea for the same node and fight over its value.
-// null = unscoped (e.g. keyboard nav) — any instance of editingId may edit.
-export const [editingOwner, setEditingOwner] = createSignal<string | null>(null);
-// Where to put the caret when a block starts editing. Either a concrete offset
-// (clicks, splits, most callers) OR a column descriptor for cross-block Up/Down
-// navigation: land `col` chars into the target's FIRST (Down) or LAST (Up) source
-// line, resolved against the TARGET's own editor value (so hidden props / calc /
-// annotation blocks land correctly). Matches OG's cross-boundary caret algorithm.
-export type CaretPos = number | { col: number; edge: "first" | "last" };
-const [caretTarget, setCaretTarget] = createSignal<{ id: string; offset: CaretPos } | null>(null);
-
-export function takeCaretFor(id: string): CaretPos | null {
-  const t = caretTarget();
-  if (t && t.id === id) {
-    setCaretTarget(null);
-    return t.offset;
-  }
-  return null;
 }
 
 let idCounter = 0;
@@ -414,7 +391,7 @@ export function resetStore() {
   // across the switch (audit P2).
   clearSeededFacets();
   setDoc({ byId: {}, pages: [], feed: [], loaded: false });
-  setEditingId(null);
+  endEdit("graph-switch");
 }
 
 // A navigation/feed load must NOT replace a page that has unsaved edits (or an
@@ -458,7 +435,7 @@ export function loadSingle(dto: PageDto) {
   upsertUnlessDirty(dto);
   setDoc("feed", [dto.name]);
   setDoc("loaded", true);
-  setEditingId(null);
+  endEdit("page-navigation");
   evictIfNeeded();
 }
 
@@ -467,7 +444,7 @@ export function loadFeed(dtos: PageDto[]) {
   for (const d of dtos) upsertUnlessDirty(d);
   setDoc("feed", dtos.map((d) => d.name));
   setDoc("loaded", true);
-  setEditingId(null);
+  endEdit("page-navigation");
   evictIfNeeded();
 }
 
@@ -789,7 +766,7 @@ export function undo() {
   if (!undoStack.length) return;
   redoStack.push(applyEntry(undoStack.pop()!));
   lastUndoTag = null;
-  setEditingId(null);
+  endEdit("undo");
   scheduleSave();
 }
 
@@ -797,7 +774,7 @@ export function redo() {
   if (!redoStack.length) return;
   undoStack.push(applyEntry(redoStack.pop()!));
   lastUndoTag = null;
-  setEditingId(null);
+  endEdit("redo");
   scheduleSave();
 }
 
@@ -809,61 +786,6 @@ export function setRaw(id: string, raw: string) {
   pushRawUndo(id, doc.byId[id].raw);
   setDoc("byId", id, "raw", raw);
   markDirty(doc.byId[id].page);
-}
-
-// Surface-aware edit focus. A block uuid can render in SEVERAL surfaces at once
-// (the main pane and each right-sidebar item). `activeSurface` tracks which
-// surface's editor currently holds the caret (set on textarea focus). An UNSCOPED
-// edit (owner=null — a split or keyboard nav) mounts an editor in EVERY surface
-// that renders the new block, and each one's onMount would call focus(); without
-// arbitration the main pane wins and the caret "disappears" out of the sidebar.
-// So we stamp the new block id with the surface that had the caret, and only that
-// surface focuses it (see Block's onMount). Scoped edits (owner set on click) only
-// ever mount one instance, so they need no stamp.
-export const [activeSurface, setActiveSurface] = createSignal<string | null>(null);
-const pendingFocusSurface = new Map<string, string>();
-/** The surface that should take the caret for `id`, or undefined for "no
- *  constraint" (single-surface edit → focus normally). */
-export function focusSurfaceFor(id: string): string | undefined {
-  return pendingFocusSurface.get(id);
-}
-export function clearFocusSurface(id: string) {
-  pendingFocusSurface.delete(id);
-}
-
-export function startEditing(id: string, offset: CaretPos = 0, owner: string | null = null) {
-  // Latch the block so that when editing ends its body renders eagerly (no
-  // deferred raw-text placeholder frame on blur). A just-created block goes
-  // straight to the editor and is never rendered through AstBody first, so without
-  // this it would briefly show its raw text on blur while the IntersectionObserver
-  // catches up. See AstBody / src/lazyObserve.ts (P1 lazy body).
-  renderedBlocks.add(id);
-  setSelAnchor(null);
-  setSelFocus(null);
-  setCaretTarget({ id, offset });
-  if (owner === null) {
-    // Unscoped: pin the caret to the surface that currently has it, so the new
-    // block doesn't get its focus stolen by another surface rendering the same id.
-    const s = activeSurface();
-    if (s) pendingFocusSurface.set(id, s);
-    else pendingFocusSurface.delete(id);
-  } else {
-    // Scoped to one rendered instance (a click) → exactly one editor mounts; drop
-    // any stale stamp so it focuses immediately.
-    pendingFocusSurface.delete(id);
-  }
-  // Set both editing signals atomically. `editing()` (Block.tsx) depends on BOTH
-  // editingId AND editingOwner; without batching, an unscoped nav (owner=null) from a
-  // previously-clicked block (editingOwner non-null) leaves a one-flush intermediate
-  // window where the target's editing() is still false — so it renders its Rendered
-  // view (incl. a SCHEDULED/DEADLINE date chip) for a frame before the editor mounts.
-  // In WebKitGTK that intermediate chip-bearing state drops focus, so ArrowDown/Up into
-  // a scheduled block lost the caret. batch() collapses both setters into one flush so
-  // the target goes Rendered→Editor directly, matching the working direct-click path.
-  batch(() => {
-    setEditingId(id);
-    setEditingOwner(owner);
-  });
 }
 
 /** Enter: split the block at `offset`. Built-in `id::`/`collapsed::` props are
@@ -1506,7 +1428,7 @@ function deleteBlockInternal(id: string) {
       rm(id);
     })
   );
-  if (editingId() === id) setEditingId(null);
+  if (editingId() === id) endEdit("delete-block");
   markDirty(pageName);
 }
 
@@ -1543,7 +1465,7 @@ export function isSelected(id: string): boolean {
   return selectedSet().has(id);
 }
 export function selectBlock(id: string) {
-  setEditingId(null);
+  endEdit("select-block");
   setSelAnchor(id);
   setSelFocus(id);
 }
@@ -1673,7 +1595,7 @@ export function deleteSelection() {
     })
   );
   const ed = editingId();
-  if (ed && !doc.byId[ed]) setEditingId(null);
+  if (ed && !doc.byId[ed]) endEdit("delete-selection");
   for (const p of pages) markDirty(p);
   clearSelection();
 }
@@ -2128,4 +2050,3 @@ export function setCollapsed(id: string, collapsed: boolean) {
   writeCollapsed(id, collapsed);
   markDirty(n.page);
 }
-

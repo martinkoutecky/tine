@@ -17,11 +17,11 @@ import {
   ensurePageLoaded,
   pageByName,
   blockSubtreeMarkdown,
-  setEditingId,
   deleteBlock,
   setRaw,
   doc,
 } from "./store";
+import { startEditing } from "./editorController";
 import { installKeybindings, eventToBindingString } from "./keybindings";
 import { backend } from "./backend";
 import { initSpellcheckSettings } from "./spellcheckSettings";
@@ -84,7 +84,8 @@ function Capture() {
       blocks: [{ id: "", raw: "", collapsed: false, children: [] }],
       rev: null,
     });
-    setEditingId(pageByName(SCRATCH)?.roots[0] ?? null);
+    const root = pageByName(SCRATCH)?.roots[0];
+    if (root) startEditing(root, 0, null);
     setReady(true);
   };
 
@@ -97,7 +98,7 @@ function Capture() {
     const first = doc.byId[rid];
     if (first) for (const c of [...first.children]) deleteBlock(c);
     setRaw(rid, "");
-    setEditingId(rid);
+    startEditing(rid, 0, null);
   };
 
   // The window is created hidden at startup, so the editor's onMount fit to a
