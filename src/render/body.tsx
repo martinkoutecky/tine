@@ -5,6 +5,7 @@ import { For, Show, createMemo, createResource, createSignal, onCleanup, type JS
 import { Dynamic } from "solid-js/web";
 import { InlineText, renderInlines, renderRawHtml, MathView } from "./inline";
 import type { Block as AstBlock, ListItem as AstListItem, Format } from "./ast";
+import { coarseSpanAttrs, type SpanDomAttrs } from "./spans";
 import { backend } from "../backend";
 import { evalCalc } from "../editor/calc";
 import { toggleListItemAtIndex, doc, formatForBlock } from "../store";
@@ -28,7 +29,7 @@ function loadHljs() {
 // A fenced code block: renders escaped (plain) immediately, then upgrades to
 // syntax-highlighted once highlight.js loads. The highlight result is memoized
 // (highlightAuto is expensive) so re-renders don't re-tokenize.
-function CodeBlock(props: { code: string; lang: string }): JSX.Element {
+function CodeBlock(props: { code: string; lang: string; spanAttrs?: SpanDomAttrs }): JSX.Element {
   const [hljs] = createResource(loadHljs);
   const html = createMemo(() => {
     const h = hljs();
@@ -43,7 +44,7 @@ function CodeBlock(props: { code: string; lang: string }): JSX.Element {
     }
   });
   return (
-    <pre class="code-block">
+    <pre class="code-block" {...(props.spanAttrs ?? {})}>
       <button
         class="code-copy"
         title="Copy code"
@@ -62,10 +63,10 @@ function CodeBlock(props: { code: string; lang: string }): JSX.Element {
 // A ```calc block: each input line on the left, its evaluated result on the
 // right (Logseq's calculator). The raw text is unchanged — render-only.
 // Exported so the editor can show the SAME live results panel while you type.
-export function CalcBlock(props: { src: string }): JSX.Element {
+export function CalcBlock(props: { src: string; spanAttrs?: SpanDomAttrs }): JSX.Element {
   const lines = createMemo(() => evalCalc(props.src));
   return (
-    <div class="calc-block">
+    <div class="calc-block" {...(props.spanAttrs ?? {})}>
       <For each={lines()}>
         {(ln, i) => (
           <>
@@ -121,7 +122,7 @@ export function renderBlocks(blocks: AstBlock[], blockId?: string, headingLevel?
               (e.g. a `> quote` under it) — matching OG. The heading level comes from
               the facet cache (facetsOf); we wrap just block 0. */}
           <Show when={i() === 0 && headingLevel && isInlineFlow(b)} fallback={renderBlock(b, blockId)}>
-            <span class={`heading-text h${headingLevel}`}>{renderBlock(b, blockId)}</span>
+            <span class={`heading-text h${headingLevel}`} {...(coarseSpanAttrs(b.span) ?? {})}>{renderBlock(b, blockId)}</span>
           </Show>
         </>
       )}
@@ -136,30 +137,32 @@ function renderBlock(b: AstBlock, blockId?: string): JSX.Element {
     case "heading":
       return renderInlines(b.inline, blockId);
     case "src":
-      return b.lang === "calc" ? <CalcBlock src={b.code} /> : <CodeBlock code={b.code} lang={b.lang} />;
+      return b.lang === "calc"
+        ? <CalcBlock src={b.code} spanAttrs={coarseSpanAttrs(b.span)} />
+        : <CodeBlock code={b.code} lang={b.lang} spanAttrs={coarseSpanAttrs(b.span)} />;
     case "example":
-      return <CodeBlock code={b.code} lang="" />;
+      return <CodeBlock code={b.code} lang="" spanAttrs={coarseSpanAttrs(b.span)} />;
     case "quote":
       return renderQuote(b, blockId);
     case "custom":
       return renderCustom(b, blockId);
     case "list":
-      return <AstList items={b.items} blockId={blockId} cbItems={flattenCheckboxItems(b.items)} />;
+      return <AstList items={b.items} blockId={blockId} cbItems={flattenCheckboxItems(b.items)} spanAttrs={coarseSpanAttrs(b.span)} />;
     case "table":
       return renderTable(b, blockId);
     case "properties":
       return renderProps(b, blockId);
     case "hr":
-      return <hr class="md-hr" />;
+      return <hr class="md-hr" {...(coarseSpanAttrs(b.span) ?? {})} />;
     case "displayed_math":
-      return <MathView tex={b.text} display={true} />;
+      return <MathView tex={b.text} display={true} spanAttrs={coarseSpanAttrs(b.span)} />;
     case "latex_env":
-      return <MathView tex={`\\begin{${b.name}}${b.content}\\end{${b.name}}`} display={true} />;
+      return <MathView tex={`\\begin{${b.name}}${b.content}\\end{${b.name}}`} display={true} spanAttrs={coarseSpanAttrs(b.span)} />;
     case "raw_html":
-      return renderRawHtml(b.text);
+      return renderRawHtml(b.text, coarseSpanAttrs(b.span));
     case "footnote_def":
       return (
-        <div class="footnote-def">
+        <div class="footnote-def" {...(coarseSpanAttrs(b.span) ?? {})}>
           <sup class="footnote-ref">{b.name}</sup> {renderInlines(b.inline, blockId)}
         </div>
       );
@@ -170,7 +173,7 @@ function renderBlock(b: AstBlock, blockId?: string): JSX.Element {
     case "hiccup":
       // Clojure-hiccup `[:tag …]` — render the raw bracket text literally (OG turns
       // it into HTML; a hiccup→HTML transform is a possible later upgrade). Edge case.
-      return <span class="ast-hiccup">{b.v}</span>;
+      return <span class="ast-hiccup" {...(coarseSpanAttrs(b.span) ?? {})}>{b.v}</span>;
   }
 }
 
@@ -199,7 +202,7 @@ function renderQuote(b: Extract<AstBlock, { kind: "quote" }>, blockId?: string):
           ? [{ kind: "paragraph", inline: bodyInlines }, ...b.children.slice(1)]
           : b.children.slice(1);
         return (
-          <div class={`callout callout-${type}`}>
+          <div class={`callout callout-${type}`} {...(coarseSpanAttrs(b.span) ?? {})}>
             <div class="callout-title">
               <Show when={!titleEmpty} fallback={type.toUpperCase()}>
                 {titleText}
@@ -212,14 +215,14 @@ function renderQuote(b: Extract<AstBlock, { kind: "quote" }>, blockId?: string):
       }
     }
   }
-  return <blockquote class="md-quote">{renderBlocks(b.children, blockId)}</blockquote>;
+  return <blockquote class="md-quote" {...(coarseSpanAttrs(b.span) ?? {})}>{renderBlocks(b.children, blockId)}</blockquote>;
 }
 
 function renderCustom(b: Extract<AstBlock, { kind: "custom" }>, blockId?: string): JSX.Element {
   const type = b.name.toLowerCase();
   if (CALLOUT_TYPES.includes(type)) {
     return (
-      <div class={`callout callout-${type}`}>
+      <div class={`callout callout-${type}`} {...(coarseSpanAttrs(b.span) ?? {})}>
         <div class="callout-title">{type.toUpperCase()}</div>
         <Show when={b.children.length > 0}>
           <div class="callout-body">{renderBlocks(b.children, blockId)}</div>
@@ -227,7 +230,7 @@ function renderCustom(b: Extract<AstBlock, { kind: "custom" }>, blockId?: string
       </div>
     );
   }
-  if (type === "quote") return <blockquote class="md-quote">{renderBlocks(b.children, blockId)}</blockquote>;
+  if (type === "quote") return <blockquote class="md-quote" {...(coarseSpanAttrs(b.span) ?? {})}>{renderBlocks(b.children, blockId)}</blockquote>;
   return <>{renderBlocks(b.children, blockId)}</>;
 }
 
@@ -237,7 +240,7 @@ function renderTable(b: Extract<AstBlock, { kind: "table" }>, blockId?: string):
     return align ? { "text-align": align } : undefined;
   };
   return (
-    <table class="md-table">
+    <table class="md-table" {...(coarseSpanAttrs(b.span) ?? {})}>
       <Show when={b.header}>
         <thead>
           <tr>
@@ -297,10 +300,10 @@ function flattenCheckboxItems(items: AstListItem[]): AstListItem[] {
 // An in-block list from the AST (`ListItem[]`). `cbItems` is the block-wide
 // depth-first list of checkbox items, shared across nested AstLists so each
 // checkbox knows its global index.
-function AstList(props: { items: AstListItem[]; blockId?: string; cbItems: AstListItem[] }): JSX.Element {
+function AstList(props: { items: AstListItem[]; blockId?: string; cbItems: AstListItem[]; spanAttrs?: SpanDomAttrs }): JSX.Element {
   const ordered = props.items[0]?.ordered ?? false;
   return (
-    <Dynamic component={ordered ? "ol" : "ul"} class="md-list">
+    <Dynamic component={ordered ? "ol" : "ul"} class="md-list" {...(props.spanAttrs ?? {})}>
       <For each={props.items}>
         {(item) => (
           <li

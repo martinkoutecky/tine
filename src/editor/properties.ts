@@ -67,24 +67,69 @@ export function splitProps(
   raw: string,
   isHidden: (key: string) => boolean
 ): { visible: string; hidden: string } {
+  const { visible, hidden } = splitPropsInternal(raw, isHidden);
+  return { visible, hidden };
+}
+
+function splitPropsInternal(
+  raw: string,
+  isHidden: (key: string) => boolean,
+  rawOffset?: number
+): { visible: string; hidden: string; visibleOffset?: number } {
   const vis: string[] = [];
   const hid: string[] = [];
   let fence: string | null = null;
+  const target = rawOffset == null ? null : Math.max(0, Math.min(rawOffset, raw.length));
+  let visibleLen = 0;
+  let visibleOffset: number | null = null;
+  let rawPos = 0;
   for (const l of raw.split("\n")) {
+    const rawStart = rawPos;
+    const rawEnd = rawStart + l.length;
     const t = fenceTransition(fence, l);
+    let visible = false;
     if (t.opens || t.closes) {
       fence = t.next;
+      visible = true;
+    } else if (fence !== null) {
+      visible = true; // inside a code fence — never metadata
+    } else {
+      const k = propLineKey(l);
+      visible = !(k && isHidden(k));
+    }
+    if (visible) {
+      const lineVisibleStart = visibleLen + (vis.length > 0 ? 1 : 0);
+      const lineVisibleEnd = lineVisibleStart + l.length;
+      if (target != null && visibleOffset == null && target >= rawStart && target <= rawEnd) {
+        visibleOffset = lineVisibleStart + (target - rawStart);
+      }
       vis.push(l);
-      continue;
+      visibleLen = lineVisibleEnd;
+    } else {
+      if (target != null && visibleOffset == null && target >= rawStart && target <= rawEnd) {
+        visibleOffset = visibleLen;
+      }
+      hid.push(l);
     }
-    if (fence !== null) {
-      vis.push(l); // inside a code fence — never metadata
-      continue;
-    }
-    const k = propLineKey(l);
-    (k && isHidden(k) ? hid : vis).push(l);
+    rawPos = rawEnd + 1;
   }
-  return { visible: vis.join("\n"), hidden: hid.join("\n") };
+  return {
+    visible: vis.join("\n"),
+    hidden: hid.join("\n"),
+    visibleOffset: target == null ? undefined : (visibleOffset ?? visibleLen),
+  };
+}
+
+/** Map a UTF-16 offset in raw block text into the textarea's visible buffer,
+ *  using the same fence-aware hidden-property split as {@link splitProps}. When
+ *  the raw offset falls inside a hidden property line, it maps to the edit point
+ *  where that removed line would have appeared. */
+export function rawOffsetToVisibleOffset(
+  raw: string,
+  rawOffset: number,
+  isHidden: (key: string) => boolean
+): number {
+  return splitPropsInternal(raw, isHidden, rawOffset).visibleOffset ?? 0;
 }
 
 /** Reattach hidden property lines below the visible text. A metadata-only block

@@ -8,7 +8,8 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
 
 ## Outliner & editing
 
-- Click-to-edit blocks; the caret lands exactly where you clicked.
+- Click-to-edit blocks; the caret lands exactly where you clicked, including
+  rendered bold/link/heading markup.
 - `Enter` / `Tab` / `Shift+Tab` / `Backspace` / arrows with correct Logseq
   semantics and caret preservation — no reflow on indent/outdent; arrow nav
   respects *visual* wrapped rows.

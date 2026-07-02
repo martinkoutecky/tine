@@ -20,6 +20,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   now vendored in the frontend, with crash fixes for adversarial input,
   parser-owned table alignment in the app, and support for `data:` image links.
 
+### Fixed
+
+- **Click-to-caret in marked-up blocks.** Clicking rendered Markdown/Org markup
+  now maps through lsdoc inline byte spans, so the editor opens at the clicked
+  source position instead of falling back to the end of the block.
+
 ## [0.3.1] — 2026-07-01
 
 ### Added

@@ -28,7 +28,7 @@ async function htmlOf(el: () => unknown): Promise<string> {
 describe("AstBody (no-IO degrade path)", () => {
   it("renders the parsed body, not a deferred placeholder", async () => {
     const h = await htmlOf(() => AstBody({ raw: "a **bold** b", blockId: "blk-1" }));
-    expect(h).toContain("<strong>");
+    expect(h).toContain("<strong");
     expect(h).not.toContain("ast-deferred");
   });
 

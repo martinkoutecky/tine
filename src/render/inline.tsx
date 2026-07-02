@@ -14,6 +14,7 @@ import { parseBlock, parserReady } from "./parse";
 import type { Inline, Url, MacroInline, TimestampInline, TimestampPoint, EmailValue, Block as AstBlock, Format } from "./ast";
 import { EmojiText } from "./emoji";
 import { typographic } from "./typography";
+import { coarseSpanAttrs, plainSpanAttrs, type SpanDomAttrs } from "./spans";
 import { typographyMode } from "../ui";
 import { visibleBody } from "./block";
 import { backend } from "../backend";
@@ -57,66 +58,70 @@ function renderMacroBody(raw: string, blockId?: string): JSX.Element {
 }
 
 /** Render a parsed inline run (lsdoc `Inline[]`) to interactive DOM. */
-export function renderInlines(inlines: Inline[], blockId?: string): JSX.Element {
-  return <For each={inlines}>{(s) => renderInline(s, blockId)}</For>;
+export function renderInlines(inlines: Inline[], blockId?: string, spanMode = true): JSX.Element {
+  return <For each={inlines}>{(s) => renderInline(s, blockId, spanMode)}</For>;
 }
 
-function renderInline(s: Inline, blockId?: string): JSX.Element {
+function renderInline(s: Inline, blockId?: string, spanMode = true): JSX.Element {
   switch (s.k) {
-    case "plain":
+    case "plain": {
       // Render-time typographic replacement (`->`→`→`, `--`→`–`, …) is a Tine
       // opinion applied ONLY to plain text — code/links/math/tags are other node
       // kinds, so they're excluded for free. Source keeps the ASCII.
-      return <EmojiText text={typographyMode() === "render" ? typographic(s.text) : s.text} />;
+      const text = typographyMode() === "render" ? typographic(s.text) : s.text;
+      const attrs = spanMode && text === s.text ? plainSpanAttrs(s.span, s.span_map) : undefined;
+      return attrs ? <span {...attrs}><EmojiText text={text} /></span> : <EmojiText text={text} />;
+    }
     case "code":
     case "verbatim":
-      return <code class="inline-code">{s.text}</code>;
+      return <code class="inline-code" {...((spanMode ? coarseSpanAttrs(s.span) : undefined) ?? {})}>{s.text}</code>;
     case "break":
     case "hardbreak":
       // Both render as <br>: today body.tsx joins every in-block line with <br>,
       // and a soft `break` is exactly such an in-block newline — match that look.
-      return <br />;
+      return <br {...((spanMode ? coarseSpanAttrs(s.span) : undefined) ?? {})} />;
     case "emphasis": {
-      const inner = renderInlines(s.children, blockId);
+      const inner = renderInlines(s.children, blockId, spanMode);
+      const attrs = (spanMode ? coarseSpanAttrs(s.span) : undefined) ?? {};
       switch (s.emph) {
-        case "Bold": return <strong>{inner}</strong>;
-        case "Italic": return <em>{inner}</em>;
-        case "Strike_through": return <del>{inner}</del>;
-        case "Highlight": return <mark>{inner}</mark>;
-        case "Underline": return <u>{inner}</u>;
+        case "Bold": return <strong {...attrs}>{inner}</strong>;
+        case "Italic": return <em {...attrs}>{inner}</em>;
+        case "Strike_through": return <del {...attrs}>{inner}</del>;
+        case "Highlight": return <mark {...attrs}>{inner}</mark>;
+        case "Underline": return <u {...attrs}>{inner}</u>;
       }
       return inner;
     }
     case "subscript":
-      return <sub>{renderInlines(s.children, blockId)}</sub>;
+      return <sub {...((spanMode ? coarseSpanAttrs(s.span) : undefined) ?? {})}>{renderInlines(s.children, blockId, spanMode)}</sub>;
     case "superscript":
-      return <sup>{renderInlines(s.children, blockId)}</sup>;
+      return <sup {...((spanMode ? coarseSpanAttrs(s.span) : undefined) ?? {})}>{renderInlines(s.children, blockId, spanMode)}</sup>;
     case "link":
-      return renderLink(s, blockId);
+      return renderLink(s, blockId, spanMode);
     case "nested_link":
       // Logseq `[[a [[b]] c]]` — best-effort: route the whole inner as a page ref.
-      return <PageRef name={s.content} />;
+      return <PageRef name={s.content} spanAttrs={spanMode ? coarseSpanAttrs(s.span) : undefined} />;
     case "target":
-      return <span class="org-target">{s.text}</span>;
+      return <span class="org-target" {...((spanMode ? coarseSpanAttrs(s.span) : undefined) ?? {})}>{s.text}</span>;
     case "tag":
-      return <PageRef name={astText(s.children)} tag />;
+      return <PageRef name={astText(s.children)} tag spanAttrs={spanMode ? coarseSpanAttrs(s.span) : undefined} />;
     case "macro":
       return renderMacroBody(macroBody(s), blockId);
     case "latex":
-      return <MathView tex={s.body} display={s.mode === "Displayed"} />;
+      return <MathView tex={s.body} display={s.mode === "Displayed"} spanAttrs={spanMode ? coarseSpanAttrs(s.span) : undefined} />;
     case "timestamp":
       return renderTimestamp(s);
     case "fnref":
-      return <sup class="footnote-ref">{s.name}</sup>;
+      return <sup class="footnote-ref" {...((spanMode ? coarseSpanAttrs(s.span) : undefined) ?? {})}>{s.name}</sup>;
     case "inline_html":
-      return renderRawHtml(s.text);
+      return renderRawHtml(s.text, spanMode ? coarseSpanAttrs(s.span) : undefined);
     case "email":
-      return renderEmail(s.text);
+      return renderEmail(s.text, spanMode ? coarseSpanAttrs(s.span) : undefined);
     case "entity":
-      return <>{s.unicode}</>;
+      return spanMode && s.span ? <span {...(coarseSpanAttrs(s.span) ?? {})}>{s.unicode}</span> : <>{s.unicode}</>;
     case "hiccup":
       // Inline Clojure-hiccup `[:tag …]` — literal text for now (see ast.ts). Edge case.
-      return <>{s.v}</>;
+      return spanMode && s.span ? <span {...(coarseSpanAttrs(s.span) ?? {})}>{s.v}</span> : <>{s.v}</>;
   }
 }
 
@@ -159,7 +164,7 @@ function macroBody(s: MacroInline): string {
 }
 
 // A `[[page]]` / `#tag` anchor — shared by page_ref links, bare refs, and #tags.
-function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolean }): JSX.Element {
+function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolean; spanAttrs?: SpanDomAttrs }): JSX.Element {
   const open = (e: MouseEvent) => {
     e.stopPropagation();
     const kind = isJournalTitle(props.name) ? "journal" : "page";
@@ -169,6 +174,7 @@ function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolean }): J
   return (
     <a
       class={props.tag ? "tag" : "page-ref"}
+      {...(props.spanAttrs ?? {})}
       onClick={open}
       onAuxClick={(e) => {
         if (e.button === 1) {
@@ -194,15 +200,16 @@ function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolean }): J
   );
 }
 
-function renderLink(s: Extract<Inline, { k: "link" }>, blockId?: string): JSX.Element {
+function renderLink(s: Extract<Inline, { k: "link" }>, blockId?: string, spanMode = true): JSX.Element {
   const url = s.url;
+  const spanAttrs = spanMode ? coarseSpanAttrs(s.span) : undefined;
   if (url.type === "page_ref") {
-    const alias = s.label && s.label.length ? renderInlines(s.label, blockId) : undefined;
-    return <PageRef name={url.v} alias={alias} />;
+    const alias = s.label && s.label.length ? renderInlines(s.label, blockId, spanMode) : undefined;
+    return <PageRef name={url.v} alias={alias} spanAttrs={spanAttrs} />;
   }
   if (url.type === "block_ref") {
     const label = s.label && s.label.length ? astText(s.label) : undefined;
-    return <BlockRefView id={url.v} label={label} />;
+    return <BlockRefView id={url.v} label={label} spanAttrs={spanAttrs} />;
   }
   const dest = urlDest(url);
   if (s.image) {
@@ -210,14 +217,14 @@ function renderLink(s: Extract<Inline, { k: "link" }>, blockId?: string): JSX.El
     const alt = s.label && s.label.length ? astText(s.label) : "";
     const k = mediaKind(dest);
     if (k === "video" || k === "audio")
-      return <MediaEmbed url={dest} kind={k} alt={alt} width={width} blockId={blockId} />;
-    return <AssetImage url={dest} alt={alt} width={width} height={height} blockId={blockId} />;
+      return <MediaEmbed url={dest} kind={k} alt={alt} width={width} blockId={blockId} spanAttrs={spanAttrs} />;
+    return <AssetImage url={dest} alt={alt} width={width} height={height} blockId={blockId} spanAttrs={spanAttrs} />;
   }
   if (/\.pdf$/i.test(dest)) {
     const filename = dest.split("/").pop() ?? dest;
     const labelStr = s.label && s.label.length ? astText(s.label) : filename;
     return (
-      <a class="external-link pdf-link" onClick={(e) => { e.stopPropagation(); openPdf(filename, labelStr || filename); }}>
+      <a class="external-link pdf-link" {...(spanAttrs ?? {})} onClick={(e) => { e.stopPropagation(); openPdf(filename, labelStr || filename); }}>
         📄 {labelStr || filename}
       </a>
     );
@@ -226,9 +233,10 @@ function renderLink(s: Extract<Inline, { k: "link" }>, blockId?: string): JSX.El
     <a
       class="external-link"
       href={dest}
+      {...(spanAttrs ?? {})}
       onClick={(e) => { e.preventDefault(); e.stopPropagation(); void backend().openExternal(dest); }}
     >
-      <Show when={s.label && s.label.length} fallback={dest}>{renderInlines(s.label!, blockId)}</Show>
+      <Show when={s.label && s.label.length} fallback={dest}>{renderInlines(s.label!, blockId, spanMode)}</Show>
     </a>
   );
 }
@@ -270,16 +278,16 @@ function renderTimestamp(s: TimestampInline): JSX.Element {
     text = fmtTsPoint(p);
   }
   return (
-    <span class="org-timestamp" classList={{ inactive: !active }}>
+    <span class="org-timestamp" classList={{ inactive: !active }} {...(coarseSpanAttrs(s.span) ?? {})}>
       {active ? "<" : "["}{text}{active ? ">" : "]"}
     </span>
   );
 }
 
 // Sandboxed-iframe rendering, reused for inline `inline_html` and block `raw_html`.
-function renderIframe(src: string, width?: string, height?: string): JSX.Element {
+function renderIframe(src: string, width?: string, height?: string, spanAttrs?: SpanDomAttrs): JSX.Element {
   return (
-    <span class="embed-iframe-wrap" style={{ ...(width ? { width } : {}), ...(height ? { "aspect-ratio": "auto", height } : {}) }}>
+    <span class="embed-iframe-wrap" style={{ ...(width ? { width } : {}), ...(height ? { "aspect-ratio": "auto", height } : {}) }} {...(spanAttrs ?? {})}>
       <iframe class="embed-iframe" src={src} sandbox="allow-scripts allow-same-origin allow-popups allow-forms" referrerpolicy="no-referrer" title="embed" />
     </span>
   );
@@ -287,7 +295,7 @@ function renderIframe(src: string, width?: string, height?: string): JSX.Element
 // Raw HTML (inline_html / raw_html): honour ONLY the https `<iframe>` subset
 // (sandboxed); any OTHER raw HTML renders as PLAIN TEXT (no innerHTML — XSS-safe,
 // matches today's behavior).
-export function renderRawHtml(text: string): JSX.Element {
+export function renderRawHtml(text: string, spanAttrs?: SpanDomAttrs): JSX.Element {
   const m = /<iframe\b([^>]*)>/i.exec(text);
   if (m) {
     const attrs = m[1];
@@ -295,13 +303,13 @@ export function renderRawHtml(text: string): JSX.Element {
     if (src && /^https?:\/\//i.test(src)) {
       const width = /width\s*=\s*["']?(\d+%?|\d+px)["']?/i.exec(attrs)?.[1];
       const height = /height\s*=\s*["']?(\d+%?|\d+px)["']?/i.exec(attrs)?.[1];
-      return renderIframe(src, width, height);
+      return renderIframe(src, width, height, spanAttrs);
     }
   }
-  return <EmojiText text={text} />;
+  return spanAttrs ? <span {...spanAttrs}><EmojiText text={text} /></span> : <EmojiText text={text} />;
 }
 
-function renderEmail(text: EmailValue): JSX.Element {
+function renderEmail(text: EmailValue, spanAttrs?: SpanDomAttrs): JSX.Element {
   let addr = "";
   if (typeof text === "string") addr = text;
   else if (text && typeof text === "object") {
@@ -311,7 +319,7 @@ function renderEmail(text: EmailValue): JSX.Element {
   }
   const href = `mailto:${addr}`;
   return (
-    <a class="external-link" href={href} onClick={(e) => { e.preventDefault(); e.stopPropagation(); void backend().openExternal(href); }}>
+    <a class="external-link" href={href} {...(spanAttrs ?? {})} onClick={(e) => { e.preventDefault(); e.stopPropagation(); void backend().openExternal(href); }}>
       {addr}
     </a>
   );
@@ -335,7 +343,7 @@ function loadKatex() {
 // KaTeX-typeset math. KaTeX output is trusted HTML, so innerHTML is safe here.
 // Shows the raw TeX until KaTeX has loaded, then upgrades. The typeset result is
 // memoized so re-renders of this span don't re-run the (non-trivial) typesetter.
-export function MathView(props: { tex: string; display: boolean }): JSX.Element {
+export function MathView(props: { tex: string; display: boolean; spanAttrs?: SpanDomAttrs }): JSX.Element {
   const [katex] = createResource(loadKatex);
   const html = createMemo(() => {
     const k = katex();
@@ -347,7 +355,7 @@ export function MathView(props: { tex: string; display: boolean }): JSX.Element 
     }
   });
   return (
-    <span class="math" classList={{ "math-display": props.display }}>
+    <span class="math" classList={{ "math-display": props.display }} {...(props.spanAttrs ?? {})}>
       <Show when={html()} fallback={<span class="math-raw">{props.tex}</span>}>
         <span innerHTML={html()!} />
       </Show>
@@ -414,6 +422,7 @@ function AssetImage(props: {
   width?: string;
   height?: string;
   blockId?: string;
+  spanAttrs?: SpanDomAttrs;
 }): JSX.Element {
   // Width sizes the WRAPPER, not the <img>: an inline-block sized by a
   // percentage child doesn't shrink to it, so the grip (positioned against the
@@ -501,7 +510,7 @@ function AssetImage(props: {
       when={external || src()}
       fallback={<span class="inline-image-missing">🖼 {props.alt || assetRelPath(props.url)}</span>}
     >
-      <span ref={wrapEl} class="inline-image-wrap" style={wrapStyle()}>
+      <span ref={wrapEl} class="inline-image-wrap" style={wrapStyle()} {...(props.spanAttrs ?? {})}>
         <img
           ref={imgEl}
           class="inline-image"
@@ -575,6 +584,7 @@ function MediaEmbed(props: {
   alt?: string;
   width?: string;
   blockId?: string;
+  spanAttrs?: SpanDomAttrs;
 }): JSX.Element {
   const [failed, setFailed] = createSignal(false);
   // Audio has no fullscreen; the "Expand" button (below) opens a wide overlay
@@ -648,6 +658,7 @@ function MediaEmbed(props: {
         class="media-embed-wrap"
         classList={{ "media-audio-wrap": props.kind === "audio" }}
         style={wrapStyle()}
+        {...(props.spanAttrs ?? {})}
       >
         <Dynamic
           component={props.kind}
@@ -710,7 +721,7 @@ export function InlineText(props: { text: string; blockId?: string; format?: For
   );
   return (
     <Show when={inlines() && inlines()!.length > 0} fallback={<EmojiText text={props.text} />}>
-      {renderInlines(inlines()!, props.blockId)}
+      {renderInlines(inlines()!, props.blockId, false)}
     </Show>
   );
 }
@@ -743,7 +754,7 @@ function UserMacroView(props: { name: string; template: string; args: string[]; 
 // line; the labeled form `[label](((uuid)))` shows the label instead. Both
 // navigate to the source page on click and show a hover preview of the full
 // referenced block (mirrors OG); a missing target falls back to a short id.
-function BlockRefView(props: { id: string; label?: string }): JSX.Element {
+function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAttrs }): JSX.Element {
   const [grp] = createResource(
     () => `${props.id} ${graphEpoch()}`, // resolve once per open graph; batched + cached
     () => resolveBlockBatched(props.id)
@@ -757,6 +768,7 @@ function BlockRefView(props: { id: string; label?: string }): JSX.Element {
     <span
       class="block-ref"
       classList={{ "block-ref-missing": !grp() }}
+      {...(props.spanAttrs ?? {})}
       title="Click to go to the block; shift-click → sidebar; right-click for more"
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}

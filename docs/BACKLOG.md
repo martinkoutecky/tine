@@ -34,7 +34,6 @@ _Nothing actively in flight._
 
 | Item | Notes |
 |---|---|
-| **Click→caret placement in marked-up blocks** | Clicking a block that renders markup currently drops the caret at end-of-block; needs the renderer to map a click back to the source offset. **Standing order (Jul 2 2026): rides the lsdoc v0.3.0 integration** (`subagent-tasks/lsdoc-030-integration-spec.md`, Part 3) — the full span/span_map contract is ordered from lsdoc; thread it when the tag lands. |
 | **Plugin CSS-variable alias shim** | Alias OG `--ls-*` CSS variables so the Awesome-Styler theme family "mostly works". A themes-compat slice, **not** full plugin support (that's WONTFIX). ~1–2 days. |
 | **Datalog query coverage expansion** | A scoped subset of advanced Datalog queries works today (unsupported clauses are flagged, not silently dropped); expand coverage on demand. |
 | **Quick-capture browser extension (Firefox)** | Snap a page/selection/link into today's journal or an inbox page via a capture template. Prefer a watched drop-file (no open port; rides the existing file-watch + journal-append). |
