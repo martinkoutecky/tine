@@ -8,6 +8,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- **Deleting today's journal leaves an empty today.** Right-clicking today in the
+  Journals feed and choosing *Delete journal* used to blank the top of the feed;
+  it now restores the empty, writable today placeholder — the same one you get on
+  reopening the journal — so you can start writing again straight away (#17).
+
 ## [0.3.2] — 2026-07-02
 
 ### Added

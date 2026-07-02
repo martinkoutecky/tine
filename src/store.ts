@@ -467,6 +467,34 @@ export function appendFeed(dtos: PageDto[]) {
   evictIfNeeded();
 }
 
+/** A fresh, empty (unsaved) page: one editable blank block. Used for a page that
+ *  doesn't exist on disk yet — the file is written lazily on first save. Shared by
+ *  the feed loader (today's placeholder), single-page open, and the post-delete
+ *  today restore, so the empty-page shape has ONE definition. */
+export function emptyPage(name: string, kind: "journal" | "page"): PageDto {
+  return {
+    name,
+    kind,
+    title: name,
+    pre_block: null,
+    blocks: [{ id: `new-${name}`, raw: "", collapsed: false, children: [] }],
+  };
+}
+
+/** Re-assert "the journals feed always shows today" on the LIVE feed after today's
+ *  journal is deleted from it. The feed loader's `withToday` only runs on (re)load,
+ *  so deleting today in place while viewing the feed would otherwise leave the top
+ *  blank until you navigate away and back (#17). No-op if today is still in the feed
+ *  (e.g. it was an OLDER day that got deleted). The placeholder is empty and
+ *  writable — `upsertPage` lifts the delete tombstone, so the first keystroke saves
+ *  a fresh file, exactly like reopening the journal. */
+export function restoreTodayJournalInFeed() {
+  const title = journalTitle(new Date());
+  if (doc.feed.includes(title)) return;
+  upsertUnlessDirty(emptyPage(title, "journal"));
+  setDoc("feed", [title, ...doc.feed]);
+}
+
 function toDto(id: string): BlockDto {
   const n = doc.byId[id];
   // Trim a block's trailing space only here, at the disk-write boundary — OG

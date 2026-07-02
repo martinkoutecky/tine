@@ -32,6 +32,7 @@ import {
   dtoSubtreeMarkdown,
   flushAll,
   deletePage,
+  restoreTodayJournalInFeed,
   selectedIds,
 } from "../store";
 import { copyStripCollapsed } from "../copySettings";
@@ -303,8 +304,13 @@ function PageMenu(props: {
         }
         const r = route();
         // Deleted the page you're viewing → fall back to journals in place (the
-        // page is gone; don't open a new tab even on a pinned tab).
+        // page is gone; don't open a new tab even on a pinned tab). Landing on the
+        // feed re-runs withToday, so a deleted today comes back empty.
         if (r.kind === "page" && r.name === name) openJournals({ inPlace: true });
+        // Deleted a day IN the journals feed (in place, no navigation) → the feed
+        // loader's withToday didn't re-run, so restore today's empty placeholder
+        // here if it was the one deleted (#17). No-op for an older day.
+        else if (r.kind === "journals" && kind === "journal") restoreTodayJournalInFeed();
         pushToast(`Deleted “${name}”`, "success");
       })
       .catch(() => pushToast("Delete failed", "error"));

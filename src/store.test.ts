@@ -8,6 +8,7 @@ import {
   resetStore,
   loadSingle,
   loadFeed,
+  restoreTodayJournalInFeed,
   markDirty,
   flushPage,
   flushAll,
@@ -969,6 +970,45 @@ describe("save engine (persistence)", () => {
     expect(pageByName("Older")).toBeUndefined();
     expect(favorites()).toEqual([{ name: "Pinned", kind: "page" }]);
     expect(recentPages()).toEqual([{ name: "Pinned", kind: "page" }]);
+  });
+
+  it("restores today's empty journal at the top of the feed after deleting today in place (#17)", async () => {
+    const today = journalTitle(new Date());
+    loadFeed([
+      { name: today, kind: "journal", title: today, pre_block: null, blocks: [blk("today content")] },
+      { name: "Older", kind: "journal", title: "Older", pre_block: null, blocks: [blk("older")] },
+    ]);
+
+    expect(await deletePage(today, "journal")).toBe(true);
+    expect(doc.feed).toEqual(["Older"]); // deletePage alone drops today from the feed
+    restoreTodayJournalInFeed(); // ContextMenu re-runs this on the journals feed
+
+    expect(doc.feed).toEqual([today, "Older"]); // today back on top…
+    const page = pageByName(today)!;
+    expect(page.roots).toHaveLength(1); // …as a single empty editable block
+    expect(doc.byId[page.roots[0]].raw).toBe("");
+
+    // The placeholder is writable: the delete tombstone was lifted, so the first
+    // edit saves a fresh file (not silently swallowed like a still-deleted page).
+    saveSpy.mockClear();
+    markDirty(today);
+    expect(await flushPage(today)).toBe(true);
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+    expect((saveSpy.mock.calls[0][0] as { name: string }).name).toBe(today);
+  });
+
+  it("keeps today untouched when an OLDER day is deleted from the feed (#17 no-op)", async () => {
+    const today = journalTitle(new Date());
+    loadFeed([
+      { name: today, kind: "journal", title: today, pre_block: null, blocks: [blk("today content")] },
+      { name: "Older", kind: "journal", title: "Older", pre_block: null, blocks: [blk("older")] },
+    ]);
+
+    expect(await deletePage("Older", "journal")).toBe(true);
+    restoreTodayJournalInFeed(); // called on every journals-feed delete; must not disturb today
+
+    expect(doc.feed).toEqual([today]); // today's real content still there, not replaced
+    expect(doc.byId[pageByName(today)!.roots[0]].raw).toBe("today content");
   });
 
   it("forceSave overwrites even a conflicted page (force=true)", async () => {

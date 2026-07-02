@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js";
-import { doc, mainPages, pageByName, reloadPage, loadSingle, loadFeed, appendFeed, isDirty, isSaving, reloadDisposition, setFeedExtender, flushAll, formatForBlock, type FeedPage } from "../store";
+import { doc, mainPages, pageByName, reloadPage, loadSingle, loadFeed, appendFeed, emptyPage, isDirty, isSaving, reloadDisposition, setFeedExtender, flushAll, formatForBlock, type FeedPage } from "../store";
 import { route, sameRoute, openPage, openJournals, openPageInNewTab, restoreScrollFor } from "../router";
 import {
   zoomedBlock, zoomInto, isFavorite, toggleFavorite,
@@ -26,16 +26,6 @@ const FEED_PAGE = 3;
 // as "aka" chips above, and `icon` is consumed as the page icon next to the title
 // (OG hides it too). Other internal/metadata page props could be added here.
 const PAGE_PROPS_HIDDEN = new Set(["alias", "icon"]);
-
-function emptyPage(name: string, kind: "journal" | "page"): PageDto {
-  return {
-    name,
-    kind,
-    title: name,
-    pre_block: null,
-    blocks: [{ id: `new-${name}`, raw: "", collapsed: false, children: [] }],
-  };
-}
 
 // OG always shows today's journal at the top of the feed, even with no file yet
 // (the file is created lazily on first edit — Tine writes on save). So prepend
