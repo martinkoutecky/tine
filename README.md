@@ -178,6 +178,11 @@ npx tauri build --no-bundle
 TINE_GRAPH=/path/to/your/graph ./target/release/tine
 ```
 
+### Release checklist
+
+Before tagging a release, run `npm run e2e:caret` against the release binary to
+guard the ADR 0013 duplicate-instance caret/focus invariant.
+
 - Point `TINE_GRAPH` at the same `journals/` + `pages/` + `logseq/config.edn` tree you use with
   Logseq. **Run one app at a time** on a given graph.
 - **GPU compositing (smooth scrolling) is on by default.** On the rare GPU/compositor combo where

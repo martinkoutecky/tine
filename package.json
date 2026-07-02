@@ -13,6 +13,7 @@
     "test": "vitest run && vitest run --config vitest.render.config.ts",
     "test:render": "vitest run --config vitest.render.config.ts",
     "build:wasm": "node scripts/build-wasm.mjs",
+    "e2e:caret": "CARET_LABEL=release-required CARET_MODE=agenda node scripts/e2e-caret.mjs",
     "screenshot": "node scripts/screenshot.mjs",
     "bench": "node scripts/bench.mjs"
   },

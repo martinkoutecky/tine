@@ -6,10 +6,11 @@
 // Two modes (env CARET_MODE):
 //   page    (default) — single CaretTest page, Round-1 fixture (bug B confirm).
 //   journal           — multi-day journal FEED with structural variants (bug A).
+//   agenda            — release-required duplicate-instance invariant (ADR 0013).
 //
 // Usage:
-//   Xvfb :98 -screen 0 1400x1000x24 &
-//   DISPLAY=:98 CARET_MODE=journal node scripts/e2e-caret.mjs
+//   CARET_MODE=agenda node scripts/e2e-caret.mjs
+//   CARET_MODE=journal node scripts/e2e-caret.mjs
 //
 // Appends findings to subagent-tasks/notes/caret-updown-repro-findings.md.
 // Does NOT modify Tine src/.
@@ -19,13 +20,84 @@ import { remote } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const MODE = process.env.CARET_MODE || "page";
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const G = "/tmp/txdg-caret-g";
-const APP = process.env.TINE_APP || `${process.env.HOME}/research/tine`;
+const LOCAL_APP = path.join(ROOT, "target/release/tine");
+const LOCAL_TAURI_DRIVER = path.resolve(ROOT, "..", ".toolchain", "cargo", "bin", "tauri-driver");
+const CARGO_TAURI_DRIVER = process.env.CARGO_HOME
+  ? path.join(process.env.CARGO_HOME, "bin", "tauri-driver")
+  : null;
+const APP =
+  process.env.TINE_APP ||
+  (fs.existsSync(LOCAL_APP) ? LOCAL_APP : `${process.env.HOME}/research/tine`);
 const TD =
   process.env.TAURI_DRIVER ||
-  (process.env.CARGO_HOME ? `${process.env.CARGO_HOME}/bin/tauri-driver` : "tauri-driver");
+  (CARGO_TAURI_DRIVER && fs.existsSync(CARGO_TAURI_DRIVER)
+    ? CARGO_TAURI_DRIVER
+    : fs.existsSync(LOCAL_TAURI_DRIVER)
+      ? LOCAL_TAURI_DRIVER
+      : "tauri-driver");
+const DAY_MS = 24 * 60 * 60 * 1000;
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+function noon(d = new Date()) {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12, 0, 0, 0);
+}
+
+function addDays(d, n) {
+  return new Date(d.getTime() + n * DAY_MS);
+}
+
+function pad2(n) {
+  return String(n).padStart(2, "0");
+}
+
+function journalFileStem(d) {
+  return `${d.getFullYear()}_${pad2(d.getMonth() + 1)}_${pad2(d.getDate())}`;
+}
+
+function logseqDate(d) {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${WEEKDAYS[d.getDay()]}`;
+}
+
+let xvfb;
+async function ensureDisplay() {
+  if (process.env.DISPLAY) return;
+  const displays = process.env.XVFB_DISPLAY
+    ? [process.env.XVFB_DISPLAY]
+    : [":98", ":99", ":100", ":101"];
+  let lastLog = "/tmp/xvfb-caret.log";
+  let lastError = "";
+  for (const display of displays) {
+    const suffix = display.replace(/[^0-9]/g, "") || "x";
+    lastLog = `/tmp/xvfb-caret-${suffix}.log`;
+    const xvfbLog = fs.openSync(lastLog, "w");
+    let spawnError = "";
+    const child = spawn("Xvfb", [display, "-screen", "0", "1400x1000x24"], {
+      stdio: ["ignore", xvfbLog, xvfbLog],
+    });
+    child.on("error", (e) => {
+      spawnError = e.message;
+    });
+    await sleep(900);
+    if (spawnError) {
+      lastError = spawnError;
+      continue;
+    }
+    if (child.exitCode == null) {
+      xvfb = child;
+      process.env.DISPLAY = display;
+      return;
+    }
+    lastError = `display ${display} exited with code ${child.exitCode}`;
+  }
+  if (lastError) {
+    throw new Error(`Xvfb failed to start (${lastError}); see ${lastLog}`);
+  }
+}
 
 // ---- Fixtures ----------------------------------------------------------------
 const PAGE_FIXTURE = `- TODO alpha one two three four
@@ -95,23 +167,22 @@ const J_0628 = [
   "",
 ].join("\n");
 
-// Round 3: agenda-duplicate scenario. TODAY = 2026-07-01. Several sibling blocks,
-// with SCHEDULED/DEADLINE dates inside the agenda window (2026-06-24..2026-07-08)
-// so the "Scheduled & Deadline" agenda lists them → each renders TWICE in the DOM.
-const J_AGENDA = [
-  "- TODO alpha one two three",
-  "- TODO beta four five",
-  "- TODO gamma six seven",
-  "  SCHEDULED: <2026-07-01 Tue>",
-  "- TODO delta eight",
-  "  DEADLINE: <2026-07-03 Thu>",
-  "- TODO epsilon nine ten",
-  "- TODO zeta scheduled soon",
-  "  SCHEDULED: <2026-06-30 Mon>",
-  "- TODO eta deadline soon",
-  "  DEADLINE: <2026-07-05 Sun>",
-  "",
-].join("\n");
+function agendaFixture(today = noon()) {
+  return [
+    "- TODO alpha one two three",
+    "- TODO beta four five",
+    "- TODO gamma six seven",
+    `  SCHEDULED: <${logseqDate(today)}>`,
+    "- TODO delta eight",
+    `  DEADLINE: <${logseqDate(addDays(today, 2))}>`,
+    "- TODO epsilon nine ten",
+    "- TODO zeta scheduled soon",
+    `  SCHEDULED: <${logseqDate(addDays(today, -1))}>`,
+    "- TODO eta deadline soon",
+    `  DEADLINE: <${logseqDate(addDays(today, 3))}>`,
+    "",
+  ].join("\n");
+}
 
 function seed() {
   fs.rmSync(G, { recursive: true, force: true });
@@ -119,7 +190,8 @@ function seed() {
   fs.mkdirSync(`${G}/journals`, { recursive: true });
   fs.mkdirSync(`${G}/logseq`, { recursive: true });
   if (MODE === "agenda") {
-    fs.writeFileSync(`${G}/journals/2026_07_01.md`, J_AGENDA);
+    const today = noon();
+    fs.writeFileSync(`${G}/journals/${journalFileStem(today)}.md`, agendaFixture(today));
   } else if (MODE === "journal") {
     fs.writeFileSync(`${G}/journals/2026_07_01.md`, J_0701);
     fs.writeFileSync(`${G}/journals/2026_06_30.md`, J_0630);
@@ -132,6 +204,7 @@ function seed() {
 }
 
 seed();
+await ensureDisplay();
 
 fs.rmSync("/tmp/txdg", { recursive: true, force: true });
 for (const d of ["data", "config", "cache"])
@@ -148,7 +221,7 @@ const env = {
   WEBKIT_DISABLE_COMPOSITING_MODE: "1",
   GDK_BACKEND: "x11",
 };
-console.log("DISPLAY=", process.env.DISPLAY, "MODE=", MODE);
+console.log("DISPLAY=", process.env.DISPLAY, "MODE=", MODE, "APP=", APP);
 
 const tdLog = fs.openSync("/tmp/td-caret.log", "w");
 const td = spawn(
@@ -261,113 +334,228 @@ const clickBlock = async (blockIdx, selStart) => {
 
 // ---- Round 3: agenda-duplicate BEFORE/AFTER scenario ------------------------
 async function runAgendaScenario() {
-  const info = await browser.execute(() => {
-    const agenda = document.querySelector(".agenda-block");
-    const copies = document.querySelectorAll(
-      ".agenda-block .ls-block, .query-block .ls-block"
-    ).length;
-    const count = (t) =>
-      [...document.querySelectorAll(".ls-block")].filter((b) =>
-        (b.textContent || "").includes(t)
-      ).length;
-    return {
-      hasAgenda: !!agenda,
-      copies,
-      gamma: count("gamma six seven"),
-      delta: count("delta eight"),
-      zeta: count("zeta scheduled soon"),
-    };
-  });
-  log(`Agenda present: ${info.hasAgenda}   agenda .ls-block copies: ${info.copies}`);
+  const targetText = "gamma six seven";
+  const aboveText = "beta four five";
+  const typed = "q";
+  const failures = [];
+  const expect = (cond, msg) => {
+    if (!cond) {
+      failures.push(msg);
+      log(`    !! ${msg}`);
+    }
+  };
+  const lineStart = (value, pos) => value.slice(0, pos).lastIndexOf("\n") + 1;
+  const firstLineLen = (value) => {
+    const nl = value.indexOf("\n");
+    return nl === -1 ? value.length : nl;
+  };
+  const expectedDownSel = (fromValue, fromSel, toValue) => {
+    const col = fromSel - lineStart(fromValue, fromSel);
+    return Math.min(col, firstLineLen(toValue));
+  };
+  const expectedUpSel = (fromValue, fromSel, toValue) => {
+    const col = fromSel - lineStart(fromValue, fromSel);
+    const start = toValue.lastIndexOf("\n") + 1;
+    return start + Math.min(col, toValue.length - start);
+  };
+
+  const state = async (targetId = null, aboveId = null) =>
+    browser.execute(
+      (targetTextArg, aboveTextArg, targetIdArg, aboveIdArg) => {
+        const inAgenda = (el) => !!el.closest(".agenda-block, .query-block");
+        const textOf = (b) => {
+          const ta = b.querySelector(":scope > .block-main textarea.block-editor");
+          return ta ? ta.value : (b.textContent || "");
+        };
+        const blockInfo = (b) => {
+          const ta = b.querySelector(":scope > .block-main textarea.block-editor");
+          const main = b.querySelector(":scope > .block-main");
+          return {
+            id: b.getAttribute("data-block-id"),
+            inAgenda: inAgenda(b),
+            text: textOf(b).trim(),
+            hasEditor: !!ta,
+            editing: !!main?.classList.contains("editing"),
+          };
+        };
+        const blocks = [...document.querySelectorAll(".ls-block")];
+        const byText = (t) => blocks.filter((b) => textOf(b).includes(t)).map(blockInfo);
+        const byId = (id) =>
+          id ? blocks.filter((b) => b.getAttribute("data-block-id") === id).map(blockInfo) : [];
+        const editors = [...document.querySelectorAll("textarea.block-editor")].map((ta) => {
+          const block = ta.closest(".ls-block");
+          return {
+            id: block ? block.getAttribute("data-block-id") : null,
+            inAgenda: block ? inAgenda(block) : false,
+            active: ta === document.activeElement,
+            sel: ta.selectionStart,
+            value: ta.value,
+          };
+        });
+        const editingMains = [...document.querySelectorAll(".block-main.editing")].map((main) => {
+          const block = main.closest(".ls-block");
+          return {
+            id: block ? block.getAttribute("data-block-id") : null,
+            inAgenda: block ? inAgenda(block) : false,
+          };
+        });
+        const active = document.activeElement;
+        const activeEditor =
+          active instanceof HTMLTextAreaElement && active.classList.contains("block-editor")
+            ? editors.find((e) => e.active) ?? null
+            : null;
+        return {
+          hasAgenda: !!document.querySelector(".agenda-block"),
+          agendaCopies: document.querySelectorAll(".agenda-block .ls-block, .query-block .ls-block").length,
+          targetByText: byText(targetTextArg),
+          aboveByText: byText(aboveTextArg),
+          targetById: byId(targetIdArg),
+          aboveById: byId(aboveIdArg),
+          editors,
+          editingMains,
+          activeEditor,
+          activeTag: active ? active.tagName : "null",
+          activeClass: active ? String(active.className) : "",
+          scrollTop: Math.round(document.querySelector(".main-content")?.scrollTop ?? -1),
+        };
+      },
+      targetText,
+      aboveText,
+      targetId,
+      aboveId
+    );
+
+  const waitForDuplicate = async () => {
+    let last = null;
+    await browser.waitUntil(
+      async () => {
+        last = await state();
+        const feedTarget = last.targetByText.find((b) => !b.inAgenda);
+        const agendaTarget = last.targetByText.find((b) => b.inAgenda);
+        const feedAbove = last.aboveByText.find((b) => !b.inAgenda);
+        return !!last.hasAgenda && !!feedTarget && !!agendaTarget && feedTarget.id === agendaTarget.id && !!feedAbove;
+      },
+      { timeout: 15000, interval: 250, timeoutMsg: "agenda duplicate target did not render" }
+    );
+    return last;
+  };
+
+  const fixture = await waitForDuplicate();
+  const feedTarget = fixture.targetByText.find((b) => !b.inAgenda);
+  const agendaTarget = fixture.targetByText.find((b) => b.inAgenda);
+  const feedAbove = fixture.aboveByText.find((b) => !b.inAgenda);
+  const targetId = feedTarget.id;
+  const aboveId = feedAbove.id;
+
+  log(`Agenda present: ${fixture.hasAgenda}   agenda .ls-block copies: ${fixture.agendaCopies}`);
   log(
-    `DOM occurrences — gamma:${info.gamma} delta:${info.delta} zeta:${info.zeta}  (2 => duplicated in agenda)`
+    `DOM duplicate target: id=${String(targetId).slice(0, 12)} feed=${!!feedTarget} agenda=${!!agendaTarget}` +
+      ` occurrences=${fixture.targetByText.length}`
   );
 
-  // Click a MAIN-outline block (NOT inside the agenda/query) by text substring.
-  const clickMain = async (textSub, caret) => {
-    await browser.execute((t) => {
-      const blocks = [...document.querySelectorAll(".ls-block")];
-      const main = blocks.find(
-        (b) => !b.closest(".agenda-block, .query-block") && (b.textContent || "").includes(t)
-      );
-      if (!main) return;
-      const w = main.querySelector(":scope > .block-main .block-content-wrapper");
-      (w || main).click();
-    }, textSub);
+  const clickFeedBlock = async (id, caret) => {
+    await browser.execute(
+      (blockId) => {
+        const blocks = [...document.querySelectorAll(".ls-block")];
+        const block = blocks.find(
+          (b) =>
+            b.getAttribute("data-block-id") === blockId &&
+            !b.closest(".agenda-block, .query-block")
+        );
+        if (!block) return false;
+        const wrapper = block.querySelector(":scope > .block-main .block-content-wrapper");
+        (wrapper || block).click();
+        return true;
+      },
+      id
+    );
     await sleep(450);
-    await browser.execute((c) => {
-      const ae = document.activeElement;
-      if (!(ae instanceof HTMLTextAreaElement)) return;
-      const pos = c === "end" ? ae.value.length : Number(c);
-      ae.setSelectionRange(pos, pos);
-    }, caret === "end" ? "end" : String(caret));
+    await browser.execute(
+      (wantedCaret) => {
+        const ae = document.activeElement;
+        if (!(ae instanceof HTMLTextAreaElement)) return false;
+        const pos = wantedCaret === "end" ? ae.value.length : Number(wantedCaret);
+        ae.setSelectionRange(pos, pos);
+        return true;
+      },
+      caret === "end" ? "end" : String(caret)
+    );
     await sleep(150);
   };
 
-  const aprobe = async (tag) => {
-    const s = await browser.execute(() => {
-      const ae = document.activeElement;
-      const isEd = ae instanceof HTMLTextAreaElement && ae.classList.contains("block-editor");
-      const inAgenda = ae && ae.closest ? !!ae.closest(".agenda-block, .query-block") : false;
-      const em = document.querySelector(".block-main.editing");
-      const eb = em ? em.closest(".ls-block") : null;
-      const editingId = eb ? eb.getAttribute("data-block-id") : null;
-      const editingInAgenda = eb ? !!eb.closest(".agenda-block, .query-block") : null;
-      const sc = document.querySelector(".main-content");
-      return {
-        isEd,
-        inAgenda,
-        sel: isEd ? ae.selectionStart : null,
-        val: isEd ? ae.value.slice(0, 28) : null,
-        editingId: editingId ? editingId.slice(0, 8) : null,
-        editingInAgenda,
-        scrollTop: sc ? Math.round(sc.scrollTop) : -1,
-        aeTag: ae ? ae.tagName : "null",
-        aeCls: ae ? String(ae.className).slice(0, 34) : "",
-      };
-    });
-    const verdict = !s.isEd ? "CARET_LOST" : s.inAgenda ? "STOLEN-BY-AGENDA" : "OK-main";
-    log(
-      `    ${tag.padEnd(16)} ${verdict.padEnd(16)} sel=${s.sel} inAgenda=${s.inAgenda}` +
-        ` editInAgenda=${s.editingInAgenda} scrollTop=${s.scrollTop} eId=${s.editingId}` +
-        ` ae=${s.aeTag}.${s.aeCls} val=${JSON.stringify(s.val)}`
-    );
-    return { tag, ...s };
+  const assertAgendaCopyRendered = (s, tag) => {
+    const agendaCopy = s.targetById.find((b) => b.inAgenda);
+    expect(!!agendaCopy, `${tag}: agenda copy for target uuid is missing`);
+    if (!agendaCopy) return;
+    expect(!agendaCopy.hasEditor, `${tag}: agenda copy mounted an editor`);
+    expect(agendaCopy.text.length > 0, `${tag}: agenda copy rendered blank`);
   };
 
-  const cases = [
-    { name: "Down INTO gamma (from beta above)", start: "beta four five", key: "ArrowDown", caret: "end" },
-    { name: "Up INTO gamma (from delta below)", start: "delta eight", key: "ArrowUp", caret: 0 },
-    { name: "Down INTO delta (from gamma above)", start: "gamma six seven", key: "ArrowDown", caret: "end" },
-    { name: "Up INTO delta (from epsilon below)", start: "epsilon nine ten", key: "ArrowUp", caret: 0 },
-  ];
-  const outcomes = [];
-  for (const c of cases) {
-    log(`\n  CASE: ${c.name}`);
-    await clickMain(c.start, c.caret);
-    const before = await aprobe("click(start)");
-    await browser.keys([c.key]);
-    await sleep(550);
-    const after = await aprobe(c.key);
-    const jump = Math.abs((after.scrollTop ?? 0) - (before.scrollTop ?? 0));
-    const outcome = !after.isEd
-      ? "CARET_LOST"
-      : after.inAgenda
-      ? "STOLEN-BY-AGENDA"
-      : "OK-main";
+  const assertFocusedEditor = (s, tag, expectedId, expectedSel, requireDuplicate) => {
     log(
-      `    scrollTop ${before.scrollTop} -> ${after.scrollTop} (Δ=${jump}${jump > 50 ? "  <== VIEWPORT JUMP" : ""})  => ${outcome}`
+      `    ${tag.padEnd(18)} active=${s.activeEditor ? "editor" : s.activeTag}` +
+        ` editors=${s.editors.length} editing=${s.editingMains.length}` +
+        ` id=${String(s.activeEditor?.id ?? "").slice(0, 12)} inAgenda=${s.activeEditor?.inAgenda}` +
+        ` sel=${s.activeEditor?.sel} scrollTop=${s.scrollTop}` +
+        ` val=${JSON.stringify((s.activeEditor?.value ?? "").slice(0, 42))}`
     );
-    outcomes.push({ case: c.name, outcome, jump, editingInAgenda: after.editingInAgenda });
-  }
-  log(`\n  --- AGENDA SCENARIO SUMMARY (${process.env.CARET_LABEL || "?"}) ---`);
-  for (const o of outcomes)
-    log(`    ${o.outcome.padEnd(16)} jump=${o.jump} editInAgenda=${o.editingInAgenda}  ${o.case}`);
-  const anyBug = outcomes.some(
-    (o) => o.outcome !== "OK-main" || o.editingInAgenda || o.jump > 50
+    expect(!!s.activeEditor, `${tag}: activeElement is not textarea.block-editor`);
+    expect(s.editors.length === 1, `${tag}: expected exactly one mounted block editor, saw ${s.editors.length}`);
+    expect(s.editingMains.length === 1, `${tag}: expected exactly one .block-main.editing, saw ${s.editingMains.length}`);
+    expect(s.activeEditor?.id === expectedId, `${tag}: active editor id ${s.activeEditor?.id} != ${expectedId}`);
+    expect(s.activeEditor?.inAgenda === false, `${tag}: active editor is in the agenda/ref surface`);
+    expect(s.activeEditor?.sel === expectedSel, `${tag}: caret ${s.activeEditor?.sel} != expected ${expectedSel}`);
+    if (requireDuplicate) {
+      expect(s.targetById.length === 2, `${tag}: expected two rendered target instances, saw ${s.targetById.length}`);
+      assertAgendaCopyRendered(s, tag);
+    }
+  };
+
+  log(`\n  CASE: ADR 0013 duplicate-instance invariant`);
+  await clickFeedBlock(aboveId, "end");
+  const clicked = await state(targetId, aboveId);
+  const beforeEditor = clicked.activeEditor;
+  expect(!!beforeEditor, "click(start): failed to focus the block above the scheduled task");
+  const beforeValue = beforeEditor?.value ?? "";
+  const beforeSel = beforeEditor?.sel ?? 0;
+  assertFocusedEditor(clicked, "click(start)", aboveId, beforeSel, false);
+  assertAgendaCopyRendered(clicked, "click(start)");
+
+  await browser.keys(["ArrowDown"]);
+  await sleep(550);
+  const down = await state(targetId, aboveId);
+  const targetValueBeforeType = down.activeEditor?.value ?? "";
+  const downSel = expectedDownSel(beforeValue, beforeSel, targetValueBeforeType);
+  assertFocusedEditor(down, "ArrowDown", targetId, downSel, true);
+
+  await browser.keys([typed]);
+  await sleep(250);
+  const typedState = await state(targetId, aboveId);
+  const expectedTypedValue =
+    targetValueBeforeType.slice(0, downSel) + typed + targetValueBeforeType.slice(downSel);
+  assertFocusedEditor(typedState, "type one char", targetId, downSel + 1, true);
+  expect(
+    typedState.activeEditor?.value === expectedTypedValue,
+    "type one char: inserted character did not land in the scheduled feed block"
   );
-  log(`  VERDICT: ${anyBug ? "BUG PRESENT (steal/loss/jump seen)" : "CLEAN (all main-outline, no jump)"}`);
-  return { hasAgenda: info.hasAgenda, copies: info.copies, outcomes, anyBug };
+
+  await browser.keys(["ArrowUp"]);
+  await sleep(550);
+  const up = await state(targetId, aboveId);
+  const aboveValue = up.activeEditor?.value ?? "";
+  const upSel = expectedUpSel(expectedTypedValue, downSel + 1, aboveValue);
+  assertFocusedEditor(up, "ArrowUp", aboveId, upSel, false);
+  assertAgendaCopyRendered(up, "ArrowUp");
+
+  const anyBug = failures.length > 0;
+  log(`\n  --- AGENDA INVARIANT SUMMARY (${process.env.CARET_LABEL || "?"}) ---`);
+  if (anyBug) {
+    for (const f of failures) log(`    FAIL ${f}`);
+  } else {
+    log("    PASS one feed editor, agenda copy rendered, deterministic caret, typed char landed");
+  }
+  log(`  VERDICT: ${anyBug ? "BUG PRESENT (ADR 0013 invariant failed)" : "CLEAN (ADR 0013 invariant holds)"}`);
+  return { hasAgenda: fixture.hasAgenda, copies: fixture.agendaCopies, failures, anyBug };
 }
 
 let browser;
@@ -416,7 +604,10 @@ try {
   log(`Blocks: ${blockCount}   date-chips: ${chipCount}`);
 
   if (MODE === "agenda") {
-   await runAgendaScenario();
+   const agenda = await runAgendaScenario();
+   if (agenda.anyBug) {
+     throw new Error(`agenda duplicate invariant failed (${agenda.failures.length} failure(s))`);
+   }
   } else {
   await dumpBlockMap("initial");
 
@@ -565,6 +756,7 @@ try {
   console.log(`\nAppended results to ${outPath}`);
 } catch (e) {
   log(`\nE2E ERROR: ${String(e).split("\n").slice(0, 8).join(" | ")}`);
+  process.exitCode = 1;
   const notesDir = "/aux/koutecky/logseq/logseq-claude/subagent-tasks/notes";
   fs.mkdirSync(notesDir, { recursive: true });
   fs.appendFileSync(
@@ -574,4 +766,5 @@ try {
 } finally {
   try { await browser?.deleteSession(); } catch {}
   td.kill("SIGKILL");
+  xvfb?.kill("SIGKILL");
 }
