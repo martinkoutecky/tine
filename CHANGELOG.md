@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.3.2] — 2026-07-02
+
 ### Added
 
 - **Portable Windows build.** Releases now include a `Tine_*_x64-portable.zip` alongside the
@@ -524,7 +526,9 @@ takes over your graph.
 - macOS and Windows installers are currently **unsigned** — on macOS right-click →
   Open; on Windows choose *More info → Run anyway*.
 
-[Unreleased]: https://github.com/martinkoutecky/tine/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/martinkoutecky/tine/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/martinkoutecky/tine/compare/v0.3.1...v0.3.2
+[0.3.1]: https://github.com/martinkoutecky/tine/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/martinkoutecky/tine/compare/v0.2.3...v0.3.0
 [0.2.3]: https://github.com/martinkoutecky/tine/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/martinkoutecky/tine/compare/v0.2.1...v0.2.2
