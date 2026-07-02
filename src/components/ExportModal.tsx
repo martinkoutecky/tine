@@ -1,10 +1,11 @@
 import { For, Show, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js";
-import { exportModal, closeExportModal, pushToast } from "../ui";
+import { exportModal, closeExportModal, pushToast, typographyMode } from "../ui";
 import { exportNodesFor } from "../store";
 import { backend } from "../backend";
 import {
   exportOutline,
   DEFAULT_EXPORT_OPTIONS,
+  type ExportContent,
   type ExportOptions,
   type IndentStyle,
 } from "../editor/exportText";
@@ -30,15 +31,21 @@ function saveOptions(o: ExportOptions): void {
   }
 }
 
+const CONTENT_STYLES: { value: ExportContent; label: string; hint: string }[] = [
+  { value: "rendered", label: "Rendered", hint: "the text as displayed — glyphs (→ –), no markup markers" },
+  { value: "source", label: "Source", hint: "the raw Markdown/Org text" },
+];
+
 const INDENT_STYLES: { value: IndentStyle; label: string; hint: string }[] = [
   { value: "dashes", label: "Dashes", hint: "Logseq outline (- bullets)" },
   { value: "spaces", label: "Spaces", hint: "indent, no bullets" },
   { value: "no-indent", label: "No indent", hint: "flat, no bullets" },
 ];
 
-const TOGGLES: { key: keyof ExportOptions; label: string }[] = [
+// `sourceOnly` toggles are moot in rendered mode (the markers are already gone).
+const TOGGLES: { key: keyof ExportOptions; label: string; sourceOnly?: boolean }[] = [
   { key: "stripLinks", label: "[[links]] → text" },
-  { key: "removeEmphasis", label: "Remove emphasis" },
+  { key: "removeEmphasis", label: "Remove emphasis", sourceOnly: true },
   { key: "removeTags", label: "Remove #tags" },
   { key: "removeProperties", label: "Remove properties" },
   { key: "newlineAfterBlock", label: "Newline after block" },
@@ -64,9 +71,12 @@ function Modal(props: { ids: string[] }): JSX.Element {
   };
 
   // Build the node forest once (the selection is fixed while the modal is open);
-  // the preview recomputes from it as options change.
+  // the preview recomputes from it as options change. Rendered mode applies the
+  // typographic glyphs exactly when the app displays them (not persisted).
   const nodes = exportNodesFor(props.ids);
-  const text = createMemo(() => exportOutline(nodes, opts()));
+  const text = createMemo(() =>
+    exportOutline(nodes, { ...opts(), typographicGlyphs: typographyMode() === "render" })
+  );
 
   const copy = () => {
     void backend().writeText(text());
@@ -100,6 +110,21 @@ function Modal(props: { ids: string[] }): JSX.Element {
 
         <div class="export-opts">
           <div class="export-opt-row export-indent">
+            <span class="export-opt-label">Content</span>
+            <For each={CONTENT_STYLES}>
+              {(s) => (
+                <button
+                  class="export-indent-btn"
+                  classList={{ active: opts().content === s.value }}
+                  title={s.hint}
+                  onClick={() => update({ content: s.value })}
+                >
+                  {s.label}
+                </button>
+              )}
+            </For>
+          </div>
+          <div class="export-opt-row export-indent">
             <span class="export-opt-label">Indent</span>
             <For each={INDENT_STYLES}>
               {(s) => (
@@ -117,9 +142,14 @@ function Modal(props: { ids: string[] }): JSX.Element {
           <div class="export-opt-row export-toggles">
             <For each={TOGGLES}>
               {(t) => (
-                <label class="export-toggle">
+                <label
+                  class="export-toggle"
+                  classList={{ "export-toggle-moot": t.sourceOnly && opts().content === "rendered" }}
+                  title={t.sourceOnly && opts().content === "rendered" ? "Rendered text has no markup markers" : undefined}
+                >
                   <input
                     type="checkbox"
+                    disabled={t.sourceOnly && opts().content === "rendered"}
                     checked={opts()[t.key] as boolean}
                     onChange={(e) => update({ [t.key]: e.currentTarget.checked } as Partial<ExportOptions>)}
                   />

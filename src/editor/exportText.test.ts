@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { exportOutline, DEFAULT_EXPORT_OPTIONS, type ExportNode, type ExportOptions } from "./exportText";
 
-const opt = (o: Partial<ExportOptions>): ExportOptions => ({ ...DEFAULT_EXPORT_OPTIONS, ...o });
+// These tests cover the SOURCE serialization (raw + regex transforms); rendered
+// mode needs the wasm parser and is tested in src/render/renderedText.test.tsx.
+const opt = (o: Partial<ExportOptions>): ExportOptions => ({ ...DEFAULT_EXPORT_OPTIONS, content: "source", ...o });
 
 // parent / child / grandchild tree for indent-style tests.
 const tree: ExportNode[] = [

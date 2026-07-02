@@ -6,22 +6,34 @@
 // modal offers, matching OG's option set within reason.
 
 import { isPropertyLine } from "../render/block";
+import { renderedBlockText } from "../render/renderedText";
+import type { Format } from "../render/ast";
 
 // dashes  = Logseq outline: `\t`×level + "- " + text (paste back into Logseq).
 // spaces  = indentation preserved with spaces, NO bullet (portable indented text).
 // no-indent = flat: no indentation, no bullet (plain lines).
 export type IndentStyle = "dashes" | "spaces" | "no-indent";
 
+// rendered = the text as displayed (glyphs, no markup markers) — lsdoc-AST
+//            flattening via render/renderedText.ts, never a regex re-scan.
+// source   = the raw markdown/org, with the regex "remove" transforms below.
+export type ExportContent = "rendered" | "source";
+
 export interface ExportOptions {
+  content: ExportContent;
   indent: IndentStyle;
   stripLinks: boolean; // [[Foo]] -> Foo
-  removeEmphasis: boolean; // **/__/*/_/~~/== markers dropped
+  removeEmphasis: boolean; // **/__/*/_/~~/== markers dropped (source mode only — rendered has none)
   removeTags: boolean; // #tag and #[[tag]] removed
   removeProperties: boolean; // drop `key:: value` lines
   newlineAfterBlock: boolean; // blank line after each block
+  /** Apply `->`→`→` glyphs in rendered mode; the modal sets this from the app's
+   *  typography mode each time (not persisted — it must match what you see). */
+  typographicGlyphs?: boolean;
 }
 
 export const DEFAULT_EXPORT_OPTIONS: ExportOptions = {
+  content: "rendered",
   indent: "dashes",
   stripLinks: false,
   removeEmphasis: false,
@@ -32,6 +44,7 @@ export const DEFAULT_EXPORT_OPTIONS: ExportOptions = {
 
 export interface ExportNode {
   raw: string;
+  format?: Format; // md when absent
   children: ExportNode[];
 }
 
@@ -55,13 +68,28 @@ function stripInline(text: string, opts: ExportOptions): string {
   return s;
 }
 
+/** One block's export lines: rendered (AST flattening) or source (raw + regex
+ *  transforms). Both honor removeProperties/stripLinks/removeTags; emphasis
+ *  markers only exist in source. */
+function blockExportLines(n: ExportNode, opts: ExportOptions): string[] {
+  if (opts.content === "rendered") {
+    return renderedBlockText(n.raw, n.format ?? "md", {
+      typographicGlyphs: opts.typographicGlyphs ?? false,
+      stripLinks: opts.stripLinks,
+      removeTags: opts.removeTags,
+      removeProperties: opts.removeProperties,
+    }).split("\n");
+  }
+  let lines = n.raw.split("\n");
+  if (opts.removeProperties) lines = lines.filter((l) => !isPropertyLine(l));
+  return lines.map((l) => stripInline(l, opts));
+}
+
 /** Serialize an export-node forest to text per `opts`. */
 export function exportOutline(nodes: ExportNode[], opts: ExportOptions): string {
   const out: string[] = [];
   const walk = (n: ExportNode, level: number) => {
-    let lines = n.raw.split("\n");
-    if (opts.removeProperties) lines = lines.filter((l) => !isPropertyLine(l));
-    lines = lines.map((l) => stripInline(l, opts));
+    let lines = blockExportLines(n, opts);
     // Trailing blank lines left by stripping add nothing; keep at least one line.
     while (lines.length > 1 && lines[lines.length - 1].trim() === "") lines.pop();
     const first = lines[0] ?? "";

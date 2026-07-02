@@ -296,14 +296,14 @@ describe("exportNodesFor (Copy / export selection)", () => {
     const ids = [parent.id, parent.children[0].id, parent.children[1].id, parent.children[2].id];
     const nodes = exportNodesFor(ids);
     expect(nodes.length).toBe(1); // only the parent root
-    expect(exportOutline(nodes, DEFAULT_EXPORT_OPTIONS)).toBe("- parent\n\t- c1\n\t- c2\n\t- c3");
+    expect(exportOutline(nodes, { ...DEFAULT_EXPORT_OPTIONS, content: "source" })).toBe("- parent\n\t- c1\n\t- c2\n\t- c3");
   });
 
   it("sibling roots both export (no false dedup)", () => {
     const a = blk("a");
     const b = blk("b");
     load([a, b]);
-    expect(exportOutline(exportNodesFor([a.id, b.id]), DEFAULT_EXPORT_OPTIONS)).toBe("- a\n- b");
+    expect(exportOutline(exportNodesFor([a.id, b.id]), { ...DEFAULT_EXPORT_OPTIONS, content: "source" })).toBe("- a\n- b");
   });
 });
 

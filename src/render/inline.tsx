@@ -11,7 +11,8 @@ import { isJournalTitle } from "../journal";
 import { openPdf, openPageInSidebar, openBlockInSidebar, openPageContextMenu, openBlockRefContextMenu, setLightbox, setAudioPlayer, graphEpoch, graphMeta, pushToast } from "../ui";
 import { copyImageFromSrc } from "../copyImage";
 import { parseBlock, parserReady } from "./parse";
-import type { Inline, Url, MacroInline, TimestampInline, TimestampPoint, EmailValue, Block as AstBlock, Format } from "./ast";
+import type { Inline, Url, MacroInline, TimestampInline, EmailValue, Block as AstBlock, Format } from "./ast";
+import { timestampText } from "./renderedText";
 import { EmojiText } from "./emoji";
 import { typographic } from "./typography";
 import { coarseSpanAttrs, plainSpanAttrs, typographicPlainSpanAttrs, type SpanDomAttrs } from "./spans";
@@ -258,32 +259,14 @@ function parseImageMetaBrace(brace: string | undefined): { width?: string; heigh
   return out;
 }
 
-// Org timestamp inline → the styled `<…>`(active)/`[…]`(inactive) badge. The AST
-// carries only the structured date, so format the display string ourselves.
-function pad2(n: number): string { return String(n).padStart(2, "0"); }
-function fmtTsPoint(p: TimestampPoint): string {
-  const d = p.date;
-  let s = `${d.year}-${pad2(d.month)}-${pad2(d.day)}`;
-  if (p.wday) s += ` ${p.wday}`;
-  if (p.time) s += ` ${pad2(p.time.hour)}:${pad2(p.time.min)}`;
-  return s;
-}
+// Org timestamp inline → the styled `<…>`(active)/`[…]`(inactive) badge. The
+// display string comes from the ONE formatter shared with rendered-text export
+// (render/renderedText.ts timestampText).
 function renderTimestamp(s: TimestampInline): JSX.Element {
-  const v = s.date as Record<string, unknown>;
-  let active = true;
-  let text: string;
-  if (s.ts === "Range" && v.start && v.stop) {
-    const start = v.start as TimestampPoint;
-    active = start.active ?? true;
-    text = `${fmtTsPoint(start)}--${fmtTsPoint(v.stop as TimestampPoint)}`;
-  } else {
-    const p = v as unknown as TimestampPoint;
-    active = p.active ?? true;
-    text = fmtTsPoint(p);
-  }
+  const { text, active } = timestampText(s);
   return (
     <span class="org-timestamp" classList={{ inactive: !active }} {...(coarseSpanAttrs(s.span) ?? {})}>
-      {active ? "<" : "["}{text}{active ? ">" : "]"}
+      {text}
     </span>
   );
 }

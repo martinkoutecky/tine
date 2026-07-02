@@ -779,6 +779,10 @@ body {
   color: var(--text-primary);
   cursor: pointer;
 }
+.export-toggle-moot {
+  opacity: 0.45;
+  cursor: default;
+}
 .export-foot {
   display: flex;
   justify-content: flex-end;

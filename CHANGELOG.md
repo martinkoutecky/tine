@@ -30,6 +30,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   Logseq's mousedown-instant-edit). Links, chips, media, and checkboxes keep
   their click behavior.
 
+- **Copy/Export modal: Rendered / Source content toggle** (Rendered is the
+  default — plain select-mode copy stays source). Rendered emits the text as
+  displayed — typographic glyphs, entity unicode, no markup markers — from the
+  parser's AST, honoring the link/tag/property remove options; Source is the
+  previous raw-text behavior.
+
 ### Fixed
 
 - **Click-to-caret in marked-up blocks.** Clicking rendered Markdown/Org markup

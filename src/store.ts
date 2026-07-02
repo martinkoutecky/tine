@@ -1398,7 +1398,11 @@ export function exportNodesFor(ids: string[]): ExportNode[] {
   const toNode = (id: string): ExportNode | null => {
     const n = doc.byId[id];
     if (!n) return null;
-    return { raw: n.raw, children: n.children.map(toNode).filter((x): x is ExportNode => x != null) };
+    return {
+      raw: n.raw,
+      format: pageByName(n.page)?.format ?? "md",
+      children: n.children.map(toNode).filter((x): x is ExportNode => x != null),
+    };
   };
   return ids
     .filter((id) => !hasSelectedAncestor(id))
