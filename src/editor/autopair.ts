@@ -28,6 +28,30 @@ export const PAIRS: Record<string, string> = {
 /** Brackets that ALSO double-open (`[[`, `((`, `{{`). Quotes/backtick don't. */
 const DOUBLE: Record<string, string> = { "[": "]", "(": ")", "{": "}" };
 
+/** Openers that WRAP A SELECTION when typed (opener → closer), matching OG's
+ *  `autopair-map`. This is a SUPERSET of `PAIRS`: it adds the emphasis marks
+ *  (`* _ ^ = ~ / +`), which OG pairs *only* when text is selected (never on an
+ *  empty caret, where they'd fight ordinary Markdown/bullet typing) — so `*`/`~`/
+ *  `=` wrap a selection (and double to `**bold**`/`~~strike~~`/`==highlight==`),
+ *  and `/`/`+`/`_`/`^` cover the Org emphasis markers. `[`/`(` additionally open
+ *  the page/block search on their doubling bracket (see `doubleRefKind`). `"` is a
+ *  Tine extra (OG doesn't pair it) kept because it's harmless and useful. Selection
+ *  wrapping is ALWAYS-ON, independent of the opt-in empty-caret auto-pairing. */
+export const SELECTION_WRAP: Record<string, string> = {
+  "(": ")",
+  "[": "]",
+  "{": "}",
+  '"': '"',
+  "`": "`",
+  "~": "~",
+  "*": "*",
+  "_": "_",
+  "^": "^",
+  "=": "=",
+  "/": "/",
+  "+": "+",
+};
+
 /** The closer characters (values of PAIRS), for skip-over / before-close tests. */
 export const CLOSERS = new Set(Object.values(PAIRS));
 
@@ -73,10 +97,11 @@ export function autoPairInsertOnInput(
 }
 
 /** Typing an opener with a NON-empty selection wraps the selection in the pair
- *  (`(sel)`), keeping the selection around the inner text. Returns null for a
- *  non-opener or an empty selection (the caller falls through to insert-pair). */
+ *  (`(sel)`), keeping the selection around the inner text. Uses `SELECTION_WRAP`
+ *  (the OG wrap set, incl. emphasis marks), NOT the empty-caret `PAIRS`. Returns
+ *  null for a non-wrap key or an empty selection. */
 export function wrapSelectionEdit(text: string, start: number, end: number, opener: string): Edit | null {
-  const closer = PAIRS[opener];
+  const closer = SELECTION_WRAP[opener];
   if (!closer || start === end) return null;
   const sel = text.slice(start, end);
   return {
@@ -84,6 +109,19 @@ export function wrapSelectionEdit(text: string, start: number, end: number, open
     start: start + opener.length,
     end: end + opener.length,
   };
+}
+
+/** After a selection is wrapped by `[` or `(`, report whether the inner (still-
+ *  selected) text `[innerStart,innerEnd)` is now enclosed by a DOUBLE bracket —
+ *  `[[x]]` (page ref) or `((x))` (block ref). That is the SECOND bracket of a
+ *  `[[`/`((`, the point where OG opens the page/block search seeded with the
+ *  selection (`:editor/search-page` / `:editor/search-block`). Returns null on the
+ *  first bracket (`[x]`) or a non-ref pair (`{`, `"`, backtick). */
+export function doubleRefKind(text: string, innerStart: number, innerEnd: number): "page" | "block" | null {
+  if (innerStart < 2) return null;
+  if (text.slice(innerStart - 2, innerStart) === "[[" && text.slice(innerEnd, innerEnd + 2) === "]]") return "page";
+  if (text.slice(innerStart - 2, innerStart) === "((" && text.slice(innerEnd, innerEnd + 2) === "))") return "block";
+  return null;
 }
 
 /** Backspace with the caret BETWEEN an empty pair (`(|)`, `"|"`, …) deletes BOTH

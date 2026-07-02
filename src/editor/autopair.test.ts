@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   autoPairInsertOnInput,
   wrapSelectionEdit,
+  doubleRefKind,
   backspacePairEdit,
 } from "./autopair";
 
@@ -72,6 +73,56 @@ describe("wrapSelectionEdit", () => {
     expect(wrapSelectionEdit("hi", 1, 1, "(")).toBeNull();
     expect(wrapSelectionEdit("hi", 0, 2, ")")).toBeNull();
     expect(wrapSelectionEdit("hi", 0, 2, "a")).toBeNull();
+  });
+});
+
+describe("select-text → page/block ref (#18)", () => {
+  // Two `[` presses on a selection compose into `[[sel]]`, keeping the selection
+  // around the inner text each time — the mechanism Block.tsx drives always-on.
+  it("`[` twice around a selection builds `[[sel]]`, then reports a page ref", () => {
+    const first = wrapSelectionEdit("say foo bar", 4, 7, "[")!; // select "foo"
+    expect(first).toEqual({ text: "say [foo] bar", start: 5, end: 8 });
+    expect(doubleRefKind(first.text, first.start, first.end)).toBeNull(); // first bracket: no search yet
+
+    const second = wrapSelectionEdit(first.text, first.start, first.end, "[")!;
+    expect(second).toEqual({ text: "say [[foo]] bar", start: 6, end: 9 });
+    expect(second.text.slice(second.start, second.end)).toBe("foo"); // selection still on the inner text
+    expect(doubleRefKind(second.text, second.start, second.end)).toBe("page"); // now open page search
+  });
+
+  it("`(` twice around a selection builds `((sel))` and reports a block ref", () => {
+    const first = wrapSelectionEdit("foo", 0, 3, "(")!;
+    const second = wrapSelectionEdit(first.text, first.start, first.end, "(")!;
+    expect(second.text).toBe("((foo))");
+    expect(doubleRefKind(second.text, second.start, second.end)).toBe("block");
+  });
+
+  it("doubleRefKind is null for a single bracket, a non-ref pair, or out-of-bounds", () => {
+    expect(doubleRefKind("[foo]", 1, 4)).toBeNull(); // single `[`
+    expect(doubleRefKind("{{foo}}", 2, 5)).toBeNull(); // `{{` is not a page/block ref
+    expect(doubleRefKind('"foo"', 1, 4)).toBeNull();
+    expect(doubleRefKind("[[foo]]", 1, 6)).toBeNull(); // innerStart<2 guard / mismatched bounds
+  });
+});
+
+describe("select-text → emphasis wrap (OG parity, always-on)", () => {
+  it("wraps a selection with emphasis marks; doubling gives **/~~/==", () => {
+    expect(wrapSelectionEdit("a foo b", 2, 5, "*")).toEqual({ text: "a *foo* b", start: 3, end: 6 });
+    const one = wrapSelectionEdit("foo", 0, 3, "*")!;
+    const two = wrapSelectionEdit(one.text, one.start, one.end, "*")!;
+    expect(two.text).toBe("**foo**"); // second press → bold
+    expect(two.text.slice(two.start, two.end)).toBe("foo"); // selection preserved
+    expect(wrapSelectionEdit("foo", 0, 3, "~")!.text).toBe("~foo~"); // → ~~strike~~ on doubling
+    expect(wrapSelectionEdit("foo", 0, 3, "=")!.text).toBe("=foo="); // → ==highlight==
+    expect(wrapSelectionEdit("foo", 0, 3, "_")!.text).toBe("_foo_");
+    expect(doubleRefKind(two.text, two.start, two.end)).toBeNull(); // emphasis opens no search
+  });
+
+  it("wraps Org emphasis markers `/` and `+` too, but not a plain letter or empty selection", () => {
+    expect(wrapSelectionEdit("foo", 0, 3, "/")!.text).toBe("/foo/");
+    expect(wrapSelectionEdit("foo", 0, 3, "+")!.text).toBe("+foo+");
+    expect(wrapSelectionEdit("foo", 0, 3, "a")).toBeNull();
+    expect(wrapSelectionEdit("foo", 1, 1, "*")).toBeNull();
   });
 });
 

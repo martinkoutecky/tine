@@ -22,8 +22,13 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   asset.
 - Inline formatting (`Mod+B/I`, strike, `==highlight==`, link) via a floating
   selection toolbar, plus Emacs-style word/line kill motions.
-- ⊕ **Optional auto-pairing** (Settings → Appearance) — typing `(` `[` `{` `"`
-  `` ` `` inserts the matching closer with the caret between, wraps a selection,
+- **Select then wrap** (always on, Logseq parity) — with text selected, typing a
+  wrap character surrounds it: `[` twice → `[[selection]]` (opens the page search
+  seeded with the words — Enter links or creates), `(` twice → `((selection))`
+  (block search), and emphasis marks `*` `~` `=` `_` (plus Org `/` `+` `^`) so a
+  second press gives `**bold**`, `~~strike~~`, `==highlight==`.
+- ⊕ **Optional auto-pairing** (Settings → Appearance) — for the *empty-caret* case:
+  typing `(` `[` `{` `"` `` ` `` inserts the matching closer with the caret between,
   types through a closer, and `Backspace` on an empty pair clears both. **Off by
   default** (turn it on if you like it); page-ref `[[…]]` always auto-closes.
 - ⊕ **Typographic replacements** (Settings → Appearance) — show `->` → `→`,

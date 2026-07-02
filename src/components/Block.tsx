@@ -13,7 +13,7 @@ import {
   fuzzyScore,
   type Trigger,
 } from "../editor/autocomplete";
-import { autoPairInsertOnInput, wrapSelectionEdit, backspacePairEdit, PAIRS } from "../editor/autopair";
+import { autoPairInsertOnInput, wrapSelectionEdit, doubleRefKind, backspacePairEdit, SELECTION_WRAP } from "../editor/autopair";
 import { typoTypeReplace } from "../render/typography";
 import { linkFirstMatch } from "../editor/linkDefault";
 import { spellcheckEnabled } from "../spellcheckSettings";
@@ -1351,19 +1351,34 @@ export function Editor(props: { id: string }): JSX.Element {
       }
     }
 
-    // Auto-pair wrap (opt-in): typing an opener with a non-empty selection wraps
-    // it in the pair (`(sel)`), keeping the selection. Modifier-free single chars
-    // only, so it never shadows Ctrl/Cmd editor commands or IME composition.
+    // Auto-pair wrap on a SELECTION (OG parity, always-on — independent of the
+    // opt-in empty-caret auto-pairing). Typing any of `SELECTION_WRAP` around
+    // selected text wraps it, keeping the selection: `*`/`~`/`=` etc. so a second
+    // press gives `**bold**`/`~~strike~~`/`==highlight==`, and `[`/`(` so `[[sel]]`
+    // makes a page ref and `((sel))` a block ref — the doubling bracket then opens
+    // the matching search seeded with the selection, so Enter links it to an
+    // existing page/block or creates it. Modifier-free single chars only, so it
+    // never shadows Ctrl/Cmd editor commands or IME composition.
     if (
-      autoPairing() &&
       start !== end &&
       !e.ctrlKey && !e.metaKey && !e.altKey && !e.isComposing &&
-      e.key.length === 1 && Object.prototype.hasOwnProperty.call(PAIRS, e.key)
+      e.key.length === 1 && Object.prototype.hasOwnProperty.call(SELECTION_WRAP, e.key)
     ) {
       const ed = wrapSelectionEdit(raw, start, end, e.key);
       if (ed) {
         e.preventDefault();
         applyEdit(ed);
+        // The bracket that just DOUBLED (`[[sel]]` / `((sel))`) opens the page/
+        // block search seeded with the selection. applyEdit writes the textarea in
+        // a microtask, so defer to a following one (FIFO): collapse the caret to
+        // the inner end so detectTrigger reads the selection as the query, then
+        // open the popup. Enter picks an existing page/block or creates it.
+        if (doubleRefKind(ed.text, ed.start, ed.end)) {
+          queueMicrotask(() => {
+            ref.setSelectionRange(ed.end, ed.end);
+            void updateAutocomplete();
+          });
+        }
         return;
       }
     }

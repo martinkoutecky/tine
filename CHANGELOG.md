@@ -8,6 +8,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Added
+
+- **Select text, then wrap it (OG parity).** With text selected in the editor,
+  typing `[` twice wraps it as `[[selection]]` and opens the page search seeded
+  with those words — so Enter links it to an existing page or creates it (#18);
+  `(` twice does the same for a block ref `((selection))`. Emphasis marks wrap a
+  selection too: `*`/`~`/`=`/`_` (and the Org markers `/`/`+`/`^`), so a second
+  press gives `**bold**`, `~~strike~~`, `==highlight==`. This is always on and
+  independent of the opt-in auto-pairing (which only affects the empty-caret case).
+
 ### Fixed
 
 - **Deleting today's journal leaves an empty today.** Right-clicking today in the
