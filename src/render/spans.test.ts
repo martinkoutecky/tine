@@ -3,10 +3,16 @@ import { isBuiltinHidden, rawOffsetToVisibleOffset } from "../editor/properties"
 import {
   rebulletedSourceByteToRawByte,
   sourceByteFromPlainTextByte,
+  typographicPlainSpanAttrs,
   utf16ToUtf8ByteOffset,
   utf8ByteLength,
   utf8ByteToUtf16Offset,
 } from "./spans";
+
+function decodeSm(attrs: { "data-sm"?: string } | undefined): [number, number, number][] {
+  return (attrs?.["data-sm"] ?? "").split(";").filter(Boolean)
+    .map((p) => p.split(":").map(Number) as [number, number, number]);
+}
 
 describe("span offset helpers", () => {
   it("converts UTF-16 offsets to UTF-8 byte offsets for emoji and CJK", () => {
@@ -46,6 +52,41 @@ describe("span offset helpers", () => {
     expect(rebulletedSourceByteToRawByte(raw, 2)).toBe(2);
     expect(rebulletedSourceByteToRawByte(raw, 6)).toBe(6);
     expect(rebulletedSourceByteToRawByte(raw, 999)).toBe(utf8ByteLength(raw));
+  });
+
+  it("typographic plains keep exact mapping: unchanged runs map, glyphs are gaps", () => {
+    // AST text "a -> b" (6 bytes) at source span [2, 8); rendered "a → b".
+    // Unchanged runs: "a " (2 bytes) and " b" (2 bytes); "→" is 3 rendered bytes.
+    const attrs = typographicPlainSpanAttrs("a -> b", [2, 8], undefined)!;
+    expect(attrs["data-so"]).toBe("2");
+    expect(attrs["data-se"]).toBe("8");
+    const sm = decodeSm(attrs);
+    expect(sm).toEqual([[0, 2, 2], [5, 6, 2]]);
+    // Click positions on the rendered "a → b" (7 bytes): "a"(0)→2; " "(1)→3;
+    // inside the glyph (2..4) snaps forward to the " b" run's source (6, i.e.
+    // right after the source "->"); "b"(6)→7.
+    expect(sourceByteFromPlainTextByte([2, 8], sm, 0, 7)).toBe(2);
+    expect(sourceByteFromPlainTextByte([2, 8], sm, 1, 7)).toBe(3);
+    expect(sourceByteFromPlainTextByte([2, 8], sm, 3, 7)).toBe(6);
+    expect(sourceByteFromPlainTextByte([2, 8], sm, 6, 7)).toBe(7);
+  });
+
+  it("typographic mapping composes through an existing span_map", () => {
+    // AST text "a*b--c" from escaped source "a\\*b--c" at span [2, 9):
+    // inner map: "a" [0→2], "*b--c" [1→4..9). Rendered: "a*b–c".
+    const inner: [number, number, number][] = [[0, 2, 1], [1, 4, 5]];
+    const attrs = typographicPlainSpanAttrs("a*b--c", [2, 9], inner)!;
+    const sm = decodeSm(attrs);
+    // Unchanged runs "a*b" and "c" compose: [0,2,1] stays split from [1,4,2]
+    // (inner boundary), "c" (rendered byte 6: after 3-byte en dash) → source 8.
+    expect(sm).toEqual([[0, 2, 1], [1, 4, 2], [6, 8, 1]]);
+  });
+
+  it("typographic plain that is ONLY a glyph degrades to coarse attrs", () => {
+    const attrs = typographicPlainSpanAttrs("->", [4, 6], undefined)!;
+    expect(attrs["data-so"]).toBe("4");
+    expect(attrs["data-se"]).toBeUndefined();
+    expect(attrs["data-sm"]).toBeUndefined();
   });
 
   it("maps raw offsets into the editor-visible buffer using hidden property lines", () => {

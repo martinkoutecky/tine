@@ -38,6 +38,27 @@ export function typographic(text: string): string {
   return text.replace(TYPO_RE, (m) => TYPO_MAP[m] ?? m);
 }
 
+/** One replaced trigger: `[start, end)` UTF-16 indices into the SOURCE text and
+ *  the glyph it becomes. Drives the click→caret span composition (render/spans.ts)
+ *  so substituted plains stay exactly mappable instead of falling back. */
+export interface TypoSeg {
+  start: number;
+  end: number;
+  glyph: string;
+}
+
+/** The trigger matches `typographic()` replaces, in order. Empty ⇒ no change. */
+export function typographicSegments(text: string): TypoSeg[] {
+  if (!text) return [];
+  const out: TypoSeg[] = [];
+  TYPO_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = TYPO_RE.exec(text))) {
+    out.push({ start: m.index, end: m.index + m[0].length, glyph: TYPO_MAP[m[0]] ?? m[0] });
+  }
+  return out;
+}
+
 // --- "On type" mode: rewrite the SOURCE as you type (typographyMode === "type").
 // Called from Block.tsx's onInput after a single char is inserted. The hard part
 // is knowing when a trigger is COMPLETE and can't be extended by the next char:

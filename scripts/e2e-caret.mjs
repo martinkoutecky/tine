@@ -319,8 +319,10 @@ const clickBlock = async (blockIdx, selStart) => {
     const block = blocks[idx];
     if (!block) return;
     const wrapper = block.querySelector(":scope > .block-main .block-content-wrapper");
-    if (wrapper) wrapper.click();
-    else block.click();
+    // Edit entry is on MOUSEDOWN (OG parity, Jul 2 2026) — element.click() only
+    // fires a click event, so dispatch a real left-button mousedown instead.
+    const down = new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 });
+    (wrapper || block).dispatchEvent(down);
   }, blockIdx);
   await sleep(500);
   await browser.execute((s) => {
@@ -464,7 +466,10 @@ async function runAgendaScenario() {
         );
         if (!block) return false;
         const wrapper = block.querySelector(":scope > .block-main .block-content-wrapper");
-        (wrapper || block).click();
+        // Edit entry is on MOUSEDOWN (OG parity, Jul 2 2026) — element.click() only
+        // fires a click event, so dispatch a real left-button mousedown instead.
+        const down = new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 });
+        (wrapper || block).dispatchEvent(down);
         return true;
       },
       id

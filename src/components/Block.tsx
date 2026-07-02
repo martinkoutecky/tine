@@ -305,11 +305,16 @@ export function Block(props: { id: string; hideRefCount?: boolean }): JSX.Elemen
         <div
           class="block-content-wrapper"
           classList={{ "read-only": readOnly() }}
-          onClick={() => {
-            // Click anywhere in the row (not on a link) starts editing — and
-            // claims the editor for THIS instance. Read-only org pages don't edit.
-            if (!editing() && !readOnly())
+          onMouseDown={(e) => {
+            // Mousedown anywhere in the row (not on a link/chip) starts editing —
+            // and claims the editor for THIS instance. Mousedown, not click, so the
+            // offset/row is read from the PRE-blur layout (see Rendered's handler).
+            // Read-only org pages don't edit.
+            if (e.button !== 0 || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+            if (!editing() && !readOnly() && !forbidsEditEntry(e)) {
+              e.preventDefault(); // keep the default focus-move from blurring the new editor
               startEditing(props.id, doc.byId[props.id].raw.length, instanceId);
+            }
           }}
         >
           <Show
@@ -364,6 +369,35 @@ export function Block(props: { id: string; hideRefCount?: boolean }): JSX.Elemen
   );
 }
 
+// Interactive targets that must NOT enter edit on mousedown (mirrors OG's
+// target-forbidden-edit?). Their own handlers run on click — after our
+// mousedown — so entering edit first would swap the DOM out from under them.
+const FORBID_EDIT_SELECTOR = [
+  "a",
+  "button",
+  "input",
+  "textarea",
+  "select",
+  "video",
+  "audio",
+  "iframe",
+  "details",
+  "summary",
+  ".block-ref",
+  ".block-marker",
+  ".date-chip",
+  ".hl-prefix",
+  ".inline-image-wrap",
+  ".media-embed-wrap",
+  ".embed-iframe-wrap",
+].join(", ");
+
+function forbidsEditEntry(e: MouseEvent): boolean {
+  const target = e.target as Element | null;
+  const hit = target?.closest?.(FORBID_EDIT_SELECTOR);
+  return !!hit && (e.currentTarget as Element).contains(hit);
+}
+
 function Rendered(props: { id: string; owner?: string; trailing?: JSX.Element }): JSX.Element {
   const node = () => doc.byId[props.id];
   const fmt = () => pageByName(node().page)?.format ?? "md";
@@ -398,9 +432,21 @@ function Rendered(props: { id: string; owner?: string; trailing?: JSX.Element })
   };
   // For annotation blocks the editor shows only the highlight text (metadata
   // stays hidden); the colored prefix still jumps to the PDF.
-  const onClick = (e: MouseEvent) => {
-    e.stopPropagation();
+  //
+  // Edit entry happens on MOUSEDOWN, not click (OG parity: block-content-on-
+  // mouse-down). It must run BEFORE the previously-focused editor blurs: blur
+  // re-renders that block (often shorter), everything below shifts, and by the
+  // time a click event would fire the coordinates are stale — worse, mouseup can
+  // land on a different element than mousedown, in which case the click fires on
+  // a common ancestor and no block receives it at all (caret appears nowhere).
+  const onMouseDown = (e: MouseEvent) => {
+    if (e.button !== 0 || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
     if (readOnly()) return; // read-only org page — never enter the editor
+    if (forbidsEditEntry(e)) return;
+    e.stopPropagation();
+    // preventDefault: the mousedown's default action would move focus AFTER we
+    // focus the editor textarea, blurring it right back out (endEdit("blur")).
+    e.preventDefault();
     startEditing(props.id, clickOffset(e) ?? node().raw.length, props.owner ?? null);
   };
 
@@ -428,7 +474,7 @@ function Rendered(props: { id: string; owner?: string; trailing?: JSX.Element })
     <Show
       when={!macro()}
       fallback={
-        <div class="block-content macro-host" onClick={onClick}>
+        <div class="block-content macro-host" onMouseDown={onMouseDown}>
           <Switch>
             <Match when={macro()!.kind === "query"}>
               <QueryMacro body={macro()!.inner} blockId={props.id} />
@@ -445,7 +491,7 @@ function Rendered(props: { id: string; owner?: string; trailing?: JSX.Element })
       class="block-content"
       classList={{ done: facets().done, "has-bg": !!bgColor(), [`heading h${facets().headingLevel ?? ""}`]: facets().headingLevel != null }}
       style={bgColor() ? { background: bgColor() } : undefined}
-      onClick={onClick}
+      onMouseDown={onMouseDown}
     >
       <Show when={facets().marker}>
         <span

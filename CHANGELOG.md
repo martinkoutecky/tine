@@ -19,12 +19,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - **Parser upgraded to lsdoc v0.3.0.** The parser's `O(n)` single-pass rewrite is
   now vendored in the frontend, with crash fixes for adversarial input,
   parser-owned table alignment in the app, and support for `data:` image links.
+- **Editing starts on mouse-down** (matching Logseq), so the caret lands where
+  you pressed even when the layout shifts as the previously-edited block
+  collapses back to its rendered height. Links, chips, media, and checkboxes
+  keep their click behavior.
 
 ### Fixed
 
 - **Click-to-caret in marked-up blocks.** Clicking rendered Markdown/Org markup
   now maps through lsdoc inline byte spans, so the editor opens at the clicked
-  source position instead of falling back to the end of the block.
+  source position instead of falling back to the end of the block. This includes
+  text with rendered arrows/dashes (`->` → `→`, `--` → `–`).
+- Clicking a block below a focused taller-in-edit block (e.g. one with a
+  `DEADLINE:` line) no longer loses the caret entirely.
 
 ## [0.3.1] — 2026-07-01
 

@@ -14,7 +14,7 @@ import { parseBlock, parserReady } from "./parse";
 import type { Inline, Url, MacroInline, TimestampInline, TimestampPoint, EmailValue, Block as AstBlock, Format } from "./ast";
 import { EmojiText } from "./emoji";
 import { typographic } from "./typography";
-import { coarseSpanAttrs, plainSpanAttrs, type SpanDomAttrs } from "./spans";
+import { coarseSpanAttrs, plainSpanAttrs, typographicPlainSpanAttrs, type SpanDomAttrs } from "./spans";
 import { typographyMode } from "../ui";
 import { visibleBody } from "./block";
 import { backend } from "../backend";
@@ -69,7 +69,11 @@ function renderInline(s: Inline, blockId?: string, spanMode = true): JSX.Element
       // opinion applied ONLY to plain text — code/links/math/tags are other node
       // kinds, so they're excluded for free. Source keeps the ASCII.
       const text = typographyMode() === "render" ? typographic(s.text) : s.text;
-      const attrs = spanMode && text === s.text ? plainSpanAttrs(s.span, s.span_map) : undefined;
+      const attrs = spanMode
+        ? text === s.text
+          ? plainSpanAttrs(s.span, s.span_map)
+          : typographicPlainSpanAttrs(s.text, s.span, s.span_map)
+        : undefined;
       return attrs ? <span {...attrs}><EmojiText text={text} /></span> : <EmojiText text={text} />;
     }
     case "code":

@@ -1,4 +1,5 @@
 import { rawOffsetToVisibleOffset } from "../editor/properties";
+import { typographicSegments } from "./typography";
 import type { Span, SpanMap } from "./ast";
 
 const UTF8 = new TextEncoder();
@@ -89,6 +90,64 @@ export function plainSpanAttrs(span: Span | undefined, spanMap?: SpanMap): SpanD
 
 export function coarseSpanAttrs(span: Span | undefined): SpanDomAttrs | undefined {
   return span ? { "data-so": String(span[0]) } : undefined;
+}
+
+/** Span attrs for a plain whose RENDERED text differs from the AST text by the
+ *  typographic substitution (`->`→`→`, `--`→`–`, …). The emitted `data-sm` maps
+ *  RENDERED text bytes → block-source bytes: the unchanged runs between glyph
+ *  replacements map byte-equal, composed through the plain's own `span_map` when
+ *  present; the glyph bytes stay uncovered, so a click on a glyph snaps to the
+ *  next mapped run (same rule as CRLF joiners). Falls back to coarse attrs when
+ *  nothing maps (e.g. the whole plain is a single trigger). */
+export function typographicPlainSpanAttrs(
+  sourceText: string,
+  span: Span | undefined,
+  spanMap: SpanMap | undefined,
+): SpanDomAttrs | undefined {
+  if (!span) return undefined;
+  const typo = typographicSegments(sourceText);
+  if (typo.length === 0) return plainSpanAttrs(span, spanMap);
+
+  // Outer map: rendered-byte → AST-text-byte, over the unchanged runs.
+  const outer: SpanMap = [];
+  let renderedByte = 0;
+  let textUtf16 = 0;
+  let textByte = 0;
+  const advance = (to: number) => {
+    const runBytes = utf8ByteLength(sourceText.slice(textUtf16, to));
+    if (runBytes > 0) outer.push([renderedByte, textByte, runBytes]);
+    renderedByte += runBytes;
+    textByte += runBytes;
+    textUtf16 = to;
+  };
+  for (const seg of typo) {
+    advance(seg.start);
+    // The trigger's bytes are consumed from the text side, the glyph's from the
+    // rendered side; neither is covered by a mapping segment.
+    renderedByte += utf8ByteLength(seg.glyph);
+    textByte += utf8ByteLength(sourceText.slice(seg.start, seg.end));
+    textUtf16 = seg.end;
+  }
+  advance(sourceText.length);
+
+  // Compose with the plain's own text-byte → block-source-byte mapping.
+  const composed: SpanMap = [];
+  const inner: SpanMap = spanMap && spanMap.length > 0
+    ? spanMap
+    : [[0, span[0], utf8ByteLength(sourceText)]];
+  for (const [rOff, tOff, len] of outer) {
+    for (const [tiOff, siOff, ilen] of inner) {
+      const a = Math.max(tOff, tiOff);
+      const b = Math.min(tOff + len, tiOff + ilen);
+      if (b > a) composed.push([rOff + (a - tOff), siOff + (a - tiOff), b - a]);
+    }
+  }
+  if (composed.length === 0) return coarseSpanAttrs(span);
+  return {
+    "data-so": String(span[0]),
+    "data-se": String(span[1]),
+    "data-sm": encodeSpanMap(composed),
+  };
 }
 
 function byteAttr(el: Element, name: string): number | null {
