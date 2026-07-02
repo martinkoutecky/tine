@@ -164,6 +164,8 @@ try {
         idx: closest ? blocks.indexOf(closest) : -1,
         editingIdx: editingBlock ? blocks.indexOf(editingBlock) : -1,
         aeTag: ae ? ae.tagName : "null",
+        textSel: String(window.getSelection() || "").slice(0, 40),
+        selBlocks: document.querySelectorAll(".block-main.selected").length,
         crfp: (window.__crfpLog || []).slice(-1)[0] || null,
       };
     });
@@ -210,6 +212,38 @@ try {
   console.log("point (while TODO editing):", JSON.stringify(p));
   if (!p.err) { await realClick(p.x, p.y); await probe("clicked below → expect editor on idx 2"); }
   await probe("final state");
+  await browser.keys(["Escape"]); await sleep(400);
+
+  const realDrag = async (x1, y1, x2, y2) => {
+    const steps = 6;
+    const actions = [{ type: "pointerMove", duration: 0, x: Math.round(x1), y: Math.round(y1) }, { type: "pointerDown", button: 0 }];
+    for (let i = 1; i <= steps; i++) {
+      actions.push({ type: "pointerMove", duration: 30, x: Math.round(x1 + ((x2 - x1) * i) / steps), y: Math.round(y1 + ((y2 - y1) * i) / steps) });
+    }
+    actions.push({ type: "pointerUp", button: 0 });
+    await browser.performActions([{ type: "pointer", id: "mouse", parameters: { pointerType: "mouse" }, actions }]);
+    await browser.releaseActions();
+    await sleep(600);
+  };
+
+  console.log("\n=== DRAG 1: within block 0, 'second' → 'here' (text selection, no edit) ===");
+  const d1a = await charPoint(0, "second", 0);
+  const d1b = await charPoint(0, "here", 3);
+  console.log("from", JSON.stringify(d1a), "to", JSON.stringify(d1b));
+  if (!d1a.err && !d1b.err) { await realDrag(d1a.x, d1a.y, d1b.x, d1b.y); await probe("in-block drag"); }
+  await browser.keys(["Escape"]); await sleep(300);
+  await browser.execute(() => window.getSelection()?.removeAllRanges());
+
+  console.log("\n=== DRAG 2: block 0 → block 3 (escalate to block selection) ===");
+  const d2a = await charPoint(0, "rest", 1);
+  const d2b = await charPoint(3, "target", 2);
+  console.log("from", JSON.stringify(d2a), "to", JSON.stringify(d2b));
+  if (!d2a.err && !d2b.err) { await realDrag(d2a.x, d2a.y, d2b.x, d2b.y); await probe("cross-block drag"); }
+  await browser.keys(["Escape"]); await sleep(300);
+
+  console.log("\n=== DRAG 3: click still works after drags (block 0 'bold'+2) ===");
+  const d3 = await charPoint(0, "bold", 2);
+  if (!d3.err) { await realClick(d3.x, d3.y); await probe("post-drag click"); }
 } finally {
   try { if (browser) await browser.deleteSession(); } catch {}
   td.kill();

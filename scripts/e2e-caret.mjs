@@ -319,10 +319,12 @@ const clickBlock = async (blockIdx, selStart) => {
     const block = blocks[idx];
     if (!block) return;
     const wrapper = block.querySelector(":scope > .block-main .block-content-wrapper");
-    // Edit entry is on MOUSEDOWN (OG parity, Jul 2 2026) — element.click() only
-    // fires a click event, so dispatch a real left-button mousedown instead.
-    const down = new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 });
-    (wrapper || block).dispatchEvent(down);
+    // Edit entry is a mousedown-armed / mouseup-resolved gesture (Jul 2 2026) —
+    // element.click() fires neither, so dispatch the down+up pair (same point =
+    // a click, which starts editing).
+    const el = wrapper || block;
+    el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
+    el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, button: 0 }));
   }, blockIdx);
   await sleep(500);
   await browser.execute((s) => {
@@ -466,10 +468,12 @@ async function runAgendaScenario() {
         );
         if (!block) return false;
         const wrapper = block.querySelector(":scope > .block-main .block-content-wrapper");
-        // Edit entry is on MOUSEDOWN (OG parity, Jul 2 2026) — element.click() only
-        // fires a click event, so dispatch a real left-button mousedown instead.
-        const down = new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 });
-        (wrapper || block).dispatchEvent(down);
+        // Edit entry is a mousedown-armed / mouseup-resolved gesture (Jul 2 2026) —
+        // element.click() fires neither, so dispatch the down+up pair (same point =
+        // a click, which starts editing).
+        const el = wrapper || block;
+        el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
+        el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, button: 0 }));
         return true;
       },
       id

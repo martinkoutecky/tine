@@ -19,10 +19,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - **Parser upgraded to lsdoc v0.3.0.** The parser's `O(n)` single-pass rewrite is
   now vendored in the frontend, with crash fixes for adversarial input,
   parser-owned table alignment in the app, and support for `data:` image links.
-- **Editing starts on mouse-down** (matching Logseq), so the caret lands where
-  you pressed even when the layout shifts as the previously-edited block
-  collapses back to its rendered height. Links, chips, media, and checkboxes
-  keep their click behavior.
+- **Click edits, drag selects.** A click on rendered block content opens the
+  editor at the clicked character (the position is captured at mouse-down, so
+  it stays correct even when the layout shifts as the previously-edited block
+  collapses back to its rendered height). A drag selects instead of editing:
+  within one block it is a normal text selection of the *rendered* text (copy
+  gives the glyphs you see — `→`, `–`); the moment it crosses into another
+  block it becomes Tine's block selection. Deterministic by design — the
+  behavior depends only on where the pointer went, never on timing (unlike
+  Logseq's mousedown-instant-edit). Links, chips, media, and checkboxes keep
+  their click behavior.
 
 ### Fixed
 

@@ -35,6 +35,8 @@ import {
   moveBlock,
   moveBlockFeed,
   selectBlock,
+  extendSelectionTo,
+  clearSelection,
   moveSelection,
   isSelected,
   ensureBlockId,
@@ -306,15 +308,12 @@ export function Block(props: { id: string; hideRefCount?: boolean }): JSX.Elemen
           class="block-content-wrapper"
           classList={{ "read-only": readOnly() }}
           onMouseDown={(e) => {
-            // Mousedown anywhere in the row (not on a link/chip) starts editing —
-            // and claims the editor for THIS instance. Mousedown, not click, so the
-            // offset/row is read from the PRE-blur layout (see Rendered's handler).
-            // Read-only org pages don't edit.
+            // Mousedown anywhere in the row (not on a link/chip) arms the same
+            // click-or-drag gesture as block content, with an end-of-block caret
+            // (the row padding has no text to map). Read-only org pages don't edit.
             if (e.button !== 0 || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
-            if (!editing() && !readOnly() && !forbidsEditEntry(e)) {
-              e.preventDefault(); // keep the default focus-move from blurring the new editor
-              startEditing(props.id, doc.byId[props.id].raw.length, instanceId);
-            }
+            if (!editing() && !readOnly() && !forbidsEditEntry(e))
+              beginEditGesture(e, props.id, doc.byId[props.id].raw.length, instanceId);
           }}
         >
           <Show
@@ -398,6 +397,72 @@ function forbidsEditEntry(e: MouseEvent): boolean {
   return !!hit && (e.currentTarget as Element).contains(hit);
 }
 
+// --- Click / drag gesture on rendered block content -------------------------
+//
+// The caret offset is captured at MOUSEDOWN (before the previously-edited
+// block's blur reflows the layout — the coordinates are only valid then), but
+// editing starts at MOUSEUP and only for a CLICK (pointer moved < threshold).
+// A drag instead selects: within the origin block it is the browser's native
+// text selection of the RENDERED text (copy gives the glyphs you see); the
+// moment it crosses into another block it escalates to Tine's block selection
+// (muscle memory from OG — but deterministic: the escalation rule is purely
+// "did the pointer enter a different block", never timing).
+//
+// Deliberately NOT OG's mousedown-instant-edit: that races the native
+// selection against the DOM swap (the inconsistency Martin observed in OG).
+const DRAG_THRESHOLD_PX = 4;
+
+interface EditGesture {
+  blockId: string;
+  offset: number;
+  owner: string | null;
+  startX: number;
+  startY: number;
+  escalated: boolean;
+}
+
+function blockIdAtPoint(x: number, y: number): string | null {
+  const el = document.elementFromPoint(x, y);
+  const row = el?.closest?.(".ls-block");
+  return row?.getAttribute("data-block-id") ?? null;
+}
+
+/** Arm a click-or-drag gesture from a rendered-content mousedown. Document-level
+ *  listeners resolve it, so post-blur layout shifts can't misroute the mouseup. */
+function beginEditGesture(e: MouseEvent, blockId: string, offset: number, owner: string | null): void {
+  clearSelection(); // a plain gesture replaces any active block selection (shift-click returns before this)
+  const g: EditGesture = { blockId, offset, owner, startX: e.clientX, startY: e.clientY, escalated: false };
+  const onMove = (ev: MouseEvent) => {
+    const moved =
+      Math.abs(ev.clientX - g.startX) > DRAG_THRESHOLD_PX || Math.abs(ev.clientY - g.startY) > DRAG_THRESHOLD_PX;
+    if (!moved) return;
+    const over = blockIdAtPoint(ev.clientX, ev.clientY);
+    if (g.escalated) {
+      if (over) extendSelectionTo(over);
+      return;
+    }
+    if (over && over !== g.blockId) {
+      // Crossed into another block: escalate to block selection for the rest of
+      // the gesture (never de-escalate — flipping modes mid-drag is jarring).
+      g.escalated = true;
+      window.getSelection()?.removeAllRanges();
+      selectBlock(g.blockId);
+      extendSelectionTo(over);
+    }
+  };
+  const onUp = (ev: MouseEvent) => {
+    document.removeEventListener("mousemove", onMove, true);
+    document.removeEventListener("mouseup", onUp, true);
+    if (g.escalated) return; // block selection stands
+    const moved =
+      Math.abs(ev.clientX - g.startX) > DRAG_THRESHOLD_PX || Math.abs(ev.clientY - g.startY) > DRAG_THRESHOLD_PX;
+    if (moved) return; // an in-block text selection (or a stray drag) — not a click
+    startEditing(g.blockId, g.offset, g.owner);
+  };
+  document.addEventListener("mousemove", onMove, true);
+  document.addEventListener("mouseup", onUp, true);
+}
+
 function Rendered(props: { id: string; owner?: string; trailing?: JSX.Element }): JSX.Element {
   const node = () => doc.byId[props.id];
   const fmt = () => pageByName(node().page)?.format ?? "md";
@@ -433,21 +498,17 @@ function Rendered(props: { id: string; owner?: string; trailing?: JSX.Element })
   // For annotation blocks the editor shows only the highlight text (metadata
   // stays hidden); the colored prefix still jumps to the PDF.
   //
-  // Edit entry happens on MOUSEDOWN, not click (OG parity: block-content-on-
-  // mouse-down). It must run BEFORE the previously-focused editor blurs: blur
-  // re-renders that block (often shorter), everything below shifts, and by the
-  // time a click event would fire the coordinates are stale — worse, mouseup can
-  // land on a different element than mousedown, in which case the click fires on
-  // a common ancestor and no block receives it at all (caret appears nowhere).
+  // The caret offset must be computed at MOUSEDOWN — before the previously-
+  // focused editor blurs and reflows the layout (on click the coordinates are
+  // stale; the mouseup can even land on a different element so no block receives
+  // the click at all). Whether it becomes an EDIT (click) or a SELECTION (drag)
+  // is decided at mouseup — see beginEditGesture.
   const onMouseDown = (e: MouseEvent) => {
     if (e.button !== 0 || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
     if (readOnly()) return; // read-only org page — never enter the editor
     if (forbidsEditEntry(e)) return;
-    e.stopPropagation();
-    // preventDefault: the mousedown's default action would move focus AFTER we
-    // focus the editor textarea, blurring it right back out (endEdit("blur")).
-    e.preventDefault();
-    startEditing(props.id, clickOffset(e) ?? node().raw.length, props.owner ?? null);
+    e.stopPropagation(); // keep the row wrapper from arming a second gesture
+    beginEditGesture(e, props.id, clickOffset(e) ?? node().raw.length, props.owner ?? null);
   };
 
   const displayProps = () => {
