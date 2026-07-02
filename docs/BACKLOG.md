@@ -53,7 +53,6 @@ _Nothing actively in flight._
 | **macOS notarization** | The macOS build is unsigned, so Mac users hit the "unidentified developer" wall (right-click→Open works around it). Signing needs an Apple Developer ID ($99/yr) — exploring a shared/borrowed ID or revisiting later. **Deferred, explicitly not WONTFIX.** |
 | **Verso/Servo engine swap** | A longer-term answer to WebKitGTK's scroll/render gaps. Servo's web-compat for a dense editor isn't ready yet; revisit ~early 2027. |
 | **Nested-grid ("breadth") views** | A TreeSheets-inspired grid over child blocks — a post-1.0 exploration. |
-| **`src-tauri/main.rs` module split** | The least-cohesive large file (watcher, backup/restore, settings, spellcheck, IPC plumbing in one 2k-line file). Split into modules *after* the write/watch protocol ADR (0012) so the split preserves the protocol instead of hiding it. |
 | **Donations / sponsor link** | A single low-friction Ko-fi/Liberapay link + `FUNDING.yml`. Parked — low priority. |
 | **Feature video clips for the website** | Looping clips of the motion features (PDF, audio waveform, video, tabs). Parked — headless capture is too heavy for now. |
 

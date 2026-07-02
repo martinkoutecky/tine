@@ -1,0 +1,400 @@
+use crate::debug::diag;
+use crate::platform::opener_command;
+use crate::state::{refresh_graph, with_graph, AppState};
+use std::sync::Arc;
+use tauri::State;
+use tine_core::model::{PageDto, PageEntry, PageKind, RefGroup};
+
+/// Write a PNG image to the OS clipboard. The lightbox encodes the shown image to
+/// PNG and sends the bytes. On Linux we prefer `wl-copy`/`xclip` (see above) and
+/// fall back to the Tauri clipboard plugin; elsewhere the plugin is reliable.
+/// Decode a base64 asset payload. The frontend sends bytes as one base64 string
+/// rather than a JSON number[] (which inflated the IPC payload ~4-5x and forced a
+/// per-element parse + a giant throwaway array on the webview thread).
+pub(crate) fn decode_asset_b64(b64: &str) -> Result<Vec<u8>, String> {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .map_err(|e| format!("bad base64 asset payload: {e}"))
+}
+
+#[tauri::command]
+pub(crate) fn list_pages(state: State<'_, AppState>) -> Result<Vec<PageEntry>, String> {
+    with_graph(&state, |g| Ok(g.list_pages()))
+}
+
+#[tauri::command]
+pub(crate) fn journals_desc(
+    limit: usize,
+    offset: usize,
+    state: State<'_, AppState>,
+) -> Result<Vec<PageDto>, String> {
+    with_graph(&state, |g| {
+        let entries = g.journals_desc();
+        let mut out = Vec::new();
+        for e in entries.into_iter().skip(offset).take(limit) {
+            match g.load_page(&e) {
+                Ok(dto) => out.push(dto),
+                // A journal deleted from disk between the cache listing and this
+                // load just drops out of the feed — don't fail the whole batch (and
+                // don't serve a stale ghost; load_page already evicted it).
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => return Err(err.to_string()),
+            }
+        }
+        Ok(out)
+    })
+}
+
+#[tauri::command]
+pub(crate) fn get_page(
+    name: String,
+    kind: PageKind,
+    state: State<'_, AppState>,
+) -> Result<Option<PageDto>, String> {
+    with_graph(&state, |g| g.load_named(&name, kind).map_err(|e| e.to_string()))
+}
+
+#[tauri::command]
+pub(crate) fn save_page(
+    page: PageDto,
+    base_rev: Option<String>,
+    force: Option<bool>,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    with_graph(&state, |g| {
+        let res = if force.unwrap_or(false) {
+            g.force_save_page(&page)
+        } else {
+            g.save_page(&page, base_rev.as_deref())
+        };
+        res.map_err(|e| {
+            if e.kind() == std::io::ErrorKind::AlreadyExists {
+                "conflict".to_string()
+            } else {
+                e.to_string()
+            }
+        })
+    })
+}
+
+#[tauri::command]
+pub(crate) fn get_backlinks(name: String, state: State<'_, AppState>) -> Result<Arc<Vec<RefGroup>>, String> {
+    with_graph(&state, |g| Ok(g.backlinks(&name)))
+}
+
+#[tauri::command]
+pub(crate) fn get_unlinked_refs(name: String, state: State<'_, AppState>) -> Result<Arc<Vec<RefGroup>>, String> {
+    with_graph(&state, |g| Ok(g.unlinked_refs(&name)))
+}
+
+/// `block uuid → # of referrers` over the whole graph (drives the per-block
+/// reference-count badge). Small map (only referenced uuids); fetched once per
+/// graph generation by the frontend.
+#[tauri::command]
+pub(crate) fn block_ref_counts(
+    state: State<'_, AppState>,
+) -> Result<Arc<std::collections::HashMap<String, usize>>, String> {
+    with_graph(&state, |g| Ok(g.block_ref_counts()))
+}
+
+/// The blocks that reference block `uuid`, grouped by page (the badge's referrers
+/// panel). Lazy: called only when a badge is clicked open.
+#[tauri::command]
+pub(crate) fn block_referrers(uuid: String, state: State<'_, AppState>) -> Result<Arc<Vec<RefGroup>>, String> {
+    with_graph(&state, |g| Ok(g.block_referrers(&uuid)))
+}
+
+#[tauri::command]
+pub(crate) fn delete_page(name: String, kind: PageKind, state: State<'_, AppState>) -> Result<(), String> {
+    with_graph(&state, |g| g.delete_page(&name, kind).map_err(|e| e.to_string()))
+}
+
+#[tauri::command]
+pub(crate) fn rename_page(old: String, new: String, state: State<'_, AppState>) -> Result<(), String> {
+    with_graph(&state, |g| g.rename_page(&old, &new).map_err(|e| e.to_string()))
+}
+
+#[tauri::command]
+pub(crate) fn publish_html(state: State<'_, AppState>) -> Result<(String, usize), String> {
+    with_graph(&state, |g| g.publish_html().map_err(|e| e.to_string()))
+}
+
+#[tauri::command]
+pub(crate) fn run_query(query: String, state: State<'_, AppState>) -> Result<Arc<Vec<RefGroup>>, String> {
+    with_graph(&state, |g| Ok(g.run_query(&query)))
+}
+
+#[tauri::command]
+pub(crate) fn run_advanced_query(
+    query: String,
+    current_page: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<tine_core::query::AdvancedResult, String> {
+    with_graph(&state, |g| Ok(g.run_advanced_query(&query, current_page.as_deref())))
+}
+
+#[tauri::command]
+pub(crate) fn query_facets(state: State<'_, AppState>) -> Result<Vec<(String, Vec<String>)>, String> {
+    with_graph(&state, |g| Ok(g.property_facets()))
+}
+
+#[tauri::command]
+pub(crate) fn page_aliases(state: State<'_, AppState>) -> Result<Vec<(String, String)>, String> {
+    with_graph(&state, |g| Ok(g.page_aliases()))
+}
+
+#[tauri::command]
+pub(crate) fn page_icons(
+    names: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<std::collections::HashMap<String, String>, String> {
+    with_graph(&state, |g| Ok(g.page_icons(&names)))
+}
+
+#[tauri::command]
+pub(crate) fn set_favorites(names: Vec<String>, state: State<'_, AppState>) -> Result<(), String> {
+    with_graph(&state, |g| g.set_favorites(&names).map_err(|e| e.to_string()))
+}
+
+#[tauri::command]
+pub(crate) fn set_preferred_workflow(workflow: String, state: State<'_, AppState>) -> Result<(), String> {
+    with_graph(&state, |g| {
+        g.set_preferred_workflow(&workflow).map_err(|e| e.to_string())
+    })
+}
+
+#[tauri::command]
+pub(crate) fn set_default_journal_template(
+    name: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    with_graph(&state, |g| {
+        g.set_default_journal_template(name.as_deref()).map_err(|e| e.to_string())
+    })
+}
+
+#[tauri::command]
+pub(crate) fn set_start_of_week(n: u32, state: State<'_, AppState>) -> Result<(), String> {
+    with_graph(&state, |g| g.set_start_of_week(n).map_err(|e| e.to_string()))
+}
+
+/// Set the graph's `:preferred-format` for new pages/journals ("md" or "org").
+#[tauri::command]
+pub(crate) fn set_preferred_format(format: String, state: State<'_, AppState>) -> Result<(), String> {
+    let fmt = if format.eq_ignore_ascii_case("org") {
+        tine_core::model::Format::Org
+    } else {
+        tine_core::model::Format::Md
+    };
+    with_graph(&state, |g| g.set_preferred_format(fmt).map_err(|e| e.to_string()))?;
+    refresh_graph(&state); // so new pages/journals use the new extension immediately
+    Ok(())
+}
+
+/// Set the graph's `:journal/page-title-format` (journal display-title format,
+/// e.g. "MMM do, yyyy"). Display-only — does not rename journal files.
+#[tauri::command]
+pub(crate) fn set_journal_title_format(format: String, state: State<'_, AppState>) -> Result<(), String> {
+    with_graph(&state, |g| g.set_journal_page_title_format(&format).map_err(|e| e.to_string()))?;
+    refresh_graph(&state); // pick up the new format + migrate any title-named journals
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) fn read_custom_css(state: State<'_, AppState>) -> Result<String, String> {
+    with_graph(&state, |g| Ok(g.custom_css()))
+}
+
+#[tauri::command]
+pub(crate) fn search(query: String, limit: usize, state: State<'_, AppState>) -> Result<Vec<RefGroup>, String> {
+    with_graph(&state, |g| Ok(g.search(&query, limit)))
+}
+
+#[tauri::command]
+pub(crate) fn quick_switch(
+    query: String,
+    limit: usize,
+    state: State<'_, AppState>,
+) -> Result<Vec<PageEntry>, String> {
+    with_graph(&state, |g| Ok(g.quick_switch(&query, limit)))
+}
+
+#[tauri::command]
+pub(crate) fn list_templates(state: State<'_, AppState>) -> Result<Vec<tine_core::model::TemplateDto>, String> {
+    with_graph(&state, |g| Ok(g.templates()))
+}
+
+#[tauri::command]
+pub(crate) fn journal_content_days(state: State<'_, AppState>) -> Result<Vec<i64>, String> {
+    with_graph(&state, |g| Ok(g.journal_content_days()))
+}
+
+#[tauri::command]
+pub(crate) fn resolve_block(uuid: String, state: State<'_, AppState>) -> Result<Option<RefGroup>, String> {
+    with_graph(&state, |g| Ok(g.resolve_block(&uuid)))
+}
+
+#[tauri::command]
+pub(crate) fn resolve_blocks(uuids: Vec<String>, state: State<'_, AppState>) -> Result<Vec<Option<RefGroup>>, String> {
+    with_graph(&state, |g| Ok(g.resolve_blocks(&uuids)))
+}
+
+#[tauri::command]
+pub(crate) fn read_asset(name: String, state: State<'_, AppState>) -> Result<tauri::ipc::Response, String> {
+    // Return RAW bytes (not a JSON number[]), so a multi-MB PDF/image isn't
+    // serialized element-by-element and re-parsed on the JS side — the frontend
+    // receives an ArrayBuffer directly.
+    with_graph(&state, |g| {
+        g.read_asset(&name).map(tauri::ipc::Response::new).map_err(|e| e.to_string())
+    })
+}
+
+#[tauri::command]
+pub(crate) fn import_asset(
+    path: String,
+    name: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    with_graph(&state, |g| {
+        g.import_asset(std::path::Path::new(&path), name.as_deref()).map_err(|e| e.to_string())
+    })
+}
+
+/// Open a graph asset (by its `assets/`-relative name) in the OS default app,
+/// e.g. a video/audio file in the system player. Path-gated to the assets dir
+/// (canonicalized) so a crafted name can't open a file outside the graph.
+#[tauri::command]
+pub(crate) fn open_asset(name: String, state: State<'_, AppState>) -> Result<(), String> {
+    let target = with_graph(&state, |g| {
+        let assets = g.assets_path();
+        let canon_assets = assets.canonicalize().map_err(|e| e.to_string())?;
+        let canon = assets.join(&name).canonicalize().map_err(|e| e.to_string())?;
+        if !canon.starts_with(&canon_assets) {
+            return Err("asset path escapes assets dir".to_string());
+        }
+        Ok(canon)
+    })?;
+    #[cfg(target_os = "linux")]
+    let prog = "xdg-open";
+    #[cfg(target_os = "macos")]
+    let prog = "open";
+    #[cfg(target_os = "windows")]
+    let prog = "explorer";
+    diag(format!("open_asset: {name} -> {} ({prog})", target.display()));
+    opener_command(prog).arg(&target).spawn().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Orphaned `assets/` files (no block references them) for the cleanup UI.
+#[tauri::command]
+pub(crate) fn list_orphan_assets(
+    state: State<'_, AppState>,
+) -> Result<Vec<tine_core::model::AssetInfo>, String> {
+    with_graph(&state, |g| Ok(g.orphan_assets()))
+}
+
+/// Move an orphaned asset to the recoverable trash.
+#[tauri::command]
+pub(crate) fn trash_asset(name: String, state: State<'_, AppState>) -> Result<(), String> {
+    with_graph(&state, |g| g.trash_asset(&name).map_err(|e| e.to_string()))
+}
+
+/// Count + total bytes in the recoverable asset trash.
+#[tauri::command]
+pub(crate) fn asset_trash_stats(state: State<'_, AppState>) -> Result<tine_core::model::TrashStats, String> {
+    with_graph(&state, |g| Ok(g.asset_trash_stats()))
+}
+
+/// Permanently delete everything in the asset trash; returns files removed.
+#[tauri::command]
+pub(crate) fn empty_asset_trash(state: State<'_, AppState>) -> Result<u64, String> {
+    with_graph(&state, |g| g.empty_asset_trash().map_err(|e| e.to_string()))
+}
+
+/// Journal days that resolve to more than one file (e.g. a date-stem file plus a
+/// title-named one) — for the user to reconcile.
+#[tauri::command]
+pub(crate) fn list_journal_conflicts(
+    state: State<'_, AppState>,
+) -> Result<Vec<tine_core::model::JournalConflict>, String> {
+    with_graph(&state, |g| Ok(g.journal_conflicts()))
+}
+
+/// Move one journal file (by exact filename) to the recoverable trash.
+#[tauri::command]
+pub(crate) fn trash_journal_file(name: String, state: State<'_, AppState>) -> Result<(), String> {
+    with_graph(&state, |g| g.trash_journal_file(&name).map_err(|e| e.to_string()))
+}
+
+/// Raw contents of one journal file (by exact filename) — for inspecting a
+/// duplicate day's files before reconciling.
+#[tauri::command]
+pub(crate) fn read_journal_file(name: String, state: State<'_, AppState>) -> Result<String, String> {
+    with_graph(&state, |g| g.read_journal_file(&name).map_err(|e| e.to_string()))
+}
+
+/// Load a page from a SPECIFIC file by its graph-root-relative path — lets the UI
+/// navigate to a duplicate-day stray that shares a (kind,name) with the canonical
+/// file and so is unreachable by name (#21).
+#[tauri::command]
+pub(crate) fn get_page_by_path(path: String, state: State<'_, AppState>) -> Result<Option<PageDto>, String> {
+    with_graph(&state, |g| g.load_by_path(&path).map_err(|e| e.to_string()))
+}
+
+/// Reconcile a duplicate-day pair: append the blocks of `src` to `dst`, then trash
+/// `src` (both graph-root-relative paths). The merged `dst` is written through the
+/// normal round-tripping save path (#21).
+#[tauri::command]
+pub(crate) fn merge_pages(src: String, dst: String, state: State<'_, AppState>) -> Result<(), String> {
+    with_graph(&state, |g| g.merge_pages(&src, &dst).map_err(|e| e.to_string()))
+}
+
+/// Rescue a duplicate-day stray by moving it to a uniquely-named page
+/// (`pages/<new_name>`), so it stops colliding and becomes normally navigable (#21).
+#[tauri::command]
+pub(crate) fn rename_file_to_page(path: String, new_name: String, state: State<'_, AppState>) -> Result<(), String> {
+    with_graph(&state, |g| g.rename_file_to_page(&path, &new_name).map_err(|e| e.to_string()))
+}
+
+#[tauri::command]
+pub(crate) fn save_asset(name: String, bytes_b64: String, state: State<'_, AppState>) -> Result<String, String> {
+    let bytes = decode_asset_b64(&bytes_b64)?;
+    with_graph(&state, |g| g.save_asset(&name, &bytes).map_err(|e| e.to_string()))
+}
+
+#[tauri::command]
+pub(crate) fn read_highlights(
+    pdf: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<tine_core::pdf::Highlight>, String> {
+    with_graph(&state, |g| Ok(g.read_highlights(&pdf)))
+}
+
+#[tauri::command]
+pub(crate) fn write_highlights(
+    pdf: String,
+    label: String,
+    highlights: Vec<tine_core::pdf::Highlight>,
+    base_ids: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    with_graph(&state, |g| {
+        g.write_highlights(&pdf, &label, &highlights, &base_ids).map_err(|e| e.to_string())
+    })
+}
+
+#[tauri::command]
+pub(crate) fn save_pdf_area_image(
+    pdf: String,
+    page: i64,
+    id: String,
+    stamp: i64,
+    bytes_b64: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let bytes = decode_asset_b64(&bytes_b64)?;
+    with_graph(&state, |g| {
+        g.write_pdf_area_image(&pdf, page, &id, stamp, &bytes).map_err(|e| e.to_string())
+    })
+}
