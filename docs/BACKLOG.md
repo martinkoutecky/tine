@@ -17,9 +17,7 @@ move them between categories in place.
 
 ## In flight (being built now)
 
-| Item | Where |
-|---|---|
-| **[#15](https://github.com/martinkoutecky/tine/issues/15) — templates: finds 1 of 4, can't pick.** `templates()` only sees cached pages → whole-graph discovery; confirm slash-list is scrollable. | `crates/tine-core/src/query.rs` |
+_Nothing actively in flight._
 
 ---
 
@@ -42,6 +40,7 @@ move them between categories in place.
 | **Datalog query coverage expansion** | A scoped subset of advanced Datalog queries works today (unsupported clauses are flagged, not silently dropped); expand coverage on demand. |
 | **Quick-capture browser extension (Firefox)** | Snap a page/selection/link into today's journal or an inbox page via a capture template. Prefer a watched drop-file (no open port; rides the existing file-watch + journal-append). |
 | **Performance audit / refactor** | A focused pass on the remaining perf levers, measurement-first: block **DOM windowing** on very large pages (unmount off-screen blocks — gated on measuring a big page first) plus internal cache refactors. Perf is why Tine exists, so this gets its own deliberate slot rather than piecemeal fixes. |
+| **Slash-menu autocomplete UX** ([#15](https://github.com/martinkoutecky/tine/issues/15)) | Two OG-parity/discoverability gaps in the `/` autocomplete: (1) a **visible scroll affordance** — WebKitGTK hides scrollbars, so overflow items below the 280px fold look absent (affects every menu: slash, block-ref, page); (2) an **OG-style `/template` picker/submenu** — reporter expects Logseq's dedicated template chooser. Backend discovery + listing are verified working; this is the UX layer. Blocked on a repro for the "sees only one template" part. |
 
 ---
 
