@@ -1346,8 +1346,17 @@ impl Graph {
         f(self.cache.read().unwrap().as_ref().unwrap())
     }
 
-    /// Eagerly build the page cache (call once after opening, off the hot path).
+    /// Eagerly build the page cache plus graph-open derived maps (call once after
+    /// opening, off the hot path).
     pub fn warm_cache(&self) {
+        self.warm_page_cache();
+        // Warm the derived maps the frontend fetches right after `warm-cache-done`
+        // (aliases + block-ref counts), so those fetches are pure cache hits.
+        let _ = self.page_aliases();
+        let _ = self.block_ref_counts();
+    }
+
+    fn warm_page_cache(&self) {
         use std::sync::atomic::Ordering;
         if self.cache.read().unwrap().is_some() {
             return; // already built (e.g. by a query) — nothing to warm
@@ -3412,6 +3421,49 @@ mod tests {
         fs::create_dir_all(dir.join("journals")).unwrap();
         fs::create_dir_all(dir.join("pages")).unwrap();
         dir
+    }
+
+    #[test]
+    fn warm_cache_primes_alias_and_block_ref_count_caches() {
+        let dir = scratch("warm-derived");
+        fs::write(
+            dir.join("pages").join("Target.md"),
+            "alias:: Alias One\n\n- target\n  id:: aaaaaaaa-0000-0000-0000-000000000001\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages").join("Refs.md"),
+            "- see ((aaaaaaaa-0000-0000-0000-000000000001))\n",
+        )
+        .unwrap();
+
+        let g = Graph::open(&dir);
+        assert!(g.alias_cache.read().unwrap().is_none(), "alias cache starts cold");
+        assert!(
+            g.block_ref_count_cache.read().unwrap().is_none(),
+            "block-ref count cache starts cold"
+        );
+
+        g.warm_cache();
+
+        let aliases = g.alias_cache.read().unwrap().as_ref().cloned().unwrap();
+        assert!(
+            aliases.iter().any(|(alias, canon)| alias == "alias one" && canon == "Target"),
+            "alias cache warmed: {aliases:?}"
+        );
+        let gen = g.cache_generation();
+        let counts = g.block_ref_count_cache.read().unwrap();
+        let (count_gen, count_map) = counts.as_ref().expect("block-ref count cache warmed");
+        assert_eq!(*count_gen, gen, "count cache is keyed to the current cache generation");
+        assert_eq!(count_map.get("aaaaaaaa-0000-0000-0000-000000000001").copied(), Some(1));
+
+        let first = g.block_ref_counts();
+        let second = g.block_ref_counts();
+        assert!(
+            std::sync::Arc::ptr_eq(&first, &second),
+            "re-entering block_ref_counts should reuse the warmed Arc"
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

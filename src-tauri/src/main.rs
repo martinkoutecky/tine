@@ -5,6 +5,7 @@ use tine_core::model::{atomic_copy, Graph, GraphMeta, PageDto, PageEntry, PageKi
 use std::collections::HashMap;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::{Duration, SystemTime};
@@ -150,11 +151,26 @@ fn debug_info() -> DebugInfo {
 // graph (open / switch) takes the write lock.
 struct AppState {
     graph: RwLock<Option<Arc<Graph>>>,
+    // "The whole-graph derived caches are warm" — set by warm_cache_async when a
+    // warm completes for the CURRENT graph, cleared (and the generation bumped) by
+    // begin_warm_cache on every graph open/switch so a stale warm thread can't
+    // report done for a graph that's been replaced. The frontend defers its
+    // whole-graph fetches (aliases, block-ref counts) on this + the
+    // `warm-cache-done` event (perf: graph open must not scale with graph size).
+    warm_done: AtomicBool,
+    warm_generation: AtomicU64,
     // Poke channel to the file-watcher thread: `load_graph` (graph switch) and
     // `set_watch_mode` send `()` so the watcher re-targets / switches mechanism
     // immediately instead of waiting for its next cycle. Set once by
     // `start_watcher`.
     watch_ctl: Mutex<Option<Sender<()>>>,
+}
+
+/// Reset the warm flag for a new graph load and return the new warm generation
+/// (passed to `warm_cache_async`, which only reports done if still current).
+fn begin_warm_cache(state: &AppState) -> u64 {
+    state.warm_done.store(false, Ordering::Release);
+    state.warm_generation.fetch_add(1, Ordering::AcqRel) + 1
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -349,6 +365,7 @@ fn load_graph(
     let meta = graph.meta();
     // Recover any journals mis-saved under their title (see method docs).
     graph.migrate_journal_filenames();
+    let warm_generation = begin_warm_cache(&state);
     *state.graph.write().unwrap() = Some(Arc::new(graph));
     // Nudge the watcher so it re-targets the new graph's dirs at once (in inotify
     // mode it's otherwise blocked on the old graph's events).
@@ -356,7 +373,7 @@ fn load_graph(
         let _ = tx.send(());
     }
     backup_async(app.clone());
-    warm_cache_async(app);
+    warm_cache_async(app, warm_generation);
     Ok(meta)
 }
 
@@ -1337,8 +1354,12 @@ fn backup_stamp() -> String {
 
 /// Build the search/backlinks cache off the hot path. We let the frontend's
 /// first journal load grab the graph lock first, then warm in the background so
-/// the first search is instant instead of re-parsing the whole tree.
-fn warm_cache_async(app: tauri::AppHandle) {
+/// the first search is instant instead of re-parsing the whole tree. When the
+/// warm completes (and this graph is still the current one — generation check),
+/// flip `warm_done` and tell the frontend, which has been HOLDING its
+/// whole-graph fetches (aliases, ref-count badges) so graph open never does
+/// graph-sized work in the foreground.
+fn warm_cache_async(app: tauri::AppHandle, warm_generation: u64) {
     std::thread::spawn(move || {
         // Brief delay so the first journal paint (which only needs a few pages)
         // grabs the lock first; then build the whole-graph cache in the
@@ -1346,11 +1367,28 @@ fn warm_cache_async(app: tauri::AppHandle) {
         // parsing every file synchronously under the lock.
         std::thread::sleep(std::time::Duration::from_millis(250));
         let state: State<'_, AppState> = app.state();
-        let guard = state.graph.read().unwrap();
-        if let Some(g) = guard.as_ref() {
+        if state.warm_generation.load(Ordering::Acquire) != warm_generation {
+            return; // the graph was switched while we slept — a newer warm owns it
+        }
+        // Clone the Arc and drop the state lock BEFORE the (long) warm, so a
+        // graph switch isn't blocked behind it.
+        let graph = state.graph.read().unwrap().as_ref().cloned();
+        if let Some(g) = graph {
             g.warm_cache();
+            if state.warm_generation.load(Ordering::Acquire) == warm_generation {
+                state.warm_done.store(true, Ordering::Release);
+                let _ = app.emit("warm-cache-done", ());
+            }
         }
     });
+}
+
+/// "Have the whole-graph derived caches finished warming for the current graph?"
+/// Polled once by the frontend after it subscribes to `warm-cache-done`, closing
+/// the boot race where the event fired before the listener mounted.
+#[tauri::command]
+fn warm_done(state: State<'_, AppState>) -> bool {
+    state.warm_done.load(Ordering::Acquire)
 }
 
 fn with_graph<T>(
@@ -1973,7 +2011,12 @@ fn main() {
                 }
             }
         })
-        .manage(AppState { graph: RwLock::new(None), watch_ctl: Mutex::new(None) })
+        .manage(AppState {
+            graph: RwLock::new(None),
+            warm_done: AtomicBool::new(false),
+            warm_generation: AtomicU64::new(0),
+            watch_ctl: Mutex::new(None),
+        })
         .setup(|app| {
             diag("setup() begin");
             // Eagerly open the graph if one was configured at startup.
@@ -2028,13 +2071,14 @@ fn main() {
                     }
                 }
                 let state: State<'_, AppState> = app.state();
+                let warm_generation = begin_warm_cache(&state);
                 *state.graph.write().unwrap() = Some(Arc::new(g));
                 // Warm the whole-graph cache in the background. Without this the
                 // startup (TINE_GRAPH / argv) path never warms — only the
                 // `load_graph` command did — so the user's first `g j` (whose
                 // agenda query touches the whole graph) paid to parse every file
                 // synchronously. First nav slow, second fine; this fixes it.
-                warm_cache_async(app.handle().clone());
+                warm_cache_async(app.handle().clone(), warm_generation);
             } else {
                 diag("NO graph root resolved — set TINE_GRAPH=/path/to/graph");
             }
@@ -2070,6 +2114,7 @@ fn main() {
             save_page,
             get_backlinks,
             get_unlinked_refs,
+            warm_done,
             block_ref_counts,
             block_referrers,
             delete_page,

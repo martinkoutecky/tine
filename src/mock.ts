@@ -384,6 +384,9 @@ export function mockBackend(): Backend {
         name
       );
     },
+    async warmDone(): Promise<boolean> {
+      return true;
+    },
     async getBlockRefCounts(): Promise<Record<string, number>> {
       const counts: Record<string, number> = {};
       const walk = (bs: BlockDto[]) =>

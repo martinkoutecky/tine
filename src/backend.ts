@@ -49,6 +49,8 @@ export interface Backend {
   savePage(page: PageDto, baseRev: string | null, force?: boolean): Promise<string>;
   getBacklinks(name: string): Promise<RefGroup[]>;
   getUnlinkedRefs(name: string): Promise<RefGroup[]>;
+  /** True once the background whole-graph warm has built derived graph-open caches. */
+  warmDone(): Promise<boolean>;
   /** Map of block uuid → number of blocks that reference it (the count badge). */
   getBlockRefCounts(): Promise<Record<string, number>>;
   /** Blocks that reference block `uuid`, grouped by page (the referrers panel). */
@@ -286,6 +288,9 @@ class TauriBackend implements Backend {
   }
   getUnlinkedRefs(name: string) {
     return this.call<RefGroup[]>("get_unlinked_refs", { name });
+  }
+  warmDone() {
+    return this.call<boolean>("warm_done");
   }
   getBlockRefCounts() {
     return this.call<Record<string, number>>("block_ref_counts", {});

@@ -8,6 +8,7 @@ import { clearAssetBlobCache } from "./assetCache";
 import { resetTabsToJournals, openPage } from "./router";
 import { journalTitle, setJournalTitleFormat } from "./journal";
 import { applyTemplateVars } from "./editor/templateVars";
+import { waitForWarmCache } from "./warmCache";
 import type { BlockDto } from "./types";
 
 const GRAPH_KEY = "tine.graphPath";
@@ -89,7 +90,12 @@ export async function refreshAliases(): Promise<void> {
     if (epoch === graphEpoch()) setAliasMap({});
   }
 }
-const loadAliases = refreshAliases;
+async function loadAliases(): Promise<void> {
+  const epoch = graphEpoch();
+  if (!(await waitForWarmCache(epoch))) return;
+  if (epoch !== graphEpoch()) return;
+  await refreshAliases();
+}
 
 /** Refresh frontend state after a successful page rename. The backend rename
  *  rewrites `[[refs]]` across many files through the self-write guard, which

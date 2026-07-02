@@ -1,6 +1,7 @@
 import { createResource, createRoot } from "solid-js";
 import { backend } from "./backend";
 import { graphEpoch } from "./ui";
+import { waitForWarmCache } from "./warmCache";
 
 // One graph-wide `block uuid → referrer count` map, fetched once per graph
 // generation and shared by every block's count badge (Block.tsx). Reading
@@ -12,7 +13,12 @@ const countsMap = createRoot(() => {
   // first paint; the value still changes whenever graphEpoch does → refetch.
   const [counts] = createResource(
     () => graphEpoch() + 1,
-    () => backend().getBlockRefCounts().catch(() => ({}) as Record<string, number>)
+    async (epochKey) => {
+      const epoch = epochKey - 1;
+      if (!(await waitForWarmCache(epoch))) return {};
+      if (epoch !== graphEpoch()) return {};
+      return backend().getBlockRefCounts().catch(() => ({}) as Record<string, number>);
+    }
   );
   return counts;
 });
