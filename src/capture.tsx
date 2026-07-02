@@ -25,6 +25,14 @@ import {
 import { installKeybindings, eventToBindingString } from "./keybindings";
 import { backend } from "./backend";
 import { initSpellcheckSettings } from "./spellcheckSettings";
+import {
+  QUICK_CAPTURE_ACK_TIMEOUT_MS,
+  createQuickCaptureRequestId,
+  quickCaptureAckMatches,
+  shouldRetryQuickCapture,
+  type QuickCaptureAck,
+  type QuickCaptureRequest,
+} from "./quickCaptureAck";
 // theme.css MUST come first: it defines every CSS variable (--bg-primary,
 // --bullet-color, --ls-block-bullet-size, --selection-bg) AND the
 // html[data-theme="dark"] overrides. Without it the capture webview had no
@@ -58,6 +66,8 @@ function Capture() {
   // window) so the hint text shows the user's ACTUAL submit shortcut.
   const [title, setTitle] = createSignal("");
   const [shortcuts, setShortcuts] = createSignal<Record<string, string>>({});
+  const [captureStatus, setCaptureStatus] = createSignal<"idle" | "saving" | "error">("idle");
+  const [captureMessage, setCaptureMessage] = createSignal("");
   const submitShortcut = () =>
     formatBinding(shortcuts()["editor/quick-capture-file"] || "mod+shift+enter");
   const bulletHint = () => `Edit as usual, ${submitShortcut()} to submit`;
@@ -187,6 +197,22 @@ function Capture() {
     void backend().getCaptureEnterFiles().then(setEnterFiles).catch(() => {});
   };
 
+  type PendingCapture = {
+    id: string;
+    attemptsStarted: number;
+    payload: QuickCaptureRequest;
+    unlisten?: () => void;
+    timer?: number;
+  };
+  let pendingCapture: PendingCapture | null = null;
+  const disposePendingCapture = () => {
+    if (!pendingCapture) return;
+    if (pendingCapture.timer !== undefined) window.clearTimeout(pendingCapture.timer);
+    pendingCapture.unlisten?.();
+    pendingCapture = null;
+  };
+  onCleanup(disposePendingCapture);
+
   // The capture webview can't read the main window's chosen theme (localStorage
   // isn't shared across WebKitGTK webviews, and prefers-color-scheme doesn't
   // track the app theme). Ask the running main window for it; it replies (and
@@ -219,25 +245,104 @@ function Capture() {
   };
 
   const submit = () => {
+    if (pendingCapture) return;
     const md = roots().map((r) => blockSubtreeMarkdown(r)).join("\n").trim();
     const pageTitle = title().trim();
     void (async () => {
-      if (md) {
-        try {
-          const { emit } = await import("@tauri-apps/api/event");
-          // `title` set → the main window files this as a NEW page; empty → today.
-          await emit("quick-capture", { text: md, title: pageTitle });
-        } catch {
-          // ignore — emit only works inside Tauri
-        }
+      if (!md) {
+        setCaptureStatus("idle");
+        setCaptureMessage("");
+        clearScratch();
+        setTitle("");
+        await hideWindow();
+        return;
       }
-      clearScratch();
-      setTitle(""); // reset for the next capture — don't carry over the filed text
-      await hideWindow();
+      const id = createQuickCaptureRequestId();
+      const pending: PendingCapture = {
+        id,
+        attemptsStarted: 0,
+        payload: { id, text: md, title: pageTitle },
+      };
+      const finish = async (ok: boolean) => {
+        if (pendingCapture !== pending) return;
+        disposePendingCapture();
+        if (ok) {
+          setCaptureStatus("idle");
+          setCaptureMessage("");
+          clearScratch();
+          setTitle(""); // reset for the next capture — don't carry over the filed text
+          await hideWindow();
+        } else {
+          setCaptureStatus("error");
+          setCaptureMessage("Capture couldn't be saved — text kept");
+          scheduleFit();
+        }
+      };
+      const giveUp = () => {
+        if (pendingCapture !== pending) return;
+        disposePendingCapture();
+        setCaptureStatus("error");
+        setCaptureMessage("main window not ready — try again");
+        scheduleFit();
+      };
+      setCaptureStatus("saving");
+      setCaptureMessage("saving…");
+      pendingCapture = pending;
+      let eventApi: typeof import("@tauri-apps/api/event");
+      try {
+        eventApi = await import("@tauri-apps/api/event");
+      } catch {
+        giveUp();
+        return;
+      }
+      if (pendingCapture !== pending) return;
+      const { emit, listen } = eventApi;
+      const scheduleTimeout = () => {
+        pending.timer = window.setTimeout(() => {
+          if (pendingCapture !== pending) return;
+          if (shouldRetryQuickCapture(pending.attemptsStarted)) {
+            void emitAttempt();
+          } else {
+            giveUp();
+          }
+        }, QUICK_CAPTURE_ACK_TIMEOUT_MS);
+      };
+      const emitAttempt = async () => {
+        if (pending.timer !== undefined) {
+          window.clearTimeout(pending.timer);
+          pending.timer = undefined;
+        }
+        pending.attemptsStarted += 1;
+        try {
+          // `title` set → the main window files this as a NEW page; empty → today.
+          await emit("quick-capture", pending.payload);
+        } catch {
+          giveUp();
+          return;
+        }
+        scheduleTimeout();
+      };
+      try {
+        const unlisten = await listen<QuickCaptureAck>("quick-capture-ack", (e) => {
+          if (quickCaptureAckMatches(pending.id, e.payload)) void finish(e.payload.ok);
+        });
+        if (pendingCapture !== pending) {
+          unlisten();
+          return;
+        }
+        pending.unlisten = unlisten;
+      } catch {
+        giveUp();
+        return;
+      }
+      await emitAttempt();
     })();
   };
 
   const cancel = () => {
+    disposePendingCapture();
+    setCaptureStatus("idle");
+    setCaptureMessage("");
     clearScratch();
     setTitle("");
     void hideWindow();
@@ -251,6 +356,7 @@ function Capture() {
   // but the effect makes the dependency explicit.
   createEffect(() => {
     datePicker();
+    captureMessage();
     scheduleFit();
   });
 
@@ -363,6 +469,14 @@ function Capture() {
           <div class="page-blocks">
             <For each={roots()}>{(rid) => <Block id={rid} />}</For>
           </div>
+          <Show when={captureMessage()}>
+            <div
+              class="capture-status"
+              classList={{ "capture-status-error": captureStatus() === "error" }}
+            >
+              {captureMessage()}
+            </div>
+          </Show>
         </Show>
       </div>
       <DatePicker />

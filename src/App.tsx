@@ -56,6 +56,7 @@ import {
 } from "./ui";
 import { applyZoom, installInterfaceZoomKeys, installInterfaceZoomWheel } from "./zoom";
 import { flushAll, appendToTodayJournal, captureToPage } from "./store";
+import type { QuickCaptureAck, QuickCaptureRequest } from "./quickCaptureAck";
 import { backend, isTauri } from "./backend";
 import { parserFailed } from "./render/parse";
 import { warnIfSoftwareRendering } from "./gpu";
@@ -180,22 +181,65 @@ export function App(): JSX.Element {
   onMount(() => {
     if (!isTauri()) return;
     let unlisten = () => {};
+    const inFlight = new Map<string, Promise<boolean>>();
+    const completed = new Map<string, boolean>();
+    const completedOrder: string[] = [];
+    const rememberCompleted = (id: string, ok: boolean) => {
+      completed.set(id, ok);
+      completedOrder.push(id);
+      while (completedOrder.length > 100) {
+        const old = completedOrder.shift();
+        if (old) completed.delete(old);
+      }
+    };
     void (async () => {
-      const { listen } = await import("@tauri-apps/api/event");
-      unlisten = await listen<{ text: string; title?: string }>("quick-capture", async (e) => {
+      const { emit, listen } = await import("@tauri-apps/api/event");
+      const ack = (id: string | undefined, ok: boolean) => {
+        if (id) void emit("quick-capture-ack", { id, ok } satisfies QuickCaptureAck);
+      };
+      unlisten = await listen<QuickCaptureRequest>("quick-capture", async (e) => {
+        const id = e.payload?.id;
+        if (id && completed.has(id)) {
+          ack(id, completed.get(id) ?? false);
+          return;
+        }
+        const existing = id ? inFlight.get(id) : undefined;
+        if (existing) {
+          ack(id, await existing);
+          return;
+        }
         const text = e.payload?.text ?? "";
-        if (!text.trim()) return;
+        if (!text.trim()) {
+          ack(id, false);
+          return;
+        }
         // A title routes the capture to a NEW (or existing) page; empty → today.
         const title = (e.payload?.title ?? "").trim();
-        const ok = title ? await captureToPage(title, text) : await appendToTodayJournal(text);
-        pushToast(
-          ok
-            ? title
-              ? `Captured to “${title}”`
-              : "Captured to today's journal"
-            : "Capture couldn't be saved",
-          ok ? "info" : "error"
-        );
+        const save = async () => {
+          let ok = false;
+          try {
+            ok = title ? await captureToPage(title, text) : await appendToTodayJournal(text);
+          } catch {
+            ok = false;
+          }
+          pushToast(
+            ok
+              ? title
+                ? `Captured to “${title}”`
+                : "Captured to today's journal"
+              : "Capture couldn't be saved",
+            ok ? "info" : "error"
+          );
+          return ok;
+        };
+        const promise = save();
+        if (id) inFlight.set(id, promise);
+        const ok = await promise;
+        if (id) {
+          inFlight.delete(id);
+          rememberCompleted(id, ok);
+        }
+        ack(id, ok);
       });
     })();
     onCleanup(() => unlisten());

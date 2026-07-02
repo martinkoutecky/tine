@@ -51,3 +51,14 @@ body {
   top: calc(100% + 4px);
   bottom: auto;
 }
+
+.capture-status {
+  margin-top: 6px;
+  font-size: 0.86rem;
+  line-height: 1.25;
+  color: var(--text-muted);
+}
+
+.capture-status-error {
+  color: var(--danger, #b42318);
+}

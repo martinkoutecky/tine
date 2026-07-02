@@ -43,15 +43,7 @@ function sanitizeStem(s: string): string {
   return s.replace(/[ %/\\]+/g, "_").replace(/_+/g, "_").replace(/^_+|_+$/g, "");
 }
 
-/** Substitute the `%`-tokens of an asset-name template (see assetSettings.ts).
- *  PURE — the date is injected — so the Settings live-preview and tests can call
- *  it without touching the clock. `original` is the source filename (absent for a
- *  clipboard paste). Always returns a non-empty, separator-free name that ends in
- *  an extension: an empty stem (paste with the default `%assetname` template)
- *  falls back to a `yyyymmdd-hhmmss` stamp, and a paste with no extension defaults
- *  to `.png` (clipboard images are PNG). The backend's `reserve_asset` still
- *  appends `_N` on a same-name collision, so bare-name templates stay safe. */
-export function formatAssetName(template: string, original: string | undefined, now: Date): string {
+function dateParts(now: Date) {
   const p = (n: number) => String(n).padStart(2, "0");
   const yyyy = String(now.getFullYear());
   const MM = p(now.getMonth() + 1);
@@ -59,13 +51,44 @@ export function formatAssetName(template: string, original: string | undefined, 
   const HH = p(now.getHours());
   const mm = p(now.getMinutes());
   const ss = p(now.getSeconds());
+  return { yyyy, MM, dd, HH, mm, ss, stamp: `${yyyy}${MM}${dd}-${HH}${mm}${ss}` };
+}
+
+let clipboardPasteCounter = 0;
+
+function clipboardPasteStem(now: Date): string {
+  clipboardPasteCounter += 1;
+  const ms = String(now.getMilliseconds()).padStart(3, "0");
+  return `${dateParts(now).stamp}-${ms}-${clipboardPasteCounter}`;
+}
+
+function appendClipboardUniqueness(name: string, uniqueStem: string): string {
+  if (name.includes(uniqueStem)) return name;
+  const dot = name.lastIndexOf(".");
+  if (dot > 0) return `${name.slice(0, dot)}-${uniqueStem}${name.slice(dot)}`;
+  return `${name}-${uniqueStem}`;
+}
+
+/** Substitute the `%`-tokens of an asset-name template (see assetSettings.ts).
+ *  PURE — the date is injected — so the Settings live-preview and tests can call
+ *  it without touching the clock. `original` is the source filename (absent for a
+ *  clipboard paste). Always returns a non-empty, separator-free name that ends in
+ *  an extension: an empty stem (paste with the default `%assetname` template)
+ *  falls back to a `yyyymmdd-hhmmss` stamp, and a paste with no extension defaults
+ *  to `.png` (clipboard images are PNG). */
+function formatAssetNameWithFallbackStem(
+  template: string,
+  original: string | undefined,
+  now: Date,
+  fallbackStem?: string
+): string {
+  const { yyyy, MM, dd, HH, mm, ss, stamp } = dateParts(now);
   const dot = original ? original.lastIndexOf(".") : -1;
   // A named file keeps its real extension (case preserved — "just the filename");
   // a clipboard paste has none → png. An empty stem (paste) falls back to a
   // sortable stamp, so %assetname is never blank.
   const ext = dot > 0 ? original!.slice(dot + 1) : original ? "" : "png";
-  const stamp = `${yyyy}${MM}${dd}-${HH}${mm}${ss}`;
-  const stem = sanitizeStem(dot > 0 ? original!.slice(0, dot) : original ?? "") || stamp;
+  const stem = sanitizeStem(dot > 0 ? original!.slice(0, dot) : original ?? "") || fallbackStem || stamp;
   const tokens: Record<string, string> = {
     "%yyyymmdd": `${yyyy}${MM}${dd}`,
     "%hhmmss": `${HH}${mm}${ss}`,
@@ -90,12 +113,75 @@ export function formatAssetName(template: string, original: string | undefined, 
   // Never drop the real extension, even if the template omits %ext — a media file
   // with no extension wouldn't render. (If %ext is present, it already ends here.)
   if (ext && !out.toLowerCase().endsWith(`.${ext.toLowerCase()}`)) out = `${out}.${ext}`;
-  return out || `${stamp}.png`; // last-ditch guard (template was all separators)
+  return out || `${fallbackStem || stamp}.png`; // last-ditch guard (template was all separators)
+}
+
+export function formatAssetName(template: string, original: string | undefined, now: Date): string {
+  return formatAssetNameWithFallbackStem(template, original, now);
 }
 
 /** On-disk name for a newly-inserted asset, per the user's format template
  *  (Settings → Backups → Asset names; default = the plain original filename).
- *  New inserts only — existing files are never renamed. */
+ *  New inserts only — existing files are never renamed. Clipboard-paste
+ *  candidates get millisecond + session-counter uniqueness before the backend's
+ *  final collision de-dupe, so same-second optimistic links don't alias. */
 export function assetFileName(original?: string): string {
-  return formatAssetName(assetNameFormat(), original, new Date());
+  const now = new Date();
+  if (original !== undefined) return formatAssetName(assetNameFormat(), original, now);
+  const uniqueStem = clipboardPasteStem(now);
+  return appendClipboardUniqueness(
+    formatAssetNameWithFallbackStem(assetNameFormat(), undefined, now, uniqueStem),
+    uniqueStem
+  );
+}
+
+export interface AssetMarkdownFixupTarget {
+  insertedAt: number;
+  occurrence: number;
+}
+
+function occurrenceAt(raw: string, needle: string, offset: number): number {
+  let occurrence = 0;
+  let pos = raw.indexOf(needle);
+  while (pos >= 0) {
+    if (pos === offset) return occurrence;
+    if (pos > offset) return occurrence;
+    occurrence += 1;
+    pos = raw.indexOf(needle, pos + needle.length);
+  }
+  return occurrence;
+}
+
+export function insertedAssetMarkdownTarget(
+  raw: string,
+  markdown: string,
+  insertedAt: number
+): AssetMarkdownFixupTarget {
+  return { insertedAt, occurrence: occurrenceAt(raw, markdown, insertedAt) };
+}
+
+function replaceAt(raw: string, start: number, len: number, replacement: string): string {
+  return raw.slice(0, start) + replacement + raw.slice(start + len);
+}
+
+export function replaceInsertedAssetMarkdown(
+  raw: string,
+  candidate: string,
+  stored: string,
+  target: AssetMarkdownFixupTarget
+): string {
+  const from = assetMarkdown(candidate);
+  const to = assetMarkdown(stored);
+  if (!from || from === to) return raw;
+  const positions: number[] = [];
+  let pos = raw.indexOf(from);
+  while (pos >= 0) {
+    positions.push(pos);
+    pos = raw.indexOf(from, pos + from.length);
+  }
+  if (!positions.length) return raw;
+  const exact = positions[target.occurrence];
+  if (exact !== undefined) return replaceAt(raw, exact, from.length, to);
+  const afterOriginalOffset = positions.find((p) => p >= target.insertedAt);
+  return replaceAt(raw, afterOriginalOffset ?? positions[0], from.length, to);
 }

@@ -69,7 +69,12 @@ import { isRenderHiddenProp, isPropertyLine } from "../render/block";
 import { facetsOf } from "../render/facets";
 import { AstBody } from "../render/body";
 import { InlineText } from "../render/inline";
-import { assetMarkdown, assetFileName } from "../media";
+import {
+  assetMarkdown,
+  assetFileName,
+  insertedAssetMarkdownTarget,
+  replaceInsertedAssetMarkdown,
+} from "../media";
 import { calcSource, wrapCalc, evalCalc } from "../editor/calc";
 import { QueryMacro, EmbedMacro } from "./Macro";
 import { workflow, zoomInto, openContextMenu, openDatePicker, openBlockInSidebar, graphMeta, dataRev, setQueryBuilderAutoOpen, openPageProps, pushToast, dismissToast, autoPairing, typographyMode } from "../ui";
@@ -1546,6 +1551,7 @@ export function Editor(props: { id: string }): JSX.Element {
       const md = assetMarkdown(candidate);
       const start = ref.selectionStart;
       const newRaw = ref.value.slice(0, start) + md + ref.value.slice(ref.selectionEnd);
+      const fixupTarget = insertedAssetMarkdownTarget(newRaw, md, start);
       commit(newRaw);
       const pos = start + md.length;
       queueMicrotask(() => {
@@ -1567,7 +1573,7 @@ export function Editor(props: { id: string }): JSX.Element {
         if (stored && stored !== candidate) {
           seedAssetBlob(stored, bytes);
           const cur = node().raw;
-          const fixed = cur.replace(assetMarkdown(candidate), assetMarkdown(stored));
+          const fixed = replaceInsertedAssetMarkdown(cur, candidate, stored, fixupTarget);
           if (fixed !== cur) commit(fixed);
         }
       })();

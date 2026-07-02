@@ -1,5 +1,12 @@
-import { describe, it, expect } from "vitest";
-import { mediaKind, assetMarkdown, assetFileName, formatAssetName } from "./media";
+import { describe, it, expect, vi } from "vitest";
+import {
+  mediaKind,
+  assetMarkdown,
+  assetFileName,
+  formatAssetName,
+  insertedAssetMarkdownTarget,
+  replaceInsertedAssetMarkdown,
+} from "./media";
 import { DEFAULT_ASSET_NAME_FORMAT, STAMPED_ASSET_NAME_FORMAT } from "./assetSettings";
 
 describe("media helpers", () => {
@@ -23,8 +30,22 @@ describe("media helpers", () => {
     // Default template is %assetname.%ext (the bare original name), ext case kept.
     expect(assetFileName("My Holiday Clip.MP4")).toBe("My_Holiday_Clip.MP4");
     expect(assetFileName("a/b%c.png")).toBe("a_b_c.png");
-    expect(assetFileName()).toMatch(/^\d{8}-\d{6}\.png$/); // paste has no name → stamp
+    expect(assetFileName()).toMatch(/^\d{8}-\d{6}-\d{3}-\d+\.png$/); // paste has no name → unique stamp
     expect(assetFileName("noext")).toBe("noext");
+  });
+
+  it("assetFileName: clipboard paste names are unique within the same second", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date(2030, 0, 2, 3, 4, 5, 6));
+      const first = assetFileName();
+      const second = assetFileName();
+      expect(first).toMatch(/^20300102-030405-006-\d+\.png$/);
+      expect(second).toMatch(/^20300102-030405-006-\d+\.png$/);
+      expect(second).not.toBe(first);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   const D = new Date(2030, 0, 2, 3, 4, 5); // 2030-01-02 03:04:05 → every token distinct
@@ -61,5 +82,18 @@ describe("media helpers", () => {
     expect(danger).not.toContain("..");
     expect(danger.startsWith(".")).toBe(false);
     expect(danger.endsWith(".png")).toBe(true);
+  });
+
+  it("replaceInsertedAssetMarkdown: repoints the tracked duplicate occurrence", () => {
+    const candidate = "20300102-030405.png";
+    const stored = "20300102-030405_1.png";
+    const md = assetMarkdown(candidate);
+    const raw = `${md} ${md}`;
+    const secondOffset = md.length + 1;
+    const target = insertedAssetMarkdownTarget(raw, md, secondOffset);
+
+    expect(replaceInsertedAssetMarkdown(raw, candidate, stored, target)).toBe(
+      `${md} ${assetMarkdown(stored)}`
+    );
   });
 });
