@@ -36,6 +36,7 @@ import {
 } from "../store";
 import { copyStripCollapsed } from "../copySettings";
 import { copyOutline } from "../clipboard";
+import type { PageKind } from "../types";
 
 // Copy a block reference/embed — but only after the block's id:: is durably on
 // disk. ensureBlockId returns null if the save couldn't land (conflict/error), in
@@ -276,7 +277,7 @@ function MakeTemplate(props: { id: string; close: () => void }): JSX.Element {
 
 function PageMenu(props: {
   name: string;
-  pageKind: "journal" | "page";
+  pageKind: PageKind;
   x: number;
   y: number;
   close: () => void;
@@ -289,8 +290,8 @@ function PageMenu(props: {
     const name = props.name;
     const kind = props.pageKind;
     // Native GTK confirm — window.confirm silently returns true here, which would
-    // delete the page with no prompt (this is destructive + irreversible).
-    if (!(await backend().confirm(`Delete page "${name}"? This cannot be undone.`))) return;
+    // delete the page with no prompt.
+    if (!(await backend().confirm(`Delete "${name}"? The file moves to the graph's .tine-trash folder.`))) return;
     // Route through the store (not backend directly) so it tombstones the page and
     // cancels any pending save — otherwise a just-typed, never-saved page could be
     // recreated by a queued save right after we delete it.
@@ -339,16 +340,26 @@ function PageMenu(props: {
           </div>
         )}
       </For>
-      {/* Rename/Delete are page-only. Rename expands into an inline input (like
-          MakeTemplate) — window.prompt is a silent no-op in WebKitGTK. */}
-      <Show when={props.pageKind === "page"}>
+      {/* Rename is page-only. It expands into an inline input (like MakeTemplate)
+          because window.prompt is a silent no-op in WebKitGTK. */}
+      <Show when={pageMenuAvailability(props.pageKind).rename}>
         <RenamePage name={props.name} pageKind={props.pageKind} close={props.close} />
+      </Show>
+      <Show when={pageMenuAvailability(props.pageKind).delete}>
         <div class="ctx-item danger" onClick={() => { void remove(); props.close(); }}>
-          Delete page
+          {deletePageMenuLabel(props.pageKind)}
         </div>
       </Show>
     </>
   );
+}
+
+export function pageMenuAvailability(pageKind: PageKind): { rename: boolean; delete: boolean } {
+  return { rename: pageKind === "page", delete: true };
+}
+
+export function deletePageMenuLabel(pageKind: PageKind): string {
+  return pageKind === "journal" ? "Delete journal" : "Delete page";
 }
 
 // Inline page rename: a context-menu item that expands into a name field (mirrors
@@ -356,7 +367,7 @@ function PageMenu(props: {
 // silent no-op in this WebKitGTK build, so we never use it.
 function RenamePage(props: {
   name: string;
-  pageKind: "journal" | "page";
+  pageKind: PageKind;
   close: () => void;
 }): JSX.Element {
   const [editing, setEditing] = createSignal(false);

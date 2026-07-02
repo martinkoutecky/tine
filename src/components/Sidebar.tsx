@@ -1,8 +1,9 @@
 import { For, Show, createMemo, createSignal, type JSX } from "solid-js";
 import { openJournals, openPage, openPageInNewTab, openInNewTab, route } from "../router";
-import { openSwitcher, favorites, recentPages } from "../ui";
+import { openSwitcher, favorites, recentPages, openPageContextMenu } from "../ui";
 import { allPages as allGraphPages } from "../pages";
 import { NamespaceTree } from "./Namespace";
+import type { PageKind } from "../types";
 
 // Cap the rendered "All pages" list. Beyond this, rendering every row (each
 // reading route() for its active state) makes both the initial render and every
@@ -30,6 +31,10 @@ export function Sidebar(): JSX.Element {
   const isActive = (name: string) => {
     const r = route();
     return r.kind === "page" && r.name === name;
+  };
+  const openRowMenu = (e: MouseEvent, name: string, kind: PageKind) => {
+    e.preventDefault();
+    openPageContextMenu(e.clientX, e.clientY, name, kind);
   };
 
   return (
@@ -79,6 +84,7 @@ export function Sidebar(): JSX.Element {
                       openPageInNewTab(fav.name, fav.kind);
                     }
                   }}
+                  onContextMenu={(e) => openRowMenu(e, fav.name, fav.kind)}
                 >
                   ⭐ {fav.name}
                 </div>
@@ -102,6 +108,7 @@ export function Sidebar(): JSX.Element {
                       openPageInNewTab(r.name, r.kind);
                     }
                   }}
+                  onContextMenu={(e) => openRowMenu(e, r.name, r.kind)}
                 >
                   {r.name.startsWith("hls__") ? r.name.slice(5) : r.name}
                 </div>
@@ -134,6 +141,7 @@ export function Sidebar(): JSX.Element {
                       openPageInNewTab(p.name, "page");
                     }
                   }}
+                  onContextMenu={(e) => openRowMenu(e, p.name, "page")}
                 >
                   {p.name}
                 </div>
@@ -156,7 +164,7 @@ export function Sidebar(): JSX.Element {
             NAMESPACES
           </div>
           <Show when={showNs()}>
-            <NamespaceTree />
+            <NamespaceTree onPageContextMenu={openRowMenu} />
           </Show>
         </div>
       </div>

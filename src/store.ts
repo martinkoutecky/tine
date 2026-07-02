@@ -12,7 +12,15 @@ import type { BlockDto, Format, PageDto, PageKind } from "./types";
 import { parseOutline, type OutlineNode } from "./editor/outline";
 import type { ExportNode } from "./editor/exportText";
 import { backend } from "./backend";
-import { isConflicted, clearConflict, rightSidebar, conflicts, pushToast, graphMeta } from "./ui";
+import {
+  isConflicted,
+  clearConflict,
+  rightSidebar,
+  conflicts,
+  pushToast,
+  graphMeta,
+  removeDeletedPageFromNavigation,
+} from "./ui";
 import { seedFacets, facetsFromDto, clearSeededFacets } from "./render/facets";
 import { journalTitle } from "./journal";
 import { upsertPropertyLine, readPropertyValue, splitProps, joinProps, isBuiltinHidden } from "./editor/properties";
@@ -317,6 +325,7 @@ export async function deletePage(name: string, kind: PageKind): Promise<boolean>
     return false;
   }
   forgetPage(name); // success — now drop it from the working set + feed
+  removeDeletedPageFromNavigation(name, kind);
   return true;
 }
 

@@ -146,6 +146,9 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   "Namespace" header + nested descendant tree), an automatic **"Hierarchy"** section
   (breadcrumb paths of descendant pages) on any namespaced page, and read-only
   **"aka" alias chips** on pages reachable by another name.
+- ⊕ **Right-click page rows in the left sidebar** (favorites, recents, all pages,
+  namespace tree) for the full page menu, including trash-backed Delete. Logseq core
+  has page-title journal delete, but not sidebar-row delete.
 - ⊕ **Built-in tabs.** Middle-click any bullet, page title, query result, or
   switcher row to open it in a background tab; pin (persisted), drag-reorder, `Mod+W`
   to close. Plain navigation to a route already open in another tab focuses that

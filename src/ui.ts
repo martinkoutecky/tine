@@ -1,6 +1,6 @@
 // Small global UI state: theme, left sidebar, and the quick-switcher modal.
 import { createSignal } from "solid-js";
-import type { GraphMeta, JournalConflict } from "./types";
+import type { GraphMeta, JournalConflict, PageKind } from "./types";
 import { backend, isTauri } from "./backend";
 // Zoom is route state; these are call-time only, so the ui↔router cycle is safe.
 import { route, focusBlock, scheduleSessionSave } from "./router";
@@ -516,7 +516,7 @@ export function persistPdfPaneWidth() {
 // Favorites (starred pages/journals), persisted.
 export interface FavItem {
   name: string;
-  kind: "page" | "journal";
+  kind: PageKind;
 }
 const FAV_KEY = "logseq-claude.favorites";
 function loadFavs(): FavItem[] {
@@ -551,6 +551,24 @@ export function toggleFavorite(name: string, kind: "page" | "journal" = "page") 
     : [...f, { name, kind }];
   setFavorites(next);
   persistFavorites(next);
+}
+export function removeDeletedPageFromNavigation(name: string, kind: PageKind) {
+  const nextFavs = favorites().filter((f) => f.name !== name);
+  if (nextFavs.length !== favorites().length) {
+    setFavorites(nextFavs);
+    persistFavorites(nextFavs);
+  }
+
+  const nextRecents = recentPages().filter((r) => !(r.name === name && r.kind === kind));
+  if (nextRecents.length !== recentPages().length) {
+    setRecentPages(nextRecents);
+    try {
+      if (nextRecents.length) localStorage.setItem(RECENT_KEY, JSON.stringify(nextRecents));
+      else localStorage.removeItem(RECENT_KEY);
+    } catch {
+      // ignore
+    }
+  }
 }
 /** Seed favorites from config.edn `:favorites` on graph open (graph is the source
  *  of truth); falls back to whatever was already loaded (localStorage) if empty. */

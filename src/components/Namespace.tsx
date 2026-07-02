@@ -3,6 +3,7 @@ import { backend } from "../backend";
 import { openPage } from "../router";
 import { allPageNames } from "../pages";
 import { EmojiText } from "../render/emoji";
+import type { PageKind } from "../types";
 
 // Namespace hierarchy for a page named `a/b/c`: a clickable breadcrumb of the
 // ancestor namespaces (shown above the title) and a list of direct child pages
@@ -68,7 +69,11 @@ export function buildNamespaceTree(names: string[]): NsNode[] {
   return roots;
 }
 
-function NsNodeView(props: { node: NsNode; depth: number }): JSX.Element {
+function NsNodeView(props: {
+  node: NsNode;
+  depth: number;
+  onPageContextMenu?: (e: MouseEvent, name: string, kind: PageKind) => void;
+}): JSX.Element {
   const [open, setOpen] = createSignal(props.depth < 1);
   const has = () => props.node.children.length > 0;
   return (
@@ -77,26 +82,42 @@ function NsNodeView(props: { node: NsNode; depth: number }): JSX.Element {
         <Show when={has()} fallback={<span class="ns-node-spacer" />}>
           <span class="ns-node-toggle" onClick={() => setOpen(!open())}>{open() ? "▾" : "▸"}</span>
         </Show>
-        <span class="ns-node-label" onClick={() => openPage(props.node.full, "page")}>
+        <span
+          class="ns-node-label"
+          onClick={() => openPage(props.node.full, "page")}
+          onContextMenu={(e) => props.onPageContextMenu?.(e, props.node.full, "page")}
+        >
           {props.node.seg}
         </span>
       </div>
       <Show when={has() && open()}>
-        <For each={props.node.children}>{(c) => <NsNodeView node={c} depth={props.depth + 1} />}</For>
+        <For each={props.node.children}>
+          {(c) => (
+            <NsNodeView
+              node={c}
+              depth={props.depth + 1}
+              onPageContextMenu={props.onPageContextMenu}
+            />
+          )}
+        </For>
       </Show>
     </div>
   );
 }
 
 /** A collapsible tree of all namespaces in the graph, for the left sidebar. */
-export function NamespaceTree(): JSX.Element {
+export function NamespaceTree(props: {
+  onPageContextMenu?: (e: MouseEvent, name: string, kind: PageKind) => void;
+} = {}): JSX.Element {
   // Pure CPU derivation off the shared, epoch-keyed page list (src/pages.ts) —
   // no longer its own whole-graph listPages() fetch.
   const tree = createMemo(() => buildNamespaceTree(allPageNames()));
   return (
     <Show when={tree().length > 0}>
       <div class="ns-tree">
-        <For each={tree()}>{(n) => <NsNodeView node={n} depth={0} />}</For>
+        <For each={tree()}>
+          {(n) => <NsNodeView node={n} depth={0} onPageContextMenu={props.onPageContextMenu} />}
+        </For>
       </div>
     </Show>
   );

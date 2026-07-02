@@ -52,7 +52,15 @@ import { exportOutline, DEFAULT_EXPORT_OPTIONS } from "./editor/exportText";
 import { splitProps, joinProps, isBuiltinHidden, hideAll } from "./editor/properties";
 import { setCopyIncludeSubtree, setCopyStripCollapsed } from "./copySettings";
 import { backend, type Backend } from "./backend";
-import { isConflicted, conflicts, clearConflict } from "./ui";
+import {
+  isConflicted,
+  conflicts,
+  clearConflict,
+  favorites,
+  recentPages,
+  setFavorites,
+  setRecentPages,
+} from "./ui";
 import { journalTitle } from "./journal";
 import type { BlockDto, PageDto } from "./types";
 
@@ -77,6 +85,8 @@ function shape(ids: string[] = doc.pages[0].roots): any[] {
 beforeEach(() => {
   counter = 0;
   resetStore();
+  setFavorites([]);
+  setRecentPages([]);
   setCopyIncludeSubtree(false); // copy prefs default OFF; reset so tests don't leak
   setCopyStripCollapsed(false);
 });
@@ -943,6 +953,22 @@ describe("save engine (persistence)", () => {
     markDirty("Test"); // a stray queued save after delete must not recreate it
     expect(await flushPage("Test")).toBe(true);
     expect(saveSpy).not.toHaveBeenCalled();
+  });
+
+  it("deletePage removes journal feed entries plus sidebar favorites and recents", async () => {
+    loadFeed([
+      { name: "Today", kind: "journal", title: "Today", pre_block: null, blocks: [blk("today")] },
+      { name: "Older", kind: "journal", title: "Older", pre_block: null, blocks: [blk("older")] },
+    ]);
+    setFavorites([{ name: "Older", kind: "journal" }, { name: "Pinned", kind: "page" }]);
+    setRecentPages([{ name: "Older", kind: "journal" }, { name: "Pinned", kind: "page" }]);
+
+    expect(await deletePage("Older", "journal")).toBe(true);
+
+    expect(doc.feed).toEqual(["Today"]);
+    expect(pageByName("Older")).toBeUndefined();
+    expect(favorites()).toEqual([{ name: "Pinned", kind: "page" }]);
+    expect(recentPages()).toEqual([{ name: "Pinned", kind: "page" }]);
   });
 
   it("forceSave overwrites even a conflicted page (force=true)", async () => {
