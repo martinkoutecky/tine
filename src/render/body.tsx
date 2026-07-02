@@ -239,25 +239,29 @@ function renderTable(b: Extract<AstBlock, { kind: "table" }>, blockId?: string):
     const align = b.aligns[i] ?? null;
     return align ? { "text-align": align } : undefined;
   };
+  // Wrap in a horizontal-scroll container (mirrors OG's `div.table-wrapper`):
+  // a wide table scrolls instead of cram-wrapping its cells down to nothing.
   return (
-    <table class="md-table" {...(coarseSpanAttrs(b.span) ?? {})}>
-      <Show when={b.header}>
-        <thead>
-          <tr>
-            <For each={b.header!}>{(cell, i) => <th style={al(i())}>{renderInlines(cell, blockId)}</th>}</For>
-          </tr>
-        </thead>
-      </Show>
-      <tbody>
-        <For each={b.rows}>
-          {(row) => (
+    <div class="md-table-wrap">
+      <table class="md-table" {...(coarseSpanAttrs(b.span) ?? {})}>
+        <Show when={b.header}>
+          <thead>
             <tr>
-              <For each={row}>{(cell, i) => <td style={al(i())}>{renderInlines(cell, blockId)}</td>}</For>
+              <For each={b.header!}>{(cell, i) => <th style={al(i())}>{renderInlines(cell, blockId)}</th>}</For>
             </tr>
-          )}
-        </For>
-      </tbody>
-    </table>
+          </thead>
+        </Show>
+        <tbody>
+          <For each={b.rows}>
+            {(row) => (
+              <tr>
+                <For each={row}>{(cell, i) => <td style={al(i())}>{renderInlines(cell, blockId)}</td>}</For>
+              </tr>
+            )}
+          </For>
+        </tbody>
+      </table>
+    </div>
   );
 }
 

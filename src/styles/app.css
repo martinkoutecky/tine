@@ -2906,21 +2906,36 @@ body.file-drop-active::after {
   color: var(--marker-now);
 }
 
-/* markdown tables */
+/* markdown tables — matches OG's default look: no per-cell grid, just zebra
+   rows + a 2px header underline, wrapped in a horizontal-scroll container so a
+   wide table scrolls instead of cram-wrapping its cells (OG's div.table-wrapper;
+   see GH #16). */
+.md-table-wrap {
+  overflow-x: auto;
+  margin: 1rem 0;
+}
 .md-table {
+  width: 100%;
   border-collapse: collapse;
-  margin: 6px 0;
-  font-size: 0.95em;
+  text-align: left;
+  font-size: 14px;
 }
 .md-table th,
 .md-table td {
-  border: 1px solid var(--border-color);
-  padding: 4px 10px;
+  padding: 6px 8px;
   text-align: left;
+  /* Don't break cells to fit a narrow column — let a wide table overflow the
+     .md-table-wrap scroll container instead of cram-wrapping "16.7" to "16./7". */
+  white-space: nowrap;
 }
 .md-table th {
+  padding: 10px 8px;
+  font-weight: 400;
+  color: var(--text-primary);
+  border-bottom: 2px solid var(--border-color);
+}
+.md-table tbody tr:nth-child(even) {
   background: var(--bg-secondary);
-  font-weight: 600;
 }
 
 /* ------------------------------------------------------------- toasts */
