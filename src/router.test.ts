@@ -9,6 +9,7 @@ import {
   openFile,
   openJournals,
   openInNewTab,
+  focusBlock,
   togglePin,
   closeTab,
   setActiveTab,
@@ -18,12 +19,16 @@ import {
   activateNextTab,
   activatePrevTab,
 } from "./router";
+import { setNavReuseTabs } from "./navSettings";
+import { setDoc } from "./store";
 
 // The router holds singleton tab state, so reset to a single unpinned journals
 // tab before each test. confirm() is stubbed true so closing pinned tabs (which
 // now prompts) doesn't hang the teardown.
 beforeEach(() => {
   vi.stubGlobal("confirm", () => true);
+  setNavReuseTabs(true);
+  setDoc({ byId: {}, pages: [], feed: [], loaded: false });
   // Unpin everything first so closeTab (which prompts for pinned tabs, via the
   // mock's window.confirm) takes the synchronous unpinned path during teardown.
   for (const t of tabs()) if (t.pinned) togglePin(t.id);
@@ -33,6 +38,113 @@ beforeEach(() => {
 });
 
 const pinActive = () => togglePin(activeId());
+
+describe("reuse already-open tabs on user navigation", () => {
+  it("sticky navigation to a route already open in another pinned tab focuses it without changing the active tab's content", () => {
+    pinActive();
+    const journalsId = activeId();
+    openInNewTab({ kind: "page", name: "Draft", pageKind: "page" }, true);
+    const draftId = activeId();
+
+    openJournals();
+
+    expect(activeId()).toBe(journalsId);
+    expect(tabs().length).toBe(2);
+    expect(tabRoute(tabs().find((t) => t.id === draftId)!)).toEqual({
+      kind: "page",
+      name: "Draft",
+      pageKind: "page",
+    });
+    expect(tabRoute(tabs().find((t) => t.id === journalsId)!)).toEqual({ kind: "journals" });
+  });
+
+  it("prefers the first matching tab in strip order", () => {
+    openInNewTab({ kind: "page", name: "Target", pageKind: "page" }, true);
+    const firstTargetId = activeId();
+    togglePin(firstTargetId);
+    openInNewTab({ kind: "page", name: "Target", pageKind: "page" }, true);
+    openInNewTab({ kind: "page", name: "Other", pageKind: "page" }, true);
+
+    openPage("Target");
+
+    expect(activeId()).toBe(firstTargetId);
+  });
+
+  it("toggle OFF restores duplicate/replace behavior", () => {
+    setNavReuseTabs(false);
+    pinActive();
+    const journalsId = activeId();
+    openInNewTab({ kind: "page", name: "Draft", pageKind: "page" }, true);
+    const draftId = activeId();
+
+    openJournals();
+
+    expect(activeId()).toBe(draftId);
+    expect(tabs().length).toBe(2);
+    expect(tabRoute(tabs().find((t) => t.id === draftId)!)).toEqual({ kind: "journals" });
+    expect(tabRoute(tabs().find((t) => t.id === journalsId)!)).toEqual({ kind: "journals" });
+  });
+
+  it("inPlace navigation never retargets to another tab", () => {
+    openInNewTab({ kind: "page", name: "Target", pageKind: "page" }, true);
+    const existingTargetId = activeId();
+    setActiveTab(tabs()[0].id);
+    const sourceId = activeId();
+
+    openPage("Target", "page", { inPlace: true });
+
+    expect(activeId()).toBe(sourceId);
+    expect(activeId()).not.toBe(existingTargetId);
+    expect(tabRoute(activeTab())).toEqual({ kind: "page", name: "Target", pageKind: "page" });
+  });
+
+  it("zoom navigation never retargets to another tab", () => {
+    setDoc("byId", "block-zoom", {
+      id: "block-zoom",
+      raw: "Zoom target",
+      collapsed: false,
+      parent: null,
+      page: "Target",
+      children: [],
+    });
+    const zoomed = { kind: "page" as const, name: "Target", pageKind: "page" as const, block: "block-zoom" };
+    openInNewTab(zoomed, true);
+    const existingZoomId = activeId();
+    setActiveTab(tabs()[0].id);
+    openPage("Other");
+    const sourceId = activeId();
+
+    focusBlock("block-zoom");
+
+    expect(activeId()).toBe(sourceId);
+    expect(activeId()).not.toBe(existingZoomId);
+    expect(route()).toEqual(zoomed);
+  });
+
+  it("explicit new-tab navigation still duplicates", () => {
+    const target = { kind: "page" as const, name: "Target", pageKind: "page" as const };
+    openInNewTab(target, true);
+    setActiveTab(tabs()[0].id);
+    const sourceId = activeId();
+
+    openInNewTab(target);
+
+    expect(activeId()).toBe(sourceId);
+    expect(tabs().filter((t) => sameRoute(tabRoute(t), target))).toHaveLength(2);
+  });
+
+  it("navigating to the current route is a no-op", () => {
+    openPage("Current");
+    const id = activeId();
+    const historyLength = activeTab().history.length;
+
+    openPage("Current");
+
+    expect(activeId()).toBe(id);
+    expect(activeTab().history).toHaveLength(historyLength);
+    expect(route()).toEqual({ kind: "page", name: "Current", pageKind: "page" });
+  });
+});
 
 describe("sticky (pinned) tabs", () => {
   it("a user navigation from a pinned tab opens a new FOREGROUND tab, leaving the pinned view", () => {

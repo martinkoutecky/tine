@@ -18,6 +18,7 @@ import {
 import { doc, persistentBlockRef, extendFeedForScroll } from "./store";
 import { backend } from "./backend";
 import { renderedBlocks } from "./lazyObserve";
+import { navReuseTabs } from "./navSettings";
 
 export type Route =
   | { kind: "journals" }
@@ -154,16 +155,24 @@ export function restoreScrollFor(r: Route) {
 // (dropping any forward entries — standard browser behaviour). Re-navigating to
 // the current route is a no-op so the back stack doesn't fill with duplicates.
 //
-// Sticky (pinned) tabs: a pinned tab stays on its content. When `opts.sticky` is
-// set (a user navigation, not a programmatic reset) and the active tab is pinned,
-// the destination opens in a NEW foreground tab instead of replacing the pinned
-// view — except a no-op (same route). Zoom (focusBlock) navigates in place, so it
-// doesn't pass `sticky`. Programmatic resets (graph switch, post-delete) pass
-// `inPlace` to force the active tab regardless of pin.
+// User navigations (`opts.sticky`) first reuse an already-open exact route when
+// that preference is on. Sticky (pinned) tabs otherwise stay on their content:
+// a pinned active tab opens the destination in a NEW foreground tab instead of
+// replacing the pinned view. Zoom (focusBlock) navigates in place, so it doesn't
+// pass `sticky`. Programmatic resets (graph switch, post-delete) pass `inPlace`
+// to force the active tab regardless of pin or reuse.
 function navigate(r: Route, opts: { sticky?: boolean } = {}) {
   rememberScroll(); // capture where we are before leaving this entry
   const active = activeTab();
-  if (opts.sticky && active.pinned && !sameRoute(tabRoute(active), r)) {
+  if (opts.sticky && navReuseTabs()) {
+    const existing = tabs().find((t) => sameRoute(tabRoute(t), r));
+    if (existing) {
+      if (existing.id !== active.id) setActiveTab(existing.id);
+      return;
+    }
+  }
+  if (sameRoute(tabRoute(active), r)) return;
+  if (opts.sticky && active.pinned) {
     openInNewTab(r, true);
     return;
   }

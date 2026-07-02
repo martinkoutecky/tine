@@ -53,6 +53,7 @@ import {
   refClickZoom,
   setRefClickZoom,
 } from "../copySettings";
+import { navReuseTabs, setNavReuseTabs } from "../navSettings";
 import { linkFirstMatch, setLinkFirstMatch } from "../editor/linkDefault";
 import {
   spellcheckEnabled,
@@ -575,6 +576,13 @@ function EditorTab(): JSX.Element {
         hint={`When you type [[name (or #name) that isn’t an exact existing page: ON → Enter LINKS to the first match (and “Create…” moves to the end of the list); OFF (default, like Logseq) → Enter CREATES a new page/tag unless an exact match exists. Either way the arrow keys reach the other options.`}
       >
         <Toggle on={linkFirstMatch()} onClick={() => setLinkFirstMatch(!linkFirstMatch())} />
+      </Field>
+
+      <Field
+        label="Switch to an already-open tab when navigating"
+        hint="Plain navigation to a page, journal, or exact zoomed/file-pinned view focuses the matching tab if one is already open. Middle-click and explicit Open in new tab still create another tab."
+      >
+        <Toggle on={navReuseTabs()} onClick={() => setNavReuseTabs(!navReuseTabs())} />
       </Field>
 
       <Field

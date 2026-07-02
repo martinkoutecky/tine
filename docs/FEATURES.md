@@ -148,7 +148,9 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   **"aka" alias chips** on pages reachable by another name.
 - ⊕ **Built-in tabs.** Middle-click any bullet, page title, query result, or
   switcher row to open it in a background tab; pin (persisted), drag-reorder, `Mod+W`
-  to close. (Logseq core has no tabs.)
+  to close. Plain navigation to a route already open in another tab focuses that
+  tab instead of duplicating it; Settings → Editor can turn this off. (Logseq core
+  has no tabs.)
 - ⊕ **Browser-style back/forward** (`Alt+Left` / `Alt+Right`, per-tab history, works
   mid-edit).
 - ⊕ **Focus mode + dim-inactive-blocks** (`t f` / `t b`): hide the chrome and fade
