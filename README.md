@@ -58,7 +58,9 @@ it:
   **right-click the app → Open** (just once) and it opens normally after that. If Tine then
   **keeps asking to access your Documents folder on every launch**, see the
   [workaround](#macos-repeated-documents-permission-prompt) below.
-- **Windows** — run the **`.exe`**; if SmartScreen appears, click **More info → Run anyway**.
+- **Windows** — run the **`.exe`** installer; if SmartScreen appears, click **More info → Run
+  anyway**. Prefer no installer? Grab the portable **`Tine_*_x64-portable.zip`**, unzip, and run
+  `Tine.exe` — it needs the WebView2 runtime, which is preinstalled on Windows 10/11.
 
 (Want to hack on Tine instead? Build from source — see [Build & run](#build--run).)
 

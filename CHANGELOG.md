@@ -8,6 +8,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Added
+
+- **Portable Windows build.** Releases now include a `Tine_*_x64-portable.zip` alongside the
+  installer — unzip and run `Tine.exe`, no install needed (requires the WebView2 runtime,
+  preinstalled on Windows 10/11).
+
 ## [0.3.1] — 2026-07-01
 
 ### Added
