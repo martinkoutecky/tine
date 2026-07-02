@@ -1,0 +1,543 @@
+{
+  "_readme": "Generated from Rust date.rs. Regenerate with `source scripts/env.sh && cargo run --quiet -p tine-core --example date_golden > src/fixtures/date-golden.json`. Rust Format is authoritative; both Rust and TS assert against this committed fixture. `do` parsing intentionally accepts mismatched st/nd/rd/th suffixes, matching OG Logseq's cljs-time internal/parse.cljs parse-ordinal-suffix, but a suffix must be present.",
+  "format": [
+    {
+      "fmt": "MMM do, yyyy",
+      "date": {
+        "y": 2026,
+        "m": 6,
+        "d": 1
+      },
+      "title": "Jun 1st, 2026"
+    },
+    {
+      "fmt": "MMM do, yyyy",
+      "date": {
+        "y": 2026,
+        "m": 6,
+        "d": 2
+      },
+      "title": "Jun 2nd, 2026"
+    },
+    {
+      "fmt": "MMM do, yyyy",
+      "date": {
+        "y": 2026,
+        "m": 6,
+        "d": 3
+      },
+      "title": "Jun 3rd, 2026"
+    },
+    {
+      "fmt": "MMM do, yyyy",
+      "date": {
+        "y": 2026,
+        "m": 6,
+        "d": 4
+      },
+      "title": "Jun 4th, 2026"
+    },
+    {
+      "fmt": "MMM do, yyyy",
+      "date": {
+        "y": 2026,
+        "m": 6,
+        "d": 11
+      },
+      "title": "Jun 11th, 2026"
+    },
+    {
+      "fmt": "MMM do, yyyy",
+      "date": {
+        "y": 2026,
+        "m": 6,
+        "d": 12
+      },
+      "title": "Jun 12th, 2026"
+    },
+    {
+      "fmt": "MMM do, yyyy",
+      "date": {
+        "y": 2026,
+        "m": 6,
+        "d": 13
+      },
+      "title": "Jun 13th, 2026"
+    },
+    {
+      "fmt": "MMM do, yyyy",
+      "date": {
+        "y": 2026,
+        "m": 6,
+        "d": 21
+      },
+      "title": "Jun 21st, 2026"
+    },
+    {
+      "fmt": "MMM do, yyyy",
+      "date": {
+        "y": 2026,
+        "m": 6,
+        "d": 22
+      },
+      "title": "Jun 22nd, 2026"
+    },
+    {
+      "fmt": "MMM do, yyyy",
+      "date": {
+        "y": 2026,
+        "m": 6,
+        "d": 23
+      },
+      "title": "Jun 23rd, 2026"
+    },
+    {
+      "fmt": "MMM do, yyyy",
+      "date": {
+        "y": 2026,
+        "m": 1,
+        "d": 31
+      },
+      "title": "Jan 31st, 2026"
+    },
+    {
+      "fmt": "yyyy_MM_dd",
+      "date": {
+        "y": 2026,
+        "m": 6,
+        "d": 1
+      },
+      "title": "2026_06_01"
+    },
+    {
+      "fmt": "yyyy-MM-dd",
+      "date": {
+        "y": 2026,
+        "m": 6,
+        "d": 1
+      },
+      "title": "2026-06-01"
+    },
+    {
+      "fmt": "yyyy/MM/dd",
+      "date": {
+        "y": 2026,
+        "m": 6,
+        "d": 1
+      },
+      "title": "2026/06/01"
+    },
+    {
+      "fmt": "MM/dd/yyyy",
+      "date": {
+        "y": 2026,
+        "m": 6,
+        "d": 1
+      },
+      "title": "06/01/2026"
+    },
+    {
+      "fmt": "M/d/y",
+      "date": {
+        "y": 2026,
+        "m": 6,
+        "d": 1
+      },
+      "title": "6/1/2026"
+    },
+    {
+      "fmt": "yy-M-d",
+      "date": {
+        "y": 2026,
+        "m": 6,
+        "d": 1
+      },
+      "title": "26-6-1"
+    },
+    {
+      "fmt": "MMMM do, yyyy",
+      "date": {
+        "y": 2026,
+        "m": 6,
+        "d": 1
+      },
+      "title": "June 1st, 2026"
+    },
+    {
+      "fmt": "do MMM yyyy",
+      "date": {
+        "y": 2026,
+        "m": 6,
+        "d": 1
+      },
+      "title": "1st Jun 2026"
+    },
+    {
+      "fmt": "yyyy_MM_dd",
+      "date": {
+        "y": 2025,
+        "m": 12,
+        "d": 31
+      },
+      "title": "2025_12_31"
+    },
+    {
+      "fmt": "yyyy_MM_dd",
+      "date": {
+        "y": 2026,
+        "m": 1,
+        "d": 1
+      },
+      "title": "2026_01_01"
+    },
+    {
+      "fmt": "MMM do, yyyy",
+      "date": {
+        "y": 2025,
+        "m": 12,
+        "d": 31
+      },
+      "title": "Dec 31st, 2025"
+    },
+    {
+      "fmt": "MMM do, yyyy",
+      "date": {
+        "y": 2026,
+        "m": 1,
+        "d": 1
+      },
+      "title": "Jan 1st, 2026"
+    },
+    {
+      "fmt": "yyyy-MM-dd",
+      "date": {
+        "y": 2024,
+        "m": 2,
+        "d": 29
+      },
+      "title": "2024-02-29"
+    },
+    {
+      "fmt": "EEEE, MMMM do, yyyy",
+      "date": {
+        "y": 2024,
+        "m": 2,
+        "d": 29
+      },
+      "title": "Thursday, February 29th, 2024"
+    },
+    {
+      "fmt": "EEE, yyyy/MM/dd",
+      "date": {
+        "y": 2024,
+        "m": 1,
+        "d": 5
+      },
+      "title": "Fri, 2024/01/05"
+    },
+    {
+      "fmt": "EE E yyyy-MM-dd",
+      "date": {
+        "y": 2024,
+        "m": 1,
+        "d": 5
+      },
+      "title": "Fr F 2024-01-05"
+    },
+    {
+      "fmt": "EEEE EEE EE E yyyy-MM-dd",
+      "date": {
+        "y": 2024,
+        "m": 1,
+        "d": 7
+      },
+      "title": "Sunday Sun Su S 2024-01-07"
+    },
+    {
+      "fmt": "EEEE EEE EE E yyyy-MM-dd",
+      "date": {
+        "y": 2024,
+        "m": 1,
+        "d": 8
+      },
+      "title": "Monday Mon Mo M 2024-01-08"
+    },
+    {
+      "fmt": "EEEE EEE EE E yyyy-MM-dd",
+      "date": {
+        "y": 2024,
+        "m": 1,
+        "d": 9
+      },
+      "title": "Tuesday Tue Tu T 2024-01-09"
+    },
+    {
+      "fmt": "EEEE EEE EE E yyyy-MM-dd",
+      "date": {
+        "y": 2024,
+        "m": 1,
+        "d": 10
+      },
+      "title": "Wednesday Wed We W 2024-01-10"
+    },
+    {
+      "fmt": "EEEE EEE EE E yyyy-MM-dd",
+      "date": {
+        "y": 2024,
+        "m": 1,
+        "d": 11
+      },
+      "title": "Thursday Thu Th T 2024-01-11"
+    },
+    {
+      "fmt": "EEEE EEE EE E yyyy-MM-dd",
+      "date": {
+        "y": 2024,
+        "m": 1,
+        "d": 12
+      },
+      "title": "Friday Fri Fr F 2024-01-12"
+    },
+    {
+      "fmt": "EEEE EEE EE E yyyy-MM-dd",
+      "date": {
+        "y": 2024,
+        "m": 1,
+        "d": 13
+      },
+      "title": "Saturday Sat Sa S 2024-01-13"
+    }
+  ],
+  "parse": [
+    {
+      "fmt": "MMM do, yyyy",
+      "input": "Jun 1st, 2026",
+      "date": {
+        "y": 2026,
+        "m": 6,
+        "d": 1
+      }
+    },
+    {
+      "fmt": "MMM do, yyyy",
+      "input": "Jun 1th, 2026",
+      "date": {
+        "y": 2026,
+        "m": 6,
+        "d": 1
+      }
+    },
+    {
+      "fmt": "MMM do, yyyy",
+      "input": "Jun 2st, 2026",
+      "date": {
+        "y": 2026,
+        "m": 6,
+        "d": 2
+      }
+    },
+    {
+      "fmt": "MMM do, yyyy",
+      "input": "June 3rd, 2026",
+      "date": {
+        "y": 2026,
+        "m": 6,
+        "d": 3
+      }
+    },
+    {
+      "fmt": "MMM do, yyyy",
+      "input": "jun 4TH, 2026",
+      "date": {
+        "y": 2026,
+        "m": 6,
+        "d": 4
+      }
+    },
+    {
+      "fmt": "MMMM do, yyyy",
+      "input": "June 21nd, 2026",
+      "date": {
+        "y": 2026,
+        "m": 6,
+        "d": 21
+      }
+    },
+    {
+      "fmt": "do MMM yyyy",
+      "input": "23rd Jun 2026",
+      "date": {
+        "y": 2026,
+        "m": 6,
+        "d": 23
+      }
+    },
+    {
+      "fmt": "yyyy_MM_dd",
+      "input": "2026_06_01",
+      "date": {
+        "y": 2026,
+        "m": 6,
+        "d": 1
+      }
+    },
+    {
+      "fmt": "yyyy-MM-dd",
+      "input": "2026-06-01",
+      "date": {
+        "y": 2026,
+        "m": 6,
+        "d": 1
+      }
+    },
+    {
+      "fmt": "yyyy/MM/dd",
+      "input": "2026/06/01",
+      "date": {
+        "y": 2026,
+        "m": 6,
+        "d": 1
+      }
+    },
+    {
+      "fmt": "MM/dd/yyyy",
+      "input": "06/01/2026",
+      "date": {
+        "y": 2026,
+        "m": 6,
+        "d": 1
+      }
+    },
+    {
+      "fmt": "M/d/y",
+      "input": "6/1/2026",
+      "date": {
+        "y": 2026,
+        "m": 6,
+        "d": 1
+      }
+    },
+    {
+      "fmt": "yy-M-d",
+      "input": "26-6-1",
+      "date": {
+        "y": 2026,
+        "m": 6,
+        "d": 1
+      }
+    },
+    {
+      "fmt": "MMM do, yyyy",
+      "input": "Jax 1st, 2026",
+      "date": null
+    },
+    {
+      "fmt": "MMM do, yyyy",
+      "input": "Jun 1, 2026",
+      "date": null
+    },
+    {
+      "fmt": "MMM do, yyyy",
+      "input": "Jun 1xx, 2026",
+      "date": null
+    },
+    {
+      "fmt": "MMM do, yyyy",
+      "input": "Jun 1st, 2026 extra",
+      "date": null
+    },
+    {
+      "fmt": "yyyy-MM-dd",
+      "input": "2026-13-01",
+      "date": null
+    },
+    {
+      "fmt": "yyyy-MM-dd",
+      "input": "2026-06-40",
+      "date": null
+    },
+    {
+      "fmt": "yyyy-MM-dd",
+      "input": "2026-00-01",
+      "date": null
+    },
+    {
+      "fmt": "EEEE, yyyy-MM-dd",
+      "input": "Funday, 2026-06-01",
+      "date": null
+    },
+    {
+      "fmt": "MM/dd/yyyy",
+      "input": "13/01/2026",
+      "date": null
+    },
+    {
+      "fmt": "yyyy/MM/dd",
+      "input": "2026/06/00",
+      "date": null
+    },
+    {
+      "fmt": "EEEE EEE EE E yyyy-MM-dd",
+      "input": "Sunday Sun Su S 2024-01-07",
+      "date": {
+        "y": 2024,
+        "m": 1,
+        "d": 7
+      }
+    },
+    {
+      "fmt": "EEEE EEE EE E yyyy-MM-dd",
+      "input": "Monday Mon Mo M 2024-01-08",
+      "date": {
+        "y": 2024,
+        "m": 1,
+        "d": 8
+      }
+    },
+    {
+      "fmt": "EEEE EEE EE E yyyy-MM-dd",
+      "input": "Tuesday Tue Tu T 2024-01-09",
+      "date": {
+        "y": 2024,
+        "m": 1,
+        "d": 9
+      }
+    },
+    {
+      "fmt": "EEEE EEE EE E yyyy-MM-dd",
+      "input": "Wednesday Wed We W 2024-01-10",
+      "date": {
+        "y": 2024,
+        "m": 1,
+        "d": 10
+      }
+    },
+    {
+      "fmt": "EEEE EEE EE E yyyy-MM-dd",
+      "input": "Thursday Thu Th T 2024-01-11",
+      "date": {
+        "y": 2024,
+        "m": 1,
+        "d": 11
+      }
+    },
+    {
+      "fmt": "EEEE EEE EE E yyyy-MM-dd",
+      "input": "Friday Fri Fr F 2024-01-12",
+      "date": {
+        "y": 2024,
+        "m": 1,
+        "d": 12
+      }
+    },
+    {
+      "fmt": "EEEE EEE EE E yyyy-MM-dd",
+      "input": "Saturday Sat Sa S 2024-01-13",
+      "date": {
+        "y": 2024,
+        "m": 1,
+        "d": 13
+      }
+    }
+  ]
+}

@@ -23,16 +23,7 @@ impl JournalDate {
     /// Parse a display title in the default `MMM do, yyyy` format, e.g.
     /// "Jan 1st, 2022" or "Jun 14th, 2026". Returns `None` if it doesn't match.
     pub fn from_title(title: &str) -> Option<JournalDate> {
-        let (md, year) = title.trim().rsplit_once(", ")?;
-        let year: i32 = year.trim().parse().ok()?;
-        let (mon, day) = md.trim().split_once(' ')?;
-        let month = MONTHS.iter().position(|m| m.eq_ignore_ascii_case(mon))? as u32 + 1;
-        let digits: String = day.chars().take_while(|c| c.is_ascii_digit()).collect();
-        let day: u32 = digits.parse().ok()?;
-        if !(1..=31).contains(&day) {
-            return None;
-        }
-        Some(JournalDate { year, month, day })
+        Format::compile(DEFAULT_TITLE_FORMAT).parse(title.trim())
     }
 
     /// Parse a journal file stem. Accepts `yyyy_MM_dd` (default) and
@@ -306,14 +297,7 @@ impl Format {
                 Tok::DayNum(_) => day = Some(take_digits(&cs, &mut i, 2)? as u32),
                 Tok::DayOrd => {
                     day = Some(take_digits(&cs, &mut i, 2)? as u32);
-                    for suf in ["st", "nd", "rd", "th"] {
-                        if i + 2 <= cs.len()
-                            && cs[i..i + 2].iter().collect::<String>().eq_ignore_ascii_case(suf)
-                        {
-                            i += 2;
-                            break;
-                        }
-                    }
+                    take_ordinal_suffix(&cs, &mut i)?;
                 }
                 Tok::Weekday(_) => {
                     let (_, len) = match_name(
@@ -346,6 +330,20 @@ fn take_digits(cs: &[char], i: &mut usize, max: usize) -> Option<i64> {
         return None;
     }
     cs[start..*i].iter().collect::<String>().parse().ok()
+}
+
+/// `do` requires an ordinal suffix, but OG cljs-time's parse-ordinal-suffix
+/// accepts any of st/nd/rd/th without checking whether it matches the number.
+fn take_ordinal_suffix(cs: &[char], i: &mut usize) -> Option<()> {
+    for suffix in ["st", "nd", "rd", "th"] {
+        if *i + 2 <= cs.len()
+            && cs[*i..*i + 2].iter().collect::<String>().eq_ignore_ascii_case(suffix)
+        {
+            *i += 2;
+            return Some(());
+        }
+    }
+    None
 }
 
 /// Match the longest name (case-insensitive) from any table at position `i`;
@@ -481,6 +479,10 @@ mod fmt_tests {
         for (s, day) in [("Jan 1st, 2024", 1), ("Jan 2nd, 2024", 2), ("Jan 3rd, 2024", 3), ("Jan 21st, 2024", 21), ("Jan 22nd, 2024", 22)] {
             assert_eq!(f.parse(s), Some(d(2024, 1, day)));
         }
+        assert_eq!(f.parse("Jan 1th, 2024"), Some(d(2024, 1, 1)));
+        assert_eq!(f.parse("Jan 1, 2024"), None);
+        assert_eq!(JournalDate::from_title("Jan 1th, 2024"), Some(d(2024, 1, 1)));
+        assert_eq!(JournalDate::from_title("Jan 1, 2024"), None);
     }
 
     #[test]
@@ -500,5 +502,62 @@ mod fmt_tests {
         assert_eq!(custom.parse("2024_01_05"), Some(d(2024, 1, 5))); // legacy default file
         assert_eq!(custom.parse("Jan 5th, 2024"), Some(d(2024, 1, 5))); // title ref
         assert_eq!(custom.file_stem(d(2024, 1, 5)), "05-01-2024");
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    struct GoldenFixture {
+        format: Vec<FormatVector>,
+        parse: Vec<ParseVector>,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    struct FormatVector {
+        fmt: String,
+        date: GoldenDate,
+        title: String,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    struct ParseVector {
+        fmt: String,
+        input: String,
+        date: Option<GoldenDate>,
+    }
+
+    #[derive(Clone, Copy, Debug, serde::Deserialize)]
+    struct GoldenDate {
+        y: i32,
+        m: u32,
+        d: u32,
+    }
+
+    impl GoldenDate {
+        fn into_journal_date(self) -> JournalDate {
+            d(self.y, self.m, self.d)
+        }
+    }
+
+    fn load_date_golden_fixture() -> GoldenFixture {
+        serde_json::from_str(include_str!("../../../src/fixtures/date-golden.json"))
+            .expect("parse src/fixtures/date-golden.json")
+    }
+
+    #[test]
+    fn date_golden_fixture_matches_rust_format() {
+        let fixture = load_date_golden_fixture();
+        for vector in fixture.format {
+            let got = Format::compile(&vector.fmt).format(vector.date.into_journal_date());
+            assert_eq!(got, vector.title, "format {:?}", vector);
+        }
+    }
+
+    #[test]
+    fn date_golden_fixture_matches_rust_parse() {
+        let fixture = load_date_golden_fixture();
+        for vector in fixture.parse {
+            let want = vector.date.map(GoldenDate::into_journal_date);
+            let got = Format::compile(&vector.fmt).parse(&vector.input);
+            assert_eq!(got, want, "parse {:?}", vector);
+        }
     }
 }

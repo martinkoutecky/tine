@@ -18,6 +18,8 @@ const WD_1 = ["S", "M", "T", "W", "T", "F", "S"];
 const DEFAULT_TITLE_FORMAT = "MMM do, yyyy";
 let titleFormat = DEFAULT_TITLE_FORMAT;
 
+export type JournalDateParts = { y: number; m: number; d: number };
+
 /// Set the active journal title format (from `GraphMeta.journal_page_title_format`).
 export function setJournalTitleFormat(fmt: string | undefined | null): void {
   titleFormat = fmt && fmt.trim() ? fmt : DEFAULT_TITLE_FORMAT;
@@ -73,8 +75,8 @@ export function journalTitle(d: Date): string {
 /// Try to parse `s` as a date in pattern `fmt` (the inverse of formatJournal, for
 /// the token subset Logseq uses). Mirrors the Rust `Format::parse` so a
 /// `[[journal title]]` link can be routed to the journal page rather than opened
-/// as an empty regular page. Returns true iff the whole string is a valid date.
-function parseJournalWith(s: string, fmt: string): boolean {
+/// as an empty regular page. Returns the date iff the whole string is valid.
+export function parseJournalWith(s: string, fmt: string): JournalDateParts | null {
   let i = 0;
   let f = 0;
   let y: number | null = null;
@@ -99,37 +101,50 @@ function parseJournalWith(s: string, fmt: string): boolean {
     return null;
   };
   while (f < fmt.length) {
-    if (at("yyyy")) { const v = digits(4); if (v === null) return false; y = v; f += 4; }
-    else if (at("yy")) { const v = digits(2); if (v === null) return false; y = 2000 + v; f += 2; }
-    else if (at("y")) { const v = digits(4); if (v === null) return false; y = v; f += 1; }
+    if (at("yyyy")) { const v = digits(4); if (v === null) return null; y = v; f += 4; }
+    else if (at("yy")) { const v = digits(2); if (v === null) return null; y = 2000 + v; f += 2; }
+    else if (at("y")) { const v = digits(4); if (v === null) return null; y = v; f += 1; }
     else if (at("MMMM") || at("MMM")) {
       const idx = matchName([MONTHS_FULL, MONTHS]);
-      if (idx === null) return false;
+      if (idx === null) return null;
       mo = idx + 1;
       f += at("MMMM") ? 4 : 3;
-    } else if (at("MM")) { const v = digits(2); if (v === null) return false; mo = v; f += 2; }
-    else if (at("M")) { const v = digits(2); if (v === null) return false; mo = v; f += 1; }
-    else if (at("dd")) { const v = digits(2); if (v === null) return false; d = v; f += 2; }
+    } else if (at("MM")) { const v = digits(2); if (v === null) return null; mo = v; f += 2; }
+    else if (at("M")) { const v = digits(2); if (v === null) return null; mo = v; f += 1; }
+    else if (at("dd")) { const v = digits(2); if (v === null) return null; d = v; f += 2; }
     else if (at("do")) {
       const v = digits(2);
-      if (v === null) return false;
+      if (v === null) return null;
       d = v;
       f += 2;
-      if (["st", "nd", "rd", "th"].includes(s.substr(i, 2).toLowerCase())) i += 2;
-    } else if (at("d")) { const v = digits(2); if (v === null) return false; d = v; f += 1; }
+      // OG cljs-time's parse-ordinal-suffix accepts any suffix string here; it
+      // does not validate that "st"/"nd"/"rd"/"th" matches the day number.
+      if (!["st", "nd", "rd", "th"].includes(s.substr(i, 2).toLowerCase())) return null;
+      i += 2;
+    } else if (at("d")) { const v = digits(2); if (v === null) return null; d = v; f += 1; }
     else if (at("EEEE") || at("EEE") || at("EE") || at("E")) {
       const tok = at("EEEE") ? 4 : at("EEE") ? 3 : at("EE") ? 2 : 1;
-      if (matchName([WD_FULL, WD_ABBR, WD_2, WD_1]) === null) return false;
+      if (matchName([WD_FULL, WD_ABBR, WD_2, WD_1]) === null) return null;
       f += tok;
     } else {
-      if (s[i] !== fmt[f]) return false;
+      if (s[i] !== fmt[f]) return null;
       i += 1;
       f += 1;
     }
   }
-  return (
-    i === s.length && y !== null && mo !== null && d !== null && mo >= 1 && mo <= 12 && d >= 1 && d <= 31
-  );
+  if (
+    i !== s.length ||
+    y === null ||
+    mo === null ||
+    d === null ||
+    mo < 1 ||
+    mo > 12 ||
+    d < 1 ||
+    d > 31
+  ) {
+    return null;
+  }
+  return { y, m: mo, d };
 }
 
 /// Whether `name` is a journal date in the graph's title format (or a common
@@ -137,5 +152,5 @@ function parseJournalWith(s: string, fmt: string): boolean {
 /// empty page. Mirrors the backend's `safe-journal-title-formatters` leniency.
 export function isJournalTitle(name: string): boolean {
   if (!name.trim()) return false;
-  return [titleFormat, DEFAULT_TITLE_FORMAT, "yyyy-MM-dd"].some((f) => parseJournalWith(name, f));
+  return [titleFormat, DEFAULT_TITLE_FORMAT, "yyyy-MM-dd"].some((f) => parseJournalWith(name, f) !== null);
 }
