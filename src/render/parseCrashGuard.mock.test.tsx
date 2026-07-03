@@ -7,7 +7,7 @@ const wasmMock = vi.hoisted(() => {
     return JSON.stringify([{ kind: "paragraph", inline: [{ k: "plain", text: raw }] }]);
   });
   const reinstantiate = vi.fn();
-  const tag = vi.fn(() => "v0.4.0");
+  const tag = vi.fn(() => "v0.4.1");
   return { init, parseBlockJson, reinstantiate, tag };
 });
 

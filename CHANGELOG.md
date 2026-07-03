@@ -14,12 +14,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   guarded per block: if the WebAssembly parser ever traps on some block, Tine rebuilds
   a fresh parser instance and retries; if that block still traps, it's shown as raw
   text with a subtle marker while every other block renders normally — instead of the
-  whole view going blank until restart. (Defense-in-depth: lsdoc v0.4.0 has no known
+  whole view going blank until restart. (Defense-in-depth: lsdoc v0.4.1 has no known
   trapping input; this guards the unknown.)
-- **Parser updated to lsdoc v0.4.0.** A performance release: the raw-HTML tag index
-  and the `>`-quote fallback reparse are now linear (they were `O(n²)` on adversarial
-  input), so pathological blocks parse fast. No behavior change — the parsed AST is
-  byte-identical to v0.3.0.
+- **Parser updated to lsdoc v0.4.1.** Two threads since v0.3.0: (1) a batch of
+  edge-case byte-exactness fixes that bring parsing closer to Logseq's own on
+  uncommon constructs — Markdown table-separator rules, LaTeX-environment tails,
+  definition lists, front matter, footnote definitions, `>>`/nested blockquotes,
+  Markdown comments, and inline backslash/backtick residue (so a handful of unusual
+  blocks now render exactly as Logseq renders them, where before they differed); and
+  (2) more `O(n²)→O(n)` parse-path fixes (raw-HTML tag index, `>`-quote fallback
+  reparse, and the Markdown link-label scan), so pathological blocks parse fast.
 
 ### Added
 
