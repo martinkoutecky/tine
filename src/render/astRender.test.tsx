@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, afterEach } from "vitest";
 import { render } from "solid-js/web";
-import { renderInlines, InlineText } from "./inline";
+import { renderInlines, InlineText, expandTemplate, expansionIsBlockLevel } from "./inline";
 import { renderBlocks } from "./body";
-import { initParser } from "./parse";
+import { initParser, parseBlock } from "./parse";
+import { setGraphMeta } from "../ui";
 import type { JSX } from "solid-js";
 import type { Block, Inline } from "./ast";
 
@@ -12,6 +13,10 @@ import type { Block, Inline } from "./ast";
 // test (it must instantiate cleanly outside WebKitGTK too).
 beforeAll(async () => {
   await initParser();
+});
+
+afterEach(() => {
+  setGraphMeta(null);
 });
 
 function html(node: () => JSX.Element): string {
@@ -185,6 +190,29 @@ describe("renderBlocks", () => {
     const headingSpan = /<span class="heading-text h1">.*?<\/span>/s.exec(h)?.[0] ?? "";
     expect(headingSpan).toContain("Title"); // heading line is h1
     expect(headingSpan).not.toContain("quoted"); // the quote is OUTSIDE the heading span
+  });
+});
+
+describe("user macro helpers", () => {
+  it("leaves unfilled placeholders literal", () => {
+    expect(expandTemplate("$1 and $5", ["a", "b"])).toBe("a and $5");
+  });
+
+  it("classifies block-level expansions through the block parser", () => {
+    expect(expansionIsBlockLevel("## H\n\np\n\n- x", "md")).toBe(true);
+    expect(expansionIsBlockLevel("## H", "md")).toBe(true);
+    expect(expansionIsBlockLevel("just **bold** text", "md")).toBe(false);
+  });
+
+  it("uses lsdoc's parsed macro args instead of re-splitting quoted commas", () => {
+    const parsed = parseBlock('{{m "a, b", c}}', false)[0];
+    if (parsed.kind !== "bullet") throw new Error(`unexpected macro host: ${parsed.kind}`);
+    const macro = parsed.inline.find((i) => i.k === "macro");
+    expect(macro).toMatchObject({ k: "macro", name: "m", args: ['"a, b"', "c"] });
+
+    setGraphMeta({ macros: { echo: "$1|$2" } } as never);
+    const h = inl([{ k: "macro", name: "echo", args: ['"a, b"', "c"] }]);
+    expect(h).toContain('"a, b"|c');
   });
 });
 

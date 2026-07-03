@@ -2342,6 +2342,11 @@ mark {
   border-radius: 4px;
 }
 
+.macro-blocks {
+  display: block;
+  margin: 2px 0;
+}
+
 .math-display {
   display: block;
   margin: 6px 0;

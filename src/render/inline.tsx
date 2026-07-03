@@ -18,6 +18,7 @@ import { typographic } from "./typography";
 import { coarseSpanAttrs, plainSpanAttrs, typographicPlainSpanAttrs, type SpanDomAttrs } from "./spans";
 import { typographyMode } from "../ui";
 import { visibleBody } from "./block";
+import { AstBody } from "./body";
 import { backend } from "../backend";
 import { loadAssetBlob } from "../assetCache";
 import { resolveBlockBatched } from "../resolveBatch";
@@ -33,9 +34,9 @@ import { NamespaceMacro } from "../components/Namespace";
 // MediaEmbed, the macros). See subagent-tasks/notes/ast-render-contract.md.
 // ===========================================================================
 
-// Shared `{{macro}}` dispatch, keyed off a reconstructed body string so the
-// legacy Seg path and the AST path render macros identically.
-function renderMacroBody(raw: string, blockId?: string): JSX.Element {
+// Shared `{{macro}}` dispatch, keyed off a reconstructed body string for built-ins.
+// User macros get parser-supplied args from the AST path so quoted commas survive.
+function renderMacroBody(raw: string, blockId?: string, userArgs?: string[]): JSX.Element {
   const body = raw.trimStart();
   if (/^query\b/i.test(body)) return <QueryMacro body={body} blockId={blockId} />;
   if (/^embed\b/i.test(body)) return <EmbedMacro body={body} />;
@@ -52,7 +53,7 @@ function renderMacroBody(raw: string, blockId?: string): JSX.Element {
   const um = /^(\S+)\s*([\s\S]*)$/.exec(body);
   const userMacros = graphMeta()?.macros;
   if (um && userMacros && Object.prototype.hasOwnProperty.call(userMacros, um[1])) {
-    const args = um[2].trim() ? um[2].split(",").map((a) => a.trim()) : [];
+    const args = userArgs ?? (um[2].trim() ? um[2].split(",").map((a) => a.trim()) : []);
     return <UserMacroView name={um[1]} template={userMacros[um[1]]} args={args} blockId={blockId} />;
   }
   return <span class="macro">{`{{${raw}}}`}</span>;
@@ -111,7 +112,7 @@ function renderInline(s: Inline, blockId?: string, spanMode = true): JSX.Element
     case "tag":
       return <PageRef name={astText(s.children)} tag spanAttrs={spanMode ? coarseSpanAttrs(s.span) : undefined} />;
     case "macro":
-      return renderMacroBody(macroBody(s), blockId);
+      return renderMacroBody(macroBody(s), blockId, s.args);
     case "latex":
       return <MathView tex={s.body} display={s.mode === "Displayed"} spanAttrs={spanMode ? coarseSpanAttrs(s.span) : undefined} />;
     case "timestamp":
@@ -720,18 +721,48 @@ export function InlineText(props: { text: string; blockId?: string; format?: For
 let userMacroDepth = 0;
 const MAX_USER_MACRO_DEPTH = 12;
 
+export function expandTemplate(template: string, args: string[]): string {
+  return template.replace(/\$(\d+)/g, (m, d) => args[Number(d) - 1] ?? m);
+}
+
+function isSingleParagraphExpansionBlock(b: AstBlock): boolean {
+  // parseBlock re-bullets raw Markdown/Org block bodies, so a plain paragraph
+  // arrives as the synthetic header bullet. A heading expansion has `size`.
+  return b.kind === "paragraph" || (b.kind === "bullet" && b.size == null);
+}
+
+export function expansionIsBlockLevel(expanded: string, fmt?: Format): boolean {
+  const blocks = parseBlock(expanded, fmt === "org");
+  return !(blocks.length === 1 && isSingleParagraphExpansionBlock(blocks[0]));
+}
+
+function expansionHeadingLevel(expanded: string, fmt?: Format): number | null {
+  const first = parseBlock(expanded, fmt === "org")[0];
+  if (!first) return null;
+  if (first.kind === "heading") return first.size ?? first.level ?? null;
+  if (first.kind === "bullet") return first.size ?? null;
+  return null;
+}
+
 // `{{name a, b}}` where `name` is a user-defined `:macros` key: fill `$1..$N` with
-// the args, render the result as inline markdown. Block-level expansions degrade to
-// inline (we only have an inline renderer here) — fine for the common link/format
-// macros; a documented limitation for multi-line templates.
+// the args. Single-paragraph expansions stay inline; block-level expansions render
+// through the block renderer, matching OG's macro parse/render split.
 function UserMacroView(props: { name: string; template: string; args: string[]; blockId?: string }): JSX.Element {
   if (userMacroDepth >= MAX_USER_MACRO_DEPTH) {
     return <span class="macro">{`{{${props.name}}}`}</span>;
   }
-  const expanded = props.template.replace(/\$(\d+)/g, (_, d) => props.args[Number(d) - 1] ?? "");
+  const expanded = expandTemplate(props.template, props.args);
   userMacroDepth++;
   try {
-    return <InlineText text={expanded} blockId={props.blockId} format={formatForBlock(props.blockId)} />;
+    const fmt = formatForBlock(props.blockId);
+    if (parserReady() && expansionIsBlockLevel(expanded, fmt)) {
+      return (
+        <div class="macro-blocks">
+          <AstBody raw={expanded} blockId={props.blockId} format={fmt} headingLevel={expansionHeadingLevel(expanded, fmt)} />
+        </div>
+      );
+    }
+    return <InlineText text={expanded} blockId={props.blockId} format={fmt} />;
   } finally {
     userMacroDepth--;
   }

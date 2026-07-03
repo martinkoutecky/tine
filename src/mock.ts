@@ -180,6 +180,7 @@ const NAMED: PageDto[] = [
       b("More embeds: {{twitter https://twitter.com/logseq/status/9}} · {{vimeo 76979871}} · {{bilibili BV1xx411c7mD}}"),
       b("youtube-timestamp {{youtube-timestamp 125}} · cloze {{cloze the answer\\\\the cue}} · zotero {{zotero-imported-file abc, paper.pdf}}"),
       b("User macro (config.edn :macros): {{poem red, blue}} and {{hi Martin, kitchen-sink}}"),
+      b("Block user macro:\n{{card Topic, Body text}}"),
       b("Block reference (bare): see ((64b9c0e2-0000-0000-0000-000000000000)) inline"),
       b("Labeled block reference: see [Related Work](((64b9c0e2-0000-0000-0000-000000000000))) inline"),
       b("Project notes", [
@@ -347,9 +348,10 @@ export function mockBackend(): Backend {
         journal_file_name_format: "yyyy_MM_dd",
         preferred_format: "md",
         macros: {
-          // Demo user macros so the kitchen-sink exercises {{poem}} / {{yt}}.
+          // Demo user macros so the kitchen-sink exercises inline and block expansions.
           poem: "Roses are $1, violets are $2.",
           hi: "Hello, **$1**! See [[$2]].",
+          card: "## $1\n\n$2\n\n+ see [[$1]]",
         },
       };
     },

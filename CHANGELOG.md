@@ -17,6 +17,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **User `:macros` can expand to real blocks (OG parity).** A `config.edn` macro
+  whose template is block-level Markdown — a heading, a list, multiple paragraphs —
+  now renders as real nested blocks instead of a flattened inline line. Single-
+  paragraph/inline macros still render inline. Unfilled placeholders (`$5` with only
+  two args) stay literal, and arguments now come straight from the parser, so a
+  quoted argument containing a comma is no longer split in two — all matching Logseq.
 - **Headings stay heading-sized while you edit them (OG parity).** Clicking into a
   single-line `#`/`##`/`###…` heading now keeps the editor text at its heading size
   and weight (the `#` markers stay visible at the same size), instead of shrinking to

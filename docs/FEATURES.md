@@ -101,7 +101,10 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
 - **Macros:** `{{query}}`, `{{embed}}`,
   `{{video}}`/`{{youtube}}`/`{{vimeo}}`/`{{bilibili}}`, `{{tweet}}`/`{{twitter}}`,
   `{{img url [w h] [left|right|center]}}`, `{{namespace}}`, and **user-defined
-  `:macros`** from `config.edn` (`$1..$N` substitution, rendered as Markdown).
+  `:macros`** from `config.edn` — positional `$1..$N` substitution (unfilled
+  placeholders stay literal, like Logseq); a template that expands to block-level
+  Markdown (heading / list / multiple paragraphs) renders as **real nested blocks**,
+  not a flattened line.
   `{{youtube-timestamp}}`, `{{cloze}}` (click-to-reveal) and `{{zotero-*}}` render in
   a degraded form (no on-page-player seek / SRS / Zotero connector — flagged inline).
 - **`{{query}}` engine** (inline or whole-block): boolean `and`/`or`/`not`,
