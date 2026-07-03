@@ -23,9 +23,9 @@ _Nothing actively in flight._
 
 ## P1 — do next (high value, bounded scope)
 
-| Item | Notes |
-|---|---|
-| **Live editing, cheap tier: heading-sized editor** — SHIPPED (Jul 3 2026) | Editing a single-line heading now keeps heading size/weight (OG's `.uniline-block` rule), verified vs OG source (`7090da1`). This closes the *cheap* half of the promoted "live editing" item. The other half (live facet chips) turned out NOT to be cheap — see the CM6 Deferred row: Martin's actual ask is **inline caret-proximity reveal** (the TODO/marker shows as raw text while the caret is in/adjacent to it, and becomes a clickable chip once the caret leaves), which a plain `<textarea>` physically cannot do — it *is* the CodeMirror 6 live-preview route, now unblocked (lsdoc has inline spans). Decision pending. |
+_Empty — the Jul 3 2026 batch cleared it (heading-sized editor `7090da1`, block-level
+`:macros` `48e602b`, parser crash-guard `af09a14`). The "live facet chip" idea resolved to
+the CodeMirror 6 live-preview route — see Deferred; Martin chose to keep it deferred._
 
 ---
 
