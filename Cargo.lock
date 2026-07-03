@@ -2166,8 +2166,8 @@ checksum = "953f07c43838f8e6f9758cab68bf5bed85465e7587ebe0b823f1bcd81978ad3a"
 
 [[package]]
 name = "lsdoc"
-version = "0.3.0"
-source = "git+https://github.com/martinkoutecky/lsdoc?tag=v0.3.0#4d6817ae8fff34d70ca8f38023644a2b81527fb7"
+version = "0.4.0"
+source = "git+https://github.com/martinkoutecky/lsdoc?tag=v0.4.0#468cfea440e57ca85c905aeb89820fb85642b01f"
 dependencies = [
  "phf 0.11.3",
  "serde",

@@ -8,6 +8,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Changed
+
+- **Parser updated to lsdoc v0.4.0.** A performance release: the raw-HTML tag index
+  and the `>`-quote fallback reparse are now linear (they were `O(n²)` on adversarial
+  input), so pathological blocks parse fast. No behavior change — the parsed AST is
+  byte-identical to v0.3.0.
+
 ### Added
 
 - **Select text, then wrap it (OG parity).** With text selected in the editor,
