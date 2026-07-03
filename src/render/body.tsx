@@ -11,7 +11,7 @@ import { evalCalc } from "../editor/calc";
 import { toggleListItemAtIndex, doc, formatForBlock } from "../store";
 import { graphMeta } from "../ui";
 import { isRenderHiddenProp, isPropertyLine } from "./block";
-import { parserReady } from "./parse";
+import { isQuarantined, parserReady } from "./parse";
 import { parseBody, isStandalonePlanning } from "./facets";
 import { observeNear, unobserveNear, renderedBlocks } from "../lazyObserve";
 
@@ -110,7 +110,7 @@ function isEmptyInlineFlow(b: AstBlock): boolean {
  *  blocks (header + continuation paragraphs) are `<br>`-joined to match the old
  *  line-stacked look; block-level constructs render standalone. */
 export function renderBlocks(blocks: AstBlock[], blockId?: string, headingLevel?: number | null): JSX.Element {
-  return (
+  const content = (
     <For each={blocks}>
       {(b, i) => (
         <>
@@ -127,6 +127,12 @@ export function renderBlocks(blocks: AstBlock[], blockId?: string, headingLevel?
         </>
       )}
     </For>
+  );
+  if (!isQuarantined(blocks)) return content;
+  return (
+    <span class="parse-quarantine" title="This block couldn't be parsed and is shown as raw text">
+      {content}
+    </span>
   );
 }
 
@@ -353,11 +359,13 @@ function AstList(props: { items: AstListItem[]; blockId?: string; cbItems: AstLi
  *  standalone planning line (lsdoc never makes one mid-text), so dropping any block
  *  that contains one drops exactly the badge lines. */
 function bodyBlocks(raw: string, isOrg: boolean): AstBlock[] {
+  const parsed = parseBody(raw, isOrg ? "org" : "md");
+  if (isQuarantined(parsed)) return parsed;
   // Drop `properties` (chips in chrome) and STANDALONE planning lines (date badges in
   // chrome). A block with a mid-text/inline `SCHEDULED:` timestamp is NOT standalone —
   // keep it whole so its body text renders (the old `.some(timestamp)` dropped the
   // entire bullet, silently eating the text — audit C1).
-  return parseBody(raw, isOrg ? "org" : "md").filter(
+  return parsed.filter(
     (b) => b.kind !== "properties" && !isStandalonePlanning(b) && !isEmptyInlineFlow(b)
   );
 }

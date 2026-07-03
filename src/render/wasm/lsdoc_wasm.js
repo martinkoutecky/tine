@@ -270,3 +270,13 @@ async function __wbg_init(module_or_path) {
 }
 
 export { initSync, __wbg_init as default };
+
+// Tine crash-recovery: rebuild a FRESH wasm instance from the retained compiled module,
+// bypassing the init()/initSync() `wasm !== undefined` early-return. Used by
+// src/render/parse.ts to recover from a parser trap (poisoned instance). Same-module
+// scope gives it access to wasmModule / __wbg_get_imports / __wbg_finalize_init.
+export function __tineReinstantiate() {
+  if (wasmModule === undefined) throw new Error('lsdoc-wasm: reinit before init');
+  const instance = new WebAssembly.Instance(wasmModule, __wbg_get_imports());
+  return __wbg_finalize_init(instance, wasmModule);
+}

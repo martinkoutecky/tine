@@ -10,6 +10,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- **A block that fails to parse no longer breaks rendering.** The parser is now
+  guarded per block: if the WebAssembly parser ever traps on some block, Tine rebuilds
+  a fresh parser instance and retries; if that block still traps, it's shown as raw
+  text with a subtle marker while every other block renders normally — instead of the
+  whole view going blank until restart. (Defense-in-depth: lsdoc v0.4.0 has no known
+  trapping input; this guards the unknown.)
 - **Parser updated to lsdoc v0.4.0.** A performance release: the raw-HTML tag index
   and the `>`-quote fallback reparse are now linear (they were `O(n²)` on adversarial
   input), so pathological blocks parse fast. No behavior change — the parsed AST is

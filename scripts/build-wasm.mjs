@@ -15,7 +15,7 @@
 //      and CI consume — no fetch, no wasm toolchain at app-build time.
 
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync, copyFileSync, mkdtempSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdtempSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -82,8 +82,46 @@ glue = glue.replace(
   defaultPath,
   "throw new Error('lsdoc-wasm: init() must be called with explicit bytes (see src/render/parse.ts); default fetch path is disabled.');",
 );
+const reinitAnchor = "export { initSync, __wbg_init as default };\n";
+if (!glue.includes(reinitAnchor)) {
+  throw new Error(
+    "build-wasm: expected final export line not found in glue — wasm-bindgen output " +
+      "changed; re-check the Tine crash-recovery reinit injection in scripts/build-wasm.mjs.",
+  );
+}
+if (glue.includes("__tineReinstantiate")) {
+  throw new Error("build-wasm: __tineReinstantiate already present in generated glue; refuse to duplicate it.");
+}
+glue = glue.replace(
+  reinitAnchor,
+  reinitAnchor +
+    `
+// Tine crash-recovery: rebuild a FRESH wasm instance from the retained compiled module,
+// bypassing the init()/initSync() \`wasm !== undefined\` early-return. Used by
+// src/render/parse.ts to recover from a parser trap (poisoned instance). Same-module
+// scope gives it access to wasmModule / __wbg_get_imports / __wbg_finalize_init.
+export function __tineReinstantiate() {
+  if (wasmModule === undefined) throw new Error('lsdoc-wasm: reinit before init');
+  const instance = new WebAssembly.Instance(wasmModule, __wbg_get_imports());
+  return __wbg_finalize_init(instance, wasmModule);
+}
+`,
+);
 writeFileSync(join(outDir, "lsdoc_wasm.js"), glue);
-copyFileSync(join(tmp, "lsdoc_wasm.d.ts"), join(outDir, "lsdoc_wasm.d.ts"));
+
+let dts = readFileSync(join(tmp, "lsdoc_wasm.d.ts"), "utf8");
+const dtsAnchor = "export function render_block_html(raw: string, is_org: boolean): string;\n";
+if (!dts.includes(dtsAnchor)) {
+  throw new Error(
+    "build-wasm: expected render_block_html declaration not found in .d.ts — wasm-bindgen output " +
+      "changed; re-check the Tine crash-recovery type injection in scripts/build-wasm.mjs.",
+  );
+}
+if (dts.includes("__tineReinstantiate")) {
+  throw new Error("build-wasm: __tineReinstantiate already present in generated .d.ts; refuse to duplicate it.");
+}
+dts = dts.replace(dtsAnchor, `${dtsAnchor}\nexport function __tineReinstantiate(): void;\n`);
+writeFileSync(join(outDir, "lsdoc_wasm.d.ts"), dts);
 
 console.log(
   `vendored → src/render/wasm/ (lsdoc_wasm.js, lsdoc_wasm.d.ts, lsdoc_wasm_bytes.ts; ` +

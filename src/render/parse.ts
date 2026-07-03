@@ -13,7 +13,7 @@
 // once at app boot (main.tsx + capture.tsx) before the first render.
 
 import { createSignal } from "solid-js";
-import init, { parse_block_json, lsdoc_tag } from "./wasm/lsdoc_wasm.js";
+import init, { parse_block_json, lsdoc_tag, __tineReinstantiate } from "./wasm/lsdoc_wasm.js";
 import { WASM_B64, LSDOC_TAG } from "./wasm/lsdoc_wasm_bytes";
 import type { Block } from "./ast";
 
@@ -85,6 +85,23 @@ export function parserFailed(): boolean {
 // than the cap degrades to partial hits instead of dropping to a 0% hit rate.
 const cache = new Map<string, Block[]>();
 const CACHE_MAX = 8000;
+const quarantined = new WeakSet<Block[]>();
+
+function remember(key: string, blocks: Block[]): Block[] {
+  if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value!);
+  cache.set(key, blocks);
+  return blocks;
+}
+
+function quarantine(key: string, text: string): Block[] {
+  const blocks: Block[] = [{ kind: "paragraph", inline: [{ k: "plain", text }] }];
+  quarantined.add(blocks);
+  return remember(key, blocks);
+}
+
+export function isQuarantined(blocks: Block[]): boolean {
+  return quarantined.has(blocks);
+}
 
 // A/B instrumentation: counts parseBlock calls (cold misses + warm hits) so the
 // lazy-body virtualization win is measurable on a large page
@@ -123,8 +140,17 @@ export function parseBlock(text: string, isOrg: boolean): Block[] {
     return hit;
   }
   if (statsEnabled()) bumpParseStats(false);
-  const blocks = JSON.parse(parse_block_json(text, isOrg)) as Block[];
-  if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value!);
-  cache.set(key, blocks);
-  return blocks;
+  let json: string;
+  try {
+    json = parse_block_json(text, isOrg);
+  } catch {
+    __tineReinstantiate();
+    try {
+      json = parse_block_json(text, isOrg);
+    } catch {
+      __tineReinstantiate();
+      return quarantine(key, text);
+    }
+  }
+  return remember(key, JSON.parse(json) as Block[]);
 }

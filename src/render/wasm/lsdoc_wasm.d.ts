@@ -39,6 +39,8 @@ export function parse_block_json(raw: string, is_org: boolean): string;
  */
 export function render_block_html(raw: string, is_org: boolean): string;
 
+export function __tineReinstantiate(): void;
+
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {

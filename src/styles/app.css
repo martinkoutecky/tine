@@ -57,6 +57,12 @@ body {
   white-space: pre-wrap;
 }
 
+.parse-quarantine {
+  border-left: 2px solid color-mix(in srgb, var(--text-muted) 38%, transparent);
+  padding-left: 6px;
+  color: var(--text-secondary);
+}
+
 .left-sidebar {
   position: relative;
   width: var(--ls-left-sidebar-width);
