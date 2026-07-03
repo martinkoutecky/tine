@@ -241,7 +241,8 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
 - **Copy/export as** Markdown for a block subtree or a whole page, with a *Rendered*
   mode that flattens to what you see — and in Rendered mode a `((block ref))` resolves
   to the referenced block's text and a user `{{macro}}` to its expansion (not the bare
-  uuid / literal call); math stays as TeX (which is what copying rendered KaTeX gives).
+  uuid / literal call); math is left as TeX for now (rendered-math copy is still on the
+  backlog).
 - A slash menu for headings, code, calculator, quote, callouts, divider, embed, query
   (raw or visual builder), template, asset upload, and dates.
 
