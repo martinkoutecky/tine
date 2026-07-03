@@ -49,6 +49,8 @@ function skeleton(html: string): string {
   for (const sel of REMOVE_SELECTORS) root.querySelectorAll(sel).forEach((e) => e.remove());
   // delta 2: the frontend wraps `[[ ]]` in dimmed `.bracket` spans; lsdoc emits plain text.
   root.querySelectorAll("span.bracket").forEach((e) => e.replaceWith(document.createTextNode(e.textContent ?? "")));
+  // Frontend-only horizontal-scroll affordance around wide tables; the table skeleton is canonical.
+  root.querySelectorAll("div.md-table-wrap").forEach((e) => e.replaceWith(...Array.from(e.childNodes)));
   // Click-to-caret span threading wraps exact plain leaves in unstyled span[data-so][data-se].
   // They carry source-offset metadata only, so unwrap them before skeleton comparison.
   root.querySelectorAll("span[data-so][data-se]").forEach((e) => e.replaceWith(...Array.from(e.childNodes)));
