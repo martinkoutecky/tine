@@ -3558,6 +3558,15 @@ img.emoji {
   padding: 8px 12px;
   margin: 2px 0;
   background: var(--bg-secondary);
+  /* Give each query box its own stable compositing layer. WebKitGTK's DMABUF
+     renderer otherwise re-rasterizes a *varying subset* of these boxes when the
+     pointer re-enters the page (the overlay scrollbar fade-in forces a
+     recomposite) — a visible flicker of the collapsed builders. A persistent
+     layer means the compositor re-composites the existing texture instead of
+     re-rasterizing, killing the flash. Safe: translateZ(0) doesn't clip (the
+     chip dropdowns anchor to their own .qb-chip-wrap, not this box) and is a
+     no-op on layout. Disappears entirely under TINE_GPU=0 (software path). */
+  transform: translateZ(0);
 }
 
 .agenda-block {
