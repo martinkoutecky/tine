@@ -8,8 +8,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.3.3] — 2026-07-04
+
 ### Changed
 
+- **Consecutive same-page query results share one heading.** When a query is
+  sorted, several results from the same page that land next to each other in the
+  order now render under a single page heading, instead of repeating the heading
+  once per result. A page whose results fall at different positions in the sort
+  (e.g. an A and a C task under a priority sort) still appears at each of those
+  positions, and a page's blocks keep their document order under the heading.
 - **A block that fails to parse no longer breaks rendering.** The parser is now
   guarded per block: if the WebAssembly parser ever traps on some block, Tine rebuilds
   a fresh parser instance and retries; if that block still traps, it's shown as raw
@@ -27,6 +35,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Sort query results with one click.** The visual query builder's **Sort**
+  control now leads with preset buttons — *Newest first / Oldest first*,
+  *Priority A→C*, *Page A→Z*, *Deadline*, *Scheduled* — so the common orderings
+  need no typing (a free-text field remains for sorting by any other property).
+  *Newest first* places results on one timeline: journal pages by the day they
+  represent (stable — not the file's modified time), other pages by when the file
+  was last modified, so journal-page and ordinary-page todos interleave
+  chronologically. These extend Logseq's property-only `(sort-by …)`.
 - **Copy/export "Rendered" mode resolves block refs and macros.** Copying or
   exporting in *Rendered* mode now flattens a `((block ref))` to the referenced
   block's text and a user `{{macro}}` to its expansion, instead of the bare uuid or
@@ -53,6 +69,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Clicking a query's collapse arrow toggles it, instead of editing the block.**
+  The ▸/▾ arrow — and the other query controls (the title, result-page links,
+  table headers) — now run their own action on click and no longer fall through
+  into raw-text edit mode of the query block.
+- **Collapsed query builders no longer flicker.** On WebKitGTK, moving the pointer
+  off the page and back could flash a varying subset of collapsed `{{query}}`
+  boxes; each now sits on a stable compositing layer, so the compositor reuses its
+  texture instead of re-rasterizing it.
 - **Deleting today's journal leaves an empty today.** Right-clicking today in the
   Journals feed and choosing *Delete journal* used to blank the top of the feed;
   it now restores the empty, writable today placeholder — the same one you get on
