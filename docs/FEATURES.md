@@ -112,7 +112,13 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   `(scheduled)`, `(deadline)`, `(journal)`, `(namespace …)`, `(between START END)`
   with a field selector, `(sort-by …)`. Results render as a list or a sortable
   **table**; ⊕ an interactive **visual query builder** (chip/clause bar) builds them
-  without writing the DSL.
+  without writing the DSL. The builder's **Sort** control offers one-click presets
+  — *Newest / Oldest first*, *Priority*, *Page*, *Deadline*, *Scheduled* — plus a
+  free-text field for any other property. *Newest first* orders results on one
+  recency timeline: journal pages by the day they represent (stable, not their file
+  mtime), other pages by file modified-time, so journal and page todos interleave
+  chronologically. (`sort-by modified/priority/page/deadline/scheduled` extend
+  Logseq's property-only `sort-by`.)
 - A scoped compatibility path for Logseq's **advanced (Datalog) queries**:
   recognized clauses (`task`, `between`, `property`, `page-property`, `priority`,
   page-refs, boolean `or/and/not`, `:today`/`:current-page`-style inputs) map onto

@@ -413,6 +413,37 @@ export function toDsl(root: Clause): string {
 }
 
 // ---------------------------------------------------------------------------
+// Sort presets — the one-click sort options in the builder (single source of
+// truth for the buttons AND the chip label). `field`/`dir` are the DSL values;
+// the engine resolves them to a block facet: `priority` → `[#A]` marker, `page`
+// → page name, `deadline`/`scheduled` → the planning date, and `modified` → a
+// recency axis (journal pages by the day they represent, other pages by file
+// mtime), so journal and non-journal todos interleave on one timeline.
+// ---------------------------------------------------------------------------
+
+export interface SortPreset {
+  field: string;
+  dir: "asc" | "desc";
+  label: string;
+  hint: string;
+}
+export const SORT_PRESETS: SortPreset[] = [
+  { field: "modified", dir: "desc", label: "Newest first", hint: "Most recent first — journal pages by their date, others by when the file was last modified" },
+  { field: "modified", dir: "asc", label: "Oldest first", hint: "Oldest first — journal pages by their date, others by file modified time" },
+  { field: "priority", dir: "asc", label: "Priority A→C", hint: "Highest priority ([#A]) first; unprioritized last" },
+  { field: "page", dir: "asc", label: "Page A→Z", hint: "Alphabetically by the page each result lives on" },
+  { field: "deadline", dir: "asc", label: "Deadline", hint: "Soonest DEADLINE first; blocks without a deadline last" },
+  { field: "scheduled", dir: "asc", label: "Scheduled", hint: "Soonest SCHEDULED first; blocks without one last" },
+];
+
+/** Friendly text for a sort clause — a matching preset's label, else `field ↑/↓`. */
+export function sortLabel(field: string, dir: "asc" | "desc"): string {
+  const p = SORT_PRESETS.find((p) => p.field === field && p.dir === dir);
+  if (p) return p.label.toLowerCase();
+  return `${field} ${dir === "desc" ? "↓" : "↑"}`;
+}
+
+// ---------------------------------------------------------------------------
 // Human-readable chip labels
 // ---------------------------------------------------------------------------
 
@@ -447,7 +478,7 @@ export function clauseLabel(c: Clause): string {
     case "content":
       return `text: "${c.text}"`;
     case "sortBy":
-      return `sort: ${c.field} ${c.dir === "desc" ? "↓" : "↑"}`;
+      return `sort: ${sortLabel(c.field, c.dir)}`;
     case "raw":
       return c.text;
     case "op":

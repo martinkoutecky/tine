@@ -33,6 +33,49 @@ fn sort_by_priority_is_global_across_pages() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+// `(sort-by modified …)` orders results on ONE recency axis: journal pages by the
+// day they represent (stable — NOT their file mtime), other pages by file mtime.
+// A page written "now" (>> any 2020 journal day) is the most recent, so `desc`
+// (the "Newest first" preset) floats it above the journal days, newest journal
+// next — journal and non-journal todos interleaved on a single timeline.
+#[test]
+fn sort_by_modified_interleaves_journal_and_pages() {
+    let root = mk("sortmod");
+    std::fs::write(root.join("journals").join("2020_01_01.md"), "- TODO j-old\n").unwrap();
+    std::fs::write(root.join("journals").join("2020_01_02.md"), "- TODO j-new\n").unwrap();
+    std::fs::write(root.join("pages").join("Proj.md"), "- TODO p-now\n").unwrap();
+    let g = Graph::open(&root);
+    g.warm_cache();
+    let tag = |grp: &tine_core::RefGroup| {
+        grp.blocks[0].raw.split_whitespace().last().unwrap().to_string()
+    };
+    let desc: Vec<String> = g.run_query("(and (task TODO) (sort-by modified desc))").iter().map(tag).collect();
+    assert_eq!(desc, vec!["p-now", "j-new", "j-old"], "newest first: page(mtime now) > 2020-01-02 > 2020-01-01");
+    let asc: Vec<String> = g.run_query("(and (task TODO) (sort-by modified asc))").iter().map(tag).collect();
+    assert_eq!(asc, vec!["j-old", "j-new", "p-now"], "oldest first reverses");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+// `(sort-by deadline)` orders by the DEADLINE planning date — soonest first in
+// ascending order; tasks without a deadline sort last (the `~` sentinel).
+#[test]
+fn sort_by_deadline_soonest_first() {
+    let root = mk("sortdead");
+    std::fs::write(
+        root.join("pages").join("D.md"),
+        "- TODO later\n  DEADLINE: <2026-12-01 Tue>\n- TODO soon\n  DEADLINE: <2026-01-05 Mon>\n- TODO none\n",
+    )
+    .unwrap();
+    let g = Graph::open(&root);
+    g.warm_cache();
+    let tag = |grp: &tine_core::RefGroup| {
+        grp.blocks[0].raw.lines().next().unwrap().split_whitespace().last().unwrap().to_string()
+    };
+    let asc: Vec<String> = g.run_query("(and (task TODO) (sort-by deadline asc))").iter().map(tag).collect();
+    assert_eq!(asc, vec!["soon", "later", "none"], "soonest deadline first; no-deadline last");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 // Setting the first day of week writes config.edn `:start-of-week` (Logseq
 // convention, 0=Monday … 6=Sunday) and round-trips on reopen — replacing an
 // existing value and inserting when the key is absent.

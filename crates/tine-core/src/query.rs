@@ -218,8 +218,13 @@ pub fn run_query(graph: &Graph, query_src: &str) -> Vec<RefGroup> {
 /// Evaluate a parsed predicate against the whole graph (shared by the simple-DSL
 /// `run_query` and the advanced-datalog `run_advanced_query`).
 fn run_pred(graph: &Graph, pred: &Pred, opts: &QueryOpts) -> Vec<RefGroup> {
-    let mut groups = graph.with_pages(|pages| {
+    // A recency sort (`(sort-by modified …)`) needs each result page's position on
+    // a single time axis: journal pages by the day they represent, other pages by
+    // file mtime. Only computed when such a sort is active (else we skip the stat).
+    let want_recency = matches!(&opts.sort, Some((f, _)) if is_recency_field(f));
+    let (mut groups, recency_by_page) = graph.with_pages(|pages| {
         let mut groups: Vec<RefGroup> = Vec::new();
+        let mut recency: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
         for (entry, doc) in pages {
             let (page_props, page_tags) = page_facets(doc.pre_block.as_deref());
             let ctx = EvalCtx {
@@ -236,11 +241,14 @@ fn run_pred(graph: &Graph, pred: &Pred, opts: &QueryOpts) -> Vec<RefGroup> {
                 }
             });
             if !matched.is_empty() {
+                if want_recency {
+                    recency.insert(entry.name.clone(), page_recency_secs(entry));
+                }
                 let blocks: Vec<BlockDto> = matched.into_iter().map(block_to_dto).collect();
                 groups.push(RefGroup { page: entry.name.clone(), kind: entry.kind, blocks });
             }
         }
-        groups
+        (groups, recency)
     });
 
     // sort-by is GLOBAL (like Logseq): flatten every matched block across all
@@ -259,7 +267,14 @@ fn run_pred(graph: &Graph, pred: &Pred, opts: &QueryOpts) -> Vec<RefGroup> {
         }
         // Decorate-sort: compute each block's key ONCE (an lsdoc parse per result
         // block), not per comparison — `sort_by` would re-derive it O(n log n) times.
-        flat.sort_by_cached_key(|g| sort_key(&g.blocks[0], &g.page, field));
+        if is_recency_field(field) {
+            // Recency is numeric (Unix seconds on one axis), not text: journal
+            // pages by their represented day, others by file mtime. Ascending =
+            // oldest first; `reverse` gives newest first (the "Newest first" preset).
+            flat.sort_by_cached_key(|g| recency_by_page.get(&g.page).copied().unwrap_or(i64::MIN));
+        } else {
+            flat.sort_by_cached_key(|g| sort_key(&g.blocks[0], &g.page, field));
+        }
         if !*asc {
             flat.reverse();
         }
@@ -594,6 +609,29 @@ fn resolve_inputs(
     map
 }
 
+/// Fields naming a block's position on the recency time-axis (journal day for
+/// journal pages, file mtime otherwise) — sorted numerically, not lexically.
+/// `modified` is the canonical token; `updated`/`updated-at`/`date` are aliases.
+fn is_recency_field(field: &str) -> bool {
+    matches!(field.to_ascii_lowercase().as_str(), "modified" | "updated" | "updated-at" | "date")
+}
+
+/// A page's position on the recency axis, in Unix seconds: a journal page by the
+/// midnight of the day it represents (stable — independent of when it was last
+/// edited); any other page by its file's last-modified time. `i64::MIN` when a
+/// non-journal page can't be stat'd (so it sorts oldest).
+fn page_recency_secs(entry: &PageEntry) -> i64 {
+    if let Some(dk) = entry.date_key {
+        return JournalDate::from_ordinal(dk).to_days() * 86_400;
+    }
+    std::fs::metadata(&entry.path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(i64::MIN)
+}
+
 /// Sort key for a result block: the named property's value if present, else the
 /// block's visible first line (lowercased for stable case-insensitive order).
 fn sort_key(b: &BlockDto, page: &str, field: &str) -> String {
@@ -606,6 +644,11 @@ fn sort_key(b: &BlockDto, page: &str, field: &str) -> String {
         "priority" => b.priority.as_deref().map_or_else(|| "Z".to_string(), |c| c.to_ascii_uppercase()),
         // Sort by the source page name.
         "page" => page.to_lowercase(),
+        // SCHEDULED / DEADLINE planning dates off the DTO facet (lead with
+        // `YYYY-MM-DD`, so lexical order == chronological). Blocks without one sort
+        // last in ascending ("soonest first") order via the high sentinel `~`.
+        "deadline" => b.deadline.clone().unwrap_or_else(|| "~".to_string()),
+        "scheduled" => b.scheduled.clone().unwrap_or_else(|| "~".to_string()),
         // Otherwise: a block property value (off the DTO's lsdoc properties — no
         // reparse, format-correct, audit P4), else the block's visible first line.
         _ => {

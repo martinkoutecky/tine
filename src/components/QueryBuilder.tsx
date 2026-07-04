@@ -22,8 +22,10 @@ import {
   MARKERS,
   PRIORITIES,
   BETWEEN_FIELDS,
+  SORT_PRESETS,
   type Clause,
   type BetweenField,
+  type SortPreset,
 } from "../editor/queryBuilder";
 import { DATE_PRESETS, previewDate } from "../editor/dateExpr";
 import { queryBuilderAutoOpen, setQueryBuilderAutoOpen } from "../ui";
@@ -61,9 +63,13 @@ function withSort(root: Clause, sort: { field: string; dir: "asc" | "desc" } | n
 }
 
 // A small "+ sort" / "sort: field ↑" control in the bar (NOT a filter chip).
+// The popover leads with one-click presets (the common cases — no typing, no
+// syntax to get wrong) and keeps a free-text row for sorting by any other
+// property. `SORT_PRESETS` is the single source of truth (see queryBuilder.ts).
 function SortControl(props: { tree: () => Clause; apply: (c: Clause) => void }): JSX.Element {
   const [open, setOpen] = createSignal(false);
   const cur = () => currentSort(props.tree());
+  // The free-text escape hatch: sort by an arbitrary property name.
   const [field, setField] = createSignal("");
   const [dir, setDir] = createSignal<"asc" | "desc">("asc");
   let wrapEl: HTMLSpanElement | undefined;
@@ -78,53 +84,83 @@ function SortControl(props: { tree: () => Clause; apply: (c: Clause) => void }):
     document.addEventListener("mousedown", onDown, true);
     onCleanup(() => document.removeEventListener("mousedown", onDown, true));
   });
+  const isPreset = (c: { field: string; dir: "asc" | "desc" } | null) =>
+    !!c && SORT_PRESETS.some((p) => p.field === c.field && p.dir === c.dir);
+  const activePreset = (p: SortPreset) => {
+    const c = cur();
+    return !!c && c.field === p.field && c.dir === p.dir;
+  };
   const openPopover = () => {
     const c = cur();
-    setField(c?.field ?? "");
+    // Pre-fill the free-text row only for a non-preset (custom-property) sort;
+    // a preset sort is reflected by its highlighted button instead.
+    setField(c && !isPreset(c) ? c.field : "");
     setDir(c?.dir ?? "asc");
     setOpen(true);
   };
-  const applySort = () => {
-    props.apply(withSort(props.tree(), field().trim() ? { field: field().trim(), dir: dir() } : null));
+  const applyPreset = (p: SortPreset) => {
+    props.apply(withSort(props.tree(), { field: p.field, dir: p.dir }));
+    setOpen(false);
+  };
+  const applyCustom = () => {
+    if (!field().trim()) return;
+    props.apply(withSort(props.tree(), { field: field().trim(), dir: dir() }));
+    setOpen(false);
+  };
+  const clearSort = () => {
+    props.apply(withSort(props.tree(), null));
     setOpen(false);
   };
   return (
     <span class="qb-add-wrap" ref={wrapEl}>
       {/* A stable "+ sort" affordance — it does NOT morph into the current sort
           value (the active sort shows as its own chip in the bar). It just gains
-          an `active` highlight and opens the popover (pre-filled) to change/clear. */}
+          an `active` highlight and opens the popover to change/clear. */}
       <button
         class="qb-sort"
         classList={{ active: !!cur() }}
-        title={cur() ? `Sorted by ${cur()!.field} (${cur()!.dir === "desc" ? "desc" : "asc"}). Click to change.` : "Sort results"}
+        title={cur() ? `Sorted by ${clauseLabel({ kind: "sortBy", field: cur()!.field, dir: cur()!.dir })}. Click to change.` : "Sort results"}
         onClick={(e) => { stop(e); openPopover(); }}
       >
         + sort
       </button>
       <Show when={open()}>
-        <div class="qb-picker" onClick={stop}>
+        <div class="qb-picker qb-sort-picker" onClick={stop}>
           <div class="qb-picker-title">Sort by</div>
+          {/* One click = applied. No typing for the common cases. */}
+          <div class="qb-sort-presets">
+            <For each={SORT_PRESETS}>
+              {(p) => (
+                <button
+                  class="qb-sort-preset"
+                  classList={{ active: activePreset(p) }}
+                  title={p.hint}
+                  onClick={() => applyPreset(p)}
+                >
+                  {p.label}
+                </button>
+              )}
+            </For>
+          </div>
+          <div class="qb-divider" />
+          {/* Escape hatch: sort by any other property (still no required syntax —
+              just the bare property name + a direction). */}
+          <div class="qb-sort-custom-label">Or by a property</div>
           <input
             class="qb-input"
-            placeholder="field (priority, page, a property…)"
+            placeholder="property name (e.g. rating)"
             value={field()}
             onInput={(e) => setField(e.currentTarget.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") applySort();
-            }}
-            // eslint-disable-next-line
-            ref={(el) => queueMicrotask(() => el.focus())}
+            onKeyDown={(e) => { if (e.key === "Enter") applyCustom(); }}
           />
           <div class="qb-conn-row">
             <button class="qb-conn" classList={{ active: dir() === "asc" }} onClick={() => setDir("asc")}>Asc ↑</button>
             <button class="qb-conn" classList={{ active: dir() === "desc" }} onClick={() => setDir("desc")}>Desc ↓</button>
+            <button class="qb-conn" classList={{ disabled: !field().trim() }} onClick={applyCustom}>Apply</button>
           </div>
-          <div class="qb-conn-row">
-            <button class="qb-conn" onClick={applySort}>Apply</button>
-            <Show when={cur()}>
-              <button class="qb-conn" onClick={() => { props.apply(withSort(props.tree(), null)); setOpen(false); }}>Clear</button>
-            </Show>
-          </div>
+          <Show when={cur()}>
+            <button class="qb-sort-clear" onClick={clearSort}>Clear sort</button>
+          </Show>
         </div>
       </Show>
     </span>

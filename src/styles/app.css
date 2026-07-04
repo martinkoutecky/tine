@@ -3902,6 +3902,63 @@ img.emoji {
   color: var(--text-secondary);
 }
 
+/* Sort picker: a grid of one-click presets (the common cases — no typing) over a
+   free-text property fallback for anything else. */
+.qb-sort-picker {
+  min-width: 236px;
+}
+.qb-sort-presets {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 2px 4px 4px;
+}
+.qb-sort-preset {
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.qb-sort-preset:hover {
+  border-color: var(--link-color);
+  background: var(--bg-tertiary);
+}
+.qb-sort-preset.active {
+  background: var(--link-color);
+  color: #fff;
+  border-color: var(--link-color);
+}
+.qb-sort-custom-label {
+  padding: 3px 8px 1px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.qb-conn.disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+.qb-sort-clear {
+  margin: 2px 4px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  border-radius: 5px;
+  padding: 4px 0;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.qb-sort-clear:hover {
+  border-color: #b91c1c;
+  color: #b91c1c;
+}
+
 .query-table th {
   cursor: pointer;
   user-select: none;
