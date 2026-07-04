@@ -368,6 +368,18 @@ export function mockBackend(): Backend {
       if (name.startsWith("hls__")) return hlsPageDto(name);
       return find(name);
     },
+    async graphSourceFiles(includeJournals: boolean) {
+      // Synthetic sources so the diff panel is exercisable against the mock
+      // backend (the real comparison still needs mldoc + lsdoc-wasm at runtime).
+      const files = [
+        { rel: "pages/welcome.md", text: "# Welcome\n- a **bold** note with [[Link]]\n", format: "md" as const },
+        { rel: "pages/tasks.md", text: "- TODO finish #project\n- DONE ship it\n", format: "md" as const },
+      ];
+      if (includeJournals) {
+        files.push({ rel: "journals/2026_07_04.md", text: "- met with [[Alice]] re: $$x^2$$\n", format: "md" as const });
+      }
+      return files.map((f) => ({ ...f, bytes: new TextEncoder().encode(f.text).length }));
+    },
     async savePage(_page: PageDto, _baseRev: string | null, _force?: boolean): Promise<string> {
       return "mock-rev"; // no-op in mock
     },

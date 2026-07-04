@@ -1,4 +1,5 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { ImproveTab } from "./ImproveTab";
 import {
   settingsOpen,
   closeSettings,
@@ -117,6 +118,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "files", label: "Files" },
   { id: "backups", label: "Backups" },
   { id: "graph", label: "Graph" },
+  { id: "improve", label: "Help improve Tine" },
   { id: "shortcuts", label: "Keyboard shortcuts" },
 ];
 
@@ -223,6 +225,9 @@ export function Settings(): JSX.Element {
               </Show>
               <Show when={tab() === "graph"}>
                 <GraphTab publishMsg={publishMsg()} doPublish={doPublish} />
+              </Show>
+              <Show when={tab() === "improve"}>
+                <ImproveTab />
               </Show>
               <Show when={tab() === "shortcuts"}>
                 <ShortcutsSettingsPane

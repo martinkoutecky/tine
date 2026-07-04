@@ -32,6 +32,15 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
+/** One raw graph file, as returned by `graphSourceFiles` — the input to the
+ *  in-app lsdoc↔mldoc diff panel. `text` is the file's bytes exactly as on disk. */
+export interface GraphSourceFile {
+  rel: string;
+  text: string;
+  format: "md" | "org";
+  bytes: number;
+}
+
 export interface Backend {
   loadGraph(path: string): Promise<GraphMeta>;
   /** Scaffold a brand-new demo graph (onboarding "create new graph"); returns
@@ -43,6 +52,9 @@ export interface Backend {
   /** Journal date-keys (yyyymmdd) whose page has real content. */
   journalContentDays(): Promise<number[]>;
   getPage(name: string, kind: "journal" | "page"): Promise<PageDto | null>;
+  /** Raw source text of every md/org file in the open graph (+journals when
+   *  asked), for the "Help improve Tine" diff panel. Read-only, local. */
+  graphSourceFiles(includeJournals: boolean): Promise<GraphSourceFile[]>;
   /** Save a page. `baseRev` is the file hash the editor loaded; the backend
    *  rejects with "conflict" if the file changed on disk since then (unless
    *  `force`). Returns the new on-disk rev to use as the next baseline. */
@@ -279,6 +291,9 @@ class TauriBackend implements Backend {
   }
   getPage(name: string, kind: "journal" | "page") {
     return this.call<PageDto | null>("get_page", { name, kind });
+  }
+  graphSourceFiles(includeJournals: boolean) {
+    return this.call<GraphSourceFile[]>("graph_source_files", { includeJournals });
   }
   savePage(page: PageDto, baseRev: string | null, force = false) {
     return this.call<string>("save_page", { page, baseRev, force });

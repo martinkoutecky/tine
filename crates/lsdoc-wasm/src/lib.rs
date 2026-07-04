@@ -26,6 +26,17 @@ pub fn parse_block_json(raw: &str, is_org: bool) -> String {
     serde_json::to_string(&ast).unwrap_or_else(|_| "[]".to_string())
 }
 
+/// Parse a WHOLE FILE (raw graph file text, NOT re-bulleted) into lsdoc's observable
+/// projection `{blocks, refs}`, serialized to JSON — the same thing the `lsdoc-parse`
+/// CLI emits. Unlike `parse_block_json` (one de-bulleted block), this is document-level,
+/// for the "Help improve Tine" diff panel, which compares whole files against mldoc
+/// exactly as `lsdoc/tools/graph-check.mjs` does. Not on the render path.
+#[wasm_bindgen]
+pub fn parse_document_json(text: &str, is_org: bool) -> String {
+    let fmt = if is_org { "org" } else { "md" };
+    serde_json::to_string(&lsdoc::parse_format(text, fmt)).unwrap_or_else(|_| "{}".to_string())
+}
+
 /// Render one de-bulleted block body to lsdoc's CANONICAL HTML skeleton (M3 render
 /// contract — `lsdoc::render_html`): structural tags + classes + `data-*` hooks, no
 /// ref/asset/math/macro resolution. Re-bullets EXACTLY like `parse_block_json` so the

@@ -44,3 +44,4 @@ see the project `CLAUDE.md`.
 | [0015](0015-lsdoc-wire-contract.md) | The lsdoc wire contract: what Tine may assume about lsdoc's output | Accepted |
 | [0016](0016-mock-backend-intentionally-lossy.md) | The mock backend is an intentionally lossy dev double | Accepted |
 | [0017](0017-snapshot-scope.md) | Launch snapshots cover text + config + PDF highlight sidecars, not asset bytes | Accepted |
+| [0018](0018-in-app-lsdoc-mldoc-diff-panel.md) | In-app lsdoc↔mldoc diff panel bundles mldoc lazily and runs it in a worker | Accepted |

@@ -26,6 +26,15 @@ export function lsdoc_tag(): string;
 export function parse_block_json(raw: string, is_org: boolean): string;
 
 /**
+ * Parse a WHOLE FILE (raw graph file text, NOT re-bulleted) into lsdoc's observable
+ * projection `{blocks, refs}`, serialized to JSON — the same thing the `lsdoc-parse`
+ * CLI emits. Unlike `parse_block_json` (one de-bulleted block), this is document-level,
+ * for the "Help improve Tine" diff panel, which compares whole files against mldoc
+ * exactly as `lsdoc/tools/graph-check.mjs` does. Not on the render path.
+ */
+export function parse_document_json(text: string, is_org: boolean): string;
+
+/**
  * Render one de-bulleted block body to lsdoc's CANONICAL HTML skeleton (M3 render
  * contract — `lsdoc::render_html`): structural tags + classes + `data-*` hooks, no
  * ref/asset/math/macro resolution. Re-bullets EXACTLY like `parse_block_json` so the
@@ -47,6 +56,7 @@ export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly lsdoc_tag: () => [number, number];
     readonly parse_block_json: (a: number, b: number, c: number) => [number, number];
+    readonly parse_document_json: (a: number, b: number, c: number) => [number, number];
     readonly render_block_html: (a: number, b: number, c: number) => [number, number];
     readonly __wbindgen_externrefs: WebAssembly.Table;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;

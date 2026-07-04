@@ -17,7 +17,13 @@ move them between categories in place.
 
 ## In flight (being built now)
 
-_Nothing actively in flight._
+- **"Help improve Tine" diff panel** (targets 0.3.4) — a Settings panel that runs lsdoc against
+  Logseq's own parser (mldoc) on the user's graph, locally, and surfaces anonymized + re-verified
+  divergences to paste into bug reports (crowd-sources divergence hunting). Engine, backend
+  command, worker + lazy mldoc bundling, and the panel UI are built and screenshot-verified; see
+  [ADR 0018](adr/0018-in-app-lsdoc-mldoc-diff-panel.md). **Blocked on** a whole-file
+  `parse_document_json` export in `lsdoc-wasm` (lsdoc 0.3.4) — until then the lsdoc side is stubbed
+  and only mldoc speed timing runs. Remove this line when the export is wired and the feature ships.
 
 ---
 

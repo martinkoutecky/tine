@@ -8,6 +8,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Added
+
+- **Settings → Help improve Tine.** A panel that runs Tine's parser (lsdoc)
+  against Logseq's own parser (mldoc) on your graph, entirely on your machine, and
+  reports where they disagree plus a parse-speed comparison. Divergence snippets are
+  **anonymized** (your words replaced, markup structure kept) and **re-verified** to
+  still reproduce the divergence before they're shown — so they're safe to paste into
+  a bug report. mldoc is loaded only when you press Run (no startup cost); nothing is
+  ever uploaded.
+
 ### Fixed
 
 - **Priority `[#A]` chip now shows on query and reference results.** A task

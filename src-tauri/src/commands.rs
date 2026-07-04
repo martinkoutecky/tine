@@ -55,6 +55,81 @@ pub(crate) fn get_page(
     with_graph(&state, |g| g.load_named(&name, kind).map_err(|e| e.to_string()))
 }
 
+/// One raw source file of the open graph, for the in-app lsdoc↔mldoc diff panel.
+#[derive(serde::Serialize)]
+pub(crate) struct GraphSourceFile {
+    /// graph-root-relative, forward-slashed path (stable id shown in the report)
+    rel: String,
+    /// the file's raw UTF-8 text (fed to both parsers exactly as on disk)
+    text: String,
+    /// "md" | "org" — selects the parser grammar
+    format: String,
+    bytes: u64,
+}
+
+/// Raw text of every Markdown/Org file in the open graph (`pages/`, plus
+/// `journals/` when `include_journals`), for the "Help improve Tine" diff panel.
+/// Mirrors `lsdoc/tools/graph-check.mjs`'s file scan: skips files over 8 MB, tags
+/// format by extension, returns graph-root-relative paths sorted for stable
+/// output. Read-only and local — the panel makes no network calls.
+#[tauri::command]
+pub(crate) fn graph_source_files(
+    include_journals: bool,
+    state: State<'_, AppState>,
+) -> Result<Vec<GraphSourceFile>, String> {
+    const MAX_FILE_BYTES: u64 = 8 * 1024 * 1024;
+    with_graph(&state, |g| {
+        let mut out: Vec<GraphSourceFile> = Vec::new();
+        let mut roots = vec![g.pages_path()];
+        if include_journals {
+            roots.push(g.journals_path());
+        }
+        for root in roots {
+            collect_graph_text(g, &root, MAX_FILE_BYTES, &mut out);
+        }
+        out.sort_by(|a, b| a.rel.cmp(&b.rel));
+        Ok(out)
+    })
+}
+
+fn collect_graph_text(
+    g: &tine_core::model::Graph,
+    dir: &std::path::Path,
+    max_bytes: u64,
+    out: &mut Vec<GraphSourceFile>,
+) {
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            collect_graph_text(g, &p, max_bytes, out);
+            continue;
+        }
+        let format = match p.extension().and_then(|x| x.to_str()) {
+            Some("md") => "md",
+            Some("org") => "org",
+            _ => continue,
+        };
+        let Ok(meta) = std::fs::metadata(&p) else {
+            continue;
+        };
+        if meta.len() > max_bytes {
+            continue; // oversized files skipped, like graph-check
+        }
+        let Ok(text) = std::fs::read_to_string(&p) else {
+            continue; // non-UTF-8 / unreadable file skipped
+        };
+        out.push(GraphSourceFile {
+            rel: g.rel_path(&p),
+            text,
+            format: format.to_string(),
+            bytes: meta.len(),
+        });
+    }
+}
+
 #[tauri::command]
 pub(crate) fn save_page(
     page: PageDto,

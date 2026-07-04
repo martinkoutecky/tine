@@ -29,6 +29,7 @@ npm run build                # refresh dist/ so the harness serves current code
 node scripts/shot-readme.mjs # → screenshots/rm-tabs.png, rm-focus-dim.png, rm-quick-capture.png
 node scripts/shot-capture.mjs# → screenshots/rm-quick-capture.png (better: slash menu + window frame)
 node scripts/screenshot.mjs  # → screenshots/journals-light.png, pdf-notes-light.png, … (the review set)
+node scripts/shot-improve.mjs# → screenshots/improve-{empty,report,findings}.png (Help improve Tine diff panel; uses __tineDiffFixture)
 ```
 
 Scripts write to the gitignored `screenshots/` dir; the README set is then

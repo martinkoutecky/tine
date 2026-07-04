@@ -53,6 +53,31 @@ export function parse_block_json(raw, is_org) {
 }
 
 /**
+ * Parse a WHOLE FILE (raw graph file text, NOT re-bulleted) into lsdoc's observable
+ * projection `{blocks, refs}`, serialized to JSON — the same thing the `lsdoc-parse`
+ * CLI emits. Unlike `parse_block_json` (one de-bulleted block), this is document-level,
+ * for the "Help improve Tine" diff panel, which compares whole files against mldoc
+ * exactly as `lsdoc/tools/graph-check.mjs` does. Not on the render path.
+ * @param {string} text
+ * @param {boolean} is_org
+ * @returns {string}
+ */
+export function parse_document_json(text, is_org) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(text, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.parse_document_json(ptr0, len0, is_org);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
  * Render one de-bulleted block body to lsdoc's CANONICAL HTML skeleton (M3 render
  * contract — `lsdoc::render_html`): structural tags + classes + `data-*` hooks, no
  * ref/asset/math/macro resolution. Re-bullets EXACTLY like `parse_block_json` so the

@@ -1302,6 +1302,150 @@ body {
   transform: translateX(16px);
 }
 
+/* "Help improve Tine" diff panel ------------------------------------------- */
+.improve-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.improve-tab .seg {
+  display: inline-flex;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.improve-tab .seg-btn {
+  padding: 5px 12px;
+  border: none;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+}
+.improve-tab .seg-btn + .seg-btn {
+  border-left: 1px solid var(--border-color);
+}
+.improve-tab .seg-btn.on {
+  background: var(--link-color);
+  color: #fff;
+}
+.improve-run {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 4px;
+}
+.improve-run .btn-primary {
+  padding: 7px 16px;
+  border: none;
+  border-radius: 8px;
+  background: var(--link-color);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+.improve-run .btn-primary:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.improve-progress {
+  font-variant-numeric: tabular-nums;
+}
+.improve-error {
+  color: var(--marker-todo, #c0392b);
+  font-size: 13px;
+}
+.improve-report {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  border-top: 1px solid var(--border-color);
+  padding-top: 12px;
+}
+.improve-notice {
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-tertiary);
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.improve-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.improve-table th,
+.improve-table td {
+  text-align: left;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border-color);
+}
+.improve-table th {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.improve-findings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.improve-findings h4,
+.improve-bench h4 {
+  margin: 0 0 6px;
+}
+.improve-clean {
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+.improve-card {
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.improve-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.improve-lines {
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.improve-snippet {
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--code-bg, var(--bg-tertiary));
+  border-radius: 6px;
+  font-family: var(--ls-font-mono, monospace);
+  font-size: 12.5px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 220px;
+  overflow: auto;
+}
+.btn-secondary {
+  align-self: flex-start;
+  padding: 4px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12.5px;
+}
+.improve-other {
+  margin-top: 6px;
+  font-size: 13px;
+}
+
 /* Light/Dark switcher: a pill with a knob that slides between the two options. */
 .theme-switch {
   position: relative;
@@ -2718,7 +2862,13 @@ body.file-drop-active::after {
 }
 .date-picker {
   position: fixed;
-  width: 244px;
+  /* Wide enough that the longest header title — the scheduled/deadline picker's
+     "September 2026 · Scheduled" — stays on ONE line (measured single-line floor
+     ~260px; +24 slack for wider system fonts). Shared with the topbar CalendarJump,
+     which fits comfortably. Paired with `.dp-title { white-space: nowrap }` so the
+     header can never reflow to two rows (which shoved the day grid down). If the
+     width here changes, update DatePicker.tsx's on-screen `left` clamp to match. */
+  width: 284px;
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: 10px;
@@ -2736,6 +2886,10 @@ body.file-drop-active::after {
   font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
+  /* Never let the title wrap onto a second line: a long month + " · Scheduled"
+     used to grow the header and push the whole day grid down a row (jumping back
+     up on shorter months). See `.date-picker` width. */
+  white-space: nowrap;
 }
 .dp-which {
   color: var(--text-muted);

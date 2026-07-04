@@ -228,6 +228,12 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   docs live in one place.
 - **Fully remappable keyboard shortcuts** — in the Settings modal or via
   `config.edn :shortcuts`.
+- **Help improve Tine** (Settings tab) — runs Tine's parser (lsdoc) against
+  Logseq's own parser (mldoc) over your graph, locally, and reports any place they
+  disagree plus a parse-speed comparison. Every divergence snippet is **anonymized**
+  (words scrubbed, markup structure kept) and **re-verified to still reproduce the
+  divergence** before it's shown, so it's safe to paste into a bug report. mldoc is
+  loaded only on demand; nothing is uploaded.
 - Light/dark themes, accent color, custom CSS, wide mode (`t w`), document mode
   (`t d`).
 - ⊕ **Spell checking** in the editor (on by default, like Logseq) with red squiggles
