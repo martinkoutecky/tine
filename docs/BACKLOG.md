@@ -23,9 +23,9 @@ _Nothing actively in flight._
 
 ## P1 — do next (high value, bounded scope)
 
-_Empty — the Jul 3 2026 batch cleared it (heading-sized editor `7090da1`, block-level
-`:macros` `48e602b`, parser crash-guard `af09a14`). The "live facet chip" idea resolved to
-the CodeMirror 6 live-preview route — see Deferred; Martin chose to keep it deferred._
+| Item | Notes |
+|---|---|
+| **Collapsed-query builder flicker on pointer re-entry (WebKitGTK)** | On a page of collapsed `{{query}}` bullets, moving the pointer off the page (onto the tab bar) and back makes a *varying subset* of the collapsed query builders flicker (Martin, Jul 4 2026). **Diagnosed, not a reactivity bug:** headless-Chromium repro (5 collapsed queries, mock TODOs page) shows **zero DOM churn** — QueryMacro/qb-bar do not re-mount on hover — and no chip-bar re-wrap on a 15px width change, so it is not a `createResource` re-mount nor a scrollbar-width reflow of the flex-wrap bar. It reproduces only in the real app → **WebKitGTK paint/compositor artifact** on hover-driven repaint (`.ls-block:hover` reveals the collapse toggle at `app.css:1875`; overlay-scrollbar fade-in on pointer re-entry repaints composited layers; the "subset" = whichever boxes the cursor path crosses / which tiles re-raster). Headless SW rendering can't reproduce it (cf. `tine-focus-scroll-jitter`). **Next:** Martin runs `TINE_GPU=0 tine` — if the flicker stops, it's the GPU compositor and the fix is layer-isolation (careful: `contain:paint` on `.query-block` would clip the chip dropdowns/sort popover — need a non-clipping approach); if it persists, chase the scrollbar/paint path. Discriminator-first so we fix the real cause, not a guess. |
 
 ---
 
