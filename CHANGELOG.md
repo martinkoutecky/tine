@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.3.4] — 2026-07-04
+
 ### Added
 
 - **Settings → Help improve Tine.** A panel that runs Tine's parser (lsdoc)
