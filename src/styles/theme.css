@@ -37,7 +37,8 @@ html[data-theme="light"] {
   --text-title: #0f1419;
   --text-muted: #9b9b9b;
 
-  --link-color: #1f6fd0;
+  --accent: #1f6fd0;
+  --link-color: var(--accent);
   --link-hover: #18548f;
   --tag-color: #8a45c4;
 
@@ -73,7 +74,8 @@ html[data-theme="dark"] {
   --text-title: #ecedf0;
   --text-muted: #7a7c82;
 
-  --link-color: #6cb0ff;
+  --accent: #6cb0ff;
+  --link-color: var(--accent);
   --link-hover: #9ccbff;
   --tag-color: #cf92ec;
 

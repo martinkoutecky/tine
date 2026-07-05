@@ -52,12 +52,17 @@ function saveStr(key: string, val: string | null) {
 
 const ACCENT_KEY = "logseq-claude.accent";
 export const [accentColor, setAccentColor] = createSignal<string | null>(loadStr(ACCENT_KEY));
-/** Apply (or clear) the accent color as the link/highlight CSS variable. */
+/** Apply (or clear) the accent color as the link/highlight CSS variables. */
 export function applyAccent() {
   const c = accentColor();
   const root = document.documentElement;
-  if (c) root.style.setProperty("--link-color", c);
-  else root.style.removeProperty("--link-color");
+  if (c) {
+    root.style.setProperty("--accent", c);
+    root.style.setProperty("--link-color", c);
+  } else {
+    root.style.removeProperty("--accent");
+    root.style.removeProperty("--link-color");
+  }
 }
 export function changeAccent(c: string | null) {
   setAccentColor(c);

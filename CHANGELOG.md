@@ -10,6 +10,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Logseq `--ls-*` theme CSS mostly works in `custom.css`.** Tine now seeds the
+  common OG color variables and routes its own theme tokens back through them, so
+  Awesome-Styler-style themes can recolor backgrounds, text, links, borders, bullets,
+  selection, marks, and inline code while Tine's default light/dark themes stay
+  visually unchanged. This is CSS theme compatibility only, not Logseq plugin support.
 - **Pages in sub-directories are now scanned** ([#21](https://github.com/martinkoutecky/tine/issues/21)).
   Like Logseq, Tine walks `pages/` (and `journals/`) **recursively**, so pages filed
   into real sub-folders — e.g. archiving `pages/client-a/…` — appear in the page list

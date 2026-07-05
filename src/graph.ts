@@ -9,6 +9,7 @@ import { resetTabsToJournals, openPage } from "./router";
 import { journalTitle, setJournalTitleFormat } from "./journal";
 import { applyTemplateVars } from "./editor/templateVars";
 import { waitForWarmCache } from "./warmCache";
+import { CUSTOM_CSS_STYLE_ID, ensureLsShimStyle } from "./lsShim";
 import type { BlockDto } from "./types";
 
 const GRAPH_KEY = "tine.graphPath";
@@ -150,13 +151,14 @@ async function injectCustomCss(): Promise<void> {
   } catch {
     css = "";
   }
-  let el = document.getElementById("tine-custom-css");
+  ensureLsShimStyle();
+  let el = document.getElementById(CUSTOM_CSS_STYLE_ID);
   if (!el) {
     el = document.createElement("style");
-    el.id = "tine-custom-css";
-    document.head.appendChild(el);
+    el.id = CUSTOM_CSS_STYLE_ID;
   }
   el.textContent = css;
+  document.head.appendChild(el);
 }
 
 /** Pick a folder and open it as the graph. No-op if cancelled. */

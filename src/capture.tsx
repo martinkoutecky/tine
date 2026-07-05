@@ -39,6 +39,7 @@ import {
 // variable definitions → white background, invisible bullets (size 0), no
 // selection highlight, and data-theme="dark" did nothing.
 import "./styles/theme.css";
+import "./lsShimInstall";
 import "./styles/app.css";
 import "./styles/capture.css";
 

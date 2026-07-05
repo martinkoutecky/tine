@@ -1,0 +1,101 @@
+/* OG Logseq theme compatibility.
+   Keep the direction: Tine tokens resolve through seeded --ls-* variables so a
+   user's custom.css override of an OG variable reaches Tine components. */
+
+html[data-theme="light"] {
+  --ls-active-primary-color: #1f6fd0;
+  --ls-primary-background-color: #ffffff;
+  --ls-secondary-background-color: #f7f7f7;
+  --ls-tertiary-background-color: #eaeaea;
+  --ls-quaternary-background-color: #e2e2e2;
+  --ls-primary-text-color: #433f38;
+  --ls-secondary-text-color: #5c5c5c;
+  --ls-title-text-color: #0f1419;
+  --ls-link-text-color: var(--ls-active-primary-color);
+  --ls-link-text-hover-color: #18548f;
+  --ls-link-ref-text-color: var(--ls-link-text-color);
+  --ls-block-ref-link-text-color: var(--ls-link-ref-text-color);
+  --ls-a-chosen-bg: rgba(76, 139, 245, 0.15);
+  --ls-border-color: #e2e2e2;
+  --ls-secondary-border-color: var(--ls-border-color);
+  --ls-guideline-color: rgba(46, 27, 5, 0.12);
+  --ls-block-highlight-color: #eef6fc;
+  --ls-block-bullet-color: #adadad;
+  --ls-block-bullet-active-color: var(--ls-active-primary-color);
+  --ls-selection-background-color: rgba(76, 139, 245, 0.30);
+  --ls-page-inline-code-bg-color: #f1f1f1;
+  --ls-page-inline-code-color: var(--ls-primary-text-color);
+  --ls-page-mark-bg-color: #fef3ac;
+  --ls-page-mark-color: #262626;
+  --ls-tag-text-color: #8a45c4;
+
+  --accent: var(--ls-block-bullet-active-color, #1f6fd0);
+  --bg-primary: var(--ls-primary-background-color, #ffffff);
+  --bg-secondary: var(--ls-secondary-background-color, #f7f7f7);
+  --bg-tertiary: var(--ls-tertiary-background-color, #eaeaea);
+  --bg-quaternary: var(--ls-quaternary-background-color, #e2e2e2);
+  --text-primary: var(--ls-page-inline-code-color, #433f38);
+  --text-secondary: var(--ls-secondary-text-color, #5c5c5c);
+  --text-title: var(--ls-title-text-color, #0f1419);
+  --link-color: var(--ls-block-ref-link-text-color, #1f6fd0);
+  --link-hover: var(--ls-link-text-hover-color, #18548f);
+  --tag-color: var(--ls-tag-text-color, #8a45c4);
+  --border-color: var(--ls-secondary-border-color, #e2e2e2);
+  --guide-color: var(--ls-guideline-color, rgba(46, 27, 5, 0.12));
+  --bullet-color: var(--ls-block-bullet-color, #adadad);
+  --selection-bg: var(--ls-selection-background-color, rgba(76, 139, 245, 0.30));
+  --block-select-bg: var(--ls-a-chosen-bg, rgba(76, 139, 245, 0.15));
+  --block-highlight: var(--ls-block-highlight-color, #eef6fc);
+  --code-bg: var(--ls-page-inline-code-bg-color, #f1f1f1);
+  --mark-bg: var(--ls-page-mark-bg-color, #fef3ac);
+  --mark-text: var(--ls-page-mark-color, #262626);
+}
+
+html[data-theme="dark"] {
+  --ls-active-primary-color: #6cb0ff;
+  --ls-primary-background-color: #1a1b1e;
+  --ls-secondary-background-color: #25262b;
+  --ls-tertiary-background-color: #2f3035;
+  --ls-quaternary-background-color: #3a3b40;
+  --ls-primary-text-color: #c6c8cc;
+  --ls-secondary-text-color: #a0a2a8;
+  --ls-title-text-color: #ecedf0;
+  --ls-link-text-color: var(--ls-active-primary-color);
+  --ls-link-text-hover-color: #9ccbff;
+  --ls-link-ref-text-color: var(--ls-link-text-color);
+  --ls-block-ref-link-text-color: var(--ls-link-ref-text-color);
+  --ls-a-chosen-bg: rgba(76, 139, 245, 0.22);
+  --ls-border-color: #34363c;
+  --ls-secondary-border-color: var(--ls-border-color);
+  --ls-guideline-color: rgba(255, 255, 255, 0.10);
+  --ls-block-highlight-color: #24303d;
+  --ls-block-bullet-color: #6f7177;
+  --ls-block-bullet-active-color: var(--ls-active-primary-color);
+  --ls-selection-background-color: rgba(76, 139, 245, 0.50);
+  --ls-page-inline-code-bg-color: #2a2b30;
+  --ls-page-inline-code-color: var(--ls-primary-text-color);
+  --ls-page-mark-bg-color: #5b5320;
+  --ls-page-mark-color: #ecedf0;
+  --ls-tag-text-color: #cf92ec;
+
+  --accent: var(--ls-block-bullet-active-color, #6cb0ff);
+  --bg-primary: var(--ls-primary-background-color, #1a1b1e);
+  --bg-secondary: var(--ls-secondary-background-color, #25262b);
+  --bg-tertiary: var(--ls-tertiary-background-color, #2f3035);
+  --bg-quaternary: var(--ls-quaternary-background-color, #3a3b40);
+  --text-primary: var(--ls-page-inline-code-color, #c6c8cc);
+  --text-secondary: var(--ls-secondary-text-color, #a0a2a8);
+  --text-title: var(--ls-title-text-color, #ecedf0);
+  --link-color: var(--ls-block-ref-link-text-color, #6cb0ff);
+  --link-hover: var(--ls-link-text-hover-color, #9ccbff);
+  --tag-color: var(--ls-tag-text-color, #cf92ec);
+  --border-color: var(--ls-secondary-border-color, #34363c);
+  --guide-color: var(--ls-guideline-color, rgba(255, 255, 255, 0.10));
+  --bullet-color: var(--ls-block-bullet-color, #6f7177);
+  --selection-bg: var(--ls-selection-background-color, rgba(76, 139, 245, 0.50));
+  --block-select-bg: var(--ls-a-chosen-bg, rgba(76, 139, 245, 0.22));
+  --block-highlight: var(--ls-block-highlight-color, #24303d);
+  --code-bg: var(--ls-page-inline-code-bg-color, #2a2b30);
+  --mark-bg: var(--ls-page-mark-bg-color, #5b5320);
+  --mark-text: var(--ls-page-mark-color, #ecedf0);
+}

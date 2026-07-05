@@ -12,6 +12,7 @@ import "@fontsource/inter/700.css";
 import "katex/dist/katex.min.css";
 import "pdfjs-dist/web/pdf_viewer.css";
 import "./styles/theme.css";
+import "./lsShimInstall";
 import "./styles/app.css";
 
 applyTheme();

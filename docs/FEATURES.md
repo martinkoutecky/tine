@@ -279,7 +279,9 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   divergence** before it's shown, so it's safe to paste into a bug report. mldoc is
   loaded only on demand; nothing is uploaded.
 - Light/dark themes, accent color, custom CSS, wide mode (`t w`), document mode
-  (`t d`).
+  (`t d`). Tine also aliases common Logseq `--ls-*` theme variables, so file-based
+  themes such as the Awesome-Styler family can recolor backgrounds, text, links,
+  borders, and inline code. This is theme CSS compatibility, not plugin support.
 - ⊕ **Spell checking** in the editor (on by default, like Logseq) with red squiggles
   + right-click suggestions, using the system dictionaries. Unlike Logseq you can
   check **multiple languages at once** — Settings → Editor lists the dictionaries
