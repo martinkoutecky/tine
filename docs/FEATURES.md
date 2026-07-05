@@ -229,8 +229,17 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   (e.g. `dd-MM-yyyy`, `yyyy-MM-dd`, `yyyyMMdd`), falling back to the defaults so
   old/foreign files still resolve. The display-title format is pickable in Settings.
 - **Duplicate-day reconcile** — if two files ever resolve to the same day, Tine keeps
-  **both** rather than silently dropping one, and Settings → *Backups* → **Duplicate
+  **both** rather than silently dropping one, and Settings → *Journals* → **Duplicate
   journal days** lets you **Open** / **Merge** / **Rename** / **Trash** each.
+- **Sync-conflict merge** — Syncthing/Dropbox leave a `*.sync-conflict-*` (or
+  `(conflicted copy)`) file when the same page was edited on two devices. Tine keeps
+  these **out of your page list** (they're not real pages) and surfaces them under
+  Settings → *Journals* → **Sync conflict copies**. **Review & merge** shows a
+  **block-by-block diff** against the current page — matched by `id::`, then by
+  content, then by first-line similarity — with a per-block **keep-current /
+  keep-copy / keep-both** choice (and page-property merge); **Discard copy** trashes
+  it. The merge writes through the normal save path (base-revision-guarded, atomic)
+  and moves the copy to the recoverable **trash** — never auto-merged, never unlinked.
 - **Org-mode graphs** — opens, renders, and edits `.org` pages and journals
   (headlines as blocks; org inline `*bold*` `/italic/` `_underline_` `~code~`
   `[[target][desc]]`; TODO markers; `#+BEGIN_SRC`/`QUOTE`). Mixed `.md` + `.org`

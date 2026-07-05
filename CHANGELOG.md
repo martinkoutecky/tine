@@ -10,6 +10,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Sync-conflict merge.** Syncthing/Dropbox `*.sync-conflict-*` (and Dropbox
+  `(conflicted copy)`) files are now kept out of your page list and surfaced under
+  Settings → *Journals* → **Sync conflict copies**. **Review & merge** shows a
+  block-by-block diff against the current page — matched by `id::`, then content,
+  then first-line similarity — with per-block **keep-current / keep-copy / keep-both**
+  and a page-property merge; **Discard copy** trashes it. Merges write through the
+  normal (base-revision-guarded, atomic) save path and move the copy to the
+  recoverable trash — never auto-merged, never unlinked. See ADR 0020.
 - **"Help improve Tine" diff panel** (Settings). Runs Tine's parser (lsdoc) against
   Logseq's own (mldoc) on your graph, locally, and surfaces anonymized, re-verified
   divergences to paste into a bug report — crowd-sourcing parser divergence hunting.
