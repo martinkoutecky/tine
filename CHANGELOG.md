@@ -8,6 +8,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Added
+
+- **Pages in sub-directories are now scanned** ([#21](https://github.com/martinkoutecky/tine/issues/21)).
+  Like Logseq, Tine walks `pages/` (and `journals/`) **recursively**, so pages filed
+  into real sub-folders — e.g. archiving `pages/client-a/…` — appear in the page list
+  and are searchable and linkable instead of being invisible. A nested page is keyed by
+  its **file name** (`pages/client-a/foo.md` → page `foo`), matching Logseq, and edits
+  save back to that file in place. Namespaces (`parent/child`) remain the flat
+  `parent___child.md` filename encoding, not real folders — also matching Logseq.
+
 ## [0.3.5] — 2026-07-05
 
 ### Added

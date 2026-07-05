@@ -240,6 +240,13 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   keep-copy / keep-both** choice (and page-property merge); **Discard copy** trashes
   it. The merge writes through the normal save path (base-revision-guarded, atomic)
   and moves the copy to the recoverable **trash** — never auto-merged, never unlinked.
+- **Pages in sub-folders are found** — like Logseq, Tine scans `pages/` (and
+  `journals/`) **recursively**, so pages you've filed into real sub-directories
+  (e.g. archiving `pages/client-a/…`) show up in the page list and are searchable
+  and linkable. A nested page is keyed by its **file name** (`pages/client-a/foo.md`
+  → page `foo`), matching Logseq; edits save back to the file in place. (Namespaces
+  — `parent/child` — are still the flat `parent___child.md` filename form, not real
+  folders, exactly as in Logseq.)
 - **Org-mode graphs** — opens, renders, and edits `.org` pages and journals
   (headlines as blocks; org inline `*bold*` `/italic/` `_underline_` `~code~`
   `[[target][desc]]`; TODO markers; `#+BEGIN_SRC`/`QUOTE`). Mixed `.md` + `.org`

@@ -532,13 +532,6 @@ impl Graph {
         }
         let mut parts = rel.split('/');
         let dir = parts.next()?;
-        let file = parts.next()?;
-        if parts.next().is_some() {
-            return None; // more than one separator → nested/traversal
-        }
-        if file.is_empty() || dir == ".." || dir == "." || file == ".." || file == "." {
-            return None;
-        }
         let base = if dir == self.config.journals_dir {
             self.journals_path()
         } else if dir == self.config.pages_dir {
@@ -546,7 +539,24 @@ impl Graph {
         } else {
             return None;
         };
-        let abs = base.join(file);
+        // The remaining segments are the file's path UNDER that dir. Nested
+        // sub-directories are allowed (#21) but the can't-escape-the-graph
+        // invariant is kept lexically: every segment must be a plain name — no
+        // empty segment (`a//b`, a trailing `/`), no `.`/`..` traversal. With no
+        // `..` and no absolute/backslash (rejected above), `base.join(tail)`
+        // provably stays within `base`; there must be at least one segment (a bare
+        // `pages` is a dir, not a file).
+        let mut tail = PathBuf::new();
+        for seg in parts {
+            if seg.is_empty() || seg == "." || seg == ".." {
+                return None;
+            }
+            tail.push(seg);
+        }
+        if tail.as_os_str().is_empty() {
+            return None;
+        }
+        let abs = base.join(tail);
         match abs.extension().and_then(|e| e.to_str()) {
             Some("md") | Some("org") => Some(abs),
             _ => None,
@@ -2574,14 +2584,18 @@ impl Graph {
             return None;
         }
         let stem = path.file_stem().and_then(|s| s.to_str())?;
-        let parent = path.parent()?;
-        if parent == self.journals_path() {
+        // Accept a file anywhere UNDER journals/ or pages/, not just a direct child
+        // (#21 recursive subdirs). The page name is the basename (the sub-path is
+        // discarded, matching OG); the file's own `path` remains its load/save
+        // identity. `starts_with` is a lexical prefix over path components, so a
+        // file at `pages/x/foo.md` matches `pages/` but nothing outside it.
+        if path.starts_with(self.journals_path()) {
             let (name, date_key) = match self.journal_format.parse(stem) {
                 Some(d) => (self.journal_format.title(d), Some(d.ordinal_key())),
                 None => (stem.to_string(), None),
             };
             Some(PageEntry { name, kind: PageKind::Journal, date_key, path: path.to_path_buf() })
-        } else if parent == self.pages_path() {
+        } else if path.starts_with(self.pages_path()) {
             Some(PageEntry {
                 name: decode_page_name(stem, self.config.file_name_format),
                 kind: PageKind::Page,
@@ -3141,24 +3155,51 @@ fn list_md(
     name_fmt: FileNameFormat,
 ) -> Vec<PageEntry> {
     let mut out = Vec::new();
-    let Ok(rd) = fs::read_dir(dir) else { return out };
-    for entry in rd.flatten() {
-        let path = entry.path();
-        if !is_page_file(&path) {
-            continue;
+    // Descend into sub-directories (#21). Logseq scans the whole graph root
+    // recursively, so a page archived under `pages/client-a/foo.md` is a real
+    // page — keyed by its BASENAME (`foo`); the sub-path is discarded, matching
+    // OG's `path->file-name` (the file's own `path` stays its load/save identity).
+    // One stack-based walk, O(files), no re-scan.
+    //
+    // Perf: an entry with a page extension is taken as a file WITHOUT a
+    // `file_type()`/stat — exactly the old single-level fast path, so a flat graph
+    // pays nothing extra even on d_type-less filesystems (some NFS). We only stat
+    // NON-page entries, and only to decide whether to recurse into a sub-dir.
+    // `file_type()` doesn't follow symlinks, so a symlinked dir is naturally not
+    // recursed (no cycles / no escaping the graph). Hidden dirs (`.git` &c.) are
+    // skipped — never a page store.
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let Ok(rd) = fs::read_dir(&d) else { continue };
+        for entry in rd.flatten() {
+            let path = entry.path();
+            if is_page_file(&path) {
+                let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else { continue };
+                if is_sync_conflict(stem) {
+                    continue; // sync-tool conflict copy — not a page (see list_sync_conflicts)
+                }
+                let (name, date_key) = match kind {
+                    PageKind::Journal => match fmt.parse(stem) {
+                        Some(d) => (fmt.title(d), Some(d.ordinal_key())),
+                        None => (stem.to_string(), None),
+                    },
+                    PageKind::Page => (decode_page_name(stem, name_fmt), None),
+                };
+                out.push(PageEntry { name, kind, date_key, path });
+                continue;
+            }
+            // Non-page entry: recurse if it's a real (non-symlink, non-hidden)
+            // sub-directory. This is the only stat we pay, and never on the hot
+            // page-file path above.
+            let hidden = path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .map(|s| s.starts_with('.'))
+                .unwrap_or(true);
+            if !hidden && entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
+                stack.push(path);
+            }
         }
-        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else { continue };
-        if is_sync_conflict(stem) {
-            continue; // sync-tool conflict copy — not a page (see list_sync_conflicts)
-        }
-        let (name, date_key) = match kind {
-            PageKind::Journal => match fmt.parse(stem) {
-                Some(d) => (fmt.title(d), Some(d.ordinal_key())),
-                None => (stem.to_string(), None),
-            },
-            PageKind::Page => (decode_page_name(stem, name_fmt), None),
-        };
-        out.push(PageEntry { name, kind, date_key, path });
     }
     out
 }
@@ -4484,15 +4525,31 @@ mod tests {
             Some(dir.join("journals").join("2026_06_26.org"))
         );
         assert_eq!(g.resolve_rel("pages/Note.md"), Some(dir.join("pages").join("Note.md")));
-        // Rejections: traversal, absolute, nesting, wrong dir, wrong/no extension.
+        // Valid: nested sub-directories under pages/ (#21) — any depth.
+        assert_eq!(
+            g.resolve_rel("pages/client-a/foo.md"),
+            Some(dir.join("pages").join("client-a").join("foo.md"))
+        );
+        assert_eq!(
+            g.resolve_rel("pages/a/b/c/deep.org"),
+            Some(dir.join("pages").join("a").join("b").join("c").join("deep.org"))
+        );
+        // Rejections: traversal (incl. FROM a subdir), absolute, empty/`.` segment,
+        // wrong dir, wrong/no extension, a bare dir. Nesting itself is NOT rejected.
         for bad in [
             "../secrets.md",
             "journals/../../etc/passwd.md",
+            "pages/../../etc/passwd.md",
+            "pages/sub/../../../etc/passwd.md",
+            "pages/client-a/../../escape.md",
+            "pages/./foo.md",
+            "pages/a//b.md",
+            "pages/sub/.md",
             "/etc/passwd.md",
-            "journals/sub/deep.md",
             "assets/pic.png",
             "journals/note.txt",
             "journals/",
+            "pages/sub/",
             "Note.md",
             "",
         ] {
@@ -4558,6 +4615,70 @@ mod tests {
         let mut p = g.load_by_path("journals/Friday, 26-06-2026.org").unwrap().unwrap();
         p.path = "../escape.md".into();
         assert!(g.save_page(&p, p.rev.as_deref()).is_err(), "save must refuse an out-of-graph path");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ---- #21: recursive sub-directory scanning under pages/ ----
+
+    #[test]
+    fn nested_page_is_listed_openable_by_name_and_searchable() {
+        // A page archived in a real sub-folder (`pages/client-a/foo.md`) must show
+        // up as a page — by its BASENAME `foo` (the directory is discarded, OG
+        // parity) — and be openable by name and findable by search.
+        let dir = scratch("nested-visible");
+        fs::create_dir_all(dir.join("pages").join("client-a")).unwrap();
+        fs::write(
+            dir.join("pages").join("client-a").join("foo.md"),
+            "- nestedsentinel body\n",
+        )
+        .unwrap();
+        let g = Graph::open(&dir);
+        g.warm_cache();
+
+        // Listed by basename, carrying its nested path.
+        let entry = g
+            .list_pages()
+            .into_iter()
+            .find(|e| e.kind == PageKind::Page && e.name == "foo")
+            .expect("nested page listed by basename");
+        assert_eq!(g.rel_path(&entry.path), "pages/client-a/foo.md");
+
+        // Openable by name (find_entry resolves via the recursive scan), and the
+        // DTO carries the nested path so a later save round-trips in place.
+        let dto = g.load_named("foo", PageKind::Page).unwrap().expect("open nested page by name");
+        assert_eq!(dto.blocks[0].raw, "nestedsentinel body");
+        assert_eq!(dto.path, "pages/client-a/foo.md");
+
+        // Indexed for full-text search (the cache folded it in via list_pages).
+        assert!(!g.search("nestedsentinel", 10).is_empty(), "nested page is searchable");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn nested_page_edit_saves_in_place_with_no_flat_twin() {
+        // The data-safety invariant: editing a nested page must write back to its
+        // own file — never re-resolve by name and create a flat `pages/foo.md` twin.
+        let dir = scratch("nested-roundtrip");
+        fs::create_dir_all(dir.join("pages").join("client-a")).unwrap();
+        fs::write(dir.join("pages").join("client-a").join("foo.md"), "- before\n").unwrap();
+        let g = Graph::open(&dir);
+        g.warm_cache();
+
+        let mut dto = g.load_named("foo", PageKind::Page).unwrap().unwrap();
+        assert_eq!(dto.path, "pages/client-a/foo.md");
+        dto.blocks[0].raw = "after".into();
+        g.save_page(&dto, dto.rev.as_deref()).unwrap();
+
+        // The nested file got the edit…
+        assert_eq!(
+            fs::read_to_string(dir.join("pages").join("client-a").join("foo.md")).unwrap(),
+            "- after\n"
+        );
+        // …and NO flat twin was created.
+        assert!(
+            !dir.join("pages").join("foo.md").exists(),
+            "save must not create a flat pages/foo.md twin"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
