@@ -192,6 +192,10 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
 - `Ctrl+K` quick switcher: page titles + full-text content hits (visible text only —
   no false hits on hidden properties/uuids), with block breadcrumbs and middle-click
   → background tab.
+- `Mod+F` in-page find on normal pages: a slim find bar with next/previous,
+  `n / total` counts, and highlights for the current page. The match list is built
+  from the block model, so collapsed or lazy-rendered branches are found and opened
+  before the active match is highlighted.
 - Command palette (`Mod+Shift+P`), favorites, recent pages, a collapsible
   **namespace tree** in the sidebar, the **`{{namespace X}}`** macro (a bold
   "Namespace" header + nested descendant tree), an automatic **"Hierarchy"** section

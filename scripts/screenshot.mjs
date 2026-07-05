@@ -40,6 +40,15 @@ try {
   await sleep(400);
   await page.screenshot({ path: `${OUT}/journals-light.png` });
 
+  // In-page find on normal pages: model-backed count + non-destructive highlight.
+  await page.keyboard.press("Control+f");
+  await page.waitForSelector(".inpage-find-bar", { timeout: 5000 });
+  await page.keyboard.type("Tine");
+  await sleep(350);
+  await page.screenshot({ path: `${NOTES_OUT}/inpage-find-light.png` });
+  await page.keyboard.press("Escape");
+  await sleep(150);
+
   // Editing state: click a block to show the textarea editor.
   await page.locator(".block-content").nth(1).click();
   await sleep(250);
@@ -132,11 +141,23 @@ try {
   await page.screenshot({ path: `${OUT}/tabs-light.png` });
 
   // Dark theme on the journals feed.
-  await page.locator(".tab").first().click();
+  const closePdf = page.locator('[title="Close PDF"]');
+  if (await closePdf.count()) {
+    await closePdf.click();
+    await sleep(150);
+  }
+  await page.locator(".tab").filter({ hasText: "Journals" }).first().click();
   await sleep(150);
+  await page.keyboard.press("Escape");
+  await sleep(100);
   await page.click('[title^="Toggle theme"]');
   await sleep(300);
   await page.screenshot({ path: `${OUT}/journals-dark.png` });
+  await page.keyboard.press("Control+f");
+  await page.waitForSelector(".inpage-find-bar", { timeout: 5000 });
+  await page.keyboard.type("Tine");
+  await sleep(350);
+  await page.screenshot({ path: `${NOTES_OUT}/inpage-find-dark.png` });
 
   await browser.close();
   console.log("screenshots written to", OUT);

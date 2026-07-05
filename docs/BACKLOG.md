@@ -23,9 +23,7 @@ _Empty. (The "Help improve Tine" lsdoc↔mldoc diff panel — [ADR 0018](adr/001
 
 ## P1 — do next (high value, bounded scope)
 
-| Item | Notes |
-|---|---|
-| **In-page find (Ctrl+F) on normal pages** (Martin, Jul 5 2026) | **Confirmed missing.** `Ctrl+F` is bound **only inside the PDF viewer** (`PdfViewer.tsx:557`, scoped to the PDF text layer); there is **no `mod+f` binding** in the central `keybindings.ts`, and Tauri/WebKitGTK ships **no default browser find-in-page UI** — so pressing Ctrl+F on an ordinary page does nothing. Distinct from what *does* exist: **Ctrl+K** (QuickSwitcher, `keybindings.ts:89`) is a graph-wide grouped search incl. full-text **Blocks** — that finds across the graph but is not a browser-style *find-and-highlight-on-the-current-page*. **Work:** a find bar (input + next/prev + match count + highlight) driven in the WebView. Caveats: matches inside **collapsed/unmounted** blocks (block-body lazy render, ADR 0008) and folded content won't be found by a naive DOM `window.find`/text-walk — needs to expand/mount hits or search the doc model; interacts with the caret/focus cluster and any future DOM windowing (which lists find-in-page as a risk). **OG-parity check:** confirm OG's own in-page find affordance (Electron `findInPage`?) before matching its exact UX. |
+_Empty._
 
 ---
 

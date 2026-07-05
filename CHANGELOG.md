@@ -10,6 +10,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **In-page find on normal pages.** `Mod+F` opens a browser-style find bar with
+  next/previous navigation, match counts, and non-destructive highlights. Matches
+  come from the loaded block model rather than the mounted DOM, so text under
+  lazy-rendered or collapsed branches is counted and the target branch is expanded
+  before the active hit is scrolled into view.
 - **Logseq-compatible time tracking.** Moving tasks into `DOING`/`NOW` clocks in,
   and moving them back to `TODO`/`LATER` or into `DONE` clocks out by writing OG
   `:LOGBOOK:` `CLOCK:` rows. The writer uses Logseq's local timestamp shape,

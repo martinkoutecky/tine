@@ -28,6 +28,7 @@ import {
   carryDays,
   pushToast,
   openPdfExport,
+  pdfTarget,
 } from "./ui";
 import { carryDaysBack } from "./carry";
 import {
@@ -55,6 +56,7 @@ import {
 } from "./store";
 import { startEditing } from "./editorController";
 import { copyOutline } from "./clipboard";
+import { closeInPageFind, inPageFindOpen, openInPageFind } from "./inpageFind";
 
 interface Chord {
   mod: boolean;
@@ -87,6 +89,7 @@ const isMac = typeof navigator !== "undefined" && /Mac/.test(navigator.platform)
 // Default command table. Editor command ids mirror OG Logseq where practical.
 const COMMANDS: CommandDef[] = [
   { id: "go/search", binding: "mod+k", label: "Search / quick switch", scope: "global", run: openSwitcher, global: true },
+  { id: "go/find-in-page", binding: "mod+f", label: "Find in page", scope: "global", run: openInPageFind, global: true },
   { id: "command-palette/toggle", binding: "mod+shift+p", label: "Command palette", scope: "global", run: openCommandPalette, global: true },
   { id: "go/journals", binding: "g j", label: "Go to journals", scope: "global", run: openJournals },
   { id: "go/keyboard-shortcuts", binding: "g s", label: "Go to keyboard shortcuts", scope: "global", run: () => openSettings("shortcuts") },
@@ -525,6 +528,12 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
     // deselects (and in focus mode that same Esc exits focus); else exit focus.
     // Net: editing → Esc (to block-select) → Esc (exit focus) = twice, not once.
     if (e.key === "Escape") {
+      if (inPageFindOpen()) {
+        closeInPageFind();
+        e.preventDefault();
+        resetSeq();
+        return;
+      }
       if (switcherOpen() || settingsOpen()) {
         closeSwitcher();
         closeSettings();
@@ -593,6 +602,10 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
       if (cs.length > seq.length) continue;
       const tail = seq.slice(seq.length - cs.length);
       if (cs.every((c, i) => chordEq(c, tail[i]))) {
+        if (cmd.id === "go/find-in-page" && pdfTarget()) {
+          resetSeq();
+          return;
+        }
         e.preventDefault();
         resetSeq();
         cmd.run!();

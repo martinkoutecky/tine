@@ -20,6 +20,7 @@ import { DatePicker } from "./components/DatePicker";
 import { PageProps } from "./components/PageProps";
 import { ExportModal } from "./components/ExportModal";
 import { PdfExportDialog } from "./components/PdfExportDialog";
+import { InPageFind } from "./components/InPageFind";
 import { installKeybindings } from "./keybindings";
 import { installFileDrop } from "./filedrop";
 import { installBlockSelectionDrag } from "./blockDrag";
@@ -509,6 +510,7 @@ export function App(): JSX.Element {
           </div>
         </header>
         <ConflictBar />
+        <InPageFind />
         {/* Everything below the topbar lives in this row, so the topbar (and its
             window controls at the far right) spans the full window width and the
             right sidebar / PDF pane sit UNDER it — not beside the close button. */}

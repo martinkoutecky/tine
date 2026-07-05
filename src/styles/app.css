@@ -4707,6 +4707,64 @@ img.emoji {
   100% { background: transparent; }
 }
 
+/* Browser-style find bar for normal pages. Highlights use CSS Custom Highlight
+   when available; the overlay fallback is paint-only and never mutates block DOM. */
+.inpage-find-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+}
+.inpage-find-input {
+  width: 240px;
+  max-width: min(48vw, 240px);
+  padding: 4px 8px;
+  font-size: 13px;
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+}
+.inpage-find-input:focus {
+  border-color: var(--link-color);
+  outline: none;
+}
+.inpage-find-count {
+  min-width: 70px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+::highlight(tine-find) {
+  background: rgba(251, 230, 158, 0.58);
+  color: inherit;
+}
+::highlight(tine-find-active) {
+  background: rgba(255, 170, 58, 0.78);
+  color: inherit;
+}
+.inpage-find-active-block > .block-main {
+  box-shadow: inset 3px 0 0 rgba(255, 170, 58, 0.95);
+}
+.inpage-find-overlays {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  pointer-events: none;
+}
+.inpage-find-overlay {
+  position: fixed;
+  border-radius: 2px;
+  background: rgba(251, 230, 158, 0.5);
+}
+.inpage-find-overlay.active {
+  background: rgba(255, 170, 58, 0.72);
+}
+
 /* ------------------------------------------------------- right sidebar */
 
 .right-sidebar {

@@ -97,6 +97,7 @@ import { normalizePlanning } from "../editor/planning";
 import { isAnnotationBlock, annotationInfo } from "../editor/annotation";
 import { AnnotationBody } from "./AnnotationBody";
 import { logbookInfo, type LogbookInfo } from "../logbook";
+import { inPageFindPreservesEditorBlur } from "../inpageFind";
 
 // Detect a block whose entire body is a single {{query}} / {{embed}} macro.
 function detectMacro(raw: string): { kind: "query" | "embed"; inner: string } | null {
@@ -1657,6 +1658,14 @@ export function Editor(props: { id: string }): JSX.Element {
     // handler refocuses and restores the caret). Commit as-is, don't normalize.
     if (isBlockMoving()) {
       commit(ref.value);
+      return;
+    }
+    // Ctrl+F moves focus into Tine's find bar, but the block should remain in
+    // edit mode so Escape can restore the caret instead of remounting rendered
+    // content underneath the user.
+    if (inPageFindPreservesEditorBlur()) {
+      commit(ref.value);
+      savedSel = { start: ref.selectionStart, end: ref.selectionEnd };
       return;
     }
     // The whole window lost focus (switched to another app/window): stay in edit
