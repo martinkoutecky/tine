@@ -10,6 +10,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Sub-directory scan Phase 2 polish** ([#21](https://github.com/martinkoutecky/tine/issues/21)).
+  Sync-conflict and duplicate-day journal scanners now recurse under `pages/` and
+  `journals/` through the same page-file walker as the main scan, so nested
+  conflict copies are surfaced. The Pages list also disambiguates basename
+  collisions only when needed (`foo — client-a/`) and opens file-backed entries by
+  graph-relative path, so colliding nested pages save back to their own files
+  without creating a flat twin.
 - **Logseq `--ls-*` theme CSS mostly works in `custom.css`.** Tine now seeds the
   common OG color variables and routes its own theme tokens back through them, so
   Awesome-Styler-style themes can recolor backgrounds, text, links, borders, bullets,

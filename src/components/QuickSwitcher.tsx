@@ -1,7 +1,7 @@
 import { For, Show, createSignal, createResource, createEffect, createMemo, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { switcherOpen, closeSwitcher, switcherMode, recentPages } from "../ui";
-import { openPage, openPageAtBlock, openPageInNewTab, route } from "../router";
+import { openPage, openPageAtBlock, openPageInNewTab, openFile, openInNewTab, route } from "../router";
 import { paletteCommands } from "../keybindings";
 import { fuzzyScore } from "../editor/autocomplete";
 import { visibleBody } from "../render/block";
@@ -9,7 +9,7 @@ import type { PageEntry, PageKind } from "../types";
 
 // One selectable result row.
 type Item =
-  | { t: "page"; name: string; pageKind: PageKind }
+  | { t: "page"; name: string; pageKind: PageKind; path?: string }
   | { t: "create"; name: string }
   | { t: "command"; label: string; binding: string; run: () => void }
   | { t: "block"; page: string; pageKind: PageKind; blockId: string; text: string; crumb: string[] };
@@ -123,7 +123,7 @@ export function QuickSwitcher(): JSX.Element {
     // Pages (require contiguous substring — fuzzy subsequence reads as noise here).
     const allPages: Item[] = (pages() ?? [])
       .filter((e) => e.name.toLowerCase().includes(ql))
-      .map((e) => ({ t: "page", name: e.name, pageKind: e.kind }));
+      .map((e) => ({ t: "page", name: e.name, pageKind: e.kind, path: e.path }));
     const morePages = allPages.length > pageLimit();
     const pageItems = morePages ? allPages.slice(0, pageLimit()) : allPages;
     if (pageItems.length)
@@ -198,7 +198,7 @@ export function QuickSwitcher(): JSX.Element {
   const choose = (it: Item) => {
     switch (it.t) {
       case "page":
-        openPage(it.name, it.pageKind);
+        it.path ? openFile(it.path, it.name, it.pageKind) : openPage(it.name, it.pageKind);
         break;
       case "create":
         void createPage(it.name);
@@ -219,7 +219,10 @@ export function QuickSwitcher(): JSX.Element {
   // itself (self-contained and durable — the tab shows exactly what you found);
   // create/command have no background-tab meaning, so they're ignored.
   const openInBackground = (it: Item) => {
-    if (it.t === "page") openPageInNewTab(it.name, it.pageKind);
+    if (it.t === "page")
+      it.path
+        ? openInNewTab({ kind: "page", name: it.name, pageKind: it.pageKind, path: it.path })
+        : openPageInNewTab(it.name, it.pageKind);
     else if (it.t === "block") openPageInNewTab(it.page, it.pageKind, it.blockId);
   };
 

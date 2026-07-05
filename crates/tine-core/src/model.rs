@@ -59,6 +59,19 @@ fn is_page_file(path: &Path) -> bool {
     matches!(path.extension().and_then(|e| e.to_str()), Some("md") | Some("org"))
 }
 
+fn slash_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+fn rel_under_dir(rel_dir: &str, dir: &Path, path: &Path) -> String {
+    let tail = path.strip_prefix(dir).unwrap_or(path);
+    if tail.as_os_str().is_empty() {
+        rel_dir.to_string()
+    } else {
+        format!("{rel_dir}/{}", slash_path(tail))
+    }
+}
+
 /// If `stem` is a sync tool's conflict copy of another file, return the base file
 /// stem it shadows. Recognises Syncthing
 /// (`name.sync-conflict-YYYYMMDD-HHMMSS-XXXXXXX`) and Dropbox
@@ -128,6 +141,10 @@ pub struct PageEntry {
     pub kind: PageKind,
     /// Sort key `yyyymmdd` for journals; `None` for ordinary pages.
     pub date_key: Option<i64>,
+    /// Graph-root-relative path exposed to the frontend so duplicate basenames
+    /// can be opened by file, not by ambiguous `(kind,name)`.
+    #[serde(rename = "path", default)]
+    pub rel_path: String,
     #[serde(skip)]
     pub path: PathBuf,
 }
@@ -512,19 +529,16 @@ impl Graph {
     /// to a SPECIFIC file (#21). Falls back to the input lossily if it's somehow
     /// outside the root (shouldn't happen for graph files).
     pub fn rel_path(&self, abs: &Path) -> String {
-        abs.strip_prefix(&self.root)
-            .unwrap_or(abs)
-            .to_string_lossy()
-            .replace('\\', "/")
+        slash_path(abs.strip_prefix(&self.root).unwrap_or(abs))
     }
 
     /// Resolve a graph-root-relative path (as produced by [`rel_path`]) back to an
     /// absolute file path, validating it points at a real graph text file. This is
     /// the security gate for every path-addressed command (#21): it accepts ONLY
-    /// `<journals-dir>/<file>` or `<pages-dir>/<file>` — one path segment under a
-    /// known dir, no `..`/`.`/absolute/extra separators — with a `.md`/`.org`
-    /// extension. Anything else (traversal, a nested subdir, a stray extension)
-    /// returns `None`, so a path-addressed read/save can never escape the graph.
+    /// `.md`/`.org` files under `<journals-dir>/` or `<pages-dir>/`, with nested
+    /// sub-directories allowed but no `..`/`.`/absolute/empty/backslash segments.
+    /// Anything else returns `None`, so a path-addressed read/save can never
+    /// escape the graph.
     pub fn resolve_rel(&self, rel: &str) -> Option<PathBuf> {
         let rel = rel.trim();
         if rel.is_empty() || rel.starts_with('/') || rel.contains('\\') {
@@ -600,8 +614,8 @@ impl Graph {
         }
         let mut entries = Vec::new();
         let nf = self.config.file_name_format;
-        entries.extend(list_md(&self.journals_path(), PageKind::Journal, &self.journal_format, nf));
-        entries.extend(list_md(&self.pages_path(), PageKind::Page, &self.journal_format, nf));
+        entries.extend(list_md(&self.journals_path(), PageKind::Journal, &self.journal_format, nf, &self.config.journals_dir));
+        entries.extend(list_md(&self.pages_path(), PageKind::Page, &self.journal_format, nf, &self.config.pages_dir));
         // A duplicate-day journal (canonical + leftover title-named file) must show
         // once in quick-switch / All-Pages, not twice (both resolve to one page).
         let entries = dedup_journal_days(entries);
@@ -691,7 +705,7 @@ impl Graph {
                 .filter(|(e, _)| e.kind == PageKind::Journal && e.date_key.is_some())
                 .map(|(e, _)| e.clone())
                 .collect(),
-            None => list_md(&self.journals_path(), PageKind::Journal, &self.journal_format, self.config.file_name_format)
+            None => list_md(&self.journals_path(), PageKind::Journal, &self.journal_format, self.config.file_name_format, &self.config.journals_dir)
                 .into_iter()
                 .filter(|e| e.date_key.is_some())
                 .collect(),
@@ -762,23 +776,21 @@ impl Graph {
     /// Each file gets a one-line preview and a `canonical` flag (date-stem name).
     pub fn journal_conflicts(&self) -> Vec<JournalConflict> {
         let dir = self.journals_path();
-        let Ok(rd) = fs::read_dir(&dir) else { return Vec::new() };
         let mut by_date: std::collections::BTreeMap<i64, Vec<(String, PathBuf, bool)>> =
             std::collections::BTreeMap::new();
-        for e in rd.flatten() {
-            let p = e.path();
+        walk_page_files(&dir, |p| {
             let ext = match p.extension().and_then(|x| x.to_str()) {
                 Some(x @ ("md" | "org")) => x.to_string(),
-                _ => continue,
+                _ => return,
             };
-            let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else { continue };
+            let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else { return };
             // A date-stem file is canonical; otherwise try to parse its title.
             let canonical = JournalDate::from_file_stem(stem).is_some();
             let date = JournalDate::from_file_stem(stem).or_else(|| self.journal_format.parse(stem));
             if let Some(d) = date {
                 by_date.entry(d.ordinal_key()).or_default().push((format!("{stem}.{ext}"), p, canonical));
             }
-        }
+        });
         let mut out = Vec::new();
         for (key, files) in by_date {
             if files.len() < 2 {
@@ -819,17 +831,15 @@ impl Graph {
         for (dir, kind) in
             [(self.journals_path(), PageKind::Journal), (self.pages_path(), PageKind::Page)]
         {
-            let Ok(rd) = fs::read_dir(&dir) else { continue };
-            for e in rd.flatten() {
-                let p = e.path();
+            walk_page_files(&dir, |p| {
                 let ext = match p.extension().and_then(|x| x.to_str()) {
                     Some(x @ ("md" | "org")) => x,
-                    _ => continue,
+                    _ => return,
                 };
-                let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else { continue };
-                let Some(base_stem) = sync_conflict_base(stem) else { continue };
+                let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else { return };
+                let Some(base_stem) = sync_conflict_base(stem) else { return };
                 // The winner it shadows: same dir, same extension, base stem.
-                let base_file = dir.join(format!("{base_stem}.{ext}"));
+                let base_file = p.parent().unwrap_or(&dir).join(format!("{base_stem}.{ext}"));
                 let base_path = base_file.is_file().then(|| self.rel_path(&base_file));
                 let base_name = match kind {
                     PageKind::Journal => self
@@ -865,7 +875,7 @@ impl Graph {
                     tag,
                     preview,
                 });
-            }
+            });
         }
         out.sort_by(|a, b| a.base_name.cmp(&b.base_name).then_with(|| a.path.cmp(&b.path)));
         out
@@ -1253,7 +1263,11 @@ impl Graph {
             PageKind::Journal => self.journals_path(),
             PageKind::Page => self.pages_path(),
         };
-        let matches: Vec<PageEntry> = list_md(&dir, kind, &self.journal_format, self.config.file_name_format)
+        let rel_dir = match kind {
+            PageKind::Journal => &self.config.journals_dir,
+            PageKind::Page => &self.config.pages_dir,
+        };
+        let matches: Vec<PageEntry> = list_md(&dir, kind, &self.journal_format, self.config.file_name_format, rel_dir)
             .into_iter()
             .filter(|e| crate::refs::same_page(&e.name, name))
             .collect();
@@ -2554,6 +2568,7 @@ impl Graph {
             name,
             kind: PageKind::Page,
             date_key: None,
+            rel_path: self.rel_path(&page_path),
             path: page_path.clone(),
         });
         self.cache_upsert(entry, page_doc, page_rev.clone());
@@ -2594,12 +2609,13 @@ impl Graph {
                 Some(d) => (self.journal_format.title(d), Some(d.ordinal_key())),
                 None => (stem.to_string(), None),
             };
-            Some(PageEntry { name, kind: PageKind::Journal, date_key, path: path.to_path_buf() })
+            Some(PageEntry { name, kind: PageKind::Journal, date_key, rel_path: self.rel_path(path), path: path.to_path_buf() })
         } else if path.starts_with(self.pages_path()) {
             Some(PageEntry {
                 name: decode_page_name(stem, self.config.file_name_format),
                 kind: PageKind::Page,
                 date_key: None,
+                rel_path: self.rel_path(path),
                 path: path.to_path_buf(),
             })
         } else {
@@ -3005,7 +3021,7 @@ impl Graph {
                 } else {
                     None
                 };
-                PageEntry { name: page.name.clone(), kind: page.kind, date_key, path: path.clone() }
+                PageEntry { name: page.name.clone(), kind: page.kind, date_key, rel_path: self.rel_path(&path), path: path.clone() }
             });
             // H4: for org, the on-disk bytes are authoritative. If the user typed a
             // structural marker (a column-0 `* ` line, or an unbalanced #+BEGIN_)
@@ -3153,8 +3169,27 @@ fn list_md(
     kind: PageKind,
     fmt: &JournalFormat,
     name_fmt: FileNameFormat,
+    rel_dir: &str,
 ) -> Vec<PageEntry> {
     let mut out = Vec::new();
+    walk_page_files(dir, |path| {
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else { return };
+        if is_sync_conflict(stem) {
+            return; // sync-tool conflict copy — not a page (see list_sync_conflicts)
+        }
+        let (name, date_key) = match kind {
+            PageKind::Journal => match fmt.parse(stem) {
+                Some(d) => (fmt.title(d), Some(d.ordinal_key())),
+                None => (stem.to_string(), None),
+            },
+            PageKind::Page => (decode_page_name(stem, name_fmt), None),
+        };
+        out.push(PageEntry { name, kind, date_key, rel_path: rel_under_dir(rel_dir, dir, &path), path });
+    });
+    out
+}
+
+fn walk_page_files(dir: &Path, mut visit: impl FnMut(PathBuf)) {
     // Descend into sub-directories (#21). Logseq scans the whole graph root
     // recursively, so a page archived under `pages/client-a/foo.md` is a real
     // page — keyed by its BASENAME (`foo`); the sub-path is discarded, matching
@@ -3174,18 +3209,7 @@ fn list_md(
         for entry in rd.flatten() {
             let path = entry.path();
             if is_page_file(&path) {
-                let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else { continue };
-                if is_sync_conflict(stem) {
-                    continue; // sync-tool conflict copy — not a page (see list_sync_conflicts)
-                }
-                let (name, date_key) = match kind {
-                    PageKind::Journal => match fmt.parse(stem) {
-                        Some(d) => (fmt.title(d), Some(d.ordinal_key())),
-                        None => (stem.to_string(), None),
-                    },
-                    PageKind::Page => (decode_page_name(stem, name_fmt), None),
-                };
-                out.push(PageEntry { name, kind, date_key, path });
+                visit(path);
                 continue;
             }
             // Non-page entry: recurse if it's a real (non-symlink, non-hidden)
@@ -3201,7 +3225,6 @@ fn list_md(
             }
         }
     }
-    out
 }
 
 /// Union of two markdown page-property pre-blocks: keep `mine` and append any
@@ -3865,6 +3888,50 @@ mod tests {
         assert_eq!(c.files[0].preview, "canonical content");
         assert!(!c.files[1].canonical);
         assert_eq!(c.files[1].name, "Friday, 26-06-2026.org");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn journal_conflicts_reports_nested_duplicate_days() {
+        let dir = scratch("journal-conflicts-nested");
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq").join("config.edn"),
+            "{:preferred-format \"Org\"\n :journal/page-title-format \"EEEE, dd-MM-yyyy\"}\n",
+        )
+        .unwrap();
+        fs::create_dir_all(dir.join("journals").join("archive")).unwrap();
+        fs::write(dir.join("journals").join("archive").join("2026_06_26.org"), "* canonical nested\n").unwrap();
+        fs::write(dir.join("journals").join("archive").join("Friday, 26-06-2026.org"), "* stray nested\n").unwrap();
+
+        let conflicts = Graph::open(&dir).journal_conflicts();
+        assert_eq!(conflicts.len(), 1, "nested duplicate day is surfaced: {conflicts:?}");
+        let files = &conflicts[0].files;
+        assert_eq!(files.len(), 2);
+        assert_eq!(files[0].path, "journals/archive/2026_06_26.org");
+        assert_eq!(files[1].path, "journals/archive/Friday, 26-06-2026.org");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn list_sync_conflicts_reports_nested_conflict_copy() {
+        let dir = scratch("sync-conflicts-nested");
+        fs::create_dir_all(dir.join("pages").join("client-a")).unwrap();
+        fs::write(dir.join("pages").join("client-a").join("Foo.md"), "- base\n").unwrap();
+        fs::write(
+            dir.join("pages").join("client-a").join("Foo.sync-conflict-20260705-141233-A1B2C3D.md"),
+            "- conflict copy\n",
+        )
+        .unwrap();
+
+        let conflicts = Graph::open(&dir).list_sync_conflicts();
+        assert_eq!(conflicts.len(), 1, "nested sync-conflict copy is surfaced: {conflicts:?}");
+        let c = &conflicts[0];
+        assert_eq!(c.path, "pages/client-a/Foo.sync-conflict-20260705-141233-A1B2C3D.md");
+        assert_eq!(c.base_path.as_deref(), Some("pages/client-a/Foo.md"));
+        assert_eq!(c.base_name, "Foo");
+        assert_eq!(c.kind, PageKind::Page);
+        assert_eq!(c.preview, "conflict copy");
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -4642,6 +4709,7 @@ mod tests {
             .find(|e| e.kind == PageKind::Page && e.name == "foo")
             .expect("nested page listed by basename");
         assert_eq!(g.rel_path(&entry.path), "pages/client-a/foo.md");
+        assert_eq!(entry.rel_path, "pages/client-a/foo.md");
 
         // Openable by name (find_entry resolves via the recursive scan), and the
         // DTO carries the nested path so a later save round-trips in place.
@@ -4678,6 +4746,43 @@ mod tests {
         assert!(
             !dir.join("pages").join("foo.md").exists(),
             "save must not create a flat pages/foo.md twin"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn colliding_nested_pages_round_trip_by_path_without_flat_twin() {
+        let dir = scratch("nested-collision-roundtrip");
+        fs::create_dir_all(dir.join("pages").join("client-a")).unwrap();
+        fs::create_dir_all(dir.join("pages").join("client-b")).unwrap();
+        fs::write(dir.join("pages").join("client-a").join("foo.md"), "- before a\n").unwrap();
+        fs::write(dir.join("pages").join("client-b").join("foo.md"), "- before b\n").unwrap();
+        let g = Graph::open(&dir);
+        g.warm_cache();
+
+        let mut a = g.load_by_path("pages/client-a/foo.md").unwrap().unwrap();
+        let mut b = g.load_by_path("pages/client-b/foo.md").unwrap().unwrap();
+        assert_eq!(a.name, "foo");
+        assert_eq!(b.name, "foo");
+        assert_eq!(a.path, "pages/client-a/foo.md");
+        assert_eq!(b.path, "pages/client-b/foo.md");
+
+        a.blocks[0].raw = "after a".into();
+        b.blocks[0].raw = "after b".into();
+        g.save_page(&a, a.rev.as_deref()).unwrap();
+        g.save_page(&b, b.rev.as_deref()).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(dir.join("pages").join("client-a").join("foo.md")).unwrap(),
+            "- after a\n"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("pages").join("client-b").join("foo.md")).unwrap(),
+            "- after b\n"
+        );
+        assert!(
+            !dir.join("pages").join("foo.md").exists(),
+            "path-pinned saves must not create a flat pages/foo.md twin"
         );
         let _ = fs::remove_dir_all(&dir);
     }

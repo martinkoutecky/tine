@@ -1,8 +1,8 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js";
-import { openJournals, openPage, openPageInNewTab, openInNewTab, route } from "../router";
+import { openJournals, openPage, openPageInNewTab, openFile, openInNewTab, route } from "../router";
 import { openSwitcher, favorites, recentPages, openPageContextMenu, graphMeta } from "../ui";
 import { switchGraph, createNewGraph } from "../graph";
-import { allPages as allGraphPages } from "../pages";
+import { allPages as allGraphPages, pageListLabel } from "../pages";
 import { NamespaceTree } from "./Namespace";
 import type { PageKind } from "../types";
 
@@ -29,9 +29,12 @@ export function Sidebar(): JSX.Element {
       .sort((a, b) => a.name.localeCompare(b.name))
   );
 
-  const isActive = (name: string) => {
+  const isActive = (path: string, name: string) => {
     const r = route();
-    return r.kind === "page" && r.name === name;
+    return r.kind === "page" && r.name === name && (!r.path || r.path === path);
+  };
+  const openEntry = (path: string, name: string) => {
+    path ? openFile(path, name, "page") : openPage(name, "page");
   };
   const openRowMenu = (e: MouseEvent, name: string, kind: PageKind) => {
     e.preventDefault();
@@ -135,17 +138,19 @@ export function Sidebar(): JSX.Element {
               {(p) => (
                 <div
                   class="nav-page"
-                  classList={{ active: isActive(p.name) }}
-                  onClick={() => openPage(p.name, "page")}
+                  classList={{ active: isActive(p.path, p.name) }}
+                  onClick={() => openEntry(p.path, p.name)}
                   onAuxClick={(e) => {
                     if (e.button === 1) {
                       e.preventDefault();
-                      openPageInNewTab(p.name, "page");
+                      p.path
+                        ? openInNewTab({ kind: "page", name: p.name, pageKind: "page", path: p.path })
+                        : openPageInNewTab(p.name, "page");
                     }
                   }}
                   onContextMenu={(e) => openRowMenu(e, p.name, "page")}
                 >
-                  {p.name}
+                  {pageListLabel(p, allPages())}
                 </div>
               )}
             </For>

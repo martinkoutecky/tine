@@ -56,6 +56,9 @@ export interface PageEntry {
   name: string;
   kind: PageKind;
   date_key: number | null;
+  /** Graph-root-relative path of this specific file. Use it to open basename
+   *  collisions without re-resolving by display name. */
+  path: string;
 }
 
 /** An orphaned asset file (no block references it) — for the cleanup UI. */

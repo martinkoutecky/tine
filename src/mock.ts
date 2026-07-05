@@ -47,6 +47,17 @@ function b(raw: string, children: BlockDto[] = [], collapsed = false): BlockDto 
   return { id: m ? m[1].trim() : nid(), raw, collapsed, children };
 }
 
+function mockPagePath(p: PageDto): string {
+  if (p.path) return p.path;
+  const dir = p.kind === "journal" ? "journals" : "pages";
+  const ext = p.format === "org" ? "org" : "md";
+  return `${dir}/${p.name.replace(/\//g, "___")}.${ext}`;
+}
+
+function mockPageEntry(p: PageDto): PageEntry {
+  return { name: p.name, kind: p.kind, date_key: null, path: mockPagePath(p) };
+}
+
 const PAGES: PageDto[] = [
   {
     name: "Jun 14th, 2026",
@@ -356,7 +367,7 @@ export function mockBackend(): Backend {
       };
     },
     async listPages(): Promise<PageEntry[]> {
-      return all.map((p) => ({ name: p.name, kind: p.kind, date_key: null }));
+      return all.map(mockPageEntry);
     },
     async journalsDesc(limit: number, offset: number): Promise<PageDto[]> {
       return PAGES.slice(offset, offset + limit);
@@ -547,7 +558,7 @@ export function mockBackend(): Backend {
       return all
         .filter((p) => p.name.toLowerCase().includes(q))
         .slice(0, limit)
-        .map((p) => ({ name: p.name, kind: p.kind, date_key: null }));
+        .map(mockPageEntry);
     },
     async resolveBlock(uuid: string): Promise<RefGroup | null> {
       for (const p of all) {
@@ -630,6 +641,8 @@ export function mockBackend(): Backend {
         : "* Tried out the Org demo graph in Tine today\n* TODO follow up on the [[kitchen-sink]] feature tour\nSCHEDULED: <2026-06-27 Sat>\n* DONE loaded the graph and clicked around\n";
     },
     async getPageByPath(path: string): Promise<PageDto | null> {
+      const page = all.find((p) => mockPagePath(p) === path);
+      if (page) return { ...page, path };
       // The duplicate-day stray opens to its own content (#21); other paths fall
       // back to the canonical page by name.
       const stray = path.includes("Friday");

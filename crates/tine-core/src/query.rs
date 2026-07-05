@@ -857,6 +857,7 @@ pub fn quick_switch(graph: &Graph, query: &str, limit: usize) -> Vec<PageEntry> 
                     name,
                     kind: PageKind::Page,
                     date_key: None,
+                    rel_path: String::new(),
                     path: std::path::PathBuf::new(),
                 }),
             ));
