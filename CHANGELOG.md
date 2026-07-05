@@ -10,6 +10,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **"Help improve Tine" diff panel** (Settings). Runs Tine's parser (lsdoc) against
+  Logseq's own (mldoc) on your graph, locally, and surfaces anonymized, re-verified
+  divergences to paste into a bug report — crowd-sourcing parser divergence hunting.
+  See ADR 0018.
 - **Page icons on inline references.** A page's `icon::` (emoji/character) now shows
   as a prefix on inline `[[references]]` and `#tags` to it — matching Logseq (Tine
   already showed it on the page title and in the namespace listing). Emoji render as
