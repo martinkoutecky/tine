@@ -5,9 +5,9 @@
 //
 // Fidelity notes (pragmatic, documented): graph-dependent leaves are resolved
 // only when callers inject sync leaf resolvers; otherwise block refs emit their
-// label or bare uuid and macros stay in `{{...}}` form. Math intentionally emits
-// the TeX source: browser selection of rendered KaTeX also copies the embedded
-// TeX annotation. Properties honor the built-in render-hidden set but not the
+// label or bare uuid and macros stay in `{{...}}` form. Math emits the TeX source
+// with delimiters so the copy is re-parseable; the optional unicode path is only
+// for trivial inline scripts. Properties honor the built-in render-hidden set but not the
 // user's `:block-hidden-properties` (graph state).
 
 import { parseBlock } from "./parse";
@@ -47,6 +47,8 @@ export interface RenderedTextOptions {
   stripLinks: boolean; // [[Foo]] → Foo
   removeTags: boolean; // drop #tag nodes
   removeProperties: boolean; // drop property blocks
+  resolveBlockRefsFully?: boolean; // keep all resolved ref body lines instead of the inline first-line view
+  mathAsUnicode?: boolean; // lossy only for trivial inline scripts; off by default
   resolveBlockRef?: (uuid: string) => RenderedTextResolvedLeaf | null;
   resolveMacro?: (name: string, args: string[]) => RenderedTextResolvedLeaf | null;
 }
@@ -54,6 +56,7 @@ export interface RenderedTextOptions {
 export interface RenderedTextResolvedLeaf {
   raw: string;
   format: Format;
+  text?: string;
 }
 
 const MAX_RENDERED_TEXT_RESOLVE_DEPTH = 12;
@@ -88,17 +91,86 @@ function renderResolvedLeaf<T>(fallback: T, render: () => T): T {
 
 function resolvedBlockRefText(uuid: string, o: RenderedTextOptions): string {
   if (renderedTextResolveDepth >= MAX_RENDERED_TEXT_RESOLVE_DEPTH) return uuid;
-  const resolved = o.resolveBlockRef?.(uuid);
-  if (!resolved) return uuid;
-  return renderResolvedLeaf(uuid, () => renderedBlockText(resolved.raw, resolved.format, o).split("\n")[0] ?? "");
+  return renderResolvedLeaf(uuid, () => {
+    const resolved = o.resolveBlockRef?.(uuid);
+    if (!resolved) return uuid;
+    const text = resolved.text ?? renderedBlockText(resolved.raw, resolved.format, o);
+    return o.resolveBlockRefsFully ? text : (text.split("\n")[0] ?? "");
+  });
 }
 
 function resolvedMacroText(name: string, args: string[], o: RenderedTextOptions): string {
   const fallback = macroLiteral(name, args);
   if (renderedTextResolveDepth >= MAX_RENDERED_TEXT_RESOLVE_DEPTH) return fallback;
-  const resolved = o.resolveMacro?.(name, args);
-  if (!resolved) return fallback;
-  return renderResolvedLeaf(fallback, () => renderedBlockText(resolved.raw, resolved.format, o));
+  return renderResolvedLeaf(fallback, () => {
+    const resolved = o.resolveMacro?.(name, args);
+    if (!resolved) return fallback;
+    return resolved.text ?? renderedBlockText(resolved.raw, resolved.format, o);
+  });
+}
+
+const SUPERSCRIPT: Record<string, string> = {
+  "0": "⁰",
+  "1": "¹",
+  "2": "²",
+  "3": "³",
+  "4": "⁴",
+  "5": "⁵",
+  "6": "⁶",
+  "7": "⁷",
+  "8": "⁸",
+  "9": "⁹",
+  "+": "⁺",
+  "-": "⁻",
+  "=": "⁼",
+  "(": "⁽",
+  ")": "⁾",
+};
+
+const SUBSCRIPT: Record<string, string> = {
+  "0": "₀",
+  "1": "₁",
+  "2": "₂",
+  "3": "₃",
+  "4": "₄",
+  "5": "₅",
+  "6": "₆",
+  "7": "₇",
+  "8": "₈",
+  "9": "₉",
+  "+": "₊",
+  "-": "₋",
+  "=": "₌",
+  "(": "₍",
+  ")": "₎",
+};
+
+function trivialInlineMathUnicode(body: string): string | null {
+  if (!body || /\\|[{}]/.test(body)) return null;
+  if (/[^A-Za-z0-9\s+\-*/=().,^_]/.test(body)) return null;
+  let changed = false;
+  let out = "";
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i];
+    if (ch !== "^" && ch !== "_") {
+      out += ch;
+      continue;
+    }
+    const map = ch === "^" ? SUPERSCRIPT : SUBSCRIPT;
+    const next = body[++i];
+    if (!next || !(next in map)) return null;
+    out += map[next];
+    changed = true;
+  }
+  return changed ? out : null;
+}
+
+function latexInlineText(s: Extract<Inline, { k: "latex" }>, o: RenderedTextOptions): string {
+  if (o.mathAsUnicode && s.mode === "Inline") {
+    const unicode = trivialInlineMathUnicode(s.body);
+    if (unicode) return unicode;
+  }
+  return s.mode === "Displayed" ? `$$${s.body}$$` : `$${s.body}$`;
 }
 
 function inlineText(nodes: Inline[], o: RenderedTextOptions): string {
@@ -147,7 +219,7 @@ function inlineText(nodes: Inline[], o: RenderedTextOptions): string {
         out += resolvedMacroText(s.name, s.args, o);
         break;
       case "latex":
-        out += s.body;
+        out += latexInlineText(s, o);
         break;
       case "timestamp":
         out += timestampText(s).text;
@@ -223,10 +295,11 @@ function blockLines(b: Block, o: RenderedTextOptions): string[] {
     case "hr":
       return ["---"];
     case "displayed_math":
+      return ["$$", ...b.text.split("\n"), "$$"];
     case "raw_html":
       return b.text.split("\n");
     case "latex_env":
-      return b.content.split("\n");
+      return [`\\begin{${b.name}}`, ...b.content.replace(/\n$/, "").split("\n"), `\\end{${b.name}}`];
     case "footnote_def":
       return [`[${b.name}] ${inlineText(b.inline, o)}`];
     case "hiccup":

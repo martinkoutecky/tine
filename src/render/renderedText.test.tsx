@@ -43,6 +43,14 @@ describe("renderedBlockText", () => {
     expect(renderedBlockText("\\Delta and `x->y`", "md", O)).toBe("Δ and x->y");
   });
 
+  it("keeps math delimiters and only unicode-converts trivial inline math when asked", () => {
+    expect(renderedBlockText("Euler $x^2$ and $$y$$", "md", O)).toBe("Euler $x^2$ and $$y$$");
+    expect(renderedBlockText("$$E=mc^2$$", "md", O)).toBe("$$\nE=mc^2\n$$");
+    expect(renderedBlockText("Euler $E=mc^2$ and $\\frac{1}{2}$", "md", { ...O, mathAsUnicode: true })).toBe(
+      "Euler E=mc² and $\\frac{1}{2}$",
+    );
+  });
+
   it("flattens tables to cell rows and honors removeProperties", () => {
     expect(renderedBlockText("|a|b|\n|-|-|\n|1|2|", "md", O)).toBe("a | b\n1 | 2");
     expect(renderedBlockText("text\nkey:: val", "md", O)).toBe("text\nkey val");
@@ -63,6 +71,17 @@ describe("renderedBlockText", () => {
           uuid === REF_ID ? { raw: "**Referenced** first line\nsecond line", format: "md" } : null,
       }),
     ).toBe("see Referenced first line");
+  });
+
+  it("can resolve bare block refs to the referenced full body", () => {
+    expect(
+      renderedBlockText(`see ((${REF_ID}))`, "md", {
+        ...O,
+        resolveBlockRefsFully: true,
+        resolveBlockRef: (uuid) =>
+          uuid === REF_ID ? { raw: "**Referenced** first line\nsecond line", format: "md" } : null,
+      }),
+    ).toBe("see Referenced first line\nsecond line");
   });
 
   it("keeps labeled block refs as labels and does not consult the resolver", () => {
@@ -96,6 +115,16 @@ describe("renderedBlockText", () => {
         resolveMacro: () => null,
       }),
     ).toBe("{{query (task TODO)}}");
+  });
+
+  it("resolves provider macros from warmed text leaves", () => {
+    expect(
+      renderedBlockText("{{video https://example.test/v.mp4}}", "md", {
+        ...O,
+        resolveMacro: (name, args) =>
+          name === "video" ? { raw: "", format: "md", text: args.join(", ") } : null,
+      }),
+    ).toBe("https://example.test/v.mp4");
   });
 
   it("bails to the fallback at the resolver recursion cap", () => {

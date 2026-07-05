@@ -868,6 +868,10 @@ body {
   border-color: var(--link-color);
   color: #fff;
 }
+.export-btn-primary:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
 .export-btn-primary:hover {
   filter: brightness(1.05);
 }

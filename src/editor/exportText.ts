@@ -30,6 +30,10 @@ export interface ExportOptions {
   /** Apply `->`→`→` glyphs in rendered mode; the modal sets this from the app's
    *  typography mode each time (not persisted — it must match what you see). */
   typographicGlyphs?: boolean;
+  /** Render trivial inline math scripts as unicode (`E=mc^2` → `E=mc²`); lossy and off by default. */
+  mathAsUnicode?: boolean;
+  /** Render all lines of resolved block refs instead of the inline first-line view. */
+  resolveRefsFully?: boolean;
   resolveBlockRef?: RenderedTextOptions["resolveBlockRef"];
   resolveMacro?: RenderedTextOptions["resolveMacro"];
 }
@@ -42,6 +46,8 @@ export const DEFAULT_EXPORT_OPTIONS: ExportOptions = {
   removeTags: false,
   removeProperties: false,
   newlineAfterBlock: false,
+  mathAsUnicode: false,
+  resolveRefsFully: false,
 };
 
 export interface ExportNode {
@@ -80,6 +86,8 @@ function blockExportLines(n: ExportNode, opts: ExportOptions): string[] {
       stripLinks: opts.stripLinks,
       removeTags: opts.removeTags,
       removeProperties: opts.removeProperties,
+      resolveBlockRefsFully: opts.resolveRefsFully ?? false,
+      mathAsUnicode: opts.mathAsUnicode ?? false,
       resolveBlockRef: opts.resolveBlockRef,
       resolveMacro: opts.resolveMacro,
     }).split("\n");

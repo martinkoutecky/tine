@@ -10,6 +10,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Rendered copy is more faithful.** Copy / export → **Rendered** now preserves
+  `$…$` / `$$…$$` math delimiters, pre-warms off-screen block refs before copying,
+  resolves `{{embed}}`, `{{query}}`, and media/widget macros to sensible text forms,
+  and adds a **Resolve refs fully** toggle for multi-line block refs. Query exports
+  are capped and visibly marked when truncated; full math-typeset-to-plain-text is
+  still tracked separately.
 - **Sub-directory scan Phase 2 polish** ([#21](https://github.com/martinkoutecky/tine/issues/21)).
   Sync-conflict and duplicate-day journal scanners now recurse under `pages/` and
   `journals/` through the same page-file walker as the main scan, so nested

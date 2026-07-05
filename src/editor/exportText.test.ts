@@ -79,4 +79,19 @@ describe("exportOutline", () => {
       ),
     ).toBe("Exported ref and roses red, violets blue");
   });
+
+  it("threads rendered full-ref resolution", () => {
+    const n: ExportNode[] = [{ raw: `((${REF_ID}))`, children: [] }];
+    expect(
+      exportOutline(
+        n,
+        opt({
+          content: "rendered",
+          indent: "no-indent",
+          resolveRefsFully: true,
+          resolveBlockRef: (uuid) => (uuid === REF_ID ? { raw: "first\nsecond", format: "md" } : null),
+        }),
+      ),
+    ).toBe("first\nsecond");
+  });
 });

@@ -312,10 +312,13 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   print engine. (Matches what the Logseq PDF-export community plugin did; OG has no
   native PDF export.)
 - **Copy/export as** Markdown for a block subtree or a whole page, with a *Rendered*
-  mode that flattens to what you see — and in Rendered mode a `((block ref))` resolves
-  to the referenced block's text and a user `{{macro}}` to its expansion (not the bare
-  uuid / literal call); math is left as TeX for now (rendered-math copy is still on the
-  backlog).
+  mode that flattens to what you see. Rendered copy keeps math delimiters (`$…$`,
+  `$$…$$`) so pasted math is re-parseable, pre-warms off-screen `((block ref))`
+  targets before copy, and resolves user macros plus provider macros with sensible
+  text forms: `{{embed}}` inlines the target, `{{query}}` emits a capped result list
+  with visible truncation, and media macros such as `{{video}}` copy the URL. A
+  **Resolve refs fully** export toggle expands multi-line block refs; full
+  math-typeset-to-plain-text remains on the backlog.
 - A slash menu for headings, code, calculator, quote, callouts, divider, embed, query
   (raw or visual builder), template, asset upload, and dates.
 
