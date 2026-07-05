@@ -8,7 +8,7 @@ icon:: 🧪
 - # 1 — Inline text formatting
 - **Bold**, *italic*, _also italic_, ~~strikethrough~~, `inline code`, ==highlight==, and ^^also highlight^^.
 - A mix in one line: a **bold `code` span**, an *italic [[link]]*, and a ~~struck ==highlight==~~.
-- *Not yet:* inline `<ins>underline</ins>`, superscript `^x^`, and subscript `~x~` aren't parsed yet — they render as literal text. (For sub/superscript, use math instead: $H_2O$, $E = mc^2$.)
+- *Not yet:* raw inline HTML like <ins>underline</ins> — Logseq renders it live, Tine shows the literal tags for now (an HTML sanitizer is planned). Note `x^2^` / `H~2~O` aren't sub/superscript in Logseq either (both render them literally) — use math: $E = mc^2$, $H_2O$.
 - # 2 — Links & references
 - Page link: [[Welcome to Tine]] · tag: #demo · namespaced page: [[Features/Quick capture]].
 - External link: [the Logseq docs](https://docs.logseq.com) · bare URL: https://logseq.com · autolinked email: <hello@example.com>.
