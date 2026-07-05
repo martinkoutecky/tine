@@ -46,7 +46,14 @@ const QUERIES: &[&str] = &[
 ];
 
 fn b(raw: impl Into<String>) -> BlockDto {
-    BlockDto { id: String::new(), raw: raw.into(), collapsed: false, children: vec![], breadcrumb: vec![], ..Default::default() }
+    BlockDto {
+        id: String::new(),
+        raw: raw.into(),
+        collapsed: false,
+        children: vec![],
+        breadcrumb: vec![],
+        ..Default::default()
+    }
 }
 
 // One random block body, drawing from every shape the queries/backlinks key off.
@@ -59,7 +66,9 @@ fn gen_block(r: &mut Rng) -> BlockDto {
         0 => b(format!("TODO work on [[{p}]]")),
         1 => b(format!("DONE [[{p}]] shipped")),
         2 => b(format!("TODO [#A] urgent [[{p}]]")),
-        3 => b(format!("DOING [#B] thing\nSCHEDULED: <2026-06-{dd:02} Mon>")),
+        3 => b(format!(
+            "DOING [#B] thing\nSCHEDULED: <2026-06-{dd:02} Mon>"
+        )),
         4 => b(format!("#{tag} idea about [[{p}]]")),
         5 => b(format!("plain prose mentioning {p} without a link")),
         6 => b(format!("note linking [[{alt}]] (an alias)")),
@@ -77,7 +86,11 @@ fn gen_pre(r: &mut Rng, page_idx: usize) -> Option<String> {
     if r.below(3) == 0 {
         lines.push(format!("alias:: Alt{page_idx}"));
     }
-    if lines.is_empty() { None } else { Some(lines.join("\n")) }
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.join("\n"))
+    }
 }
 
 // Order-sensitive fingerprint (page order + within-page block order both matter,
@@ -104,7 +117,10 @@ fn fingerprint(g: &Graph) -> String {
     for p in PAGES {
         out.push(fmt(format!("bl:{p}"), g.backlinks(p)));
         out.push(fmt(format!("ul:{p}"), g.unlinked_refs(p)));
-        out.push(fmt(format!("blAlt:{p}"), g.backlinks(&format!("Alt{}", &p[1..]))));
+        out.push(fmt(
+            format!("blAlt:{p}"),
+            g.backlinks(&format!("Alt{}", &p[1..])),
+        ));
     }
     for q in QUERIES {
         out.push(fmt(format!("q:{q}"), g.run_query(q)));
@@ -132,7 +148,10 @@ fn run_seed(seed: u64) {
             s.push_str("\n\n");
         }
         for _ in 0..nblocks {
-            s.push_str(&format!("- {}\n", gen_block(&mut r).raw.replace('\n', "\n  ")));
+            s.push_str(&format!(
+                "- {}\n",
+                gen_block(&mut r).raw.replace('\n', "\n  ")
+            ));
         }
         std::fs::write(root.join("pages").join(format!("{p}.md")), s).unwrap();
     }

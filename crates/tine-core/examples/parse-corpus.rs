@@ -12,7 +12,9 @@ use serde_json::Value;
 use std::{env, fs};
 
 fn main() {
-    let path = env::args().nth(1).expect("usage: parse-corpus <block-raws.json>");
+    let path = env::args()
+        .nth(1)
+        .expect("usage: parse-corpus <block-raws.json>");
     let text = fs::read_to_string(&path).expect("read block-raws.json");
     let records: Vec<Value> = serde_json::from_str(&text).expect("parse block-raws.json");
 

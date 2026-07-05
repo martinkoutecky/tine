@@ -133,7 +133,12 @@ fn anchor_eq(a: &DocBlock, b: &DocBlock) -> bool {
 /// First visible line of a block (property lines stripped), lowercased and
 /// trimmed — the key the L2 similarity pairing compares.
 fn first_line_key(b: &DocBlock) -> String {
-    b.visible_text().lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim().to_lowercase()
+    b.visible_text()
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("")
+        .trim()
+        .to_lowercase()
 }
 
 /// Normalized similarity of two short strings in [0,1] (1 = identical). Bounded
@@ -213,15 +218,37 @@ fn align_nodes<'a>(mine: &'a [DocBlock], theirs: &'a [DocBlock], prefix: &str) -
         let a = &mine[i];
         let b = &theirs[j];
         if a == b {
-            out.push(Node::Both { id, mine: a, theirs: b, modified: false, children: Vec::new() });
+            out.push(Node::Both {
+                id,
+                mine: a,
+                theirs: b,
+                modified: false,
+                children: Vec::new(),
+            });
         } else {
             let children = align_nodes(&a.children, &b.children, &format!("{id}."));
-            out.push(Node::Both { id, mine: a, theirs: b, modified: true, children });
+            out.push(Node::Both {
+                id,
+                mine: a,
+                theirs: b,
+                modified: true,
+                children,
+            });
         }
         mi = i + 1;
         ti = j + 1;
     }
-    gap_nodes(mine, theirs, mi, mine.len(), ti, theirs.len(), prefix, &mut out, &mut counter);
+    gap_nodes(
+        mine,
+        theirs,
+        mi,
+        mine.len(),
+        ti,
+        theirs.len(),
+        prefix,
+        &mut out,
+        &mut counter,
+    );
     out
 }
 
@@ -262,7 +289,10 @@ fn gap_nodes<'a>(
                 if !used_theirs[k - t_from] {
                     let id = row_id(prefix, *counter);
                     *counter += 1;
-                    out.push(Node::Theirs { id, block: &theirs[k] });
+                    out.push(Node::Theirs {
+                        id,
+                        block: &theirs[k],
+                    });
                     used_theirs[k - t_from] = true;
                 }
             }
@@ -281,14 +311,20 @@ fn gap_nodes<'a>(
         } else {
             let id = row_id(prefix, *counter);
             *counter += 1;
-            out.push(Node::Mine { id, block: &mine[i] });
+            out.push(Node::Mine {
+                id,
+                block: &mine[i],
+            });
         }
     }
     for j in t_from..t_to {
         if !used_theirs[j - t_from] {
             let id = row_id(prefix, *counter);
             *counter += 1;
-            out.push(Node::Theirs { id, block: &theirs[j] });
+            out.push(Node::Theirs {
+                id,
+                block: &theirs[j],
+            });
         }
     }
 }
@@ -298,9 +334,19 @@ fn nodes_to_rows(nodes: &[Node]) -> Vec<DiffRow> {
     nodes
         .iter()
         .map(|n| match n {
-            Node::Both { id, mine, theirs, modified, children } => DiffRow {
+            Node::Both {
+                id,
+                mine,
+                theirs,
+                modified,
+                children,
+            } => DiffRow {
                 id: id.clone(),
-                kind: if *modified { RowKind::Modified } else { RowKind::Unchanged },
+                kind: if *modified {
+                    RowKind::Modified
+                } else {
+                    RowKind::Unchanged
+                },
                 mine: Some(BlockView::of(mine)),
                 theirs: Some(BlockView::of(theirs)),
                 children: nodes_to_rows(children),
@@ -367,7 +413,13 @@ fn nodes_to_merged(
     let mut out = Vec::new();
     for n in nodes {
         match n {
-            Node::Both { id, mine, theirs, modified, children } => {
+            Node::Both {
+                id,
+                mine,
+                theirs,
+                modified,
+                children,
+            } => {
                 if !*modified {
                     out.push((*mine).clone()); // content-equal — keep as-is
                     continue;
@@ -394,7 +446,10 @@ fn nodes_to_merged(
                 // Removed (conflict-only): pulled in on keep-theirs / keep-both. Its
                 // id is unique to the conflict (a shared id would have anchored it as
                 // a Both), so it's kept as-is.
-                if matches!(decision_for(decisions, id), Decision::Theirs | Decision::Both) {
+                if matches!(
+                    decision_for(decisions, id),
+                    Decision::Theirs | Decision::Both
+                ) {
                     out.push((*block).clone());
                 }
             }
@@ -570,7 +625,14 @@ mod tests {
         let mine = parse("- aaa\n- bbb\n- ccc\n");
         let theirs = parse("- aaa\n- ccc\n- bbb\n");
         let d = diff_docs(&mine, &theirs);
-        assert_eq!(d.rows.iter().filter(|r| r.kind == RowKind::Unchanged).count() >= 2, true);
+        assert_eq!(
+            d.rows
+                .iter()
+                .filter(|r| r.kind == RowKind::Unchanged)
+                .count()
+                >= 2,
+            true
+        );
         assert!(!d.blocks_identical);
     }
 
@@ -579,7 +641,10 @@ mod tests {
     use std::collections::HashMap;
 
     fn raws(blocks: &[DocBlock]) -> Vec<String> {
-        blocks.iter().map(|b| b.raw.lines().next().unwrap_or("").to_string()).collect()
+        blocks
+            .iter()
+            .map(|b| b.raw.lines().next().unwrap_or("").to_string())
+            .collect()
     }
 
     #[test]
@@ -589,7 +654,10 @@ mod tests {
         let mine = parse("- alpha\n- the quick brown fox jumps\n- winner only\n");
         let theirs = parse("- alpha\n- the quick brown fox leaps\n- conflict only\n");
         let merged = merge_blocks(&mine.roots, &theirs.roots, &HashMap::new());
-        assert_eq!(raws(&merged), vec!["alpha", "the quick brown fox jumps", "winner only"]);
+        assert_eq!(
+            raws(&merged),
+            vec!["alpha", "the quick brown fox jumps", "winner only"]
+        );
     }
 
     #[test]
@@ -630,8 +698,14 @@ mod tests {
         let merged = merge_blocks(&mine.roots, &theirs.roots, &dec);
         assert_eq!(merged.len(), 2);
         // Winner keeps its id::; the pulled-in copy does not.
-        assert!(merged[0].raw.contains("id:: aaaaaaaa-0000-0000-0000-0000000000cd"));
-        assert!(!merged[1].raw.contains("id::"), "dup id leaked: {:?}", merged[1].raw);
+        assert!(merged[0]
+            .raw
+            .contains("id:: aaaaaaaa-0000-0000-0000-0000000000cd"));
+        assert!(
+            !merged[1].raw.contains("id::"),
+            "dup id leaked: {:?}",
+            merged[1].raw
+        );
         assert!(merged[1].raw.contains("their text"));
     }
 

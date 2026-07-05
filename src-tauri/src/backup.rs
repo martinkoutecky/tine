@@ -47,12 +47,18 @@ fn do_backup(app: &tauri::AppHandle, suffix: &str) -> (usize, bool) {
             None => return (0, false),
         }
     };
-    let Ok(data_dir) = app.path().app_data_dir() else { return (0, false) };
+    let Ok(data_dir) = app.path().app_data_dir() else {
+        return (0, false);
+    };
     let base = data_dir
         .join("backups")
         .join(sanitize_id(&root.display().to_string()));
     let stamp = backup_stamp();
-    let name = if suffix.is_empty() { stamp } else { format!("{stamp}-{suffix}") };
+    let name = if suffix.is_empty() {
+        stamp
+    } else {
+        format!("{stamp}-{suffix}")
+    };
     // Reserve a UNIQUE destination directory. The stamp is second-granularity, so
     // two snapshots in the same second (e.g. a launch snapshot racing a pre-restore
     // snapshot) would otherwise share one directory — and copy_md_dir, which copies
@@ -137,12 +143,18 @@ fn backup_base(app: &tauri::AppHandle) -> Option<PathBuf> {
         guard.as_ref().map(|g| g.root.clone())?
     };
     let data_dir = app.path().app_data_dir().ok()?;
-    Some(data_dir.join("backups").join(sanitize_id(&root.display().to_string())))
+    Some(
+        data_dir
+            .join("backups")
+            .join(sanitize_id(&root.display().to_string())),
+    )
 }
 
 #[tauri::command]
 pub(crate) fn list_backups(app: tauri::AppHandle) -> Result<Vec<BackupInfo>, String> {
-    let Some(base) = backup_base(&app) else { return Ok(Vec::new()) };
+    let Some(base) = backup_base(&app) else {
+        return Ok(Vec::new());
+    };
     let mut out = Vec::new();
     if let Ok(rd) = std::fs::read_dir(&base) {
         for e in rd.flatten() {
@@ -197,10 +209,16 @@ fn count_asset_sidecars_recursive(dir: &std::path::Path) -> usize {
 /// *current* state first (so a mistaken restore is itself reversible).
 /// Destructive — the frontend confirms.
 #[tauri::command]
-pub(crate) fn restore_backup(stamp: String, app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+pub(crate) fn restore_backup(
+    stamp: String,
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     // Guard against path traversal — a stamp is only ever `YYYY-MM-DD_HH-MM-SS`.
     if stamp.is_empty()
-        || !stamp.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        || !stamp
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
     {
         return Err("invalid backup id".into());
     }
@@ -230,7 +248,9 @@ pub(crate) fn restore_backup(stamp: String, app: tauri::AppHandle, state: State<
     // A destructive restore must be fully reversible: abort unless the pre-restore
     // snapshot captured everything (every file copied, nothing skipped).
     if live_n > 0 && (snapshot_n == 0 || !complete) {
-        return Err("couldn't create a complete pre-restore safety snapshot — restore aborted".into());
+        return Err(
+            "couldn't create a complete pre-restore safety snapshot — restore aborted".into(),
+        );
     }
     // Restore each dir; a copy failure aborts WITHOUT having deleted anything
     // (copy-in happens before delete-extras), so a failure never loses data.
@@ -285,7 +305,10 @@ fn restore_md_dir(src: &std::path::Path, dest: &std::path::Path) -> std::io::Res
     Ok(())
 }
 
-fn restore_asset_sidecars_dir(src: &std::path::Path, dest: &std::path::Path) -> std::io::Result<()> {
+fn restore_asset_sidecars_dir(
+    src: &std::path::Path,
+    dest: &std::path::Path,
+) -> std::io::Result<()> {
     if !src.is_dir() {
         return Ok(());
     }
@@ -350,7 +373,10 @@ fn delete_unrestored_asset_sidecars(
 /// `.edn` sidecars are handled separately under `assets`; binary asset bytes stay
 /// excluded from snapshots by design.
 fn is_graph_text(p: &std::path::Path) -> bool {
-    matches!(p.extension().and_then(|x| x.to_str()), Some("md") | Some("org"))
+    matches!(
+        p.extension().and_then(|x| x.to_str()),
+        Some("md") | Some("org")
+    )
 }
 
 fn is_asset_sidecar(p: &std::path::Path) -> bool {
@@ -358,10 +384,15 @@ fn is_asset_sidecar(p: &std::path::Path) -> bool {
 }
 
 fn dir_name(p: &std::path::Path) -> String {
-    p.file_name().and_then(|s| s.to_str()).unwrap_or("dir").to_string()
+    p.file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("dir")
+        .to_string()
 }
 fn sanitize_id(s: &str) -> String {
-    s.chars().map(|c| if c.is_alphanumeric() { c } else { '_' }).collect()
+    s.chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '_' })
+        .collect()
 }
 /// Copy every graph text file from `src` to `dest`. Returns (copied, failed) so
 /// the caller can tell a complete snapshot from a partial one.
@@ -431,7 +462,9 @@ fn copy_asset_sidecars_dir(src: &std::path::Path, dest: &std::path::Path) -> (us
     (copied, failed)
 }
 fn prune_backups(base: &std::path::Path, keep: usize) {
-    let Ok(rd) = std::fs::read_dir(base) else { return };
+    let Ok(rd) = std::fs::read_dir(base) else {
+        return;
+    };
     // Only the routine launch snapshots are subject to the keep-count. Tagged
     // snapshots (e.g. "...-pre-restore") are deliberate safety points and are
     // never auto-pruned.
@@ -500,7 +533,10 @@ mod tests {
         std::fs::write(src.join("nested").join("image.png"), b"png").unwrap();
 
         assert_eq!(copy_asset_sidecars_dir(&src, &dst), (2, 0));
-        assert_eq!(std::fs::read_to_string(dst.join("doc.edn")).unwrap(), "{:a 1}\n");
+        assert_eq!(
+            std::fs::read_to_string(dst.join("doc.edn")).unwrap(),
+            "{:a 1}\n"
+        );
         assert_eq!(
             std::fs::read_to_string(dst.join("nested").join("hl.edn")).unwrap(),
             "{:b 2}\n"
@@ -526,7 +562,10 @@ mod tests {
         std::fs::write(dest.join("nested").join("image.png"), b"keep").unwrap();
 
         restore_asset_sidecars_dir(&src, &dest).unwrap();
-        assert_eq!(std::fs::read_to_string(dest.join("doc.edn")).unwrap(), "new\n");
+        assert_eq!(
+            std::fs::read_to_string(dest.join("doc.edn")).unwrap(),
+            "new\n"
+        );
         assert_eq!(
             std::fs::read_to_string(dest.join("nested").join("hl.edn")).unwrap(),
             "nested new\n"
@@ -534,7 +573,10 @@ mod tests {
         assert!(!dest.join("stale.edn").exists());
         assert!(!dest.join("nested").join("stale.edn").exists());
         assert_eq!(std::fs::read(dest.join("image.png")).unwrap(), b"keep");
-        assert_eq!(std::fs::read(dest.join("nested").join("image.png")).unwrap(), b"keep");
+        assert_eq!(
+            std::fs::read(dest.join("nested").join("image.png")).unwrap(),
+            b"keep"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 }

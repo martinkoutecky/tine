@@ -22,10 +22,15 @@ struct GraphChange {
 fn collect_page_files(dir: &std::path::Path, out: &mut HashMap<PathBuf, (SystemTime, u64)>) {
     let mut stack = vec![dir.to_path_buf()];
     while let Some(d) = stack.pop() {
-        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        let Ok(rd) = std::fs::read_dir(&d) else {
+            continue;
+        };
         for e in rd.flatten() {
             let p = e.path();
-            if matches!(p.extension().and_then(|x| x.to_str()), Some("md") | Some("org")) {
+            if matches!(
+                p.extension().and_then(|x| x.to_str()),
+                Some("md") | Some("org")
+            ) {
                 if let Ok(md) = e.metadata() {
                     if let Ok(m) = md.modified() {
                         out.insert(p, (m, md.len()));
@@ -33,7 +38,11 @@ fn collect_page_files(dir: &std::path::Path, out: &mut HashMap<PathBuf, (SystemT
                 }
                 continue;
             }
-            let hidden = p.file_name().and_then(|s| s.to_str()).map(|s| s.starts_with('.')).unwrap_or(true);
+            let hidden = p
+                .file_name()
+                .and_then(|s| s.to_str())
+                .map(|s| s.starts_with('.'))
+                .unwrap_or(true);
             if !hidden && e.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
                 stack.push(p);
             }
@@ -107,15 +116,16 @@ pub(crate) fn start_watcher(app: tauri::AppHandle) {
             if inotify {
                 if watcher.is_none() {
                     let txc = tx.clone();
-                    watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-                        // Any successful event wakes the loop for a full rescan;
-                        // we don't trust per-event detail (renames arrive as
-                        // remove+create, etc.) — the rescan is the source of truth.
-                        if res.is_ok() {
-                            let _ = txc.send(());
-                        }
-                    })
-                    .ok();
+                    watcher =
+                        notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+                            // Any successful event wakes the loop for a full rescan;
+                            // we don't trust per-event detail (renames arrive as
+                            // remove+create, etc.) — the rescan is the source of truth.
+                            if res.is_ok() {
+                                let _ = txc.send(());
+                            }
+                        })
+                        .ok();
                     watched.clear();
                 }
                 if let (Some(w), Some(ds)) = (watcher.as_mut(), dirs.as_ref()) {
@@ -156,7 +166,11 @@ pub(crate) fn start_watcher(app: tauri::AppHandle) {
                             if tine_core::model::path_is_sync_conflict(p) {
                                 conflicts_dirty = true;
                             } else if let Some(en) = graph.sync_file(p) {
-                                changes.push(GraphChange { name: en.name, kind: en.kind, removed: false });
+                                changes.push(GraphChange {
+                                    name: en.name,
+                                    kind: en.kind,
+                                    removed: false,
+                                });
                             }
                         }
                     }
@@ -165,7 +179,11 @@ pub(crate) fn start_watcher(app: tauri::AppHandle) {
                             if tine_core::model::path_is_sync_conflict(p) {
                                 conflicts_dirty = true;
                             } else if let Some(en) = graph.forget_file(p) {
-                                changes.push(GraphChange { name: en.name, kind: en.kind, removed: true });
+                                changes.push(GraphChange {
+                                    name: en.name,
+                                    kind: en.kind,
+                                    removed: true,
+                                });
                             }
                         }
                     }
@@ -206,7 +224,10 @@ fn watch_mode(app: &tauri::AppHandle) -> String {
     settings_path(app)
         .and_then(|p| std::fs::read_to_string(p).ok())
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        .and_then(|v| v.get("watch_mode").and_then(|x| x.as_str().map(String::from)))
+        .and_then(|v| {
+            v.get("watch_mode")
+                .and_then(|x| x.as_str().map(String::from))
+        })
         .filter(|m| m == "poll" || m == "inotify")
         .unwrap_or_else(|| "inotify".to_string())
 }
@@ -217,7 +238,11 @@ pub(crate) fn get_watch_mode(app: tauri::AppHandle) -> String {
 }
 
 #[tauri::command]
-pub(crate) fn set_watch_mode(mode: String, app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+pub(crate) fn set_watch_mode(
+    mode: String,
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     let mode = if mode == "poll" { "poll" } else { "inotify" };
     update_settings(&app, |json| {
         json["watch_mode"] = serde_json::json!(mode);
@@ -251,10 +276,18 @@ mod tests {
         collect_page_files(&dir, &mut out);
         let mut names: Vec<String> = out
             .keys()
-            .map(|p| p.strip_prefix(&dir).unwrap().to_string_lossy().replace('\\', "/"))
+            .map(|p| {
+                p.strip_prefix(&dir)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
             .collect();
         names.sort();
-        assert_eq!(names, vec!["Archive/Deep/Deeper/deep.md", "Archive/mid.org", "top.md"]);
+        assert_eq!(
+            names,
+            vec!["Archive/Deep/Deeper/deep.md", "Archive/mid.org", "top.md"]
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

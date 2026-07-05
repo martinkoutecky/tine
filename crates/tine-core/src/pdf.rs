@@ -82,16 +82,29 @@ fn highlight_from(e: &Edn) -> Option<Highlight> {
         .unwrap_or("yellow")
         .to_string();
     let content = e.get("content");
-    let text = content.and_then(|c| c.get("text")).and_then(Edn::as_str).map(String::from);
+    let text = content
+        .and_then(|c| c.get("text"))
+        .and_then(Edn::as_str)
+        .map(String::from);
     let image = content.and_then(|c| c.get("image")).and_then(Edn::as_i64);
-    Some(Highlight { id, page, position, color, text, image })
+    Some(Highlight {
+        id,
+        page,
+        position,
+        color,
+        text,
+        image,
+    })
 }
 
 fn highlight_to(h: &Highlight) -> Edn {
     let position = Edn::Map(vec![
         (kw("page"), Edn::Int(h.position.page)),
         (kw("bounding"), rect_to(&h.position.bounding)),
-        (kw("rects"), Edn::Vec(h.position.rects.iter().map(rect_to).collect())),
+        (
+            kw("rects"),
+            Edn::Vec(h.position.rects.iter().map(rect_to).collect()),
+        ),
     ]);
     let mut content_pairs = Vec::new();
     if let Some(t) = &h.text {
@@ -103,13 +116,18 @@ fn highlight_to(h: &Highlight) -> Edn {
         (kw("page"), Edn::Int(h.page)),
         (kw("position"), position),
         (kw("content"), Edn::Map(content_pairs)),
-        (kw("properties"), Edn::Map(vec![(kw("color"), Edn::Str(h.color.clone()))])),
+        (
+            kw("properties"),
+            Edn::Map(vec![(kw("color"), Edn::Str(h.color.clone()))]),
+        ),
     ])
 }
 
 /// Parse `assets/<key>.edn` contents into highlights.
 pub fn parse_highlights(edn_str: &str) -> Vec<Highlight> {
-    let Some(root) = edn::parse(edn_str) else { return Vec::new() };
+    let Some(root) = edn::parse(edn_str) else {
+        return Vec::new();
+    };
     root.get("highlights")
         .and_then(Edn::as_vec)
         .map(|v| v.iter().filter_map(highlight_from).collect())
@@ -253,7 +271,13 @@ fn sanitize_filename(s: &str) -> String {
 pub fn legacy_asset_key(pdf_filename: &str) -> String {
     let stem = pdf_filename.strip_suffix(".pdf").unwrap_or(pdf_filename);
     stem.chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -287,7 +311,8 @@ pub fn merge_hls_page(
     if let Some(doc) = existing {
         if let Some(prev) = &doc.pre_block {
             for line in prev.lines() {
-                let key = crate::doc::parse_property_line(line).map(|(k, _)| k.to_ascii_lowercase());
+                let key =
+                    crate::doc::parse_property_line(line).map(|(k, _)| k.to_ascii_lowercase());
                 if matches!(key.as_deref(), Some("file") | Some("file-path")) {
                     continue;
                 }
@@ -327,7 +352,10 @@ pub fn merge_hls_page(
         .collect();
     // Keep the user's own top-level notes (after the generated annotations).
     roots.extend(user_roots);
-    Document { pre_block: Some(pre), roots }
+    Document {
+        pre_block: Some(pre),
+        roots,
+    }
 }
 
 /// Refresh an existing annotation block's `hl-color::` / `hl-page::` to match the
@@ -340,22 +368,27 @@ fn refresh_annotation(mut block: DocBlock, h: &Highlight) -> DocBlock {
     let mut lines: Vec<String> = block
         .raw
         .lines()
-        .map(|line| match crate::doc::parse_property_line(line).map(|(k, _)| k.to_ascii_lowercase()) {
-            Some(k) if k == "hl-color" => {
-                saw_color = true;
-                format!("hl-color:: {}", h.color)
+        .map(|line| {
+            match crate::doc::parse_property_line(line).map(|(k, _)| k.to_ascii_lowercase()) {
+                Some(k) if k == "hl-color" => {
+                    saw_color = true;
+                    format!("hl-color:: {}", h.color)
+                }
+                Some(k) if k == "hl-page" => {
+                    saw_page = true;
+                    format!("hl-page:: {}", h.page)
+                }
+                _ => line.to_string(),
             }
-            Some(k) if k == "hl-page" => {
-                saw_page = true;
-                format!("hl-page:: {}", h.page)
-            }
-            _ => line.to_string(),
         })
         .collect();
     // If the metadata lines were missing (hand-edited file), add them before id::.
     if !saw_color || !saw_page {
         let id_pos = lines.iter().position(|l| {
-            crate::doc::parse_property_line(l).map(|(k, _)| k.to_ascii_lowercase()).as_deref() == Some("id")
+            crate::doc::parse_property_line(l)
+                .map(|(k, _)| k.to_ascii_lowercase())
+                .as_deref()
+                == Some("id")
         });
         let mut add: Vec<String> = Vec::new();
         if !saw_page {
@@ -389,7 +422,13 @@ fn highlight_block(h: &Highlight) -> DocBlock {
     }
     lines.push("ls-type:: annotation".to_string());
     lines.push(format!("id:: {}", h.id));
-    DocBlock { raw: lines.join("\n"), children: Vec::new(), uuid: String::new(), is_org: false, proj: std::sync::OnceLock::new() }
+    DocBlock {
+        raw: lines.join("\n"),
+        children: Vec::new(),
+        uuid: String::new(),
+        is_org: false,
+        proj: std::sync::OnceLock::new(),
+    }
 }
 
 #[cfg(test)]
@@ -402,8 +441,18 @@ mod tests {
             page: 42,
             position: Position {
                 page: 42,
-                bounding: Rect { top: 100.0, left: 50.0, width: 400.0, height: 200.0 },
-                rects: vec![Rect { top: 100.0, left: 50.0, width: 400.0, height: 20.0 }],
+                bounding: Rect {
+                    top: 100.0,
+                    left: 50.0,
+                    width: 400.0,
+                    height: 200.0,
+                },
+                rects: vec![Rect {
+                    top: 100.0,
+                    left: 50.0,
+                    width: 400.0,
+                    height: 20.0,
+                }],
             },
             color: "yellow".into(),
             text: Some("some highlighted text".into()),
@@ -434,12 +483,32 @@ mod tests {
         let out = write_highlights(&[h], existing);
         let root = crate::edn::parse(&out).unwrap();
         // root :extra and the unknown root key survive
-        assert_eq!(root.get("extra").and_then(|e| e.get("zoom")).and_then(crate::edn::Edn::as_f64), Some(1.5));
-        assert_eq!(root.get("future-root-key").and_then(crate::edn::Edn::as_i64), Some(42));
+        assert_eq!(
+            root.get("extra")
+                .and_then(|e| e.get("zoom"))
+                .and_then(crate::edn::Edn::as_f64),
+            Some(1.5)
+        );
+        assert_eq!(
+            root.get("future-root-key")
+                .and_then(crate::edn::Edn::as_i64),
+            Some(42)
+        );
         // the unknown per-highlight field survives, and Tine's edit applied
-        let hl = &root.get("highlights").and_then(crate::edn::Edn::as_vec).unwrap()[0];
-        assert_eq!(hl.get("ls-mystery").and_then(crate::edn::Edn::as_str), Some("keep-me"));
-        assert_eq!(hl.get("properties").and_then(|p| p.get("color")).and_then(crate::edn::Edn::as_str), Some("red"));
+        let hl = &root
+            .get("highlights")
+            .and_then(crate::edn::Edn::as_vec)
+            .unwrap()[0];
+        assert_eq!(
+            hl.get("ls-mystery").and_then(crate::edn::Edn::as_str),
+            Some("keep-me")
+        );
+        assert_eq!(
+            hl.get("properties")
+                .and_then(|p| p.get("color"))
+                .and_then(crate::edn::Edn::as_str),
+            Some("red")
+        );
     }
 
     #[test]
@@ -481,8 +550,14 @@ mod tests {
         ));
         let merged = merge_hls_page(Some(&existing), "paper.pdf", "Paper", &[h.clone()]);
         let raws: Vec<&str> = merged.roots.iter().map(|b| b.raw.as_str()).collect();
-        assert!(raws.iter().any(|r| r.contains("my summary note")), "user note dropped: {raws:?}");
-        assert!(raws.iter().any(|r| r.contains(&h.id)), "annotation missing: {raws:?}");
+        assert!(
+            raws.iter().any(|r| r.contains("my summary note")),
+            "user note dropped: {raws:?}"
+        );
+        assert!(
+            raws.iter().any(|r| r.contains(&h.id)),
+            "annotation missing: {raws:?}"
+        );
     }
 
     #[test]
@@ -493,8 +568,14 @@ mod tests {
         );
         let merged = merge_hls_page(Some(&existing), "paper.pdf", "Paper", &[]);
         let pre = merged.pre_block.unwrap();
-        assert!(pre.contains("tags:: reading"), "user page property dropped: {pre}");
-        assert!(pre.contains("file-path:: ../assets/paper.pdf"), "file-path not updated: {pre}");
+        assert!(
+            pre.contains("tags:: reading"),
+            "user page property dropped: {pre}"
+        );
+        assert!(
+            pre.contains("file-path:: ../assets/paper.pdf"),
+            "file-path not updated: {pre}"
+        );
         assert!(!pre.contains("old.pdf"), "stale file path kept: {pre}");
     }
 
@@ -516,7 +597,10 @@ mod tests {
         let merged = merge_hls_page(Some(&edited), "b.pdf", "b", &[h1, h2]);
         assert_eq!(merged.roots.len(), 2);
         assert_eq!(merged.roots[0].children.len(), 1, "note child preserved");
-        assert_eq!(merged.roots[0].children[0].raw, "my note about this highlight");
+        assert_eq!(
+            merged.roots[0].children[0].raw,
+            "my note about this highlight"
+        );
         assert!(merged.roots[1].raw.contains("second highlight"));
     }
 
@@ -534,9 +618,21 @@ mod tests {
         h.color = "green".into();
         let merged = merge_hls_page(Some(&edited), "b.pdf", "b", &[h]);
         assert_eq!(merged.roots.len(), 1);
-        assert!(merged.roots[0].raw.contains("hl-color:: green"), "color not updated: {}", merged.roots[0].raw);
-        assert!(!merged.roots[0].raw.contains("hl-color:: yellow"), "old color kept: {}", merged.roots[0].raw);
-        assert_eq!(merged.roots[0].children.len(), 1, "note child must survive a recolor");
+        assert!(
+            merged.roots[0].raw.contains("hl-color:: green"),
+            "color not updated: {}",
+            merged.roots[0].raw
+        );
+        assert!(
+            !merged.roots[0].raw.contains("hl-color:: yellow"),
+            "old color kept: {}",
+            merged.roots[0].raw
+        );
+        assert_eq!(
+            merged.roots[0].children.len(),
+            1,
+            "note child must survive a recolor"
+        );
         assert_eq!(merged.roots[0].children[0].raw, "my note");
     }
 

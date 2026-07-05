@@ -1,8 +1,8 @@
 //! Walk a directory, parse+serialize every `.md`, and report any byte-level
 //! mismatches. Usage: cargo run -p tine-core --example roundtrip_dir -- <dir>
 
-use tine_core::doc;
 use std::path::Path;
+use tine_core::doc;
 
 fn main() {
     let dir = std::env::args().nth(1).expect("usage: roundtrip_dir <dir>");
@@ -32,7 +32,9 @@ fn main() {
 }
 
 fn walk(dir: &Path, f: &mut impl FnMut(&Path, &String)) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in rd.flatten() {
         let path = entry.path();
         if path.is_dir() {
@@ -54,6 +56,10 @@ fn print_first_diff(a: &str, b: &str) {
         }
     }
     if a.lines().count() != b.lines().count() {
-        println!("  line count differs: in={} out={}", a.lines().count(), b.lines().count());
+        println!(
+            "  line count differs: in={} out={}",
+            a.lines().count(),
+            b.lines().count()
+        );
     }
 }

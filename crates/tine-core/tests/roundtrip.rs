@@ -1,8 +1,8 @@
 //! Round-trip fidelity tests: `serialize(parse(x)) == x` for well-formed
 //! Logseq markdown, plus structural and canonicalization checks.
 
-use tine_core::doc::{self, DocBlock};
 use pretty_assertions::assert_eq;
+use tine_core::doc::{self, DocBlock};
 
 /// Assert byte-exact round-trip.
 fn assert_roundtrip(input: &str) {
@@ -48,8 +48,15 @@ fn fenced_code_with_bullet_line_stays_one_block() {
     assert_roundtrip(input);
     let doc = doc::parse(input);
     assert_eq!(doc.roots.len(), 2);
-    assert_eq!(doc.roots[0].children.len(), 0, "code fence must not become children");
-    assert_eq!(doc.roots[0].raw, "```clojure\n(defn f [x] x)\n- not a child\n```");
+    assert_eq!(
+        doc.roots[0].children.len(),
+        0,
+        "code fence must not become children"
+    );
+    assert_eq!(
+        doc.roots[0].raw,
+        "```clojure\n(defn f [x] x)\n- not a child\n```"
+    );
     assert_eq!(doc.roots[1].raw, "after");
 }
 
@@ -61,7 +68,11 @@ fn nested_backtick_fence_not_closed_early() {
     assert_roundtrip(input);
     let doc = doc::parse(input);
     assert_eq!(doc.roots.len(), 2);
-    assert_eq!(doc.roots[0].children.len(), 0, "inner ``` must not split the block");
+    assert_eq!(
+        doc.roots[0].children.len(),
+        0,
+        "inner ``` must not split the block"
+    );
     assert_eq!(doc.roots[0].raw, "````\n```\n- still code\n````");
 }
 
@@ -106,7 +117,10 @@ fn page_properties_pre_block() {
     let input = "title:: My Page\ntags:: a, b\nalias:: Other\n\n- first block\n- second\n";
     assert_roundtrip(input);
     let doc = doc::parse(input);
-    assert_eq!(doc.pre_block.as_deref(), Some("title:: My Page\ntags:: a, b\nalias:: Other"));
+    assert_eq!(
+        doc.pre_block.as_deref(),
+        Some("title:: My Page\ntags:: a, b\nalias:: Other")
+    );
     assert_eq!(doc.roots.len(), 2);
 }
 
@@ -178,7 +192,10 @@ fn manual_tree_serialization() {
     let mut child_two = DocBlock::new("child two");
     child_two.children.push(DocBlock::new("deep"));
     parent.children.push(child_two);
-    let doc = doc::Document { pre_block: None, roots: vec![parent] };
+    let doc = doc::Document {
+        pre_block: None,
+        roots: vec![parent],
+    };
     let out = doc::serialize(&doc);
     assert_eq!(out, "- parent\n\t- child one\n\t- child two\n\t\t- deep\n");
 }

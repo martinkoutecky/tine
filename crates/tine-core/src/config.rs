@@ -124,7 +124,11 @@ impl Config {
             cfg.pages_dir = v;
         }
         if let Some(v) = keyword_value(edn, ":preferred-workflow") {
-            cfg.preferred_workflow = if v == "todo" { Workflow::Todo } else { Workflow::Now };
+            cfg.preferred_workflow = if v == "todo" {
+                Workflow::Todo
+            } else {
+                Workflow::Now
+            };
         }
         cfg.shortcuts = parse_shortcuts(edn);
         cfg.all_pages_public = bool_value(edn, ":publishing/all-pages-public?").unwrap_or(false);
@@ -182,32 +186,32 @@ impl Graph {
         let path = self.root.join("logseq").join("config.edn");
         crate::model::atomic_update(&path, &CONFIG_LOCK, |content| {
             let mut content = content.to_string();
-        let vec_str = format!(
-            "[{}]",
-            names
-                .iter()
-                .map(|n| format!("\"{}\"", n.replace('\\', "\\\\").replace('"', "\\\"")))
-                .collect::<Vec<_>>()
-                .join(" ")
-        );
-        if let Some(start) = find_keyword(&content, ":favorites") {
-            // Replace the existing `:favorites [...]` vector. Require its value to
-            // be a vector and find the matching `]` with an EDN-aware scan so a
-            // favorite NAME containing `]` (or a comment in the vector) can't
-            // truncate the replacement and corrupt config.edn.
-            let after = start + ":favorites".len();
-            let j = skip_blank(&content, after); // comment-aware, like the readers
-            if content.as_bytes().get(j) == Some(&b'[') {
-                let end = match_close_bracket(&content, j) + 1;
-                content.replace_range(start..end, &format!(":favorites {vec_str}"));
+            let vec_str = format!(
+                "[{}]",
+                names
+                    .iter()
+                    .map(|n| format!("\"{}\"", n.replace('\\', "\\\\").replace('"', "\\\"")))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            );
+            if let Some(start) = find_keyword(&content, ":favorites") {
+                // Replace the existing `:favorites [...]` vector. Require its value to
+                // be a vector and find the matching `]` with an EDN-aware scan so a
+                // favorite NAME containing `]` (or a comment in the vector) can't
+                // truncate the replacement and corrupt config.edn.
+                let after = start + ":favorites".len();
+                let j = skip_blank(&content, after); // comment-aware, like the readers
+                if content.as_bytes().get(j) == Some(&b'[') {
+                    let end = match_close_bracket(&content, j) + 1;
+                    content.replace_range(start..end, &format!(":favorites {vec_str}"));
+                } else {
+                    content.insert_str(after, &format!(" {vec_str}"));
+                }
+            } else if let Some(brace) = content.find('{') {
+                content.insert_str(brace + 1, &format!("\n :favorites {vec_str}\n"));
             } else {
-                content.insert_str(after, &format!(" {vec_str}"));
+                content = format!("{{:favorites {vec_str}}}\n");
             }
-        } else if let Some(brace) = content.find('{') {
-            content.insert_str(brace + 1, &format!("\n :favorites {vec_str}\n"));
-        } else {
-            content = format!("{{:favorites {vec_str}}}\n");
-        }
             Ok(content)
         })
     }
@@ -222,23 +226,23 @@ impl Graph {
         crate::model::atomic_update(&path, &CONFIG_LOCK, |content| {
             let mut content = content.to_string();
 
-        if let Some(start) = find_keyword(&content, key) {
-            let after = start + key.len();
-            let vstart = skip_blank(&content, after); // comment-aware
-            if content[vstart..].starts_with(':') {
-                let vrest = &content[vstart + 1..];
-                let end = vrest
-                    .find(|c: char| c.is_whitespace() || c == '}' || c == ')')
-                    .unwrap_or(vrest.len());
-                content.replace_range(vstart..vstart + 1 + end, kw);
+            if let Some(start) = find_keyword(&content, key) {
+                let after = start + key.len();
+                let vstart = skip_blank(&content, after); // comment-aware
+                if content[vstart..].starts_with(':') {
+                    let vrest = &content[vstart + 1..];
+                    let end = vrest
+                        .find(|c: char| c.is_whitespace() || c == '}' || c == ')')
+                        .unwrap_or(vrest.len());
+                    content.replace_range(vstart..vstart + 1 + end, kw);
+                } else {
+                    content.insert_str(after, &format!(" {kw}"));
+                }
+            } else if let Some(brace) = content.find('{') {
+                content.insert_str(brace + 1, &format!("\n :preferred-workflow {kw}\n"));
             } else {
-                content.insert_str(after, &format!(" {kw}"));
+                content = format!("{{:preferred-workflow {kw}}}\n");
             }
-        } else if let Some(brace) = content.find('{') {
-            content.insert_str(brace + 1, &format!("\n :preferred-workflow {kw}\n"));
-        } else {
-            content = format!("{{:preferred-workflow {kw}}}\n");
-        }
             Ok(content)
         })
     }
@@ -257,22 +261,22 @@ impl Graph {
         crate::model::atomic_update(&path, &CONFIG_LOCK, |content| {
             let mut content = content.to_string();
 
-        if let Some(start) = find_keyword(&content, key) {
-            let after = start + key.len();
-            // Replace the FULL existing value span — whether it's a string
-            // (`"Markdown"`) or a keyword (`:org`) — so a keyword value isn't left
-            // dangling beside the new string (which would corrupt the map).
-            match next_value_span(&content, after, content.len()) {
-                Some((vstart, vend, _)) if vend > vstart => {
-                    content.replace_range(vstart..vend, val)
+            if let Some(start) = find_keyword(&content, key) {
+                let after = start + key.len();
+                // Replace the FULL existing value span — whether it's a string
+                // (`"Markdown"`) or a keyword (`:org`) — so a keyword value isn't left
+                // dangling beside the new string (which would corrupt the map).
+                match next_value_span(&content, after, content.len()) {
+                    Some((vstart, vend, _)) if vend > vstart => {
+                        content.replace_range(vstart..vend, val)
+                    }
+                    _ => content.insert_str(after, &format!(" {val}")),
                 }
-                _ => content.insert_str(after, &format!(" {val}")),
+            } else if let Some(brace) = content.find('{') {
+                content.insert_str(brace + 1, &format!("\n {key} {val}\n"));
+            } else {
+                content = format!("{{{key} {val}}}\n");
             }
-        } else if let Some(brace) = content.find('{') {
-            content.insert_str(brace + 1, &format!("\n {key} {val}\n"));
-        } else {
-            content = format!("{{{key} {val}}}\n");
-        }
             Ok(content)
         })
     }
@@ -291,17 +295,19 @@ impl Graph {
         crate::model::atomic_update(&path, &CONFIG_LOCK, |content| {
             let mut content = content.to_string();
 
-        if let Some(start) = find_keyword(&content, key) {
-            let after = start + key.len();
-            match next_value_span(&content, after, content.len()) {
-                Some((vstart, vend, _)) if vend > vstart => content.replace_range(vstart..vend, &val),
-                _ => content.insert_str(after, &format!(" {val}")),
+            if let Some(start) = find_keyword(&content, key) {
+                let after = start + key.len();
+                match next_value_span(&content, after, content.len()) {
+                    Some((vstart, vend, _)) if vend > vstart => {
+                        content.replace_range(vstart..vend, &val)
+                    }
+                    _ => content.insert_str(after, &format!(" {val}")),
+                }
+            } else if let Some(brace) = content.find('{') {
+                content.insert_str(brace + 1, &format!("\n {key} {val}\n"));
+            } else {
+                content = format!("{{{key} {val}}}\n");
             }
-        } else if let Some(brace) = content.find('{') {
-            content.insert_str(brace + 1, &format!("\n {key} {val}\n"));
-        } else {
-            content = format!("{{{key} {val}}}\n");
-        }
             Ok(content)
         })
     }
@@ -315,64 +321,71 @@ impl Graph {
         crate::model::atomic_update(&path, &CONFIG_LOCK, |content| {
             let mut content = content.to_string();
 
-        // Locate a real `:default-templates` whose value is a map literal `{ … }`.
-        let dt = find_keyword(&content, ":default-templates").and_then(|start| {
-            let after = start + ":default-templates".len();
-            let j = skip_blank(&content, after); // comment-aware
-            if content.as_bytes().get(j) != Some(&b'{') {
-                return None; // value isn't a map → don't touch it
-            }
-            let close = match_close_brace(&content, j);
-            Some((j, close)) // byte indices of `{` and matching `}`
-        });
+            // Locate a real `:default-templates` whose value is a map literal `{ … }`.
+            let dt = find_keyword(&content, ":default-templates").and_then(|start| {
+                let after = start + ":default-templates".len();
+                let j = skip_blank(&content, after); // comment-aware
+                if content.as_bytes().get(j) != Some(&b'{') {
+                    return None; // value isn't a map → don't touch it
+                }
+                let close = match_close_brace(&content, j);
+                Some((j, close)) // byte indices of `{` and matching `}`
+            });
 
-        match name {
-            Some(n) => {
-                let v = format!("\"{}\"", n.replace('\\', "\\\\").replace('"', "\\\""));
-                match dt {
-                    Some((open, close)) => {
-                        if let Some(jrel) = find_keyword(&content[open + 1..close], ":journals") {
-                            // Replace the value IMMEDIATELY after :journals (string or
-                            // not) — never scan for the next quote anywhere, which could
-                            // land on a later key's value.
-                            let after = open + 1 + jrel + ":journals".len();
-                            match next_value_span(&content, after, close) {
-                                Some((vstart, vend, _)) => content.replace_range(vstart..vend, &v),
-                                None => content.insert_str(after, &format!(" {v}")),
+            match name {
+                Some(n) => {
+                    let v = format!("\"{}\"", n.replace('\\', "\\\\").replace('"', "\\\""));
+                    match dt {
+                        Some((open, close)) => {
+                            if let Some(jrel) = find_keyword(&content[open + 1..close], ":journals")
+                            {
+                                // Replace the value IMMEDIATELY after :journals (string or
+                                // not) — never scan for the next quote anywhere, which could
+                                // land on a later key's value.
+                                let after = open + 1 + jrel + ":journals".len();
+                                match next_value_span(&content, after, close) {
+                                    Some((vstart, vend, _)) => {
+                                        content.replace_range(vstart..vend, &v)
+                                    }
+                                    None => content.insert_str(after, &format!(" {v}")),
+                                }
+                            } else {
+                                let sep = if content[open + 1..close].trim().is_empty() {
+                                    ""
+                                } else {
+                                    " "
+                                };
+                                content.insert_str(open + 1, &format!(":journals {v}{sep}"));
                             }
-                        } else {
-                            let sep = if content[open + 1..close].trim().is_empty() { "" } else { " " };
-                            content.insert_str(open + 1, &format!(":journals {v}{sep}"));
+                        }
+                        None => {
+                            let entry = format!("\n :default-templates {{:journals {v}}}\n");
+                            if let Some(brace) = content.find('{') {
+                                content.insert_str(brace + 1, &entry);
+                            } else {
+                                content = format!("{{:default-templates {{:journals {v}}}}}\n");
+                            }
                         }
                     }
-                    None => {
-                        let entry = format!("\n :default-templates {{:journals {v}}}\n");
-                        if let Some(brace) = content.find('{') {
-                            content.insert_str(brace + 1, &entry);
-                        } else {
-                            content = format!("{{:default-templates {{:journals {v}}}}}\n");
+                }
+                None => {
+                    if let Some((open, close)) = dt {
+                        if let Some(jrel) = find_keyword(&content[open + 1..close], ":journals") {
+                            let jstart = open + 1 + jrel;
+                            let after = jstart + ":journals".len();
+                            let end = next_value_span(&content, after, close)
+                                .map(|(_, vend, _)| vend)
+                                .unwrap_or(after);
+                            let tail: usize = content[end..close]
+                                .chars()
+                                .take_while(|c| c.is_whitespace() || *c == ',')
+                                .map(|c| c.len_utf8())
+                                .sum();
+                            content.replace_range(jstart..end + tail, "");
                         }
                     }
                 }
             }
-            None => {
-                if let Some((open, close)) = dt {
-                    if let Some(jrel) = find_keyword(&content[open + 1..close], ":journals") {
-                        let jstart = open + 1 + jrel;
-                        let after = jstart + ":journals".len();
-                        let end = next_value_span(&content, after, close)
-                            .map(|(_, vend, _)| vend)
-                            .unwrap_or(after);
-                        let tail: usize = content[end..close]
-                            .chars()
-                            .take_while(|c| c.is_whitespace() || *c == ',')
-                            .map(|c| c.len_utf8())
-                            .sum();
-                        content.replace_range(jstart..end + tail, "");
-                    }
-                }
-            }
-        }
             Ok(content)
         })
     }
@@ -388,23 +401,23 @@ impl Graph {
         crate::model::atomic_update(&path, &CONFIG_LOCK, |content| {
             let mut content = content.to_string();
 
-        if let Some(start) = find_keyword(&content, key) {
-            let after = start + key.len();
-            let vstart = skip_blank(&content, after); // comment-aware
-            let digits = content[vstart..]
-                .chars()
-                .take_while(|c| c.is_ascii_digit())
-                .count();
-            if digits > 0 {
-                content.replace_range(vstart..vstart + digits, &n.to_string());
+            if let Some(start) = find_keyword(&content, key) {
+                let after = start + key.len();
+                let vstart = skip_blank(&content, after); // comment-aware
+                let digits = content[vstart..]
+                    .chars()
+                    .take_while(|c| c.is_ascii_digit())
+                    .count();
+                if digits > 0 {
+                    content.replace_range(vstart..vstart + digits, &n.to_string());
+                } else {
+                    content.insert_str(after, &format!(" {n}"));
+                }
+            } else if let Some(brace) = content.find('{') {
+                content.insert_str(brace + 1, &format!("\n :start-of-week {n}\n"));
             } else {
-                content.insert_str(after, &format!(" {n}"));
+                content = format!("{{:start-of-week {n}}}\n");
             }
-        } else if let Some(brace) = content.find('{') {
-            content.insert_str(brace + 1, &format!("\n :start-of-week {n}\n"));
-        } else {
-            content = format!("{{:start-of-week {n}}}\n");
-        }
             Ok(content)
         })
     }
@@ -495,8 +508,18 @@ fn find_keyword(s: &str, key: &str) -> Option<usize> {
                 let boundary = after >= b.len()
                     || matches!(
                         b[after],
-                        b' ' | b'\t' | b'\n' | b'\r' | b'"' | b'{' | b'}'
-                            | b'[' | b']' | b'(' | b')' | b'#' | b','
+                        b' ' | b'\t'
+                            | b'\n'
+                            | b'\r'
+                            | b'"'
+                            | b'{'
+                            | b'}'
+                            | b'['
+                            | b']'
+                            | b'('
+                            | b')'
+                            | b'#'
+                            | b','
                     );
                 if boundary {
                     return Some(i);
@@ -537,7 +560,12 @@ fn next_value_span(s: &str, from: usize, close: usize) -> Option<(usize, usize, 
         return Some((i, edn_str_end(s, i).min(close), true));
     }
     let start = i;
-    while i < close && !matches!(b[i], b' ' | b'\t' | b'\n' | b'\r' | b',' | b'{' | b'}' | b'"') {
+    while i < close
+        && !matches!(
+            b[i],
+            b' ' | b'\t' | b'\n' | b'\r' | b',' | b'{' | b'}' | b'"'
+        )
+    {
         i += 1;
     }
     Some((start, i, false))
@@ -590,7 +618,11 @@ fn unescape(inner: &str) -> String {
 /// Read the (unescaped) content of the EDN string whose opening `"` is at `open`.
 fn read_string_at(s: &str, open: usize) -> String {
     let end = edn_str_end(s, open);
-    let inner_end = if end > open + 1 && s.as_bytes()[end - 1] == b'"' { end - 1 } else { end };
+    let inner_end = if end > open + 1 && s.as_bytes()[end - 1] == b'"' {
+        end - 1
+    } else {
+        end
+    };
     unescape(&s[open + 1..inner_end])
 }
 
@@ -611,7 +643,12 @@ fn keyword_value(edn: &str, key: &str) -> Option<String> {
     }
     let vstart = from + 1;
     let mut j = vstart;
-    while j < b.len() && !matches!(b[j], b' ' | b'\t' | b'\n' | b'\r' | b',' | b'}' | b')' | b']') {
+    while j < b.len()
+        && !matches!(
+            b[j],
+            b' ' | b'\t' | b'\n' | b'\r' | b',' | b'}' | b')' | b']'
+        )
+    {
         j += 1;
     }
     Some(edn[vstart..j].to_string())
@@ -634,14 +671,19 @@ fn bool_value(edn: &str, key: &str) -> Option<bool> {
 fn int_value(edn: &str, key: &str) -> Option<u32> {
     let start = find_keyword(edn, key)?;
     let from = skip_blank(edn, start + key.len());
-    let digits: String = edn[from..].chars().take_while(|c| c.is_ascii_digit()).collect();
+    let digits: String = edn[from..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
     digits.parse().ok()
 }
 
 /// Quoted strings in the vector following `key` (`:favorites ["a" "b"]`),
 /// string-aware so a value containing `]` doesn't end the vector early.
 fn parse_string_vector(edn: &str, key: &str) -> Vec<String> {
-    let Some(start) = find_keyword(edn, key) else { return Vec::new() };
+    let Some(start) = find_keyword(edn, key) else {
+        return Vec::new();
+    };
     let from = skip_blank(edn, start + key.len());
     let b = edn.as_bytes();
     if b.get(from) != Some(&b'[') {
@@ -683,7 +725,9 @@ fn nested_string(edn: &str, outer: &str, inner: &str) -> Option<String> {
 
 /// Keywords in the set following `key` (`:block-hidden-properties #{:a :b}`).
 fn parse_keyword_set(edn: &str, key: &str) -> Vec<String> {
-    let Some(start) = find_keyword(edn, key) else { return Vec::new() };
+    let Some(start) = find_keyword(edn, key) else {
+        return Vec::new();
+    };
     let from = skip_blank(edn, start + key.len());
     let b = edn.as_bytes();
     if b.get(from) != Some(&b'#') || b.get(from + 1) != Some(&b'{') {
@@ -706,7 +750,9 @@ fn parse_keyword_set(edn: &str, key: &str) -> Vec<String> {
 /// `false` (disable) | `["b1" "b2"]` (first wins). String/brace-aware.
 fn parse_shortcuts(edn: &str) -> HashMap<String, String> {
     let mut map = HashMap::new();
-    let Some(start) = find_keyword(edn, ":shortcuts") else { return map };
+    let Some(start) = find_keyword(edn, ":shortcuts") else {
+        return map;
+    };
     let from = skip_blank(edn, start + ":shortcuts".len());
     let b = edn.as_bytes();
     if b.get(from) != Some(&b'{') {
@@ -773,7 +819,9 @@ fn parse_shortcuts(edn: &str) -> HashMap<String, String> {
 /// first non-string key/value rather than desyncing on unexpected EDN.
 fn parse_macros(edn: &str) -> HashMap<String, String> {
     let mut map = HashMap::new();
-    let Some(start) = find_keyword(edn, ":macros") else { return map };
+    let Some(start) = find_keyword(edn, ":macros") else {
+        return map;
+    };
     let from = skip_blank(edn, start + ":macros".len());
     let b = edn.as_bytes();
     if b.get(from) != Some(&b'{') {
@@ -811,13 +859,21 @@ mod tests {
                       :macros {"poem" "Roses are $1, violets are $2"
                                "greet" "Hello, **$1**! See [[$2]]"}}"#;
         let cfg = Config::parse(edn);
-        assert_eq!(cfg.macros.get("poem").map(String::as_str), Some("Roses are $1, violets are $2"));
-        assert_eq!(cfg.macros.get("greet").map(String::as_str), Some("Hello, **$1**! See [[$2]]"));
+        assert_eq!(
+            cfg.macros.get("poem").map(String::as_str),
+            Some("Roses are $1, violets are $2")
+        );
+        assert_eq!(
+            cfg.macros.get("greet").map(String::as_str),
+            Some("Hello, **$1**! See [[$2]]")
+        );
     }
 
     #[test]
     fn no_macros_section_is_empty() {
-        assert!(Config::parse(r#"{:preferred-format "Markdown"}"#).macros.is_empty());
+        assert!(Config::parse(r#"{:preferred-format "Markdown"}"#)
+            .macros
+            .is_empty());
     }
 
     #[test]
@@ -826,8 +882,14 @@ mod tests {
                       :shortcuts {:go/search "mod+shift+k"
                                   :ui/toggle-theme "t d"}}"#;
         let cfg = Config::parse(edn);
-        assert_eq!(cfg.shortcuts.get("go/search").map(String::as_str), Some("mod+shift+k"));
-        assert_eq!(cfg.shortcuts.get("ui/toggle-theme").map(String::as_str), Some("t d"));
+        assert_eq!(
+            cfg.shortcuts.get("go/search").map(String::as_str),
+            Some("mod+shift+k")
+        );
+        assert_eq!(
+            cfg.shortcuts.get("ui/toggle-theme").map(String::as_str),
+            Some("t d")
+        );
     }
 
     #[test]
@@ -841,16 +903,31 @@ mod tests {
         let edn = r#"{:shortcuts {:go/search false
                                   :editor/indent ["tab" "mod+]"]}}"#;
         let cfg = Config::parse(edn);
-        assert_eq!(cfg.shortcuts.get("go/search").map(String::as_str), Some("false"));
-        assert_eq!(cfg.shortcuts.get("editor/indent").map(String::as_str), Some("tab"));
+        assert_eq!(
+            cfg.shortcuts.get("go/search").map(String::as_str),
+            Some("false")
+        );
+        assert_eq!(
+            cfg.shortcuts.get("editor/indent").map(String::as_str),
+            Some("tab")
+        );
     }
 
     #[test]
     fn parses_preferred_format() {
         use crate::model::Format;
-        assert_eq!(Config::parse(r#"{:preferred-format "Org"}"#).preferred_format, Format::Org);
-        assert_eq!(Config::parse(r#"{:preferred-format "org"}"#).preferred_format, Format::Org);
-        assert_eq!(Config::parse(r#"{:preferred-format "Markdown"}"#).preferred_format, Format::Md);
+        assert_eq!(
+            Config::parse(r#"{:preferred-format "Org"}"#).preferred_format,
+            Format::Org
+        );
+        assert_eq!(
+            Config::parse(r#"{:preferred-format "org"}"#).preferred_format,
+            Format::Org
+        );
+        assert_eq!(
+            Config::parse(r#"{:preferred-format "Markdown"}"#).preferred_format,
+            Format::Md
+        );
         assert_eq!(Config::parse("{}").preferred_format, Format::Md);
     }
 
@@ -858,8 +935,14 @@ mod tests {
     fn parses_preferred_format_keyword_form() {
         use crate::model::Format;
         // M3: OG's schema also allows the keyword form `:preferred-format :org`.
-        assert_eq!(Config::parse("{:preferred-format :org}").preferred_format, Format::Org);
-        assert_eq!(Config::parse("{:preferred-format :markdown}").preferred_format, Format::Md);
+        assert_eq!(
+            Config::parse("{:preferred-format :org}").preferred_format,
+            Format::Org
+        );
+        assert_eq!(
+            Config::parse("{:preferred-format :markdown}").preferred_format,
+            Format::Md
+        );
     }
 
     #[test]
@@ -870,12 +953,22 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("tine-cfgkw-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("logseq")).unwrap();
-        fs::write(dir.join("logseq").join("config.edn"), "{:preferred-format :markdown\n :start-of-week 0}\n").unwrap();
+        fs::write(
+            dir.join("logseq").join("config.edn"),
+            "{:preferred-format :markdown\n :start-of-week 0}\n",
+        )
+        .unwrap();
         let g = Graph::open(&dir);
         g.set_preferred_format(Format::Org).unwrap();
         let after = fs::read_to_string(dir.join("logseq").join("config.edn")).unwrap();
-        assert!(after.contains(":preferred-format \"Org\""), "keyword not replaced: {after}");
-        assert!(!after.contains(":markdown"), "stale keyword left behind: {after}");
+        assert!(
+            after.contains(":preferred-format \"Org\""),
+            "keyword not replaced: {after}"
+        );
+        assert!(
+            !after.contains(":markdown"),
+            "stale keyword left behind: {after}"
+        );
         assert!(after.contains(":start-of-week 0"), "other keys preserved");
         assert_eq!(Graph::open(&dir).preferred_format(), Format::Org);
         let _ = fs::remove_dir_all(&dir);
@@ -895,7 +988,10 @@ mod tests {
         let g = Graph::open(&dir);
         g.set_preferred_format(Format::Org).unwrap();
         let after = fs::read_to_string(dir.join("logseq").join("config.edn")).unwrap();
-        assert!(after.contains(":preferred-format \"Org\""), "value flipped: {after}");
+        assert!(
+            after.contains(":preferred-format \"Org\""),
+            "value flipped: {after}"
+        );
         assert!(after.contains(":start-of-week 0"), "other keys preserved");
         assert_eq!(Graph::open(&dir).preferred_format(), Format::Org);
         // Inserts the key when absent.
@@ -919,9 +1015,18 @@ mod tests {
         let g = Graph::open(&dir);
         g.set_journal_page_title_format("yyyy-MM-dd").unwrap();
         let after = fs::read_to_string(dir.join("logseq").join("config.edn")).unwrap();
-        assert!(after.contains(":journal/page-title-format \"yyyy-MM-dd\""), "not written: {after}");
-        assert!(after.contains(":preferred-format \"Markdown\""), "other keys clobbered: {after}");
-        assert_eq!(Config::parse(&after).journal_page_title_format.as_deref(), Some("yyyy-MM-dd"));
+        assert!(
+            after.contains(":journal/page-title-format \"yyyy-MM-dd\""),
+            "not written: {after}"
+        );
+        assert!(
+            after.contains(":preferred-format \"Markdown\""),
+            "other keys clobbered: {after}"
+        );
+        assert_eq!(
+            Config::parse(&after).journal_page_title_format.as_deref(),
+            Some("yyyy-MM-dd")
+        );
         // A second set replaces the value wholesale (no stale leftover).
         g.set_journal_page_title_format("MMMM do, yyyy").unwrap();
         let after2 = fs::read_to_string(dir.join("logseq").join("config.edn")).unwrap();
@@ -929,7 +1034,10 @@ mod tests {
             after2.contains(":journal/page-title-format \"MMMM do, yyyy\""),
             "value not replaced: {after2}"
         );
-        assert!(!after2.contains("\"yyyy-MM-dd\""), "stale value left behind: {after2}");
+        assert!(
+            !after2.contains("\"yyyy-MM-dd\""),
+            "stale value left behind: {after2}"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -950,15 +1058,24 @@ mod tests {
     #[test]
     fn parses_favorites_vector() {
         let cfg = Config::parse(r#"{:favorites ["Inbox" "Reading List"]}"#);
-        assert_eq!(cfg.favorites, vec!["Inbox".to_string(), "Reading List".to_string()]);
+        assert_eq!(
+            cfg.favorites,
+            vec!["Inbox".to_string(), "Reading List".to_string()]
+        );
         assert!(Config::parse("{}").favorites.is_empty());
     }
 
     #[test]
     fn default_journal_template() {
         let edn = r#"{:default-templates {:journals "Daily"}}"#;
-        assert_eq!(Config::parse(edn).default_journal_template.as_deref(), Some("Daily"));
-        assert_eq!(Config::parse(r#"{:preferred-format "Markdown"}"#).default_journal_template, None);
+        assert_eq!(
+            Config::parse(edn).default_journal_template.as_deref(),
+            Some("Daily")
+        );
+        assert_eq!(
+            Config::parse(r#"{:preferred-format "Markdown"}"#).default_journal_template,
+            None
+        );
     }
 
     #[test]
@@ -967,7 +1084,10 @@ mod tests {
                       :block-hidden-properties #{:public :icon}}"#;
         let cfg = Config::parse(edn);
         assert_eq!(cfg.start_of_week, 1);
-        assert_eq!(cfg.block_hidden_properties, vec!["public".to_string(), "icon".to_string()]);
+        assert_eq!(
+            cfg.block_hidden_properties,
+            vec!["public".to_string(), "icon".to_string()]
+        );
     }
 
     #[test]
@@ -977,9 +1097,15 @@ mod tests {
         let cfg = Config::parse("{:favorites [\"A\" ;; \"B\"\n \"C\"]}");
         assert_eq!(cfg.favorites, vec!["A".to_string(), "C".to_string()]);
         let cfg = Config::parse("{:block-hidden-properties #{:public ;; :secret\n :icon}}");
-        assert_eq!(cfg.block_hidden_properties, vec!["public".to_string(), "icon".to_string()]);
+        assert_eq!(
+            cfg.block_hidden_properties,
+            vec!["public".to_string(), "icon".to_string()]
+        );
         // Compact (whitespace-free) EDN: the key boundary now includes `[` / `#`.
-        assert_eq!(Config::parse("{:favorites[\"X\"]}").favorites, vec!["X".to_string()]);
+        assert_eq!(
+            Config::parse("{:favorites[\"X\"]}").favorites,
+            vec!["X".to_string()]
+        );
         assert_eq!(
             Config::parse("{:block-hidden-properties#{:id}}").block_hidden_properties,
             vec!["id".to_string()]

@@ -37,7 +37,13 @@ fn walk_path<'a>(
 
 /// A short, single-line label for a block in a breadcrumb trail.
 fn crumb_line(b: &DocBlock) -> String {
-    let line = b.visible_text().lines().next().unwrap_or("").trim().to_string();
+    let line = b
+        .visible_text()
+        .lines()
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_string();
     if line.chars().count() > 60 {
         format!("{}…", line.chars().take(60).collect::<String>())
     } else {
@@ -48,7 +54,11 @@ fn crumb_line(b: &DocBlock) -> String {
 /// Collect matching blocks across the graph, grouped by source page. Scans the
 /// graph's in-memory page cache (built once, kept in sync by edits) so no disk
 /// I/O or re-parsing happens per call.
-fn collect(graph: &Graph, mut keep: impl FnMut(&DocBlock) -> bool, exclude: Option<&str>) -> Vec<RefGroup> {
+fn collect(
+    graph: &Graph,
+    mut keep: impl FnMut(&DocBlock) -> bool,
+    exclude: Option<&str>,
+) -> Vec<RefGroup> {
     let ex = exclude.map(refs::normalize);
     graph.with_pages(|pages| {
         // Pair each group with the referring page's journal `date_key` so the result
@@ -68,7 +78,14 @@ fn collect(graph: &Graph, mut keep: impl FnMut(&DocBlock) -> bool, exclude: Opti
                 }
             });
             if !matched.is_empty() {
-                groups.push((entry.date_key, RefGroup { page: entry.name.clone(), kind: entry.kind, blocks: matched }));
+                groups.push((
+                    entry.date_key,
+                    RefGroup {
+                        page: entry.name.clone(),
+                        kind: entry.kind,
+                        blocks: matched,
+                    },
+                ));
             }
         }
         // OG parity (components/block.cljs:3521 `sort-by :block/journal-day >`): order the
@@ -147,7 +164,11 @@ pub fn block_referrers(graph: &Graph, uuid: &str) -> Vec<RefGroup> {
     if u.is_empty() {
         return Vec::new();
     }
-    collect(graph, |b| b.projection().block_refs.iter().any(|r| r == u), None)
+    collect(
+        graph,
+        |b| b.projection().block_refs.iter().any(|r| r == u),
+        None,
+    )
 }
 
 fn contains_word(hay: &str, needle: &str) -> bool {
@@ -209,7 +230,9 @@ fn page_facets(pre_block: Option<&str>) -> (Vec<(String, String)>, Vec<String>) 
 
 pub fn run_query(graph: &Graph, query_src: &str) -> Vec<RefGroup> {
     let today = JournalDate::today();
-    let Some(pred) = Pred::parse(query_src, today) else { return Vec::new() };
+    let Some(pred) = Pred::parse(query_src, today) else {
+        return Vec::new();
+    };
     let mut opts = QueryOpts::default();
     pred.collect_opts(&mut opts);
     run_pred(graph, &pred, &opts)
@@ -245,7 +268,11 @@ fn run_pred(graph: &Graph, pred: &Pred, opts: &QueryOpts) -> Vec<RefGroup> {
                     recency.insert(entry.name.clone(), page_recency_secs(entry));
                 }
                 let blocks: Vec<BlockDto> = matched.into_iter().map(block_to_dto).collect();
-                groups.push(RefGroup { page: entry.name.clone(), kind: entry.kind, blocks });
+                groups.push(RefGroup {
+                    page: entry.name.clone(),
+                    kind: entry.kind,
+                    blocks,
+                });
             }
         }
         (groups, recency)
@@ -277,7 +304,15 @@ fn run_pred(graph: &Graph, pred: &Pred, opts: &QueryOpts) -> Vec<RefGroup> {
                     SortDecor::Text(sort_key(&b, &page, field))
                 };
                 let idx = flat.len();
-                flat.push((key, idx, RefGroup { page: page.clone(), kind, blocks: vec![b] }));
+                flat.push((
+                    key,
+                    idx,
+                    RefGroup {
+                        page: page.clone(),
+                        kind,
+                        blocks: vec![b],
+                    },
+                ));
             }
         }
         flat.sort_by(|a, b| {
@@ -289,7 +324,9 @@ fn run_pred(graph: &Graph, pred: &Pred, opts: &QueryOpts) -> Vec<RefGroup> {
         let mut merged: Vec<RefGroup> = Vec::with_capacity(flat.len());
         for (_, _, g) in flat {
             match merged.last_mut() {
-                Some(last) if last.page == g.page && last.kind == g.kind => last.blocks.extend(g.blocks),
+                Some(last) if last.page == g.page && last.kind == g.kind => {
+                    last.blocks.extend(g.blocks)
+                }
                 _ => merged.push(g),
             }
         }
@@ -321,7 +358,9 @@ fn run_pred(graph: &Graph, pred: &Pred, opts: &QueryOpts) -> Vec<RefGroup> {
 /// Whether page (entry, doc) contributes any block to query `src`.
 pub(crate) fn page_affects_query(src: &str, entry: &PageEntry, doc: &Document) -> bool {
     let today = JournalDate::today();
-    let Some(pred) = Pred::parse(src, today) else { return false };
+    let Some(pred) = Pred::parse(src, today) else {
+        return false;
+    };
     let (page_props, page_tags) = page_facets(doc.pre_block.as_deref());
     let ctx = EvalCtx {
         journal: entry.date_key,
@@ -342,7 +381,11 @@ pub(crate) fn page_affects_query(src: &str, entry: &PageEntry, doc: &Document) -
 /// Whether page `doc` references `target` or any of its aliases — i.e. could be
 /// in `backlinks(target)`. Mirrors `backlinks`'s alias resolution; takes the
 /// resolved alias map so the caller needn't hold the graph lock.
-pub(crate) fn page_affects_backlinks(aliases: &[(String, String)], target: &str, doc: &Document) -> bool {
+pub(crate) fn page_affects_backlinks(
+    aliases: &[(String, String)],
+    target: &str,
+    doc: &Document,
+) -> bool {
     let tnorm = refs::normalize(target);
     let canonical = aliases
         .iter()
@@ -399,7 +442,11 @@ pub struct AdvancedResult {
 /// predicates already exist. Unrecognized clauses (custom rules, `[?e ?a ?v]`
 /// joins, `:view`/`:result-transform`) are listed in `ignored` and skipped, never
 /// guessed (a wrong result is worse than "unsupported").
-pub fn run_advanced_query(graph: &Graph, query_src: &str, current_page: Option<&str>) -> AdvancedResult {
+pub fn run_advanced_query(
+    graph: &Graph,
+    query_src: &str,
+    current_page: Option<&str>,
+) -> AdvancedResult {
     let today = JournalDate::today();
     let inputs = resolve_inputs(query_src, current_page, today);
     let mut ran = Vec::new();
@@ -409,13 +456,27 @@ pub fn run_advanced_query(graph: &Graph, query_src: &str, current_page: Option<&
         .filter_map(|g| parse_adv_group(g, &inputs, today, &mut ran, &mut ignored))
         .collect();
     if preds.is_empty() {
-        return AdvancedResult { groups: Vec::new(), ran, ignored, supported: false };
+        return AdvancedResult {
+            groups: Vec::new(),
+            ran,
+            ignored,
+            supported: false,
+        };
     }
-    let pred = if preds.len() == 1 { preds.into_iter().next().unwrap() } else { Pred::And(preds) };
+    let pred = if preds.len() == 1 {
+        preds.into_iter().next().unwrap()
+    } else {
+        Pred::And(preds)
+    };
     let mut opts = QueryOpts::default();
     pred.collect_opts(&mut opts);
     let groups = run_pred(graph, &pred, &opts);
-    AdvancedResult { groups, ran, ignored, supported: true }
+    AdvancedResult {
+        groups,
+        ran,
+        ignored,
+        supported: true,
+    }
 }
 
 /// Collect balanced `(...)`/`[...]` groups at the top level of `s` (string-aware),
@@ -487,7 +548,11 @@ fn parse_adv_group(
         return None;
     }
     let inner = &c[1..c.len().saturating_sub(1)];
-    let head = inner.split_whitespace().next().unwrap_or("").to_ascii_lowercase();
+    let head = inner
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
     match head.as_str() {
         "and" | "or" | "not" => {
             let kids: Vec<Pred> = scan_groups(inner)
@@ -578,7 +643,11 @@ fn adv_strings(s: &str) -> Vec<String> {
 }
 
 /// Resolve a `between` bound: an input `?var` (looked up) or a literal token.
-fn adv_bound(tok: &str, inputs: &std::collections::HashMap<String, i64>, today: JournalDate) -> Option<i64> {
+fn adv_bound(
+    tok: &str,
+    inputs: &std::collections::HashMap<String, i64>,
+    today: JournalDate,
+) -> Option<i64> {
     let t = tok.trim();
     if t.starts_with('?') {
         return inputs.get(t).copied();
@@ -599,8 +668,15 @@ fn resolve_inputs(
     let vars: Vec<String> = match src.find(":in") {
         Some(i) => {
             let rest = &src[i + 3..];
-            let end = rest.find(":where").or_else(|| rest.find(']')).unwrap_or(rest.len());
-            rest[..end].split_whitespace().filter(|t| t.starts_with('?')).map(String::from).collect()
+            let end = rest
+                .find(":where")
+                .or_else(|| rest.find(']'))
+                .unwrap_or(rest.len());
+            rest[..end]
+                .split_whitespace()
+                .filter(|t| t.starts_with('?'))
+                .map(String::from)
+                .collect()
         }
         None => Vec::new(),
     };
@@ -608,9 +684,10 @@ fn resolve_inputs(
         Some(i) => {
             let rest = &src[i + ":inputs".len()..];
             match (rest.find('['), rest.find(']')) {
-                (Some(a), Some(b)) if b > a => {
-                    rest[a + 1..b].split_whitespace().map(String::from).collect()
-                }
+                (Some(a), Some(b)) if b > a => rest[a + 1..b]
+                    .split_whitespace()
+                    .map(String::from)
+                    .collect(),
                 _ => Vec::new(),
             }
         }
@@ -637,7 +714,10 @@ enum SortDecor {
 /// journal pages, file mtime otherwise) — sorted numerically, not lexically.
 /// `modified` is the canonical token; `updated`/`updated-at`/`date` are aliases.
 fn is_recency_field(field: &str) -> bool {
-    matches!(field.to_ascii_lowercase().as_str(), "modified" | "updated" | "updated-at" | "date")
+    matches!(
+        field.to_ascii_lowercase().as_str(),
+        "modified" | "updated" | "updated-at" | "date"
+    )
 }
 
 /// A page's position on the recency axis, in Unix seconds: a journal page by the
@@ -665,7 +745,10 @@ fn sort_key(b: &BlockDto, page: &str, field: &str) -> String {
         // top). Descending naturally reverses (A sinks to the bottom).
         // Priority off the DTO's lsdoc-derived facet (header-position `[#A]`, matching
         // the chip) — no reparse, no `[#A]`-anywhere false positive (audit C3/P4).
-        "priority" => b.priority.as_deref().map_or_else(|| "Z".to_string(), |c| c.to_ascii_uppercase()),
+        "priority" => b
+            .priority
+            .as_deref()
+            .map_or_else(|| "Z".to_string(), |c| c.to_ascii_uppercase()),
         // Sort by the source page name.
         "page" => page.to_lowercase(),
         // SCHEDULED / DEADLINE planning dates off the DTO facet (lead with
@@ -676,7 +759,11 @@ fn sort_key(b: &BlockDto, page: &str, field: &str) -> String {
         // Otherwise: a block property value (off the DTO's lsdoc properties — no
         // reparse, format-correct, audit P4), else the block's visible first line.
         _ => {
-            if let Some((_, v)) = b.properties.iter().find(|(k, _)| k.eq_ignore_ascii_case(field)) {
+            if let Some((_, v)) = b
+                .properties
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case(field))
+            {
                 return v.to_lowercase();
             }
             // Fallback: visible text (the DTO carries no visible text; reparse, bounded
@@ -718,7 +805,11 @@ pub fn search(graph: &Graph, query: &str, limit: usize) -> Vec<RefGroup> {
                 }
             });
             if !matched.is_empty() {
-                groups.push(RefGroup { page: entry.name.clone(), kind: entry.kind, blocks: matched });
+                groups.push(RefGroup {
+                    page: entry.name.clone(),
+                    kind: entry.kind,
+                    blocks: matched,
+                });
             }
         }
         groups
@@ -731,7 +822,9 @@ pub fn templates(graph: &Graph) -> Vec<TemplateDto> {
         let mut out: Vec<TemplateDto> = Vec::new();
         for (entry, doc) in pages {
             walk(&doc.roots, &mut |b| {
-                let Some(name) = b.property("template") else { return };
+                let Some(name) = b.property("template") else {
+                    return;
+                };
                 if name.is_empty() {
                     return;
                 }
@@ -742,7 +835,12 @@ pub fn templates(graph: &Graph) -> Vec<TemplateDto> {
                 } else {
                     b.children.iter().map(|c| template_dto(c, false)).collect()
                 };
-                out.push(TemplateDto { name, blocks, page: entry.name.clone(), kind: entry.kind });
+                out.push(TemplateDto {
+                    name,
+                    blocks,
+                    page: entry.name.clone(),
+                    kind: entry.kind,
+                });
             });
         }
         out
@@ -759,7 +857,8 @@ fn template_dto(b: &DocBlock, strip_template: bool) -> BlockDto {
             let t = l.trim();
             let drop = t.starts_with("id::")
                 || (strip_template
-                    && (t.starts_with("template::") || t.starts_with("template-including-parent::")));
+                    && (t.starts_with("template::")
+                        || t.starts_with("template-including-parent::")));
             !drop
         })
         .collect::<Vec<_>>()
@@ -904,8 +1003,7 @@ pub fn resolve_block(graph: &Graph, uuid: &str) -> Option<RefGroup> {
         let find_in = |entry: &PageEntry, doc: &Document| -> Option<RefGroup> {
             let mut found: Option<&DocBlock> = None;
             walk(&doc.roots, &mut |b| {
-                if found.is_none()
-                    && (b.uuid == uuid || b.property("id").as_deref() == Some(uuid))
+                if found.is_none() && (b.uuid == uuid || b.property("id").as_deref() == Some(uuid))
                 {
                     found = Some(b);
                 }
@@ -963,7 +1061,9 @@ pub fn resolve_blocks(graph: &Graph, uuids: &[String]) -> Vec<Option<RefGroup>> 
         let mut page_by_name: HashMap<&str, (&PageEntry, &std::sync::Arc<Document>)> =
             HashMap::with_capacity(pages.len());
         for (entry, doc) in pages {
-            page_by_name.entry(entry.name.as_str()).or_insert((entry, doc));
+            page_by_name
+                .entry(entry.name.as_str())
+                .or_insert((entry, doc));
         }
         // 1) Each hinted page: ONE walk resolving all of its hinted ids.
         for (page, ids) in &by_page {
@@ -990,7 +1090,10 @@ pub fn resolve_blocks(graph: &Graph, uuids: &[String]) -> Vec<Option<RefGroup>> 
         }
     });
 
-    uuids.iter().map(|u| resolved.get(u.as_str()).cloned()).collect()
+    uuids
+        .iter()
+        .map(|u| resolved.get(u.as_str()).cloned())
+        .collect()
 }
 
 /// Walk `doc` once, resolving any block whose uuid (or persisted `id::`) is a
@@ -1017,7 +1120,11 @@ fn resolve_ids_in_page<'a>(
         if let Some(id) = hit {
             resolved.insert(
                 id,
-                RefGroup { page: entry.name.clone(), kind: entry.kind, blocks: vec![block_to_dto(b)] },
+                RefGroup {
+                    page: entry.name.clone(),
+                    kind: entry.kind,
+                    blocks: vec![block_to_dto(b)],
+                },
             );
         }
     });
@@ -1139,7 +1246,6 @@ fn block_date_ordinals(raw: &str, only: Option<&str>) -> Vec<i64> {
     out
 }
 
-
 impl Pred {
     fn parse(src: &str, today: JournalDate) -> Option<Pred> {
         if is_advanced(src) {
@@ -1185,7 +1291,9 @@ impl Pred {
                 match field {
                     BetweenField::Any => {
                         ctx.journal.is_some_and(in_range)
-                            || block_date_ordinals(&block.raw, None).into_iter().any(in_range)
+                            || block_date_ordinals(&block.raw, None)
+                                .into_iter()
+                                .any(in_range)
                     }
                     BetweenField::Journal => ctx.journal.is_some_and(in_range),
                     BetweenField::Scheduled => block_date_ordinals(&block.raw, Some("SCHEDULED:"))
@@ -1206,9 +1314,9 @@ impl Pred {
                 .page_props
                 .iter()
                 .any(|(k, v)| k.eq_ignore_ascii_case(key) && value_matches(v, val.as_deref())),
-            Pred::PageTags(tags) => tags.iter().any(|t| {
-                ctx.page_tags.iter().any(|pt| pt.eq_ignore_ascii_case(t))
-            }),
+            Pred::PageTags(tags) => tags
+                .iter()
+                .any(|t| ctx.page_tags.iter().any(|pt| pt.eq_ignore_ascii_case(t))),
             // `s` is already lowercased at parse time; `visible_lower` is the
             // block's lowercased visible text — a direct substring test.
             Pred::Content(s) => block.projection().visible_lower.contains(s.as_str()),
@@ -1234,7 +1342,10 @@ fn value_matches(stored: &str, query: Option<&str>) -> bool {
 }
 fn strip_ref(s: &str) -> String {
     let t = s.trim();
-    let t = t.strip_prefix("[[").and_then(|x| x.strip_suffix("]]")).unwrap_or(t);
+    let t = t
+        .strip_prefix("[[")
+        .and_then(|x| x.strip_suffix("]]"))
+        .unwrap_or(t);
     t.strip_prefix('#').unwrap_or(t).trim().to_string()
 }
 
@@ -1402,7 +1513,12 @@ fn parse_expr(toks: &[Tok], pos: &mut usize, today: JournalDate) -> Option<Pred>
                     let markers = parse_words(toks, pos);
                     // `(todo)` with no args means any open task.
                     if markers.is_empty() {
-                        Pred::Task(vec!["TODO".into(), "DOING".into(), "NOW".into(), "LATER".into()])
+                        Pred::Task(vec![
+                            "TODO".into(),
+                            "DOING".into(),
+                            "NOW".into(),
+                            "LATER".into(),
+                        ])
                     } else {
                         Pred::Task(markers)
                     }
@@ -1470,7 +1586,9 @@ fn parse_expr(toks: &[Tok], pos: &mut usize, today: JournalDate) -> Option<Pred>
                     Pred::Between(field, lo, hi)
                 }
                 "sample" => {
-                    let n = parse_name(toks, pos).and_then(|s| s.parse::<usize>().ok()).unwrap_or(0);
+                    let n = parse_name(toks, pos)
+                        .and_then(|s| s.parse::<usize>().ok())
+                        .unwrap_or(0);
                     Pred::Sample(n)
                 }
                 "sort-by" => {
@@ -1556,7 +1674,11 @@ mod tests {
     use super::*;
 
     // Fixed "today" so relative-date tests are deterministic: 2026-06-16.
-    const TODAY: JournalDate = JournalDate { year: 2026, month: 6, day: 16 };
+    const TODAY: JournalDate = JournalDate {
+        year: 2026,
+        month: 6,
+        day: 16,
+    };
 
     fn pred(src: &str) -> Pred {
         Pred::parse(src, TODAY).expect("parse")
@@ -1564,10 +1686,22 @@ mod tests {
 
     /// A minimal eval context for a block on a named (non-journal) page.
     fn ctx_named<'a>() -> EvalCtx<'a> {
-        EvalCtx { journal: None, is_journal: false, page_name: "Test", page_props: &[], page_tags: &[] }
+        EvalCtx {
+            journal: None,
+            is_journal: false,
+            page_name: "Test",
+            page_props: &[],
+            page_tags: &[],
+        }
     }
     fn ctx_journal<'a>(key: i64) -> EvalCtx<'a> {
-        EvalCtx { journal: Some(key), is_journal: true, page_name: "Journal", page_props: &[], page_tags: &[] }
+        EvalCtx {
+            journal: Some(key),
+            is_journal: true,
+            page_name: "Journal",
+            page_props: &[],
+            page_tags: &[],
+        }
     }
 
     #[test]
@@ -1582,14 +1716,26 @@ mod tests {
             pred("(and [[A]] [[B]])"),
             Pred::And(vec![Pred::PageRef("A".into()), Pred::PageRef("B".into())])
         );
-        assert_eq!(pred("(not [[A]])"), Pred::Not(Box::new(Pred::PageRef("A".into()))));
+        assert_eq!(
+            pred("(not [[A]])"),
+            Pred::Not(Box::new(Pred::PageRef("A".into())))
+        );
     }
 
     #[test]
     fn parse_task_and_property() {
-        assert_eq!(pred("(task TODO DOING)"), Pred::Task(vec!["TODO".into(), "DOING".into()]));
-        assert_eq!(pred("(property type book)"), Pred::Property("type".into(), Some("book".into())));
-        assert_eq!(pred("(property public)"), Pred::Property("public".into(), None));
+        assert_eq!(
+            pred("(task TODO DOING)"),
+            Pred::Task(vec!["TODO".into(), "DOING".into()])
+        );
+        assert_eq!(
+            pred("(property type book)"),
+            Pred::Property("type".into(), Some("book".into()))
+        );
+        assert_eq!(
+            pred("(property public)"),
+            Pred::Property("public".into(), None)
+        );
     }
 
     #[test]
@@ -1597,7 +1743,10 @@ mod tests {
         // `\"`/`\\` inside a quoted full-text term are unescaped (mirrors the
         // query-builder serializer's quoteStr), so a quote in the term doesn't
         // end the string early and silently truncate the query.
-        assert_eq!(pred("\"foo \\\"bar\\\"\""), Pred::Content("foo \"bar\"".into()));
+        assert_eq!(
+            pred("\"foo \\\"bar\\\"\""),
+            Pred::Content("foo \"bar\"".into())
+        );
         assert_eq!(pred("\"a\\\\b\""), Pred::Content("a\\b".into()));
         // Only `\"`/`\\` are escapes: a hand-authored backslash before another
         // char is literal, so `"C:\tmp"` stays `C:\tmp` (not `C:tmp`). The term
@@ -1612,7 +1761,9 @@ mod tests {
 
     #[test]
     fn advanced_datalog_is_unsupported() {
-        assert!(is_advanced("[:find (pull ?b [*]) :where [?b :block/marker]]"));
+        assert!(is_advanced(
+            "[:find (pull ?b [*]) :where [?b :block/marker]]"
+        ));
         assert!(Pred::parse("[:find ?b :where ...]", TODAY).is_none());
     }
 
@@ -1649,7 +1800,10 @@ mod tests {
     fn eval_between_relative_dates() {
         // TODAY = 2026-06-16. (between -7d +7d) => [2026-06-09, 2026-06-23].
         let q = pred("(between -7d +7d)");
-        assert_eq!(q, Pred::Between(BetweenField::Any, Some(20260609), Some(20260623)));
+        assert_eq!(
+            q,
+            Pred::Between(BetweenField::Any, Some(20260609), Some(20260623))
+        );
         let b = DocBlock::new("x");
         assert!(q.eval(&b, &ctx_journal(20260616)));
         assert!(q.eval(&b, &ctx_journal(20260609)));
@@ -1740,7 +1894,13 @@ mod tests {
     #[test]
     fn eval_page_and_namespace() {
         let b = DocBlock::new("hi");
-        let ctx = EvalCtx { journal: None, is_journal: false, page_name: "Project/Alpha", page_props: &[], page_tags: &[] };
+        let ctx = EvalCtx {
+            journal: None,
+            is_journal: false,
+            page_name: "Project/Alpha",
+            page_props: &[],
+            page_tags: &[],
+        };
         assert!(pred("(page Project/Alpha)").eval(&b, &ctx));
         assert!(!pred("(page Project/Beta)").eval(&b, &ctx));
         assert!(pred("(namespace Project)").eval(&b, &ctx));
@@ -1752,7 +1912,13 @@ mod tests {
         let b = DocBlock::new("hi");
         let props = vec![("type".to_string(), "project".to_string())];
         let tags = vec!["research".to_string(), "active".to_string()];
-        let ctx = EvalCtx { journal: None, is_journal: false, page_name: "P", page_props: &props, page_tags: &tags };
+        let ctx = EvalCtx {
+            journal: None,
+            is_journal: false,
+            page_name: "P",
+            page_props: &props,
+            page_tags: &tags,
+        };
         assert!(pred("(page-property type project)").eval(&b, &ctx));
         assert!(pred("(page-property type)").eval(&b, &ctx));
         assert!(!pred("(page-property type book)").eval(&b, &ctx));
@@ -1786,17 +1952,29 @@ mod tests {
     fn block_date_ordinals_finds_planning_markers_anywhere() {
         let ord = date_ordinal(2026, 7, 6);
         // own line (after trim)
-        assert_eq!(block_date_ordinals("TODO x\nSCHEDULED: <2026-07-06 Mon>", Some("SCHEDULED:")), vec![ord]);
+        assert_eq!(
+            block_date_ordinals("TODO x\nSCHEDULED: <2026-07-06 Mon>", Some("SCHEDULED:")),
+            vec![ord]
+        );
         // inline on the marker line (the regressed case)
-        assert_eq!(block_date_ordinals("TODO SCHEDULED: <2026-07-06 Mon> do it", Some("SCHEDULED:")), vec![ord]);
+        assert_eq!(
+            block_date_ordinals("TODO SCHEDULED: <2026-07-06 Mon> do it", Some("SCHEDULED:")),
+            vec![ord]
+        );
         // with trailing text after the timestamp
         assert_eq!(
-            block_date_ordinals(" SCHEDULED: <2026-07-06 Mon> #email students", Some("SCHEDULED:")),
+            block_date_ordinals(
+                " SCHEDULED: <2026-07-06 Mon> #email students",
+                Some("SCHEDULED:")
+            ),
             vec![ord]
         );
         // DEADLINE restricted; SCHEDULED-only query ignores it
         assert!(block_date_ordinals("DEADLINE: <2026-07-06 Mon>", Some("SCHEDULED:")).is_empty());
-        assert_eq!(block_date_ordinals("DEADLINE: <2026-07-06 Mon>", Some("DEADLINE:")), vec![ord]);
+        assert_eq!(
+            block_date_ordinals("DEADLINE: <2026-07-06 Mon>", Some("DEADLINE:")),
+            vec![ord]
+        );
     }
 
     /// Issue #9: linked references are grouped by referring page, ordered by the
@@ -1811,10 +1989,26 @@ mod tests {
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::create_dir_all(dir.join("logseq")).unwrap();
         // Three journals referencing [[Common]], written OUT of date order; one plain page.
-        fs::write(dir.join("journals").join("1897_07_24.md"), "- oldestref [[Common]]\n").unwrap();
-        fs::write(dir.join("journals").join("2026_06_29.md"), "- newestref [[Common]]\n").unwrap();
-        fs::write(dir.join("journals").join("1927_07_02.md"), "- middleref [[Common]]\n").unwrap();
-        fs::write(dir.join("pages").join("Notes.md"), "- plainref [[Common]]\n").unwrap();
+        fs::write(
+            dir.join("journals").join("1897_07_24.md"),
+            "- oldestref [[Common]]\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("journals").join("2026_06_29.md"),
+            "- newestref [[Common]]\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("journals").join("1927_07_02.md"),
+            "- middleref [[Common]]\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages").join("Notes.md"),
+            "- plainref [[Common]]\n",
+        )
+        .unwrap();
 
         let g = crate::model::Graph::open(&dir);
         let groups = g.backlinks("Common");
@@ -1829,7 +2023,11 @@ mod tests {
                     .unwrap_or("?")
             })
             .collect();
-        assert_eq!(tags, vec!["newestref", "middleref", "oldestref", "plainref"], "{tags:?}");
+        assert_eq!(
+            tags,
+            vec!["newestref", "middleref", "oldestref", "plainref"],
+            "{tags:?}"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -22,8 +22,14 @@ const QUICK_CAPTURE_PNG: &[u8] = include_bytes!("templates/assets/quick-capture.
 /// with a `/` create namespaces (e.g. `Features/Quick capture`).
 const PAGES: &[(&str, &str)] = &[
     ("Welcome to Tine", include_str!("templates/welcome.md")),
-    ("Features/Quick capture", include_str!("templates/quick-capture.md")),
-    ("Features/Tips & shortcuts", include_str!("templates/tips.md")),
+    (
+        "Features/Quick capture",
+        include_str!("templates/quick-capture.md"),
+    ),
+    (
+        "Features/Tips & shortcuts",
+        include_str!("templates/tips.md"),
+    ),
     ("Features/PDF annotation", include_str!("templates/pdf.md")),
     ("Project/Roadmap", include_str!("templates/roadmap.md")),
 ];
@@ -88,23 +94,45 @@ mod tests {
                 .iter()
                 .find(|e| e.name == *title)
                 .unwrap_or_else(|| panic!("page {title:?} not listed"));
-            graph.load_page(entry).unwrap_or_else(|e| panic!("page {title:?} failed to load: {e}"));
+            graph
+                .load_page(entry)
+                .unwrap_or_else(|e| panic!("page {title:?} failed to load: {e}"));
         }
 
         // The reference + the embed in Welcome both point at the Roadmap bullet:
         // it resolves, and its referrer count is 2 (no dangling refs).
-        assert!(graph.resolve_block(TARGET_ID).is_some(), "block-ref target missing");
+        assert!(
+            graph.resolve_block(TARGET_ID).is_some(),
+            "block-ref target missing"
+        );
         let counts = graph.block_ref_counts();
-        assert_eq!(counts.get(TARGET_ID).copied(), Some(2), "expected 2 referrers of the demo block");
+        assert_eq!(
+            counts.get(TARGET_ID).copied(),
+            Some(2),
+            "expected 2 referrers of the demo block"
+        );
 
         // Good outliner structure: a heading bullet actually PARENTS the body that
         // belongs to it (proper indentation), rather than leaving it as flat
         // siblings. Verify on the Welcome page.
-        let welcome = entries.iter().find(|e| e.name == "Welcome to Tine").unwrap();
+        let welcome = entries
+            .iter()
+            .find(|e| e.name == "Welcome to Tine")
+            .unwrap();
         let dto = graph.load_page(welcome).unwrap();
-        let parents = |needle: &str| dto.blocks.iter().any(|b| b.raw.starts_with(needle) && !b.children.is_empty());
-        assert!(parents("## Try the basics"), "section heading should parent its body");
-        assert!(parents("# Welcome to Tine"), "page heading should parent its intro");
+        let parents = |needle: &str| {
+            dto.blocks
+                .iter()
+                .any(|b| b.raw.starts_with(needle) && !b.children.is_empty())
+        };
+        assert!(
+            parents("## Try the basics"),
+            "section heading should parent its body"
+        );
+        assert!(
+            parents("# Welcome to Tine"),
+            "page heading should parent its intro"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

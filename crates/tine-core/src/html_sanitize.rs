@@ -15,9 +15,33 @@ use std::collections::{HashMap, HashSet};
 
 /// Mirror of `RAW_HTML_TAGS` in `src/render/htmlSanitize.ts`.
 const TAGS: &[&str] = &[
-    "b", "strong", "i", "em", "u", "ins", "del", "s", "strike", "sub", "sup",
-    "mark", "kbd", "abbr", "small", "code", "cite", "q", "span", "br",
-    "p", "div", "blockquote", "details", "summary", "a", "img",
+    "b",
+    "strong",
+    "i",
+    "em",
+    "u",
+    "ins",
+    "del",
+    "s",
+    "strike",
+    "sub",
+    "sup",
+    "mark",
+    "kbd",
+    "abbr",
+    "small",
+    "code",
+    "cite",
+    "q",
+    "span",
+    "br",
+    "p",
+    "div",
+    "blockquote",
+    "details",
+    "summary",
+    "a",
+    "img",
 ];
 
 /// Sanitize a raw-HTML fragment to the shared allowlist. Event handlers,
@@ -30,7 +54,10 @@ pub fn sanitize(html: &str) -> String {
     let generic: HashSet<&str> = ["class", "title"].into_iter().collect();
     let mut tag_attrs: HashMap<&str, HashSet<&str>> = HashMap::new();
     tag_attrs.insert("a", ["href"].into_iter().collect());
-    tag_attrs.insert("img", ["src", "alt", "width", "height"].into_iter().collect());
+    tag_attrs.insert(
+        "img",
+        ["src", "alt", "width", "height"].into_iter().collect(),
+    );
     tag_attrs.insert("details", ["open"].into_iter().collect());
 
     let schemes: HashSet<&str> = ["https", "http", "mailto", "tel", "data"]

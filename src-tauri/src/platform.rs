@@ -62,7 +62,10 @@ fn linux_copy_image(bytes: &[u8]) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub(crate) fn copy_image_to_clipboard(app: tauri::AppHandle, bytes_b64: String) -> Result<(), String> {
+pub(crate) fn copy_image_to_clipboard(
+    app: tauri::AppHandle,
+    bytes_b64: String,
+) -> Result<(), String> {
     use tauri_plugin_clipboard_manager::ClipboardExt;
     let bytes = decode_asset_b64(&bytes_b64)?;
     #[cfg(target_os = "linux")]
@@ -116,7 +119,10 @@ pub(crate) fn open_external(url: String) -> Result<(), String> {
     let prog = "open";
     #[cfg(target_os = "windows")]
     let prog = "explorer";
-    opener_command(prog).arg(&url).spawn().map_err(|e| e.to_string())?;
+    opener_command(prog)
+        .arg(&url)
+        .spawn()
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 

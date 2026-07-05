@@ -20,19 +20,21 @@ use commands::{
     asset_trash_stats, block_ref_counts, block_referrers, delete_page, empty_asset_trash,
     get_backlinks, get_page, get_page_by_path, get_unlinked_refs, graph_source_files, import_asset,
     journal_content_days, journals_desc, list_journal_conflicts, list_orphan_assets, list_pages,
-    list_sync_conflicts,
-    list_templates, merge_pages, page_aliases, page_icons, page_print_html, publish_html, query_facets,
-    quick_switch, open_asset, read_asset, read_local_image, read_custom_css, read_highlights, read_journal_file, rename_file_to_page,
-    rename_page, resolve_block, resolve_blocks, run_advanced_query, run_query, save_asset,
-    save_page, save_pdf_area_image, search, set_default_journal_template, set_favorites,
-    resolve_sync_conflict, set_journal_title_format, set_preferred_format, set_preferred_workflow,
+    list_sync_conflicts, list_templates, merge_pages, open_asset, page_aliases, page_icons,
+    page_print_html, publish_html, query_facets, quick_switch, read_asset, read_custom_css,
+    read_highlights, read_journal_file, read_local_image, rename_file_to_page, rename_page,
+    resolve_block, resolve_blocks, resolve_sync_conflict, run_advanced_query, run_query,
+    save_asset, save_page, save_pdf_area_image, search, set_default_journal_template,
+    set_favorites, set_journal_title_format, set_preferred_format, set_preferred_workflow,
     set_start_of_week, sync_conflict_diff, trash_asset, trash_journal_file, trash_sync_conflict,
     write_highlights,
 };
 use debug::{
     debug_enabled, debug_header, debug_info, debug_init, debug_log, diag, install_panic_logger,
 };
-use graph::{begin_warm_cache, create_graph, load_graph, resolve_root, warm_cache_async, warm_done};
+use graph::{
+    begin_warm_cache, create_graph, load_graph, resolve_root, warm_cache_async, warm_done,
+};
 use platform::{copy_image_to_clipboard, gpu_env, open_external};
 use settings::{
     get_app_bool, get_app_string, get_capture_enter_files, get_link_first_match, get_smooth_scroll,
@@ -119,13 +121,17 @@ fn main() {
             };
             // `exec` only returns on failure; on success it replaces this process
             // (same PID, env + bundled LD_LIBRARY_PATH inherited, host lib preloaded).
-            diag(format!("Wayland AppImage: re-exec with LD_PRELOAD={preload}"));
+            diag(format!(
+                "Wayland AppImage: re-exec with LD_PRELOAD={preload}"
+            ));
             let err = std::process::Command::new(exe)
                 .args(std::env::args_os().skip(1))
                 .env("LD_PRELOAD", preload)
                 .env("TINE_WL_PRELOADED", "1")
                 .exec();
-            diag(format!("Wayland libwayland-client preload re-exec failed ({err}); continuing"));
+            diag(format!(
+                "Wayland libwayland-client preload re-exec failed ({err}); continuing"
+            ));
         }
     }
 

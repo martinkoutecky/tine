@@ -28,7 +28,9 @@ pub fn slug(name: &str) -> String {
 }
 
 fn esc(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 /// Read a local `assets/<file>` image referenced by an export `data-asset` path
@@ -46,7 +48,12 @@ fn inline_asset_uri(ctx: &Ctx, src: &str) -> Option<String> {
     // `../assets/x` (or `assets/x`) ref resolves to `<graph>/assets/x`.
     let name = src.rsplit('/').next().unwrap_or(src);
     let bytes = graph.read_asset(name).ok()?;
-    let mime = match name.rsplit('.').next().map(|e| e.to_ascii_lowercase()).as_deref() {
+    let mime = match name
+        .rsplit('.')
+        .next()
+        .map(|e| e.to_ascii_lowercase())
+        .as_deref()
+    {
         Some("png") => "image/png",
         Some("jpg") | Some("jpeg") => "image/jpeg",
         Some("gif") => "image/gif",
@@ -72,8 +79,16 @@ fn base64_encode(bytes: &[u8]) -> String {
         let n = (b0 << 16) | (b1 << 8) | b2;
         out.push(TABLE[(n >> 18 & 63) as usize] as char);
         out.push(TABLE[(n >> 12 & 63) as usize] as char);
-        out.push(if chunk.len() > 1 { TABLE[(n >> 6 & 63) as usize] as char } else { '=' });
-        out.push(if chunk.len() > 2 { TABLE[(n & 63) as usize] as char } else { '=' });
+        out.push(if chunk.len() > 1 {
+            TABLE[(n >> 6 & 63) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            TABLE[(n & 63) as usize] as char
+        } else {
+            '='
+        });
     }
     out
 }
@@ -90,7 +105,13 @@ type RefIndex = std::collections::HashMap<String, RefTarget>;
 fn collect_block_refs(blocks: &[DocBlock], slug: &str, refs: &mut RefIndex) {
     for b in blocks {
         if let Some(id) = block_id(&b.raw) {
-            refs.insert(id, RefTarget { slug: slug.to_string(), text: ref_target_text(&b.raw) });
+            refs.insert(
+                id,
+                RefTarget {
+                    slug: slug.to_string(),
+                    text: ref_target_text(&b.raw),
+                },
+            );
         }
         collect_block_refs(&b.children, slug, refs);
     }
@@ -216,14 +237,20 @@ fn decorate(html: &str, ctx: &Ctx, depth: u8) -> String {
 
         if name == "a" && has_class(inner, "page-ref") {
             if let Some(page) = tag_attr(inner, "data-page") {
-                out.push_str(&format!("<a class=\"ref\" href=\"{}.html\">", slug(&unescape(page))));
+                out.push_str(&format!(
+                    "<a class=\"ref\" href=\"{}.html\">",
+                    slug(&unescape(page))
+                ));
                 strip_brackets = true;
                 continue;
             }
         }
         if name == "a" && has_class(inner, "tag") {
             if let Some(page) = tag_attr(inner, "data-page") {
-                out.push_str(&format!("<a class=\"tag\" href=\"{}.html\">", slug(&unescape(page))));
+                out.push_str(&format!(
+                    "<a class=\"tag\" href=\"{}.html\">",
+                    slug(&unescape(page))
+                ));
                 continue;
             }
         }
@@ -260,7 +287,9 @@ fn decorate(html: &str, ctx: &Ctx, depth: u8) -> String {
         }
         if name == "span" && has_class(inner, "macro") {
             let _ = take_to_close(html, &mut i, "span"); // empty element; args are in attrs
-            let mname = tag_attr(inner, "data-macro").map(unescape).unwrap_or_default();
+            let mname = tag_attr(inner, "data-macro")
+                .map(unescape)
+                .unwrap_or_default();
             let args = macro_args(tag_attr(inner, "data-args"));
             out.push_str(&expand_macro(&mname, &args, ctx, depth));
             continue;
@@ -309,11 +338,16 @@ fn decorate(html: &str, ctx: &Ctx, depth: u8) -> String {
         if name == "code" && has_class(inner, "hljs") {
             // data-lang → highlight.js's `language-X` class; body (escaped code) + the
             // `</code>` close pass through as the default text/close-tag.
-            let lang = tag_attr(inner, "data-lang").map(unescape).unwrap_or_default();
+            let lang = tag_attr(inner, "data-lang")
+                .map(unescape)
+                .unwrap_or_default();
             if lang.is_empty() {
                 out.push_str("<code class=\"hljs\">");
             } else {
-                out.push_str(&format!("<code class=\"hljs language-{}\">", esc_attr(&lang)));
+                out.push_str(&format!(
+                    "<code class=\"hljs language-{}\">",
+                    esc_attr(&lang)
+                ));
             }
             continue;
         }
@@ -346,9 +380,9 @@ fn url_dest(url: &Url) -> String {
 fn flatten_inlines(inlines: &[Inline], out: &mut String) {
     for s in inlines {
         match s {
-            Inline::Plain { text, .. } | Inline::Code { text, .. } | Inline::Verbatim { text, .. } => {
-                out.push_str(text)
-            }
+            Inline::Plain { text, .. }
+            | Inline::Code { text, .. }
+            | Inline::Verbatim { text, .. } => out.push_str(text),
             Inline::Emphasis { children, .. }
             | Inline::Subscript { children, .. }
             | Inline::Superscript { children, .. } => flatten_inlines(children, out),
@@ -401,7 +435,9 @@ fn flatten_blocks(blocks: &[Block], out: &mut String) {
                 out.push(' ');
                 out.push_str(code);
             }
-            Block::Quote { children, .. } | Block::Custom { children, .. } => flatten_blocks(children, out),
+            Block::Quote { children, .. } | Block::Custom { children, .. } => {
+                flatten_blocks(children, out)
+            }
             Block::Table { header, rows, .. } => {
                 if let Some(h) = header {
                     for cell in h {
@@ -441,7 +477,9 @@ fn ast_plain_text(blocks: &[Block]) -> String {
 fn body_blocks(raw: &str) -> Vec<Block> {
     crate::render::parse_block(raw, false)
         .into_iter()
-        .filter(|b| !matches!(b, Block::Properties { .. }) && !crate::doc::block_is_standalone_planning(b))
+        .filter(|b| {
+            !matches!(b, Block::Properties { .. }) && !crate::doc::block_is_standalone_planning(b)
+        })
         .collect()
 }
 
@@ -450,7 +488,6 @@ fn ref_target_text(raw: &str) -> String {
     let first: Vec<Block> = body_blocks(raw).into_iter().take(1).collect();
     ast_plain_text(&first)
 }
-
 
 /// Render context threaded through `render_block`/`decorate`: the block-ref index
 /// (always) and the graph (present in a real export, absent in inline-decorator unit
@@ -467,7 +504,9 @@ struct Ctx<'a> {
 
 /// lsdoc render options for a Markdown block body (the canonical skeleton the export decorates).
 fn md_opts() -> lsdoc::RenderOpts {
-    lsdoc::RenderOpts { format: lsdoc::Format::Md }
+    lsdoc::RenderOpts {
+        format: lsdoc::Format::Md,
+    }
 }
 
 /// Parse `data-args` (lsdoc emits a JSON array of strings, attribute-escaped) into its items.
@@ -538,7 +577,8 @@ fn emit_trailer_facets(
             esc(d)
         ));
     }
-    let visible: Vec<&(String, String)> = props.iter().filter(|(k, _)| !is_hidden_prop(k)).collect();
+    let visible: Vec<&(String, String)> =
+        props.iter().filter(|(k, _)| !is_hidden_prop(k)).collect();
     if !visible.is_empty() {
         out.push_str("<div class=\"block-props\">");
         for (k, v) in visible {
@@ -557,9 +597,17 @@ fn emit_trailer_facets(
 /// task in a query result looks exactly like a task on its own page.
 fn emit_block_inner(raw: &str, out: &mut String, ctx: &Ctx, depth: u8) {
     let blk = DocBlock::new(raw);
-    out.push_str(if blk.marker() == Some("DONE") { "<div class=\"b done\">" } else { "<div class=\"b\">" });
+    out.push_str(if blk.marker() == Some("DONE") {
+        "<div class=\"b done\">"
+    } else {
+        "<div class=\"b\">"
+    });
     emit_header_facets(blk.marker(), blk.priority(), out);
-    let body = decorate(&lsdoc::render_html(&body_blocks(raw), &md_opts()), ctx, depth);
+    let body = decorate(
+        &lsdoc::render_html(&body_blocks(raw), &md_opts()),
+        ctx,
+        depth,
+    );
     out.push_str(&body);
     out.push_str("</div>");
     emit_trailer_facets(blk.scheduled(), blk.deadline(), &blk.properties(), out);
@@ -597,7 +645,9 @@ fn render_embedded_block(b: &DocBlock, out: &mut String, ctx: &Ctx, depth: u8) {
 /// Expand one `{{macro …}}`. Bounded by `depth` (a page can embed a block that embeds
 /// a page …; a circular embed would otherwise loop). With no graph in context, macros drop.
 fn expand_macro(name: &str, args: &[String], ctx: &Ctx, depth: u8) -> String {
-    let Some(graph) = ctx.graph else { return String::new() };
+    let Some(graph) = ctx.graph else {
+        return String::new();
+    };
     if depth >= 4 {
         return format!("<span class=\"macro-raw\">{{{{{} …}}}}</span>", esc(name));
     }
@@ -676,7 +726,10 @@ fn render_embed(graph: &Graph, arg: &str, ctx: &Ctx, depth: u8) -> String {
             None => "<div class=\"embed embed-missing\">Embedded page not found.</div>".into(),
         };
     }
-    format!("<span class=\"macro-raw\">{{{{embed {}}}}}</span>", esc(arg))
+    format!(
+        "<span class=\"macro-raw\">{{{{embed {}}}}}</span>",
+        esc(arg)
+    )
 }
 
 /// Embed a video: a YouTube/Vimeo URL becomes an iframe; anything else, a link.
@@ -704,10 +757,20 @@ fn youtube_id(url: &str) -> Option<String> {
         }
     }
     if let Some(rest) = u.split("youtu.be/").nth(1) {
-        return Some(rest.split(['?', '&', '#']).next().unwrap_or(rest).to_string());
+        return Some(
+            rest.split(['?', '&', '#'])
+                .next()
+                .unwrap_or(rest)
+                .to_string(),
+        );
     }
     if let Some(rest) = u.split("youtube.com/embed/").nth(1) {
-        return Some(rest.split(['?', '&', '#']).next().unwrap_or(rest).to_string());
+        return Some(
+            rest.split(['?', '&', '#'])
+                .next()
+                .unwrap_or(rest)
+                .to_string(),
+        );
     }
     None
 }
@@ -724,7 +787,10 @@ fn render_namespace(graph: &Graph, ns: &str) -> String {
     children.sort();
     children.dedup();
     if children.is_empty() {
-        return format!("<div class=\"namespace-macro\">No pages under {}.</div>", esc(ns));
+        return format!(
+            "<div class=\"namespace-macro\">No pages under {}.</div>",
+            esc(ns)
+        );
     }
     let mut out = format!(
         "<div class=\"namespace-macro\"><div class=\"ns-head\">{}</div><ul>",
@@ -785,7 +851,11 @@ fn render_block(
     // canonical render_html; a `# heading` block is wrapped in `<span class="heading-text
     // h{n}">` by render_html itself, so the export markup matches the app) → trailer facets
     // (SCHEDULED/DEADLINE, block properties). Macros in the body are expanded via `ctx`.
-    out.push_str(if b.marker() == Some("DONE") { "<div class=\"b done\">" } else { "<div class=\"b\">" });
+    out.push_str(if b.marker() == Some("DONE") {
+        "<div class=\"b done\">"
+    } else {
+        "<div class=\"b\">"
+    });
     emit_header_facets(b.marker(), b.priority(), out);
     out.push_str(&decorate(&lsdoc::render_html(&blocks, &md_opts()), ctx, 0));
     out.push_str("</div>");
@@ -817,7 +887,16 @@ fn page_html(
     let mut counter = 0u32;
     for b in &doc.roots {
         // The whole-graph site export always expands (no fold state on paper).
-        render_block(b, &mut body, ctx, slug, title, &mut counter, blocks, PrintOpts::default());
+        render_block(
+            b,
+            &mut body,
+            ctx,
+            slug,
+            title,
+            &mut counter,
+            blocks,
+            PrintOpts::default(),
+        );
     }
     body.push_str("</ul>");
     // Journal titles get a leading calendar glyph, like Logseq.
@@ -874,11 +953,31 @@ fn shell(title: &str, main: &str) -> String {
 // fixes that and makes the PDF self-contained + Inter-faithful. Latin subset only
 // (~120 KB); non-latin falls back to the system font, same as before.
 const INTER_FACES: &[(&[u8], u32, &str)] = &[
-    (include_bytes!("../assets/fonts/inter-400-normal.woff2"), 400, "normal"),
-    (include_bytes!("../assets/fonts/inter-400-italic.woff2"), 400, "italic"),
-    (include_bytes!("../assets/fonts/inter-600-normal.woff2"), 600, "normal"),
-    (include_bytes!("../assets/fonts/inter-700-normal.woff2"), 700, "normal"),
-    (include_bytes!("../assets/fonts/inter-700-italic.woff2"), 700, "italic"),
+    (
+        include_bytes!("../assets/fonts/inter-400-normal.woff2"),
+        400,
+        "normal",
+    ),
+    (
+        include_bytes!("../assets/fonts/inter-400-italic.woff2"),
+        400,
+        "italic",
+    ),
+    (
+        include_bytes!("../assets/fonts/inter-600-normal.woff2"),
+        600,
+        "normal",
+    ),
+    (
+        include_bytes!("../assets/fonts/inter-700-normal.woff2"),
+        700,
+        "normal",
+    ),
+    (
+        include_bytes!("../assets/fonts/inter-700-italic.woff2"),
+        700,
+        "italic",
+    ),
 ];
 
 fn print_fontface() -> String {
@@ -970,7 +1069,11 @@ pub fn page_print_html(graph: &Graph, name: &str, opts: PrintOpts) -> io::Result
     let slug = slug(&entry.name);
     let mut refs = RefIndex::new();
     collect_block_refs(&parsed.roots, &slug, &mut refs);
-    let ctx = Ctx { refs: &refs, graph: Some(graph), inline_assets: true };
+    let ctx = Ctx {
+        refs: &refs,
+        graph: Some(graph),
+        inline_assets: true,
+    };
     // `page_html` builds the heading + outline and wraps it in `shell`; we want the
     // same body but the print shell, so mirror its body build here.
     let mut blocks: Vec<serde_json::Value> = Vec::new();
@@ -978,11 +1081,24 @@ pub fn page_print_html(graph: &Graph, name: &str, opts: PrintOpts) -> io::Result
     body.push_str("<ul class=\"outline\">");
     let mut counter = 0u32;
     for b in &parsed.roots {
-        render_block(b, &mut body, &ctx, &slug, &entry.name, &mut counter, &mut blocks, opts);
+        render_block(
+            b,
+            &mut body,
+            &ctx,
+            &slug,
+            &entry.name,
+            &mut counter,
+            &mut blocks,
+            opts,
+        );
     }
     body.push_str("</ul>");
     let heading = format!("<h1 class=\"page\">{}</h1>", esc(&entry.name));
-    Ok(Some(print_shell(&entry.name, &format!("{heading}{body}"), opts)))
+    Ok(Some(print_shell(
+        &entry.name,
+        &format!("{heading}{body}"),
+        opts,
+    )))
 }
 
 /// Options for the single-page print/PDF export, chosen in the pre-export dialog.
@@ -1001,7 +1117,11 @@ pub struct PrintOpts {
 
 impl Default for PrintOpts {
     fn default() -> Self {
-        Self { expand_collapsed: true, font_px: 16, margin_mm: 16 }
+        Self {
+            expand_collapsed: true,
+            font_px: 16,
+            margin_mm: 16,
+        }
     }
 }
 
@@ -1286,7 +1406,10 @@ pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
     fs::write(out.join("style.css"), STYLE)?;
     // Sidebar + fuzzy search are JS-driven: Fuse (vendored, OG's version) + our tiny
     // app.js, both loaded as `<script src>` so they work offline / over file://.
-    fs::write(out.join("fuse.min.js"), include_str!("../assets/fuse.min.js"))?;
+    fs::write(
+        out.join("fuse.min.js"),
+        include_str!("../assets/fuse.min.js"),
+    )?;
     fs::write(out.join("app.js"), APP_JS)?;
     let all_public = graph.config.all_pages_public;
     let favorites: HashSet<&str> = graph.config.favorites.iter().map(|s| s.as_str()).collect();
@@ -1301,7 +1424,9 @@ pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
     let mut public: Vec<(&str, String, PageKind, doc::Document)> = Vec::new();
     let mut refs = RefIndex::new();
     for e in entries {
-        let Ok(content) = fs::read_to_string(&e.path) else { continue };
+        let Ok(content) = fs::read_to_string(&e.path) else {
+            continue;
+        };
         let parsed = doc::parse(&content);
         if !all_public && !page_is_public(parsed.pre_block.as_deref()) {
             continue;
@@ -1320,13 +1445,29 @@ pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
     let mut count = 0;
     // The render context: the block-ref index + the graph (so `{{query}}`/`{{embed}}`/
     // `{{namespace}}` macros can resolve against real data at publish time).
-    let ctx = Ctx { refs: &refs, graph: Some(graph), inline_assets: false };
+    let ctx = Ctx {
+        refs: &refs,
+        graph: Some(graph),
+        inline_assets: false,
+    };
     for (name, slug, kind, parsed) in &public {
         let file = format!("{slug}.html");
-        fs::write(out.join(&file), page_html(name, slug, parsed, *kind, &ctx, &mut all_blocks))?;
+        fs::write(
+            out.join(&file),
+            page_html(name, slug, parsed, *kind, &ctx, &mut all_blocks),
+        )?;
         let journal = *kind == PageKind::Journal;
-        let tag = if journal { "<span class=\"k\">journal</span>" } else { "" };
-        index_list.push_str(&format!("<li><a class=\"ref\" href=\"{}\">{}</a>{}</li>", file, esc(name), tag));
+        let tag = if journal {
+            "<span class=\"k\">journal</span>"
+        } else {
+            ""
+        };
+        index_list.push_str(&format!(
+            "<li><a class=\"ref\" href=\"{}\">{}</a>{}</li>",
+            file,
+            esc(name),
+            tag
+        ));
         sidebar_pages.push(json!({
             "title": *name,
             "slug": slug,
@@ -1375,7 +1516,11 @@ mod tests {
     /// skeleton (`render_html`) → export decoration. The unit the decorator tests drive.
     fn render_body(raw: &str, refs: &RefIndex) -> String {
         // Graph-less context: the inline decorator under test; macros drop (no graph).
-        let ctx = Ctx { refs, graph: None, inline_assets: false };
+        let ctx = Ctx {
+            refs,
+            graph: None,
+            inline_assets: false,
+        };
         decorate(&lsdoc::render_html(&body_blocks(raw), &md_opts()), &ctx, 0)
     }
     fn search_text(raw: &str) -> String {
@@ -1386,10 +1531,16 @@ mod tests {
     fn inline_html() {
         let h = render_body("see [[Foo Bar]] and **bold** and `x` and #tag", &no_refs());
         // page ref → `.html` link, brackets dropped (the decorator); #tag → page link.
-        assert!(h.contains("<a class=\"ref\" href=\"foo-bar.html\">Foo Bar</a>"), "{h}");
+        assert!(
+            h.contains("<a class=\"ref\" href=\"foo-bar.html\">Foo Bar</a>"),
+            "{h}"
+        );
         assert!(h.contains("<strong>bold</strong>"), "{h}");
         assert!(h.contains("class=\"inline-code\">x</code>"), "{h}");
-        assert!(h.contains("<a class=\"tag\" href=\"tag.html\">#tag</a>"), "{h}");
+        assert!(
+            h.contains("<a class=\"tag\" href=\"tag.html\">#tag</a>"),
+            "{h}"
+        );
     }
 
     #[test]
@@ -1408,7 +1559,10 @@ mod tests {
         // NB: mldoc only classifies a SELF-CLOSED `<img/>` as raw HTML; a bare
         // `<img>` is Plain in mldoc/OG too (parity, stays literal). Sanitizer strips
         // the handler, keeps the src.
-        let bad = render_body(r#"<img src="https://e.com/a.png" onerror="steal()"/>"#, &no_refs());
+        let bad = render_body(
+            r#"<img src="https://e.com/a.png" onerror="steal()"/>"#,
+            &no_refs(),
+        );
         assert!(bad.contains("https://e.com/a.png"), "{bad}");
         assert!(!bad.contains("onerror"), "{bad}");
         // A paired <script> IS raw HTML to mldoc; the sanitizer drops it.
@@ -1419,8 +1573,14 @@ mod tests {
     fn math_decorates_katex_delimiters() {
         // The decorator turns lsdoc's `data-tex` hook into KaTeX `\(..\)` / `\[..\]`.
         let h = render_body(r"Euler $e^{i\pi}+1=0$ and $$\int_0^1 x\,dx$$", &no_refs());
-        assert!(h.contains(r#"<span class="math">\(e^{i\pi}+1=0\)</span>"#), "{h}");
-        assert!(h.contains(r#"<span class="math math-display">\[\int_0^1 x\,dx\]</span>"#), "{h}");
+        assert!(
+            h.contains(r#"<span class="math">\(e^{i\pi}+1=0\)</span>"#),
+            "{h}"
+        );
+        assert!(
+            h.contains(r#"<span class="math math-display">\[\int_0^1 x\,dx\]</span>"#),
+            "{h}"
+        );
         // Underscores inside math must NOT become italics.
         assert!(!render_body(r"$a_1 + b_2$", &no_refs()).contains("<em>"));
     }
@@ -1430,36 +1590,57 @@ mod tests {
         let mut refs = RefIndex::new();
         refs.insert(
             "5cfb2cc4-2f18-4b6e-b4c0-dcf657179204".into(),
-            RefTarget { slug: "related-work".into(), text: "Related Work section".into() },
+            RefTarget {
+                slug: "related-work".into(),
+                text: "Related Work section".into(),
+            },
         );
         // Labeled block ref → a link to the target block's anchor, showing the label.
-        let h = render_body("see [Related Work](((5cfb2cc4-2f18-4b6e-b4c0-dcf657179204)))", &refs);
+        let h = render_body(
+            "see [Related Work](((5cfb2cc4-2f18-4b6e-b4c0-dcf657179204)))",
+            &refs,
+        );
         assert!(
             h.contains(r#"<a class="ref block-ref" href="related-work.html#5cfb2cc4-2f18-4b6e-b4c0-dcf657179204">Related Work</a>"#),
             "{h}"
         );
         // Bare block ref → the target's text, linked.
         let b = render_body("((5cfb2cc4-2f18-4b6e-b4c0-dcf657179204))", &refs);
-        assert!(b.contains("related-work.html#5cfb2cc4-2f18-4b6e-b4c0-dcf657179204"), "{b}");
+        assert!(
+            b.contains("related-work.html#5cfb2cc4-2f18-4b6e-b4c0-dcf657179204"),
+            "{b}"
+        );
         assert!(b.contains("Related Work section"), "{b}");
         // Unresolved ref → muted text, no broken link / no stray `))`.
         let u = render_body("[X](((deadbeef-0000-0000-0000-000000000000)))", &refs);
         assert!(u.contains(r#"<span class="block-ref">X</span>"#), "{u}");
         assert!(!u.contains("((deadbeef"), "{u}");
         // A real URL with parentheses is captured whole (no truncation at first ')').
-        let w = render_body("[wiki](https://en.wikipedia.org/wiki/Foo_(bar))", &no_refs());
-        assert!(w.contains(r#"href="https://en.wikipedia.org/wiki/Foo_(bar)""#), "{w}");
+        let w = render_body(
+            "[wiki](https://en.wikipedia.org/wiki/Foo_(bar))",
+            &no_refs(),
+        );
+        assert!(
+            w.contains(r#"href="https://en.wikipedia.org/wiki/Foo_(bar)""#),
+            "{w}"
+        );
     }
 
     #[test]
     fn decorates_image_and_code_block() {
         // image: `data-asset` → src; the inline-image skeleton survives.
         let h = render_body("![cat](../assets/cat.png)", &no_refs());
-        assert!(h.contains(r#"<img class="inline-image" src="../assets/cat.png" alt="cat">"#), "{h}");
+        assert!(
+            h.contains(r#"<img class="inline-image" src="../assets/cat.png" alt="cat">"#),
+            "{h}"
+        );
         // fenced code: data-lang → highlight.js `language-X` class, body escaped (not the
         // old per-line `<div class="b">` that leaked the ``` fences).
         let c = render_body("```rust\nlet x = 1 < 2;\n```", &no_refs());
-        assert!(c.contains(r#"<pre class="code-block"><code class="hljs language-rust">"#), "{c}");
+        assert!(
+            c.contains(r#"<pre class="code-block"><code class="hljs language-rust">"#),
+            "{c}"
+        );
         assert!(c.contains("1 &lt; 2"), "code body escaped: {c}");
         assert!(!c.contains("```"), "no raw fence in output: {c}");
     }
@@ -1467,11 +1648,20 @@ mod tests {
     #[test]
     fn search_text_off_the_ast() {
         // headings, emphasis/code, [[wiki]], [label](url), ![alt](url) → readable text.
-        assert_eq!(search_text("## Heading **bold** _it_ `c`"), "Heading bold it c");
-        assert_eq!(search_text("see [[Foo Bar]] and [lbl](http://x)"), "see Foo Bar and lbl");
+        assert_eq!(
+            search_text("## Heading **bold** _it_ `c`"),
+            "Heading bold it c"
+        );
+        assert_eq!(
+            search_text("see [[Foo Bar]] and [lbl](http://x)"),
+            "see Foo Bar and lbl"
+        );
         assert_eq!(search_text("img ![cat](cat.png) end"), "img cat end");
         // a bare block ref → dropped from the index (an opaque uuid reads as noise).
-        assert_eq!(search_text("ref ((5cfb2cc4-2f18-4b6e-b4c0-dcf657179204)) gone"), "ref gone");
+        assert_eq!(
+            search_text("ref ((5cfb2cc4-2f18-4b6e-b4c0-dcf657179204)) gone"),
+            "ref gone"
+        );
     }
 
     #[test]
@@ -1490,13 +1680,21 @@ mod tests {
         fs::create_dir_all(dir.join("journals")).unwrap();
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::create_dir_all(dir.join("logseq")).unwrap();
-        fs::write(dir.join("logseq").join("config.edn"), "{:favorites [\"Alpha\"]}\n").unwrap();
+        fs::write(
+            dir.join("logseq").join("config.edn"),
+            "{:favorites [\"Alpha\"]}\n",
+        )
+        .unwrap();
         fs::write(
             dir.join("pages").join("Alpha.md"),
             "public:: true\n- # Intro to [[Beta]] and **bold** text\n  id:: 11111111-1111-1111-1111-111111111111\n- a unique searchwidget term\n",
         )
         .unwrap();
-        fs::write(dir.join("pages").join("Beta.md"), "public:: true\n- linking back to [[Alpha]]\n").unwrap();
+        fs::write(
+            dir.join("pages").join("Beta.md"),
+            "public:: true\n- linking back to [[Alpha]]\n",
+        )
+        .unwrap();
         // A non-public page must NOT be exported.
         fs::write(dir.join("pages").join("Secret.md"), "- private stuff\n").unwrap();
 
@@ -1511,20 +1709,39 @@ mod tests {
 
         // embedded search data: pages + blocks globals, favorite flag, stripped text
         let sidx = fs::read_to_string(out.join("search-index.js")).unwrap();
-        assert!(sidx.starts_with("window.__tinePages="), "{}", &sidx[..60.min(sidx.len())]);
+        assert!(
+            sidx.starts_with("window.__tinePages="),
+            "{}",
+            &sidx[..60.min(sidx.len())]
+        );
         assert!(sidx.contains("window.__tineBlocks="));
-        assert!(sidx.contains("\"favorite\":true"), "Alpha is a favorite: {sidx}");
+        assert!(
+            sidx.contains("\"favorite\":true"),
+            "Alpha is a favorite: {sidx}"
+        );
         assert!(sidx.contains("searchwidget"), "block content indexed");
-        assert!(sidx.contains("Intro to Beta and bold text"), "markup stripped in index: {sidx}");
+        assert!(
+            sidx.contains("Intro to Beta and bold text"),
+            "markup stripped in index: {sidx}"
+        );
         assert!(!sidx.contains("[[Beta]]"), "no raw wiki brackets in index");
 
         // page html: EVERY block carries an anchor (id:: uuid or generated b{n}); the
         // sidebar + scripts are present; no anchorless <li>.
         let alpha = fs::read_to_string(out.join("alpha.html")).unwrap();
-        assert!(alpha.contains("id=\"11111111-1111-1111-1111-111111111111\""), "id:: anchor kept");
-        assert!(alpha.contains("id=\"b0\""), "id-less block got a generated anchor: {alpha}");
+        assert!(
+            alpha.contains("id=\"11111111-1111-1111-1111-111111111111\""),
+            "id:: anchor kept"
+        );
+        assert!(
+            alpha.contains("id=\"b0\""),
+            "id-less block got a generated anchor: {alpha}"
+        );
         assert!(!alpha.contains("<li>"), "no anchorless <li>");
-        assert!(alpha.contains("<aside class=\"sidebar\">"), "sidebar present");
+        assert!(
+            alpha.contains("<aside class=\"sidebar\">"),
+            "sidebar present"
+        );
         assert!(alpha.contains("id=\"tine-search\""), "search box present");
         assert!(alpha.contains("src=\"app.js\""), "app.js linked");
 
@@ -1532,7 +1749,10 @@ mod tests {
         let index = fs::read_to_string(out.join("index.html")).unwrap();
         assert!(index.contains("alpha.html") && index.contains("beta.html"));
         assert!(!index.contains("secret.html"), "private page excluded");
-        assert!(index.contains("<aside class=\"sidebar\">"), "index uses the sidebar shell");
+        assert!(
+            index.contains("<aside class=\"sidebar\">"),
+            "index uses the sidebar shell"
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -1573,23 +1793,48 @@ mod tests {
         .unwrap();
 
         let g = Graph::open(&dir);
-        let html = g.page_print_html("Report", PrintOpts::default()).unwrap().expect("page exists");
+        let html = g
+            .page_print_html("Report", PrintOpts::default())
+            .unwrap()
+            .expect("page exists");
 
         // Self-contained: inlined stylesheet + inlined image, no sidebar / app scripts /
         // external style.css.
         assert!(html.contains("<style>"), "stylesheet inlined");
-        assert!(html.contains("data:image/png;base64,"), "image inlined as data URI: {}", &html[..0]);
-        assert!(!html.contains("../assets/pic.png"), "no relative asset link left");
-        assert!(!html.contains("<aside class=\"sidebar\">"), "no sidebar in print doc");
+        assert!(
+            html.contains("data:image/png;base64,"),
+            "image inlined as data URI: {}",
+            &html[..0]
+        );
+        assert!(
+            !html.contains("../assets/pic.png"),
+            "no relative asset link left"
+        );
+        assert!(
+            !html.contains("<aside class=\"sidebar\">"),
+            "no sidebar in print doc"
+        );
         assert!(!html.contains("src=\"app.js\""), "no app.js in print doc");
-        assert!(!html.contains("href=\"style.css\""), "no external stylesheet link");
+        assert!(
+            !html.contains("href=\"style.css\""),
+            "no external stylesheet link"
+        );
         // Content actually rendered.
-        assert!(html.contains("<h1 class=\"page\">Report</h1>"), "page heading");
-        assert!(html.contains("<strong>bold</strong>"), "inline markup rendered");
+        assert!(
+            html.contains("<h1 class=\"page\">Report</h1>"),
+            "page heading"
+        );
+        assert!(
+            html.contains("<strong>bold</strong>"),
+            "inline markup rendered"
+        );
         assert!(html.contains("@media print"), "print CSS present");
 
         // Missing page → None (not an error).
-        assert!(g.page_print_html("No Such Page", PrintOpts::default()).unwrap().is_none());
+        assert!(g
+            .page_print_html("No Such Page", PrintOpts::default())
+            .unwrap()
+            .is_none());
 
         // Collapsed handling: a collapsed parent's children are expanded by default,
         // and hidden when expand_collapsed is off.
@@ -1599,13 +1844,28 @@ mod tests {
         )
         .unwrap();
         let g2 = Graph::open(&dir);
-        let expanded = g2.page_print_html("Folded", PrintOpts::default()).unwrap().unwrap();
-        assert!(expanded.contains("hidden child text"), "default expands collapsed");
-        let folded = g2
-            .page_print_html("Folded", PrintOpts { expand_collapsed: false, ..PrintOpts::default() })
+        let expanded = g2
+            .page_print_html("Folded", PrintOpts::default())
             .unwrap()
             .unwrap();
-        assert!(!folded.contains("hidden child text"), "folded hides collapsed children");
+        assert!(
+            expanded.contains("hidden child text"),
+            "default expands collapsed"
+        );
+        let folded = g2
+            .page_print_html(
+                "Folded",
+                PrintOpts {
+                    expand_collapsed: false,
+                    ..PrintOpts::default()
+                },
+            )
+            .unwrap()
+            .unwrap();
+        assert!(
+            !folded.contains("hidden child text"),
+            "folded hides collapsed children"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -1616,7 +1876,11 @@ mod tests {
         fs::create_dir_all(dir.join("journals")).unwrap();
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::create_dir_all(dir.join("logseq")).unwrap();
-        fs::write(dir.join("logseq").join("config.edn"), "{:publishing/all-pages-public? true}\n").unwrap();
+        fs::write(
+            dir.join("logseq").join("config.edn"),
+            "{:publishing/all-pages-public? true}\n",
+        )
+        .unwrap();
         fs::write(
             dir.join("pages").join("Target.md"),
             "- an embeddable target\n  id:: 22222222-2222-2222-2222-222222222222\n",
@@ -1638,19 +1902,40 @@ mod tests {
         let main = fs::read_to_string(std::path::Path::new(&outdir).join("main.html")).unwrap();
 
         // task facets: checkbox + marker badge, priority, planning date
-        assert!(main.contains("class=\"task-checkbox\""), "open task checkbox: {main}");
-        assert!(main.contains("class=\"task-marker m-todo\">TODO"), "TODO badge");
-        assert!(main.contains("class=\"priority p-a\">[#A]"), "priority badge");
+        assert!(
+            main.contains("class=\"task-checkbox\""),
+            "open task checkbox: {main}"
+        );
+        assert!(
+            main.contains("class=\"task-marker m-todo\">TODO"),
+            "TODO badge"
+        );
+        assert!(
+            main.contains("class=\"priority p-a\">[#A]"),
+            "priority badge"
+        );
         assert!(main.contains("SCHEDULED:"), "scheduled line");
-        assert!(main.contains("class=\"task-checkbox checked\"") && main.contains("class=\"b done\""), "DONE checked + muted");
+        assert!(
+            main.contains("class=\"task-checkbox checked\"") && main.contains("class=\"b done\""),
+            "DONE checked + muted"
+        );
         // block property shown
-        assert!(main.contains("status") && main.contains("open"), "block property rendered");
+        assert!(
+            main.contains("status") && main.contains("open"),
+            "block property rendered"
+        );
         // query ran and rendered the TODO result (not empty, not the literal macro)
         assert!(main.contains("class=\"query\""), "query block rendered");
-        assert!(!main.contains("{{query"), "query macro expanded, not literal");
+        assert!(
+            !main.contains("{{query"),
+            "query macro expanded, not literal"
+        );
         // embed inlined the target block's text
         assert!(main.contains("class=\"embed"), "embed rendered");
-        assert!(main.contains("an embeddable target"), "embed inlined target content: {main}");
+        assert!(
+            main.contains("an embeddable target"),
+            "embed inlined target content: {main}"
+        );
         // video → youtube iframe
         assert!(main.contains("youtube.com/embed/abc123"), "video iframe");
 
@@ -1721,7 +2006,10 @@ mod tests {
 
         // Also emit the single-page print/PDF document for the showcase page, so
         // the print CSS + self-contained render can be eyeballed / screenshotted.
-        let print = g.page_print_html("Rendering Showcase", PrintOpts::default()).unwrap().unwrap();
+        let print = g
+            .page_print_html("Rendering Showcase", PrintOpts::default())
+            .unwrap()
+            .unwrap();
         let pfile = dir.join("print-sample.html");
         fs::write(&pfile, print).unwrap();
         println!("SAMPLE_PRINT_HTML={}", pfile.display());

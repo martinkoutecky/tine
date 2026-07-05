@@ -19,19 +19,40 @@ fn mk(tag: &str) -> std::path::PathBuf {
 #[test]
 fn sort_by_priority_is_global_across_pages() {
     let root = mk("sortprio");
-    std::fs::write(root.join("pages").join("P1.md"), "- TODO [#C] c-one\n- TODO [#A] a-one\n").unwrap();
-    std::fs::write(root.join("pages").join("P2.md"), "- TODO [#B] b-two\n- TODO [#A] a-two\n").unwrap();
+    std::fs::write(
+        root.join("pages").join("P1.md"),
+        "- TODO [#C] c-one\n- TODO [#A] a-one\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("pages").join("P2.md"),
+        "- TODO [#B] b-two\n- TODO [#A] a-two\n",
+    )
+    .unwrap();
     let g = Graph::open(&root);
     g.warm_cache();
     let prios = |q: &str| -> Vec<char> {
         g.run_query(q)
             .iter()
             .flat_map(|grp| grp.blocks.iter())
-            .map(|b| b.raw[b.raw.find("[#").unwrap() + 2..].chars().next().unwrap())
+            .map(|b| {
+                b.raw[b.raw.find("[#").unwrap() + 2..]
+                    .chars()
+                    .next()
+                    .unwrap()
+            })
             .collect()
     };
-    assert_eq!(prios("(and (task TODO) (sort-by priority asc))"), vec!['A', 'A', 'B', 'C'], "A floats to the top globally");
-    assert_eq!(prios("(and (task TODO) (sort-by priority desc))"), vec!['C', 'B', 'A', 'A'], "descending sinks A to the bottom");
+    assert_eq!(
+        prios("(and (task TODO) (sort-by priority asc))"),
+        vec!['A', 'A', 'B', 'C'],
+        "A floats to the top globally"
+    );
+    assert_eq!(
+        prios("(and (task TODO) (sort-by priority desc))"),
+        vec!['C', 'B', 'A', 'A'],
+        "descending sinks A to the bottom"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -43,18 +64,47 @@ fn sort_by_priority_is_global_across_pages() {
 #[test]
 fn sort_by_modified_interleaves_journal_and_pages() {
     let root = mk("sortmod");
-    std::fs::write(root.join("journals").join("2020_01_01.md"), "- TODO j-old\n").unwrap();
-    std::fs::write(root.join("journals").join("2020_01_02.md"), "- TODO j-new\n").unwrap();
+    std::fs::write(
+        root.join("journals").join("2020_01_01.md"),
+        "- TODO j-old\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("journals").join("2020_01_02.md"),
+        "- TODO j-new\n",
+    )
+    .unwrap();
     std::fs::write(root.join("pages").join("Proj.md"), "- TODO p-now\n").unwrap();
     let g = Graph::open(&root);
     g.warm_cache();
     let tag = |grp: &tine_core::RefGroup| {
-        grp.blocks[0].raw.split_whitespace().last().unwrap().to_string()
+        grp.blocks[0]
+            .raw
+            .split_whitespace()
+            .last()
+            .unwrap()
+            .to_string()
     };
-    let desc: Vec<String> = g.run_query("(and (task TODO) (sort-by modified desc))").iter().map(tag).collect();
-    assert_eq!(desc, vec!["p-now", "j-new", "j-old"], "newest first: page(mtime now) > 2020-01-02 > 2020-01-01");
-    let asc: Vec<String> = g.run_query("(and (task TODO) (sort-by modified asc))").iter().map(tag).collect();
-    assert_eq!(asc, vec!["j-old", "j-new", "p-now"], "oldest first reverses");
+    let desc: Vec<String> = g
+        .run_query("(and (task TODO) (sort-by modified desc))")
+        .iter()
+        .map(tag)
+        .collect();
+    assert_eq!(
+        desc,
+        vec!["p-now", "j-new", "j-old"],
+        "newest first: page(mtime now) > 2020-01-02 > 2020-01-01"
+    );
+    let asc: Vec<String> = g
+        .run_query("(and (task TODO) (sort-by modified asc))")
+        .iter()
+        .map(tag)
+        .collect();
+    assert_eq!(
+        asc,
+        vec!["j-old", "j-new", "p-now"],
+        "oldest first reverses"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -77,9 +127,22 @@ fn sort_by_deadline_soonest_first() {
     let asc: Vec<String> = groups[0]
         .blocks
         .iter()
-        .map(|b| b.raw.lines().next().unwrap().split_whitespace().last().unwrap().to_string())
+        .map(|b| {
+            b.raw
+                .lines()
+                .next()
+                .unwrap()
+                .split_whitespace()
+                .last()
+                .unwrap()
+                .to_string()
+        })
         .collect();
-    assert_eq!(asc, vec!["soon", "later", "none"], "soonest deadline first; no-deadline last");
+    assert_eq!(
+        asc,
+        vec!["soon", "later", "none"],
+        "soonest deadline first; no-deadline last"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -89,16 +152,35 @@ fn sort_by_deadline_soonest_first() {
 #[test]
 fn sort_coalesces_consecutive_same_page_results() {
     let root = mk("sortcoalesce");
-    std::fs::write(root.join("journals").join("2020_02_02.md"), "- TODO a1\n- TODO a2\n- TODO a3\n").unwrap();
+    std::fs::write(
+        root.join("journals").join("2020_02_02.md"),
+        "- TODO a1\n- TODO a2\n- TODO a3\n",
+    )
+    .unwrap();
     std::fs::write(root.join("journals").join("2020_01_01.md"), "- TODO b1\n").unwrap();
     let g = Graph::open(&root);
     g.warm_cache();
     let groups = g.run_query("(and (task TODO) (sort-by modified desc))");
-    assert_eq!(groups.len(), 2, "consecutive same-page results share one heading (2, not 4)");
-    assert_eq!(groups[0].blocks.len(), 3, "the 3 same-day todos are under one group");
-    let first_day: Vec<String> =
-        groups[0].blocks.iter().map(|b| b.raw.split_whitespace().last().unwrap().to_string()).collect();
-    assert_eq!(first_day, vec!["a1", "a2", "a3"], "within-page document order kept even under desc");
+    assert_eq!(
+        groups.len(),
+        2,
+        "consecutive same-page results share one heading (2, not 4)"
+    );
+    assert_eq!(
+        groups[0].blocks.len(),
+        3,
+        "the 3 same-day todos are under one group"
+    );
+    let first_day: Vec<String> = groups[0]
+        .blocks
+        .iter()
+        .map(|b| b.raw.split_whitespace().last().unwrap().to_string())
+        .collect();
+    assert_eq!(
+        first_day,
+        vec!["a1", "a2", "a3"],
+        "within-page document order kept even under desc"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -108,15 +190,26 @@ fn sort_coalesces_consecutive_same_page_results() {
 #[test]
 fn sort_does_not_over_merge_nonadjacent_same_page() {
     let root = mk("sortsplit");
-    std::fs::write(root.join("pages").join("P.md"), "- TODO [#A] pa\n- TODO [#C] pc\n").unwrap();
+    std::fs::write(
+        root.join("pages").join("P.md"),
+        "- TODO [#A] pa\n- TODO [#C] pc\n",
+    )
+    .unwrap();
     std::fs::write(root.join("pages").join("Q.md"), "- TODO [#B] qb\n").unwrap();
     let g = Graph::open(&root);
     g.warm_cache();
     let groups = g.run_query("(and (task TODO) (sort-by priority asc))");
-    let seq: Vec<(String, usize)> = groups.iter().map(|g| (g.page.clone(), g.blocks.len())).collect();
+    let seq: Vec<(String, usize)> = groups
+        .iter()
+        .map(|g| (g.page.clone(), g.blocks.len()))
+        .collect();
     assert_eq!(
         seq,
-        vec![("P".to_string(), 1), ("Q".to_string(), 1), ("P".to_string(), 1)],
+        vec![
+            ("P".to_string(), 1),
+            ("Q".to_string(), 1),
+            ("P".to_string(), 1)
+        ],
         "P split across its A and C ranks; only adjacent same-page runs merge"
     );
     let _ = std::fs::remove_dir_all(&root);
@@ -129,47 +222,85 @@ fn sort_does_not_over_merge_nonadjacent_same_page() {
 fn set_start_of_week_round_trips_through_config_edn() {
     let root = mk("sow");
     std::fs::create_dir_all(root.join("logseq")).unwrap();
-    std::fs::write(root.join("logseq").join("config.edn"), "{:start-of-week 6}\n").unwrap();
+    std::fs::write(
+        root.join("logseq").join("config.edn"),
+        "{:start-of-week 6}\n",
+    )
+    .unwrap();
     let g = Graph::open(&root);
     assert_eq!(g.meta().start_of_week, 6);
     g.set_start_of_week(0).expect("write start-of-week");
-    assert_eq!(Graph::open(&root).meta().start_of_week, 0, "0 (Monday) persisted");
+    assert_eq!(
+        Graph::open(&root).meta().start_of_week,
+        0,
+        "0 (Monday) persisted"
+    );
 
     // Insert into a config that has no :start-of-week key yet.
-    std::fs::write(root.join("logseq").join("config.edn"), "{:preferred-workflow :todo}\n").unwrap();
-    Graph::open(&root).set_start_of_week(2).expect("insert start-of-week");
+    std::fs::write(
+        root.join("logseq").join("config.edn"),
+        "{:preferred-workflow :todo}\n",
+    )
+    .unwrap();
+    Graph::open(&root)
+        .set_start_of_week(2)
+        .expect("insert start-of-week");
     let g2 = Graph::open(&root);
     assert_eq!(g2.meta().start_of_week, 2);
-    assert_eq!(g2.meta().preferred_workflow, "todo", "existing key preserved");
+    assert_eq!(
+        g2.meta().preferred_workflow,
+        "todo",
+        "existing key preserved"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 
 #[test]
 fn search_reflects_toggle_on_named_page() {
     let root = mk("named");
-    std::fs::write(root.join("pages").join("Tasks.md"), "- TODO ship the thing\n").unwrap();
+    std::fs::write(
+        root.join("pages").join("Tasks.md"),
+        "- TODO ship the thing\n",
+    )
+    .unwrap();
     let g = Graph::open(&root);
     g.warm_cache();
     let mut dto = g.load_named("Tasks", PageKind::Page).unwrap().unwrap();
     dto.blocks[0].raw = dto.blocks[0].raw.replace("TODO", "DOING");
     g.save_page(&dto, dto.rev.as_deref()).expect("save");
-    assert!(!g.search("DOING", 20).is_empty(), "named: DOING found after save");
-    assert!(g.search("TODO", 20).is_empty(), "named: TODO gone after toggle");
+    assert!(
+        !g.search("DOING", 20).is_empty(),
+        "named: DOING found after save"
+    );
+    assert!(
+        g.search("TODO", 20).is_empty(),
+        "named: TODO gone after toggle"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 
 #[test]
 fn search_reflects_toggle_on_journal_page() {
     let root = mk("journal");
-    std::fs::write(root.join("journals").join("2026_06_16.md"), "- TODO ship the thing\n").unwrap();
+    std::fs::write(
+        root.join("journals").join("2026_06_16.md"),
+        "- TODO ship the thing\n",
+    )
+    .unwrap();
     let g = Graph::open(&root);
     g.warm_cache();
     let title = g.run_query("(task TODO)")[0].page.clone();
     let mut dto = g.load_named(&title, PageKind::Journal).unwrap().unwrap();
     dto.blocks[0].raw = dto.blocks[0].raw.replace("TODO", "DOING");
     g.save_page(&dto, dto.rev.as_deref()).expect("journal save");
-    assert!(!g.search("DOING", 20).is_empty(), "journal: DOING found after save");
-    assert!(g.search("TODO", 20).is_empty(), "journal: TODO gone after toggle");
+    assert!(
+        !g.search("DOING", 20).is_empty(),
+        "journal: DOING found after save"
+    );
+    assert!(
+        g.search("TODO", 20).is_empty(),
+        "journal: TODO gone after toggle"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -202,7 +333,11 @@ fn new_journal_appears_in_journals_desc_via_cache() {
     g.save_page(&dto, None).expect("save new journal");
 
     let js = g.journals_desc();
-    assert_eq!(js.len(), 2, "the freshly-created journal must appear in the feed");
+    assert_eq!(
+        js.len(),
+        2,
+        "the freshly-created journal must appear in the feed"
+    );
     assert_eq!(js[0].name, "Jun 18th, 2026", "newest day sorts first");
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -226,7 +361,10 @@ fn own_write_is_suppressed_by_watcher() {
     g.save_page(&dto, dto.rev.as_deref()).expect("save");
 
     // The watcher polling this file must see it as OUR write, not external.
-    assert!(g.sync_file(&path).is_none(), "own write → suppressed (no phantom graph-changed)");
+    assert!(
+        g.sync_file(&path).is_none(),
+        "own write → suppressed (no phantom graph-changed)"
+    );
 
     // A genuine external change is still detected.
     std::fs::write(&path, "- DOING ship the thing\n- edited by hand\n").unwrap();
@@ -238,7 +376,11 @@ fn own_write_is_suppressed_by_watcher() {
 fn journal_content_days_distinguishes_empty() {
     let root = mk("contentdays");
     // Non-empty journal, an empty one (placeholder bullet), and a props-only one.
-    std::fs::write(root.join("journals").join("2026_06_16.md"), "- went for a walk\n").unwrap();
+    std::fs::write(
+        root.join("journals").join("2026_06_16.md"),
+        "- went for a walk\n",
+    )
+    .unwrap();
     std::fs::write(root.join("journals").join("2026_06_15.md"), "- \n").unwrap();
     std::fs::write(root.join("journals").join("2026_06_14.md"), "title:: x\n").unwrap();
     let g = Graph::open(&root);
@@ -253,7 +395,11 @@ fn journal_content_days_distinguishes_empty() {
 #[test]
 fn frontend_added_id_survives_reload_and_resolves() {
     let root = mk("idpersist");
-    std::fs::write(root.join("pages").join("TODOs.md"), "- {{query (task TODO)}}\n").unwrap();
+    std::fs::write(
+        root.join("pages").join("TODOs.md"),
+        "- {{query (task TODO)}}\n",
+    )
+    .unwrap();
     let g = Graph::open(&root);
     g.warm_cache();
 
@@ -265,15 +411,24 @@ fn frontend_added_id_survives_reload_and_resolves() {
     dto.blocks[0].raw = format!("{}\nid:: {}", dto.blocks[0].raw, uuid);
     g.save_page(&dto, dto.rev.as_deref()).expect("save");
 
-    eprintln!("--- file on disk ---\n{}", std::fs::read_to_string(root.join("pages").join("TODOs.md")).unwrap());
+    eprintln!(
+        "--- file on disk ---\n{}",
+        std::fs::read_to_string(root.join("pages").join("TODOs.md")).unwrap()
+    );
 
     // Reopen from scratch (fresh process would do this).
     let g2 = Graph::open(&root);
     g2.warm_cache();
     let dto2 = g2.load_named("TODOs", PageKind::Page).unwrap().unwrap();
     eprintln!("reloaded uuid = {}", dto2.blocks[0].id);
-    assert_eq!(dto2.blocks[0].id, uuid, "block uuid stable across reload via id::");
-    assert!(g2.resolve_block(&uuid).is_some(), "resolve_block finds it by id::");
+    assert_eq!(
+        dto2.blocks[0].id, uuid,
+        "block uuid stable across reload via id::"
+    );
+    assert!(
+        g2.resolve_block(&uuid).is_some(),
+        "resolve_block finds it by id::"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -299,8 +454,16 @@ fn memoized_query_and_backlinks_invalidate_after_edit() {
     g.save_page(&note, note.rev.as_deref()).unwrap();
 
     // The memo MUST reflect the edits, not serve the primed results.
-    assert_eq!(total(&g.run_query("(task TODO)")), 2, "query must see the flipped task");
-    assert_eq!(total(&g.backlinks("Tasks")), 0, "backlinks must see the removed link");
+    assert_eq!(
+        total(&g.run_query("(task TODO)")),
+        2,
+        "query must see the flipped task"
+    );
+    assert_eq!(
+        total(&g.backlinks("Tasks")),
+        0,
+        "backlinks must see the removed link"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -310,36 +473,73 @@ fn write_highlights_preserves_externally_added_ones() {
     let root = mk("hlmerge");
     let g = Graph::open(&root);
     let mk_hl = |id: &str, text: &str| {
-        let r = Rect { top: 0.0, left: 0.0, width: 1.0, height: 1.0 };
+        let r = Rect {
+            top: 0.0,
+            left: 0.0,
+            width: 1.0,
+            height: 1.0,
+        };
         Highlight {
             id: id.into(),
             page: 1,
-            position: Position { page: 1, bounding: r.clone(), rects: vec![r] },
+            position: Position {
+                page: 1,
+                bounding: r.clone(),
+                rects: vec![r],
+            },
             color: "yellow".into(),
             text: Some(text.into()),
             image: None,
         }
     };
     let ids = |g: &Graph| -> std::collections::HashSet<String> {
-        g.read_highlights("paper.pdf").into_iter().map(|h| h.id).collect()
+        g.read_highlights("paper.pdf")
+            .into_iter()
+            .map(|h| h.id)
+            .collect()
     };
     // Tine writes H1 (no baseline yet).
-    g.write_highlights("paper.pdf", "Paper", &[mk_hl("H1", "one")], &[]).unwrap();
+    g.write_highlights("paper.pdf", "Paper", &[mk_hl("H1", "one")], &[])
+        .unwrap();
     // An external editor (OG) adds H2 to the same EDN.
-    let edn_path = root.join("assets").join(format!("{}.edn", tine_core::pdf::asset_key("paper.pdf")));
+    let edn_path = root
+        .join("assets")
+        .join(format!("{}.edn", tine_core::pdf::asset_key("paper.pdf")));
     let mut both = tine_core::pdf::parse_highlights(&std::fs::read_to_string(&edn_path).unwrap());
     both.push(mk_hl("H2", "two"));
     std::fs::write(&edn_path, tine_core::pdf::write_highlights(&both, "")).unwrap();
     // Tine, baseline [H1], adds H3 and writes — H2 (external) must NOT be dropped.
-    g.write_highlights("paper.pdf", "Paper", &[mk_hl("H1", "one"), mk_hl("H3", "three")], &["H1".into()]).unwrap();
-    assert!(ids(&g).is_superset(&["H1", "H2", "H3"].map(String::from).into_iter().collect()), "got {:?}", ids(&g));
+    g.write_highlights(
+        "paper.pdf",
+        "Paper",
+        &[mk_hl("H1", "one"), mk_hl("H3", "three")],
+        &["H1".into()],
+    )
+    .unwrap();
+    assert!(
+        ids(&g).is_superset(&["H1", "H2", "H3"].map(String::from).into_iter().collect()),
+        "got {:?}",
+        ids(&g)
+    );
 
     // Now DELETE H2: baseline is everything currently on disk; current omits H2.
     let base: Vec<String> = ids(&g).into_iter().collect();
-    g.write_highlights("paper.pdf", "Paper", &[mk_hl("H1", "one"), mk_hl("H3", "three")], &base).unwrap();
+    g.write_highlights(
+        "paper.pdf",
+        "Paper",
+        &[mk_hl("H1", "one"), mk_hl("H3", "three")],
+        &base,
+    )
+    .unwrap();
     let after = ids(&g);
-    assert!(!after.contains("H2"), "deleted highlight must stay deleted: {after:?}");
-    assert!(after.contains("H1") && after.contains("H3"), "kept ones must survive: {after:?}");
+    assert!(
+        !after.contains("H2"),
+        "deleted highlight must stay deleted: {after:?}"
+    );
+    assert!(
+        after.contains("H1") && after.contains("H3"),
+        "kept ones must survive: {after:?}"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -353,11 +553,20 @@ fn highlight_write_is_not_seen_as_external_change() {
     let g = Graph::open(&root);
     g.search("x", 10); // build the cache
 
-    let r = Rect { top: 0.0, left: 0.0, width: 1.0, height: 1.0 };
+    let r = Rect {
+        top: 0.0,
+        left: 0.0,
+        width: 1.0,
+        height: 1.0,
+    };
     let h = Highlight {
         id: "H1".into(),
         page: 1,
-        position: Position { page: 1, bounding: r.clone(), rects: vec![r] },
+        position: Position {
+            page: 1,
+            bounding: r.clone(),
+            rects: vec![r],
+        },
         color: "yellow".into(),
         text: Some("noted".into()),
         image: None,
@@ -396,11 +605,19 @@ fn list_pages_memo_reflects_new_and_deleted_pages() {
     b.rev = None;
     b.path = String::new();
     g.save_page(&b, None).unwrap();
-    assert!(names(&g).contains(&"B".to_string()), "new page must appear: {:?}", names(&g));
+    assert!(
+        names(&g).contains(&"B".to_string()),
+        "new page must appear: {:?}",
+        names(&g)
+    );
 
     // Delete A → memo must drop it.
     g.delete_page("A", PageKind::Page).unwrap();
-    assert!(!names(&g).contains(&"A".to_string()), "deleted page must disappear: {:?}", names(&g));
+    assert!(
+        !names(&g).contains(&"A".to_string()),
+        "deleted page must disappear: {:?}",
+        names(&g)
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -433,10 +650,21 @@ fn delete_page_errors_when_trash_path_is_file_and_keeps_page_cached() {
     let g = Graph::open(&root);
     g.warm_cache();
 
-    let err = g.delete_page("Doomed", PageKind::Page).expect_err("trash path is blocked");
-    assert!(err.to_string().contains(".tine-trash"), "error should name the trash path: {err}");
-    assert!(root.join("pages").join("Doomed.md").is_file(), "source page survives");
-    let dto = g.load_named("Doomed", PageKind::Page).unwrap().expect("page still loads");
+    let err = g
+        .delete_page("Doomed", PageKind::Page)
+        .expect_err("trash path is blocked");
+    assert!(
+        err.to_string().contains(".tine-trash"),
+        "error should name the trash path: {err}"
+    );
+    assert!(
+        root.join("pages").join("Doomed.md").is_file(),
+        "source page survives"
+    );
+    let dto = g
+        .load_named("Doomed", PageKind::Page)
+        .unwrap()
+        .expect("page still loads");
     assert_eq!(dto.blocks[0].raw, "keep me");
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -450,10 +678,18 @@ fn trash_journal_file_errors_when_trash_path_is_file_and_keeps_source() {
     std::fs::write(&journal, "- journal body\n").unwrap();
     let g = Graph::open(&root);
 
-    let err = g.trash_journal_file("2026_06_20.md").expect_err("trash path is blocked");
-    assert!(err.to_string().contains(".tine-trash"), "error should name the trash path: {err}");
+    let err = g
+        .trash_journal_file("2026_06_20.md")
+        .expect_err("trash path is blocked");
+    assert!(
+        err.to_string().contains(".tine-trash"),
+        "error should name the trash path: {err}"
+    );
     assert!(journal.is_file(), "source journal survives");
-    assert_eq!(std::fs::read_to_string(&journal).unwrap(), "- journal body\n");
+    assert_eq!(
+        std::fs::read_to_string(&journal).unwrap(),
+        "- journal body\n"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -467,8 +703,13 @@ fn trash_asset_errors_when_trash_path_is_file_and_keeps_source() {
     std::fs::write(&asset, b"asset bytes").unwrap();
     let g = Graph::open(&root);
 
-    let err = g.trash_asset("clip.png").expect_err("trash path is blocked");
-    assert!(err.to_string().contains(".tine-trash"), "error should name the trash path: {err}");
+    let err = g
+        .trash_asset("clip.png")
+        .expect_err("trash path is blocked");
+    assert!(
+        err.to_string().contains(".tine-trash"),
+        "error should name the trash path: {err}"
+    );
     assert!(asset.is_file(), "source asset survives");
     assert_eq!(std::fs::read(&asset).unwrap(), b"asset bytes");
     let _ = std::fs::remove_dir_all(&root);
@@ -531,7 +772,10 @@ fn resolve_blocks_uses_indexed_hinted_page_lookup() {
 #[test]
 fn run_advanced_query_uses_generation_keyed_memo_cache() {
     let src = include_str!("../src/model.rs");
-    assert!(src.contains("fn advanced_memo("), "advanced queries should have a dedicated memo cache");
+    assert!(
+        src.contains("fn advanced_memo("),
+        "advanced queries should have a dedicated memo cache"
+    );
     assert!(
         !src.contains("Not memoized (invoked on demand)"),
         "stale non-memoized advanced-query comment should be gone"
@@ -541,14 +785,22 @@ fn run_advanced_query_uses_generation_keyed_memo_cache() {
 #[test]
 fn resolve_block_index_refreshes_after_cache_change() {
     let root = mk("blockidx");
-    std::fs::write(root.join("pages").join("A.md"), "- alpha\n  id:: aaaa-1111\n").unwrap();
+    std::fs::write(
+        root.join("pages").join("A.md"),
+        "- alpha\n  id:: aaaa-1111\n",
+    )
+    .unwrap();
     let g = Graph::open(&root);
     g.warm_cache();
     // First resolve builds the gen-keyed uuid index.
     assert_eq!(g.resolve_block("aaaa-1111").unwrap().page, "A");
 
     // A new page appears on disk; invalidate the cache as the watcher would.
-    std::fs::write(root.join("pages").join("B.md"), "- beta\n  id:: bbbb-2222\n").unwrap();
+    std::fs::write(
+        root.join("pages").join("B.md"),
+        "- beta\n  id:: bbbb-2222\n",
+    )
+    .unwrap();
     g.invalidate_cache();
     // The index must rebuild against the fresh cache — not serve a stale "not
     // found" for the new block, nor lose the old one.
@@ -572,7 +824,11 @@ fn resolve_blocks_batch_resolves_across_pages_with_duplicates() {
         "- alpha one\n  id:: aaaa-1111\n- alpha two\n  id:: aaaa-2222\n",
     )
     .unwrap();
-    std::fs::write(root.join("pages").join("B.md"), "- beta\n  id:: bbbb-3333\n").unwrap();
+    std::fs::write(
+        root.join("pages").join("B.md"),
+        "- beta\n  id:: bbbb-3333\n",
+    )
+    .unwrap();
     let g = Graph::open(&root);
     g.warm_cache();
 
@@ -586,17 +842,31 @@ fn resolve_blocks_batch_resolves_across_pages_with_duplicates() {
     let out = g.resolve_blocks(&req);
     assert_eq!(out.len(), req.len(), "one result slot per input");
     assert_eq!(out[0].as_ref().unwrap().page, "A");
-    assert_eq!(out[0].as_ref().unwrap().blocks[0].raw, "alpha one\nid:: aaaa-1111");
+    assert_eq!(
+        out[0].as_ref().unwrap().blocks[0].raw,
+        "alpha one\nid:: aaaa-1111"
+    );
     assert_eq!(out[1].as_ref().unwrap().page, "B");
     assert_eq!(out[2].as_ref().unwrap().page, "A");
-    assert_eq!(out[2].as_ref().unwrap().blocks[0].raw, "alpha two\nid:: aaaa-2222");
+    assert_eq!(
+        out[2].as_ref().unwrap().blocks[0].raw,
+        "alpha two\nid:: aaaa-2222"
+    );
     assert!(out[3].is_none(), "unknown id resolves to None, not a panic");
-    assert_eq!(out[4].as_ref().unwrap().page, "A", "duplicate input resolves again");
+    assert_eq!(
+        out[4].as_ref().unwrap().page,
+        "A",
+        "duplicate input resolves again"
+    );
 
     // Batch agrees with N single resolves (same semantics, just one pass).
     for u in &req {
         assert_eq!(
-            g.resolve_blocks(std::slice::from_ref(u)).into_iter().next().unwrap().map(|r| r.page),
+            g.resolve_blocks(std::slice::from_ref(u))
+                .into_iter()
+                .next()
+                .unwrap()
+                .map(|r| r.page),
             g.resolve_block(u).map(|r| r.page),
         );
     }
@@ -629,11 +899,19 @@ fn new_journal_saved_with_date_stem_not_title() {
     };
     g.save_page(&dto, None).expect("save new journal");
     // It must land on the date-stem file, and reopening must show it in the feed.
-    assert!(root.join("journals").join("2026_06_18.md").exists(), "stem-named file");
-    assert!(!root.join("journals").join("Jun 18th, 2026.md").exists(), "no title-named file");
+    assert!(
+        root.join("journals").join("2026_06_18.md").exists(),
+        "stem-named file"
+    );
+    assert!(
+        !root.join("journals").join("Jun 18th, 2026.md").exists(),
+        "no title-named file"
+    );
     let g2 = Graph::open(&root);
     assert!(
-        g2.journals_desc().iter().any(|e| e.name == "Jun 18th, 2026"),
+        g2.journals_desc()
+            .iter()
+            .any(|e| e.name == "Jun 18th, 2026"),
         "new journal appears in the feed after reload"
     );
     let _ = std::fs::remove_dir_all(&root);
@@ -643,12 +921,22 @@ fn new_journal_saved_with_date_stem_not_title() {
 fn migrate_renames_title_named_journal_files() {
     let root = mk("journalmigrate");
     // Simulate a previously-mis-saved journal (title as filename).
-    std::fs::write(root.join("journals").join("Jun 18th, 2026.md"), "- TODO recovered\n").unwrap();
+    std::fs::write(
+        root.join("journals").join("Jun 18th, 2026.md"),
+        "- TODO recovered\n",
+    )
+    .unwrap();
     let g = Graph::open(&root);
     let n = g.migrate_journal_filenames();
     assert_eq!(n, 1);
-    assert!(root.join("journals").join("2026_06_18.md").exists(), "renamed to stem");
-    assert!(!root.join("journals").join("Jun 18th, 2026.md").exists(), "title file gone");
+    assert!(
+        root.join("journals").join("2026_06_18.md").exists(),
+        "renamed to stem"
+    );
+    assert!(
+        !root.join("journals").join("Jun 18th, 2026.md").exists(),
+        "title file gone"
+    );
     // Content preserved + now visible.
     assert!(g.journals_desc().iter().any(|e| e.name == "Jun 18th, 2026"));
     let _ = std::fs::remove_dir_all(&root);
@@ -668,7 +956,10 @@ fn crlf_files_round_trip_without_churn() {
 
     let dto = g.load_named("Win", PageKind::Page).unwrap().unwrap();
     // (1) no stray CR leaks into the in-memory model
-    assert!(dto.pre_block.as_deref().map_or(true, |p| !p.contains('\r')), "pre-block CR");
+    assert!(
+        dto.pre_block.as_deref().map_or(true, |p| !p.contains('\r')),
+        "pre-block CR"
+    );
     for b in &dto.blocks {
         assert!(!b.raw.contains('\r'), "block raw carries a CR: {:?}", b.raw);
     }

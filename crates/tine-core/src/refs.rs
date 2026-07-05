@@ -14,7 +14,10 @@ pub fn page_key(name: &str) -> String {
 /// `page_key(a) == page_key(b)` without allocating — the comparison form for hot
 /// cache scans. Unicode case fold (matches `page_key`), NOT `eq_ignore_ascii_case`.
 pub fn same_page(a: &str, b: &str) -> bool {
-    a.trim().chars().flat_map(char::to_lowercase).eq(b.trim().chars().flat_map(char::to_lowercase))
+    a.trim()
+        .chars()
+        .flat_map(char::to_lowercase)
+        .eq(b.trim().chars().flat_map(char::to_lowercase))
 }
 
 /// Historical name for the page-identity fold used throughout ref extraction;
@@ -54,12 +57,15 @@ fn code_ranges(raw: &str) -> Vec<std::ops::Range<usize>> {
         let trimmed = content.trim_start();
         if let Some((fc, fl)) = fence {
             ranges.push(line_start..pos); // whole line (incl. newline) is code
-            // A closing fence is the same marker, >= the opening run, nothing after
-            // it. It is a bare line (no bullet) — a Logseq bulleted code block closes
-            // with an aligned `  ``` `, so the close check uses the un-stripped text.
+                                          // A closing fence is the same marker, >= the opening run, nothing after
+                                          // it. It is a bare line (no bullet) — a Logseq bulleted code block closes
+                                          // with an aligned `  ``` `, so the close check uses the un-stripped text.
             let cm = trimmed.bytes().next().filter(|&c| c == b'`' || c == b'~');
             let cr = cm.map_or(0, |m| trimmed.bytes().take_while(|&c| c == m).count());
-            if cm == Some(fc) && cr >= fl && trimmed.as_bytes()[cr..].iter().all(u8::is_ascii_whitespace) {
+            if cm == Some(fc)
+                && cr >= fl
+                && trimmed.as_bytes()[cr..].iter().all(u8::is_ascii_whitespace)
+            {
                 fence = None;
             }
             continue;
@@ -193,7 +199,11 @@ fn org_block_ranges(raw: &str) -> Vec<std::ops::Range<usize>> {
 /// (URL fragments) are NOT tags — matching OG — while ` #x`, `(#x`, `]#x` are.
 /// (`[[name]]` links don't need this; they're bracket-delimited.)
 fn tag_boundary(raw: &str, i: usize) -> bool {
-    i == 0 || raw[..i].chars().next_back().map_or(true, |c| !is_tag_char(c))
+    i == 0
+        || raw[..i]
+            .chars()
+            .next_back()
+            .map_or(true, |c| !is_tag_char(c))
 }
 
 // NOTE: the OG-faithful page/block ref EXTRACTORS live in lsdoc (see
@@ -249,7 +259,10 @@ pub fn read_bracket_link(rest: &str) -> Option<(&str, &str, usize)> {
 
 /// The inner uuid if `url` is exactly a `((uuid))` block-ref target.
 pub fn as_block_ref(url: &str) -> Option<&str> {
-    url.trim().strip_prefix("((").and_then(|s| s.strip_suffix("))")).map(str::trim)
+    url.trim()
+        .strip_prefix("((")
+        .and_then(|s| s.strip_suffix("))"))
+        .map(str::trim)
 }
 
 /// Rewrite every reference to page `from` (case-insensitive) as `to`, returning
@@ -436,10 +449,7 @@ fn tags_value_start(line: &str) -> Option<usize> {
 /// Rewrite a `tags::` value (the part after `::`): for each comma-separated
 /// segment whose trimmed, **bare** name normalizes to `target`, swap the name
 /// for `to`, keeping the segment's surrounding whitespace.
-fn rewrite_bare_tags(
-    valpart: &str,
-    renames: &std::collections::HashMap<String, String>,
-) -> String {
+fn rewrite_bare_tags(valpart: &str, renames: &std::collections::HashMap<String, String>) -> String {
     valpart
         .split(',')
         .map(|seg| {
@@ -466,17 +476,26 @@ mod tests {
     #[test]
     fn read_bracket_link_balances_parens() {
         // url with parens (block ref) captured whole, not stopped at first `)`
-        assert_eq!(read_bracket_link("[L](((u)))rest"), Some(("L", "((u))", 10)));
+        assert_eq!(
+            read_bracket_link("[L](((u)))rest"),
+            Some(("L", "((u))", 10))
+        );
         assert_eq!(as_block_ref("((u))"), Some("u"));
         // a paren-bearing normal url survives too
-        assert_eq!(read_bracket_link("[a](/Foo_(bar)) x").map(|t| t.1), Some("/Foo_(bar)"));
+        assert_eq!(
+            read_bracket_link("[a](/Foo_(bar)) x").map(|t| t.1),
+            Some("/Foo_(bar)")
+        );
         // not a link
         assert!(read_bracket_link("[a] (b)").is_none());
     }
 
     #[test]
     fn block_id_reads_id_property() {
-        assert_eq!(block_id("text\nid:: 1234-abcd"), Some("1234-abcd".to_string()));
+        assert_eq!(
+            block_id("text\nid:: 1234-abcd"),
+            Some("1234-abcd".to_string())
+        );
         assert_eq!(block_id("ID:: Xyz"), Some("Xyz".to_string())); // case-insensitive key
         assert_eq!(block_id("no props here"), None);
     }
@@ -485,7 +504,12 @@ mod tests {
     fn rename_leaves_url_fragments_alone() {
         // `#Old` inside a URL isn't a tag → untouched; the real tag is renamed
         assert_eq!(
-            rename_refs("visit https://ex.com/docs#Old and tag #Old", "Old", "New", false),
+            rename_refs(
+                "visit https://ex.com/docs#Old and tag #Old",
+                "Old",
+                "New",
+                false
+            ),
             "visit https://ex.com/docs#Old and tag #New"
         );
     }
@@ -502,7 +526,10 @@ mod tests {
         let got = rename_refs(raw, "Old", "New", false);
         assert!(got.contains("before [[New]]"), "prose ref renamed: {got}");
         assert!(got.contains("after #New"), "trailing tag renamed: {got}");
-        assert!(got.contains("\"[[Old]]\"; // #Old"), "code body untouched: {got}");
+        assert!(
+            got.contains("\"[[Old]]\"; // #Old"),
+            "code body untouched: {got}"
+        );
     }
 
     #[test]
@@ -514,7 +541,10 @@ mod tests {
         // skipped. The whole `## Tests` subtree mirrors Tine.md.
         let raw = "- ## Tests\n\t- ```calc\n\t  1 + 2\n\t  var = 2+4\n\t  ```\n\t- #+BEGIN_TIP\n\t  a tip\n\t  #+END_TIP\n\t- [[Pokus2]]\n";
         let out = rename_refs(raw, "Pokus2", "Pokus", false);
-        assert!(out.contains("[[Pokus]]"), "ref after bulleted fence not rewritten: {out:?}");
+        assert!(
+            out.contains("[[Pokus]]"),
+            "ref after bulleted fence not rewritten: {out:?}"
+        );
         // the code block body itself is untouched
         assert!(out.contains("```calc") && out.contains("1 + 2"), "{out:?}");
     }
@@ -533,7 +563,10 @@ mod tests {
         // Same input as markdown (is_org=false) WOULD rewrite inside (no org fence
         // awareness) — proving the gate matters.
         let md = rename_refs(raw, "Old", "New", false);
-        assert!(md.contains("(def s \"[[New]]\")"), "md path rewrites inside (expected): {md:?}");
+        assert!(
+            md.contains("(def s \"[[New]]\")"),
+            "md path rewrites inside (expected): {md:?}"
+        );
     }
 
     #[test]
@@ -573,7 +606,7 @@ mod tests {
         assert_ne!(page_key("Uber"), page_key("Über"));
         assert!(!same_page("Cafe", "Café"));
         assert_ne!(page_key("Σ"), page_key("S")); // Greek sigma is not Latin S
-        // normalize is the same fold as page_key (single source).
+                                                  // normalize is the same fold as page_key (single source).
         assert_eq!(normalize("Über"), page_key("Über"));
     }
 
@@ -597,16 +630,25 @@ mod tests {
             "tags:: New, keep"
         );
         // case-insensitive match; original `to` casing used
-        assert_eq!(rename_tags_property("tags:: old", "Old", "New", false), "tags:: New");
+        assert_eq!(
+            rename_tags_property("tags:: old", "Old", "New", false),
+            "tags:: New"
+        );
         // bracketed / #-prefixed values are left for rename_refs (no double-rewrite)
         assert_eq!(
             rename_tags_property("tags:: [[Old]], #Old", "Old", "New", false),
             "tags:: [[Old]], #Old"
         );
         // a non-tags property is untouched
-        assert_eq!(rename_tags_property("author:: Old", "Old", "New", false), "author:: Old");
+        assert_eq!(
+            rename_tags_property("author:: Old", "Old", "New", false),
+            "author:: Old"
+        );
         // a `tags::` line inside a code fence is literal — not rewritten
         let raw = "tags:: Old\n```\ntags:: Old\n```\n";
-        assert_eq!(rename_tags_property(raw, "Old", "New", false), "tags:: New\n```\ntags:: Old\n```\n");
+        assert_eq!(
+            rename_tags_property(raw, "Old", "New", false),
+            "tags:: New\n```\ntags:: Old\n```\n"
+        );
     }
 }

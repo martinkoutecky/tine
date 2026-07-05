@@ -55,7 +55,10 @@ pub(crate) fn diag(msg: impl AsRef<str>) {
     let msg = msg.as_ref();
     eprintln!("[tine] {msg}");
     if let Some(Some(lock)) = DEBUG_LOG.get() {
-        let ms = DEBUG_START.get().map(|s| s.elapsed().as_millis()).unwrap_or(0);
+        let ms = DEBUG_START
+            .get()
+            .map(|s| s.elapsed().as_millis())
+            .unwrap_or(0);
         if let Ok(mut f) = lock.lock() {
             let _ = writeln!(f, "[+{ms:>7}ms] {msg}");
             let _ = f.flush();

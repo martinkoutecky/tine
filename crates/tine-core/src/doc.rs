@@ -14,8 +14,17 @@ use serde::{Deserialize, Serialize};
 
 /// Recognized task markers (leading keyword of a block).
 pub const MARKERS: &[&str] = &[
-    "TODO", "DOING", "DONE", "NOW", "LATER", "WAITING", "WAIT", "CANCELED", "CANCELLED",
-    "STARTED", "IN-PROGRESS",
+    "TODO",
+    "DOING",
+    "DONE",
+    "NOW",
+    "LATER",
+    "WAITING",
+    "WAIT",
+    "CANCELED",
+    "CANCELLED",
+    "STARTED",
+    "IN-PROGRESS",
 ];
 
 /// A parsed `.md` document: an optional page-property pre-block plus a forest
@@ -139,7 +148,13 @@ impl Clone for DocBlock {
 
 impl DocBlock {
     pub fn new(raw: impl Into<String>) -> Self {
-        DocBlock { raw: raw.into(), children: Vec::new(), uuid: String::new(), is_org: false, proj: std::sync::OnceLock::new() }
+        DocBlock {
+            raw: raw.into(),
+            children: Vec::new(),
+            uuid: String::new(),
+            is_org: false,
+            proj: std::sync::OnceLock::new(),
+        }
     }
 
     /// Lazily-computed, memoized projection of `raw` (visible lowercased text +
@@ -162,7 +177,10 @@ impl DocBlock {
             let visible = visible_minus_properties(&self.raw, &proj.blocks);
             let visible_lower = visible.to_lowercase();
             let refs_page = proj.refs.page;
-            let refs_norm = refs_page.iter().map(|r| crate::refs::normalize(r)).collect();
+            let refs_norm = refs_page
+                .iter()
+                .map(|r| crate::refs::normalize(r))
+                .collect();
             BlockProjection {
                 visible,
                 visible_lower,
@@ -235,15 +253,30 @@ impl DocBlock {
 /// `(marker, heading_level, properties)`.
 fn header_facets(
     blocks: &[lsdoc::ast::Block],
-) -> (Option<String>, Option<String>, Option<u8>, Vec<(String, String)>) {
+) -> (
+    Option<String>,
+    Option<String>,
+    Option<u8>,
+    Vec<(String, String)>,
+) {
     use lsdoc::ast::Block;
     let (marker, priority, heading_level) = match blocks.first() {
-        Some(Block::Bullet { marker, priority, size, .. }) => (
+        Some(Block::Bullet {
+            marker,
+            priority,
+            size,
+            ..
+        }) => (
             marker.clone(),
             priority.clone(),
             size.and_then(|s| (1..=6).contains(&s).then_some(s as u8)),
         ),
-        Some(Block::Heading { marker, priority, level, .. }) => (
+        Some(Block::Heading {
+            marker,
+            priority,
+            level,
+            ..
+        }) => (
             marker.clone(),
             priority.clone(),
             (1..=6u32).contains(level).then_some(*level as u8),
@@ -284,7 +317,9 @@ fn planning_dates(blocks: &[lsdoc::ast::Block], raw: &str) -> (Option<String>, O
             continue;
         }
         for i in inlines {
-            let Inline::Timestamp { ts, .. } = i else { continue };
+            let Inline::Timestamp { ts, .. } = i else {
+                continue;
+            };
             let slot = match ts.as_str() {
                 "Scheduled" => &mut scheduled,
                 "Deadline" => &mut deadline,
@@ -311,7 +346,9 @@ fn is_standalone_planning(inlines: &[lsdoc::ast::Inline]) -> bool {
     let mut planning = false;
     for i in inlines {
         match i {
-            Inline::Timestamp { ts, .. } if ts == "Scheduled" || ts == "Deadline" => planning = true,
+            Inline::Timestamp { ts, .. } if ts == "Scheduled" || ts == "Deadline" => {
+                planning = true
+            }
             Inline::Break { .. } | Inline::HardBreak { .. } => {}
             Inline::Plain { text, .. } if text.trim().is_empty() => {}
             _ => return false,
@@ -328,16 +365,20 @@ fn is_standalone_planning(inlines: &[lsdoc::ast::Inline]) -> bool {
 pub(crate) fn block_is_standalone_planning(b: &lsdoc::ast::Block) -> bool {
     use lsdoc::ast::Block;
     match b {
-        Block::Paragraph { inline, .. } | Block::Bullet { inline, .. } | Block::Heading { inline, .. } => {
-            is_standalone_planning(inline)
-        }
+        Block::Paragraph { inline, .. }
+        | Block::Bullet { inline, .. }
+        | Block::Heading { inline, .. } => is_standalone_planning(inline),
         _ => false,
     }
 }
 
 /// The `<…>` content following a `SCHEDULED:` / `DEADLINE:` keyword in `slice`.
 fn angle_after(slice: &str, ts: &str) -> Option<String> {
-    let kw = if ts == "Scheduled" { "SCHEDULED:" } else { "DEADLINE:" };
+    let kw = if ts == "Scheduled" {
+        "SCHEDULED:"
+    } else {
+        "DEADLINE:"
+    };
     let after = &slice[slice.find(kw)? + kw.len()..];
     let lt = after.find('<')?;
     let gt = after[lt + 1..].find('>')?;
@@ -423,7 +464,9 @@ pub(crate) fn parse_property_line(line: &str) -> Option<(String, String)> {
 /// comparison recovers nesting regardless of which a file uses. Output is
 /// always canonicalized to TABs.
 fn leading_ws(line: &str) -> usize {
-    line.bytes().take_while(|b| *b == b'\t' || *b == b' ').count()
+    line.bytes()
+        .take_while(|b| *b == b'\t' || *b == b' ')
+        .count()
 }
 
 /// Classify a line as a bullet at a given indent column, returning its content
@@ -480,7 +523,11 @@ pub fn parse(content: &str) -> Document {
         content
     };
     let body = content.strip_suffix('\n').unwrap_or(content);
-    let lines: Vec<&str> = if body.is_empty() { Vec::new() } else { body.split('\n').collect() };
+    let lines: Vec<&str> = if body.is_empty() {
+        Vec::new()
+    } else {
+        body.split('\n').collect()
+    };
 
     // Find the first bullet to split pre-block from block region.
     let first_bullet = lines.iter().position(|l| bullet(l).is_some());
@@ -495,7 +542,11 @@ pub fn parse(content: &str) -> Document {
     while pre_end > 0 && pre_lines[pre_end - 1].trim().is_empty() {
         pre_end -= 1;
     }
-    let pre_block = if pre_end == 0 { None } else { Some(pre_lines[..pre_end].join("\n")) };
+    let pre_block = if pre_end == 0 {
+        None
+    } else {
+        Some(pre_lines[..pre_end].join("\n"))
+    };
 
     // Build the block forest with a stack of frames keyed by indent column.
     struct Frame {
@@ -522,7 +573,13 @@ pub fn parse(content: &str) -> Document {
         while let Some(top) = stack.last() {
             if top.col >= keep_above {
                 let f = stack.pop().unwrap();
-                let block = DocBlock { raw: f.raw, children: f.children, uuid: String::new(), is_org: false, proj: std::sync::OnceLock::new() };
+                let block = DocBlock {
+                    raw: f.raw,
+                    children: f.children,
+                    uuid: String::new(),
+                    is_org: false,
+                    proj: std::sync::OnceLock::new(),
+                };
                 match stack.last_mut() {
                     Some(parent) => parent.children.push(block),
                     None => roots.push(block),
@@ -591,7 +648,11 @@ pub struct SerializeOpts {
 
 impl Default for SerializeOpts {
     fn default() -> Self {
-        SerializeOpts { trailing_newlines: 1, blank_after_props: true, indent: "\t".into() }
+        SerializeOpts {
+            trailing_newlines: 1,
+            blank_after_props: true,
+            indent: "\t".into(),
+        }
     }
 }
 
@@ -627,7 +688,11 @@ fn blank_after_props(s: &str) -> bool {
 }
 
 fn gcd(a: usize, b: usize) -> usize {
-    if b == 0 { a } else { gcd(b, a % b) }
+    if b == 0 {
+        a
+    } else {
+        gcd(b, a % b)
+    }
 }
 
 /// Infer the per-level indentation unit from a file's indented bullet lines:
@@ -649,7 +714,11 @@ fn detect_indent(s: &str) -> String {
         space_widths.push(lead_len);
     }
     let w = space_widths.into_iter().fold(0usize, gcd);
-    if w >= 2 { " ".repeat(w) } else { "\t".into() }
+    if w >= 2 {
+        " ".repeat(w)
+    } else {
+        "\t".into()
+    }
 }
 
 /// Serialize a [`Document`] back to Logseq-compatible markdown (default style).
@@ -712,12 +781,21 @@ mod property_fence_tests {
         let props = b.properties();
         assert!(props.iter().any(|(k, _)| k == "title"));
         assert!(props.iter().any(|(k, _)| k == "foo"));
-        assert!(!props.iter().any(|(k, _)| k == "lang"), "fenced lang:: is not a property: {props:?}");
+        assert!(
+            !props.iter().any(|(k, _)| k == "lang"),
+            "fenced lang:: is not a property: {props:?}"
+        );
         assert_eq!(b.property("lang"), None);
         // The fenced property line stays visible (it's code); real props are dropped.
         let vis = b.projection().visible_lower.clone();
-        assert!(vis.contains("lang:: rust"), "fenced line searchable: {vis:?}");
-        assert!(!vis.contains("title:: real"), "real property dropped from visible text");
+        assert!(
+            vis.contains("lang:: rust"),
+            "fenced line searchable: {vis:?}"
+        );
+        assert!(
+            !vis.contains("title:: real"),
+            "real property dropped from visible text"
+        );
     }
 
     #[test]
@@ -736,7 +814,10 @@ mod property_fence_tests {
 
     #[test]
     fn detect_trailing_newlines_is_crlf_robust() {
-        assert_eq!(SerializeOpts::detect(Some("- a\r\n\r\n")).trailing_newlines, 2);
+        assert_eq!(
+            SerializeOpts::detect(Some("- a\r\n\r\n")).trailing_newlines,
+            2
+        );
         assert_eq!(SerializeOpts::detect(Some("- a\r\n")).trailing_newlines, 1);
         assert_eq!(SerializeOpts::detect(Some("- a\n\n")).trailing_newlines, 2);
     }
@@ -752,7 +833,10 @@ mod projection_tests {
         let p = b.projection();
         // visible_lower == visible_text(raw).to_lowercase(): property lines dropped
         assert_eq!(p.visible_lower, "todo ship [[foo bar]] and #tag");
-        assert!(!p.visible_lower.contains("secret"), "property values excluded");
+        assert!(
+            !p.visible_lower.contains("secret"),
+            "property values excluded"
+        );
         // refs_contains ≡ references_page (case-insensitive, normalized)
         assert!(p.refs_contains("foo bar"));
         assert!(p.refs_contains("TAG"));
@@ -801,13 +885,18 @@ mod projection_tests {
     #[test]
     fn planning_dates_off_lsdoc_timestamp_code_robust() {
         // Real planning lines → faithful `<…>` date text off lsdoc's Timestamp.
-        let b = DocBlock::new("TODO ship it\nSCHEDULED: <2026-06-28 Sun>\nDEADLINE: <2026-07-01 Wed>");
+        let b =
+            DocBlock::new("TODO ship it\nSCHEDULED: <2026-06-28 Sun>\nDEADLINE: <2026-07-01 Wed>");
         assert_eq!(b.scheduled(), Some("2026-06-28 Sun"));
         assert_eq!(b.deadline(), Some("2026-07-01 Wed"));
         // The robustness fix: a `DEADLINE:` inside inline code is `Code`, not a
         // Timestamp — so it is NEVER badged (the old regex wrongly badged it).
         let code = DocBlock::new("look at `DEADLINE: <2026-06-28 Sun>` here");
-        assert_eq!(code.deadline(), None, "code-embedded planning is not badged");
+        assert_eq!(
+            code.deadline(),
+            None,
+            "code-embedded planning is not badged"
+        );
         assert_eq!(DocBlock::new("plain block").scheduled(), None);
     }
 
@@ -822,6 +911,9 @@ mod projection_tests {
         let mut plain = DocBlock::new("note\nfoo:: bar");
         plain.is_org = true;
         assert_eq!(plain.property("foo"), None, "org key:: is not a property");
-        assert!(plain.visible_text().contains("foo:: bar"), "org key:: stays visible");
+        assert!(
+            plain.visible_text().contains("foo:: bar"),
+            "org key:: stays visible"
+        );
     }
 }

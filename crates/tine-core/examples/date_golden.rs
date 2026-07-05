@@ -35,20 +35,39 @@ struct DateParts {
 }
 
 fn main() {
-    let fixture = Fixture { _readme: README, format: format_vectors(), parse: parse_vectors() };
-    println!("{}", serde_json::to_string_pretty(&fixture).expect("serialize date golden fixture"));
+    let fixture = Fixture {
+        _readme: README,
+        format: format_vectors(),
+        parse: parse_vectors(),
+    };
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&fixture).expect("serialize date golden fixture")
+    );
 }
 
 fn jd(y: i32, m: u32, d: u32) -> JournalDate {
-    JournalDate { year: y, month: m, day: d }
+    JournalDate {
+        year: y,
+        month: m,
+        day: d,
+    }
 }
 
 fn parts(d: JournalDate) -> DateParts {
-    DateParts { y: d.year, m: d.month, d: d.day }
+    DateParts {
+        y: d.year,
+        m: d.month,
+        d: d.day,
+    }
 }
 
 fn format_vector(fmt: &'static str, date: JournalDate) -> FormatVector {
-    FormatVector { fmt, date: parts(date), title: Format::compile(fmt).format(date) }
+    FormatVector {
+        fmt,
+        date: parts(date),
+        title: Format::compile(fmt).format(date),
+    }
 }
 
 fn parse_vector(fmt: &'static str, input: impl Into<String>) -> ParseVector {
@@ -140,7 +159,10 @@ fn parse_vectors() -> Vec<ParseVector> {
         jd(2024, 1, 12),
         jd(2024, 1, 13),
     ] {
-        vectors.push(parse_vector("EEEE EEE EE E yyyy-MM-dd", weekday_fmt.format(date)));
+        vectors.push(parse_vector(
+            "EEEE EEE EE E yyyy-MM-dd",
+            weekday_fmt.format(date),
+        ));
     }
 
     vectors

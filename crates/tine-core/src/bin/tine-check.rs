@@ -79,9 +79,13 @@ fn main() {
     println!("  STRUCTURAL     : {structural}   (round-trip bugs — investigate)");
 
     println!("\non-disk format profile (what your Logseq writes):");
-    println!("  indentation    : TAB in {disk_indent_tab} files, SPACES in {disk_indent_space} files");
+    println!(
+        "  indentation    : TAB in {disk_indent_tab} files, SPACES in {disk_indent_space} files"
+    );
     println!("  trailing \\n    : none in {disk_trail_0}, one in {disk_trail_1}, two+ (blank end) in {disk_trail_2}");
-    println!("  Tine emits     : TAB indent, single trailing \\n, blank line after page properties");
+    println!(
+        "  Tine emits     : TAB indent, single trailing \\n, blank line after page properties"
+    );
 
     if !cats.is_empty() {
         println!("\nprecise difference categories (file counts):");
@@ -96,7 +100,9 @@ fn main() {
                 println!("  {p}");
             }
         } else {
-            println!("\n(run again with --paths to list the {structural} structural-bug files locally)");
+            println!(
+                "\n(run again with --paths to list the {structural} structural-bug files locally)"
+            );
         }
     }
     println!("\nLegend: trailing-newline=final newline count differs · interior-blank-lines=blank");
@@ -154,8 +160,16 @@ fn classify(content: &str, out: &str) -> Vec<&'static str> {
         tags.push("interior-blank-lines");
     }
 
-    let cn: Vec<&str> = cl.iter().copied().filter(|l| !l.trim().is_empty()).collect();
-    let on: Vec<&str> = ol.iter().copied().filter(|l| !l.trim().is_empty()).collect();
+    let cn: Vec<&str> = cl
+        .iter()
+        .copied()
+        .filter(|l| !l.trim().is_empty())
+        .collect();
+    let on: Vec<&str> = ol
+        .iter()
+        .copied()
+        .filter(|l| !l.trim().is_empty())
+        .collect();
     if cn.iter().map(|l| l.trim()).ne(on.iter().map(|l| l.trim())) {
         tags.push("content-change");
         return dedup(tags);
@@ -174,7 +188,11 @@ fn classify(content: &str, out: &str) -> Vec<&'static str> {
                 tags.push("indent-char");
             } else if la.len() != lb.len() {
                 // bullet lines vs continuation lines indent differently
-                tags.push(if a.trim_start().starts_with("- ") { "indent-width" } else { "cont-indent" });
+                tags.push(if a.trim_start().starts_with("- ") {
+                    "indent-width"
+                } else {
+                    "cont-indent"
+                });
             }
         }
     }
@@ -192,7 +210,9 @@ fn dedup(mut v: Vec<&'static str>) -> Vec<&'static str> {
 }
 
 fn walk(dir: &Path, f: &mut impl FnMut(&Path, &String)) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in rd.flatten() {
         let path = entry.path();
         if path.is_dir() {

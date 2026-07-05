@@ -54,11 +54,18 @@ mod tests {
     fn marker_and_priority_break_out_onto_the_bullet() {
         let blocks = parse_block("TODO [#A] do the thing", false);
         match &blocks[0] {
-            Block::Bullet { marker, priority, inline, .. } => {
+            Block::Bullet {
+                marker,
+                priority,
+                inline,
+                ..
+            } => {
                 assert_eq!(marker.as_deref(), Some("TODO"));
                 assert_eq!(priority.as_deref(), Some("A"));
                 // the marker/priority are NOT left in the rendered inline text
-                assert!(matches!(inline.first(), Some(Inline::Plain { text, .. }) if text == "do the thing"));
+                assert!(
+                    matches!(inline.first(), Some(Inline::Plain { text, .. }) if text == "do the thing")
+                );
             }
             other => panic!("expected bullet, got {other:?}"),
         }
@@ -77,9 +84,13 @@ mod tests {
     #[test]
     fn inline_refs_and_image_survive() {
         let blocks = parse_block("see [[Page]] and ![alt](a.png){:width 50%}", false);
-        let Block::Bullet { inline, .. } = &blocks[0] else { panic!("expected bullet") };
+        let Block::Bullet { inline, .. } = &blocks[0] else {
+            panic!("expected bullet")
+        };
         // page ref present
-        assert!(inline.iter().any(|s| matches!(s, Inline::Link { url: Url::PageRef { v }, .. } if v == "Page")));
+        assert!(inline
+            .iter()
+            .any(|s| matches!(s, Inline::Link { url: Url::PageRef { v }, .. } if v == "Page")));
         // image flagged + metadata carried
         assert!(inline.iter().any(|s| matches!(s, Inline::Link { image, metadata, .. } if *image && metadata == "{:width 50%}")));
     }
@@ -88,7 +99,10 @@ mod tests {
     fn block_opener_splits_into_a_sibling() {
         // v0.1.1: `- ---` splits into [empty bullet, hr] rather than literal "---".
         let blocks = parse_block("---", false);
-        assert!(blocks.iter().any(|b| matches!(b, Block::Hr { .. })), "expected an Hr sibling: {blocks:?}");
+        assert!(
+            blocks.iter().any(|b| matches!(b, Block::Hr { .. })),
+            "expected an Hr sibling: {blocks:?}"
+        );
     }
 
     #[test]

@@ -32,10 +32,7 @@ fn headline_level(line: &str) -> Option<usize> {
         return None;
     }
     let rest = &line[stars..];
-    if rest.is_empty()
-        || rest.starts_with(' ')
-        || rest.starts_with('\t')
-        || rest.starts_with('\r')
+    if rest.is_empty() || rest.starts_with(' ') || rest.starts_with('\t') || rest.starts_with('\r')
     {
         Some(stars)
     } else {
@@ -125,7 +122,10 @@ pub fn parse_org(content: &str) -> Document {
         flat.push((level, b));
     }
 
-    Document { pre_block, roots: build_tree(flat) }
+    Document {
+        pre_block,
+        roots: build_tree(flat),
+    }
 }
 
 /// Assemble a flat list of `(level, block)` in document order into a forest,
@@ -298,7 +298,10 @@ mod tests {
     fn body_kept_verbatim_with_block_text() {
         let doc = parse_org("* TODO task\nSCHEDULED: <2026-06-25 Thu>\nbody line\n");
         assert_eq!(doc.roots.len(), 1);
-        assert_eq!(doc.roots[0].raw, "TODO task\nSCHEDULED: <2026-06-25 Thu>\nbody line");
+        assert_eq!(
+            doc.roots[0].raw,
+            "TODO task\nSCHEDULED: <2026-06-25 Thu>\nbody line"
+        );
         // Marker detection (shared with markdown) sees the leading keyword.
         assert_eq!(doc.roots[0].marker(), Some("TODO"));
     }
@@ -330,7 +333,10 @@ mod tests {
         // `*` then `***` (skipped `**`): cannot be reproduced from tree depth,
         // so it must NOT be considered editable (loads read-only, never written).
         let src = "* a\n*** c\n";
-        assert!(!org_round_trips(src), "skipped-level file should not round-trip");
+        assert!(
+            !org_round_trips(src),
+            "skipped-level file should not round-trip"
+        );
         assert!(!org_editable(src));
     }
 

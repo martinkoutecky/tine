@@ -57,7 +57,11 @@ impl Edn {
 }
 
 pub fn parse(input: &str) -> Option<Edn> {
-    let mut p = Parser { s: input.as_bytes(), i: 0, src: input };
+    let mut p = Parser {
+        s: input.as_bytes(),
+        i: 0,
+        src: input,
+    };
     p.skip_ws();
     let v = p.value()?;
     p.skip_ws();
@@ -199,7 +203,11 @@ impl<'a> Parser<'a> {
 }
 
 fn is_delim(c: u8) -> bool {
-    c.is_ascii_whitespace() || matches!(c, b'{' | b'}' | b'[' | b']' | b'(' | b')' | b'"' | b',' | b';')
+    c.is_ascii_whitespace()
+        || matches!(
+            c,
+            b'{' | b'}' | b'[' | b']' | b'(' | b')' | b'"' | b',' | b';'
+        )
 }
 
 /// Pretty-ish EDN writer. Logseq reads regardless of formatting; we emit a

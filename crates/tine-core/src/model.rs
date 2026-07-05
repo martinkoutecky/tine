@@ -56,7 +56,10 @@ impl Format {
 
 /// Whether `path` is a page file Tine reads (markdown or org).
 fn is_page_file(path: &Path) -> bool {
-    matches!(path.extension().and_then(|e| e.to_str()), Some("md") | Some("org"))
+    matches!(
+        path.extension().and_then(|e| e.to_str()),
+        Some("md") | Some("org")
+    )
 }
 
 fn slash_path(path: &Path) -> String {
@@ -104,7 +107,9 @@ pub fn is_sync_conflict(stem: &str) -> bool {
 /// Whether `path`'s file stem names a sync-tool conflict copy — the `Path`-level
 /// convenience used by the watcher (which works in paths, not stems).
 pub fn path_is_sync_conflict(path: &Path) -> bool {
-    path.file_stem().and_then(|s| s.to_str()).is_some_and(is_sync_conflict)
+    path.file_stem()
+        .and_then(|s| s.to_str())
+        .is_some_and(is_sync_conflict)
 }
 
 /// Error for an ambiguous page that exists as both a `.md` and a `.org` file.
@@ -382,7 +387,8 @@ pub struct Graph {
     /// read→conflict-check→write→`cache_upsert` makes same-page writes serialize,
     /// so they can't clobber each other or leave a stale self-write marker.
     /// Lock order is ALWAYS page_lock → cache → disk_revs; never the reverse.
-    page_locks: std::sync::Mutex<std::collections::HashMap<PathBuf, std::sync::Arc<std::sync::Mutex<()>>>>,
+    page_locks:
+        std::sync::Mutex<std::collections::HashMap<PathBuf, std::sync::Arc<std::sync::Mutex<()>>>>,
 }
 
 /// Cache key for `disk_revs` (and any other (kind,name)-keyed side table):
@@ -614,8 +620,20 @@ impl Graph {
         }
         let mut entries = Vec::new();
         let nf = self.config.file_name_format;
-        entries.extend(list_md(&self.journals_path(), PageKind::Journal, &self.journal_format, nf, &self.config.journals_dir));
-        entries.extend(list_md(&self.pages_path(), PageKind::Page, &self.journal_format, nf, &self.config.pages_dir));
+        entries.extend(list_md(
+            &self.journals_path(),
+            PageKind::Journal,
+            &self.journal_format,
+            nf,
+            &self.config.journals_dir,
+        ));
+        entries.extend(list_md(
+            &self.pages_path(),
+            PageKind::Page,
+            &self.journal_format,
+            nf,
+            &self.config.pages_dir,
+        ));
         // A duplicate-day journal (canonical + leftover title-named file) must show
         // once in quick-switch / All-Pages, not twice (both resolve to one page).
         let entries = dedup_journal_days(entries);
@@ -654,13 +672,18 @@ impl Graph {
         // down to the page name. (Line-based, like DocBlock::property.)
         fn add_property_refs(seen: &mut std::collections::HashMap<String, String>, text: &str) {
             for line in text.lines() {
-                let Some((k, v)) = crate::doc::parse_property_line(line) else { continue };
+                let Some((k, v)) = crate::doc::parse_property_line(line) else {
+                    continue;
+                };
                 if !(k.eq_ignore_ascii_case("tags") || k.eq_ignore_ascii_case("alias")) {
                     continue;
                 }
                 for val in v.split(',') {
                     let t = val.trim();
-                    let t = t.strip_prefix("[[").and_then(|x| x.strip_suffix("]]")).unwrap_or(t);
+                    let t = t
+                        .strip_prefix("[[")
+                        .and_then(|x| x.strip_suffix("]]"))
+                        .unwrap_or(t);
                     add(seen, t.strip_prefix('#').unwrap_or(t).trim().to_string());
                 }
             }
@@ -705,10 +728,16 @@ impl Graph {
                 .filter(|(e, _)| e.kind == PageKind::Journal && e.date_key.is_some())
                 .map(|(e, _)| e.clone())
                 .collect(),
-            None => list_md(&self.journals_path(), PageKind::Journal, &self.journal_format, self.config.file_name_format, &self.config.journals_dir)
-                .into_iter()
-                .filter(|e| e.date_key.is_some())
-                .collect(),
+            None => list_md(
+                &self.journals_path(),
+                PageKind::Journal,
+                &self.journal_format,
+                self.config.file_name_format,
+                &self.config.journals_dir,
+            )
+            .into_iter()
+            .filter(|e| e.date_key.is_some())
+            .collect(),
         };
         // A day with more than one file (e.g. a leftover title-named duplicate of
         // a `yyyy_MM_dd` file) must appear ONCE — both files resolve to the same
@@ -748,14 +777,18 @@ impl Graph {
                 Some(e @ ("md" | "org")) => e,
                 _ => continue,
             };
-            let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else { continue };
+            let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else {
+                continue;
+            };
             if JournalDate::from_file_stem(stem).is_some() {
                 continue; // already a plausible date stem (yyyy_MM_dd / yyyy-MM-dd) — leave it
             }
             // A title-named ("Jun 18th, 2026.md", "Thursday, 25-06-2026.org") or
             // otherwise non-stem journal file: normalize it to the graph's filename
             // format so it round-trips with OG and is recognized in the feed.
-            let Some(d) = self.journal_format.parse(stem) else { continue }; // not a date
+            let Some(d) = self.journal_format.parse(stem) else {
+                continue;
+            }; // not a date
             let want = self.journal_format.file_stem(d);
             if want == stem {
                 continue; // already in the graph's filename format
@@ -783,12 +816,19 @@ impl Graph {
                 Some(x @ ("md" | "org")) => x.to_string(),
                 _ => return,
             };
-            let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else { return };
+            let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else {
+                return;
+            };
             // A date-stem file is canonical; otherwise try to parse its title.
             let canonical = JournalDate::from_file_stem(stem).is_some();
-            let date = JournalDate::from_file_stem(stem).or_else(|| self.journal_format.parse(stem));
+            let date =
+                JournalDate::from_file_stem(stem).or_else(|| self.journal_format.parse(stem));
             if let Some(d) = date {
-                by_date.entry(d.ordinal_key()).or_default().push((format!("{stem}.{ext}"), p, canonical));
+                by_date.entry(d.ordinal_key()).or_default().push((
+                    format!("{stem}.{ext}"),
+                    p,
+                    canonical,
+                ));
             }
         });
         let mut out = Vec::new();
@@ -804,18 +844,36 @@ impl Graph {
                         .ok()
                         .and_then(|c| {
                             c.lines()
-                                .map(|l| l.trim_start_matches(|ch| ch == '*' || ch == '-' || ch == ' ' || ch == '\t').trim().to_string())
+                                .map(|l| {
+                                    l.trim_start_matches(|ch| {
+                                        ch == '*' || ch == '-' || ch == ' ' || ch == '\t'
+                                    })
+                                    .trim()
+                                    .to_string()
+                                })
                                 .find(|l| !l.is_empty())
                         })
                         .map(|l| l.chars().take(80).collect::<String>())
                         .unwrap_or_default();
                     let rel = self.rel_path(&path);
-                    JournalFile { name, path: rel, preview, canonical }
+                    JournalFile {
+                        name,
+                        path: rel,
+                        preview,
+                        canonical,
+                    }
                 })
                 .collect();
             // Canonical first (the keeper), then alphabetical.
-            jfiles.sort_by(|a, b| b.canonical.cmp(&a.canonical).then_with(|| a.name.cmp(&b.name)));
-            out.push(JournalConflict { title: self.journal_format.title(date), files: jfiles });
+            jfiles.sort_by(|a, b| {
+                b.canonical
+                    .cmp(&a.canonical)
+                    .then_with(|| a.name.cmp(&b.name))
+            });
+            out.push(JournalConflict {
+                title: self.journal_format.title(date),
+                files: jfiles,
+            });
         }
         out
     }
@@ -828,18 +886,26 @@ impl Graph {
     /// (see [`is_sync_conflict`]); this is the ONLY place they're surfaced.
     pub fn list_sync_conflicts(&self) -> Vec<SyncConflict> {
         let mut out = Vec::new();
-        for (dir, kind) in
-            [(self.journals_path(), PageKind::Journal), (self.pages_path(), PageKind::Page)]
-        {
+        for (dir, kind) in [
+            (self.journals_path(), PageKind::Journal),
+            (self.pages_path(), PageKind::Page),
+        ] {
             walk_page_files(&dir, |p| {
                 let ext = match p.extension().and_then(|x| x.to_str()) {
                     Some(x @ ("md" | "org")) => x,
                     _ => return,
                 };
-                let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else { return };
-                let Some(base_stem) = sync_conflict_base(stem) else { return };
+                let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else {
+                    return;
+                };
+                let Some(base_stem) = sync_conflict_base(stem) else {
+                    return;
+                };
                 // The winner it shadows: same dir, same extension, base stem.
-                let base_file = p.parent().unwrap_or(&dir).join(format!("{base_stem}.{ext}"));
+                let base_file = p
+                    .parent()
+                    .unwrap_or(&dir)
+                    .join(format!("{base_stem}.{ext}"));
                 let base_path = base_file.is_file().then(|| self.rel_path(&base_file));
                 let base_name = match kind {
                     PageKind::Journal => self
@@ -877,7 +943,11 @@ impl Graph {
                 });
             });
         }
-        out.sort_by(|a, b| a.base_name.cmp(&b.base_name).then_with(|| a.path.cmp(&b.path)));
+        out.sort_by(|a, b| {
+            a.base_name
+                .cmp(&b.base_name)
+                .then_with(|| a.path.cmp(&b.path))
+        });
         out
     }
 
@@ -941,7 +1011,10 @@ impl Graph {
         let win = self.resolve_rel(winner_rel).ok_or_else(bad_path)?;
         let conf = self.resolve_rel(conflict_rel).ok_or_else(bad_path)?;
         if win == conf {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "winner and conflict are the same file"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "winner and conflict are the same file",
+            ));
         }
         let win_entry = self.entry_for_path(&win).ok_or_else(bad_path)?;
         // Lock the winner so a concurrent editor/watcher write can't race the merge.
@@ -952,7 +1025,10 @@ impl Graph {
         // base_rev guard — the winner must still be what the UI diffed against.
         if let Some(br) = base_rev {
             if content_rev(&win_content) != br {
-                return Err(io::Error::new(io::ErrorKind::AlreadyExists, "winner changed on disk"));
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    "winner changed on disk",
+                ));
             }
         }
         // Org round-trip firewall (same as merge_pages).
@@ -973,12 +1049,16 @@ impl Graph {
         let pre_block = match pre_choice {
             "theirs" => theirs_doc.pre_block.clone(),
             "mine" => mine_doc.pre_block.clone(),
-            _ if Format::from_path(&win) == Format::Md => {
-                union_pre(mine_doc.pre_block.as_deref(), theirs_doc.pre_block.as_deref())
-            }
+            _ if Format::from_path(&win) == Format::Md => union_pre(
+                mine_doc.pre_block.as_deref(),
+                theirs_doc.pre_block.as_deref(),
+            ),
             _ => mine_doc.pre_block.clone(),
         };
-        let mut merged = Document { pre_block, roots: merged_roots };
+        let mut merged = Document {
+            pre_block,
+            roots: merged_roots,
+        };
         assign_doc_uuids(&mut merged.roots);
         let dto = page_dto(&win_entry, &merged);
         let win_cacheable = self.path_is_cacheable(&win);
@@ -1006,7 +1086,10 @@ impl Graph {
             return Err(bad_path()); // refuse anything that isn't a conflict copy
         }
         if !conf.is_file() {
-            return Err(io::Error::new(io::ErrorKind::NotFound, "no such conflict file"));
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "no such conflict file",
+            ));
         }
         let trash = self.root.join("logseq").join(".tine-trash");
         let name = conf.file_name().and_then(|s| s.to_str()).unwrap_or("file");
@@ -1019,7 +1102,10 @@ impl Graph {
     /// as pages are keyed by date) so the user can inspect before reconciling.
     pub fn read_journal_file(&self, name: &str) -> io::Result<String> {
         if name.is_empty() || name.contains('/') || name.contains('\\') {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "bad journal file name"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "bad journal file name",
+            ));
         }
         fs::read_to_string(self.journals_path().join(name))
     }
@@ -1029,11 +1115,17 @@ impl Graph {
     /// it can't reach outside `journals/`.
     pub fn trash_journal_file(&self, name: &str) -> io::Result<()> {
         if name.is_empty() || name.contains('/') || name.contains('\\') {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "bad journal file name"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "bad journal file name",
+            ));
         }
         let src = self.journals_path().join(name);
         if !src.is_file() {
-            return Err(io::Error::new(io::ErrorKind::NotFound, "no such journal file"));
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "no such journal file",
+            ));
         }
         let trash = self.root.join("logseq").join(".tine-trash");
         let dest = trash.join(format!("{}__{name}", trash_stamp()));
@@ -1068,10 +1160,16 @@ impl Graph {
         let src = self.resolve_rel(src_rel).ok_or_else(bad_path)?;
         let dst = self.resolve_rel(dst_rel).ok_or_else(bad_path)?;
         if src == dst {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "cannot merge a file into itself"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "cannot merge a file into itself",
+            ));
         }
         if Format::from_path(&src) != Format::from_path(&dst) {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "files are in different formats"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "files are in different formats",
+            ));
         }
         let dst_entry = self.entry_for_path(&dst).ok_or_else(bad_path)?;
         // Write `dst` under its page lock so a concurrent editor/PDF write can't
@@ -1103,7 +1201,9 @@ impl Graph {
                 let dst_pre = merged.pre_block.clone().unwrap_or_default();
                 let dst_keys: std::collections::HashSet<String> = dst_pre
                     .lines()
-                    .filter_map(|l| doc::parse_property_line(l).map(|(k, _)| k.to_ascii_lowercase()))
+                    .filter_map(|l| {
+                        doc::parse_property_line(l).map(|(k, _)| k.to_ascii_lowercase())
+                    })
                     .collect();
                 let extra: Vec<&str> = src_pre
                     .lines()
@@ -1157,7 +1257,10 @@ impl Graph {
         let src = self.resolve_rel(src_rel).ok_or_else(bad_path)?;
         let name = new_name.trim();
         if name.is_empty() {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "empty page name"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "empty page name",
+            ));
         }
         let ext = match src.extension().and_then(|e| e.to_str()) {
             Some(e @ ("md" | "org")) => e.to_string(),
@@ -1239,7 +1342,9 @@ impl Graph {
             ),
             PageKind::Journal => (
                 self.journals_path(),
-                self.journal_format.parse(name).map(|d| self.journal_format.file_stem(d)),
+                self.journal_format
+                    .parse(name)
+                    .map(|d| self.journal_format.file_stem(d)),
             ),
         };
         match stem {
@@ -1267,10 +1372,16 @@ impl Graph {
             PageKind::Journal => &self.config.journals_dir,
             PageKind::Page => &self.config.pages_dir,
         };
-        let matches: Vec<PageEntry> = list_md(&dir, kind, &self.journal_format, self.config.file_name_format, rel_dir)
-            .into_iter()
-            .filter(|e| crate::refs::same_page(&e.name, name))
-            .collect();
+        let matches: Vec<PageEntry> = list_md(
+            &dir,
+            kind,
+            &self.journal_format,
+            self.config.file_name_format,
+            rel_dir,
+        )
+        .into_iter()
+        .filter(|e| crate::refs::same_page(&e.name, name))
+        .collect();
         matches
             .iter()
             .find(|e| {
@@ -1316,10 +1427,7 @@ impl Graph {
     /// cached pages once, then answers the requested names; only pages WITH an
     /// icon appear in the result. On-demand (e.g. a `{{namespace}}` macro), not at
     /// index time.
-    pub fn page_icons(
-        &self,
-        names: &[String],
-    ) -> std::collections::HashMap<String, String> {
+    pub fn page_icons(&self, names: &[String]) -> std::collections::HashMap<String, String> {
         let (mut icons_by_name, real_page_names) = self.with_pages(|pages| {
             let mut icons = std::collections::HashMap::new();
             let mut real = std::collections::HashSet::new();
@@ -1465,7 +1573,11 @@ impl Graph {
         let read = fs::read_to_string(&entry.path);
         if let Ok(content) = &read {
             self.sync_file_content(&entry.path, content, false);
-        } else if read.as_ref().err().is_some_and(|e| e.kind() == io::ErrorKind::NotFound) {
+        } else if read
+            .as_ref()
+            .err()
+            .is_some_and(|e| e.kind() == io::ErrorKind::NotFound)
+        {
             // The file is gone (external delete) but may still sit in the warm
             // cache. Serving that cached copy below — with rev = None — would make
             // it a null-baseline page, so a later edit + save would treat it as
@@ -1549,7 +1661,10 @@ impl Graph {
     /// cache is searched by `(kind, name)`, never by position.
     fn load_all_pages(&self) -> Vec<(PageEntry, Document, String)> {
         let entries = self.list_pages();
-        let workers = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1).min(8);
+        let workers = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+            .min(8);
         // Small graphs (or a single core): serial — the parse is fast and thread
         // spawn isn't worth it. Big graphs: split across `workers` threads.
         if workers <= 1 || entries.len() < 64 {
@@ -1569,9 +1684,19 @@ impl Graph {
         std::thread::scope(|s| {
             let handles: Vec<_> = chunks
                 .into_iter()
-                .map(|chunk| s.spawn(move || chunk.into_iter().filter_map(parse_page_entry).collect::<Vec<_>>()))
+                .map(|chunk| {
+                    s.spawn(move || {
+                        chunk
+                            .into_iter()
+                            .filter_map(parse_page_entry)
+                            .collect::<Vec<_>>()
+                    })
+                })
                 .collect();
-            handles.into_iter().flat_map(|h| h.join().unwrap_or_default()).collect()
+            handles
+                .into_iter()
+                .flat_map(|h| h.join().unwrap_or_default())
+                .collect()
         })
     }
 
@@ -1579,10 +1704,14 @@ impl Graph {
     /// into the cache, their on-disk revs into `disk_revs`. Cache set BEFORE
     /// disk_revs so a reader never observes a fresh rev paired with a stale cache.
     fn install_built(&self, built: Vec<(PageEntry, Document, String)>) {
-        let revs: std::collections::HashMap<String, String> =
-            built.iter().map(|(e, _, r)| (rev_key(e.kind, &e.name), r.clone())).collect();
-        let pages: Vec<(PageEntry, Arc<Document>)> =
-            built.into_iter().map(|(e, d, _)| (e, Arc::new(d))).collect();
+        let revs: std::collections::HashMap<String, String> = built
+            .iter()
+            .map(|(e, _, r)| (rev_key(e.kind, &e.name), r.clone()))
+            .collect();
+        let pages: Vec<(PageEntry, Arc<Document>)> = built
+            .into_iter()
+            .map(|(e, d, _)| (e, Arc::new(d)))
+            .collect();
         // Publish cache + revs atomically under the cache lock (cache → disk_revs
         // order), so no reader observes a fresh rev paired with a stale cache.
         let mut guard = self.cache.write().unwrap();
@@ -1649,7 +1778,8 @@ impl Graph {
         // Record each file's mtime BEFORE reading it, so a re-stat before install
         // catches any external edit that landed during the paced parse (external
         // writers don't bump cache_gen, so the gen check below can't see them).
-        let mut mtimes: Vec<(PathBuf, Option<std::time::SystemTime>)> = Vec::with_capacity(entries.len());
+        let mut mtimes: Vec<(PathBuf, Option<std::time::SystemTime>)> =
+            Vec::with_capacity(entries.len());
         for (i, e) in entries.into_iter().enumerate() {
             let mtime = fs::metadata(&e.path).and_then(|m| m.modified()).ok();
             if let Ok(content) = fs::read_to_string(&e.path) {
@@ -1691,12 +1821,13 @@ impl Graph {
         let mut guard = self.cache.write().unwrap();
         *guard = None;
         self.disk_revs.write().unwrap().clear(); // under the cache lock (cache → disk_revs)
-        // Bump the generation AFTER discarding the cache (under the cache lock), so
-        // a reader that loads the new gen then reads the cache sees None (and
-        // rebuilds from disk) rather than the stale pre-invalidation content — same
-        // gen-after-content ordering as cache_upsert. The gen-keyed block index
-        // then rebuilds against fresh content too.
-        self.cache_gen.fetch_add(1, std::sync::atomic::Ordering::Release);
+                                                 // Bump the generation AFTER discarding the cache (under the cache lock), so
+                                                 // a reader that loads the new gen then reads the cache sees None (and
+                                                 // rebuilds from disk) rather than the stale pre-invalidation content — same
+                                                 // gen-after-content ordering as cache_upsert. The gen-keyed block index
+                                                 // then rebuilds against fresh content too.
+        self.cache_gen
+            .fetch_add(1, std::sync::atomic::Ordering::Release);
         drop(guard);
         *self.alias_cache.write().unwrap() = None;
         *self.block_index.write().unwrap() = None;
@@ -1727,9 +1858,10 @@ impl Graph {
         let mut guard = self.cache.write().unwrap();
         let cache_built = guard.is_some();
         if let Some(pages) = guard.as_mut() {
-            match pages.iter_mut().find(|(e, _)| {
-                e.kind == entry.kind && crate::refs::same_page(&e.name, &entry.name)
-            }) {
+            match pages
+                .iter_mut()
+                .find(|(e, _)| e.kind == entry.kind && crate::refs::same_page(&e.name, &entry.name))
+            {
                 Some(slot) => {
                     alias_touched = new_has_alias || doc_has_alias(&slot.1);
                     slot.1 = doc;
@@ -1760,7 +1892,10 @@ impl Graph {
         // (Bumping FIRST left a window where the gen was new but the doc still old.)
         // The bump is unconditional — even on a cold cache (no slot to update) — so
         // a concurrent lock-free with_pages build still detects the race and retries.
-        let newgen = self.cache_gen.fetch_add(1, std::sync::atomic::Ordering::Release) + 1;
+        let newgen = self
+            .cache_gen
+            .fetch_add(1, std::sync::atomic::Ordering::Release)
+            + 1;
         drop(guard);
         if alias_touched {
             *self.alias_cache.write().unwrap() = None;
@@ -1779,10 +1914,20 @@ impl Graph {
     /// See `cache_upsert`. When `scoped`, evict only derived entries the edited
     /// page (`entry`, `doc`) participates in and re-tag the survivors to `newgen`;
     /// otherwise drop the whole derived cache.
-    fn scope_derived_invalidation(&self, entry: &PageEntry, doc: &Document, newgen: u64, scoped: bool) {
+    fn scope_derived_invalidation(
+        &self,
+        entry: &PageEntry,
+        doc: &Document,
+        newgen: u64,
+        scoped: bool,
+    ) {
         // Resolve aliases BEFORE taking the derived lock (page_aliases may take the
         // cache lock); never hold derived while taking cache.
-        let aliases = if scoped { self.page_aliases() } else { Vec::new() };
+        let aliases = if scoped {
+            self.page_aliases()
+        } else {
+            Vec::new()
+        };
         let today = crate::date::JournalDate::today().ordinal_key();
         // Hold the derived write lock across the WHOLE prune+re-tag. This is
         // deliberately atomic: the keep/evict test (page_affects_*) is re-evaluated
@@ -1803,7 +1948,10 @@ impl Graph {
         dc.results.retain(|key, result| {
             // Evict iff this page is already in the result OR now matches the key's
             // predicate; keep (still correct) otherwise.
-            if result.iter().any(|grp| crate::refs::same_page(&grp.page, pname)) {
+            if result
+                .iter()
+                .any(|grp| crate::refs::same_page(&grp.page, pname))
+            {
                 return false;
             }
             let affects = match key.split_once('\0') {
@@ -1826,8 +1974,9 @@ impl Graph {
         let mut guard = self.cache.write().unwrap();
         let mut alias_touched = false;
         if let Some(pages) = guard.as_mut() {
-            if let Some((_, d)) =
-                pages.iter().find(|(e, _)| e.kind == kind && crate::refs::same_page(&e.name, name))
+            if let Some((_, d)) = pages
+                .iter()
+                .find(|(e, _)| e.kind == kind && crate::refs::same_page(&e.name, name))
             {
                 alias_touched = doc_has_alias(d);
             }
@@ -1839,7 +1988,8 @@ impl Graph {
         // Bump AFTER the removal is published (under the cache lock), so a reader
         // that loads the new gen is guaranteed to see the page gone — see the
         // gen-after-content note in cache_upsert.
-        self.cache_gen.fetch_add(1, std::sync::atomic::Ordering::Release);
+        self.cache_gen
+            .fetch_add(1, std::sync::atomic::Ordering::Release);
         drop(guard);
         if alias_touched {
             *self.alias_cache.write().unwrap() = None;
@@ -1877,7 +2027,11 @@ impl Graph {
             _ => {
                 let mut results = std::collections::HashMap::new();
                 results.insert(key, Arc::clone(&result));
-                *g = Some(DerivedCache { gen, today, results });
+                *g = Some(DerivedCache {
+                    gen,
+                    today,
+                    results,
+                });
             }
         }
         result
@@ -1910,7 +2064,11 @@ impl Graph {
             _ => {
                 let mut results = std::collections::HashMap::new();
                 results.insert(key, Arc::clone(&result));
-                *g = Some(AdvancedCache { gen, today, results });
+                *g = Some(AdvancedCache {
+                    gen,
+                    today,
+                    results,
+                });
             }
         }
         result
@@ -1948,7 +2106,9 @@ impl Graph {
 
     /// Evaluate a `{{query ...}}` body over the graph (memoized).
     pub fn run_query(&self, query_src: &str) -> Arc<Vec<RefGroup>> {
-        self.derived_memo(format!("q\0{query_src}"), || crate::query::run_query(self, query_src))
+        self.derived_memo(format!("q\0{query_src}"), || {
+            crate::query::run_query(self, query_src)
+        })
     }
 
     /// Evaluate an advanced (datalog-subset) query, returning the matched groups
@@ -1959,7 +2119,9 @@ impl Graph {
         query_src: &str,
         current_page: Option<&str>,
     ) -> crate::query::AdvancedResult {
-        self.run_advanced_query_cached(query_src, current_page).as_ref().clone()
+        self.run_advanced_query_cached(query_src, current_page)
+            .as_ref()
+            .clone()
     }
 
     /// Unlinked references: plain-text mentions of a page that aren't links
@@ -2044,7 +2206,10 @@ impl Graph {
                 Format::from_path(&entry.path).ext()
             ));
             if new_path != entry.path && new_path.exists() {
-                return Err(io::Error::new(io::ErrorKind::AlreadyExists, "target page exists"));
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    "target page exists",
+                ));
             }
             if is_primary {
                 primary_is_file = true;
@@ -2080,7 +2245,9 @@ impl Graph {
             .collect();
         let mut edits: Vec<Edit> = Vec::new();
         for entry in &entries {
-            let Ok(content) = fs::read_to_string(&entry.path) else { continue };
+            let Ok(content) = fs::read_to_string(&entry.path) else {
+                continue;
+            };
             let is_org = Format::from_path(&entry.path) == Format::Org;
             // One inline-ref pass + one `tags::` pass per file (each computes code
             // ranges once), regardless of how many descendants are being renamed.
@@ -2144,7 +2311,10 @@ impl Graph {
         // change) on any mismatch (an external editor / Syncthing pull landed).
         for e in &edits {
             if e.is_move && e.dst != e.src && e.dst.exists() {
-                return Err(io::Error::new(io::ErrorKind::AlreadyExists, "target page exists"));
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    "target page exists",
+                ));
             }
             if content_rev(&fs::read_to_string(&e.src).unwrap_or_default()) != e.base_rev {
                 return Err(io::Error::new(io::ErrorKind::AlreadyExists, "conflict"));
@@ -2206,7 +2376,11 @@ impl Graph {
         }
         if let Some(entry) = self.find_entry(name, kind) {
             let trash = self.root.join("logseq").join(".tine-trash");
-            let fname = entry.path.file_name().and_then(|s| s.to_str()).unwrap_or("page.md");
+            let fname = entry
+                .path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("page.md");
             let dest = trash.join(format!("{}__{fname}", trash_stamp()));
             move_to_trash(&entry.path, &dest, &trash)?;
         }
@@ -2280,14 +2454,18 @@ impl Graph {
             }
         });
         let mut out = Vec::new();
-        let Ok(rd) = fs::read_dir(self.assets_path()) else { return out };
+        let Ok(rd) = fs::read_dir(self.assets_path()) else {
+            return out;
+        };
         for entry in rd.flatten() {
             let Ok(ft) = entry.file_type() else { continue };
             if !ft.is_file() {
                 continue; // skip subdirs (PDF area-image stores, tied to a PDF)
             }
             let path = entry.path();
-            let Some(name) = path.file_name().and_then(|s| s.to_str()) else { continue };
+            let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+                continue;
+            };
             // Sidecars/hidden files aren't user media; never flag them as orphans.
             if name.starts_with('.') || name.ends_with(".edn") {
                 continue;
@@ -2302,7 +2480,11 @@ impl Graph {
                 .and_then(|m| m.modified().ok())
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                 .map(|d| d.as_secs());
-            out.push(AssetInfo { name: name.to_string(), size, modified });
+            out.push(AssetInfo {
+                name: name.to_string(),
+                size,
+                modified,
+            });
         }
         out.sort_by(|a, b| a.name.cmp(&b.name));
         out
@@ -2313,7 +2495,10 @@ impl Graph {
     /// assets only) so it can't reach outside `assets/`.
     pub fn trash_asset(&self, name: &str) -> io::Result<()> {
         if name.is_empty() || name.contains('/') || name.contains('\\') {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "bad asset name"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "bad asset name",
+            ));
         }
         let src = self.assets_path().join(name);
         if !src.is_file() {
@@ -2463,10 +2648,13 @@ impl Graph {
             .or_else(|| {
                 let legacy = crate::pdf::legacy_asset_key(pdf_filename);
                 (legacy != key)
-                    .then(|| fs::read_to_string(self.assets_path().join(format!("{legacy}.edn"))).ok())
+                    .then(|| {
+                        fs::read_to_string(self.assets_path().join(format!("{legacy}.edn"))).ok()
+                    })
                     .flatten()
             });
-        s.map(|s| crate::pdf::parse_highlights(&s)).unwrap_or_default()
+        s.map(|s| crate::pdf::parse_highlights(&s))
+            .unwrap_or_default()
     }
 
     /// Persist highlights: write `assets/<key>.edn` and the `hls__<key>` page.
@@ -2485,15 +2673,19 @@ impl Graph {
         // exist, we read those as the baseline and migrate them to the new key
         // below — so the key change never strands existing highlights.
         let legacy_key = crate::pdf::legacy_asset_key(pdf_filename);
-        let legacy_edn = (legacy_key != key)
-            .then(|| self.assets_path().join(format!("{legacy_key}.edn")));
-        let legacy_page = (legacy_key != key)
-            .then(|| self.pages_path().join(format!("{}.md", crate::pdf::hls_page_name(&legacy_key))));
+        let legacy_edn =
+            (legacy_key != key).then(|| self.assets_path().join(format!("{legacy_key}.edn")));
+        let legacy_page = (legacy_key != key).then(|| {
+            self.pages_path()
+                .join(format!("{}.md", crate::pdf::hls_page_name(&legacy_key)))
+        });
         // Serialize against an editor save of the SAME `hls__` page (see
         // `page_locks`): hold the page lock across the .edn merge AND the page
         // read→merge→write→cache_upsert, so the two writers can't clobber each
         // other or trip a false self-write conflict.
-        let page_path = self.pages_path().join(format!("{}.md", crate::pdf::hls_page_name(&key)));
+        let page_path = self
+            .pages_path()
+            .join(format!("{}.md", crate::pdf::hls_page_name(&key)));
         let lock = self.page_lock(&page_path);
         let _guard = lock.lock().unwrap();
         fs::create_dir_all(self.assets_path())?;
@@ -2503,7 +2695,8 @@ impl Graph {
         // and not already present). A highlight we deliberately deleted (in the
         // baseline, absent from current) is NOT resurrected. Prefer the new-key
         // file; fall back to the legacy-key file (migrating it forward).
-        let have: std::collections::HashSet<&str> = highlights.iter().map(|h| h.id.as_str()).collect();
+        let have: std::collections::HashSet<&str> =
+            highlights.iter().map(|h| h.id.as_str()).collect();
         let base: std::collections::HashSet<&str> = base_ids.iter().map(|s| s.as_str()).collect();
         let mut merged: Vec<crate::pdf::Highlight> = highlights.to_vec();
         // `edn_baseline` = the new-key file's OWN prior bytes (None = it didn't exist),
@@ -2531,9 +2724,11 @@ impl Graph {
         // legacy-key fallback (used only as a migration merge source). The A3-style
         // recheck below compares the page against THIS baseline.
         let page_baseline = fs::read_to_string(&page_path).ok();
-        let existing_raw = page_baseline
-            .clone()
-            .or_else(|| legacy_page.as_ref().and_then(|p| fs::read_to_string(p).ok()));
+        let existing_raw = page_baseline.clone().or_else(|| {
+            legacy_page
+                .as_ref()
+                .and_then(|p| fs::read_to_string(p).ok())
+        });
         let existing = existing_raw.as_deref().map(doc::parse);
         let page_doc = crate::pdf::merge_hls_page(existing.as_ref(), pdf_filename, label, &merged);
         // Preserve the notes page's CRLF (shared with write_page), then go through
@@ -2545,7 +2740,8 @@ impl Graph {
         // On mismatch → conflict; PdfViewer.persist toasts + reverts and a retry merges
         // cleanly (the .edn was already 3-way-merged, so no highlight is lost).
         let page_md = preserve_crlf(doc::serialize(&page_doc), existing_raw.as_deref());
-        let page_rev = match self.commit_write(&page_path, &page_md, page_baseline.as_deref(), true) {
+        let page_rev = match self.commit_write(&page_path, &page_md, page_baseline.as_deref(), true)
+        {
             Ok(rev) => rev,
             Err(e) => {
                 // The .edn sidecar was already written; the page commit failed (conflict
@@ -2609,7 +2805,13 @@ impl Graph {
                 Some(d) => (self.journal_format.title(d), Some(d.ordinal_key())),
                 None => (stem.to_string(), None),
             };
-            Some(PageEntry { name, kind: PageKind::Journal, date_key, rel_path: self.rel_path(path), path: path.to_path_buf() })
+            Some(PageEntry {
+                name,
+                kind: PageKind::Journal,
+                date_key,
+                rel_path: self.rel_path(path),
+                path: path.to_path_buf(),
+            })
         } else if path.starts_with(self.pages_path()) {
             Some(PageEntry {
                 name: decode_page_name(stem, self.config.file_name_format),
@@ -2705,7 +2907,12 @@ impl Graph {
     /// run in the rename→cache_upsert window and must not steal the marker out
     /// from under the watcher, which would turn the watcher's later poll into a
     /// false "changed on disk".
-    fn sync_file_content(&self, path: &Path, content: &str, consume_self_write: bool) -> Option<PageEntry> {
+    fn sync_file_content(
+        &self,
+        path: &Path,
+        content: &str,
+        consume_self_write: bool,
+    ) -> Option<PageEntry> {
         let entry = self.entry_for_path(path)?;
         // A sync-tool conflict copy (`*.sync-conflict-*`) is never a real page: keep
         // it out of the `(kind,name)` cache (it would show as a garbage page and its
@@ -2821,7 +3028,9 @@ impl Graph {
         let was_cached = {
             let guard = self.cache.read().unwrap();
             guard.as_ref().is_some_and(|c| {
-                c.iter().any(|(e, _)| e.kind == entry.kind && crate::refs::same_page(&e.name, &entry.name))
+                c.iter().any(|(e, _)| {
+                    e.kind == entry.kind && crate::refs::same_page(&e.name, &entry.name)
+                })
             })
         };
         self.cache_remove(&entry.name, entry.kind);
@@ -2931,7 +3140,11 @@ impl Graph {
         let dto_is_org = matches!(Format::from_path(path), Format::Org);
         let doc = Document {
             pre_block: page.pre_block.clone(),
-            roots: page.blocks.iter().map(|b| dto_to_doc(b, dto_is_org)).collect(),
+            roots: page
+                .blocks
+                .iter()
+                .map(|b| dto_to_doc(b, dto_is_org))
+                .collect(),
         };
         // Own the caller's resolved+locked path (M2: never re-resolve path_for here).
         let path = path.to_path_buf();
@@ -3021,7 +3234,13 @@ impl Graph {
                 } else {
                     None
                 };
-                PageEntry { name: page.name.clone(), kind: page.kind, date_key, rel_path: self.rel_path(&path), path: path.clone() }
+                PageEntry {
+                    name: page.name.clone(),
+                    kind: page.kind,
+                    date_key,
+                    rel_path: self.rel_path(&path),
+                    path: path.clone(),
+                }
             });
             // H4: for org, the on-disk bytes are authoritative. If the user typed a
             // structural marker (a column-0 `* ` line, or an unbalanced #+BEGIN_)
@@ -3069,13 +3288,11 @@ impl Graph {
 /// blocks overwriting an existing file, so the realistic pre-guard outcome was a
 /// stray file, not corruption — but reject it outright anyway.
 fn top_level_asset_name(name: &str) -> io::Result<()> {
-    if name.is_empty()
-        || name == "."
-        || name == ".."
-        || name.contains('/')
-        || name.contains('\\')
-    {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "bad asset name"));
+    if name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\\') {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "bad asset name",
+        ));
     }
     Ok(())
 }
@@ -3173,7 +3390,9 @@ fn list_md(
 ) -> Vec<PageEntry> {
     let mut out = Vec::new();
     walk_page_files(dir, |path| {
-        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else { return };
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+            return;
+        };
         if is_sync_conflict(stem) {
             return; // sync-tool conflict copy — not a page (see list_sync_conflicts)
         }
@@ -3184,7 +3403,13 @@ fn list_md(
             },
             PageKind::Page => (decode_page_name(stem, name_fmt), None),
         };
-        out.push(PageEntry { name, kind, date_key, rel_path: rel_under_dir(rel_dir, dir, &path), path });
+        out.push(PageEntry {
+            name,
+            kind,
+            date_key,
+            rel_path: rel_under_dir(rel_dir, dir, &path),
+            path,
+        });
     });
     out
 }
@@ -3245,7 +3470,8 @@ fn union_pre(mine: Option<&str>, theirs: Option<&str>) -> Option<String> {
     let extra: Vec<&str> = theirs
         .lines()
         .filter(|l| {
-            doc::parse_property_line(l).is_some_and(|(k, _)| !mine_keys.contains(&k.to_ascii_lowercase()))
+            doc::parse_property_line(l)
+                .is_some_and(|(k, _)| !mine_keys.contains(&k.to_ascii_lowercase()))
         })
         .collect();
     if extra.is_empty() {
@@ -3301,7 +3527,11 @@ fn assign_uuids_rec(b: &mut DocBlock, seen: &mut std::collections::HashSet<Strin
 /// Convert a parsed (cached) block to a DTO, carrying its stable uuid as the id.
 pub fn block_to_dto(b: &DocBlock) -> BlockDto {
     BlockDto {
-        id: if b.uuid.is_empty() { Uuid::new_v4().to_string() } else { b.uuid.clone() },
+        id: if b.uuid.is_empty() {
+            Uuid::new_v4().to_string()
+        } else {
+            b.uuid.clone()
+        },
         raw: b.raw.clone(),
         collapsed: b.collapsed(),
         children: b.children.iter().map(block_to_dto).collect(),
@@ -3384,7 +3614,10 @@ fn pre_block_icon(pre: &str) -> Option<String> {
         }
         let t = line.trim();
         // Org property drawer `:icon: value` or directive `#+ICON: value`.
-        for stripped in [t.strip_prefix(':'), t.strip_prefix("#+")].into_iter().flatten() {
+        for stripped in [t.strip_prefix(':'), t.strip_prefix("#+")]
+            .into_iter()
+            .flatten()
+        {
             if let Some(idx) = stripped.find(':') {
                 let (k, v) = (&stripped[..idx], stripped[idx + 1..].trim());
                 if k.eq_ignore_ascii_case("icon") && !v.is_empty() {
@@ -3486,7 +3719,12 @@ fn collect_asset_refs(text: &str, into: &mut std::collections::HashSet<String>) 
     while let Some(i) = rest.find("assets/") {
         let after = &rest[i + "assets/".len()..];
         let end = after
-            .find(|c: char| matches!(c, ')' | ']' | '"' | '\'' | '<' | '>' | '|' | '\n' | '\r' | '\t'))
+            .find(|c: char| {
+                matches!(
+                    c,
+                    ')' | ']' | '"' | '\'' | '<' | '>' | '|' | '\n' | '\r' | '\t'
+                )
+            })
             .unwrap_or(after.len());
         let name = &after[..end];
         if !name.is_empty() {
@@ -3525,7 +3763,10 @@ fn trash_stamp() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
     static SEQ: AtomicU64 = AtomicU64::new(0);
-    let ms = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+    let ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
     format!("{ms}-{}", SEQ.fetch_add(1, Ordering::Relaxed))
 }
 
@@ -3650,8 +3891,14 @@ mod tests {
         assert_eq!(encode_page_name("a___b", tlb), "a%5F%5F%5Fb");
         assert_eq!(decode_page_name("a%5F%5F%5Fb", tlb), "a___b");
         // `_` adjacent to the separator round-trips too.
-        assert_eq!(decode_page_name(&encode_page_name("a_/b", tlb), tlb), "a_/b");
-        assert_eq!(decode_page_name(&encode_page_name("x/_y", tlb), tlb), "x/_y");
+        assert_eq!(
+            decode_page_name(&encode_page_name("a_/b", tlb), tlb),
+            "a_/b"
+        );
+        assert_eq!(
+            decode_page_name(&encode_page_name("x/_y", tlb), tlb),
+            "x/_y"
+        );
 
         // The cross-format hazard the fix addresses: a legacy `%2F` file is read
         // as a namespace ONLY under legacy; a triple-lowbar `___` file ONLY under
@@ -3699,7 +3946,13 @@ mod tests {
         assert_eq!(reserve_asset(&dir, "NOTES").unwrap().0, "NOTES");
         assert_eq!(reserve_asset(&dir, "NOTES").unwrap().0, "NOTES_1");
         // Every reserved name is a real, distinct file on disk.
-        for n in ["paper.pdf", "paper_1.pdf", "paper_2.pdf", "NOTES", "NOTES_1"] {
+        for n in [
+            "paper.pdf",
+            "paper_1.pdf",
+            "paper_2.pdf",
+            "NOTES",
+            "NOTES_1",
+        ] {
             assert!(dir.join(n).exists(), "{n} reserved");
         }
         let _ = fs::remove_dir_all(&dir);
@@ -3728,17 +3981,40 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("journals")).unwrap();
         fs::create_dir_all(dir.join("pages")).unwrap();
-        fs::write(dir.join("pages").join("dst.md"), "tags:: Keep\n- dst body\n").unwrap();
-        fs::write(dir.join("pages").join("src.md"), "alias:: Foo\ntags:: Other\n- src body\n").unwrap();
+        fs::write(
+            dir.join("pages").join("dst.md"),
+            "tags:: Keep\n- dst body\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages").join("src.md"),
+            "alias:: Foo\ntags:: Other\n- src body\n",
+        )
+        .unwrap();
         let g = Graph::open(&dir);
         g.warm_cache();
         g.merge_pages("pages/src.md", "pages/dst.md").unwrap();
         let merged = fs::read_to_string(dir.join("pages").join("dst.md")).unwrap();
-        assert!(merged.contains("alias:: Foo"), "src alias:: preserved: {merged:?}");
-        assert!(merged.contains("tags:: Keep"), "dst tags:: kept: {merged:?}");
-        assert!(!merged.contains("tags:: Other"), "src tags:: must not duplicate dst's key: {merged:?}");
-        assert!(merged.contains("dst body") && merged.contains("src body"), "both bodies merged: {merged:?}");
-        assert!(!dir.join("pages").join("src.md").exists(), "src moved to trash");
+        assert!(
+            merged.contains("alias:: Foo"),
+            "src alias:: preserved: {merged:?}"
+        );
+        assert!(
+            merged.contains("tags:: Keep"),
+            "dst tags:: kept: {merged:?}"
+        );
+        assert!(
+            !merged.contains("tags:: Other"),
+            "src tags:: must not duplicate dst's key: {merged:?}"
+        );
+        assert!(
+            merged.contains("dst body") && merged.contains("src body"),
+            "both bodies merged: {merged:?}"
+        );
+        assert!(
+            !dir.join("pages").join("src.md").exists(),
+            "src moved to trash"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -3768,13 +4044,27 @@ mod tests {
         g.warm_cache(); // referenced names come from the whole-graph cache
 
         let has = |q: &str, name: &str| {
-            g.quick_switch(q, 8).iter().any(|e| crate::refs::same_page(&e.name, name))
+            g.quick_switch(q, 8)
+                .iter()
+                .any(|e| crate::refs::same_page(&e.name, name))
         };
-        assert!(has("thistag", "thistag"), "referenced #thistag should appear");
-        assert!(has("some page", "Some Page"), "referenced [[Some Page]] should appear");
+        assert!(
+            has("thistag", "thistag"),
+            "referenced #thistag should appear"
+        );
+        assert!(
+            has("some page", "Some Page"),
+            "referenced [[Some Page]] should appear"
+        );
         // tags:: values (bare and bracketed) and alias:: values count too.
-        assert!(has("projectx", "ProjectX"), "bare tags:: value should appear");
-        assert!(has("linear ip", "Linear IP"), "bracketed tags:: value should appear");
+        assert!(
+            has("projectx", "ProjectX"),
+            "bare tags:: value should appear"
+        );
+        assert!(
+            has("linear ip", "Linear IP"),
+            "bracketed tags:: value should appear"
+        );
         assert!(has("lp survey", "LP Survey"), "alias:: value should appear");
         // Neither filed nor referenced → not offered (so autocomplete still says
         // "Create" for a genuinely new name).
@@ -3805,7 +4095,10 @@ mod tests {
         .unwrap();
 
         let g = Graph::open(&dir);
-        assert!(g.alias_cache.read().unwrap().is_none(), "alias cache starts cold");
+        assert!(
+            g.alias_cache.read().unwrap().is_none(),
+            "alias cache starts cold"
+        );
         assert!(
             g.block_ref_count_cache.read().unwrap().is_none(),
             "block-ref count cache starts cold"
@@ -3815,14 +4108,24 @@ mod tests {
 
         let aliases = g.alias_cache.read().unwrap().as_ref().cloned().unwrap();
         assert!(
-            aliases.iter().any(|(alias, canon)| alias == "alias one" && canon == "Target"),
+            aliases
+                .iter()
+                .any(|(alias, canon)| alias == "alias one" && canon == "Target"),
             "alias cache warmed: {aliases:?}"
         );
         let gen = g.cache_generation();
         let counts = g.block_ref_count_cache.read().unwrap();
         let (count_gen, count_map) = counts.as_ref().expect("block-ref count cache warmed");
-        assert_eq!(*count_gen, gen, "count cache is keyed to the current cache generation");
-        assert_eq!(count_map.get("aaaaaaaa-0000-0000-0000-000000000001").copied(), Some(1));
+        assert_eq!(
+            *count_gen, gen,
+            "count cache is keyed to the current cache generation"
+        );
+        assert_eq!(
+            count_map
+                .get("aaaaaaaa-0000-0000-0000-000000000001")
+                .copied(),
+            Some(1)
+        );
 
         let first = g.block_ref_counts();
         let second = g.block_ref_counts();
@@ -3846,19 +4149,45 @@ mod tests {
             "{:preferred-format \"Org\"\n :journal/page-title-format \"EEEE, dd-MM-yyyy\"}\n",
         )
         .unwrap();
-        fs::write(dir.join("journals").join("Thursday, 25-06-2026.org"), "* bla\n").unwrap();
+        fs::write(
+            dir.join("journals").join("Thursday, 25-06-2026.org"),
+            "* bla\n",
+        )
+        .unwrap();
         // A canonical file for another day must be left untouched.
         fs::write(dir.join("journals").join("2026_06_24.org"), "* prior\n").unwrap();
 
         let g = Graph::open(&dir);
-        assert_eq!(g.migrate_journal_filenames(), 1, "exactly the title-named file renamed");
-        assert!(dir.join("journals").join("2026_06_25.org").exists(), "renamed to date stem");
-        assert!(!dir.join("journals").join("Thursday, 25-06-2026.org").exists(), "old name gone");
-        assert!(dir.join("journals").join("2026_06_24.org").exists(), "canonical file untouched");
+        assert_eq!(
+            g.migrate_journal_filenames(),
+            1,
+            "exactly the title-named file renamed"
+        );
+        assert!(
+            dir.join("journals").join("2026_06_25.org").exists(),
+            "renamed to date stem"
+        );
+        assert!(
+            !dir.join("journals")
+                .join("Thursday, 25-06-2026.org")
+                .exists(),
+            "old name gone"
+        );
+        assert!(
+            dir.join("journals").join("2026_06_24.org").exists(),
+            "canonical file untouched"
+        );
 
         // It's now recognized in the feed listing (name via the title format).
-        let names: Vec<String> = Graph::open(&dir).journals_desc().into_iter().map(|e| e.name).collect();
-        assert!(names.iter().any(|n| n == "Thursday, 25-06-2026"), "listed: {names:?}");
+        let names: Vec<String> = Graph::open(&dir)
+            .journals_desc()
+            .into_iter()
+            .map(|e| e.name)
+            .collect();
+        assert!(
+            names.iter().any(|n| n == "Thursday, 25-06-2026"),
+            "listed: {names:?}"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -3872,13 +4201,25 @@ mod tests {
         )
         .unwrap();
         // Same day, two files (canonical stem + title-named) — a conflict.
-        fs::write(dir.join("journals").join("2026_06_26.org"), "* canonical content\n").unwrap();
-        fs::write(dir.join("journals").join("Friday, 26-06-2026.org"), "* stray content\n").unwrap();
+        fs::write(
+            dir.join("journals").join("2026_06_26.org"),
+            "* canonical content\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("journals").join("Friday, 26-06-2026.org"),
+            "* stray content\n",
+        )
+        .unwrap();
         // A clean day with one file — not a conflict.
         fs::write(dir.join("journals").join("2026_06_24.org"), "* fine\n").unwrap();
 
         let conflicts = Graph::open(&dir).journal_conflicts();
-        assert_eq!(conflicts.len(), 1, "exactly one conflicted day: {conflicts:?}");
+        assert_eq!(
+            conflicts.len(),
+            1,
+            "exactly one conflicted day: {conflicts:?}"
+        );
         let c = &conflicts[0];
         assert_eq!(c.title, "Friday, 26-06-2026");
         assert_eq!(c.files.len(), 2);
@@ -3901,11 +4242,25 @@ mod tests {
         )
         .unwrap();
         fs::create_dir_all(dir.join("journals").join("archive")).unwrap();
-        fs::write(dir.join("journals").join("archive").join("2026_06_26.org"), "* canonical nested\n").unwrap();
-        fs::write(dir.join("journals").join("archive").join("Friday, 26-06-2026.org"), "* stray nested\n").unwrap();
+        fs::write(
+            dir.join("journals").join("archive").join("2026_06_26.org"),
+            "* canonical nested\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("journals")
+                .join("archive")
+                .join("Friday, 26-06-2026.org"),
+            "* stray nested\n",
+        )
+        .unwrap();
 
         let conflicts = Graph::open(&dir).journal_conflicts();
-        assert_eq!(conflicts.len(), 1, "nested duplicate day is surfaced: {conflicts:?}");
+        assert_eq!(
+            conflicts.len(),
+            1,
+            "nested duplicate day is surfaced: {conflicts:?}"
+        );
         let files = &conflicts[0].files;
         assert_eq!(files.len(), 2);
         assert_eq!(files[0].path, "journals/archive/2026_06_26.org");
@@ -3917,17 +4272,30 @@ mod tests {
     fn list_sync_conflicts_reports_nested_conflict_copy() {
         let dir = scratch("sync-conflicts-nested");
         fs::create_dir_all(dir.join("pages").join("client-a")).unwrap();
-        fs::write(dir.join("pages").join("client-a").join("Foo.md"), "- base\n").unwrap();
         fs::write(
-            dir.join("pages").join("client-a").join("Foo.sync-conflict-20260705-141233-A1B2C3D.md"),
+            dir.join("pages").join("client-a").join("Foo.md"),
+            "- base\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages")
+                .join("client-a")
+                .join("Foo.sync-conflict-20260705-141233-A1B2C3D.md"),
             "- conflict copy\n",
         )
         .unwrap();
 
         let conflicts = Graph::open(&dir).list_sync_conflicts();
-        assert_eq!(conflicts.len(), 1, "nested sync-conflict copy is surfaced: {conflicts:?}");
+        assert_eq!(
+            conflicts.len(),
+            1,
+            "nested sync-conflict copy is surfaced: {conflicts:?}"
+        );
         let c = &conflicts[0];
-        assert_eq!(c.path, "pages/client-a/Foo.sync-conflict-20260705-141233-A1B2C3D.md");
+        assert_eq!(
+            c.path,
+            "pages/client-a/Foo.sync-conflict-20260705-141233-A1B2C3D.md"
+        );
         assert_eq!(c.base_path.as_deref(), Some("pages/client-a/Foo.md"));
         assert_eq!(c.base_name, "Foo");
         assert_eq!(c.kind, PageKind::Page);
@@ -3947,14 +4315,29 @@ mod tests {
         )
         .unwrap();
         fs::write(dir.join("journals").join("2026_06_26.org"), "* real day\n").unwrap();
-        fs::write(dir.join("journals").join("Friday, 26-06-2026.org"), "* stray\n").unwrap();
+        fs::write(
+            dir.join("journals").join("Friday, 26-06-2026.org"),
+            "* stray\n",
+        )
+        .unwrap();
         fs::write(dir.join("journals").join("2026_06_24.org"), "* other day\n").unwrap();
 
         let js = Graph::open(&dir).journals_desc();
-        assert_eq!(js.len(), 2, "one entry per day: {:?}", js.iter().map(|e| &e.name).collect::<Vec<_>>());
+        assert_eq!(
+            js.len(),
+            2,
+            "one entry per day: {:?}",
+            js.iter().map(|e| &e.name).collect::<Vec<_>>()
+        );
         // The deduped 26th keeps the canonical date-stem file (what saves resolve to).
-        let day26 = js.iter().find(|e| e.name == "Friday, 26-06-2026").expect("26th present");
-        assert_eq!(day26.path.file_name().unwrap().to_str().unwrap(), "2026_06_26.org");
+        let day26 = js
+            .iter()
+            .find(|e| e.name == "Friday, 26-06-2026")
+            .expect("26th present");
+        assert_eq!(
+            day26.path.file_name().unwrap().to_str().unwrap(),
+            "2026_06_26.org"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -3968,7 +4351,10 @@ mod tests {
         g.rename_page("Alpha", "Beta").unwrap();
         // The page file moved (content preserved) and the old file is gone.
         assert!(!dir.join("pages").join("Alpha.md").exists());
-        assert_eq!(fs::read_to_string(dir.join("pages").join("Beta.md")).unwrap(), "- alpha body\n");
+        assert_eq!(
+            fs::read_to_string(dir.join("pages").join("Beta.md")).unwrap(),
+            "- alpha body\n"
+        );
         // Every reference was rewritten across the graph.
         let other = fs::read_to_string(dir.join("pages").join("Other.md")).unwrap();
         assert!(other.contains("[[Beta]]"), "ref rewritten to [[Beta]]");
@@ -3985,7 +4371,11 @@ mod tests {
         // on disk as `Project%2FAlpha.md`.
         let dir = scratch("rename-ns");
         fs::write(dir.join("pages").join("Project.md"), "- project body\n").unwrap();
-        fs::write(dir.join("pages").join("Project%2FAlpha.md"), "- alpha body\n").unwrap();
+        fs::write(
+            dir.join("pages").join("Project%2FAlpha.md"),
+            "- alpha body\n",
+        )
+        .unwrap();
         fs::write(dir.join("pages").join("Project%2FBeta.md"), "- beta body\n").unwrap();
         // One file references the primary AND both descendants (inline) plus two
         // bare `tags::` values — all rewritten in the single multi-target pass.
@@ -4018,12 +4408,24 @@ mod tests {
         // Every inline ref AND both bare tag values rewritten; no stale `Project`.
         let refs = fs::read_to_string(dir.join("pages").join("Refs.md")).unwrap();
         assert!(refs.contains("[[Archive]]"), "primary inline ref: {refs:?}");
-        assert!(refs.contains("[[Archive/Alpha]]"), "descendant inline ref: {refs:?}");
+        assert!(
+            refs.contains("[[Archive/Alpha]]"),
+            "descendant inline ref: {refs:?}"
+        );
         // `Archive/Beta` is bare-tag-safe (`/` is a tag char), so `#[[..]]`
         // collapses to the bare `#Archive/Beta` form, matching Logseq.
-        assert!(refs.contains("#Archive/Beta"), "descendant tag ref: {refs:?}");
-        assert!(refs.contains("tags:: Archive, Archive/Beta"), "bare tags rewritten: {refs:?}");
-        assert!(!refs.contains("Project"), "no stale Project anywhere: {refs:?}");
+        assert!(
+            refs.contains("#Archive/Beta"),
+            "descendant tag ref: {refs:?}"
+        );
+        assert!(
+            refs.contains("tags:: Archive, Archive/Beta"),
+            "bare tags rewritten: {refs:?}"
+        );
+        assert!(
+            !refs.contains("Project"),
+            "no stale Project anywhere: {refs:?}"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -4048,12 +4450,18 @@ mod tests {
         assert_eq!(dto.format, Format::Org);
         assert!(!dto.read_only);
         assert_eq!(dto.blocks.len(), 2);
-        assert_eq!(dto.blocks[0].raw, "TODO Buy milk\nSCHEDULED: <2026-06-25 Thu>");
+        assert_eq!(
+            dto.blocks[0].raw,
+            "TODO Buy milk\nSCHEDULED: <2026-06-25 Thu>"
+        );
         assert_eq!(dto.blocks[1].raw, "second block");
 
         // No-op save leaves the file byte-identical (no churn).
         let rev = g.save_page(&dto, dto.rev.as_deref()).unwrap();
-        assert_eq!(fs::read_to_string(dir.join("pages").join("Org Notes.org")).unwrap(), src);
+        assert_eq!(
+            fs::read_to_string(dir.join("pages").join("Org Notes.org")).unwrap(),
+            src
+        );
 
         // Edit a block and save → file updated, still org, byte-faithful.
         let mut edited = dto.clone();
@@ -4072,7 +4480,11 @@ mod tests {
     #[test]
     fn org_journal_recognized_and_listed() {
         let dir = scratch("org-journal");
-        fs::write(dir.join("journals").join("2026_06_24.org"), "* woke up\n* TODO ship\n").unwrap();
+        fs::write(
+            dir.join("journals").join("2026_06_24.org"),
+            "* woke up\n* TODO ship\n",
+        )
+        .unwrap();
         let g = Graph::open(&dir);
         let j = g
             .journals_desc()
@@ -4100,7 +4512,10 @@ mod tests {
         // Even a forced save must refuse (defense in depth) and leave bytes intact.
         let err = g.force_save_page(&dto).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
-        assert_eq!(fs::read_to_string(dir.join("pages").join("Weird.org")).unwrap(), src);
+        assert_eq!(
+            fs::read_to_string(dir.join("pages").join("Weird.org")).unwrap(),
+            src
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -4118,19 +4533,38 @@ mod tests {
             kind: PageKind::Page,
             title: "Foo".into(),
             pre_block: None,
-            blocks: vec![BlockDto { id: "x".into(), raw: "edited".into(), ..Default::default() }],
+            blocks: vec![BlockDto {
+                id: "x".into(),
+                raw: "edited".into(),
+                ..Default::default()
+            }],
             rev: None,
             format: Format::Md,
             read_only: false,
             path: String::new(),
         };
         assert!(g.save_page(&page, None).is_err(), "save refused on twin");
-        assert!(g.force_save_page(&page).is_err(), "force_save refused on twin");
-        assert!(g.rename_page("Foo", "Bar").is_err(), "rename refused on twin");
-        assert!(g.delete_page("Foo", PageKind::Page).is_err(), "delete refused on twin");
+        assert!(
+            g.force_save_page(&page).is_err(),
+            "force_save refused on twin"
+        );
+        assert!(
+            g.rename_page("Foo", "Bar").is_err(),
+            "rename refused on twin"
+        );
+        assert!(
+            g.delete_page("Foo", PageKind::Page).is_err(),
+            "delete refused on twin"
+        );
         // Both files are byte-intact (nothing was written/moved/trashed).
-        assert_eq!(fs::read_to_string(dir.join("pages").join("Foo.md")).unwrap(), "- md body\n");
-        assert_eq!(fs::read_to_string(dir.join("pages").join("Foo.org")).unwrap(), "* org body\n");
+        assert_eq!(
+            fs::read_to_string(dir.join("pages").join("Foo.md")).unwrap(),
+            "- md body\n"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("pages").join("Foo.org")).unwrap(),
+            "* org body\n"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -4152,7 +4586,11 @@ mod tests {
         // Two watcher reconciles of the unchanged file must be no-ops.
         g.sync_file(&path);
         g.sync_file(&path);
-        assert_eq!(g.cache_generation(), gen0, "unchanged read-only org reconciled spuriously");
+        assert_eq!(
+            g.cache_generation(),
+            gen0,
+            "unchanged read-only org reconciled spuriously"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -4179,7 +4617,10 @@ mod tests {
         .unwrap();
         let g = Graph::open(&dir);
         let orphans: Vec<String> = g.orphan_assets().into_iter().map(|a| a.name).collect();
-        assert_eq!(orphans, vec!["old_video.webm".to_string(), "stray.png".to_string()]);
+        assert_eq!(
+            orphans,
+            vec!["old_video.webm".to_string(), "stray.png".to_string()]
+        );
         // Trash one → it moves out of assets/ into the recoverable trash.
         g.trash_asset("stray.png").unwrap();
         assert!(!assets.join("stray.png").exists());
@@ -4200,7 +4641,11 @@ mod tests {
         fs::create_dir_all(&assets).unwrap();
         fs::write(assets.join("my file.png"), b"x").unwrap(); // referenced via %20
         fs::write(assets.join("real orphan.png"), b"x").unwrap(); // genuinely unused
-        fs::write(dir.join("pages").join("P.md"), "- ![pic](../assets/my%20file.png)\n").unwrap();
+        fs::write(
+            dir.join("pages").join("P.md"),
+            "- ![pic](../assets/my%20file.png)\n",
+        )
+        .unwrap();
         let g = Graph::open(&dir);
         let orphans: Vec<String> = g.orphan_assets().into_iter().map(|a| a.name).collect();
         assert_eq!(
@@ -4239,7 +4684,9 @@ mod tests {
         let src = dir.join("source.png");
         fs::write(&src, b"img").unwrap();
         let g = Graph::open(&dir);
-        let saved = g.import_asset(&src, Some("source_20260626_120000.png")).unwrap();
+        let saved = g
+            .import_asset(&src, Some("source_20260626_120000.png"))
+            .unwrap();
         assert_eq!(saved, "source_20260626_120000.png");
         assert!(dir.join("assets").join(&saved).exists());
         let _ = fs::remove_dir_all(&dir);
@@ -4258,8 +4705,14 @@ mod tests {
         let err = g.rename_page("Alpha", "Beta").unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
         // All-or-nothing: neither file moved/changed.
-        assert!(dir.join("pages").join("Alpha.md").exists(), "rename rolled back");
-        assert_eq!(fs::read_to_string(dir.join("pages").join("Weird.org")).unwrap(), ro);
+        assert!(
+            dir.join("pages").join("Alpha.md").exists(),
+            "rename rolled back"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("pages").join("Weird.org")).unwrap(),
+            ro
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -4275,7 +4728,10 @@ mod tests {
         g.warm_cache();
         g.rename_page("Old", "New").unwrap();
         let got = fs::read_to_string(dir.join("pages").join("Ref.org")).unwrap();
-        assert_eq!(got, "* note\nsee [[New]]\n#+BEGIN_SRC clojure\n\"[[Old]]\"\n#+END_SRC\n");
+        assert_eq!(
+            got,
+            "* note\nsee [[New]]\n#+BEGIN_SRC clojure\n\"[[Old]]\"\n#+END_SRC\n"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -4300,7 +4756,11 @@ mod tests {
         // A fresh load (served from cache) must reflect the 3-block disk structure,
         // not the 2-block frontend doc that produced it.
         let again = g.load_named("P", PageKind::Page).unwrap().unwrap();
-        assert_eq!(again.blocks.len(), 3, "cache reflects disk structure after H4 reparse");
+        assert_eq!(
+            again.blocks.len(),
+            3,
+            "cache reflects disk structure after H4 reparse"
+        );
         assert_eq!(again.rev.as_deref(), Some(rev.as_str()));
         let _ = fs::remove_dir_all(&dir);
     }
@@ -4309,7 +4769,11 @@ mod tests {
     fn new_page_uses_preferred_format_org() {
         let dir = scratch("org-pref");
         fs::create_dir_all(dir.join("logseq")).unwrap();
-        fs::write(dir.join("logseq").join("config.edn"), "{:preferred-format \"Org\"}\n").unwrap();
+        fs::write(
+            dir.join("logseq").join("config.edn"),
+            "{:preferred-format \"Org\"}\n",
+        )
+        .unwrap();
         let g = Graph::open(&dir);
         assert_eq!(g.preferred_format(), Format::Org);
         // Create a brand-new page via save (no baseline) — it must land as .org.
@@ -4318,16 +4782,26 @@ mod tests {
             kind: PageKind::Page,
             title: "Fresh".into(),
             pre_block: None,
-            blocks: vec![BlockDto { id: "x".into(), raw: "hello org".into(), ..Default::default() }],
+            blocks: vec![BlockDto {
+                id: "x".into(),
+                raw: "hello org".into(),
+                ..Default::default()
+            }],
             rev: None,
             format: Format::Org,
             read_only: false,
             path: String::new(),
         };
         g.save_page(&page, None).unwrap();
-        assert!(dir.join("pages").join("Fresh.org").exists(), "new page created as .org");
+        assert!(
+            dir.join("pages").join("Fresh.org").exists(),
+            "new page created as .org"
+        );
         assert!(!dir.join("pages").join("Fresh.md").exists());
-        assert_eq!(fs::read_to_string(dir.join("pages").join("Fresh.org")).unwrap(), "* hello org\n");
+        assert_eq!(
+            fs::read_to_string(dir.join("pages").join("Fresh.org")).unwrap(),
+            "* hello org\n"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -4347,18 +4821,39 @@ mod tests {
         let dto = g.load_page(&entry).unwrap();
         let gen_before = g.cache_generation();
         let rev = g.save_page(&dto, dto.rev.as_deref()).unwrap();
-        assert_eq!(fs::read_to_string(&path).unwrap(), original, "bytes left untouched");
-        assert_eq!(rev, content_rev(original), "returned rev is the on-disk rev");
-        assert_eq!(g.cache_generation(), gen_before, "no cache_gen bump on a trivia-only no-op");
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            original,
+            "bytes left untouched"
+        );
+        assert_eq!(
+            rev,
+            content_rev(original),
+            "returned rev is the on-disk rev"
+        );
+        assert_eq!(
+            g.cache_generation(),
+            gen_before,
+            "no cache_gen bump on a trivia-only no-op"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
     fn mkhl(id: &str, page: i64, text: Option<&str>) -> crate::pdf::Highlight {
-        let r = crate::pdf::Rect { top: 1.0, left: 2.0, width: 3.0, height: 4.0 };
+        let r = crate::pdf::Rect {
+            top: 1.0,
+            left: 2.0,
+            width: 3.0,
+            height: 4.0,
+        };
         crate::pdf::Highlight {
             id: id.into(),
             page,
-            position: crate::pdf::Position { page, bounding: r.clone(), rects: vec![r] },
+            position: crate::pdf::Position {
+                page,
+                bounding: r.clone(),
+                rects: vec![r],
+            },
             color: "yellow".into(),
             text: text.map(String::from),
             image: None,
@@ -4378,12 +4873,22 @@ mod tests {
         assert_ne!(legacy_key, new_key);
         let assets = dir.join("assets");
         fs::create_dir_all(&assets).unwrap();
-        let h1 = mkhl("11111111-1111-1111-1111-111111111111", 3, Some("legacy text"));
-        fs::write(assets.join(format!("{legacy_key}.edn")), crate::pdf::write_highlights(&[h1.clone()], ""))
-            .unwrap();
+        let h1 = mkhl(
+            "11111111-1111-1111-1111-111111111111",
+            3,
+            Some("legacy text"),
+        );
+        fs::write(
+            assets.join(format!("{legacy_key}.edn")),
+            crate::pdf::write_highlights(&[h1.clone()], ""),
+        )
+        .unwrap();
         let legacy_page = crate::pdf::hls_page_document(pdf, "My Paper", &[h1.clone()]);
-        fs::write(dir.join("pages").join(format!("hls__{legacy_key}.md")), doc::serialize(&legacy_page))
-            .unwrap();
+        fs::write(
+            dir.join("pages").join(format!("hls__{legacy_key}.md")),
+            doc::serialize(&legacy_page),
+        )
+        .unwrap();
 
         let g = Graph::open(&dir);
         g.warm_cache();
@@ -4394,17 +4899,28 @@ mod tests {
 
         // Write H1 + a newly-added H2 (editor baseline = [H1]).
         let h2 = mkhl("22222222-2222-2222-2222-222222222222", 4, Some("new text"));
-        g.write_highlights(pdf, "My Paper", &[h1.clone(), h2.clone()], &[h1.id.clone()]).unwrap();
+        g.write_highlights(pdf, "My Paper", &[h1.clone(), h2.clone()], &[h1.id.clone()])
+            .unwrap();
 
         // New-key artifacts exist with both highlights; the legacy ones are gone.
         let new_edn = assets.join(format!("{new_key}.edn"));
         assert!(new_edn.exists(), "new-key edn written");
         let migrated = crate::pdf::parse_highlights(&fs::read_to_string(&new_edn).unwrap());
         assert_eq!(migrated.len(), 2, "both highlights carried forward");
-        assert!(dir.join("pages").join(format!("hls__{new_key}.md")).exists(), "new hls page");
-        assert!(!assets.join(format!("{legacy_key}.edn")).exists(), "legacy edn removed");
         assert!(
-            !dir.join("pages").join(format!("hls__{legacy_key}.md")).exists(),
+            dir.join("pages")
+                .join(format!("hls__{new_key}.md"))
+                .exists(),
+            "new hls page"
+        );
+        assert!(
+            !assets.join(format!("{legacy_key}.edn")).exists(),
+            "legacy edn removed"
+        );
+        assert!(
+            !dir.join("pages")
+                .join(format!("hls__{legacy_key}.md"))
+                .exists(),
             "legacy hls page removed"
         );
         let _ = fs::remove_dir_all(&dir);
@@ -4422,12 +4938,24 @@ mod tests {
         let h1 = mkhl("aaaaaaaa-0000-0000-0000-000000000001", 1, Some("one"));
         let h2 = mkhl("bbbbbbbb-0000-0000-0000-000000000002", 2, Some("two"));
         let page_path = dir.join("pages").join("hls__paper.md");
-        g.write_highlights("paper.pdf", "Paper", &[h1.clone(), h2.clone()], &[]).unwrap();
-        assert!(g.sync_file(&page_path).is_none(), "initial highlight write looked external");
-        // Delete h2 (write just h1; baseline = both) — the rewrite must also be ours.
-        g.write_highlights("paper.pdf", "Paper", &[h1.clone()], &[h1.id.clone(), h2.id.clone()])
+        g.write_highlights("paper.pdf", "Paper", &[h1.clone(), h2.clone()], &[])
             .unwrap();
-        assert!(g.sync_file(&page_path).is_none(), "delete-rewrite looked external (false conflict)");
+        assert!(
+            g.sync_file(&page_path).is_none(),
+            "initial highlight write looked external"
+        );
+        // Delete h2 (write just h1; baseline = both) — the rewrite must also be ours.
+        g.write_highlights(
+            "paper.pdf",
+            "Paper",
+            &[h1.clone()],
+            &[h1.id.clone(), h2.id.clone()],
+        )
+        .unwrap();
+        assert!(
+            g.sync_file(&page_path).is_none(),
+            "delete-rewrite looked external (false conflict)"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -4435,10 +4963,15 @@ mod tests {
     fn write_pdf_area_image_uses_og_layout() {
         let dir = scratch("areaimg");
         let g = Graph::open(&dir);
-        let rel = g.write_pdf_area_image("My Paper.pdf", 7, "abc-id", 1659920114630, &[1, 2, 3, 4]).unwrap();
+        let rel = g
+            .write_pdf_area_image("My Paper.pdf", 7, "abc-id", 1659920114630, &[1, 2, 3, 4])
+            .unwrap();
         // OG layout: assets/<key>/<page>_<id>_<stamp>.png with the OG-compatible key.
         assert_eq!(rel, "My Paper/7_abc-id_1659920114630.png");
-        let p = dir.join("assets").join("My Paper").join("7_abc-id_1659920114630.png");
+        let p = dir
+            .join("assets")
+            .join("My Paper")
+            .join("7_abc-id_1659920114630.png");
         assert_eq!(fs::read(&p).unwrap(), vec![1, 2, 3, 4]);
         let _ = fs::remove_dir_all(&dir);
     }
@@ -4499,9 +5032,16 @@ mod tests {
         fs::write(dir.join("journals").join("24-06-2026.md"), "- hi\n").unwrap();
         let g = Graph::open(&dir);
         let js = g.journals_desc();
-        assert_eq!(js.len(), 1, "custom-format journal must be recognized (was dropped before)");
+        assert_eq!(
+            js.len(),
+            1,
+            "custom-format journal must be recognized (was dropped before)"
+        );
         assert_eq!(js[0].date_key, Some(20260624));
-        assert_eq!(js[0].name, "2026-06-24", "title rendered in :journal/page-title-format");
+        assert_eq!(
+            js[0].name, "2026-06-24",
+            "title rendered in :journal/page-title-format"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -4518,7 +5058,11 @@ mod tests {
     #[test]
     fn advanced_query_runs_supported_subset_flags_rest() {
         let dir = scratch("adv");
-        fs::write(dir.join("journals").join("2026_06_20.md"), "- TODO ship it\n- DONE done\n").unwrap();
+        fs::write(
+            dir.join("journals").join("2026_06_20.md"),
+            "- TODO ship it\n- DONE done\n",
+        )
+        .unwrap();
         fs::write(dir.join("pages").join("Note.md"), "- TODO not a journal\n").unwrap();
         let g = Graph::open(&dir);
         g.warm_cache();
@@ -4577,8 +5121,16 @@ mod tests {
             "{:preferred-format \"Org\"\n :journal/page-title-format \"EEEE, dd-MM-yyyy\"}\n",
         )
         .unwrap();
-        fs::write(dir.join("journals").join("2026_06_26.org"), "* canonical body\n").unwrap();
-        fs::write(dir.join("journals").join("Friday, 26-06-2026.org"), "* stray body\n").unwrap();
+        fs::write(
+            dir.join("journals").join("2026_06_26.org"),
+            "* canonical body\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("journals").join("Friday, 26-06-2026.org"),
+            "* stray body\n",
+        )
+        .unwrap();
         dir
     }
 
@@ -4591,7 +5143,10 @@ mod tests {
             g.resolve_rel("journals/2026_06_26.org"),
             Some(dir.join("journals").join("2026_06_26.org"))
         );
-        assert_eq!(g.resolve_rel("pages/Note.md"), Some(dir.join("pages").join("Note.md")));
+        assert_eq!(
+            g.resolve_rel("pages/Note.md"),
+            Some(dir.join("pages").join("Note.md"))
+        );
         // Valid: nested sub-directories under pages/ (#21) — any depth.
         assert_eq!(
             g.resolve_rel("pages/client-a/foo.md"),
@@ -4599,7 +5154,13 @@ mod tests {
         );
         assert_eq!(
             g.resolve_rel("pages/a/b/c/deep.org"),
-            Some(dir.join("pages").join("a").join("b").join("c").join("deep.org"))
+            Some(
+                dir.join("pages")
+                    .join("a")
+                    .join("b")
+                    .join("c")
+                    .join("deep.org")
+            )
         );
         // Rejections: traversal (incl. FROM a subdir), absolute, empty/`.` segment,
         // wrong dir, wrong/no extension, a bare dir. Nesting itself is NOT rejected.
@@ -4632,12 +5193,18 @@ mod tests {
         g.warm_cache(); // canonical is what name-resolution caches
 
         // By name → canonical.
-        let by_name = g.load_named("Friday, 26-06-2026", PageKind::Journal).unwrap().unwrap();
+        let by_name = g
+            .load_named("Friday, 26-06-2026", PageKind::Journal)
+            .unwrap()
+            .unwrap();
         assert_eq!(by_name.blocks[0].raw, "canonical body");
         assert_eq!(by_name.path, "journals/2026_06_26.org");
 
         // By path → the STRAY's own content, even though it shares the (kind,name).
-        let stray = g.load_by_path("journals/Friday, 26-06-2026.org").unwrap().unwrap();
+        let stray = g
+            .load_by_path("journals/Friday, 26-06-2026.org")
+            .unwrap()
+            .unwrap();
         assert_eq!(stray.blocks[0].raw, "stray body");
         assert_eq!(stray.path, "journals/Friday, 26-06-2026.org");
         let _ = fs::remove_dir_all(&dir);
@@ -4651,12 +5218,17 @@ mod tests {
         let g = Graph::open(&dir);
         g.warm_cache();
 
-        let mut stray = g.load_by_path("journals/Friday, 26-06-2026.org").unwrap().unwrap();
+        let mut stray = g
+            .load_by_path("journals/Friday, 26-06-2026.org")
+            .unwrap()
+            .unwrap();
         stray.blocks[0].raw = "stray body edited".into();
         let rev = g.save_page(&stray, stray.rev.as_deref()).unwrap();
         assert_eq!(
             rev,
-            content_rev(&fs::read_to_string(dir.join("journals").join("Friday, 26-06-2026.org")).unwrap())
+            content_rev(
+                &fs::read_to_string(dir.join("journals").join("Friday, 26-06-2026.org")).unwrap()
+            )
         );
 
         // The stray file got the edit; the canonical file is byte-for-byte untouched.
@@ -4670,7 +5242,10 @@ mod tests {
         );
         // And name-resolution still serves the canonical (the stray didn't poison
         // the (kind,name) cache slot).
-        let by_name = g.load_named("Friday, 26-06-2026", PageKind::Journal).unwrap().unwrap();
+        let by_name = g
+            .load_named("Friday, 26-06-2026", PageKind::Journal)
+            .unwrap()
+            .unwrap();
         assert_eq!(by_name.blocks[0].raw, "canonical body");
         let _ = fs::remove_dir_all(&dir);
     }
@@ -4679,9 +5254,15 @@ mod tests {
     fn save_rejects_pinned_path_that_escapes_the_graph() {
         let dir = dup_day_graph("savebadpath");
         let g = Graph::open(&dir);
-        let mut p = g.load_by_path("journals/Friday, 26-06-2026.org").unwrap().unwrap();
+        let mut p = g
+            .load_by_path("journals/Friday, 26-06-2026.org")
+            .unwrap()
+            .unwrap();
         p.path = "../escape.md".into();
-        assert!(g.save_page(&p, p.rev.as_deref()).is_err(), "save must refuse an out-of-graph path");
+        assert!(
+            g.save_page(&p, p.rev.as_deref()).is_err(),
+            "save must refuse an out-of-graph path"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -4713,12 +5294,18 @@ mod tests {
 
         // Openable by name (find_entry resolves via the recursive scan), and the
         // DTO carries the nested path so a later save round-trips in place.
-        let dto = g.load_named("foo", PageKind::Page).unwrap().expect("open nested page by name");
+        let dto = g
+            .load_named("foo", PageKind::Page)
+            .unwrap()
+            .expect("open nested page by name");
         assert_eq!(dto.blocks[0].raw, "nestedsentinel body");
         assert_eq!(dto.path, "pages/client-a/foo.md");
 
         // Indexed for full-text search (the cache folded it in via list_pages).
-        assert!(!g.search("nestedsentinel", 10).is_empty(), "nested page is searchable");
+        assert!(
+            !g.search("nestedsentinel", 10).is_empty(),
+            "nested page is searchable"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -4728,7 +5315,11 @@ mod tests {
         // own file — never re-resolve by name and create a flat `pages/foo.md` twin.
         let dir = scratch("nested-roundtrip");
         fs::create_dir_all(dir.join("pages").join("client-a")).unwrap();
-        fs::write(dir.join("pages").join("client-a").join("foo.md"), "- before\n").unwrap();
+        fs::write(
+            dir.join("pages").join("client-a").join("foo.md"),
+            "- before\n",
+        )
+        .unwrap();
         let g = Graph::open(&dir);
         g.warm_cache();
 
@@ -4755,8 +5346,16 @@ mod tests {
         let dir = scratch("nested-collision-roundtrip");
         fs::create_dir_all(dir.join("pages").join("client-a")).unwrap();
         fs::create_dir_all(dir.join("pages").join("client-b")).unwrap();
-        fs::write(dir.join("pages").join("client-a").join("foo.md"), "- before a\n").unwrap();
-        fs::write(dir.join("pages").join("client-b").join("foo.md"), "- before b\n").unwrap();
+        fs::write(
+            dir.join("pages").join("client-a").join("foo.md"),
+            "- before a\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages").join("client-b").join("foo.md"),
+            "- before b\n",
+        )
+        .unwrap();
         let g = Graph::open(&dir);
         g.warm_cache();
 
@@ -4792,13 +5391,20 @@ mod tests {
         let dir = dup_day_graph("merge");
         let g = Graph::open(&dir);
         g.warm_cache();
-        g.merge_pages("journals/Friday, 26-06-2026.org", "journals/2026_06_26.org").unwrap();
+        g.merge_pages("journals/Friday, 26-06-2026.org", "journals/2026_06_26.org")
+            .unwrap();
 
         // Canonical now holds both bodies; the stray is gone (moved to trash).
         let merged = fs::read_to_string(dir.join("journals").join("2026_06_26.org")).unwrap();
-        assert!(merged.contains("canonical body"), "canonical kept: {merged:?}");
+        assert!(
+            merged.contains("canonical body"),
+            "canonical kept: {merged:?}"
+        );
         assert!(merged.contains("stray body"), "stray appended: {merged:?}");
-        assert!(!dir.join("journals").join("Friday, 26-06-2026.org").exists(), "stray trashed");
+        assert!(
+            !dir.join("journals").join("Friday, 26-06-2026.org").exists(),
+            "stray trashed"
+        );
         // Recoverable, not hard-deleted.
         let trash = dir.join("logseq").join(".tine-trash");
         let kept = fs::read_dir(&trash).unwrap().flatten().count();
@@ -4811,7 +5417,8 @@ mod tests {
         let dir = dup_day_graph("renamefile");
         let g = Graph::open(&dir);
         g.warm_cache();
-        g.rename_file_to_page("journals/Friday, 26-06-2026.org", "Old Friday").unwrap();
+        g.rename_file_to_page("journals/Friday, 26-06-2026.org", "Old Friday")
+            .unwrap();
 
         // The stray became a normal page, reachable by its new unique name.
         assert!(!dir.join("journals").join("Friday, 26-06-2026.org").exists());
@@ -4820,12 +5427,22 @@ mod tests {
         assert_eq!(page.kind, PageKind::Page);
 
         // A second rescue onto an existing page name is refused (never clobbers).
-        fs::write(dir.join("journals").join("Saturday, 27-06-2026.org"), "* s\n").unwrap();
+        fs::write(
+            dir.join("journals").join("Saturday, 27-06-2026.org"),
+            "* s\n",
+        )
+        .unwrap();
         assert!(
-            g.rename_file_to_page("journals/Saturday, 27-06-2026.org", "Old Friday").is_err(),
+            g.rename_file_to_page("journals/Saturday, 27-06-2026.org", "Old Friday")
+                .is_err(),
             "collision refused"
         );
-        assert!(dir.join("journals").join("Saturday, 27-06-2026.org").exists(), "source left intact on refusal");
+        assert!(
+            dir.join("journals")
+                .join("Saturday, 27-06-2026.org")
+                .exists(),
+            "source left intact on refusal"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -4842,7 +5459,11 @@ mod tests {
         assert_eq!(files[0].path, "journals/2026_06_26.org");
         assert_eq!(files[1].path, "journals/Friday, 26-06-2026.org");
         for f in files {
-            assert!(g.resolve_rel(&f.path).is_some(), "conflict path resolves: {}", f.path);
+            assert!(
+                g.resolve_rel(&f.path).is_some(),
+                "conflict path resolves: {}",
+                f.path
+            );
         }
         let _ = fs::remove_dir_all(&dir);
     }

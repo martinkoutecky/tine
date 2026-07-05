@@ -60,7 +60,8 @@ fn is_locale_code(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 24
         && s.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
-        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
 /// Discover the spell-check dictionaries installed on this machine, so the UI can

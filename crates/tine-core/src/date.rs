@@ -70,7 +70,11 @@ impl JournalDate {
         let year = self.year as i64 + total.div_euclid(12);
         let month = (total.rem_euclid(12) + 1) as u32;
         let day = self.day.min(days_in_month(year as i32, month));
-        JournalDate { year: year as i32, month, day }
+        JournalDate {
+            year: year as i32,
+            month,
+            day,
+        }
     }
 
     /// Today's date (UTC) from the system clock.
@@ -85,7 +89,10 @@ impl JournalDate {
 
     /// Default display title, e.g. "Jun 14th, 2026".
     pub fn title(&self) -> String {
-        let month = MONTHS.get((self.month - 1) as usize).copied().unwrap_or("?");
+        let month = MONTHS
+            .get((self.month - 1) as usize)
+            .copied()
+            .unwrap_or("?");
         format!("{} {}, {}", month, ordinal(self.day), self.year)
     }
 
@@ -102,7 +109,13 @@ fn days_in_month(y: i32, m: u32) -> u32 {
     match m {
         1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
         4 | 6 | 9 | 11 => 30,
-        2 => if is_leap(y) { 29 } else { 28 },
+        2 => {
+            if is_leap(y) {
+                29
+            } else {
+                28
+            }
+        }
         _ => 30,
     }
 }
@@ -154,11 +167,28 @@ pub const DEFAULT_FILE_FORMAT: &str = "yyyy_MM_dd";
 pub const DEFAULT_TITLE_FORMAT: &str = "MMM do, yyyy";
 
 const MONTHS_FULL: [&str; 12] = [
-    "January", "February", "March", "April", "May", "June", "July", "August", "September",
-    "October", "November", "December",
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
 ];
-const WEEKDAYS_FULL: [&str; 7] =
-    ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const WEEKDAYS_FULL: [&str; 7] = [
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+];
 const WEEKDAYS_ABBR: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const WEEKDAYS_2: [&str; 7] = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
 const WEEKDAYS_1: [&str; 7] = ["S", "M", "T", "W", "T", "F", "S"];
@@ -303,7 +333,12 @@ impl Format {
                     let (_, len) = match_name(
                         &cs,
                         i,
-                        &[&WEEKDAYS_FULL[..], &WEEKDAYS_ABBR[..], &WEEKDAYS_2[..], &WEEKDAYS_1[..]],
+                        &[
+                            &WEEKDAYS_FULL[..],
+                            &WEEKDAYS_ABBR[..],
+                            &WEEKDAYS_2[..],
+                            &WEEKDAYS_1[..],
+                        ],
                     )?;
                     i += len;
                 }
@@ -316,7 +351,11 @@ impl Format {
         if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
             return None;
         }
-        Some(JournalDate { year: y, month: m, day: d })
+        Some(JournalDate {
+            year: y,
+            month: m,
+            day: d,
+        })
     }
 }
 
@@ -337,7 +376,10 @@ fn take_digits(cs: &[char], i: &mut usize, max: usize) -> Option<i64> {
 fn take_ordinal_suffix(cs: &[char], i: &mut usize) -> Option<()> {
     for suffix in ["st", "nd", "rd", "th"] {
         if *i + 2 <= cs.len()
-            && cs[*i..*i + 2].iter().collect::<String>().eq_ignore_ascii_case(suffix)
+            && cs[*i..*i + 2]
+                .iter()
+                .collect::<String>()
+                .eq_ignore_ascii_case(suffix)
         {
             *i += 2;
             return Some(());
@@ -378,9 +420,14 @@ pub struct JournalFormat {
 impl JournalFormat {
     /// Build from the config strings (`None`/empty → Logseq defaults).
     pub fn new(file_fmt: Option<&str>, title_fmt: Option<&str>) -> JournalFormat {
-        let file_pat = file_fmt.filter(|s| !s.is_empty()).unwrap_or(DEFAULT_FILE_FORMAT).to_string();
-        let title_pat =
-            title_fmt.filter(|s| !s.is_empty()).unwrap_or(DEFAULT_TITLE_FORMAT).to_string();
+        let file_pat = file_fmt
+            .filter(|s| !s.is_empty())
+            .unwrap_or(DEFAULT_FILE_FORMAT)
+            .to_string();
+        let title_pat = title_fmt
+            .filter(|s| !s.is_empty())
+            .unwrap_or(DEFAULT_TITLE_FORMAT)
+            .to_string();
         // OG-style "just works": try the user's formats first, then safe defaults.
         let mut pats: Vec<String> = Vec::new();
         for p in [
@@ -438,7 +485,11 @@ mod fmt_tests {
     use super::*;
 
     fn d(y: i32, m: u32, day: u32) -> JournalDate {
-        JournalDate { year: y, month: m, day }
+        JournalDate {
+            year: y,
+            month: m,
+            day,
+        }
     }
 
     #[test]
@@ -476,12 +527,21 @@ mod fmt_tests {
     #[test]
     fn ordinal_suffixes_parse() {
         let f = Format::compile("MMM do, yyyy");
-        for (s, day) in [("Jan 1st, 2024", 1), ("Jan 2nd, 2024", 2), ("Jan 3rd, 2024", 3), ("Jan 21st, 2024", 21), ("Jan 22nd, 2024", 22)] {
+        for (s, day) in [
+            ("Jan 1st, 2024", 1),
+            ("Jan 2nd, 2024", 2),
+            ("Jan 3rd, 2024", 3),
+            ("Jan 21st, 2024", 21),
+            ("Jan 22nd, 2024", 22),
+        ] {
             assert_eq!(f.parse(s), Some(d(2024, 1, day)));
         }
         assert_eq!(f.parse("Jan 1th, 2024"), Some(d(2024, 1, 1)));
         assert_eq!(f.parse("Jan 1, 2024"), None);
-        assert_eq!(JournalDate::from_title("Jan 1th, 2024"), Some(d(2024, 1, 1)));
+        assert_eq!(
+            JournalDate::from_title("Jan 1th, 2024"),
+            Some(d(2024, 1, 1))
+        );
         assert_eq!(JournalDate::from_title("Jan 1, 2024"), None);
     }
 

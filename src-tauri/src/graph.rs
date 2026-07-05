@@ -34,9 +34,8 @@ pub(crate) fn load_graph(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<GraphMeta, String> {
-    let root = resolve_root(&path).ok_or_else(|| {
-        "no graph path provided (set TINE_GRAPH or pass a path)".to_string()
-    })?;
+    let root = resolve_root(&path)
+        .ok_or_else(|| "no graph path provided (set TINE_GRAPH or pass a path)".to_string())?;
     let graph = Graph::open(&root);
     let meta = graph.meta();
     // Recover any journals mis-saved under their title (see method docs).

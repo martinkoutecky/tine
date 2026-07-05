@@ -49,7 +49,9 @@ fn main() {
         files.sort();
         let mut records: Vec<serde_json::Value> = Vec::new();
         for f in &files {
-            let Ok(content) = fs::read_to_string(f) else { continue };
+            let Ok(content) = fs::read_to_string(f) else {
+                continue;
+            };
             let is_org = f.extension().and_then(|s| s.to_str()) == Some("org");
             let (document, fmt) = if is_org {
                 (org::parse_org(&content), "org")
@@ -68,6 +70,12 @@ fn main() {
             eprintln!("{}: write failed: {e}", out.display());
             continue;
         }
-        eprintln!("{}: {} blocks from {} files -> {}", dir, records.len(), files.len(), out.display());
+        eprintln!(
+            "{}: {} blocks from {} files -> {}",
+            dir,
+            records.len(),
+            files.len(),
+            out.display()
+        );
     }
 }

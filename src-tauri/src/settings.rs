@@ -4,7 +4,10 @@ use tauri::Manager;
 // --- local app settings (outside the graph): currently just the backup keep
 // count. A tiny JSON file in the OS app-data dir. ---
 pub(crate) fn settings_path(app: &tauri::AppHandle) -> Option<PathBuf> {
-    app.path().app_data_dir().ok().map(|d| d.join("tine-settings.json"))
+    app.path()
+        .app_data_dir()
+        .ok()
+        .map(|d| d.join("tine-settings.json"))
 }
 /// Serializes ALL device-settings (tine-settings.json) writers; every `set_*` below
 /// goes through `update_settings`, which routes to the shared `tine_core` atomic_update
@@ -135,7 +138,11 @@ pub(crate) fn get_app_string(key: String, default: String, app: tauri::AppHandle
 }
 
 #[tauri::command]
-pub(crate) fn set_app_string(key: String, value: String, app: tauri::AppHandle) -> Result<(), String> {
+pub(crate) fn set_app_string(
+    key: String,
+    value: String,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
     update_settings(&app, |json| {
         json[&key] = serde_json::Value::String(value);
     })
@@ -146,7 +153,10 @@ pub(crate) fn set_app_string(key: String, value: String, app: tauri::AppHandle) 
 /// file in the app-data dir. (WebKitGTK's localStorage is not durably persisted
 /// for this app, so the frontend can't rely on it — it round-trips here.)
 fn session_path(app: &tauri::AppHandle) -> Option<PathBuf> {
-    app.path().app_data_dir().ok().map(|d| d.join("tine-session.json"))
+    app.path()
+        .app_data_dir()
+        .ok()
+        .map(|d| d.join("tine-session.json"))
 }
 
 #[tauri::command]

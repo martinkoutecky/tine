@@ -1,7 +1,7 @@
 //! Integration tests against the on-disk demo graph (standard layout).
 
-use tine_core::Graph;
 use std::path::PathBuf;
+use tine_core::Graph;
 
 fn demo_graph() -> Graph {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../samples/demo-graph");
@@ -15,16 +15,24 @@ fn lists_journals_and_pages() {
     assert!(pages.iter().any(|p| p.name == "logseq-claude"));
     let journals = g.journals_desc();
     // Newest first.
-    assert_eq!(journals.first().map(|j| j.name.as_str()), Some("Jun 14th, 2026"));
+    assert_eq!(
+        journals.first().map(|j| j.name.as_str()),
+        Some("Jun 14th, 2026")
+    );
     assert!(journals.len() >= 2);
 }
 
 #[test]
 fn loads_a_page_with_nesting_and_properties() {
     let g = demo_graph();
-    let entry = g.find_entry("logseq-claude", tine_core::PageKind::Page).unwrap();
+    let entry = g
+        .find_entry("logseq-claude", tine_core::PageKind::Page)
+        .unwrap();
     let dto = g.load_page(&entry).unwrap();
-    assert_eq!(dto.pre_block.as_deref(), Some("title:: logseq-claude\ntags:: project, tooling"));
+    assert_eq!(
+        dto.pre_block.as_deref(),
+        Some("title:: logseq-claude\ntags:: project, tooling")
+    );
     // Has a nested child under the first block.
     assert!(dto.blocks[0].children.len() >= 1);
 }
@@ -64,18 +72,29 @@ fn block_ref_counts_and_referrers() {
     // Count = distinct referrer blocks: 1 (same page) + 3 (Other) = 4. The double
     // ref on the last Other block counts once.
     let counts = g.block_ref_counts();
-    assert_eq!(counts.get("aaaaaaaa-0000-0000-0000-000000000001").copied(), Some(4), "counts: {counts:?}");
+    assert_eq!(
+        counts.get("aaaaaaaa-0000-0000-0000-000000000001").copied(),
+        Some(4),
+        "counts: {counts:?}"
+    );
 
     // Referrers grouped by page, and the same-page referrer IS included (unlike
     // page backlinks).
     let groups = g.block_referrers("aaaaaaaa-0000-0000-0000-000000000001");
-    let mut by_page: std::collections::HashMap<&str, usize> =
-        std::collections::HashMap::new();
+    let mut by_page: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
     for gr in groups.iter() {
         by_page.insert(gr.page.as_str(), gr.blocks.len());
     }
-    assert_eq!(by_page.get("Target").copied(), Some(1), "same-page referrer included");
-    assert_eq!(by_page.get("Other").copied(), Some(3), "all 3 Other referrers");
+    assert_eq!(
+        by_page.get("Target").copied(),
+        Some(1),
+        "same-page referrer included"
+    );
+    assert_eq!(
+        by_page.get("Other").copied(),
+        Some(3),
+        "all 3 Other referrers"
+    );
 
     // The target block itself is not a referrer of itself.
     let target_refs: Vec<&str> = groups
@@ -83,7 +102,12 @@ fn block_ref_counts_and_referrers() {
         .find(|gr| gr.page == "Target")
         .map(|gr| gr.blocks.iter().map(|b| b.raw.as_str()).collect())
         .unwrap_or_default();
-    assert!(target_refs.iter().all(|r| r.contains("see ((aaaaaaaa-0000-0000-0000-000000000001))")), "{target_refs:?}");
+    assert!(
+        target_refs
+            .iter()
+            .all(|r| r.contains("see ((aaaaaaaa-0000-0000-0000-000000000001))")),
+        "{target_refs:?}"
+    );
 
     std::fs::remove_dir_all(&root).ok();
 }
@@ -137,7 +161,7 @@ fn search_cache_reflects_saves_and_deletes() {
             id: "x".into(),
             raw: "contains zonkwort here".into(),
             ..Default::default()
-            }],
+        }],
         rev: None,
         format: Default::default(),
         read_only: false,
@@ -150,7 +174,11 @@ fn search_cache_reflects_saves_and_deletes() {
 
     // Deleting the page removes it from the cache too.
     g.delete_page("Fresh", PageKind::Page).unwrap();
-    assert_eq!(g.search("zonkwort", 10).len(), 0, "deleted page should drop out");
+    assert_eq!(
+        g.search("zonkwort", 10).len(),
+        0,
+        "deleted page should drop out"
+    );
 
     std::fs::remove_dir_all(&root).ok();
 }
@@ -188,7 +216,11 @@ fn search_ignores_hidden_property_metadata() {
         "token only in a property line should not be a search hit"
     );
     // But the visible body is still searchable.
-    assert_eq!(g.search("ordinary", 10).len(), 1, "visible body still matches");
+    assert_eq!(
+        g.search("ordinary", 10).len(),
+        1,
+        "visible body still matches"
+    );
 
     std::fs::remove_dir_all(&root).ok();
 }
@@ -215,9 +247,18 @@ fn save_preserves_file_format_no_churn() {
         let dto = g.load_named(name, PageKind::Page).unwrap().unwrap();
         g.save_page(&dto, dto.rev.as_deref()).unwrap();
     }
-    assert_eq!(std::fs::read_to_string(root.join("pages").join("A.md")).unwrap(), no_nl);
-    assert_eq!(std::fs::read_to_string(root.join("pages").join("B.md")).unwrap(), with_nl);
-    assert_eq!(std::fs::read_to_string(root.join("pages").join("C.md")).unwrap(), spaces);
+    assert_eq!(
+        std::fs::read_to_string(root.join("pages").join("A.md")).unwrap(),
+        no_nl
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("pages").join("B.md")).unwrap(),
+        with_nl
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("pages").join("C.md")).unwrap(),
+        spaces
+    );
 
     std::fs::remove_dir_all(&root).ok();
 }
@@ -268,7 +309,10 @@ fn save_conflicts_when_file_deleted_externally() {
     // Saving must conflict, NOT silently resurrect the deleted note.
     let err = g.save_page(&dto, dto.rev.as_deref()).unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
-    assert!(!path.exists(), "deleted file must stay deleted on a conflicting save");
+    assert!(
+        !path.exists(),
+        "deleted file must stay deleted on a conflicting save"
+    );
     std::fs::remove_dir_all(&root).ok();
 }
 
@@ -289,8 +333,12 @@ fn load_reflects_external_change_then_save_is_clean() {
     // load_page must reconcile and serve the NEW content (not the stale cache),
     // and the rev it returns must match disk so a save doesn't spuriously conflict.
     let dto = g.load_named("N", PageKind::Page).unwrap().unwrap();
-    assert!(dto.blocks[0].raw.contains("TWO external"), "load reflects external change");
-    g.save_page(&dto, dto.rev.as_deref()).expect("save of freshly-loaded current content is clean");
+    assert!(
+        dto.blocks[0].raw.contains("TWO external"),
+        "load reflects external change"
+    );
+    g.save_page(&dto, dto.rev.as_deref())
+        .expect("save of freshly-loaded current content is clean");
     std::fs::remove_dir_all(&root).ok();
 }
 
@@ -311,21 +359,30 @@ fn consecutive_self_saves_do_not_conflict() {
         kind: PageKind::Page,
         title: "D".into(),
         pre_block: None,
-        blocks: vec![BlockDto { id: "b1".into(), raw: raw.into(), ..Default::default() }],
+        blocks: vec![BlockDto {
+            id: "b1".into(),
+            raw: raw.into(),
+            ..Default::default()
+        }],
         rev: None,
         format: Default::default(),
         read_only: false,
         path: String::new(),
     };
     // 1) date picker inserts a SCHEDULED line (page is new — no baseline yet).
-    let r1 = g.save_page(&mk("TODO task\nSCHEDULED: <2026-06-16 Tue>"), None).unwrap();
+    let r1 = g
+        .save_page(&mk("TODO task\nSCHEDULED: <2026-06-16 Tue>"), None)
+        .unwrap();
     // 2) user deletes the inserted text — must NOT be read as an external edit.
     let r2 = g
         .save_page(&mk("TODO task"), Some(&r1))
         .expect("no spurious conflict after our own save");
     // 3) and a further edit still saves cleanly.
-    g.save_page(&mk("TODO task edited"), Some(&r2)).expect("no spurious conflict");
-    assert!(std::fs::read_to_string(root.join("pages").join("D.md")).unwrap().contains("edited"));
+    g.save_page(&mk("TODO task edited"), Some(&r2))
+        .expect("no spurious conflict");
+    assert!(std::fs::read_to_string(root.join("pages").join("D.md"))
+        .unwrap()
+        .contains("edited"));
 
     std::fs::remove_dir_all(&root).ok();
 }
@@ -350,7 +407,11 @@ fn sync_file_detects_external_change_and_suppresses_self() {
     let changed = g.sync_file(&path).expect("external change detected");
     assert_eq!(changed.name, "S");
     assert_eq!(changed.kind, PageKind::Page);
-    assert_eq!(g.search("after", 10).len(), 1, "cache updated to new content");
+    assert_eq!(
+        g.search("after", 10).len(),
+        1,
+        "cache updated to new content"
+    );
     assert_eq!(g.search("before", 10).len(), 0);
 
     // Re-syncing the same content is a no-op (self-write suppression).
@@ -381,7 +442,11 @@ fn noop_save_does_not_bump_cache_generation() {
         kind: PageKind::Page,
         title: "N".into(),
         pre_block: None,
-        blocks: vec![BlockDto { id: "b1".into(), raw: raw.into(), ..Default::default() }],
+        blocks: vec![BlockDto {
+            id: "b1".into(),
+            raw: raw.into(),
+            ..Default::default()
+        }],
         rev: None,
         format: Default::default(),
         read_only: false,
@@ -392,10 +457,17 @@ fn noop_save_does_not_bump_cache_generation() {
     // Re-save byte-identical content (no-op) with the returned baseline.
     let r2 = g.save_page(&mk("hello"), Some(&r1)).unwrap();
     assert_eq!(r1, r2, "rev must be stable across a no-op save");
-    assert_eq!(g.cache_generation(), gen1, "no-op save must not bump cache_gen");
+    assert_eq!(
+        g.cache_generation(),
+        gen1,
+        "no-op save must not bump cache_gen"
+    );
     // A real edit DOES bump it.
     g.save_page(&mk("hello world"), Some(&r2)).unwrap();
-    assert!(g.cache_generation() > gen1, "a real edit must bump cache_gen");
+    assert!(
+        g.cache_generation() > gen1,
+        "a real edit must bump cache_gen"
+    );
 
     std::fs::remove_dir_all(&root).ok();
 }
@@ -419,7 +491,11 @@ fn self_write_marker_does_not_outlive_its_save() {
         kind: PageKind::Page,
         title: "C".into(),
         pre_block: None,
-        blocks: vec![BlockDto { id: "b1".into(), raw: "noted".into(), ..Default::default() }],
+        blocks: vec![BlockDto {
+            id: "b1".into(),
+            raw: "noted".into(),
+            ..Default::default()
+        }],
         rev: None,
         format: Default::default(),
         read_only: false,
@@ -427,7 +503,10 @@ fn self_write_marker_does_not_outlive_its_save() {
     };
     g.save_page(&page, None).unwrap(); // sets, then self-removes, the marker
     let path = root.join("pages").join("C.md");
-    assert!(g.forget_file(&path).is_some(), "page should have been cached");
+    assert!(
+        g.forget_file(&path).is_some(),
+        "page should have been cached"
+    );
     // The page still exists on disk; with the marker gone, re-syncing must treat
     // it as a real (re)appearance, not a suppressed self-write.
     assert!(
@@ -454,7 +533,11 @@ fn disk_rev_fast_path_is_fresh_and_detects_external_change() {
         kind: PageKind::Page,
         title: "R".into(),
         pre_block: None,
-        blocks: vec![BlockDto { id: "b1".into(), raw: "alpha".into(), ..Default::default() }],
+        blocks: vec![BlockDto {
+            id: "b1".into(),
+            raw: "alpha".into(),
+            ..Default::default()
+        }],
         rev: None,
         format: Default::default(),
         read_only: false,
@@ -462,16 +545,27 @@ fn disk_rev_fast_path_is_fresh_and_detects_external_change() {
     };
     g.save_page(&page, None).unwrap(); // populates disk_revs[R] (marker self-removed)
     let path = root.join("pages").join("R.md");
-    assert!(g.sync_file(&path).is_none(), "unchanged save → suppressed via disk_rev fast-path");
-    assert!(g.sync_file(&path).is_none(), "still unchanged → disk_rev fast-path again");
+    assert!(
+        g.sync_file(&path).is_none(),
+        "unchanged save → suppressed via disk_rev fast-path"
+    );
+    assert!(
+        g.sync_file(&path).is_none(),
+        "still unchanged → disk_rev fast-path again"
+    );
 
     // A real external edit must still be detected (not masked by disk_revs).
     std::fs::write(&path, "- beta\n").unwrap();
-    let changed = g.sync_file(&path).expect("external change detected despite disk_revs entry");
+    let changed = g
+        .sync_file(&path)
+        .expect("external change detected despite disk_revs entry");
     assert_eq!(changed.name, "R");
     // The cache now serves the new content (load_page goes through sync_file_content).
     let dto = g.load_named("R", PageKind::Page).unwrap().unwrap();
-    assert!(dto.blocks.iter().any(|b| b.raw.contains("beta")), "served stale after external edit");
+    assert!(
+        dto.blocks.iter().any(|b| b.raw.contains("beta")),
+        "served stale after external edit"
+    );
 
     std::fs::remove_dir_all(&root).ok();
 }
@@ -496,7 +590,11 @@ fn self_write_is_not_reported_as_external_change() {
         kind: PageKind::Page,
         title: "W".into(),
         pre_block: None,
-        blocks: vec![BlockDto { id: "b1".into(), raw: "hello\n> quote".into(), ..Default::default() }],
+        blocks: vec![BlockDto {
+            id: "b1".into(),
+            raw: "hello\n> quote".into(),
+            ..Default::default()
+        }],
         rev: None,
         format: Default::default(),
         read_only: false,
@@ -517,19 +615,32 @@ fn self_write_is_not_reported_as_external_change() {
 fn query_between_filters_by_journal_date() {
     let root = std::env::temp_dir().join(format!("tine-between-test-{}", std::process::id()));
     std::fs::create_dir_all(root.join("journals")).unwrap();
-    std::fs::write(root.join("journals").join("2022_06_15.md"), "- TODO [[scs]] recent\n").unwrap();
-    std::fs::write(root.join("journals").join("2019_01_01.md"), "- TODO [[scs]] old\n").unwrap();
+    std::fs::write(
+        root.join("journals").join("2022_06_15.md"),
+        "- TODO [[scs]] recent\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("journals").join("2019_01_01.md"),
+        "- TODO [[scs]] old\n",
+    )
+    .unwrap();
 
     let g = Graph::open(&root);
-    let groups = g.run_query(
-        "(and (task TODO) (and [[scs]] (between [[Jan 1st, 2021]] [[Jan 1st, 2100]])))",
-    );
+    let groups = g
+        .run_query("(and (task TODO) (and [[scs]] (between [[Jan 1st, 2021]] [[Jan 1st, 2100]])))");
     let raws: Vec<String> = groups
         .iter()
         .flat_map(|gr| gr.blocks.iter().map(|b| b.raw.clone()))
         .collect();
-    assert!(raws.iter().any(|r| r.contains("recent")), "in-range journal matches: {raws:?}");
-    assert!(!raws.iter().any(|r| r.contains("old")), "out-of-range journal excluded: {raws:?}");
+    assert!(
+        raws.iter().any(|r| r.contains("recent")),
+        "in-range journal matches: {raws:?}"
+    );
+    assert!(
+        !raws.iter().any(|r| r.contains("old")),
+        "out-of-range journal excluded: {raws:?}"
+    );
 
     std::fs::remove_dir_all(&root).ok();
 }
@@ -540,8 +651,16 @@ fn rename_page_moves_file_and_updates_refs() {
     std::fs::create_dir_all(root.join("pages")).unwrap();
     std::fs::create_dir_all(root.join("journals")).unwrap();
     std::fs::write(root.join("pages").join("Old Name.md"), "- the page body\n").unwrap();
-    std::fs::write(root.join("pages").join("Other.md"), "- see [[Old Name]] and #[[Old Name]]\n").unwrap();
-    std::fs::write(root.join("journals").join("2026_06_15.md"), "- ref [[Old Name]]\n").unwrap();
+    std::fs::write(
+        root.join("pages").join("Other.md"),
+        "- see [[Old Name]] and #[[Old Name]]\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("journals").join("2026_06_15.md"),
+        "- ref [[Old Name]]\n",
+    )
+    .unwrap();
 
     let g = Graph::open(&root);
     g.rename_page("Old Name", "New Name").unwrap();
@@ -572,12 +691,36 @@ fn rename_cascades_namespace_and_rewrites_self_refs() {
     // These namespace pages use the `___` separator, so the graph must be pinned
     // to :triple-lowbar (the modern format) — otherwise (legacy default) `___`
     // isn't a separator and the cascade wouldn't see them as `Proj/*` children.
-    std::fs::write(root.join("logseq").join("config.edn"), "{:file/name-format :triple-lowbar}\n").unwrap();
-    std::fs::write(root.join("pages").join("Proj.md"), "- root, see [[Proj]] self\n").unwrap();
-    std::fs::write(root.join("pages").join("Proj___Child.md"), "- child of [[Proj]]\n").unwrap();
-    std::fs::write(root.join("pages").join("Proj___Child___Deep.md"), "- deep\n").unwrap();
-    std::fs::write(root.join("pages").join("Other.md"), "- [[Proj]] and [[Proj/Child]]\n").unwrap();
-    std::fs::write(root.join("journals").join("2026_06_15.md"), "- note [[Proj/Child/Deep]]\n").unwrap();
+    std::fs::write(
+        root.join("logseq").join("config.edn"),
+        "{:file/name-format :triple-lowbar}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("pages").join("Proj.md"),
+        "- root, see [[Proj]] self\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("pages").join("Proj___Child.md"),
+        "- child of [[Proj]]\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("pages").join("Proj___Child___Deep.md"),
+        "- deep\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("pages").join("Other.md"),
+        "- [[Proj]] and [[Proj/Child]]\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("journals").join("2026_06_15.md"),
+        "- note [[Proj/Child/Deep]]\n",
+    )
+    .unwrap();
 
     let g = Graph::open(&root);
     g.rename_page("Proj", "Renamed").unwrap();
@@ -598,7 +741,10 @@ fn rename_cascades_namespace_and_rewrites_self_refs() {
     assert!(child.contains("[[Renamed]]"), "child→parent ref: {child}");
     // Refs everywhere rewritten, parent and namespaced child both.
     let other = std::fs::read_to_string(p.join("Other.md")).unwrap();
-    assert!(other.contains("[[Renamed]]") && other.contains("[[Renamed/Child]]"), "{other}");
+    assert!(
+        other.contains("[[Renamed]]") && other.contains("[[Renamed/Child]]"),
+        "{other}"
+    );
     assert!(!other.contains("Proj"), "{other}");
     let journal = std::fs::read_to_string(root.join("journals").join("2026_06_15.md")).unwrap();
     assert!(journal.contains("[[Renamed/Child/Deep]]"), "{journal}");
@@ -615,7 +761,11 @@ fn legacy_namespace_file_round_trips() {
     let root = std::env::temp_dir().join(format!("tine-ns-legacy-{}", std::process::id()));
     std::fs::create_dir_all(root.join("pages")).unwrap();
     std::fs::create_dir_all(root.join("journals")).unwrap();
-    std::fs::write(root.join("pages").join("math%2Falgebra.md"), "- legacy ns page\n").unwrap();
+    std::fs::write(
+        root.join("pages").join("math%2Falgebra.md"),
+        "- legacy ns page\n",
+    )
+    .unwrap();
 
     let g = Graph::open(&root);
     // Discoverable under the decoded, slashed name.
@@ -643,7 +793,11 @@ fn rename_rewrites_bare_tags_property() {
     std::fs::create_dir_all(root.join("pages")).unwrap();
     std::fs::create_dir_all(root.join("journals")).unwrap();
     std::fs::write(root.join("pages").join("Old.md"), "- old page body\n").unwrap();
-    std::fs::write(root.join("pages").join("Note.md"), "tags:: Old, keep\n\n- body\n").unwrap();
+    std::fs::write(
+        root.join("pages").join("Note.md"),
+        "tags:: Old, keep\n\n- body\n",
+    )
+    .unwrap();
 
     let g = Graph::open(&root);
     g.rename_page("Old", "New").unwrap();
@@ -651,7 +805,10 @@ fn rename_rewrites_bare_tags_property() {
     assert!(!root.join("pages").join("Old.md").exists());
     assert!(root.join("pages").join("New.md").exists());
     let note = std::fs::read_to_string(root.join("pages").join("Note.md")).unwrap();
-    assert!(note.contains("tags:: New, keep"), "bare tag rewritten + sibling kept: {note}");
+    assert!(
+        note.contains("tags:: New, keep"),
+        "bare tag rewritten + sibling kept: {note}"
+    );
     assert!(!note.contains("Old"), "{note}");
 
     std::fs::remove_dir_all(&root).ok();
@@ -668,9 +825,18 @@ fn rename_aborts_on_target_collision_without_changes() {
     std::fs::write(root.join("pages").join("B.md"), "- b body\n").unwrap();
 
     let g = Graph::open(&root);
-    assert!(g.rename_page("A", "B").is_err(), "rename onto existing page must fail");
-    assert_eq!(std::fs::read_to_string(root.join("pages").join("A.md")).unwrap(), "- a body [[B]]\n");
-    assert_eq!(std::fs::read_to_string(root.join("pages").join("B.md")).unwrap(), "- b body\n");
+    assert!(
+        g.rename_page("A", "B").is_err(),
+        "rename onto existing page must fail"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("pages").join("A.md")).unwrap(),
+        "- a body [[B]]\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("pages").join("B.md")).unwrap(),
+        "- b body\n"
+    );
 
     std::fs::remove_dir_all(&root).ok();
 }
@@ -682,7 +848,11 @@ fn rename_ref_only_page_rewrites_refs_without_a_file() {
     let root = std::env::temp_dir().join(format!("tine-refonly-rename-{}", std::process::id()));
     std::fs::create_dir_all(root.join("pages")).unwrap();
     std::fs::create_dir_all(root.join("journals")).unwrap();
-    std::fs::write(root.join("pages").join("Ref.md"), "- mentions [[Ghost]] here\n").unwrap();
+    std::fs::write(
+        root.join("pages").join("Ref.md"),
+        "- mentions [[Ghost]] here\n",
+    )
+    .unwrap();
 
     let g = Graph::open(&root);
     g.rename_page("Ghost", "Spirit").unwrap();
@@ -700,8 +870,11 @@ fn query_and_not_includes_everything_except_excluded() {
     // reference [[X]] — regression for "NOT excludes right but drops others".
     let root = std::env::temp_dir().join(format!("tine-not-test-{}", std::process::id()));
     std::fs::create_dir_all(root.join("pages")).unwrap();
-    std::fs::write(root.join("pages").join("P.md"),
-        "- TODO alpha\n- TODO beta [[X]]\n- TODO gamma\n- DONE delta\n").unwrap();
+    std::fs::write(
+        root.join("pages").join("P.md"),
+        "- TODO alpha\n- TODO beta [[X]]\n- TODO gamma\n- DONE delta\n",
+    )
+    .unwrap();
     let g = Graph::open(&root);
     let raws: Vec<String> = g
         .run_query("(and (task TODO) (not [[X]]))")
@@ -710,8 +883,14 @@ fn query_and_not_includes_everything_except_excluded() {
         .collect();
     assert!(raws.iter().any(|r| r.contains("alpha")), "{raws:?}");
     assert!(raws.iter().any(|r| r.contains("gamma")), "{raws:?}");
-    assert!(!raws.iter().any(|r| r.contains("beta")), "X-referencing excluded: {raws:?}");
-    assert!(!raws.iter().any(|r| r.contains("delta")), "non-TODO excluded: {raws:?}");
+    assert!(
+        !raws.iter().any(|r| r.contains("beta")),
+        "X-referencing excluded: {raws:?}"
+    );
+    assert!(
+        !raws.iter().any(|r| r.contains("delta")),
+        "non-TODO excluded: {raws:?}"
+    );
     std::fs::remove_dir_all(&root).ok();
 }
 
@@ -721,23 +900,43 @@ fn page_aliases_resolve_and_collect_backlinks() {
     let root = std::env::temp_dir().join(format!("tine-alias-test-{}", std::process::id()));
     std::fs::create_dir_all(root.join("pages")).unwrap();
     // Canonical page "Parameterized Complexity" with an alias "PC".
-    std::fs::write(root.join("pages").join("Parameterized Complexity.md"),
-        "alias:: PC\n\n- the canonical page\n").unwrap();
+    std::fs::write(
+        root.join("pages").join("Parameterized Complexity.md"),
+        "alias:: PC\n\n- the canonical page\n",
+    )
+    .unwrap();
     // One page links the canonical name, another links the alias.
-    std::fs::write(root.join("pages").join("A.md"), "- see [[Parameterized Complexity]]\n").unwrap();
+    std::fs::write(
+        root.join("pages").join("A.md"),
+        "- see [[Parameterized Complexity]]\n",
+    )
+    .unwrap();
     std::fs::write(root.join("pages").join("B.md"), "- via [[PC]]\n").unwrap();
 
     let g = Graph::open(&root);
     // Loading the alias resolves to the canonical page.
-    let dto = g.load_named("PC", PageKind::Page).unwrap().expect("alias resolves");
+    let dto = g
+        .load_named("PC", PageKind::Page)
+        .unwrap()
+        .expect("alias resolves");
     assert!(dto.blocks.iter().any(|b| b.raw.contains("canonical page")));
     // Backlinks of the canonical page include the alias-referencing page.
-    let pages: Vec<String> = g.backlinks("Parameterized Complexity").iter().map(|gr| gr.page.clone()).collect();
+    let pages: Vec<String> = g
+        .backlinks("Parameterized Complexity")
+        .iter()
+        .map(|gr| gr.page.clone())
+        .collect();
     assert!(pages.contains(&"A".to_string()), "{pages:?}");
-    assert!(pages.contains(&"B".to_string()), "alias ref counted: {pages:?}");
+    assert!(
+        pages.contains(&"B".to_string()),
+        "alias ref counted: {pages:?}"
+    );
     // Backlinks queried via the alias name also resolve to the canonical set.
     let via_alias: Vec<String> = g.backlinks("PC").iter().map(|gr| gr.page.clone()).collect();
-    assert!(via_alias.contains(&"A".to_string()) && via_alias.contains(&"B".to_string()), "{via_alias:?}");
+    assert!(
+        via_alias.contains(&"A".to_string()) && via_alias.contains(&"B".to_string()),
+        "{via_alias:?}"
+    );
 
     std::fs::remove_dir_all(&root).ok();
 }
@@ -753,17 +952,30 @@ fn set_favorites_round_trips_in_config_edn() {
         "{;; :favorites [\"example\"]\n :preferred-workflow :now\n :journals-directory \"journals\"}\n").unwrap();
 
     let g = Graph::open(&root);
-    g.set_favorites(&["Inbox".into(), "Reading List".into()]).unwrap();
+    g.set_favorites(&["Inbox".into(), "Reading List".into()])
+        .unwrap();
     // Re-open and confirm favorites parsed back + the other key survived.
     let g2 = Graph::open(&root);
-    assert_eq!(g2.meta().favorites, vec!["Inbox".to_string(), "Reading List".to_string()]);
+    assert_eq!(
+        g2.meta().favorites,
+        vec!["Inbox".to_string(), "Reading List".to_string()]
+    );
     let cfg = std::fs::read_to_string(root.join("logseq").join("config.edn")).unwrap();
-    assert!(cfg.contains(":journals-directory"), "other keys preserved: {cfg}");
-    assert!(cfg.contains(";; :favorites [\"example\"]"), "commented decoy untouched: {cfg}");
+    assert!(
+        cfg.contains(":journals-directory"),
+        "other keys preserved: {cfg}"
+    );
+    assert!(
+        cfg.contains(";; :favorites [\"example\"]"),
+        "commented decoy untouched: {cfg}"
+    );
 
     // Updating again replaces (not appends) the vector.
     g2.set_favorites(&["Only One".into()]).unwrap();
-    assert_eq!(Graph::open(&root).meta().favorites, vec!["Only One".to_string()]);
+    assert_eq!(
+        Graph::open(&root).meta().favorites,
+        vec!["Only One".to_string()]
+    );
 
     std::fs::remove_dir_all(&root).ok();
 }
@@ -787,12 +999,28 @@ fn set_favorites_edn_aware_vector_end() {
 
     Graph::open(&root).set_favorites(&["Only".into()]).unwrap();
     let cfg = std::fs::read_to_string(&cfg_path).unwrap();
-    assert_eq!(Graph::open(&root).meta().favorites, vec!["Only".to_string()]);
-    assert!(cfg.contains(":journals-directory"), "sibling preserved: {cfg}");
+    assert_eq!(
+        Graph::open(&root).meta().favorites,
+        vec!["Only".to_string()]
+    );
+    assert!(
+        cfg.contains(":journals-directory"),
+        "sibling preserved: {cfg}"
+    );
     // The whole old vector is gone — no truncation fragment left behind.
-    assert!(!cfg.contains("A]B"), "old first entry fully replaced: {cfg}");
-    assert!(!cfg.contains("\"C\""), "old second entry gone (no leftover): {cfg}");
-    assert_eq!(cfg.matches(":favorites").count(), 1, "exactly one :favorites: {cfg}");
+    assert!(
+        !cfg.contains("A]B"),
+        "old first entry fully replaced: {cfg}"
+    );
+    assert!(
+        !cfg.contains("\"C\""),
+        "old second entry gone (no leftover): {cfg}"
+    );
+    assert_eq!(
+        cfg.matches(":favorites").count(),
+        1,
+        "exactly one :favorites: {cfg}"
+    );
 
     std::fs::remove_dir_all(&root).ok();
 }
@@ -820,9 +1048,19 @@ fn set_preferred_workflow_ignores_key_inside_string_literal() {
     // (Asserted on file content: the matching READER `keyword_value` isn't
     // string-aware for key LOCATION — a separate, far more pathological case
     // codex did not flag — so we verify the writer targeted the right key here.)
-    assert!(c.contains("\":preferred-workflow :now\""), "string decoy untouched: {c}");
-    assert!(c.contains(":preferred-workflow :todo"), "real key flipped in file: {c}");
-    assert_eq!(c.matches(":todo").count(), 1, "exactly the real value changed: {c}");
+    assert!(
+        c.contains("\":preferred-workflow :now\""),
+        "string decoy untouched: {c}"
+    );
+    assert!(
+        c.contains(":preferred-workflow :todo"),
+        "real key flipped in file: {c}"
+    );
+    assert_eq!(
+        c.matches(":todo").count(),
+        1,
+        "exactly the real value changed: {c}"
+    );
 
     std::fs::remove_dir_all(&root).ok();
 }
@@ -848,9 +1086,14 @@ fn config_readers_are_edn_aware_for_bracket_brace_in_values() {
     );
 
     // Default journal template name containing `}` survives a reload.
-    Graph::open(&root).set_default_journal_template(Some("Plan {B}")).unwrap();
+    Graph::open(&root)
+        .set_default_journal_template(Some("Plan {B}"))
+        .unwrap();
     assert_eq!(
-        Graph::open(&root).meta().default_journal_template.as_deref(),
+        Graph::open(&root)
+            .meta()
+            .default_journal_template
+            .as_deref(),
         Some("Plan {B}")
     );
 
@@ -875,17 +1118,30 @@ fn config_reader_preserves_semicolon_in_string_values() {
         vec!["A;B".to_string(), "C".to_string()]
     );
 
-    Graph::open(&root).set_default_journal_template(Some("Plan;B")).unwrap();
+    Graph::open(&root)
+        .set_default_journal_template(Some("Plan;B"))
+        .unwrap();
     assert_eq!(
-        Graph::open(&root).meta().default_journal_template.as_deref(),
+        Graph::open(&root)
+            .meta()
+            .default_journal_template
+            .as_deref(),
         Some("Plan;B")
     );
 
     // A real (line-start) comment is still stripped — the decoy must not be read.
     let cfg_path = root.join("logseq").join("config.edn");
     let cur = std::fs::read_to_string(&cfg_path).unwrap();
-    std::fs::write(&cfg_path, format!(";; :journals-directory \"DECOY\"\n{cur}")).unwrap();
-    assert_ne!(Graph::open(&root).meta().journals_dir, "DECOY", "line comment still stripped");
+    std::fs::write(
+        &cfg_path,
+        format!(";; :journals-directory \"DECOY\"\n{cur}"),
+    )
+    .unwrap();
+    assert_ne!(
+        Graph::open(&root).meta().journals_dir,
+        "DECOY",
+        "line comment still stripped"
+    );
 
     std::fs::remove_dir_all(&root).ok();
 }
@@ -909,18 +1165,32 @@ fn set_preferred_workflow_round_trips_in_config_edn() {
     let g2 = Graph::open(&root);
     assert_eq!(g2.meta().preferred_workflow, "todo");
     let cfg = std::fs::read_to_string(root.join("logseq").join("config.edn")).unwrap();
-    assert!(cfg.contains(":start-of-week 1"), "other keys preserved: {cfg}");
+    assert!(
+        cfg.contains(":start-of-week 1"),
+        "other keys preserved: {cfg}"
+    );
     // The commented decoy line is untouched (still says :todo (example)).
-    assert!(cfg.contains(";; :preferred-workflow :todo (example)"), "comment preserved: {cfg}");
+    assert!(
+        cfg.contains(";; :preferred-workflow :todo (example)"),
+        "comment preserved: {cfg}"
+    );
 
     // Flipping back replaces (not appends) the keyword.
     g2.set_preferred_workflow("now").unwrap();
     assert_eq!(Graph::open(&root).meta().preferred_workflow, "now");
     let cfg = std::fs::read_to_string(root.join("logseq").join("config.edn")).unwrap();
-    assert_eq!(cfg.matches(":preferred-workflow :now").count(), 1, "no duplicate key: {cfg}");
+    assert_eq!(
+        cfg.matches(":preferred-workflow :now").count(),
+        1,
+        "no duplicate key: {cfg}"
+    );
 
     // Inserting into a config that lacks the key entirely.
-    std::fs::write(root.join("logseq").join("config.edn"), "{:start-of-week 0}\n").unwrap();
+    std::fs::write(
+        root.join("logseq").join("config.edn"),
+        "{:start-of-week 0}\n",
+    )
+    .unwrap();
     let g3 = Graph::open(&root);
     g3.set_preferred_workflow("todo").unwrap();
     assert_eq!(Graph::open(&root).meta().preferred_workflow, "todo");
@@ -949,28 +1219,61 @@ fn set_default_journal_template_round_trips_in_config_edn() {
     // Set (key absent → inserted, NOT touching the commented decoy).
     g.set_default_journal_template(Some("Daily")).unwrap();
     assert_eq!(jtmpl().as_deref(), Some("Daily"));
-    assert!(cfg().contains(":start-of-week 1"), "sibling key preserved: {}", cfg());
-    assert!(cfg().contains(";; :default-templates {:journals \"Commented\"}"), "comment preserved: {}", cfg());
+    assert!(
+        cfg().contains(":start-of-week 1"),
+        "sibling key preserved: {}",
+        cfg()
+    );
+    assert!(
+        cfg().contains(";; :default-templates {:journals \"Commented\"}"),
+        "comment preserved: {}",
+        cfg()
+    );
 
     // Replace (no duplicate key).
-    Graph::open(&root).set_default_journal_template(Some("Weekly")).unwrap();
+    Graph::open(&root)
+        .set_default_journal_template(Some("Weekly"))
+        .unwrap();
     assert_eq!(jtmpl().as_deref(), Some("Weekly"));
-    assert_eq!(cfg().matches(":journals").count(), 2, "one real + one commented :journals: {}", cfg());
+    assert_eq!(
+        cfg().matches(":journals").count(),
+        2,
+        "one real + one commented :journals: {}",
+        cfg()
+    );
 
     // A multi-word name round-trips.
-    Graph::open(&root).set_default_journal_template(Some("My Daily Log")).unwrap();
+    Graph::open(&root)
+        .set_default_journal_template(Some("My Daily Log"))
+        .unwrap();
     assert_eq!(jtmpl().as_deref(), Some("My Daily Log"));
 
     // Clear → back to factory default (blank journals).
-    Graph::open(&root).set_default_journal_template(None).unwrap();
+    Graph::open(&root)
+        .set_default_journal_template(None)
+        .unwrap();
     assert_eq!(jtmpl(), None);
-    assert!(cfg().contains(":start-of-week 1"), "sibling still preserved after clear: {}", cfg());
+    assert!(
+        cfg().contains(":start-of-week 1"),
+        "sibling still preserved after clear: {}",
+        cfg()
+    );
 
     // Preserve a SIBLING key inside :default-templates when clearing :journals.
-    std::fs::write(&cfg_path, "{:default-templates {:journals \"D\" :pages \"P\"}}\n").unwrap();
-    Graph::open(&root).set_default_journal_template(None).unwrap();
+    std::fs::write(
+        &cfg_path,
+        "{:default-templates {:journals \"D\" :pages \"P\"}}\n",
+    )
+    .unwrap();
+    Graph::open(&root)
+        .set_default_journal_template(None)
+        .unwrap();
     assert_eq!(jtmpl(), None);
-    assert!(cfg().contains(":pages \"P\""), "sibling inner key preserved: {}", cfg());
+    assert!(
+        cfg().contains(":pages \"P\""),
+        "sibling inner key preserved: {}",
+        cfg()
+    );
 
     std::fs::remove_dir_all(&root).ok();
 }
@@ -990,10 +1293,20 @@ fn set_default_journal_template_ignores_commented_journals_inside_map() {
         "{:default-templates { ;; :journals \"Commented\"\n  :pages \"P\"}}\n",
     )
     .unwrap();
-    Graph::open(&root).set_default_journal_template(Some("Real")).unwrap();
+    Graph::open(&root)
+        .set_default_journal_template(Some("Real"))
+        .unwrap();
     let c = std::fs::read_to_string(&cfg_path).unwrap();
-    assert!(c.contains(":journals \"Real\""), "real journals inserted: {}", c);
-    assert!(c.contains(";; :journals \"Commented\""), "comment untouched: {}", c);
+    assert!(
+        c.contains(":journals \"Real\""),
+        "real journals inserted: {}",
+        c
+    );
+    assert!(
+        c.contains(";; :journals \"Commented\""),
+        "comment untouched: {}",
+        c
+    );
     assert!(c.contains(":pages \"P\""), "sibling preserved: {}", c);
     std::fs::remove_dir_all(&root).ok();
 }
@@ -1008,24 +1321,55 @@ fn set_default_journal_template_quoted_name_does_not_corrupt_config() {
     std::fs::create_dir_all(root.join("logseq")).unwrap();
     std::fs::create_dir_all(root.join("pages")).unwrap();
     let cfg_path = root.join("logseq").join("config.edn");
-    std::fs::write(&cfg_path, "{:start-of-week 1\n :default-templates {:journals \"Old\"}}\n").unwrap();
+    std::fs::write(
+        &cfg_path,
+        "{:start-of-week 1\n :default-templates {:journals \"Old\"}}\n",
+    )
+    .unwrap();
     let cfg = || std::fs::read_to_string(&cfg_path).unwrap();
 
-    Graph::open(&root).set_default_journal_template(Some("My \"Daily\"")).unwrap();
-    assert!(cfg().contains("\\\""), "embedded quote should be escaped: {}", cfg());
+    Graph::open(&root)
+        .set_default_journal_template(Some("My \"Daily\""))
+        .unwrap();
+    assert!(
+        cfg().contains("\\\""),
+        "embedded quote should be escaped: {}",
+        cfg()
+    );
 
     // Replace with a plain name: clean single :journals, sibling intact, old value gone.
-    Graph::open(&root).set_default_journal_template(Some("Plain")).unwrap();
+    Graph::open(&root)
+        .set_default_journal_template(Some("Plain"))
+        .unwrap();
     let c = cfg();
-    assert!(c.contains(":journals \"Plain\""), "value replaced cleanly: {}", c);
-    assert_eq!(c.matches(":journals").count(), 1, "exactly one :journals: {}", c);
+    assert!(
+        c.contains(":journals \"Plain\""),
+        "value replaced cleanly: {}",
+        c
+    );
+    assert_eq!(
+        c.matches(":journals").count(),
+        1,
+        "exactly one :journals: {}",
+        c
+    );
     assert!(c.contains(":start-of-week 1"), "sibling preserved: {}", c);
-    assert!(!c.contains("Daily"), "old quoted value fully removed: {}", c);
+    assert!(
+        !c.contains("Daily"),
+        "old quoted value fully removed: {}",
+        c
+    );
 
     // Clearing a value that contains an escaped quote removes the whole pair.
     std::fs::write(&cfg_path, "{:default-templates {:journals \"a\\\"b\"}}\n").unwrap();
-    Graph::open(&root).set_default_journal_template(None).unwrap();
-    assert!(!cfg().contains(":journals"), "journals cleared, no garbage: {}", cfg());
+    Graph::open(&root)
+        .set_default_journal_template(None)
+        .unwrap();
+    assert!(
+        !cfg().contains(":journals"),
+        "journals cleared, no garbage: {}",
+        cfg()
+    );
 
     std::fs::remove_dir_all(&root).ok();
 }
@@ -1045,23 +1389,50 @@ fn set_default_journal_template_edn_aware_value_location() {
 
     // (a) `:journals` has a NON-string value (nil) and a later sibling has a string.
     // Setting must replace `nil`, not the `:pages` value.
-    std::fs::write(&cfg_path, "{:default-templates {:journals nil :pages \"P\"}}\n").unwrap();
-    Graph::open(&root).set_default_journal_template(Some("X")).unwrap();
+    std::fs::write(
+        &cfg_path,
+        "{:default-templates {:journals nil :pages \"P\"}}\n",
+    )
+    .unwrap();
+    Graph::open(&root)
+        .set_default_journal_template(Some("X"))
+        .unwrap();
     let c = cfg();
-    assert!(c.contains(":journals \"X\""), "nil value replaced with X: {}", c);
-    assert!(c.contains(":pages \"P\""), "later sibling string untouched: {}", c);
+    assert!(
+        c.contains(":journals \"X\""),
+        "nil value replaced with X: {}",
+        c
+    );
+    assert!(
+        c.contains(":pages \"P\""),
+        "later sibling string untouched: {}",
+        c
+    );
     assert!(!c.contains("nil"), "old nil value gone: {}", c);
     assert_eq!(
-        Graph::open(&root).meta().default_journal_template.as_deref(),
+        Graph::open(&root)
+            .meta()
+            .default_journal_template
+            .as_deref(),
         Some("X")
     );
 
     // Clearing the same shape removes only `:journals nil`, keeps `:pages "P"`.
-    std::fs::write(&cfg_path, "{:default-templates {:journals nil :pages \"P\"}}\n").unwrap();
-    Graph::open(&root).set_default_journal_template(None).unwrap();
+    std::fs::write(
+        &cfg_path,
+        "{:default-templates {:journals nil :pages \"P\"}}\n",
+    )
+    .unwrap();
+    Graph::open(&root)
+        .set_default_journal_template(None)
+        .unwrap();
     let c = cfg();
     assert!(!c.contains(":journals"), "journals pair removed: {}", c);
-    assert!(c.contains(":pages \"P\""), "sibling string preserved on clear: {}", c);
+    assert!(
+        c.contains(":pages \"P\""),
+        "sibling string preserved on clear: {}",
+        c
+    );
 
     // (b) `:default-templates {…}` appears only INSIDE a string literal — it is not
     // the real key, so the writer must not edit it; it inserts a real key instead.
@@ -1070,12 +1441,25 @@ fn set_default_journal_template_edn_aware_value_location() {
         "{:note \":default-templates {:journals \\\"fake\\\"}\"}\n",
     )
     .unwrap();
-    Graph::open(&root).set_default_journal_template(Some("Real")).unwrap();
+    Graph::open(&root)
+        .set_default_journal_template(Some("Real"))
+        .unwrap();
     let c = cfg();
-    assert!(c.contains(":journals \"Real\""), "real journals inserted: {}", c);
-    assert!(c.contains("fake"), "string-literal decoy preserved verbatim: {}", c);
+    assert!(
+        c.contains(":journals \"Real\""),
+        "real journals inserted: {}",
+        c
+    );
+    assert!(
+        c.contains("fake"),
+        "string-literal decoy preserved verbatim: {}",
+        c
+    );
     assert_eq!(
-        Graph::open(&root).meta().default_journal_template.as_deref(),
+        Graph::open(&root)
+            .meta()
+            .default_journal_template
+            .as_deref(),
         Some("Real")
     );
 
@@ -1096,14 +1480,27 @@ fn config_writers_skip_comment_between_key_and_value() {
     std::fs::write(&cfg_path, "{:favorites ; note\n [\"Old\"]}\n").unwrap();
     Graph::open(&root).set_favorites(&["New".into()]).unwrap();
     let c = std::fs::read_to_string(&cfg_path).unwrap();
-    assert_eq!(c.matches(":favorites").count(), 1, "replaced, not duplicated: {c}");
+    assert_eq!(
+        c.matches(":favorites").count(),
+        1,
+        "replaced, not duplicated: {c}"
+    );
     assert!(!c.contains("\"Old\""), "old value gone: {c}");
     assert_eq!(Graph::open(&root).meta().favorites, vec!["New".to_string()]);
 
-    std::fs::write(&cfg_path, "{:default-templates {:journals ; note\n \"Old\"}}\n").unwrap();
-    Graph::open(&root).set_default_journal_template(Some("New")).unwrap();
+    std::fs::write(
+        &cfg_path,
+        "{:default-templates {:journals ; note\n \"Old\"}}\n",
+    )
+    .unwrap();
+    Graph::open(&root)
+        .set_default_journal_template(Some("New"))
+        .unwrap();
     assert_eq!(
-        Graph::open(&root).meta().default_journal_template.as_deref(),
+        Graph::open(&root)
+            .meta()
+            .default_journal_template
+            .as_deref(),
         Some("New")
     );
 
@@ -1135,9 +1532,15 @@ fn deleted_journal_is_not_served_from_stale_cache() {
     let err = g.load_page(&entry).unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
     // load_named treats the vanished page as absent (Ok(None)), not an error.
-    assert!(g.load_named(&entry.name, PageKind::Journal).unwrap().is_none());
+    assert!(g
+        .load_named(&entry.name, PageKind::Journal)
+        .unwrap()
+        .is_none());
     // The stale entry was evicted, so the feed no longer lists it.
-    assert!(g.journals_desc().is_empty(), "deleted journal must drop out of the feed");
+    assert!(
+        g.journals_desc().is_empty(),
+        "deleted journal must drop out of the feed"
+    );
 
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -1150,10 +1553,19 @@ fn query_open_tasks() {
         .iter()
         .flat_map(|gr| gr.blocks.iter().map(|b| b.raw.clone()))
         .collect();
-    assert!(raws.iter().any(|r| r.starts_with("TODO Ship the M0")), "got: {raws:?}");
-    assert!(raws.iter().any(|r| r.starts_with("DOING Wire up")), "got: {raws:?}");
+    assert!(
+        raws.iter().any(|r| r.starts_with("TODO Ship the M0")),
+        "got: {raws:?}"
+    );
+    assert!(
+        raws.iter().any(|r| r.starts_with("DOING Wire up")),
+        "got: {raws:?}"
+    );
     // A DONE task must not match.
-    assert!(!raws.iter().any(|r| r.contains("DONE Validate")), "got: {raws:?}");
+    assert!(
+        !raws.iter().any(|r| r.contains("DONE Validate")),
+        "got: {raws:?}"
+    );
 }
 
 #[test]
@@ -1177,13 +1589,31 @@ fn agenda_query_excludes_finished_tasks() {
     g.warm_cache();
     let q = "(and (or (between scheduled -36500d +36500d) (between deadline -36500d +36500d)) \
              (not (task DONE CANCELED CANCELLED)))";
-    let raws: Vec<String> =
-        g.run_query(q).iter().flat_map(|gr| gr.blocks.iter().map(|b| b.raw.clone())).collect();
-    assert!(raws.iter().any(|r| r.starts_with("TODO open task")), "open task missing: {raws:?}");
-    assert!(raws.iter().any(|r| r.starts_with("plain meeting")), "marker-less missing: {raws:?}");
-    assert!(!raws.iter().any(|r| r.contains("DONE finished")), "DONE leaked: {raws:?}");
-    assert!(!raws.iter().any(|r| r.contains("CANCELED dropped")), "CANCELED leaked: {raws:?}");
-    assert!(!raws.iter().any(|r| r.contains("CANCELLED british")), "CANCELLED leaked: {raws:?}");
+    let raws: Vec<String> = g
+        .run_query(q)
+        .iter()
+        .flat_map(|gr| gr.blocks.iter().map(|b| b.raw.clone()))
+        .collect();
+    assert!(
+        raws.iter().any(|r| r.starts_with("TODO open task")),
+        "open task missing: {raws:?}"
+    );
+    assert!(
+        raws.iter().any(|r| r.starts_with("plain meeting")),
+        "marker-less missing: {raws:?}"
+    );
+    assert!(
+        !raws.iter().any(|r| r.contains("DONE finished")),
+        "DONE leaked: {raws:?}"
+    );
+    assert!(
+        !raws.iter().any(|r| r.contains("CANCELED dropped")),
+        "CANCELED leaked: {raws:?}"
+    );
+    assert!(
+        !raws.iter().any(|r| r.contains("CANCELLED british")),
+        "CANCELLED leaked: {raws:?}"
+    );
     std::fs::remove_dir_all(&root).ok();
 }
 
@@ -1196,8 +1626,16 @@ fn rename_superstring_rewrites_journal_and_nonjournal_refs() {
     std::fs::create_dir_all(root.join("pages")).unwrap();
     std::fs::create_dir_all(root.join("journals")).unwrap();
     std::fs::write(root.join("pages").join("Testtest.md"), "- the page\n").unwrap();
-    std::fs::write(root.join("pages").join("MyPage.md"), "- see [[Testtest]] here\n").unwrap();
-    std::fs::write(root.join("journals").join("2026_06_15.md"), "- ref [[Testtest]]\n").unwrap();
+    std::fs::write(
+        root.join("pages").join("MyPage.md"),
+        "- see [[Testtest]] here\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("journals").join("2026_06_15.md"),
+        "- ref [[Testtest]]\n",
+    )
+    .unwrap();
 
     let g = Graph::open(&root);
     g.warm_cache();
@@ -1207,11 +1645,17 @@ fn rename_superstring_rewrites_journal_and_nonjournal_refs() {
 
     let my = std::fs::read_to_string(root.join("pages").join("MyPage.md")).unwrap();
     let jr = std::fs::read_to_string(root.join("journals").join("2026_06_15.md")).unwrap();
-    assert!(my.contains("[[TesttestTest]]") && !my.contains("[[Testtest]]"), "non-journal: {my}");
+    assert!(
+        my.contains("[[TesttestTest]]") && !my.contains("[[Testtest]]"),
+        "non-journal: {my}"
+    );
     assert!(jr.contains("[[TesttestTest]]"), "journal: {jr}");
     let bl = g.backlinks("TesttestTest");
     let after: Vec<&str> = bl.iter().map(|x| x.page.as_str()).collect();
-    assert!(after.contains(&"MyPage"), "backlinks miss non-journal: {after:?}");
+    assert!(
+        after.contains(&"MyPage"),
+        "backlinks miss non-journal: {after:?}"
+    );
     std::fs::remove_dir_all(&root).ok();
 }
 
@@ -1229,7 +1673,11 @@ fn rename_rewrites_nested_ref_in_open_page() {
         "- Tine notes\n\t- see [[Testtest]] in a sub-bullet\n\t  id:: 1111aaaa-bbbb-cccc-dddd-eeeeeeeeeeee\n",
     )
     .unwrap();
-    std::fs::write(root.join("journals").join("2026_06_15.md"), "- ref [[Testtest]]\n").unwrap();
+    std::fs::write(
+        root.join("journals").join("2026_06_15.md"),
+        "- ref [[Testtest]]\n",
+    )
+    .unwrap();
 
     let g = Graph::open(&root);
     g.warm_cache();
@@ -1239,7 +1687,10 @@ fn rename_rewrites_nested_ref_in_open_page() {
     g.rename_page("Testtest", "TesttestTest").unwrap();
 
     let tine = std::fs::read_to_string(root.join("pages").join("Tine.md")).unwrap();
-    assert!(tine.contains("[[TesttestTest]]"), "nested ref NOT rewritten: {tine:?}");
+    assert!(
+        tine.contains("[[TesttestTest]]"),
+        "nested ref NOT rewritten: {tine:?}"
+    );
     assert!(!tine.contains("[[Testtest]]"), "old ref remains: {tine:?}");
     let bl = g.backlinks("TesttestTest");
     let pages: Vec<&str> = bl.iter().map(|x| x.page.as_str()).collect();
@@ -1263,7 +1714,10 @@ fn trash_sync_conflict_refuses_real_pages() {
     assert!(pages.join("Real.md").exists(), "real page must survive");
     // Trashes an actual conflict copy.
     g.trash_sync_conflict(&format!("pages/{conflict}")).unwrap();
-    assert!(!pages.join(conflict).exists(), "conflict copy should be gone");
+    assert!(
+        !pages.join(conflict).exists(),
+        "conflict copy should be gone"
+    );
     assert!(g.list_sync_conflicts().is_empty());
 
     std::fs::remove_dir_all(&root).ok();
@@ -1278,7 +1732,10 @@ fn sync_conflict_base_recognises_syncthing_and_dropbox() {
         Some("Foo")
     );
     // Dropbox variants.
-    assert_eq!(sync_conflict_base("Foo (conflicted copy 2026-07-05)"), Some("Foo"));
+    assert_eq!(
+        sync_conflict_base("Foo (conflicted copy 2026-07-05)"),
+        Some("Foo")
+    );
     assert_eq!(
         sync_conflict_base("Foo (martin's conflicted copy 2026-07-05)"),
         Some("Foo")
@@ -1302,14 +1759,16 @@ fn sync_conflict_copies_excluded_from_pages_and_surfaced_separately() {
     )
     .unwrap();
     std::fs::write(
-        root.join("pages").join("Foo.sync-conflict-20260705-120000-ABCDEFG.md"),
+        root.join("pages")
+            .join("Foo.sync-conflict-20260705-120000-ABCDEFG.md"),
         "- hello from the other device\n  id:: aaaaaaaa-0000-0000-0000-0000000000ff\n",
     )
     .unwrap();
     // A journal + its conflict copy.
     std::fs::write(root.join("journals").join("2026_06_26.md"), "- day one\n").unwrap();
     std::fs::write(
-        root.join("journals").join("2026_06_26.sync-conflict-20260705-130000-ABCDEFG.md"),
+        root.join("journals")
+            .join("2026_06_26.sync-conflict-20260705-130000-ABCDEFG.md"),
         "- day one, edited elsewhere\n",
     )
     .unwrap();
@@ -1318,7 +1777,10 @@ fn sync_conflict_copies_excluded_from_pages_and_surfaced_separately() {
 
     // The conflict copies must NOT appear as pages/journals.
     let names: Vec<String> = g.list_pages().into_iter().map(|p| p.name).collect();
-    assert!(names.iter().any(|n| n == "Foo"), "real page missing: {names:?}");
+    assert!(
+        names.iter().any(|n| n == "Foo"),
+        "real page missing: {names:?}"
+    );
     assert!(
         !names.iter().any(|n| n.contains("sync-conflict")),
         "conflict copy leaked into page list: {names:?}"
@@ -1328,11 +1790,21 @@ fn sync_conflict_copies_excluded_from_pages_and_surfaced_separately() {
     let mut conflicts = g.list_sync_conflicts();
     conflicts.sort_by(|a, b| a.base_name.cmp(&b.base_name));
     assert_eq!(conflicts.len(), 2, "conflicts: {conflicts:?}");
-    let foo = conflicts.iter().find(|c| c.base_name == "Foo").expect("Foo conflict");
+    let foo = conflicts
+        .iter()
+        .find(|c| c.base_name == "Foo")
+        .expect("Foo conflict");
     assert_eq!(foo.base_path.as_deref(), Some("pages/Foo.md"));
     assert!(foo.tag.starts_with("sync-conflict-"), "tag: {}", foo.tag);
-    assert!(foo.preview.contains("other device"), "preview: {}", foo.preview);
-    let jrnl = conflicts.iter().find(|c| c.base_name != "Foo").expect("journal conflict");
+    assert!(
+        foo.preview.contains("other device"),
+        "preview: {}",
+        foo.preview
+    );
+    let jrnl = conflicts
+        .iter()
+        .find(|c| c.base_name != "Foo")
+        .expect("journal conflict");
     assert_eq!(jrnl.base_path.as_deref(), Some("journals/2026_06_26.md"));
 
     std::fs::remove_dir_all(&root).ok();
@@ -1356,16 +1828,41 @@ fn resolve_sync_conflict_merges_and_trashes() {
     let conf_rel = format!("pages/{conflict_name}");
 
     // Diff to discover the row ids.
-    let diff = g.sync_conflict_diff(win_rel, &conf_rel).unwrap().expect("a diff");
-    let modified = diff.rows.iter().find(|r| format!("{:?}", r.kind) == "Modified").expect("modified row");
-    let removed = diff.rows.iter().find(|r| format!("{:?}", r.kind) == "Removed").expect("removed row");
+    let diff = g
+        .sync_conflict_diff(win_rel, &conf_rel)
+        .unwrap()
+        .expect("a diff");
+    let modified = diff
+        .rows
+        .iter()
+        .find(|r| format!("{:?}", r.kind) == "Modified")
+        .expect("modified row");
+    let removed = diff
+        .rows
+        .iter()
+        .find(|r| format!("{:?}", r.kind) == "Removed")
+        .expect("removed row");
 
     // Guard: a stale base_rev must refuse without writing.
     let err = g
-        .resolve_sync_conflict(win_rel, &conf_rel, &HashMap::new(), Some("stale-rev"), "union")
+        .resolve_sync_conflict(
+            win_rel,
+            &conf_rel,
+            &HashMap::new(),
+            Some("stale-rev"),
+            "union",
+        )
         .unwrap_err();
-    assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists, "stale base_rev should conflict");
-    assert_eq!(std::fs::read_to_string(pages.join("Foo.md")).unwrap(), winner, "winner untouched on guard");
+    assert_eq!(
+        err.kind(),
+        std::io::ErrorKind::AlreadyExists,
+        "stale base_rev should conflict"
+    );
+    assert_eq!(
+        std::fs::read_to_string(pages.join("Foo.md")).unwrap(),
+        winner,
+        "winner untouched on guard"
+    );
 
     // Resolve: take theirs for the modified block, pull in the removed one.
     let decisions = HashMap::from([
@@ -1373,20 +1870,32 @@ fn resolve_sync_conflict_merges_and_trashes() {
         (removed.id.clone(), "theirs".to_string()),
     ]);
     let base = tine_core::model::content_rev(winner);
-    g.resolve_sync_conflict(win_rel, &conf_rel, &decisions, Some(&base), "union").unwrap();
+    g.resolve_sync_conflict(win_rel, &conf_rel, &decisions, Some(&base), "union")
+        .unwrap();
 
     let merged = std::fs::read_to_string(pages.join("Foo.md")).unwrap();
     assert!(merged.contains("beta line there"), "merged: {merged:?}");
-    assert!(!merged.contains("beta line here"), "old winner text remains: {merged:?}");
-    assert!(merged.contains("extra from other device"), "removed block not pulled in: {merged:?}");
+    assert!(
+        !merged.contains("beta line here"),
+        "old winner text remains: {merged:?}"
+    );
+    assert!(
+        merged.contains("extra from other device"),
+        "removed block not pulled in: {merged:?}"
+    );
 
     // Conflict copy is gone from pages/ and from the conflicts list, and lives in trash.
-    assert!(!pages.join(conflict_name).exists(), "conflict copy not moved");
+    assert!(
+        !pages.join(conflict_name).exists(),
+        "conflict copy not moved"
+    );
     assert!(g.list_sync_conflicts().is_empty(), "conflict still listed");
     let trash = root.join("logseq").join(".tine-trash");
     let trashed: Vec<_> = std::fs::read_dir(&trash).unwrap().flatten().collect();
     assert!(
-        trashed.iter().any(|e| e.file_name().to_string_lossy().contains("sync-conflict")),
+        trashed
+            .iter()
+            .any(|e| e.file_name().to_string_lossy().contains("sync-conflict")),
         "conflict copy not in trash: {trashed:?}"
     );
 
