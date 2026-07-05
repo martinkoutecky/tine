@@ -91,6 +91,10 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
 - `[[page]]`, `#tags`, `#[[multi word]]`, `((block ref))` — including the labeled
   form `[text](((id)))` — and `{{embed}}`, all clickable, with autocomplete on
   `[[`, `#`, `((`, and `/`.
+- **Page icons on inline references.** If a page has an `icon::` (emoji or
+  character), it shows as a prefix on every inline `[[reference]]` and `#tag` to
+  that page — like Logseq, and like Tine's own page title / namespace listing. (Emoji
+  render as Twemoji SVG, since WebKitGTK paints color-emoji fonts blank.)
 - The `((` popup full-text-searches blocks and inserts a **durable** reference
   (writes a stable `id::` first).
 - The `[[`/`#` Enter default is configurable (Settings → *Journals & tasks* →

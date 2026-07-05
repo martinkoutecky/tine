@@ -3662,6 +3662,12 @@ ol.md-list { list-style: decimal; }
   font-size: 0.8em;
   vertical-align: 0.06em;
 }
+/* Icon prefix on an inline page reference / tag (OG parity). Small, tight to the
+   name, and non-interactive so a click still opens the page. */
+.page-ref-icon {
+  margin-right: 0.2em;
+  font-size: 0.9em;
+}
 /* Emoji rendered as a Twemoji SVG <img> (font-independent; see render/emoji.tsx).
    Sized in em so it tracks the surrounding text / icon font-size. */
 img.emoji {

@@ -10,6 +10,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Page icons on inline references.** A page's `icon::` (emoji/character) now shows
+  as a prefix on inline `[[references]]` and `#tags` to it — matching Logseq (Tine
+  already showed it on the page title and in the namespace listing). Emoji render as
+  Twemoji SVG for WebKitGTK. Icons are fetched batched + cached, so an icon-less graph
+  costs one lookup and no re-render.
 - **Raw HTML now renders (sanitized).** Inline and block HTML embedded in a note —
   `<ins>`, `<del>`, `<sup>`/`<sub>`, `<kbd>`, `<mark>`, `<abbr>`, `<a>`, a self-closed
   `<img/>`, and small containers — renders live the way Logseq shows it, in both the

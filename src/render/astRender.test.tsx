@@ -250,3 +250,26 @@ describe("InlineText", () => {
     expect(text).toContain(token);
   });
 });
+
+// A page reference shows the target page's `icon::` as a prefix (OG parity). The
+// icon is fetched async + batched, so these await the resource resolving.
+describe("inline page-icon prefix", () => {
+  it("shows the referenced page's icon:: (Formula1 has 🏁 in the mock)", async () => {
+    const div = document.createElement("div");
+    const dispose = render(() => InlineText({ text: "[[Formula1]]" }) as JSX.Element, div);
+    for (let i = 0; i < 60 && !div.innerHTML.includes("page-ref-icon"); i++) {
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    expect(div.innerHTML).toContain("page-ref-icon");
+    expect(div.innerHTML).toContain("emoji"); // 🏁 → Twemoji <img class="emoji">
+    dispose();
+  });
+
+  it("a page with no icon:: gets no prefix", async () => {
+    const div = document.createElement("div");
+    const dispose = render(() => InlineText({ text: "[[NoSuchIconPage]]" }) as JSX.Element, div);
+    await new Promise((r) => setTimeout(r, 80));
+    expect(div.innerHTML).not.toContain("page-ref-icon");
+    dispose();
+  });
+});

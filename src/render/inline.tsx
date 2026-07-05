@@ -16,6 +16,7 @@ import { timestampText } from "./renderedText";
 import { EmojiText } from "./emoji";
 import { sanitizeRawHtml, rawHtmlLocalImages } from "./htmlSanitize";
 import { allowLocalFileImages } from "../localFileSettings";
+import { pageIcon } from "../pageIconBatch";
 import { typographic } from "./typography";
 import { coarseSpanAttrs, plainSpanAttrs, typographicPlainSpanAttrs, type SpanDomAttrs } from "./spans";
 import { typographyMode } from "../ui";
@@ -173,6 +174,11 @@ function macroBody(s: MacroInline): string {
 
 // A `[[page]]` / `#tag` anchor — shared by page_ref links, bare refs, and #tags.
 function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolean; spanAttrs?: SpanDomAttrs }): JSX.Element {
+  // The referenced page's `icon::`, shown as a prefix like OG (and Tine's own page
+  // title / namespace macro). Emoji route through EmojiText → Twemoji SVG, since
+  // WebKitGTK paints color-emoji webfonts blank. Reactive + batched + cached per
+  // graph; an icon-less graph costs one IPC and no re-render (see pageIconBatch).
+  const icon = () => pageIcon(props.name);
   const open = (e: MouseEvent) => {
     e.stopPropagation();
     const kind = isJournalTitle(props.name) ? "journal" : "page";
@@ -197,6 +203,9 @@ function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolean; span
         openPageContextMenu(e.clientX, e.clientY, props.name);
       }}
     >
+      <Show when={icon()}>
+        <span class="page-icon page-ref-icon"><EmojiText text={icon()!} /></span>
+      </Show>
       <Show when={props.tag} fallback={
         <Show when={props.alias} fallback={<><span class="bracket">[[</span>{props.name}<span class="bracket">]]</span></>}>
           {props.alias}
