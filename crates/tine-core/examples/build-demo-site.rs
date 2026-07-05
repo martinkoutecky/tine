@@ -50,6 +50,14 @@ fn main() {
 
     create_demo_graph(&tmp).expect("scaffold demo graph");
 
+    // A dense "Feature showcase" page — exercises every page-level feature Tine
+    // renders, so the public demo doubles as an honest render reference. It's
+    // injected into the DEMO SITE ONLY (not the onboarding graph in
+    // `create_demo_graph`), so a brand-new user's graph stays lean.
+    const SHOWCASE: &str = include_str!("../src/templates/showcase.md");
+    fs::write(tmp.join("pages").join("Feature showcase.md"), SHOWCASE)
+        .expect("write showcase page");
+
     let mut graph = Graph::open(&tmp);
     graph.config.all_pages_public = true;
     let (publish_dir, count) = publish_graph(&graph).expect("publish demo graph");
