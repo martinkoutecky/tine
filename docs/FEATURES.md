@@ -129,6 +129,12 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
 
 - `TODO/DOING/DONE/NOW/LATER/WAITING/CANCELED`, two configurable workflows,
   priorities, cycle with `Mod+Enter`.
+- **Task checkbox** in front of every task block (Logseq parity): click it to mark
+  the task `DONE`, click again to reopen it (to `TODO`, or `LATER` under the "now"
+  workflow); a repeating task rolls its date forward instead of closing. `DONE`
+  shows a checked box, `CANCELED`/`CANCELLED` show none. The marker word stays
+  beside the box and still cycles on click. Checkboxes also show (read-only) on
+  tasks surfaced in Linked References, query results, and embeds.
 - `SCHEDULED:` / `DEADLINE:` via a calendar **date picker** (`/scheduled`,
   `/deadline`), including **recurring tasks** (`+1w` / `.+1w` / `++1w`) where
   completing a repeater advances the date. You can type a planning line *anywhere*

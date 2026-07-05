@@ -2333,6 +2333,40 @@ body {
   transform: rotate(45deg);
 }
 
+/* TODO/DOING/… task-marker checkbox (OG's block-checkbox). Same look as the GFM
+   checklist box above; sits just before the marker chip. Slightly smaller +
+   nudged to sit on the text baseline next to the marker word. */
+.block-task-checkbox {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  box-sizing: border-box;
+  vertical-align: -1px;
+  margin-right: 1px;
+  border: 1.5px solid color-mix(in srgb, currentColor 45%, transparent);
+  border-radius: 3px;
+  cursor: pointer;
+  position: relative;
+}
+.block-task-checkbox:hover {
+  border-color: var(--accent, #4c8bf5);
+}
+.block-task-checkbox.checked {
+  background: var(--accent, #4c8bf5);
+  border-color: var(--accent, #4c8bf5);
+}
+.block-task-checkbox.checked::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 3.5px;
+  height: 7px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
 .marker-todo { color: var(--marker-todo); }
 .marker-doing { color: var(--marker-doing); }
 .marker-now { color: var(--marker-now); }

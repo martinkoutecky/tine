@@ -88,7 +88,8 @@ import { openPageInNewTab } from "../router";
 import { blockRefCount } from "../blockRefCounts";
 import { BlockReferences } from "./BlockReferences";
 import { editorCommandFor } from "../keybindings";
-import { cycleMarkerSmart } from "../editor/repeat";
+import { cycleMarkerSmart, toggleTaskDone } from "../editor/repeat";
+import { taskCheckboxState } from "../markers";
 import { applyTemplateVars } from "../editor/templateVars";
 import { caretAtFirstRow, caretAtLastRow } from "../editor/caretRows";
 import { splitProps, joinProps, isBuiltinHidden, hideAll, caretInFence } from "../editor/properties";
@@ -568,6 +569,22 @@ function Rendered(props: { id: string; owner?: string; trailing?: JSX.Element })
       style={bgColor() ? { background: bgColor() } : undefined}
       onMouseDown={onMouseDown}
     >
+      <Show when={taskCheckboxState(facets().marker) !== null}>
+        <span
+          class="block-task-checkbox"
+          classList={{ checked: taskCheckboxState(facets().marker) === true }}
+          role="checkbox"
+          aria-checked={taskCheckboxState(facets().marker) === true}
+          title={taskCheckboxState(facets().marker) === true ? "Mark undone" : "Mark done"}
+          // Mouse-DOWN (not click) + preventDefault so toggling never enters the
+          // block editor (OG parity — matches the block-ref/chip mousedown model).
+          onMouseDown={(e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            toggleBlockCheckbox(props.id);
+          }}
+        />{" "}
+      </Show>
       <Show when={facets().marker}>
         <span
           class={`block-marker marker-${facets().marker?.toLowerCase()}`}
@@ -635,6 +652,13 @@ function Rendered(props: { id: string; owner?: string; trailing?: JSX.Element })
 function cycleBlockMarker(id: string) {
   const { raw } = cycleMarkerSmart(doc.byId[id].raw, workflow());
   setRaw(id, raw);
+}
+
+// Toggle the task checkbox (OG check/uncheck): open → DONE (rolling a repeater
+// forward instead), DONE → the workflow's open marker. Used by the block checkbox.
+function toggleBlockCheckbox(id: string) {
+  const raw = toggleTaskDone(doc.byId[id].raw, workflow());
+  if (raw !== null) setRaw(id, raw);
 }
 
 interface AcItem {
@@ -1492,11 +1516,14 @@ export function Editor(props: { id: string }): JSX.Element {
         splitBlock(props.id, start);
       }
     } else if (e.key === "Backspace" && end === start) {
-      // Auto-pair (opt-in): Backspace with the caret between an empty pair (`(|)`)
-      // deletes both chars, so an unwanted auto-inserted closer clears in one press.
-      if (autoPairing()) {
+      // Auto-pair Backspace: caret between an empty pair (`(|)`) deletes both
+      // chars, so an unwanted auto-inserted closer clears in one press. General
+      // auto-pairing is opt-in, but the page-ref pairing (`[[`→`[[]]`) is
+      // ALWAYS on — so the bracket case must clean up even with the opt-in off,
+      // otherwise backspacing a `[[]]` strands `]]` (GH #19).
+      {
         const ed = backspacePairEdit(raw, start);
-        if (ed) {
+        if (ed && (autoPairing() || (raw[start - 1] === "[" && raw[start] === "]"))) {
           e.preventDefault();
           applyEdit(ed);
           return;

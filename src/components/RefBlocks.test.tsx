@@ -51,3 +51,31 @@ describe("RefBlocks priority chip", () => {
     expect(out.html).not.toContain("block-priority");
   });
 });
+
+describe("RefBlocks task checkbox (parity with <Block>, OG block-checkbox)", () => {
+  it("renders an UNCHECKED checkbox for an open task marker", () => {
+    const out = html(() =>
+      RefBlocks({ blocks: [dto({ raw: "TODO plain task", marker: "TODO", priority: undefined })] })
+    );
+    expect(out.html).toContain("block-task-checkbox");
+    expect(out.html).toContain('aria-checked="false"');
+  });
+
+  it("renders a CHECKED checkbox for a DONE task", () => {
+    const out = html(() =>
+      RefBlocks({ blocks: [dto({ raw: "DONE plain task", marker: "DONE", priority: undefined })] })
+    );
+    expect(out.html).toContain("block-task-checkbox");
+    expect(out.html).toContain("checked");
+    expect(out.html).toContain('aria-checked="true"');
+  });
+
+  it("renders NO checkbox for a non-task block or a CANCELED marker", () => {
+    const plain = html(() => RefBlocks({ blocks: [dto({ raw: "just a note", marker: undefined })] }));
+    expect(plain.html).not.toContain("block-task-checkbox");
+    const canceled = html(() =>
+      RefBlocks({ blocks: [dto({ raw: "CANCELED dropped", marker: "CANCELED", priority: undefined })] })
+    );
+    expect(canceled.html).not.toContain("block-task-checkbox");
+  });
+});

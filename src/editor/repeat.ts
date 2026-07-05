@@ -4,6 +4,7 @@
 // occurrence and resets the marker to the workflow's open state. Pure + tested.
 
 import { leadingMarker, nextMarker, cycleMarker, type Workflow } from "./marker";
+import { taskCheckboxState } from "../markers";
 
 const REPEATER = /([.+]{1,2})(\d+)([dwmy])/;
 const TS_RE = /<(\d{4})-(\d{2})-(\d{2})(?:\s+[A-Za-z]{3})?(?:\s+([.+]{1,2})(\d+)([dwmy]))?>/;
@@ -73,6 +74,32 @@ export function rollRepeat(raw: string, workflow: Workflow): string | null {
   let first = lines[0];
   if (cur) first = first.slice(cur.length).replace(/^ /, "");
   lines[0] = first ? `${open} ${first}` : open;
+  return lines.join("\n");
+}
+
+/** Toggle a task's checkbox the way OG's `check`/`uncheck` do: an OPEN task →
+ *  `DONE` (but a *repeating* task rolls its date(s) forward and stays open
+ *  instead); `DONE` → the workflow's open marker (`TODO`, or `LATER` under the
+ *  `now` workflow). Returns the new raw, or null if the block has no checkbox
+ *  (no leading marker, or a CANCELED/CANCELLED one). Only line 0's marker word
+ *  is rewritten; the rest of the block (properties, SCHEDULED/DEADLINE) is kept. */
+export function toggleTaskDone(raw: string, workflow: Workflow): string | null {
+  const cur = leadingMarker(raw);
+  const state = taskCheckboxState(cur);
+  if (state === null) return null;
+
+  const lines = raw.split("\n");
+  const rest = cur ? lines[0].slice(cur.length).replace(/^ /, "") : lines[0];
+  if (state === true) {
+    // DONE → open marker (uncheck).
+    const open = workflow === "now" ? "LATER" : "TODO";
+    lines[0] = rest ? `${open} ${rest}` : open;
+    return lines.join("\n");
+  }
+  // OPEN → DONE (check). A repeater rolls forward instead of closing.
+  const rolled = rollRepeat(raw, workflow);
+  if (rolled) return rolled;
+  lines[0] = rest ? `DONE ${rest}` : "DONE";
   return lines.join("\n");
 }
 

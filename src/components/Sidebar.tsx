@@ -170,7 +170,7 @@ export function Sidebar(): JSX.Element {
       </div>
 
       <div class="sidebar-footer">
-        <button class="new-page-btn">+ New page</button>
+        <button class="new-page-btn" onClick={() => openSwitcher()}>+ New page</button>
       </div>
     </div>
   );

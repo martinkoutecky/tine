@@ -8,6 +8,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Added
+
+- **Task checkboxes.** A `TODO`/`DOING`/`NOW`/`LATER`/`WAITING`/… block now shows
+  a clickable checkbox in front of it (like Logseq): click it to mark the task
+  `DONE` (checked), click again to reopen it (`TODO`, or `LATER` under the "now"
+  workflow). A repeating task (`SCHEDULED`/`DEADLINE` with a `+1w`-style repeater)
+  rolls forward to its next occurrence instead of closing, matching OG. The marker
+  word stays next to the box and still cycles on click. `DONE` shows a checked box;
+  `CANCELED`/`CANCELLED` show none (OG parity). Checkboxes also render on tasks in
+  Linked References, query results, and embeds.
+
+### Fixed
+
+- **Sidebar "+ New page" button now works.** It was wired to nothing (a dead
+  button on every platform) — it now opens the quick switcher, where typing a name
+  that doesn't exist offers "Create…". (GH #20.)
+- **Deleting an auto-inserted `[[]]` no longer strands `]]`.** With general
+  auto-pairing off, typing `[[` still auto-closed to `[[]]` (always-on page-ref
+  pairing) but Backspace didn't clean the closer, leaving `]]`. Backspacing between
+  the brackets now removes both, matching the always-on insertion. (GH #19.)
+
 ## [0.3.4] — 2026-07-04
 
 ### Added

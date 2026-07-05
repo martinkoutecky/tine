@@ -40,3 +40,14 @@ export const OPEN_MARKERS: ReadonlySet<string> = new Set(
  *  carry `isOpenTask` would otherwise move non-task prose). Prefix-safe via the
  *  MARKERS order (WAITING before WAIT). */
 export const MARKER_RE = new RegExp(`^(${MARKERS.join("|")})(?=\\s|$)`);
+
+/** Whether a block with this leading marker renders a task checkbox, and if so
+ *  its state — matching OG's `block-checkbox`: `DONE` → checked, any OPEN task
+ *  marker → unchecked, everything else (CANCELED/CANCELLED/none) → no checkbox.
+ *  Returns `true` (checked) / `false` (unchecked) / `null` (no checkbox). */
+export function taskCheckboxState(marker: string | null | undefined): boolean | null {
+  if (!marker) return null;
+  if (marker === "DONE") return true;
+  if (OPEN_MARKERS.has(marker)) return false;
+  return null;
+}

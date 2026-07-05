@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { MARKERS, OPEN_MARKERS, DONE_MARKERS, MARKER_RE } from "./markers";
+import { MARKERS, OPEN_MARKERS, DONE_MARKERS, MARKER_RE, taskCheckboxState } from "./markers";
 import { leadingMarker } from "./editor/marker";
 
 describe("task markers (single source of truth)", () => {
@@ -26,6 +26,17 @@ describe("task markers (single source of truth)", () => {
     expect(OPEN_MARKERS.has("WAIT")).toBe(true);
     expect(OPEN_MARKERS.has("STARTED")).toBe(true); // in-progress-like → carried forward
     expect(DONE_MARKERS.has("CANCELLED")).toBe(true);
+  });
+
+  it("taskCheckboxState: DONE checked, open markers unchecked, canceled/none none (OG block-checkbox)", () => {
+    expect(taskCheckboxState("DONE")).toBe(true);
+    for (const m of ["TODO", "DOING", "NOW", "LATER", "WAITING", "WAIT", "STARTED", "IN-PROGRESS"]) {
+      expect(taskCheckboxState(m)).toBe(false); // open task → unchecked box
+    }
+    expect(taskCheckboxState("CANCELED")).toBeNull(); // closed-but-not-done → no box (OG)
+    expect(taskCheckboxState("CANCELLED")).toBeNull();
+    expect(taskCheckboxState(null)).toBeNull();
+    expect(taskCheckboxState(undefined)).toBeNull();
   });
 
   it("MARKER_RE anchors every marker as a whole word, prefix-safe (WAITING vs WAIT)", () => {

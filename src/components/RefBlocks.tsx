@@ -5,6 +5,7 @@ import { For, Show, createMemo, type JSX } from "solid-js";
 import type { BlockDto } from "../types";
 import { visibleBody } from "../render/block";
 import { facetsFromDto } from "../render/facets";
+import { taskCheckboxState } from "../markers";
 import { InlineText } from "../render/inline";
 import { formatForPage } from "../store";
 import { openBlockInSidebar } from "../ui";
@@ -60,6 +61,16 @@ function RefBlock(props: {
         </div>
         <div class="block-content-wrapper">
           <div class="block-content" classList={{ done: facets().done }}>
+            <Show when={taskCheckboxState(facets().marker) !== null}>
+              {/* Read-only here (references/embeds/query results aren't edited in
+                  place); it mirrors the live block's checkbox look. */}
+              <span
+                class="block-task-checkbox"
+                classList={{ checked: taskCheckboxState(facets().marker) === true }}
+                role="checkbox"
+                aria-checked={taskCheckboxState(facets().marker) === true}
+              />{" "}
+            </Show>
             <Show when={facets().marker}>
               <span class={`block-marker marker-${facets().marker?.toLowerCase()}`}>
                 {facets().marker}
