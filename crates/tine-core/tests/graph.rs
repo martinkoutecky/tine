@@ -1248,6 +1248,28 @@ fn rename_rewrites_nested_ref_in_open_page() {
 }
 
 #[test]
+fn trash_sync_conflict_refuses_real_pages() {
+    let root = std::env::temp_dir().join(format!("tine-trashconflict-{}", std::process::id()));
+    let pages = root.join("pages");
+    std::fs::create_dir_all(&pages).unwrap();
+    std::fs::create_dir_all(root.join("journals")).unwrap();
+    std::fs::write(pages.join("Real.md"), "- keep me\n").unwrap();
+    let conflict = "Real.sync-conflict-20260705-120000-ABCDEFG.md";
+    std::fs::write(pages.join(conflict), "- other device\n").unwrap();
+
+    let g = Graph::open(&root);
+    // Refuses a genuine page — never trashes real data.
+    assert!(g.trash_sync_conflict("pages/Real.md").is_err());
+    assert!(pages.join("Real.md").exists(), "real page must survive");
+    // Trashes an actual conflict copy.
+    g.trash_sync_conflict(&format!("pages/{conflict}")).unwrap();
+    assert!(!pages.join(conflict).exists(), "conflict copy should be gone");
+    assert!(g.list_sync_conflicts().is_empty());
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn sync_conflict_base_recognises_syncthing_and_dropbox() {
     use tine_core::model::sync_conflict_base;
     // Syncthing.

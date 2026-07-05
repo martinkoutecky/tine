@@ -1,6 +1,6 @@
 // Small global UI state: theme, left sidebar, and the quick-switcher modal.
 import { createSignal } from "solid-js";
-import type { GraphMeta, JournalConflict, PageKind } from "./types";
+import type { GraphMeta, JournalConflict, SyncConflict, PageKind } from "./types";
 import { backend, isTauri } from "./backend";
 // Zoom is route state; these are call-time only, so the ui↔router cycle is safe.
 import { route, focusBlock, scheduleSessionSave } from "./router";
@@ -183,6 +183,27 @@ export async function refreshJournalConflicts(notify = false): Promise<void> {
     if (notify && c.length) {
       pushToast(
         `${c.length} journal day${c.length === 1 ? "" : "s"} have duplicate files in different formats — reconcile them in Settings → Backups`,
+        "info",
+        { sticky: true }
+      );
+    }
+  } catch {
+    /* best-effort */
+  }
+}
+
+// --- sync-tool conflict copies (Syncthing/Dropbox `*.sync-conflict-*` files).
+// Excluded from the page list; surfaced here so the user can review + merge them
+// (Settings → Backups) instead of them rotting as garbage pages. ---
+export const [syncConflicts, setSyncConflicts] = createSignal<SyncConflict[]>([]);
+/** Re-fetch the sync-conflict list; with `notify`, toast if any exist. */
+export async function refreshSyncConflicts(notify = false): Promise<void> {
+  try {
+    const c = await backend().listSyncConflicts();
+    setSyncConflicts(c);
+    if (notify && c.length) {
+      pushToast(
+        `${c.length} sync-conflict file${c.length === 1 ? "" : "s"} in your graph — review + merge them in Settings → Backups`,
         "info",
         { sticky: true }
       );

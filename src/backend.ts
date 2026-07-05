@@ -13,6 +13,9 @@ import type {
   TemplateDto,
   TrashStats,
   JournalConflict,
+  SyncConflict,
+  SyncConflictDiff,
+  MergeDecision,
 } from "./types";
 import { assetFileName } from "./media";
 import { mockBackend } from "./mock";
@@ -131,6 +134,28 @@ export interface Backend {
   /** Move a stray file (graph-root-relative path) to a uniquely-named page so it
    *  stops colliding and becomes normally navigable (#21). */
   renameFileToPage(path: string, newName: string): Promise<void>;
+  /** Sync-tool conflict copies (Syncthing/Dropbox) sitting in the graph — for the
+   *  user to review + merge instead of them showing as garbage pages. */
+  listSyncConflicts(): Promise<SyncConflict[]>;
+  /** Block-level diff of a conflict copy against its winner (graph-root-relative
+   *  paths). Read-only; null if a path is invalid or the file is gone. */
+  syncConflictDiff(winner: string, conflict: string): Promise<SyncConflictDiff | null>;
+  /** Merge a conflict copy into its winner per the user's per-row decisions
+   *  (row id → mine/theirs/both), via the normal save path, then trash the copy.
+   *  `baseRev` guards against the winner changing under the merge (throws
+   *  "conflict" if it did). `preChoice`: "mine" | "theirs" | "union". */
+  resolveSyncConflict(
+    winner: string,
+    conflict: string,
+    decisions: Record<string, MergeDecision>,
+    baseRev?: string,
+    preChoice?: "mine" | "theirs" | "union"
+  ): Promise<void>;
+  /** Discard a conflict copy without merging (move it to the recoverable trash). */
+  trashSyncConflict(conflict: string): Promise<void>;
+  /** Subscribe to the watcher's `conflicts-changed` event (a conflict copy
+   *  appeared or vanished). Returns an unlisten fn. */
+  onConflictsChanged(cb: () => void): Promise<() => void>;
   search(query: string, limit: number): Promise<RefGroup[]>;
   quickSwitch(query: string, limit: number): Promise<PageEntry[]>;
   listTemplates(): Promise<TemplateDto[]>;
@@ -450,6 +475,34 @@ class TauriBackend implements Backend {
   }
   renameFileToPage(path: string, newName: string) {
     return this.call<void>("rename_file_to_page", { path, newName });
+  }
+  listSyncConflicts() {
+    return this.call<SyncConflict[]>("list_sync_conflicts");
+  }
+  syncConflictDiff(winner: string, conflict: string) {
+    return this.call<SyncConflictDiff | null>("sync_conflict_diff", { winner, conflict });
+  }
+  resolveSyncConflict(
+    winner: string,
+    conflict: string,
+    decisions: Record<string, MergeDecision>,
+    baseRev?: string,
+    preChoice?: "mine" | "theirs" | "union"
+  ) {
+    return this.call<void>("resolve_sync_conflict", {
+      winner,
+      conflict,
+      decisions,
+      baseRev: baseRev ?? null,
+      preChoice: preChoice ?? "union",
+    });
+  }
+  trashSyncConflict(conflict: string) {
+    return this.call<void>("trash_sync_conflict", { conflict });
+  }
+  async onConflictsChanged(cb: () => void): Promise<() => void> {
+    const { listen } = await import("@tauri-apps/api/event");
+    return listen("conflicts-changed", () => cb());
   }
   importAsset(path: string, name?: string) {
     return this.call<string>("import_asset", { path, name });

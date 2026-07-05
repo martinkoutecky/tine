@@ -476,6 +476,13 @@ pub(crate) fn resolve_sync_conflict(
     })
 }
 
+/// Discard a sync-conflict copy without merging (move it to the recoverable
+/// trash). Refuses anything that isn't a conflict copy.
+#[tauri::command]
+pub(crate) fn trash_sync_conflict(conflict: String, state: State<'_, AppState>) -> Result<(), String> {
+    with_graph(&state, |g| g.trash_sync_conflict(&conflict).map_err(|e| e.to_string()))
+}
+
 /// Move one journal file (by exact filename) to the recoverable trash.
 #[tauri::command]
 pub(crate) fn trash_journal_file(name: String, state: State<'_, AppState>) -> Result<(), String> {

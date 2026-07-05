@@ -26,7 +26,8 @@ use commands::{
     rename_page, resolve_block, resolve_blocks, run_advanced_query, run_query, save_asset,
     save_page, save_pdf_area_image, search, set_default_journal_template, set_favorites,
     resolve_sync_conflict, set_journal_title_format, set_preferred_format, set_preferred_workflow,
-    set_start_of_week, sync_conflict_diff, trash_asset, trash_journal_file, write_highlights,
+    set_start_of_week, sync_conflict_diff, trash_asset, trash_journal_file, trash_sync_conflict,
+    write_highlights,
 };
 use debug::{
     debug_enabled, debug_header, debug_info, debug_init, debug_log, diag, install_panic_logger,
@@ -321,6 +322,7 @@ fn main() {
             list_sync_conflicts,
             sync_conflict_diff,
             resolve_sync_conflict,
+            trash_sync_conflict,
             trash_journal_file,
             read_journal_file,
             get_page_by_path,

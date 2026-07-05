@@ -1243,6 +1243,186 @@ body {
 .settings-btn-danger:hover {
   background: color-mix(in srgb, #c0392b 12%, transparent);
 }
+.settings-btn-primary {
+  color: #fff;
+  background: var(--link-color);
+  border-color: var(--link-color);
+}
+.settings-btn-primary:hover {
+  background: color-mix(in srgb, var(--link-color) 85%, black);
+}
+.settings-btn-primary:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* --- Sync-conflict (Syncthing/Dropbox) reconcile + merge UI --- */
+.sync-conflict-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.sync-conflict-tag {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.sync-conflict-row .journal-conflict-actions {
+  margin-top: 4px;
+}
+.sync-merge-overlay {
+  position: fixed;
+  inset: 0;
+  background: color-mix(in srgb, black 45%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 60;
+}
+.sync-merge-modal {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  width: min(760px, 94vw);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 12px 40px color-mix(in srgb, black 35%, transparent);
+}
+.sync-merge-header,
+.sync-merge-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+}
+.sync-merge-header {
+  border-bottom: 1px solid var(--border-color);
+}
+.sync-merge-footer {
+  border-top: 1px solid var(--border-color);
+  gap: 8px;
+}
+.sync-merge-footer button + button {
+  margin-left: 6px;
+}
+.sync-merge-title {
+  font-weight: 600;
+}
+.sync-merge-sub {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.sync-merge-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 16px;
+}
+.sync-merge-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.sync-merge-showunchanged {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.sync-merge-collabels {
+  display: flex;
+  padding: 2px 16px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.sync-merge-collabels span {
+  flex: 1;
+}
+.sync-merge-body {
+  overflow-y: auto;
+  padding: 4px 16px 12px;
+}
+.sync-merge-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-color) 55%, transparent);
+}
+.sync-merge-cols {
+  display: flex;
+  flex: 1;
+  gap: 10px;
+  min-width: 0;
+}
+.sync-merge-cell {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 2px 6px;
+  border-radius: 5px;
+  border: 1px solid transparent;
+}
+.sync-merge-cell.chosen {
+  background: color-mix(in srgb, var(--link-color) 12%, transparent);
+  border-color: color-mix(in srgb, var(--link-color) 40%, transparent);
+}
+.sync-merge-absent {
+  color: var(--text-muted);
+}
+.sync-merge-kids {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.sync-merge-row[data-kind="added"] .sync-merge-cell.mine {
+  color: #2e7d32;
+}
+.sync-merge-row[data-kind="removed"] .sync-merge-cell.theirs {
+  color: #1565c0;
+}
+.sync-merge-row[data-kind="unchanged"] .sync-merge-cell {
+  color: var(--text-muted);
+}
+.sync-merge-controls {
+  display: flex;
+  gap: 3px;
+  flex-shrink: 0;
+}
+.sync-merge-seg {
+  font-size: 11px;
+  padding: 2px 8px;
+  border: 1px solid var(--border-color);
+  background: none;
+  color: var(--text-muted);
+  border-radius: 5px;
+  cursor: pointer;
+}
+.sync-merge-seg.active {
+  background: var(--link-color);
+  border-color: var(--link-color);
+  color: #fff;
+}
+.sync-merge-unchanged-tag {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.sync-merge-preblock {
+  padding: 6px 16px 0;
+}
+.sync-merge-preblock select {
+  margin: 0 4px;
+}
 /* Carry-over action buttons, right-aligned next to a journal title. */
 .page-carry-actions {
   display: flex;

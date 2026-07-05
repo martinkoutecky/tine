@@ -89,6 +89,57 @@ export interface JournalConflict {
   files: JournalFile[];
 }
 
+/** A sync-tool conflict copy (Syncthing/Dropbox) shadowing a real page — a
+ *  `*.sync-conflict-*.md` (or Dropbox `(conflicted copy)`) file. Excluded from
+ *  the page list; surfaced here so the user can review + merge it. */
+export interface SyncConflict {
+  /** Graph-root-relative path of the conflict copy. */
+  path: string;
+  /** Display name of the page it shadows (decoded page name / journal title). */
+  base_name: string;
+  /** Graph-root-relative path of the winning file, if it still exists. */
+  base_path: string | null;
+  kind: PageKind;
+  /** Device/timestamp suffix from the conflict filename (best-effort label). */
+  tag: string;
+  /** One-line content preview of the conflict copy. */
+  preview: string;
+}
+
+/** How one aligned block differs between the winner and the conflict copy. */
+export type RowKind = "unchanged" | "modified" | "added" | "removed";
+
+/** One side of a diff row. */
+export interface BlockView {
+  /** Persisted `id::`, or empty. */
+  uuid: string;
+  /** The block's full dedented body (may be multi-line); UI shows the first line. */
+  text: string;
+  child_count: number;
+}
+
+/** One aligned position in the two block trees. `id` is a stable path ("2.1")
+ *  that the resolve step reproduces, so a decision maps back to the same block. */
+export interface DiffRow {
+  id: string;
+  kind: RowKind;
+  mine: BlockView | null;
+  theirs: BlockView | null;
+  children: DiffRow[];
+}
+
+/** The full block-level diff of a conflict copy against its winner. */
+export interface SyncConflictDiff {
+  rows: DiffRow[];
+  mine_pre: string | null;
+  theirs_pre: string | null;
+  pre_differs: boolean;
+  blocks_identical: boolean;
+}
+
+/** A user's per-row merge decision. */
+export type MergeDecision = "mine" | "theirs" | "both";
+
 export interface RefGroup {
   page: string;
   kind: PageKind;

@@ -976,6 +976,24 @@ impl Graph {
         Ok(())
     }
 
+    /// Move a sync-conflict copy to the recoverable trash WITHOUT merging (the
+    /// "I've reviewed it, the winner is fine, discard the copy" affordance). Guards
+    /// that the target actually IS a conflict copy so this can never trash a real
+    /// page. Recoverable in `logseq/.tine-trash` (ADR 0007).
+    pub fn trash_sync_conflict(&self, conflict_rel: &str) -> io::Result<()> {
+        let conf = self.resolve_rel(conflict_rel).ok_or_else(bad_path)?;
+        if !path_is_sync_conflict(&conf) {
+            return Err(bad_path()); // refuse anything that isn't a conflict copy
+        }
+        if !conf.is_file() {
+            return Err(io::Error::new(io::ErrorKind::NotFound, "no such conflict file"));
+        }
+        let trash = self.root.join("logseq").join(".tine-trash");
+        let name = conf.file_name().and_then(|s| s.to_str()).unwrap_or("file");
+        let dest = trash.join(format!("{}__{name}", trash_stamp()));
+        move_to_trash(&conf, &dest, &trash)
+    }
+
     /// Raw contents of ONE journal file (by exact filename) — lets the UI show a
     /// duplicate day's individual files (which can't be navigated to separately,
     /// as pages are keyed by date) so the user can inspect before reconciling.

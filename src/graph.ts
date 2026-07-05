@@ -2,7 +2,7 @@
 // persisting the choice so it reopens next launch.
 
 import { backend } from "./backend";
-import { setGraphMeta, setWorkflow, bumpGraphEpoch, setRightSidebar, graphMeta, graphEpoch, setAliasMap, seedFavorites, pruneSidebarBlocks, pushToast, refreshJournalConflicts, clearRecent } from "./ui";
+import { setGraphMeta, setWorkflow, bumpGraphEpoch, setRightSidebar, graphMeta, graphEpoch, setAliasMap, seedFavorites, pruneSidebarBlocks, pushToast, refreshJournalConflicts, refreshSyncConflicts, clearRecent } from "./ui";
 import { resetStore, flushAll } from "./store";
 import { clearAssetBlobCache } from "./assetCache";
 import { resetTabsToJournals, openPage } from "./router";
@@ -56,6 +56,7 @@ export async function loadGraphPath(path: string): Promise<void> {
   setJournalTitleFormat(meta?.journal_page_title_format); // match this graph's journal titles
   seedFavorites(meta?.favorites ?? []);
   void refreshJournalConflicts(true); // tell the user if any day has duplicate journal files
+  void refreshSyncConflicts(true); // and flag any Syncthing/Dropbox conflict copies
   if (path) {
     try {
       localStorage.setItem(GRAPH_KEY, path);

@@ -639,6 +639,45 @@ export function mockBackend(): Backend {
     async renameFileToPage(): Promise<void> {
       // no-op in the browser mock
     },
+    async listSyncConflicts() {
+      // Gated on the same `?conflicts` flag as the journal-day demo, so the
+      // reconcile area stays out of the marketing screenshots by default.
+      if (typeof location !== "undefined" && !/[?&]conflicts\b/.test(location.search)) return [];
+      return [
+        {
+          path: "pages/Project Plan.sync-conflict-20260705-141233-A1B2C3D.md",
+          base_name: "Project Plan",
+          base_path: "pages/Project Plan.md",
+          kind: "page" as const,
+          tag: "sync-conflict-20260705-141233-A1B2C3D",
+          preview: "Milestones for the launch",
+        },
+      ];
+    },
+    async syncConflictDiff() {
+      const v = (text: string) => ({ uuid: "", text, child_count: 0 });
+      return {
+        rows: [
+          { id: "0", kind: "unchanged" as const, mine: v("Milestones for the launch"), theirs: v("Milestones for the launch"), children: [] },
+          { id: "1", kind: "modified" as const, mine: v("TODO ship the beta by Friday"), theirs: v("TODO ship the beta by Thursday"), children: [] },
+          { id: "2", kind: "added" as const, mine: v("write the release notes"), theirs: null, children: [] },
+          { id: "3", kind: "removed" as const, mine: null, theirs: v("ask marketing for the banner"), children: [] },
+        ],
+        mine_pre: "title:: Project Plan",
+        theirs_pre: "title:: Project Plan",
+        pre_differs: false,
+        blocks_identical: false,
+      };
+    },
+    async resolveSyncConflict(): Promise<void> {
+      // no-op in the browser mock
+    },
+    async trashSyncConflict(): Promise<void> {
+      // no-op in the browser mock
+    },
+    async onConflictsChanged(): Promise<() => void> {
+      return () => {};
+    },
     async confirm(message: string): Promise<boolean> {
       // The browser/test env has a working global confirm (unlike the WebKitGTK
       // app), so defer to it. Read it off globalThis so test stubs (vi.stubGlobal)

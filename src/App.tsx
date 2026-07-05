@@ -56,6 +56,7 @@ import {
   dataRev,
   installPaneTracker,
   pushToast,
+  refreshSyncConflicts,
 } from "./ui";
 import { applyZoom, installInterfaceZoomKeys, installInterfaceZoomWheel } from "./zoom";
 import { flushAll, appendToTodayJournal, captureToPage } from "./store";
@@ -115,6 +116,14 @@ export function App(): JSX.Element {
   onMount(() => void initNavSettings());
   // Load the local-file images opt-in (Settings → Editing). Default off.
   onMount(() => void initLocalFileSettings());
+  // A conflict copy appearing/vanishing on disk (watcher) refreshes the list.
+  onMount(() => {
+    let unsub = () => {};
+    void backend()
+      .onConflictsChanged(() => void refreshSyncConflicts())
+      .then((u) => (unsub = u));
+    onCleanup(() => unsub());
+  });
   // Load the asset-filename format template (Settings → Backups → Asset names).
   onMount(() => void initAssetSettings());
   // Load spellcheck prefs (toggle + languages) and apply them to the webview.
