@@ -18,6 +18,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   literal in Logseq too — only a self-closed `<img/>` is raw HTML; and the Markdown
   carets `^x^`/`~x~` aren't sub/superscript in either app.) See ADR 0019,
   [#16](https://github.com/martinkoutecky/tine/issues/16).
+- **Load local-file images (opt-in).** A new **Settings → Editing → "Load local-file
+  images"** toggle (off by default) lets a raw-HTML `<img>` load an image from an
+  absolute path outside the graph — for imported notes that reference local files.
+  Read over a gated, image-only IPC; the HTML export never serves local files.
 - **HTML export now renders task facets, queries, and embeds.** The static export
   (`public:: true` pages) previously dropped task markers/checkboxes, priorities,
   `SCHEDULED`/`DEADLINE`, and block properties, and left `{{query}}`/`{{embed}}`/

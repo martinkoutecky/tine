@@ -58,6 +58,7 @@ import {
   setRefClickZoom,
 } from "../copySettings";
 import { navReuseTabs, setNavReuseTabs } from "../navSettings";
+import { allowLocalFileImages, setAllowLocalFileImages } from "../localFileSettings";
 import { linkFirstMatch, setLinkFirstMatch } from "../editor/linkDefault";
 import {
   spellcheckEnabled,
@@ -408,6 +409,13 @@ function AppearanceTab(): JSX.Element {
         hint="Auto-enable dim inactive blocks (t b) when entering focus mode (t f)."
       >
         <Toggle on={dimInFocus()} onClick={() => setDimInFocus(!dimInFocus())} />
+      </Field>
+
+      <Field
+        label="Load local-file images"
+        hint="Let raw-HTML <img> tags in notes load images from absolute paths anywhere on this computer (e.g. an imported note's <img src=&quot;/home/…/pic.png&quot;>). Off by default — this is a permission: a synced or imported note isn't self-authored, so only enable it for graphs you trust. In-graph images and https images always work regardless."
+      >
+        <Toggle on={allowLocalFileImages()} onClick={() => setAllowLocalFileImages(!allowLocalFileImages())} />
       </Field>
 
       <Field

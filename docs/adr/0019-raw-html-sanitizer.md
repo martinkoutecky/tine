@@ -68,10 +68,15 @@ lsdoc is untouched.
   glued to a letter (`H<sub>2</sub>O`, `mc<sup>2</sup>`) is `Plain`, i.e. literal in
   Logseq too. This is an lsdoc/mldoc parse fact, upstream of the sanitizer, but it
   governs *what* reaches it, so it's noted here.
-- The `file://` limitation is unchanged and orthogonal: Tauri's custom-protocol
-  origin (WebView2 too) won't load arbitrary absolute local paths, so remote
-  `https` images work but a bare `file://`/`F:\…` `src` still needs the file inside
-  the graph or an explicit opt-in permission.
+- The `file://`/absolute-local-path limitation is handled by an **opt-in** rather
+  than the asset protocol: Tauri's custom-protocol origin won't load an arbitrary
+  `file://`/`F:\…` `src`, so instead the app reads those bytes over a **gated
+  `read_local_image` IPC** (image extensions + size cap, OFF by default — Settings →
+  "Load local-file images") and swaps in a blob URL, reusing the same
+  blob mechanism as in-graph images. This is **app-only**; the HTML **export never
+  serves local files** (ammonia strips the `file:`/absolute `src`), since a published
+  page can't reach the author's disk anyway. The opt-in is a real permission —
+  synced/imported notes aren't self-authored — so it defaults off.
 - Two allowlists must be kept in lockstep by hand; the contract fixtures are the
   guard. Adding a tag/attr means editing both modules and adding a fixture.
 - The export now serves sanitized user HTML (by design); the sanitizer, not the

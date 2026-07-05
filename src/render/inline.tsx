@@ -2,7 +2,7 @@
 // [[links]] and #tags), not an innerHTML string. Used to render a block when it
 // is not being edited.
 
-import { For, Show, createMemo, createResource, createSignal, type JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createResource, createSignal, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { mediaKind } from "../media";
 import { openPage, openPageInNewTab, openPageAtBlock, focusBlock } from "../router";
@@ -14,14 +14,15 @@ import { parseBlock, parserReady } from "./parse";
 import type { Inline, Url, MacroInline, TimestampInline, EmailValue, Block as AstBlock, Format } from "./ast";
 import { timestampText } from "./renderedText";
 import { EmojiText } from "./emoji";
-import { sanitizeRawHtml } from "./htmlSanitize";
+import { sanitizeRawHtml, rawHtmlLocalImages } from "./htmlSanitize";
+import { allowLocalFileImages } from "../localFileSettings";
 import { typographic } from "./typography";
 import { coarseSpanAttrs, plainSpanAttrs, typographicPlainSpanAttrs, type SpanDomAttrs } from "./spans";
 import { typographyMode } from "../ui";
 import { visibleBody } from "./block";
 import { AstBody } from "./body";
 import { backend } from "../backend";
-import { loadAssetBlob } from "../assetCache";
+import { loadAssetBlob, loadLocalImageBlob } from "../assetCache";
 import { resolveBlockBatched } from "../resolveBatch";
 import { doc, setRaw, formatForPage, formatForBlock } from "../store";
 import { QueryMacro, EmbedMacro, VideoMacro, TweetMacro, YoutubeTimestamp, ClozeMacro, ZoteroMacro } from "../components/Macro";
@@ -297,8 +298,27 @@ export function renderRawHtml(text: string, spanAttrs?: SpanDomAttrs): JSX.Eleme
       return renderIframe(src, width, height, spanAttrs);
     }
   }
-  const clean = sanitizeRawHtml(text);
-  return <span class="raw-html" innerHTML={clean} {...(spanAttrs ?? {})} />;
+  return <RawHtmlContent text={text} spanAttrs={spanAttrs} />;
+}
+
+// Renders sanitized raw HTML, and — when the user has opted into local-file images
+// (Settings → "Load local-file images") — swaps a blob URL into any `<img>` whose
+// `src` was a local path (the sanitizer strips those, so we re-attach them by
+// document-order match to the scanned paths). Off by default; see ADR 0019.
+function RawHtmlContent(props: { text: string; spanAttrs?: SpanDomAttrs }): JSX.Element {
+  const clean = createMemo(() => sanitizeRawHtml(props.text));
+  let host: HTMLSpanElement | undefined;
+  createEffect(() => {
+    clean(); // re-run if the sanitized markup changes
+    if (!host || !allowLocalFileImages()) return;
+    const locals = rawHtmlLocalImages(props.text);
+    if (!locals.some(Boolean)) return;
+    host.querySelectorAll("img").forEach((img, idx) => {
+      const path = locals[idx];
+      if (path) void loadLocalImageBlob(path).then((url) => { if (url) img.src = url; });
+    });
+  });
+  return <span ref={host} class="raw-html" innerHTML={clean()} {...(props.spanAttrs ?? {})} />;
 }
 
 function renderEmail(text: EmailValue, spanAttrs?: SpanDomAttrs): JSX.Element {

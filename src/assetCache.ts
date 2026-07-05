@@ -75,6 +75,27 @@ export function loadAssetBlob(rel: string): Promise<string> {
   return p;
 }
 
+/** A blob URL for an image at an ABSOLUTE local `path` outside the graph, read over
+ *  the gated `read_local_image` IPC (raw-HTML `<img>` the user opted into). Cached
+ *  under a `local:` key so repeat references share one read; resolves to "" if the
+ *  opt-in is off or the file is missing/unreadable/too big. */
+export function loadLocalImageBlob(path: string): Promise<string> {
+  const key = `local:${path}`;
+  const hit = cache.get(key);
+  if (hit) return hit;
+  const p = (async () => {
+    try {
+      const bytes = await backend().readLocalImage(path);
+      if (!bytes.length) return "";
+      return URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: mimeFromExt(path) }));
+    } catch {
+      return "";
+    }
+  })();
+  cache.set(key, p);
+  return p;
+}
+
 /** Pre-populate the cache for `rel` from in-memory bytes (e.g. a just-pasted
  *  image) so it renders instantly, before the disk write completes — and so the
  *  inline loader never races readAsset against a not-yet-written file (which would

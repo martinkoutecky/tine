@@ -559,6 +559,10 @@ export function mockBackend(): Backend {
       if (name === "voice_memo.wav") return decodeB64(SILENT_WAV_B64);
       return new Uint8Array();
     },
+    async readLocalImage(_path: string): Promise<Uint8Array> {
+      // The mock has no filesystem; local-file images never resolve here.
+      return new Uint8Array();
+    },
     async saveAsset(name: string, bytes: Uint8Array): Promise<string> {
       mockAssets[name] = bytes;
       return name;

@@ -137,6 +137,10 @@ export interface Backend {
   resolveBlock(uuid: string): Promise<RefGroup | null>;
   resolveBlocks(uuids: string[]): Promise<(RefGroup | null)[]>;
   readAsset(name: string): Promise<Uint8Array>;
+  /** Read an image from an absolute path OUTSIDE the graph (raw-HTML `<img>` the
+   *  user opted into via Settings). Rejects when the opt-in is off or the path
+   *  isn't a permitted image. */
+  readLocalImage(path: string): Promise<Uint8Array>;
   saveAsset(name: string, bytes: Uint8Array): Promise<string>;
   /** If the OS clipboard holds an image, save it to assets/ and return the
    *  filename; otherwise null. */
@@ -389,6 +393,10 @@ class TauriBackend implements Backend {
     // read_asset now returns raw bytes (tauri::ipc::Response) → an ArrayBuffer,
     // not a JSON number[] — far cheaper for large PDFs/images.
     const buf = await this.call<ArrayBuffer>("read_asset", { name });
+    return new Uint8Array(buf);
+  }
+  async readLocalImage(path: string) {
+    const buf = await this.call<ArrayBuffer>("read_local_image", { path });
     return new Uint8Array(buf);
   }
   saveAsset(name: string, bytes: Uint8Array) {

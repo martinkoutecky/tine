@@ -326,6 +326,35 @@ pub(crate) fn read_asset(name: String, state: State<'_, AppState>) -> Result<tau
 }
 
 #[tauri::command]
+pub(crate) fn read_local_image(path: String, app: tauri::AppHandle) -> Result<tauri::ipc::Response, String> {
+    // Read an image from an ABSOLUTE path OUTSIDE the graph, for raw-HTML `<img>`
+    // srcs the user has explicitly opted into (Settings → "Load local-file images").
+    // OFF by default; gated here too (defense in depth — the frontend also checks),
+    // restricted to image extensions + a size cap so an allowed note can't slurp an
+    // arbitrary file. Returns RAW bytes like `read_asset`. See ADR 0019.
+    if !crate::settings::get_app_bool("allow_local_file_images".into(), false, app) {
+        return Err("local-file images are disabled".into());
+    }
+    let p = std::path::Path::new(&path);
+    let ext_ok = matches!(
+        p.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref(),
+        Some("png" | "jpg" | "jpeg" | "gif" | "svg" | "webp" | "bmp" | "ico" | "avif" | "apng")
+    );
+    if !ext_ok {
+        return Err("not an image file".into());
+    }
+    let meta = std::fs::metadata(p).map_err(|e| e.to_string())?;
+    if !meta.is_file() {
+        return Err("not a file".into());
+    }
+    const MAX_BYTES: u64 = 64 * 1024 * 1024;
+    if meta.len() > MAX_BYTES {
+        return Err("image too large".into());
+    }
+    std::fs::read(p).map(tauri::ipc::Response::new).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub(crate) fn import_asset(
     path: String,
     name: Option<String>,

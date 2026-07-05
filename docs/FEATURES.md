@@ -56,6 +56,12 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   self-closed `<img/>` is raw HTML), and the Markdown carets `^x^`/`~x~` are literal
   in Logseq (not sub/superscript) — use the tags or `$math$`. (Sanitizer allowlist
   is shared between the two surfaces and contract-tested; see ADR 0019.)
+  - **Local-file images (opt-in).** In-graph and `https` images always work; to also
+    let a raw-HTML `<img>` load an image from an absolute path *outside* the graph
+    (e.g. an imported note's `<img src="/home/…/pic.png"/>`), turn on **Settings →
+    Editing → "Load local-file images"**. Off by default — it's a permission (a
+    synced/imported note isn't self-authored), read over a gated, image-only IPC. The
+    HTML export never serves local files.
 - ⊕ **`/calc` block** — evaluates arithmetic live as you type (`+ - * / ^ %`,
   parentheses, `name = expr` variables across lines, a running result).
 

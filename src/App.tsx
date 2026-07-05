@@ -66,6 +66,7 @@ import { warnIfSoftwareRendering } from "./gpu";
 import { initSmoothScroll } from "./smoothScroll";
 import { initCopySettings } from "./copySettings";
 import { initNavSettings } from "./navSettings";
+import { initLocalFileSettings } from "./localFileSettings";
 import { initAssetSettings } from "./assetSettings";
 import { initSpellcheckSettings } from "./spellcheckSettings";
 import { initLinkDefault } from "./editor/linkDefault";
@@ -112,6 +113,8 @@ export function App(): JSX.Element {
   onMount(() => void initSmoothScroll());
   onMount(() => void initCopySettings());
   onMount(() => void initNavSettings());
+  // Load the local-file images opt-in (Settings → Editing). Default off.
+  onMount(() => void initLocalFileSettings());
   // Load the asset-filename format template (Settings → Backups → Asset names).
   onMount(() => void initAssetSettings());
   // Load spellcheck prefs (toggle + languages) and apply them to the webview.
