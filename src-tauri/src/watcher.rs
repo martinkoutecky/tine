@@ -13,6 +13,34 @@ struct GraphChange {
     removed: bool,
 }
 
+/// Recursively collect every `.md`/`.org` page file under `dir` with its
+/// (mtime, len) — the watcher's diff snapshot. Descends sub-directories so a page
+/// in a sub-folder (#21) is reconciled like a top-level one; mirrors the core's
+/// `list_md` walk: match page files by extension (the metadata read is needed for
+/// mtime/len anyway), skip hidden dirs and symlinked dirs (no cycles, no escaping
+/// the watched tree). Scoped to the dir passed in (journals/ or pages/).
+fn collect_page_files(dir: &std::path::Path, out: &mut HashMap<PathBuf, (SystemTime, u64)>) {
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        for e in rd.flatten() {
+            let p = e.path();
+            if matches!(p.extension().and_then(|x| x.to_str()), Some("md") | Some("org")) {
+                if let Ok(md) = e.metadata() {
+                    if let Ok(m) = md.modified() {
+                        out.insert(p, (m, md.len()));
+                    }
+                }
+                continue;
+            }
+            let hidden = p.file_name().and_then(|s| s.to_str()).map(|s| s.starts_with('.')).unwrap_or(true);
+            if !hidden && e.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
+                stack.push(p);
+            }
+        }
+    }
+}
+
 /// Watch the graph dirs for external changes (Logseq, Syncthing) and reconcile
 /// them into the cache, emitting `graph-changed` so the UI can reload. Two
 /// mechanisms, switchable at runtime via the device-local `watch_mode` setting:
@@ -93,7 +121,11 @@ pub(crate) fn start_watcher(app: tauri::AppHandle) {
                 if let (Some(w), Some(ds)) = (watcher.as_mut(), dirs.as_ref()) {
                     if watched.is_empty() {
                         for d in ds.iter() {
-                            if w.watch(d, notify::RecursiveMode::NonRecursive).is_ok() {
+                            // Recursive so a page created/edited in a SUB-directory
+                            // (#21) — or delivered there by Syncthing — wakes the
+                            // reconcile. notify emulates recursion on inotify by
+                            // watching subdirs; scoped to journals/ + pages/ only.
+                            if w.watch(d, notify::RecursiveMode::Recursive).is_ok() {
                                 watched.push(d.clone());
                             }
                         }
@@ -108,22 +140,7 @@ pub(crate) fn start_watcher(app: tauri::AppHandle) {
             if let (Some(ds), Some(graph)) = (dirs.as_ref(), graph.as_ref()) {
                 let mut current: HashMap<PathBuf, (SystemTime, u64)> = HashMap::new();
                 for dir in ds {
-                    if let Ok(rd) = std::fs::read_dir(dir) {
-                        for e in rd.flatten() {
-                            let p = e.path();
-                            // Watch markdown AND org page files (mirror the core's
-                            // is_page_file), so external .org edits/creates/deletes
-                            // are reconciled like .md ones.
-                            if !matches!(p.extension().and_then(|x| x.to_str()), Some("md") | Some("org")) {
-                                continue;
-                            }
-                            if let Ok(md) = e.metadata() {
-                                if let Ok(m) = md.modified() {
-                                    current.insert(p, (m, md.len()));
-                                }
-                            }
-                        }
-                    }
+                    collect_page_files(dir, &mut current);
                 }
                 if !baseline {
                     snap = current;
@@ -210,4 +227,34 @@ pub(crate) fn set_watch_mode(mode: String, app: tauri::AppHandle, state: State<'
         let _ = tx.send(());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn collect_page_files_descends_subdirectories() {
+        // #21: the watcher snapshot must include page files in sub-folders, so an
+        // edit/create there is reconciled (not invisible until a graph reopen).
+        let dir = std::env::temp_dir().join(format!("tine-watch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("Archive/Deep/Deeper")).unwrap();
+        std::fs::create_dir_all(dir.join(".hidden")).unwrap();
+        std::fs::write(dir.join("top.md"), "- t\n").unwrap();
+        std::fs::write(dir.join("Archive/mid.org"), "* m\n").unwrap();
+        std::fs::write(dir.join("Archive/Deep/Deeper/deep.md"), "- d\n").unwrap();
+        std::fs::write(dir.join("Archive/notes.txt"), "ignored\n").unwrap();
+        std::fs::write(dir.join(".hidden/skip.md"), "- s\n").unwrap();
+
+        let mut out: HashMap<PathBuf, (SystemTime, u64)> = HashMap::new();
+        collect_page_files(&dir, &mut out);
+        let mut names: Vec<String> = out
+            .keys()
+            .map(|p| p.strip_prefix(&dir).unwrap().to_string_lossy().replace('\\', "/"))
+            .collect();
+        names.sort();
+        assert_eq!(names, vec!["Archive/Deep/Deeper/deep.md", "Archive/mid.org", "top.md"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

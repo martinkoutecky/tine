@@ -17,6 +17,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   its **file name** (`pages/client-a/foo.md` → page `foo`), matching Logseq, and edits
   save back to that file in place. Namespaces (`parent/child`) remain the flat
   `parent___child.md` filename encoding, not real folders — also matching Logseq.
+  The file watcher also descends sub-directories now, so a page added in a sub-folder
+  (or delivered there by Syncthing) while Tine is open appears live, without a reopen.
 
 ## [0.3.5] — 2026-07-05
 
