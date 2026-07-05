@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tine vs Logseq — where it's at today</title>
+<meta name="description" content="An honest, feature-by-feature comparison of Tine and Logseq: where Tine is at parity, where it's scoped, where it goes further, and what it deliberately doesn't do.">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Tine vs Logseq — where it's at today">
+<meta property="og:description" content="An honest, feature-by-feature comparison of Tine and Logseq.">
+<style>
+  /* Page-specific: the comparison tables + status legend. */
+  .cmp-intro { max-width: 760px; margin: 0 auto; }
+  .cmp-section { max-width: var(--maxw); margin: 0 auto; padding: 0 clamp(1rem, 4vw, 2rem); }
+  .legend { display: flex; flex-wrap: wrap; gap: .4rem 1.2rem; justify-content: center; margin: 1.4rem 0 0; font-size: .9rem; color: var(--ink-soft); }
+  .legend span { white-space: nowrap; }
+  .g { font-weight: 800; font-variant-emoji: text; }
+  .g-yes { color: var(--accent-deep); }
+  .g-part { color: #c2410c; }
+  .g-no { color: var(--ink-faint); }
+  .g-add { color: #7c3aed; }
+
+  .qa { max-width: 820px; margin: 2rem auto 0; display: grid; gap: .7rem; }
+  .qa-item { background: var(--card); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: var(--radius); padding: .9rem 1.1rem; box-shadow: var(--shadow); }
+  .qa-q { font-weight: 700; color: var(--ink); }
+  .qa-a { color: var(--ink-soft); margin-top: .25rem; }
+
+  h2.cmp-h { font-size: 1.5rem; margin: 2.6rem 0 .3rem; }
+  .cmp-h-lede { color: var(--ink-faint); margin: 0 0 1rem; font-size: .95rem; }
+  .tbl-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+  table.cmp { border-collapse: collapse; width: 100%; font-size: .94rem; background: var(--card); }
+  table.cmp th, table.cmp td { text-align: left; padding: .55rem .8rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  table.cmp thead th { font-size: .74rem; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-faint); background: var(--bg-tint); }
+  table.cmp col.c-feat { width: 26%; } table.cmp col.c-og, table.cmp col.c-tine { width: 9%; }
+  table.cmp td.st { text-align: center; white-space: nowrap; }
+  table.cmp tr:last-child td { border-bottom: 0; }
+  table.cmp td.feat { font-weight: 600; color: var(--ink); }
+  table.cmp td.note { color: var(--ink-soft); }
+  .notdoing { max-width: 820px; margin: 1rem auto 0; }
+  .notdoing li { margin: .35rem 0; color: var(--ink-soft); }
+  .notdoing b { color: var(--ink); }
+  .asof { text-align: center; color: var(--ink-faint); font-size: .88rem; margin-top: 2.5rem; }
+</style>
+</head>
+<body>
+
+<header class="nav">
+  <a class="brand" href="index.html" aria-label="Tine — home">
+    <svg class="mark" width="34" height="34" viewBox="0 0 64 80" aria-hidden="true">
+      <g stroke="currentColor" stroke-width="6" stroke-linecap="round" fill="none">
+        <path d="M16 14 V36"/><path d="M32 14 V36"/><path d="M48 14 V36"/>
+        <path d="M16 36 H48"/><path d="M32 36 V70"/>
+      </g>
+    </svg>
+    <span class="brand-word">Tine</span>
+  </a>
+  <nav class="nav-links">
+    <a href="index.html#why">Same graph</a>
+    <a href="index.html#adds">What's new</a>
+    <a href="compare.html" aria-current="page">vs Logseq</a>
+    <a href="demo/">Demo</a>
+    <a href="blog/">Blog</a>
+    <a class="nav-cta" href="https://github.com/martinkoutecky/tine/releases">Download</a>
+  </nav>
+</header>
+
+<main id="top">
+
+  <section class="wrap">
+    <div class="cmp-intro">
+      <p class="eyebrow">Honest status · not marketing</p>
+      <h1>Tine vs Logseq, <span class="accent">today</span></h1>
+      <p class="lede">
+        Tine matches Logseq by default and round-trips the <em>same</em> Markdown files, so
+        the goal is convergence. But it isn't finished. Here's where it's at
+        <strong>parity</strong>, where it's <strong>scoped</strong>, where it deliberately
+        <strong>goes further</strong>, and what it <strong>won't</strong> do — grounded in
+        what the app actually does, not a wish-list.
+      </p>
+      <p class="cmp-h-lede">
+        "Logseq" here means the classic <strong>file / Markdown</strong> Logseq — the one that
+        reads a folder of <code>.md</code> files, which Tine is file-compatible with. Logseq's
+        newer database version is a different product and isn't the comparison target. The full
+        Tine feature list lives in <a href="https://github.com/martinkoutecky/tine/blob/master/docs/FEATURES.md">FEATURES.md</a>;
+        this page is the curated, gap-focused view.
+      </p>
+      <div class="legend">
+        <span><b class="g g-yes">✓</b> full parity</span>
+        <span><b class="g g-part">◑</b> partial / scoped</span>
+        <span><b class="g g-no">✗</b> not yet</span>
+        <span><b class="g g-add">⊕</b> Tine goes further</span>
+      </div>
+    </div>
+
+    <!-- QUICK ANSWERS -->
+    <div class="qa">
+      <div class="qa-item">
+        <div class="qa-q">Can I copy a block reference?</div>
+        <div class="qa-a"><b class="g g-yes">✓</b> Yes. Right-click a block → <em>Copy block ref</em> or <em>Copy block embed</em>. Tine stamps the block's <code>id::</code> on demand and keeps it stable, so the reference survives restarts and round-trips to Logseq.</div>
+      </div>
+      <div class="qa-item">
+        <div class="qa-q">Page properties?</div>
+        <div class="qa-a"><b class="g g-yes">✓</b> Yes — page-level and block-level <code>key:: value</code> properties, edited inline, with the same on-disk format Logseq uses.</div>
+      </div>
+      <div class="qa-item">
+        <div class="qa-q">Queries?</div>
+        <div class="qa-a"><b class="g g-part">◑</b> Yes for simple and compound queries — <code>{{query (and (task TODO) (priority A))}}</code>, page-refs, properties, <code>scheduled</code>/<code>deadline</code>, <code>sort-by</code>, etc. Advanced Datalog (<code>[:find …]</code>) is supported for a <em>mapped subset</em> of clauses; anything it can't map is listed as ignored rather than answered wrongly. Queries even run in the HTML export.</div>
+      </div>
+      <div class="qa-item">
+        <div class="qa-q">Do math on queries?</div>
+        <div class="qa-a"><b class="g g-no">✗</b> Not yet — no aggregation / arithmetic over query results. Worth knowing: Logseq has no <em>native</em> math-on-queries either; it needs advanced <code>:view</code>/<code>:result-transform</code> functions or a plugin. Both are in the same place here.</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band">
+    <div class="band-inner cmp-section">
+
+      <h2 class="cmp-h">Editing &amp; the outliner</h2>
+      <p class="cmp-h-lede">The core writing experience.</p>
+      <div class="tbl-wrap"><table class="cmp">
+        <colgroup><col class="c-feat"><col class="c-og"><col class="c-tine"><col></colgroup>
+        <thead><tr><th>Feature</th><th>Logseq</th><th>Tine</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td class="feat">Outlining — nest, fold, zoom, move blocks</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">Keyboard-first; drag to reorder.</td></tr>
+          <tr><td class="feat">Bold / italic / strikethrough / highlight / inline code</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">Cmd+B/I plus a floating selection toolbar; <code>**</code>/<code>==</code>/<code>~~</code> wrap the selection as you type.</td></tr>
+          <tr><td class="feat">Underline (<code>&lt;ins&gt;</code>), super/subscript</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-no">✗</b></td><td class="note">Not parsed yet — render as literal text. For sub/superscript, use math: <code>$H_2O$</code>, <code>$E=mc^2$</code>.</td></tr>
+          <tr><td class="feat">Slash command menu</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">Blocks, headings, tasks, dates, code, math… A dedicated template picker is still being polished.</td></tr>
+          <tr><td class="feat">Auto-pair brackets / <code>[[ ]]</code></td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">Page-ref pairing is always on; general auto-pairing is a toggle.</td></tr>
+          <tr><td class="feat">Block references &amp; embeds</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note"><code>((ref))</code>, <code>{{embed}}</code>; copy ref/embed from the right-click menu.</td></tr>
+          <tr><td class="feat">Page &amp; block properties</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">Same <code>key:: value</code> on-disk format.</td></tr>
+        </tbody>
+      </table></div>
+
+      <h2 class="cmp-h">Content &amp; rendering</h2>
+      <p class="cmp-h-lede">What a block can show. Every row here is verified against the live <a href="demo/feature-showcase.html">Feature showcase</a>.</p>
+      <div class="tbl-wrap"><table class="cmp">
+        <colgroup><col class="c-feat"><col class="c-og"><col class="c-tine"><col></colgroup>
+        <thead><tr><th>Feature</th><th>Logseq</th><th>Tine</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td class="feat">Headings, lists, blockquotes, HR</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note"></td></tr>
+          <tr><td class="feat">Code blocks + syntax highlighting</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note"></td></tr>
+          <tr><td class="feat">Tables (with column alignment)</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note"></td></tr>
+          <tr><td class="feat">LaTeX math (inline + display)</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">KaTeX.</td></tr>
+          <tr><td class="feat">Images (inline, sized) &amp; media</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">Video/audio embeds; PDF too (below).</td></tr>
+          <tr><td class="feat">Callouts / admonitions</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note"><code>#+BEGIN_NOTE</code> and <code>[!NOTE]</code>.</td></tr>
+          <tr><td class="feat">Task markers + checkboxes</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">TODO/DOING/NOW/LATER/WAITING/DONE/CANCELED; click the box to toggle.</td></tr>
+          <tr><td class="feat">Priorities <code>[#A]</code></td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note"></td></tr>
+          <tr><td class="feat">SCHEDULED / DEADLINE + repeaters</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">Repeating tasks roll forward on completion.</td></tr>
+          <tr><td class="feat">Logbook / time tracking</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-part">◑</b></td><td class="note">Logbook drawers round-trip and stay hidden like Logseq; no start/stop clock UI yet.</td></tr>
+          <tr><td class="feat">Footnotes</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note"></td></tr>
+        </tbody>
+      </table></div>
+
+      <h2 class="cmp-h">Pages, journals &amp; links</h2>
+      <div class="tbl-wrap"><table class="cmp">
+        <colgroup><col class="c-feat"><col class="c-og"><col class="c-tine"><col></colgroup>
+        <thead><tr><th>Feature</th><th>Logseq</th><th>Tine</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td class="feat">Journals / daily notes</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">Multi-day feed, configurable title/file formats.</td></tr>
+          <tr><td class="feat">Page links, tags, namespaces (<code>a/b/c</code>)</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">Namespace tree in the sidebar.</td></tr>
+          <tr><td class="feat">Aliases</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note"><code>alias::</code> resolves in search + refs.</td></tr>
+          <tr><td class="feat">Linked &amp; unlinked references</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note"></td></tr>
+          <tr><td class="feat">Favorites</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note"></td></tr>
+          <tr><td class="feat">Graph view (node-link)</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-no">✗</b></td><td class="note">Not yet — researched; a local-neighborhood view is the likely first bite.</td></tr>
+        </tbody>
+      </table></div>
+
+      <h2 class="cmp-h">Queries</h2>
+      <div class="tbl-wrap"><table class="cmp">
+        <colgroup><col class="c-feat"><col class="c-og"><col class="c-tine"><col></colgroup>
+        <thead><tr><th>Feature</th><th>Logseq</th><th>Tine</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td class="feat">Simple &amp; compound queries (DSL)</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">task / priority / property / page-ref / scheduled / deadline / between / sort-by, with and/or/not.</td></tr>
+          <tr><td class="feat">Advanced Datalog (<code>[:find …]</code>)</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-part">◑</b></td><td class="note">A mapped subset of clauses; unsupported ones are reported as ignored, never guessed.</td></tr>
+          <tr><td class="feat">Query result tables / views</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-part">◑</b></td><td class="note">Results render as blocks + a query builder; custom table views / <code>:result-transform</code> are limited.</td></tr>
+          <tr><td class="feat">Math / aggregation on results</td><td class="st"><b class="g g-no">✗</b></td><td class="st"><b class="g g-no">✗</b></td><td class="note">Not native in either; needs advanced views / a plugin.</td></tr>
+        </tbody>
+      </table></div>
+
+      <h2 class="cmp-h">Search, assets &amp; export</h2>
+      <div class="tbl-wrap"><table class="cmp">
+        <colgroup><col class="c-feat"><col class="c-og"><col class="c-tine"><col></colgroup>
+        <thead><tr><th>Feature</th><th>Logseq</th><th>Tine</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td class="feat">Global search / quick switcher (Ctrl+K)</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note"></td></tr>
+          <tr><td class="feat">PDF viewer + annotation / highlights</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">Highlights become blocks, same as Logseq.</td></tr>
+          <tr><td class="feat">Asset handling (images, files)</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">Paste an image → saved to <code>assets/</code>.</td></tr>
+          <tr><td class="feat">HTML publish / export</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">Facets, queries, and embeds all render — resolved against your graph at publish time. This site's <a href="demo/">demo</a> is Tine's own export.</td></tr>
+          <tr><td class="feat">PDF export</td><td class="st"><b class="g g-no">✗</b></td><td class="st"><b class="g g-no">✗</b></td><td class="note">Logseq has no native PDF export either (it's a plugin/print job); on Tine's roadmap.</td></tr>
+          <tr><td class="feat">Copy as Markdown / Rendered</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-add">⊕</b></td><td class="note">Tine adds a <em>Rendered</em> copy (paste formatted into email/docs).</td></tr>
+          <tr><td class="feat">Org-mode graphs</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">Reads/writes <code>.org</code>; per-graph preferred format.</td></tr>
+        </tbody>
+      </table></div>
+
+      <h2 class="cmp-h">Where Tine goes further <b class="g g-add">⊕</b></h2>
+      <p class="cmp-h-lede">The reason Tine exists is speed — and a few conveniences beyond Logseq.</p>
+      <div class="tbl-wrap"><table class="cmp">
+        <colgroup><col class="c-feat"><col class="c-og"><col class="c-tine"><col></colgroup>
+        <thead><tr><th>Feature</th><th>Logseq</th><th>Tine</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td class="feat">Performance on large graphs / older machines</td><td class="st"><b class="g g-part">◑</b></td><td class="st"><b class="g g-add">⊕</b></td><td class="note">The founding goal: a native Rust core + a lean UI, tuned for machines Logseq bogs down on.</td></tr>
+          <tr><td class="feat">Editor tabs</td><td class="st"><b class="g g-no">✗</b></td><td class="st"><b class="g g-add">⊕</b></td><td class="note">Middle-click / Ctrl+W, reorderable, restored on launch.</td></tr>
+          <tr><td class="feat">Global quick capture</td><td class="st"><b class="g g-part">◑</b></td><td class="st"><b class="g g-add">⊕</b></td><td class="note"><code>tine --capture</code> mini-window into today's journal.</td></tr>
+          <tr><td class="feat">Typographic replacements (<code>-&gt;</code> → →)</td><td class="st"><b class="g g-part">◑</b></td><td class="st"><b class="g g-add">⊕</b></td><td class="note">Optional render-time only; your <code>.md</code> keeps the ASCII.</td></tr>
+          <tr><td class="feat">lsdoc-vs-Logseq render diff tool</td><td class="st"><b class="g g-no">✗</b></td><td class="st"><b class="g g-add">⊕</b></td><td class="note">Run Logseq's own parser over your graph, locally, and see any divergence.</td></tr>
+        </tbody>
+      </table></div>
+
+      <h2 class="cmp-h">Deliberately not doing</h2>
+      <p class="cmp-h-lede">Logseq features that are out of scope by design — so a gap here is a choice, not a to-do.</p>
+      <ul class="notdoing">
+        <li><b>Whiteboards</b> — a whole separate canvas app; not Tine's focus.</li>
+        <li><b>Flashcards / spaced repetition</b> — a large subsystem better served by dedicated tools.</li>
+        <li><b>Plugin marketplace / <code>@logseq/libs</code></b> — no plugin runtime; a curated CSS-theming shim is the realistic slice.</li>
+        <li><b>Real-time multi-user collaboration</b> — Tine is local-first over your own file sync (Syncthing/Dropbox/git), not a live shared server.</li>
+        <li><b>The database version of Logseq</b> — Tine targets the file/Markdown model on purpose; that's what keeps your notes as plain files you own.</li>
+      </ul>
+
+      <p class="asof">As of Tine v0.3.x · July 2026. This page is maintained by hand and will drift as features ship — <a href="https://github.com/martinkoutecky/tine/blob/master/docs/FEATURES.md">FEATURES.md</a> is the source of truth.</p>
+    </div>
+  </section>
+
+</main>
+
+<footer class="foot">
+  <div class="foot-inner">
+    <div class="foot-brand">
+      <svg class="mark" width="26" height="26" viewBox="0 0 64 80" aria-hidden="true">
+        <g stroke="currentColor" stroke-width="6" stroke-linecap="round" fill="none">
+          <path d="M16 14 V36"/><path d="M32 14 V36"/><path d="M48 14 V36"/>
+          <path d="M16 36 H48"/><path d="M32 36 V70"/>
+        </g>
+      </svg>
+      <span>Tine</span>
+    </div>
+    <nav class="foot-links">
+      <a href="https://github.com/martinkoutecky/tine">GitHub</a>
+      <a href="https://github.com/martinkoutecky/tine/releases">Releases</a>
+      <a href="index.html">Home</a>
+      <a href="https://www.gnu.org/licenses/agpl-3.0.html">AGPL-3.0</a>
+    </nav>
+    <p class="foot-note">
+      Tine is an independent reimplementation, not a fork — original Rust + SolidJS, no Logseq
+      source. <a href="https://logseq.com">Logseq</a> is © its authors. Tine is <strong>not
+      affiliated with or endorsed by Logseq.</strong>
+    </p>
+    <p class="foot-copy">© 2026 Martin Koutecký · Built as a faster, file-compatible companion to Logseq.</p>
+  </div>
+</footer>
+
+</body>
+</html>

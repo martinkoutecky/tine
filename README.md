@@ -134,6 +134,8 @@ and the **[demo](https://tine.page/demo/)** shows the rendered-content side of i
 | **Customize & export** | Remappable shortcuts with `?` help, themes + custom CSS, multi-language spell check, static HTML export with offline search, copy/export as Markdown. |
 
 → **[See every feature, with the details, in docs/FEATURES.md.](docs/FEATURES.md)**
+→ **[Tine vs Logseq, feature by feature](https://tine.page/compare.html)** — an honest, dated
+comparison: parity, scoped, not-yet, and what Tine deliberately doesn't do.
 
 ---
 

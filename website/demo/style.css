@@ -80,6 +80,38 @@ strong{font-weight:650}
 .md-list-term{font-weight:650}
 .block-checkbox{display:inline-block;width:.95em;height:.95em;border:1.5px solid var(--muted);border-radius:3px;vertical-align:-2px;margin-right:.15em}
 .block-checkbox.checked{background:var(--accent);border-color:var(--accent)}
+/* task facets: checkbox + marker badge, priority badge (match the app header) */
+.task-checkbox{display:inline-block;width:.95em;height:.95em;border:1.5px solid var(--muted);border-radius:3px;vertical-align:-2px;margin-right:.35em;position:relative}
+.task-checkbox.checked{background:var(--accent);border-color:var(--accent)}
+.task-checkbox.checked::after{content:"";position:absolute;left:.28em;top:.08em;width:.2em;height:.42em;border:solid #fff;border-width:0 .12em .12em 0;transform:rotate(45deg)}
+.task-marker{font-size:.68rem;font-weight:700;letter-spacing:.03em;padding:.05em .35em;border-radius:4px;background:var(--code);color:var(--muted);vertical-align:.05em}
+.task-marker.m-doing,.task-marker.m-now{color:#c2410c;background:#fff2e8}
+.task-marker.m-done{color:var(--accent);background:#e7f7f0}
+.task-marker.m-waiting{color:#a16207;background:#fdf6e3}
+.task-marker.m-canceled,.task-marker.m-cancelled{color:var(--muted);text-decoration:line-through}
+.b.done>.heading-text,.b.done{color:var(--muted)}
+.priority{font-size:.72rem;font-weight:700;padding:.02em .3em;border-radius:4px;background:var(--code);color:var(--muted)}
+.priority.p-a{color:#b91c1c;background:#fdeaea}.priority.p-b{color:#c2410c;background:#fff2e8}
+/* planning (SCHEDULED/DEADLINE) + block properties */
+.planning{font-size:.85em;color:var(--muted);margin:.05rem 0}
+.planning.deadline .pk{color:#b91c1c}
+.planning .pk,.block-props .pk{font-weight:650;letter-spacing:.02em}
+.block-props{font-size:.85em;color:var(--muted);margin:.1rem 0;display:flex;flex-wrap:wrap;gap:.1rem .8rem}
+.block-props .pv{color:var(--fg)}
+/* query results + embeds + video + namespace macro */
+.query{border:1px solid var(--line);border-radius:8px;margin:.4rem 0;overflow:hidden}
+.query-head{font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);background:var(--code);padding:.3em .7em}
+.query-count{background:var(--muted);color:var(--bg);border-radius:8px;padding:0 .45em;margin-left:.3em;font-size:.9em}
+.query-results{padding:.3rem .7rem}
+.query-empty{padding:.5rem .7rem;color:var(--muted);font-size:.9em}
+.embed{border-left:3px solid var(--line);padding:.1rem 0 .1rem .8rem;margin:.35rem 0}
+.embed-title{display:inline-block;font-size:.78rem;color:var(--muted);margin-bottom:.1rem}
+.embed-missing{color:var(--muted);font-style:italic;font-size:.9em}
+.video-embed{position:relative;width:100%;max-width:560px;aspect-ratio:16/9;margin:.4rem 0}
+.video-embed iframe{position:absolute;inset:0;width:100%;height:100%;border:0;border-radius:8px}
+.namespace-macro{margin:.3rem 0}
+.namespace-macro .ns-head{font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.macro-raw{color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em}
 /* tables (data-align is the export's beyond-OG column alignment) */
 table.md-table{border-collapse:collapse;margin:.5rem 0;font-size:.94em}
 table.md-table th,table.md-table td{border:1px solid var(--line);padding:.3em .6em;text-align:left}
