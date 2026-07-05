@@ -4,7 +4,7 @@ import type { GraphMeta, JournalConflict, SyncConflict, PageKind } from "./types
 import { backend, isTauri } from "./backend";
 // Zoom is route state; these are call-time only, so the ui↔router cycle is safe.
 import { route, focusBlock, scheduleSessionSave } from "./router";
-import { setJournalTitleFormat } from "./journal";
+import { setJournalTitleFormat, isJournalTitle } from "./journal";
 
 const THEME_KEY = "logseq-claude.theme";
 function loadTheme(): "light" | "dark" {
@@ -534,35 +534,23 @@ export function persistPdfPaneWidth() {
   }
 }
 
-// Favorites (starred pages/journals), persisted.
+// Favorites (starred pages/journals). Persisted PER GRAPH in that graph's
+// config.edn `:favorites` (the single source of truth) — NOT in a global
+// localStorage key, which would leak one graph's favorites into another and
+// leave dead links (clicking them opens an empty page) after a graph switch.
+// The signal starts empty and is (re)seeded from config.edn on every graph open
+// (see seedFavorites), so switching graphs always shows exactly that graph's set.
 export interface FavItem {
   name: string;
   kind: PageKind;
 }
-const FAV_KEY = "logseq-claude.favorites";
-function loadFavs(): FavItem[] {
-  try {
-    const v = JSON.parse(localStorage.getItem(FAV_KEY) ?? "[]");
-    if (!Array.isArray(v)) return [];
-    // migrate old string[] format
-    return v.map((x: unknown) =>
-      typeof x === "string" ? { name: x, kind: "page" as const } : (x as FavItem)
-    );
-  } catch {
-    return [];
-  }
-}
-export const [favorites, setFavorites] = createSignal<FavItem[]>(loadFavs());
+export const [favorites, setFavorites] = createSignal<FavItem[]>([]);
 export function isFavorite(name: string): boolean {
   return favorites().some((f) => f.name === name);
 }
 function persistFavorites(next: FavItem[]) {
-  try {
-    localStorage.setItem(FAV_KEY, JSON.stringify(next));
-  } catch {
-    // ignore
-  }
-  // Persist to config.edn :favorites so favorites travel with the graph.
+  // Persist to config.edn :favorites so favorites travel with the graph and stay
+  // scoped to it. config.edn stores names only; kind is re-derived on seed.
   void backend().setFavorites(next.map((f) => f.name)).catch(() => {});
 }
 export function toggleFavorite(name: string, kind: "page" | "journal" = "page") {
@@ -591,10 +579,16 @@ export function removeDeletedPageFromNavigation(name: string, kind: PageKind) {
     }
   }
 }
-/** Seed favorites from config.edn `:favorites` on graph open (graph is the source
- *  of truth); falls back to whatever was already loaded (localStorage) if empty. */
+/** Seed favorites from config.edn `:favorites` on graph open. config.edn is the
+ *  source of truth, so this ALWAYS replaces the current set — including clearing
+ *  it to empty when the newly-opened graph has no favorites — otherwise the
+ *  previous graph's favorites would linger and open empty pages. config.edn
+ *  stores names only; kind is re-derived so a favorited journal still routes as a
+ *  journal (not a would-be-empty page). */
 export function seedFavorites(names: string[]) {
-  if (names.length) setFavorites(names.map((name) => ({ name, kind: "page" as const })));
+  setFavorites(
+    names.map((name): FavItem => ({ name, kind: isJournalTitle(name) ? "journal" : "page" }))
+  );
 }
 
 // Recently-visited pages (navigation history), newest first. This is the right

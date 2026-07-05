@@ -61,6 +61,7 @@ import {
   recentPages,
   setFavorites,
   setRecentPages,
+  seedFavorites,
 } from "./ui";
 import { journalTitle } from "./journal";
 import type { BlockDto, PageDto } from "./types";
@@ -970,6 +971,22 @@ describe("save engine (persistence)", () => {
     expect(pageByName("Older")).toBeUndefined();
     expect(favorites()).toEqual([{ name: "Pinned", kind: "page" }]);
     expect(recentPages()).toEqual([{ name: "Pinned", kind: "page" }]);
+  });
+
+  it("seedFavorites replaces (per-graph) on graph open, clearing to empty for a graph with none", () => {
+    // Graph A has favorites.
+    seedFavorites(["Inbox", "2026-07-05"]);
+    expect(favorites()).toEqual([
+      { name: "Inbox", kind: "page" },
+      // A journal-titled favorite is re-derived as a journal so it routes correctly.
+      { name: "2026-07-05", kind: "journal" },
+    ]);
+    // Switch to graph B, which has NO favorites — must not linger from graph A.
+    seedFavorites([]);
+    expect(favorites()).toEqual([]);
+    // Switch to graph C with a different set — full replace, not a merge.
+    seedFavorites(["Reading List"]);
+    expect(favorites()).toEqual([{ name: "Reading List", kind: "page" }]);
   });
 
   it("restores today's empty journal at the top of the feed after deleting today in place (#17)", async () => {
