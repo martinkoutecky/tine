@@ -1246,3 +1246,72 @@ fn rename_rewrites_nested_ref_in_open_page() {
     assert!(pages.contains(&"Tine"), "backlinks miss Tine: {pages:?}");
     std::fs::remove_dir_all(&root).ok();
 }
+
+#[test]
+fn sync_conflict_base_recognises_syncthing_and_dropbox() {
+    use tine_core::model::sync_conflict_base;
+    // Syncthing.
+    assert_eq!(
+        sync_conflict_base("Foo.sync-conflict-20260705-120000-ABCDEFG"),
+        Some("Foo")
+    );
+    // Dropbox variants.
+    assert_eq!(sync_conflict_base("Foo (conflicted copy 2026-07-05)"), Some("Foo"));
+    assert_eq!(
+        sync_conflict_base("Foo (martin's conflicted copy 2026-07-05)"),
+        Some("Foo")
+    );
+    // Not a conflict copy.
+    assert_eq!(sync_conflict_base("Foo"), None);
+    assert_eq!(sync_conflict_base("2026_06_26"), None);
+    assert_eq!(sync_conflict_base("My (draft) page"), None);
+}
+
+#[test]
+fn sync_conflict_copies_excluded_from_pages_and_surfaced_separately() {
+    let root = std::env::temp_dir().join(format!("tine-syncconflict-test-{}", std::process::id()));
+    std::fs::create_dir_all(root.join("journals")).unwrap();
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    // A real page + its Syncthing conflict copy (shares the id::, so exercises the
+    // "must not churn the id space" reason to keep it out of the cache).
+    std::fs::write(
+        root.join("pages").join("Foo.md"),
+        "- hello\n  id:: aaaaaaaa-0000-0000-0000-0000000000ff\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("pages").join("Foo.sync-conflict-20260705-120000-ABCDEFG.md"),
+        "- hello from the other device\n  id:: aaaaaaaa-0000-0000-0000-0000000000ff\n",
+    )
+    .unwrap();
+    // A journal + its conflict copy.
+    std::fs::write(root.join("journals").join("2026_06_26.md"), "- day one\n").unwrap();
+    std::fs::write(
+        root.join("journals").join("2026_06_26.sync-conflict-20260705-130000-ABCDEFG.md"),
+        "- day one, edited elsewhere\n",
+    )
+    .unwrap();
+
+    let g = Graph::open(&root);
+
+    // The conflict copies must NOT appear as pages/journals.
+    let names: Vec<String> = g.list_pages().into_iter().map(|p| p.name).collect();
+    assert!(names.iter().any(|n| n == "Foo"), "real page missing: {names:?}");
+    assert!(
+        !names.iter().any(|n| n.contains("sync-conflict")),
+        "conflict copy leaked into page list: {names:?}"
+    );
+
+    // They ARE surfaced by list_sync_conflicts, each pointing at its winner.
+    let mut conflicts = g.list_sync_conflicts();
+    conflicts.sort_by(|a, b| a.base_name.cmp(&b.base_name));
+    assert_eq!(conflicts.len(), 2, "conflicts: {conflicts:?}");
+    let foo = conflicts.iter().find(|c| c.base_name == "Foo").expect("Foo conflict");
+    assert_eq!(foo.base_path.as_deref(), Some("pages/Foo.md"));
+    assert!(foo.tag.starts_with("sync-conflict-"), "tag: {}", foo.tag);
+    assert!(foo.preview.contains("other device"), "preview: {}", foo.preview);
+    let jrnl = conflicts.iter().find(|c| c.base_name != "Foo").expect("journal conflict");
+    assert_eq!(jrnl.base_path.as_deref(), Some("journals/2026_06_26.md"));
+
+    std::fs::remove_dir_all(&root).ok();
+}

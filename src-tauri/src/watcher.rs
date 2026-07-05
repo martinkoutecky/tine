@@ -130,16 +130,24 @@ pub(crate) fn start_watcher(app: tauri::AppHandle) {
                     baseline = true; // first scan establishes the baseline; emit nothing
                 } else {
                     let mut changes: Vec<GraphChange> = Vec::new();
+                    // A sync-tool conflict copy appearing/vanishing isn't a page
+                    // change (it's never cached), but the conflicts panel must
+                    // refresh — track it and emit `conflicts-changed` once.
+                    let mut conflicts_dirty = false;
                     for (p, m) in &current {
                         if snap.get(p) != Some(m) {
-                            if let Some(en) = graph.sync_file(p) {
+                            if tine_core::model::path_is_sync_conflict(p) {
+                                conflicts_dirty = true;
+                            } else if let Some(en) = graph.sync_file(p) {
                                 changes.push(GraphChange { name: en.name, kind: en.kind, removed: false });
                             }
                         }
                     }
                     for p in snap.keys() {
                         if !current.contains_key(p) {
-                            if let Some(en) = graph.forget_file(p) {
+                            if tine_core::model::path_is_sync_conflict(p) {
+                                conflicts_dirty = true;
+                            } else if let Some(en) = graph.forget_file(p) {
                                 changes.push(GraphChange { name: en.name, kind: en.kind, removed: true });
                             }
                         }
@@ -147,6 +155,9 @@ pub(crate) fn start_watcher(app: tauri::AppHandle) {
                     snap = current;
                     for c in changes {
                         let _ = app.emit("graph-changed", c);
+                    }
+                    if conflicts_dirty {
+                        let _ = app.emit("conflicts-changed", ());
                     }
                 }
             }

@@ -59,6 +59,41 @@ fn is_page_file(path: &Path) -> bool {
     matches!(path.extension().and_then(|e| e.to_str()), Some("md") | Some("org"))
 }
 
+/// If `stem` is a sync tool's conflict copy of another file, return the base file
+/// stem it shadows. Recognises Syncthing
+/// (`name.sync-conflict-YYYYMMDD-HHMMSS-XXXXXXX`) and Dropbox
+/// (`name (conflicted copy …)` / `name (<user>'s conflicted copy …)`).
+///
+/// A conflict copy is NOT a real page — it must be kept out of the page list and
+/// the `(kind,name)` cache (otherwise it shows as a garbage page and its shared
+/// `id::` values churn the id space), yet remain loadable by path for the
+/// conflict-merge UI. So this is threaded through the *listing* sites, never
+/// through `is_page_file`/`entry_for_path`/`resolve_rel` (which the merge UI's
+/// path-addressed load relies on).
+pub fn sync_conflict_base(stem: &str) -> Option<&str> {
+    if let Some(i) = stem.find(".sync-conflict-") {
+        return Some(&stem[..i]);
+    }
+    // Dropbox: "<base> (conflicted copy …)" or "<base> (<user>'s conflicted copy …)".
+    if let Some(i) = stem.find(" (") {
+        if stem[i..].contains("conflicted copy") {
+            return Some(&stem[..i]);
+        }
+    }
+    None
+}
+
+/// Whether `stem` names a sync-tool conflict copy (see [`sync_conflict_base`]).
+pub fn is_sync_conflict(stem: &str) -> bool {
+    sync_conflict_base(stem).is_some()
+}
+
+/// Whether `path`'s file stem names a sync-tool conflict copy — the `Path`-level
+/// convenience used by the watcher (which works in paths, not stems).
+pub fn path_is_sync_conflict(path: &Path) -> bool {
+    path.file_stem().and_then(|s| s.to_str()).is_some_and(is_sync_conflict)
+}
+
 /// Error for an ambiguous page that exists as both a `.md` and a `.org` file.
 /// Deliberately NOT the `AlreadyExists`/"conflict" signal, so the UI surfaces it
 /// as a plain error (a toast) instead of a keep-mine/use-disk conflict prompt.
@@ -188,6 +223,26 @@ pub struct JournalFile {
 pub struct JournalConflict {
     pub title: String,
     pub files: Vec<JournalFile>,
+}
+
+/// A sync-tool conflict copy left in the graph (Syncthing/Dropbox) — a
+/// `*.sync-conflict-*.md` (or Dropbox `(conflicted copy)`) file that shadows a
+/// real page. Surfaced so the user can review + reconcile it instead of it
+/// rotting as a garbage page. See [`sync_conflict_base`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncConflict {
+    /// Graph-root-relative path of the conflict copy file.
+    pub path: String,
+    /// Display name of the page it shadows (decoded page name / journal title).
+    pub base_name: String,
+    /// Graph-root-relative path of the winning (base) file, if it still exists.
+    pub base_path: Option<String>,
+    /// Kind of the shadowed page (journal/page).
+    pub kind: PageKind,
+    /// The device/timestamp suffix from the conflict filename (best-effort label).
+    pub tag: String,
+    /// One-line content preview of the conflict copy.
+    pub preview: String,
 }
 
 /// A full page as sent to / received from the frontend.
@@ -740,6 +795,69 @@ impl Graph {
             jfiles.sort_by(|a, b| b.canonical.cmp(&a.canonical).then_with(|| a.name.cmp(&b.name)));
             out.push(JournalConflict { title: self.journal_format.title(date), files: jfiles });
         }
+        out
+    }
+
+    /// Sync-tool conflict copies (`*.sync-conflict-*`, Dropbox `(conflicted copy)`)
+    /// sitting in `journals/` or `pages/`. Each carries the winning page it shadows,
+    /// that winner's path (if it still exists), a device/timestamp tag, and a
+    /// one-line preview — everything the conflicts panel needs to offer a merge.
+    /// These files are deliberately excluded from `list_pages`/the cache
+    /// (see [`is_sync_conflict`]); this is the ONLY place they're surfaced.
+    pub fn list_sync_conflicts(&self) -> Vec<SyncConflict> {
+        let mut out = Vec::new();
+        for (dir, kind) in
+            [(self.journals_path(), PageKind::Journal), (self.pages_path(), PageKind::Page)]
+        {
+            let Ok(rd) = fs::read_dir(&dir) else { continue };
+            for e in rd.flatten() {
+                let p = e.path();
+                let ext = match p.extension().and_then(|x| x.to_str()) {
+                    Some(x @ ("md" | "org")) => x,
+                    _ => continue,
+                };
+                let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else { continue };
+                let Some(base_stem) = sync_conflict_base(stem) else { continue };
+                // The winner it shadows: same dir, same extension, base stem.
+                let base_file = dir.join(format!("{base_stem}.{ext}"));
+                let base_path = base_file.is_file().then(|| self.rel_path(&base_file));
+                let base_name = match kind {
+                    PageKind::Journal => self
+                        .journal_format
+                        .parse(base_stem)
+                        .map(|d| self.journal_format.title(d))
+                        .unwrap_or_else(|| base_stem.to_string()),
+                    PageKind::Page => decode_page_name(base_stem, self.config.file_name_format),
+                };
+                let tag = stem[base_stem.len()..]
+                    .trim_matches(|c: char| c == '.' || c == ' ' || c == '(' || c == ')')
+                    .to_string();
+                let preview = fs::read_to_string(&p)
+                    .ok()
+                    .and_then(|c| {
+                        c.lines()
+                            .map(|l| {
+                                l.trim_start_matches(|ch| {
+                                    ch == '*' || ch == '-' || ch == ' ' || ch == '\t'
+                                })
+                                .trim()
+                                .to_string()
+                            })
+                            .find(|l| !l.is_empty())
+                    })
+                    .map(|l| l.chars().take(80).collect::<String>())
+                    .unwrap_or_default();
+                out.push(SyncConflict {
+                    path: self.rel_path(&p),
+                    base_name,
+                    base_path,
+                    kind,
+                    tag,
+                    preview,
+                });
+            }
+        }
+        out.sort_by(|a, b| a.base_name.cmp(&b.base_name).then_with(|| a.path.cmp(&b.path)));
         out
     }
 
@@ -2416,6 +2534,13 @@ impl Graph {
     /// false "changed on disk".
     fn sync_file_content(&self, path: &Path, content: &str, consume_self_write: bool) -> Option<PageEntry> {
         let entry = self.entry_for_path(path)?;
+        // A sync-tool conflict copy (`*.sync-conflict-*`) is never a real page: keep
+        // it out of the `(kind,name)` cache (it would show as a garbage page and its
+        // shared `id::` values would churn the id space). It's surfaced separately via
+        // `list_sync_conflicts` and loaded on demand by path for the merge UI.
+        if path_is_sync_conflict(path) {
+            return None;
+        }
         // A shadow journal file (a title-named leftover coexisting with a canonical
         // date-stem file for the same day, #21) must never be reconciled into the
         // `(kind,name)` cache — that slot belongs to the canonical file, and caching
@@ -2880,6 +3005,9 @@ fn list_md(
             continue;
         }
         let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else { continue };
+        if is_sync_conflict(stem) {
+            continue; // sync-tool conflict copy — not a page (see list_sync_conflicts)
+        }
         let (name, date_key) = match kind {
             PageKind::Journal => match fmt.parse(stem) {
                 Some(d) => (fmt.title(d), Some(d.ordinal_key())),

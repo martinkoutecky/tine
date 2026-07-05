@@ -425,6 +425,15 @@ pub(crate) fn list_journal_conflicts(
     with_graph(&state, |g| Ok(g.journal_conflicts()))
 }
 
+/// Sync-tool conflict copies (Syncthing/Dropbox) sitting in the graph — for the
+/// user to review + reconcile instead of them showing as garbage pages.
+#[tauri::command]
+pub(crate) fn list_sync_conflicts(
+    state: State<'_, AppState>,
+) -> Result<Vec<tine_core::model::SyncConflict>, String> {
+    with_graph(&state, |g| Ok(g.list_sync_conflicts()))
+}
+
 /// Move one journal file (by exact filename) to the recoverable trash.
 #[tauri::command]
 pub(crate) fn trash_journal_file(name: String, state: State<'_, AppState>) -> Result<(), String> {
