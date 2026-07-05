@@ -11,6 +11,7 @@ uuid = { workspace = true }
 slotmap = { version = "1", features = ["serde"] }
 ammonia = "4"
 lsdoc = { git = "https://github.com/martinkoutecky/lsdoc", tag = "v0.4.2" }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 [dev-dependencies]
 pretty_assertions = "1"

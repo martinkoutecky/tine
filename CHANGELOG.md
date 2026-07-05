@@ -10,6 +10,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Logseq-compatible time tracking.** Moving tasks into `DOING`/`NOW` clocks in,
+  and moving them back to `TODO`/`LATER` or into `DONE` clocks out by writing OG
+  `:LOGBOOK:` `CLOCK:` rows. The writer uses Logseq's local timestamp shape,
+  English weekday abbreviations, default seconds mode, and the exact `=>  ` span
+  spacing; elapsed badges on `DONE`/`TODO`/`LATER` blocks show recent CLOCK rows in
+  a tooltip. The feature is gated by `:feature/enable-timetracking?` (default on).
 - **Rendered copy is more faithful.** Copy / export → **Rendered** now preserves
   `$…$` / `$$…$$` math delimiters, pre-warms off-screen block refs before copying,
   resolves `{{embed}}`, `{{query}}`, and media/widget macros to sensible text forms,

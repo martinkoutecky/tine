@@ -3102,7 +3102,7 @@ body.file-drop-active::after {
   background: color-mix(in srgb, var(--link-color, #4a7) 6%, transparent);
 }
 
-/* priorities + date chips */
+/* priorities + time/date chips */
 .block-priority {
   font-size: 0.74em;
   font-weight: 700;
@@ -3114,6 +3114,74 @@ body.file-drop-active::after {
 .priority-A { color: var(--marker-todo); }
 .priority-B { color: var(--marker-doing); }
 .priority-C { color: var(--marker-now); }
+
+.clock-badge {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  vertical-align: 1px;
+  outline: none;
+}
+
+.clock-badge-label {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent, #4c8bf5) 12%, transparent);
+  color: var(--text-secondary);
+  font-size: 0.76em;
+  font-weight: 700;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.clock-tooltip {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 6px);
+  z-index: 60;
+  display: none;
+  width: max-content;
+  max-width: min(680px, calc(100vw - 48px));
+  padding: 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+  white-space: normal;
+}
+
+.clock-badge:hover .clock-tooltip,
+.clock-badge:focus-within .clock-tooltip {
+  display: block;
+}
+
+.clock-tooltip table {
+  border-collapse: collapse;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.clock-tooltip th,
+.clock-tooltip td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border-color);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.clock-tooltip th {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.clock-tooltip tr:last-child td {
+  border-bottom: none;
+}
 
 .date-chip {
   display: inline-flex;

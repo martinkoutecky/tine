@@ -292,6 +292,19 @@ pub(crate) fn set_preferred_workflow(
 }
 
 #[tauri::command]
+pub(crate) fn set_timetracking_enabled(
+    enabled: bool,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    with_graph(&state, |g| {
+        g.set_timetracking_enabled(enabled)
+            .map_err(|e| e.to_string())
+    })?;
+    refresh_graph(&state);
+    Ok(())
+}
+
+#[tauri::command]
 pub(crate) fn set_default_journal_template(
     name: Option<String>,
     state: State<'_, AppState>,

@@ -444,6 +444,14 @@ pub struct GraphMeta {
     /// User-defined `:macros {"name" "template"}` — the frontend substitutes
     /// `$1..$N` args into the template and renders the result as markdown.
     pub macros: std::collections::HashMap<String, String>,
+    /// `:feature/enable-timetracking?` effective value; default true.
+    pub enable_timetracking: bool,
+    /// `:logbook/settings :with-second-support?` effective value; default true.
+    pub logbook_with_second_support: bool,
+    /// `:logbook/settings :enabled-in-timestamped-blocks` effective value.
+    pub logbook_enabled_in_timestamped_blocks: bool,
+    /// `:logbook/settings :enabled-in-all-blocks` effective value.
+    pub logbook_enabled_in_all_blocks: bool,
 }
 
 impl Graph {
@@ -510,6 +518,13 @@ impl Graph {
             journal_file_name_format: self.journal_format.file_format().to_string(),
             preferred_format: self.config.preferred_format.ext().to_string(),
             macros: self.config.macros.clone(),
+            enable_timetracking: self.config.enable_timetracking,
+            logbook_with_second_support: self.config.logbook.with_second_support,
+            logbook_enabled_in_timestamped_blocks: self
+                .config
+                .logbook
+                .enabled_in_timestamped_blocks,
+            logbook_enabled_in_all_blocks: self.config.logbook.enabled_in_all_blocks,
         }
     }
 

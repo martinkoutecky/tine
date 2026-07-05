@@ -33,6 +33,21 @@ export function changeWorkflow(wf: "now" | "todo") {
   void backend().setPreferredWorkflow(wf).catch(() => {});
 }
 
+export function timetrackingEnabled(): boolean {
+  return graphMeta()?.enable_timetracking ?? true;
+}
+
+export function logbookWithSecondSupport(): boolean {
+  return graphMeta()?.logbook_with_second_support ?? true;
+}
+
+export function changeTimetrackingEnabled(enabled: boolean) {
+  const m = graphMeta();
+  if (m && m.enable_timetracking === enabled) return;
+  if (m) setGraphMeta({ ...m, enable_timetracking: enabled });
+  void backend().setTimetrackingEnabled(enabled).catch(() => {});
+}
+
 // --- appearance: accent color, wide mode, document mode (all persisted) ---
 function loadStr(key: string): string | null {
   try {

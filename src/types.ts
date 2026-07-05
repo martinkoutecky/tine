@@ -172,6 +172,10 @@ export interface GraphMeta {
   journal_file_name_format: string; // :journal/file-name-format (default "yyyy_MM_dd")
   preferred_format: Format; // :preferred-format — new pages/journals ("md" | "org")
   macros: Record<string, string>; // :macros — user text-substitution macros ($1..$N)
+  enable_timetracking: boolean; // :feature/enable-timetracking?, default true
+  logbook_with_second_support: boolean; // :logbook/settings :with-second-support?, default true
+  logbook_enabled_in_timestamped_blocks: boolean;
+  logbook_enabled_in_all_blocks: boolean;
 }
 
 export interface Rect {

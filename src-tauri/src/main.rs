@@ -26,6 +26,7 @@ use commands::{
     resolve_block, resolve_blocks, resolve_sync_conflict, run_advanced_query, run_query,
     save_asset, save_page, save_pdf_area_image, search, set_default_journal_template,
     set_favorites, set_journal_title_format, set_preferred_format, set_preferred_workflow,
+    set_timetracking_enabled,
     set_start_of_week, sync_conflict_diff, trash_asset, trash_journal_file, trash_sync_conflict,
     write_highlights,
 };
@@ -313,6 +314,7 @@ fn main() {
             page_icons,
             set_favorites,
             set_preferred_workflow,
+            set_timetracking_enabled,
             set_preferred_format,
             set_journal_title_format,
             set_default_journal_template,

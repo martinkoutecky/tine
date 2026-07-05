@@ -19,6 +19,8 @@ import {
   conflicts,
   pushToast,
   graphMeta,
+  timetrackingEnabled,
+  logbookWithSecondSupport,
   removeDeletedPageFromNavigation,
 } from "./ui";
 import { seedFacets, facetsFromDto, clearSeededFacets } from "./render/facets";
@@ -28,6 +30,7 @@ import { copyIncludeSubtree, copyStripCollapsed } from "./copySettings";
 import { trimBlockTrailingSpace } from "./editor/format";
 import { OPEN_MARKERS, MARKER_RE } from "./markers";
 import { editingId, endEdit, startEditing } from "./editorController";
+import { applyMarkerTransition } from "./logbook";
 import {
   markDirty,
   isDirty,
@@ -819,9 +822,20 @@ export function redo() {
 // Mutations (each schedules a debounced save of the affected page)
 // ---------------------------------------------------------------------------
 
-export function setRaw(id: string, raw: string) {
-  pushRawUndo(id, doc.byId[id].raw);
-  setDoc("byId", id, "raw", raw);
+export function setRaw(id: string, raw: string, opts?: { timetracking?: boolean }) {
+  const prev = doc.byId[id].raw;
+  const next =
+    opts?.timetracking === false
+      ? raw
+      : applyMarkerTransition(
+          prev,
+          raw,
+          formatForBlock(id),
+          timetrackingEnabled(),
+          logbookWithSecondSupport(),
+        );
+  pushRawUndo(id, prev);
+  setDoc("byId", id, "raw", next);
   markDirty(doc.byId[id].page);
 }
 

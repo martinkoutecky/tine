@@ -7,6 +7,9 @@
 
 use wasm_bindgen::prelude::*;
 
+#[path = "../../tine-core/src/logbook.rs"]
+mod logbook;
+
 /// Parse one de-bulleted block body into lsdoc's render AST, serialized to JSON.
 ///
 /// Mirrors `tine_core::render::parse_block` EXACTLY (the OG-faithful boundary):
@@ -57,6 +60,80 @@ pub fn render_block_html(raw: &str, is_org: bool) -> String {
     let input = format!("{pattern} {}", raw.trim_start());
     let blocks = lsdoc::parse(&input, fmt);
     lsdoc::render_html(&blocks, &lsdoc::RenderOpts { format: rfmt })
+}
+
+#[wasm_bindgen]
+pub fn logbook_clock_in(raw: &str, is_org: bool, with_seconds: bool) -> String {
+    logbook::clock_in_at(raw, logbook_format(is_org), with_seconds, now_parts())
+}
+
+#[wasm_bindgen]
+pub fn logbook_clock_out(raw: &str, with_seconds: bool) -> String {
+    logbook::clock_out_at(raw, with_seconds, now_parts())
+}
+
+#[wasm_bindgen]
+pub fn logbook_apply_marker_transition(
+    raw: &str,
+    is_org: bool,
+    old_marker: &str,
+    new_marker: &str,
+    enabled: bool,
+    with_seconds: bool,
+) -> String {
+    let old = (!old_marker.is_empty()).then_some(old_marker);
+    let new = (!new_marker.is_empty()).then_some(new_marker);
+    logbook::apply_marker_transition_at(
+        raw,
+        logbook_format(is_org),
+        old,
+        new,
+        enabled,
+        with_seconds,
+        now_parts(),
+    )
+}
+
+#[wasm_bindgen]
+pub fn logbook_info_json(raw: &str) -> String {
+    let rows = logbook::clock_rows(raw)
+        .into_iter()
+        .map(|r| {
+            serde_json::json!({
+                "type": r.kind,
+                "start": r.start,
+                "end": r.end,
+                "span": r.span,
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "seconds": logbook::clock_summary_seconds(raw),
+        "summary": logbook::clock_summary_compact(raw),
+        "rows": rows,
+    })
+    .to_string()
+}
+
+fn logbook_format(is_org: bool) -> logbook::LogbookFormat {
+    if is_org {
+        logbook::LogbookFormat::Org
+    } else {
+        logbook::LogbookFormat::Markdown
+    }
+}
+
+fn now_parts() -> logbook::TimestampParts {
+    let d = js_sys::Date::new_0();
+    logbook::TimestampParts {
+        year: d.get_full_year() as i32,
+        month: d.get_month() + 1,
+        day: d.get_date(),
+        weekday: d.get_day(),
+        hour: d.get_hours(),
+        minute: d.get_minutes(),
+        second: d.get_seconds(),
+    }
 }
 
 /// The lsdoc git tag this wasm was built against (set by `build:wasm` via the

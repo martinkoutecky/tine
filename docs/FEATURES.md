@@ -147,6 +147,13 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
 
 - `TODO/DOING/DONE/NOW/LATER/WAITING/CANCELED`, two configurable workflows,
   priorities, cycle with `Mod+Enter`.
+- **Time tracking / logbook** — marker transitions write OG-compatible
+  `:LOGBOOK:` drawers: moving into `DOING`/`NOW` clocks in, moving back to
+  `TODO`/`LATER` or into `DONE` clocks out. CLOCK rows use Logseq's exact local
+  timestamp shape (`yyyy-MM-dd E HH:mm[:ss]`, English weekday abbreviations),
+  seconds are on by default, and closed rows keep the two spaces after `=>`.
+  `DONE`/`TODO`/`LATER` blocks show an elapsed-time badge with a Type / Start /
+  End / Span tooltip; the drawer itself stays hidden by default, like Logseq.
 - **Task checkbox** in front of every task block (Logseq parity): click it to mark
   the task `DONE`, click again to reopen it (to `TODO`, or `LATER` under the "now"
   workflow); a repeating task rolls its date forward instead of closing. `DONE`

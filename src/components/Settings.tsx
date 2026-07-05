@@ -10,6 +10,8 @@ import {
   toggleTheme,
   workflow,
   changeWorkflow,
+  timetrackingEnabled,
+  changeTimetrackingEnabled,
   changePreferredFormat,
   changeJournalTitleFormat,
   graphMeta,
@@ -776,6 +778,19 @@ function JournalsTab(): JSX.Element {
             NOW / LATER
           </button>
         </div>
+      </Field>
+
+      <Field
+        label="Time tracking"
+        hint={
+          <>
+            Marker transitions write OG-compatible <code>:LOGBOOK:</code> CLOCK rows. Saved to{" "}
+            <code>:feature/enable-timetracking?</code>; seconds mode follows{" "}
+            <code>:logbook/settings</code> and is {graphMeta()?.logbook_with_second_support ?? true ? "on" : "off"}.
+          </>
+        }
+      >
+        <Toggle on={timetrackingEnabled()} onClick={() => changeTimetrackingEnabled(!timetrackingEnabled())} />
       </Field>
 
       <JournalTemplateField />

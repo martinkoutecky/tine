@@ -82,7 +82,7 @@ import {
 } from "../media";
 import { calcSource, wrapCalc, evalCalc } from "../editor/calc";
 import { QueryMacro, EmbedMacro } from "./Macro";
-import { workflow, zoomInto, openContextMenu, openDatePicker, openBlockInSidebar, graphMeta, dataRev, setQueryBuilderAutoOpen, openPageProps, pushToast, dismissToast, autoPairing, typographyMode } from "../ui";
+import { workflow, zoomInto, openContextMenu, openDatePicker, openBlockInSidebar, graphMeta, dataRev, setQueryBuilderAutoOpen, openPageProps, pushToast, dismissToast, autoPairing, typographyMode, timetrackingEnabled, logbookWithSecondSupport } from "../ui";
 import { seedAssetBlob } from "../assetCache";
 import { openPageInNewTab } from "../router";
 import { blockRefCount } from "../blockRefCounts";
@@ -96,6 +96,7 @@ import { splitProps, joinProps, isBuiltinHidden, hideAll, caretInFence } from ".
 import { normalizePlanning } from "../editor/planning";
 import { isAnnotationBlock, annotationInfo } from "../editor/annotation";
 import { AnnotationBody } from "./AnnotationBody";
+import { logbookInfo, type LogbookInfo } from "../logbook";
 
 // Detect a block whose entire body is a single {{query}} / {{embed}} macro.
 function detectMacro(raw: string): { kind: "query" | "embed"; inner: string } | null {
@@ -389,6 +390,7 @@ const FORBID_EDIT_SELECTOR = [
   "summary",
   ".block-ref",
   ".block-marker",
+  ".clock-badge",
   ".date-chip",
   ".hl-prefix",
   ".inline-image-wrap",
@@ -485,6 +487,13 @@ function Rendered(props: { id: string; owner?: string; trailing?: JSX.Element })
   // ONE lsdoc parse — read from the cache the store seeded from the backend DTO (no
   // parse on load), recomputed from a single wasm parse only for the edited block.
   const facets = createMemo(() => facetsOf(node().raw, fmt()));
+  const clock = createMemo((): LogbookInfo | null => {
+    if (!timetrackingEnabled()) return null;
+    const marker = facets().marker;
+    if (marker !== "DONE" && marker !== "TODO" && marker !== "LATER") return null;
+    const info = logbookInfo(node().raw);
+    return info.seconds > 0 ? info : null;
+  });
   const readOnly = () => pageByName(node().page)?.readOnly ?? false;
 
   const macro = createMemo(() => detectMacro(node().raw));
@@ -603,6 +612,9 @@ function Rendered(props: { id: string; owner?: string; trailing?: JSX.Element })
           (see renderBlocks headingLevel), so a `> quote`/table/etc. continuation in
           the same block renders at normal size — matching OG. */}
       {body}
+      <Show when={clock()}>
+        {(info) => <ClockBadge info={info()} />}
+      </Show>
       <Show when={facets().scheduled}>
         <span
           class="date-chip scheduled"
@@ -650,15 +662,60 @@ function Rendered(props: { id: string; owner?: string; trailing?: JSX.Element })
 
 // Cycle the task marker on a block (OG order), used by the marker chip click.
 function cycleBlockMarker(id: string) {
-  const { raw } = cycleMarkerSmart(doc.byId[id].raw, workflow());
-  setRaw(id, raw);
+  const { raw } = cycleMarkerSmart(doc.byId[id].raw, workflow(), {
+    format: formatForBlockId(id),
+    enabled: timetrackingEnabled(),
+    withSeconds: logbookWithSecondSupport(),
+  });
+  setRaw(id, raw, { timetracking: false });
 }
 
 // Toggle the task checkbox (OG check/uncheck): open → DONE (rolling a repeater
 // forward instead), DONE → the workflow's open marker. Used by the block checkbox.
 function toggleBlockCheckbox(id: string) {
-  const raw = toggleTaskDone(doc.byId[id].raw, workflow());
-  if (raw !== null) setRaw(id, raw);
+  const raw = toggleTaskDone(doc.byId[id].raw, workflow(), {
+    format: formatForBlockId(id),
+    enabled: timetrackingEnabled(),
+    withSeconds: logbookWithSecondSupport(),
+  });
+  if (raw !== null) setRaw(id, raw, { timetracking: false });
+}
+
+function formatForBlockId(id: string): "md" | "org" {
+  return pageByName(doc.byId[id]?.page)?.format ?? "md";
+}
+
+function ClockBadge(props: { info: LogbookInfo }): JSX.Element {
+  const rows = () => props.info.rows.slice().reverse().slice(0, 10);
+  return (
+    <span class="clock-badge" tabIndex={0}>
+      <span class="clock-badge-label">{props.info.summary}</span>
+      <span class="clock-tooltip" role="tooltip">
+        <table>
+          <thead>
+            <tr>
+              <th>Type</th>
+              <th>Start</th>
+              <th>End</th>
+              <th>Span</th>
+            </tr>
+          </thead>
+          <tbody>
+            <For each={rows()}>
+              {(r) => (
+                <tr>
+                  <td>{r.type}</td>
+                  <td>{r.start}</td>
+                  <td>{r.end ?? ""}</td>
+                  <td>{r.span ?? ""}</td>
+                </tr>
+              )}
+            </For>
+          </tbody>
+        </table>
+      </span>
+    </span>
+  );
 }
 
 interface AcItem {
@@ -809,7 +866,7 @@ export function Editor(props: { id: string }): JSX.Element {
   const calcLive = createMemo(() => calcSource(editorValue()));
   const isCalc = () => calcLive() !== null;
   const calcRows = createMemo(() => (isCalc() ? evalCalc(calcLive() ?? "") : []));
-  const commit = (text: string) => {
+  const commit = (text: string, opts?: { timetracking?: boolean }) => {
     // For calc, `text` is the bare expressions the user sees — re-fence it.
     // Keep any trailing space the user left (or that a `/priority` insert added as
     // a typing convenience) in the live buffer — OG keeps it while you edit and
@@ -824,7 +881,7 @@ export function Editor(props: { id: string }): JSX.Element {
     // identical raw): don't mark the page dirty or push undo — avoids churn and
     // can't rewrite the block's bytes.
     if (next === node().raw) return;
-    setRaw(props.id, next);
+    setRaw(props.id, next, opts);
   };
 
   // Nest/un-nest an in-block list item by ±2 leading spaces (Tab/Shift-Tab when

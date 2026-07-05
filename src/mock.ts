@@ -44,7 +44,7 @@ function b(raw: string, children: BlockDto[] = [], collapsed = false): BlockDto 
   // Mirror the real backend: a block carrying an `id::` property uses that uuid as
   // its store id (so block refs resolve to it and the count badge keys correctly).
   const m = raw.match(/^\s*id::\s*(.+)$/m);
-  return { id: m ? m[1].trim() : nid(), raw, collapsed, children };
+  return { id: m ? m[1].trim() : nid(), raw, collapsed, children, marker: leadingMarker(raw) ?? undefined };
 }
 
 function mockPagePath(p: PageDto): string {
@@ -169,7 +169,7 @@ const NAMED: PageDto[] = [
       b("Autolink (angle): <https://example.com>"),
       b("Inline math: $E = mc^2$ and chemistry: $\\ce{H2O + CO2}$"),
       b("Display math:\n$$\\int_0^1 x^2 \\, dx = \\tfrac13$$"),
-      b("DONE finished task with a logbook drawer\n:LOGBOOK:\nCLOCK: [2026-06-16 Tue 09:00]--[2026-06-16 Tue 09:30] =>  0:30\n:END:"),
+      b("DONE finished task with a logbook drawer\n:LOGBOOK:\nCLOCK: [2026-06-16 Tue 09:00:00]--[2026-06-16 Tue 09:30:45] =>  00:30:45\nCLOCK: [2026-06-17 Wed 10:00:00]--[2026-06-17 Wed 10:20:00] =>  00:20:00\n:END:"),
       b("Task markers: TODO a, DOING b, NOW c, LATER d, WAIT e, DONE f"),
       b("in-block checklist (+ list inside one bullet — ticks in OG/mobile):\n+ [ ] pack toothbrush\n+ [x] pack charger\n+ [ ] pack passport"),
       b("in-block nested list:\n+ groceries\n  + milk\n  + eggs\n+ hardware"),
@@ -358,6 +358,10 @@ export function mockBackend(): Backend {
         journal_page_title_format: "MMM do, yyyy",
         journal_file_name_format: "yyyy_MM_dd",
         preferred_format: "md",
+        enable_timetracking: true,
+        logbook_with_second_support: true,
+        logbook_enabled_in_timestamped_blocks: true,
+        logbook_enabled_in_all_blocks: false,
         macros: {
           // Demo user macros so the kitchen-sink exercises inline and block expansions.
           poem: "Roses are $1, violets are $2.",
@@ -489,6 +493,9 @@ export function mockBackend(): Backend {
       // no-op in the browser mock
     },
     async setPreferredWorkflow(): Promise<void> {
+      // no-op in the browser mock
+    },
+    async setTimetrackingEnabled(): Promise<void> {
       // no-op in the browser mock
     },
     async setPreferredFormat(): Promise<void> {

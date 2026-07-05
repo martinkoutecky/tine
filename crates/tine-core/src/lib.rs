@@ -7,6 +7,7 @@ pub mod date;
 pub mod doc;
 pub mod edn;
 pub mod html_sanitize;
+pub mod logbook;
 pub mod model;
 pub mod onboarding;
 pub mod org;

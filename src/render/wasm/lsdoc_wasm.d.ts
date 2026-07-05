@@ -1,6 +1,14 @@
 /* tslint:disable */
 /* eslint-disable */
 
+export function logbook_apply_marker_transition(raw: string, is_org: boolean, old_marker: string, new_marker: string, enabled: boolean, with_seconds: boolean): string;
+
+export function logbook_clock_in(raw: string, is_org: boolean, with_seconds: boolean): string;
+
+export function logbook_clock_out(raw: string, with_seconds: boolean): string;
+
+export function logbook_info_json(raw: string): string;
+
 /**
  * The lsdoc git tag this wasm was built against (set by `build:wasm` via the
  * `LSDOC_TAG` env, read from tine-core's Cargo.toml — the single source of truth).
@@ -54,14 +62,18 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
+    readonly logbook_apply_marker_transition: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number];
+    readonly logbook_clock_in: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly logbook_clock_out: (a: number, b: number, c: number) => [number, number];
+    readonly logbook_info_json: (a: number, b: number) => [number, number];
     readonly lsdoc_tag: () => [number, number];
     readonly parse_block_json: (a: number, b: number, c: number) => [number, number];
     readonly parse_document_json: (a: number, b: number, c: number) => [number, number];
     readonly render_block_html: (a: number, b: number, c: number) => [number, number];
     readonly __wbindgen_externrefs: WebAssembly.Table;
-    readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
+    readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_start: () => void;
 }
 

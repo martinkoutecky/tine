@@ -7,7 +7,9 @@ import { setTimeout as sleep } from "node:timers/promises";
 
 const PORT = 5191;
 const OUT = "screenshots";
+const NOTES_OUT = "subagent-tasks/notes";
 mkdirSync(OUT, { recursive: true });
+mkdirSync(NOTES_OUT, { recursive: true });
 
 const server = spawn("npx", ["vite", "preview", "--port", String(PORT), "--strictPort"], {
   stdio: "inherit",
@@ -60,8 +62,38 @@ try {
   await page.keyboard.press("Escape");
   await sleep(150);
 
+  // Logbook badge + tooltip on the kitchen-sink task with a CLOCK drawer.
+  await page.keyboard.press("Control+k");
+  await sleep(150);
+  await page.keyboard.type("kitchen-sink");
+  await sleep(250);
+  await page.keyboard.press("Enter");
+  await page.waitForSelector(".clock-badge", { timeout: 5000 });
+  const clockBlock = page.locator(".ls-block", { has: page.locator(".clock-badge") }).first();
+  await clockBlock.scrollIntoViewIfNeeded();
+  await page.locator(".clock-badge").first().hover();
+  await page.waitForSelector(".clock-tooltip", { state: "visible", timeout: 5000 });
+  await sleep(250);
+  const blockBox = await clockBlock.boundingBox();
+  const tooltipBox = await page.locator(".clock-tooltip").first().boundingBox();
+  if (blockBox && tooltipBox) {
+    const x = Math.max(0, Math.min(blockBox.x, tooltipBox.x) - 12);
+    const y = Math.max(0, Math.min(blockBox.y, tooltipBox.y) - 12);
+    const right = Math.min(1280, Math.max(blockBox.x + blockBox.width, tooltipBox.x + tooltipBox.width) + 12);
+    const bottom = Math.min(860, Math.max(blockBox.y + blockBox.height, tooltipBox.y + tooltipBox.height) + 12);
+    await page.screenshot({
+      path: `${NOTES_OUT}/logbook-badge-tooltip.png`,
+      clip: { x, y, width: right - x, height: bottom - y },
+    });
+  }
+
   // A named page (shows page properties + Linked References).
-  await page.locator(".nav-page").first().click();
+  await page.keyboard.press("Control+k");
+  await sleep(150);
+  await page.keyboard.type("Tine");
+  await sleep(250);
+  await page.keyboard.press("Enter");
+  await page.waitForSelector(".pdf-link", { timeout: 5000 });
   await sleep(400);
   await page.screenshot({ path: `${OUT}/page-light.png` });
 

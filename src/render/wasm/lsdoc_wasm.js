@@ -1,6 +1,94 @@
 /* @ts-self-types="./lsdoc_wasm.d.ts" */
 
 /**
+ * @param {string} raw
+ * @param {boolean} is_org
+ * @param {string} old_marker
+ * @param {string} new_marker
+ * @param {boolean} enabled
+ * @param {boolean} with_seconds
+ * @returns {string}
+ */
+export function logbook_apply_marker_transition(raw, is_org, old_marker, new_marker, enabled, with_seconds) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(old_marker, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(new_marker, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.logbook_apply_marker_transition(ptr0, len0, is_org, ptr1, len1, ptr2, len2, enabled, with_seconds);
+        deferred4_0 = ret[0];
+        deferred4_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
+ * @param {string} raw
+ * @param {boolean} is_org
+ * @param {boolean} with_seconds
+ * @returns {string}
+ */
+export function logbook_clock_in(raw, is_org, with_seconds) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.logbook_clock_in(ptr0, len0, is_org, with_seconds);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * @param {string} raw
+ * @param {boolean} with_seconds
+ * @returns {string}
+ */
+export function logbook_clock_out(raw, with_seconds) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.logbook_clock_out(ptr0, len0, with_seconds);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
+ * @param {string} raw
+ * @returns {string}
+ */
+export function logbook_info_json(raw) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(raw, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.logbook_info_json(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
  * The lsdoc git tag this wasm was built against (set by `build:wasm` via the
  * `LSDOC_TAG` env, read from tine-core's Cargo.toml — the single source of truth).
  * Surfaced to the frontend for diagnostics; the hard stale-wasm guard lives in the
@@ -109,6 +197,41 @@ export function render_block_html(raw, is_org) {
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,
+        __wbg___wbindgen_throw_344f42d3211c4765: function(arg0, arg1) {
+            throw new Error(getStringFromWasm0(arg0, arg1));
+        },
+        __wbg_getDate_a1a40c1c5f40fe3b: function(arg0) {
+            const ret = arg0.getDate();
+            return ret;
+        },
+        __wbg_getDay_aa318cce5da74c49: function(arg0) {
+            const ret = arg0.getDay();
+            return ret;
+        },
+        __wbg_getFullYear_6af8b229792ae254: function(arg0) {
+            const ret = arg0.getFullYear();
+            return ret;
+        },
+        __wbg_getHours_9f6561095682ce51: function(arg0) {
+            const ret = arg0.getHours();
+            return ret;
+        },
+        __wbg_getMinutes_b0d5cd90bf9b8f22: function(arg0) {
+            const ret = arg0.getMinutes();
+            return ret;
+        },
+        __wbg_getMonth_fffe29d654d5eb69: function(arg0) {
+            const ret = arg0.getMonth();
+            return ret;
+        },
+        __wbg_getSeconds_40c565b3a6cb05fe: function(arg0) {
+            const ret = arg0.getSeconds();
+            return ret;
+        },
+        __wbg_new_0_3da9e97f24fc69be: function() {
+            const ret = new Date();
+            return ret;
+        },
         __wbindgen_init_externref_table: function() {
             const table = wasm.__wbindgen_externrefs;
             const offset = table.grow(4);

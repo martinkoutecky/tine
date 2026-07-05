@@ -59,6 +59,11 @@ pub struct Config {
     /// markdown. We only collect the string→string pairs; the frontend substitutes
     /// and recurses.
     pub macros: HashMap<String, String>,
+    /// `:feature/enable-timetracking?` — OG default ON; only explicit false
+    /// disables marker-driven CLOCK entries.
+    pub enable_timetracking: bool,
+    /// `:logbook/settings` — OG logbook write/display settings.
+    pub logbook: LogbookSettings,
 }
 
 /// Logseq's default journal formats (verified against
@@ -90,6 +95,13 @@ pub enum FileNameFormat {
     TripleLowbar,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LogbookSettings {
+    pub with_second_support: bool,
+    pub enabled_in_timestamped_blocks: bool,
+    pub enabled_in_all_blocks: bool,
+}
+
 impl Default for Config {
     fn default() -> Self {
         Config {
@@ -107,6 +119,18 @@ impl Default for Config {
             preferred_format: crate::model::Format::Md,
             file_name_format: FileNameFormat::Legacy,
             macros: HashMap::new(),
+            enable_timetracking: true,
+            logbook: LogbookSettings::default(),
+        }
+    }
+}
+
+impl Default for LogbookSettings {
+    fn default() -> Self {
+        LogbookSettings {
+            with_second_support: true,
+            enabled_in_timestamped_blocks: true,
+            enabled_in_all_blocks: false,
         }
     }
 }
@@ -162,6 +186,20 @@ impl Config {
             _ => FileNameFormat::Legacy,
         };
         cfg.macros = parse_macros(edn);
+        cfg.enable_timetracking =
+            bool_value(edn, ":feature/enable-timetracking?").unwrap_or(true);
+        cfg.logbook = LogbookSettings {
+            with_second_support: nested_bool(edn, ":logbook/settings", ":with-second-support?")
+                .unwrap_or(true),
+            enabled_in_timestamped_blocks: nested_bool(
+                edn,
+                ":logbook/settings",
+                ":enabled-in-timestamped-blocks",
+            )
+            .unwrap_or(true),
+            enabled_in_all_blocks: nested_bool(edn, ":logbook/settings", ":enabled-in-all-blocks")
+                .unwrap_or(false),
+        };
         cfg
     }
 }
@@ -242,6 +280,32 @@ impl Graph {
                 content.insert_str(brace + 1, &format!("\n :preferred-workflow {kw}\n"));
             } else {
                 content = format!("{{:preferred-workflow {kw}}}\n");
+            }
+            Ok(content)
+        })
+    }
+
+    /// Persist `:feature/enable-timetracking?`. OG treats an absent key as ON,
+    /// but writing the explicit boolean keeps the Settings toggle reversible.
+    pub fn set_timetracking_enabled(&self, enabled: bool) -> io::Result<()> {
+        let key = ":feature/enable-timetracking?";
+        let val = if enabled { "true" } else { "false" };
+        let path = self.root.join("logseq").join("config.edn");
+        crate::model::atomic_update(&path, &CONFIG_LOCK, |content| {
+            let mut content = content.to_string();
+
+            if let Some(start) = find_keyword(&content, key) {
+                let after = start + key.len();
+                match next_value_span(&content, after, content.len()) {
+                    Some((vstart, vend, _)) if vend > vstart => {
+                        content.replace_range(vstart..vend, val)
+                    }
+                    _ => content.insert_str(after, &format!(" {val}")),
+                }
+            } else if let Some(brace) = content.find('{') {
+                content.insert_str(brace + 1, &format!("\n {key} {val}\n"));
+            } else {
+                content = format!("{{{key} {val}}}\n");
             }
             Ok(content)
         })
@@ -723,6 +787,26 @@ fn nested_string(edn: &str, outer: &str, inner: &str) -> Option<String> {
     (edn.as_bytes().get(vfrom) == Some(&b'"')).then(|| read_string_at(edn, vfrom))
 }
 
+/// Boolean value for `inner` inside the map following `outer`, e.g.
+/// `:logbook/settings {:with-second-support? false}`.
+fn nested_bool(edn: &str, outer: &str, inner: &str) -> Option<bool> {
+    let start = find_keyword(edn, outer)?;
+    let from = skip_blank(edn, start + outer.len());
+    if edn.as_bytes().get(from) != Some(&b'{') {
+        return None;
+    }
+    let close = match_close_brace(edn, from);
+    let irel = find_keyword(&edn[from + 1..close], inner)?;
+    let vfrom = skip_blank(edn, from + 1 + irel + inner.len());
+    if edn[vfrom..close].starts_with("true") {
+        Some(true)
+    } else if edn[vfrom..close].starts_with("false") {
+        Some(false)
+    } else {
+        None
+    }
+}
+
 /// Keywords in the set following `key` (`:block-hidden-properties #{:a :b}`).
 fn parse_keyword_set(edn: &str, key: &str) -> Vec<String> {
     let Some(start) = find_keyword(edn, key) else {
@@ -896,6 +980,51 @@ mod tests {
     fn no_shortcuts_section_is_empty() {
         let cfg = Config::parse(r#"{:preferred-format "Markdown"}"#);
         assert!(cfg.shortcuts.is_empty());
+    }
+
+    #[test]
+    fn parses_timetracking_defaults_and_logbook_settings() {
+        let cfg = Config::parse("{}");
+        assert!(cfg.enable_timetracking);
+        assert!(cfg.logbook.with_second_support);
+        assert!(cfg.logbook.enabled_in_timestamped_blocks);
+        assert!(!cfg.logbook.enabled_in_all_blocks);
+
+        let cfg = Config::parse(
+            "{:feature/enable-timetracking? false
+              :logbook/settings {:with-second-support? false
+                                 :enabled-in-timestamped-blocks false
+                                 :enabled-in-all-blocks true}}",
+        );
+        assert!(!cfg.enable_timetracking);
+        assert!(!cfg.logbook.with_second_support);
+        assert!(!cfg.logbook.enabled_in_timestamped_blocks);
+        assert!(cfg.logbook.enabled_in_all_blocks);
+    }
+
+    #[test]
+    fn set_timetracking_enabled_round_trips() {
+        use crate::model::Graph;
+        let dir = std::env::temp_dir().join(format!("tine-cfgttrack-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq").join("config.edn"),
+            "{:preferred-format \"Markdown\"\n :start-of-week 0}\n",
+        )
+        .unwrap();
+        let g = Graph::open(&dir);
+        g.set_timetracking_enabled(false).unwrap();
+        let after = fs::read_to_string(dir.join("logseq").join("config.edn")).unwrap();
+        assert!(
+            after.contains(":feature/enable-timetracking? false"),
+            "not written: {after}"
+        );
+        assert!(after.contains(":start-of-week 0"), "other keys preserved");
+        assert!(!Graph::open(&dir).config.enable_timetracking);
+        Graph::open(&dir).set_timetracking_enabled(true).unwrap();
+        assert!(Graph::open(&dir).config.enable_timetracking);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
