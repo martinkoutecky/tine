@@ -400,6 +400,60 @@ body {
   font-size: 15px;
 }
 
+/* Current-graph switcher in the sidebar header (open/create a graph). */
+.graph-switch {
+  position: relative;
+  margin-top: 4px;
+}
+.graph-switch-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  text-align: left;
+}
+.graph-switch-btn:hover {
+  background: var(--bg-tertiary);
+}
+.graph-switch-icon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  color: var(--text-muted);
+}
+.graph-switch-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.graph-switch-caret {
+  font-size: 9px;
+  opacity: 0.7;
+}
+.graph-switch-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+/* Higher specificity than `.ctx-menu` (defined later in this file) so its
+ * `position: fixed` / `min-width` don't win and shove the menu off-screen. */
+.graph-switch .graph-switch-menu {
+  position: absolute;
+  top: 100%;
+  left: 6px;
+  right: 6px;
+  z-index: 41;
+  min-width: 0;
+}
+
 .nav-search {
   padding: 0 6px 10px;
 }

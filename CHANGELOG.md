@@ -10,6 +10,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Graph switcher in the sidebar.** The active graph's name now shows in the
+  sidebar header (under "Tine") as a clickable control → **Open graph…** (native
+  folder picker) / **New graph…**. Switching graphs was previously buried in
+  Settings; this surfaces it. (You can also start Tine on a specific graph from
+  the command line: `tine /path/to/graph`, or `TINE_GRAPH=/path`.) A saved
+  recent-graphs list is still to come.
 - **Windows ARM64 and Linux ARM64 builds.** Releases now include `aarch64`
   installers for Windows (Surface Pro X, Snapdragon X laptops) and Linux (Asahi,
   Raspberry Pi / SBC) alongside the existing x64 builds — pick the one matching

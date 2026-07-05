@@ -223,7 +223,11 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
 - **Launch snapshots** (configurable keep-count) with a restore UI that takes a
   safety snapshot first; page delete moves to a recoverable **trash**; `atomic_write`
   + fsync.
-- Open/switch graphs from the app (native folder picker) or via `TINE_GRAPH`.
+- **Switch graphs** right from the sidebar header — click the current graph name
+  (under the "Tine" wordmark) for **Open graph…** (native folder picker) and
+  **New graph…**. Also openable from the command line: `tine /path/to/graph` or
+  the `TINE_GRAPH` env var. (No saved recent-graphs list yet — you pick the folder
+  each time.)
 
 ## Customization & output
 

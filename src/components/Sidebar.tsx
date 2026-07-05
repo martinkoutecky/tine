@@ -1,6 +1,7 @@
-import { For, Show, createMemo, createSignal, type JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js";
 import { openJournals, openPage, openPageInNewTab, openInNewTab, route } from "../router";
-import { openSwitcher, favorites, recentPages, openPageContextMenu } from "../ui";
+import { openSwitcher, favorites, recentPages, openPageContextMenu, graphMeta } from "../ui";
+import { switchGraph, createNewGraph } from "../graph";
 import { allPages as allGraphPages } from "../pages";
 import { NamespaceTree } from "./Namespace";
 import type { PageKind } from "../types";
@@ -41,6 +42,7 @@ export function Sidebar(): JSX.Element {
     <div class="left-sidebar-inner">
       <div class="sidebar-header">
         <div class="app-logo">Tine</div>
+        <GraphSwitcher />
       </div>
 
       <div class="nav-search">
@@ -172,6 +174,83 @@ export function Sidebar(): JSX.Element {
       <div class="sidebar-footer">
         <button class="new-page-btn" onClick={() => openSwitcher()}>+ New page</button>
       </div>
+    </div>
+  );
+}
+
+// Display name for the active graph = basename of its root folder (OG shows the
+// same). Falls back to "No graph" when none is loaded (e.g. mock/first run).
+function graphDisplayName(): string {
+  const root = graphMeta()?.root;
+  if (!root) return "No graph";
+  const base = root.replace(/[/\\]+$/, "").split(/[/\\]/).pop();
+  return base || root;
+}
+
+// The current-graph control in the sidebar header. OG puts a graph-name dropdown
+// top-left (database icon → switch/new/all-graphs/re-index). Tine has no
+// multi-graph list yet (that's R4a), so this surfaces the already-existing
+// open/create actions — making graph switching DISCOVERABLE rather than buried
+// in Settings.
+function GraphSwitcher(): JSX.Element {
+  const [open, setOpen] = createSignal(false);
+  const close = () => setOpen(false);
+
+  // Esc closes the menu (the backdrop handles click-outside).
+  createEffect(() => {
+    if (!open()) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    window.addEventListener("keydown", onKey);
+    onCleanup(() => window.removeEventListener("keydown", onKey));
+  });
+
+  return (
+    <div class="graph-switch">
+      <button
+        class="graph-switch-btn"
+        title={graphMeta()?.root ?? undefined}
+        onClick={() => setOpen(!open())}
+      >
+        <svg viewBox="0 0 24 24" class="graph-switch-icon">
+          <ellipse cx="12" cy="5" rx="7" ry="3" fill="none" stroke="currentColor" stroke-width="1.6" />
+          <path d="M5 5v7c0 1.66 3.13 3 7 3s7-1.34 7-3V5" fill="none" stroke="currentColor" stroke-width="1.6" />
+          <path d="M5 12v7c0 1.66 3.13 3 7 3s7-1.34 7-3v-7" fill="none" stroke="currentColor" stroke-width="1.6" />
+        </svg>
+        <span class="graph-switch-name">{graphDisplayName()}</span>
+        <span class="graph-switch-caret">▾</span>
+      </button>
+      <Show when={open()}>
+        <div
+          class="graph-switch-backdrop"
+          onClick={close}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            close();
+          }}
+        />
+        <div class="ctx-menu graph-switch-menu">
+          <div
+            class="ctx-item"
+            onClick={() => {
+              close();
+              void switchGraph();
+            }}
+          >
+            Open graph…
+          </div>
+          <div
+            class="ctx-item"
+            onClick={() => {
+              close();
+              void createNewGraph();
+            }}
+          >
+            New graph…
+          </div>
+        </div>
+      </Show>
     </div>
   );
 }
