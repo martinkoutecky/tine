@@ -1315,3 +1315,58 @@ fn sync_conflict_copies_excluded_from_pages_and_surfaced_separately() {
 
     std::fs::remove_dir_all(&root).ok();
 }
+
+#[test]
+fn resolve_sync_conflict_merges_and_trashes() {
+    use std::collections::HashMap;
+    let root = std::env::temp_dir().join(format!("tine-resolveconflict-{}", std::process::id()));
+    std::fs::create_dir_all(root.join("journals")).unwrap();
+    let pages = root.join("pages");
+    std::fs::create_dir_all(&pages).unwrap();
+    let winner = "- alpha\n- beta line here\n  id:: aaaaaaaa-0000-0000-0000-0000000000b0\n";
+    std::fs::write(pages.join("Foo.md"), winner).unwrap();
+    let conflict = "- alpha\n- beta line there\n  id:: aaaaaaaa-0000-0000-0000-0000000000b0\n- extra from other device\n";
+    let conflict_name = "Foo.sync-conflict-20260705-120000-ABCDEFG.md";
+    std::fs::write(pages.join(conflict_name), conflict).unwrap();
+
+    let g = Graph::open(&root);
+    let win_rel = "pages/Foo.md";
+    let conf_rel = format!("pages/{conflict_name}");
+
+    // Diff to discover the row ids.
+    let diff = g.sync_conflict_diff(win_rel, &conf_rel).unwrap().expect("a diff");
+    let modified = diff.rows.iter().find(|r| format!("{:?}", r.kind) == "Modified").expect("modified row");
+    let removed = diff.rows.iter().find(|r| format!("{:?}", r.kind) == "Removed").expect("removed row");
+
+    // Guard: a stale base_rev must refuse without writing.
+    let err = g
+        .resolve_sync_conflict(win_rel, &conf_rel, &HashMap::new(), Some("stale-rev"), "union")
+        .unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists, "stale base_rev should conflict");
+    assert_eq!(std::fs::read_to_string(pages.join("Foo.md")).unwrap(), winner, "winner untouched on guard");
+
+    // Resolve: take theirs for the modified block, pull in the removed one.
+    let decisions = HashMap::from([
+        (modified.id.clone(), "theirs".to_string()),
+        (removed.id.clone(), "theirs".to_string()),
+    ]);
+    let base = tine_core::model::content_rev(winner);
+    g.resolve_sync_conflict(win_rel, &conf_rel, &decisions, Some(&base), "union").unwrap();
+
+    let merged = std::fs::read_to_string(pages.join("Foo.md")).unwrap();
+    assert!(merged.contains("beta line there"), "merged: {merged:?}");
+    assert!(!merged.contains("beta line here"), "old winner text remains: {merged:?}");
+    assert!(merged.contains("extra from other device"), "removed block not pulled in: {merged:?}");
+
+    // Conflict copy is gone from pages/ and from the conflicts list, and lives in trash.
+    assert!(!pages.join(conflict_name).exists(), "conflict copy not moved");
+    assert!(g.list_sync_conflicts().is_empty(), "conflict still listed");
+    let trash = root.join("logseq").join(".tine-trash");
+    let trashed: Vec<_> = std::fs::read_dir(&trash).unwrap().flatten().collect();
+    assert!(
+        trashed.iter().any(|e| e.file_name().to_string_lossy().contains("sync-conflict")),
+        "conflict copy not in trash: {trashed:?}"
+    );
+
+    std::fs::remove_dir_all(&root).ok();
+}

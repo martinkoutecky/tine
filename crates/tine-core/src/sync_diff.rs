@@ -94,7 +94,7 @@ pub struct SyncConflictDiff {
 
 /// Diff `theirs` (the conflict copy's blocks) against `mine` (the winner's).
 pub fn diff_blocks(mine: &[DocBlock], theirs: &[DocBlock]) -> Vec<DiffRow> {
-    align(mine, theirs, "")
+    nodes_to_rows(&align_nodes(mine, theirs, ""))
 }
 
 /// Build the full page-level diff, including the pre-block comparison.
@@ -175,82 +175,78 @@ fn levenshtein(a: &str, b: &str) -> usize {
 
 const SIMILARITY_THRESHOLD: f32 = 0.8;
 
-/// Align two sibling lists into ordered diff rows. `prefix` is the path id of the
-/// parent ("" at the root, "2.0." style otherwise) so child ids are stable.
-fn align(mine: &[DocBlock], theirs: &[DocBlock], prefix: &str) -> Vec<DiffRow> {
+/// One aligned position in the two trees — the SINGLE source of alignment truth
+/// that both the diff rows ([`nodes_to_rows`]) and the merged output
+/// ([`nodes_to_merged`]) derive from. Because both walk the same nodes in the
+/// same order, a row `id` addresses the same block in the diff the UI shows and
+/// in the merge the resolve applies (the diff and the apply stay symmetric).
+enum Node<'a> {
+    /// Present on both sides (matched by id, content, or similarity). `modified`
+    /// is false iff the subtrees are content-equal.
+    Both {
+        id: String,
+        mine: &'a DocBlock,
+        theirs: &'a DocBlock,
+        modified: bool,
+        children: Vec<Node<'a>>,
+    },
+    /// Winner-only subtree (an Added block).
+    Mine { id: String, block: &'a DocBlock },
+    /// Conflict-only subtree (a Removed block).
+    Theirs { id: String, block: &'a DocBlock },
+}
+
+/// Align two sibling lists into ordered [`Node`]s. `prefix` is the parent's path
+/// id ("" at the root, "2.0." otherwise) so child ids are stable and identical on
+/// the diff and merge walks.
+fn align_nodes<'a>(mine: &'a [DocBlock], theirs: &'a [DocBlock], prefix: &str) -> Vec<Node<'a>> {
     // --- L1: LCS over the sibling sequences using anchor equality. ---
     let matched = lcs_pairs(mine, theirs);
-    // matched: sorted (i, j) anchor pairs (both strictly increasing).
-
-    let mut rows: Vec<DiffRow> = Vec::new();
-    let mut mi = 0usize; // next unconsumed index in `mine`
-    let mut ti = 0usize; // next unconsumed index in `theirs`
-    let mut counter = 0usize; // row index at this level → stable id
-
+    let mut out: Vec<Node> = Vec::new();
+    let mut mi = 0usize;
+    let mut ti = 0usize;
+    let mut counter = 0usize;
     for (i, j) in matched.iter().copied() {
-        // Everything before this anchor on either side is an unmatched gap.
-        emit_gap(mine, theirs, mi, i, ti, j, prefix, &mut rows, &mut counter);
-        // The anchor itself.
+        gap_nodes(mine, theirs, mi, i, ti, j, prefix, &mut out, &mut counter);
         let id = row_id(prefix, counter);
         counter += 1;
         let a = &mine[i];
         let b = &theirs[j];
         if a == b {
-            rows.push(DiffRow {
-                id,
-                kind: RowKind::Unchanged,
-                mine: Some(BlockView::of(a)),
-                theirs: Some(BlockView::of(b)),
-                children: Vec::new(),
-            });
+            out.push(Node::Both { id, mine: a, theirs: b, modified: false, children: Vec::new() });
         } else {
-            let children = align(&a.children, &b.children, &format!("{id}."));
-            rows.push(DiffRow {
-                id,
-                kind: RowKind::Modified,
-                mine: Some(BlockView::of(a)),
-                theirs: Some(BlockView::of(b)),
-                children,
-            });
+            let children = align_nodes(&a.children, &b.children, &format!("{id}."));
+            out.push(Node::Both { id, mine: a, theirs: b, modified: true, children });
         }
         mi = i + 1;
         ti = j + 1;
     }
-    // Trailing gap after the last anchor.
-    emit_gap(mine, theirs, mi, mine.len(), ti, theirs.len(), prefix, &mut rows, &mut counter);
-    rows
+    gap_nodes(mine, theirs, mi, mine.len(), ti, theirs.len(), prefix, &mut out, &mut counter);
+    out
 }
 
-/// Emit rows for an unmatched gap: pair similar first-lines as `Modified`, then
-/// leftover winner blocks as `Added` and leftover conflict blocks as `Removed`.
+/// Align an unmatched gap: pair similar first-lines as a modified `Both`, then
+/// leftover winner blocks as `Mine` (Added) and conflict blocks as `Theirs`
+/// (Removed), preserving order.
 #[allow(clippy::too_many_arguments)]
-fn emit_gap(
-    mine: &[DocBlock],
-    theirs: &[DocBlock],
+fn gap_nodes<'a>(
+    mine: &'a [DocBlock],
+    theirs: &'a [DocBlock],
     m_from: usize,
     m_to: usize,
     t_from: usize,
     t_to: usize,
     prefix: &str,
-    rows: &mut Vec<DiffRow>,
+    out: &mut Vec<Node<'a>>,
     counter: &mut usize,
 ) {
-    // Greedy left-to-right similarity pairing within the gap.
     let mut used_theirs = vec![false; t_to.saturating_sub(t_from)];
-    // Precompute conflict-side keys once.
-    let their_keys: Vec<String> =
-        (t_from..t_to).map(|j| first_line_key(&theirs[j])).collect();
-
-    // We must keep OUTPUT ORDER stable and interleaved by winner position, but a
-    // pure per-winner greedy can emit a Removed after a later Added out of order.
-    // To keep it simple and order-faithful, walk BOTH gaps with a merge: for each
-    // winner block, if it pairs with the earliest still-unused similar conflict
-    // block at-or-after the current conflict cursor, first flush the skipped
-    // conflict blocks as Removed, then emit the Modified pair; else emit Added.
+    let their_keys: Vec<String> = (t_from..t_to).map(|j| first_line_key(&theirs[j])).collect();
+    // Walk both gaps interleaved by winner position; a pure per-winner greedy
+    // could emit a Removed out of order, so flush skipped conflict blocks first.
     let mut tj = t_from; // conflict cursor
     for i in m_from..m_to {
         let key = first_line_key(&mine[i]);
-        // Find the best similar unused conflict block from the cursor onward.
         let mut best: Option<(usize, f32)> = None;
         for j in tj..t_to {
             if used_theirs[j - t_from] {
@@ -262,60 +258,175 @@ fn emit_gap(
             }
         }
         if let Some((j, _)) = best {
-            // Flush conflict blocks before the match as Removed (preserve order).
             for k in tj..j {
                 if !used_theirs[k - t_from] {
-                    emit_single(theirs, k, RowKind::Removed, prefix, rows, counter, false);
+                    let id = row_id(prefix, *counter);
+                    *counter += 1;
+                    out.push(Node::Theirs { id, block: &theirs[k] });
                     used_theirs[k - t_from] = true;
                 }
             }
-            // The Modified pair (recurse children).
             let id = row_id(prefix, *counter);
             *counter += 1;
-            let children =
-                align(&mine[i].children, &theirs[j].children, &format!("{id}."));
-            rows.push(DiffRow {
+            let children = align_nodes(&mine[i].children, &theirs[j].children, &format!("{id}."));
+            out.push(Node::Both {
                 id,
-                kind: RowKind::Modified,
-                mine: Some(BlockView::of(&mine[i])),
-                theirs: Some(BlockView::of(&theirs[j])),
+                mine: &mine[i],
+                theirs: &theirs[j],
+                modified: true,
                 children,
             });
             used_theirs[j - t_from] = true;
             tj = j + 1;
         } else {
-            emit_single(mine, i, RowKind::Added, prefix, rows, counter, true);
+            let id = row_id(prefix, *counter);
+            *counter += 1;
+            out.push(Node::Mine { id, block: &mine[i] });
         }
     }
-    // Any remaining unused conflict blocks are Removed.
     for j in t_from..t_to {
         if !used_theirs[j - t_from] {
-            emit_single(theirs, j, RowKind::Removed, prefix, rows, counter, false);
+            let id = row_id(prefix, *counter);
+            *counter += 1;
+            out.push(Node::Theirs { id, block: &theirs[j] });
         }
     }
 }
 
-/// Emit one atomic (Added/Removed) subtree row. `is_mine` picks which side the
-/// block populates.
-fn emit_single(
-    blocks: &[DocBlock],
-    idx: usize,
-    kind: RowKind,
-    prefix: &str,
-    rows: &mut Vec<DiffRow>,
-    counter: &mut usize,
-    is_mine: bool,
-) {
-    let id = row_id(prefix, *counter);
-    *counter += 1;
-    let view = BlockView::of(&blocks[idx]);
-    rows.push(DiffRow {
-        id,
-        kind,
-        mine: if is_mine { Some(view.clone()) } else { None },
-        theirs: if is_mine { None } else { Some(view) },
-        children: Vec::new(),
-    });
+/// Project the aligned nodes into the diff rows the UI renders.
+fn nodes_to_rows(nodes: &[Node]) -> Vec<DiffRow> {
+    nodes
+        .iter()
+        .map(|n| match n {
+            Node::Both { id, mine, theirs, modified, children } => DiffRow {
+                id: id.clone(),
+                kind: if *modified { RowKind::Modified } else { RowKind::Unchanged },
+                mine: Some(BlockView::of(mine)),
+                theirs: Some(BlockView::of(theirs)),
+                children: nodes_to_rows(children),
+            },
+            Node::Mine { id, block } => DiffRow {
+                id: id.clone(),
+                kind: RowKind::Added,
+                mine: Some(BlockView::of(block)),
+                theirs: None,
+                children: Vec::new(),
+            },
+            Node::Theirs { id, block } => DiffRow {
+                id: id.clone(),
+                kind: RowKind::Removed,
+                mine: None,
+                theirs: Some(BlockView::of(block)),
+                children: Vec::new(),
+            },
+        })
+        .collect()
+}
+
+// --- merge (the resolve side; symmetric with the diff via the same nodes) -----
+
+/// A user's per-row choice in the merge UI. Any row the UI didn't send defaults
+/// to `Mine` (keep the winner) — the safe default, since the conflict copy is
+/// trashed-recoverable so nothing is lost.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Decision {
+    Mine,
+    Theirs,
+    Both,
+}
+
+fn decision_for(decisions: &std::collections::HashMap<String, String>, id: &str) -> Decision {
+    match decisions.get(id).map(String::as_str) {
+        Some("theirs") => Decision::Theirs,
+        Some("both") => Decision::Both,
+        _ => Decision::Mine,
+    }
+}
+
+/// Rebuild a merged sibling list from the two trees and the user's per-row
+/// decisions. Re-derives the SAME alignment the diff used, so a decision id maps
+/// onto the same block. Per-kind semantics:
+///   - Unchanged  → the block, as-is.
+///   - Modified   → mine/theirs body with recursively-merged children; `both`
+///                  keeps both whole subtrees (the conflict copy's `id::`s
+///                  stripped so they don't collide with the winner's).
+///   - Added      → kept unless explicitly dropped (`theirs`).
+///   - Removed    → pulled in only on `theirs`/`both`.
+pub fn merge_blocks(
+    mine: &[DocBlock],
+    theirs: &[DocBlock],
+    decisions: &std::collections::HashMap<String, String>,
+) -> Vec<DocBlock> {
+    nodes_to_merged(&align_nodes(mine, theirs, ""), decisions)
+}
+
+fn nodes_to_merged(
+    nodes: &[Node],
+    decisions: &std::collections::HashMap<String, String>,
+) -> Vec<DocBlock> {
+    let mut out = Vec::new();
+    for n in nodes {
+        match n {
+            Node::Both { id, mine, theirs, modified, children } => {
+                if !*modified {
+                    out.push((*mine).clone()); // content-equal — keep as-is
+                    continue;
+                }
+                match decision_for(decisions, id) {
+                    Decision::Mine => out.push(rebuild(mine, nodes_to_merged(children, decisions))),
+                    Decision::Theirs => {
+                        out.push(rebuild(theirs, nodes_to_merged(children, decisions)))
+                    }
+                    Decision::Both => {
+                        out.push((*mine).clone());
+                        // Fresh block — must not duplicate the winner's id:: on disk.
+                        out.push(strip_ids(theirs));
+                    }
+                }
+            }
+            Node::Mine { id, block } => {
+                // Added (winner-only): kept unless the user drops it.
+                if decision_for(decisions, id) != Decision::Theirs {
+                    out.push((*block).clone());
+                }
+            }
+            Node::Theirs { id, block } => {
+                // Removed (conflict-only): pulled in on keep-theirs / keep-both. Its
+                // id is unique to the conflict (a shared id would have anchored it as
+                // a Both), so it's kept as-is.
+                if matches!(decision_for(decisions, id), Decision::Theirs | Decision::Both) {
+                    out.push((*block).clone());
+                }
+            }
+        }
+    }
+    out
+}
+
+/// A block with `side`'s own body but the given (already-merged) children.
+fn rebuild(side: &DocBlock, children: Vec<DocBlock>) -> DocBlock {
+    let mut b = DocBlock::new(side.raw.clone());
+    b.is_org = side.is_org;
+    b.children = children;
+    b
+}
+
+/// Deep-copy a block with every `id::` property line stripped — so keeping the
+/// conflict's version alongside the winner's (keep-both) can't duplicate the
+/// winner's `id::` on disk. The copy becomes a fresh, un-referenced block.
+fn strip_ids(b: &DocBlock) -> DocBlock {
+    let raw: String = b
+        .raw
+        .lines()
+        .filter(|l| {
+            crate::doc::parse_property_line(l).map_or(true, |(k, _)| !k.eq_ignore_ascii_case("id"))
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut nb = DocBlock::new(raw);
+    nb.is_org = b.is_org;
+    nb.children = b.children.iter().map(strip_ids).collect();
+    nb
 }
 
 fn row_id(prefix: &str, n: usize) -> String {
@@ -461,5 +572,82 @@ mod tests {
         let d = diff_docs(&mine, &theirs);
         assert_eq!(d.rows.iter().filter(|r| r.kind == RowKind::Unchanged).count() >= 2, true);
         assert!(!d.blocks_identical);
+    }
+
+    // --- merge -------------------------------------------------------------
+
+    use std::collections::HashMap;
+
+    fn raws(blocks: &[DocBlock]) -> Vec<String> {
+        blocks.iter().map(|b| b.raw.lines().next().unwrap_or("").to_string()).collect()
+    }
+
+    #[test]
+    fn merge_default_keeps_winner() {
+        // No decisions → winner wins: modified keeps mine's body, added kept,
+        // removed dropped. Result equals the winner's blocks.
+        let mine = parse("- alpha\n- the quick brown fox jumps\n- winner only\n");
+        let theirs = parse("- alpha\n- the quick brown fox leaps\n- conflict only\n");
+        let merged = merge_blocks(&mine.roots, &theirs.roots, &HashMap::new());
+        assert_eq!(raws(&merged), vec!["alpha", "the quick brown fox jumps", "winner only"]);
+    }
+
+    #[test]
+    fn merge_keep_theirs_on_modified() {
+        let mine = parse("- the quick brown fox jumps\n");
+        let theirs = parse("- the quick brown fox leaps\n");
+        // The single modified root has id "0".
+        let dec = HashMap::from([("0".to_string(), "theirs".to_string())]);
+        let merged = merge_blocks(&mine.roots, &theirs.roots, &dec);
+        assert_eq!(raws(&merged), vec!["the quick brown fox leaps"]);
+    }
+
+    #[test]
+    fn merge_pull_in_removed_block() {
+        // Removed (conflict-only) block pulled in with keep-theirs.
+        let mine = parse("- alpha\n");
+        let theirs = parse("- alpha\n- conflict only line\n");
+        let d = diff_docs(&mine, &theirs);
+        // Find the Removed row's id.
+        let removed_id = d
+            .rows
+            .iter()
+            .find(|r| r.kind == RowKind::Removed)
+            .map(|r| r.id.clone())
+            .expect("a removed row");
+        let dec = HashMap::from([(removed_id, "theirs".to_string())]);
+        let merged = merge_blocks(&mine.roots, &theirs.roots, &dec);
+        assert_eq!(raws(&merged), vec!["alpha", "conflict only line"]);
+    }
+
+    #[test]
+    fn merge_keep_both_strips_duplicate_id() {
+        // Same id::, both kept → the conflict copy loses the id:: so it doesn't
+        // duplicate the winner's on disk.
+        let mine = parse("- winner text\n  id:: aaaaaaaa-0000-0000-0000-0000000000cd\n");
+        let theirs = parse("- their text\n  id:: aaaaaaaa-0000-0000-0000-0000000000cd\n");
+        let dec = HashMap::from([("0".to_string(), "both".to_string())]);
+        let merged = merge_blocks(&mine.roots, &theirs.roots, &dec);
+        assert_eq!(merged.len(), 2);
+        // Winner keeps its id::; the pulled-in copy does not.
+        assert!(merged[0].raw.contains("id:: aaaaaaaa-0000-0000-0000-0000000000cd"));
+        assert!(!merged[1].raw.contains("id::"), "dup id leaked: {:?}", merged[1].raw);
+        assert!(merged[1].raw.contains("their text"));
+    }
+
+    #[test]
+    fn merge_drop_added_block() {
+        let mine = parse("- alpha\n- winner only\n");
+        let theirs = parse("- alpha\n");
+        let d = diff_docs(&mine, &theirs);
+        let added_id = d
+            .rows
+            .iter()
+            .find(|r| r.kind == RowKind::Added)
+            .map(|r| r.id.clone())
+            .expect("an added row");
+        let dec = HashMap::from([(added_id, "theirs".to_string())]); // drop it
+        let merged = merge_blocks(&mine.roots, &theirs.roots, &dec);
+        assert_eq!(raws(&merged), vec!["alpha"]);
     }
 }

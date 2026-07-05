@@ -445,6 +445,37 @@ pub(crate) fn sync_conflict_diff(
     with_graph(&state, |g| g.sync_conflict_diff(&winner, &conflict).map_err(|e| e.to_string()))
 }
 
+/// Resolve a sync-conflict copy: merge it into its winner per the user's per-row
+/// `decisions` (row id → "mine"/"theirs"/"both") via the normal save path, then
+/// trash the conflict copy. `base_rev` guards against the winner changing under
+/// the merge; returns "conflict" if it did. `pre_choice`: "mine"/"theirs"/"union".
+#[tauri::command]
+pub(crate) fn resolve_sync_conflict(
+    winner: String,
+    conflict: String,
+    decisions: std::collections::HashMap<String, String>,
+    base_rev: Option<String>,
+    pre_choice: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    with_graph(&state, |g| {
+        g.resolve_sync_conflict(
+            &winner,
+            &conflict,
+            &decisions,
+            base_rev.as_deref(),
+            pre_choice.as_deref().unwrap_or("union"),
+        )
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::AlreadyExists {
+                "conflict".to_string()
+            } else {
+                e.to_string()
+            }
+        })
+    })
+}
+
 /// Move one journal file (by exact filename) to the recoverable trash.
 #[tauri::command]
 pub(crate) fn trash_journal_file(name: String, state: State<'_, AppState>) -> Result<(), String> {

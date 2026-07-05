@@ -888,6 +888,94 @@ impl Graph {
         Ok(Some(crate::sync_diff::diff_docs(&mine, &theirs)))
     }
 
+    /// Resolve a sync-conflict copy: build the merged winner from the user's
+    /// per-row `decisions` (row id → `"mine"`/`"theirs"`/`"both"`, see
+    /// [`crate::sync_diff::merge_blocks`]), write it through the NORMAL round-
+    /// tripping save path, and move the conflict copy to the recoverable trash.
+    ///
+    /// Data-safety invariants (ADR 0012 one-writer + ADR 0007 never-silently-
+    /// overwrite), mirroring [`merge_pages`]:
+    /// - Everything runs under the winner's `page_lock`.
+    /// - `base_rev` guard: if the winner changed on disk since the UI diffed it,
+    ///   returns `AlreadyExists` ("conflict") WITHOUT writing, so the UI re-diffs
+    ///   against fresh content instead of merging a stale alignment.
+    /// - Org round-trip firewall: if either side is a non-round-trippable `.org`,
+    ///   refuses rather than risk corrupting it.
+    /// - Stage-before-commit: the conflict copy is moved to trash BEFORE the
+    ///   merged winner is written, and the move is rolled back if the write fails
+    ///   — so a retry can never duplicate content, and nothing is lost.
+    ///
+    /// `pre_choice` decides the page-property pre-block: `"mine"`, `"theirs"`, or
+    /// `"union"` (default; markdown only — keep the winner's and add any property
+    /// the conflict defines that the winner doesn't, so an `alias::`/`tags::` from
+    /// the other device isn't dropped; org keeps the winner's, gated by the
+    /// firewall).
+    pub fn resolve_sync_conflict(
+        &self,
+        winner_rel: &str,
+        conflict_rel: &str,
+        decisions: &std::collections::HashMap<String, String>,
+        base_rev: Option<&str>,
+        pre_choice: &str,
+    ) -> io::Result<()> {
+        let win = self.resolve_rel(winner_rel).ok_or_else(bad_path)?;
+        let conf = self.resolve_rel(conflict_rel).ok_or_else(bad_path)?;
+        if win == conf {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "winner and conflict are the same file"));
+        }
+        let win_entry = self.entry_for_path(&win).ok_or_else(bad_path)?;
+        // Lock the winner so a concurrent editor/watcher write can't race the merge.
+        let lock = self.page_lock(&win);
+        let _guard = lock.lock().unwrap();
+        let win_content = fs::read_to_string(&win)?;
+        let conf_content = fs::read_to_string(&conf)?;
+        // base_rev guard — the winner must still be what the UI diffed against.
+        if let Some(br) = base_rev {
+            if content_rev(&win_content) != br {
+                return Err(io::Error::new(io::ErrorKind::AlreadyExists, "winner changed on disk"));
+            }
+        }
+        // Org round-trip firewall (same as merge_pages).
+        if Format::from_path(&win) == Format::Org
+            && (!crate::org::org_editable(&win_content) || !crate::org::org_editable(&conf_content))
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "an org file in this pair does not round-trip; not merging",
+            ));
+        }
+        let mut mine_doc = parse_doc(&win, &win_content);
+        let mut theirs_doc = parse_doc(&conf, &conf_content);
+        assign_doc_uuids(&mut mine_doc.roots);
+        assign_doc_uuids(&mut theirs_doc.roots);
+        let merged_roots =
+            crate::sync_diff::merge_blocks(&mine_doc.roots, &theirs_doc.roots, decisions);
+        let pre_block = match pre_choice {
+            "theirs" => theirs_doc.pre_block.clone(),
+            "mine" => mine_doc.pre_block.clone(),
+            _ if Format::from_path(&win) == Format::Md => {
+                union_pre(mine_doc.pre_block.as_deref(), theirs_doc.pre_block.as_deref())
+            }
+            _ => mine_doc.pre_block.clone(),
+        };
+        let mut merged = Document { pre_block, roots: merged_roots };
+        assign_doc_uuids(&mut merged.roots);
+        let dto = page_dto(&win_entry, &merged);
+        let win_cacheable = self.path_is_cacheable(&win);
+        // Stage-before-commit (L5): move the conflict copy out first, then write the
+        // merged winner; roll the move back if the write fails.
+        let trash = self.root.join("logseq").join(".tine-trash");
+        fs::create_dir_all(&trash)?;
+        let conf_name = conf.file_name().and_then(|s| s.to_str()).unwrap_or("file");
+        let staged = trash.join(format!("{}__{conf_name}", trash_stamp()));
+        fs::rename(&conf, &staged)?;
+        if let Err(e) = self.write_page(&dto, &win, Some(&win_content), false, win_cacheable) {
+            let _ = fs::rename(&staged, &conf); // rollback: restore the conflict copy
+            return Err(e);
+        }
+        Ok(())
+    }
+
     /// Raw contents of ONE journal file (by exact filename) — lets the UI show a
     /// duplicate day's individual files (which can't be navigated to separately,
     /// as pages are keyed by date) so the user can inspect before reconciling.
@@ -3045,6 +3133,38 @@ fn list_md(
         out.push(PageEntry { name, kind, date_key, path });
     }
     out
+}
+
+/// Union of two markdown page-property pre-blocks: keep `mine` and append any
+/// `key:: value` line `theirs` defines that `mine` doesn't (mine wins on a clash),
+/// so a sync-conflict resolve doesn't silently drop the other device's
+/// `alias::`/`tags::`/`icon::`. Free text in `theirs`' pre-block is dropped (rare;
+/// the conflict copy is trashed-recoverable). Mirrors the property-carry in
+/// [`Graph::merge_pages`].
+fn union_pre(mine: Option<&str>, theirs: Option<&str>) -> Option<String> {
+    let mine = mine.unwrap_or("");
+    let Some(theirs) = theirs else {
+        return (!mine.is_empty()).then(|| mine.to_string());
+    };
+    let mine_keys: std::collections::HashSet<String> = mine
+        .lines()
+        .filter_map(|l| doc::parse_property_line(l).map(|(k, _)| k.to_ascii_lowercase()))
+        .collect();
+    let extra: Vec<&str> = theirs
+        .lines()
+        .filter(|l| {
+            doc::parse_property_line(l).is_some_and(|(k, _)| !mine_keys.contains(&k.to_ascii_lowercase()))
+        })
+        .collect();
+    if extra.is_empty() {
+        return (!mine.is_empty()).then(|| mine.to_string());
+    }
+    let mut pre = mine.to_string();
+    if !pre.is_empty() && !pre.ends_with('\n') {
+        pre.push('\n');
+    }
+    pre.push_str(&extra.join("\n"));
+    Some(pre)
 }
 
 /// True if any block in the subtree has a non-empty line that isn't a `key::`
