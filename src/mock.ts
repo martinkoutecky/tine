@@ -476,7 +476,7 @@ export function mockBackend(): Backend {
       return [];
     },
     async readCustomCss(): Promise<string> {
-      return "";
+      return (globalThis as unknown as { __tineMockCustomCss?: string }).__tineMockCustomCss ?? "";
     },
     async pageAliases(): Promise<[string, string][]> {
       return [];

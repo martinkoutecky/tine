@@ -289,10 +289,15 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   (words scrubbed, markup structure kept) and **re-verified to still reproduce the
   divergence** before it's shown, so it's safe to paste into a bug report. mldoc is
   loaded only on demand; nothing is uploaded.
-- Light/dark themes, accent color, custom CSS, wide mode (`t w`), document mode
-  (`t d`). Tine also aliases common Logseq `--ls-*` theme variables, so file-based
-  themes such as the Awesome-Styler family can recolor backgrounds, text, links,
-  borders, and inline code. This is theme CSS compatibility, not plugin support.
+- Light/dark themes, a built-in theme gallery (Default, Nord, Solarized, Gruvbox),
+  accent color, custom CSS, wide mode (`t w`), document mode (`t d`). Gallery
+  themes are app-level and device-local: Tine stores only the selected theme id in
+  its backend settings, applies the theme as a managed `#tine-theme` CSS layer, and
+  never writes to your graph. Tine also aliases common Logseq `--ls-*` theme
+  variables, so both gallery themes and file-based themes in `logseq/custom.css`
+  can recolor backgrounds, text, links, borders, and inline code. The cascade is
+  built so your own `logseq/custom.css` loads last and takes priority. This is
+  theme CSS compatibility, not plugin support.
 - ⊕ **Spell checking** in the editor (on by default, like Logseq) with red squiggles
   + right-click suggestions, using the system dictionaries. Unlike Logseq you can
   check **multiple languages at once** — Settings → Editor lists the dictionaries

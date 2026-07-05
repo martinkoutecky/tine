@@ -1,0 +1,55 @@
+html[data-theme="light"] {
+  --ls-active-primary-color: #5e81ac;
+  --ls-primary-background-color: #eceff4;
+  --ls-secondary-background-color: #e5e9f0;
+  --ls-tertiary-background-color: #d8dee9;
+  --ls-quaternary-background-color: #d0d6e2;
+  --ls-primary-text-color: #3b4252;
+  --ls-secondary-text-color: #4c566a;
+  --ls-title-text-color: #2e3440;
+  --ls-link-text-color: #5e81ac;
+  --ls-link-text-hover-color: #81a1c1;
+  --ls-link-ref-text-color: var(--ls-link-text-color);
+  --ls-block-ref-link-text-color: var(--ls-link-ref-text-color);
+  --ls-a-chosen-bg: rgba(94, 129, 172, 0.16);
+  --ls-border-color: #d8dee9;
+  --ls-secondary-border-color: var(--ls-border-color);
+  --ls-guideline-color: rgba(76, 86, 106, 0.18);
+  --ls-block-highlight-color: #e5edf7;
+  --ls-block-bullet-color: #9aa6b8;
+  --ls-block-bullet-active-color: var(--ls-active-primary-color);
+  --ls-selection-background-color: rgba(94, 129, 172, 0.30);
+  --ls-page-inline-code-bg-color: #d8dee9;
+  --ls-page-inline-code-color: var(--ls-primary-text-color);
+  --ls-page-mark-bg-color: #ebcb8b;
+  --ls-page-mark-color: #2e3440;
+  --ls-tag-text-color: #8f5f9f;
+}
+
+html[data-theme="dark"] {
+  --ls-active-primary-color: #88c0d0;
+  --ls-primary-background-color: #2e3440;
+  --ls-secondary-background-color: #3b4252;
+  --ls-tertiary-background-color: #434c5e;
+  --ls-quaternary-background-color: #4c566a;
+  --ls-primary-text-color: #d8dee9;
+  --ls-secondary-text-color: #c5cedb;
+  --ls-title-text-color: #eceff4;
+  --ls-link-text-color: #88c0d0;
+  --ls-link-text-hover-color: #8fbcbb;
+  --ls-link-ref-text-color: var(--ls-link-text-color);
+  --ls-block-ref-link-text-color: var(--ls-link-ref-text-color);
+  --ls-a-chosen-bg: rgba(136, 192, 208, 0.20);
+  --ls-border-color: #4c566a;
+  --ls-secondary-border-color: var(--ls-border-color);
+  --ls-guideline-color: rgba(216, 222, 233, 0.16);
+  --ls-block-highlight-color: #394457;
+  --ls-block-bullet-color: #69758a;
+  --ls-block-bullet-active-color: var(--ls-active-primary-color);
+  --ls-selection-background-color: rgba(94, 129, 172, 0.46);
+  --ls-page-inline-code-bg-color: #3b4252;
+  --ls-page-inline-code-color: var(--ls-primary-text-color);
+  --ls-page-mark-bg-color: #5d5437;
+  --ls-page-mark-color: #eceff4;
+  --ls-tag-text-color: #b48ead;
+}

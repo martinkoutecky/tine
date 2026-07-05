@@ -10,6 +10,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Built-in theme gallery.** Settings → Appearance now has one-click Default,
+  Nord, Solarized, and Gruvbox cards, each covering both light and dark mode. The
+  selected gallery theme is saved through Tine's backend app settings
+  (`theme.gallery`), not WebKit localStorage, and applies as a managed
+  `#tine-theme` layer before the user's `logseq/custom.css`, so hand-written graph
+  CSS still wins.
 - **In-page find on normal pages.** `Mod+F` opens a browser-style find bar with
   next/previous navigation, match counts, and non-destructive highlights. Matches
   come from the loaded block model rather than the mounted DOM, so text under

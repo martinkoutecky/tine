@@ -10,6 +10,7 @@ import { journalTitle, setJournalTitleFormat } from "./journal";
 import { applyTemplateVars } from "./editor/templateVars";
 import { waitForWarmCache } from "./warmCache";
 import { CUSTOM_CSS_STYLE_ID, ensureLsShimStyle } from "./lsShim";
+import { ensureThemeStyle } from "./themeGallery";
 import type { BlockDto } from "./types";
 
 const GRAPH_KEY = "tine.graphPath";
@@ -152,6 +153,7 @@ async function injectCustomCss(): Promise<void> {
     css = "";
   }
   ensureLsShimStyle();
+  ensureThemeStyle();
   let el = document.getElementById(CUSTOM_CSS_STYLE_ID);
   if (!el) {
     el = document.createElement("style");

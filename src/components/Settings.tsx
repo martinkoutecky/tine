@@ -81,6 +81,8 @@ import {
   STAMPED_ASSET_NAME_FORMAT,
 } from "../assetSettings";
 import { formatAssetName } from "../media";
+import { galleryThemes, selectedGalleryTheme, applyTheme as applyGalleryTheme } from "../themeGallery";
+import type { GalleryTheme } from "../styles/themes";
 import { openPage, openFile } from "../router";
 import { commandDefaults, eventToBindingString, setKeybindingsSuspended } from "../keybindings";
 import { ShortcutsSettingsPane } from "./HelpShortcuts";
@@ -321,6 +323,40 @@ function OgField(props: {
   );
 }
 
+function galleryBadge(theme: GalleryTheme): string {
+  if (theme.modes.length === 1) return theme.modes[0] === "light" ? "Light-only" : "Dark-only";
+  return theme.compat === "full" ? "Full" : "Partial";
+}
+
+function ThemeGalleryCard(props: {
+  id: string;
+  name: string;
+  author: string;
+  badge: string;
+  thumbnail: string;
+  selected: boolean;
+}): JSX.Element {
+  return (
+    <button
+      class="theme-gallery-card"
+      classList={{ selected: props.selected }}
+      aria-pressed={props.selected}
+      onClick={() => applyGalleryTheme(props.id)}
+    >
+      <span class="theme-gallery-thumb">
+        <img src={props.thumbnail} alt="" loading="lazy" />
+      </span>
+      <span class="theme-gallery-card-body">
+        <span class="theme-gallery-card-top">
+          <span class="theme-gallery-name">{props.name}</span>
+          <span class="theme-gallery-badge">{props.badge}</span>
+        </span>
+        <span class="theme-gallery-author">{props.author}</span>
+      </span>
+    </button>
+  );
+}
+
 function AppearanceTab(): JSX.Element {
   return (
     <>
@@ -338,6 +374,33 @@ function AppearanceTab(): JSX.Element {
           <span class="theme-opt"><span class="theme-ico">☾</span>Dark</span>
           <span class="theme-knob" />
         </button>
+      </div>
+
+      <div class="settings-section">Themes</div>
+      <div class="theme-gallery-grid">
+        <ThemeGalleryCard
+          id=""
+          name="Default"
+          author="Tine"
+          badge="Stock"
+          thumbnail="/theme-thumbnails/default.png"
+          selected={selectedGalleryTheme() === ""}
+        />
+        <For each={galleryThemes}>
+          {(theme) => (
+            <ThemeGalleryCard
+              id={theme.id}
+              name={theme.name}
+              author={theme.author}
+              badge={galleryBadge(theme)}
+              thumbnail={theme.thumbnail}
+              selected={selectedGalleryTheme() === theme.id}
+            />
+          )}
+        </For>
+      </div>
+      <div class="settings-hint theme-gallery-hint">
+        Themes recolor Tine using Logseq's <code>--ls-*</code> variables. If you keep your own <code>logseq/custom.css</code>, it still takes priority.
       </div>
 
       <div class="settings-row">
