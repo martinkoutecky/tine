@@ -113,7 +113,7 @@ fn take_to_close(html: &str, i: &mut usize, tag: &str) -> String {
 /// - `data-tex`   → KaTeX `\(..\)` / `\[..\]` delimiters (typeset client-side)
 /// - `data-asset` → the asset's path as `src`
 /// - `data-lang`  → a `language-X` class for highlight.js
-/// - `data-raw`   → the escaped literal (raw HTML is never live in the export)
+/// - `data-raw`   → the raw HTML, sanitized to the shared allowlist (`html_sanitize`) and emitted live
 /// - macros       → EXPANDED when a graph is in context (`ctx.graph`): `query` runs the
 ///   query engine, `embed` inlines the target block/page, `video` embeds an iframe,
 ///   `namespace` lists child pages, user macros expand from config; unknown macros
@@ -221,8 +221,11 @@ fn decorate(html: &str, ctx: &Ctx, depth: u8) -> String {
         if name == "span" && has_class(inner, "raw-html") {
             let _ = take_to_close(html, &mut i, "span");
             if let Some(raw_esc) = tag_attr(inner, "data-raw") {
-                // Never live in the export — render the escaped HTML as literal text.
-                out.push_str(&format!("<span class=\"raw-html\">{}</span>", esc(&unescape(raw_esc))));
+                // Sanitize to the shared allowlist and emit LIVE (mirrors the app's
+                // DOMPurify pass — see html_sanitize). Handlers/`style`/`<script>`/
+                // `<iframe>` are stripped; the surviving markup is already safe, so it
+                // is pushed verbatim (NOT re-escaped).
+                out.push_str(&crate::html_sanitize::sanitize(&unescape(raw_esc)));
             }
             continue;
         }
@@ -1182,6 +1185,23 @@ mod tests {
     fn escapes_html() {
         // lsdoc owns text escaping; the decorator never un-escapes body text.
         assert!(render_body("a < b & c", &no_refs()).contains("a &lt; b &amp; c"));
+    }
+
+    #[test]
+    fn raw_html_is_sanitized_live() {
+        // Raw inline/block HTML now renders LIVE in the export, through the shared
+        // sanitizer — allowlisted tags survive, handlers/scripts are stripped.
+        let ok = render_body("press <kbd>Ctrl</kbd> and <ins>added</ins>", &no_refs());
+        assert!(ok.contains("<kbd>Ctrl</kbd>"), "{ok}");
+        assert!(ok.contains("<ins>added</ins>"), "{ok}");
+        // NB: mldoc only classifies a SELF-CLOSED `<img/>` as raw HTML; a bare
+        // `<img>` is Plain in mldoc/OG too (parity, stays literal). Sanitizer strips
+        // the handler, keeps the src.
+        let bad = render_body(r#"<img src="https://e.com/a.png" onerror="steal()"/>"#, &no_refs());
+        assert!(bad.contains("https://e.com/a.png"), "{bad}");
+        assert!(!bad.contains("onerror"), "{bad}");
+        // A paired <script> IS raw HTML to mldoc; the sanitizer drops it.
+        assert!(!render_body("<script>steal()</script>", &no_refs()).contains("steal()"));
     }
 
     #[test]

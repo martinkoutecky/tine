@@ -9,6 +9,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
 slotmap = { version = "1", features = ["serde"] }
+ammonia = "4"
 lsdoc = { git = "https://github.com/martinkoutecky/lsdoc", tag = "v0.4.2" }
 
 [dev-dependencies]

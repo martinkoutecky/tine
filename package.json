@@ -25,6 +25,7 @@
     "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-updater": "^2.10.1",
     "@twemoji/svg": "^15.0.0",
+    "dompurify": "^3.4.11",
     "emoji-regex": "^10.6.0",
     "highlight.js": "^11.11.1",
     "katex": "^0.16.47",

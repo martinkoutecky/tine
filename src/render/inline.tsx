@@ -14,6 +14,7 @@ import { parseBlock, parserReady } from "./parse";
 import type { Inline, Url, MacroInline, TimestampInline, EmailValue, Block as AstBlock, Format } from "./ast";
 import { timestampText } from "./renderedText";
 import { EmojiText } from "./emoji";
+import { sanitizeRawHtml } from "./htmlSanitize";
 import { typographic } from "./typography";
 import { coarseSpanAttrs, plainSpanAttrs, typographicPlainSpanAttrs, type SpanDomAttrs } from "./spans";
 import { typographyMode } from "../ui";
@@ -280,9 +281,11 @@ function renderIframe(src: string, width?: string, height?: string, spanAttrs?: 
     </span>
   );
 }
-// Raw HTML (inline_html / raw_html): honour ONLY the https `<iframe>` subset
-// (sandboxed); any OTHER raw HTML renders as PLAIN TEXT (no innerHTML — XSS-safe,
-// matches today's behavior).
+// Raw HTML (inline_html / raw_html): the https `<iframe>` subset renders as a
+// SANDBOXED iframe (a deliberate embed feature, kept above the allowlist); all
+// other raw HTML is sanitized to the shared allowlist (html_sanitize.ts, mirrored
+// by the Rust export) and rendered LIVE. Handlers/`style`/`<script>` are stripped,
+// so `innerHTML` is XSS-safe here. See ADR 0019.
 export function renderRawHtml(text: string, spanAttrs?: SpanDomAttrs): JSX.Element {
   const m = /<iframe\b([^>]*)>/i.exec(text);
   if (m) {
@@ -294,7 +297,8 @@ export function renderRawHtml(text: string, spanAttrs?: SpanDomAttrs): JSX.Eleme
       return renderIframe(src, width, height, spanAttrs);
     }
   }
-  return spanAttrs ? <span {...spanAttrs}><EmojiText text={text} /></span> : <EmojiText text={text} />;
+  const clean = sanitizeRawHtml(text);
+  return <span class="raw-html" innerHTML={clean} {...(spanAttrs ?? {})} />;
 }
 
 function renderEmail(text: EmailValue, spanAttrs?: SpanDomAttrs): JSX.Element {

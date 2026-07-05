@@ -48,6 +48,14 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
 - **Callouts / admonitions** — both Obsidian-style `> [!note] …` and org
   `#+BEGIN_NOTE … #+END_NOTE` render as colored callouts (`QUOTE` stays a plain
   blockquote).
+- **Raw inline/block HTML** — HTML the way Logseq renders it: `<ins>`, `<del>`,
+  `<sup>`/`<sub>`, `<kbd>`, `<mark>`, `<abbr>`, `<a>`, a self-closed `<img/>`, small
+  containers. It renders **live, sanitized** to a safe allowlist (both the app and
+  the HTML export) — scripts, event handlers (`onerror=`) and `style` are stripped.
+  Two Logseq-parity notes: a *bare* `<img>` is literal in Logseq too (only a
+  self-closed `<img/>` is raw HTML), and the Markdown carets `^x^`/`~x~` are literal
+  in Logseq (not sub/superscript) — use the tags or `$math$`. (Sanitizer allowlist
+  is shared between the two surfaces and contract-tested; see ADR 0019.)
 - ⊕ **`/calc` block** — evaluates arithmetic live as you type (`+ - * / ^ %`,
   parentheses, `name = expr` variables across lines, a running result).
 
@@ -259,8 +267,8 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   works offline / off disk. Pages render from the **same parser the app uses** (lsdoc's
   canonical HTML), so the export matches what you see: syntax-highlighted code blocks
   (highlight.js), aligned tables, callouts, KaTeX math, lists and task checkboxes,
-  **task markers + priorities + SCHEDULED/DEADLINE**, block properties, and page/block
-  links. Dynamic content is resolved **at publish time** against your graph, too:
+  **task markers + priorities + SCHEDULED/DEADLINE**, block properties, page/block
+  links, and **sanitized raw HTML**. Dynamic content is resolved **at publish time** against your graph, too:
   `{{query …}}` runs and lists its results, `{{embed}}` inlines the target block/page,
   `{{namespace}}` lists child pages, and `{{video}}` embeds the player. (No interactive
   graph view yet.) See the live **[Feature showcase](../website/demo/)** demo page.

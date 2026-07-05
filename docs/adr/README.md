@@ -45,3 +45,4 @@ see the project `CLAUDE.md`.
 | [0016](0016-mock-backend-intentionally-lossy.md) | The mock backend is an intentionally lossy dev double | Accepted |
 | [0017](0017-snapshot-scope.md) | Launch snapshots cover text + config + PDF highlight sidecars, not asset bytes | Accepted |
 | [0018](0018-in-app-lsdoc-mldoc-diff-panel.md) | In-app lsdoc↔mldoc diff panel bundles mldoc lazily and runs it in a worker | Accepted |
+| [0019](0019-raw-html-sanitizer.md) | Raw HTML renders live via a shared sanitizer allowlist (DOMPurify + ammonia), mirrored and contract-tested | Accepted |

@@ -10,6 +10,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Raw HTML now renders (sanitized).** Inline and block HTML embedded in a note —
+  `<ins>`, `<del>`, `<sup>`/`<sub>`, `<kbd>`, `<mark>`, `<abbr>`, `<a>`, a self-closed
+  `<img/>`, and small containers — renders live the way Logseq shows it, in both the
+  app and the HTML export. It's sanitized to a shared, contract-tested allowlist:
+  scripts, event handlers (`onerror=`) and `style` are stripped. (A *bare* `<img>` is
+  literal in Logseq too — only a self-closed `<img/>` is raw HTML; and the Markdown
+  carets `^x^`/`~x~` aren't sub/superscript in either app.) See ADR 0019,
+  [#16](https://github.com/martinkoutecky/tine/issues/16).
 - **HTML export now renders task facets, queries, and embeds.** The static export
   (`public:: true` pages) previously dropped task markers/checkboxes, priorities,
   `SCHEDULED`/`DEADLINE`, and block properties, and left `{{query}}`/`{{embed}}`/

@@ -1,0 +1,25 @@
+{
+  "_comment": "Cross-language contract fixtures for the raw-HTML sanitizer. Consumed by BOTH src/render/htmlSanitize.test.tsx (DOMPurify) and crates/tine-core/src/html_sanitize.rs (ammonia) so the app and the static-HTML export enforce the SAME allowlist. Assertions are on tolerant substrings (tag opener, url, stripped-token) rather than exact serialization, since DOMPurify and ammonia serialize attributes differently.",
+  "cases": [
+    { "name": "ins-survives",        "input": "<ins>added</ins>",                                   "mustContain": ["<ins", "added"],            "mustNotContain": [] },
+    { "name": "del-survives",        "input": "<del>removed</del>",                                 "mustContain": ["<del", "removed"],          "mustNotContain": [] },
+    { "name": "sup-survives",        "input": "x<sup>2</sup>",                                      "mustContain": ["<sup", "2"],                "mustNotContain": [] },
+    { "name": "sub-survives",        "input": "H<sub>2</sub>O",                                     "mustContain": ["<sub", "2"],                "mustNotContain": [] },
+    { "name": "kbd-survives",        "input": "<kbd>Ctrl</kbd>",                                    "mustContain": ["<kbd", "Ctrl"],             "mustNotContain": [] },
+    { "name": "mark-survives",       "input": "<mark>hi</mark>",                                    "mustContain": ["<mark", "hi"],              "mustNotContain": [] },
+    { "name": "u-survives",          "input": "<u>underline</u>",                                   "mustContain": ["<u>", "underline"],         "mustNotContain": [] },
+    { "name": "abbr-title-survives", "input": "<abbr title=\"Hyper Text\">HT</abbr>",               "mustContain": ["<abbr", "Hyper Text", "HT"],"mustNotContain": [] },
+    { "name": "img-https-survives",  "input": "<img src=\"https://e.com/a.png\" alt=\"a\" width=\"320\">", "mustContain": ["<img", "https://e.com/a.png", "alt=\"a\"", "320"], "mustNotContain": [] },
+    { "name": "a-https-survives",    "input": "<a href=\"https://x.com\">y</a>",                    "mustContain": ["<a", "https://x.com", "y"], "mustNotContain": [] },
+    { "name": "div-class-survives",  "input": "<div class=\"note\">body</div>",                     "mustContain": ["<div", "class=\"note\"", "body"], "mustNotContain": [] },
+
+    { "name": "strip-script",        "input": "<script>steal()</script>ok",                         "mustContain": ["ok"],                       "mustNotContain": ["<script", "steal()"] },
+    { "name": "strip-onerror",       "input": "<img src=\"https://e.com/a.png\" onerror=\"steal()\">", "mustContain": ["<img", "https://e.com/a.png"], "mustNotContain": ["onerror", "steal()"] },
+    { "name": "strip-onclick",       "input": "<div onclick=\"steal()\">z</div>",                   "mustContain": ["<div", "z"],                "mustNotContain": ["onclick", "steal()"] },
+    { "name": "strip-onmouseover",   "input": "<b onmouseover=\"x()\">bold</b>",                    "mustContain": ["<b", "bold"],               "mustNotContain": ["onmouseover", "x()"] },
+    { "name": "strip-js-href",       "input": "<a href=\"javascript:steal()\">click</a>",           "mustContain": ["click"],                    "mustNotContain": ["javascript:", "steal()"] },
+    { "name": "strip-js-img-src",    "input": "<img src=\"javascript:steal()\">",                   "mustContain": [],                           "mustNotContain": ["javascript:", "steal()"] },
+    { "name": "strip-style-attr",    "input": "<span style=\"position:fixed\">t</span>",            "mustContain": ["<span", "t"],               "mustNotContain": ["position:fixed", "style="] },
+    { "name": "strip-iframe",        "input": "<iframe src=\"https://evil.example\"></iframe>after", "mustContain": ["after"],                    "mustNotContain": ["<iframe"] }
+  ]
+}
