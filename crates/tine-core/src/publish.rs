@@ -3,7 +3,7 @@
 //! become real anchors between the generated files.
 
 use crate::doc::{self, DocBlock};
-use crate::model::{Graph, PageKind};
+use crate::model::{BlockDto, Graph, PageKind};
 use crate::refs::block_id;
 use lsdoc::ast::{Block, Inline, Url};
 use serde_json::json;
@@ -114,13 +114,19 @@ fn take_to_close(html: &str, i: &mut usize, tag: &str) -> String {
 /// - `data-asset` → the asset's path as `src`
 /// - `data-lang`  → a `language-X` class for highlight.js
 /// - `data-raw`   → the escaped literal (raw HTML is never live in the export)
-/// - macros       → dropped (a static page can't run them)
+/// - macros       → EXPANDED when a graph is in context (`ctx.graph`): `query` runs the
+///   query engine, `embed` inlines the target block/page, `video` embeds an iframe,
+///   `namespace` lists child pages, user macros expand from config; unknown macros
+///   render as muted literal `{{name …}}`. With no graph (unit tests of the inline
+///   decorator) they drop, as before.
 /// Everything else (tags, classes, escaped text, nesting, `td`/`th` `data-align`) passes
 /// through verbatim.
 ///
-/// O(n) single pass: lsdoc escapes every text + attribute value, so the only raw `<` in
-/// its output opens a tag — a `<`-delimited scan is exact and can't be fooled by content.
-fn decorate(html: &str, refs: &RefIndex) -> String {
+/// O(n) single pass over the html: lsdoc escapes every text + attribute value, so the only
+/// raw `<` in its output opens a tag — a `<`-delimited scan is exact and can't be fooled by
+/// content. (`depth` bounds macro-expansion recursion; see `expand_macro`.)
+fn decorate(html: &str, ctx: &Ctx, depth: u8) -> String {
+    let refs = ctx.refs;
     let b = html.as_bytes();
     let mut out = String::with_capacity(html.len() + 64);
     let mut i = 0;
@@ -206,7 +212,10 @@ fn decorate(html: &str, refs: &RefIndex) -> String {
             }
         }
         if name == "span" && has_class(inner, "macro") {
-            let _ = take_to_close(html, &mut i, "span"); // drop (static page can't run it)
+            let _ = take_to_close(html, &mut i, "span"); // empty element; args are in attrs
+            let mname = tag_attr(inner, "data-macro").map(unescape).unwrap_or_default();
+            let args = macro_args(tag_attr(inner, "data-args"));
+            out.push_str(&expand_macro(&mname, &args, ctx, depth));
             continue;
         }
         if name == "span" && has_class(inner, "raw-html") {
@@ -384,10 +393,302 @@ fn ref_target_text(raw: &str) -> String {
 }
 
 
+/// Render context threaded through `render_block`/`decorate`: the block-ref index
+/// (always) and the graph (present in a real export, absent in inline-decorator unit
+/// tests — when absent, macros drop instead of expanding).
+struct Ctx<'a> {
+    refs: &'a RefIndex,
+    graph: Option<&'a Graph>,
+}
+
+/// lsdoc render options for a Markdown block body (the canonical skeleton the export decorates).
+fn md_opts() -> lsdoc::RenderOpts {
+    lsdoc::RenderOpts { format: lsdoc::Format::Md }
+}
+
+/// Parse `data-args` (lsdoc emits a JSON array of strings, attribute-escaped) into its items.
+fn macro_args(attr: Option<&str>) -> Vec<String> {
+    attr.map(unescape)
+        .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+        .unwrap_or_default()
+}
+
+/// A task marker's checkbox state, mirroring the app's `taskCheckboxState`
+/// (`src/markers.ts`): DONE = checked, CANCELED/CANCELLED = no box, any other
+/// marker = an empty box.
+fn checkbox_state(marker: &str) -> Option<bool> {
+    match marker {
+        "DONE" => Some(true),
+        "CANCELED" | "CANCELLED" => None,
+        _ => Some(false),
+    }
+}
+
+/// The header-line facet chrome that precedes a block's body text: the task
+/// checkbox + marker badge and the `[#A]` priority badge (matches the app's Block header).
+fn emit_header_facets(marker: Option<&str>, priority: Option<&str>, out: &mut String) {
+    if let Some(m) = marker {
+        match checkbox_state(m) {
+            Some(true) => out.push_str("<span class=\"task-checkbox checked\"></span>"),
+            Some(false) => out.push_str("<span class=\"task-checkbox\"></span>"),
+            None => {}
+        }
+        out.push_str(&format!(
+            "<span class=\"task-marker m-{}\">{}</span> ",
+            m.to_ascii_lowercase(),
+            esc(m)
+        ));
+    }
+    if let Some(p) = priority {
+        out.push_str(&format!(
+            "<span class=\"priority p-{}\">[#{}]</span> ",
+            p.to_ascii_lowercase(),
+            esc(p)
+        ));
+    }
+}
+
+/// A block property is chrome we hide from the rendered page (the app hides these too):
+/// the block `id::`, the collapsed flag, and any `logseq.*` internal key.
+fn is_hidden_prop(key: &str) -> bool {
+    key == "id" || key == "collapsed" || key.starts_with("logseq.")
+}
+
+/// The trailing facet chrome shown BELOW a block's body: SCHEDULED / DEADLINE
+/// planning lines and the block's visible `key:: value` properties.
+fn emit_trailer_facets(
+    scheduled: Option<&str>,
+    deadline: Option<&str>,
+    props: &[(String, String)],
+    out: &mut String,
+) {
+    if let Some(s) = scheduled {
+        out.push_str(&format!(
+            "<div class=\"planning scheduled\"><span class=\"pk\">SCHEDULED:</span> {}</div>",
+            esc(s)
+        ));
+    }
+    if let Some(d) = deadline {
+        out.push_str(&format!(
+            "<div class=\"planning deadline\"><span class=\"pk\">DEADLINE:</span> {}</div>",
+            esc(d)
+        ));
+    }
+    let visible: Vec<&(String, String)> = props.iter().filter(|(k, _)| !is_hidden_prop(k)).collect();
+    if !visible.is_empty() {
+        out.push_str("<div class=\"block-props\">");
+        for (k, v) in visible {
+            out.push_str(&format!(
+                "<div class=\"prop\"><span class=\"pk\">{}::</span> <span class=\"pv\">{}</span></div>",
+                esc(k),
+                esc(v)
+            ));
+        }
+        out.push_str("</div>");
+    }
+}
+
+/// Render one block's inner: header facets + the decorated body + trailer facets.
+/// Shared by the top-level renderer and the embedded/query-result renderers so a
+/// task in a query result looks exactly like a task on its own page.
+fn emit_block_inner(raw: &str, out: &mut String, ctx: &Ctx, depth: u8) {
+    let blk = DocBlock::new(raw);
+    out.push_str(if blk.marker() == Some("DONE") { "<div class=\"b done\">" } else { "<div class=\"b\">" });
+    emit_header_facets(blk.marker(), blk.priority(), out);
+    let body = decorate(&lsdoc::render_html(&body_blocks(raw), &md_opts()), ctx, depth);
+    out.push_str(&body);
+    out.push_str("</div>");
+    emit_trailer_facets(blk.scheduled(), blk.deadline(), &blk.properties(), out);
+}
+
+/// Render a query/embed result block (a `BlockDto` from the query engine) as an
+/// `<li>` with its facets + children, at `depth` (bounds recursion).
+fn render_result_block(dto: &BlockDto, out: &mut String, ctx: &Ctx, depth: u8) {
+    out.push_str("<li>");
+    emit_block_inner(&dto.raw, out, ctx, depth);
+    if !dto.children.is_empty() {
+        out.push_str("<ul>");
+        for c in &dto.children {
+            render_result_block(c, out, ctx, depth);
+        }
+        out.push_str("</ul>");
+    }
+    out.push_str("</li>");
+}
+
+/// Render an embedded page's block (a `DocBlock`) as an `<li>`, mirroring `render_result_block`.
+fn render_embedded_block(b: &DocBlock, out: &mut String, ctx: &Ctx, depth: u8) {
+    out.push_str("<li>");
+    emit_block_inner(&b.raw, out, ctx, depth);
+    if !b.children.is_empty() {
+        out.push_str("<ul>");
+        for c in &b.children {
+            render_embedded_block(c, out, ctx, depth);
+        }
+        out.push_str("</ul>");
+    }
+    out.push_str("</li>");
+}
+
+/// Expand one `{{macro …}}`. Bounded by `depth` (a page can embed a block that embeds
+/// a page …; a circular embed would otherwise loop). With no graph in context, macros drop.
+fn expand_macro(name: &str, args: &[String], ctx: &Ctx, depth: u8) -> String {
+    let Some(graph) = ctx.graph else { return String::new() };
+    if depth >= 4 {
+        return format!("<span class=\"macro-raw\">{{{{{} …}}}}</span>", esc(name));
+    }
+    let arg0 = args.first().map(|s| s.as_str()).unwrap_or("").trim();
+    match name {
+        "query" => render_query(graph, arg0, ctx, depth + 1),
+        "embed" => render_embed(graph, arg0, ctx, depth + 1),
+        "video" => render_video(arg0),
+        "namespace" => render_namespace(graph, arg0),
+        // Unknown / can't-render-statically macro → muted literal (better than a blank).
+        _ => format!(
+            "<span class=\"macro-raw\">{{{{{} {}}}}}</span>",
+            esc(name),
+            esc(&args.join(" "))
+        ),
+    }
+}
+
+/// Run a `{{query …}}` against the graph and render its results as a bordered block.
+fn render_query(graph: &Graph, src: &str, ctx: &Ctx, depth: u8) -> String {
+    let groups = if crate::query::is_advanced(src) {
+        crate::query::run_advanced_query(graph, src, None).groups
+    } else {
+        crate::query::run_query(graph, src)
+    };
+    let total: usize = groups.iter().map(|g| g.blocks.len()).sum();
+    let mut out = format!(
+        "<div class=\"query\"><div class=\"query-head\">Query <span class=\"query-count\">{}</span></div>",
+        total
+    );
+    if total == 0 {
+        out.push_str("<div class=\"query-empty\">No matching blocks.</div>");
+    } else {
+        out.push_str("<ul class=\"query-results\">");
+        for g in &groups {
+            for blk in &g.blocks {
+                render_result_block(blk, &mut out, ctx, depth);
+            }
+        }
+        out.push_str("</ul>");
+    }
+    out.push_str("</div>");
+    out
+}
+
+/// Inline an `{{embed ((uuid))}}` or `{{embed [[Page]]}}`.
+fn render_embed(graph: &Graph, arg: &str, ctx: &Ctx, depth: u8) -> String {
+    if let Some(uuid) = arg.strip_prefix("((").and_then(|s| s.strip_suffix("))")) {
+        return match crate::query::resolve_block(graph, uuid.trim()) {
+            Some(g) => {
+                let mut out = String::from("<div class=\"embed block-embed\"><ul>");
+                for blk in &g.blocks {
+                    render_result_block(blk, &mut out, ctx, depth);
+                }
+                out.push_str("</ul></div>");
+                out
+            }
+            None => "<div class=\"embed embed-missing\">Embedded block not found.</div>".into(),
+        };
+    }
+    if let Some(page) = arg.strip_prefix("[[").and_then(|s| s.strip_suffix("]]")) {
+        let page = page.trim();
+        return match load_page_doc(graph, page) {
+            Some(doc) => {
+                let mut out = format!(
+                    "<div class=\"embed page-embed\"><a class=\"embed-title ref\" href=\"{}.html\">{}</a><ul>",
+                    slug(page),
+                    esc(page)
+                );
+                for b in &doc.roots {
+                    render_embedded_block(b, &mut out, ctx, depth);
+                }
+                out.push_str("</ul></div>");
+                out
+            }
+            None => "<div class=\"embed embed-missing\">Embedded page not found.</div>".into(),
+        };
+    }
+    format!("<span class=\"macro-raw\">{{{{embed {}}}}}</span>", esc(arg))
+}
+
+/// Embed a video: a YouTube/Vimeo URL becomes an iframe; anything else, a link.
+fn render_video(url: &str) -> String {
+    if let Some(id) = youtube_id(url) {
+        return format!(
+            "<div class=\"video-embed\"><iframe src=\"https://www.youtube.com/embed/{}\" \
+             allowfullscreen loading=\"lazy\" frameborder=\"0\"></iframe></div>",
+            esc_attr(&id)
+        );
+    }
+    format!(
+        "<div class=\"video-embed\"><a href=\"{}\">{}</a></div>",
+        esc_attr(url),
+        esc(url)
+    )
+}
+
+/// Extract a YouTube video id from a watch/short/embed URL, if this is one.
+fn youtube_id(url: &str) -> Option<String> {
+    let u = url.trim();
+    if let Some(rest) = u.split("v=").nth(1) {
+        if u.contains("youtube.com") {
+            return Some(rest.split(['&', '#']).next().unwrap_or(rest).to_string());
+        }
+    }
+    if let Some(rest) = u.split("youtu.be/").nth(1) {
+        return Some(rest.split(['?', '&', '#']).next().unwrap_or(rest).to_string());
+    }
+    if let Some(rest) = u.split("youtube.com/embed/").nth(1) {
+        return Some(rest.split(['?', '&', '#']).next().unwrap_or(rest).to_string());
+    }
+    None
+}
+
+/// List the pages directly under a `{{namespace X}}` prefix as links.
+fn render_namespace(graph: &Graph, ns: &str) -> String {
+    let prefix = format!("{}/", ns.trim());
+    let mut children: Vec<String> = graph
+        .list_pages()
+        .into_iter()
+        .map(|e| e.name)
+        .filter(|n| n.starts_with(&prefix))
+        .collect();
+    children.sort();
+    children.dedup();
+    if children.is_empty() {
+        return format!("<div class=\"namespace-macro\">No pages under {}.</div>", esc(ns));
+    }
+    let mut out = format!(
+        "<div class=\"namespace-macro\"><div class=\"ns-head\">{}</div><ul>",
+        esc(ns)
+    );
+    for c in &children {
+        out.push_str(&format!(
+            "<li><a class=\"ref\" href=\"{}.html\">{}</a></li>",
+            slug(c),
+            esc(c)
+        ));
+    }
+    out.push_str("</ul></div>");
+    out
+}
+
+/// Read + parse a page's file by name (for `{{embed [[Page]]}}`), case-insensitively.
+fn load_page_doc(graph: &Graph, name: &str) -> Option<doc::Document> {
+    let pages = graph.list_pages();
+    let e = pages.iter().find(|e| e.name.eq_ignore_ascii_case(name))?;
+    let content = fs::read_to_string(&e.path).ok()?;
+    Some(doc::parse(&content))
+}
+
 fn render_block(
     b: &DocBlock,
     out: &mut String,
-    refs: &RefIndex,
+    ctx: &Ctx,
     slug: &str,
     title: &str,
     counter: &mut u32,
@@ -415,18 +716,20 @@ fn render_block(
         index.push(json!({"slug": slug, "title": title, "anchor": anchor, "text": text}));
     }
 
-    // The whole body via lsdoc's canonical render_html, then decorate the data-* hooks for
-    // a static page. A `# heading` block is wrapped in `<span class="heading-text h{n}">` by
-    // render_html itself (lsdoc v0.2.3), so the export markup matches the app — no separate
-    // `<h{n}>` wrapping here.
-    let opts = lsdoc::RenderOpts { format: lsdoc::Format::Md };
-    let body = decorate(&lsdoc::render_html(&blocks, &opts), refs);
-    out.push_str(&format!("<div class=\"b\">{body}</div>"));
+    // Header facets (task checkbox + marker, priority) → the decorated body (lsdoc's
+    // canonical render_html; a `# heading` block is wrapped in `<span class="heading-text
+    // h{n}">` by render_html itself, so the export markup matches the app) → trailer facets
+    // (SCHEDULED/DEADLINE, block properties). Macros in the body are expanded via `ctx`.
+    out.push_str(if b.marker() == Some("DONE") { "<div class=\"b done\">" } else { "<div class=\"b\">" });
+    emit_header_facets(b.marker(), b.priority(), out);
+    out.push_str(&decorate(&lsdoc::render_html(&blocks, &md_opts()), ctx, 0));
+    out.push_str("</div>");
+    emit_trailer_facets(b.scheduled(), b.deadline(), &b.properties(), out);
 
     if !b.children.is_empty() {
         out.push_str("<ul>");
         for c in &b.children {
-            render_block(c, out, refs, slug, title, counter, index);
+            render_block(c, out, ctx, slug, title, counter, index);
         }
         out.push_str("</ul>");
     }
@@ -438,14 +741,14 @@ fn page_html(
     slug: &str,
     doc: &doc::Document,
     kind: PageKind,
-    refs: &RefIndex,
+    ctx: &Ctx,
     blocks: &mut Vec<serde_json::Value>,
 ) -> String {
     let mut body = String::new();
     body.push_str("<ul class=\"outline\">");
     let mut counter = 0u32;
     for b in &doc.roots {
-        render_block(b, &mut body, refs, slug, title, &mut counter, blocks);
+        render_block(b, &mut body, ctx, slug, title, &mut counter, blocks);
     }
     body.push_str("</ul>");
     // Journal titles get a leading calendar glyph, like Logseq.
@@ -583,6 +886,38 @@ strong{font-weight:650}
 .md-list-term{font-weight:650}
 .block-checkbox{display:inline-block;width:.95em;height:.95em;border:1.5px solid var(--muted);border-radius:3px;vertical-align:-2px;margin-right:.15em}
 .block-checkbox.checked{background:var(--accent);border-color:var(--accent)}
+/* task facets: checkbox + marker badge, priority badge (match the app header) */
+.task-checkbox{display:inline-block;width:.95em;height:.95em;border:1.5px solid var(--muted);border-radius:3px;vertical-align:-2px;margin-right:.35em;position:relative}
+.task-checkbox.checked{background:var(--accent);border-color:var(--accent)}
+.task-checkbox.checked::after{content:"";position:absolute;left:.28em;top:.08em;width:.2em;height:.42em;border:solid #fff;border-width:0 .12em .12em 0;transform:rotate(45deg)}
+.task-marker{font-size:.68rem;font-weight:700;letter-spacing:.03em;padding:.05em .35em;border-radius:4px;background:var(--code);color:var(--muted);vertical-align:.05em}
+.task-marker.m-doing,.task-marker.m-now{color:#c2410c;background:#fff2e8}
+.task-marker.m-done{color:var(--accent);background:#e7f7f0}
+.task-marker.m-waiting{color:#a16207;background:#fdf6e3}
+.task-marker.m-canceled,.task-marker.m-cancelled{color:var(--muted);text-decoration:line-through}
+.b.done>.heading-text,.b.done{color:var(--muted)}
+.priority{font-size:.72rem;font-weight:700;padding:.02em .3em;border-radius:4px;background:var(--code);color:var(--muted)}
+.priority.p-a{color:#b91c1c;background:#fdeaea}.priority.p-b{color:#c2410c;background:#fff2e8}
+/* planning (SCHEDULED/DEADLINE) + block properties */
+.planning{font-size:.85em;color:var(--muted);margin:.05rem 0}
+.planning.deadline .pk{color:#b91c1c}
+.planning .pk,.block-props .pk{font-weight:650;letter-spacing:.02em}
+.block-props{font-size:.85em;color:var(--muted);margin:.1rem 0;display:flex;flex-wrap:wrap;gap:.1rem .8rem}
+.block-props .pv{color:var(--fg)}
+/* query results + embeds + video + namespace macro */
+.query{border:1px solid var(--line);border-radius:8px;margin:.4rem 0;overflow:hidden}
+.query-head{font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);background:var(--code);padding:.3em .7em}
+.query-count{background:var(--muted);color:var(--bg);border-radius:8px;padding:0 .45em;margin-left:.3em;font-size:.9em}
+.query-results{padding:.3rem .7rem}
+.query-empty{padding:.5rem .7rem;color:var(--muted);font-size:.9em}
+.embed{border-left:3px solid var(--line);padding:.1rem 0 .1rem .8rem;margin:.35rem 0}
+.embed-title{display:inline-block;font-size:.78rem;color:var(--muted);margin-bottom:.1rem}
+.embed-missing{color:var(--muted);font-style:italic;font-size:.9em}
+.video-embed{position:relative;width:100%;max-width:560px;aspect-ratio:16/9;margin:.4rem 0}
+.video-embed iframe{position:absolute;inset:0;width:100%;height:100%;border:0;border-radius:8px}
+.namespace-macro{margin:.3rem 0}
+.namespace-macro .ns-head{font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.macro-raw{color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em}
 /* tables (data-align is the export's beyond-OG column alignment) */
 table.md-table{border-collapse:collapse;margin:.5rem 0;font-size:.94em}
 table.md-table th,table.md-table td{border:1px solid var(--line);padding:.3em .6em;text-align:left}
@@ -769,9 +1104,12 @@ pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
     let mut all_blocks: Vec<serde_json::Value> = Vec::new();
     let mut sidebar_pages: Vec<serde_json::Value> = Vec::new();
     let mut count = 0;
+    // The render context: the block-ref index + the graph (so `{{query}}`/`{{embed}}`/
+    // `{{namespace}}` macros can resolve against real data at publish time).
+    let ctx = Ctx { refs: &refs, graph: Some(graph) };
     for (name, slug, kind, parsed) in &public {
         let file = format!("{slug}.html");
-        fs::write(out.join(&file), page_html(name, slug, parsed, *kind, &refs, &mut all_blocks))?;
+        fs::write(out.join(&file), page_html(name, slug, parsed, *kind, &ctx, &mut all_blocks))?;
         let journal = *kind == PageKind::Journal;
         let tag = if journal { "<span class=\"k\">journal</span>" } else { "" };
         index_list.push_str(&format!("<li><a class=\"ref\" href=\"{}\">{}</a>{}</li>", file, esc(name), tag));
@@ -822,8 +1160,9 @@ mod tests {
     /// Render a block body the way `render_block` does: one lsdoc parse → canonical
     /// skeleton (`render_html`) → export decoration. The unit the decorator tests drive.
     fn render_body(raw: &str, refs: &RefIndex) -> String {
-        let opts = lsdoc::RenderOpts { format: lsdoc::Format::Md };
-        decorate(&lsdoc::render_html(&body_blocks(raw), &opts), refs)
+        // Graph-less context: the inline decorator under test; macros drop (no graph).
+        let ctx = Ctx { refs, graph: None };
+        decorate(&lsdoc::render_html(&body_blocks(raw), &md_opts()), &ctx, 0)
     }
     fn search_text(raw: &str) -> String {
         ast_plain_text(&body_blocks(raw))
@@ -963,6 +1302,54 @@ mod tests {
         assert!(index.contains("alpha.html") && index.contains("beta.html"));
         assert!(!index.contains("secret.html"), "private page excluded");
         assert!(index.contains("<aside class=\"sidebar\">"), "index uses the sidebar shell");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn publish_renders_facets_queries_and_embeds() {
+        let dir = std::env::temp_dir().join(format!("tine-publish-facets-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(dir.join("logseq").join("config.edn"), "{:publishing/all-pages-public? true}\n").unwrap();
+        fs::write(
+            dir.join("pages").join("Target.md"),
+            "- an embeddable target\n  id:: 22222222-2222-2222-2222-222222222222\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages").join("Main.md"),
+            "- TODO [#A] do the thing\n  SCHEDULED: <2026-07-10 Fri>\n\
+             - DONE finished it\n\
+             - a note\n  status:: open\n\
+             - {{query (task TODO)}}\n\
+             - {{embed ((22222222-2222-2222-2222-222222222222))}}\n\
+             - {{video https://www.youtube.com/watch?v=abc123}}\n",
+        )
+        .unwrap();
+
+        let g = Graph::open(&dir);
+        let (outdir, _) = publish_graph(&g).unwrap();
+        let main = fs::read_to_string(std::path::Path::new(&outdir).join("main.html")).unwrap();
+
+        // task facets: checkbox + marker badge, priority, planning date
+        assert!(main.contains("class=\"task-checkbox\""), "open task checkbox: {main}");
+        assert!(main.contains("class=\"task-marker m-todo\">TODO"), "TODO badge");
+        assert!(main.contains("class=\"priority p-a\">[#A]"), "priority badge");
+        assert!(main.contains("SCHEDULED:"), "scheduled line");
+        assert!(main.contains("class=\"task-checkbox checked\"") && main.contains("class=\"b done\""), "DONE checked + muted");
+        // block property shown
+        assert!(main.contains("status") && main.contains("open"), "block property rendered");
+        // query ran and rendered the TODO result (not empty, not the literal macro)
+        assert!(main.contains("class=\"query\""), "query block rendered");
+        assert!(!main.contains("{{query"), "query macro expanded, not literal");
+        // embed inlined the target block's text
+        assert!(main.contains("class=\"embed"), "embed rendered");
+        assert!(main.contains("an embeddable target"), "embed inlined target content: {main}");
+        // video → youtube iframe
+        assert!(main.contains("youtube.com/embed/abc123"), "video iframe");
 
         let _ = fs::remove_dir_all(&dir);
     }

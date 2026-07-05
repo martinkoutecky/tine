@@ -6,9 +6,9 @@ icon:: 🧪
 
 - This page exercises every Logseq page-level feature Tine knows about, so you can see **exactly how each one renders** — and where we're still rough. It's ordinary Logseq Markdown; the same file opens unchanged in Logseq.
 - # 1 — Inline text formatting
-- **Bold**, *italic*, _also italic_, ~~strikethrough~~, `inline code`, ==highlight==, ^^also highlight^^, and <ins>underline</ins>.
-- Superscript E = mc^2^ and subscript H~2~O.
+- **Bold**, *italic*, _also italic_, ~~strikethrough~~, `inline code`, ==highlight==, and ^^also highlight^^.
 - A mix in one line: a **bold `code` span**, an *italic [[link]]*, and a ~~struck ==highlight==~~.
+- *Not yet:* inline `<ins>underline</ins>`, superscript `^x^`, and subscript `~x~` aren't parsed yet — they render as literal text. (For sub/superscript, use math instead: $H_2O$, $E = mc^2$.)
 - # 2 — Links & references
 - Page link: [[Welcome to Tine]] · tag: #demo · namespaced page: [[Features/Quick capture]].
 - External link: [the Logseq docs](https://docs.logseq.com) · bare URL: https://logseq.com · autolinked email: <hello@example.com>.
@@ -84,14 +84,14 @@ icon:: 🧪
 - Block embed of the reference target above:
 - {{embed ((00000000-0000-4000-8000-00000000feed))}}
 - # 9 — Queries
-- Simple query — all TODO tasks on this page:
+- Simple query — every TODO task in this graph:
 - {{query (task TODO)}}
 - Simple query — blocks referencing a page:
 - {{query [[Welcome to Tine]]}}
 - Query by priority:
 - {{query (priority A)}}
-- Advanced (Datalog) query — pages of type reference:
-- {{query (and (property type "reference"))}}
+- Compound query (and / or / not) — TODO tasks that are also high priority:
+- {{query (and (task TODO) (priority A))}}
 - # 10 — Macros, renderers & callouts
 - Video embed: {{video https://www.youtube.com/watch?v=dQw4w9WgXcQ}}
 - Namespace macro: {{namespace Features}}

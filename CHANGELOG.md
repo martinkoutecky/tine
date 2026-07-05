@@ -10,6 +10,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **HTML export now renders task facets, queries, and embeds.** The static export
+  (`public:: true` pages) previously dropped task markers/checkboxes, priorities,
+  `SCHEDULED`/`DEADLINE`, and block properties, and left `{{query}}`/`{{embed}}`/
+  `{{namespace}}`/`{{video}}` blank. It now renders all of them — queries and embeds
+  are resolved against your graph **at publish time** — so a published page matches
+  what you see in the app. A new **Feature showcase** page in the demo site exercises
+  every page-level feature.
 - **Graph switcher in the sidebar.** The active graph's name now shows in the
   sidebar header (under "Tine") as a clickable control → **Open graph…** (native
   folder picker) / **New graph…**. Switching graphs was previously buried in

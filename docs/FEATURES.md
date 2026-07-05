@@ -258,8 +258,12 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   block). Driven by a small embedded index + a vendored Fuse.js, so the exported site
   works offline / off disk. Pages render from the **same parser the app uses** (lsdoc's
   canonical HTML), so the export matches what you see: syntax-highlighted code blocks
-  (highlight.js), aligned tables, callouts, KaTeX math, lists and task checkboxes, and
-  page/block links. (No interactive graph view yet.)
+  (highlight.js), aligned tables, callouts, KaTeX math, lists and task checkboxes,
+  **task markers + priorities + SCHEDULED/DEADLINE**, block properties, and page/block
+  links. Dynamic content is resolved **at publish time** against your graph, too:
+  `{{query …}}` runs and lists its results, `{{embed}}` inlines the target block/page,
+  `{{namespace}}` lists child pages, and `{{video}}` embeds the player. (No interactive
+  graph view yet.) See the live **[Feature showcase](../website/demo/)** demo page.
 - **Copy/export as** Markdown for a block subtree or a whole page, with a *Rendered*
   mode that flattens to what you see — and in Rendered mode a `((block ref))` resolves
   to the referenced block's text and a user `{{macro}}` to its expansion (not the bare
