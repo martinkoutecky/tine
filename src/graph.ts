@@ -11,7 +11,7 @@ import { applyTemplateVars } from "./editor/templateVars";
 import { waitForWarmCache } from "./warmCache";
 import { CUSTOM_CSS_STYLE_ID, ensureLsShimStyle } from "./lsShim";
 import { ensureThemeStyle } from "./themeGallery";
-import { isMobile } from "./platform";
+import { isMobile, platformKind } from "./platform";
 import type { BlockDto } from "./types";
 
 const GRAPH_KEY = "tine.graphPath";
@@ -166,9 +166,27 @@ async function injectCustomCss(): Promise<void> {
 
 /** Pick a folder and open it as the graph. No-op if cancelled. */
 export async function switchGraph(): Promise<void> {
-  if (await isMobile()) {
+  const platform = await platformKind();
+  if (platform === "android") {
+    let result;
+    try {
+      result = await backend().pickGraphFolder();
+    } catch (e) {
+      pushToast(`Couldn't open the Android folder picker. (${String(e)})`, "error");
+      return;
+    }
+    if (result.status === "picked") {
+      if (result.path) await loadGraphPath(result.path);
+      return;
+    }
+    if (result.status === "permission-requested" || result.status === "permission-needed") {
+      pushToast('Grant "All files access" for Tine, then tap Open again.', "info");
+    }
+    return;
+  }
+  if (platform === "ios") {
     pushToast(
-      "Opening an existing graph on Android is coming soon. For now, tap “Create a new graph” to try Tine.",
+      "Opening an existing graph on iOS is coming soon. For now, tap “Create a new graph” to try Tine.",
       "info"
     );
     return;

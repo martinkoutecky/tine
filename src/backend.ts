@@ -45,6 +45,10 @@ export interface GraphSourceFile {
   bytes: number;
 }
 
+export type GraphFolderPickResult =
+  | { status: "picked"; path: string }
+  | { status: "permission-requested" | "permission-needed" | "cancelled"; path?: string };
+
 export interface Backend {
   loadGraph(path: string): Promise<GraphMeta>;
   appPlatform(): Promise<"android" | "ios" | "desktop">;
@@ -194,6 +198,9 @@ export interface Backend {
   /** Native folder picker (graph open). Null if cancelled / unsupported.
    *  `title` overrides the dialog title (e.g. for "create new graph"). */
   pickFolder(title?: string): Promise<string | null>;
+  /** Android native graph-folder picker. Returns a real filesystem path when
+   *  picked; never a content URI. */
+  pickGraphFolder(): Promise<GraphFolderPickResult>;
   /** Native file picker (asset upload). Null if cancelled / unsupported. */
   pickFile(): Promise<string | null>;
   writeText(text: string): Promise<void>;
@@ -536,6 +543,9 @@ class TauriBackend implements Backend {
     const { open } = await import("@tauri-apps/plugin-dialog");
     const res = await open({ directory: true, multiple: false, title: title ?? "Open graph folder" });
     return typeof res === "string" ? res : null;
+  }
+  pickGraphFolder(): Promise<GraphFolderPickResult> {
+    return this.call<GraphFolderPickResult>("pick_graph_folder");
   }
   async pickFile(): Promise<string | null> {
     const { open } = await import("@tauri-apps/plugin-dialog");

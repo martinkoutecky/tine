@@ -726,6 +726,9 @@ export function mockBackend(): Backend {
     async pickFolder(_title?: string): Promise<string | null> {
       return null; // no native dialog in the browser mock
     },
+    async pickGraphFolder() {
+      return { status: "cancelled" as const };
+    },
     async pickFile(): Promise<string | null> {
       return null;
     },

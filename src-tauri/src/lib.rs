@@ -5,6 +5,7 @@
 mod backup;
 mod commands;
 mod debug;
+mod android_folder_picker;
 mod graph;
 mod platform;
 mod settings;
@@ -185,6 +186,9 @@ pub fn run() {
                 .build(),
         );
 
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(android_folder_picker::init());
+
     builder
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
@@ -301,6 +305,7 @@ pub fn run() {
             create_graph,
             app_platform,
             default_graph_parent,
+            android_folder_picker::pick_graph_folder,
             list_pages,
             journals_desc,
             get_page,
