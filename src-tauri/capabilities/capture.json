@@ -1,7 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "capture",
-  "description": "Capability set for the quick-capture mini window.",
+  "description": "Capability set for the quick-capture mini window (desktop only).",
+  "platforms": ["linux", "macOS", "windows"],
   "windows": ["capture"],
   "permissions": [
     "core:default",

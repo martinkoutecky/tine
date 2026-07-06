@@ -1,4 +1,5 @@
 use crate::debug::diag;
+#[cfg(desktop)]
 use crate::platform::opener_command;
 use crate::state::{refresh_graph, with_graph, AppState};
 use std::sync::Arc;
@@ -487,21 +488,30 @@ pub(crate) fn open_asset(name: String, state: State<'_, AppState>) -> Result<(),
         }
         Ok(canon)
     })?;
-    #[cfg(target_os = "linux")]
-    let prog = "xdg-open";
-    #[cfg(target_os = "macos")]
-    let prog = "open";
-    #[cfg(target_os = "windows")]
-    let prog = "explorer";
-    diag(format!(
-        "open_asset: {name} -> {} ({prog})",
-        target.display()
-    ));
-    opener_command(prog)
-        .arg(&target)
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    Ok(())
+    #[cfg(desktop)]
+    {
+        #[cfg(target_os = "linux")]
+        let prog = "xdg-open";
+        #[cfg(target_os = "macos")]
+        let prog = "open";
+        #[cfg(target_os = "windows")]
+        let prog = "explorer";
+        diag(format!(
+            "open_asset: {name} -> {} ({prog})",
+            target.display()
+        ));
+        opener_command(prog)
+            .arg(&target)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    // Mobile: opening an asset in an external app uses a platform intent; stub for now (M1).
+    #[cfg(not(desktop))]
+    {
+        let _ = (&name, &target);
+        Err("open asset externally is not supported on this platform".into())
+    }
 }
 
 /// Orphaned `assets/` files (no block references them) for the cleanup UI.

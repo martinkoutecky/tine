@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[lib]
+name = "tine_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -21,12 +25,6 @@ custom-protocol = ["tauri/custom-protocol"]
 tauri = { version = "2", features = ["image-png"] }
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-dialog = "2"
-tauri-plugin-window-state = "2"
-tauri-plugin-single-instance = "2"
-# In-app self-update (Win/Linux; macOS stays manual — unsigned). The updater
-# verifies each artifact against `plugins.updater.pubkey` (minisign); process lets
-# the frontend relaunch after `downloadAndInstall()`. See docs/adr + release.yml.
-tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -35,6 +33,14 @@ notify = "6"
 # of a JSON number[] (~4-5x payload + a giant per-element parse on the UI thread).
 base64 = "0.22"
 tine-core = { path = "../crates/tine-core" }
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-window-state = "2"
+tauri-plugin-single-instance = "2"
+# In-app self-update (Win/Linux; macOS stays manual — unsigned). The updater
+# verifies each artifact against `plugins.updater.pubkey` (minisign); process lets
+# the frontend relaunch after `downloadAndInstall()`. See docs/adr + release.yml.
+tauri-plugin-updater = "2"
 
 # Linux/WebKitGTK only: enable the webview's native spell checker (enchant +
 # hunspell). Pinned to the exact version wry already resolves so the

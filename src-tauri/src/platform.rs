@@ -113,17 +113,26 @@ pub(crate) fn open_external(url: String) -> Result<(), String> {
     if !(url.starts_with("http://") || url.starts_with("https://") || url.starts_with("mailto:")) {
         return Err("unsupported url scheme".into());
     }
-    #[cfg(target_os = "linux")]
-    let prog = "xdg-open";
-    #[cfg(target_os = "macos")]
-    let prog = "open";
-    #[cfg(target_os = "windows")]
-    let prog = "explorer";
-    opener_command(prog)
-        .arg(&url)
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    Ok(())
+    #[cfg(desktop)]
+    {
+        #[cfg(target_os = "linux")]
+        let prog = "xdg-open";
+        #[cfg(target_os = "macos")]
+        let prog = "open";
+        #[cfg(target_os = "windows")]
+        let prog = "explorer";
+        opener_command(prog)
+            .arg(&url)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    // Mobile: external open uses a platform intent, not a spawned binary; stub for now (M1).
+    #[cfg(not(desktop))]
+    {
+        let _ = url;
+        Err("external open is not supported on this platform".into())
+    }
 }
 
 /// Build the OS "open" command, scrubbing the env vars Tine (or its AppImage
@@ -133,6 +142,7 @@ pub(crate) fn open_external(url: String) -> Result<(), String> {
 /// launched player's VIDEO output — e.g. VLC opens then exits immediately — while
 /// audio-only playback (no GL/window) is unaffected. A clean env is both the fix
 /// and good hygiene; no-op on non-Linux.
+#[cfg(desktop)]
 pub(crate) fn opener_command(prog: &str) -> std::process::Command {
     let mut cmd = std::process::Command::new(prog);
     #[cfg(target_os = "linux")]
