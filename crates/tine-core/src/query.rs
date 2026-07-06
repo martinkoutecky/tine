@@ -491,6 +491,14 @@ fn scan_groups(s: &str) -> Vec<String> {
         if c == ')' || c == ']' || c == '}' {
             break;
         }
+        // EDN/DataScript line comment (`; …` to end of line) — skip it so example
+        // clauses written inside a `;;` hint are NOT parsed as real groups.
+        if c == ';' {
+            while i < b.len() && b[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
         if c == '(' || c == '[' {
             let start = i;
             let mut depth = 0;
@@ -505,6 +513,12 @@ fn scan_groups(s: &str) -> Vec<String> {
                     if ch == '"' {
                         in_str = false;
                     }
+                } else if ch == ';' {
+                    // Comment inside a group body (between clauses) — skip to EOL.
+                    while i < b.len() && b[i] != b'\n' {
+                        i += 1;
+                    }
+                    continue;
                 } else if ch == '"' {
                     in_str = true;
                 } else if ch == '(' || ch == '[' || ch == '{' {

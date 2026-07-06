@@ -470,8 +470,19 @@ export function mockBackend(): Backend {
       );
     },
     async runAdvancedQuery(query: string) {
-      // Dev-preview stub: the real engine runs in the Tauri backend.
-      void query;
+      // Dev-preview approximation (the real engine runs in the Tauri backend): map
+      // the one head the harness needs — `(task ?b #{"TODO" …})` — so the "switch to
+      // advanced" skeleton returns results in the screenshot harness. Anything else
+      // is reported as unsupported, matching the real ran/ignored contract shape.
+      const markers = query.match(/\b(TODO|DOING|DONE|NOW|LATER|WAITING|CANCELED)\b/g) ?? [];
+      if (/\(\s*task\b/i.test(query) && markers.length) {
+        const set = new Set(markers);
+        const groups = collect((b) => {
+          const m = leadingMarker(b.raw);
+          return !!m && set.has(m);
+        });
+        return { groups, ran: ["task"], ignored: [], supported: true };
+      }
       return { groups: [], ran: [], ignored: [], supported: false };
     },
     async runQuery(query: string): Promise<RefGroup[]> {

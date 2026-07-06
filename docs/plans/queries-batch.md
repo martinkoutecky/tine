@@ -1,8 +1,12 @@
 # Plan — Queries batch (Next #1): aggregation, discoverable-advanced, coverage
 
-**Status:** approved, not started (Martin promoted it to Next, Jul 6 2026). This doc is
-the resume-from-cold spec — it captures the subsystem map, the decisions, and the ordered
-steps so the work survives a context compaction. Build in the order below.
+**Status: SHIPPED (Jul 6 2026, in `[Unreleased]`).** All three landed in the built order
+(1c → 1a → 1b): coverage expansion (`parse_adv_group` widened + field-aware `between`),
+aggregation/group-by (`∑ summarize` control + `queryAggregate.ts` + `Aggregate`/`GroupBy`
+no-op preds), and the `⚙ advanced` switch (skeleton + EDN `;`-comment support in
+`scan_groups`). Verified: `cargo test -p tine-core`, `npm test`, and the screenshot
+harnesses `scripts/shot-summarize.mjs` + `scripts/shot-advanced-switch.mjs`. This doc is
+kept as the design record; the resume-from-cold spec below reflects what was built.
 
 Three features, one subsystem:
 - **1a Aggregation on query results** — no-code count / sum-of-property / average / group-by.

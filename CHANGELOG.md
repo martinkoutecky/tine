@@ -17,6 +17,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   many rows were skipped (blank or non-numeric). The full result list still renders
   below the summary. (This goes beyond Logseq, which does aggregation only through
   Datalog `:result-transform`.)
+- **Switch a query to advanced (Datalog).** The visual query builder gains a
+  **⚙ advanced** button that drops a ready-to-edit `[:find … :where …]` template
+  with a commented cheat-sheet of every supported clause. Writing Datalog flips the
+  query to the advanced engine automatically, and the "ran / ignored" note keeps
+  mistakes visible. (EDN `;` comments are now honored, so the cheat-sheet lines
+  aren't parsed as filters.)
 - **Wider coverage for advanced (Datalog) queries.** The `[:find … :where …]`
   mapper now also understands `(page …)`, `(namespace …)`, `(page-tags …)`,
   `(scheduled)`, `(deadline)`, `(journal)`, and a field-aware `(between …)` —

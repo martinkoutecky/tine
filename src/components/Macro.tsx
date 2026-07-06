@@ -339,7 +339,11 @@ export function QueryMacro(props: {
               {table() ? "List" : "Table"}
             </button>
           </div>
-          <Show when={props.blockId}>
+          {/* The visual builder only models the simple DSL. For an advanced
+              (datalog) query, hide the chip bar (its clauses aren't builder-
+              representable) — the block is editable as raw text by clicking it, and
+              the ran/ignored note above shows which clauses took. */}
+          <Show when={props.blockId && !isAdvanced()}>
             <QueryBuilder dsl={form} onChange={applyDsl} blockId={props.blockId} />
           </Show>
           <Show when={!collapsed()}>

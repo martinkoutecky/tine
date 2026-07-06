@@ -5151,6 +5151,34 @@ mod tests {
     }
 
     #[test]
+    fn advanced_query_skeleton_ignores_comment_hints() {
+        // 1b: the "switch to advanced" skeleton lists supported heads as `;;` EDN
+        // comments. Those example clauses must NOT be parsed as real filters — only
+        // the single active clause runs. (Regression: scan_groups now skips `; …`.)
+        let dir = scratch("adv-skel");
+        fs::write(
+            dir.join("journals").join("2026_06_20.md"),
+            "- TODO ship it\n- DOING wire it\n- DONE done\n",
+        )
+        .unwrap();
+        let g = Graph::open(&dir);
+        g.warm_cache();
+        let skeleton = "[:find (pull ?b [*])\n \
+             :where\n \
+             ;; supported: (priority ?b \"A\") (page-ref ?b \"Nope\") (property ?b :k \"v\")\n \
+             ;; (scheduled ?b) (deadline ?b) (page ?b \"Nowhere\")\n \
+             (task ?b #{\"TODO\" \"DOING\"})]";
+        let r = g.run_advanced_query(skeleton, None);
+        assert!(r.supported, "ran: {:?} ignored: {:?}", r.ran, r.ignored);
+        // Only the task clause ran — the commented priority/page-ref/etc. did not.
+        assert_eq!(r.ran, vec!["task".to_string()]);
+        assert!(r.ignored.is_empty(), "no clause should be ignored: {:?}", r.ignored);
+        let total: usize = r.groups.iter().map(|grp| grp.blocks.len()).sum();
+        assert_eq!(total, 2, "TODO + DOING match; the commented (page-ref \"Nope\") is inert");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn advanced_query_reuses_cached_result_until_graph_changes() {
         let dir = scratch("adv-memo");
         fs::write(dir.join("pages").join("P.md"), "- TODO ship\n").unwrap();

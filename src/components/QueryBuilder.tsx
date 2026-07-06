@@ -302,6 +302,20 @@ function PropNameInput(props: { onCommit: (key: string) => void }): JSX.Element 
   );
 }
 
+// The "switch to advanced" datalog skeleton: a working `(task …)` clause plus a
+// commented cheat-sheet of every head Tine's advanced mapper supports. Writing
+// `[:find …]` auto-flips the render path to runAdvancedQuery (Macro.tsx gates on
+// ADVANCED_RE), and the `;;` hints are EDN comments the engine skips (they are NOT
+// parsed as real filters). Unsupported lines you add are flagged, never guessed.
+const ADVANCED_SKELETON = `[:find (pull ?b [*])
+ :where
+ ;; Supported clauses (edit freely; unsupported ones are flagged, not guessed):
+ ;;   (task ?b #{"TODO" "DOING"})   (priority ?b "A")   (page-ref ?b "Some Page")
+ ;;   (property ?b :key "value")    (page-property ?b :key)    (page-tags ?b "tag")
+ ;;   (scheduled ?b)  (deadline ?b)  (journal ?b)  (page ?b "Name")  (namespace ?b "Parent")
+ ;;   (between ?b "2026-01-01" "2026-12-31")   combine with (and …) (or …) (not …)
+ (task ?b #{"TODO" "DOING"})]`;
+
 export function QueryBuilder(props: {
   dsl: () => string;
   onChange: (dsl: string) => void;
@@ -328,6 +342,13 @@ export function QueryBuilder(props: {
         openMenu={openMenu} setOpenMenu={setOpenMenu} adding={adding} setAdding={setAdding} />
       <SortControl tree={tree} apply={apply} />
       <SummarizeControl tree={tree} apply={apply} />
+      <button
+        class="qb-sort qb-advanced"
+        title="Switch to an advanced (Datalog) query — drops a [:find …] template with the supported clauses"
+        onClick={(e) => { stop(e); props.onChange(ADVANCED_SKELETON); }}
+      >
+        ⚙ advanced
+      </button>
     </div>
   );
 }
