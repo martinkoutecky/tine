@@ -54,11 +54,38 @@ to `~/research/tine`. Martin is unavailable for testing.
 
 ## Decisions made (by Claude, per mandate)
 
-_(none yet — each gets an ADR or spec edit + a row here)_
+- **ADR 0023** — render substrate: CSS Grid `max-content` tracks; `<table>`
+  auto-layout rejected on Phase-0 numbers; no hard cell cap in v1, log-warn
+  ~2000 cells.
+- **ADR 0024** — §13.4 header row: explicit opt-in `tine.header:: true`, never
+  auto-detected; positional face only.
+- **ADR 0025** — §13.2 mode boundaries: click-on-text edits (mousedown entry,
+  span→caret), click-on-whitespace selects cell, Esc ladder
+  (edit→cell→outline), `←` past left exits, flow-out at top/bottom (no wrap),
+  per-grid in-memory last-cell re-entry.
+- **Spec §3.1 "Org coverage"** (Martin's Jul 6 question): Sheets is
+  format-agnostic — org carries geometry as headline nesting and config as
+  `:PROPERTIES:` drawer keys (`:tine.view: grid`); dotted keys verified legal
+  in lsdoc's org drawer parser (rejects only `:`/space/newline, matches mldoc);
+  org write-gating inherited from the existing round-trip self-check (failing
+  pages read-only — no new rule). Every phase's fixtures include an org
+  variant. Canonical md empty bullet = bare `-`, no trailing space.
 
 ## Decisions Martin should review
 
-_(none yet)_
+- All four above (each marked so in its ADR). The riskiest to taste is
+  ADR 0025 (mode boundaries) — it's also the one the spec called most likely
+  to feel wrong if rushed; revising it pre-merge is cheap.
+
+## Sample pages for Martin
+
+`~/research/tine-test/pages/Sheets demo.md` and
+`~/research/org-graph/pages/Sheets demo.org` — one page each: positional grid
+(header + ragged row), nested sub-grid, field-keyed table, task kanban
+(`{{query (todo …)}}` + `tine.group-by:: state`) + scattered tasks for it.
+Both validated round-trip-clean (md byte-identical; org passes
+`org_round_trips` — checked with the new `roundtrip_org_dir` example). They
+render as plain outlines until each phase lands.
 
 ## Next step
 
