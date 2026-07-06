@@ -37,16 +37,36 @@ to `~/research/tine`. Martin is unavailable for testing.
         contenteditable divs, not Tine block projections (heavier to *build*,
         but layout mechanics was the question); paint cost not isolated — but
         the environment is software-rendered, i.e. pessimistic on paint.
-  - [ ] (B) query: `run_query("TODO")` cold (incl. cache build) + warm, +
-        edit-while-board-visible re-scan. *Martin's real graph is unavailable
-        (and off-limits as a corpus) — measuring on a synthetic graph at ≥ real
-        scale (10k–200k blocks); substitution recorded.* Budget: warm re-scan
-        ~10–30 ms; if blown, facet indices move v2→v1. Running via codex
-        (spec: `subagent-tasks/sheets-phase0-query-bench.md`).
-  - [ ] Go/no-go + indices decisions recorded here.
-- [ ] **Phase 1 — encoding + read-only positional grid** (render `tine.view:: grid`
-      children as positional table; logical-matrix pass; §3.7 round-trip gate as
-      an automated test EARLY; settle §13.2 mode-boundary + §13.4 header row as ADRs)
+  - [x] (B) query — **GO; facet indices STAY v2.** Synthetic graphs (Martin's
+        real graph unavailable + off-limits as corpus), release build, local
+        disk; bench committed as `crates/tine-core/examples/sheets_phase0_bench.rs`
+        (re-runnable, deterministic). Note: bare `TODO` isn't accepted by the
+        simple DSL — `(task TODO)` is; compound = `(and (task TODO DOING) #SomeTag)`.
+        | blocks | cold (incl. cache build) | edit→re-scan med/p95 | compound med/p95 | save_page |
+        |---|---|---|---|---|
+        | 10k | 12 ms | 0.6 / 1.1 ms | 0.4 / 0.9 ms | 0.5 ms |
+        | 50k | 64 ms | 5.2 / 6.2 ms | 4.0 / 4.3 ms | 1.9 ms |
+        | 100k | 130 ms | 9.5 / 11.8 ms | 8.2 / 8.8 ms | 4.8 ms |
+        | 200k | 238 ms | 19.0 / 24.5 ms | 15.6 / 16.3 ms | 11.3 ms |
+        Linear ≈1 ms per 10k blocks warm; the 10–30 ms budget holds through
+        200k blocks (the tight 10 ms end frays ~100k p95). Memo hits ~0.1 µs.
+  - [x] Go/no-go: **GO on both gates.** Auto-fit = CSS Grid max-content
+        (ADR 0023); indices stay v2-if-measured; no hard cell cap.
+- [x] **Phase 1 — encoding + read-only positional grid** — DONE Jul 6 2026
+      (codex; verified: `npm test` 15 files/153 tests green both configs,
+      `cargo test -p tine-core` 268 green incl. new md+org byte-exact grid
+      fixtures in `tests/roundtrip.rs`, screenshot self-verified via
+      `scripts/shot-sheets.mjs`). Shipped: `src/sheet/config.ts` (tine.*
+      parser) + `src/sheet/matrix.ts` (logical matrix, holes, span-ready) +
+      `src/components/SheetGrid.tsx` (read-only renderer: header row, holes,
+      nested sub-grids depth-capped at 5, org-aware via `facetsOf(raw, fmt)`)
+      + Block.tsx children-branch integration + `tine.*` chips hidden
+      (render/block.ts prefix rule) + mock demo page. §13.2/§13.4 settled as
+      ADR 0025/0024. **Phase-2 note:** a cell whose block is a task renders
+      body-only — the TODO marker/priority are invisible in grid cells (seen in
+      the screenshot); Phase 2/3 must render cell header-facets (marker,
+      priority chips) inside cells, and remember BOTH facet renderers rule
+      (`tine-refblocks-vs-block-facets`) now has a third surface.
 - [ ] **Phase 2 — editable cells + modality + full §4.3 keyboard** (largest phase)
 - [ ] **Phase 3 — field-keyed table + query rowSource + task kanban** (showcase)
 - [ ] **Phase 4 — Hierarchify/Flatten + board + aggregates**
