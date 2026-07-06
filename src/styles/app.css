@@ -138,6 +138,13 @@ body {
   flex: 0 0 auto;
 }
 
+/* Mobile stand-in for the (hidden) tab strip: fills the toolbar's middle so the
+   right-side icons stay pinned to the edge, exactly as .tab-bar does on desktop. */
+.topbar-spacer {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 /* macOS: the native traffic-light buttons float in the window's top-left, over our
    content (the Overlay title bar — see nativeChrome.ts). Reserve room so they don't
    sit on top of interactive chrome:

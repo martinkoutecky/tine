@@ -31,14 +31,24 @@ export const isMac: boolean =
   typeof navigator !== "undefined" &&
   (/Mac/i.test(navigator.platform ?? "") || /Mac OS X|Macintosh/i.test(navigator.userAgent ?? ""));
 
+// Mobile (Android/iOS) detection: the Tauri WebView's UA carries the platform.
+// Evaluated once, same idiom as isMac above. The backend `app_platform` command
+// is the authoritative source for file-system logic (see platform.ts / graph.ts);
+// this synchronous UA constant is the instant client-side gate for layout/chrome,
+// where a one-frame async round-trip would flash desktop-only controls.
+export const isMobilePlatform: boolean =
+  typeof navigator !== "undefined" && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent ?? "");
+
 // Linux/Windows user preference: use the OS-native window frame instead of our
 // custom frameless chrome.
 const [nativeFrame, setNativeFrameSig] = createSignal(false);
 
 /** Reactive: is the OS drawing the window controls (so our custom chrome should
- *  hide)? True on macOS always (the Overlay title bar provides traffic lights), and
- *  on Linux/Windows when the user has turned the native frame on. */
-export const osDrawsWindowControls = (): boolean => isMac || nativeFrame();
+ *  hide)? True on macOS always (the Overlay title bar provides traffic lights),
+ *  on Linux/Windows when the user has turned the native frame on, and always on
+ *  mobile (Android/iOS have no in-app min/max/close — the OS owns the window). */
+export const osDrawsWindowControls = (): boolean =>
+  isMac || nativeFrame() || isMobilePlatform;
 
 /** Reactive state of the Linux/Windows native-frame toggle (for the Settings switch).
  *  Meaningless on macOS (where the native frame is always on). */

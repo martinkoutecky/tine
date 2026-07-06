@@ -75,7 +75,7 @@ import { initSpellcheckSettings } from "./spellcheckSettings";
 import { initLinkDefault } from "./editor/linkDefault";
 import { initDebug, dbg } from "./debug";
 import { WindowControls, ResizeGrips, installWindowChrome, maximized } from "./components/WindowChrome";
-import { initNativeChrome, isMac, osDrawsWindowControls } from "./nativeChrome";
+import { initNativeChrome, isMac, isMobilePlatform, osDrawsWindowControls } from "./nativeChrome";
 
 export function App(): JSX.Element {
   // Startup debug trace (TINE_DEBUG=1 / --debug): forward UI milestones + errors
@@ -445,7 +445,12 @@ export function App(): JSX.Element {
               </svg>
             </button>
           </div>
-          <TabBar />
+          {/* The tab strip is a desktop feature; on a phone it only crowds the
+              single-row toolbar (and its pill clips). Hide it there, keeping a
+              flex spacer so the right-side icons stay pinned to the edge. */}
+          <Show when={!isMobilePlatform} fallback={<div class="topbar-spacer" data-tauri-drag-region />}>
+            <TabBar />
+          </Show>
           <div class="topbar-right">
             <CalendarJump />
             <button class="icon-btn" title="Search (Ctrl+K)" onClick={openSwitcher}>
