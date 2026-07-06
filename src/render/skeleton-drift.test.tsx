@@ -29,7 +29,7 @@ beforeAll(async () => {
 // Interactive-only chrome the frontend adds and lsdoc (static) does not — removed before
 // comparison.
 const REMOVE_SELECTORS = [
-  "button.code-copy",
+  "button.copy-btn", // code-copy + inline-code/link copy affordances (#24)
   ".asset-action-bar",
   ".img-resize-grip",
   ".media-open-external",
@@ -51,6 +51,10 @@ function skeleton(html: string): string {
   root.querySelectorAll("span.bracket").forEach((e) => e.replaceWith(document.createTextNode(e.textContent ?? "")));
   // Frontend-only horizontal-scroll affordance around wide tables; the table skeleton is canonical.
   root.querySelectorAll("div.md-table-wrap").forEach((e) => e.replaceWith(...Array.from(e.childNodes)));
+  // #24 copy affordance: the frontend wraps inline code / links in a positioning
+  // span (for the hover copy button, already removed above); lsdoc emits the bare
+  // <code>/<a>. Unwrap so the content skeleton matches.
+  root.querySelectorAll("span.inline-copy-wrap, span.link-copy-wrap").forEach((e) => e.replaceWith(...Array.from(e.childNodes)));
   // Click-to-caret span threading wraps exact plain leaves in unstyled span[data-so][data-se].
   // They carry source-offset metadata only, so unwrap them before skeleton comparison.
   root.querySelectorAll("span[data-so][data-se]").forEach((e) => e.replaceWith(...Array.from(e.childNodes)));
