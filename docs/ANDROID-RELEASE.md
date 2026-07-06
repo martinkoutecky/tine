@@ -64,6 +64,35 @@ $ANDROID_HOME/build-tools/35.0.0/apksigner verify --print-certs \
 
 The printed certificate DN should be `CN=Tine, …`, not `CN=Android Debug`.
 
+## Signing off-machine (when the build host must not hold the key)
+
+The build sandbox on the university machine deliberately does **not** hold the
+private key (its home is world-readable NFS). So the key lives only on a private
+machine, and we sign there:
+
+1. **On the build host** — build an *unsigned* release APK. Because
+   `build.gradle.kts` gates signing on the keystore *file* existing (not just
+   `keystore.properties`), a host without the `.jks` produces
+   `…/apk/universal/release/app-universal-release-unsigned.apk` cleanly. Ensure
+   it's zipaligned before delivery:
+   ```sh
+   $ANDROID_HOME/build-tools/35.0.0/zipalign -c -v 4 app-universal-release-unsigned.apk  # verify
+   ```
+   (Gradle release packaging already aligns it; the check should pass.)
+
+2. **On the private machine that has the key** — sign with the self-contained
+   `apksigner.jar` (needs only a JDK, which you have from `keytool`):
+   ```sh
+   java -jar apksigner.jar sign \
+     --ks ~/.android-keys/tine-release.jks --ks-key-alias tine \
+     --out tine-release-signed.apk app-universal-release-unsigned.apk
+   ```
+   It prompts for the keystore password. Verify:
+   ```sh
+   java -jar apksigner.jar verify --print-certs tine-release-signed.apk   # → CN=Tine
+   ```
+   Install `tine-release-signed.apk`. The private key never touches the build host.
+
 ## Notes
 
 - Minification (R8/ProGuard) is currently **off** for release: Tauri mobile

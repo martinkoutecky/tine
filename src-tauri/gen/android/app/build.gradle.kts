@@ -14,17 +14,23 @@ val tauriProperties = Properties().apply {
 }
 
 // Release signing: credentials live in gen/android/keystore.properties, which is
-// gitignored (never commit the keystore or its passwords). When the file is
-// absent (CI, other machines, debug-only builds) the release signingConfig stays
-// empty and only debug builds — which use the auto debug keystore — are signable.
-// Expected keys: storeFile (absolute path to the .jks), storePassword, keyAlias,
-// keyPassword. See docs/ANDROID-RELEASE.md.
+// gitignored (never commit the keystore or its passwords). Expected keys:
+// storeFile (absolute path to the .jks), storePassword, keyAlias, keyPassword.
+// See docs/ANDROID-RELEASE.md.
+//
+// We gate on the KEYSTORE FILE actually existing, not merely on the properties
+// file — so a machine that has the properties but not the key (e.g. this build
+// sandbox, where the private key deliberately never lives) still builds a valid
+// *unsigned* release APK to be signed off-machine, instead of failing at the
+// validateSigning task.
 val keystorePropertiesFile = rootProject.file("keystore.properties")
 val keystoreProperties = Properties().apply {
     if (keystorePropertiesFile.exists()) {
         keystorePropertiesFile.inputStream().use { load(it) }
     }
 }
+val releaseStoreFile = keystoreProperties.getProperty("storeFile")?.let { file(it) }
+val hasReleaseKey = releaseStoreFile != null && releaseStoreFile.exists()
 
 android {
     compileSdk = 36
@@ -39,8 +45,8 @@ android {
     }
     signingConfigs {
         create("release") {
-            if (keystorePropertiesFile.exists()) {
-                storeFile = keystoreProperties.getProperty("storeFile")?.let { file(it) }
+            if (hasReleaseKey) {
+                storeFile = releaseStoreFile
                 storePassword = keystoreProperties.getProperty("storePassword")
                 keyAlias = keystoreProperties.getProperty("keyAlias")
                 keyPassword = keystoreProperties.getProperty("keyPassword")
@@ -60,10 +66,10 @@ android {
             }
         }
         getByName("release") {
-            // Sign with the release key when keystore.properties is present; without
-            // it, an unsigned release APK is produced (installable only after manual
-            // signing) — the debug build stays the fallback.
-            if (keystorePropertiesFile.exists()) {
+            // Sign with the release key when the keystore file is actually present;
+            // otherwise produce an unsigned release APK to be signed off-machine
+            // (see docs/ANDROID-RELEASE.md) — the debug build stays the fallback.
+            if (hasReleaseKey) {
                 signingConfig = signingConfigs.getByName("release")
             }
             // Minification is OFF for now: the folder-picker plugin (and Tauri's
