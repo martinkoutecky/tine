@@ -2,7 +2,10 @@
 //! Logseq markdown, plus structural and canonicalization checks.
 
 use pretty_assertions::assert_eq;
-use tine_core::doc::{self, DocBlock};
+use tine_core::{
+    doc::{self, DocBlock},
+    org,
+};
 
 /// Assert byte-exact round-trip.
 fn assert_roundtrip(input: &str) {
@@ -157,6 +160,66 @@ fn inline_syntax_preserved_in_raw() {
     // Inline markup is rendered later; here we just ensure it survives I/O.
     let input = "- **bold** and *italic* and `code`\n- a [[Page Ref]] and #tag and ((uuid-here))\n- $$E=mc^2$$ math\n";
     assert_roundtrip(input);
+}
+
+#[test]
+fn sheets_positional_grid_encoding_round_trips() {
+    let input = concat!(
+        "- Sheet fixture\n",
+        "  tine.view:: grid\n",
+        "  tine.header:: true\n",
+        "  tine.col-widths:: 0=120;2=88\n",
+        "\t-\n",
+        "\t\t- Column A\n",
+        "\t\t- Column B\n",
+        "\t\t- Column C\n",
+        "\t-\n",
+        "\t\t- TODO Cell with [[Page Ref]]\n",
+        "\t\t- Nested grid\n",
+        "\t\t  tine.view:: grid\n",
+        "\t\t\t-\n",
+        "\t\t\t\t- Inner A1\n",
+        "\t\t\t\t- Inner A2\n",
+        "\t\t\t-\n",
+        "\t\t\t\t- Inner B1\n",
+        "\t\t- Plain tail\n",
+        "\t-\n",
+    );
+
+    assert_roundtrip(input);
+}
+
+#[test]
+fn sheets_org_positional_grid_encoding_round_trips() {
+    let input = concat!(
+        "* Sheet fixture\n",
+        ":PROPERTIES:\n",
+        ":tine.view: grid\n",
+        ":tine.header: true\n",
+        ":tine.col-widths: 0=120;2=88\n",
+        ":END:\n",
+        "**\n",
+        "*** Column A\n",
+        "*** Column B\n",
+        "*** Column C\n",
+        "**\n",
+        "*** TODO Cell with [[Page Ref]]\n",
+        "*** Nested grid\n",
+        ":PROPERTIES:\n",
+        ":tine.view: grid\n",
+        ":END:\n",
+        "****\n",
+        "***** Inner A1\n",
+        "***** Inner A2\n",
+        "****\n",
+        "***** Inner B1\n",
+        "*** Plain tail\n",
+        "**\n",
+    );
+
+    assert!(org::org_round_trips(input));
+    let out = org::serialize_org(&org::parse_org(input));
+    assert_eq!(out, input, "org sheet fixture round-trip mismatch");
 }
 
 #[test]

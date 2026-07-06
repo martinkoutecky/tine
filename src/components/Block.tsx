@@ -102,6 +102,8 @@ import { logbookInfo, type LogbookInfo } from "../logbook";
 import { inPageFindPreservesEditorBlur } from "../inpageFind";
 import { registerFocusedEditorCommandBridge, type MobileEditorCommandId } from "../editorCommandBridge";
 import { isRecordingAudio, setRecordingAudio, base64ToBytes } from "../mediaCapture";
+import { sheetConfig } from "../sheet/config";
+import { SheetGrid } from "./SheetGrid";
 
 // Detect a block whose entire body is a single {{query}} / {{embed}} macro.
 function detectMacro(raw: string): { kind: "query" | "embed"; inner: string } | null {
@@ -234,12 +236,15 @@ export function Block(props: { id: string; hideRefCount?: boolean }): JSX.Elemen
   };
   const hasChildren = () => node().children.length > 0;
   const collapsed = () => node().collapsed;
+  const fmt = () => pageByName(node().page)?.format ?? "md";
+  const blockFacets = createMemo(() => {
+    const n = node();
+    return n ? facetsOf(n.raw, fmt()) : null;
+  });
+  const sheet = createMemo(() => sheetConfig(blockFacets()?.properties ?? []));
   // Heading level of THIS block's first line, so the bullet column can match the
   // (taller) heading line box and the bullet stays centered on it.
-  const headingLevel = createMemo(() => {
-    const n = node();
-    return n ? facetsOf(n.raw, pageByName(n.page)?.format ?? "md").headingLevel : null;
-  });
+  const headingLevel = createMemo(() => blockFacets()?.headingLevel ?? null);
   const editorVisibleValue = createMemo(() => {
     const n = node();
     return n ? splitProps(n.raw, isBuiltinHidden).visible : "";
@@ -367,13 +372,22 @@ export function Block(props: { id: string; hideRefCount?: boolean }): JSX.Elemen
         </div>
       </Show>
 
-      <Show when={hasChildren() && !collapsed()}>
-        <div class="block-children-container">
-          <div class="block-children-left-border" />
-          <div class="block-children">
-            <For each={node().children}>{(cid) => <Block id={cid} />}</For>
+      <Show when={!collapsed() && (hasChildren() || sheet().view === "grid")}>
+        <Show
+          when={sheet().view === "grid"}
+          fallback={
+            <div class="block-children-container">
+              <div class="block-children-left-border" />
+              <div class="block-children">
+                <For each={node().children}>{(cid) => <Block id={cid} />}</For>
+              </div>
+            </div>
+          }
+        >
+          <div class="block-sheet-container">
+            <SheetGrid id={props.id} />
           </div>
-        </div>
+        </Show>
       </Show>
     </div>
   );

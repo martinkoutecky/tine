@@ -40,11 +40,18 @@ function leadingMarker(raw: string): string | null {
 let _id = 0;
 const nid = () => `mock-${_id++}`;
 
-function b(raw: string, children: BlockDto[] = [], collapsed = false): BlockDto {
+function b(raw: string, children: BlockDto[] = [], collapsed = false, properties?: [string, string][]): BlockDto {
   // Mirror the real backend: a block carrying an `id::` property uses that uuid as
   // its store id (so block refs resolve to it and the count badge keys correctly).
   const m = raw.match(/^\s*id::\s*(.+)$/m);
-  return { id: m ? m[1].trim() : nid(), raw, collapsed, children, marker: leadingMarker(raw) ?? undefined };
+  return {
+    id: m ? m[1].trim() : nid(),
+    raw,
+    collapsed,
+    children,
+    marker: leadingMarker(raw) ?? undefined,
+    properties,
+  };
 }
 
 function mockPagePath(p: PageDto): string {
@@ -200,6 +207,41 @@ const NAMED: PageDto[] = [
         ]),
       ]),
       b("Block-ref target: the **Related Work** section\nid:: 64b9c0e2-0000-0000-0000-000000000000"),
+    ],
+  },
+  {
+    name: "Sheets demo",
+    kind: "page",
+    title: "Sheets demo",
+    pre_block: null,
+    blocks: [
+      b(
+        "Readonly grid demo\ntine.view:: grid\ntine.header:: true\ntine.col-widths:: 0=140;1=180;2=220",
+        [
+          b("", [b("Project"), b("Status"), b("Notes")]),
+          b("", [
+            b("TODO Ship [[Tine]] sheet"),
+            b(
+              "Nested sub-grid\ntine.view:: grid",
+              [
+                b("", [b("Inner A"), b("Inner B")]),
+                b("", [b("Inner C")]),
+              ],
+              false,
+              [["tine.view", "grid"]]
+            ),
+            b("Uses tree geometry only"),
+          ]),
+          b("", [b("Ragged row"), b("missing note cell")]),
+          b("", [b("Done"), b("Read-only"), b("Phase 2 adds interaction")]),
+        ],
+        false,
+        [
+          ["tine.view", "grid"],
+          ["tine.header", "true"],
+          ["tine.col-widths", "0=140;1=180;2=220"],
+        ]
+      ),
     ],
   },
   // Namespace + page-icon demo: {{namespace}} renders the nested descendant tree,
