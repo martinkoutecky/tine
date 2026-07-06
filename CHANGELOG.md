@@ -8,8 +8,41 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-07-06
+
+The headline of 0.4.0 is that **Tine now runs on Android** — a native build that
+reads and writes your real Logseq graph on the phone, sharing the same Markdown
+files with Logseq over Syncthing. This release also folds in the whole 0.3.x
+series (PDF export, task checkboxes, in-page find, time tracking, the theme
+gallery, and more).
+
+> **Installing on Android:** the APK is sideloaded and signed with Tine's own key
+> (not a Play Store key), so Google Play Protect will warn that it "doesn't
+> recognize this developer" — expand the dialog and choose to install anyway
+> (some devices ask you to confirm with your fingerprint). That's expected for
+> any app from outside the Play Store. Also, if your graph doesn't open on the
+> very first attempt, **restart the app and try again** — a known first-launch
+> hiccup we're still chasing.
+
 ### Added
 
+- **Tine runs on Android.** A native Android build (Tauri v2) opens and edits
+  your real Logseq graph. On first run, grant Tine "All files access", then pick
+  your graph folder (e.g. your Syncthing-synced notes) — Tine reads and writes
+  the same Markdown files as Logseq, so the two coexist on one graph. The file
+  watcher runs in poll mode, so external edits (Logseq mobile, Syncthing) appear
+  live.
+- **Above-keyboard editing toolbar (Android).** While a block is focused, a
+  toolbar docks above the keyboard with the keyboard-only actions — outdent /
+  indent, move block up / down, soft line break, TODO, date, `[[ ]]` / `(( ))`,
+  the slash menu, and hide-keyboard.
+- **Android quality-of-life.** A real Tine app icon, an edge-to-edge layout that
+  keeps the toolbar clear of the status/navigation bars, a hardware Back button
+  that navigates within Tine (exiting only at the root), and mobile-tuned journal
+  headers and settings.
+- **Signed Android releases, built in CI.** Each tagged release builds a
+  release-signed `Tine_<version>_android-arm64.apk` on GitHub Actions (arm64
+  devices); the signing key lives only in encrypted CI secrets.
 - **Built-in theme gallery.** Settings → Appearance now has one-click Default,
   Nord, Solarized, and Gruvbox cards, each covering both light and dark mode. The
   selected gallery theme is saved through Tine's backend app settings

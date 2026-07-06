@@ -274,6 +274,26 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   the `TINE_GRAPH` env var. (No saved recent-graphs list yet — you pick the folder
   each time.)
 
+## Mobile (Android)
+
+- **Native Android app** (Tauri v2, arm64) that opens and edits your **real**
+  Logseq graph — the same Markdown files, over your own sync. On first run you
+  grant "All files access" and pick your graph folder (e.g. a Syncthing folder),
+  then Tine reads and writes it directly, so it coexists with the Logseq mobile
+  app on one graph. The file watcher runs in poll mode so external edits appear
+  live.
+- **Above-keyboard editing toolbar** — a strip that docks above the on-screen
+  keyboard while editing, with the keyboard-only actions: outdent / indent, move
+  block up / down, soft line break, TODO, date, `[[ ]]` / `(( ))`, the slash
+  menu, and a pinned hide-keyboard button.
+- **Mobile-tuned UI** — a real app icon, an edge-to-edge layout that keeps
+  controls clear of the status/navigation bars, a hardware **Back** button that
+  navigates within Tine (exiting only at the root), and compact journal headers
+  and settings for a phone.
+- **Distribution** — sideloaded, release-signed APK attached to each GitHub
+  release (built and signed in CI). Play Store / F-Droid are planned; iOS is
+  being scoped.
+
 ## Customization & output
 
 - **Help & shortcuts** — `?` toggles the OG-style bottom-right help popup;

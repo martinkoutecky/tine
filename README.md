@@ -250,9 +250,10 @@ file a good report, are in **[CONTRIBUTING.md](CONTRIBUTING.md)**.
 **Planned / under evaluation:** graph view, configurable typographic auto-replace, and **broader
 coverage of advanced Datalog queries** (a scoped subset works today — see above).
 
-**Out of scope (by design):** whiteboards, flashcards, the plugin system, and built-in git. Today
-Tine coexists with the Logseq mobile app over your own sync; a native Android build (Tauri v2) is
-under evaluation.
+**Mobile:** Tine has a **native Android build** (Tauri v2) as of 0.4.0 — it opens and edits your real
+Logseq graph on the phone over your own sync, alongside the Logseq mobile app. iOS is being scoped.
+
+**Out of scope (by design):** whiteboards, flashcards, the plugin system, and built-in git.
 
 The full working backlog — what's next, what's deferred, and what's explicitly WONTFIX — lives in
 [`docs/BACKLOG.md`](docs/BACKLOG.md).
