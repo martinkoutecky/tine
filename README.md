@@ -238,6 +238,13 @@ Round-trip parsing is validated against a real Logseq graph (0 structural diffs 
 canonicalization); `tine-check` is a privacy-safe profiler that proves byte-faithful serialization
 without reading note content.
 
+## Community
+
+Questions, ideas, screenshots, and bug reports are welcome on the subreddit:
+**[r/TineOutline](https://www.reddit.com/r/TineOutline/)** — the best place to follow what's
+shipping and help shape what's next. For concrete bugs or feature requests you can also
+[open an issue](https://github.com/martinkoutecky/tine/issues).
+
 ## Contributing
 
 Tine is a single-maintainer project with an unusual contribution model: **the most valuable thing
