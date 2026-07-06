@@ -4784,7 +4784,28 @@ img.emoji {
 .footnote-ref::before { content: "["; }
 .footnote-ref::after { content: "]"; }
 
-/* copy-code button (appears on hover over a code block) */
+/* One-click copy affordance shared by fenced code blocks, inline code, and
+ * links (#24). Icon button; hidden until the host is hovered/focused. */
+.copy-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  line-height: 0;
+  opacity: 0;
+  transition: opacity 0.1s ease;
+}
+.copy-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--text-secondary);
+}
+
+/* Code block: pinned to the top-right of the <pre>. */
 .code-block {
   position: relative;
 }
@@ -4792,17 +4813,28 @@ img.emoji {
   position: absolute;
   top: 6px;
   right: 6px;
-  font-size: 11px;
-  padding: 2px 8px;
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
-  background: var(--bg-primary);
-  color: var(--text-secondary);
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.1s ease;
 }
-.code-block:hover .code-copy {
+.code-block:hover .code-copy,
+.code-copy:focus-visible {
+  opacity: 1;
+}
+
+/* Inline code + links: float the icon just past the token, no layout reflow. */
+.inline-copy-wrap,
+.link-copy-wrap {
+  position: relative;
+}
+.copy-inline {
+  position: absolute;
+  left: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  margin-left: 3px;
+  z-index: 1;
+}
+.inline-copy-wrap:hover .copy-inline,
+.link-copy-wrap:hover .copy-inline,
+.copy-inline:focus-visible {
   opacity: 1;
 }
 

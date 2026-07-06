@@ -3,10 +3,9 @@
 
 import { For, Show, createMemo, createResource, createSignal, onCleanup, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
-import { InlineText, renderInlines, renderRawHtml, MathView } from "./inline";
+import { InlineText, renderInlines, renderRawHtml, MathView, CopyButton } from "./inline";
 import type { Block as AstBlock, ListItem as AstListItem, Format } from "./ast";
 import { coarseSpanAttrs, type SpanDomAttrs } from "./spans";
-import { backend } from "../backend";
 import { evalCalc } from "../editor/calc";
 import { toggleListItemAtIndex, doc, formatForBlock } from "../store";
 import { graphMeta } from "../ui";
@@ -45,16 +44,7 @@ function CodeBlock(props: { code: string; lang: string; spanAttrs?: SpanDomAttrs
   });
   return (
     <pre class="code-block" {...(props.spanAttrs ?? {})}>
-      <button
-        class="code-copy"
-        title="Copy code"
-        onClick={(e) => {
-          e.stopPropagation();
-          void backend().writeText(props.code);
-        }}
-      >
-        Copy
-      </button>
+      <CopyButton text={props.code} title="Copy code" class="code-copy" />
       <code class="hljs" innerHTML={html()} />
     </pre>
   );

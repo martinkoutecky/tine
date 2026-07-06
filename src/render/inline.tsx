@@ -83,7 +83,12 @@ function renderInline(s: Inline, blockId?: string, spanMode = true): JSX.Element
     }
     case "code":
     case "verbatim":
-      return <code class="inline-code" {...((spanMode ? coarseSpanAttrs(s.span) : undefined) ?? {})}>{s.text}</code>;
+      return (
+        <span class="inline-copy-wrap">
+          <code class="inline-code" {...((spanMode ? coarseSpanAttrs(s.span) : undefined) ?? {})}>{s.text}</code>
+          <CopyButton text={s.text} title="Copy code" class="copy-inline" />
+        </span>
+      );
     case "break":
     case "hardbreak":
       // Both render as <br>: today body.tsx joins every in-block line with <br>,
@@ -217,6 +222,35 @@ function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolean; span
   );
 }
 
+// One-click copy affordance (#24 — the logseq-copy-code / logseq-copy-url QoL).
+// Copies RAW source text (off the AST, never the rendered DOM) through the
+// backend clipboard path — WebKitGTK's navigator.clipboard is unreliable
+// ([[tine-webkitgtk-confirm]]) — and toasts. Shared by inline code + links
+// (here) and fenced code blocks (body.tsx). `class` positions it per site.
+export function CopyButton(props: { text: string; title: string; class?: string }): JSX.Element {
+  const onCopy = (e: MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    void backend()
+      .writeText(props.text)
+      .then(() => pushToast("Copied to clipboard", "success"))
+      .catch(() => pushToast("Couldn’t copy to clipboard", "error"));
+  };
+  return (
+    <button
+      class={`copy-btn${props.class ? " " + props.class : ""}`}
+      title={props.title}
+      aria-label={props.title}
+      onClick={onCopy}
+    >
+      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="9" y="9" width="11" height="11" rx="2" />
+        <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+      </svg>
+    </button>
+  );
+}
+
 function renderLink(s: Extract<Inline, { k: "link" }>, blockId?: string, spanMode = true): JSX.Element {
   const url = s.url;
   const spanAttrs = spanMode ? coarseSpanAttrs(s.span) : undefined;
@@ -247,14 +281,17 @@ function renderLink(s: Extract<Inline, { k: "link" }>, blockId?: string, spanMod
     );
   }
   return (
-    <a
-      class="external-link"
-      href={dest}
-      {...(spanAttrs ?? {})}
-      onClick={(e) => { e.preventDefault(); e.stopPropagation(); void backend().openExternal(dest); }}
-    >
-      <Show when={s.label && s.label.length} fallback={dest}>{renderInlines(s.label!, blockId, spanMode)}</Show>
-    </a>
+    <span class="link-copy-wrap">
+      <a
+        class="external-link"
+        href={dest}
+        {...(spanAttrs ?? {})}
+        onClick={(e) => { e.preventDefault(); e.stopPropagation(); void backend().openExternal(dest); }}
+      >
+        <Show when={s.label && s.label.length} fallback={dest}>{renderInlines(s.label!, blockId, spanMode)}</Show>
+      </a>
+      <CopyButton text={dest} title="Copy link" class="copy-inline" />
+    </span>
   );
 }
 
