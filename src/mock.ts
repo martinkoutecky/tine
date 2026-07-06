@@ -732,6 +732,18 @@ export function mockBackend(): Backend {
     async pickFile(): Promise<string | null> {
       return null;
     },
+    async capturePhoto() {
+      return { status: "cancelled" as const };
+    },
+    async startRecording() {
+      return { status: "cancelled" as const };
+    },
+    async stopRecording() {
+      return { status: "cancelled" as const };
+    },
+    async cancelRecording() {
+      return { status: "cancelled" as const };
+    },
     async writeText(text: string): Promise<void> {
       try {
         await navigator.clipboard.writeText(text);

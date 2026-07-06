@@ -49,6 +49,15 @@ export type GraphFolderPickResult =
   | { status: "picked"; path: string }
   | { status: "permission-requested" | "permission-needed" | "cancelled"; path?: string };
 
+/** Result of an Android media-capture command (camera / voice memo). When
+ *  `status === "ok"`, `data` is base64-encoded file bytes and `ext` its
+ *  extension (no dot). Other statuses carry no data. */
+export interface MediaCaptureResult {
+  status: "ok" | "recording" | "cancelled";
+  data?: string | null;
+  ext?: string | null;
+}
+
 export interface Backend {
   loadGraph(path: string): Promise<GraphMeta>;
   appPlatform(): Promise<"android" | "ios" | "desktop">;
@@ -203,6 +212,16 @@ export interface Backend {
   pickGraphFolder(): Promise<GraphFolderPickResult>;
   /** Native file picker (asset upload). Null if cancelled / unsupported. */
   pickFile(): Promise<string | null>;
+  /** Android: take a photo with the camera (or pick an existing image) → base64
+   *  bytes + ext. `status: "cancelled"` if dismissed. */
+  capturePhoto(): Promise<MediaCaptureResult>;
+  /** Android: start a voice-memo recording (prompts for mic permission on first
+   *  use). `status: "recording"` on success. */
+  startRecording(): Promise<MediaCaptureResult>;
+  /** Android: stop the active recording → base64 audio bytes + ext. */
+  stopRecording(): Promise<MediaCaptureResult>;
+  /** Android: discard an in-progress recording without inserting anything. */
+  cancelRecording(): Promise<MediaCaptureResult>;
   writeText(text: string): Promise<void>;
   /** Copy with text/plain (markdown) + text/html flavors; degrades to text/plain. */
   writeRich(text: string, html: string): Promise<void>;
@@ -546,6 +565,18 @@ class TauriBackend implements Backend {
   }
   pickGraphFolder(): Promise<GraphFolderPickResult> {
     return this.call<GraphFolderPickResult>("pick_graph_folder");
+  }
+  capturePhoto(): Promise<MediaCaptureResult> {
+    return this.call<MediaCaptureResult>("capture_photo");
+  }
+  startRecording(): Promise<MediaCaptureResult> {
+    return this.call<MediaCaptureResult>("start_recording");
+  }
+  stopRecording(): Promise<MediaCaptureResult> {
+    return this.call<MediaCaptureResult>("stop_recording");
+  }
+  cancelRecording(): Promise<MediaCaptureResult> {
+    return this.call<MediaCaptureResult>("cancel_recording");
   }
   async pickFile(): Promise<string | null> {
     const { open } = await import("@tauri-apps/plugin-dialog");

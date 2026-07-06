@@ -65,6 +65,8 @@ describe("MobileKeyboardToolbar", () => {
       "Move block down",
       "Soft newline",
       "TODO",
+      "Camera",
+      "Voice memo",
       "Undo",
       "Redo",
       "Date picker",

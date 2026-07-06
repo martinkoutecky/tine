@@ -6,6 +6,7 @@ mod backup;
 mod commands;
 mod debug;
 mod android_folder_picker;
+mod android_media;
 mod graph;
 mod platform;
 mod settings;
@@ -188,6 +189,8 @@ pub fn run() {
 
     #[cfg(target_os = "android")]
     let builder = builder.plugin(android_folder_picker::init());
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(android_media::init());
 
     builder
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -306,6 +309,10 @@ pub fn run() {
             app_platform,
             default_graph_parent,
             android_folder_picker::pick_graph_folder,
+            android_media::capture_photo,
+            android_media::start_recording,
+            android_media::stop_recording,
+            android_media::cancel_recording,
             list_pages,
             journals_desc,
             get_page,

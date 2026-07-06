@@ -101,6 +101,7 @@ import { AnnotationBody } from "./AnnotationBody";
 import { logbookInfo, type LogbookInfo } from "../logbook";
 import { inPageFindPreservesEditorBlur } from "../inpageFind";
 import { registerFocusedEditorCommandBridge, type MobileEditorCommandId } from "../editorCommandBridge";
+import { isRecordingAudio, setRecordingAudio, base64ToBytes } from "../mediaCapture";
 
 // Detect a block whose entire body is a single {{query}} / {{embed}} macro.
 function detectMacro(raw: string): { kind: "query" | "embed"; inner: string } | null {
@@ -1093,6 +1094,87 @@ export function Editor(props: { id: string }): JSX.Element {
 
   // Open the native file picker, copy the chosen file into assets/, and insert
   // its markdown at the caret. Uses the Tauri dialog plugin + import_asset.
+  // Seed + insert an asset from raw bytes at the caret, then persist to assets/
+  // in the background (repointing the link if the backend de-dups the name).
+  // Shared by clipboard-image paste and mobile capture (camera / voice memo).
+  const insertAssetBytes = (bytes: Uint8Array, origName?: string) => {
+    const candidate = assetFileName(origName);
+    // Cache key is the bare filename — assetRelPath() strips the `assets/` prefix
+    // before loadAssetBlob() (see render/inline.tsx). Seed it so the asset renders
+    // instantly, before the disk write lands.
+    seedAssetBlob(candidate, bytes);
+    const md = assetMarkdown(candidate);
+    const start = ref.selectionStart;
+    const newRaw = ref.value.slice(0, start) + md + ref.value.slice(ref.selectionEnd);
+    const fixupTarget = insertedAssetMarkdownTarget(newRaw, md, start);
+    commit(newRaw);
+    const pos = start + md.length;
+    queueMicrotask(() => {
+      ref.value = newRaw;
+      ref.setSelectionRange(pos, pos);
+      ref.focus();
+      autosize();
+    });
+    void (async () => {
+      let stored: string;
+      try {
+        stored = await backend().saveAsset(candidate, bytes);
+      } catch {
+        pushToast(`Couldn’t save to assets/`, "error");
+        return;
+      }
+      // The backend de-dups a colliding name (e.g. two inserts in the same second)
+      // to `<name>_1.ext`; repoint the link + blob to the ACTUAL stored file so the
+      // block never references a wrong/missing asset and the real file isn't orphaned.
+      if (stored && stored !== candidate) {
+        seedAssetBlob(stored, bytes);
+        const cur = node().raw;
+        const fixed = replaceInsertedAssetMarkdown(cur, candidate, stored, fixupTarget);
+        if (fixed !== cur) commit(fixed);
+      }
+    })();
+  };
+
+  // Mobile: take/pick a photo (Android camera plugin) → insert at the caret.
+  const capturePhotoCmd = async () => {
+    let res;
+    try {
+      res = await backend().capturePhoto();
+    } catch (err) {
+      pushToast(`Couldn’t capture a photo (${String(err)})`, "error");
+      return;
+    }
+    if (res.status === "ok" && res.data) insertAssetBytes(base64ToBytes(res.data), `photo.${res.ext || "jpg"}`);
+  };
+
+  // Mobile: toggle voice-memo recording. First tap starts (prompts for mic
+  // permission); second tap stops and inserts the recorded audio at the caret.
+  const voiceMemoToggle = async () => {
+    if (isRecordingAudio()) {
+      setRecordingAudio(false);
+      let res;
+      try {
+        res = await backend().stopRecording();
+      } catch (err) {
+        pushToast(`Couldn’t save the recording (${String(err)})`, "error");
+        return;
+      }
+      if (res.status === "ok" && res.data) insertAssetBytes(base64ToBytes(res.data), `voice-memo.${res.ext || "m4a"}`);
+      return;
+    }
+    let res;
+    try {
+      res = await backend().startRecording();
+    } catch (err) {
+      pushToast(`Couldn’t start recording (${String(err)})`, "error");
+      return;
+    }
+    if (res.status === "recording") {
+      setRecordingAudio(true);
+      pushToast("Recording… tap the mic again to stop", "info");
+    }
+  };
+
   const uploadAsset = async () => {
     const path = await backend().pickFile();
     if (!path) return;
@@ -1465,6 +1547,12 @@ export function Editor(props: { id: string }): JSX.Element {
         return true;
       case "editor/upload-asset":
         uploadAsset();
+        return true;
+      case "editor/capture-photo":
+        void capturePhotoCmd();
+        return true;
+      case "editor/voice-memo":
+        void voiceMemoToggle();
         return true;
       case "editor/open-date-picker":
         openScheduledDatePicker();
@@ -1851,40 +1939,7 @@ export function Editor(props: { id: string }): JSX.Element {
         if (toastId) dismissToast(toastId);
       }
       if (!bytes) return;
-      const candidate = assetFileName();
-      // Cache key is the bare filename — assetRelPath() strips the `assets/`
-      // prefix before loadAssetBlob() (see render/inline.tsx). Seed it so the
-      // image renders instantly, before the disk write lands.
-      seedAssetBlob(candidate, bytes);
-      const md = assetMarkdown(candidate);
-      const start = ref.selectionStart;
-      const newRaw = ref.value.slice(0, start) + md + ref.value.slice(ref.selectionEnd);
-      const fixupTarget = insertedAssetMarkdownTarget(newRaw, md, start);
-      commit(newRaw);
-      const pos = start + md.length;
-      queueMicrotask(() => {
-        ref.value = newRaw;
-        ref.setSelectionRange(pos, pos);
-        autosize();
-      });
-      void (async () => {
-        let stored: string;
-        try {
-          stored = await backend().saveAsset(candidate, bytes);
-        } catch {
-          pushToast(`Couldn’t save pasted image to assets/`, "error");
-          return;
-        }
-        // The backend de-dups a colliding name (e.g. two pastes in the same second) to
-        // `<name>_1.png`; repoint the link + blob to the ACTUAL stored file so the block
-        // never references a wrong/missing asset and the real file isn't orphaned (M4).
-        if (stored && stored !== candidate) {
-          seedAssetBlob(stored, bytes);
-          const cur = node().raw;
-          const fixed = replaceInsertedAssetMarkdown(cur, candidate, stored, fixupTarget);
-          if (fixed !== cur) commit(fixed);
-        }
-      })();
+      insertAssetBytes(bytes);
     })();
   };
 

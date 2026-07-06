@@ -8,6 +8,8 @@ export type MobileEditorCommandId =
   | "editor/soft-newline"
   | "editor/cycle-todo"
   | "editor/upload-asset"
+  | "editor/capture-photo"
+  | "editor/voice-memo"
   | "editor/open-date-picker"
   | "editor/insert-page-ref"
   | "editor/insert-block-ref"

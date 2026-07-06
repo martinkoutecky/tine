@@ -2738,6 +2738,19 @@ body {
   stroke-linejoin: round;
 }
 
+/* Voice-memo button while recording: red + a filled stop square + a soft pulse. */
+.mobile-keyboard-toolbar-btn.recording {
+  color: var(--danger, #c0392b);
+  animation: tine-rec-pulse 1.1s ease-in-out infinite;
+}
+.mobile-keyboard-toolbar-btn.recording svg {
+  fill: currentColor;
+}
+@keyframes tine-rec-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
 .mobile-keyboard-toolbar-text {
   font-size: 13px;
   font-weight: 650;

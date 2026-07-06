@@ -2,6 +2,7 @@ import { For, Show, createEffect, createSignal, onCleanup, onMount, type JSX } f
 import { dispatchFocusedEditorCommand, blurFocusedEditor, focusedEditorCommandBridge, type MobileEditorCommandId } from "../editorCommandBridge";
 import { runGlobalCommand } from "../keybindings";
 import { isMobilePlatform } from "../nativeChrome";
+import { isRecordingAudio } from "../mediaCapture";
 
 type ToolbarIcon =
   | "outdent"
@@ -10,6 +11,9 @@ type ToolbarIcon =
   | "move-down"
   | "soft-newline"
   | "todo"
+  | "camera"
+  | "mic"
+  | "stop-recording"
   | "undo"
   | "redo"
   | "date"
@@ -28,9 +32,8 @@ const ACTIONS: ToolbarAction[] = [
   { label: "Move block down", icon: "move-down", kind: "editor", command: "editor/move-block-down" },
   { label: "Soft newline", icon: "soft-newline", kind: "editor", command: "editor/soft-newline" },
   { label: "TODO", icon: "todo", kind: "editor", command: "editor/cycle-todo" },
-  // Camera (photo capture) + mic (voice memo) are deferred to P1 — they need
-  // native capture intents, not the file-picker upload this once wrapped. See
-  // docs/BACKLOG.md. The `editor/upload-asset` bridge command stays available.
+  { label: "Camera", icon: "camera", kind: "editor", command: "editor/capture-photo" },
+  { label: "Voice memo", icon: "mic", kind: "editor", command: "editor/voice-memo" },
   { label: "Undo", icon: "undo", kind: "global", command: "editor/undo" },
   { label: "Redo", icon: "redo", kind: "global", command: "editor/redo" },
   { label: "Date picker", icon: "date", kind: "editor", command: "editor/open-date-picker" },
@@ -65,6 +68,12 @@ function Icon(props: { name: ToolbarIcon }): JSX.Element {
       return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 5v5a4 4 0 0 1-4 4H6M9 10l-4 4 4 4" /></svg>;
     case "todo":
       return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3" /><path d="M8 12l3 3 5-7" /></svg>;
+    case "camera":
+      return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l1.5-2h7L17 8h3v11H4z" /><circle cx="12" cy="13" r="3.2" /></svg>;
+    case "mic":
+      return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M6 11a6 6 0 0 0 12 0M12 17v4M8 21h8" /></svg>;
+    case "stop-recording":
+      return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>;
     case "undo":
       return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7H5v4M5 11a7 7 0 1 0 2-5" /></svg>;
     case "redo":
@@ -177,13 +186,19 @@ export function MobileKeyboardToolbar(): JSX.Element {
               <button
                 type="button"
                 class="mobile-keyboard-toolbar-btn"
-                title={action.label}
-                aria-label={action.label}
+                classList={{ recording: action.icon === "mic" && isRecordingAudio() }}
+                title={action.icon === "mic" && isRecordingAudio() ? "Stop recording" : action.label}
+                aria-label={action.icon === "mic" && isRecordingAudio() ? "Stop recording" : action.label}
                 onPointerDown={keepEditorFocus}
                 onMouseDown={keepEditorFocus}
                 onClick={() => run(action)}
               >
-                <Icon name={action.icon} />
+                <Show
+                  when={action.icon === "mic" && isRecordingAudio()}
+                  fallback={<Icon name={action.icon} />}
+                >
+                  <Icon name="stop-recording" />
+                </Show>
               </button>
             )}
           </For>
