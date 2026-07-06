@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-07-06
+
 ### Added
 
 - **Summarize query results — count, sum, average, group-by.** The visual query
@@ -820,7 +822,9 @@ takes over your graph.
 - macOS and Windows installers are currently **unsigned** — on macOS right-click →
   Open; on Windows choose *More info → Run anyway*.
 
-[Unreleased]: https://github.com/martinkoutecky/tine/compare/v0.3.5...HEAD
+[Unreleased]: https://github.com/martinkoutecky/tine/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/martinkoutecky/tine/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/martinkoutecky/tine/compare/v0.3.5...v0.4.0
 [0.3.5]: https://github.com/martinkoutecky/tine/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/martinkoutecky/tine/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/martinkoutecky/tine/compare/v0.3.2...v0.3.3

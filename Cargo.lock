@@ -4407,7 +4407,7 @@ dependencies = [
 
 [[package]]
 name = "tine"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "base64 0.22.1",
  "notify",
@@ -4427,7 +4427,7 @@ dependencies = [
 
 [[package]]
 name = "tine-core"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "ammonia",
  "chrono",
