@@ -59,7 +59,34 @@ Users add a repo URL (or scan a QR) in the F-Droid client; we publish our own
 **Deliverable:** "Add our repo to F-Droid" instructions on tine.page. Users get
 auto-updates through the F-Droid client from our own signature.
 
-### A2 — Main f-droid.org repository (the real goal; slow, iterative)
+### A2 — Main f-droid.org repository (recipe VALIDATED end-to-end Jul 6 2026)
+
+**A full `fdroid build` succeeds locally** (fdroidserver 2.4.5, run in the dev container).
+`fdroid lint` → `fdroid` scanner → the recipe (rustup wasm target → `npm ci` →
+`npm run build:wasm` rebuilding the parser **from source** → `vite build` → Rust/Android →
+Gradle) → **`1 build succeeded`**, output `unsigned/dev.tine.app_4000.apk` (24.8 MB), which
+aapt confirms is `versionCode=4000 versionName=0.4.0` (matches the metadata, so fdroid's
+version check passed). So the recipe below is proven, not theoretical. What's left is
+process: cut a tag that includes `rust-toolchain.toml`, then open the MR from a GitLab
+account. Remaining gates that only F-Droid's server settles: gradle-wrapper.jar hash
+verification (routine) and, if we later want it, reproducible-builds.
+
+**Gotchas hit while validating (documented so the buildserver run is smooth):**
+- **Scanner does NOT flag the vendored base64 wasm** — so `scandelete` on it errors as
+  "unused" (fdroid only counts scandelete as used when it deletes a *flagged* file). Don't
+  list the wasm in `scandelete`; the recipe's `npm run build:wasm` gives from-source
+  provenance regardless. gradle-wrapper.jar is auto-removed by the scanner (routine).
+- **Tauri needs a `gradle` on PATH.** The scanner removes `gradle-wrapper.jar`, so `./gradlew`
+  can't run and Tauri falls back to system `gradle`. F-Droid's buildserver provides one; for a
+  local run, install Gradle 8.14.3 (per `gradle-wrapper.properties`) on PATH.
+- (dev-container only, not F-Droid) `~/.gitconfig`/`~/.git-credentials` are read-only NFS
+  mounts with `credential.helper=store`, which made fdroid's clone fail
+  ("unable to write credential store: Device or resource busy"). Fixed by pointing git at a
+  writable temp config: `GIT_CONFIG_GLOBAL=<tmp> GIT_CONFIG_SYSTEM=/dev/null` with
+  `credential.helper=` empty. Also pre-clone into `build/dev.tine.app` to satisfy
+  fdroidserver's `SOURCE_DATE_EPOCH` step. Reusable harness: `/aux/koutecky/logseq/fdroid-work/`.
+
+### A2 details
 
 F-Droid builds **from source** on their own build server; our GitHub APK is ignored
 (unless we later add reproducible-build verification). The whole difficulty is getting a
@@ -123,19 +150,18 @@ minor·1e3 + patch`, per `release.yml`), **NDK `26.3.11579264`**, `compileSdk 36
 
 **Remaining steps:**
 
-1. **Repo prep (mostly done):** `rust-toolchain.toml` is in. Decide the wasm-opt approach
-   above. Optionally `cargo fetch` + confirm a clean-tree build (`git clean`-equivalent of the
-   gitignored gen glue → the Tauri CLI regenerates it, verified this session). Vendor cargo
-   (`cargo vendor`) only if F-Droid's env can't fetch crates.io/the lsdoc git dep.
-2. **Fork `gitlab.com/fdroid/fdroiddata`**; add `metadata/dev.tine.app.yml` (starter
-   below). Use `Builds:` with a freeform `build:` that drives the Tauri CLI + `output:`.
-3. **Validate locally with the real F-Droid buildserver BEFORE the MR** — this is where
-   the weeks go. Either the Docker image
-   `registry.gitlab.com/fdroid/fdroidserver:buildserver` or `fdroid build -l dev.tine.app`
-   from an `fdroidserver` checkout. Iterate: build error → fix recipe/repo → repeat. Then
-   run `fdroid scanner dev.tine.app` and `fdroid lint dev.tine.app` clean.
-4. **Open the MR** to fdroiddata, respond to the reviewer. After merge the first build can
-   take days–weeks; then `UpdateCheckMode: Tags` auto-proposes each new `v*` tag.
+1. ✅ **Repo prep — done.** `rust-toolchain.toml` is in; the Tauri CLI regenerates the
+   gitignored gen glue on build (verified); wasm rebuilds byte-identical from source.
+2. ✅ **Metadata written + recipe validated.** `fdroid lint`/scanner/`fdroid build` all pass
+   locally (fdroidserver 2.4.5) → valid unsigned APK `dev.tine.app_4000.apk`
+   (`versionCode=4000 versionName=0.4.0`). Harness kept at `/aux/koutecky/logseq/fdroid-work/`
+   (venv + `fdroiddata/` + `run-build.sh`) to re-run after any change.
+3. **Cut a release tag that includes `rust-toolchain.toml`** (v0.4.1+; needs Martin's OK per
+   the version policy) and point the metadata `commit:`/`versionCode:` at it (4001 for 0.4.1).
+4. **Open the MR** to `gitlab.com/fdroid/fdroiddata` (needs a GitLab account — Martin's
+   action): fork, add `metadata/dev.tine.app.yml` (real-MR version below, with `sudo:` deps),
+   push, open MR, respond to the reviewer. After merge the first build can take days–weeks;
+   then `UpdateCheckMode: Tags` auto-proposes each new tag.
 5. **(Later, optional) Reproducible builds** — add `Binaries:` pointing at our GitHub
    release APK so F-Droid ships **our** signature (sideloaded users update in place).
    Needs a deterministic release build (fixed timestamps, sorted zip). Skip for v1.
@@ -161,37 +187,39 @@ RepoType: git
 Repo: https://github.com/martinkoutecky/tine.git
 
 Builds:
-  - versionName: 0.4.0
-    versionCode: 4000
-    commit: v0.4.0
+  - versionName: 0.4.1            # a TAG that INCLUDES rust-toolchain.toml (v0.4.0 does not)
+    versionCode: 4001             # 0.4.1 → 4*1000+1; for 0.4.0 it is 4000
+    commit: v0.4.1
     sudo:
       - apt-get update || true
       - apt-get install -y nodejs npm binaryen   # binaryen = system wasm-opt
-      # If the pinned Rust toolchain isn't preinstalled, install rustup here too.
+      # If the pinned Rust toolchain / wasm-pack aren't preinstalled, add rustup +
+      # `cargo install wasm-pack --version 0.15.0` here (or in prebuild).
     ndk: 26.3.11579264
-    scandelete:
-      # Vendored PREBUILT wasm — deleted before the scan, rebuilt from source below.
-      - src/render/wasm/lsdoc_wasm_bytes.ts
-      - src/render/wasm/lsdoc_wasm.js
     build:
       - rustup target add wasm32-unknown-unknown
       - npm ci
       - npm run build:wasm    # rebuild the parser FROM SOURCE (crates/lsdoc-wasm → lsdoc git dep)
-      # Call the binary directly — `npx tauri`/npm eats the --flags (see findings).
+      # Call the binary directly — `npx tauri`/npm eats the --flags (validated finding).
       - ./node_modules/.bin/tauri android build --target aarch64 --apk
     output: src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk
 
 AutoUpdateMode: Version
 UpdateCheckMode: Tags
-CurrentVersion: 0.4.0
-CurrentVersionCode: 4000
+CurrentVersion: 0.4.1
+CurrentVersionCode: 4001
 ```
 
-Notes on the recipe: `npm run build:wasm` needs `wasm-pack` (install via `cargo install
-wasm-pack` in `build:`, or a `sudo` binary) — and it wants `wasm-opt`; the `binaryen`
-apt package supplies it, else set `wasm-opt = false` in the crate. `npm run build:wasm`
-regenerates `lsdoc_wasm_bytes.ts` before `tauri android build` runs `npm run build` (whose
-`check-wasm-pin` then passes because the tags match).
+Notes:
+- **NO `scandelete`** (validated: the scanner doesn't flag the vendored wasm; listing it
+  errors "unused"). Provenance comes from the `npm run build:wasm` step rebuilding it.
+- **The `commit` must be a tag containing `rust-toolchain.toml`** — that landed AFTER v0.4.0,
+  so the first F-Droid build needs a fresh tag (v0.4.1+). Do not tag without Martin's OK.
+- `npm run build:wasm` needs `wasm-pack` + `wasm-opt` (binaryen); it regenerates
+  `lsdoc_wasm_bytes.ts` before `tauri android build` runs `npm run build`, whose
+  `check-wasm-pin` then passes (tags match).
+- The locally-validated variant differed only by environment (sudo-less: node already on PATH,
+  Gradle 8.14.3 provisioned by hand, wasm-pack already installed) and used `commit: <sha>`.
 
 **Reality check:** many Tauri/JS apps stall on step 3 (offline + scanner). Budget weeks of
 iteration; the fixes land in the tine repo (toolchain pin, vendoring, deterministic
