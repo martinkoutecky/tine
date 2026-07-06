@@ -257,6 +257,21 @@ under evaluation.
 The full working backlog — what's next, what's deferred, and what's explicitly WONTFIX — lives in
 [`docs/BACKLOG.md`](docs/BACKLOG.md).
 
+## Support
+
+Tine is free, open source, and built in the cracks of a busy life. If it's made your notes a little
+faster or your day a little smoother, and you'd like to say thanks with a coffee — that genuinely
+makes me happy, and I'm grateful. Anything donated goes first toward Tine's running costs — the
+domain, and things like app-store registration fees down the line.
+
+One honest thing, so there are no crossed wires: **donating won't move Tine up my list, and it won't
+buy a feature.** I work on Tine when I can and on what I find worth doing — a tip changes none of
+that. Think of it as a thank-you for what already exists, not a down payment on what's next. No
+expectations, no obligations, either way. 🌱
+
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-support-FF5E5B?logo=kofi&logoColor=white)](https://ko-fi.com/martinkoutecky)
+· [GitHub Sponsors](https://github.com/sponsors/martinkoutecky)
+
 ## Acknowledgements
 
 Tine is an independent reimplementation, not a fork — the codebase is original Rust + SolidJS and
