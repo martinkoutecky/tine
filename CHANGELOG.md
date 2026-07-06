@@ -10,6 +10,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Camera and voice memo on Android.** The mobile editor toolbar gains a camera
+  button (take a photo or pick an existing image — it goes straight into the
+  graph's `assets/` and inserts the image) and a mic button that records a voice
+  memo (`.m4a`) into `assets/` and drops in an audio player. The mic asks for
+  microphone permission on first use and shows a red pulsing stop button while
+  recording.
+
 - **Paste a URL over selected text to link it** ([#23](https://github.com/martinkoutecky/tine/issues/23)).
   Select some text, paste a URL, and Tine wraps the selection as a link instead of
   replacing it — `[text](url)` on a Markdown page, `[[url][text]]` on an Org page.

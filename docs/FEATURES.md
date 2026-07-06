@@ -290,8 +290,12 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   live.
 - **Above-keyboard editing toolbar** — a strip that docks above the on-screen
   keyboard while editing, with the keyboard-only actions: outdent / indent, move
-  block up / down, soft line break, TODO, date, `[[ ]]` / `(( ))`, the slash
-  menu, and a pinned hide-keyboard button.
+  block up / down, soft line break, TODO, **camera**, **voice memo**, date,
+  `[[ ]]` / `(( ))`, the slash menu, and a pinned hide-keyboard button.
+- **Camera & voice memo** — the camera button takes a photo (or picks an existing
+  image) straight into the graph's `assets/` and inserts it; the mic button
+  records a voice memo (`.m4a`) into `assets/` and inserts an audio player
+  (permission-prompted on first use, with a pulsing stop button while recording).
 - **Mobile-tuned UI** — a real app icon, an edge-to-edge layout that keeps
   controls clear of the status/navigation bars, a hardware **Back** button that
   navigates within Tine (exiting only at the root), and compact journal headers
