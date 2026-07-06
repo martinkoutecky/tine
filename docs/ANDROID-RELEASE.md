@@ -64,6 +64,35 @@ $ANDROID_HOME/build-tools/35.0.0/apksigner verify --print-certs \
 
 The printed certificate DN should be `CN=Tine, …`, not `CN=Android Debug`.
 
+## Signing in CI (the normal path — GitHub Actions builds signed APKs)
+
+The `release` workflow has an `android` job that builds a **signed** release APK
+and attaches it to the GitHub Release on every `v*` tag — no manual signing, and
+the private key never touches a build host. The key lives only in GitHub's
+encrypted secrets.
+
+**One-time setup** (do it on the machine that holds the `.jks`, so the key never
+transits NFS). Add four repo secrets to the GitHub repo (`martinkoutecky/tine`):
+
+```sh
+base64 -w0 ~/.android-keys/tine-release.jks | gh secret set ANDROID_KEYSTORE_BASE64 --repo martinkoutecky/tine
+gh secret set ANDROID_KEYSTORE_PASSWORD --repo martinkoutecky/tine   # paste password
+gh secret set ANDROID_KEY_ALIAS --repo martinkoutecky/tine --body tine
+gh secret set ANDROID_KEY_PASSWORD --repo martinkoutecky/tine        # paste password
+```
+
+(Or add them via GitHub → Settings → Secrets and variables → Actions.) That's it —
+tag a release (`git tag vX.Y.Z && git push origin vX.Y.Z`) and the signed
+`Tine_X.Y.Z_android-arm64.apk` appears on the release. Until `ANDROID_KEYSTORE_BASE64`
+is set, the `android` job skips itself and the desktop release proceeds unaffected.
+
+Notes:
+- The workflow writes `keystore.properties` from the secrets, builds, and deletes
+  the decoded key + properties file at the end of the job.
+- For the **Play Store** later, add `--aab` to the build step (produces a signed
+  `.aab` to upload to the Play Console). F-Droid signs its own builds, so it needs
+  none of this.
+
 ## Signing off-machine (when the build host must not hold the key)
 
 The build sandbox on the university machine deliberately does **not** hold the

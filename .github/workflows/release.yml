@@ -202,10 +202,116 @@ jobs:
           Compress-Archive -Path $exe -DestinationPath $zip -Force
           gh release upload $tag $zip --clobber --repo $env:GITHUB_REPOSITORY
 
+  # 2b) Android: build a SIGNED release APK and upload it to the draft release.
+  #     The private signing key lives ONLY in encrypted repo secrets — never in the
+  #     repo or on a build host (see docs/ANDROID-RELEASE.md). Add these once, on the
+  #     machine that holds the .jks (Settings → Secrets, or `gh secret set`):
+  #       ANDROID_KEYSTORE_BASE64    base64 of the .jks   (`base64 -w0 tine-release.jks`)
+  #       ANDROID_KEYSTORE_PASSWORD  keystore password
+  #       ANDROID_KEY_ALIAS          key alias (e.g. tine)
+  #       ANDROID_KEY_PASSWORD       key password
+  #     Until ANDROID_KEYSTORE_BASE64 is set this job SKIPS (succeeds, builds
+  #     nothing), so it never blocks the desktop release.
+  android:
+    needs: create-release
+    if: always() && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped')
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # secrets can't be used in a job-level `if:`, so gate every real step on this.
+      # `secrets.X != ''` evaluates to a boolean without ever printing the secret.
+      - name: Detect signing secret
+        id: sign
+        run: echo "enabled=${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}" >> "$GITHUB_OUTPUT"
+
+      - name: Note skip
+        if: steps.sign.outputs.enabled != 'true'
+        run: echo "::notice::ANDROID_KEYSTORE_BASE64 not set — skipping signed Android build. Add the ANDROID_* secrets to enable it."
+
+      - uses: actions/setup-java@v4
+        if: steps.sign.outputs.enabled == 'true'
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: actions/setup-node@v4
+        if: steps.sign.outputs.enabled == 'true'
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.sign.outputs.enabled == 'true'
+        with:
+          targets: aarch64-linux-android
+
+      - uses: swatinem/rust-cache@v2
+        if: steps.sign.outputs.enabled == 'true'
+        with:
+          workspaces: ". -> target"
+
+      # Match the local toolchain exactly (compileSdk 36; NDK 26.3.11579264).
+      - name: Install Android SDK packages
+        if: steps.sign.outputs.enabled == 'true'
+        run: |
+          yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-36" "platforms;android-35" \
+            "build-tools;35.0.0" "ndk;26.3.11579264" "platform-tools" >/dev/null
+          echo "NDK_HOME=$ANDROID_SDK_ROOT/ndk/26.3.11579264" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/26.3.11579264" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/26.3.11579264" >> "$GITHUB_ENV"
+
+      - name: Install JS deps
+        if: steps.sign.outputs.enabled == 'true'
+        run: npm ci
+
+      # Decode the keystore + write the gitignored signing config the Gradle build
+      # reads. Both are removed in the final step regardless of outcome.
+      - name: Write signing config from secrets
+        if: steps.sign.outputs.enabled == 'true'
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/tine-release.jks"
+          {
+            echo "storeFile=$RUNNER_TEMP/tine-release.jks"
+            echo "storePassword=$KS_PASS"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASS"
+          } > src-tauri/gen/android/keystore.properties
+
+      - name: Build signed Android APK
+        if: steps.sign.outputs.enabled == 'true'
+        run: npx tauri android build --target aarch64 --apk
+
+      - name: Upload Android APK to the release
+        if: steps.sign.outputs.enabled == 'true' && startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${{ github.ref_name }}"
+          version="${tag#v}"
+          # The signed artifact is app-universal-release.apk (the unsigned build
+          # would end in -release-unsigned.apk, which this glob excludes).
+          apk=$(find src-tauri/gen/android -path '*/release/*' -name '*-release.apk' | head -1)
+          if [ -z "$apk" ]; then echo "no signed APK found"; exit 1; fi
+          cp "$apk" "Tine_${version}_android-arm64.apk"
+          gh release upload "$tag" "Tine_${version}_android-arm64.apk" --clobber --repo "$GITHUB_REPOSITORY"
+
+      - name: Remove signing material
+        if: always()
+        run: rm -f "$RUNNER_TEMP/tine-release.jks" src-tauri/gen/android/keystore.properties
+
   # 3) All platforms built → flip the draft to a published release. Skipped if any
-  #    build failed (the draft stays unpublished) or on a manual dispatch.
+  #    build failed (the draft stays unpublished) or on a manual dispatch. The
+  #    android job is a soft gate: it succeeds-and-skips until secrets are set, so
+  #    it never blocks here, but once configured a failed signed build does.
   publish-release:
-    needs: [create-release, build]
+    needs: [create-release, build, android]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-22.04
     steps:
