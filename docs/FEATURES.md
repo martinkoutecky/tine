@@ -23,8 +23,14 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
 - Multi-block selection → move / indent / cut / copy; the viewport follows the
   active end as you extend past the top/bottom edge.
 - Multi-line blocks, syntax-highlighted code blocks, Markdown tables.
+- **One-click copy** on hover for fenced code blocks, inline `` `code` ``, and
+  links — copies the raw source (not the rendered text) to the clipboard.
 - Paste an indented outline → a real block tree; paste a clipboard image → a graph
   asset.
+- **Paste a URL over selected text → a link** (Logseq parity) — select some text,
+  paste a URL, and the selection is wrapped rather than replaced: `[text](url)` on
+  a Markdown page, `[[url][text]]` on an Org page. (Skipped inside code, and when
+  the selection is itself a URL — then a normal replace happens.)
 - Inline formatting (`Mod+B/I`, strike, `==highlight==`, link) via a floating
   selection toolbar, plus Emacs-style word/line kill motions.
 - **Select then wrap** (always on, Logseq parity) — with text selected, typing a

@@ -8,6 +8,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Added
+
+- **Paste a URL over selected text to link it** ([#23](https://github.com/martinkoutecky/tine/issues/23)).
+  Select some text, paste a URL, and Tine wraps the selection as a link instead of
+  replacing it — `[text](url)` on a Markdown page, `[[url][text]]` on an Org page.
+  It's skipped inside code and when the selection is itself a URL (a normal paste
+  happens then).
+- **One-click copy for code and links** ([#24](https://github.com/martinkoutecky/tine/issues/24)).
+  Hovering a fenced code block, an inline `` `code` `` span, or a link now shows a
+  small copy button that puts the raw source on the clipboard — the ease-of-life
+  the `logseq-copy-code`/`logseq-copy-url` plugins add to Logseq, built in.
+
 ## [0.4.0] — 2026-07-06
 
 The headline of 0.4.0 is that **Tine now runs on Android** — a native build that
