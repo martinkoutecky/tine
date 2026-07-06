@@ -34,6 +34,13 @@ body {
   display: flex;
   height: 100vh;
   overflow: hidden;
+  /* Keep the app shell out from under the system bars on edge-to-edge mobile
+     (Android targetSdk 36 forces this): without it the topbar's sidebar/settings
+     buttons sit behind the status bar and can't be tapped. All four insets are
+     0 on desktop, so this is a no-op there. box-sizing keeps 100vh honest. */
+  box-sizing: border-box;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right)
+    env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
 
 /* Shown only if the wasm block renderer fails to load (degraded mode). */
