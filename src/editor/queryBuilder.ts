@@ -27,6 +27,11 @@ export type Clause =
   | { kind: "pageTags"; tags: string[] }
   | { kind: "content"; text: string }
   | { kind: "sortBy"; field: string; dir: "asc" | "desc" } // result ordering (query-global)
+  // Result-level aggregation/grouping, computed in the frontend from the returned
+  // block list (see Macro.tsx). Ride in the DSL so the builder round-trips and the
+  // Rust engine returns the full set (it parses these as no-op filters).
+  | { kind: "aggregate"; agg: "count" | "sum" | "avg"; field: string | null }
+  | { kind: "groupBy"; field: string }
   // Verbatim fallback for a sub-expression we don't model, so an unfamiliar
   // (but non-datalog) query round-trips losslessly instead of being discarded.
   | { kind: "raw"; text: string };
@@ -246,6 +251,17 @@ function parseExpr(toks: Tok[], cur: Cur, src: string): Clause | null {
         clause = { kind: "sortBy", field, dir: dir?.toLowerCase() === "desc" ? "desc" : "asc" };
         break;
       }
+      case "aggregate": {
+        const k = parseName(toks, cur)?.toLowerCase();
+        if (k === "sum") clause = { kind: "aggregate", agg: "sum", field: parseName(toks, cur) };
+        else if (k === "avg" || k === "average")
+          clause = { kind: "aggregate", agg: "avg", field: parseName(toks, cur) };
+        else clause = { kind: "aggregate", agg: "count", field: null };
+        break;
+      }
+      case "group-by":
+        clause = { kind: "groupBy", field: parseName(toks, cur) ?? "page" };
+        break;
       default:
         clause = null;
     }
@@ -390,6 +406,12 @@ function clauseDsl(c: Clause): string {
       return quoteStr(c.text);
     case "sortBy":
       return `(sort-by ${word(c.field)} ${c.dir})`;
+    case "aggregate":
+      return c.agg === "count"
+        ? "(aggregate count)"
+        : `(aggregate ${c.agg} ${word(c.field ?? "")})`;
+    case "groupBy":
+      return `(group-by ${word(c.field)})`;
     case "raw":
       return c.text;
     case "op": {
@@ -479,6 +501,10 @@ export function clauseLabel(c: Clause): string {
       return `text: "${c.text}"`;
     case "sortBy":
       return `sort: ${sortLabel(c.field, c.dir)}`;
+    case "aggregate":
+      return c.agg === "count" ? "count" : `${c.agg} of ${c.field ?? "?"}`;
+    case "groupBy":
+      return `group by ${c.field}`;
     case "raw":
       return c.text;
     case "op":

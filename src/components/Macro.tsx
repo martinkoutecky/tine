@@ -6,6 +6,8 @@ import { setRaw, doc, formatForPage } from "../store";
 import { resolveBlockBatched } from "../resolveBatch";
 import { LiveRefGroup } from "./LiveRefGroup";
 import { QueryBuilder } from "./QueryBuilder";
+import { parseQuery, type Clause } from "../editor/queryBuilder";
+import { foldAggregate, groupRows } from "../editor/queryAggregate";
 import { quoteEdnString, unquoteEdnString, splitTrailingMap, queryMacroExtents } from "../editor/edn";
 import { visibleBody } from "../render/block";
 import { InlineText } from "../render/inline";
@@ -181,6 +183,51 @@ export function QueryMacro(props: {
     return Array.from(keys);
   });
 
+  // Result summarization (1a): the `(aggregate …)` / `(group-by …)` directives ride
+  // in the DSL and are parse-but-ignored by the engine (it returns the full set), so
+  // the math is computed HERE from the returned rows. Only the simple DSL carries
+  // them (datalog aggregation is OG's :result-transform, which we list as ignored).
+  const directives = createMemo<{ agg: Extract<Clause, { kind: "aggregate" }> | null; group: string | null }>(() => {
+    if (isAdvanced()) return { agg: null, group: null };
+    const root = parseQuery(form());
+    const kids = root.kind === "op" && root.op === "and" ? root.children : [root];
+    const agg = kids.find((c) => c.kind === "aggregate");
+    const group = kids.find((c) => c.kind === "groupBy");
+    return {
+      agg: agg?.kind === "aggregate" ? agg : null,
+      group: group?.kind === "groupBy" ? group.field : null,
+    };
+  });
+  const aggLabel = () => {
+    const a = directives().agg;
+    if (!a || a.agg === "count") return "Count";
+    return `${a.agg === "sum" ? "Sum" : "Avg"} of ${a.field}`;
+  };
+  type Summary =
+    | { kind: "single"; text: string; skipped: number }
+    | { kind: "grouped"; field: string; groups: { key: string; text: string; skipped: number }[] };
+  const summary = createMemo<Summary | null>(() => {
+    const d = directives();
+    if (!d.agg && !d.group) return null;
+    if (!d.group) return { kind: "single", ...foldAggregate(rows(), d.agg) };
+    return {
+      kind: "grouped",
+      field: d.group,
+      groups: Array.from(groupRows(rows(), d.group).entries()).map(([key, set]) => ({
+        key,
+        ...foldAggregate(set, d.agg),
+      })),
+    };
+  });
+  const summarySingle = () => {
+    const s = summary();
+    return s && s.kind === "single" ? s : null;
+  };
+  const summaryGrouped = () => {
+    const s = summary();
+    return s && s.kind === "grouped" ? s : null;
+  };
+
   const sorted = createMemo(() => {
     const c = sortCol();
     if (!c) return rows();
@@ -296,6 +343,46 @@ export function QueryMacro(props: {
             <QueryBuilder dsl={form} onChange={applyDsl} blockId={props.blockId} />
           </Show>
           <Show when={!collapsed()}>
+          {/* Summary panel (1a): count/sum/avg overall, or a per-group breakdown.
+              Rendered above the full result list, which stays grouped by page. */}
+          <Show when={summarySingle()}>
+            {(s) => (
+              <div class="query-summary" onClick={stop}>
+                <span class="qs-label">{aggLabel()}:</span>{" "}
+                <span class="qs-value">{s().text}</span>
+                <Show when={s().skipped > 0}>
+                  <span class="qs-skip"> ({s().skipped} non-numeric skipped)</span>
+                </Show>
+              </div>
+            )}
+          </Show>
+          <Show when={summaryGrouped()}>
+            {(s) => (
+              <table class="md-table query-summary-table" onClick={stop}>
+                <thead>
+                  <tr>
+                    <th>{s().field}</th>
+                    <th>{aggLabel()}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <For each={s().groups}>
+                    {(row) => (
+                      <tr>
+                        <td>{row.key}</td>
+                        <td>
+                          {row.text}
+                          <Show when={row.skipped > 0}>
+                            <span class="qs-skip"> ({row.skipped} skipped)</span>
+                          </Show>
+                        </td>
+                      </tr>
+                    )}
+                  </For>
+                </tbody>
+              </table>
+            )}
+          </Show>
           <Show
             when={groups() && groups()!.length > 0}
             fallback={<div class="query-empty">No results</div>}

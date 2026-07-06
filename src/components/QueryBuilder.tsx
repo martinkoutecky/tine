@@ -62,6 +62,29 @@ function withSort(root: Clause, sort: { field: string; dir: "asc" | "desc" } | n
   return { kind: "op", op: "and", children: kids };
 }
 
+// Aggregation + grouping are result-level directives (like sort), held as
+// root-level `aggregate`/`groupBy` children and edited via the "+ summarize"
+// control below — not as filter chips. These helpers read/replace them.
+type AggState = { agg: "count" | "sum" | "avg"; field: string | null };
+function currentAgg(root: Clause): AggState | null {
+  const a = rootChildren(root).find((c) => c.kind === "aggregate");
+  return a && a.kind === "aggregate" ? { agg: a.agg, field: a.field } : null;
+}
+function currentGroup(root: Clause): string | null {
+  const g = rootChildren(root).find((c) => c.kind === "groupBy");
+  return g && g.kind === "groupBy" ? g.field : null;
+}
+function withAgg(root: Clause, agg: AggState | null): Clause {
+  const kids: Clause[] = rootChildren(root).filter((c) => c.kind !== "aggregate");
+  if (agg) kids.push({ kind: "aggregate", agg: agg.agg, field: agg.field });
+  return { kind: "op", op: "and", children: kids };
+}
+function withGroup(root: Clause, field: string | null): Clause {
+  const kids: Clause[] = rootChildren(root).filter((c) => c.kind !== "groupBy");
+  if (field && field.trim()) kids.push({ kind: "groupBy", field: field.trim() });
+  return { kind: "op", op: "and", children: kids };
+}
+
 // A small "+ sort" / "sort: field ↑" control in the bar (NOT a filter chip).
 // The popover leads with one-click presets (the common cases — no typing, no
 // syntax to get wrong) and keeps a free-text row for sorting by any other
@@ -167,6 +190,118 @@ function SortControl(props: { tree: () => Clause; apply: (c: Clause) => void }):
   );
 }
 
+// A "+ summarize" control: no-code aggregation (count / sum / average of a
+// property) and grouping (by page or a property). Modeled on SortControl — a
+// single pill + popover, dismiss-on-outside-click. Aggregate + group are
+// independent (you can group by page AND count per group). The numbers are
+// computed in the frontend from the returned block list (Macro.tsx); this just
+// edits the DSL directive that rides along.
+function SummarizeControl(props: { tree: () => Clause; apply: (c: Clause) => void }): JSX.Element {
+  const [open, setOpen] = createSignal(false);
+  // Two-step property choice: null = show the top-level buttons; "sum"/"avg" =
+  // pick a property to aggregate; "group" = pick a property to group by.
+  const [pick, setPick] = createSignal<"sum" | "avg" | "group" | null>(null);
+  const [facets] = createResource(() => backend().queryFacets());
+  const keys = () => (facets() ?? []).map(([k]) => k);
+  const agg = () => currentAgg(props.tree());
+  const group = () => currentGroup(props.tree());
+  const active = () => !!agg() || !!group();
+  let wrapEl: HTMLSpanElement | undefined;
+  createEffect(() => {
+    if (!open()) return;
+    const onDown = (e: MouseEvent) => {
+      if (wrapEl && !wrapEl.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown, true);
+    onCleanup(() => document.removeEventListener("mousedown", onDown, true));
+  });
+  const openPopover = () => {
+    setPick(null);
+    setOpen(true);
+  };
+  // Each pick applies and closes the popover (like SortControl's presets). To set
+  // BOTH an aggregate and a grouping, reopen — the two are independent, so the DSL
+  // keeps whichever the other pick already set.
+  const setAgg = (a: AggState | null) => {
+    props.apply(withAgg(props.tree(), a));
+    setPick(null);
+    setOpen(false);
+  };
+  const setGroup = (f: string | null) => {
+    props.apply(withGroup(props.tree(), f));
+    setPick(null);
+    setOpen(false);
+  };
+  const label = () => {
+    const parts: string[] = [];
+    const a = agg();
+    if (a) parts.push(a.agg === "count" ? "count" : `${a.agg} of ${a.field ?? "?"}`);
+    const g = group();
+    if (g) parts.push(`by ${g}`);
+    return parts.join(", ");
+  };
+  return (
+    <span class="qb-add-wrap" ref={wrapEl}>
+      <button
+        class="qb-sort"
+        classList={{ active: active() }}
+        title={active() ? `Summary: ${label()}. Click to change.` : "Summarize results (count / sum / average / group)"}
+        onClick={(e) => { stop(e); open() ? setOpen(false) : openPopover(); }}
+      >
+        {active() ? `∑ ${label()}` : "+ summarize"}
+      </button>
+      <Show when={open()}>
+        <div class="qb-picker" onClick={stop}>
+          {/* Step: pick a property for sum / avg / group-by. */}
+          <Show when={pick() != null} fallback={
+            <>
+              <div class="qb-picker-title">Aggregate</div>
+              <button class="qb-menu-item" classList={{ active: agg()?.agg === "count" }} onClick={() => setAgg({ agg: "count", field: null })}>Count</button>
+              <button class="qb-menu-item" classList={{ active: agg()?.agg === "sum" }} onClick={() => setPick("sum")}>Sum of a property…</button>
+              <button class="qb-menu-item" classList={{ active: agg()?.agg === "avg" }} onClick={() => setPick("avg")}>Average of a property…</button>
+              <Show when={agg()}>
+                <button class="qb-sort-clear" onClick={() => setAgg(null)}>Clear aggregate</button>
+              </Show>
+              <div class="qb-divider" />
+              <div class="qb-picker-title">Group by</div>
+              <button class="qb-menu-item" classList={{ active: group() === "page" }} onClick={() => setGroup("page")}>Page</button>
+              <button class="qb-menu-item" classList={{ active: !!group() && group() !== "page" }} onClick={() => setPick("group")}>Property…</button>
+              <Show when={group()}>
+                <button class="qb-sort-clear" onClick={() => setGroup(null)}>Clear grouping</button>
+              </Show>
+            </>
+          }>
+            <div class="qb-picker-title">{pick() === "group" ? "Group by property" : `${pick() === "sum" ? "Sum" : "Average"} of property`}</div>
+            <For each={keys()}>
+              {(k) => (
+                <button class="qb-menu-item" onClick={() => (pick() === "group" ? setGroup(k) : setAgg({ agg: pick() as "sum" | "avg", field: k }))}>
+                  {k}
+                </button>
+              )}
+            </For>
+            <PropNameInput onCommit={(k) => (pick() === "group" ? setGroup(k) : setAgg({ agg: pick() as "sum" | "avg", field: k }))} />
+          </Show>
+        </div>
+      </Show>
+    </span>
+  );
+}
+
+// A free-text property-name input (Enter commits) for the summarize picker, so a
+// property not yet used in the graph (absent from facets) can still be chosen.
+function PropNameInput(props: { onCommit: (key: string) => void }): JSX.Element {
+  const [v, setV] = createSignal("");
+  return (
+    <input
+      class="qb-input"
+      placeholder="or type a property name"
+      value={v()}
+      onInput={(e) => setV(e.currentTarget.value)}
+      onKeyDown={(e) => { if (e.key === "Enter" && v().trim()) props.onCommit(v().trim()); }}
+    />
+  );
+}
+
 export function QueryBuilder(props: {
   dsl: () => string;
   onChange: (dsl: string) => void;
@@ -192,6 +327,7 @@ export function QueryBuilder(props: {
       <Node clause={tree()} loc={[]} isRoot tree={tree} apply={apply}
         openMenu={openMenu} setOpenMenu={setOpenMenu} adding={adding} setAdding={setAdding} />
       <SortControl tree={tree} apply={apply} />
+      <SummarizeControl tree={tree} apply={apply} />
     </div>
   );
 }
@@ -301,16 +437,23 @@ function ChipMenu(props: NodeCtx): JSX.Element {
   // The root op has no enclosing position to delete/wrap from.
   const atRoot = () => props.loc.length === 0;
 
-  // A sort clause isn't a filter: it's edited via the "+ sort" control, so its
-  // chip menu offers only Delete (no Edit, no wrap-in-AND/OR/NOT — wrapping a
-  // sort would nest it out of the root and silently disable it).
-  const isSort = () => props.clause.kind === "sortBy";
+  // Result-level directives (sort / aggregate / group-by) aren't filters: they're
+  // edited via the "+ sort" / "+ summarize" controls, so their chip menu offers
+  // only Delete (no Edit, no wrap-in-AND/OR/NOT — wrapping one would nest it out
+  // of the root and silently disable it).
+  const isSort = () =>
+    props.clause.kind === "sortBy" ||
+    props.clause.kind === "aggregate" ||
+    props.clause.kind === "groupBy";
 
   const [editing, setEditing] = createSignal(false);
-  // Nullary clauses (scheduled/deadline/journal), sort, and raw/op have nothing
-  // to edit here.
+  // Nullary clauses (scheduled/deadline/journal), result-level directives, and
+  // raw/op have nothing to edit here.
   const canEdit = () =>
-    !isOpKey() && !["raw", "scheduled", "deadline", "journal", "sortBy"].includes(props.clause.kind);
+    !isOpKey() &&
+    !["raw", "scheduled", "deadline", "journal", "sortBy", "aggregate", "groupBy"].includes(
+      props.clause.kind,
+    );
   const editKind = () => (props.clause.kind === "raw" ? "page" : (props.clause.kind as ClauseKind));
 
   return (

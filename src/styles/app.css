@@ -4761,6 +4761,38 @@ img.emoji {
   margin-bottom: 2px;
 }
 
+/* Result summary panel (aggregation / group-by), shown above the result list. */
+.query-summary {
+  font-size: 13px;
+  margin: 2px 0 6px;
+}
+.query-summary .qs-label {
+  color: var(--text-muted);
+}
+.query-summary .qs-value {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.qs-skip {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.query-summary-table {
+  margin: 2px 0 8px;
+  font-size: 13px;
+  width: auto;
+  min-width: 180px;
+}
+.query-summary-table th {
+  text-align: left;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+.query-summary-table td:last-child,
+.query-summary-table th:last-child {
+  text-align: right;
+}
+
 .embed-block {
   border-left: 3px solid var(--border-color);
   padding-left: 12px;

@@ -218,3 +218,24 @@ describe("sort-by clause", () => {
     expect(clauseLabel({ kind: "sortBy", field: "priority", dir: "desc" })).toBe("sort: priority ↓");
   });
 });
+
+describe("aggregate + group-by directives", () => {
+  it("parse and round-trip", () => {
+    expect(roundtrip("(aggregate count)")).toBe("(aggregate count)");
+    expect(roundtrip("(aggregate sum hours)")).toBe("(aggregate sum hours)");
+    expect(roundtrip("(aggregate avg score)")).toBe("(aggregate avg score)");
+    expect(roundtrip("(group-by page)")).toBe("(group-by page)");
+    expect(roundtrip("(group-by status)")).toBe("(group-by status)");
+    // Alongside filters + a group-by, all round-trip together.
+    expect(roundtrip("(and (task TODO) (group-by page) (aggregate count))")).toBe(
+      "(and (task TODO) (group-by page) (aggregate count))"
+    );
+    // `average` normalizes to `avg`.
+    expect(roundtrip("(aggregate average score)")).toBe("(aggregate avg score)");
+  });
+  it("has readable labels", () => {
+    expect(clauseLabel({ kind: "aggregate", agg: "count", field: null })).toBe("count");
+    expect(clauseLabel({ kind: "aggregate", agg: "sum", field: "hours" })).toBe("sum of hours");
+    expect(clauseLabel({ kind: "groupBy", field: "status" })).toBe("group by status");
+  });
+});

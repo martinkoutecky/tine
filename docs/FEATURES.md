@@ -143,11 +143,19 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   mtime), other pages by file modified-time, so journal and page todos interleave
   chronologically. (`sort-by modified/priority/page/deadline/scheduled` extend
   Logseq's property-only `sort-by`.)
+- **Summarize results** (beyond Logseq) — the builder's **∑ summarize** control
+  computes, with no code, a **count** / **sum** / **average** of a property over the
+  matched blocks, and/or a **group-by** (page or property) that breaks the results
+  down into a per-group table. Sum/average parse the property numerically and report
+  how many rows were skipped. Rides in the DSL as `(aggregate count|sum|avg …)` /
+  `(group-by page|<prop>)`; the engine returns the full set and the math is computed
+  client-side. (Logseq does this only via Datalog `:result-transform`.)
 - A scoped compatibility path for Logseq's **advanced (Datalog) queries**:
-  recognized clauses (`task`, `between`, `property`, `page-property`, `priority`,
-  page-refs, boolean `or/and/not`, `:today`/`:current-page`-style inputs) map onto
-  the same engine; any unsupported part is **flagged** in the result rather than
-  silently dropped or wrongly answered.
+  recognized clauses (`task`, `between` with a field selector, `property`,
+  `page-property`, `priority`, `page`, `namespace`, `page-tags`, `scheduled`,
+  `deadline`, `journal`, page-refs, boolean `or/and/not`, `:today`/`:current-page`-style
+  inputs) map onto the same engine; any unsupported part is **flagged** in the result
+  rather than silently dropped or wrongly answered.
 
 ## Tasks, journals & dates
 

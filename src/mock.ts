@@ -324,6 +324,18 @@ export function mockBackend(): Backend {
   const find = (name: string) =>
     all.find((p) => p.name.toLowerCase() === name.toLowerCase()) ?? null;
 
+  // Parse a block's `key:: value` property lines (mirrors the real backend's
+  // block_to_dto), so query results carry `properties` for the table columns and
+  // the aggregation summary (sum/avg of a property).
+  const parseProps = (raw: string): [string, string][] => {
+    const out: [string, string][] = [];
+    for (const line of raw.split("\n")) {
+      const m = /^([A-Za-z][\w-]*):: ?(.*)$/.exec(line.trim());
+      if (m && !["id", "collapsed"].includes(m[1])) out.push([m[1], m[2].trim()]);
+    }
+    return out;
+  };
+
   // Collect (page, matching blocks) where keep() holds, grouped by page.
   const collect = (keep: (b: BlockDto) => boolean, exclude?: string): RefGroup[] => {
     const groups: RefGroup[] = [];
@@ -334,7 +346,7 @@ export function mockBackend(): Backend {
       // (like the real backend's query::collect), exercising the block-ref panel.
       const walk = (bs: BlockDto[], anc: string[]) =>
         bs.forEach((b) => {
-          if (keep(b)) matched.push({ ...b, breadcrumb: anc });
+          if (keep(b)) matched.push({ ...b, breadcrumb: anc, properties: parseProps(b.raw) });
           walk(b.children, [...anc, b.raw.split("\n")[0] ?? ""]);
         });
       walk(p.blocks, []);

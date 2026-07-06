@@ -10,6 +10,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Summarize query results — count, sum, average, group-by.** The visual query
+  builder gains a **∑ summarize** control: with no code, count the matched blocks,
+  sum or average a numeric property across them, and/or break the results down by
+  page or by a property. Sum/average parse the property as a number and report how
+  many rows were skipped (blank or non-numeric). The full result list still renders
+  below the summary. (This goes beyond Logseq, which does aggregation only through
+  Datalog `:result-transform`.)
+- **Wider coverage for advanced (Datalog) queries.** The `[:find … :where …]`
+  mapper now also understands `(page …)`, `(namespace …)`, `(page-tags …)`,
+  `(scheduled)`, `(deadline)`, `(journal)`, and a field-aware `(between …)` —
+  matching what the everyday `{{query}}` DSL already supports. Clauses outside the
+  supported set are still listed as *ignored* rather than guessed.
+
 - **Camera and voice memo on Android.** The mobile editor toolbar gains a camera
   button (take a photo or pick an existing image — it goes straight into the
   graph's `assets/` and inserts the image) and a mic button that records a voice

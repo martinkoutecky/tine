@@ -1216,6 +1216,21 @@ enum Pred {
     /// Result-level options (always pass as filters; collected as `QueryOpts`).
     Sample(usize),
     SortBy(String, bool),
+    /// Result-level aggregation, computed in the FRONTEND from the returned block
+    /// list (D1). Parsed-but-ignored here (eval → true) so `run_query` succeeds and
+    /// the builder DSL round-trips; the frontend re-parses the same DSL to render it.
+    Aggregate(AggKind),
+    /// Result-level grouping (`(group-by page|<prop>)`), also frontend-computed.
+    GroupBy(String),
+}
+
+/// A result aggregation directive. `Sum`/`Avg` carry the property whose numeric
+/// values are combined; `Count` needs no field.
+#[derive(Debug, Clone, PartialEq)]
+enum AggKind {
+    Count,
+    Sum(String),
+    Avg(String),
 }
 
 /// Which date a `between` range is tested against.
@@ -1370,8 +1385,8 @@ impl Pred {
             Pred::And(ps) => ps.iter().all(|p| p.eval(block, ctx)),
             Pred::Or(ps) => ps.iter().any(|p| p.eval(block, ctx)),
             Pred::Not(p) => !p.eval(block, ctx),
-            // Options are not filters.
-            Pred::Sample(_) | Pred::SortBy(..) => true,
+            // Options and frontend-computed directives are not filters.
+            Pred::Sample(_) | Pred::SortBy(..) | Pred::Aggregate(_) | Pred::GroupBy(_) => true,
         }
     }
 }
@@ -1643,6 +1658,22 @@ fn parse_expr(toks: &[Tok], pos: &mut usize, today: JournalDate) -> Option<Pred>
                     let dir = parse_opt_name(toks, pos).unwrap_or_else(|| "asc".into());
                     Pred::SortBy(field, !dir.eq_ignore_ascii_case("desc"))
                 }
+                // Frontend-computed result directives (D1/D2): parse-but-ignore so
+                // run_query succeeds and the builder round-trips the DSL text.
+                "aggregate" => {
+                    let kind = match parse_name(toks, pos) {
+                        Some(k) => match k.to_ascii_lowercase().as_str() {
+                            "sum" => AggKind::Sum(parse_name(toks, pos).unwrap_or_default()),
+                            "avg" | "average" => {
+                                AggKind::Avg(parse_name(toks, pos).unwrap_or_default())
+                            }
+                            _ => AggKind::Count,
+                        },
+                        None => AggKind::Count,
+                    };
+                    Pred::Aggregate(kind)
+                }
+                "group-by" => Pred::GroupBy(parse_name(toks, pos).unwrap_or_else(|| "page".into())),
                 _ => return None,
             };
             // consume closing )
@@ -1804,6 +1835,33 @@ mod tests {
         let none = ctx_named();
         let b = DocBlock::new("note: foo \"bar\" baz");
         assert!(pred("\"foo \\\"bar\\\"\"").eval(&b, &none));
+    }
+
+    #[test]
+    fn aggregate_and_group_by_parse_as_noop_filters() {
+        // 1a: the aggregation/grouping directives ride in the DSL (D2) so the
+        // builder round-trips and run_query succeeds; they never filter (eval→true).
+        assert_eq!(pred("(aggregate count)"), Pred::Aggregate(AggKind::Count));
+        assert_eq!(
+            pred("(aggregate sum hours)"),
+            Pred::Aggregate(AggKind::Sum("hours".into()))
+        );
+        assert_eq!(
+            pred("(aggregate avg score)"),
+            Pred::Aggregate(AggKind::Avg("score".into()))
+        );
+        assert_eq!(pred("(group-by page)"), Pred::GroupBy("page".into()));
+        assert_eq!(pred("(group-by status)"), Pred::GroupBy("status".into()));
+
+        // No-op filter: a block passes regardless.
+        let none = ctx_named();
+        let b = DocBlock::new("just a note");
+        assert!(pred("(aggregate count)").eval(&b, &none));
+        assert!(pred("(group-by page)").eval(&b, &none));
+        // Combined with a real filter, the aggregate doesn't restrict the matches.
+        let task = DocBlock::new("TODO ship it");
+        assert!(pred("(and (task TODO) (aggregate count))").eval(&task, &none));
+        assert!(!pred("(and (task DONE) (aggregate count))").eval(&task, &none));
     }
 
     #[test]
