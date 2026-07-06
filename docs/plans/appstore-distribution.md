@@ -201,9 +201,9 @@ Builds:
     sudo:
       - apt-get update || true
       - apt-get install -y nodejs npm binaryen   # binaryen = system wasm-opt
-      # If wasm-pack isn't preinstalled: `cargo install wasm-pack --version 0.15.0`.
     ndk: 26.3.11579264
     build:
+      - cargo install wasm-pack --version 0.15.0 --locked   # buildserver has no wasm-pack
       - rustup target add aarch64-linux-android wasm32-unknown-unknown
       - npm ci
       - npm run build:wasm    # rebuild the parser FROM SOURCE (crates/lsdoc-wasm → lsdoc git dep)
