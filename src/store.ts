@@ -1304,25 +1304,69 @@ export function setCollapsedDeep(id: string, collapsed: boolean) {
   markDirty(doc.byId[id].page);
 }
 
-/** Ensure a block has a persistent `id::` uuid (assigned lazily, like OG) AND
- *  that it's durably on disk, returning the uuid — or null if it couldn't be
- *  saved (conflict/error). Used to make `((uuid))` references: the caller must
- *  not put a ref on the clipboard until the id is actually written, or quitting /
+/** The block's existing durable `id` — a markdown `id:: <uuid>` trailer or an
+ *  org `:PROPERTIES:` drawer `:id: <uuid>` line — case-insensitively, or null.
+ *  Format-aware because in ORG `id:: x` is plain body text, NOT a property (lsdoc
+ *  reads the drawer, not a `key::` line); so an org block's real id lives in its
+ *  `:PROPERTIES:` drawer and must be matched there (GH #25). */
+export function existingBlockId(raw: string, format: Format): string | null {
+  const re = format === "org" ? /(?:^|\n):id:\s*(\S+)/i : /(?:^|\n)id:: *(\S+)/i;
+  const m = re.exec(raw);
+  return m ? m[1] : null;
+}
+
+/** `raw` with a durable `id` property added in the page's on-disk format.
+ *  Markdown appends an `id:: <uuid>` trailer. ORG inserts/extends a
+ *  `:PROPERTIES:`/`:id:`/`:END:` drawer at OG's canonical position — right after
+ *  the title line and any SCHEDULED/DEADLINE planning lines (mirroring OG's
+ *  `insert-property`, util/property.cljs). Writing markdown `id::` into an org
+ *  file would BOTH render as visible body text and not be read back as the
+ *  block's id (GH #25) — org MUST use the drawer. The caller guarantees the
+ *  block has no id yet (see {@link existingBlockId}). */
+export function rawWithBlockId(raw: string, uuid: string, format: Format): string {
+  if (format !== "org") return `${raw}\nid:: ${uuid}`;
+  const lines = raw.split("\n");
+  const start = lines.findIndex((l) => l.trim().toUpperCase() === ":PROPERTIES:");
+  const end =
+    start >= 0 ? lines.findIndex((l, i) => i > start && l.trim().toUpperCase() === ":END:") : -1;
+  if (start >= 0 && end > start) {
+    // Extend the existing drawer: insert the id line just before :END:.
+    lines.splice(end, 0, `:id: ${uuid}`);
+    return lines.join("\n");
+  }
+  // No drawer: title, SCHEDULED*, DEADLINE*, :PROPERTIES: drawer, rest-of-body —
+  // OG groups planning lines above the drawer (util/property.cljs insert-property).
+  const [title, ...rest] = lines;
+  const isSched = (l: string) => l.startsWith("SCHEDULED");
+  const isDead = (l: string) => l.startsWith("DEADLINE");
+  const scheduled = rest.filter(isSched);
+  const deadline = rest.filter(isDead);
+  const body = rest.filter((l) => !isSched(l) && !isDead(l));
+  return [title, ...scheduled, ...deadline, ":PROPERTIES:", `:id: ${uuid}`, ":END:", ...body].join(
+    "\n"
+  );
+}
+
+/** Ensure a block has a persistent id (assigned lazily, like OG) AND that it's
+ *  durably on disk, returning the uuid — or null if it couldn't be saved
+ *  (conflict/error). Used to make `((uuid))` references: the caller must not put
+ *  a ref on the clipboard until the id is actually written, or quitting /
  *  resolving a conflict with "use disk version" would leave the ref dangling. */
 export async function ensureBlockId(id: string): Promise<string | null> {
   const node = doc.byId[id];
   if (!node) return null;
-  // Any existing id:: is the block's durable id — match its value (not just a
-  // UUID shape), case-INSENSITIVELY (Rust's property("id") is case-insensitive, so
-  // an `ID::` from another editor counts), so we never append a SECOND id:: that
-  // Rust then ignores → dangling copied ref.
-  const m = /(?:^|\n)id:: *(\S+)/i.exec(node.raw);
-  const uuid = m ? m[1] : crypto.randomUUID();
-  if (!m) {
-    setDoc("byId", id, "raw", `${node.raw}\nid:: ${uuid}`);
+  const fmt = formatForBlock(id);
+  // Any existing id is the block's durable id — match its value (not just a UUID
+  // shape), case-INSENSITIVELY (Rust's property("id") is case-insensitive, so an
+  // `ID::` / `:ID:` from another editor counts), so we never write a SECOND id
+  // that Rust then ignores → dangling copied ref.
+  const existing = existingBlockId(node.raw, fmt);
+  const uuid = existing ?? crypto.randomUUID();
+  if (!existing) {
+    setDoc("byId", id, "raw", rawWithBlockId(node.raw, uuid, fmt));
     markDirty(node.page);
   }
-  // Even a pre-existing id:: may not be on disk yet (added in-memory, not flushed);
+  // Even a pre-existing id may not be on disk yet (added in-memory, not flushed);
   // flush and only hand back the uuid if the write actually landed.
   const ok = await flushPage(node.page);
   return ok ? uuid : null;
@@ -1346,9 +1390,10 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 export function ensureStableBlockId(id: string): void {
   const node = doc.byId[id];
   if (!node) return;
-  if (/(?:^|\n)id:: *\S+/.test(node.raw)) return;
+  const fmt = formatForBlock(id);
+  if (existingBlockId(node.raw, fmt)) return;
   if (!UUID_RE.test(id)) return;
-  setDoc("byId", id, "raw", `${node.raw}\nid:: ${id}`);
+  setDoc("byId", id, "raw", rawWithBlockId(node.raw, id, fmt));
   markDirty(node.page);
   // Persist now, not on the 400ms debounce: the user may quit right after
   // parking the block, and a pending timer is lost when the webview closes.

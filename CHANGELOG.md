@@ -8,6 +8,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- **Org files: block ids are written as a hidden `:PROPERTIES:` drawer, not a
+  visible `id::` line** ([#25](https://github.com/martinkoutecky/tine/issues/25)).
+  On an `.org` page, parking a block (zoom / open in sidebar / new tab) or making
+  a block reference used to append a Markdown `id:: <uuid>` line, which org renders
+  as visible body text *and* which Logseq doesn't read back as the block's id.
+  Tine now writes the id the way Logseq does in org — a `:PROPERTIES:` / `:id:` /
+  `:END:` drawer at the canonical spot (after the title and any
+  SCHEDULED/DEADLINE lines), extending an existing drawer in place. It's hidden
+  from the rendered view and read back correctly, so it also makes zoom/sidebar/tab
+  spots actually survive a restart on org pages (they previously couldn't). Markdown
+  pages are unchanged.
+
 ## [0.4.2] — 2026-07-06
 
 ### Fixed

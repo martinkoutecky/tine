@@ -345,4 +345,45 @@ mod tests {
         let src = "* a\r\n* b\r\n";
         assert!(org_round_trips(src));
     }
+
+    /// GH #25: the id `rawWithBlockId` (store.ts) writes into an ORG block — a
+    /// canonical `:PROPERTIES:`/`:id:`/`:END:` drawer after the title+planning —
+    /// must (a) round-trip byte-for-byte, (b) be read back as the block's `id`,
+    /// and (c) be hidden from the visible body (so it never renders as text).
+    /// A plain markdown `id::` line, by contrast, is NOT read as the id and DOES
+    /// show — the bug this fix removes.
+    #[test]
+    fn org_id_drawer_roundtrips_reads_and_hides() {
+        // (file content, expected block-0 id, must-not-appear-in-visible)
+        let cases: &[(&str, &str)] = &[
+            ("* Title\n:PROPERTIES:\n:id: U1\n:END:\n", "U1"),
+            ("* Title\n:PROPERTIES:\n:id: U2\n:END:\nbody\n", "U2"),
+            (
+                "* TODO t\nSCHEDULED: <2026-06-25 Thu>\n:PROPERTIES:\n:id: U3\n:END:\nbody\n",
+                "U3",
+            ),
+            ("* Title\n:PROPERTIES:\n:foo: bar\n:id: U4\n:END:\n", "U4"),
+        ];
+        for (src, id) in cases {
+            assert!(org_round_trips(src), "org drawer must round-trip: {src:?}");
+            let doc = parse_org(src);
+            let b = &doc.roots[0];
+            assert_eq!(b.property("id").as_deref(), Some(*id), "id read back: {src:?}");
+            assert!(
+                !b.visible_text().contains(":PROPERTIES:") && !b.visible_text().contains(":id:"),
+                "drawer must be hidden from visible body: {src:?} -> {:?}",
+                b.visible_text()
+            );
+        }
+
+        // The pre-fix behavior, pinned as the bug: a markdown `id::` line in an
+        // org block is neither read as the id nor hidden.
+        let mut bad = DocBlock::new("Title\nid:: U5".to_string());
+        bad.is_org = true;
+        assert_eq!(bad.property("id"), None, "md id:: is not an org id");
+        assert!(
+            bad.visible_text().contains("id:: U5"),
+            "md id:: shows as body text in org (the GH #25 bug)"
+        );
+    }
 }
