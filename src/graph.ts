@@ -175,8 +175,16 @@ export async function switchGraph(): Promise<void> {
       pushToast(`Couldn't open the Android folder picker. (${String(e)})`, "error");
       return;
     }
+    // Diagnostic breadcrumbs (visible in `adb logcat`, chromium console channel):
+    // an intermittent first-run stall on "Opening…" — these pin down whether the
+    // native picker returned and whether the graph parse completed or hung.
+    console.info(`[tine/android] pickGraphFolder → ${result.status}`);
     if (result.status === "picked") {
-      if (result.path) await loadGraphPath(result.path);
+      if (result.path) {
+        console.info("[tine/android] loadGraphPath: start");
+        await loadGraphPath(result.path);
+        console.info("[tine/android] loadGraphPath: done");
+      }
       return;
     }
     if (result.status === "permission-requested" || result.status === "permission-needed") {
