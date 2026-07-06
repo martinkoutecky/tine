@@ -1,0 +1,14 @@
+# Pin the Rust toolchain so the Android build is reproducible across machines and
+# on F-Droid's build server (see docs/plans/appstore-distribution.md, Track A2).
+# Keep the channel in step with what CI + the release build actually use.
+[toolchain]
+channel = "1.96.0"
+targets = [
+    "aarch64-linux-android",
+    "armv7-linux-androideabi",
+    "i686-linux-android",
+    "x86_64-linux-android",
+    # The frontend parser (crates/lsdoc-wasm) is compiled to wasm via wasm-pack;
+    # F-Droid rebuilds it from source rather than shipping the vendored base64.
+    "wasm32-unknown-unknown",
+]

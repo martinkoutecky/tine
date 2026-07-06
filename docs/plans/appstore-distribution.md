@@ -91,18 +91,42 @@ minor·1e3 + patch`, per `release.yml`), **NDK `26.3.11579264`**, `compileSdk 36
   (`[toolchain] channel = "1.xx"` + `targets = ["aarch64-linux-android", …]`). The recipe
   installs rustup in `sudo` if the buildserver lacks the pinned toolchain.
 
-**Steps:**
+**Phase-1 findings (validated on the uni box, Jul 6 2026):**
 
-1. **Repo prep (in tine, land before the MR):**
-   - Add `rust-toolchain.toml` pinning the channel + android targets.
-   - Do a **network-off** end-to-end build locally to prove it's offline-buildable:
-     `npm ci` then `npx tauri android build --apk` with the box offline (netns / unplug).
-     If cargo/npm need the network, pre-fetch: `cargo fetch` (Cargo.lock is committed) and
-     `npm ci` while online, then re-run offline. Vendor cargo (`cargo vendor` +
-     `.cargo/config.toml`) only if F-Droid's env can't fetch crates.
-   - Note the **exact output APK path** the build produces (expected
-     `src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk`
-     — verify, since the flavor/name comes from the generated `tauri.build.gradle.kts`).
+- ✅ `rust-toolchain.toml` added (channel 1.96.0 + the 4 android targets + `wasm32-unknown-unknown`).
+- ✅ **Release build is green.** Exact output path confirmed:
+  `src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk`
+  (24.8 MB, arm64). The `universal` flavor comes from the generated `tauri.build.gradle.kts`.
+- ⚠️ **npm swallows the CLI flags.** `npx tauri android build --target aarch64 --apk` loses
+  the flags because the repo has a `"tauri": "tauri"` npm script. The recipe MUST call the
+  binary directly: `./node_modules/.bin/tauri android build --target aarch64 --apk`.
+- ✅ **Source tree is scanner-clean** except `src-tauri/gen/android/gradle/wrapper/gradle-wrapper.jar`
+  — the standard Gradle wrapper, which F-Droid verifies against known hashes (routine, not a
+  blocker). No committed `.so`/`.wasm`/`.node`/`.exe`.
+- 🔴 **THE Tauri-specific blocker — the wasm parser is a vendored prebuilt.**
+  `src/render/wasm/lsdoc_wasm_bytes.ts` (462 KB) is the base64-inlined wasm; `npm run build`
+  only *checks a pin* (`scripts/check-wasm-pin.mjs`), it never rebuilds. F-Droid forbids
+  shipping prebuilt binaries, so the recipe must **rebuild it from source** with
+  `npm run build:wasm` (→ `wasm-pack build crates/lsdoc-wasm`) and `scandelete` the vendored
+  copy so F-Droid never ships our blob.
+  - ✅ **Verified the from-source rebuild is byte-identical** to the committed bytes (same
+    sha256, empty git diff) with the pinned toolchain + wasm-pack 0.15.0 — so the parser is
+    genuinely reproducible-from-source (also good for later reproducible-builds).
+  - `crates/lsdoc-wasm` git-deps `lsdoc` (`github.com/martinkoutecky/lsdoc`, tag `v0.4.2`,
+    **public + AGPL**, Cargo.lock-pinned) — F-Droid can fetch it.
+  - ⚠️ **wasm-opt is itself a prebuilt binary wasm-pack downloads** (binaryen, into
+    `~/.cache/.wasm-pack/`). F-Droid's build must provide it (`sudo apt-get install binaryen`
+    → system `wasm-opt`) OR disable it via `[package.metadata.wasm-pack.profile.release]`
+    `wasm-opt = false` in `crates/lsdoc-wasm/Cargo.toml` (smaller-opt wasm, no download — but
+    then the bytes differ from the GitHub build, which matters only for reproducible-builds).
+    Resolve during the buildserver iteration.
+
+**Remaining steps:**
+
+1. **Repo prep (mostly done):** `rust-toolchain.toml` is in. Decide the wasm-opt approach
+   above. Optionally `cargo fetch` + confirm a clean-tree build (`git clean`-equivalent of the
+   gitignored gen glue → the Tauri CLI regenerates it, verified this session). Vendor cargo
+   (`cargo vendor`) only if F-Droid's env can't fetch crates.io/the lsdoc git dep.
 2. **Fork `gitlab.com/fdroid/fdroiddata`**; add `metadata/dev.tine.app.yml` (starter
    below). Use `Builds:` with a freeform `build:` that drives the Tauri CLI + `output:`.
 3. **Validate locally with the real F-Droid buildserver BEFORE the MR** — this is where
@@ -142,12 +166,19 @@ Builds:
     commit: v0.4.0
     sudo:
       - apt-get update || true
-      - apt-get install -y nodejs npm
-      # If the pinned Rust toolchain isn't preinstalled, add rustup here.
+      - apt-get install -y nodejs npm binaryen   # binaryen = system wasm-opt
+      # If the pinned Rust toolchain isn't preinstalled, install rustup here too.
     ndk: 26.3.11579264
+    scandelete:
+      # Vendored PREBUILT wasm — deleted before the scan, rebuilt from source below.
+      - src/render/wasm/lsdoc_wasm_bytes.ts
+      - src/render/wasm/lsdoc_wasm.js
     build:
+      - rustup target add wasm32-unknown-unknown
       - npm ci
-      - npx tauri android build --apk --target aarch64
+      - npm run build:wasm    # rebuild the parser FROM SOURCE (crates/lsdoc-wasm → lsdoc git dep)
+      # Call the binary directly — `npx tauri`/npm eats the --flags (see findings).
+      - ./node_modules/.bin/tauri android build --target aarch64 --apk
     output: src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk
 
 AutoUpdateMode: Version
@@ -155,6 +186,12 @@ UpdateCheckMode: Tags
 CurrentVersion: 0.4.0
 CurrentVersionCode: 4000
 ```
+
+Notes on the recipe: `npm run build:wasm` needs `wasm-pack` (install via `cargo install
+wasm-pack` in `build:`, or a `sudo` binary) — and it wants `wasm-opt`; the `binaryen`
+apt package supplies it, else set `wasm-opt = false` in the crate. `npm run build:wasm`
+regenerates `lsdoc_wasm_bytes.ts` before `tauri android build` runs `npm run build` (whose
+`check-wasm-pin` then passes because the tags match).
 
 **Reality check:** many Tauri/JS apps stall on step 3 (offline + scanner). Budget weeks of
 iteration; the fixes land in the tine repo (toolchain pin, vendoring, deterministic
