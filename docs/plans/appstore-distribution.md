@@ -59,39 +59,106 @@ Users add a repo URL (or scan a QR) in the F-Droid client; we publish our own
 **Deliverable:** "Add our repo to F-Droid" instructions on tine.page. Users get
 auto-updates through the F-Droid client from our own signature.
 
-### A2 — Main f-droid.org repository (the real goal; slow)
+### A2 — Main f-droid.org repository (the real goal; slow, iterative)
 
-F-Droid builds from source on their infra with **no network access** during the build.
-The Tauri Rust+npm toolchain is the whole difficulty.
+F-Droid builds **from source** on their own build server; our GitHub APK is ignored
+(unless we later add reproducible-build verification). The whole difficulty is getting a
+Tauri (Rust + npm) app to build cleanly there. **Exact facts for the recipe** (verified
+Jul 6 2026): version `0.4.0` → **versionCode `4000`** (Tauri scheme `major·1e6 +
+minor·1e3 + patch`, per `release.yml`), **NDK `26.3.11579264`**, `compileSdk 36`,
+`build-tools 35.0.0`, `minSdk 24`, **Node 20**, `frontendDist: ../dist`,
+`beforeBuildCommand: npm run build`, tag `v0.4.0`.
 
-1. **Make the build reproducible + offline-buildable** (do in our repo first):
-   - Pin toolchains: `rust-toolchain.toml` (exact Rust), and an explicit Node version.
-   - Vendor Cargo: `cargo vendor` + `.cargo/config.toml` `[source.crates-io] replace-with`.
-   - npm offline: `package-lock.json` is committed already; the F-Droid recipe prefetches
-     and runs `npm ci --offline`.
-   - Verify a clean build with NO network locally (drop the box offline / use a netns)
-     end-to-end: `npm ci` → `tauri android build --apk`.
-2. **Fork `gitlab.com/fdroid/fdroiddata`**, add `metadata/dev.tine.app.yml`:
-   - Header: `Categories`, `License: AGPL-3.0-only`, `AuthorName`, `SourceCode`,
-     `IssueTracker`, `Changelog`.
-   - `Builds:` one entry per version — `versionName`/`versionCode`, `commit: v0.4.x`,
-     `subdir: src-tauri/gen/android`, `sudo:`/`prebuild:` to install Node + `npm ci`
-     (and `cargo vendor` if not committed), `ndk:` (r26 per `tine-android-build`),
-     `rust:` toolchain, `build:` = `tauri android build --apk`, `output:` = the APK path
-     under `.../release/`.
-   - `AutoUpdateMode: Version` + `UpdateCheckMode: Tags` so new tags auto-propose builds.
-   - **Reproducible builds (recommended):** add `Binaries:` pointing at our GitHub-release
-     APK URL. If F-Droid's build byte-matches ours, F-Droid ships **our** signature — so a
-     user who sideloaded the GitHub APK can update in place. Requires our release build to
-     be deterministic (fixed timestamps, sorted zip entries).
-3. **Validate before the MR:** run F-Droid's own build via `fdroidserver`
-   (`makebuildserver` VM or the official CI image) — `fdroid build -v -l dev.tine.app` —
-   and iterate until it builds clean offline. This is where most of the time goes.
-4. **Open the MR** to `fdroiddata`, respond to the reviewer. After merge, first build can
-   take days–weeks; thereafter each tag auto-builds.
+**Blockers discovered in the repo (fix in the tine repo FIRST):**
 
-**Gotcha:** many Tauri apps stall on A2's offline build. If A2 drags, A1 already covers
-"distributed on F-Droid" — keep shipping via A1.
+- **Tauri leaves the Android glue gitignored.** `src-tauri/gen/android/app/.gitignore`
+  excludes `tauri.properties` (→ versionCode/Name), `tauri.build.gradle.kts` (defines the
+  ABI product-flavors incl. `universal`), `proguard-tauri.pro`, `assets/tauri.conf.json`,
+  and `src/main/**/generated/` (WryActivity etc.). So a clean checkout is NOT
+  gradle-buildable as-is — the build **must run `npx tauri android build`**, which
+  regenerates all of these. (This is why the recipe drives the Tauri CLI, not `gradle:`.)
+- **versionCode source.** The Tauri CLI regenerates `tauri.properties` from
+  `tauri.conf.json` version using the same `4000` scheme, so the built APK's versionCode
+  will be 4000 — declare that in metadata. (Belt-and-suspenders: have the recipe write
+  `tauri.properties` before the build, mirroring the CI step.)
+- **Scanner risk (the usual Tauri/JS wall).** F-Droid's `fdroid scanner` rejects
+  prebuilt/non-free binaries in the tree. A Vite/esbuild frontend pulls **native binaries**
+  into `node_modules` (esbuild ships a platform binary; rollup/swc too). Expect scanner
+  hits — resolve with `ScannerExclude`/`scandelete` for `node_modules` build-time-only
+  binaries, and confirm nothing non-free ends up **inside the APK** (only our JS bundle +
+  Rust `.so` should). This is the part that takes iteration.
+- **Rust toolchain.** Pin it: add `rust-toolchain.toml` at repo root
+  (`[toolchain] channel = "1.xx"` + `targets = ["aarch64-linux-android", …]`). The recipe
+  installs rustup in `sudo` if the buildserver lacks the pinned toolchain.
+
+**Steps:**
+
+1. **Repo prep (in tine, land before the MR):**
+   - Add `rust-toolchain.toml` pinning the channel + android targets.
+   - Do a **network-off** end-to-end build locally to prove it's offline-buildable:
+     `npm ci` then `npx tauri android build --apk` with the box offline (netns / unplug).
+     If cargo/npm need the network, pre-fetch: `cargo fetch` (Cargo.lock is committed) and
+     `npm ci` while online, then re-run offline. Vendor cargo (`cargo vendor` +
+     `.cargo/config.toml`) only if F-Droid's env can't fetch crates.
+   - Note the **exact output APK path** the build produces (expected
+     `src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk`
+     — verify, since the flavor/name comes from the generated `tauri.build.gradle.kts`).
+2. **Fork `gitlab.com/fdroid/fdroiddata`**; add `metadata/dev.tine.app.yml` (starter
+   below). Use `Builds:` with a freeform `build:` that drives the Tauri CLI + `output:`.
+3. **Validate locally with the real F-Droid buildserver BEFORE the MR** — this is where
+   the weeks go. Either the Docker image
+   `registry.gitlab.com/fdroid/fdroidserver:buildserver` or `fdroid build -l dev.tine.app`
+   from an `fdroidserver` checkout. Iterate: build error → fix recipe/repo → repeat. Then
+   run `fdroid scanner dev.tine.app` and `fdroid lint dev.tine.app` clean.
+4. **Open the MR** to fdroiddata, respond to the reviewer. After merge the first build can
+   take days–weeks; then `UpdateCheckMode: Tags` auto-proposes each new `v*` tag.
+5. **(Later, optional) Reproducible builds** — add `Binaries:` pointing at our GitHub
+   release APK so F-Droid ships **our** signature (sideloaded users update in place).
+   Needs a deterministic release build (fixed timestamps, sorted zip). Skip for v1.
+
+**Starter `metadata/dev.tine.app.yml`** (verify paths/flavors against the local build):
+
+```yaml
+Categories:
+  - Writing
+License: AGPL-3.0-only
+AuthorName: Martin Koutecký
+SourceCode: https://github.com/martinkoutecky/tine
+IssueTracker: https://github.com/martinkoutecky/tine/issues
+Changelog: https://github.com/martinkoutecky/tine/blob/master/CHANGELOG.md
+
+AutoName: Tine
+Summary: Fast local-first Logseq-compatible outliner
+Description: |-
+    Tine is a fast, local-first outliner that reads and writes a real Logseq
+    Markdown/Org graph on disk. (Fill from README.)
+
+RepoType: git
+Repo: https://github.com/martinkoutecky/tine.git
+
+Builds:
+  - versionName: 0.4.0
+    versionCode: 4000
+    commit: v0.4.0
+    sudo:
+      - apt-get update || true
+      - apt-get install -y nodejs npm
+      # If the pinned Rust toolchain isn't preinstalled, add rustup here.
+    ndk: 26.3.11579264
+    build:
+      - npm ci
+      - npx tauri android build --apk --target aarch64
+    output: src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk
+
+AutoUpdateMode: Version
+UpdateCheckMode: Tags
+CurrentVersion: 0.4.0
+CurrentVersionCode: 4000
+```
+
+**Reality check:** many Tauri/JS apps stall on step 3 (offline + scanner). Budget weeks of
+iteration; the fixes land in the tine repo (toolchain pin, vendoring, deterministic
+frontend) and in the recipe (`sudo`, `scandelete`, `output` path), not in F-Droid's court.
 
 ---
 
