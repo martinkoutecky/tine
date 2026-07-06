@@ -10,6 +10,8 @@ import {
   killWordBackward,
   setPriority,
   trimBlockTrailingSpace,
+  wrapLink,
+  isPasteableUrl,
 } from "./format";
 
 describe("toggleWrap", () => {
@@ -40,6 +42,42 @@ describe("insertLink", () => {
   });
   it("inserts empty link with caret in [] on no selection", () => {
     expect(insertLink("a b", 2, 2)).toEqual({ text: "a []()b", start: 3, end: 3 });
+  });
+});
+
+describe("isPasteableUrl", () => {
+  it("accepts http(s) and mailto single tokens", () => {
+    expect(isPasteableUrl("https://www.github.com")).toBe(true);
+    expect(isPasteableUrl("http://example.com/a?b=c#d")).toBe(true);
+    expect(isPasteableUrl("mailto:x@y.com")).toBe(true);
+    expect(isPasteableUrl("  https://x.com  ")).toBe(true); // trims
+  });
+  it("rejects non-URLs, scheme-less, and multi-token text", () => {
+    expect(isPasteableUrl("just text")).toBe(false);
+    expect(isPasteableUrl("www.github.com")).toBe(false); // no scheme
+    expect(isPasteableUrl("see https://x.com now")).toBe(false); // spaces
+    expect(isPasteableUrl("")).toBe(false);
+  });
+});
+
+describe("wrapLink", () => {
+  it("wraps a selection as a markdown link, caret after", () => {
+    // "Link" selected at 0..4, paste https://x.com
+    expect(wrapLink("Link", 0, 4, "https://x.com", "md")).toEqual({
+      text: "[Link](https://x.com)",
+      start: 21,
+      end: 21,
+    });
+  });
+  it("wraps a selection as an org link (target first)", () => {
+    expect(wrapLink("Link", 0, 4, "https://x.com", "org")).toEqual({
+      text: "[[https://x.com][Link]]",
+      start: 23,
+      end: 23,
+    });
+  });
+  it("preserves surrounding text", () => {
+    expect(wrapLink("a Link b", 2, 6, "https://x.com", "md").text).toBe("a [Link](https://x.com) b");
   });
 });
 

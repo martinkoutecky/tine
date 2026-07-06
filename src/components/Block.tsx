@@ -60,6 +60,8 @@ import { parseOutline } from "../editor/outline";
 import {
   toggleWrap,
   insertLink,
+  wrapLink,
+  isPasteableUrl,
   killLineBefore,
   killLineAfter,
   wordForward,
@@ -1811,6 +1813,27 @@ export function Editor(props: { id: string }): JSX.Element {
       if (wasEmpty) deleteBlock(props.id);
       startEditing(lastId, doc.byId[lastId].raw.length);
       return;
+    }
+    // A bare URL pasted over a non-empty selection wraps the selection as a
+    // link instead of replacing it (#23; logseq-copy-url-style QoL). Format
+    // aware: md `[sel](url)` vs org `[[url][sel]]`. Skip in calc/code fences,
+    // and when the selection is itself a URL (a normal replace is wanted then).
+    {
+      const start = ref.selectionStart;
+      const end = ref.selectionEnd;
+      const url = text.trim();
+      if (
+        start !== end &&
+        isPasteableUrl(url) &&
+        !isPasteableUrl(ref.value.slice(start, end)) &&
+        !isCalc() &&
+        !caretInFence(ref.value, start)
+      ) {
+        e.preventDefault();
+        applyEdit(wrapLink(ref.value, start, end, url, pageFmt()));
+        queueMicrotask(updateSel);
+        return;
+      }
     }
     // Single-line/no text: maybe an image on the OS clipboard. Show an immediate
     // "Pasting image…" hint when the clipboard clearly holds one (so there's no

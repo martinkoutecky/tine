@@ -63,6 +63,33 @@ export function insertLink(text: string, start: number, end: number): Edit {
   return { text: next, start: start + 1, end: start + 1 }; // caret in []
 }
 
+// A single bare URL (one token, known scheme, no whitespace). Used by the
+// "paste a URL over a selection → link the selection" behavior (#23). We key on
+// an explicit scheme — `http(s)://` and `mailto:` cover the real cases — and
+// deliberately exclude scheme-less `www.…` (ambiguous, and OG's autolinker
+// keys on a scheme too). Trim before calling.
+const PASTE_URL_RE = /^(?:https?:\/\/|mailto:)\S+$/i;
+export function isPasteableUrl(text: string): boolean {
+  return PASTE_URL_RE.test(text.trim());
+}
+
+/** Wrap a selection as a link around a pasted `url`. Format-aware: markdown
+ *  `[sel](url)`, org `[[url][sel]]` (org puts the target first, label second —
+ *  the inverse of markdown). The caret lands just after the inserted link. */
+export function wrapLink(
+  text: string,
+  start: number,
+  end: number,
+  url: string,
+  format: "md" | "org",
+): Edit {
+  const sel = text.slice(start, end);
+  const link = format === "org" ? `[[${url}][${sel}]]` : `[${sel}](${url})`;
+  const next = text.slice(0, start) + link + text.slice(end);
+  const caret = start + link.length;
+  return { text: next, start: caret, end: caret };
+}
+
 // --- line helpers (a "line" is bounded by \n or the text ends) ---
 function lineStart(text: string, pos: number): number {
   const nl = text.lastIndexOf("\n", pos - 1);
