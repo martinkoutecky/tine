@@ -81,6 +81,7 @@ function Icon(props: { name: ToolbarIcon }): JSX.Element {
 }
 
 export function MobileKeyboardToolbar(): JSX.Element {
+  let toolbarRef: HTMLDivElement | undefined;
   const [dockTop, setDockTop] = createSignal(typeof window !== "undefined" ? window.innerHeight : 0);
   const [keyboardVisible, setKeyboardVisible] = createSignal(false);
   const [focusedFallback, setFocusedFallback] = createSignal(false);
@@ -116,6 +117,32 @@ export function MobileKeyboardToolbar(): JSX.Element {
     if (isMobilePlatform) queueMicrotask(updateDock);
   });
 
+  // Publish the toolbar's on-screen top as a CSS var so the fixed help "?" FAB
+  // (and any other bottom-anchored chrome) can lift ABOVE it instead of
+  // overlapping. Re-runs when the dock position or visibility changes; measures
+  // the real rendered box (robust to whatever the keyboard does to the viewport).
+  createEffect(() => {
+    const shown = isMobilePlatform && visible();
+    dockTop(); // re-measure when the keyboard/dock moves
+    const root = typeof document !== "undefined" ? document.documentElement : null;
+    if (!root) return;
+    if (!shown) {
+      root.style.removeProperty("--mobile-kb-toolbar-lift");
+      return;
+    }
+    requestAnimationFrame(() => {
+      if (!toolbarRef) return;
+      const top = toolbarRef.getBoundingClientRect().top;
+      const lift = Math.max(0, window.innerHeight - top) + 8;
+      root.style.setProperty("--mobile-kb-toolbar-lift", `${lift}px`);
+    });
+  });
+  onCleanup(() => {
+    if (typeof document !== "undefined") {
+      document.documentElement.style.removeProperty("--mobile-kb-toolbar-lift");
+    }
+  });
+
   const visible = () =>
     !!focusedEditorCommandBridge() && (keyboardVisible() || focusedFallback());
   const style = () => ({
@@ -137,6 +164,7 @@ export function MobileKeyboardToolbar(): JSX.Element {
   return (
     <Show when={isMobilePlatform && visible()}>
       <div
+        ref={toolbarRef}
         class="mobile-keyboard-toolbar"
         data-mobile-keyboard-toolbar
         role="toolbar"

@@ -1,7 +1,10 @@
 .help-corner {
   position: fixed;
   right: 16px;
-  bottom: 16px;
+  /* Sits 16px off the bottom normally; on mobile, when the above-keyboard editor
+     toolbar is up it publishes --mobile-kb-toolbar-lift so this FAB rises ABOVE
+     the toolbar instead of overlapping it (var is unset otherwise → 16px). */
+  bottom: max(16px, var(--mobile-kb-toolbar-lift, 16px));
   z-index: 118;
 }
 
@@ -347,7 +350,9 @@
 @media (max-width: 720px) {
   .help-corner {
     right: 12px;
-    bottom: 12px;
+    /* Keep the keyboard-toolbar lift on small screens too (see the base rule);
+       fall back to 12px when the toolbar isn't up. */
+    bottom: max(12px, var(--mobile-kb-toolbar-lift, 12px));
   }
 
   .help-table {
