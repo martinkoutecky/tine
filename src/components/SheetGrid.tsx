@@ -1,4 +1,4 @@
-import { For, Match, Show, Switch, createEffect, createMemo, createSignal, type JSX } from "solid-js";
+import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup, useContext, type JSX } from "solid-js";
 import { doc, formatForBlock } from "../store";
 import { AstBody } from "../render/body";
 import { visibleBody } from "../render/block";
@@ -10,8 +10,11 @@ import {
   cellOwner,
   cellSel,
   cellSurfaceKey,
+  aggregateFooterPinned,
   setCellSel,
+  setAggregateFooterPinned,
   startCellEditing,
+  toggleAggregateFooterPinned,
   type SheetSel,
 } from "../sheet/selection";
 import { setColumnWidth } from "../sheet/mutations";
@@ -24,7 +27,8 @@ import { blockBackgroundColor } from "../blockColors";
 import { Editor, SurfaceContext } from "./Block";
 import { SheetTable } from "./SheetTable";
 import { SheetBoard } from "./SheetBoard";
-import { SheetAggregateFooterCell } from "./SheetAggregateFooter";
+import { SheetAggregateCornerToggle, SheetAggregateFooterCell } from "./SheetAggregateFooter";
+import { SheetContainerOverlayContext } from "./SheetContainerOverlay";
 
 const MAX_GRID_DEPTH = 5;
 
@@ -172,6 +176,10 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
   const [seamStyle, setSeamStyle] = createSignal<JSX.CSSProperties | null>(null);
   const [resizing, setResizing] = createSignal(false);
   const [hovering, setHovering] = createSignal(false);
+  const [footerEditingCount, setFooterEditingCount] = createSignal(0);
+  const containerOverlay = useContext(SheetContainerOverlayContext);
+  const sheetOverlay = props.depth === 0 ? containerOverlay : null;
+  const sheetHovering = () => sheetOverlay?.hovering() ?? hovering();
   const config = createMemo(() => configForBlock(props.id));
   const rows = createMemo(() =>
     blockChildren(props.id).map((id) => ({
@@ -182,6 +190,38 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
   const matrix = createMemo(() => buildMatrix(rows()));
   const columns = createMemo(() => columnTracks(matrix().cols, config().colWidths));
   const hasAggregates = createMemo(() => config().colAggregates.size > 0);
+  const footerPinned = createMemo(() => aggregateFooterPinned(props.id));
+  const footerEditing = createMemo(() => footerEditingCount() > 0);
+  const showFooter = createMemo(() => hasAggregates() || footerPinned() || footerEditing());
+  const showFooterToggle = createMemo(() => !hasAggregates() && (sheetHovering() || footerPinned() || footerEditing()));
+
+  const noteFooterEditing = (editing: boolean) => {
+    setFooterEditingCount((count) => Math.max(0, count + (editing ? 1 : -1)));
+  };
+
+  const toggleFooter = (e: MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    toggleAggregateFooterPinned(props.id);
+  };
+
+  const footerToggle = () => (
+    <SheetAggregateCornerToggle
+      active={footerPinned()}
+      onClick={toggleFooter}
+    />
+  );
+
+  createEffect(() => {
+    if (hasAggregates() && footerPinned()) setAggregateFooterPinned(props.id, false);
+  });
+
+  createEffect(() => {
+    if (!sheetOverlay) return;
+    sheetOverlay.setCorner(showFooterToggle() ? footerToggle() : null);
+  });
+
+  onCleanup(() => sheetOverlay?.setCorner(null));
 
   createEffect(() => {
     const sel = cellSel();
@@ -314,7 +354,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
               />
             )}
           </For>
-          <Show when={hasAggregates() || hovering()}>
+          <Show when={showFooter()}>
             <For each={Array.from({ length: matrix().cols }, (_, col) => col)}>
               {(col) => (
                 <SheetAggregateFooterCell
@@ -323,10 +363,14 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
                   fn={config().colAggregates.get(`${col}`) ?? null}
                   values={columnValues(col)}
                   stickyLeft={col === 0}
-                  showEmpty={hovering()}
+                  showEmpty={footerPinned()}
+                  onEditingChange={noteFooterEditing}
                 />
               )}
             </For>
+          </Show>
+          <Show when={!sheetOverlay && showFooterToggle()}>
+            {footerToggle()}
           </Show>
           <Show when={seamStyle()}>
             {(style) => <div class="sheet-seam-selected" style={style()} />}
@@ -484,20 +528,22 @@ function SheetBlock(props: { id: string; depth: number; cell?: SheetCellCtx; bod
             </Show>
           </div>
           <Show when={children().length > 0 || config()?.view === "grid" || config()?.view === "table" || config()?.view === "board"}>
-            <Switch>
-              <Match when={config()?.view === "grid"}>
-                <SheetGridInner id={props.id} depth={props.depth} />
-              </Match>
-              <Match when={config()?.view === "table"}>
-                <SheetTable ownerId={props.id} rowSource="children" />
-              </Match>
-              <Match when={config()?.view === "board"}>
-                <SheetBoard ownerId={props.id} rowSource="children" groupBy={config()?.groupBy} />
-              </Match>
-              <Match when={true}>
-                <SheetOutline ids={children()} depth={props.depth} />
-              </Match>
-            </Switch>
+            <SheetContainerOverlayContext.Provider value={null}>
+              <Switch>
+                <Match when={config()?.view === "grid"}>
+                  <SheetGridInner id={props.id} depth={props.depth} />
+                </Match>
+                <Match when={config()?.view === "table"}>
+                  <SheetTable ownerId={props.id} rowSource="children" />
+                </Match>
+                <Match when={config()?.view === "board"}>
+                  <SheetBoard ownerId={props.id} rowSource="children" groupBy={config()?.groupBy} />
+                </Match>
+                <Match when={true}>
+                  <SheetOutline ids={children()} depth={props.depth} />
+                </Match>
+              </Switch>
+            </SheetContainerOverlayContext.Provider>
           </Show>
         </>
       )}

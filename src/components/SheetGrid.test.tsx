@@ -6,12 +6,14 @@ import { ContextMenu } from "./ContextMenu";
 import { initParser } from "../render/parse";
 import { blockProperty, resetStore, setDoc, type Node, type FeedPage } from "../store";
 import { openJournals, route } from "../router";
+import { resetCellSelectionForTests } from "../sheet/selection";
 
 beforeAll(async () => {
   await initParser();
 });
 
 afterEach(() => {
+  resetCellSelectionForTests();
   resetStore();
   openJournals({ inPlace: true });
   document.body.innerHTML = "";
@@ -64,20 +66,56 @@ function pointerEnter(target: EventTarget): Event {
   return event;
 }
 
+function pointerLeave(target: EventTarget): Event {
+  const event = new Event("pointerleave", { bubbles: false, cancelable: true });
+  target.dispatchEvent(event);
+  return event;
+}
+
 function animationFrame(): Promise<void> {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
+
+async function settledMeasure(): Promise<void> {
+  for (let i = 0; i < 6; i++) await animationFrame();
+}
+
+function rectSnapshot(el: Element): Pick<DOMRect, "left" | "top" | "right" | "bottom" | "width" | "height"> {
+  const rect = el.getBoundingClientRect();
+  return {
+    left: rect.left,
+    top: rect.top,
+    right: rect.right,
+    bottom: rect.bottom,
+    width: rect.width,
+    height: rect.height,
+  };
 }
 
 function mockSheetLayout(width: () => number) {
   const originalClientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
   const originalScrollWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollWidth");
+  const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
   const originalResizeObserver = globalThis.ResizeObserver;
   const observers: ResizeObserverCallback[] = [];
+  const rect = (left: number, top: number, width: number, height: number): DOMRect => ({
+    x: left,
+    y: top,
+    left,
+    top,
+    right: left + width,
+    bottom: top + height,
+    width,
+    height,
+    toJSON: () => ({}),
+  } as DOMRect);
+  const hasDirectSheetContainer = (el: HTMLElement): boolean =>
+    [...el.children].some((child) => child.classList.contains("block-sheet-container"));
 
   Object.defineProperty(HTMLElement.prototype, "clientWidth", {
     configurable: true,
     get() {
-      if (this.classList.contains("ls-block") || this.classList.contains("block-sheet-container")) return 200;
+      if (this.classList.contains("ls-block") || this.classList.contains("block-sheet-container") || hasDirectSheetContainer(this)) return 200;
       return 0;
     },
   });
@@ -88,6 +126,13 @@ function mockSheetLayout(width: () => number) {
       return 0;
     },
   });
+  HTMLElement.prototype.getBoundingClientRect = function () {
+    if (this.classList.contains("main-content")) return rect(0, 0, 1000, 600);
+    if (hasDirectSheetContainer(this)) return rect(400, 30, 200, 80);
+    if (this.classList.contains("block-sheet-container")) return rect(400, 30, Math.max(200, width()), 80);
+    if (this.classList.contains("sheet-grid")) return rect(400, 30, width(), 80);
+    return originalGetBoundingClientRect.call(this);
+  };
   globalThis.ResizeObserver = class ResizeObserver {
     constructor(callback: ResizeObserverCallback) {
       observers.push(callback);
@@ -106,6 +151,7 @@ function mockSheetLayout(width: () => number) {
       else delete (HTMLElement.prototype as { clientWidth?: number }).clientWidth;
       if (originalScrollWidth) Object.defineProperty(HTMLElement.prototype, "scrollWidth", originalScrollWidth);
       else delete (HTMLElement.prototype as { scrollWidth?: number }).scrollWidth;
+      HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect;
       globalThis.ResizeObserver = originalResizeObserver;
     },
   };
@@ -186,20 +232,27 @@ describe("SheetGrid", () => {
     dispose();
   });
 
-  it("toggles the breakout class when the natural sheet width exceeds the column", async () => {
+  it("toggles and centers breakout when the natural sheet width exceeds the column", async () => {
     let naturalWidth = 640;
     const layout = mockSheetLayout(() => naturalWidth);
     loadMdSheetDoc();
-    const { root, dispose } = mount(() => <Block id="grid" />);
+    const { root, dispose } = mount(() => (
+      <div class="main-content">
+        <Block id="grid" />
+      </div>
+    ));
     try {
+      await settledMeasure();
       const container = root.querySelector(".block-sheet-container") as HTMLElement | null;
       expect(container).not.toBeNull();
       expect(container!.classList.contains("sheet-breakout")).toBe(true);
+      expect(container!.style.getPropertyValue("--sheet-breakout-width")).toBe("640px");
+      expect(container!.style.getPropertyValue("--sheet-breakout-shift")).toBe("220px");
       expect(root.querySelector(".sheet-cell .block-sheet-container")).toBeNull();
 
       naturalWidth = 160;
       layout.trigger();
-      await animationFrame();
+      await settledMeasure();
 
       expect(container!.classList.contains("sheet-breakout")).toBe(false);
     } finally {
@@ -316,11 +369,12 @@ describe("SheetGrid", () => {
     const { root, dispose } = mount(() => <Block id="grid" />);
 
     expect(root.textContent).toContain("7");
+    expect(root.querySelector(".sheet-aggregate-corner-toggle")).toBeNull();
 
     dispose();
   });
 
-  it("writes the selected positional aggregate token", () => {
+  it("pins, unpins, and writes positional aggregates from the corner toggle without hover reflow", async () => {
     const pageName = "Sheet";
     setDoc({
       byId: {
@@ -332,25 +386,60 @@ describe("SheetGrid", () => {
       feed: [pageName],
       loaded: true,
     });
-    const { root, dispose } = mount(() => <Block id="grid" />);
-    const grid = root.querySelector(".sheet-grid") as HTMLElement | null;
-    expect(root.querySelector(".sheet-footer-cell")).toBeNull();
-    pointerEnter(grid!);
-    const footer = root.querySelector(".sheet-grid > .sheet-footer-cell") as HTMLElement | null;
-    expect(footer).not.toBeNull();
-    expect(root.querySelector(".sheet-footer-overlay")).toBeNull();
-    expect(footer!.style.position).not.toBe("absolute");
-    const add = root.querySelector(".sheet-grid > .sheet-footer-cell .sheet-aggregate-add") as HTMLButtonElement | null;
-    expect(add).not.toBeNull();
-    add!.click();
-    const select = root.querySelector(".sheet-aggregate-select") as HTMLSelectElement | null;
-    expect(select).not.toBeNull();
+    const layout = mockSheetLayout(() => 200);
+    const { root, dispose } = mount(() => (
+      <div class="main-content">
+        <Block id="grid" />
+      </div>
+    ));
+    try {
+      await settledMeasure();
+      const grid = root.querySelector(".sheet-grid") as HTMLElement | null;
+      const container = root.querySelector(".block-sheet-container") as HTMLElement | null;
+      expect(grid).not.toBeNull();
+      expect(container).not.toBeNull();
+      expect(root.querySelector(".sheet-footer-cell")).toBeNull();
+      expect(root.querySelector(".sheet-aggregate-corner-toggle")).toBeNull();
 
-    select!.value = "sum";
-    change(select!);
+      const beforeHover = rectSnapshot(container!);
+      pointerEnter(container!);
+      expect(root.querySelector(".sheet-footer-cell")).toBeNull();
+      let toggle = root.querySelector(".sheet-aggregate-corner-toggle") as HTMLButtonElement | null;
+      expect(toggle).not.toBeNull();
+      expect(rectSnapshot(container!)).toEqual(beforeHover);
 
-    expect(blockProperty("grid", "tine.col-aggregates")).toBe("0=sum");
-    dispose();
+      toggle!.click();
+      let footer = root.querySelector(".sheet-grid > .sheet-footer-cell") as HTMLElement | null;
+      expect(footer).not.toBeNull();
+      expect(root.querySelector(".sheet-footer-overlay")).toBeNull();
+      expect(footer!.style.position).not.toBe("absolute");
+      toggle = root.querySelector(".sheet-aggregate-corner-toggle") as HTMLButtonElement | null;
+      expect(toggle?.getAttribute("aria-pressed")).toBe("true");
+
+      pointerLeave(grid!);
+      expect(root.querySelector(".sheet-grid > .sheet-footer-cell")).not.toBeNull();
+      toggle = root.querySelector(".sheet-aggregate-corner-toggle") as HTMLButtonElement | null;
+      toggle!.click();
+      expect(root.querySelector(".sheet-footer-cell")).toBeNull();
+
+      pointerEnter(container!);
+      (root.querySelector(".sheet-aggregate-corner-toggle") as HTMLButtonElement).click();
+      const add = root.querySelector(".sheet-grid > .sheet-footer-cell .sheet-aggregate-add") as HTMLButtonElement | null;
+      expect(add).not.toBeNull();
+      add!.click();
+      const select = root.querySelector(".sheet-aggregate-select") as HTMLSelectElement | null;
+      expect(select).not.toBeNull();
+
+      pointerLeave(grid!);
+      select!.dispatchEvent(new FocusEvent("blur"));
+      select!.value = "sum";
+      change(select!);
+
+      expect(blockProperty("grid", "tine.col-aggregates")).toBe("0=sum");
+    } finally {
+      dispose();
+      layout.restore();
+    }
   });
 
   it("opens a sheet block as a full page from the sheet context menu", () => {

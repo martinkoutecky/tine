@@ -3887,6 +3887,7 @@ body.file-drop-active::after {
 /* sheets: read-only positional grid substrate */
 .block-sheet-container {
   --sheet-container-indent: 28px;
+  position: relative;
   margin: 6px 0 10px var(--sheet-container-indent);
   max-width: 100%;
   overflow-x: auto;
@@ -4107,6 +4108,38 @@ body.file-drop-active::after {
 .sheet-aggregate-add:hover,
 .sheet-aggregate-value:hover {
   color: var(--accent, #4c8bf5);
+}
+.sheet-aggregate-corner-toggle {
+  position: absolute;
+  right: -7px;
+  bottom: -7px;
+  z-index: 6;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-color);
+  border-radius: 50%;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--text-primary) 18%, transparent);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+.sheet-aggregate-corner-toggle:hover,
+.sheet-aggregate-corner-toggle:focus-visible,
+.sheet-aggregate-corner-toggle-active {
+  color: var(--accent, #4c8bf5);
+  border-color: var(--accent, #4c8bf5);
+  background: var(--bg-secondary);
+}
+.sheet-aggregate-corner-toggle:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent, #4c8bf5) 40%, transparent);
+  outline-offset: 2px;
 }
 .sheet-add-field {
   min-width: 34px;

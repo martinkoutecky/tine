@@ -1,4 +1,4 @@
-import { For, Match, Show, Switch, createMemo, createResource, createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { For, Match, Show, Switch, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, useContext, type JSX } from "solid-js";
 import { backend } from "../backend";
 import {
   blockPageReadOnly,
@@ -26,9 +26,12 @@ import {
   cellOwner,
   cellSel,
   cellSurfaceKey,
+  aggregateFooterPinned,
   registerSheetViewAdapter,
   setCellSel,
+  setAggregateFooterPinned,
   startCellEditing,
+  toggleAggregateFooterPinned,
   type CellSel,
 } from "../sheet/selection";
 import {
@@ -65,7 +68,8 @@ import {
 import { blockBackgroundColor } from "../blockColors";
 import type { RefGroup } from "../types";
 import { Editor, SurfaceContext } from "./Block";
-import { SheetAggregateFooterCell } from "./SheetAggregateFooter";
+import { SheetAggregateCornerToggle, SheetAggregateFooterCell } from "./SheetAggregateFooter";
+import { SheetContainerOverlayContext } from "./SheetContainerOverlay";
 
 interface RowRecord extends FormulaEvalRow {}
 
@@ -104,6 +108,9 @@ export function SheetTable(props: {
   const [addingColumn, setAddingColumn] = createSignal(false);
   const [editingProp, setEditingProp] = createSignal<{ rowId: string; field: FieldId; initial: string } | null>(null);
   const [hovering, setHovering] = createSignal(false);
+  const [footerEditingCount, setFooterEditingCount] = createSignal(0);
+  const sheetOverlay = useContext(SheetContainerOverlayContext);
+  const sheetHovering = () => sheetOverlay?.hovering() ?? hovering();
   const config = createMemo(() => {
     const owner = doc.byId[props.ownerId];
     return sheetConfig(owner ? facetsOf(owner.raw, formatForBlock(props.ownerId)).properties : []);
@@ -240,6 +247,38 @@ export function SheetTable(props: {
     `minmax(180px, max-content) repeat(${fields().length}, max-content) ${actionColumn()}`
   );
   const hasAggregates = createMemo(() => config().colAggregates.size > 0);
+  const footerPinned = createMemo(() => aggregateFooterPinned(props.ownerId));
+  const footerEditing = createMemo(() => footerEditingCount() > 0);
+  const showFooter = createMemo(() => hasAggregates() || footerPinned() || footerEditing());
+  const showFooterToggle = createMemo(() => !hasAggregates() && (sheetHovering() || footerPinned() || footerEditing()));
+
+  const noteFooterEditing = (editing: boolean) => {
+    setFooterEditingCount((count) => Math.max(0, count + (editing ? 1 : -1)));
+  };
+
+  const toggleFooter = (e: MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    toggleAggregateFooterPinned(props.ownerId);
+  };
+
+  const footerToggle = () => (
+    <SheetAggregateCornerToggle
+      active={footerPinned()}
+      onClick={toggleFooter}
+    />
+  );
+
+  createEffect(() => {
+    if (hasAggregates() && footerPinned()) setAggregateFooterPinned(props.ownerId, false);
+  });
+
+  createEffect(() => {
+    if (!sheetOverlay) return;
+    sheetOverlay.setCorner(showFooterToggle() ? footerToggle() : null);
+  });
+
+  onCleanup(() => sheetOverlay?.setCorner(null));
 
   const sortedRows = createMemo(() => {
     const s = sort();
@@ -616,7 +655,7 @@ export function SheetTable(props: {
             </>
           )}
         </For>
-        <Show when={hasAggregates() || hovering()}>
+        <Show when={showFooter()}>
           <div class="sheet-cell sheet-footer-cell sheet-footer-title sheet-sticky-left" />
           <For each={fields()}>
             {(field) => (
@@ -625,13 +664,17 @@ export function SheetTable(props: {
                 columnKey={field}
                 fn={config().colAggregates.get(field) ?? null}
                 values={sortedRows().map((row) => rowFieldValue(row, field))}
-                showEmpty={hovering()}
+                showEmpty={footerPinned()}
+                onEditingChange={noteFooterEditing}
               />
             )}
           </For>
           <Show when={hasActionColumn()}>
             <div class="sheet-cell sheet-footer-cell sheet-row-tail" />
           </Show>
+        </Show>
+        <Show when={!sheetOverlay && showFooterToggle()}>
+          {footerToggle()}
         </Show>
       </div>
     </Show>

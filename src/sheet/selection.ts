@@ -75,6 +75,7 @@ export interface SheetViewAdapter {
 }
 
 const [activeCellSel, writeCellSel] = createRoot(() => createSignal<SheetSel | null>(null));
+const [aggregateFooterPins, writeAggregateFooterPins] = createRoot(() => createSignal<ReadonlySet<string>>(new Set<string>()));
 const lastByGrid = new Map<string, { row: number; col: number }>();
 const adapters = new Map<string, SheetViewAdapter>();
 
@@ -109,6 +110,24 @@ function clearCellSelectionOnly(): void {
 export function resetCellSelectionForTests(): void {
   clearCellSelectionOnly();
   lastByGrid.clear();
+  writeAggregateFooterPins(new Set<string>());
+}
+
+export function aggregateFooterPinned(ownerId: string): boolean {
+  return aggregateFooterPins().has(ownerId);
+}
+
+export function setAggregateFooterPinned(ownerId: string, pinned: boolean): void {
+  writeAggregateFooterPins((cur) => {
+    const next = new Set(cur);
+    if (pinned) next.add(ownerId);
+    else next.delete(ownerId);
+    return next;
+  });
+}
+
+export function toggleAggregateFooterPinned(ownerId: string): void {
+  setAggregateFooterPinned(ownerId, !aggregateFooterPinned(ownerId));
 }
 
 export function isSheetCellOwner(owner: string | null): boolean {

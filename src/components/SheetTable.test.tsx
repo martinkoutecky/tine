@@ -70,6 +70,12 @@ function pointerEnter(target: EventTarget): Event {
   return event;
 }
 
+function pointerLeave(target: EventTarget): Event {
+  const event = new Event("pointerleave", { bubbles: false, cancelable: true });
+  target.dispatchEvent(event);
+  return event;
+}
+
 function cell(root: HTMLElement, row: number, col: number, gridId = "table"): HTMLElement {
   const el = root.querySelector(
     `.sheet-cell[data-sheet-grid-id="${gridId}"][data-row="${row}"][data-col="${col}"]`
@@ -638,6 +644,7 @@ describe("SheetTable", () => {
     const { root, dispose } = mount(() => <Block id="table" />);
 
     expect(root.textContent).toContain("7 (1 skipped)");
+    expect(root.querySelector(".sheet-aggregate-corner-toggle")).toBeNull();
 
     dispose();
   });
@@ -796,16 +803,34 @@ describe("SheetTable", () => {
     dispose();
   });
 
-  it("writes the selected field aggregate token", () => {
+  it("pins, unpins, and writes field aggregates from the corner toggle", () => {
     loadTableDoc();
     const { root, dispose } = mount(() => <Block id="table" />);
     const table = root.querySelector(".sheet-table") as HTMLElement | null;
+    const container = root.querySelector(".block-sheet-container") as HTMLElement | null;
     expect(root.querySelector(".sheet-footer-cell")).toBeNull();
-    pointerEnter(table!);
-    const footer = root.querySelector(".sheet-table > .sheet-footer-cell") as HTMLElement | null;
+    expect(root.querySelector(".sheet-aggregate-corner-toggle")).toBeNull();
+
+    pointerEnter(container!);
+    expect(root.querySelector(".sheet-footer-cell")).toBeNull();
+    let toggle = root.querySelector(".sheet-aggregate-corner-toggle") as HTMLButtonElement | null;
+    expect(toggle).not.toBeNull();
+
+    toggle!.click();
+    let footer = root.querySelector(".sheet-table > .sheet-footer-cell") as HTMLElement | null;
     expect(footer).not.toBeNull();
     expect(root.querySelector(".sheet-footer-overlay")).toBeNull();
     expect(footer!.style.position).not.toBe("absolute");
+    toggle = root.querySelector(".sheet-aggregate-corner-toggle") as HTMLButtonElement | null;
+    expect(toggle?.getAttribute("aria-pressed")).toBe("true");
+
+    pointerLeave(table!);
+    expect(root.querySelector(".sheet-table > .sheet-footer-cell")).not.toBeNull();
+    toggle!.click();
+    expect(root.querySelector(".sheet-footer-cell")).toBeNull();
+
+    pointerEnter(container!);
+    (root.querySelector(".sheet-aggregate-corner-toggle") as HTMLButtonElement).click();
     const adds = [...root.querySelectorAll(".sheet-table > .sheet-footer-cell .sheet-aggregate-add")] as HTMLButtonElement[];
     const estimateAdd = adds[adds.length - 1];
     expect(estimateAdd).not.toBeUndefined();
@@ -813,6 +838,8 @@ describe("SheetTable", () => {
     const estimateSelect = root.querySelector(".sheet-aggregate-select") as HTMLSelectElement | null;
     expect(estimateSelect).not.toBeNull();
 
+    pointerLeave(table!);
+    estimateSelect!.dispatchEvent(new FocusEvent("blur"));
     estimateSelect!.value = "sum";
     change(estimateSelect!);
 
