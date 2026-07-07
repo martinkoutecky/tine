@@ -5,6 +5,7 @@ import { openPage, openPageAtBlock, openPageInNewTab, openFile, openInNewTab, ro
 import { paletteCommands } from "../keybindings";
 import { fuzzyScore } from "../editor/autocomplete";
 import { visibleBody } from "../render/block";
+import { EmojiText } from "../render/emoji";
 import type { PageEntry, PageKind } from "../types";
 
 // One selectable result row.
@@ -368,21 +369,21 @@ function Row(props: { item: Item; query: string }): JSX.Element {
       return (
         <>
           <span class="switcher-kind">{it.pageKind === "journal" ? "journal" : "page"}</span>
-          <span class="switcher-name">{it.name}</span>
+          <span class="switcher-name"><EmojiText text={it.name} /></span>
         </>
       );
     case "create":
       return (
         <>
           <span class="switcher-kind create">new</span>
-          <span class="switcher-name">Create page: <strong>{it.name}</strong></span>
+          <span class="switcher-name">Create page: <strong><EmojiText text={it.name} /></strong></span>
         </>
       );
     case "command":
       return (
         <>
           <span class="switcher-kind cmd">cmd</span>
-          <span class="switcher-name">{it.label}</span>
+          <span class="switcher-name"><EmojiText text={it.label} /></span>
           <Show when={it.binding}>
             <span class="switcher-shortcut">{it.binding}</span>
           </Show>
@@ -394,8 +395,8 @@ function Row(props: { item: Item; query: string }): JSX.Element {
           <span class="switcher-kind">block</span>
           <span class="switcher-name">
             <span class="switcher-page">
-              {it.page}
-              {it.crumb.length ? ` › ${it.crumb.join(" › ")} › ` : ": "}
+              <EmojiText text={it.page} />
+              <EmojiText text={it.crumb.length ? ` › ${it.crumb.join(" › ")} › ` : ": "} />
             </span>
             {snippet(it.text, props.query)}
           </span>
@@ -407,18 +408,20 @@ function Row(props: { item: Item; query: string }): JSX.Element {
 // Window the text around the first case-insensitive match and wrap it in <mark>.
 function snippet(text: string, query: string): JSX.Element {
   const q = query.trim();
-  if (!q) return <>{text.slice(0, 120)}</>;
+  // Every text run goes through EmojiText: a raw color-emoji glyph in block
+  // content crashes WebKitGTK's Skia COLRv1 path on hardened libstdc++ (#29).
+  if (!q) return <EmojiText text={text.slice(0, 120)} />;
   const i = text.toLowerCase().indexOf(q.toLowerCase());
-  if (i === -1) return <>{text.slice(0, 120)}</>;
+  if (i === -1) return <EmojiText text={text.slice(0, 120)} />;
   const start = Math.max(0, i - 30);
   const pre = (start > 0 ? "…" : "") + text.slice(start, i);
   const match = text.slice(i, i + q.length);
   const post = text.slice(i + q.length, i + q.length + 60);
   return (
     <>
-      {pre}
-      <mark>{match}</mark>
-      {post}
+      <EmojiText text={pre} />
+      <mark><EmojiText text={match} /></mark>
+      <EmojiText text={post} />
       {i + q.length + 60 < text.length ? "…" : ""}
     </>
   );

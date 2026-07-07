@@ -11,6 +11,7 @@ import {
   type SidebarItem,
 } from "../ui";
 import { openPage } from "../router";
+import { EmojiText } from "../render/emoji";
 import { backend } from "../backend";
 import { doc, ensurePageLoaded, pageByName } from "../store";
 import { visibleBody } from "../render/block";
@@ -121,7 +122,7 @@ function PageItem(props: {
     <div class="rs-item">
       <div class="rs-item-head">
         <a class="rs-item-title" onClick={() => openPage(props.item.name, props.item.pageKind)}>
-          {props.item.name}
+          <EmojiText text={props.item.name} />
         </a>
         <button class="rs-close" onClick={props.onClose} title="Close">
           ✕

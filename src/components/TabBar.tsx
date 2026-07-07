@@ -121,7 +121,7 @@ export function TabBar(): JSX.Element {
                 <EmojiText text="📌" />
               </span>
             </Show>
-            <span class="tab-title">{tabTitle(tabRoute(t))}</span>
+            <span class="tab-title"><EmojiText text={tabTitle(tabRoute(t))} /></span>
             {/* The last tab can't be closed (closeTab keeps one), so hide its ✕. */}
             <Show when={tabs().length > 1}>
               <span

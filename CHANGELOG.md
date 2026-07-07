@@ -8,6 +8,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- **Crash (`SIGABRT`) when the sidebar, tabs, or switcher show a page whose name
+  contains a color emoji** ([#29](https://github.com/martinkoutecky/tine/issues/29)).
+  On Linux distros that harden libstdc++ (e.g. Fedora), WebKitGTK's Skia
+  color-font (COLRv1) glyph path aborts while painting a raw emoji. Tine already
+  renders emoji in block content as Twemoji SVG images to sidestep WebKitGTK's
+  emoji handling; the sidebar (favorites, recent, all-pages), tab titles, quick
+  switcher, and right-sidebar titles now go through that same path, so no color
+  glyph is ever handed to the font renderer.
+
 ## [0.4.4] - 2026-07-07
 
 ### Added

@@ -22,6 +22,28 @@ describe("emojiSplit", () => {
     expect(emojiSplit("")).toEqual([{ t: "text", v: "" }]);
     expect(emojiSplit("café — n-fold IP")).toEqual([{ t: "text", v: "café — n-fold IP" }]);
   });
+
+  // #29: raw color-emoji glyphs in chrome surfaces (sidebar favorites/all-pages,
+  // tabs, switcher, right sidebar) crash WebKitGTK's Skia COLRv1 path on hardened
+  // libstdc++. Those surfaces now route through EmojiText, which relies on
+  // emojiSplit peeling every emoji out to a Twemoji <img>. The star ⭐ (U+2B50) is
+  // the sidebar favorite marker AND lives in the BMP hint sub-range (not the astral
+  // 1F000+ range), so it's the easiest one to regress — guard it explicitly.
+  it("peels a BMP-range emoji (⭐ favorite marker) so it never paints as a font glyph", () => {
+    expect(emojiSplit("⭐ Favorites")).toEqual([
+      { t: "emoji", v: "⭐" },
+      { t: "text", v: " Favorites" },
+    ]);
+    expect(emojiSplit("⭐")).toEqual([{ t: "emoji", v: "⭐" }]);
+    expect(twemojiName("⭐")).toBe("2b50");
+  });
+
+  it("peels an emoji out of a page title (astral range)", () => {
+    expect(emojiSplit("📁 Projects")).toEqual([
+      { t: "emoji", v: "📁" },
+      { t: "text", v: " Projects" },
+    ]);
+  });
 });
 
 describe("twemojiName (Twemoji filename rule)", () => {

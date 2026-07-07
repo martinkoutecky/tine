@@ -3,6 +3,7 @@ import { openJournals, openPage, openPageInNewTab, openFile, openInNewTab, route
 import { openSwitcher, favorites, recentPages, openPageContextMenu, graphMeta } from "../ui";
 import { switchGraph, createNewGraph } from "../graph";
 import { allPages as allGraphPages, pageListLabel } from "../pages";
+import { EmojiText } from "../render/emoji";
 import { NamespaceTree } from "./Namespace";
 import type { PageKind } from "../types";
 
@@ -98,7 +99,10 @@ export function Sidebar(): JSX.Element {
                   }}
                   onContextMenu={(e) => openRowMenu(e, fav.name, fav.kind)}
                 >
-                  ⭐ {fav.name}
+                  {/* ⭐ + name via EmojiText: WebKitGTK's Skia COLRv1 path
+                      crashes painting a raw color-emoji glyph on hardened
+                      libstdc++ (#29); Twemoji <img> never touches the font. */}
+                  <EmojiText text={`⭐ ${fav.name}`} />
                 </div>
               )}
             </For>
@@ -122,7 +126,7 @@ export function Sidebar(): JSX.Element {
                   }}
                   onContextMenu={(e) => openRowMenu(e, r.name, r.kind)}
                 >
-                  {r.name.startsWith("hls__") ? r.name.slice(5) : r.name}
+                  <EmojiText text={r.name.startsWith("hls__") ? r.name.slice(5) : r.name} />
                 </div>
               )}
             </For>
@@ -157,7 +161,7 @@ export function Sidebar(): JSX.Element {
                   }}
                   onContextMenu={(e) => openRowMenu(e, p.name, "page")}
                 >
-                  {pageListLabel(p, allPages())}
+                  <EmojiText text={pageListLabel(p, allPages())} />
                 </div>
               )}
             </For>
