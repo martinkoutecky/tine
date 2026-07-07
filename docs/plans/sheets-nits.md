@@ -348,3 +348,52 @@ view switcher) AND the builder chip bar above the sheet face — builder
 edits membership, sheet edits content, side by side. (3) /Query (visual
 builder) then flows naturally into "make it a board" without leaving the
 block. Record as ADR (query-view unification).
+
+## N31 — copy/paste of grids is destructive: no structural clipboard  [ROOT-CAUSED — batch 8]
+Martin: selected a whole grid (Ctrl+A), pasted into a cell that already
+had a subgrid, expected TWO subgrids; got garbage. Then pasted between
+two lines inside a cell — more garbage (phantom subgrid columns, a stray
+`tine.view:: grid` landing on the "write intro" cell and turning it into
+a bogus childless grid host — seen on disk in tine-test; I restored §2
+of the Sheets guide, round-trip re-validated 17/17).
+ROOT CAUSE (two lossy paths, both confirmed in code):
+(a) sheet copy (`copySheetSelection`) serializes the selection as FLAT
+TSV of `cellText` = visibleBody joined with SPACES — subgrid structure,
+children, and properties are dropped; multi-line bodies break the TSV
+grammar. No structural payload exists, so no paste can ever rebuild a
+grid. (b) pasting outline-markdown INTO a cell editor goes through the
+outline-aware multi-line paste, which splits lines into sibling blocks
+AT ROW LEVEL — property lines land on whichever block the split makes,
+phantom cells appear as new columns.
+FIX DIRECTION (adopting Martin's expectation as the ruling): copy of a
+sheet selection carries a structural payload (the block subtree, same
+internal form as outline block copy) alongside TSV/HTML for external
+apps. Paste on a SELECTED cell with a grid payload inserts the grid as
+a CHILD HOST block of that cell (`tine.view:: grid` on the host, rows
+under it) — so a cell can host several grids side by side; paste in
+EDIT mode stays plain-TEXT-only (never the outline splitter inside a
+cell — that path must be gated off for cell editors).
+
+## N32 — outline children in a cell: unreachable + read-only  [ROOT-CAUSED — batch 8]
+Martin envisioned the recursive form — plain bullets inside a cell,
+controlled by "Show children as". They RENDER (SheetOutline nested
+lines) but: caret-Down after the last line selects the grid's bottom
+edge instead of entering the children; clicking a nested line does
+nothing. ROOT CAUSE: descent (selectTopRowSeamAfterEdit path) only
+targets sub-GRIDS; and SheetBlock only mounts an Editor when props.cell
+exists — nested outline lines have no cell, so they are read-only by
+construction. "Show children as table" over grid-shaped children (empty
+row bodies) shows nonsense — the lens is honest but the shape is wrong;
+needs either a conversion or a graceful empty-title rendering.
+FIX DIRECTION: descent from cell edit enters the first outline child in
+edit mode when children exist and aren't a sheet face; nested lines are
+click-to-edit like cells (mousedown entry, OG parity); Esc walks back to
+the host cell.
+
+## N33 — no way to CREATE children in a cell  [ROOT-CAUSED — batch 8, needs ruling]
+In cell edit, Enter commits (spec) — there is no affordance to create a
+child bullet. Proposed ruling (mine, Martin to veto): Alt+Enter in cell
+edit creates a child bullet under the cell and enters it (mirrors the
+descent ladder); right-click cell menu gains "Add child bullet". With
+N31's paste-as-child-host and N28's /Grid-in-a-cell, this completes the
+recursive form: type, Alt+Enter for sub-bullets, /grid for sub-grids.
