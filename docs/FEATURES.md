@@ -157,6 +157,41 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   inputs) map onto the same engine; any unsupported part is **flagged** in the result
   rather than silently dropped or wrongly answered.
 
+## Sheets (2-D grids)
+
+Tine's first deliberately beyond-Logseq feature: render a block's children as a
+**recursive, editable, TreeSheets-style grid** — while everything round-trips to
+plain Logseq markdown (and org). Geometry is the outline shape; config is a few
+harmless `tine.*` properties (`tine.view:: grid`, `tine.header:: true`,
+`tine.col-widths:: 0=140`). Logseq renders the same file as an ordinary nested
+outline — no sidecars, no coordinates, no lock-in.
+
+- **Positional grid** — a block with `tine.view:: grid` shows its children as
+  rows and grandchildren as cells (sibling order = column). Ragged rows render
+  holes; empty cells are just empty bullets. Optional header row
+  (`tine.header:: true`).
+- **Cells are real blocks** — click into a cell to edit it exactly like any
+  block (links, refs, tags all live); nested children render inside the cell,
+  and a cell can itself be a grid (recursion).
+- **Full spreadsheet keyboard** — 2-D arrow navigation with a
+  selection↔edit ladder (`Enter`/`Esc`), `Tab` cell-walk, type-to-overtype,
+  `Shift+arrow` range select (plus row/column/grid selection),
+  `Ctrl+arrow` content moves, `Ctrl+D`/`Ctrl+R` fill down/right.
+- **Seams** — the boundary between rows/columns is a first-class selection
+  target (TreeSheets-style): arrow onto a seam, then **type to insert a
+  row/column right there**; `Backspace`/`Delete` on a seam removes the adjacent
+  row/column. Drag a column ruling to resize (double-click resets).
+- **Clipboard interop** — copy a range as TSV (+ an HTML table, so it pastes
+  into real spreadsheets); paste TSV/CSV to fill and grow the grid; paste
+  indented text to build nested structure.
+- **Safety** — every grid gesture is a single undo step, and grid pages are
+  byte-exact round-trip tested (md and org).
+
+Coming next on this front: field-keyed tables (columns from task state /
+priority / dates / properties), a query-driven task kanban, grouping
+(Hierarchify/Flatten), and column aggregates — see the spec in
+`docs/breadth-grid-spec.md`.
+
 ## Tasks, journals & dates
 
 - `TODO/DOING/DONE/NOW/LATER/WAITING/CANCELED`, two configurable workflows,

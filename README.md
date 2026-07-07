@@ -254,6 +254,12 @@ file a good report, are in **[CONTRIBUTING.md](CONTRIBUTING.md)**.
 
 ## Roadmap & non-goals
 
+**New — Sheets (2-D grids):** render a block's children as a recursive, editable,
+TreeSheets-style grid with a full spreadsheet keyboard — while everything stays plain
+Logseq markdown/org (see [FEATURES.md](docs/FEATURES.md#sheets-2-d-grids)). Field-keyed
+tables, a query-driven task kanban, grouping, and aggregates are in progress on the same
+engine.
+
 **Planned / under evaluation:** graph view, configurable typographic auto-replace, and **broader
 coverage of advanced Datalog queries** (a scoped subset works today — see above).
 
