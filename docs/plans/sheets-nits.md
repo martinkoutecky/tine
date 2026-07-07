@@ -1,16 +1,10 @@
 # Sheets — Martin's nit list (Jul 7 2026) + triage
 
-**Resume state:** batch 1 (N1) LANDED + verified (gates green, table
-sticky-left probe-proven in a live viewport — codex's fullPage screenshot
-artifact was NOT a real bug — e2e 30/30 twice; commit f7ea7ea, deployed to ~/research/tine-sheets).
-Batch 2 DISPATCHED to codex
-(`subagent-tasks/sheets-nits-batch2-interaction.md`) = N2 (drag ghost +
-grabbing cursor), N3 (Esc walks up from nested sub-grid to the containing
-cell), N4 (cell editor hides `tine.*`/hidden props — splitProps pattern),
-N5 guard (toast when a query-board move ejects the card from the refreshed
-results). Samples already fixed. Martin approved the canvas proposal
-(breakout + sticky edges + zoom = the canvas; no infinite-pan widget) and
-re-tests after the fixes → expect a SECOND nit batch.
+**Resume state:** batch 1 (N1 layout) SHIPPED `f7ea7ea`; batch 2 (N2–N5)
+SHIPPED `9e90aad` (codex; orchestrator restored the properties.test.ts
+coverage codex had deleted); both deployed to ~/research/tine-sheets, e2e
+30/30. Martin's SECOND nit batch (Jul 7, screenshots) = N7–N9 below —
+batch 3 spec at `subagent-tasks/sheets-nits-batch3-footer-layout.md`.
 
 Captured verbatim-in-spirit from his post-Phase-7 testing; root causes
 investigated before triage. Batch polish pass runs against this list.
@@ -40,24 +34,24 @@ Fix (batch 1): full-width breakout container + natural width + in-flow
 hover footer + sticky header/first column when scrolling. The bigger
 "canvas" question → PROPOSED section below.
 
-## N2 — kanban drag has no ghost; cursor becomes a caret  [batch 2]
+## N2 — kanban drag has no ghost; cursor becomes a caret  [FIXED — batch 2, 9e90aad]
 The dragged card only shades in place; nothing follows the pointer, and
 the text-caret cursor confuses. Fix: floating drag ghost (fixed-position
 clone, pointer-events:none), `cursor: grabbing` during drag,
 selection/caret suppressed.
 
-## N3 — Esc from a nested sub-grid should walk UP the ladder  [batch 2]
+## N3 — Esc from a nested sub-grid should walk UP the ladder  [FIXED — batch 2, 9e90aad]
 Esc inside the inner grid should land on the OUTER cell containing the
 sub-grid (Esc walks up, Enter walks down — ADR 0025); today it exits
 toward the outline.
 
-## N4 — Enter on a sub-grid cell reveals `tine.view:: grid`  [batch 2]
+## N4 — Enter on a sub-grid cell reveals `tine.view:: grid`  [FIXED — batch 2, 9e90aad; Esc now CANCELS a cell edit (spreadsheet parity), commit paths splice hidden lines back]
 The cell editor shows the block's config property lines. In a sheet cell,
 the editor should present only the visible body and splice the hidden +
 `tine.*` lines back on commit (same split/join the overtype path already
 uses).
 
-## N5 — kanban cards disappear when moved to NOW  [ROOT-CAUSED; guard in batch 2]
+## N5 — kanban cards disappear when moved to NOW  [FIXED — samples + batch-2 toast guard, 9e90aad]
 Not a store bug: the demo board's query was `(todo TODO DOING DONE)` while
 the workflow is LATER/NOW — the board offers workflow columns (LATER, NOW,
 DONE), so moving a card into NOW writes a marker the query doesn't match
@@ -70,6 +64,41 @@ query's results" — honest, covers any filtered board.
 The explanatory note bullets were CHILDREN of the table block, so they
 rendered as rows (no points → ⚠ error formula cells). Children = rows is
 the contract; the notes moved out to sibling blocks (also §6's try-it row).
+
+## N7 — aggregate select menu collapses before you can pick  [batch 3]
+Clicking Σ opens the native `<select>`, but picking an option is
+impossible — the menu collapses immediately. Root cause: the footer row
+only renders while `hovering()` (SheetGrid.tsx:317); the native select
+popup is outside the grid element, so moving the pointer onto it fires
+`pointerleave` → hovering=false → the footer row (and the select) UNMOUNTS
+→ popup dies. Structural fix = N9's click-to-pin design (the row no longer
+depends on hover); belt-and-braces: keep the row mounted while any footer
+cell is editing.
+
+## N8 — breakout expands only right (off-screen) + sheets jump left on hover  [batch 3]
+The wide kanban/table extends past the RIGHT window edge with no left
+shift; hovering §6/§9 makes them jump left to the correct breakout
+position. So the initial mount-time measure() computes a wrong/zero
+`--sheet-breakout-shift`, and the hover-mounted footer row triggers the
+ResizeObserver → re-measure → correct shift → visible jump. Also batch 1
+made breakout width ALWAYS ≥ the full sidebar-to-sidebar span
+(`max(normalWidth, span)`), so a modestly-wide sheet (§9) gets a
+full-span container with dead space. Martin's ruling: (a) breakout sheets
+are CENTERED between the sidebars in the default view, (b) layout must
+NEVER change on hover. Fix: width = min(natural, span), shift computed to
+center; find + fix the deterministic reason the mount-time measure is
+wrong (don't paper over); N9 removes hover-driven geometry entirely.
+
+## N9 — in-flow hover Σ row makes the whole page jump  [batch 3 — Martin's design, agreed]
+The batch-1 in-flow footer row appears on hover → container grows → all
+content below shifts. Martin's proposal (adopted): no configured
+aggregates → NO row on hover; instead a single small Σ affordance floats
+at the sheet's bottom-right corner (absolutely positioned next to/over the
+border — zero layout impact), shown on hover. CLICKING it (not hovering)
+pins the aggregate row open — in-flow, one deliberate layout change — and
+it stays until the Σ affordance is clicked again (per-grid session-only UI
+state, not persisted). Configured aggregates keep the always-visible row
+(no jump — it is always present). This also structurally fixes N7.
 
 ## PROPOSED — the "canvas" question (Martin asked for thinking, not just fixes)
 Recommendation, three layers (details in the reply that accompanied this
