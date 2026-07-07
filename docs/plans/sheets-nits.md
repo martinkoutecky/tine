@@ -4,7 +4,15 @@
 SHIPPED `9e90aad` (codex; orchestrator restored the properties.test.ts
 coverage codex had deleted); both deployed to ~/research/tine-sheets, e2e
 30/30. Martin's SECOND nit batch (Jul 7, screenshots) = N7–N9 below —
-batch 3 spec at `subagent-tasks/sheets-nits-batch3-footer-layout.md`.
+batch 3 (N7–N9) SHIPPED `02eb21e` (codex + two orchestrator fixes: centering
+had to be main-pane-based not parent-based — parent-center drifts right by
+half the indent and overflows the pane at narrow widths — and the
+mount-time mismeasure needed a bounded verify loop, not just delayed
+re-measures; probe passes 3/3). Known limitation: nested sub-grids have
+no corner Σ, so sub-grid aggregates are currently unreachable (tolerable;
+revisit on request). NEXT = master→sheets merge (Martin green-lit), then
+batch 4 (N10–N14, scoped down per Martin: N13 = mouse drag + click-select
+only, he re-reviews after).
 
 Captured verbatim-in-spirit from his post-Phase-7 testing; root causes
 investigated before triage. Batch polish pass runs against this list.
@@ -65,7 +73,7 @@ The explanatory note bullets were CHILDREN of the table block, so they
 rendered as rows (no points → ⚠ error formula cells). Children = rows is
 the contract; the notes moved out to sibling blocks (also §6's try-it row).
 
-## N7 — aggregate select menu collapses before you can pick  [batch 3]
+## N7 — aggregate select menu collapses before you can pick  [FIXED — batch 3, 02eb21e]
 Clicking Σ opens the native `<select>`, but picking an option is
 impossible — the menu collapses immediately. Root cause: the footer row
 only renders while `hovering()` (SheetGrid.tsx:317); the native select
@@ -75,7 +83,7 @@ popup is outside the grid element, so moving the pointer onto it fires
 depends on hover); belt-and-braces: keep the row mounted while any footer
 cell is editing.
 
-## N8 — breakout expands only right (off-screen) + sheets jump left on hover  [batch 3]
+## N8 — breakout expands only right (off-screen) + sheets jump left on hover  [FIXED — batch 3, 02eb21e]
 The wide kanban/table extends past the RIGHT window edge with no left
 shift; hovering §6/§9 makes them jump left to the correct breakout
 position. So the initial mount-time measure() computes a wrong/zero
@@ -89,7 +97,7 @@ NEVER change on hover. Fix: width = min(natural, span), shift computed to
 center; find + fix the deterministic reason the mount-time measure is
 wrong (don't paper over); N9 removes hover-driven geometry entirely.
 
-## N9 — in-flow hover Σ row makes the whole page jump  [batch 3 — Martin's design, agreed]
+## N9 — in-flow hover Σ row makes the whole page jump  [FIXED — batch 3, 02eb21e — Martin's corner-Σ design]
 The batch-1 in-flow footer row appears on hover → container grows → all
 content below shifts. Martin's proposal (adopted): no configured
 aggregates → NO row on hover; instead a single small Σ affordance floats
