@@ -2,6 +2,7 @@ import { facetsOf } from "../render/facets";
 import type { Format } from "../render/ast";
 import { isAggregateFn, type AggregateFn } from "./aggregate";
 import type { FieldId } from "./fields";
+import { decodeFormulaExpr } from "./formula";
 
 export type SheetView = "table" | "grid" | "board";
 export type FieldType =
@@ -26,6 +27,7 @@ export interface SheetConfig {
   colWidths: ReadonlyMap<number, number>;
   colAggregates: ReadonlyMap<string, AggregateFn>;
   fields: readonly FieldSpec[];
+  filter: string | null;
 }
 
 const VIEWS = new Set<SheetView>(["table", "grid", "board"]);
@@ -150,6 +152,7 @@ export function sheetConfig(props: readonly [string, string][]): SheetConfig {
   let colWidths: ReadonlyMap<number, number> = new Map();
   let colAggregates: ReadonlyMap<string, AggregateFn> = new Map();
   let fields: readonly FieldSpec[] = [];
+  let filter: string | null = null;
 
   for (const [rawKey, rawValue] of props) {
     const key = rawKey.trim().toLowerCase();
@@ -167,10 +170,12 @@ export function sheetConfig(props: readonly [string, string][]): SheetConfig {
       colAggregates = parseColAggregates(value);
     } else if (key === "tine.fields") {
       fields = parseFields(value);
+    } else if (key === "tine.filter") {
+      filter = value ? decodeFormulaExpr(value) : null;
     }
   }
 
-  return { view, groupBy, header, colWidths, colAggregates, fields };
+  return { view, groupBy, header, colWidths, colAggregates, fields, filter };
 }
 
 /** Sheet config straight from a block's raw text, through the ONE block-property

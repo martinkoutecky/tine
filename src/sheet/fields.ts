@@ -10,6 +10,7 @@ import type { Inline } from "../render/ast";
 import { rebulletedSourceByteToRawByte, utf8ByteLength, utf8ByteToUtf16Offset } from "../render/spans";
 import { tagRef } from "../tags";
 import { parseIsoDateLike } from "./typed";
+import { evaluateFormulaForRow, formulaValueText } from "./formulaEval";
 import type { BlockDto } from "../types";
 
 export type FieldId =
@@ -50,6 +51,10 @@ function facetsForBlock(id: string): Facets | null {
 }
 
 type GroupKeyInput = string | { id: string; page?: string; dto?: BlockDto };
+interface GroupKeysOptions {
+  formulas?: ReadonlyMap<string, string>;
+  now?: Date;
+}
 
 function facetsForInput(input: GroupKeyInput): Facets | null {
   const id = typeof input === "string" ? input : input.id;
@@ -328,8 +333,22 @@ export function groupKeyForBlock(id: string, field: FieldId): string | null {
   return v.text || null;
 }
 
-export function groupKeysForBlock(input: GroupKeyInput, field: FieldId): (string | null)[] {
-  if (isFormulaField(field)) return [null];
+export function groupKeysForBlock(input: GroupKeyInput, field: FieldId, opts: GroupKeysOptions = {}): (string | null)[] {
+  if (isFormulaField(field)) {
+    const formulas = opts.formulas;
+    if (!formulas) return [null];
+    const id = typeof input === "string" ? input : input.id;
+    const page = typeof input === "string" ? doc.byId[id]?.page ?? "" : input.page ?? doc.byId[id]?.page ?? "";
+    const value = evaluateFormulaForRow(
+      { id, page, dto: typeof input === "string" ? undefined : input.dto },
+      field.slice("formula:".length),
+      formulas,
+      opts.now ?? new Date()
+    );
+    if (value.kind === "error") return ["(error)"];
+    if (value.kind === "null") return [null];
+    return [formulaValueText(value) || null];
+  }
   if (field === "tags") {
     const f = facetsForInput(input);
     return f && f.tags.length > 0 ? f.tags : [null];

@@ -438,8 +438,28 @@ Plan: [sheets-phase7-plan.md](sheets-phase7-plan.md); DSL decided in ADR 0028.
   already converts it to an error value. E2E ALL PASS; deployed to
   `~/research/tine-sheets`; tine-test gained a §9 formulas section
   (round-trip re-validated).
-- **7c NEXT** — formula group-by + `tine.filter::` + the validating
-  formula editor; 7d docs/samples.
+- **7c DONE (Jul 7)** — formula axes + filter + editor:
+  `tine.group-by:: formula.<name>` (dot form → `formula:` field id;
+  boolean buckets true,false; `(none)`/`(error)` last; moves REFUSED on
+  formula axes — drag affordance off + both paths gated);
+  `tine.filter::` on tables AND boards via a shared
+  `createFormulaFilterMemo` (fail-OPEN honesty rule: parse error or any
+  non-boolean/error row disables filtering entirely + a
+  `sheet-filter-error` chip carries the message; aggregates/counts use
+  filtered rows); root-mounted `FormulaEditor` (DatePicker pattern):
+  add/edit formula + filter mode, LIVE parse validation with caret
+  marker, field/formula/stdlib chips, save disabled until valid, one
+  property write via the schema-home rule, read-only gated.
+  Verification: gates green (539+214, tsc, cargo); browser probe (menu →
+  editor → live error + disabled save → valid filter save → rows 3→2);
+  e2e extended to **30 checks ALL PASS** incl. real-app add-formula
+  (property on disk, computed value NOT on disk, column renders).
+  Deployed to `~/research/tine-sheets`; tine-test gained the 7c try-it
+  note + a §10 filtered-table section (round-trip re-validated; NOTE:
+  Martin is actively editing that graph while testing — always re-read
+  before editing).
+- **7d NEXT** — docs sync (FEATURES/README/CHANGELOG), onboarding
+  template + website demo, screenshots, org sample parity for formulas.
 
 **Phase 6 leftovers for a later pass** (deliberate): list chip editor
 (comma-text editing works); enum types are hand-edit-only in the header

@@ -139,6 +139,11 @@ describe("sheetConfig", () => {
     ]);
   });
 
+  it("reads tine.filter as a decoded formula expression", () => {
+    const cfg = sheetConfig([["tine.filter", String.raw`"( (x)" + "\#tag"`]]);
+    expect(cfg.filter).toBe('"((x)" + "#tag"');
+  });
+
   it("serializes field schemas in schema order and filters unsafe entries", () => {
     expect(
       serializeFields([

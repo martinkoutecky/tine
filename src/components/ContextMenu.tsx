@@ -13,6 +13,7 @@ import {
   openPageProps,
   openExportModal,
   openPdfExport,
+  openFormulaEditor,
   type ContextMenuAction,
 } from "../ui";
 import { openPage, openPageInNewTab, openPageAtBlock, openJournals, route } from "../router";
@@ -105,6 +106,12 @@ export function ContextMenu(): JSX.Element {
                   surface={(m() as { surface: "grid" | "table" | "board" }).surface}
                   rowSource={(m() as { rowSource: "children" | "query" }).rowSource}
                   groupBy={(m() as { groupBy?: string | null }).groupBy}
+                  schemaPage={(m() as { schemaPage?: string }).schemaPage}
+                  fields={(m() as { fields?: readonly string[] }).fields}
+                  formulas={(m() as { formulas?: readonly [string, string][] }).formulas}
+                  filter={(m() as { filter?: string | null }).filter}
+                  x={m().x}
+                  y={m().y}
                   close={close}
                 />
               </Match>
@@ -277,9 +284,17 @@ function SheetMenu(props: {
   surface: "grid" | "table" | "board";
   rowSource: "children" | "query";
   groupBy?: string | null;
+  schemaPage?: string;
+  fields?: readonly string[];
+  formulas?: readonly [string, string][];
+  filter?: string | null;
+  x: number;
+  y: number;
   close: () => void;
 }): JSX.Element {
   const fields = () => sheetFields(props.ownerId);
+  const formulaFields = () => props.fields ?? fields().map(formulaReferenceName).filter((v): v is string => !!v);
+  const formulaActions = () => props.surface === "table" || props.surface === "board";
   const doHierarchify = (field: FieldId) => {
     hierarchify(props.ownerId, field);
     props.close();
@@ -291,7 +306,47 @@ function SheetMenu(props: {
   const boardField = () => (props.groupBy && isFieldId(props.groupBy) ? props.groupBy : null);
 
   return (
-    <Show when={props.rowSource === "children"} fallback={<div class="ctx-item ctx-disabled">No structural actions</div>}>
+    <>
+      <Show when={formulaActions()}>
+        <div
+          class="ctx-item"
+          onClick={() => {
+            openFormulaEditor({
+              mode: "add",
+              ownerId: props.ownerId,
+              schemaPage: props.schemaPage,
+              x: props.x,
+              y: props.y,
+              expr: "",
+              formulas: props.formulas ?? [],
+              fields: formulaFields(),
+            });
+            props.close();
+          }}
+        >
+          Add formula…
+        </div>
+        <div
+          class="ctx-item"
+          onClick={() => {
+            openFormulaEditor({
+              mode: "filter",
+              ownerId: props.ownerId,
+              schemaPage: props.schemaPage,
+              x: props.x,
+              y: props.y,
+              expr: props.filter ?? "",
+              formulas: props.formulas ?? [],
+              fields: formulaFields(),
+            });
+            props.close();
+          }}
+        >
+          Edit filter…
+        </div>
+        <div class="ctx-sep" />
+      </Show>
+      <Show when={props.rowSource === "children"} fallback={<div class="ctx-item ctx-disabled">No structural actions</div>}>
       <Show when={props.surface === "grid"}>
         <div
           class="ctx-item"
@@ -337,8 +392,15 @@ function SheetMenu(props: {
       >
         Flatten
       </div>
-    </Show>
+      </Show>
+    </>
   );
+}
+
+function formulaReferenceName(field: FieldId): string | null {
+  if (field.startsWith("formula:")) return null;
+  if (field.startsWith("prop:")) return field.slice(5);
+  return field;
 }
 
 // Right-click menu for an INLINE block ref `((uuid))` — acts on the referenced

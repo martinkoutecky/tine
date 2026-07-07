@@ -156,6 +156,74 @@ describe("SheetBoard", () => {
     dispose();
   });
 
+  it("groups by formula values and refuses Ctrl+Arrow moves on the derived axis", () => {
+    setDoc({
+      byId: {
+        board: node(
+          "board",
+          "Board\ntine.view:: board\ntine.group-by:: formula.big\ntine.formula.big:: points > 2",
+          null,
+          ["high", "low"]
+        ),
+        high: node("high", "High\npoints:: 3", "board"),
+        low: node("low", "Low\npoints:: 1", "board"),
+      },
+      pages: [page(["board"])],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    const { root, dispose } = mount(() => <Block id="board" />);
+    const before = doc.byId.high.raw;
+
+    expect([...root.querySelectorAll(".sheet-board-header")].map((h) => h.textContent?.trim())).toEqual([
+      "true1",
+      "false1",
+    ]);
+    setCellSel({ gridId: "board", row: 0, col: 0 });
+    expect(handleCellSelectionKey(keydown("ArrowRight", { ctrlKey: true }))).toBe(true);
+    expect(doc.byId.high.raw).toBe(before);
+
+    dispose();
+  });
+
+  it("applies board filters before grouping and shows all cards when a filter is broken", () => {
+    setDoc({
+      byId: {
+        board: node(
+          "board",
+          "Board\ntine.view:: board\ntine.group-by:: state\ntine.filter:: points > 2",
+          null,
+          ["high", "low"]
+        ),
+        high: node("high", "TODO High\npoints:: 3", "board"),
+        low: node("low", "DOING Low\npoints:: 1", "board"),
+      },
+      pages: [page(["board"])],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    const { root, dispose } = mount(() => <Block id="board" />);
+
+    expect([...root.querySelectorAll(".sheet-board-header")].map((h) => h.textContent?.trim())).toEqual([
+      "TODO1",
+      "DOING0",
+      "DONE0",
+    ]);
+    dispose();
+
+    setDoc("byId", "board", "raw", "Board\ntine.view:: board\ntine.group-by:: state\ntine.filter:: points >");
+    const mounted = mount(() => <Block id="board" />);
+    expect([...mounted.root.querySelectorAll(".sheet-board-header")].map((h) => h.textContent?.trim())).toEqual([
+      "TODO1",
+      "DOING1",
+      "DONE0",
+    ]);
+    const chip = mounted.root.querySelector(".sheet-filter-error") as HTMLElement | null;
+    expect(chip?.getAttribute("title")).toContain("Filter parse error");
+
+    mounted.dispose();
+  });
+
   it("dragging a card to another column writes only that card marker", () => {
     loadBoardDoc();
     const { root, dispose } = mount(() => <Block id="board" />);

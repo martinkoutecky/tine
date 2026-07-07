@@ -30,6 +30,19 @@ interface FormulaResultsOptions {
   onEvaluate?: () => void;
 }
 
+interface FormulaFilterOptions<T extends FormulaEvalRow> {
+  rows: Accessor<readonly T[]>;
+  formulas: Accessor<ReadonlyMap<string, string>>;
+  filter: Accessor<string | null>;
+  now?: Accessor<Date>;
+  ownerId?: string;
+}
+
+export interface FormulaFilterState<T extends FormulaEvalRow = FormulaEvalRow> {
+  rows: readonly T[];
+  error: string | null;
+}
+
 const BUILTIN_FIELD_NAMES = new Set(["state", "priority", "scheduled", "deadline", "tags", "page"]);
 const DEFAULT_EVAL_WARN_THRESHOLD = 10_000;
 const parseCache = new Map<string, ParseResult>();
@@ -120,6 +133,20 @@ function formulaAstResolver(formulas: ReadonlyMap<string, string>): (name: strin
   };
 }
 
+function evaluateAstForRow(
+  row: FormulaEvalRow,
+  ast: Ast,
+  formulas: ReadonlyMap<string, string>,
+  now: Date
+): FormulaValue {
+  const astFor = formulaAstResolver(formulas);
+  return evaluate(ast, {
+    field: (name) => fieldValueToFormulaValue(fieldIdForName(name), readFormulaRowField(row, fieldIdForName(name))),
+    formulaAst: astFor,
+    now,
+  });
+}
+
 export function evaluateFormulaForRow(
   row: FormulaEvalRow,
   formulaName: string,
@@ -135,11 +162,14 @@ export function evaluateFormulaForRow(
   }
   if (!ast) return errorValue(`Unknown formula ${formulaName}`);
 
-  return evaluate(ast, {
-    field: (name) => fieldValueToFormulaValue(fieldIdForName(name), readFormulaRowField(row, fieldIdForName(name))),
-    formulaAst: astFor,
-    now,
-  });
+  return evaluateAstForRow(row, ast, formulas, now);
+}
+
+function observeFormulaRow(row: FormulaEvalRow): void {
+  if (doc.byId[row.id]) {
+    // Track the same fine-grained raw dependency ordinary sheet cells read.
+    void facetsOf(doc.byId[row.id].raw, formatForBlock(row.id));
+  }
 }
 
 export function createFormulaResultsMemo(opts: FormulaResultsOptions): Accessor<ReadonlyMap<string, FormulaValue>> {
@@ -154,10 +184,7 @@ export function createFormulaResultsMemo(opts: FormulaResultsOptions): Accessor<
     let evaluations = 0;
 
     for (const row of rows) {
-      if (doc.byId[row.id]) {
-        // Track the same fine-grained raw dependency ordinary sheet cells read.
-        void facetsOf(doc.byId[row.id].raw, formatForBlock(row.id));
-      }
+      observeFormulaRow(row);
       for (const name of names) {
         evaluations += 1;
         opts.onEvaluate?.();
@@ -173,6 +200,44 @@ export function createFormulaResultsMemo(opts: FormulaResultsOptions): Accessor<
       );
     }
     return out;
+  });
+}
+
+export function createFormulaFilterMemo<T extends FormulaEvalRow>(
+  opts: FormulaFilterOptions<T>
+): Accessor<FormulaFilterState<T>> {
+  return createMemo(() => {
+    dataRev();
+    const rows = opts.rows();
+    const expr = opts.filter()?.trim() ?? "";
+    if (!expr) return { rows, error: null };
+
+    const parsed = parseCached(expr);
+    if (!parsed.ok) {
+      return {
+        rows,
+        error: `Filter parse error at ${parsed.error.offset}: ${parsed.error.message}`,
+      };
+    }
+
+    const formulas = opts.formulas();
+    const now = opts.now?.() ?? new Date();
+    const kept: T[] = [];
+    for (const row of rows) {
+      observeFormulaRow(row);
+      const value = evaluateAstForRow(row, parsed.ast, formulas, now);
+      if (value.kind === "boolean") {
+        if (value.value) kept.push(row);
+        continue;
+      }
+      const detail = value.kind === "error" ? value.message : `returned ${value.kind}`;
+      return {
+        rows,
+        error: `Filter disabled${opts.ownerId ? ` for ${opts.ownerId}` : ""}: ${detail}`,
+      };
+    }
+
+    return { rows: kept, error: null };
   });
 }
 

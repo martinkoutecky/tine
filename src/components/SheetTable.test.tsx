@@ -639,6 +639,90 @@ describe("SheetTable", () => {
     dispose();
   });
 
+  it("filters table rows before sorting and aggregates", () => {
+    setDoc({
+      byId: {
+        table: node(
+          "table",
+          "Table\ntine.view:: table\ntine.fields:: points=number\ntine.filter:: points > 2\ntine.col-aggregates:: prop:points=sum",
+          null,
+          ["r1", "r2", "r3"]
+        ),
+        r1: node("r1", "One\npoints:: 1", "table"),
+        r2: node("r2", "Three\npoints:: 3", "table"),
+        r3: node("r3", "Five\npoints:: 5", "table"),
+      },
+      pages: [page(["table"])],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    const { root, dispose } = mount(() => <Block id="table" />);
+
+    expect([...root.querySelectorAll(".sheet-title-cell .sheet-cell-body")].map((c) => c.textContent?.trim())).toEqual([
+      "Three",
+      "Five",
+    ]);
+    expect([...root.querySelectorAll(".sheet-aggregate-value")].map((el) => el.textContent?.trim())).toContain("8");
+
+    dispose();
+  });
+
+  it("disables filtering and shows a warning chip on parse errors", () => {
+    setDoc({
+      byId: {
+        table: node(
+          "table",
+          "Table\ntine.view:: table\ntine.fields:: points=number\ntine.filter:: points >",
+          null,
+          ["r1", "r2"]
+        ),
+        r1: node("r1", "One\npoints:: 1", "table"),
+        r2: node("r2", "Three\npoints:: 3", "table"),
+      },
+      pages: [page(["table"])],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    const { root, dispose } = mount(() => <Block id="table" />);
+
+    expect([...root.querySelectorAll(".sheet-title-cell .sheet-cell-body")].map((c) => c.textContent?.trim())).toEqual([
+      "One",
+      "Three",
+    ]);
+    const chip = root.querySelector(".sheet-filter-error") as HTMLElement | null;
+    expect(chip?.getAttribute("title")).toContain("Filter parse error");
+
+    dispose();
+  });
+
+  it("disables filtering and shows a warning chip on non-boolean filter results", () => {
+    setDoc({
+      byId: {
+        table: node(
+          "table",
+          "Table\ntine.view:: table\ntine.fields:: points=number\ntine.filter:: points * 2",
+          null,
+          ["r1", "r2"]
+        ),
+        r1: node("r1", "One\npoints:: 1", "table"),
+        r2: node("r2", "Three\npoints:: 3", "table"),
+      },
+      pages: [page(["table"])],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    const { root, dispose } = mount(() => <Block id="table" />);
+
+    expect([...root.querySelectorAll(".sheet-title-cell .sheet-cell-body")].map((c) => c.textContent?.trim())).toEqual([
+      "One",
+      "Three",
+    ]);
+    const chip = root.querySelector(".sheet-filter-error") as HTMLElement | null;
+    expect(chip?.getAttribute("title")).toContain("returned number");
+
+    dispose();
+  });
+
   it("renders computed formula columns as read-only typed cells with sort, aggregate, and remove", () => {
     setDoc({
       byId: {
@@ -697,7 +781,10 @@ describe("SheetTable", () => {
     ]);
 
     contextMenu(totalHeader!);
-    expect([...document.querySelectorAll(".ctx-item")].map((el) => el.textContent?.trim())).toEqual(["Remove formula"]);
+    expect([...document.querySelectorAll(".ctx-item")].map((el) => el.textContent?.trim())).toEqual([
+      "Edit formula…",
+      "Remove formula",
+    ]);
     clickMenuItem("Remove formula");
     expect(blockProperty("table", "tine.formula.total")).toBeNull();
     expect(doc.byId.table.raw).not.toContain("tine.formula.total::");

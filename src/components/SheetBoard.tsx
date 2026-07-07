@@ -2,7 +2,7 @@ import { For, Show, createMemo, createResource, createSignal, onCleanup, onMount
 import { backend } from "../backend";
 import { doc, ensurePageLoaded, formatForBlock, formatForPage, pageByName, readPageProperty } from "../store";
 import { facetsFromDto, facetsOf, type Facets } from "../render/facets";
-import { visibleBody } from "../render/block";
+import { pageProperties, visibleBody, isRenderHiddenProp } from "../render/block";
 import { InlineText } from "../render/inline";
 import { editingId, editingOwner } from "../editorController";
 import { SheetCellContext, type SheetCellCtx } from "../sheet/context";
@@ -16,14 +16,18 @@ import {
   type CellSel,
 } from "../sheet/selection";
 import {
+  fieldIdsForBlocks,
   groupKeysForBlock,
   isFieldId,
+  isFormulaField,
   readField,
   writeTagDelta,
   writeField,
   type FieldId,
 } from "../sheet/fields";
 import { parseFields, sheetConfig, type FieldSpec } from "../sheet/config";
+import { formulasOf, mergeFormulas } from "../sheet/formulaFields";
+import { createFormulaFilterMemo } from "../sheet/formulaEval";
 import { MARKERS } from "../markers";
 import { openSheetCellContextMenu, openSheetContextMenu, workflow } from "../ui";
 import { blockBackgroundColor } from "../blockColors";
@@ -53,7 +57,8 @@ export function SheetBoard(props: {
 }): JSX.Element {
   const groupBy = createMemo<FieldId>(() => {
     const raw = props.groupBy || "state";
-    return isFieldId(raw) ? raw : "state";
+    const normalized = raw.startsWith("formula.") ? `formula:${raw.slice("formula.".length)}` : raw;
+    return isFieldId(normalized) ? normalized : "state";
   });
   const [drag, setDrag] = createSignal<{ id: string; col: number; row: number; overCol: number | null } | null>(null);
   const config = createMemo(() => {
@@ -65,6 +70,16 @@ export function SheetBoard(props: {
     if (own.length > 0) return own;
     return props.schemaPage ? parseFields(readPageProperty(props.schemaPage, "tine.fields") ?? "") : [];
   });
+  const pageFormulas = createMemo<ReadonlyMap<string, string>>(() => {
+    if (!props.schemaPage) return new Map();
+    const page = pageByName(props.schemaPage);
+    return page ? formulasOf(pageProperties(page.preBlock, page.format)) : new Map();
+  });
+  const blockFormulas = createMemo<ReadonlyMap<string, string>>(() => {
+    const owner = doc.byId[props.ownerId];
+    return owner ? formulasOf(facetsOf(owner.raw, formatForBlock(props.ownerId)).properties) : new Map();
+  });
+  const formulas = createMemo(() => mergeFormulas(pageFormulas(), blockFormulas()));
 
   const queryPages = createMemo(() => {
     const map = new Map<string, RefGroup>();
@@ -86,7 +101,7 @@ export function SheetBoard(props: {
   );
   void pagesReady;
 
-  const rows = createMemo<RowRecord[]>(() => {
+  const allRows = createMemo<RowRecord[]>(() => {
     if (props.rowSource === "children") {
       return (doc.byId[props.ownerId]?.children ?? []).map((id) => ({
         id,
@@ -95,9 +110,33 @@ export function SheetBoard(props: {
     }
     return (props.groups ?? []).flatMap((g) => g.blocks.map((b) => ({ id: b.id, page: g.page, dto: b })));
   });
+  const filterState = createFormulaFilterMemo({
+    rows: allRows,
+    formulas,
+    filter: () => config().filter,
+    ownerId: props.ownerId,
+  });
+  const rows = createMemo<RowRecord[]>(() => [...filterState().rows]);
+  const filterError = () => filterState().error;
 
-  const columns = createMemo<BoardColumn[]>(() => buildColumns(rows(), groupBy(), schemaFields()));
+  const columns = createMemo<BoardColumn[]>(() => {
+    const now = new Date();
+    return buildColumns(rows(), groupBy(), schemaFields(), { formulas: formulas(), now });
+  });
   const maxRows = createMemo(() => Math.max(1, ...columns().map((c) => c.rows.length)));
+  const formulaHintFields = createMemo(() => {
+    const observed = observedFieldsForRows(rows(), props.rowSource === "query");
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const field of [...schemaFields().map((s) => s.field), ...observed, groupBy()]) {
+      const name = formulaReferenceName(field);
+      if (!name || seen.has(name)) continue;
+      seen.add(name);
+      out.push(name);
+    }
+    return out;
+  });
+  const formulaEntries = () => [...formulas().entries()];
 
   const selected = (col: number, row: number) => {
     const sel = cellSel();
@@ -113,6 +152,7 @@ export function SheetBoard(props: {
     const row = from?.rows[sel.row];
     const targetCol = dir === "left" ? sel.col - 1 : sel.col + 1;
     const target = cols[targetCol];
+    if (isFormulaField(groupBy())) return true;
     if (!row || !target || !doc.byId[row.id]) return true;
     if (moveRowToColumn(row, from.key, target.key, groupBy())) {
       const nextCols = columns();
@@ -142,6 +182,7 @@ export function SheetBoard(props: {
   });
 
   const dropCard = (row: RowRecord, colIndex: number, targetCol: number | null) => {
+    if (isFormulaField(groupBy())) return;
     if (targetCol == null || targetCol === colIndex || !doc.byId[row.id]) return;
     const cols = columns();
     const from = cols[colIndex];
@@ -150,15 +191,32 @@ export function SheetBoard(props: {
   };
 
   const openSheetMenu = (e: MouseEvent) => {
-    if (props.rowSource !== "children") return;
+    if (!doc.byId[props.ownerId]) return;
     e.preventDefault();
     e.stopPropagation();
-    openSheetContextMenu(e.clientX, e.clientY, props.ownerId, "board", props.rowSource, groupBy());
+    openSheetContextMenu(e.clientX, e.clientY, props.ownerId, "board", props.rowSource, groupBy(), {
+      schemaPage: props.schemaPage,
+      fields: formulaHintFields(),
+      formulas: formulaEntries(),
+      filter: config().filter,
+    });
   };
 
   return (
     <Show when={columns().length > 0} fallback={<div class="sheet-board sheet-empty">empty board</div>}>
-      <div class="sheet-board" data-sheet-grid-id={props.ownerId} onContextMenu={openSheetMenu}>
+      <div
+        class="sheet-board"
+        classList={{ "sheet-filter-broken": !!filterError() }}
+        data-sheet-grid-id={props.ownerId}
+        onContextMenu={openSheetMenu}
+      >
+        <Show when={filterError()}>
+          {(err) => (
+            <span class="sheet-filter-error" title={err()}>
+              Filter disabled
+            </span>
+          )}
+        </Show>
         <For each={columns()}>
           {(col, colIndex) => (
             <section
@@ -181,6 +239,7 @@ export function SheetBoard(props: {
                       rowIndex={rowIndex()}
                       selected={selected(colIndex(), rowIndex())}
                       dragging={drag()?.id === row.id && drag()?.col === colIndex() && drag()?.row === rowIndex()}
+                      canMove={!isFormulaField(groupBy())}
                       setDrag={setDrag}
                       dropCard={dropCard}
                     />
@@ -195,12 +254,30 @@ export function SheetBoard(props: {
   );
 }
 
-function buildColumns(rows: readonly RowRecord[], groupBy: FieldId, schema: readonly FieldSpec[] = []): BoardColumn[] {
-  const keySets = rows.map((row) => groupKeysForBlock(row, groupBy));
+function buildColumns(
+  rows: readonly RowRecord[],
+  groupBy: FieldId,
+  schema: readonly FieldSpec[] = [],
+  opts: { formulas?: ReadonlyMap<string, string>; now?: Date } = {}
+): BoardColumn[] {
+  const keySets = rows.map((row) => groupKeysForBlock(row, groupBy, opts));
   const keys = keySets.map((ks) => ks[0] ?? null);
   let order: (string | null)[];
   const enumValues = enumValuesFor(schema, groupBy);
-  if (groupBy === "tags") {
+  if (isFormulaField(groupBy)) {
+    const present = new Set(keys.filter((key): key is string => key !== null));
+    const booleanish = present.has("true") || present.has("false");
+    order = [];
+    if (booleanish) {
+      if (present.has("true")) order.push("true");
+      if (present.has("false")) order.push("false");
+    }
+    for (const key of keys) {
+      if (key === null || key === "(error)") continue;
+      if (booleanish && (key === "true" || key === "false")) continue;
+      if (!order.includes(key)) order.push(key);
+    }
+  } else if (groupBy === "tags") {
     order = [];
     for (const ks of keySets) {
       for (const key of ks) if (key !== null && !order.includes(key)) order.push(key);
@@ -222,6 +299,9 @@ function buildColumns(rows: readonly RowRecord[], groupBy: FieldId, schema: read
     for (const key of keys) if (key !== null && !order.includes(key)) order.push(key);
   }
   if (keySets.some((ks) => ks.includes(null)) && !order.includes(null)) order.push(null);
+  if (isFormulaField(groupBy) && keySets.some((ks) => ks.includes("(error)")) && !order.includes("(error)")) {
+    order.push("(error)");
+  }
   if (order.length === 0) order = [null];
   return order.map((key) => ({
     key,
@@ -235,6 +315,54 @@ function enumValuesFor(schema: readonly FieldSpec[], field: FieldId): readonly s
   return spec && typeof spec.type === "object" && "enum" in spec.type ? spec.type.enum : null;
 }
 
+function observedFieldsForRows(rows: readonly RowRecord[], includePage: boolean): FieldId[] {
+  const loadedIds = rows.filter((r) => doc.byId[r.id]).map((r) => r.id);
+  if (loadedIds.length === rows.length) return fieldIdsForBlocks(loadedIds, { includePage });
+  return fieldIdsForRecords(rows, includePage);
+}
+
+function fieldIdsForRecords(rows: readonly RowRecord[], includePage: boolean): FieldId[] {
+  const out: FieldId[] = [];
+  const props: FieldId[] = [];
+  const seenProps = new Set<string>();
+  let hasState = false;
+  let hasPriority = false;
+  let hasScheduled = false;
+  let hasDeadline = false;
+  let hasTags = false;
+  for (const r of rows) {
+    const f = recordFacets(r);
+    if (!f) continue;
+    hasState ||= !!f.marker;
+    hasPriority ||= !!f.priority;
+    hasScheduled ||= !!f.scheduled;
+    hasDeadline ||= !!f.deadline;
+    hasTags ||= f.tags.length > 0;
+    for (const [key] of f.properties) {
+      if (isRenderHiddenProp(key)) continue;
+      const field: FieldId = `prop:${key}`;
+      if (!seenProps.has(field)) {
+        seenProps.add(field);
+        props.push(field);
+      }
+    }
+  }
+  if (hasState) out.push("state");
+  if (hasPriority) out.push("priority");
+  if (hasScheduled) out.push("scheduled");
+  if (hasDeadline) out.push("deadline");
+  if (hasTags) out.push("tags");
+  out.push(...props);
+  if (includePage) out.push("page");
+  return out;
+}
+
+function formulaReferenceName(field: FieldId): string | null {
+  if (isFormulaField(field)) return null;
+  if (field.startsWith("prop:")) return field.slice(5);
+  return field;
+}
+
 function recordFacets(row: RowRecord): Facets | null {
   const n = doc.byId[row.id];
   if (n) return facetsOf(n.raw, formatForBlock(row.id));
@@ -242,6 +370,7 @@ function recordFacets(row: RowRecord): Facets | null {
 }
 
 function moveRowToColumn(row: RowRecord, from: string | null, target: string | null, field: FieldId): boolean {
+  if (isFormulaField(field)) return false;
   if (field !== "tags") return writeField(row.id, field, target ?? "");
   const tags = groupKeysForBlock(row, "tags").filter((key): key is string => key !== null);
   if (from === null) return target !== null && writeTagDelta(row.id, { add: target });
@@ -250,6 +379,7 @@ function moveRowToColumn(row: RowRecord, from: string | null, target: string | n
 }
 
 function dtoField(row: RowRecord, field: FieldId): string | null {
+  if (isFormulaField(field)) return null;
   const f = recordFacets(row);
   if (!f) return null;
   if (field === "state") return f.marker;
@@ -278,6 +408,7 @@ function BoardCard(props: {
   rowIndex: number;
   selected: boolean;
   dragging: boolean;
+  canMove: boolean;
   setDrag: (v: { id: string; col: number; row: number; overCol: number | null } | null) => void;
   dropCard: (row: RowRecord, colIndex: number, targetCol: number | null) => void;
 }): JSX.Element {
@@ -292,6 +423,7 @@ function BoardCard(props: {
   const select = () => setCellSel(cell());
 
   const beginPointerDrag = (e: PointerEvent) => {
+    if (!props.canMove) return;
     if (e.button !== 0 || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
     const startX = e.clientX;
     const startY = e.clientY;
@@ -354,6 +486,7 @@ function BoardCard(props: {
       classList={{
         "sheet-cell-selected": props.selected,
         "sheet-board-card-dragging": props.dragging,
+        "sheet-board-card-static": !props.canMove,
       }}
       data-sheet-grid-id={props.ownerId}
       data-row={props.rowIndex}

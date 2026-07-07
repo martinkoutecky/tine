@@ -44,6 +44,7 @@ import {
 import { parseFields, serializeFields, sheetConfig, type FieldSpec, type FieldType } from "../sheet/config";
 import { formulaFieldId, formulaNameFromField, formulasOf, mergeFormulas } from "../sheet/formulaFields";
 import {
+  createFormulaFilterMemo,
   createFormulaResultsMemo,
   formulaResultKey,
   formulaValueText,
@@ -53,7 +54,14 @@ import {
 } from "../sheet/formulaEval";
 import type { FormulaValue } from "../sheet/formula";
 import { isPlainDecimalNumber, parseIsoDateLike } from "../sheet/typed";
-import { openActionContextMenu, openDatePicker, openSheetCellContextMenu, openSheetContextMenu, type ContextMenuAction } from "../ui";
+import {
+  openActionContextMenu,
+  openDatePicker,
+  openFormulaEditor,
+  openSheetCellContextMenu,
+  openSheetContextMenu,
+  type ContextMenuAction,
+} from "../ui";
 import { blockBackgroundColor } from "../blockColors";
 import type { RefGroup } from "../types";
 import { Editor, SurfaceContext } from "./Block";
@@ -162,7 +170,7 @@ export function SheetTable(props: {
   );
   void pagesReady;
 
-  const rows = createMemo<RowRecord[]>(() => {
+  const allRows = createMemo<RowRecord[]>(() => {
     if (props.rowSource === "children") {
       return (doc.byId[props.ownerId]?.children ?? []).map((id) => ({
         id,
@@ -171,6 +179,14 @@ export function SheetTable(props: {
     }
     return (props.groups ?? []).flatMap((g) => g.blocks.map((b) => ({ id: b.id, page: g.page, dto: b })));
   });
+  const filterState = createFormulaFilterMemo({
+    rows: allRows,
+    formulas,
+    filter: () => config().filter,
+    ownerId: props.ownerId,
+  });
+  const rows = createMemo<RowRecord[]>(() => [...filterState().rows]);
+  const filterError = () => filterState().error;
   const formulaResults = createFormulaResultsMemo({
     rows,
     formulas,
@@ -204,6 +220,18 @@ export function SheetTable(props: {
       ...inferred.filter((f) => !declaredSet.has(f) && !formulasSet.has(f)),
     ];
   });
+  const formulaHintFields = createMemo(() => {
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const field of fields()) {
+      const name = formulaReferenceName(field);
+      if (!name || seen.has(name)) continue;
+      seen.add(name);
+      out.push(name);
+    }
+    return out;
+  });
+  const formulaEntries = () => [...formulas().entries()];
 
   const columns = createMemo(() => ["title" as const, ...fields()]);
   const hasActionColumn = () => props.rowSource === "children" || !!props.addRow;
@@ -301,6 +329,25 @@ export function SheetTable(props: {
       const name = formulaNameFromField(field);
       const home = name ? formulaHomes().get(name) ?? null : null;
       openActionContextMenu(e.clientX, e.clientY, [
+        {
+          label: "Edit formula…",
+          disabled: !name || !formulaWriteAllowed(home),
+          run: () => {
+            if (!name) return;
+            openFormulaEditor({
+              mode: "edit",
+              ownerId: props.ownerId,
+              schemaPage: props.schemaPage,
+              x: e.clientX,
+              y: e.clientY,
+              name,
+              expr: formulas().get(name) ?? "",
+              formulas: formulaEntries(),
+              fields: formulaHintFields(),
+              home,
+            });
+          },
+        },
         { label: "Remove formula", disabled: !formulaWriteAllowed(home), run: () => removeFormula(field) },
       ]);
       return;
@@ -405,10 +452,15 @@ export function SheetTable(props: {
   };
 
   const openSheetMenu = (e: MouseEvent) => {
-    if (props.rowSource !== "children") return;
+    if (!doc.byId[props.ownerId]) return;
     e.preventDefault();
     e.stopPropagation();
-    openSheetContextMenu(e.clientX, e.clientY, props.ownerId, "table", props.rowSource);
+    openSheetContextMenu(e.clientX, e.clientY, props.ownerId, "table", props.rowSource, null, {
+      schemaPage: props.schemaPage,
+      fields: formulaHintFields(),
+      formulas: formulaEntries(),
+      filter: config().filter,
+    });
   };
 
   return (
@@ -437,6 +489,13 @@ export function SheetTable(props: {
       >
         <div class="sheet-cell sheet-header-cell sheet-title-header" onClick={() => sortHeader(0)}>
           Block{sortArrow(0)}
+          <Show when={filterError()}>
+            {(err) => (
+              <span class="sheet-filter-error" title={err()}>
+                Filter disabled
+              </span>
+            )}
+          </Show>
         </div>
         <For each={fields()}>
           {(field, i) => (
@@ -633,6 +692,12 @@ function fieldIdsForRecords(rows: readonly RowRecord[], includePage: boolean): F
   out.push(...props);
   if (includePage) out.push("page");
   return out;
+}
+
+function formulaReferenceName(field: FieldId): string | null {
+  if (isFormulaField(field)) return null;
+  if (field.startsWith("prop:")) return field.slice(5);
+  return field;
 }
 
 function rowRaw(row: RowRecord): string {

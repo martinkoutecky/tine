@@ -17,6 +17,7 @@ import { RightSidebar } from "./components/RightSidebar";
 import { Settings } from "./components/Settings";
 import { HelpPopup } from "./components/HelpShortcuts";
 import { DatePicker } from "./components/DatePicker";
+import { FormulaEditor } from "./components/FormulaEditor";
 import { MobileKeyboardToolbar } from "./components/MobileKeyboardToolbar";
 import { PageProps } from "./components/PageProps";
 import { ExportModal } from "./components/ExportModal";
@@ -567,6 +568,7 @@ export function App(): JSX.Element {
       <QuickSwitcher />
       <ContextMenu />
       <DatePicker />
+      <FormulaEditor />
       <MobileKeyboardToolbar />
       <PageProps />
       <ExportModal />

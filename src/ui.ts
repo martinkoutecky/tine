@@ -704,6 +704,30 @@ export function closeDatePicker() {
   setDatePicker(null);
 }
 
+// Sheet formula/filter editor popup. Mounted at the app root like DatePicker so
+// table/board menus can open one positioned editor without owning popup state.
+export type FormulaEditorHome = { kind: "block"; id: string } | { kind: "page"; name: string };
+export type FormulaEditorMode = "add" | "edit" | "filter";
+export interface FormulaEditorTarget {
+  mode: FormulaEditorMode;
+  ownerId: string;
+  schemaPage?: string;
+  x: number;
+  y: number;
+  name?: string;
+  expr: string;
+  formulas: readonly [string, string][];
+  fields: readonly string[];
+  home?: FormulaEditorHome | null;
+}
+export const [formulaEditor, setFormulaEditor] = createSignal<FormulaEditorTarget | null>(null);
+export function openFormulaEditor(target: FormulaEditorTarget) {
+  setFormulaEditor(target);
+}
+export function closeFormulaEditor() {
+  setFormulaEditor(null);
+}
+
 // Block zoom: focus a single block's subtree (click its bullet). Zoom is part of
 // the active tab's ROUTE (the block's stable uuid) — so it's per-tab, joins the
 // back/forward history, and a block can be opened pre-zoomed in its own tab
@@ -829,7 +853,17 @@ export type CtxTarget =
   | { kind: "page"; name: string; pageKind: "journal" | "page" }
   | { kind: "blockref"; uuid: string; page: string; pageKind: "journal" | "page" }
   | { kind: "sheet-cell"; blockId: string }
-  | { kind: "sheet"; ownerId: string; surface: "grid" | "table" | "board"; rowSource: "children" | "query"; groupBy?: string | null }
+  | {
+      kind: "sheet";
+      ownerId: string;
+      surface: "grid" | "table" | "board";
+      rowSource: "children" | "query";
+      groupBy?: string | null;
+      schemaPage?: string;
+      fields?: readonly string[];
+      formulas?: readonly [string, string][];
+      filter?: string | null;
+    }
   | { kind: "action-menu"; items: readonly ContextMenuAction[] };
 export interface ContextMenuAction {
   label: string;
@@ -870,9 +904,15 @@ export function openSheetContextMenu(
   ownerId: string,
   surface: "grid" | "table" | "board",
   rowSource: "children" | "query",
-  groupBy?: string | null
+  groupBy?: string | null,
+  opts: {
+    schemaPage?: string;
+    fields?: readonly string[];
+    formulas?: readonly [string, string][];
+    filter?: string | null;
+  } = {}
 ) {
-  setContextMenu({ x, y, kind: "sheet", ownerId, surface, rowSource, groupBy });
+  setContextMenu({ x, y, kind: "sheet", ownerId, surface, rowSource, groupBy, ...opts });
 }
 export function openActionContextMenu(x: number, y: number, items: readonly ContextMenuAction[]) {
   setContextMenu({ x, y, kind: "action-menu", items });

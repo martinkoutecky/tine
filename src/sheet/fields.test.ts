@@ -2,7 +2,7 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { initParser } from "../render/parse";
 import { doc, resetStore, setDoc, undo, type FeedPage, type Node } from "../store";
 import { setWorkflow } from "../ui";
-import { cycleField, fieldIdsForBlocks, fieldLabel, isFieldId, readField, writeField, writeTagDelta } from "./fields";
+import { cycleField, fieldIdsForBlocks, fieldLabel, groupKeysForBlock, isFieldId, readField, writeField, writeTagDelta } from "./fields";
 
 beforeAll(async () => {
   await initParser();
@@ -75,6 +75,30 @@ describe("sheet fields", () => {
     expect(readField("a", "formula:total")).toBeNull();
     expect(writeField("a", "formula:total", "12")).toBe(false);
     expect(doc.byId.a.raw).toContain("owner:: Martin");
+  });
+
+  it("groups formula fields into boolean, none, and error buckets", () => {
+    setDoc({
+      byId: {
+        a: node("a", "Big\npoints:: 3"),
+        b: node("b", "Small\npoints:: 1"),
+        c: node("c", "Missing"),
+      },
+      pages: [page(["a", "b", "c"])],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    const formulas = new Map([
+      ["big", "points > 2"],
+      ["maybe", "if(points > 2, null, points)"],
+      ["broken", "points + true"],
+    ]);
+    const now = new Date(Date.UTC(2026, 6, 7));
+
+    expect(groupKeysForBlock("a", "formula:big", { formulas, now })).toEqual(["true"]);
+    expect(groupKeysForBlock("b", "formula:big", { formulas, now })).toEqual(["false"]);
+    expect(groupKeysForBlock("a", "formula:maybe", { formulas, now })).toEqual([null]);
+    expect(groupKeysForBlock("c", "formula:broken", { formulas, now })).toEqual(["(error)"]);
   });
 
   it("writes state through marker machinery and cycles with the configured workflow", () => {

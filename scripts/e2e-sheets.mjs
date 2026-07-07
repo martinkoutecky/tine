@@ -220,6 +220,61 @@ try {
     check("schema'd table rendered", false, "no table cell (0,2) found");
   }
 
+  // --- Formula editor (phase 7c): add a formula, value computed not stored ---
+  const tableEl = await browser.$(".sheet-table");
+  if (await tableEl.isExisting()) {
+    await browser.execute(() => {
+      const el = document.querySelector(".sheet-table");
+      el?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 400, clientY: 300 }));
+    });
+    await sleep(400);
+    const addClicked = await browser.execute(() => {
+      const item = [...document.querySelectorAll(".ctx-item")].find((el) => /Add formula/.test(el.textContent ?? ""));
+      if (!item) return false;
+      item.click();
+      return true;
+    });
+    check("Add formula… menu entry opens", addClicked);
+    await sleep(400);
+    const filled = await browser.execute(() => {
+      const name = document.querySelector("[class*=formula-editor] input[type=text], [class*=formula-editor] input");
+      const expr = document.querySelector("[class*=formula-editor] textarea");
+      if (!name || !expr) return false;
+      const set = (el, v) => {
+        const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        Object.getOwnPropertyDescriptor(proto, "value").set.call(el, v);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      };
+      set(name, "extra");
+      set(expr, "1 + 1");
+      return true;
+    });
+    check("formula editor fields filled", filled);
+    await sleep(300);
+    const saved = await browser.execute(() => {
+      const btn = [...document.querySelectorAll("[class*=formula-editor] button, button")].find(
+        (b) => /save/i.test(b.textContent ?? "") && !b.disabled
+      );
+      if (!btn) return false;
+      btn.click();
+      return true;
+    });
+    check("formula editor save enabled + clicked", saved);
+    await sleep(2400);
+    const disk8 = fs.readFileSync(JFILE, "utf8");
+    check("formula property written to disk", disk8.includes("tine.formula.extra:: 1 + 1"), JSON.stringify(disk8));
+    check("computed value NOT stored on disk", !/extra:: 2/.test(disk8), JSON.stringify(disk8));
+    const cellShows = await browser.execute(() => {
+      const table = document.querySelector(".sheet-table");
+      const headers = [...(table?.querySelectorAll(".sheet-field-header") ?? [])].map((h) => h.textContent?.trim() ?? "");
+      const cells = [...(table?.querySelectorAll(".sheet-field-cell") ?? [])].map((c) => c.textContent?.replace("⋮", "").trim());
+      return { hasHeader: headers.some((h) => h.includes("extra")), hasValue: cells.includes("2") };
+    });
+    check("computed column renders with value 2", cellShows.hasHeader && cellShows.hasValue, JSON.stringify(cellShows));
+  } else {
+    check("table for formula editor", false, "no .sheet-table");
+  }
+
   // --- Board card-move (phase 3): flip a task marker via Ctrl+ArrowRight ----
   // The seeded journal also carries a board query + one TODO task (see seed).
   const card = await browser.$(".sheet-board-card");
