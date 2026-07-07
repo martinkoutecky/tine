@@ -2,12 +2,14 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
 import { Block } from "./Block";
+import { ContextMenu } from "./ContextMenu";
 import { SheetTable } from "./SheetTable";
 import { DatePicker } from "./DatePicker";
 import { initParser } from "../render/parse";
-import { blockProperty, doc, resetStore, setDoc, type FeedPage, type Node as StoreNode } from "../store";
+import { blockProperty, doc, readPageProperty, resetStore, setDoc, type FeedPage, type Node as StoreNode } from "../store";
 import { setWorkflow } from "../ui";
 import { resetCellSelectionForTests } from "../sheet/selection";
+import { editingId, editingOwner } from "../editorController";
 import type { RefGroup } from "../types";
 
 beforeAll(async () => {
@@ -68,12 +70,36 @@ function pointerEnter(target: EventTarget): Event {
   return event;
 }
 
-function cell(root: HTMLElement, row: number, col: number): HTMLElement {
+function cell(root: HTMLElement, row: number, col: number, gridId = "table"): HTMLElement {
   const el = root.querySelector(
-    `.sheet-cell[data-sheet-grid-id="table"][data-row="${row}"][data-col="${col}"]`
+    `.sheet-cell[data-sheet-grid-id="${gridId}"][data-row="${row}"][data-col="${col}"]`
   ) as HTMLElement | null;
   if (!el) throw new Error(`missing cell ${row},${col}`);
   return el;
+}
+
+function contextMenu(target: EventTarget): MouseEvent {
+  const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 20, clientY: 30 });
+  target.dispatchEvent(event);
+  return event;
+}
+
+function input(target: EventTarget): Event {
+  const event = new Event("input", { bubbles: true, cancelable: true });
+  target.dispatchEvent(event);
+  return event;
+}
+
+function clickMenuItem(label: string): void {
+  const item = [...document.querySelectorAll(".ctx-item")].find((el) => el.textContent?.trim() === label) as
+    | HTMLElement
+    | undefined;
+  if (!item) throw new Error(`missing menu item ${label}`);
+  item.click();
+}
+
+function tick(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 function loadTableDoc() {
@@ -142,6 +168,155 @@ describe("SheetTable", () => {
 
     const headers = [...root.querySelectorAll(".sheet-header-cell")].map((h) => h.textContent?.trim());
     expect(headers).toEqual(["Block", "status", "owner", "+"]);
+
+    dispose();
+  });
+
+  it("declaring the first prop field seeds the full observed field order", () => {
+    setDoc({
+      byId: {
+        table: node("table", "Table\ntine.view:: table", null, ["r1"]),
+        r1: node("r1", "TODO [#A] Task\nowner:: Martin\nestimate:: 2", "table"),
+      },
+      pages: [page(["table"])],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    const { root, dispose } = mount(() => (
+      <>
+        <Block id="table" />
+        <ContextMenu />
+      </>
+    ));
+    const estimateHeader = [...root.querySelectorAll(".sheet-field-header")].find((h) =>
+      h.textContent?.includes("estimate")
+    ) as HTMLElement | undefined;
+    expect(estimateHeader).not.toBeUndefined();
+
+    contextMenu(estimateHeader!);
+    clickMenuItem("Declare field (text)");
+
+    expect(blockProperty("table", "tine.fields")).toBe("state=state;priority=priority;owner=text;estimate=text");
+    expect(doc.byId.table.raw).toBe(
+      "Table\ntine.view:: table\ntine.fields:: state=state;priority=priority;owner=text;estimate=text"
+    );
+    dispose();
+  });
+
+  it("field header menu changes declared prop types and removes schema entries", () => {
+    setDoc({
+      byId: {
+        table: node("table", "Table\ntine.view:: table\ntine.fields:: owner=text;state=state", null, ["r1"]),
+        r1: node("r1", "TODO Task\nowner:: Martin", "table"),
+      },
+      pages: [page(["table"])],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    const { root, dispose } = mount(() => (
+      <>
+        <Block id="table" />
+        <ContextMenu />
+      </>
+    ));
+    const ownerHeader = [...root.querySelectorAll(".sheet-field-header")].find((h) =>
+      h.textContent?.includes("owner")
+    ) as HTMLElement | undefined;
+    const stateHeader = [...root.querySelectorAll(".sheet-field-header")].find((h) =>
+      h.textContent?.includes("State")
+    ) as HTMLElement | undefined;
+
+    contextMenu(ownerHeader!);
+    clickMenuItem("number");
+    expect(doc.byId.table.raw).toBe("Table\ntine.view:: table\ntine.fields:: owner=number;state=state");
+
+    contextMenu(ownerHeader!);
+    clickMenuItem("Remove from schema");
+    expect(doc.byId.table.raw).toBe("Table\ntine.view:: table\ntine.fields:: state=state");
+
+    contextMenu(stateHeader!);
+    clickMenuItem("Remove from schema");
+    expect(doc.byId.table.raw).toBe("Table\ntine.view:: table");
+
+    dispose();
+  });
+
+  it("field header menu writes tag-page schema homes", () => {
+    setDoc({
+      byId: {
+        row: node("row", "Tagged #Tag\nowner:: Martin", null),
+      },
+      pages: [page(["row"], null)],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    const groups: RefGroup[] = [
+      {
+        page: "Sheet",
+        kind: "page",
+        blocks: [
+          {
+            id: "row",
+            raw: doc.byId.row.raw,
+            collapsed: false,
+            children: [],
+            tags: ["Tag"],
+            properties: [["owner", "Martin"]],
+          },
+        ],
+      },
+    ];
+    const { root, dispose } = mount(() => (
+      <>
+        <SheetTable ownerId="tag-page:Tag" rowSource="query" groups={groups} schemaPage="Sheet" />
+        <ContextMenu />
+      </>
+    ));
+    const ownerHeader = [...root.querySelectorAll(".sheet-field-header")].find((h) =>
+      h.textContent?.includes("owner")
+    ) as HTMLElement | undefined;
+
+    contextMenu(ownerHeader!);
+    clickMenuItem("Declare field (text)");
+
+    expect(readPageProperty("Sheet", "tine.fields")).toBe("tags=tags;owner=text;page=page");
+    dispose();
+  });
+
+  it("tag-only query rows render declared empty typed cells from the tag-page schema", () => {
+    setDoc({
+      byId: {
+        row: node("row", "#Tag ", null),
+      },
+      pages: [page(["row"], "tine.fields:: done=checkbox;status=enum:todo,done;due=date")],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    const groups: RefGroup[] = [
+      {
+        page: "Sheet",
+        kind: "page",
+        blocks: [
+          {
+            id: "row",
+            raw: doc.byId.row.raw,
+            collapsed: false,
+            children: [],
+            tags: ["Tag"],
+            properties: [],
+          },
+        ],
+      },
+    ];
+    const { root, dispose } = mount(() => (
+      <SheetTable ownerId="tag-page:Tag" rowSource="query" groups={groups} schemaPage="Sheet" />
+    ));
+
+    const headers = [...root.querySelectorAll(".sheet-header-cell")].map((h) => h.textContent?.trim());
+    expect(headers).toEqual(["Block", "done", "status", "due", "Tags", "Page"]);
+    expect(cell(root, 0, 1, "tag-page:Tag").textContent?.replace("⋮", "").trim()).toBe("");
+    expect(cell(root, 0, 2, "tag-page:Tag").querySelector(".sheet-tag-chip")).toBeNull();
+    expect(cell(root, 0, 3, "tag-page:Tag").querySelector(".date-chip")).toBeNull();
 
     dispose();
   });
@@ -240,6 +415,142 @@ describe("SheetTable", () => {
     dispose();
   });
 
+  it("checkbox typed cells toggle true and false without enabling the rendered checkbox", () => {
+    setDoc({
+      byId: {
+        table: node("table", "Table\ntine.view:: table\ntine.fields:: done=checkbox", null, ["r1"]),
+        r1: node("r1", "Task", "table"),
+      },
+      pages: [page(["table"])],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    const { root, dispose } = mount(() => <Block id="table" />);
+
+    mouseDown(cell(root, 0, 1));
+    expect(doc.byId.r1.raw).toBe("Task\ndone:: true");
+    const checkbox = cell(root, 0, 1).querySelector('input[type="checkbox"]') as HTMLInputElement | null;
+    expect(checkbox?.disabled).toBe(true);
+    expect(checkbox?.checked).toBe(true);
+
+    mouseDown(cell(root, 0, 1));
+    expect(doc.byId.r1.raw).toBe("Task\ndone:: false");
+
+    dispose();
+  });
+
+  it("enum typed cells open the shared popup, list declared values, write values, and clear", () => {
+    setDoc({
+      byId: {
+        table: node("table", "Table\ntine.view:: table\ntine.fields:: status=enum:todo,doing,done", null, ["r1"]),
+        r1: node("r1", "Task\nstatus:: todo", "table"),
+      },
+      pages: [page(["table"])],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    const { root, dispose } = mount(() => (
+      <>
+        <Block id="table" />
+        <ContextMenu />
+      </>
+    ));
+
+    mouseDown(cell(root, 0, 1));
+    expect([...document.querySelectorAll(".ctx-item")].map((el) => el.textContent?.trim())).toEqual([
+      "todo",
+      "doing",
+      "done",
+      "Clear",
+    ]);
+    clickMenuItem("doing");
+    expect(doc.byId.r1.raw).toBe("Task\nstatus:: doing");
+
+    mouseDown(cell(root, 0, 1));
+    clickMenuItem("Clear");
+    expect(doc.byId.r1.raw).toBe("Task");
+
+    dispose();
+  });
+
+  it("number typed cells reject invalid input, accept decimals, and clear on empty input", () => {
+    setDoc({
+      byId: {
+        table: node("table", "Table\ntine.view:: table\ntine.fields:: amount=number", null, ["r1"]),
+        r1: node("r1", "Task\namount:: 1", "table"),
+      },
+      pages: [page(["table"])],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    const { root, dispose } = mount(() => <Block id="table" />);
+
+    mouseDown(cell(root, 0, 1));
+    let editor = root.querySelector("input.sheet-prop-input") as HTMLInputElement | null;
+    expect(editor).not.toBeNull();
+    editor!.value = "12abc";
+    input(editor!);
+    keydown(editor!, "Enter");
+    expect(doc.byId.r1.raw).toBe("Task\namount:: 1");
+    editor = root.querySelector("input.sheet-prop-input") as HTMLInputElement | null;
+    expect(editor).not.toBeNull();
+    expect(editor!.classList.contains("sheet-input-invalid")).toBe(true);
+
+    // blur with invalid content must not commit or close (and must not throw
+    // in the refocus microtask — regression: e.currentTarget nulls after dispatch)
+    editor!.dispatchEvent(new FocusEvent("blur"));
+    expect(doc.byId.r1.raw).toBe("Task\namount:: 1");
+    expect(root.querySelector("input.sheet-prop-input")).not.toBeNull();
+
+    editor!.value = "-3.5";
+    input(editor!);
+    keydown(editor!, "Enter");
+    expect(doc.byId.r1.raw).toBe("Task\namount:: -3.5");
+    expect(root.querySelector("input.sheet-prop-input")).toBeNull();
+
+    mouseDown(cell(root, 0, 1));
+    editor = root.querySelector("input.sheet-prop-input") as HTMLInputElement | null;
+    editor!.value = "";
+    input(editor!);
+    keydown(editor!, "Enter");
+    expect(doc.byId.r1.raw).toBe("Task");
+
+    dispose();
+  });
+
+  it("prop date and datetime typed cells use the shared date picker and preserve datetime time", () => {
+    setDoc({
+      byId: {
+        table: node("table", "Table\ntine.view:: table\ntine.fields:: due=date;starts=datetime", null, ["r1"]),
+        r1: node("r1", "Task\ndue:: 2026-07-08\nstarts:: 2026-07-08 09:30", "table"),
+      },
+      pages: [page(["table"])],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    const { root, dispose } = mount(() => (
+      <>
+        <Block id="table" />
+        <DatePicker />
+      </>
+    ));
+
+    mouseDown(cell(root, 0, 1));
+    expect(root.querySelector(".date-picker")).not.toBeNull();
+    const day10 = [...root.querySelectorAll(".date-picker .dp-cell")]
+      .find((el) => el.textContent?.trim() === "10") as HTMLButtonElement | undefined;
+    day10!.click();
+    expect(doc.byId.r1.raw).toBe("Task\nstarts:: 2026-07-08 09:30\ndue:: 2026-07-10");
+
+    mouseDown(cell(root, 0, 2));
+    const day11 = [...root.querySelectorAll(".date-picker .dp-cell")]
+      .find((el) => el.textContent?.trim() === "11") as HTMLButtonElement | undefined;
+    day11!.click();
+    expect(doc.byId.r1.raw).toBe("Task\ndue:: 2026-07-10\nstarts:: 2026-07-11 09:30");
+
+    dispose();
+  });
+
   it("sorts the table view without changing child order", () => {
     setDoc({
       byId: {
@@ -258,6 +569,32 @@ describe("SheetTable", () => {
     const titles = [...root.querySelectorAll(".sheet-title-cell .sheet-cell-body")].map((c) => c.textContent?.trim());
     expect(titles).toEqual(["Alpha", "Beta"]);
     expect(doc.byId.table.children).toEqual(["b", "a"]);
+    dispose();
+  });
+
+  it("children add-row creates an empty child at the end and enters title edit", async () => {
+    setDoc({
+      byId: {
+        table: node("table", "Table\ntine.view:: table", null, ["r1"]),
+        r1: node("r1", "Existing", "table"),
+      },
+      pages: [page(["table"])],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    const { root, dispose } = mount(() => <Block id="table" />);
+
+    (root.querySelector(".sheet-add-row-btn") as HTMLButtonElement).click();
+    await tick();
+
+    const children = doc.byId.table.children;
+    expect(children).toHaveLength(2);
+    const id = children[1];
+    expect(doc.byId[id].raw).toBe("");
+    expect(doc.byId[id].parent).toBe("table");
+    expect(editingId()).toBe(id);
+    expect(editingOwner()).toBe("sheet:table:1:0");
+
     dispose();
   });
 

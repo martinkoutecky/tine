@@ -3917,6 +3917,7 @@ body.file-drop-active::after {
 .sheet-checkbox {
   margin: 0;
   vertical-align: middle;
+  pointer-events: none;
 }
 .sheet-readonly-cell {
   cursor: default;
@@ -3991,6 +3992,11 @@ body.file-drop-active::after {
   align-items: center;
   justify-content: center;
 }
+.sheet-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
 .sheet-add-field-btn {
   width: 24px;
   height: 24px;
@@ -4004,6 +4010,9 @@ body.file-drop-active::after {
   color: var(--text-primary);
   background: var(--bg-tertiary);
 }
+.sheet-add-row-btn:empty::before {
+  content: "+";
+}
 .sheet-prop-input {
   width: 100%;
   min-width: 90px;
@@ -4014,6 +4023,10 @@ body.file-drop-active::after {
   background: var(--bg-primary);
   color: var(--text-primary);
   font: inherit;
+}
+.sheet-prop-input.sheet-input-invalid {
+  border-color: var(--marker-todo);
+  box-shadow: 0 0 0 1px var(--marker-todo);
 }
 .sheet-add-field-input {
   min-width: 112px;

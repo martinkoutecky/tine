@@ -1,6 +1,19 @@
 import { For, Match, Show, Switch, createMemo, createResource, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { backend } from "../backend";
-import { doc, ensurePageLoaded, formatForBlock, formatForPage, pageByName, readPageProperty } from "../store";
+import {
+  blockPageReadOnly,
+  blockProperty,
+  doc,
+  ensurePageLoaded,
+  formatForBlock,
+  formatForPage,
+  insertEmptyChildBlock,
+  pageByName,
+  readPageProperty,
+  setBlockProperty,
+  setPageProperty,
+  withUndoUnit,
+} from "../store";
 import { facetsFromDto, facetsOf, type Facets } from "../render/facets";
 import { visibleBody, isRenderHiddenProp } from "../render/block";
 import { InlineText } from "../render/inline";
@@ -27,8 +40,9 @@ import {
   type FieldId,
   type FieldValue,
 } from "../sheet/fields";
-import { parseFields, sheetConfig, type FieldSpec, type FieldType } from "../sheet/config";
-import { openDatePicker, openSheetCellContextMenu, openSheetContextMenu } from "../ui";
+import { parseFields, serializeFields, sheetConfig, type FieldSpec, type FieldType } from "../sheet/config";
+import { isPlainDecimalNumber } from "../sheet/typed";
+import { openActionContextMenu, openDatePicker, openSheetCellContextMenu, openSheetContextMenu, type ContextMenuAction } from "../ui";
 import { blockBackgroundColor } from "../blockColors";
 import type { BlockDto, RefGroup } from "../types";
 import { Editor, SurfaceContext } from "./Block";
@@ -41,6 +55,19 @@ interface RowRecord {
 }
 
 type SortState = { col: number; dir: 1 | -1 } | null;
+type SchemaHome = { kind: "block"; id: string; value: string } | { kind: "page"; name: string; value: string };
+type SchemaMenuType = "text" | "number" | "date" | "datetime" | "checkbox" | "list" | "ref";
+
+const BUILTIN_FIELDS = new Set<FieldId>(["state", "priority", "scheduled", "deadline", "tags", "page"]);
+const SCHEMA_PROP_TYPES: SchemaMenuType[] = [
+  "text",
+  "number",
+  "date",
+  "datetime",
+  "checkbox",
+  "list",
+  "ref",
+];
 
 export function SheetTable(props: {
   ownerId: string;
@@ -59,10 +86,20 @@ export function SheetTable(props: {
     const owner = doc.byId[props.ownerId];
     return sheetConfig(owner ? facetsOf(owner.raw, formatForBlock(props.ownerId)).properties : []);
   });
+  const schemaHome = createMemo<SchemaHome | null>(() => {
+    if (doc.byId[props.ownerId]) {
+      const value = blockProperty(props.ownerId, "tine.fields");
+      if (value !== null) return { kind: "block", id: props.ownerId, value };
+    }
+    if (props.schemaPage) {
+      const value = readPageProperty(props.schemaPage, "tine.fields");
+      if (value !== null) return { kind: "page", name: props.schemaPage, value };
+    }
+    return null;
+  });
   const schemaFields = createMemo<readonly FieldSpec[]>(() => {
-    const own = config().fields;
-    if (own.length > 0) return own;
-    return props.schemaPage ? parseFields(readPageProperty(props.schemaPage, "tine.fields") ?? "") : [];
+    const home = schemaHome();
+    return home ? parseFields(home.value) : [];
   });
   const schemaFieldSet = createMemo(() => new Set<FieldId>(schemaFields().map((s) => s.field)));
   const fieldTypes = createMemo(() => {
@@ -118,8 +155,9 @@ export function SheetTable(props: {
 
   const columns = createMemo(() => ["title" as const, ...fields()]);
   const hasActionColumn = () => props.rowSource === "children" || !!props.addRow;
+  const actionColumn = () => props.rowSource === "children" ? "58px" : hasActionColumn() ? "34px" : "";
   const gridColumns = createMemo(() =>
-    `minmax(180px, max-content) repeat(${fields().length}, max-content) ${hasActionColumn() ? "34px" : ""}`
+    `minmax(180px, max-content) repeat(${fields().length}, max-content) ${actionColumn()}`
   );
   const hasAggregates = createMemo(() => config().colAggregates.size > 0);
 
@@ -145,6 +183,69 @@ export function SheetTable(props: {
     return s?.col === col ? (s.dir > 0 ? " ▲" : " ▼") : "";
   };
 
+  const createSchemaHome = (): SchemaHome | null => {
+    if (doc.byId[props.ownerId]) return { kind: "block", id: props.ownerId, value: "" };
+    return props.schemaPage ? { kind: "page", name: props.schemaPage, value: "" } : null;
+  };
+  const schemaWriteAllowed = () => {
+    const home = schemaHome() ?? createSchemaHome();
+    if (!home) return false;
+    if (home.kind === "block") return !blockPageReadOnly(home.id);
+    return !(pageByName(home.name)?.readOnly ?? false);
+  };
+  const writeSchemaFields = (next: readonly FieldSpec[]) => {
+    const home = schemaHome() ?? createSchemaHome();
+    if (!home || !schemaWriteAllowed()) return;
+    const value = serializeFields(next);
+    if (home.kind === "block") setBlockProperty(home.id, "tine.fields", value || null);
+    else setPageProperty(home.name, "tine.fields", value || null);
+  };
+  const specForField = (field: FieldId, type: SchemaMenuType = "text"): FieldSpec | null => {
+    if (BUILTIN_FIELDS.has(field)) return { field, type: "builtin" };
+    return field.startsWith("prop:") ? { field, type } : null;
+  };
+  const declareField = (field: FieldId) => {
+    const spec = specForField(field);
+    if (!spec) return;
+    writeSchemaFields([...schemaFields(), spec]);
+  };
+  const declareFreshSchema = () => {
+    const specs = fields().map((field) => specForField(field)).filter((spec): spec is FieldSpec => !!spec);
+    writeSchemaFields(specs);
+  };
+  const changeFieldType = (field: FieldId, type: SchemaMenuType) => {
+    writeSchemaFields(schemaFields().map((spec) => (spec.field === field ? { ...spec, type } : spec)));
+  };
+  const removeFieldFromSchema = (field: FieldId) => {
+    writeSchemaFields(schemaFields().filter((spec) => spec.field !== field));
+  };
+  const openFieldHeaderMenu = (e: MouseEvent, field: FieldId) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const declared = schemaFields().find((spec) => spec.field === field) ?? null;
+    const disabled = !schemaWriteAllowed();
+    const actions: ContextMenuAction[] = [];
+    if (!schemaHome()) {
+      if (field.startsWith("prop:")) actions.push({ label: "Declare field (text)", disabled, run: declareFreshSchema });
+    } else if (!declared) {
+      actions.push({ label: "Declare field (text)", disabled, run: () => declareField(field) });
+    } else if (declared.field.startsWith("prop:")) {
+      actions.push({
+        label: "Type →",
+        disabled,
+        children: SCHEMA_PROP_TYPES.map((type) => ({
+          label: type,
+          disabled,
+          run: () => changeFieldType(field, type),
+        })),
+      });
+      actions.push({ label: "Remove from schema", disabled, run: () => removeFieldFromSchema(field) });
+    } else {
+      actions.push({ label: "Remove from schema", disabled, run: () => removeFieldFromSchema(field) });
+    }
+    if (actions.length) openActionContextMenu(e.clientX, e.clientY, actions);
+  };
+
   const selected = (row: number, col: number) => {
     const sel = cellSel();
     if (!sel || sel.gridId !== props.ownerId) return false;
@@ -156,6 +257,26 @@ export function SheetTable(props: {
   const openPropInput = (rowId: string, field: FieldId, initial?: string) => {
     setEditingProp({ rowId, field, initial: initial ?? readField(rowId, field)?.text ?? "" });
   };
+  const propUsesInlineInput = (field: FieldId): boolean => {
+    const type = fieldTypes().get(field);
+    return field.startsWith("prop:") && type !== "checkbox" && type !== "date" && type !== "datetime" && !isEnumFieldType(type);
+  };
+  const addChildRow = () => {
+    if (props.rowSource !== "children") return;
+    const owner = doc.byId[props.ownerId];
+    if (!owner || blockPageReadOnly(props.ownerId)) return;
+    const at = owner.children.length;
+    const id = withUndoUnit("sheet:table-add-row", [owner.page], () => insertEmptyChildBlock(props.ownerId, at));
+    if (!id) return;
+    queueMicrotask(() => {
+      const rowIndex = sortedRows().findIndex((row) => row.id === id);
+      if (rowIndex >= 0) startCellEditing({ gridId: props.ownerId, row: rowIndex, col: 0 }, 0);
+    });
+  };
+  const runAddRow = () => {
+    if (props.rowSource === "children") addChildRow();
+    else void props.addRow?.();
+  };
 
   const activateCell = (sel: CellSel): boolean => {
     const row = sortedRows()[sel.row];
@@ -166,7 +287,7 @@ export function SheetTable(props: {
     if (col === "state") return cycleField(row.id, "state");
     if (col === "priority") return cycleField(row.id, "priority");
     if (col === "scheduled" || col === "deadline") return true;
-    if (col.startsWith("prop:")) {
+    if (propUsesInlineInput(col)) {
       openPropInput(row.id, col);
       return true;
     }
@@ -178,7 +299,7 @@ export function SheetTable(props: {
     const col = columns()[sel.col];
     if (!row || !col) return true;
     if (col === "title") return false;
-    if (col.startsWith("prop:") && doc.byId[row.id]) openPropInput(row.id, col, text);
+    if (propUsesInlineInput(col) && doc.byId[row.id]) openPropInput(row.id, col, text);
     else if ((col === "scheduled" || col === "deadline") && doc.byId[row.id]) writeField(row.id, col, text);
     return true;
   };
@@ -213,14 +334,12 @@ export function SheetTable(props: {
       fallback={
         <div class="sheet-table sheet-empty">
           <span>empty table</span>
-          <Show when={props.addRow}>
+          <Show when={props.rowSource === "children" || props.addRow}>
             <button
               class="sheet-add-field-btn sheet-add-row-btn"
               title={props.addRowLabel ?? "Add row"}
-              onClick={() => void props.addRow?.()}
-            >
-              +
-            </button>
+              onClick={runAddRow}
+            />
           </Show>
         </div>
       }
@@ -240,8 +359,9 @@ export function SheetTable(props: {
           {(field, i) => (
             <div
               class="sheet-cell sheet-header-cell sheet-field-header"
-              classList={{ "sheet-col-stray": schemaFieldSet().size > 0 && !schemaFieldSet().has(field) }}
+              classList={{ "sheet-col-stray": !!schemaHome() && !schemaFieldSet().has(field) }}
               onClick={() => sortHeader(i() + 1)}
+              onContextMenu={(e) => openFieldHeaderMenu(e, field)}
             >
               {fieldLabel(field)}{sortArrow(i() + 1)}
             </div>
@@ -260,23 +380,31 @@ export function SheetTable(props: {
                       title={props.addRowLabel ?? "Add row"}
                       onClick={(e) => {
                         e.stopPropagation();
-                        void props.addRow?.();
+                        runAddRow();
+                      }}
+                    />
+                  }
+                >
+                  <div class="sheet-header-actions">
+                    <button
+                      class="sheet-add-field-btn"
+                      title="Add property column"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setAddingColumn(true);
                       }}
                     >
                       +
                     </button>
-                  }
-                >
-                  <button
-                    class="sheet-add-field-btn"
-                    title="Add property column"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setAddingColumn(true);
-                    }}
-                  >
-                    +
-                  </button>
+                    <button
+                      class="sheet-add-field-btn sheet-add-row-btn"
+                      title={props.addRowLabel ?? "Add row"}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        runAddRow();
+                      }}
+                    />
+                  </div>
                 </Show>
               }
             >
@@ -557,9 +685,27 @@ function FieldCell(props: {
     const f = recordFacets(props.row);
     return f ? blockBackgroundColor(f.properties) : undefined;
   });
-  const commit = (value: string) => {
+  const [inputInvalid, setInputInvalid] = createSignal(false);
+  const commit = (value: string): boolean => {
+    const trimmed = value.trim();
+    if (props.fieldType === "number" && trimmed && !isPlainDecimalNumber(trimmed)) {
+      setInputInvalid(true);
+      return false;
+    }
     if (editable()) writeField(props.row.id, props.field, value);
     props.closePropInput();
+    setInputInvalid(false);
+    return true;
+  };
+  const openEnumMenu = (e: MouseEvent, values: readonly string[]) => {
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    openActionContextMenu(rect.left, rect.bottom + 4, [
+      ...values.map((label): ContextMenuAction => ({
+        label,
+        run: () => writeField(props.row.id, props.field, label),
+      })),
+      { label: "Clear", run: () => writeField(props.row.id, props.field, "") },
+    ]);
   };
 
   const onMouseDown = (e: MouseEvent) => {
@@ -574,7 +720,20 @@ function FieldCell(props: {
       const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
       openDatePicker(props.row.id, props.field, rect.left, rect.bottom + 4);
     }
-    else if (props.field.startsWith("prop:")) props.openPropInput(props.row.id, props.field);
+    else if (props.field.startsWith("prop:")) {
+      const type = props.fieldType;
+      if (type === "checkbox") {
+        const cur = (value()?.raw ?? value()?.text ?? "").trim().toLowerCase();
+        writeField(props.row.id, props.field, cur === "true" ? "false" : "true");
+      } else if (type === "date" || type === "datetime") {
+        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+        openDatePicker(props.row.id, { field: props.field as `prop:${string}`, fieldType: type }, rect.left, rect.bottom + 4);
+      } else if (isEnumFieldType(type)) {
+        openEnumMenu(e, type.enum);
+      } else {
+        props.openPropInput(props.row.id, props.field);
+      }
+    }
   };
   const openCellMenu = (e: MouseEvent) => {
     if (!editable()) return;
@@ -627,16 +786,29 @@ function FieldCell(props: {
       >
         <input
           class="sheet-prop-input"
+          classList={{ "sheet-input-invalid": inputInvalid() }}
           autofocus
           value={props.initial}
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
+          onInput={(e) => {
+            if (props.fieldType !== "number") return;
+            const trimmed = e.currentTarget.value.trim();
+            setInputInvalid(!!trimmed && !isPlainDecimalNumber(trimmed));
+          }}
           onKeyDown={(e) => {
             e.stopPropagation();
             if (e.key === "Enter") commit(e.currentTarget.value);
-            else if (e.key === "Escape") props.closePropInput();
+            else if (e.key === "Escape") {
+              setInputInvalid(false);
+              props.closePropInput();
+            }
           }}
-          onBlur={(e) => commit(e.currentTarget.value)}
+          onBlur={(e) => {
+            // e.currentTarget is null once dispatch ends — capture before the microtask
+            const el = e.currentTarget;
+            if (!commit(el.value)) queueMicrotask(() => el.focus());
+          }}
         />
       </Show>
     </div>

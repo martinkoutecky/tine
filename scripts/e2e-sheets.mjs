@@ -35,6 +35,11 @@ const GRID_MD = [
   "  tine.view:: board",
   "  tine.group-by:: state",
   "- TODO buy milk",
+  "- task table",
+  "  tine.view:: table",
+  "  tine.fields:: topic=enum:infra,ui;shipped=checkbox",
+  "\t- row one",
+  "\t  shipped:: false",
   "",
 ].join("\n");
 
@@ -119,7 +124,7 @@ try {
   // Seeded file has 9 bullets (host + 2 rows + 4 cells + board query + task) —
   // an Enter-split would add one.
   const bulletCount = (disk.match(/^\s*-/gm) || []).length;
-  check("no block was split/created (9 bullets)", bulletCount === 9, `got ${bulletCount}: ${JSON.stringify(disk)}`);
+  check("no block was split/created (11 bullets)", bulletCount === 11, `got ${bulletCount}: ${JSON.stringify(disk)}`);
   check("grid config intact", disk.includes("tine.view:: grid"), JSON.stringify(disk));
 
   // Esc from selection → outline selection on the grid block (no doc change).
@@ -147,7 +152,7 @@ try {
   await sleep(2500);
   const disk3 = fs.readFileSync(JFILE, "utf8");
   const bullets3 = (disk3.match(/^\s*-/gm) || []).length;
-  check("seam-typing inserted a row on disk (11 bullets: +row +cell)", bullets3 === 11, `got ${bullets3}: ${JSON.stringify(disk3)}`);
+  check("seam-typing inserted a row on disk (13 bullets: +row +cell)", bullets3 === 13, `got ${bullets3}: ${JSON.stringify(disk3)}`);
   check("inserted cell holds the typed char", /-\s*z\s*$/m.test(disk3), JSON.stringify(disk3));
   // The typed char rides the editor's own undo entry; the structural insert is
   // its own atomic unit — so TWO undos fully revert (text, then structure).
@@ -171,6 +176,44 @@ try {
   const disk5 = fs.readFileSync(JFILE, "utf8");
   const betaCount = (disk5.match(/- beta/g) || []).length;
   check("Ctrl+D filled beta into the row below", betaCount === 2, JSON.stringify(disk5));
+
+  // --- Typed cells (phase 6b): checkbox toggle + enum popup write ------------
+  // Seed has a schema'd table: columns title=0, topic(enum)=1, shipped(checkbox)=2.
+  const cbCell = await browser.$('.sheet-table .sheet-cell[data-row="0"][data-col="2"]');
+  if (await cbCell.isExisting()) {
+    await cbCell.click(); // checkbox type: mousedown toggles, no editor
+    await sleep(2400);
+    const diskCb = fs.readFileSync(JFILE, "utf8");
+    check("checkbox cell click wrote shipped:: true", diskCb.includes("shipped:: true"), JSON.stringify(diskCb));
+
+    // The empty enum cell's center can be obscured (cell handle) for a WD click;
+    // the app's edit entry is mousedown anyway — dispatch it directly.
+    await browser.execute(() => {
+      const el = document.querySelector('.sheet-table .sheet-cell[data-row="0"][data-col="1"]');
+      el?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
+    });
+    await sleep(400);
+    const items = await browser.execute(() =>
+      [...document.querySelectorAll(".ctx-item")].map((el) => (el.textContent ?? "").trim())
+    );
+    check("enum popup lists declared values + Clear",
+      items.includes("infra") && items.includes("ui") && items.includes("Clear"), JSON.stringify(items));
+    const clicked = await browser.execute(() => {
+      const item = [...document.querySelectorAll(".ctx-item")].find((el) => (el.textContent ?? "").trim() === "ui");
+      if (!item) return false;
+      item.click();
+      return true;
+    });
+    if (clicked) {
+      await sleep(2400);
+      const diskEnum = fs.readFileSync(JFILE, "utf8");
+      check("enum pick wrote topic:: ui", diskEnum.includes("topic:: ui"), JSON.stringify(diskEnum));
+    } else {
+      check("enum popup item clickable", false, JSON.stringify(items));
+    }
+  } else {
+    check("schema'd table rendered", false, "no table cell (0,2) found");
+  }
 
   // --- Board card-move (phase 3): flip a task marker via Ctrl+ArrowRight ----
   // The seeded journal also carries a board query + one TODO task (see seed).

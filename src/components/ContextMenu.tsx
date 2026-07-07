@@ -13,6 +13,7 @@ import {
   openPageProps,
   openExportModal,
   openPdfExport,
+  type ContextMenuAction,
 } from "../ui";
 import { openPage, openPageInNewTab, openPageAtBlock, openJournals, route } from "../router";
 import { refreshAfterRename } from "../graph";
@@ -106,11 +107,58 @@ export function ContextMenu(): JSX.Element {
                   close={close}
                 />
               </Match>
+              <Match when={m().kind === "action-menu"}>
+                <ActionMenu items={(m() as { items: readonly ContextMenuAction[] }).items} close={close} />
+              </Match>
             </Switch>
           </div>
         </div>
       )}
     </Show>
+  );
+}
+
+function ActionMenu(props: { items: readonly ContextMenuAction[]; close: () => void }): JSX.Element {
+  const run = (item: ContextMenuAction) => {
+    if (item.disabled) return;
+    item.run?.();
+    props.close();
+  };
+
+  return (
+    <For each={props.items}>
+      {(item) => (
+        <Show
+          when={item.children?.length}
+          fallback={
+            <div
+              class="ctx-item"
+              classList={{ "ctx-disabled": !!item.disabled, danger: !!item.danger }}
+              onClick={() => run(item)}
+            >
+              {item.label}
+            </div>
+          }
+        >
+          <div class="ctx-item ctx-submenu" classList={{ "ctx-disabled": !!item.disabled }}>
+            <span>{item.label}</span>
+            <div class="ctx-submenu-menu">
+              <For each={item.children ?? []}>
+                {(child) => (
+                  <div
+                    class="ctx-item"
+                    classList={{ "ctx-disabled": !!child.disabled, danger: !!child.danger }}
+                    onClick={() => run(child)}
+                  >
+                    {child.label}
+                  </div>
+                )}
+              </For>
+            </div>
+          </div>
+        </Show>
+      )}
+    </For>
   );
 }
 

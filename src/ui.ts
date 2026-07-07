@@ -689,11 +689,15 @@ export function isConflicted(name: string): boolean {
   return conflicts().includes(name);
 }
 
-// Date picker popup for SCHEDULED / DEADLINE (and editing existing ones).
+// Date picker popup for SCHEDULED / DEADLINE and typed sheet date properties.
+export type DatePickerTarget =
+  | "scheduled"
+  | "deadline"
+  | { field: `prop:${string}`; fieldType: "date" | "datetime" };
 export const [datePicker, setDatePicker] = createSignal<
-  { blockId: string; which: "scheduled" | "deadline"; x: number; y: number } | null
+  { blockId: string; which: DatePickerTarget; x: number; y: number } | null
 >(null);
-export function openDatePicker(blockId: string, which: "scheduled" | "deadline", x: number, y: number) {
+export function openDatePicker(blockId: string, which: DatePickerTarget, x: number, y: number) {
   setDatePicker({ blockId, which, x, y });
 }
 export function closeDatePicker() {
@@ -825,7 +829,15 @@ export type CtxTarget =
   | { kind: "page"; name: string; pageKind: "journal" | "page" }
   | { kind: "blockref"; uuid: string; page: string; pageKind: "journal" | "page" }
   | { kind: "sheet-cell"; blockId: string }
-  | { kind: "sheet"; ownerId: string; surface: "grid" | "table" | "board"; rowSource: "children" | "query"; groupBy?: string | null };
+  | { kind: "sheet"; ownerId: string; surface: "grid" | "table" | "board"; rowSource: "children" | "query"; groupBy?: string | null }
+  | { kind: "action-menu"; items: readonly ContextMenuAction[] };
+export interface ContextMenuAction {
+  label: string;
+  run?: () => void;
+  disabled?: boolean;
+  danger?: boolean;
+  children?: readonly ContextMenuAction[];
+}
 export const [contextMenu, setContextMenu] = createSignal<
   ({ x: number; y: number } & CtxTarget) | null
 >(null);
@@ -861,6 +873,9 @@ export function openSheetContextMenu(
   groupBy?: string | null
 ) {
   setContextMenu({ x, y, kind: "sheet", ownerId, surface, rowSource, groupBy });
+}
+export function openActionContextMenu(x: number, y: number, items: readonly ContextMenuAction[]) {
+  setContextMenu({ x, y, kind: "action-menu", items });
 }
 export function closeContextMenu() {
   setContextMenu(null);

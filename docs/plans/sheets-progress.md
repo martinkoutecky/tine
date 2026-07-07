@@ -298,10 +298,31 @@ ADR 0026 (schema) + ADR 0027 (tags write-back / tag boards).
   own-props-only (no tag-page fallback — Macro.tsx has no parsed tag handy
   and a query-string regex was forbidden); revisit only if a real parsed tag
   target appears.
-- **6b NEXT** — typed editing + add-row seeding + header schema menu.
-- 6c tags write-back + tag boards (ADR 0027), 6d pipe-table↔grid + CSV drop
-  + docs sync. Sample pages in tine-test/org-graph get a schema'd table when
-  6b makes it playable (render-only 6a isn't compelling to test).
+- **6b DONE (Jul 7)** — typed editing + add-row + header schema menu:
+  checkbox cells click-toggle (`true`/`false`, rendered box stays disabled +
+  `pointer-events:none`); date/datetime cells reuse THE date picker
+  (`DatePickerTarget` union — prop targets write ISO, datetime preserves the
+  `HH:MM` tail, repeater UI schedule-only); enum cells open a values popup +
+  Clear (new generic `action-menu` context-menu variant, reused for the
+  header menu); number inputs validate (`sheet-input-invalid`, invalid
+  commit keeps the editor open); children-table add-row (one undo unit,
+  opens title cell); header right-click menu: declare stray / first-declare
+  seeds the FULL observed order (no reshuffle) / change type / remove —
+  writes to the effective schema home (block prop or tag-page page prop),
+  read-only gated. Orchestrator fixes over codex: blur-refocus used
+  `e.currentTarget` inside `queueMicrotask` (null after dispatch — throw
+  instead of refocus; fixed + regression test). E2E extended (21 checks ALL
+  PASS vs the real binary: checkbox → `shipped:: true` on disk, enum popup,
+  enum pick → `topic:: ui` on disk); seed grew so two bullet-count
+  expectations were re-based (9→11, 11→13). Deviations (deliberate): list
+  chip editor out of scope (comma text editing); enum types are hand-edit
+  only in the header menu. Sample pages (tine-test md + org-graph org)
+  gained a playable "§6 typed schema table" — both graphs re-validated
+  round-trip clean. NOTE: `~/research/tine` still runs the v1 binary
+  (ae9bb81) on purpose — Martin's nit list is against v1; deploy on request
+  or at phase end.
+- **6c NEXT** — tags write-back + multi-valued group-by (ADR 0027).
+- 6d pipe-table↔grid + CSV drop + docs sync.
 
 Martin's v1 UX nits are PARKED (his list, not yet captured) — batch later,
 don't interleave.
