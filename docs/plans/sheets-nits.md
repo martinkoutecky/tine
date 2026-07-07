@@ -100,6 +100,56 @@ it stays until the Σ affordance is clicked again (per-grid session-only UI
 state, not persisted). Configured aggregates keep the always-visible row
 (no jump — it is always present). This also structurally fixes N7.
 
+## N10 — descend INTO a sub-grid (Down from edit mode)  [batch 4]
+Martin (3rd batch): with the caret in edit mode inside a cell hosting a
+sub-grid, pressing Down should put the SUB-GRID in select mode — his
+ruling: "the sensible default is top edge selected". Context: batch 2
+shipped Esc-up only; Enter/descend was explicitly punted as a design
+question — now ruled. Rule set for the batch: Down from edit-in-host-cell
+descends (top edge of the sub-grid selected); Esc from the sub-grid walks
+back up (already shipped). Open sub-question (pick a default, flag it):
+Enter from SELECT mode on a sub-grid host cell — descend (ladder-
+consistent) vs edit the host's own text; default = descend, host text
+still editable via F2/typing-overtype.
+
+## N11 — seam selection should be cell-scoped, not column-scoped  [batch 4]
+TreeSheets distinguishes the edge between two CELLS from the edge between
+two COLUMNS. Right from a selected cell currently selects the full-height
+column seam; it should select just the edge between the two adjacent
+cells (e.g. Sweet|12), which also visually preserves "another Right lands
+on the 12 cell". Scope for the batch: seam RENDERING + selection become
+cell-local; typing/insert semantics at a seam stay column-insert for now
+(ragged per-row cell insertion = possible follow-up, tree geometry allows
+it — ask Martin before building that).
+
+## N12 — click should SELECT a cell, not enter edit mode  [batch 4]
+Single click currently enters edit mode. TreeSheets-style ruling: click →
+select mode (edit is one Enter away); double-click → edit directly.
+
+## N13 — multi-cell selection via mouse + full edit suite  [batch 4 — partly exists, VERIFY]
+Martin: "currently no multi-cell selection via either mouse or keyboard".
+Code says keyboard ranges EXIST (Shift+Arrows extend, Shift+Space rows,
+Ctrl+Space cols, Ctrl+A all, Ctrl+C/X copy/cut, Ctrl+D/R fill, a paste
+path) — so either they're broken in the real app or undiscoverable (or
+N12's click-to-edit hides them). Batch 4: (a) verify each in the real
+app and fix what's broken; (b) ADD mouse drag range selection (pointer
+down on a cell + drag = range, consistent with the keyboard anchor
+model); (c) ensure paste works into cells/ranges; (d) surface the
+bindings in the help/shortcuts panel + FEATURES.md.
+
+## N14 — board card drag fights outline multi-block selection  [batch 4]
+Dragging a kanban card also drives the outline's multi-block (blue)
+selection — mousedown+move on a card must not start outline block
+selection. Suppress outline selection while a card drag is in progress
+(and for the mousedown that initiates it).
+
+## PROCESS — master accumulating while sheets runs  [agreed with Martin Jul 7]
+Discipline: periodically merge MASTER → SHEETS (never the reverse — the
+sheets→master merge stays Martin-gated). Cadence: at batch boundaries,
+or whenever master lands editor/caret/mousedown work that touches shared
+code. Full gates + sheets e2e after every such merge. First merge: after
+batch 3 lands.
+
 ## PROPOSED — the "canvas" question (Martin asked for thinking, not just fixes)
 Recommendation, three layers (details in the reply that accompanied this
 capture): 1) default full-width breakout between the sidebars; 2) a sheet
