@@ -80,6 +80,15 @@ jobs:
     if: always() && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped')
     strategy:
       fail-fast: false
+      # Serialize the platform legs. tauri-action's latest.json upload is a
+      # read-modify-write merge (read the release's current latest.json → add this
+      # platform → delete + re-upload). Run in parallel, the legs race: they lose
+      # each other's platform entries AND collide on the re-upload
+      # (ReleaseAsset "already_exists"), which fails a leg and skips publish-release
+      # (v0.4.5 got stuck as a draft this way). One-at-a-time makes each leg merge
+      # into the previous complete manifest. Cost: slower releases; fine for the
+      # cadence, and correctness of the updater manifest matters more.
+      max-parallel: 1
       matrix:
         include:
           - platform: ubuntu-22.04
