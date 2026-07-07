@@ -109,3 +109,42 @@ export async function checkForUpdate(): Promise<void> {
     // offline / rate-limited / network blocked — never bother the user.
   }
 }
+
+export type UpdateStatus =
+  | { kind: "current"; version: string }
+  | { kind: "available"; version: string; current: string }
+  | { kind: "unavailable" }; // offline, rate-limited, or not the packaged app
+
+/** The About tab's explicit "Check for updates" button. Unlike `checkForUpdate`
+ *  (silent on the common no-update path), this reports every outcome so the
+ *  button can show feedback. If a newer release exists, kicks off the same
+ *  download-or-open flow as the startup toast. Never throws. */
+export async function checkForUpdateNow(): Promise<UpdateStatus> {
+  if (!isTauri()) return { kind: "unavailable" };
+  try {
+    const { getVersion } = await import("@tauri-apps/api/app");
+    const curStr = await getVersion();
+    const cur = parseVer(curStr);
+    if (!cur) return { kind: "unavailable" };
+
+    const res = await fetch(LATEST_API, { headers: { Accept: "application/vnd.github+json" } });
+    if (!res.ok) return { kind: "unavailable" };
+    const data: unknown = await res.json();
+    const tag = (data as { tag_name?: unknown })?.tag_name;
+    const latest = typeof tag === "string" ? parseVer(tag) : null;
+    if (!latest) return { kind: "unavailable" };
+
+    if (isNewer(latest, cur)) {
+      void applyUpdateOrOpen();
+      return { kind: "available", version: latest.join("."), current: cur.join(".") };
+    }
+    return { kind: "current", version: cur.join(".") };
+  } catch {
+    return { kind: "unavailable" };
+  }
+}
+
+/** Open the GitHub releases page (exported for the About tab's manual link). */
+export function openReleasesPage(): void {
+  openReleases();
+}
