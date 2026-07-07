@@ -8,8 +8,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-07-07
+
 ### Added
 
+- **About tab in Settings** ([#32](https://github.com/martinkoutecky/tine/issues/32)).
+  Settings → About shows the version and build, links to the website, source, and
+  support (Ko-fi), and credits the people and AI collaborators behind Tine.
 - **Developer tools (WebKit Web Inspector), openable in release builds**
   ([#31](https://github.com/martinkoutecky/tine/issues/31)). Press **Ctrl+Shift+J**,
   run *Toggle developer tools* from the command palette, or right-click → *Inspect
@@ -29,6 +34,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Clicking right of a bullet that ends in a link now puts the caret after the
+  link, not before it** ([#34](https://github.com/martinkoutecky/tine/issues/34)).
+  Clicking past the end of a line whose last element is a `[[page]]`/`#tag`/link
+  used to drop the caret at the start of that element; it now lands at the end of
+  the line as expected.
 - **No more "Tine crashed" coredump when closing the app on Linux**
   ([#28](https://github.com/martinkoutecky/tine/issues/28)). The app already closed
   cleanly, but WebKitGTK's renderer subprocess ran the GPU driver's exit-time
@@ -879,7 +889,9 @@ takes over your graph.
 - macOS and Windows installers are currently **unsigned** — on macOS right-click →
   Open; on Windows choose *More info → Run anyway*.
 
-[Unreleased]: https://github.com/martinkoutecky/tine/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/martinkoutecky/tine/compare/v0.4.4...HEAD
+[0.4.4]: https://github.com/martinkoutecky/tine/compare/v0.4.3...v0.4.4
+[0.4.3]: https://github.com/martinkoutecky/tine/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/martinkoutecky/tine/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/martinkoutecky/tine/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/martinkoutecky/tine/compare/v0.3.5...v0.4.0

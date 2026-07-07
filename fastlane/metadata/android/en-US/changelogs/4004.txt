@@ -1,0 +1,6 @@
+New: an About tab in Settings (version, build, and links to the website, source,
+and support). Fixed: clicking to the right of a bullet that ends in a link now
+puts the caret after the link instead of before it (#34); no more crash-report
+coredump when closing the app on Linux (#28). Also: developer tools now open in
+release builds via Ctrl+Shift+J (#31), and the SCHEDULED/DEADLINE date picker can
+now set a clock time (#30).
