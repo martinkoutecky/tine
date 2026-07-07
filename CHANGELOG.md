@@ -8,6 +8,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Added
+
+- **Time entry in the SCHEDULED/DEADLINE date picker**
+  ([#30](https://github.com/martinkoutecky/tine/issues/30)). The `/scheduled` and
+  `/deadline` picker now has an **"Add time"** control: set an `HH:mm` clock time and
+  it's written the way Logseq does — `SCHEDULED: <2026-07-07 Tue 14:30>` (time after
+  the weekday, before any repeater). Tine already *rendered* a time on planning
+  timestamps; now you can enter one. Re-picking the date (or changing the repeater)
+  keeps an existing time instead of dropping it, and an `×` clears the time. Ranges
+  aren't supported (neither is in Logseq's planning timestamps).
+
 ### Fixed
 
 - **No more "Tine crashed" coredump when closing the app on Linux**

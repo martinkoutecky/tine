@@ -1231,30 +1231,47 @@ const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const pad2 = (n: number) => String(n).padStart(2, "0");
 
 /** Read a block's SCHEDULED/DEADLINE date as {y,m,d} (m 0-based), or null. */
+/** Normalize an org time token to zero-padded `HH:mm`. mldoc/OG accept an
+ *  unpadded hour (`9:05`) and drop seconds; we canonicalize to `09:05` so a
+ *  native `<input type="time">` can pre-fill it and the on-disk form matches OG's
+ *  rendered (zero-padded) canonical form. Returns null if it isn't `H:mm`. */
+function normalizeHHmm(t: string): string | null {
+  const m = /^(\d{1,2}):(\d{2})/.exec(t);
+  if (!m) return null;
+  return `${pad2(+m[1])}:${m[2]}`;
+}
+
 export function readSchedule(
   id: string,
   which: "scheduled" | "deadline"
-): { y: number; m: number; d: number; repeater: string | null } | null {
+): { y: number; m: number; d: number; time: string | null; repeater: string | null } | null {
   const node = doc.byId[id];
   if (!node) return null;
   const tag = which === "scheduled" ? "SCHEDULED" : "DEADLINE";
-  // Optionally capture an org repeater cookie (`+1w`, `.+1w`, `++1w`) after the
-  // weekday, so re-opening the picker can pre-fill the existing recurrence.
+  // Capture the optional time (`HH:mm`) and org repeater cookie (`+1w`, `.+1w`,
+  // `++1w`) — both after the weekday, in OG's fixed order `<date wday time repeater>`
+  // — so re-opening the picker pre-fills the existing time AND recurrence. The
+  // weekday is `[A-Za-z]+` (mldoc consumes any letters; OG writes English 3-letter).
   const m = new RegExp(
-    `^${tag}:\\s*<(\\d{4})-(\\d{2})-(\\d{2})(?:\\s+[A-Za-z]{3})?(?:\\s+((?:\\.\\+|\\+\\+|\\+)\\d+[dwmy]))?`,
+    `^${tag}:\\s*<(\\d{4})-(\\d{2})-(\\d{2})(?:\\s+[A-Za-z]+)?(?:\\s+(\\d{1,2}:\\d{2}))?(?:\\s+((?:\\.\\+|\\+\\+|\\+)\\d+[dwmy]))?`,
     "m"
   ).exec(node.raw);
-  return m ? { y: +m[1], m: +m[2] - 1, d: +m[3], repeater: m[4] ?? null } : null;
+  return m
+    ? { y: +m[1], m: +m[2] - 1, d: +m[3], time: m[4] ? normalizeHHmm(m[4]) : null, repeater: m[5] ?? null }
+    : null;
 }
 
 /** Set or clear a block's SCHEDULED/DEADLINE org-timestamp (line 2, like OG).
- *  `repeater` is an org recurrence cookie (`+1w`, `.+1w`, `++1w`) or null — it's
- *  written inside the `<…>` and consumed by repeat.ts when the task is completed. */
+ *  `repeater` is an org recurrence cookie (`+1w`, `.+1w`, `++1w`) or null; `time`
+ *  is a `HH:mm` clock time or null. Both are written inside the `<…>` in OG's fixed
+ *  order — `<yyyy-MM-dd EEE[ HH:mm][ repeater]>` — the repeater is consumed by
+ *  repeat.ts on completion. */
 export function setSchedule(
   id: string,
   which: "scheduled" | "deadline",
   date: { y: number; m: number; d: number } | null,
-  repeater?: string | null
+  repeater?: string | null,
+  time?: string | null
 ) {
   const node = doc.byId[id];
   if (!node) return;
@@ -1263,8 +1280,10 @@ export function setSchedule(
   const lines = node.raw.split("\n").filter((l) => !new RegExp(`^${tag}:`).test(l.trim()));
   if (date) {
     const wd = WEEKDAYS[new Date(date.y, date.m, date.d).getDay()];
+    const hhmm = time ? normalizeHHmm(time) : null;
+    const timePart = hhmm ? ` ${hhmm}` : "";
     const rep = repeater ? ` ${repeater}` : "";
-    const stamp = `${tag}: <${date.y}-${pad2(date.m + 1)}-${pad2(date.d)} ${wd}${rep}>`;
+    const stamp = `${tag}: <${date.y}-${pad2(date.m + 1)}-${pad2(date.d)} ${wd}${timePart}${rep}>`;
     lines.splice(Math.min(1, lines.length), 0, stamp);
   }
   setDoc("byId", id, "raw", lines.join("\n"));

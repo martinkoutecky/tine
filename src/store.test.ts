@@ -47,6 +47,8 @@ import {
   blockSubtreeMarkdown,
   selectionMarkdown,
   toggleListItemAtIndex,
+  readSchedule,
+  setSchedule,
 } from "./store";
 import { editingId, startEditing, takeCaretFor } from "./editorController";
 import { exportOutline, DEFAULT_EXPORT_OPTIONS } from "./editor/exportText";
@@ -1086,5 +1088,67 @@ describe("toggleListItemAtIndex (positional checkbox toggle)", () => {
     load([b]);
     toggleListItemAtIndex(b.id, 0); // "Title" is not a checkbox line
     expect(doc.byId[b.id].raw).toBe("Title\n+ [ ] a");
+  });
+});
+
+describe("SCHEDULED/DEADLINE time (#30) — read/write round-trip, OG format", () => {
+  it("reads date + time + repeater in OG order <date wday time repeater>", () => {
+    const b = blk("Task\nSCHEDULED: <2026-07-07 Tue 14:30 .+1w>");
+    load([b]);
+    expect(readSchedule(b.id, "scheduled")).toEqual({
+      y: 2026, m: 6, d: 7, time: "14:30", repeater: ".+1w",
+    });
+  });
+
+  it("normalizes an unpadded hour (OG seeds 9:05) to 09:05 on read", () => {
+    const b = blk("Task\nSCHEDULED: <2026-07-07 Tue 9:05>");
+    load([b]);
+    expect(readSchedule(b.id, "scheduled")?.time).toBe("09:05");
+  });
+
+  it("date-only timestamp reads time: null (regression)", () => {
+    const b = blk("Task\nSCHEDULED: <2026-07-07 Tue>");
+    load([b]);
+    expect(readSchedule(b.id, "scheduled")).toEqual({
+      y: 2026, m: 6, d: 7, time: null, repeater: null,
+    });
+  });
+
+  it("a time RANGE degrades to the start time (OG/mldoc can't represent ranges)", () => {
+    const b = blk("Task\nSCHEDULED: <2026-07-07 Tue 14:30-15:30>");
+    load([b]);
+    const r = readSchedule(b.id, "scheduled");
+    expect(r?.time).toBe("14:30");
+    expect(r?.repeater).toBeNull();
+  });
+
+  it("writes <yyyy-MM-dd EEE HH:mm> (time after weekday, before repeater)", () => {
+    const b = blk("Task");
+    load([b]);
+    setSchedule(b.id, "scheduled", { y: 2026, m: 6, d: 7 }, ".+1w", "14:30");
+    expect(doc.byId[b.id].raw).toBe("Task\nSCHEDULED: <2026-07-07 Tue 14:30 .+1w>");
+  });
+
+  it("writes time with no repeater", () => {
+    const b = blk("Task");
+    load([b]);
+    setSchedule(b.id, "deadline", { y: 2026, m: 6, d: 7 }, null, "09:05");
+    expect(doc.byId[b.id].raw).toBe("Task\nDEADLINE: <2026-07-07 Tue 09:05>");
+  });
+
+  it("omits the time when null (date-only stays date-only)", () => {
+    const b = blk("Task");
+    load([b]);
+    setSchedule(b.id, "scheduled", { y: 2026, m: 6, d: 7 }, null, null);
+    expect(doc.byId[b.id].raw).toBe("Task\nSCHEDULED: <2026-07-07 Tue>");
+  });
+
+  it("PRESERVES the time when the date is re-picked (OG parity; was the strip bug)", () => {
+    const b = blk("Task\nSCHEDULED: <2026-07-07 Tue 14:30>");
+    load([b]);
+    const sel = readSchedule(b.id, "scheduled")!;
+    // Simulate the picker committing a NEW day with the seeded time carried through.
+    setSchedule(b.id, "scheduled", { y: 2026, m: 6, d: 10 }, sel.repeater, sel.time);
+    expect(doc.byId[b.id].raw).toBe("Task\nSCHEDULED: <2026-07-10 Fri 14:30>");
   });
 });

@@ -47,6 +47,17 @@ function Picker(props: { bid: string; which: "scheduled" | "deadline"; x: number
   const repeater = (): string | null =>
     repUnit() ? `${repMode()}${Math.max(1, repNum())}${repUnit()}` : null;
 
+  // Optional clock time (`HH:mm`), like OG's "Add time". Seeded from the existing
+  // timestamp so re-picking a date keeps the time (OG preserves it — GH #30). Kept
+  // as independent state, applied on the same day-click that commits the date; a
+  // native `<input type="time">` always yields 24h `HH:mm` regardless of locale.
+  const [time, setTime] = createSignal<string | null>(sel?.time ?? null);
+  // Default seed when "Add time" is first clicked: the current local time.
+  const nowHHmm = () => {
+    const n = new Date();
+    return `${String(n.getHours()).padStart(2, "0")}:${String(n.getMinutes()).padStart(2, "0")}`;
+  };
+
   // Days laid out in weeks (leading blanks for the first-of-month offset).
   const grid = createMemo(() => {
     const { y, m } = view();
@@ -64,7 +75,7 @@ function Picker(props: { bid: string; which: "scheduled" | "deadline"; x: number
     setView({ y: Math.floor(total / 12), m: ((total % 12) + 12) % 12 });
   };
   const pick = (d: number) => {
-    setSchedule(props.bid, props.which, { y: view().y, m: view().m, d }, repeater());
+    setSchedule(props.bid, props.which, { y: view().y, m: view().m, d }, repeater(), time());
     closeDatePicker();
   };
   const pickToday = () => {
@@ -72,7 +83,8 @@ function Picker(props: { bid: string; which: "scheduled" | "deadline"; x: number
       props.bid,
       props.which,
       { y: today.getFullYear(), m: today.getMonth(), d: today.getDate() },
-      repeater()
+      repeater(),
+      time()
     );
     closeDatePicker();
   };
@@ -139,6 +151,31 @@ function Picker(props: { bid: string; which: "scheduled" | "deadline"; x: number
               </Show>
             )}
           </For>
+        </div>
+        <div class="dp-time" title="Optional clock time. Pick a day to apply it.">
+          <Show
+            when={time() !== null}
+            fallback={
+              <button class="dp-addtime" onClick={() => setTime(nowHHmm())}>
+                + Add time
+              </button>
+            }
+          >
+            <span class="dp-time-label">Time</span>
+            <input
+              class="dp-time-input"
+              classList={{ invalid: !!time() && !/^\d{1,2}:\d{2}$/.test(time()!) }}
+              type="text"
+              inputmode="numeric"
+              placeholder="HH:mm"
+              maxlength="5"
+              value={time()!}
+              onInput={(e) => setTime(e.currentTarget.value || null)}
+            />
+            <button class="dp-time-clear" title="Remove time" onClick={() => setTime(null)}>
+              ×
+            </button>
+          </Show>
         </div>
         <div class="dp-repeat" title="Pick a day to apply the repeat. On completion, a repeating task advances to its next date and reopens.">
           <select

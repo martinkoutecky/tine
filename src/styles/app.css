@@ -3637,6 +3637,53 @@ body.file-drop-active::after {
   gap: 4px;
   cursor: pointer;
 }
+/* Optional clock-time row in the date picker (OG's "Add time"), above the repeat row. */
+.dp-time {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-color);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.dp-addtime {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--link-color);
+}
+.dp-addtime:hover {
+  text-decoration: underline;
+}
+.dp-time-label {
+  color: var(--text-muted);
+}
+.dp-time-input {
+  width: 58px;
+  padding: 3px 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.dp-time-input.invalid {
+  border-color: var(--marker-todo);
+}
+.dp-time-clear {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--marker-todo);
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 4px;
+}
 
 /* code blocks */
 .code-block {

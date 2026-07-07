@@ -175,8 +175,10 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   beside the box and still cycles on click. Checkboxes also show (read-only) on
   tasks surfaced in Linked References, query results, and embeds.
 - `SCHEDULED:` / `DEADLINE:` via a calendar **date picker** (`/scheduled`,
-  `/deadline`), including **recurring tasks** (`+1w` / `.+1w` / `++1w`) where
-  completing a repeater advances the date. You can type a planning line *anywhere*
+  `/deadline`), with an optional **clock time** ("Add time" → `HH:mm`, written as
+  `<2026-07-07 Tue 14:30>` like Logseq) and **recurring tasks** (`+1w` / `.+1w` /
+  `++1w`) where completing a repeater advances the date. Re-picking the date keeps
+  an existing time (and repeater). You can type a planning line *anywhere*
   in a block while editing; on exit it's moved to its canonical position (after the
   first line, before properties — OG's layout). A `SCHEDULED:`/`DEADLINE:` inside
   inline code or a code fence stays literal content (it's not a real timestamp), so
