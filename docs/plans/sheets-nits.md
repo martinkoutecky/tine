@@ -294,3 +294,57 @@ canvas = ZOOM the sheet block (block zoom already exists) — add an
 the sheet the whole viewport. Explicitly not proposed: an
 infinite-pan canvas widget (that's the v3 canvas-face territory; new
 interaction model, poor fit with outline scrolling).
+
+## ROUND 4 (Jul 8 2026, daily-driving begins) — N27–N30
+
+## N27 — aggregate dropdown STILL collapses before a pick is possible  [IN PROGRESS — root-caused, orchestrator fix]
+Symptoms (real app): click the big Σ → footer row appears; clicking the
+fn dropdown "flashes unrolled then collapses" — impossible to select.
+Sub-nit: when a cell is narrower than the dropdown, a scrollbar appears,
+obscuring the footer row.
+ROOT CAUSE (found via real-app probe + elimination): the picker is a
+native `<select>` with `onBlur` teardown. In WebKitGTK a select's popup
+is a NATIVE GtkMenu — a separate window that takes focus, so the
+`<select>` fires `blur` the moment the popup opens → `closeAfterBlur`
+unmounts the select → its popup is destroyed. Flash + collapse. The
+earlier 0-ms-delay "fix" was aimed at relatedTarget churn and could
+never help. Synthetic WebDriver/jsdom/Chromium clicks never open the
+native popup, which is why every probe so far was blind (same WebKitGTK
+native-widget pattern as window.confirm being a no-op).
+FIX: no native `<select>` at all — reuse the in-DOM portaled
+`openActionContextMenu` (what enum cells already use): Σ/value button
+click opens the menu (None + 15 fns, current one marked), pick commits
+via setColumnAggregate. Kills the blur class entirely AND the width
+overflow (menu is portaled, adds nothing to the scroller).
+
+## N28 — /Grid should insert a single CELL, not an empty grid  [PROPOSED→ruling adopted; batch 7]
+Martin's vision (verbatim intent): /Grid inserts a single cell which,
+thanks to the walkable edges, can be easily expanded. Change the
+`sheet-grid` slash action to seed one row + one cell (empty) in the same
+undo unit as the `tine.view:: grid` property write, and enter the cell
+in EDIT mode so typing flows straight in (the /command was issued from
+edit mode — the user is typing).
+
+## N29 — "Kanban" is not findable in the / menu  [batch 7]
+/Board exists but Martin searched "kanban" and got nothing. Add a
+"Kanban" match alias to the Board command (the `key` mechanism scores
+label + key) so /kan surfaces it. Consider label "Board (kanban)".
+
+## N30 — query ↔ sheet integration (his design itch, verbatim: "overlap
+that is not yet clear in my mind")  [batch 7 — design adopted, ADR]
+He wants: query builder for MEMBERSHIP (which items), sheet face for the
+VIEW (editing/sorting/dragging). Today the two are mutually exclusive in
+the UI: giving a query block a sheet face HIDES the query header + the
+visual-builder chip bar (Macro.tsx renders sheet-face queries bare), so
+there's no road back and no membership editing on a live board.
+DESIGN (adopted): (1) the query header's List/Table toggle becomes a
+List · Table · Board view switcher — Table/Board write `tine.view::`
+(+ default `tine.group-by:: state` for board) on the query block, List
+clears it; persistent, round-trips as plain properties (the old
+session-only read-only table stays as... it IS replaced by the sheet
+table — one Table meaning, editable, strictly more capable). (2) sheet-
+faced query blocks KEEP the slim query header (collapse, title, count,
+view switcher) AND the builder chip bar above the sheet face — builder
+edits membership, sheet edits content, side by side. (3) /Query (visual
+builder) then flows naturally into "make it a board" without leaving the
+block. Record as ADR (query-view unification).
