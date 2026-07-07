@@ -244,7 +244,9 @@ export function Block(props: { id: string; hideRefCount?: boolean }): JSX.Elemen
   });
   const editorVisibleValue = createMemo(() => {
     const n = node();
-    return n ? splitProps(n.raw, isBuiltinHidden).visible : "";
+    if (!n) return "";
+    const fmt = pageByName(n.page)?.format === "org" ? "org" : "md";
+    return splitProps(n.raw, isBuiltinHidden, fmt).visible;
   });
   const editorIsUniline = createMemo(() => !editorVisibleValue().includes("\n"));
   // Block-level "linked references" panel toggled by the reference-count badge.
@@ -524,7 +526,8 @@ function Rendered(props: { id: string; owner?: string; trailing?: JSX.Element })
     const d = document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null };
     const range = d.caretRangeFromPoint?.(e.clientX, e.clientY);
     if (!range) return null;
-    return editorOffsetFromRenderedRange(contentRef, range, node().raw, isBuiltinHidden);
+    const fmt = pageByName(node().page)?.format === "org" ? "org" : "md";
+    return editorOffsetFromRenderedRange(contentRef, range, node().raw, isBuiltinHidden, fmt);
   };
   // For annotation blocks the editor shows only the highlight text (metadata
   // stays hidden); the colored prefix still jumps to the PDF.
@@ -856,7 +859,7 @@ export function Editor(props: { id: string }): JSX.Element {
   // Annotation blocks hide ALL properties (edit only the highlight text); every
   // other block hides just the built-in id::/collapsed::. One fence-aware splitter.
   const hideFn = () => (isAnnot() ? hideAll : isBuiltinHidden);
-  const editorValue = createMemo(() => splitProps(node().raw, hideFn()).visible);
+  const editorValue = createMemo(() => splitProps(node().raw, hideFn(), pageFmt()).visible);
   const editorHeadingLevel = createMemo(() => {
     const visible = editorValue();
     if (visible.includes("\n")) return null;
@@ -882,11 +885,15 @@ export function Editor(props: { id: string }): JSX.Element {
     // here re-synced the reactive textarea (`value={editorValue()}`) to the
     // trimmed text on every keystroke, so backspacing to a trailing space ate the
     // space out from under the caret — the block-eats-the-space bug.
+    // No-op commit (focus/blur with no real edit): if the editor-visible text is
+    // unchanged, don't rewrite. Needed for org, where reattaching the hidden
+    // drawer canonicalizes its position — so `next === raw` alone wouldn't catch
+    // a block whose drawer wasn't already canonical, and would churn the file.
+    if (!isCalc() && text === editorValue()) return;
     const visible = isCalc() ? wrapCalc(text) : text;
-    const next = joinProps(visible, splitProps(node().raw, hideFn()).hidden);
-    // No-op commit (focus/blur with no real edit, or text that reconstructs the
-    // identical raw): don't mark the page dirty or push undo — avoids churn and
-    // can't rewrite the block's bytes.
+    const next = joinProps(visible, splitProps(node().raw, hideFn(), pageFmt()).hidden, pageFmt());
+    // No-op commit (text that reconstructs the identical raw): don't mark the page
+    // dirty or push undo — avoids churn and can't rewrite the block's bytes.
     if (next === node().raw) return;
     setRaw(props.id, next, opts);
   };
@@ -1783,7 +1790,7 @@ export function Editor(props: { id: string }): JSX.Element {
         }
         const n = doc.byId[props.id];
         const next = nextVisible(props.id);
-        if (n && splitProps(n.raw, hideFn()).visible.trim() === "" && n.children.length === 0 && next) {
+        if (n && splitProps(n.raw, hideFn(), pageFmt()).visible.trim() === "" && n.children.length === 0 && next) {
           e.preventDefault();
           deleteBlock(props.id);
           startEditing(next, 0);

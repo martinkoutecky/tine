@@ -57,47 +57,119 @@ export function caretInFence(raw: string, offset: number): boolean {
   return fence !== null;
 }
 
+/** The two on-disk block formats. Markdown keeps built-in props as trailing
+ *  `key:: value` lines; org keeps them inside a `:PROPERTIES:`/`:END:` drawer. */
+export type PropFormat = "md" | "org";
+
+/** Key of an org drawer property line (`:id: <uuid>` → `"id"`), lowercased, or
+ *  null if the line isn't a `:key: value` drawer entry. The `:PROPERTIES:` and
+ *  `:END:` wrapper lines return null (they aren't `key value` pairs). */
+function orgDrawerKey(line: string): string | null {
+  const m = /^\s*:([A-Za-z0-9_@.-]+):(?:\s|$)/.exec(line);
+  const k = m ? m[1].toLowerCase() : null;
+  return k === "properties" || k === "end" ? null : k;
+}
+
+type LineClass = "v" | "h" | "d"; // visible | hidden-payload | dropped(org wrapper)
+
+/** Classify every line as visible / hidden-property / dropped-org-wrapper.
+ *  Fence-aware. For org, a block-properties `:PROPERTIES:`/`:END:` drawer whose
+ *  inner lines are ALL built-in-hidden is dropped whole (wrapper marked `d`,
+ *  inner marked `h`) — mirroring OG's `remove-built-in-properties`, which also
+ *  strips the emptied drawer. A drawer that still holds a user property keeps its
+ *  wrapper + user lines visible and hides only the built-in lines within. */
+function classifyLines(
+  lines: string[],
+  isHidden: (key: string) => boolean,
+  format: PropFormat
+): LineClass[] {
+  const cls: LineClass[] = new Array(lines.length).fill("v");
+  let fence: string | null = null;
+  let i = 0;
+  while (i < lines.length) {
+    const l = lines[i];
+    const t = fenceTransition(fence, l);
+    if (t.opens || t.closes) {
+      fence = t.next; // fence delimiter lines are always visible content
+      i++;
+      continue;
+    }
+    if (fence !== null) {
+      i++; // inside a code fence — never metadata
+      continue;
+    }
+    if (format === "org" && l.trim().toUpperCase() === ":PROPERTIES:") {
+      let j = i + 1;
+      while (j < lines.length && lines[j].trim().toUpperCase() !== ":END:") j++;
+      if (j < lines.length) {
+        // Complete drawer spans i..j. Classify inner lines i+1..j-1.
+        let anyKept = false;
+        const inner: LineClass[] = [];
+        for (let k = i + 1; k < j; k++) {
+          const key = orgDrawerKey(lines[k]);
+          const hid = key != null && isHidden(key);
+          inner.push(hid ? "h" : "v");
+          if (!hid) anyKept = true; // a user prop (or a non-prop line) survives
+        }
+        if (anyKept) {
+          for (let k = i + 1; k < j; k++) cls[k] = inner[k - (i + 1)]; // wrapper stays "v"
+        } else {
+          cls[i] = "d"; // drop the emptied :PROPERTIES:
+          cls[j] = "d"; // drop the :END:
+          for (let k = i + 1; k < j; k++) cls[k] = "h";
+        }
+        i = j + 1;
+        continue;
+      }
+      // No matching :END: — treat the line as ordinary content.
+    }
+    // Markdown `key:: value` property lines. Only in md files: org uses the
+    // drawer for properties, so a `key::` line in an org block is body content,
+    // never metadata (and must never be folded into a drawer on reattach).
+    if (format !== "org") {
+      const key = propLineKey(l);
+      if (key && isHidden(key)) cls[i] = "h";
+    }
+    i++;
+  }
+  return cls;
+}
+
 /** Split a block's raw into the editor-visible text and the hidden property
  *  lines. Fence-aware: a `key:: value` line inside a ```/~~~ code fence stays
  *  visible content — it must NOT be pulled out as metadata and reattached
  *  outside the fence (which would corrupt the code on focus+blur). `isHidden`
  *  selects which property keys are hidden (e.g. {@link isBuiltinHidden} or
- *  {@link hideAll}). Inverse of {@link joinProps}. */
+ *  {@link hideAll}). `format` (default `"md"`) enables org `:PROPERTIES:` drawer
+ *  handling. Inverse of {@link joinProps}. */
 export function splitProps(
   raw: string,
-  isHidden: (key: string) => boolean
+  isHidden: (key: string) => boolean,
+  format: PropFormat = "md"
 ): { visible: string; hidden: string } {
-  const { visible, hidden } = splitPropsInternal(raw, isHidden);
+  const { visible, hidden } = splitPropsInternal(raw, isHidden, format);
   return { visible, hidden };
 }
 
 function splitPropsInternal(
   raw: string,
   isHidden: (key: string) => boolean,
+  format: PropFormat,
   rawOffset?: number
 ): { visible: string; hidden: string; visibleOffset?: number } {
+  const lines = raw.split("\n");
+  const cls = classifyLines(lines, isHidden, format);
   const vis: string[] = [];
   const hid: string[] = [];
-  let fence: string | null = null;
   const target = rawOffset == null ? null : Math.max(0, Math.min(rawOffset, raw.length));
   let visibleLen = 0;
   let visibleOffset: number | null = null;
   let rawPos = 0;
-  for (const l of raw.split("\n")) {
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
     const rawStart = rawPos;
     const rawEnd = rawStart + l.length;
-    const t = fenceTransition(fence, l);
-    let visible = false;
-    if (t.opens || t.closes) {
-      fence = t.next;
-      visible = true;
-    } else if (fence !== null) {
-      visible = true; // inside a code fence — never metadata
-    } else {
-      const k = propLineKey(l);
-      visible = !(k && isHidden(k));
-    }
-    if (visible) {
+    if (cls[i] === "v") {
       const lineVisibleStart = visibleLen + (vis.length > 0 ? 1 : 0);
       const lineVisibleEnd = lineVisibleStart + l.length;
       if (target != null && visibleOffset == null && target >= rawStart && target <= rawEnd) {
@@ -106,10 +178,12 @@ function splitPropsInternal(
       vis.push(l);
       visibleLen = lineVisibleEnd;
     } else {
+      // "h" (hidden payload) or "d" (dropped org wrapper): not shown. A caret
+      // inside it maps to where the removed text would have appeared.
       if (target != null && visibleOffset == null && target >= rawStart && target <= rawEnd) {
         visibleOffset = visibleLen;
       }
-      hid.push(l);
+      if (cls[i] === "h") hid.push(l);
     }
     rawPos = rawEnd + 1;
   }
@@ -127,15 +201,42 @@ function splitPropsInternal(
 export function rawOffsetToVisibleOffset(
   raw: string,
   rawOffset: number,
-  isHidden: (key: string) => boolean
+  isHidden: (key: string) => boolean,
+  format: PropFormat = "md"
 ): number {
-  return splitPropsInternal(raw, isHidden, rawOffset).visibleOffset ?? 0;
+  return splitPropsInternal(raw, isHidden, format, rawOffset).visibleOffset ?? 0;
 }
 
-/** Reattach hidden property lines below the visible text. A metadata-only block
- *  (empty visible) is just its hidden lines — no spurious leading newline. */
-export function joinProps(visible: string, hidden: string): string {
-  return hidden ? (visible ? `${visible}\n${hidden}` : hidden) : visible;
+/** Reattach hidden property lines to the visible text — the inverse of
+ *  {@link splitProps}. Markdown appends them below the body (that's where its
+ *  `id::`/`collapsed::` live). Org folds them back into a `:PROPERTIES:` drawer
+ *  at OG's canonical spot (into an existing drawer if the visible text still has
+ *  one, else a fresh drawer right after the title + SCHEDULED/DEADLINE planning
+ *  lines — matching {@link rawWithBlockId}). A metadata-only block (empty
+ *  visible) is just its hidden lines — no spurious leading newline. */
+export function joinProps(visible: string, hidden: string, format: PropFormat = "md"): string {
+  if (!hidden) return visible;
+  if (format !== "org") return visible ? `${visible}\n${hidden}` : hidden;
+  const hiddenLines = hidden.split("\n").filter((l) => l.trim() !== "");
+  if (hiddenLines.length === 0) return visible;
+  const lines = visible ? visible.split("\n") : [];
+  const start = lines.findIndex((l) => l.trim().toUpperCase() === ":PROPERTIES:");
+  const end =
+    start >= 0 ? lines.findIndex((l, i) => i > start && l.trim().toUpperCase() === ":END:") : -1;
+  if (start >= 0 && end > start) {
+    lines.splice(end, 0, ...hiddenLines); // extend the existing drawer, before :END:
+    return lines.join("\n");
+  }
+  if (lines.length === 0) return [":PROPERTIES:", ...hiddenLines, ":END:"].join("\n");
+  const [title, ...rest] = lines;
+  const isSched = (l: string) => l.startsWith("SCHEDULED");
+  const isDead = (l: string) => l.startsWith("DEADLINE");
+  const scheduled = rest.filter(isSched);
+  const deadline = rest.filter(isDead);
+  const body = rest.filter((l) => !isSched(l) && !isDead(l));
+  return [title, ...scheduled, ...deadline, ":PROPERTIES:", ...hiddenLines, ":END:", ...body].join(
+    "\n"
+  );
 }
 
 /** First value for `key` (case-insensitive) in a property block, or null. */

@@ -8,6 +8,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- **Org property drawers no longer show in the editor** ([#37](https://github.com/martinkoutecky/tine/issues/37)).
+  In `.org` files a block's built-in `id` lives in a `:PROPERTIES:`/`:END:` drawer;
+  when a block was zoomed/opened (which stamps an id for durable references) that
+  drawer appeared as raw text on edit. It's now hidden from the editor — and the
+  empty drawer wrapper removed — exactly like markdown `id::`, matching Logseq's
+  `remove-built-in-properties`. The drawer is reattached at its canonical spot on
+  save; a user property in the same drawer keeps it visible (only the built-in
+  line is hidden).
+
 ## [0.4.5] - 2026-07-07
 
 ### Changed

@@ -10,8 +10,8 @@ import {
   tabRoute,
   type Route,
 } from "../router";
-import { doc } from "../store";
-import { splitProps, isBuiltinHidden } from "../editor/properties";
+import { doc, formatForBlock } from "../store";
+import { splitProps, isBuiltinHidden, type PropFormat } from "../editor/properties";
 import { EmojiText } from "../render/emoji";
 
 const MAX_TITLE = 32;
@@ -19,8 +19,8 @@ const MAX_TITLE = 32;
 // A short, plain-text summary of a zoomed-into block, for the tab label. Drops
 // the hidden id::/collapsed:: lines, takes the first non-empty line, and strips
 // the common markdown decorations so the pill reads like the block's text.
-function blockSummary(raw: string): string {
-  const { visible } = splitProps(raw, isBuiltinHidden);
+function blockSummary(raw: string, format: PropFormat): string {
+  const { visible } = splitProps(raw, isBuiltinHidden, format);
   const line =
     visible
       .split("\n")
@@ -45,7 +45,7 @@ function tabTitle(r: Route): string {
   if (r.kind === "page" && r.block) {
     const n = doc.byId[r.block];
     if (n) {
-      const s = blockSummary(n.raw);
+      const s = blockSummary(n.raw, formatForBlock(r.block));
       if (s) return s;
     }
   }

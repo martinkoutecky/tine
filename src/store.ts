@@ -845,9 +845,10 @@ export function setRaw(id: string, raw: string, opts?: { timetracking?: boolean 
 export function splitBlock(id: string, offset: number) {
   pushUndo("split", [doc.byId[id].page]);
   const node = doc.byId[id];
+  const fmt = formatForBlock(id);
   // The caret offset is in editor-visible space (hidden props aren't shown), so
   // split the visible text and keep the hidden props on the original block.
-  const { visible, hidden } = splitProps(node.raw, isBuiltinHidden);
+  const { visible, hidden } = splitProps(node.raw, isBuiltinHidden, fmt);
   const before = visible.slice(0, offset);
   const after = visible.slice(offset);
   const pageName = node.page;
@@ -886,7 +887,7 @@ export function splitBlock(id: string, offset: number) {
 
   setDoc(
     produce((s) => {
-      s.byId[id].raw = joinProps(before, hidden);
+      s.byId[id].raw = joinProps(before, hidden, fmt);
       const hasVisibleChildren = node.children.length > 0 && !node.collapsed;
       if (hasVisibleChildren) {
         s.byId[newId] = {
@@ -970,27 +971,31 @@ export function mergeWithPrev(id: string): boolean {
   const node = doc.byId[id];
   if (doc.byId[prev].page !== node.page) return false; // don't merge across pages
   pushUndo("merge", [node.page]);
+  const fmt = formatForBlock(id); // prev is same page (checked above) → same format
   // Merge visible content only; keep the previous block's hidden props (it keeps
   // its identity) and drop the absorbed block's — otherwise the id::/collapsed::
   // lines would be concatenated mid-line and a block could end up with two ids.
-  const prevSplit = splitProps(doc.byId[prev].raw, isBuiltinHidden);
-  const curSplit = splitProps(node.raw, isBuiltinHidden);
+  const prevSplit = splitProps(doc.byId[prev].raw, isBuiltinHidden, fmt);
+  const curSplit = splitProps(node.raw, isBuiltinHidden, fmt);
   const curVisible = curSplit.visible;
   const joinOffset = prevSplit.visible.length;
   const pageName = node.page;
 
-  // Preserve the absorbed block's `id::` if the survivor has none — otherwise
-  // inbound ((id)) references to the absorbed block would orphan on merge.
+  // Preserve the absorbed block's id if the survivor has none — otherwise inbound
+  // ((id)) references to the absorbed block would orphan on merge. Match the id
+  // line in the block's on-disk syntax (md `id:: x` vs org drawer `:id: x`).
   let hidden = prevSplit.hidden;
-  const survivorHasId = /(?:^|\n)id:: /i.test(prevSplit.hidden);
-  const absorbedId = /(?:^|\n)(id:: \S+)/i.exec(curSplit.hidden)?.[1];
+  const idPresent = fmt === "org" ? /(?:^|\n):id:\s/i : /(?:^|\n)id:: /i;
+  const idLine = fmt === "org" ? /(?:^|\n)(:id:\s*\S+)/i : /(?:^|\n)(id:: \S+)/i;
+  const survivorHasId = idPresent.test(prevSplit.hidden);
+  const absorbedId = idLine.exec(curSplit.hidden)?.[1];
   if (!survivorHasId && absorbedId) {
     hidden = hidden ? `${hidden}\n${absorbedId}` : absorbedId;
   }
 
   setDoc(
     produce((s) => {
-      s.byId[prev].raw = joinProps(prevSplit.visible + curVisible, hidden);
+      s.byId[prev].raw = joinProps(prevSplit.visible + curVisible, hidden, fmt);
       for (const c of node.children) s.byId[c].parent = prev;
       s.byId[prev].children.push(...node.children);
       const arr = node.parent === null

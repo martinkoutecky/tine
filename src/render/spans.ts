@@ -1,4 +1,4 @@
-import { rawOffsetToVisibleOffset } from "../editor/properties";
+import { rawOffsetToVisibleOffset, type PropFormat } from "../editor/properties";
 import { typographicSegments } from "./typography";
 import type { Span, SpanMap } from "./ast";
 
@@ -235,6 +235,7 @@ export function editorOffsetFromRenderedRange(
   range: Pick<Range, "startContainer" | "startOffset">,
   raw: string,
   isHidden: (key: string) => boolean,
+  format: PropFormat = "md",
 ): number | null {
   const el = closestSpanElement(root, range.startContainer);
   if (!el) return null;
@@ -266,5 +267,5 @@ export function editorOffsetFromRenderedRange(
 
   const rawByte = rebulletedSourceByteToRawByte(raw, sourceByte);
   const rawUtf16 = utf8ByteToUtf16Offset(raw, rawByte);
-  return rawOffsetToVisibleOffset(raw, rawUtf16, isHidden);
+  return rawOffsetToVisibleOffset(raw, rawUtf16, isHidden, format);
 }

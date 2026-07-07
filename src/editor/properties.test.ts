@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { caretInFence, readPropertyValue, upsertPropertyLine } from "./properties";
+import {
+  caretInFence,
+  readPropertyValue,
+  upsertPropertyLine,
+  splitProps,
+  joinProps,
+  isBuiltinHidden,
+  rawOffsetToVisibleOffset,
+} from "./properties";
 
 describe("property line helpers", () => {
   it("reads a value case-insensitively", () => {
@@ -48,5 +56,93 @@ describe("caretInFence", () => {
   it("is true inside an unterminated fence", () => {
     const raw = "before\n```\nconst x = 1;";
     expect(caretInFence(raw, raw.indexOf("const"))).toBe(true);
+  });
+});
+
+// GH #37: org block-property drawers (`:PROPERTIES:`/`:id:`/`:END:`) must be
+// hidden from the editor like markdown `id::`, and round-trip losslessly.
+describe("org :PROPERTIES: drawer hiding (GH #37)", () => {
+  it("hides an id-only drawer entirely (wrapper + line)", () => {
+    const raw = "TODO Task\n:PROPERTIES:\n:id: abc-123\n:END:";
+    const { visible, hidden } = splitProps(raw, isBuiltinHidden, "org");
+    expect(visible).toBe("TODO Task");
+    expect(hidden).toBe(":id: abc-123");
+  });
+
+  it("round-trips an id-only drawer back to canonical position", () => {
+    const raw = "TODO Task\n:PROPERTIES:\n:id: abc-123\n:END:";
+    const { visible, hidden } = splitProps(raw, isBuiltinHidden, "org");
+    expect(joinProps(visible, hidden, "org")).toBe(raw);
+  });
+
+  it("keeps the drawer + user props visible, hiding only the built-in id line", () => {
+    const raw = "Title\n:PROPERTIES:\n:owner: martin\n:id: u1\n:END:\nbody";
+    const { visible, hidden } = splitProps(raw, isBuiltinHidden, "org");
+    expect(visible).toBe("Title\n:PROPERTIES:\n:owner: martin\n:END:\nbody");
+    expect(hidden).toBe(":id: u1");
+    expect(joinProps(visible, hidden, "org")).toBe(
+      "Title\n:PROPERTIES:\n:owner: martin\n:id: u1\n:END:\nbody"
+    );
+  });
+
+  it("groups a freshly reattached drawer after SCHEDULED/DEADLINE planning lines", () => {
+    const raw = "TODO Task\nSCHEDULED: <2026-07-07 Tue>\n:PROPERTIES:\n:id: x\n:END:\nbody";
+    const { visible, hidden } = splitProps(raw, isBuiltinHidden, "org");
+    expect(visible).toBe("TODO Task\nSCHEDULED: <2026-07-07 Tue>\nbody");
+    expect(joinProps(visible, hidden, "org")).toBe(raw);
+  });
+
+  it("leaves a block with no drawer untouched", () => {
+    const raw = "just some text\nsecond line";
+    const { visible, hidden } = splitProps(raw, isBuiltinHidden, "org");
+    expect(visible).toBe(raw);
+    expect(hidden).toBe("");
+    expect(joinProps(visible, hidden, "org")).toBe(raw);
+  });
+
+  it("does NOT treat a stray md `key::` line in an org block as metadata", () => {
+    const raw = "Title\ncollapsed:: true";
+    const { visible, hidden } = splitProps(raw, isBuiltinHidden, "org");
+    expect(visible).toBe(raw);
+    expect(hidden).toBe("");
+  });
+
+  it("leaves a :LOGBOOK: drawer visible (not a property drawer)", () => {
+    const raw = "DONE Ship\n:LOGBOOK:\nCLOCK: [2026-07-07 Tue 09:00]\n:END:";
+    const { visible } = splitProps(raw, isBuiltinHidden, "org");
+    expect(visible).toBe(raw);
+  });
+});
+
+describe("markdown property hiding is unchanged (regression)", () => {
+  it("still hides md id:: and appends on reattach", () => {
+    const raw = "Task\nid:: abc";
+    const { visible, hidden } = splitProps(raw, isBuiltinHidden);
+    expect(visible).toBe("Task");
+    expect(hidden).toBe("id:: abc");
+    expect(joinProps(visible, hidden)).toBe(raw);
+  });
+
+  it("md default does not touch a `:PROPERTIES:` block (treated as content)", () => {
+    const raw = "Task\n:PROPERTIES:\n:id: x\n:END:";
+    const { visible } = splitProps(raw, isBuiltinHidden); // format defaults to md
+    expect(visible).toBe(raw);
+  });
+});
+
+describe("org caret mapping across a hidden drawer", () => {
+  it("maps a raw offset in the body below a hidden drawer into visible space", () => {
+    const raw = "Title\n:PROPERTIES:\n:id: x\n:END:\nbody";
+    const rawOff = raw.indexOf("body");
+    const visOff = rawOffsetToVisibleOffset(raw, rawOff, isBuiltinHidden, "org");
+    const { visible } = splitProps(raw, isBuiltinHidden, "org");
+    expect(visible.slice(visOff)).toBe("body");
+  });
+
+  it("maps an offset inside the hidden drawer to the drawer's edit point", () => {
+    const raw = "Title\n:PROPERTIES:\n:id: x\n:END:\nbody";
+    const insideDrawer = raw.indexOf(":id:") + 2;
+    const visOff = rawOffsetToVisibleOffset(raw, insideDrawer, isBuiltinHidden, "org");
+    expect(visOff).toBe("Title".length);
   });
 });
