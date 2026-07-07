@@ -26,6 +26,17 @@ move them between tiers in place. When Next drains, review Later and promote (in
   [docs/breadth-grid-spec.md](breadth-grid-spec.md); live build state:
   [docs/plans/sheets-progress.md](plans/sheets-progress.md).
 
+- **Inline-code property lookalikes parse as properties** (Martin, Jul 8 2026:
+  fix in Now, "should be treated as code"). A bullet whose text STARTS with an
+  inline-code span containing `::` — e.g. a line beginning with
+  backtick-`tine.view:: grid`-backtick — is recognized as a property line and
+  hidden, because property recognition runs on raw lines before inline parsing.
+  Expected: a line-leading inline-code span suppresses property recognition (it
+  is code, not metadata). Touches the ONE property-line recognizer (and check
+  what OG/mldoc does for the parity record before changing behavior — if OG has
+  the same bug we deviate deliberately). Found while authoring the tine-test
+  [[Sheets guide]] page.
+
 ---
 
 ## Next — the ordered queue (top = do first)
