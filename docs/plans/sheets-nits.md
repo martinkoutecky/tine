@@ -11,11 +11,9 @@ mount-time mismeasure needed a bounded verify loop, not just delayed
 re-measures; probe passes 3/3). Known limitation: nested sub-grids have
 no corner Σ, so sub-grid aggregates are currently unreachable (tolerable;
 revisit on request). NEXT = master→sheets merge (Martin green-lit), then
-batch 4 (N10–N14) SHIPPED `c762fcd` (e2e now 34 checks; ADR 0025 amended;
-spec §13 decision 2 marked RESOLVED). Master→sheets merge `60663d5` done
-(v0.4.3+0.4.4 in; DatePicker #30 woven into dual-target picker; master's
-ADR 0023 renumbered→0029 here). ALL CAPTURED NITS N1–N14 CLOSED —
-awaiting Martin's next re-test round.
+batch 4 (N10–N14) SHIPPED `c762fcd`; master merge `60663d5` done. ROUND 2
+(Jul 7 night, 4 screenshots) = N15–N22 below, batch 5 spec at
+`subagent-tasks/sheets-nits-batch5-round2.md`.
 
 Captured verbatim-in-spirit from his post-Phase-7 testing; root causes
 investigated before triage. Batch polish pass runs against this list.
@@ -164,6 +162,83 @@ sheets→master merge stays Martin-gated). Cadence: at batch boundaries,
 or whenever master lands editor/caret/mousedown work that touches shared
 code. Full gates + sheets e2e after every such merge. First merge: after
 batch 3 lands.
+
+## N15 — query-board justification still a mess  [batch 5]
+Round 2 (Jul 7 night, screenshot): the §4 query kanban overflows past the
+window's right edge, uncentered, no scrollbar. ROOT CAUSE (confirmed in
+code): macro-rendered query sheets (Macro.tsx:481/484) are NOT wrapped in
+SheetContainer — they never got the breakout/centering/scroll treatment
+that children-source sheets got in batches 1/3. Fix: same wrapper for the
+macro path.
+
+## N15b — ghost empty kanban under the query board  [batch 5]
+Martin: "what is the third empty kanban under the working one?" ROOT
+CAUSE (confirmed): the query block renders TWICE — the macro path renders
+the query board, and Block.tsx's children-Switch ALSO fires (sheet().view
+=== "board") rendering a children-source SheetBoard with zero children =
+empty LATER/NOW/DONE columns. Fix: gate the children-sheet Match arms on
+the block body NOT being a macro (detectMacro).
+
+## N16 — hover scrollbars obscure content incl. the Σ  [batch 5]
+Tables show tiny vertical+horizontal scrollbars on hover that obscure
+content; Martin couldn't click the Σ at all (WebKitGTK scrollbars are
+fatter than my Chromium probe's). ROOT CAUSE: the corner Σ toggle sits at
+right:-7/bottom:-7 INSIDE the overflow-x:auto container → 7px of
+scrollable overflow on both axes. Fix: restructure — outer
+.block-sheet-container (position:relative, no scroll) > inner
+.sheet-scroll (the ONE scroll region) > face; corner overlay lives in the
+outer. Zero overflow when content fits → no scrollbars at all.
+
+## N17 — tag board: last card leaves → column vanishes; want add-column  [batch 5]
+Correct but unexpected. Martin's fix (agreed): an "add column" affordance
+on tag boards = add a new tag. Design: ghost "+ new tag" column at the
+right end; click → inline name input → creates a session-local empty
+column (a tag exists on disk only via cards, so the empty column lives in
+UI state until a card is dropped/created in it — same pin-style session
+map as the Σ toggle).
+
+## N18 — click-select landed inconsistently; select+edit at once; shake  [batch 5]
+In §1's grid: clicking a first-column cell still enters EDIT mode;
+clicking a second-column cell yields BOTH select highlight AND a caret,
+and the table "shakes" left-right. Batch 4's pointerSelection did not
+become the single entry point — some legacy mousedown-edit path still
+fires (double-handling). Fix: ONE pointer entry for all cell mousedowns
+(pointerSelection), kill/route the legacy handlers, double-click = edit.
+The shake is N19's width instability triggered by the spurious edit.
+
+## N19 — column width must not change select↔edit  [batch 5]
+The column renders wider when a cell is in edit mode than in select mode.
+Martin's rule: the table NEVER moves while navigating or entering edit;
+only actual content changes may reflow. Fix: freeze effective column
+widths for the duration of an edit session (or make the editor fit the
+cell's existing box) — no max-content re-measure from editor mounting.
+
+## N20 — sub-grid descent selects the wrong edge  [batch 5]
+Down from edit of the host cell ("inner grid in this cell", caret in
+text) should select the SUB-GRID's TOP edge; Martin observes the HOST
+cell's bottom edge instead ("that edge should be selectable when I am in
+select mode of the outer grid" — it belongs to the outer grid). Reproduce
+in the §2 demo, find why selectTopRowSeamAfterEdit lands on the wrong
+grid/edge (or renders as if it did), fix + component test.
+
+## N21 — seam ladder broken/incorrectly rendered in grids  [batch 5]
+From Sweet (§1, row Apples|Sweet|12|30Kč): ArrowLeft selects the WHOLE
+Product|Taste column edge (should be only the Apples|Sweet edge segment
+in Sweet's row — the cell-scoped rendering shipped in batch 4 is not
+working in the grid); another Left lights NOTHING (dead state); another
+Left selects the grid's leftmost whole edge. Expected ladder
+(alternation): Sweet → seam(Apples|Sweet, that row) → cell Apples →
+seam(grid left edge, that row) → stop. Reproduce, fix model + rendering,
+selection tests + e2e.
+
+## N22 — the two "+" chips need a real design  [batch 5 — proposal accepted-pending-Martin]
+Tooltips explain them but "better design is called for; think about it."
+PROPOSAL (implementing unless Martin objects): Notion-style ghosts —
+"add column" = a ghost header cell at the far right of the header row
+(faint +, label on hover, only visible while hovering the sheet); "add
+row" = a ghost row spanning the bottom (faint +). Both zero-layout-shift
+(they occupy the existing tail space), discoverable in place, no
+mystery chips in the corner.
 
 ## PROPOSED — the "canvas" question (Martin asked for thinking, not just fixes)
 Recommendation, three layers (details in the reply that accompanied this
