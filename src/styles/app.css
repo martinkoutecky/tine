@@ -4040,6 +4040,10 @@ body.file-drop-active::after {
 }
 .sheet-cell-selected.sheet-sticky-left {
   z-index: 4;
+  box-shadow:
+    inset 0 0 0 2px var(--accent, #4c8bf5),
+    inset 0 0 0 3px color-mix(in srgb, var(--bg-primary) 85%, transparent),
+    1px 0 0 var(--border-color);
 }
 .sheet-hole {
   background: color-mix(in srgb, var(--bg-secondary) 65%, var(--bg-primary));
@@ -4105,6 +4109,8 @@ body.file-drop-active::after {
 .sheet-checkbox {
   margin: 0;
   vertical-align: middle;
+}
+.sheet-checkbox[disabled] {
   pointer-events: none;
 }
 .sheet-readonly-cell {
@@ -4319,6 +4325,7 @@ body.file-drop-active::after {
 .sheet-board {
   display: flex;
   width: max-content;
+  max-width: 100%;
   gap: 10px;
   align-items: stretch;
   overflow: visible;
@@ -5085,6 +5092,14 @@ img.emoji {
      chip dropdowns anchor to their own .qb-chip-wrap, not this box) and is a
      no-op on layout. Disappears entirely under TINE_GPU=0 (software path). */
   transform: translateZ(0);
+}
+.query-block.query-sheet-block {
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  transform: none;
 }
 
 .agenda-block {

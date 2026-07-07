@@ -247,6 +247,18 @@ describe("cell selection state", () => {
     expect(isSelected("outer")).toBe(true);
   });
 
+  it("Escape from nested grid seams walks up to the containing outer cell", () => {
+    loadNestedGrid();
+
+    setCellSel(colSeamSel("host", 0, 0));
+    press("Escape");
+    expect(cellSel()).toEqual({ kind: "cell", gridId: "outer", row: 0, col: 0 });
+
+    setCellSel(rowSeamSel("host", 0, 0));
+    press("Escape");
+    expect(cellSel()).toEqual({ kind: "cell", gridId: "outer", row: 0, col: 0 });
+  });
+
   it("selects full rows, columns, and the whole grid from cell mode", () => {
     loadGrid();
     setCellSel({ gridId: "grid", row: 1, col: 0 });

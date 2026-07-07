@@ -21,6 +21,7 @@ import {
 } from "../sheet/selection";
 import {
   fieldIdsForBlocks,
+  cycleField,
   groupKeysForBlock,
   isFieldId,
   isFormulaField,
@@ -33,7 +34,7 @@ import { parseFields, sheetConfig, type FieldSpec } from "../sheet/config";
 import { formulasOf, mergeFormulas } from "../sheet/formulaFields";
 import { createFormulaFilterMemo } from "../sheet/formulaEval";
 import { MARKERS } from "../markers";
-import { graphEpoch, openSheetCellContextMenu, openSheetContextMenu, pushToast, workflow } from "../ui";
+import { graphEpoch, openDatePicker, openSheetCellContextMenu, openSheetContextMenu, pushToast, workflow } from "../ui";
 import { blockBackgroundColor } from "../blockColors";
 import type { BlockDto, RefGroup } from "../types";
 import { Editor, SurfaceContext } from "./Block";
@@ -617,7 +618,25 @@ function BoardCard(props: {
   const onClick = (e: MouseEvent) => {
     e.stopPropagation();
     select();
+  };
+  const onDoubleClick = (e: MouseEvent) => {
+    if (e.button !== 0 || e.ctrlKey || e.metaKey || e.altKey) return;
+    e.preventDefault();
+    e.stopPropagation();
+    select();
     if (doc.byId[props.row.id]) startCellEditing(cell());
+  };
+  const onChipClick = (field: FieldId, e: MouseEvent) => {
+    if (e.button !== 0 || e.ctrlKey || e.metaKey || e.altKey) return;
+    e.preventDefault();
+    e.stopPropagation();
+    select();
+    if (!doc.byId[props.row.id]) return;
+    if (field === "priority") cycleField(props.row.id, "priority");
+    else if (field === "scheduled" || field === "deadline") {
+      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      openDatePicker(props.row.id, field, rect.left, rect.bottom + 4);
+    }
   };
   const openCellMenu = (e: MouseEvent) => {
     if (!doc.byId[props.row.id]) return;
@@ -657,6 +676,7 @@ function BoardCard(props: {
         e.stopPropagation();
       }}
       onClick={onClick}
+      onDblClick={onDoubleClick}
       onContextMenu={openCellMenu}
       style={bgColor() ? { background: bgColor() } : undefined}
     >
@@ -684,7 +704,7 @@ function BoardCard(props: {
             <div class="sheet-board-card-title">
               <InlineText text={rowTitle(props.row)} format={fmt()} />
             </div>
-            <CardChips row={props.row} groupBy={props.groupBy} />
+            <CardChips row={props.row} groupBy={props.groupBy} onFieldClick={onChipClick} />
           </>
         }
       >
@@ -698,22 +718,47 @@ function BoardCard(props: {
   );
 }
 
-function CardChips(props: { row: RowRecord; groupBy: FieldId }): JSX.Element {
+function CardChips(props: { row: RowRecord; groupBy: FieldId; onFieldClick: (field: FieldId, e: MouseEvent) => void }): JSX.Element {
   const value = (field: FieldId) => (doc.byId[props.row.id] ? readField(props.row.id, field)?.text ?? "" : dtoField(props.row, field) ?? "");
   const priority = () => props.groupBy === "priority" ? "" : value("priority");
   const scheduled = () => props.groupBy === "scheduled" ? "" : value("scheduled");
   const deadline = () => props.groupBy === "deadline" ? "" : value("deadline");
   const tags = () => props.groupBy === "tags" ? "" : value("tags");
+  const stopDoubleClick = (e: MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
   return (
     <div class="sheet-board-card-chips">
       <Show when={priority()}>
-        <span class="block-priority">{priority()}</span>
+        <span
+          class="block-priority"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => props.onFieldClick("priority", e)}
+          onDblClick={stopDoubleClick}
+        >
+          {priority()}
+        </span>
       </Show>
       <Show when={scheduled()}>
-        <span class="date-chip scheduled">{scheduled()}</span>
+        <span
+          class="date-chip scheduled"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => props.onFieldClick("scheduled", e)}
+          onDblClick={stopDoubleClick}
+        >
+          {scheduled()}
+        </span>
       </Show>
       <Show when={deadline()}>
-        <span class="date-chip deadline">{deadline()}</span>
+        <span
+          class="date-chip deadline"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => props.onFieldClick("deadline", e)}
+          onDblClick={stopDoubleClick}
+        >
+          {deadline()}
+        </span>
       </Show>
       <Show when={tags()}>
         <For each={tags().split(/\s+/).filter(Boolean)}>

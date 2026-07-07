@@ -263,7 +263,7 @@ export function QueryMacro(props: {
 
   return (
     <Show when={!hidden()}>
-    <div class="query-block">
+    <div class="query-block" classList={{ "query-sheet-block": sheetFace() }}>
       <Switch>
         <Match when={isAdvanced() && advInfo() && !advInfo()!.supported}>
           <div class="query-unsupported">

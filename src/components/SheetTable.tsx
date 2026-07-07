@@ -917,8 +917,19 @@ function FieldCell(props: {
   freezeColumns: () => void;
 }): JSX.Element {
   const value = () => isFormulaField(props.field) ? formulaValueToFieldValue(props.formulaValue) : readFormulaRowField(props.row, props.field);
+  const displayValue = (): FieldValue | null => {
+    const current = value();
+    if (current) return current;
+    return props.field.startsWith("prop:") && props.fieldType === "checkbox" ? { text: "false", raw: "false" } : null;
+  };
   const editable = () => !!doc.byId[props.row.id] && !isFormulaField(props.field);
   const select = () => setCellSel({ gridId: props.ownerId, row: props.rowIndex, col: props.colIndex });
+  const inlinePropEditor = () =>
+    props.field.startsWith("prop:") &&
+    props.fieldType !== "checkbox" &&
+    props.fieldType !== "date" &&
+    props.fieldType !== "datetime" &&
+    !isEnumFieldType(props.fieldType);
   const bgColor = createMemo(() => {
     const f = recordFacets(props.row);
     return f ? blockBackgroundColor(f.properties) : undefined;
@@ -946,9 +957,10 @@ function FieldCell(props: {
     ]);
   };
 
-  const onDoubleClick = (e: MouseEvent) => {
+  const runControlAction = (e: MouseEvent) => {
     if (e.button !== 0 || e.ctrlKey || e.metaKey || e.altKey) return;
-    e.preventDefault();
+    const checkboxControl = props.field.startsWith("prop:") && props.fieldType === "checkbox";
+    if (!checkboxControl) e.preventDefault();
     e.stopPropagation();
     props.freezeColumns();
     select();
@@ -969,10 +981,17 @@ function FieldCell(props: {
         openDatePicker(props.row.id, { field: props.field as `prop:${string}`, fieldType: type }, rect.left, rect.bottom + 4);
       } else if (isEnumFieldType(type)) {
         openEnumMenu(e, type.enum);
-      } else {
-        props.openPropInput(props.row.id, props.field);
       }
     }
+  };
+
+  const onDoubleClick = (e: MouseEvent) => {
+    if (e.button !== 0 || e.ctrlKey || e.metaKey || e.altKey) return;
+    e.preventDefault();
+    e.stopPropagation();
+    props.freezeColumns();
+    select();
+    if (editable() && inlinePropEditor()) props.openPropInput(props.row.id, props.field);
   };
   const openCellMenu = (e: MouseEvent) => {
     if (!editable()) return;
@@ -1032,9 +1051,10 @@ function FieldCell(props: {
           <FieldValueView
             field={props.field}
             fieldType={props.fieldType}
-            value={value()}
+            value={displayValue()}
             formulaValue={props.formulaValue}
             page={props.row.page}
+            onControlClick={runControlAction}
           />
         }
       >
@@ -1075,22 +1095,40 @@ function FieldValueView(props: {
   value: FieldValue | null;
   formulaValue?: FormulaValue | null;
   page: string;
+  onControlClick?: (e: MouseEvent) => void;
 }): JSX.Element {
   if (isFormulaField(props.field)) return <FormulaValueView value={props.formulaValue ?? null} />;
   const text = () => props.value?.text ?? "";
+  const stopControlDoubleClick = (e: MouseEvent) => {
+    if (!props.onControlClick) return;
+    e.preventDefault();
+    e.stopPropagation();
+  };
   return (
     <Show when={props.value}>
       <Show when={props.field === "state"}>
-        <span class={`block-marker marker-${(props.value?.raw ?? "").toLowerCase()}`}>{props.value?.text}</span>
+        <span
+          class={`block-marker marker-${(props.value?.raw ?? "").toLowerCase()}`}
+          onClick={props.onControlClick}
+          onDblClick={stopControlDoubleClick}
+        >
+          {props.value?.text}
+        </span>
       </Show>
       <Show when={props.field === "priority"}>
-        <span class={`block-priority priority-${props.value?.raw}`}>{props.value?.text}</span>
+        <span
+          class={`block-priority priority-${props.value?.raw}`}
+          onClick={props.onControlClick}
+          onDblClick={stopControlDoubleClick}
+        >
+          {props.value?.text}
+        </span>
       </Show>
       <Show when={props.field === "scheduled"}>
-        <span class="date-chip scheduled">{text()}</span>
+        <span class="date-chip scheduled" onClick={props.onControlClick} onDblClick={stopControlDoubleClick}>{text()}</span>
       </Show>
       <Show when={props.field === "deadline"}>
-        <span class="date-chip deadline">{text()}</span>
+        <span class="date-chip deadline" onClick={props.onControlClick} onDblClick={stopControlDoubleClick}>{text()}</span>
       </Show>
       <Show when={props.field === "tags"}>
         <For each={(props.value?.raw ?? "").split(/\s+/).filter(Boolean)}>
@@ -1098,7 +1136,7 @@ function FieldValueView(props: {
         </For>
       </Show>
       <Show when={props.field.startsWith("prop:")}>
-        <PropValueView type={props.fieldType} value={props.value!} page={props.page} />
+        <PropValueView type={props.fieldType} value={props.value!} page={props.page} onControlClick={props.onControlClick} />
       </Show>
       <Show when={props.field === "page"}>
         <InlineText text={text()} format={formatForPage(props.page)} />
@@ -1141,9 +1179,14 @@ function FormulaValueView(props: { value: FormulaValue | null }): JSX.Element {
   );
 }
 
-function PropValueView(props: { type?: FieldType; value: FieldValue; page: string }): JSX.Element {
+function PropValueView(props: { type?: FieldType; value: FieldValue; page: string; onControlClick?: (e: MouseEvent) => void }): JSX.Element {
   const text = () => props.value.text;
   const raw = () => props.value.raw ?? props.value.text;
+  const stopControlDoubleClick = (e: MouseEvent) => {
+    if (!props.onControlClick) return;
+    e.preventDefault();
+    e.stopPropagation();
+  };
   const checkbox = () => {
     if (props.type !== "checkbox") return null;
     const lower = raw().trim().toLowerCase();
@@ -1176,13 +1219,20 @@ function PropValueView(props: { type?: FieldType; value: FieldValue; page: strin
   return (
     <Switch fallback={<InlineText text={text()} format={formatForPage(props.page)} />}>
       <Match when={checkbox() !== null}>
-        <input class="sheet-checkbox" type="checkbox" checked={checkbox() === true} disabled />
+        <input
+          class="sheet-checkbox"
+          type="checkbox"
+          checked={checkbox() === true}
+          readOnly
+          onClick={props.onControlClick}
+          onDblClick={stopControlDoubleClick}
+        />
       </Match>
       <Match when={dateValue()}>
-        {(value) => <span class="date-chip scheduled">{value()}</span>}
+        {(value) => <span class="date-chip scheduled" onClick={props.onControlClick} onDblClick={stopControlDoubleClick}>{value()}</span>}
       </Match>
       <Match when={enumValue()}>
-        {(value) => <span class="sheet-tag-chip">{value()}</span>}
+        {(value) => <span class="sheet-tag-chip" onClick={props.onControlClick} onDblClick={stopControlDoubleClick}>{value()}</span>}
       </Match>
       <Match when={props.type === "list" && listValues().length > 0}>
         <For each={listValues()}>{(value) => <span class="sheet-tag-chip">{value}</span>}</For>

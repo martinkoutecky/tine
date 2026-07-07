@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
+import { readFileSync } from "node:fs";
 import { Block } from "./Block";
 import { initParser } from "../render/parse";
 import {
@@ -178,6 +179,22 @@ function activeEditor(root: HTMLElement): HTMLTextAreaElement {
   return textarea;
 }
 
+function installAppStyles(): HTMLStyleElement {
+  const style = document.createElement("style");
+  style.textContent = readFileSync("src/styles/app.css", "utf8");
+  document.head.appendChild(style);
+  return style;
+}
+
+function cssRule(selector: string): CSSStyleRule | null {
+  for (const sheet of [...document.styleSheets]) {
+    for (const rule of [...sheet.cssRules]) {
+      if ("selectorText" in rule && rule.selectorText === selector) return rule as CSSStyleRule;
+    }
+  }
+  return null;
+}
+
 function inputText(textarea: HTMLTextAreaElement, text: string): void {
   textarea.value = text;
   textarea.dispatchEvent(new Event("input", { bubbles: true }) as InputEvent);
@@ -240,6 +257,43 @@ describe("SheetGrid interaction", () => {
     expect(activeEditor(root).selectionStart).toBe(2);
 
     dispose();
+  });
+
+  it("selects first-column sticky cells visibly and walks the left ladder through them", async () => {
+    const style = installAppStyles();
+    const { root, dispose } = setup();
+    try {
+      const first = cell(root, 0, 0);
+      expect(first.dataset.sheetGridId).toBe("grid");
+      expect(first.dataset.row).toBe("0");
+      expect(first.dataset.col).toBe("0");
+      expect(first.classList.contains("sheet-sticky-left")).toBe(true);
+
+      first.dispatchEvent(pointer("pointerdown", 20, 15));
+      await tick();
+
+      expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 0, col: 0 });
+      expect(first.classList.contains("sheet-cell-selected")).toBe(true);
+      expect(getComputedStyle(first).zIndex).toBe("4");
+      expect(cssRule(".sheet-cell-selected.sheet-sticky-left")?.style.getPropertyValue("box-shadow")).toContain(
+        "inset 0 0 0 2px"
+      );
+
+      setCellSel({ gridId: "grid", row: 0, col: 1 });
+      keydown(window, "ArrowLeft");
+      expect(cellSel()).toEqual(colSeamSel("grid", 1, 0));
+      keydown(window, "ArrowLeft");
+      expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 0, col: 0 });
+      await tick();
+      expect(selectedCell(root)).toBe(first);
+      keydown(window, "ArrowLeft");
+      expect(cellSel()).toEqual(colSeamSel("grid", 0, 0));
+      keydown(window, "ArrowLeft");
+      expect(cellSel()).toEqual(colSeamSel("grid", 0, 0));
+    } finally {
+      dispose();
+      style.remove();
+    }
   });
 
   it("keeps grid column tracks unchanged when a selected cell enters edit", async () => {

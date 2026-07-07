@@ -747,12 +747,10 @@ export function handleCellSelectionKey(e: KeyboardEvent): boolean {
       setCellSel({ kind: "cell", gridId: sel.gridId, row: sel.anchor.row, col: sel.anchor.col });
       return true;
     }
-    if (sel.kind === "cell") {
-      const outer = enclosingCellForGrid(sel.gridId);
-      if (outer) {
-        setCellSel(outer);
-        return true;
-      }
+    const outer = enclosingCellForGrid(sel.gridId);
+    if (outer) {
+      setCellSel(outer);
+      return true;
     }
     clearCellSelectionOnly();
     selectBlock(sel.gridId);

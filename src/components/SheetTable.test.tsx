@@ -146,6 +146,8 @@ describe("SheetTable", () => {
 
     cell(root, 0, 0).dispatchEvent(pointer("pointerdown", 0, 0));
     expect(cellSel()).toEqual({ kind: "cell", gridId: "table", row: 0, col: 0 });
+    expect(cell(root, 0, 0).classList.contains("sheet-sticky-left")).toBe(true);
+    expect(cell(root, 0, 0).classList.contains("sheet-cell-selected")).toBe(true);
     expect(editingId()).toBeNull();
 
     cell(root, 0, 1).dispatchEvent(pointer("pointerdown", 0, 0));
@@ -459,7 +461,8 @@ describe("SheetTable", () => {
     const { root, dispose } = mount(() => <Block id="table" />);
 
     const checkbox = cell(root, 0, 1).querySelector('input[type="checkbox"]') as HTMLInputElement | null;
-    expect(checkbox?.disabled).toBe(true);
+    expect(checkbox?.disabled).toBe(false);
+    expect(checkbox?.readOnly).toBe(true);
     expect(checkbox?.checked).toBe(true);
     expect(cell(root, 0, 2).classList.contains("sheet-number-cell")).toBe(true);
     expect(cell(root, 0, 3).querySelector(".date-chip")?.textContent).toBe("2026-07-08");
@@ -482,13 +485,16 @@ describe("SheetTable", () => {
     dispose();
   });
 
-  it("state cell double-click cycles the marker through the normal workflow", () => {
+  it("state marker click cycles the marker, selects the cell, and does not edit", () => {
     loadTableDoc();
     const { root, dispose } = mount(() => <Block id="table" />);
 
-    doubleClick(cell(root, 0, 1));
+    (cell(root, 0, 1).querySelector(".block-marker") as HTMLElement).click();
 
     expect(doc.byId.r1.raw.split("\n")[0]).toBe("DOING [#A] Ship #sheets");
+    expect(cellSel()).toEqual({ kind: "cell", gridId: "table", row: 0, col: 1 });
+    expect(cell(root, 0, 1).classList.contains("sheet-cell-selected")).toBe(true);
+    expect(editingId()).toBeNull();
     dispose();
   });
 
@@ -514,7 +520,7 @@ describe("SheetTable", () => {
     dispose();
   });
 
-  it("checkbox typed cells toggle true and false without enabling the rendered checkbox", () => {
+  it("checkbox typed cells toggle true and false on single click", async () => {
     setDoc({
       byId: {
         table: node("table", "Table\ntine.view:: table\ntine.fields:: done=checkbox", null, ["r1"]),
@@ -526,14 +532,49 @@ describe("SheetTable", () => {
     });
     const { root, dispose } = mount(() => <Block id="table" />);
 
-    doubleClick(cell(root, 0, 1));
+    let checkbox = cell(root, 0, 1).querySelector('input[type="checkbox"]') as HTMLInputElement | null;
+    expect(checkbox?.checked).toBe(false);
+    checkbox!.click();
     expect(doc.byId.r1.raw).toBe("Task\ndone:: true");
-    const checkbox = cell(root, 0, 1).querySelector('input[type="checkbox"]') as HTMLInputElement | null;
-    expect(checkbox?.disabled).toBe(true);
+    await tick();
+    checkbox = cell(root, 0, 1).querySelector('input[type="checkbox"]') as HTMLInputElement | null;
     expect(checkbox?.checked).toBe(true);
+    expect(cellSel()).toEqual({ kind: "cell", gridId: "table", row: 0, col: 1 });
+    expect(editingId()).toBeNull();
 
-    doubleClick(cell(root, 0, 1));
+    checkbox!.click();
     expect(doc.byId.r1.raw).toBe("Task\ndone:: false");
+    await tick();
+
+    dispose();
+  });
+
+  it("enum chip single-click opens the enum menu", () => {
+    setDoc({
+      byId: {
+        table: node("table", "Table\ntine.view:: table\ntine.fields:: status=enum:todo,doing", null, ["r1"]),
+        r1: node("r1", "Task\nstatus:: todo", "table"),
+      },
+      pages: [page(["table"])],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    const { root, dispose } = mount(() => (
+      <>
+        <Block id="table" />
+        <ContextMenu />
+      </>
+    ));
+
+    (cell(root, 0, 1).querySelector(".sheet-tag-chip") as HTMLElement).click();
+
+    expect(cellSel()).toEqual({ kind: "cell", gridId: "table", row: 0, col: 1 });
+    expect(editingId()).toBeNull();
+    expect([...document.querySelectorAll(".ctx-item")].map((el) => el.textContent?.trim())).toEqual([
+      "todo",
+      "doing",
+      "Clear",
+    ]);
 
     dispose();
   });
@@ -555,7 +596,7 @@ describe("SheetTable", () => {
       </>
     ));
 
-    doubleClick(cell(root, 0, 1));
+    (cell(root, 0, 1).querySelector(".sheet-tag-chip") as HTMLElement).click();
     expect([...document.querySelectorAll(".ctx-item")].map((el) => el.textContent?.trim())).toEqual([
       "todo",
       "doing",
@@ -565,7 +606,7 @@ describe("SheetTable", () => {
     clickMenuItem("doing");
     expect(doc.byId.r1.raw).toBe("Task\nstatus:: doing");
 
-    doubleClick(cell(root, 0, 1));
+    (cell(root, 0, 1).querySelector(".sheet-tag-chip") as HTMLElement).click();
     clickMenuItem("Clear");
     expect(doc.byId.r1.raw).toBe("Task");
 
@@ -634,14 +675,14 @@ describe("SheetTable", () => {
       </>
     ));
 
-    doubleClick(cell(root, 0, 1));
+    (cell(root, 0, 1).querySelector(".date-chip") as HTMLElement).click();
     expect(root.querySelector(".date-picker")).not.toBeNull();
     const day10 = [...root.querySelectorAll(".date-picker .dp-cell")]
       .find((el) => el.textContent?.trim() === "10") as HTMLButtonElement | undefined;
     day10!.click();
     expect(doc.byId.r1.raw).toBe("Task\nstarts:: 2026-07-08 09:30\ndue:: 2026-07-10");
 
-    doubleClick(cell(root, 0, 2));
+    (cell(root, 0, 2).querySelector(".date-chip") as HTMLElement).click();
     const day11 = [...root.querySelectorAll(".date-picker .dp-cell")]
       .find((el) => el.textContent?.trim() === "11") as HTMLButtonElement | undefined;
     day11!.click();
@@ -980,7 +1021,7 @@ describe("SheetTable", () => {
       </>
     ));
 
-    doubleClick(cell(root, 0, 3));
+    (cell(root, 0, 3).querySelector(".date-chip") as HTMLElement).click();
     expect(root.querySelector(".date-picker")).not.toBeNull();
     const day10 = [...root.querySelectorAll(".date-picker .dp-cell")]
       .find((el) => el.textContent?.trim() === "10") as HTMLButtonElement | undefined;
@@ -988,7 +1029,7 @@ describe("SheetTable", () => {
     day10!.click();
     expect(doc.byId.r1.raw).toContain("SCHEDULED: <2026-07-10 Fri>");
 
-    doubleClick(cell(root, 0, 3));
+    (cell(root, 0, 3).querySelector(".date-chip") as HTMLElement).click();
     (root.querySelector(".date-picker .dp-clear") as HTMLButtonElement).click();
     expect(doc.byId.r1.raw).not.toContain("SCHEDULED:");
 

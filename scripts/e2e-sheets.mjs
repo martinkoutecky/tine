@@ -31,14 +31,16 @@ const GRID_MD = [
   "\t-",
   "\t\t- gamma",
   "\t\t- delta",
-  "- {{query (todo TODO DOING DONE)}}",
+  "- ## 4 · Task kanban",
+  "  {{query (todo TODO DOING DONE)}}",
   "  tine.view:: board",
   "  tine.group-by:: state",
   "- TODO buy milk",
   "- task table",
   "  tine.view:: table",
-  "  tine.fields:: topic=enum:infra,ui;shipped=checkbox",
-  "\t- row one",
+  "  tine.fields:: state=state;topic=enum:infra,ui;shipped=checkbox",
+  "\t- WAIT row one",
+  "\t  topic:: infra",
   "\t  shipped:: false",
   "- reading list",
   "  tine.view:: board",
@@ -112,6 +114,22 @@ try {
   check("clicking a cell selects without editing", !editing);
   let selectedCells = await browser.$$(".sheet-cell-selected");
   check("click selected exactly one cell", selectedCells.length === 1);
+  const firstColVisible = await browser.execute(() => {
+    const el = document.querySelector('.sheet-grid .sheet-cell[data-row="0"][data-col="0"]');
+    if (!el) return { ok: false, reason: "missing first-column grid cell" };
+    const style = getComputedStyle(el);
+    return {
+      ok:
+        el.classList.contains("sheet-cell-selected") &&
+        el.classList.contains("sheet-sticky-left") &&
+        el.getAttribute("data-sheet-grid-id") &&
+        style.boxShadow.includes("inset"),
+      boxShadow: style.boxShadow,
+      zIndex: style.zIndex,
+      className: el.className,
+    };
+  });
+  check("first-column click selects with visible sticky ring", firstColVisible.ok, JSON.stringify(firstColVisible));
 
   await browser.keys(["Enter"]);
   await sleep(300);
@@ -242,22 +260,20 @@ try {
   check("Ctrl+D filled beta into the row below", betaCount === 2, JSON.stringify(disk5));
 
   // --- Typed cells (phase 6b): checkbox toggle + enum popup write ------------
-  // Seed has a schema'd table: columns title=0, topic(enum)=1, shipped(checkbox)=2.
-  const cbCell = await browser.$('.sheet-table .sheet-cell[data-row="0"][data-col="2"]');
+  // Seed has a schema'd table: columns title=0, state=1, topic(enum)=2, shipped(checkbox)=3.
+  const cbCell = await browser.$('.sheet-table .sheet-cell[data-row="0"][data-col="3"]');
   if (await cbCell.isExisting()) {
     await browser.execute(() => {
-      const el = document.querySelector('.sheet-table .sheet-cell[data-row="0"][data-col="2"]');
-      el?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, button: 0 }));
+      const el = document.querySelector('.sheet-table .sheet-cell[data-row="0"][data-col="3"] input.sheet-checkbox');
+      el?.click();
     });
     await sleep(2400);
     const diskCb = fs.readFileSync(JFILE, "utf8");
-    check("checkbox cell double-click wrote shipped:: true", diskCb.includes("shipped:: true"), JSON.stringify(diskCb));
+    check("checkbox single-click wrote shipped:: true", diskCb.includes("shipped:: true"), JSON.stringify(diskCb));
 
-    // The empty enum cell's center can be obscured (cell handle) for a WD click;
-    // the app's edit entry is mousedown anyway — dispatch it directly.
     await browser.execute(() => {
-      const el = document.querySelector('.sheet-table .sheet-cell[data-row="0"][data-col="1"]');
-      el?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, button: 0 }));
+      const el = document.querySelector('.sheet-table .sheet-cell[data-row="0"][data-col="2"] .sheet-tag-chip');
+      el?.click();
     });
     await sleep(400);
     const items = await browser.execute(() =>
@@ -341,12 +357,67 @@ try {
   // The seeded journal also carries a board query + one TODO task (see seed).
   const card = await browser.$(".sheet-board-card");
   if (await card.isExisting()) {
-    await card.click(); // enters edit on the card block
+    await card.click();
     await sleep(300);
-    await browser.keys(["Escape"]); // card selection
-    await sleep(150);
-    const selCards = await browser.execute(() => document.querySelectorAll(".sheet-board-card.sheet-cell-selected").length);
-    check("Esc from card edit returns card selection", selCards === 1);
+    const cardClick = await browser.execute(() => ({
+      selected: document.querySelectorAll(".sheet-board-card.sheet-cell-selected").length,
+      editing: !!document.activeElement && document.activeElement.tagName === "TEXTAREA",
+    }));
+    check("clicking a board card selects without editing", cardClick.selected === 1 && !cardClick.editing, JSON.stringify(cardClick));
+
+    await browser.execute(() => {
+      const block = [...document.querySelectorAll(".ls-block")].find((el) =>
+        (el.querySelector(".heading-text")?.textContent ?? "").includes("Task kanban")
+      );
+      block?.scrollIntoView({ block: "center", inline: "nearest" });
+    });
+    await sleep(300);
+    await browser.saveScreenshot("/tmp/sheets-e2e-query-board.png");
+    const queryBoardContainment = await browser.execute(() => {
+      const visible = (el) => {
+        const r = el.getBoundingClientRect();
+        const s = getComputedStyle(el);
+        return r.width > 0 && r.height > 0 && s.display !== "none" && s.visibility !== "hidden";
+      };
+      const rectObj = (r) => ({ left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height });
+      const block = [...document.querySelectorAll(".ls-block")].find((el) =>
+        (el.querySelector(".heading-text")?.textContent ?? "").includes("Task kanban")
+      );
+      if (!block) return { found: false, reason: "missing Task kanban block" };
+      const boards = [...block.querySelectorAll(".sheet-board")].filter(visible);
+      const container = block.querySelector(".block-sheet-container");
+      const heading = block.querySelector(".heading-text");
+      if (!container || boards.length === 0) return { found: true, boards: boards.length, reason: "missing container or board" };
+      const boardRect = boards[0].getBoundingClientRect();
+      const containerRect = container.getBoundingClientRect();
+      const headingRect = heading?.getBoundingClientRect() ?? null;
+      const next = block.nextElementSibling;
+      const nextRect = next?.getBoundingClientRect() ?? null;
+      const contained =
+        boardRect.left >= containerRect.left - 2 &&
+        boardRect.right <= containerRect.right + 2 &&
+        boardRect.top >= containerRect.top - 2 &&
+        boardRect.bottom <= containerRect.bottom + 2;
+      const noHeadingOverlap =
+        !headingRect || containerRect.top >= headingRect.bottom - 2 || containerRect.bottom <= headingRect.top + 2;
+      const noNextOverlap =
+        !nextRect || containerRect.bottom <= nextRect.top + 2 || containerRect.top >= nextRect.bottom - 2;
+      return {
+        found: true,
+        boards: boards.length,
+        contained,
+        noHeadingOverlap,
+        noNextOverlap,
+        board: rectObj(boardRect),
+        container: rectObj(containerRect),
+        heading: headingRect ? rectObj(headingRect) : null,
+        next: nextRect ? rectObj(nextRect) : null,
+      };
+    });
+    check("one-block query board renders exactly one visible board", queryBoardContainment.found && queryBoardContainment.boards === 1, JSON.stringify(queryBoardContainment));
+    check("one-block query board stays inside its SheetContainer", !!queryBoardContainment.contained, JSON.stringify(queryBoardContainment));
+    check("one-block query board container has no vertical bleed", !!queryBoardContainment.noHeadingOverlap && !!queryBoardContainment.noNextOverlap, JSON.stringify(queryBoardContainment));
+
     // Column order comes from the marker workflow and the board re-groups after
     // every move, so step one column at a time toward DOING, re-reading the
     // card's position each step (a precomputed step count goes stale).
@@ -393,8 +464,6 @@ try {
   });
   if (paperOneClicked) {
     await sleep(300);
-    await browser.keys(["Escape"]); // card selection
-    await sleep(150);
     // Move alpha → beta: re-read position each step within paper one's board.
     const readTagPos = () => browser.execute(() => {
       const card = [...document.querySelectorAll(".sheet-board-card")].find((c) => (c.textContent ?? "").includes("paper one"));
@@ -418,6 +487,22 @@ try {
   } else {
     check("tags board card rendered", false, "no paper one card found");
   }
+
+  const markerClick = await browser.execute(() => {
+    const cell = document.querySelector('.sheet-table .sheet-cell[data-row="0"][data-col="1"]');
+    const marker = cell?.querySelector(".block-marker");
+    if (!cell || !marker) return { clicked: false };
+    marker.click();
+    return {
+      clicked: true,
+      selected: cell.classList.contains("sheet-cell-selected"),
+      editing: !!document.activeElement && document.activeElement.tagName === "TEXTAREA",
+    };
+  });
+  await sleep(2400);
+  const diskMarker = fs.readFileSync(JFILE, "utf8");
+  check("marker pill single-click cycled table state", markerClick.clicked && diskMarker.includes("- LATER row one"), JSON.stringify({ markerClick, diskMarker }));
+  check("marker pill click selected without editing", markerClick.selected && !markerClick.editing, JSON.stringify(markerClick));
 } catch (e) {
   failures++;
   console.error("E2E error:", e && e.message);
