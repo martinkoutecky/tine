@@ -40,6 +40,11 @@ const GRID_MD = [
   "  tine.fields:: topic=enum:infra,ui;shipped=checkbox",
   "\t- row one",
   "\t  shipped:: false",
+  "- reading list",
+  "  tine.view:: board",
+  "  tine.group-by:: tags",
+  "\t- paper one #alpha",
+  "\t- paper two #alpha #beta",
   "",
 ].join("\n");
 
@@ -124,7 +129,7 @@ try {
   // Seeded file has 9 bullets (host + 2 rows + 4 cells + board query + task) —
   // an Enter-split would add one.
   const bulletCount = (disk.match(/^\s*-/gm) || []).length;
-  check("no block was split/created (11 bullets)", bulletCount === 11, `got ${bulletCount}: ${JSON.stringify(disk)}`);
+  check("no block was split/created (14 bullets)", bulletCount === 14, `got ${bulletCount}: ${JSON.stringify(disk)}`);
   check("grid config intact", disk.includes("tine.view:: grid"), JSON.stringify(disk));
 
   // Esc from selection → outline selection on the grid block (no doc change).
@@ -152,7 +157,7 @@ try {
   await sleep(2500);
   const disk3 = fs.readFileSync(JFILE, "utf8");
   const bullets3 = (disk3.match(/^\s*-/gm) || []).length;
-  check("seam-typing inserted a row on disk (13 bullets: +row +cell)", bullets3 === 13, `got ${bullets3}: ${JSON.stringify(disk3)}`);
+  check("seam-typing inserted a row on disk (16 bullets: +row +cell)", bullets3 === 16, `got ${bullets3}: ${JSON.stringify(disk3)}`);
   check("inserted cell holds the typed char", /-\s*z\s*$/m.test(disk3), JSON.stringify(disk3));
   // The typed char rides the editor's own undo entry; the structural insert is
   // its own atomic unit — so TWO undos fully revert (text, then structure).
@@ -232,7 +237,11 @@ try {
       const headers = [...document.querySelectorAll(".sheet-board-header")].map((h) => h.textContent ?? "");
       const cardCol = document.querySelector(".sheet-board-card")?.closest(".sheet-board-column");
       const cols = [...document.querySelectorAll(".sheet-board-column")];
-      const boards = document.querySelectorAll(".sheet-board").length;
+      // The duplicate-board regression guard: the QUERY block must render one
+      // board (the seed's tags board is a separate block — exclude it by content).
+      const boards = [...document.querySelectorAll(".sheet-board")].filter((b) =>
+        [...b.querySelectorAll(".sheet-board-card")].some((c) => (c.textContent ?? "").includes("buy milk"))
+      ).length;
       return { boards, from: cols.indexOf(cardCol), to: headers.findIndex((h) => h.startsWith("DONE")) };
     });
     for (let i = 0; i < 8; i++) {
@@ -248,6 +257,49 @@ try {
     check("card-move touched only the marker (no reparent)", (disk6.match(/buy milk/g) || []).length === 1);
   } else {
     check("board card rendered", false, "no .sheet-card found — check board seed/selector");
+  }
+
+  // --- Tags board (phase 6c): multi-column membership + span-guided move -----
+  // Seed: "reading list" children board grouped by tags; paper one #alpha,
+  // paper two #alpha #beta.
+  const paperTwoCount = await browser.execute(
+    () => [...document.querySelectorAll(".sheet-board-card")].filter((c) => (c.textContent ?? "").includes("paper two")).length
+  );
+  check("2-tag card renders in both tag columns", paperTwoCount === 2, `got ${paperTwoCount}`);
+
+  const paperOneClicked = await browser.execute(() => {
+    const card = [...document.querySelectorAll(".sheet-board-card")].find((c) => (c.textContent ?? "").includes("paper one"));
+    if (!card) return false;
+    card.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
+    card.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+    return true;
+  });
+  if (paperOneClicked) {
+    await sleep(300);
+    await browser.keys(["Escape"]); // card selection
+    await sleep(150);
+    // Move alpha → beta: re-read position each step within paper one's board.
+    const readTagPos = () => browser.execute(() => {
+      const card = [...document.querySelectorAll(".sheet-board-card")].find((c) => (c.textContent ?? "").includes("paper one"));
+      const cols = [...document.querySelectorAll(".sheet-board-column")];
+      const headers = [...document.querySelectorAll(".sheet-board-header")].map((h) => h.textContent ?? "");
+      return {
+        from: cols.indexOf(card?.closest(".sheet-board-column") ?? null),
+        to: headers.findIndex((h) => h.startsWith("beta")),
+      };
+    });
+    for (let i = 0; i < 6; i++) {
+      const pos = await readTagPos();
+      if (pos.from === pos.to || pos.from < 0 || pos.to < 0) break;
+      await browser.keys(["Control", pos.to > pos.from ? "ArrowRight" : "ArrowLeft"]);
+      await sleep(350);
+    }
+    await sleep(2400);
+    const disk7 = fs.readFileSync(JFILE, "utf8");
+    check("tag move rewrote exactly the tag token", /- paper one #beta\s*$/m.test(disk7), JSON.stringify(disk7));
+    check("tag move left the 2-tag sibling untouched", disk7.includes("paper two #alpha #beta"), JSON.stringify(disk7));
+  } else {
+    check("tags board card rendered", false, "no paper one card found");
   }
 } catch (e) {
   failures++;

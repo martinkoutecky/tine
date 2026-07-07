@@ -59,6 +59,19 @@ function loadBoardDoc(todoRaw = "TODO Write tests\nowner:: Codex") {
   });
 }
 
+function loadTagBoard(rows: Record<string, string>) {
+  const ids = Object.keys(rows);
+  setDoc({
+    byId: {
+      board: node("board", "Board\ntine.view:: board\ntine.group-by:: tags", null, ids),
+      ...Object.fromEntries(ids.map((id) => [id, node(id, rows[id], "board")])),
+    },
+    pages: [page(["board"])],
+    feed: ["Sheet"],
+    loaded: true,
+  });
+}
+
 function keydown(key: string, init: Partial<KeyboardEvent> = {}): KeyboardEvent {
   return new KeyboardEvent("keydown", {
     key,
@@ -159,6 +172,88 @@ describe("SheetBoard", () => {
     expect(doc.byId.doing.raw.split("\n")[0]).toBe("DOING Implement board");
 
     document.elementFromPoint = prevElementFromPoint;
+    dispose();
+  });
+
+  it("renders tag boards with duplicated multi-tag cards and a none column", () => {
+    loadTagBoard({
+      multi: "Read #alpha #beta",
+      empty: "No tags",
+      beta: "Beta only #beta",
+    });
+    const { root, dispose } = mount(() => <Block id="board" />);
+
+    const headers = [...root.querySelectorAll(".sheet-board-header")].map((h) => h.textContent?.trim());
+    expect(headers).toEqual(["alpha1", "beta2", "(none)1"]);
+    expect(root.querySelectorAll('[data-block-id="multi"]')).toHaveLength(2);
+    expect(root.querySelector('[data-board-col="2"] [data-block-id="empty"]')).not.toBeNull();
+
+    dispose();
+  });
+
+  it("Ctrl+Arrow on a tag board rewrites the raw tag token", () => {
+    loadTagBoard({
+      keep: "Keep #alpha",
+      move: "Read #alpha",
+      beta: "Other #beta",
+    });
+    const { dispose } = mount(() => <Block id="board" />);
+
+    setCellSel({ gridId: "board", row: 1, col: 0 });
+    expect(handleCellSelectionKey(keydown("ArrowRight", { ctrlKey: true }))).toBe(true);
+
+    expect(doc.byId.move.raw).toBe("Read #beta");
+    expect(cellSel()).toEqual({ kind: "cell", gridId: "board", row: 0, col: 1 });
+
+    dispose();
+  });
+
+  it("dragging a tag card between columns removes the source tag and appends the target tag", () => {
+    loadTagBoard({
+      move: "Read #alpha",
+      beta: "Other #beta",
+    });
+    const { root, dispose } = mount(() => <Block id="board" />);
+    const card = root.querySelector('[data-block-id="move"]') as HTMLElement;
+    const target = root.querySelector('[data-board-col="1"]') as HTMLElement;
+    const prevElementFromPoint = document.elementFromPoint;
+    document.elementFromPoint = () => target;
+
+    card.dispatchEvent(pointer("pointerdown", 0, 0));
+    document.dispatchEvent(pointer("pointermove", 12, 0));
+    document.dispatchEvent(pointer("pointerup", 12, 0));
+
+    expect(doc.byId.move.raw).toBe("Read #beta");
+
+    document.elementFromPoint = prevElementFromPoint;
+    dispose();
+  });
+
+  it("refuses to move a multi-tag card into none", () => {
+    loadTagBoard({
+      multi: "Read #alpha #beta",
+      empty: "No tags",
+    });
+    const { dispose } = mount(() => <Block id="board" />);
+
+    setCellSel({ gridId: "board", row: 0, col: 1 });
+    expect(handleCellSelectionKey(keydown("ArrowRight", { ctrlKey: true }))).toBe(true);
+    expect(doc.byId.multi.raw).toBe("Read #alpha #beta");
+    expect(cellSel()).toEqual({ kind: "cell", gridId: "board", row: 0, col: 1 });
+
+    dispose();
+  });
+
+  it("selects only one coordinate for a duplicated tag card", () => {
+    loadTagBoard({ multi: "Read #alpha #beta" });
+    const { root, dispose } = mount(() => <Block id="board" />);
+
+    setCellSel({ gridId: "board", row: 0, col: 1 });
+
+    const cards = [...root.querySelectorAll('[data-block-id="multi"]')] as HTMLElement[];
+    expect(cards).toHaveLength(2);
+    expect(cards.map((card) => card.classList.contains("sheet-cell-selected"))).toEqual([false, true]);
+
     dispose();
   });
 });

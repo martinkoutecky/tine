@@ -2,6 +2,7 @@
 // trigger at the caret, and apply a chosen completion. No DOM — unit-testable.
 
 import { TEMPLATE_VARS } from "./templateVars";
+import { tagRef } from "../tags";
 
 export type TriggerKind = "page" | "tag" | "command" | "block";
 
@@ -111,7 +112,7 @@ export function pageInsert(name: string): string {
 
 /** Build the inserted text for a tag (`#name` or `#[[multi word]]`). */
 export function tagInsert(name: string): string {
-  return /\s/.test(name) ? `#[[${name}]]` : `#${name}`;
+  return tagRef(name);
 }
 
 /** Order the `[[`/`#` completion list, deciding which item is the DEFAULT (first,

@@ -16,9 +16,10 @@ import {
   type CellSel,
 } from "../sheet/selection";
 import {
-  groupKeyForBlock,
+  groupKeysForBlock,
   isFieldId,
   readField,
+  writeTagDelta,
   writeField,
   type FieldId,
 } from "../sheet/fields";
@@ -113,9 +114,11 @@ export function SheetBoard(props: {
     const targetCol = dir === "left" ? sel.col - 1 : sel.col + 1;
     const target = cols[targetCol];
     if (!row || !target || !doc.byId[row.id]) return true;
-    if (writeField(row.id, groupBy(), target.key ?? "")) {
-      const nextRows = columns()[targetCol]?.rows ?? [];
-      setCellSel({ gridId: props.ownerId, col: targetCol, row: Math.max(0, nextRows.findIndex((r) => r.id === row.id)) });
+    if (moveRowToColumn(row, from.key, target.key, groupBy())) {
+      const nextCols = columns();
+      const nextCol = Math.max(0, nextCols.findIndex((c) => c.key === target.key));
+      const nextRows = nextCols[nextCol]?.rows ?? [];
+      setCellSel({ gridId: props.ownerId, col: nextCol, row: Math.max(0, nextRows.findIndex((r) => r.id === row.id)) });
     }
     return true;
   };
@@ -140,8 +143,10 @@ export function SheetBoard(props: {
 
   const dropCard = (row: RowRecord, colIndex: number, targetCol: number | null) => {
     if (targetCol == null || targetCol === colIndex || !doc.byId[row.id]) return;
-    const target = columns()[targetCol];
-    if (target) writeField(row.id, groupBy(), target.key ?? "");
+    const cols = columns();
+    const from = cols[colIndex];
+    const target = cols[targetCol];
+    if (from && target) moveRowToColumn(row, from.key, target.key, groupBy());
   };
 
   const openSheetMenu = (e: MouseEvent) => {
@@ -175,7 +180,7 @@ export function SheetBoard(props: {
                       colIndex={colIndex()}
                       rowIndex={rowIndex()}
                       selected={selected(colIndex(), rowIndex())}
-                      dragging={drag()?.id === row.id}
+                      dragging={drag()?.id === row.id && drag()?.col === colIndex() && drag()?.row === rowIndex()}
                       setDrag={setDrag}
                       dropCard={dropCard}
                     />
@@ -191,10 +196,16 @@ export function SheetBoard(props: {
 }
 
 function buildColumns(rows: readonly RowRecord[], groupBy: FieldId, schema: readonly FieldSpec[] = []): BoardColumn[] {
-  const keys = rows.map((row) => groupKey(row, groupBy));
+  const keySets = rows.map((row) => groupKeysForBlock(row, groupBy));
+  const keys = keySets.map((ks) => ks[0] ?? null);
   let order: (string | null)[];
   const enumValues = enumValuesFor(schema, groupBy);
-  if (enumValues) {
+  if (groupBy === "tags") {
+    order = [];
+    for (const ks of keySets) {
+      for (const key of ks) if (key !== null && !order.includes(key)) order.push(key);
+    }
+  } else if (enumValues) {
     order = [...enumValues];
     for (const key of keys) if (key !== null && !order.includes(key)) order.push(key);
     order.push(null);
@@ -210,12 +221,12 @@ function buildColumns(rows: readonly RowRecord[], groupBy: FieldId, schema: read
     order = [];
     for (const key of keys) if (key !== null && !order.includes(key)) order.push(key);
   }
-  if (keys.includes(null) && !order.includes(null)) order.push(null);
+  if (keySets.some((ks) => ks.includes(null)) && !order.includes(null)) order.push(null);
   if (order.length === 0) order = [null];
   return order.map((key) => ({
     key,
     label: key === null ? NONE_LABEL : groupBy === "priority" ? `[#${key}]` : key,
-    rows: rows.filter((row, i) => keys[i] === key),
+    rows: rows.filter((_row, i) => keySets[i].includes(key)),
   }));
 }
 
@@ -224,16 +235,18 @@ function enumValuesFor(schema: readonly FieldSpec[], field: FieldId): readonly s
   return spec && typeof spec.type === "object" && "enum" in spec.type ? spec.type.enum : null;
 }
 
-function groupKey(row: RowRecord, field: FieldId): string | null {
-  if (doc.byId[row.id]) return groupKeyForBlock(row.id, field);
-  const v = dtoField(row, field);
-  return v || null;
-}
-
 function recordFacets(row: RowRecord): Facets | null {
   const n = doc.byId[row.id];
   if (n) return facetsOf(n.raw, formatForBlock(row.id));
   return row.dto ? facetsFromDto(row.dto) : null;
+}
+
+function moveRowToColumn(row: RowRecord, from: string | null, target: string | null, field: FieldId): boolean {
+  if (field !== "tags") return writeField(row.id, field, target ?? "");
+  const tags = groupKeysForBlock(row, "tags").filter((key): key is string => key !== null);
+  if (from === null) return target !== null && writeTagDelta(row.id, { add: target });
+  if (target === null) return tags.length === 1 && writeTagDelta(row.id, { remove: from });
+  return writeTagDelta(row.id, { remove: from, add: target });
 }
 
 function dtoField(row: RowRecord, field: FieldId): string | null {

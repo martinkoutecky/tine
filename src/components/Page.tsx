@@ -21,6 +21,7 @@ import { EmojiText } from "../render/emoji";
 import { journalTitle } from "../journal";
 import { startEditing } from "../editorController";
 import type { PageDto, RefGroup } from "../types";
+import { tagRef } from "../tags";
 
 const FEED_PAGE = 3;
 
@@ -479,10 +480,6 @@ function quoteQueryString(value: string): string {
 
 function tagQuery(pageName: string): string {
   return `(tag ${quoteQueryString(pageName)})`;
-}
-
-function tagRef(pageName: string): string {
-  return /^[A-Za-z0-9_./-]+$/.test(pageName) ? `#${pageName}` : `#[[${pageName}]]`;
 }
 
 function taggedCount(groups: readonly RefGroup[] | undefined): number {

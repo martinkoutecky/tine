@@ -1,11 +1,15 @@
-import { doc, formatForBlock, setRaw, setBlockProperty, setSchedule , blockPageReadOnly } from "../store";
-import { facetsOf, type Facets } from "../render/facets";
+import { doc, formatForBlock, setRaw, setBlockProperty, setSchedule, blockPageReadOnly, withUndoUnit } from "../store";
+import { facetsFromDto, facetsOf, inlineText, parseBody, tagIdentityKey, type Facets } from "../render/facets";
 import { isRenderHiddenProp } from "../render/block";
 import { leadingMarker, nextMarker, setMarker } from "../editor/marker";
 import { cycleMarkerSmart } from "../editor/repeat";
 import { MARKERS } from "../markers";
 import { MARKER_RE } from "../markers";
 import { workflow, timetrackingEnabled, logbookWithSecondSupport } from "../ui";
+import type { Inline } from "../render/ast";
+import { rebulletedSourceByteToRawByte, utf8ByteLength, utf8ByteToUtf16Offset } from "../render/spans";
+import { tagRef } from "../tags";
+import type { BlockDto } from "../types";
 
 export type FieldId =
   | "state"
@@ -36,6 +40,97 @@ export function isFieldId(value: string): value is FieldId {
 function facetsForBlock(id: string): Facets | null {
   const n = doc.byId[id];
   return n ? facetsOf(n.raw, formatForBlock(id)) : null;
+}
+
+type GroupKeyInput = string | { id: string; page?: string; dto?: BlockDto };
+
+function facetsForInput(input: GroupKeyInput): Facets | null {
+  const id = typeof input === "string" ? input : input.id;
+  const n = doc.byId[id];
+  if (n) return facetsOf(n.raw, formatForBlock(id));
+  return typeof input === "string" || !input.dto ? null : facetsFromDto(input.dto);
+}
+
+function tagSetHas(f: Facets, tag: string): boolean {
+  const key = tagIdentityKey(tag);
+  return f.tags.some((t) => tagIdentityKey(t) === key);
+}
+
+function visitTagInlines(inlines: readonly Inline[], fn: (tag: Extract<Inline, { k: "tag" }>) => boolean): boolean {
+  for (const i of inlines) {
+    if (i.k === "tag") {
+      if (fn(i)) return true;
+      if (visitTagInlines(i.children, fn)) return true;
+    } else if (i.k === "emphasis" || i.k === "subscript" || i.k === "superscript") {
+      if (visitTagInlines(i.children, fn)) return true;
+    } else if (i.k === "link" && i.label) {
+      if (visitTagInlines(i.label, fn)) return true;
+    }
+  }
+  return false;
+}
+
+function firstLineByteLength(raw: string): number {
+  const nl = raw.indexOf("\n");
+  return utf8ByteLength(nl === -1 ? raw : raw.slice(0, nl));
+}
+
+function firstLineTagRange(raw: string, tag: string): [number, number] | null {
+  const key = tagIdentityKey(tag);
+  const firstLineEnd = firstLineByteLength(raw);
+  let found: [number, number] | null = null;
+  for (const b of parseBody(raw, "md")) {
+    if (!("inline" in b) || !Array.isArray(b.inline)) continue;
+    if (visitTagInlines(b.inline, (i) => {
+      if (!i.span || tagIdentityKey(inlineText(i.children)) !== key) return false;
+      const start = rebulletedSourceByteToRawByte(raw, i.span[0]);
+      const end = rebulletedSourceByteToRawByte(raw, i.span[1]);
+      if (start < end && end <= firstLineEnd) {
+        found = [start, end];
+        return true;
+      }
+      return false;
+    })) break;
+  }
+  return found;
+}
+
+function normalizeFirstLineCut(raw: string, cutAt: number): string {
+  const nl = raw.indexOf("\n");
+  const lineEnd = nl === -1 ? raw.length : nl;
+  let line = raw.slice(0, lineEnd);
+  const rest = raw.slice(lineEnd);
+  const pos = Math.min(cutAt, line.length);
+  const left = line.slice(0, pos);
+  const right = line.slice(pos);
+  const leftWs = /[ \t]*$/.exec(left)?.[0] ?? "";
+  const rightWs = /^[ \t]*/.exec(right)?.[0] ?? "";
+  if (leftWs || rightWs) {
+    const before = left.slice(0, left.length - leftWs.length);
+    const after = right.slice(rightWs.length);
+    if (before && after) line = `${before} ${after}`;
+    else if (!before && left.length > 0 && after) line = `${left}${after}`;
+    else line = `${before}${after}`;
+  }
+  line = line.replace(/[ \t]+$/, "");
+  return `${line}${rest}`;
+}
+
+function removeTagFromRaw(raw: string, tag: string): string | null {
+  const range = firstLineTagRange(raw, tag);
+  if (!range) return null;
+  const [startByte, endByte] = range;
+  const start = utf8ByteToUtf16Offset(raw, startByte);
+  const end = utf8ByteToUtf16Offset(raw, endByte);
+  return normalizeFirstLineCut(raw.slice(0, start) + raw.slice(end), start);
+}
+
+function addTagToRaw(raw: string, tag: string): string {
+  const nl = raw.indexOf("\n");
+  const lineEnd = nl === -1 ? raw.length : nl;
+  const first = raw.slice(0, lineEnd).replace(/[ \t]+$/, "");
+  const rest = raw.slice(lineEnd);
+  return `${first}${first ? " " : ""}${tagRef(tag)}${rest}`;
 }
 
 export function fieldIdsForBlocks(ids: readonly string[], opts: { includePage?: boolean } = {}): FieldId[] {
@@ -168,6 +263,33 @@ export function writeField(id: string, field: FieldId, value: string): boolean {
   return false;
 }
 
+export function writeTagDelta(id: string, delta: { add?: string; remove?: string }): boolean {
+  const n = doc.byId[id];
+  if (!n) return false;
+  if (blockPageReadOnly(id)) return false;
+  if (formatForBlock(id) !== "md") return false;
+
+  const remove = delta.remove?.trim() || undefined;
+  const add = delta.add?.trim() || undefined;
+  if (!remove && !add) return false;
+
+  let raw = n.raw;
+  if (remove) {
+    const next = removeTagFromRaw(raw, remove);
+    if (next == null) return false;
+    raw = next;
+  }
+
+  if (add && !tagSetHas(facetsOf(raw, "md"), add)) raw = addTagToRaw(raw, add);
+
+  if (raw !== n.raw) {
+    withUndoUnit("sheet:tag-move", [n.page], () => {
+      setRaw(id, raw, { timetracking: false });
+    });
+  }
+  return true;
+}
+
 export function cycleField(id: string, field: "state" | "priority"): boolean {
   if (blockPageReadOnly(id)) return false; // org round-trip gate
   const n = doc.byId[id];
@@ -192,6 +314,26 @@ export function groupKeyForBlock(id: string, field: FieldId): string | null {
   if (field === "priority" || field === "state") return v.raw ?? v.text;
   if (field.startsWith("prop:")) return v.raw ?? v.text;
   return v.text || null;
+}
+
+export function groupKeysForBlock(input: GroupKeyInput, field: FieldId): (string | null)[] {
+  if (field === "tags") {
+    const f = facetsForInput(input);
+    return f && f.tags.length > 0 ? f.tags : [null];
+  }
+
+  const id = typeof input === "string" ? input : input.id;
+  if (doc.byId[id]) return [groupKeyForBlock(id, field)];
+
+  const f = facetsForInput(input);
+  if (!f) return [null];
+  if (field === "state") return [f.marker];
+  if (field === "priority") return [f.priority];
+  if (field === "scheduled") return [f.scheduled];
+  if (field === "deadline") return [f.deadline];
+  if (field === "page") return [typeof input === "string" ? null : input.page ?? null];
+  const key = field.slice(5);
+  return [f.properties.find(([k]) => k === key)?.[1] ?? null];
 }
 
 function setPriorityRaw(raw: string, level: "A" | "B" | "C" | null): string {

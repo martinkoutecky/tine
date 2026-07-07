@@ -140,15 +140,19 @@ function deriveFacets(raw: string, format: Format): Facets {
   };
 }
 
+export function tagIdentityKey(tag: string): string {
+  return tag.trim().toLowerCase();
+}
+
 function pushTag(out: string[], seen: Set<string>, tag: string): void {
   const t = tag.trim();
-  const key = t.toLowerCase();
+  const key = tagIdentityKey(t);
   if (!t || seen.has(key)) return;
   seen.add(key);
   out.push(t);
 }
 
-function inlineText(inlines: readonly Inline[]): string {
+export function inlineText(inlines: readonly Inline[]): string {
   let out = "";
   for (const i of inlines) {
     switch (i.k) {

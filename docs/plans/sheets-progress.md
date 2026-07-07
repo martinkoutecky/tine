@@ -321,8 +321,35 @@ ADR 0026 (schema) + ADR 0027 (tags write-back / tag boards).
   round-trip clean. NOTE: `~/research/tine` still runs the v1 binary
   (ae9bb81) on purpose — Martin's nit list is against v1; deploy on request
   or at phase end.
-- **6c NEXT** — tags write-back + multi-valued group-by (ADR 0027).
-- 6d pipe-table↔grid + CSV drop + docs sync.
+- **6c DONE (Jul 7)** — tags write-back + tag boards (ADR 0027, amended:
+  org tags are headline `htags`, no inline spans → write-back is
+  markdown-only; org tag boards render, moves refuse): `writeTagDelta`
+  (delta API, one `withUndoUnit` + one `setRaw`; add appends the shared
+  `tagRef` token to line-1 end; remove cuts the lsdoc tag-inline span via
+  the click→caret span mapping — `parseBody` +
+  `rebulletedSourceByteToRawByte`, NO regex; body-line-only /
+  code-span / org / read-only all refuse); board `tine.group-by:: tags` =
+  Notion model (card in every matching column via `groupKeysForBlock`,
+  `(none)` for zero-tag rows, drag identity now (id,col,row) so duplicated
+  cards drag right, target column re-found BY KEY after re-group);
+  moves on both paths (drag + Ctrl+arrow): none→B add, A→(none) only
+  single-valued, A→B remove+add. Codex also consolidated the THREE tag-token
+  formatters (Page.tsx tagRef, autocomplete tagInsert, fields add) into
+  `src/tags.ts`. Orchestrator fix: the consolidated rule over-bracketed
+  unicode (`#čeština` → `#[[čeština]]`); rewrote `tagRef` parser-aware from
+  lsdoc's actual TAG_STOP set (bare unless whitespace/`#,!?'":`/brackets/
+  trailing `.;`) + unit tests — Czech tags stay bare, and it fixes latent
+  bugs in BOTH old rules (old tagInsert emitted broken `#a,b`; old tagRef
+  emitted `#trail.` which parses short). E2E now 24 checks ALL PASS (2-tag
+  card in both columns; on-disk move `#alpha`→`#beta` exact-token; sibling
+  untouched); the old "exactly one board" regression guard re-scoped by
+  content (the seed now legitimately has two boards). Known-minor: tag
+  COLUMNS key by exact string, so `#ChoCo` vs `#choco` across rows makes
+  two columns (removal itself matches case-insensitively; OG treats tags
+  case-insensitively as pages) — revisit if it bites. Sample page gained a
+  playable tag-board §7 (round-trip re-validated).
+- **6d NEXT** — pipe-table↔grid conversion + CSV/TSV file-drop + docs sync
+  (FEATURES/README/onboarding/website/screenshots).
 
 Martin's v1 UX nits are PARKED (his list, not yet captured) — batch later,
 don't interleave.

@@ -1,8 +1,8 @@
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { initParser } from "../render/parse";
-import { doc, resetStore, setDoc, type FeedPage, type Node } from "../store";
+import { doc, resetStore, setDoc, undo, type FeedPage, type Node } from "../store";
 import { setWorkflow } from "../ui";
-import { cycleField, fieldIdsForBlocks, readField, writeField } from "./fields";
+import { cycleField, fieldIdsForBlocks, readField, writeField, writeTagDelta } from "./fields";
 
 beforeAll(async () => {
   await initParser();
@@ -13,15 +13,15 @@ afterEach(() => {
   setWorkflow("todo");
 });
 
-function page(roots: string[]): FeedPage {
+function page(roots: string[], opts: Partial<Pick<FeedPage, "format" | "readOnly">> = {}): FeedPage {
   return {
     name: "Sheet",
     kind: "page",
     title: "Sheet",
     preBlock: null,
     roots,
-    format: "md",
-    readOnly: false,
+    format: opts.format ?? "md",
+    readOnly: opts.readOnly ?? false,
   };
 }
 
@@ -126,5 +126,92 @@ describe("writeField review fixes", () => {
     expect(writeField("a", "state", "DOING")).toBe(false);
     expect(writeField("a", "prop:x", "1")).toBe(false);
     expect(doc.byId.a.raw).toBe(before);
+  });
+});
+
+describe("writeTagDelta", () => {
+  function loadOne(raw: string, opts: Partial<Pick<FeedPage, "format" | "readOnly">> = {}) {
+    setDoc({
+      byId: { a: node("a", raw) },
+      pages: [page(["a"], opts)],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+  }
+
+  it("adds simple and multi-word tags at the end of the first line", () => {
+    loadOne("Title");
+    expect(writeTagDelta("a", { add: "alpha" })).toBe(true);
+    expect(doc.byId.a.raw).toBe("Title #alpha");
+
+    loadOne("Title\nbody");
+    expect(writeTagDelta("a", { add: "multi word" })).toBe(true);
+    expect(doc.byId.a.raw).toBe("Title #[[multi word]]\nbody");
+  });
+
+  it("does not rewrite when the tag already exists case-insensitively", () => {
+    loadOne("Title #Alpha");
+    expect(writeTagDelta("a", { add: "alpha" })).toBe(true);
+    expect(doc.byId.a.raw).toBe("Title #Alpha");
+  });
+
+  it("appends with exactly one separator after trimming first-line trailing spaces", () => {
+    loadOne("Title   \nbody");
+    expect(writeTagDelta("a", { add: "alpha" })).toBe(true);
+    expect(doc.byId.a.raw).toBe("Title #alpha\nbody");
+  });
+
+  it("removes first-line tags at the start, middle, and end with whitespace normalization", () => {
+    loadOne("#alpha Start");
+    expect(writeTagDelta("a", { remove: "alpha" })).toBe(true);
+    expect(doc.byId.a.raw).toBe("Start");
+
+    loadOne("Start  #alpha  end");
+    expect(writeTagDelta("a", { remove: "alpha" })).toBe(true);
+    expect(doc.byId.a.raw).toBe("Start end");
+
+    loadOne("Start #alpha  ");
+    expect(writeTagDelta("a", { remove: "alpha" })).toBe(true);
+    expect(doc.byId.a.raw).toBe("Start");
+  });
+
+  it("refuses to remove a tag that exists only below the first line", () => {
+    loadOne("Title\nBody #alpha");
+    expect(writeTagDelta("a", { remove: "alpha" })).toBe(false);
+    expect(doc.byId.a.raw).toBe("Title\nBody #alpha");
+  });
+
+  it("leaves a code-span lookalike untouched", () => {
+    loadOne("Title `#alpha`");
+    expect(writeTagDelta("a", { remove: "alpha" })).toBe(false);
+    expect(doc.byId.a.raw).toBe("Title `#alpha`");
+  });
+
+  it("refuses org-format write-back", () => {
+    loadOne("Title :alpha:", { format: "org" });
+    expect(writeTagDelta("a", { remove: "alpha" })).toBe(false);
+    expect(writeTagDelta("a", { add: "beta" })).toBe(false);
+    expect(doc.byId.a.raw).toBe("Title :alpha:");
+  });
+
+  it("moves by removing then adding as one undoable gesture", () => {
+    loadOne("Read #old");
+    const before = doc.byId.a.raw;
+
+    expect(writeTagDelta("a", { remove: "old", add: "new" })).toBe(true);
+    expect(doc.byId.a.raw).toBe("Read #new");
+
+    undo();
+    expect(doc.byId.a.raw).toBe(before);
+  });
+
+  it("removes both bare and bracketed source forms", () => {
+    loadOne("Read #tag");
+    expect(writeTagDelta("a", { remove: "tag" })).toBe(true);
+    expect(doc.byId.a.raw).toBe("Read");
+
+    loadOne("Read #[[tag]]");
+    expect(writeTagDelta("a", { remove: "tag" })).toBe(true);
+    expect(doc.byId.a.raw).toBe("Read");
   });
 });
