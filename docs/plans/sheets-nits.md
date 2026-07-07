@@ -119,9 +119,12 @@ two COLUMNS. Right from a selected cell currently selects the full-height
 column seam; it should select just the edge between the two adjacent
 cells (e.g. Sweet|12), which also visually preserves "another Right lands
 on the 12 cell". Scope for the batch: seam RENDERING + selection become
-cell-local; typing/insert semantics at a seam stay column-insert for now
-(ragged per-row cell insertion = possible follow-up, tree geometry allows
-it — ask Martin before building that).
+cell-local; typing at a seam stays COLUMN-insert, but the edit starts in
+the new cell AT THE SEAM'S ROW — Martin's point: the cell-local highlight
+is exactly what makes the typing target visually unambiguous (a full
+column-edge highlight leaves "which cell gets my typing?" unclear).
+(Ragged per-row cell insertion = possible follow-up, tree geometry allows
+it — ask Martin before building that.)
 
 ## N12 — click should SELECT a cell, not enter edit mode  [batch 4]
 Single click currently enters edit mode. TreeSheets-style ruling: click →
