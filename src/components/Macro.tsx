@@ -2,7 +2,7 @@ import { For, Show, Switch, Match, createMemo, createResource, createSignal, typ
 import { backend } from "../backend";
 import { openPage, openPageInNewTab } from "../router";
 import { openPageInSidebar, openPageContextMenu, dataRev, graphEpoch } from "../ui";
-import { setRaw, doc, formatForPage, formatForBlock } from "../store";
+import { blockProperty, doc, formatForPage, formatForBlock, setBlockProperty, setRaw, withUndoUnit } from "../store";
 import { resolveBlockBatched } from "../resolveBatch";
 import { LiveRefGroup } from "./LiveRefGroup";
 import { QueryBuilder } from "./QueryBuilder";
@@ -19,6 +19,13 @@ import { SheetContainer } from "./SheetContainer";
 import type { PageKind, RefGroup } from "../types";
 
 const ADVANCED_RE = /\[\s*:find|:where|:find/;
+type QueryView = "list" | "table" | "board";
+const QUERY_VIEWS: QueryView[] = ["list", "table", "board"];
+const QUERY_VIEW_LABEL: Record<QueryView, string> = {
+  list: "List",
+  table: "Table",
+  board: "Board",
+};
 
 // Collapsed state for query results, keyed by query string and persisted so a
 // query you fold (e.g. a TODO dashboard parked in the sidebar) stays folded.
@@ -94,7 +101,31 @@ export function QueryMacro(props: {
     if (!props.blockId || !doc.byId[props.blockId]) return null;
     return sheetConfig(facetsOf(doc.byId[props.blockId].raw, formatForBlock(props.blockId)).properties);
   });
-  const sheetFace = () => sheet()?.view === "table" || sheet()?.view === "board";
+  const currentView = (): QueryView => {
+    if (!props.blockId) return "list";
+    const view = blockProperty(props.blockId, "tine.view");
+    return view === "table" || view === "board" ? view : "list";
+  };
+  const sheetFace = () => currentView() === "table" || currentView() === "board";
+  const legacyTable = () => currentView() === "list" && parsed().tableView === true;
+  const setQueryView = (next: QueryView) => {
+    const blockId = props.blockId;
+    if (!blockId) return;
+    const node = doc.byId[blockId];
+    if (!node) return;
+    const storedView = blockProperty(blockId, "tine.view");
+    if ((next === "list" && storedView === null) || (next !== "list" && storedView === next)) return;
+    withUndoUnit(`query:view:${next}`, [node.page], () => {
+      if (next === "list") {
+        setBlockProperty(blockId, "tine.view", null);
+        return;
+      }
+      setBlockProperty(blockId, "tine.view", next);
+      if (next === "board" && blockProperty(blockId, "tine.group-by") === null) {
+        setBlockProperty(blockId, "tine.group-by", "state");
+      }
+    });
+  };
 
   // Rewrite just THIS {{query ...}} macro inside the owning block, preserving the
   // front-matter options and surrounding property lines (id::/collapsed::). The
@@ -171,7 +202,6 @@ export function QueryMacro(props: {
   // ordered sequence with a per-row page breadcrumb), not grouped by page, or the
   // global order would be lost to page headers.
   const globalSort = createMemo(() => /\(\s*sort-by\b/i.test(form()));
-  const [table, setTable] = createSignal(parsed().tableView ?? false);
   const [sortCol, setSortCol] = createSignal<string>("");
   const [sortDir, setSortDir] = createSignal(1);
 
@@ -263,237 +293,246 @@ export function QueryMacro(props: {
 
   return (
     <Show when={!hidden()}>
-    <div class="query-block" classList={{ "query-sheet-block": sheetFace() }}>
-      <Switch>
-        <Match when={isAdvanced() && advInfo() && !advInfo()!.supported}>
-          <div class="query-unsupported">
-            Advanced (datalog) query: no supported clauses. <code>{`{{${props.body}}}`}</code>
-          </div>
-        </Match>
-        <Match when={true}>
-          <Show when={isAdvanced() && advInfo()?.supported}>
-            <div class="query-adv-note">
-              Partial datalog — ran: {advInfo()!.ran.join(", ") || "—"}
-              <Show when={advInfo()!.ignored.length > 0}>
-                {` · ignored: ${advInfo()!.ignored.join(", ")}`}
-              </Show>
+      <div class="query-block" classList={{ "query-sheet-block": sheetFace() }}>
+        <Switch>
+          <Match when={isAdvanced() && advInfo() && !advInfo()!.supported}>
+            <div class="query-unsupported">
+              Advanced (datalog) query: no supported clauses. <code>{`{{${props.body}}}`}</code>
             </div>
-          </Show>
-          <Show
-            when={sheetFace()}
-            fallback={
-              <>
-          <div class="query-header">
-            <span
-              class="query-collapse"
-              classList={{ collapsed: collapsed() }}
-              title={collapsed() ? "Expand results" : "Collapse results"}
-              onClick={(e) => {
-                e.stopPropagation();
-                toggleCollapsed();
-              }}
-            >
-              <svg viewBox="0 0 24 24" class="triangle">
-                <path d="M8 5l8 7-8 7z" />
-              </svg>
-            </span>
-            <Show
-              when={editingTitle()}
-              fallback={
-                <span
-                  class="query-title"
-                  classList={{ "query-title-editable": titleEditable() }}
-                  title={titleEditable() ? "Click to rename this query" : undefined}
-                  onClick={(e) => {
-                    if (titleEditable()) {
-                      e.stopPropagation();
-                      setEditingTitle(true);
-                    }
-                  }}
-                >
-                  {titleText()}
-                </span>
-              }
-            >
-              {(() => {
-                let canceled = false;
-                return (
-                  <input
-                    class="query-title-input"
-                    autofocus
-                    value={parsed().title ?? ""}
-                    placeholder="Query title"
-                    onClick={(e) => e.stopPropagation()}
-                    onKeyDown={(e) => {
-                      e.stopPropagation();
-                      if (e.key === "Enter") {
-                        setTitle(e.currentTarget.value);
-                        setEditingTitle(false);
-                      } else if (e.key === "Escape") {
-                        canceled = true;
-                        setEditingTitle(false);
-                      }
-                    }}
-                    onBlur={(e) => {
-                      if (!canceled) setTitle(e.currentTarget.value);
-                      setEditingTitle(false);
-                    }}
-                  />
-                );
-              })()}
-            </Show>{" "}
-            <span class="query-count">{total()}</span>
-            <button
-              class="query-view-toggle"
-              onClick={(e) => {
-                e.stopPropagation();
-                setTable(!table());
-              }}
-            >
-              {table() ? "List" : "Table"}
-            </button>
-          </div>
-          {/* The visual builder only models the simple DSL. For an advanced
-              (datalog) query, hide the chip bar (its clauses aren't builder-
-              representable) — the block is editable as raw text by clicking it, and
-              the ran/ignored note above shows which clauses took. */}
-          <Show when={props.blockId && !isAdvanced()}>
-            <QueryBuilder dsl={form} onChange={applyDsl} blockId={props.blockId} />
-          </Show>
-          <Show when={!collapsed()}>
-          {/* Summary panel (1a): count/sum/avg overall, or a per-group breakdown.
-              Rendered above the full result list, which stays grouped by page. */}
-          <Show when={summarySingle()}>
-            {(s) => (
-              <div class="query-summary" onClick={stop}>
-                <span class="qs-label">{aggLabel()}:</span>{" "}
-                <span class="qs-value">{s().text}</span>
-                <Show when={s().skipped > 0}>
-                  <span class="qs-skip"> ({s().skipped} non-numeric skipped)</span>
+          </Match>
+          <Match when={true}>
+            <Show when={isAdvanced() && advInfo()?.supported}>
+              <div class="query-adv-note">
+                Partial datalog — ran: {advInfo()!.ran.join(", ") || "—"}
+                <Show when={advInfo()!.ignored.length > 0}>
+                  {` · ignored: ${advInfo()!.ignored.join(", ")}`}
                 </Show>
               </div>
-            )}
-          </Show>
-          <Show when={summaryGrouped()}>
-            {(s) => (
-              <table class="md-table query-summary-table" onClick={stop}>
-                <thead>
-                  <tr>
-                    <th>{s().field}</th>
-                    <th>{aggLabel()}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <For each={s().groups}>
-                    {(row) => (
-                      <tr>
-                        <td>{row.key}</td>
-                        <td>
-                          {row.text}
-                          <Show when={row.skipped > 0}>
-                            <span class="qs-skip"> ({row.skipped} skipped)</span>
-                          </Show>
-                        </td>
-                      </tr>
-                    )}
-                  </For>
-                </tbody>
-              </table>
-            )}
-          </Show>
-          <Show
-            when={groups() && groups()!.length > 0}
-            fallback={<div class="query-empty">No results</div>}
-          >
-            <Show
-              when={table()}
-              fallback={
-                <Show
-                  when={globalSort()}
-                  fallback={
-                    <For each={groups() ?? []}>
-                      {(g) => <QueryGroup page={g.page} group={() => g} />}
-                    </For>
-                  }
-                >
-                  {/* Sorted: flat global order (each group holds one block). Iterate the
-                      groups DIRECTLY and pass the group object — re-`find()`ing the group
-                      by page/id for every row was O(groups²) on broad queries (audit #3). */}
-                  <For each={groups() ?? []}>
-                    {(g) => <QueryGroup page={g.page} group={() => g} flat />}
-                  </For>
-                </Show>
-              }
-            >
-              <table class="md-table query-table">
-                <thead>
-                  <tr onClick={stop}>
-                    <th onClick={() => sortBy("content")}>Content{arrow("content")}</th>
-                    <th onClick={() => sortBy("page")}>Page{arrow("page")}</th>
-                    <For each={cols()}>
-                      {(c) => <th onClick={() => sortBy(c)}>{c}{arrow(c)}</th>}
-                    </For>
-                  </tr>
-                </thead>
-                <tbody>
-                  <For each={sorted()}>
-                    {(r) => (
-                      <tr>
-                        <td>
-                          <InlineText text={r.text} format={formatForPage(r.page)} />
-                        </td>
-                        <td
-                          class="qt-page"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (e.shiftKey) openPageInSidebar(r.page, r.kind);
-                            else openPage(r.page, r.kind);
-                          }}
-                          onAuxClick={(e) => {
-                            if (e.button === 1) {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              openPageInNewTab(r.page, r.kind);
-                            }
-                          }}
-                          onContextMenu={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            openPageContextMenu(e.clientX, e.clientY, r.page, r.kind);
-                          }}
-                        >
-                          {r.page}
-                        </td>
-                        <For each={cols()}>{(c) => <td>{r.props[c] ?? ""}</td>}</For>
-                      </tr>
-                    )}
-                  </For>
-                </tbody>
-              </table>
             </Show>
-          </Show>
-          </Show>
-              </>
-            }
-          >
-            <Show when={groups() && groups()!.length > 0} fallback={<div class="query-empty">No results</div>}>
-              <Show when={(sheet()?.view === "table" || sheet()?.view === "board") && props.blockId}>
-                <SheetContainer>
-                  <Switch>
-                    <Match when={sheet()?.view === "table"}>
-                      <SheetTable ownerId={props.blockId!} rowSource="query" groups={groups() ?? []} />
-                    </Match>
-                    <Match when={sheet()?.view === "board"}>
-                      <SheetBoard ownerId={props.blockId!} rowSource="query" groupBy={sheet()?.groupBy} groups={groups() ?? []} />
-                    </Match>
-                  </Switch>
-                </SheetContainer>
+            <div class="query-header">
+              <span
+                class="query-collapse"
+                classList={{ collapsed: collapsed() }}
+                title={collapsed() ? "Expand results" : "Collapse results"}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleCollapsed();
+                }}
+              >
+                <svg viewBox="0 0 24 24" class="triangle">
+                  <path d="M8 5l8 7-8 7z" />
+                </svg>
+              </span>
+              <Show
+                when={editingTitle()}
+                fallback={
+                  <span
+                    class="query-title"
+                    classList={{ "query-title-editable": titleEditable() }}
+                    title={titleEditable() ? "Click to rename this query" : undefined}
+                    onClick={(e) => {
+                      if (titleEditable()) {
+                        e.stopPropagation();
+                        setEditingTitle(true);
+                      }
+                    }}
+                  >
+                    {titleText()}
+                  </span>
+                }
+              >
+                {(() => {
+                  let canceled = false;
+                  return (
+                    <input
+                      class="query-title-input"
+                      autofocus
+                      value={parsed().title ?? ""}
+                      placeholder="Query title"
+                      onClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => {
+                        e.stopPropagation();
+                        if (e.key === "Enter") {
+                          setTitle(e.currentTarget.value);
+                          setEditingTitle(false);
+                        } else if (e.key === "Escape") {
+                          canceled = true;
+                          setEditingTitle(false);
+                        }
+                      }}
+                      onBlur={(e) => {
+                        if (!canceled) setTitle(e.currentTarget.value);
+                        setEditingTitle(false);
+                      }}
+                    />
+                  );
+                })()}
+              </Show>{" "}
+              <span class="query-count">{total()}</span>
+              <Show when={props.blockId}>
+                <div class="query-view-switcher" role="group" aria-label="Query view" onClick={stop}>
+                  <For each={QUERY_VIEWS}>
+                    {(view) => (
+                      <button
+                        type="button"
+                        classList={{ active: currentView() === view }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setQueryView(view);
+                        }}
+                      >
+                        {QUERY_VIEW_LABEL[view]}
+                      </button>
+                    )}
+                  </For>
+                </div>
+              </Show>
+            </div>
+            {/* The visual builder only models the simple DSL. For an advanced
+                (datalog) query, hide the chip bar (its clauses aren't builder-
+                representable) — the block is editable as raw text by clicking it, and
+                the ran/ignored note above shows which clauses took. */}
+            <Show when={props.blockId && !isAdvanced()}>
+              <QueryBuilder dsl={form} onChange={applyDsl} blockId={props.blockId} />
+            </Show>
+            <Show when={!collapsed()}>
+              <Show
+                when={sheetFace()}
+                fallback={
+                  <>
+                    {/* Summary panel (1a): count/sum/avg overall, or a per-group breakdown.
+                        Rendered above the full result list, which stays grouped by page. */}
+                    <Show when={summarySingle()}>
+                      {(s) => (
+                        <div class="query-summary" onClick={stop}>
+                          <span class="qs-label">{aggLabel()}:</span>{" "}
+                          <span class="qs-value">{s().text}</span>
+                          <Show when={s().skipped > 0}>
+                            <span class="qs-skip"> ({s().skipped} non-numeric skipped)</span>
+                          </Show>
+                        </div>
+                      )}
+                    </Show>
+                    <Show when={summaryGrouped()}>
+                      {(s) => (
+                        <table class="md-table query-summary-table" onClick={stop}>
+                          <thead>
+                            <tr>
+                              <th>{s().field}</th>
+                              <th>{aggLabel()}</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <For each={s().groups}>
+                              {(row) => (
+                                <tr>
+                                  <td>{row.key}</td>
+                                  <td>
+                                    {row.text}
+                                    <Show when={row.skipped > 0}>
+                                      <span class="qs-skip"> ({row.skipped} skipped)</span>
+                                    </Show>
+                                  </td>
+                                </tr>
+                              )}
+                            </For>
+                          </tbody>
+                        </table>
+                      )}
+                    </Show>
+                    <Show
+                      when={groups() && groups()!.length > 0}
+                      fallback={<div class="query-empty">No results</div>}
+                    >
+                      <Show
+                        when={legacyTable()}
+                        fallback={
+                          <Show
+                            when={globalSort()}
+                            fallback={
+                              <For each={groups() ?? []}>
+                                {(g) => <QueryGroup page={g.page} group={() => g} />}
+                              </For>
+                            }
+                          >
+                            {/* Sorted: flat global order (each group holds one block). Iterate the
+                                groups DIRECTLY and pass the group object — re-`find()`ing the group
+                                by page/id for every row was O(groups²) on broad queries (audit #3). */}
+                            <For each={groups() ?? []}>
+                              {(g) => <QueryGroup page={g.page} group={() => g} flat />}
+                            </For>
+                          </Show>
+                        }
+                      >
+                        <table class="md-table query-table">
+                          <thead>
+                            <tr onClick={stop}>
+                              <th onClick={() => sortBy("content")}>Content{arrow("content")}</th>
+                              <th onClick={() => sortBy("page")}>Page{arrow("page")}</th>
+                              <For each={cols()}>
+                                {(c) => <th onClick={() => sortBy(c)}>{c}{arrow(c)}</th>}
+                              </For>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <For each={sorted()}>
+                              {(r) => (
+                                <tr>
+                                  <td>
+                                    <InlineText text={r.text} format={formatForPage(r.page)} />
+                                  </td>
+                                  <td
+                                    class="qt-page"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      if (e.shiftKey) openPageInSidebar(r.page, r.kind);
+                                      else openPage(r.page, r.kind);
+                                    }}
+                                    onAuxClick={(e) => {
+                                      if (e.button === 1) {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        openPageInNewTab(r.page, r.kind);
+                                      }
+                                    }}
+                                    onContextMenu={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      openPageContextMenu(e.clientX, e.clientY, r.page, r.kind);
+                                    }}
+                                  >
+                                    {r.page}
+                                  </td>
+                                  <For each={cols()}>{(c) => <td>{r.props[c] ?? ""}</td>}</For>
+                                </tr>
+                              )}
+                            </For>
+                          </tbody>
+                        </table>
+                      </Show>
+                    </Show>
+                  </>
+                }
+              >
+                <Show when={groups() && groups()!.length > 0} fallback={<div class="query-empty">No results</div>}>
+                  <Show when={(sheet()?.view === "table" || sheet()?.view === "board") && props.blockId}>
+                    <SheetContainer>
+                      <Switch>
+                        <Match when={sheet()?.view === "table"}>
+                          <SheetTable ownerId={props.blockId!} rowSource="query" groups={groups() ?? []} />
+                        </Match>
+                        <Match when={sheet()?.view === "board"}>
+                          <SheetBoard ownerId={props.blockId!} rowSource="query" groupBy={sheet()?.groupBy} groups={groups() ?? []} />
+                        </Match>
+                      </Switch>
+                    </SheetContainer>
+                  </Show>
+                </Show>
               </Show>
             </Show>
-          </Show>
-        </Match>
-      </Switch>
-    </div>
+          </Match>
+        </Switch>
+      </div>
     </Show>
   );
 }

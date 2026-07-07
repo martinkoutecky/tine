@@ -31,6 +31,7 @@ import {
   prevVisible,
   nextVisible,
   nextVisibleOrExtend,
+  insertEmptyChildBlock,
   insertOutlineAfter,
   deleteBlock,
   moveBlock,
@@ -114,6 +115,26 @@ import { SheetTable } from "./SheetTable";
 import { SheetBoard } from "./SheetBoard";
 import { blockBackgroundColor } from "../blockColors";
 import { SheetContainer } from "./SheetContainer";
+
+type SheetSlashView = "grid" | "table" | "board";
+
+export function applySheetViewSlashAction(id: string, view: SheetSlashView): string | null {
+  const node = doc.byId[id];
+  if (!node) return null;
+  let seededCellId: string | null = null;
+  withUndoUnit(`sheet:view:${view}`, [node.page], () => {
+    const shouldSeedGrid = view === "grid" && (doc.byId[id]?.children.length ?? 0) === 0;
+    setBlockProperty(id, "tine.view", view);
+    if (view === "board") setBlockProperty(id, "tine.group-by", "state");
+    if (shouldSeedGrid) {
+      const rowId = insertEmptyChildBlock(id, 0);
+      if (rowId) seededCellId = insertEmptyChildBlock(rowId, 0);
+    }
+  });
+  endEdit("select-block");
+  if (seededCellId) startEditing(seededCellId, 0);
+  return seededCellId;
+}
 
 // Detect a block whose entire body is a single {{query}} / {{embed}} macro.
 function detectMacro(raw: string): { kind: "query" | "embed"; inner: string } | null {
@@ -1277,13 +1298,7 @@ export function Editor(props: { id: string }): JSX.Element {
         const view = item.action === "sheet-grid" ? "grid" : item.action === "sheet-table" ? "table" : "board";
         replaceTrigger("");
         closeAc();
-        const page = doc.byId[props.id]?.page;
-        if (!page) return;
-        withUndoUnit(`sheet:view:${view}`, [page], () => {
-          setBlockProperty(props.id, "tine.view", view);
-          if (view === "board") setBlockProperty(props.id, "tine.group-by", "state");
-        });
-        endEdit("select-block");
+        applySheetViewSlashAction(props.id, view);
         return;
       }
       case "today":

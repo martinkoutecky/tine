@@ -503,6 +503,50 @@ try {
   const diskMarker = fs.readFileSync(JFILE, "utf8");
   check("marker pill single-click cycled table state", markerClick.clicked && diskMarker.includes("- LATER row one"), JSON.stringify({ markerClick, diskMarker }));
   check("marker pill click selected without editing", markerClick.selected && !markerClick.editing, JSON.stringify(markerClick));
+
+  // --- N27: aggregate picker is an in-DOM menu (a native <select>'s WebKitGTK
+  // popup is a separate GTK window that blurs + collapses it). Pin the footer
+  // via the corner Σ, open the picker, pick Sum, verify value + disk write.
+  const aggSetup = await browser.execute(() => {
+    const grid = document.querySelector(".sheet-grid");
+    const container = grid?.closest(".block-sheet-container");
+    if (!container) return { ok: false, reason: "no grid container" };
+    container.dispatchEvent(new Event("pointerenter", { bubbles: false }));
+    return { ok: true };
+  });
+  await sleep(300);
+  const aggToggle = await browser.$(".sheet-aggregate-corner-toggle");
+  check("corner Σ toggle appears on hover", aggSetup.ok && (await aggToggle.isExisting()));
+  if (await aggToggle.isExisting()) {
+    await aggToggle.click();
+    await sleep(300);
+    const addBtn = await browser.$(".sheet-grid .sheet-footer-cell .sheet-aggregate-add");
+    check("pinned footer shows Σ add buttons", await addBtn.isExisting());
+    if (await addBtn.isExisting()) {
+      await addBtn.click();
+      await sleep(300);
+      const menuState = await browser.execute(() => {
+        const items = [...document.querySelectorAll(".ctx-item")].map((el) => el.textContent?.trim() ?? "");
+        return { count: items.length, hasSum: items.includes("Sum"), items: items.slice(0, 5) };
+      });
+      check("aggregate picker opens as in-DOM menu with fns", menuState.hasSum, JSON.stringify(menuState));
+      const picked = await browser.execute(() => {
+        const sum = [...document.querySelectorAll(".ctx-item")].find((el) => el.textContent?.trim() === "Sum");
+        if (!sum) return false;
+        sum.click();
+        return true;
+      });
+      await sleep(2400);
+      const diskAgg = fs.readFileSync(JFILE, "utf8");
+      check("picking Sum writes tine.col-aggregates to disk", picked && /tine\.col-aggregates:: .*=sum/.test(diskAgg), JSON.stringify(diskAgg.match(/tine\.col-aggregates.*/)?.[0] ?? "missing"));
+      const aggOverflow = await browser.execute(() => {
+        const sc = document.querySelector(".sheet-grid")?.closest(".block-sheet-container")?.querySelector(".sheet-scroll");
+        if (!sc) return { ok: false, reason: "no scroller" };
+        return { ok: sc.scrollHeight <= sc.clientHeight + 1, sh: sc.scrollHeight, ch: sc.clientHeight };
+      });
+      check("aggregate row adds no vertical scroller overflow", aggOverflow.ok, JSON.stringify(aggOverflow));
+    }
+  }
 } catch (e) {
   failures++;
   console.error("E2E error:", e && e.message);

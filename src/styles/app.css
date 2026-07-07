@@ -5121,15 +5121,29 @@ img.emoji {
   transform: rotate(0deg);
 }
 
-.query-view-toggle {
+.query-view-switcher {
   margin-left: auto;
-  font-size: 11px;
-  padding: 2px 8px;
+  display: inline-flex;
   border: 1px solid var(--border-color);
   border-radius: 5px;
+  overflow: hidden;
   background: var(--bg-primary);
+}
+.query-view-switcher button {
+  font-size: 11px;
+  padding: 2px 7px;
+  border: 0;
+  border-left: 1px solid var(--border-color);
+  background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
+}
+.query-view-switcher button:first-child {
+  border-left: 0;
+}
+.query-view-switcher button.active {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
 }
 
 .query-title-editable {
