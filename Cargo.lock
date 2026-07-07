@@ -4410,6 +4410,7 @@ name = "tine"
 version = "0.4.3"
 dependencies = [
  "base64 0.22.1",
+ "libc",
  "notify",
  "serde",
  "serde_json",

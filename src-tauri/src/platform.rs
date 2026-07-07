@@ -188,3 +188,108 @@ pub(crate) fn opener_command(prog: &str) -> std::process::Command {
     }
     cmd
 }
+
+/// SIGKILL WebKitGTK's helper subprocesses (`WebKitWebProcess` /
+/// `WebKitNetworkProcess` / `WebKitGPUProcess`) that are direct children of THIS
+/// process, before we quit.
+///
+/// Why (GH #28): those aux processes terminate by *returning from `main()`*, so on
+/// exit they run the full C runtime teardown (`exit()` → `__run_exit_handlers` →
+/// GL/EGL/GBM driver static destructors). On many Mesa/driver combos that teardown
+/// double-frees and aborts (SIGABRT), producing a coredump *after* the app has
+/// already closed — harmless but alarming, and it happens even on plain Intel iGPUs.
+/// SIGKILL is uncatchable and never runs exit handlers, so killing the web process
+/// here (rather than letting `destroy()` shut it down gracefully) makes the crash
+/// impossible instead of merely hiding the dump. It keeps GPU compositing on for the
+/// whole session (unlike `WEBKIT_DISABLE_DMABUF_RENDERER`, the `TINE_GPU=0` opt-out).
+///
+/// Must run BEFORE the WebView is destroyed and AFTER the JS close handler has
+/// flushed pending edits (it has — it only calls this via `destroy`/quit once
+/// `flushAll()`/`flushSession()` resolved). We restrict to our own children by PPID
+/// so we never touch another app's WebKit processes. Note the kernel caps `comm` at
+/// 15 bytes, so "WebKitWebProcess" (16) shows as "WebKitWebProces" — match the
+/// "WebKit" prefix, not the full name.
+#[cfg(target_os = "linux")]
+pub fn kill_webkit_children() {
+    let me = std::process::id();
+    let Ok(rd) = std::fs::read_dir("/proc") else {
+        return;
+    };
+    let mut killed: Vec<i32> = Vec::new();
+    for entry in rd.flatten() {
+        let fname = entry.file_name();
+        let Some(pid) = fname.to_str().and_then(|s| s.parse::<i32>().ok()) else {
+            continue; // non-numeric /proc entry
+        };
+        let Ok(stat) = std::fs::read_to_string(entry.path().join("stat")) else {
+            continue; // process gone / unreadable
+        };
+        let Some((comm, ppid)) = parse_comm_ppid(&stat) else {
+            continue;
+        };
+        // Kernel caps comm at 15 bytes → "WebKitWebProcess" shows as "WebKitWebProces";
+        // match the prefix. Restrict to OUR children so we never kill another app's
+        // WebKit processes.
+        if comm.starts_with("WebKit") && ppid == me {
+            // SAFETY: kill(2) with a pid we just read from /proc; SIGKILL has no
+            // handler and cannot corrupt our own state.
+            unsafe {
+                libc::kill(pid, libc::SIGKILL);
+            }
+            killed.push(pid);
+        }
+    }
+    if !killed.is_empty() {
+        crate::debug::diag(format!("kill_webkit_children: SIGKILL {killed:?} (GH #28)"));
+    }
+}
+
+/// Parse `comm` and `ppid` out of a `/proc/<pid>/stat` line.
+/// Format: `<pid> (<comm>) <state> <ppid> ...`. `comm` may contain spaces AND
+/// parentheses (e.g. a process named `foo) (bar`), so we slice between the FIRST
+/// `(` and the LAST `)` rather than tokenizing. The fields after the last `)` are
+/// space-separated: `state` then `ppid`.
+#[cfg(target_os = "linux")]
+fn parse_comm_ppid(stat: &str) -> Option<(&str, u32)> {
+    let lp = stat.find('(')?;
+    let rp = stat.rfind(')')?;
+    if rp < lp {
+        return None;
+    }
+    let comm = &stat[lp + 1..rp];
+    let mut fields = stat[rp + 1..].split_whitespace();
+    let _state = fields.next()?;
+    let ppid: u32 = fields.next()?.parse().ok()?;
+    Some((comm, ppid))
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::parse_comm_ppid;
+
+    #[test]
+    fn parses_plain_stat() {
+        // real-ish line; ppid is the 4th field (after the ')')
+        let s = "18394 (WebKitWebProces) S 18380 18380 18380 0 -1 4194560 ...";
+        let (comm, ppid) = parse_comm_ppid(s).unwrap();
+        assert_eq!(comm, "WebKitWebProces"); // 15-byte truncation of WebKitWebProcess
+        assert!(comm.starts_with("WebKit"));
+        assert_eq!(ppid, 18380);
+    }
+
+    #[test]
+    fn handles_comm_with_spaces_and_parens() {
+        // comm containing spaces and ')' must not break ppid extraction
+        let s = "42 (weird ) name)) R 7 7 0 0 -1 0";
+        let (comm, ppid) = parse_comm_ppid(s).unwrap();
+        assert_eq!(comm, "weird ) name)");
+        assert_eq!(ppid, 7);
+    }
+
+    #[test]
+    fn rejects_malformed() {
+        assert!(parse_comm_ppid("no parens here").is_none());
+        assert!(parse_comm_ppid("12 (comm)").is_none()); // no ppid field
+        assert!(parse_comm_ppid("12 (comm) S notanumber").is_none());
+    }
+}

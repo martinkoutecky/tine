@@ -62,6 +62,11 @@ export interface Backend {
   loadGraph(path: string): Promise<GraphMeta>;
   appPlatform(): Promise<"android" | "ios" | "desktop">;
   defaultGraphParent(): Promise<string>;
+  /** Quit the app. On Linux this first SIGKILLs WebKitGTK's helper subprocesses so
+   *  they don't dump a SIGABRT core on exit (GH #28 — GL driver atexit double-free);
+   *  the caller MUST have flushed pending edits first. Does not resolve — the
+   *  process exits. */
+  quit(): Promise<void>;
   /** Scaffold a brand-new demo graph (onboarding "create new graph"); returns
    *  the created graph's root path to then `loadGraph`. Creates the graph in
    *  `dir` if empty, else in a fresh `tine-demo` subfolder. */
@@ -343,6 +348,9 @@ class TauriBackend implements Backend {
   }
   appPlatform() {
     return this.call<"android" | "ios" | "desktop">("app_platform");
+  }
+  quit() {
+    return this.call<void>("tine_quit");
   }
   defaultGraphParent() {
     return this.call<string>("default_graph_parent");

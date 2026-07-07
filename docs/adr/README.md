@@ -49,3 +49,4 @@ see the project `CLAUDE.md`.
 | [0020](0020-sync-conflict-merge.md) | Sync-conflict copies: detect + block-tree merge from one shared alignment; resolve only through the safe save path | Accepted |
 | [0021](0021-pdf-export.md) | PDF export reuses the HTML render + the webview's own print engine (hidden iframe + `window.print()`), no new deps | Accepted |
 | [0022](0022-logbook-clock-drawer-format.md) | Logbook CLOCK drawer parsing and writes live in one Rust module shared with wasm | Accepted |
+| [0023](0023-sigkill-webkit-children-on-exit.md) | SIGKILL WebKitGTK's helper processes at quit (Linux) to prevent the GL-driver exit-teardown coredump | Accepted |

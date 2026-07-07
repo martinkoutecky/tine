@@ -8,6 +8,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- **No more "Tine crashed" coredump when closing the app on Linux**
+  ([#28](https://github.com/martinkoutecky/tine/issues/28)). The app already closed
+  cleanly, but WebKitGTK's renderer subprocess ran the GPU driver's exit-time
+  teardown on the way out, which double-frees on many Mesa/driver combos (SIGABRT →
+  coredump notification), even on plain Intel graphics. Tine now terminates those
+  WebKit helper processes directly at quit — after saving — so the buggy teardown
+  never runs. GPU-accelerated rendering stays on for the whole session (the
+  `TINE_GPU=0` software-rendering fallback remains available but is no longer needed
+  for this). Linux only.
+
 ## [0.4.3] — 2026-07-07
 
 ### Fixed
