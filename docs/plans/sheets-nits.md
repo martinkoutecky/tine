@@ -2,7 +2,9 @@
 
 **Resume state:** batch 1 (N1) LANDED + verified (gates green, table
 sticky-left probe-proven in a live viewport — codex's fullPage screenshot
-artifact was NOT a real bug — e2e 30/30 twice). Batch 2 = N2 (drag ghost +
+artifact was NOT a real bug — e2e 30/30 twice; commit f7ea7ea, deployed to ~/research/tine-sheets).
+Batch 2 DISPATCHED to codex
+(`subagent-tasks/sheets-nits-batch2-interaction.md`) = N2 (drag ghost +
 grabbing cursor), N3 (Esc walks up from nested sub-grid to the containing
 cell), N4 (cell editor hides `tine.*`/hidden props — splitProps pattern),
 N5 guard (toast when a query-board move ejects the card from the refreshed
