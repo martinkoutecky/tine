@@ -45,7 +45,7 @@ function cellInGrid(grid: HTMLElement, row: number, col: number): HTMLElement | 
 }
 
 function seamStyleFor(grid: HTMLElement, sel: SheetSel, matrix: { rows: number; cols: number }): JSX.CSSProperties | null {
-  if (sel.kind === "cell" || matrix.rows <= 0 || matrix.cols <= 0) return null;
+  if ((sel.kind !== "row-seam" && sel.kind !== "col-seam") || matrix.rows <= 0 || matrix.cols <= 0) return null;
   const gridRect = grid.getBoundingClientRect();
 
   if (sel.kind === "row-seam") {
@@ -179,7 +179,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
     const sel = cellSel();
     const m = matrix();
     columns();
-    if (!gridRef || !sel || sel.gridId !== props.id || sel.kind === "cell") {
+    if (!gridRef || !sel || sel.gridId !== props.id || (sel.kind !== "row-seam" && sel.kind !== "col-seam")) {
       setSeamStyle(null);
       return;
     }
@@ -303,7 +303,20 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
 
 function sameSelectedCell(gridId: string, cell: MatrixCell): boolean {
   const sel = cellSel();
-  return !!sel && sel.kind === "cell" && sel.gridId === gridId && sel.row === cell.row && sel.col === cell.col;
+  if (!sel || sel.gridId !== gridId) return false;
+  if (sel.kind === "cell") return sel.row === cell.row && sel.col === cell.col;
+  if (sel.kind === "range") return sel.focus.row === cell.row && sel.focus.col === cell.col;
+  return false;
+}
+
+function inSelectedRange(gridId: string, cell: MatrixCell): boolean {
+  const sel = cellSel();
+  if (!sel || sel.kind !== "range" || sel.gridId !== gridId) return false;
+  const top = Math.min(sel.anchor.row, sel.focus.row);
+  const bottom = Math.max(sel.anchor.row, sel.focus.row);
+  const left = Math.min(sel.anchor.col, sel.focus.col);
+  const right = Math.max(sel.anchor.col, sel.focus.col);
+  return cell.row >= top && cell.row <= bottom && cell.col >= left && cell.col <= right;
 }
 
 function clickOffset(e: MouseEvent, contentRef: HTMLDivElement | undefined, raw: string): number | null {
@@ -339,6 +352,7 @@ function SheetGridCell(props: { gridId: string; cell: MatrixCell; header: boolea
       classList={{
         "sheet-header-cell": props.header,
         "sheet-hole": !props.cell.blockId,
+        "sheet-cell-in-range": inSelectedRange(props.gridId, props.cell),
         "sheet-cell-selected": sameSelectedCell(props.gridId, props.cell),
       }}
       data-sheet-grid-id={props.gridId}

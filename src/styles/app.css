@@ -3760,6 +3760,12 @@ body.file-drop-active::after {
     inset 0 0 0 3px color-mix(in srgb, var(--bg-primary) 85%, transparent);
   z-index: 1;
 }
+.sheet-cell-in-range {
+  background: color-mix(in srgb, var(--accent, #4c8bf5) 12%, var(--bg-primary));
+}
+.sheet-cell-in-range.sheet-hole {
+  background: color-mix(in srgb, var(--accent, #4c8bf5) 12%, var(--bg-secondary));
+}
 .sheet-seam-selected {
   position: absolute;
   z-index: 3;

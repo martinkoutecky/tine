@@ -9,12 +9,34 @@ import {
 } from "../modeHooks";
 import { buildMatrix, type MatrixCell, type SheetMatrix } from "./matrix";
 import type { SheetCellCtx } from "./context";
-import { deleteColumn, deleteRow, insertColumn, insertRow, materializeCell } from "./mutations";
+import {
+  copySheetSelection,
+  cutSheetSelection,
+  deleteColumn,
+  deleteRow,
+  fillSheetSelection,
+  insertColumn,
+  insertRow,
+  materializeCell,
+  moveSheetSelection,
+  pasteTextIntoSheetSelection,
+  rectForSheetSelection,
+  type SheetMoveDirection,
+  type SheetPoint,
+  type SheetRect,
+} from "./mutations";
 
 export const SEAM_STEPPING = true;
 
 export interface CellSel extends SheetCellCtx {
   kind: "cell";
+}
+
+export interface RangeSel {
+  kind: "range";
+  gridId: string;
+  anchor: SheetPoint;
+  focus: SheetPoint;
 }
 
 export interface RowSeamSel {
@@ -31,9 +53,11 @@ export interface ColSeamSel {
   at: number;
 }
 
-export type SheetSel = CellSel | RowSeamSel | ColSeamSel;
+export type SheetSel = CellSel | RangeSel | RowSeamSel | ColSeamSel;
 type CellSelInput = SheetCellCtx | CellSel;
 type SheetSelInput = SheetSel | CellSelInput;
+
+export type { SheetPoint, SheetRect };
 
 interface CellSelectionHooks {
   clearOutlineSelection: () => void;
@@ -77,13 +101,22 @@ export function cellSurfaceKey(gridId: string): string {
   return `sheet:${gridId}`;
 }
 
-function isCellSel(sel: SheetSel | null): sel is CellSel {
-  return sel?.kind === "cell";
+function isRangeSel(sel: SheetSel | null): sel is RangeSel {
+  return sel?.kind === "range";
+}
+
+function isSeamSel(sel: SheetSel | null): sel is RowSeamSel | ColSeamSel {
+  return sel?.kind === "row-seam" || sel?.kind === "col-seam";
 }
 
 function normalizeSel(sel: SheetSelInput): SheetSel {
   if ("kind" in sel && sel.kind) return { ...sel } as SheetSel;
   return { kind: "cell", gridId: sel.gridId, row: sel.row, col: sel.col };
+}
+
+function rememberSelection(sel: SheetSel): void {
+  if (sel.kind === "cell") lastByGrid.set(sel.gridId, { row: sel.row, col: sel.col });
+  else if (sel.kind === "range") lastByGrid.set(sel.gridId, { ...sel.focus });
 }
 
 export function cellSel(): SheetSel | null {
@@ -93,7 +126,7 @@ export function cellSel(): SheetSel | null {
 export function setCellSel(sel: SheetSelInput | null): void {
   if (sel) {
     const normalized = normalizeSel(sel);
-    if (normalized.kind === "cell") lastByGrid.set(normalized.gridId, { row: normalized.row, col: normalized.col });
+    rememberSelection(normalized);
     hooks.clearOutlineSelection();
     hooks.endActiveEdit();
     writeCellSel(normalized);
@@ -132,6 +165,27 @@ export function cellBlockId(sel: CellSelInput): string | null {
   return cellAt(sel)?.blockId ?? null;
 }
 
+export function focusCell(sel: CellSel | RangeSel): CellSel {
+  if (sel.kind === "cell") return sel;
+  return { kind: "cell", gridId: sel.gridId, row: sel.focus.row, col: sel.focus.col };
+}
+
+export function sheetSelectionRect(sel: SheetSel | null): SheetRect | null {
+  if (!sel || isSeamSel(sel)) return null;
+  return rectForSheetSelection(sel);
+}
+
+export function sheetSelectionRectForGrid(gridId: string): SheetRect | null {
+  const sel = cellSel();
+  if (!sel || sel.gridId !== gridId || isSeamSel(sel)) return null;
+  return rectForSheetSelection(sel);
+}
+
+export function cellIsInRange(gridId: string, row: number, col: number): boolean {
+  const rect = sheetSelectionRectForGrid(gridId);
+  return !!rect && row >= rect.top && row <= rect.bottom && col >= rect.left && col <= rect.right;
+}
+
 function clampCell(gridId: string, wanted: { row: number; col: number }): CellSel | null {
   const bounds = boundsForGrid(gridId);
   if (bounds.rows <= 0 || bounds.cols <= 0) return null;
@@ -141,6 +195,20 @@ function clampCell(gridId: string, wanted: { row: number; col: number }): CellSe
     row: Math.max(0, Math.min(wanted.row, bounds.rows - 1)),
     col: Math.max(0, Math.min(wanted.col, bounds.cols - 1)),
   };
+}
+
+function clampPoint(gridId: string, wanted: SheetPoint): SheetPoint | null {
+  const cell = clampCell(gridId, wanted);
+  return cell ? { row: cell.row, col: cell.col } : null;
+}
+
+function setRangeOrCell(gridId: string, anchor: SheetPoint, focus: SheetPoint): boolean {
+  const a = clampPoint(gridId, anchor);
+  const f = clampPoint(gridId, focus);
+  if (!a || !f) return false;
+  if (a.row === f.row && a.col === f.col) setCellSel({ kind: "cell", gridId, row: f.row, col: f.col });
+  else setCellSel({ kind: "range", gridId, anchor: a, focus: f });
+  return true;
 }
 
 export function enterGridSelection(gridId: string): boolean {
@@ -232,6 +300,7 @@ function moveFromColSeam(sel: ColSeamSel, dir: CellDirection): boolean {
 export function moveCellSelectionFrom(sel: SheetSel, dir: CellDirection): boolean {
   if (sel.kind === "row-seam") return moveFromRowSeam(sel, dir);
   if (sel.kind === "col-seam") return moveFromColSeam(sel, dir);
+  if (sel.kind === "range") return moveCellSelectionFrom(focusCell(sel), dir);
 
   const bounds = boundsForGrid(sel.gridId);
   if (bounds.rows <= 0 || bounds.cols <= 0) return false;
@@ -273,18 +342,61 @@ export function moveCellSelectionFrom(sel: SheetSel, dir: CellDirection): boolea
 }
 
 function moveCellTab(sel: SheetSel, dir: 1 | -1): boolean {
-  if (!isCellSel(sel)) return true;
-  const bounds = boundsForGrid(sel.gridId);
+  if (isSeamSel(sel)) return true;
+  const cell = focusCell(sel);
+  const bounds = boundsForGrid(cell.gridId);
   if (bounds.rows <= 0 || bounds.cols <= 0) return false;
-  const next = sel.row * bounds.cols + sel.col + dir;
+  const next = cell.row * bounds.cols + cell.col + dir;
   if (next < 0 || next >= bounds.rows * bounds.cols) return true;
   setCellSel({
     kind: "cell",
-    gridId: sel.gridId,
+    gridId: cell.gridId,
     row: Math.floor(next / bounds.cols),
     col: next % bounds.cols,
   });
   return true;
+}
+
+function extendCellRange(sel: SheetSel, dir: CellDirection): boolean {
+  if (isSeamSel(sel)) return true;
+  const anchor = sel.kind === "range" ? sel.anchor : { row: sel.row, col: sel.col };
+  const cur = sel.kind === "range" ? sel.focus : { row: sel.row, col: sel.col };
+  const wanted =
+    dir === "up" ? { row: cur.row - 1, col: cur.col }
+    : dir === "down" ? { row: cur.row + 1, col: cur.col }
+    : dir === "left" ? { row: cur.row, col: cur.col - 1 }
+    : { row: cur.row, col: cur.col + 1 };
+  return setRangeOrCell(sel.gridId, anchor, wanted);
+}
+
+function selectRows(sel: SheetSel): boolean {
+  if (isSeamSel(sel)) return true;
+  const bounds = boundsForGrid(sel.gridId);
+  if (bounds.rows <= 0 || bounds.cols <= 0) return false;
+  const rect = rectForSheetSelection(sel);
+  return setRangeOrCell(
+    sel.gridId,
+    { row: rect.top, col: 0 },
+    { row: rect.bottom, col: bounds.cols - 1 }
+  );
+}
+
+function selectColumns(sel: SheetSel): boolean {
+  if (isSeamSel(sel)) return true;
+  const bounds = boundsForGrid(sel.gridId);
+  if (bounds.rows <= 0 || bounds.cols <= 0) return false;
+  const rect = rectForSheetSelection(sel);
+  return setRangeOrCell(
+    sel.gridId,
+    { row: 0, col: rect.left },
+    { row: bounds.rows - 1, col: rect.right }
+  );
+}
+
+function selectAllGrid(gridId: string): boolean {
+  const bounds = boundsForGrid(gridId);
+  if (bounds.rows <= 0 || bounds.cols <= 0) return false;
+  return setRangeOrCell(gridId, { row: 0, col: 0 }, { row: bounds.rows - 1, col: bounds.cols - 1 });
 }
 
 export function moveCellAfterEdit(sel: SheetCellCtx, dir: CellDirection | "tab-forward" | "tab-back"): void {
@@ -334,6 +446,10 @@ function overtypeCell(sel: CellSel, text: string): boolean {
   if (!startCellEditing(sel, 0)) return true;
   replaceThroughMountedEditor(sel, text);
   return true;
+}
+
+function overtypeCellSelection(sel: CellSel | RangeSel, text: string): boolean {
+  return overtypeCell(focusCell(sel), text);
 }
 
 function printableKey(e: KeyboardEvent): string | null {
@@ -423,24 +539,64 @@ function deleteFromSeam(sel: RowSeamSel | ColSeamSel, side: "before" | "after"):
   return true;
 }
 
+export function handleSheetPasteEvent(e: ClipboardEvent): boolean {
+  const sel = cellSel();
+  if (!sel || isSeamSel(sel)) return false;
+  const text = e.clipboardData?.getData("text/plain") ?? "";
+  if (text === "") return false;
+  const next = pasteTextIntoSheetSelection(sel, text);
+  if (next) setCellSel(next);
+  return !!next;
+}
+
 export function handleCellSelectionKey(e: KeyboardEvent): boolean {
   const sel = cellSel();
   if (!sel) return false;
-  const plain = !e.ctrlKey && !e.metaKey && !e.altKey;
+  const mod = e.ctrlKey || e.metaKey;
+  const key = e.key.toLowerCase();
+  const plain = !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey;
+  const arrowDir = e.key === "ArrowUp" ? "up"
+    : e.key === "ArrowDown" ? "down"
+    : e.key === "ArrowLeft" ? "left"
+    : e.key === "ArrowRight" ? "right"
+    : null;
 
-  if (plain && e.key === "Escape") {
+  if (!mod && !e.altKey && e.key === "Escape") {
+    if (isRangeSel(sel)) {
+      setCellSel({ kind: "cell", gridId: sel.gridId, row: sel.anchor.row, col: sel.anchor.col });
+      return true;
+    }
     clearCellSelectionOnly();
     selectBlock(sel.gridId);
+    return true;
+  }
+  if (!mod && !e.altKey && e.shiftKey && arrowDir) return extendCellRange(sel, arrowDir);
+  if (!mod && !e.altKey && e.shiftKey && (e.key === " " || e.code === "Space")) return selectRows(sel);
+  if (mod && !e.altKey && !e.shiftKey && (e.key === " " || e.code === "Space")) return selectColumns(sel);
+  if (mod && !e.altKey && !e.shiftKey && key === "a") return selectAllGrid(sel.gridId);
+  if (mod && !e.altKey && !e.shiftKey && arrowDir && !isSeamSel(sel)) {
+    const next = moveSheetSelection(sel, arrowDir as SheetMoveDirection);
+    if (next) setCellSel(next);
+    return true;
+  }
+  if (mod && !e.altKey && !e.shiftKey && key === "d" && !isSeamSel(sel)) return fillSheetSelection(sel, "down");
+  if (mod && !e.altKey && !e.shiftKey && key === "r" && !isSeamSel(sel)) return fillSheetSelection(sel, "right");
+  if (mod && !e.altKey && !e.shiftKey && key === "c" && !isSeamSel(sel)) {
+    void copySheetSelection(sel);
+    return true;
+  }
+  if (mod && !e.altKey && !e.shiftKey && key === "x" && !isSeamSel(sel)) {
+    cutSheetSelection(sel);
     return true;
   }
   if (plain && e.key === "ArrowUp") return moveCellSelectionFrom(sel, "up");
   if (plain && e.key === "ArrowDown") return moveCellSelectionFrom(sel, "down");
   if (plain && e.key === "ArrowLeft") return moveCellSelectionFrom(sel, "left");
   if (plain && e.key === "ArrowRight") return moveCellSelectionFrom(sel, "right");
-  if (plain && !isCellSel(sel) && e.key === "Backspace") return deleteFromSeam(sel, "before");
-  if (plain && !isCellSel(sel) && e.key === "Delete") return deleteFromSeam(sel, "after");
+  if (plain && isSeamSel(sel) && e.key === "Backspace") return deleteFromSeam(sel, "before");
+  if (plain && isSeamSel(sel) && e.key === "Delete") return deleteFromSeam(sel, "after");
   if (plain && (e.key === "Enter" || e.key === "F2")) {
-    if (isCellSel(sel)) startCellEditing(sel);
+    if (!isSeamSel(sel)) startCellEditing(focusCell(sel));
     else editInsertedFromSeam(sel, null);
     return true;
   }
@@ -449,7 +605,7 @@ export function handleCellSelectionKey(e: KeyboardEvent): boolean {
   }
 
   const ch = printableKey(e);
-  if (ch) return isCellSel(sel) ? overtypeCell(sel, ch) : editInsertedFromSeam(sel, ch);
+  if (ch) return isSeamSel(sel) ? editInsertedFromSeam(sel, ch) : overtypeCellSelection(sel, ch);
   return false;
 }
 

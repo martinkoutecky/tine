@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
 import { Block } from "./Block";
@@ -25,12 +25,15 @@ beforeAll(async () => {
 
 let disposeKeys: (() => void) | null = null;
 let restoreCaretRange: (() => void) | null = null;
+let restoreClipboard: (() => void) | null = null;
 
 afterEach(() => {
   disposeKeys?.();
   disposeKeys = null;
   restoreCaretRange?.();
   restoreCaretRange = null;
+  restoreClipboard?.();
+  restoreClipboard = null;
   resetCellSelectionForTests();
   resetStore();
   document.body.innerHTML = "";
@@ -158,6 +161,33 @@ function activeEditor(root: HTMLElement): HTMLTextAreaElement {
 
 function childrenSnapshot(): Record<string, string[]> {
   return Object.fromEntries(Object.entries(doc.byId).map(([id, n]) => [id, [...n.children]]));
+}
+
+function mockClipboard(): string[] {
+  const writes: string[] = [];
+  const desc = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: {
+      writeText: vi.fn(async (text: string) => {
+        writes.push(text);
+      }),
+    },
+  });
+  restoreClipboard = () => {
+    if (desc) Object.defineProperty(navigator, "clipboard", desc);
+    else Reflect.deleteProperty(navigator, "clipboard");
+  };
+  return writes;
+}
+
+function pasteText(text: string): ClipboardEvent {
+  const event = new Event("paste", { bubbles: true, cancelable: true }) as ClipboardEvent;
+  Object.defineProperty(event, "clipboardData", {
+    value: { getData: (type: string) => (type === "text/plain" ? text : "") },
+  });
+  window.dispatchEvent(event);
+  return event;
 }
 
 describe("SheetGrid interaction", () => {
@@ -368,6 +398,68 @@ describe("SheetGrid interaction", () => {
     selectBlock("grid");
     keydown(window, "ArrowRight");
     expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 0, col: 0 });
+
+    dispose();
+  });
+
+  it("renders Shift+Arrow ranges with a focused cell", async () => {
+    const { root, dispose } = setup();
+
+    setCellSel({ gridId: "grid", row: 0, col: 0 });
+    keydown(window, "ArrowRight", { shiftKey: true });
+    await tick();
+
+    expect(cellSel()).toEqual({
+      kind: "range",
+      gridId: "grid",
+      anchor: { row: 0, col: 0 },
+      focus: { row: 0, col: 1 },
+    });
+    expect(cell(root, 0, 0).classList.contains("sheet-cell-in-range")).toBe(true);
+    expect(cell(root, 0, 1).classList.contains("sheet-cell-in-range")).toBe(true);
+    expect(cell(root, 0, 1).classList.contains("sheet-cell-selected")).toBe(true);
+
+    dispose();
+  });
+
+  it("Ctrl+D fills down through the key handler", () => {
+    const { dispose } = setup();
+
+    setCellSel({ kind: "range", gridId: "grid", anchor: { row: 0, col: 0 }, focus: { row: 1, col: 0 } });
+    keydown(window, "d", { ctrlKey: true });
+
+    expect(doc.byId.c3.raw).toBe("Alpha");
+    undo();
+    expect(doc.byId.c3.raw).toBe("Gamma");
+
+    dispose();
+  });
+
+  it("mod+c copies a selected range as TSV", async () => {
+    const writes = mockClipboard();
+    const { dispose } = setup();
+
+    setCellSel({ kind: "range", gridId: "grid", anchor: { row: 0, col: 0 }, focus: { row: 1, col: 1 } });
+    keydown(window, "c", { ctrlKey: true });
+    await tick();
+
+    expect(writes).toEqual(["Alpha\tBeta\nGamma\t"]);
+
+    dispose();
+  });
+
+  it("paste TSV grows the grid from the selected anchor", async () => {
+    const { dispose } = setup();
+
+    setCellSel({ gridId: "grid", row: 1, col: 1 });
+    const event = pasteText("P\tQ\nR\tS");
+    await tick();
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(doc.byId.grid.children).toHaveLength(3);
+    expect(doc.byId.r2.children.map((id) => doc.byId[id].raw)).toEqual(["Gamma", "P", "Q"]);
+    const newRow = doc.byId.grid.children[2];
+    expect(doc.byId[newRow].children.map((id) => doc.byId[id].raw)).toEqual(["", "R", "S"]);
 
     dispose();
   });

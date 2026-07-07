@@ -43,6 +43,10 @@ export function outlineToHtml(md: string): string {
 }
 
 /** Put a block outline on the clipboard as text/plain (markdown) + text/html. */
+export function copyRich(text: string, html: string): Promise<void> {
+  return backend().writeRich(text, html);
+}
+
 export function copyOutline(md: string): Promise<void> {
-  return backend().writeRich(md, outlineToHtml(md));
+  return copyRich(md, outlineToHtml(md));
 }

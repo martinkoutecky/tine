@@ -58,7 +58,7 @@ import {
 import { startEditing } from "./editorController";
 import { copyOutline } from "./clipboard";
 import { closeInPageFind, inPageFindOpen, openInPageFind } from "./inpageFind";
-import { cellSel, enterGridSelection, handleCellSelectionKey } from "./sheet/selection";
+import { cellSel, enterGridSelection, handleCellSelectionKey, handleSheetPasteEvent } from "./sheet/selection";
 
 interface Chord {
   mod: boolean;
@@ -650,13 +650,20 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
   const clearSuper = () => {
     superDown = false;
   };
+  const pasteHandler = (e: ClipboardEvent) => {
+    if (isEditableTarget(e.target)) return;
+    if (!cellSel()) return;
+    if (handleSheetPasteEvent(e)) e.preventDefault();
+  };
 
   window.addEventListener("keydown", handler, true);
+  window.addEventListener("paste", pasteHandler, true);
   window.addEventListener("keydown", superTracker, true);
   window.addEventListener("keyup", superTracker, true);
   window.addEventListener("blur", clearSuper);
   return () => {
     window.removeEventListener("keydown", handler, true);
+    window.removeEventListener("paste", pasteHandler, true);
     window.removeEventListener("keydown", superTracker, true);
     window.removeEventListener("keyup", superTracker, true);
     window.removeEventListener("blur", clearSuper);

@@ -891,6 +891,62 @@ export function insertEmptyChildBlock(parentId: string, at: number): string | nu
   return id;
 }
 
+/** Replace child ordering for existing blocks under existing parents.
+ *  Callers must pass permutations of existing child ids; this helper owns the
+ *  produce-level tree write so higher-level sheet code stays out of store shape. */
+export function replaceChildOrders(nextByParent: Record<string, readonly string[]>): boolean {
+  const parentIds = Object.keys(nextByParent);
+  if (!parentIds.length) return false;
+  const pages = new Set<string>();
+  for (const parentId of parentIds) {
+    const parent = doc.byId[parentId];
+    if (!parent) return false;
+    pages.add(parent.page);
+    for (const childId of nextByParent[parentId]) {
+      const child = doc.byId[childId];
+      if (!child || child.page !== parent.page) return false;
+    }
+  }
+  pushUndo("replace-child-orders", [...pages]);
+  setDoc(
+    produce((s) => {
+      for (const parentId of parentIds) {
+        const next = [...nextByParent[parentId]];
+        s.byId[parentId].children = next;
+        for (const childId of next) s.byId[childId].parent = parentId;
+      }
+    })
+  );
+  for (const pageName of pages) markDirty(pageName);
+  return true;
+}
+
+/** Append parsed outline blocks as children of `parentId`.
+ *  Shared by normal editor paste (via parseOutline) and sheet indented paste. */
+export function insertOutlineChildren(parentId: string, nodes: OutlineNode[]): string | null {
+  if (!nodes.length) return null;
+  const parent = doc.byId[parentId];
+  if (!parent) return null;
+  const pageName = parent.page;
+  let lastId: string | null = null;
+  pushUndo("paste-children", [pageName]);
+  setDoc(
+    produce((s) => {
+      const create = (n: OutlineNode, par: string): string => {
+        const id = freshId();
+        const childIds = n.children.map((c) => create(c, id));
+        s.byId[id] = { id, raw: n.raw, collapsed: false, parent: par, page: pageName, children: childIds };
+        return id;
+      };
+      const created = nodes.map((n) => create(n, parentId));
+      s.byId[parentId].children.push(...created);
+      lastId = created[created.length - 1] ?? null;
+    })
+  );
+  markDirty(pageName);
+  return lastId;
+}
+
 /** Enter: split the block at `offset`. Built-in `id::`/`collapsed::` props are
  *  hidden from the editor (see editor/properties splitProps): the caret offset is
  *  in visible space, and hidden props stay with the ORIGINAL block across a split. */

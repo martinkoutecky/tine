@@ -104,7 +104,23 @@ to `~/research/tine`. Martin is unavailable for testing.
         exactly on the `.sheet-grid` overflow-clip edge; clamped into the
         content box (`seamStyleFor`). Verified: npm test 46+16 files green,
         tsc, interact tests 10/10, seam bar eyeballed in the cropped shot.
-  - [ ] **2c — range select, Ctrl+arrow content move, fill, TSV/indented clipboard**
+  - [x] **2c — ranges, content move, fill, clipboard** — DONE Jul 7 2026
+        (codex, verified clean — no orchestrator fixes needed). `SheetSel`
+        range variant (anchor/focus; cell = degenerate); Shift+arrow extend,
+        Shift/Ctrl+Space row/col select, grid-scoped Ctrl+A;
+        `.sheet-cell-in-range` render (O(visible)); Ctrl+arrow cell/range/row
+        moves (all-or-nothing, holes materialize on entry); Ctrl+D/R fill
+        (strips id::, own raw only); mod+c TSV + HTML table via `copyRich`
+        (shared backend path), mod+x = copy+clear; document paste listener
+        (sheet-mode only, editable-target guarded): TSV/CSV (quoted fields,
+        tabs>commas, `src/sheet/tsv.ts` owns both directions) anchored paste
+        that GROWS the grid, indented text via shared `parseOutline`
+        (editor/outline), single line = replace raw. All gestures one
+        `withUndoUnit`. v1 simplifications noted: ranges are single-level
+        (nested grids ride as content — TreeSheets merge rule deferred), fill
+        doesn't copy children. Verified: npm test 47/442 + 16/167 green, tsc,
+        e2e ALL PASS, range shot eyeballed.
+      **PHASE 2 COMPLETE — the grid face is fully usable.**
 - [ ] **Phase 3 — field-keyed table + query rowSource + task kanban** (showcase)
 - [ ] **Phase 4 — Hierarchify/Flatten + board + aggregates**
 - [ ] **Phase 5 — recursion + colors + polish**

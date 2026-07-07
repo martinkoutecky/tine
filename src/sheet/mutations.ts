@@ -5,10 +5,36 @@ import {
   doc,
   formatForBlock,
   insertEmptyChildBlock,
+  insertOutlineChildren,
+  replaceChildOrders,
+  setRaw,
   setBlockProperty,
   withUndoUnit,
 } from "../store";
+import { copyRich } from "../clipboard";
+import { splitProps } from "../editor/properties";
+import { parseOutline } from "../editor/outline";
+import { visibleBody } from "../render/block";
 import { serializeColWidths, sheetConfigFromRaw } from "./config";
+import { looksLikeDelimitedText, parseDelimitedText, serializeTsv } from "./tsv";
+
+export interface SheetPoint {
+  row: number;
+  col: number;
+}
+
+export interface SheetRect {
+  top: number;
+  left: number;
+  bottom: number;
+  right: number;
+}
+
+export type SheetMutationSelection =
+  | { kind: "cell"; gridId: string; row: number; col: number }
+  | { kind: "range"; gridId: string; anchor: SheetPoint; focus: SheetPoint };
+
+export type SheetMoveDirection = "up" | "down" | "left" | "right";
 
 function gridRows(gridId: string): string[] | null {
   if (!blockIsGridView(gridId)) return null;
@@ -24,6 +50,97 @@ function colCount(rows: readonly string[]): number {
   let cols = 1;
   for (const rowId of rows) cols = Math.max(cols, doc.byId[rowId]?.children.length ?? 0);
   return cols;
+}
+
+export function normalizeSheetRect(a: SheetPoint, b: SheetPoint): SheetRect {
+  return {
+    top: Math.min(a.row, b.row),
+    left: Math.min(a.col, b.col),
+    bottom: Math.max(a.row, b.row),
+    right: Math.max(a.col, b.col),
+  };
+}
+
+export function rectForSheetSelection(sel: SheetMutationSelection): SheetRect {
+  return sel.kind === "cell"
+    ? { top: sel.row, left: sel.col, bottom: sel.row, right: sel.col }
+    : normalizeSheetRect(sel.anchor, sel.focus);
+}
+
+export function focusForSheetSelection(sel: SheetMutationSelection): SheetPoint {
+  return sel.kind === "cell" ? { row: sel.row, col: sel.col } : { ...sel.focus };
+}
+
+function offsetPoint(p: SheetPoint, dir: SheetMoveDirection): SheetPoint {
+  if (dir === "up") return { row: p.row - 1, col: p.col };
+  if (dir === "down") return { row: p.row + 1, col: p.col };
+  if (dir === "left") return { row: p.row, col: p.col - 1 };
+  return { row: p.row, col: p.col + 1 };
+}
+
+function offsetRect(rect: SheetRect, dir: SheetMoveDirection): SheetRect {
+  if (dir === "up") return { ...rect, top: rect.top - 1, bottom: rect.bottom - 1 };
+  if (dir === "down") return { ...rect, top: rect.top + 1, bottom: rect.bottom + 1 };
+  if (dir === "left") return { ...rect, left: rect.left - 1, right: rect.right - 1 };
+  return { ...rect, left: rect.left + 1, right: rect.right + 1 };
+}
+
+function rectRows(rect: SheetRect): number {
+  return rect.bottom - rect.top + 1;
+}
+
+function cellIdAt(gridId: string, row: number, col: number): string | null {
+  const rowId = doc.byId[gridId]?.children[row];
+  return rowId ? (doc.byId[rowId]?.children[col] ?? null) : null;
+}
+
+function cellText(blockId: string | null): string {
+  return blockId ? visibleBody(doc.byId[blockId]?.raw ?? "").join(" ") : "";
+}
+
+function rawWithoutId(raw: string): string {
+  return splitProps(raw, (key) => key.toLowerCase() === "id").visible;
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function tableToHtml(rows: readonly (readonly string[])[]): string {
+  return `<table><tbody>${rows
+    .map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`)
+    .join("")}</tbody></table>`;
+}
+
+function ensureGridRows(gridId: string, lastRow: number): boolean {
+  let rows = gridRows(gridId);
+  if (!rows || lastRow < 0) return false;
+  while (rows.length <= lastRow) {
+    if (!insertRow(gridId, rows.length)) return false;
+    rows = gridRows(gridId);
+    if (!rows) return false;
+  }
+  return true;
+}
+
+function ensureRectCells(gridId: string, rect: SheetRect): boolean {
+  for (let row = rect.top; row <= rect.bottom; row++) {
+    for (let col = rect.left; col <= rect.right; col++) {
+      if (!materializeCell(gridId, row, col)) return false;
+    }
+  }
+  return true;
+}
+
+function sheetBounds(gridId: string): { rows: number; cols: number } {
+  const rows = gridRows(gridId) ?? [];
+  return { rows: rows.length, cols: colCount(rows) };
+}
+
+function withSheetUndo<T>(gridId: string, tag: string, fn: () => T): T | null {
+  const page = gridPage(gridId);
+  if (!page) return null;
+  return withUndoUnit(tag, [page], fn);
 }
 
 function colWidths(gridId: string): ReadonlyMap<number, number> {
@@ -130,4 +247,259 @@ export function setColumnWidth(gridId: string, col: number, px: number | null): 
     else next.set(col, Math.max(40, Math.round(px)));
     writeColWidths(gridId, next);
   });
+}
+
+export function sheetSelectionText(sel: SheetMutationSelection): { text: string; html: string } {
+  if (sel.kind === "cell") {
+    const text = cellText(cellIdAt(sel.gridId, sel.row, sel.col));
+    return { text, html: escapeHtml(text) };
+  }
+  const rect = rectForSheetSelection(sel);
+  const rows: string[][] = [];
+  for (let row = rect.top; row <= rect.bottom; row++) {
+    const out: string[] = [];
+    for (let col = rect.left; col <= rect.right; col++) out.push(cellText(cellIdAt(sel.gridId, row, col)));
+    rows.push(out);
+  }
+  return { text: serializeTsv(rows), html: tableToHtml(rows) };
+}
+
+export function copySheetSelection(sel: SheetMutationSelection): Promise<void> {
+  const { text, html } = sheetSelectionText(sel);
+  return copyRich(text, html);
+}
+
+export function clearSheetSelection(sel: SheetMutationSelection): boolean {
+  const rect = rectForSheetSelection(sel);
+  return withSheetUndo(sel.gridId, "sheet:clear", () => {
+    for (let row = rect.top; row <= rect.bottom; row++) {
+      for (let col = rect.left; col <= rect.right; col++) {
+        const id = cellIdAt(sel.gridId, row, col);
+        if (id) setRaw(id, "", { timetracking: false });
+      }
+    }
+    return true;
+  }) ?? false;
+}
+
+export function cutSheetSelection(sel: SheetMutationSelection): void {
+  void copySheetSelection(sel);
+  clearSheetSelection(sel);
+}
+
+export function fillSheetSelection(sel: SheetMutationSelection, dir: "down" | "right"): boolean {
+  const rect = rectForSheetSelection(sel);
+  if (dir === "down" && rect.top === rect.bottom) return true;
+  if (dir === "right" && rect.left === rect.right) return true;
+  return withSheetUndo(sel.gridId, `sheet:fill-${dir}`, () => {
+    if (dir === "down") {
+      const sources: string[] = [];
+      for (let col = rect.left; col <= rect.right; col++) {
+        const id = cellIdAt(sel.gridId, rect.top, col);
+        sources.push(id ? rawWithoutId(doc.byId[id]?.raw ?? "") : "");
+      }
+      for (let row = rect.top + 1; row <= rect.bottom; row++) {
+        for (let col = rect.left; col <= rect.right; col++) {
+          const target = materializeCell(sel.gridId, row, col);
+          if (target) setRaw(target, sources[col - rect.left], { timetracking: false });
+        }
+      }
+      return true;
+    }
+
+    const sources: string[] = [];
+    for (let row = rect.top; row <= rect.bottom; row++) {
+      const id = cellIdAt(sel.gridId, row, rect.left);
+      sources.push(id ? rawWithoutId(doc.byId[id]?.raw ?? "") : "");
+    }
+    for (let row = rect.top; row <= rect.bottom; row++) {
+      for (let col = rect.left + 1; col <= rect.right; col++) {
+        const target = materializeCell(sel.gridId, row, col);
+        if (target) setRaw(target, sources[row - rect.top], { timetracking: false });
+      }
+    }
+    return true;
+  }) ?? false;
+}
+
+function moveWholeRows(gridId: string, rect: SheetRect, dir: "up" | "down"): SheetRect | null {
+  const rows = gridRows(gridId);
+  if (!rows) return null;
+  if (dir === "up" && rect.top <= 0) return null;
+  if (dir === "down" && rect.bottom >= rows.length - 1) return null;
+  const count = rectRows(rect);
+  const next = [...rows];
+  const moving = next.splice(rect.top, count);
+  const at = dir === "up" ? rect.top - 1 : rect.top + 1;
+  next.splice(at, 0, ...moving);
+  const ok = withSheetUndo(gridId, "sheet:move-rows", () => replaceChildOrders({ [gridId]: next })) ?? false;
+  return ok ? offsetRect(rect, dir) : null;
+}
+
+function rotateRowSegment(children: string[], start: number, end: number, dir: "left" | "right"): void {
+  if (dir === "left") {
+    const first = children[start];
+    for (let i = start; i < end; i++) children[i] = children[i + 1];
+    children[end] = first;
+    return;
+  }
+  const last = children[end];
+  for (let i = end; i > start; i--) children[i] = children[i - 1];
+  children[start] = last;
+}
+
+function moveRectContent(gridId: string, rect: SheetRect, dir: SheetMoveDirection): SheetRect | null {
+  const bounds = sheetBounds(gridId);
+  if (bounds.rows <= 0 || bounds.cols <= 0) return null;
+  if (dir === "up" && rect.top <= 0) return null;
+  if (dir === "down" && rect.bottom >= bounds.rows - 1) return null;
+  if (dir === "left" && rect.left <= 0) return null;
+  if (dir === "right" && rect.right >= bounds.cols - 1) return null;
+
+  const materialize = { ...rect };
+  if (dir === "up") materialize.top--;
+  else if (dir === "down") materialize.bottom++;
+  else if (dir === "left") materialize.left--;
+  else materialize.right++;
+
+  const ok = withSheetUndo(gridId, "sheet:move-range", () => {
+    if (!ensureRectCells(gridId, materialize)) return false;
+
+    if (dir === "left" || dir === "right") {
+      const nextByParent: Record<string, string[]> = {};
+      for (let row = materialize.top; row <= materialize.bottom; row++) {
+        const rowId = doc.byId[gridId]?.children[row];
+        if (!rowId) return false;
+        const next = [...doc.byId[rowId].children];
+        rotateRowSegment(next, materialize.left, materialize.right, dir);
+        nextByParent[rowId] = next;
+      }
+      return replaceChildOrders(nextByParent);
+    }
+
+    const nextByParent: Record<string, string[]> = {};
+    const rowIds = doc.byId[gridId]?.children ?? [];
+    for (let row = materialize.top; row <= materialize.bottom; row++) {
+      const rowId = rowIds[row];
+      if (!rowId) return false;
+      nextByParent[rowId] = [...doc.byId[rowId].children];
+    }
+    for (let col = materialize.left; col <= materialize.right; col++) {
+      if (dir === "up") {
+        const first = nextByParent[rowIds[materialize.top]][col];
+        for (let row = materialize.top; row < materialize.bottom; row++) {
+          nextByParent[rowIds[row]][col] = nextByParent[rowIds[row + 1]][col];
+        }
+        nextByParent[rowIds[materialize.bottom]][col] = first;
+      } else {
+        const last = nextByParent[rowIds[materialize.bottom]][col];
+        for (let row = materialize.bottom; row > materialize.top; row--) {
+          nextByParent[rowIds[row]][col] = nextByParent[rowIds[row - 1]][col];
+        }
+        nextByParent[rowIds[materialize.top]][col] = last;
+      }
+    }
+    return replaceChildOrders(nextByParent);
+  }) ?? false;
+
+  return ok ? offsetRect(rect, dir) : null;
+}
+
+export function moveSheetSelection(sel: SheetMutationSelection, dir: SheetMoveDirection): SheetMutationSelection | null {
+  const rect = rectForSheetSelection(sel);
+  const bounds = sheetBounds(sel.gridId);
+  if (sel.kind === "cell") {
+    if (!cellIdAt(sel.gridId, sel.row, sel.col)) return null;
+    const target = offsetPoint({ row: sel.row, col: sel.col }, dir);
+    if (target.row < 0 || target.col < 0 || target.row >= bounds.rows || target.col >= bounds.cols) return null;
+    if ((dir === "left" || dir === "right") && !cellIdAt(sel.gridId, target.row, target.col)) return null;
+    const moved = moveRectContent(sel.gridId, rect, dir);
+    return moved ? { kind: "cell", gridId: sel.gridId, row: target.row, col: target.col } : null;
+  }
+
+  if (
+    (dir === "up" || dir === "down") &&
+    rect.left === 0 &&
+    rect.right === Math.max(0, bounds.cols - 1)
+  ) {
+    const movedRows = moveWholeRows(sel.gridId, rect, dir);
+    if (!movedRows) return null;
+    const delta = dir === "up" ? -1 : 1;
+    return {
+      kind: "range",
+      gridId: sel.gridId,
+      anchor: { row: sel.anchor.row + delta, col: sel.anchor.col },
+      focus: { row: sel.focus.row + delta, col: sel.focus.col },
+    };
+  }
+
+  const moved = moveRectContent(sel.gridId, rect, dir);
+  if (!moved) return null;
+  const delta = offsetPoint({ row: 0, col: 0 }, dir);
+  return {
+    kind: "range",
+    gridId: sel.gridId,
+    anchor: { row: sel.anchor.row + delta.row, col: sel.anchor.col + delta.col },
+    focus: { row: sel.focus.row + delta.row, col: sel.focus.col + delta.col },
+  };
+}
+
+function looksIndentedOutline(text: string): boolean {
+  const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  if (!normalized.includes("\n") || normalized.includes("\t")) return false;
+  const indents = normalized
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .map((line) => /^ */.exec(line)?.[0].length ?? 0);
+  return indents.length > 1 && new Set(indents).size > 1;
+}
+
+export function pasteTextIntoSheetSelection(sel: SheetMutationSelection, text: string): SheetMutationSelection | null {
+  const rect = rectForSheetSelection(sel);
+  const anchor = { row: rect.top, col: rect.left };
+  if (looksLikeDelimitedText(text)) {
+    const matrix = parseDelimitedText(text);
+    if (!matrix.length) return sel;
+    const ok = withSheetUndo(sel.gridId, "sheet:paste-matrix", () => {
+      if (!ensureGridRows(sel.gridId, anchor.row + matrix.length - 1)) return false;
+      for (let r = 0; r < matrix.length; r++) {
+        const row = matrix[r];
+        for (let c = 0; c < row.length; c++) {
+          const id = materializeCell(sel.gridId, anchor.row + r, anchor.col + c);
+          if (!id) return false;
+          setRaw(id, row[c], { timetracking: false });
+        }
+      }
+      return true;
+    }) ?? false;
+    if (!ok) return null;
+    const height = matrix.length;
+    const width = Math.max(1, ...matrix.map((row) => row.length));
+    if (height === 1 && width === 1) return { kind: "cell", gridId: sel.gridId, row: anchor.row, col: anchor.col };
+    return {
+      kind: "range",
+      gridId: sel.gridId,
+      anchor,
+      focus: { row: anchor.row + height - 1, col: anchor.col + width - 1 },
+    };
+  }
+
+  if (looksIndentedOutline(text)) {
+    const nodes = parseOutline(text);
+    if (!nodes.length) return sel;
+    const ok = withSheetUndo(sel.gridId, "sheet:paste-outline", () => {
+      const id = materializeCell(sel.gridId, anchor.row, anchor.col);
+      if (!id) return false;
+      return !!insertOutlineChildren(id, nodes);
+    }) ?? false;
+    return ok ? { kind: "cell", gridId: sel.gridId, row: anchor.row, col: anchor.col } : null;
+  }
+
+  const ok = withSheetUndo(sel.gridId, "sheet:paste-text", () => {
+    const id = materializeCell(sel.gridId, anchor.row, anchor.col);
+    if (!id) return false;
+    setRaw(id, text.replace(/\r\n/g, "\n").replace(/\r/g, "\n"), { timetracking: false });
+    return true;
+  }) ?? false;
+  return ok ? { kind: "cell", gridId: sel.gridId, row: anchor.row, col: anchor.col } : null;
 }
