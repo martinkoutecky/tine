@@ -787,7 +787,8 @@ function rowRaw(row: RowRecord): string {
 }
 
 function rowTitle(row: RowRecord): string {
-  return visibleBody(rowRaw(row)).join(" ");
+  const title = visibleBody(rowRaw(row)).join(" ");
+  return title.trim() === "" && (doc.byId[row.id]?.children.length ?? row.dto?.children.length ?? 0) > 0 ? "—" : title;
 }
 
 function clickOffset(e: MouseEvent, contentRef: HTMLDivElement | undefined, raw: string): number | null {

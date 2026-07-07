@@ -2,6 +2,7 @@ import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { initParser } from "../render/parse";
 import {
   blockProperty,
+  blockIsGridView,
   blockSubtreeMarkdown,
   doc,
   loadSingle,
@@ -14,13 +15,18 @@ import type { BlockDto, PageDto } from "../types";
 import {
   deleteColumn,
   deleteRow,
+  copySheetSelection,
+  appendSheetCellChild,
   fillSheetSelection,
   insertColumn,
   insertRow,
   materializeCell,
   moveSheetSelection,
+  pasteStructuralSheetSelection,
   pasteTextIntoSheetSelection,
+  sheetSelectionText,
 } from "./mutations";
+import { parseDelimitedText } from "./tsv";
 
 let counter = 0;
 function blk(raw: string, children: BlockDto[] = []): BlockDto {
@@ -58,6 +64,35 @@ function gridShape(gridId: string): string[][] {
 function cellId(gridId: string, row: number, col: number): string | null {
   const rowId = rows(gridId)[row];
   return rowId ? (doc.byId[rowId].children[col] ?? null) : null;
+}
+
+function loadStructuralPasteDoc() {
+  setDoc({
+    byId: {
+      src: { id: "src", raw: "Source\ntine.view:: grid", collapsed: false, parent: null, page: "Sheet", children: ["sr1", "sr2"] },
+      sr1: { id: "sr1", raw: "", collapsed: false, parent: "src", page: "Sheet", children: ["s11", "s12"] },
+      s11: { id: "s11", raw: "A\nprop:: one", collapsed: false, parent: "sr1", page: "Sheet", children: ["s11c"] },
+      s11c: { id: "s11c", raw: "A child", collapsed: false, parent: "s11", page: "Sheet", children: [] },
+      s12: { id: "s12", raw: "B", collapsed: false, parent: "sr1", page: "Sheet", children: [] },
+      sr2: { id: "sr2", raw: "", collapsed: false, parent: "src", page: "Sheet", children: ["s21"] },
+      s21: { id: "s21", raw: "C", collapsed: false, parent: "sr2", page: "Sheet", children: [] },
+      dst: { id: "dst", raw: "Target grid\ntine.view:: grid", collapsed: false, parent: null, page: "Sheet", children: ["dr1"] },
+      dr1: { id: "dr1", raw: "", collapsed: false, parent: "dst", page: "Sheet", children: ["target"] },
+      target: {
+        id: "target",
+        raw: "Target\ntine.view:: grid\ntine.header:: true\ntine.col-widths:: 0=100\ntine.col-aggregates:: 0=sum",
+        collapsed: false,
+        parent: "dr1",
+        page: "Sheet",
+        children: ["er1"],
+      },
+      er1: { id: "er1", raw: "", collapsed: false, parent: "target", page: "Sheet", children: ["ec1"] },
+      ec1: { id: "ec1", raw: "Existing", collapsed: false, parent: "er1", page: "Sheet", children: [] },
+    },
+    pages: [{ name: "Sheet", kind: "page", title: "Sheet", preBlock: null, roots: ["src", "dst"], format: "md", readOnly: false }],
+    feed: ["Sheet"],
+    loaded: true,
+  });
 }
 
 beforeAll(() => initParser());
@@ -217,6 +252,80 @@ describe("sheet structural mutations", () => {
     expect(doc.byId[child].raw).toBe("parent");
     expect(doc.byId[doc.byId[child].children[0]].raw).toBe("child");
     expect(blockSubtreeMarkdown(anchor, 0, true)).toContain("\t- child");
+
+    undo();
+    expect(pageToDto("Sheet")).toEqual(before);
+  });
+
+  it("copies a grid structurally and pastes it as a hosted child grid after auto-wrapping a compact target", async () => {
+    loadStructuralPasteDoc();
+    const before = pageToDto("Sheet");
+
+    await copySheetSelection({
+      kind: "range",
+      gridId: "src",
+      anchor: { row: 0, col: 0 },
+      focus: { row: 1, col: 1 },
+    });
+    const next = pasteStructuralSheetSelection({ kind: "cell", gridId: "dst", row: 0, col: 0 }, "A\tB\nC\t");
+
+    expect(next).toEqual({ kind: "cell", gridId: doc.byId.target.children[1], row: 0, col: 0 });
+    expect(doc.byId.target.raw).toBe("Target");
+    expect(doc.byId.target.children).toHaveLength(2);
+    const [existingHost, pastedHost] = doc.byId.target.children;
+    expect(doc.byId[existingHost].raw).toBe(
+      "tine.view:: grid\ntine.header:: true\ntine.col-widths:: 0=100\ntine.col-aggregates:: 0=sum"
+    );
+    expect(doc.byId[existingHost].children).toEqual(["er1"]);
+    expect(doc.byId.er1.parent).toBe(existingHost);
+    expect(blockIsGridView(existingHost)).toBe(true);
+    expect(blockIsGridView(pastedHost)).toBe(true);
+
+    const [pr1, pr2] = doc.byId[pastedHost].children;
+    expect(doc.byId[pr1].raw).toBe("");
+    expect(doc.byId[pr1].children.map((id) => doc.byId[id].raw)).toEqual(["A\nprop:: one", "B"]);
+    const copiedA = doc.byId[pr1].children[0];
+    expect(doc.byId[doc.byId[copiedA].children[0]].raw).toBe("A child");
+    expect(doc.byId[pr2].raw).toBe("");
+    expect(doc.byId[pr2].children.map((id) => doc.byId[id].raw)).toEqual(["C", ""]);
+
+    undo();
+    expect(pageToDto("Sheet")).toEqual(before);
+  });
+
+  it("leaves non-matching clipboard text on the TSV/plain paste path", async () => {
+    loadStructuralPasteDoc();
+    await copySheetSelection({ kind: "cell", gridId: "src", row: 0, col: 0 });
+
+    expect(pasteStructuralSheetSelection({ kind: "cell", gridId: "dst", row: 0, col: 0 }, "X\tY")).toBeUndefined();
+    const next = pasteTextIntoSheetSelection({ kind: "cell", gridId: "dst", row: 0, col: 0 }, "X\tY");
+
+    expect(next).toEqual({ kind: "range", gridId: "dst", anchor: { row: 0, col: 0 }, focus: { row: 0, col: 1 } });
+    expect(doc.byId.dr1.children.map((id) => doc.byId[id].raw)).toEqual(["X", "Y"]);
+  });
+
+  it("escapes tabbed and multiline cell bodies into one parseable TSV scalar", () => {
+    const gridId = loadGrid();
+    const id = cellId(gridId, 0, 0)!;
+    setDoc("byId", id, "raw", "A\tB\nsecond line");
+
+    const { text } = sheetSelectionText({ kind: "cell", gridId, row: 0, col: 0 });
+
+    expect(text).toBe("A B second line");
+    expect(parseDelimitedText(text, "tsv")).toEqual([["A B second line"]]);
+  });
+
+  it("adds a child bullet after wrapping a compact cell grid", () => {
+    loadStructuralPasteDoc();
+    const before = pageToDto("Sheet");
+
+    const child = appendSheetCellChild("target");
+
+    expect(child).toBeTruthy();
+    expect(doc.byId.target.raw).toBe("Target");
+    expect(doc.byId.target.children).toHaveLength(2);
+    expect(doc.byId[doc.byId.target.children[0]].raw).toContain("tine.view:: grid");
+    expect(doc.byId[doc.byId.target.children[1]].raw).toBe("");
 
     undo();
     expect(pageToDto("Sheet")).toEqual(before);

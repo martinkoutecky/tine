@@ -19,6 +19,7 @@ import {
   insertRow,
   materializeCell,
   moveSheetSelection,
+  pasteStructuralSheetSelection,
   pasteTextIntoSheetSelection,
   rectForSheetSelection,
   type SheetMoveDirection,
@@ -725,6 +726,11 @@ export function handleSheetPasteEvent(e: ClipboardEvent): boolean {
   if (!sel || isSeamSel(sel)) return false;
   const text = e.clipboardData?.getData("text/plain") ?? "";
   if (text === "") return false;
+  const structural = pasteStructuralSheetSelection(sel, text);
+  if (structural !== undefined) {
+    if (structural) setCellSel(structural);
+    return !!structural;
+  }
   const next = pasteTextIntoSheetSelection(sel, text);
   if (next) setCellSel(next);
   return !!next;

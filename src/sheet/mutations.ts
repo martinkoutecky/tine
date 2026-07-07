@@ -2,6 +2,7 @@ import {
   blockIsGridView,
   blockPageReadOnly,
   blockProperty,
+  blockSubtreeMarkdown,
   deleteBlock,
   doc,
   formatForBlock,
@@ -38,6 +39,17 @@ export type SheetMutationSelection =
   | { kind: "range"; gridId: string; anchor: SheetPoint; focus: SheetPoint };
 
 export type SheetMoveDirection = "up" | "down" | "left" | "right";
+
+type SheetStructuralCopy = { fingerprint: string; outlineMd: string };
+
+let lastSheetCopy: SheetStructuralCopy | null = null;
+
+const COMPACT_GRID_CONFIG_KEYS = new Set([
+  "tine.view",
+  "tine.header",
+  "tine.col-widths",
+  "tine.col-aggregates",
+]);
 
 function gridRows(gridId: string): string[] | null {
   if (!blockIsGridView(gridId)) return null;
@@ -103,7 +115,10 @@ function cellIdAt(gridId: string, row: number, col: number): string | null {
 }
 
 function cellText(blockId: string | null): string {
-  return blockId ? visibleBody(doc.byId[blockId]?.raw ?? "").join(" ") : "";
+  const text = blockId ? visibleBody(doc.byId[blockId]?.raw ?? "").join(" ") : "";
+  // The external clipboard flavor is TSV: tabs/newlines are flattened to spaces
+  // so a cell body cannot escape into extra external rows or columns.
+  return text.replace(/[\t\r\n]+/g, " ");
 }
 
 /** Replace a cell's visible text while KEEPING its hidden built-in properties
@@ -331,8 +346,26 @@ export function sheetSelectionText(sel: SheetMutationSelection): { text: string;
   return { text: serializeTsv(rows), html: tableToHtml(rows) };
 }
 
+function emptyOutlineBlock(level: number): string {
+  return `${"\t".repeat(level)}-`;
+}
+
+function sheetSelectionOutlineMarkdown(sel: SheetMutationSelection): string {
+  const rect = rectForSheetSelection(sel);
+  const out: string[] = [];
+  for (let row = rect.top; row <= rect.bottom; row++) {
+    out.push(emptyOutlineBlock(0));
+    for (let col = rect.left; col <= rect.right; col++) {
+      const id = cellIdAt(sel.gridId, row, col);
+      out.push(id ? blockSubtreeMarkdown(id, 1, true) : emptyOutlineBlock(1));
+    }
+  }
+  return out.join("\n");
+}
+
 export function copySheetSelection(sel: SheetMutationSelection): Promise<void> {
   const { text, html } = sheetSelectionText(sel);
+  lastSheetCopy = { fingerprint: text, outlineMd: sheetSelectionOutlineMarkdown(sel) };
   return copyRich(text, html);
 }
 
@@ -352,6 +385,38 @@ export function clearSheetSelection(sel: SheetMutationSelection): boolean {
 export function cutSheetSelection(sel: SheetMutationSelection): void {
   void copySheetSelection(sel);
   clearSheetSelection(sel);
+}
+
+function compactGridConfigSplit(raw: string): { visible: string; hidden: string } {
+  return splitProps(raw, (key) => COMPACT_GRID_CONFIG_KEYS.has(key.toLowerCase()));
+}
+
+function isCompactGridCell(id: string): boolean {
+  return blockIsGridView(id);
+}
+
+export function wrapCompactGridCell(cellId: string): string | null {
+  const node = doc.byId[cellId];
+  if (!node || !isCompactGridCell(cellId)) return null;
+  const rowIds = [...node.children];
+  for (const rowId of rowIds) if (!doc.byId[rowId]) return null;
+
+  const { visible, hidden } = compactGridConfigSplit(node.raw);
+  const hostId = insertEmptyChildBlock(cellId, 0);
+  if (!hostId) return null;
+  setRaw(hostId, hidden || "tine.view:: grid", { timetracking: false });
+  if (!replaceChildOrders({ [cellId]: [hostId], [hostId]: rowIds })) return null;
+  setRaw(cellId, visible, { timetracking: false });
+  return hostId;
+}
+
+export function appendSheetCellChild(cellId: string): string | null {
+  const node = doc.byId[cellId];
+  if (!node || blockPageReadOnly(cellId)) return null;
+  return withUndoUnit("sheet:add-child-bullet", [node.page], () => {
+    if (isCompactGridCell(cellId) && !wrapCompactGridCell(cellId)) return null;
+    return insertEmptyChildBlock(cellId, doc.byId[cellId]?.children.length ?? 0);
+  });
 }
 
 export function fillSheetSelection(sel: SheetMutationSelection, dir: "down" | "right"): boolean {
@@ -519,6 +584,33 @@ function looksIndentedOutline(text: string): boolean {
     .filter((line) => line.trim() !== "")
     .map((line) => /^ */.exec(line)?.[0].length ?? 0);
   return indents.length > 1 && new Set(indents).size > 1;
+}
+
+export function pasteStructuralSheetSelection(
+  sel: SheetMutationSelection,
+  text: string
+): SheetMutationSelection | null | undefined {
+  if (!lastSheetCopy || lastSheetCopy.fingerprint !== text) return undefined;
+  const rows = parseOutline(lastSheetCopy.outlineMd);
+  if (!rows.length) return null;
+  const rect = rectForSheetSelection(sel);
+  const anchor = { row: rect.top, col: rect.left };
+  let pastedHost: string | null = null;
+  const ok = withSheetUndo(sel.gridId, "sheet:paste-structural", () => {
+    const target = materializeCell(sel.gridId, anchor.row, anchor.col);
+    if (!target) return false;
+    if (isCompactGridCell(target) && !wrapCompactGridCell(target)) return false;
+    const host = insertEmptyChildBlock(target, doc.byId[target]?.children.length ?? 0);
+    if (!host) return false;
+    setRaw(host, "tine.view:: grid", { timetracking: false });
+    if (!insertOutlineChildren(host, rows)) return false;
+    pastedHost = host;
+    return true;
+  }) ?? false;
+  if (!ok || !pastedHost) return null;
+  const firstRow = doc.byId[pastedHost]?.children[0];
+  const firstCell = firstRow ? doc.byId[firstRow]?.children[0] : null;
+  return firstCell ? { kind: "cell", gridId: pastedHost, row: 0, col: 0 } : null;
 }
 
 export function pasteTextIntoSheetSelection(sel: SheetMutationSelection, text: string): SheetMutationSelection | null {

@@ -57,3 +57,4 @@ see the project `CLAUDE.md`.
 | [0028](0028-sheets-formula-dsl.md) | Sheets formulas: Bases-model typed expression DSL, `tine.formula.<name>::` lines, errors as values, derived never stored | Accepted |
 | [0029](0029-sigkill-webkit-children-on-exit.md) | SIGKILL WebKitGTK's helper processes at quit (Linux) to prevent the GL-driver exit-teardown coredump (was master's 0023; renumbered in the sheets merge) | Accepted |
 | [0030](0030-query-view-unification.md) | Query view unification: query DSL owns membership, `tine.view::` owns presentation | Accepted |
+| [0031](0031-recursive-cell-form.md) | Recursive sheet cell form: compact and hosted grids with structural clipboard paste | Accepted |

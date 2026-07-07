@@ -1,5 +1,5 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup, useContext, type JSX } from "solid-js";
-import { doc, formatForBlock } from "../store";
+import { blockPageReadOnly, doc, formatForBlock } from "../store";
 import { AstBody } from "../render/body";
 import { visibleBody } from "../render/block";
 import { facetsOf } from "../render/facets";
@@ -26,9 +26,9 @@ import {
 } from "../sheet/pointerSelection";
 import { setColumnWidth } from "../sheet/mutations";
 import { editorOffsetFromRenderedRange } from "../render/spans";
-import { isSheetCellHidden } from "../editor/properties";
+import { isSheetCellHidden, splitProps } from "../editor/properties";
 import { forbidsEditEntry } from "../editor/editTargets";
-import { editingId, editingOwner } from "../editorController";
+import { editingId, editingOwner, startEditing } from "../editorController";
 import { openSheetCellContextMenu, openSheetContextMenu } from "../ui";
 import { blockBackgroundColor } from "../blockColors";
 import { Editor, SurfaceContext } from "./Block";
@@ -547,7 +547,14 @@ function SheetGridCell(props: { gridId: string; cell: MatrixCell; header: boolea
   );
 }
 
-function SheetBlock(props: { id: string; depth: number; cell?: SheetCellCtx; bodyRef?: (el: HTMLDivElement) => void }): JSX.Element {
+function SheetBlock(props: {
+  id: string;
+  depth: number;
+  cell?: SheetCellCtx;
+  nested?: boolean;
+  bodyRef?: (el: HTMLDivElement) => void;
+}): JSX.Element {
+  let contentRef: HTMLDivElement | undefined;
   const node = () => doc.byId[props.id];
   const fmt = () => formatForBlock(props.id);
   const facets = createMemo(() => (node() ? facetsOf(node().raw, fmt()) : null));
@@ -557,6 +564,23 @@ function SheetBlock(props: { id: string; depth: number; cell?: SheetCellCtx; bod
     const cell = props.cell;
     return !!cell && editingId() === props.id && editingOwner() === cellOwner(cell);
   };
+  const bodyRef = (el: HTMLDivElement) => {
+    contentRef = el;
+    props.bodyRef?.(el);
+  };
+  const onNestedMouseDown = (e: MouseEvent) => {
+    if (!props.nested || !props.cell) return;
+    if (e.button !== 0 || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (blockPageReadOnly(props.id)) return;
+    if (forbidsEditEntry(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const n = node();
+    if (!n) return;
+    const fallback = splitProps(n.raw, isSheetCellHidden).visible.length;
+    setCellSel(props.cell);
+    startEditing(props.id, clickOffset(e, contentRef, n.raw) ?? fallback, cellOwner(props.cell));
+  };
 
   return (
     <Show when={node()}>
@@ -564,7 +588,8 @@ function SheetBlock(props: { id: string; depth: number; cell?: SheetCellCtx; bod
         <>
           <div
             class="sheet-cell-body"
-            ref={(el) => props.bodyRef?.(el)}
+            ref={bodyRef}
+            onMouseDown={onNestedMouseDown}
           >
             <Show
               when={editing() && props.cell}
@@ -592,7 +617,7 @@ function SheetBlock(props: { id: string; depth: number; cell?: SheetCellCtx; bod
                   <SheetBoard ownerId={props.id} rowSource="children" groupBy={config()?.groupBy} />
                 </Match>
                 <Match when={true}>
-                  <SheetOutline ids={children()} depth={props.depth} />
+                  <SheetOutline ids={children()} depth={props.depth} cell={props.cell} />
                 </Match>
               </Switch>
             </SheetContainerOverlayContext.Provider>
@@ -603,13 +628,13 @@ function SheetBlock(props: { id: string; depth: number; cell?: SheetCellCtx; bod
   );
 }
 
-function SheetOutline(props: { ids: readonly string[]; depth: number }): JSX.Element {
+function SheetOutline(props: { ids: readonly string[]; depth: number; cell?: SheetCellCtx }): JSX.Element {
   return (
     <div class="sheet-nested-lines">
       <For each={props.ids}>
             {(id) => (
           <div class="sheet-nested-line" style={{ "padding-left": `${Math.max(0, props.depth) * 14}px` }}>
-            <SheetBlock id={id} depth={props.depth + 1} />
+            <SheetBlock id={id} depth={props.depth + 1} cell={props.cell} nested />
           </div>
         )}
       </For>

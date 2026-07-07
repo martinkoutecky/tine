@@ -3,6 +3,7 @@ import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
 import { readFileSync } from "node:fs";
 import { Block } from "./Block";
+import { ContextMenu } from "./ContextMenu";
 import { initParser } from "../render/parse";
 import {
   doc,
@@ -89,6 +90,36 @@ function loadSheetDocWithSubgrid() {
       c2: node("c2", "Nested grid\ntine.view:: grid", "r1", ["nr1"]),
       nr1: node("nr1", "", "c2", ["n11"]),
       n11: node("n11", "Inner", "nr1"),
+    },
+    pages: [page(["before", "grid", "after"])],
+    feed: ["Sheet"],
+    loaded: true,
+  });
+}
+
+function loadSheetDocWithOutlineChild() {
+  loadSheetDoc();
+  setDoc({
+    byId: {
+      ...doc.byId,
+      c1: node("c1", "Alpha", "r1", ["c1child"]),
+      c1child: node("c1child", "Child", "c1"),
+    },
+    pages: [page(["before", "grid", "after"])],
+    feed: ["Sheet"],
+    loaded: true,
+  });
+}
+
+function loadSheetDocWithNestedHostGrid() {
+  loadSheetDoc();
+  setDoc({
+    byId: {
+      ...doc.byId,
+      c1: node("c1", "Alpha", "r1", ["host"]),
+      host: node("host", "Nested host\ntine.view:: grid", "c1", ["hr1"]),
+      hr1: node("hr1", "", "host", ["hc1"]),
+      hc1: node("hc1", "Inner", "hr1"),
     },
     pages: [page(["before", "grid", "after"])],
     feed: ["Sheet"],
@@ -229,6 +260,23 @@ function pasteText(text: string): ClipboardEvent {
   });
   window.dispatchEvent(event);
   return event;
+}
+
+function pasteInto(target: EventTarget, text: string): ClipboardEvent {
+  const event = new Event("paste", { bubbles: true, cancelable: true }) as ClipboardEvent;
+  Object.defineProperty(event, "clipboardData", {
+    value: { getData: (type: string) => (type === "text/plain" ? text : "") },
+  });
+  target.dispatchEvent(event);
+  return event;
+}
+
+function clickMenuItem(label: string): void {
+  const item = [...document.body.querySelectorAll(".ctx-item")].find((el) => el.textContent?.trim() === label) as
+    | HTMLElement
+    | undefined;
+  if (!item) throw new Error(`missing menu item: ${label}`);
+  item.click();
 }
 
 describe("SheetGrid interaction", () => {
@@ -478,6 +526,66 @@ describe("SheetGrid interaction", () => {
     dispose();
   });
 
+  it("ArrowDown from a sheet-cell editor descends into the first outline child", async () => {
+    loadSheetDocWithOutlineChild();
+    disposeKeys = installKeybindings();
+    const { root, dispose } = mount(() => <Block id="grid" />);
+
+    setCellSel({ gridId: "grid", row: 0, col: 0 });
+    keydown(window, "Enter");
+    await tick();
+
+    const editor = activeEditor(root);
+    editor.setSelectionRange(editor.value.length, editor.value.length);
+    keydown(editor, "ArrowDown");
+    await tick();
+
+    expect(editingId()).toBe("c1child");
+    expect(activeEditor(root).value).toBe("Child");
+    expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 0, col: 0 });
+
+    keydown(activeEditor(root), "Escape");
+    await tick();
+
+    expect(editingId()).toBeNull();
+    expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 0, col: 0 });
+
+    dispose();
+  });
+
+  it("mousedown on a nested outline line enters sheet-owned edit mode", async () => {
+    loadSheetDocWithOutlineChild();
+    disposeKeys = installKeybindings();
+    const { root, dispose } = mount(() => <Block id="grid" />);
+
+    const nestedBody = cell(root, 0, 0).querySelector(".sheet-nested-line .sheet-cell-body") as HTMLElement | null;
+    expect(nestedBody).not.toBeNull();
+    nestedBody!.dispatchEvent(pointer("mousedown", 20, 20));
+    await tick();
+
+    expect(editingId()).toBe("c1child");
+    expect(activeEditor(root).value).toBe("Child");
+    expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 0, col: 0 });
+
+    dispose();
+  });
+
+  it("nested host grid faces render as grids and face clicks do not edit the host line", async () => {
+    loadSheetDocWithNestedHostGrid();
+    disposeKeys = installKeybindings();
+    const { root, dispose } = mount(() => <Block id="grid" />);
+
+    const innerGrid = root.querySelector('.sheet-grid[data-sheet-grid-id="host"]') as HTMLElement | null;
+    expect(innerGrid).not.toBeNull();
+    innerGrid!.dispatchEvent(pointer("pointerdown", 20, 20));
+    innerGrid!.dispatchEvent(pointer("mousedown", 20, 20));
+    await tick();
+
+    expect(editingId()).toBeNull();
+
+    dispose();
+  });
+
   it("ArrowDown mid-text in a sheet-cell editor stays in edit mode", async () => {
     loadSheetDocWithSubgrid();
     setDoc("byId", "c2", "raw", "Top\nBottom\ntine.view:: grid");
@@ -495,6 +603,95 @@ describe("SheetGrid interaction", () => {
 
     expect(editingId()).toBe("c2");
     expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 0, col: 1 });
+
+    dispose();
+  });
+
+  it("multiline paste inside a cell editor inserts plain text and creates no blocks", async () => {
+    loadSheetDoc();
+    disposeKeys = installKeybindings();
+    const { root, dispose } = mount(() => <Block id="grid" />);
+
+    setCellSel({ gridId: "grid", row: 0, col: 0 });
+    keydown(window, "Enter");
+    await tick();
+
+    const beforeIds = Object.keys(doc.byId).sort();
+    const editor = activeEditor(root);
+    editor.setSelectionRange(editor.value.length, editor.value.length);
+    const event = pasteInto(editor, "\nline two\twith tab");
+    await tick();
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(doc.byId.c1.raw).toBe("Alpha\nline two\twith tab");
+    expect(Object.keys(doc.byId).sort()).toEqual(beforeIds);
+    expect(editingId()).toBe("c1");
+
+    dispose();
+  });
+
+  it("Alt+Enter on a plain sheet cell appends a child bullet and enters it", async () => {
+    loadSheetDoc();
+    disposeKeys = installKeybindings();
+    const { root, dispose } = mount(() => <Block id="grid" />);
+
+    setCellSel({ gridId: "grid", row: 0, col: 0 });
+    keydown(window, "Enter");
+    await tick();
+
+    keydown(activeEditor(root), "Enter", { altKey: true });
+    await tick();
+
+    const child = doc.byId.c1.children[0];
+    expect(doc.byId[child].raw).toBe("");
+    expect(editingId()).toBe(child);
+    expect(activeEditor(root).value).toBe("");
+
+    dispose();
+  });
+
+  it("Alt+Enter on a compact-grid cell wraps the grid then appends a bullet", async () => {
+    loadSheetDocWithSubgrid();
+    disposeKeys = installKeybindings();
+    const { root, dispose } = mount(() => <Block id="grid" />);
+
+    setCellSel({ gridId: "grid", row: 0, col: 1 });
+    keydown(window, "Enter");
+    await tick();
+
+    keydown(activeEditor(root), "Enter", { altKey: true });
+    await tick();
+
+    expect(doc.byId.c2.raw).toBe("Nested grid");
+    expect(doc.byId.c2.children).toHaveLength(2);
+    const [host, bullet] = doc.byId.c2.children;
+    expect(doc.byId[host].raw).toBe("tine.view:: grid");
+    expect(doc.byId[host].children).toEqual(["nr1"]);
+    expect(doc.byId[bullet].raw).toBe("");
+    expect(editingId()).toBe(bullet);
+
+    dispose();
+  });
+
+  it("the sheet-cell context menu can add and enter a child bullet", async () => {
+    loadSheetDoc();
+    disposeKeys = installKeybindings();
+    const { root, dispose } = mount(() => (
+      <>
+        <Block id="grid" />
+        <ContextMenu />
+      </>
+    ));
+
+    cell(root, 0, 0).dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 15, clientY: 20 }));
+    await tick();
+    clickMenuItem("Add child bullet");
+    await tick();
+
+    const child = doc.byId.c1.children[0];
+    expect(doc.byId[child].raw).toBe("");
+    expect(editingId()).toBe(child);
+    expect(activeEditor(root).value).toBe("");
 
     dispose();
   });

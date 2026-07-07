@@ -41,7 +41,10 @@ import {
 } from "../store";
 import { canFlatten, flatten, hierarchify } from "../sheet/restructure";
 import { canConvertPipeTableToGrid, convertGridToPipeTable, convertPipeTableToGrid } from "../sheet/conversions";
+import { appendSheetCellChild } from "../sheet/mutations";
+import { cellForBlockId, cellOwner, setCellSel } from "../sheet/selection";
 import { fieldIdsForBlocks, fieldLabel, isFieldId, type FieldId } from "../sheet/fields";
+import { startEditing } from "../editorController";
 import { copyStripCollapsed } from "../copySettings";
 import { copyOutline } from "../clipboard";
 import type { PageKind } from "../types";
@@ -240,6 +243,19 @@ function SheetCellMenu(props: { id: string; close: () => void }): JSX.Element {
     setBlockProperty(props.id, "tine.view", next === "outline" ? null : next);
     props.close();
   };
+  const addChild = () => {
+    const sel = cellForBlockId(props.id);
+    const child = appendSheetCellChild(props.id);
+    if (child) {
+      if (sel) {
+        setCellSel(sel);
+        startEditing(child, 0, cellOwner(sel));
+      } else {
+        startEditing(child, 0);
+      }
+    }
+    props.close();
+  };
   const label = (name: string, active: boolean) => `${active ? "✓ " : ""}${name}`;
 
   return (
@@ -259,6 +275,12 @@ function SheetCellMenu(props: { id: string; close: () => void }): JSX.Element {
             {label("Table", view() === "table")}
           </div>
         </div>
+      </div>
+      <div
+        class="ctx-item"
+        onClick={addChild}
+      >
+        Add child bullet
       </div>
       <div
         class="ctx-item"

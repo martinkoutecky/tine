@@ -108,7 +108,8 @@ import { registerFocusedEditorCommandBridge, type MobileEditorCommandId } from "
 import { isRecordingAudio, setRecordingAudio, base64ToBytes } from "../mediaCapture";
 import { sheetConfig } from "../sheet/config";
 import { SheetCellContext } from "../sheet/context";
-import { selectCellAfterEdit, moveCellAfterEdit, selectTopRowSeamAfterEdit } from "../sheet/selection";
+import { appendSheetCellChild } from "../sheet/mutations";
+import { cellBlockId, cellOwner, selectCellAfterEdit, moveCellAfterEdit, selectTopRowSeamAfterEdit } from "../sheet/selection";
 import { forbidsEditEntry } from "../editor/editTargets";
 import { SheetGrid } from "./SheetGrid";
 import { SheetTable } from "./SheetTable";
@@ -1630,6 +1631,47 @@ export function Editor(props: { id: string }): JSX.Element {
   onCleanup(unregisterFocusedEditor);
   let sheetCanceling = false;
 
+  const sheetFaceGridId = (id: string): string | null => {
+    if (blockIsGridView(id)) return id;
+    return (doc.byId[id]?.children ?? []).find((child) => blockIsGridView(child)) ?? null;
+  };
+  const sheetVisibleLength = (id: string): number =>
+    splitProps(doc.byId[id]?.raw ?? "", isSheetCellHidden).visible.length;
+  const deepestLastSheetOutline = (id: string): string => {
+    let cur = id;
+    for (;;) {
+      if (sheetFaceGridId(cur)) return cur;
+      const children = doc.byId[cur]?.children ?? [];
+      if (!children.length) return cur;
+      cur = children[children.length - 1];
+    }
+  };
+  const nextSheetOutline = (id: string, hostId: string): string | null => {
+    if (!sheetFaceGridId(id)) {
+      const firstChild = doc.byId[id]?.children[0];
+      if (firstChild) return firstChild;
+    }
+    let cur = id;
+    while (cur !== hostId) {
+      const parent = doc.byId[cur]?.parent ?? null;
+      if (!parent) return null;
+      const siblings = doc.byId[parent]?.children ?? [];
+      const idx = siblings.indexOf(cur);
+      if (idx >= 0 && idx + 1 < siblings.length) return siblings[idx + 1];
+      cur = parent;
+    }
+    return null;
+  };
+  const prevSheetOutline = (id: string, hostId: string): string | "host" | null => {
+    const parent = doc.byId[id]?.parent ?? null;
+    if (!parent) return null;
+    const siblings = doc.byId[parent]?.children ?? [];
+    const idx = siblings.indexOf(id);
+    if (idx > 0) return deepestLastSheetOutline(siblings[idx - 1]);
+    if (parent === hostId) return "host";
+    return parent;
+  };
+
   const handleSheetCellKey = (e: KeyboardEvent, start: number, end: number, raw: string): boolean => {
     if (!sheetCell) return false;
     const plain = !e.ctrlKey && !e.metaKey && !e.altKey;
@@ -1641,15 +1683,48 @@ export function Editor(props: { id: string }): JSX.Element {
       commit(raw);
       moveCellAfterEdit(sheetCell, dir);
     };
-    const commitAndDescendIntoSubgrid = () => {
-      const nestedGridId = blockIsGridView(props.id)
-        ? props.id
-        : (doc.byId[props.id]?.children ?? []).find((id) => blockIsGridView(id)) ?? null;
+    const commitAndStartSheetEdit = (id: string, offset: number) => {
+      startEditing(id, offset, cellOwner(sheetCell));
+    };
+    const commitAndAscend = () => {
+      commit(raw);
+      const hostId = cellBlockId(sheetCell);
+      if (hostId && props.id !== hostId) {
+        const prev = prevSheetOutline(props.id, hostId);
+        if (prev === "host") commitAndStartSheetEdit(hostId, sheetVisibleLength(hostId));
+        else if (prev) commitAndStartSheetEdit(prev, sheetVisibleLength(prev));
+        else moveCellAfterEdit(sheetCell, "up");
+        return;
+      }
+      moveCellAfterEdit(sheetCell, "up");
+    };
+    const commitAndDescend = () => {
+      const nestedGridId = sheetFaceGridId(props.id);
       commit(raw);
       if (nestedGridId) selectTopRowSeamAfterEdit(nestedGridId);
-      else moveCellAfterEdit(sheetCell, "down");
+      else {
+        const hostId = cellBlockId(sheetCell);
+        const next = hostId
+          ? props.id === hostId
+            ? doc.byId[hostId]?.children[0] ?? null
+            : nextSheetOutline(props.id, hostId)
+          : null;
+        if (next) commitAndStartSheetEdit(next, 0);
+        else moveCellAfterEdit(sheetCell, "down");
+      }
+    };
+    const commitAndAppendChild = () => {
+      commit(raw);
+      const hostId = cellBlockId(sheetCell) ?? props.id;
+      const childId = appendSheetCellChild(hostId);
+      if (childId) commitAndStartSheetEdit(childId, 0);
     };
 
+    if (!e.ctrlKey && !e.metaKey && e.altKey && e.key === "Enter") {
+      e.preventDefault();
+      commitAndAppendChild();
+      return true;
+    }
     if (plain && e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       commitAndSelect();
@@ -1687,7 +1762,7 @@ export function Editor(props: { id: string }): JSX.Element {
       const before = raw.slice(0, start);
       if (!before.includes("\n") && caretAtFirstRow(ref, start)) {
         e.preventDefault();
-        commitAndMove("up");
+        commitAndAscend();
         return true;
       }
     }
@@ -1695,7 +1770,7 @@ export function Editor(props: { id: string }): JSX.Element {
       const after = raw.slice(start);
       if (!after.includes("\n") && caretAtLastRow(ref, start)) {
         e.preventDefault();
-        commitAndDescendIntoSubgrid();
+        commitAndDescend();
         return true;
       }
     }
@@ -2007,7 +2082,7 @@ export function Editor(props: { id: string }): JSX.Element {
       e.preventDefault();
       const start = ref.selectionStart;
       const end = ref.selectionEnd;
-      if (isCalc() || caretInFence(ref.value, start)) {
+      if (sheetCell || isCalc() || caretInFence(ref.value, start)) {
         const newRaw = ref.value.slice(0, start) + text + ref.value.slice(end);
         commit(newRaw);
         const pos = start + text.length;
