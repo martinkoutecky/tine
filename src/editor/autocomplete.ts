@@ -109,6 +109,24 @@ export function pageInsert(name: string): string {
   return `[[${name}]]`;
 }
 
+/** After accepting a page/block-ref completion, optionally insert a single space
+ *  after the closing `]]`/`))` so typing continues cleanly (GH #35, Tine default).
+ *  Applies only when `insertedText` ends in a ref pair and `caret` sits right after
+ *  it; a no-op when disabled, when the completion isn't a ref, or when a space (or
+ *  end-of-buffer immediately followed by a space) already sits there — never doubles
+ *  a space. Pure: returns the adjusted `raw`+`caret`. */
+export function withRefCompletionSpace(
+  raw: string,
+  caret: number,
+  insertedText: string,
+  enabled: boolean
+): { raw: string; caret: number } {
+  if (!enabled) return { raw, caret };
+  if (!/(\]\]|\)\))$/.test(insertedText)) return { raw, caret };
+  if (raw[caret] === " ") return { raw, caret };
+  return { raw: raw.slice(0, caret) + " " + raw.slice(caret), caret: caret + 1 };
+}
+
 /** Build the inserted text for a tag (`#name` or `#[[multi word]]`). */
 export function tagInsert(name: string): string {
   return /\s/.test(name) ? `#[[${name}]]` : `#${name}`;

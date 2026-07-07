@@ -63,6 +63,7 @@ import {
   setRefClickZoom,
 } from "../copySettings";
 import { navReuseTabs, setNavReuseTabs } from "../navSettings";
+import { spaceAfterRefCompletion, setSpaceAfterRefCompletion } from "../refCompletionSettings";
 import { allowLocalFileImages, setAllowLocalFileImages } from "../localFileSettings";
 import { linkFirstMatch, setLinkFirstMatch } from "../editor/linkDefault";
 import {
@@ -475,6 +476,15 @@ function AppearanceTab(): JSX.Element {
       >
         <Toggle on={autoPairing()} onClick={() => setAutoPairing(!autoPairing())} />
       </Field>
+
+      <OgField
+        label="Space after inserting a reference"
+        hint="After you pick a page from [[…]] or a block from ((…)) autocomplete, the caret lands past the closing brackets. ON (Tine default) also drops a space there so the next word flows on without stepping over the brackets; a block-final space is trimmed on save, so it never persists."
+        ogNote="no space — the caret sits right after the closing brackets."
+        ogValue={false}
+        on={spaceAfterRefCompletion()}
+        onToggle={() => setSpaceAfterRefCompletion(!spaceAfterRefCompletion())}
+      />
 
       <Field
         label="Dim in focus mode"

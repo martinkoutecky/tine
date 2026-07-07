@@ -69,6 +69,7 @@ import { parserFailed } from "./render/parse";
 import { warnIfSoftwareRendering } from "./gpu";
 import { initSmoothScroll } from "./smoothScroll";
 import { initCopySettings } from "./copySettings";
+import { initRefCompletionSettings } from "./refCompletionSettings";
 import { initNavSettings } from "./navSettings";
 import { initLocalFileSettings } from "./localFileSettings";
 import { initAssetSettings } from "./assetSettings";
@@ -116,6 +117,7 @@ export function App(): JSX.Element {
   // (`.main-content`) is mounted by now (onMount runs after first render).
   onMount(() => void initSmoothScroll());
   onMount(() => void initCopySettings());
+  onMount(() => void initRefCompletionSettings());
   onMount(() => void initNavSettings());
   // Load the local-file images opt-in (Settings → Editing). Default off.
   onMount(() => void initLocalFileSettings());

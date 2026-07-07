@@ -4,6 +4,7 @@ import { backend } from "../backend";
 import {
   detectTrigger,
   applyCompletion,
+  withRefCompletionSpace,
   autoPairEdit,
   pageInsert,
   tagInsert,
@@ -17,6 +18,7 @@ import { autoPairInsertOnInput, wrapSelectionEdit, doubleRefKind, backspacePairE
 import { typoTypeReplace } from "../render/typography";
 import { linkFirstMatch } from "../editor/linkDefault";
 import { spellcheckEnabled } from "../spellcheckSettings";
+import { spaceAfterRefCompletion } from "../refCompletionSettings";
 import {
   doc,
   pageByName,
@@ -1082,11 +1084,20 @@ export function Editor(props: { id: string }): JSX.Element {
       }
     }
     const r = applyCompletion(ref.value, t.start, end, text, caret);
-    commit(r.raw);
+    // GH #35: after a page/block-ref completion whose caret lands at the natural end
+    // (right after the closing `]]`/`))`), optionally insert a trailing space so the
+    // next word flows on without reaching past the brackets. Tine default ON; toggle
+    // off in Settings → Editor to match Logseq. Skipped when an explicit caret was
+    // requested. commit() trims a block-final trailing space, so it never persists.
+    const spaced =
+      caret === undefined
+        ? withRefCompletionSpace(r.raw, r.caret, text, spaceAfterRefCompletion())
+        : r;
+    commit(spaced.raw);
     closeAc();
     queueMicrotask(() => {
-      ref.value = r.raw;
-      ref.setSelectionRange(r.caret, r.caret);
+      ref.value = spaced.raw;
+      ref.setSelectionRange(spaced.caret, spaced.caret);
       ref.focus();
       autosize();
     });

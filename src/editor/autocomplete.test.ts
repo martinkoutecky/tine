@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   detectTrigger,
   applyCompletion,
+  withRefCompletionSpace,
   autoPairEdit,
   pageInsert,
   tagInsert,
@@ -215,5 +216,52 @@ describe("fuzzyScore", () => {
   });
   it("non-subsequence scores 0", () => {
     expect(fuzzyScore("xyz", "Priority A")).toBe(0);
+  });
+});
+
+describe("withRefCompletionSpace (GH #35)", () => {
+  // Simulate a page-ref completion: `foo [[Page]]` with caret right after `]]` (11).
+  const rawPage = "foo [[Page]]";
+  const caretPage = rawPage.length; // 12, right after ]]
+
+  it("inserts a space after ]] when enabled", () => {
+    const r = withRefCompletionSpace(rawPage, caretPage, "[[Page]]", true);
+    expect(r.raw).toBe("foo [[Page]] ");
+    expect(r.caret).toBe(caretPage + 1);
+  });
+
+  it("inserts a space after )) for block refs", () => {
+    const raw = "see ((abc-123))";
+    const r = withRefCompletionSpace(raw, raw.length, "((abc-123))", true);
+    expect(r.raw).toBe("see ((abc-123)) ");
+    expect(r.caret).toBe(raw.length + 1);
+  });
+
+  it("is a no-op when disabled (OG behavior — caret stays after ]])", () => {
+    const r = withRefCompletionSpace(rawPage, caretPage, "[[Page]]", false);
+    expect(r.raw).toBe(rawPage);
+    expect(r.caret).toBe(caretPage);
+  });
+
+  it("never doubles an existing space", () => {
+    const raw = "foo [[Page]] bar";
+    const r = withRefCompletionSpace(raw, 12, "[[Page]]", true);
+    expect(r.raw).toBe(raw);
+    expect(r.caret).toBe(12);
+  });
+
+  it("does nothing for non-ref completions (e.g. a timestamp or query)", () => {
+    const raw = "at 09:30";
+    const r = withRefCompletionSpace(raw, raw.length, "09:30", true);
+    expect(r.raw).toBe(raw);
+    expect(r.caret).toBe(raw.length);
+  });
+
+  it("mid-text insertion keeps following content after the new space", () => {
+    // `[[Page]]` accepted with text after it already present.
+    const raw = "a [[Page]]tail";
+    const r = withRefCompletionSpace(raw, 10, "[[Page]]", true);
+    expect(r.raw).toBe("a [[Page]] tail");
+    expect(r.caret).toBe(11);
   });
 });
