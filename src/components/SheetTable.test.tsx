@@ -62,12 +62,6 @@ function keydown(target: EventTarget, key: string): KeyboardEvent {
   return event;
 }
 
-function change(target: EventTarget): Event {
-  const event = new Event("change", { bubbles: true, cancelable: true });
-  target.dispatchEvent(event);
-  return event;
-}
-
 function pointerEnter(target: EventTarget): Event {
   const event = new Event("pointerenter", { bubbles: false, cancelable: true });
   target.dispatchEvent(event);
@@ -970,7 +964,12 @@ describe("SheetTable", () => {
 
   it("pins, unpins, and writes field aggregates from the corner toggle", () => {
     loadTableDoc();
-    const { root, dispose } = mount(() => <Block id="table" />);
+    const { root, dispose } = mount(() => (
+      <>
+        <Block id="table" />
+        <ContextMenu />
+      </>
+    ));
     const table = root.querySelector(".sheet-table") as HTMLElement | null;
     const container = root.querySelector(".block-sheet-container") as HTMLElement | null;
     expect(root.querySelector(".sheet-footer-cell")).toBeNull();
@@ -1000,13 +999,14 @@ describe("SheetTable", () => {
     const estimateAdd = adds[adds.length - 1];
     expect(estimateAdd).not.toBeUndefined();
     estimateAdd.click();
-    const estimateSelect = root.querySelector(".sheet-aggregate-select") as HTMLSelectElement | null;
-    expect(estimateSelect).not.toBeNull();
+    // In-DOM action menu, not a native <select> (whose WebKitGTK popup blurs
+    // and collapses it — N27).
+    const items = [...document.querySelectorAll(".ctx-item")];
+    const sum = items.find((el) => el.textContent?.trim() === "Sum") as HTMLElement | undefined;
+    expect(sum).toBeTruthy();
 
-    pointerLeave(table!);
-    estimateSelect!.dispatchEvent(new FocusEvent("blur"));
-    estimateSelect!.value = "sum";
-    change(estimateSelect!);
+    pointerLeave(table!); // hover loss must not kill the menu or the pick
+    sum!.click();
 
     expect(blockProperty("table", "tine.col-aggregates")).toBe("prop:estimate=sum");
     dispose();

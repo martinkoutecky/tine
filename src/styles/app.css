@@ -4134,19 +4134,6 @@ body.file-drop-active::after {
 .sheet-footer-title {
   min-width: 180px;
 }
-.sheet-aggregate-select {
-  max-width: 92px;
-  min-width: 70px;
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
-  padding: 1px 4px;
-  background: var(--bg-primary);
-  color: var(--text-secondary);
-  font: inherit;
-}
-.sheet-aggregate-select:focus {
-  outline: 1px solid var(--accent, #4c8bf5);
-}
 .sheet-aggregate-value {
   border: 0;
   padding: 0;

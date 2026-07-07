@@ -197,6 +197,11 @@ describe("filterCommands", () => {
     ]);
   });
 
+  it("/kanban surfaces Board via its key alias", () => {
+    expect(filterCommands("kanban")[0]?.label).toBe("Board");
+    expect(filterCommands("kan")[0]?.label).toBe("Board");
+  });
+
   it("a bare slash (empty query) lists every command in defined order", () => {
     const all = filterCommands("");
     expect(all.length).toBeGreaterThan(20);

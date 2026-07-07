@@ -124,7 +124,6 @@ export function SheetTable(props: {
   const [addingColumn, setAddingColumn] = createSignal(false);
   const [editingProp, setEditingProp] = createSignal<{ rowId: string; field: FieldId; initial: string } | null>(null);
   const [hovering, setHovering] = createSignal(false);
-  const [footerEditingCount, setFooterEditingCount] = createSignal(0);
   const [stableColumns, setStableColumns] = createSignal<string | null>(null);
   const sheetOverlay = useContext(SheetContainerOverlayContext);
   const sheetHovering = () => sheetOverlay?.hovering() ?? hovering();
@@ -267,13 +266,8 @@ export function SheetTable(props: {
   const gridColumns = createMemo(() => stableColumns() ?? baseGridColumns());
   const hasAggregates = createMemo(() => config().colAggregates.size > 0);
   const footerPinned = createMemo(() => aggregateFooterPinned(props.ownerId));
-  const footerEditing = createMemo(() => footerEditingCount() > 0);
-  const showFooter = createMemo(() => hasAggregates() || footerPinned() || footerEditing());
-  const showFooterToggle = createMemo(() => !hasAggregates() && (sheetHovering() || footerPinned() || footerEditing()));
-
-  const noteFooterEditing = (editing: boolean) => {
-    setFooterEditingCount((count) => Math.max(0, count + (editing ? 1 : -1)));
-  };
+  const showFooter = createMemo(() => hasAggregates() || footerPinned());
+  const showFooterToggle = createMemo(() => !hasAggregates() && (sheetHovering() || footerPinned()));
 
   const toggleFooter = (e: MouseEvent) => {
     e.preventDefault();
@@ -710,7 +704,6 @@ export function SheetTable(props: {
                 fn={config().colAggregates.get(field) ?? null}
                 values={sortedRows().map((row) => rowFieldValue(row, field))}
                 showEmpty={footerPinned()}
-                onEditingChange={noteFooterEditing}
               />
             )}
           </For>

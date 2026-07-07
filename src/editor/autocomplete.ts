@@ -178,7 +178,9 @@ export const COMMANDS: Command[] = [
   { label: "Deadline", action: "deadline" },
   { label: "Grid", action: "sheet-grid" },
   { label: "Table", action: "sheet-table" },
-  { label: "Board", action: "sheet-board" },
+  // "Kanban" alias: the fuzzy matcher scores label + key, so /kanban (and /kan)
+  // surfaces the Board command even though its display name stays "Board".
+  { label: "Board", action: "sheet-board", key: "Kanban" },
   { label: "Heading 1", insert: "# " },
   { label: "Heading 2", insert: "## " },
   { label: "Heading 3", insert: "### " },

@@ -1,7 +1,8 @@
-import { For, Show, createSignal, onCleanup, type JSX } from "solid-js";
+import { Show, type JSX } from "solid-js";
 import { aggregate, AGGREGATE_FNS, AGGREGATE_LABELS, type AggregateFn } from "../sheet/aggregate";
 import type { FieldValue } from "../sheet/fields";
 import { setColumnAggregate } from "../sheet/mutations";
+import { openActionContextMenu, type ContextMenuAction } from "../ui";
 
 export function SheetAggregateCornerToggle(props: {
   active: boolean;
@@ -30,36 +31,23 @@ export function SheetAggregateFooterCell(props: {
   values: readonly (FieldValue | string | null | undefined)[];
   showEmpty?: boolean;
   stickyLeft?: boolean;
-  onEditingChange?: (editing: boolean) => void;
 }): JSX.Element {
-  const [editing, setEditing] = createSignal(false);
-  let blurTimer = 0;
   const stop = (e: Event) => e.stopPropagation();
-  const setEditingState = (next: boolean) => {
-    if (editing() === next) return;
-    setEditing(next);
-    props.onEditingChange?.(next);
+  // The picker is an in-DOM portaled menu, NOT a native <select>: in
+  // WebKitGTK a select's popup is a separate native window that steals
+  // focus, so the select blurs (and any blur-teardown kills the popup)
+  // the instant it opens.
+  const openMenu = (e: MouseEvent) => {
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const item = (label: string, value: AggregateFn | null): ContextMenuAction => ({
+      label: (props.fn ?? null) === value ? `✓ ${label}` : label,
+      run: () => setColumnAggregate(props.ownerId, props.columnKey, value),
+    });
+    openActionContextMenu(rect.left, rect.bottom + 4, [
+      item("None", null),
+      ...AGGREGATE_FNS.map((fn) => item(AGGREGATE_LABELS[fn], fn)),
+    ]);
   };
-  const commit = (value: string) => {
-    if (blurTimer) {
-      window.clearTimeout(blurTimer);
-      blurTimer = 0;
-    }
-    setColumnAggregate(props.ownerId, props.columnKey, value ? (value as AggregateFn) : null);
-    setEditingState(false);
-  };
-  const closeAfterBlur = () => {
-    if (blurTimer) window.clearTimeout(blurTimer);
-    blurTimer = window.setTimeout(() => {
-      blurTimer = 0;
-      setEditingState(false);
-    }, 0);
-  };
-
-  onCleanup(() => {
-    if (blurTimer) window.clearTimeout(blurTimer);
-    if (editing()) props.onEditingChange?.(false);
-  });
 
   return (
     <div
@@ -70,46 +58,24 @@ export function SheetAggregateFooterCell(props: {
       onClick={stop}
     >
       <Show
-        when={editing()}
+        when={props.fn}
         fallback={
-          <Show
-            when={props.fn}
-            fallback={
-              <Show when={props.showEmpty}>
-                <button
-                  class="sheet-aggregate-add"
-                  title="Add aggregate"
-                  onClick={() => setEditingState(true)}
-                >
-                  Σ
-                </button>
-              </Show>
-            }
-          >
-            {(fn) => (
-              <button
-                class="sheet-aggregate-value"
-                title={`Change aggregate (${AGGREGATE_LABELS[fn()]})`}
-                onClick={() => setEditingState(true)}
-              >
-                {aggregate(fn(), props.values)}
-              </button>
-            )}
+          <Show when={props.showEmpty}>
+            <button class="sheet-aggregate-add" title="Add aggregate" onClick={openMenu}>
+              Σ
+            </button>
           </Show>
         }
       >
-        <select
-          class="sheet-aggregate-select"
-          autofocus
-          value={props.fn ?? ""}
-          onChange={(e) => commit(e.currentTarget.value)}
-          onBlur={closeAfterBlur}
-        >
-          <option value="">None</option>
-          <For each={AGGREGATE_FNS}>
-            {(fn) => <option value={fn}>{AGGREGATE_LABELS[fn]}</option>}
-          </For>
-        </select>
+        {(fn) => (
+          <button
+            class="sheet-aggregate-value"
+            title={`Change aggregate (${AGGREGATE_LABELS[fn()]})`}
+            onClick={openMenu}
+          >
+            {aggregate(fn(), props.values)}
+          </button>
+        )}
       </Show>
     </div>
   );

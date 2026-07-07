@@ -199,7 +199,6 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
   const [resizing, setResizing] = createSignal(false);
   const [hovering, setHovering] = createSignal(false);
   const [stableColumns, setStableColumns] = createSignal<string | null>(null);
-  const [footerEditingCount, setFooterEditingCount] = createSignal(0);
   const containerOverlay = useContext(SheetContainerOverlayContext);
   const sheetOverlay = props.depth === 0 ? containerOverlay : null;
   const sheetHovering = () => sheetOverlay?.hovering() ?? hovering();
@@ -216,13 +215,8 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
   const effectiveColumns = () => stableColumns() ?? columns();
   const hasAggregates = createMemo(() => config().colAggregates.size > 0);
   const footerPinned = createMemo(() => aggregateFooterPinned(props.id));
-  const footerEditing = createMemo(() => footerEditingCount() > 0);
-  const showFooter = createMemo(() => hasAggregates() || footerPinned() || footerEditing());
-  const showFooterToggle = createMemo(() => !hasAggregates() && (sheetHovering() || footerPinned() || footerEditing()));
-
-  const noteFooterEditing = (editing: boolean) => {
-    setFooterEditingCount((count) => Math.max(0, count + (editing ? 1 : -1)));
-  };
+  const showFooter = createMemo(() => hasAggregates() || footerPinned());
+  const showFooterToggle = createMemo(() => !hasAggregates() && (sheetHovering() || footerPinned()));
 
   const toggleFooter = (e: MouseEvent) => {
     e.preventDefault();
@@ -422,7 +416,6 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
                   values={columnValues(col)}
                   stickyLeft={col === 0}
                   showEmpty={footerPinned()}
-                  onEditingChange={noteFooterEditing}
                 />
               )}
             </For>

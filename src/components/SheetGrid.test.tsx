@@ -48,12 +48,6 @@ function node(
   return { id, raw, collapsed: false, parent, page: pageName, children };
 }
 
-function change(target: EventTarget): Event {
-  const event = new Event("change", { bubbles: true, cancelable: true });
-  target.dispatchEvent(event);
-  return event;
-}
-
 function contextMenu(target: EventTarget): MouseEvent {
   const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 20, clientY: 30 });
   target.dispatchEvent(event);
@@ -390,6 +384,7 @@ describe("SheetGrid", () => {
     const { root, dispose } = mount(() => (
       <div class="main-content">
         <Block id="grid" />
+        <ContextMenu />
       </div>
     ));
     try {
@@ -431,13 +426,15 @@ describe("SheetGrid", () => {
       const add = root.querySelector(".sheet-grid > .sheet-footer-cell .sheet-aggregate-add") as HTMLButtonElement | null;
       expect(add).not.toBeNull();
       add!.click();
-      const select = root.querySelector(".sheet-aggregate-select") as HTMLSelectElement | null;
-      expect(select).not.toBeNull();
+      // The picker is an in-DOM action menu (a native <select>'s popup is a
+      // separate GTK window in WebKitGTK — it blurs the select and collapses).
+      const items = [...document.querySelectorAll(".ctx-item")];
+      expect(items.length).toBeGreaterThan(0);
+      const sum = items.find((el) => el.textContent?.trim() === "Sum") as HTMLElement | undefined;
+      expect(sum).toBeTruthy();
 
-      pointerLeave(grid!);
-      select!.dispatchEvent(new FocusEvent("blur"));
-      select!.value = "sum";
-      change(select!);
+      pointerLeave(grid!); // hover loss must not kill the menu or the pick
+      sum!.click();
 
       expect(blockProperty("grid", "tine.col-aggregates")).toBe("0=sum");
     } finally {
