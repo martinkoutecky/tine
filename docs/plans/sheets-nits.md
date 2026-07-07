@@ -138,16 +138,16 @@ it — ask Martin before building that.)
 Single click currently enters edit mode. TreeSheets-style ruling: click →
 select mode (edit is one Enter away); double-click → edit directly.
 
-## N13 — multi-cell selection via mouse + full edit suite  [batch 4 — partly exists, VERIFY]
+## N13 — multi-cell selection via mouse  [batch 4 — SCOPED DOWN by Martin]
 Martin: "currently no multi-cell selection via either mouse or keyboard".
 Code says keyboard ranges EXIST (Shift+Arrows extend, Shift+Space rows,
 Ctrl+Space cols, Ctrl+A all, Ctrl+C/X copy/cut, Ctrl+D/R fill, a paste
-path) — so either they're broken in the real app or undiscoverable (or
-N12's click-to-edit hides them). Batch 4: (a) verify each in the real
-app and fix what's broken; (b) ADD mouse drag range selection (pointer
-down on a cell + drag = range, consistent with the keyboard anchor
-model); (c) ensure paste works into cells/ranges; (d) surface the
-bindings in the help/shortcuts panel + FEATURES.md.
+path) — likely hidden behind N12's click-to-edit. Martin's ruling: "don't
+waste too much time here — add mouse drag and fix click→select, and I'll
+review it again." So batch 4 = mouse drag range selection (pointer down
+on a cell + drag = range, keyboard anchor model) + N12 + surfacing the
+existing bindings in the shortcuts help; deep verification of the
+keyboard suite waits for his re-review.
 
 ## N14 — board card drag fights outline multi-block selection  [batch 4]
 Dragging a kanban card also drives the outline's multi-block (blue)
