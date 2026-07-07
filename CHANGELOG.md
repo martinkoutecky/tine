@@ -8,8 +8,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-07-07
+
 ### Changed
 
+- **Reproducible Android builds.** The APK is now byte-for-byte reproducible from
+  source (deterministic build timestamp, single codegen unit, canonicalized build
+  paths), so F-Droid can verify its rebuild matches the signed release and ship the
+  developer's own APK.
 - **Developer tools now open as their own window** instead of docked into the app
   ([#31](https://github.com/martinkoutecky/tine/issues/31)). Docked, WebKitGTK put
   the window's resize grip at the top of the inspector pane and rendered the
@@ -909,7 +915,8 @@ takes over your graph.
 - macOS and Windows installers are currently **unsigned** — on macOS right-click →
   Open; on Windows choose *More info → Run anyway*.
 
-[Unreleased]: https://github.com/martinkoutecky/tine/compare/v0.4.4...HEAD
+[Unreleased]: https://github.com/martinkoutecky/tine/compare/v0.4.5...HEAD
+[0.4.5]: https://github.com/martinkoutecky/tine/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/martinkoutecky/tine/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/martinkoutecky/tine/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/martinkoutecky/tine/compare/v0.4.1...v0.4.2

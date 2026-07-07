@@ -304,7 +304,14 @@ jobs:
 
       - name: Build signed Android APK
         if: steps.sign.outputs.enabled == 'true'
-        run: npx tauri android build --target aarch64 --apk
+        # Reproducible build (F-Droid #reproducible): canonicalize build-location paths
+        # so the native lib's module-id hash matches F-Droid's rebuild regardless of
+        # where each ran. Must stay identical to the RUSTFLAGS in the F-Droid recipe
+        # (metadata/dev.tine.app.yml). Paired with codegen-units=1 (Cargo.toml) and the
+        # commit-time __BUILD_TIME__ (vite.config.ts).
+        run: |
+          export RUSTFLAGS="--remap-path-prefix=$GITHUB_WORKSPACE=/build --remap-path-prefix=$HOME/.cargo=/cargo"
+          npx tauri android build --target aarch64 --apk
 
       - name: Upload Android APK to the release
         if: steps.sign.outputs.enabled == 'true' && startsWith(github.ref, 'refs/tags/')

@@ -1,0 +1,4 @@
+Fixed: opening a page whose name contains a color emoji no longer crashes the app
+on some Linux setups (#29). Changed: the developer-tools inspector now opens in its
+own window (#31). Under the hood, Android builds are now byte-for-byte reproducible
+from source.

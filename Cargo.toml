@@ -7,7 +7,7 @@ exclude = ["crates/lsdoc-wasm"]
 resolver = "2"
 
 [workspace.package]
-version = "0.4.4"
+version = "0.4.5"
 edition = "2021"
 license = "AGPL-3.0-only"
 authors = ["Martin Koutecký"]
