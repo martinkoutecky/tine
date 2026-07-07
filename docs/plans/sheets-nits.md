@@ -349,7 +349,7 @@ edits membership, sheet edits content, side by side. (3) /Query (visual
 builder) then flows naturally into "make it a board" without leaving the
 block. Record as ADR (query-view unification).
 
-## N31 — copy/paste of grids is destructive: no structural clipboard  [ROOT-CAUSED — batch 8]
+## N31 — copy/paste of grids is destructive: no structural clipboard  [FIXED — batch 8, 49aee94; real-app scenario probe: copy grid -> paste on subgrid cell -> TWO subgrids, one undo restores byte-exactly]
 Martin: selected a whole grid (Ctrl+A), pasted into a cell that already
 had a subgrid, expected TWO subgrids; got garbage. Then pasted between
 two lines inside a cell — more garbage (phantom subgrid columns, a stray
@@ -374,7 +374,7 @@ under it) — so a cell can host several grids side by side; paste in
 EDIT mode stays plain-TEXT-only (never the outline splitter inside a
 cell — that path must be gated off for cell editors).
 
-## N32 — outline children in a cell: unreachable + read-only  [ROOT-CAUSED — batch 8]
+## N32 — outline children in a cell: unreachable + read-only  [FIXED — batch 8, 49aee94; descent/mousedown-edit/Esc verified in real app]
 Martin envisioned the recursive form — plain bullets inside a cell,
 controlled by "Show children as". They RENDER (SheetOutline nested
 lines) but: caret-Down after the last line selects the grid's bottom
@@ -390,10 +390,16 @@ edit mode when children exist and aren't a sheet face; nested lines are
 click-to-edit like cells (mousedown entry, OG parity); Esc walks back to
 the host cell.
 
-## N33 — no way to CREATE children in a cell  [ROOT-CAUSED — batch 8, needs ruling]
+## N33 — no way to CREATE children in a cell  [FIXED — batch 8, 49aee94; Alt+Enter + context menu; ruling open for Martin's veto]
 In cell edit, Enter commits (spec) — there is no affordance to create a
 child bullet. Proposed ruling (mine, Martin to veto): Alt+Enter in cell
 edit creates a child bullet under the cell and enters it (mirrors the
 descent ladder); right-click cell menu gains "Add child bullet". With
 N31's paste-as-child-host and N28's /Grid-in-a-cell, this completes the
 recursive form: type, Alt+Enter for sub-bullets, /grid for sub-grids.
+
+Round-4 note: the WebDriver screenshot endpoint hangs after the
+descend/Esc editing sequences while the app itself stays fully alive
+(rAF 62 ticks/s, layout fine, selection correct) — WebKitWebDriver
+snapshot quirk under Xvfb, not user-visible; don't chase it as an app
+bug next time a probe's screenshot times out.
