@@ -17,7 +17,7 @@ import {
 } from "../store";
 import { editingId } from "../editorController";
 import { installKeybindings } from "../keybindings";
-import { cellSel, resetCellSelectionForTests, setCellSel } from "../sheet/selection";
+import { cellSel, colSeamSel, resetCellSelectionForTests, rowSeamSel, setCellSel } from "../sheet/selection";
 
 beforeAll(async () => {
   await initParser();
@@ -80,6 +80,21 @@ function loadSheetDoc() {
   });
 }
 
+function loadSheetDocWithSubgrid() {
+  loadSheetDoc();
+  setDoc({
+    byId: {
+      ...doc.byId,
+      c2: node("c2", "Nested grid\ntine.view:: grid", "r1", ["nr1"]),
+      nr1: node("nr1", "", "c2", ["n11"]),
+      n11: node("n11", "Inner", "nr1"),
+    },
+    pages: [page(["before", "grid", "after"])],
+    feed: ["Sheet"],
+    loaded: true,
+  });
+}
+
 function setup(): { root: HTMLDivElement; dispose: () => void } {
   loadSheetDoc();
   disposeKeys = installKeybindings();
@@ -113,10 +128,20 @@ function keydown(target: EventTarget, key: string, init: Partial<KeyboardEvent> 
   return event;
 }
 
-function mouseDown(target: EventTarget): MouseEvent {
-  const event = new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 });
+function mouseDown(target: EventTarget, init: Partial<MouseEventInit> = {}): MouseEvent {
+  const event = new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0, ...init });
   target.dispatchEvent(event);
   return event;
+}
+
+function doubleClick(target: EventTarget, init: Partial<MouseEventInit> = {}): MouseEvent {
+  const event = new MouseEvent("dblclick", { bubbles: true, cancelable: true, button: 0, ...init });
+  target.dispatchEvent(event);
+  return event;
+}
+
+function pointer(type: string, x: number, y: number): Event {
+  return new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y });
 }
 
 function textRange(root: globalThis.Node, needle: string, offset: number): Range {
@@ -196,7 +221,7 @@ function pasteText(text: string): ClipboardEvent {
 }
 
 describe("SheetGrid interaction", () => {
-  it("selects whitespace and enters edit from text with click-point caret", async () => {
+  it("single-click selects and double-click enters edit with click-point caret", async () => {
     const { root, dispose } = setup();
 
     stubCaretRange(null);
@@ -209,6 +234,13 @@ describe("SheetGrid interaction", () => {
     mouseDown(cell(root, 0, 0));
     await tick();
 
+    expect(calls()).toBe(0);
+    expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 0, col: 0 });
+    expect(editingId()).toBeNull();
+
+    doubleClick(cell(root, 0, 0));
+    await tick();
+
     expect(calls()).toBe(1);
     expect(editingId()).toBe("c1");
     expect(activeEditor(root).selectionStart).toBe(2);
@@ -219,7 +251,7 @@ describe("SheetGrid interaction", () => {
   it("uses the Esc ladder from cell edit to cell selection to outline selection", async () => {
     const { root, dispose } = setup();
     stubCaretRange(textRange(cell(root, 0, 0), "Alpha", 1));
-    mouseDown(cell(root, 0, 0));
+    doubleClick(cell(root, 0, 0));
     await tick();
 
     keydown(activeEditor(root), "Escape");
@@ -243,7 +275,7 @@ describe("SheetGrid interaction", () => {
 
     setCellSel({ gridId: "grid", row: 0, col: 0 });
     keydown(window, "ArrowRight");
-    expect(cellSel()).toEqual({ kind: "col-seam", gridId: "grid", at: 1, row: 0 });
+    expect(cellSel()).toEqual(colSeamSel("grid", 1, 0));
     await tick();
     expect(root.querySelector(".sheet-seam-selected")).not.toBeNull();
 
@@ -251,7 +283,7 @@ describe("SheetGrid interaction", () => {
     expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 0, col: 1 });
 
     keydown(window, "ArrowDown");
-    expect(cellSel()).toEqual({ kind: "row-seam", gridId: "grid", at: 1, col: 1 });
+    expect(cellSel()).toEqual(rowSeamSel("grid", 1, 1));
 
     keydown(window, "ArrowDown");
     expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 1, col: 1 });
@@ -260,7 +292,7 @@ describe("SheetGrid interaction", () => {
 
     setCellSel({ gridId: "grid", row: 0, col: 0 });
     keydown(window, "ArrowUp");
-    expect(cellSel()).toEqual({ kind: "row-seam", gridId: "grid", at: 0, col: 0 });
+    expect(cellSel()).toEqual(rowSeamSel("grid", 0, 0));
 
     keydown(window, "ArrowUp");
     expect(cellSel()).toBeNull();
@@ -268,7 +300,7 @@ describe("SheetGrid interaction", () => {
 
     setCellSel({ gridId: "grid", row: 1, col: 0 });
     keydown(window, "ArrowDown");
-    expect(cellSel()).toEqual({ kind: "row-seam", gridId: "grid", at: 2, col: 0 });
+    expect(cellSel()).toEqual(rowSeamSel("grid", 2, 0));
 
     keydown(window, "ArrowDown");
     expect(cellSel()).toBeNull();
@@ -359,11 +391,52 @@ describe("SheetGrid interaction", () => {
     dispose();
   });
 
+  it("ArrowDown from the last editor line descends into a hosted sub-grid top seam", async () => {
+    loadSheetDocWithSubgrid();
+    disposeKeys = installKeybindings();
+    const { root, dispose } = mount(() => <Block id="grid" />);
+
+    setCellSel({ gridId: "grid", row: 0, col: 1 });
+    keydown(window, "Enter");
+    await tick();
+
+    const editor = activeEditor(root);
+    editor.setSelectionRange(editor.value.length, editor.value.length);
+    keydown(editor, "ArrowDown");
+    await tick();
+
+    expect(editingId()).toBeNull();
+    expect(cellSel()).toEqual(rowSeamSel("c2", 0, 0));
+
+    dispose();
+  });
+
+  it("ArrowDown mid-text in a sheet-cell editor stays in edit mode", async () => {
+    loadSheetDocWithSubgrid();
+    setDoc("byId", "c2", "raw", "Top\nBottom\ntine.view:: grid");
+    disposeKeys = installKeybindings();
+    const { root, dispose } = mount(() => <Block id="grid" />);
+
+    setCellSel({ gridId: "grid", row: 0, col: 1 });
+    keydown(window, "Enter");
+    await tick();
+
+    const editor = activeEditor(root);
+    editor.setSelectionRange(1, 1);
+    keydown(editor, "ArrowDown");
+    await tick();
+
+    expect(editingId()).toBe("c2");
+    expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 0, col: 1 });
+
+    dispose();
+  });
+
   it("typing on a row seam inserts a row and mounts the editor", async () => {
     const { root, dispose } = setup();
     const before = doc.byId.grid.children.length;
 
-    setCellSel({ kind: "row-seam", gridId: "grid", at: 1, col: 0 });
+    setCellSel(rowSeamSel("grid", 1, 0));
     keydown(window, "N");
     await tick();
     await tick();
@@ -381,7 +454,7 @@ describe("SheetGrid interaction", () => {
   it("Backspace on a row seam deletes the row before it and one undo restores it", () => {
     const { dispose } = setup();
 
-    setCellSel({ kind: "row-seam", gridId: "grid", at: 1, col: 0 });
+    setCellSel(rowSeamSel("grid", 1, 0));
     keydown(window, "Backspace");
 
     expect(doc.byId.grid.children).toEqual(["r2"]);
@@ -414,7 +487,7 @@ describe("SheetGrid interaction", () => {
   it("typing on a column seam inserts a column and shifts col-width keys", async () => {
     const { root, dispose } = setup();
 
-    setCellSel({ kind: "col-seam", gridId: "grid", at: 1, row: 0 });
+    setCellSel(colSeamSel("grid", 1, 0));
     keydown(window, "C");
     await tick();
     await tick();
@@ -461,6 +534,97 @@ describe("SheetGrid interaction", () => {
     expect(cell(root, 0, 1).classList.contains("sheet-cell-selected")).toBe(true);
 
     dispose();
+  });
+
+  it("drag-selects a cell range and shift-click extends from the current anchor", async () => {
+    const { root, dispose } = setup();
+    const prevElementFromPoint = document.elementFromPoint;
+    document.elementFromPoint = () => cell(root, 1, 1);
+
+    cell(root, 0, 0).dispatchEvent(pointer("pointerdown", 10, 10));
+    window.dispatchEvent(pointer("pointermove", 20, 20));
+    window.dispatchEvent(pointer("pointerup", 20, 20));
+
+    expect(cellSel()).toEqual({
+      kind: "range",
+      gridId: "grid",
+      anchor: { row: 0, col: 0 },
+      focus: { row: 1, col: 1 },
+    });
+    expect(cell(root, 1, 1).classList.contains("sheet-cell-selected")).toBe(true);
+
+    document.elementFromPoint = prevElementFromPoint;
+
+    setCellSel({ gridId: "grid", row: 0, col: 1 });
+    mouseDown(cell(root, 1, 0), { shiftKey: true });
+    expect(cellSel()).toEqual({
+      kind: "range",
+      gridId: "grid",
+      anchor: { row: 0, col: 1 },
+      focus: { row: 1, col: 0 },
+    });
+
+    dispose();
+  });
+
+  it("renders selected seams as the anchored cell edge segment", async () => {
+    const originalRect = HTMLElement.prototype.getBoundingClientRect;
+    const originalScrollWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollWidth");
+    const originalScrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+    const rect = (left: number, top: number, width: number, height: number): DOMRect => ({
+      x: left,
+      y: top,
+      left,
+      top,
+      right: left + width,
+      bottom: top + height,
+      width,
+      height,
+      toJSON: () => ({}),
+    } as DOMRect);
+    Object.defineProperty(HTMLElement.prototype, "scrollWidth", {
+      configurable: true,
+      get() {
+        return this.classList.contains("sheet-grid") ? 200 : 0;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+      configurable: true,
+      get() {
+        return this.classList.contains("sheet-grid") ? 60 : 0;
+      },
+    });
+    HTMLElement.prototype.getBoundingClientRect = function () {
+      if (this.classList.contains("sheet-grid")) return rect(0, 0, 200, 60);
+      if (this.classList.contains("sheet-cell")) {
+        const row = Number(this.dataset.row ?? 0);
+        const col = Number(this.dataset.col ?? 0);
+        return rect(col * 100, row * 30, 100, 30);
+      }
+      return originalRect.call(this);
+    };
+
+    const { root, dispose } = setup();
+    try {
+      setCellSel(colSeamSel("grid", 1, 1));
+      await tick();
+      let seam = root.querySelector(".sheet-seam-selected") as HTMLElement | null;
+      expect(seam?.style.height).toBe("30px");
+      expect(seam?.style.top).toBe("30px");
+
+      setCellSel(rowSeamSel("grid", 1, 1));
+      await tick();
+      seam = root.querySelector(".sheet-seam-selected") as HTMLElement | null;
+      expect(seam?.style.width).toBe("100px");
+      expect(seam?.style.left).toBe("100px");
+    } finally {
+      dispose();
+      HTMLElement.prototype.getBoundingClientRect = originalRect;
+      if (originalScrollWidth) Object.defineProperty(HTMLElement.prototype, "scrollWidth", originalScrollWidth);
+      else delete (HTMLElement.prototype as { scrollWidth?: number }).scrollWidth;
+      if (originalScrollHeight) Object.defineProperty(HTMLElement.prototype, "scrollHeight", originalScrollHeight);
+      else delete (HTMLElement.prototype as { scrollHeight?: number }).scrollHeight;
+    }
   });
 
   it("Ctrl+D fills down through the key handler", () => {

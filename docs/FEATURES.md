@@ -171,9 +171,9 @@ coordinates, no lock-in.
   rows and grandchildren as cells (sibling order = column). Ragged rows render
   holes; empty cells are just empty bullets. Optional header row
   (`tine.header:: true`).
-- **Cells are real blocks** — click into a cell to edit it exactly like any
-  block (links, refs, tags all live); nested children render inside the cell,
-  and a cell can itself be a grid (recursion).
+- **Cells are real blocks** — click selects a cell; double-click, `Enter`, or
+  `F2` edits it like any block (links, refs, tags all live). Nested children
+  render inside the cell, and a cell can itself be a grid (recursion).
 - **Full spreadsheet keyboard** — 2-D arrow navigation with a
   selection↔edit ladder (`Enter`/`Esc`), `Tab` cell-walk, type-to-overtype,
   `Shift+arrow` range select (plus row/column/grid selection),

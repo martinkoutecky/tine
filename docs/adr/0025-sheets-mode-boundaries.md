@@ -2,6 +2,7 @@
 
 - **Status:** Accepted (decided autonomously during the Sheets build mandate — Martin should review)
 - **Date:** 2026-07-06
+- **Amended:** 2026-07-07 — batch-4 review overruled click-on-text edit entry.
 
 ## Context
 
@@ -17,13 +18,14 @@ and `FORBID_EDIT_SELECTOR` excludes links/chips/media from edit entry.
 
 ## Decision
 
-- **Click on cell text → text edit**, caret at the click point — the same
-  mousedown+preventDefault gesture and span→caret mapping as outline blocks;
-  links/chips inside cells keep their `FORBID_EDIT_SELECTOR` behavior. One
-  click, not click-select-then-click-edit (Tine is an outliner first; its cells
-  feel like blocks, not Excel cells).
-- **Click on cell whitespace** (padding / empty area below text) → **cell
-  selection** (select mode), no caret.
+- **Single-click on any cell text or whitespace → cell selection** (select
+  mode), no caret. This overrules the original click-on-text-edits boundary:
+  the spreadsheet/TreeSheets parity is more important in use, and click-select
+  makes mouse range selection reachable without first falling into edit mode.
+- **Double-click on a cell → text edit**, caret at the click point when the
+  rendered-span caret mapping resolves one; otherwise edit starts at the normal
+  cell edit position. `Enter`, `F2`, and typing from cell selection keep their
+  shipped edit/overtype behavior.
 - **Click on grid chrome** (gap lines near a ruling = seam target per §4.2;
   the grid's outer frame / its bullet row) → seam selection or whole-grid
   outline selection respectively.
@@ -31,6 +33,12 @@ and `FORBID_EDIT_SELECTOR` excludes links/chips/media from edit entry.
   `→` enters **cell selection on the top-left cell** (row 1 col 1; the header
   row, if any, is still enterable — it's real content). Typing then replaces,
   `Enter` again edits — the standard ladder.
+- **Sub-grid descent:** `Enter` on a selected cell always enters edit mode; it
+  never descends. From the sheet-cell editor, `ArrowDown` at the last text row of
+  a cell that itself renders a child grid commits the edit and selects the
+  child grid's top edge seam. The current rendering always places the cell's
+  text above its children, so "ArrowUp from text below the sub-grid" has no UI
+  position yet.
 - **Re-entry memory:** while a page stays mounted, each grid remembers its last
   selected cell (in-memory signal, never persisted) and re-entering lands
   there; fresh mounts land top-left.
@@ -47,11 +55,8 @@ and `FORBID_EDIT_SELECTOR` excludes links/chips/media from edit entry.
 
 - Matches the outline's muscle memory (mousedown edit entry, Esc ladder) while
   adding the one 2-D rung the spec calls for; no new global modality.
-- Cell-selection-on-whitespace vs edit-on-text needs a reliable hit test
-  (text node hit vs padding hit) — the implementation must use the same
-  caret-from-point machinery as click-caret, falling back to cell selection
-  when no text position resolves. This is the fiddly bit; it gets its own
-  component tests in Phase 2.
+- Double-click edit still uses the same caret-from-point machinery as outline
+  click-caret, but single-click no longer depends on a text-vs-padding hit test.
 - Flow-out semantics tie grid navigation into the outline's selection store —
   the grid component needs an escape hatch callback rather than owning outline
   selection itself.

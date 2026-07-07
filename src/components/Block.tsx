@@ -47,6 +47,7 @@ import {
   setBlockMoving,
   orderedListMarker,
   withUndoUnit,
+  blockIsGridView,
 } from "../store";
 import {
   clearFocusSurface,
@@ -106,7 +107,7 @@ import { registerFocusedEditorCommandBridge, type MobileEditorCommandId } from "
 import { isRecordingAudio, setRecordingAudio, base64ToBytes } from "../mediaCapture";
 import { sheetConfig } from "../sheet/config";
 import { SheetCellContext } from "../sheet/context";
-import { selectCellAfterEdit, moveCellAfterEdit } from "../sheet/selection";
+import { selectCellAfterEdit, moveCellAfterEdit, selectTopRowSeamAfterEdit } from "../sheet/selection";
 import { forbidsEditEntry } from "../editor/editTargets";
 import { SheetGrid } from "./SheetGrid";
 import { SheetTable } from "./SheetTable";
@@ -1840,6 +1841,10 @@ export function Editor(props: { id: string }): JSX.Element {
       commit(raw);
       moveCellAfterEdit(sheetCell, dir);
     };
+    const commitAndDescendIntoSubgrid = () => {
+      commit(raw);
+      selectTopRowSeamAfterEdit(props.id);
+    };
 
     if (plain && e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -1886,7 +1891,8 @@ export function Editor(props: { id: string }): JSX.Element {
       const after = raw.slice(start);
       if (!after.includes("\n") && caretAtLastRow(ref, start)) {
         e.preventDefault();
-        commitAndMove("down");
+        if (blockIsGridView(props.id)) commitAndDescendIntoSubgrid();
+        else commitAndMove("down");
         return true;
       }
     }

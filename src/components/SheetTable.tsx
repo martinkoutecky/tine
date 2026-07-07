@@ -24,9 +24,11 @@ import { editingId, editingOwner } from "../editorController";
 import { SheetCellContext, type SheetCellCtx } from "../sheet/context";
 import {
   cellOwner,
+  cellIsInRange,
   cellSel,
   cellSurfaceKey,
   aggregateFooterPinned,
+  extendCellSelectionTo,
   registerSheetViewAdapter,
   setCellSel,
   setAggregateFooterPinned,
@@ -34,6 +36,7 @@ import {
   toggleAggregateFooterPinned,
   type CellSel,
 } from "../sheet/selection";
+import { beginCellPointerSelection, isSheetPointerInteractive, sheetGridIdFromEventTarget } from "../sheet/pointerSelection";
 import {
   cycleField,
   fieldIdsForBlocks,
@@ -422,6 +425,7 @@ export function SheetTable(props: {
     if (sel.kind === "range") return sel.focus.row === row && sel.focus.col === col;
     return false;
   };
+  const inRange = (row: number, col: number) => cellIsInRange(props.ownerId, row, col);
 
   const openPropInput = (rowId: string, field: FieldId, initial?: string) => {
     setEditingProp({ rowId, field, initial: initial ?? readField(rowId, field)?.text ?? "" });
@@ -506,6 +510,10 @@ export function SheetTable(props: {
       filter: config().filter,
     });
   };
+  const onPointerDown = (e: PointerEvent) => {
+    if (sheetGridIdFromEventTarget(e.target) !== props.ownerId || isSheetPointerInteractive(e.target)) return;
+    beginCellPointerSelection(e, props.ownerId);
+  };
 
   return (
     <Show
@@ -527,6 +535,7 @@ export function SheetTable(props: {
         class="sheet-table"
         data-sheet-grid-id={props.ownerId}
         style={{ "grid-template-columns": gridColumns() }}
+        onPointerDown={onPointerDown}
         onPointerEnter={() => setHovering(true)}
         onPointerLeave={() => setHovering(false)}
         onContextMenu={openSheetMenu}
@@ -630,6 +639,7 @@ export function SheetTable(props: {
                 row={row}
                 rowIndex={rowIndex()}
                 selected={selected(rowIndex(), 0)}
+                inRange={inRange(rowIndex(), 0)}
               />
               <For each={fields()}>
                 {(field, fieldIndex) => (
@@ -642,6 +652,7 @@ export function SheetTable(props: {
                     rowIndex={rowIndex()}
                     colIndex={fieldIndex() + 1}
                     selected={selected(rowIndex(), fieldIndex() + 1)}
+                    inRange={inRange(rowIndex(), fieldIndex() + 1)}
                     editing={editingProp()?.rowId === row.id && editingProp()?.field === field}
                     initial={editingProp()?.initial ?? ""}
                     openPropInput={openPropInput}
@@ -745,7 +756,7 @@ function clickOffset(e: MouseEvent, contentRef: HTMLDivElement | undefined, raw:
   return editorOffsetFromRenderedRange(contentRef, range, raw, isBuiltinHidden);
 }
 
-function TitleCell(props: { ownerId: string; row: RowRecord; rowIndex: number; selected: boolean }): JSX.Element {
+function TitleCell(props: { ownerId: string; row: RowRecord; rowIndex: number; selected: boolean; inRange: boolean }): JSX.Element {
   const cell = (): SheetCellCtx => ({ gridId: props.ownerId, row: props.rowIndex, col: 0 });
   let contentRef: HTMLDivElement | undefined;
   const editing = () => editingId() === props.row.id && editingOwner() === cellOwner(cell());
@@ -757,7 +768,14 @@ function TitleCell(props: { ownerId: string; row: RowRecord; rowIndex: number; s
   });
 
   const onMouseDown = (e: MouseEvent) => {
-    if (e.button !== 0 || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.button !== 0 || e.ctrlKey || e.metaKey || e.altKey) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.shiftKey) extendCellSelectionTo(props.ownerId, { row: props.rowIndex, col: 0 });
+    else setCellSel(cell());
+  };
+  const onDoubleClick = (e: MouseEvent) => {
+    if (e.button !== 0 || e.ctrlKey || e.metaKey || e.altKey) return;
     if (forbidsEditEntry(e)) return;
     e.preventDefault();
     e.stopPropagation();
@@ -786,19 +804,28 @@ function TitleCell(props: { ownerId: string; row: RowRecord; rowIndex: number; s
   return (
     <div
       class="sheet-cell sheet-title-cell"
-      classList={{ "sheet-cell-selected": props.selected, "sheet-sticky-left": true }}
+      classList={{
+        "sheet-cell-selected": props.selected,
+        "sheet-cell-in-range": props.inRange,
+        "sheet-sticky-left": true,
+      }}
       data-sheet-grid-id={props.ownerId}
       data-block-id={props.row.id}
       data-row={props.rowIndex}
       data-col={0}
       style={bgColor() ? { background: bgColor() } : undefined}
       onMouseDown={onMouseDown}
+      onDblClick={onDoubleClick}
       onContextMenu={openCellMenu}
     >
       <Show when={doc.byId[props.row.id]}>
         <button
           class="sheet-cell-handle"
           title="Cell menu"
+          onPointerDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
           onMouseDown={(e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -833,6 +860,7 @@ function FieldCell(props: {
   rowIndex: number;
   colIndex: number;
   selected: boolean;
+  inRange: boolean;
   editing: boolean;
   initial: string;
   openPropInput: (rowId: string, field: FieldId, initial?: string) => void;
@@ -869,7 +897,14 @@ function FieldCell(props: {
   };
 
   const onMouseDown = (e: MouseEvent) => {
-    if (e.button !== 0 || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.button !== 0 || e.ctrlKey || e.metaKey || e.altKey) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.shiftKey) extendCellSelectionTo(props.ownerId, { row: props.rowIndex, col: props.colIndex });
+    else select();
+  };
+  const onDoubleClick = (e: MouseEvent) => {
+    if (e.button !== 0 || e.ctrlKey || e.metaKey || e.altKey) return;
     e.preventDefault();
     e.stopPropagation();
     select();
@@ -916,6 +951,7 @@ function FieldCell(props: {
       class="sheet-cell sheet-field-cell"
       classList={{
         "sheet-cell-selected": props.selected,
+        "sheet-cell-in-range": props.inRange,
         "sheet-readonly-cell": !editable() || props.field === "tags" || props.field === "page" || isFormulaField(props.field),
         "sheet-number-cell":
           (props.field.startsWith("prop:") && props.fieldType === "number") ||
@@ -927,12 +963,17 @@ function FieldCell(props: {
       data-col={props.colIndex}
       style={bgColor() ? { background: bgColor() } : undefined}
       onMouseDown={onMouseDown}
+      onDblClick={onDoubleClick}
       onContextMenu={openCellMenu}
     >
       <Show when={editable()}>
         <button
           class="sheet-cell-handle"
           title="Cell menu"
+          onPointerDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
           onMouseDown={(e) => {
             e.preventDefault();
             e.stopPropagation();

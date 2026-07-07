@@ -299,6 +299,38 @@ export const BUILTIN_KEYS: BuiltinKeyDef[] = [
     binding: "enter",
     label: "Edit the last selected block",
   },
+  {
+    id: "builtin/sheet/select-cell",
+    scope: "select",
+    binding: "click",
+    label: "Select a sheet cell",
+    details: "Double-click, Enter, or F2 edits the selected cell.",
+  },
+  {
+    id: "builtin/sheet/move",
+    scope: "select",
+    binding: "arrow keys",
+    label: "Move sheet cell selection",
+    details: "Esc leaves a sheet; typing replaces the focused cell.",
+  },
+  {
+    id: "builtin/sheet/range",
+    scope: "select",
+    binding: "drag / shift+click / shift+arrows",
+    label: "Select a sheet range",
+  },
+  {
+    id: "builtin/sheet/copy-cut",
+    scope: "select",
+    binding: "mod+c / mod+x / paste",
+    label: "Copy, cut, or paste sheet cells",
+  },
+  {
+    id: "builtin/sheet/fill",
+    scope: "select",
+    binding: "mod+d / mod+r",
+    label: "Fill sheet selection down or right",
+  },
 ];
 
 function shortcutScope(c: CommandDef): ShortcutScope {

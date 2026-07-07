@@ -4,9 +4,10 @@ import { createSignal, type JSX } from "solid-js";
 import { Block } from "./Block";
 import { SheetBoard } from "./SheetBoard";
 import { initParser } from "../render/parse";
-import { doc, resetStore, setDoc, type FeedPage, type Node as StoreNode } from "../store";
+import { doc, hasSelection, resetStore, setDoc, type FeedPage, type Node as StoreNode } from "../store";
 import { setToasts, setWorkflow, toasts } from "../ui";
 import { cellSel, handleCellSelectionKey, resetCellSelectionForTests, setCellSel } from "../sheet/selection";
+import { installBlockSelectionDrag } from "../blockDrag";
 import type { RefGroup } from "../types";
 
 beforeAll(async () => {
@@ -287,6 +288,31 @@ describe("SheetBoard", () => {
 
     document.elementFromPoint = prevElementFromPoint;
     dispose();
+  });
+
+  it("does not start outline multi-block selection from a board card drag origin", () => {
+    loadBoardDoc();
+    const { root, dispose } = mount(() => <Block id="board" />);
+    const uninstall = installBlockSelectionDrag();
+    const card = root.querySelector('[data-block-id="todo"]') as HTMLElement;
+    const over = document.createElement("div");
+    over.className = "ls-block";
+    over.dataset.blockId = "doing";
+    document.body.appendChild(over);
+    const prevElementFromPoint = document.elementFromPoint;
+    document.elementFromPoint = () => over;
+
+    try {
+      card.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
+      document.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, cancelable: true, buttons: 1, clientX: 12, clientY: 0 }));
+      document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, button: 0 }));
+
+      expect(hasSelection()).toBe(false);
+    } finally {
+      document.elementFromPoint = prevElementFromPoint;
+      uninstall();
+      dispose();
+    }
   });
 
   it("renders tag boards with duplicated multi-tag cards and a none column", () => {

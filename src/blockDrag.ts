@@ -9,6 +9,8 @@ import { selectBlock, extendSelectionTo } from "./store";
 // Interactive chrome whose drags mean something else (bullet = reorder handle,
 // links/buttons/chips = clicks). A text-selection drag must not start on these.
 const CHROME = ".bullet-container, .block-controls, .collapse-toggle, a, button, .date-chip";
+const SHEET_INTERNAL =
+  ".block-sheet-container, .sheet-grid, .sheet-table, .sheet-board, .sheet-cell, .sheet-board-card";
 
 function blockIdAt(x: number, y: number): string | null {
   const el = document.elementFromPoint(x, y);
@@ -27,6 +29,7 @@ export function installBlockSelectionDrag(): () => void {
     if (e.button !== 0) return;
     const target = e.target as Element | null;
     if (!target || target.closest(CHROME)) return;
+    if (target.closest(SHEET_INTERNAL)) return;
     const block = target.closest("[data-block-id]");
     if (!block) return; // not in the outline (sidebar, title, dialogs, …)
     startId = block.getAttribute("data-block-id");

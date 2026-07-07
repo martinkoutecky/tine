@@ -8,7 +8,7 @@ import { DatePicker } from "./DatePicker";
 import { initParser } from "../render/parse";
 import { blockProperty, doc, readPageProperty, resetStore, setDoc, type FeedPage, type Node as StoreNode } from "../store";
 import { setWorkflow } from "../ui";
-import { resetCellSelectionForTests } from "../sheet/selection";
+import { cellSel, resetCellSelectionForTests, setCellSel } from "../sheet/selection";
 import { editingId, editingOwner } from "../editorController";
 import type { RefGroup } from "../types";
 
@@ -46,10 +46,20 @@ function node(id: string, raw: string, parent: string | null, children: string[]
   return { id, raw, collapsed: false, parent, page: "Sheet", children };
 }
 
-function mouseDown(target: EventTarget): MouseEvent {
-  const event = new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 });
+function mouseDown(target: EventTarget, init: Partial<MouseEventInit> = {}): MouseEvent {
+  const event = new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0, ...init });
   target.dispatchEvent(event);
   return event;
+}
+
+function doubleClick(target: EventTarget): MouseEvent {
+  const event = new MouseEvent("dblclick", { bubbles: true, cancelable: true, button: 0 });
+  target.dispatchEvent(event);
+  return event;
+}
+
+function pointer(type: string, x: number, y: number): Event {
+  return new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y });
 }
 
 function keydown(target: EventTarget, key: string): KeyboardEvent {
@@ -132,6 +142,47 @@ describe("SheetTable", () => {
     expect(root.querySelector(".sheet-title-header")?.classList.contains("sheet-sticky-left")).toBe(true);
     expect(root.querySelector(".sheet-title-cell")?.classList.contains("sheet-sticky-left")).toBe(true);
     expect(root.querySelector(".sheet-field-header")?.classList.contains("sheet-sticky-left")).toBe(false);
+
+    dispose();
+  });
+
+  it("single-click selects table cells, double-click edits the title, and dragging selects a range", async () => {
+    loadTableDoc();
+    const { root, dispose } = mount(() => <Block id="table" />);
+
+    mouseDown(cell(root, 0, 0));
+    expect(cellSel()).toEqual({ kind: "cell", gridId: "table", row: 0, col: 0 });
+    expect(editingId()).toBeNull();
+
+    doubleClick(cell(root, 0, 0));
+    await tick();
+    expect(editingId()).toBe("r1");
+
+    resetCellSelectionForTests();
+    const prevElementFromPoint = document.elementFromPoint;
+    document.elementFromPoint = () => cell(root, 1, 2);
+    cell(root, 0, 1).dispatchEvent(pointer("pointerdown", 0, 0));
+    window.dispatchEvent(pointer("pointermove", 8, 8));
+    window.dispatchEvent(pointer("pointerup", 8, 8));
+    document.elementFromPoint = prevElementFromPoint;
+
+    expect(cellSel()).toEqual({
+      kind: "range",
+      gridId: "table",
+      anchor: { row: 0, col: 1 },
+      focus: { row: 1, col: 2 },
+    });
+    expect(cell(root, 0, 1).classList.contains("sheet-cell-in-range")).toBe(true);
+    expect(cell(root, 1, 2).classList.contains("sheet-cell-selected")).toBe(true);
+
+    setCellSel({ gridId: "table", row: 0, col: 0 });
+    mouseDown(cell(root, 1, 1), { shiftKey: true });
+    expect(cellSel()).toEqual({
+      kind: "range",
+      gridId: "table",
+      anchor: { row: 0, col: 0 },
+      focus: { row: 1, col: 1 },
+    });
 
     dispose();
   });
@@ -392,11 +443,11 @@ describe("SheetTable", () => {
     dispose();
   });
 
-  it("state cell click cycles the marker through the normal workflow", () => {
+  it("state cell double-click cycles the marker through the normal workflow", () => {
     loadTableDoc();
     const { root, dispose } = mount(() => <Block id="table" />);
 
-    mouseDown(cell(root, 0, 1));
+    doubleClick(cell(root, 0, 1));
 
     expect(doc.byId.r1.raw.split("\n")[0]).toBe("DOING [#A] Ship #sheets");
     dispose();
@@ -414,7 +465,7 @@ describe("SheetTable", () => {
     });
     const { root, dispose } = mount(() => <Block id="table" />);
 
-    mouseDown(cell(root, 0, 1));
+    doubleClick(cell(root, 0, 1));
     const input = root.querySelector("input.sheet-prop-input") as HTMLInputElement | null;
     expect(input).not.toBeNull();
     input!.value = "new";
@@ -436,13 +487,13 @@ describe("SheetTable", () => {
     });
     const { root, dispose } = mount(() => <Block id="table" />);
 
-    mouseDown(cell(root, 0, 1));
+    doubleClick(cell(root, 0, 1));
     expect(doc.byId.r1.raw).toBe("Task\ndone:: true");
     const checkbox = cell(root, 0, 1).querySelector('input[type="checkbox"]') as HTMLInputElement | null;
     expect(checkbox?.disabled).toBe(true);
     expect(checkbox?.checked).toBe(true);
 
-    mouseDown(cell(root, 0, 1));
+    doubleClick(cell(root, 0, 1));
     expect(doc.byId.r1.raw).toBe("Task\ndone:: false");
 
     dispose();
@@ -465,7 +516,7 @@ describe("SheetTable", () => {
       </>
     ));
 
-    mouseDown(cell(root, 0, 1));
+    doubleClick(cell(root, 0, 1));
     expect([...document.querySelectorAll(".ctx-item")].map((el) => el.textContent?.trim())).toEqual([
       "todo",
       "doing",
@@ -475,7 +526,7 @@ describe("SheetTable", () => {
     clickMenuItem("doing");
     expect(doc.byId.r1.raw).toBe("Task\nstatus:: doing");
 
-    mouseDown(cell(root, 0, 1));
+    doubleClick(cell(root, 0, 1));
     clickMenuItem("Clear");
     expect(doc.byId.r1.raw).toBe("Task");
 
@@ -494,7 +545,7 @@ describe("SheetTable", () => {
     });
     const { root, dispose } = mount(() => <Block id="table" />);
 
-    mouseDown(cell(root, 0, 1));
+    doubleClick(cell(root, 0, 1));
     let editor = root.querySelector("input.sheet-prop-input") as HTMLInputElement | null;
     expect(editor).not.toBeNull();
     editor!.value = "12abc";
@@ -517,7 +568,7 @@ describe("SheetTable", () => {
     expect(doc.byId.r1.raw).toBe("Task\namount:: -3.5");
     expect(root.querySelector("input.sheet-prop-input")).toBeNull();
 
-    mouseDown(cell(root, 0, 1));
+    doubleClick(cell(root, 0, 1));
     editor = root.querySelector("input.sheet-prop-input") as HTMLInputElement | null;
     editor!.value = "";
     input(editor!);
@@ -544,14 +595,14 @@ describe("SheetTable", () => {
       </>
     ));
 
-    mouseDown(cell(root, 0, 1));
+    doubleClick(cell(root, 0, 1));
     expect(root.querySelector(".date-picker")).not.toBeNull();
     const day10 = [...root.querySelectorAll(".date-picker .dp-cell")]
       .find((el) => el.textContent?.trim() === "10") as HTMLButtonElement | undefined;
     day10!.click();
     expect(doc.byId.r1.raw).toBe("Task\nstarts:: 2026-07-08 09:30\ndue:: 2026-07-10");
 
-    mouseDown(cell(root, 0, 2));
+    doubleClick(cell(root, 0, 2));
     const day11 = [...root.querySelectorAll(".date-picker .dp-cell")]
       .find((el) => el.textContent?.trim() === "11") as HTMLButtonElement | undefined;
     day11!.click();
@@ -776,7 +827,7 @@ describe("SheetTable", () => {
     expect(error?.getAttribute("title")).toContain("+ expects");
     expect([...root.querySelectorAll(".sheet-aggregate-value")].map((el) => el.textContent?.trim())).toContain("18");
 
-    mouseDown(cell(root, 0, 3));
+    doubleClick(cell(root, 0, 3));
     expect(cell(root, 0, 3).classList.contains("sheet-cell-selected")).toBe(true);
     expect(root.querySelector("input.sheet-prop-input")).toBeNull();
 
@@ -856,7 +907,7 @@ describe("SheetTable", () => {
       </>
     ));
 
-    mouseDown(cell(root, 0, 3));
+    doubleClick(cell(root, 0, 3));
     expect(root.querySelector(".date-picker")).not.toBeNull();
     const day10 = [...root.querySelectorAll(".date-picker .dp-cell")]
       .find((el) => el.textContent?.trim() === "10") as HTMLButtonElement | undefined;
@@ -864,7 +915,7 @@ describe("SheetTable", () => {
     day10!.click();
     expect(doc.byId.r1.raw).toContain("SCHEDULED: <2026-07-10 Fri>");
 
-    mouseDown(cell(root, 0, 3));
+    doubleClick(cell(root, 0, 3));
     (root.querySelector(".date-picker .dp-clear") as HTMLButtonElement).click();
     expect(doc.byId.r1.raw).not.toContain("SCHEDULED:");
 
@@ -886,7 +937,7 @@ describe("SheetTable", () => {
     const { root, dispose } = mount(() => <Block id="table" />);
 
     expect(root.textContent).toContain("7 (1 skipped)");
-    mouseDown(cell(root, 1, 2));
+    doubleClick(cell(root, 1, 2));
     const input = root.querySelector("input.sheet-prop-input") as HTMLInputElement | null;
     expect(input).not.toBeNull();
     input!.value = "8h";

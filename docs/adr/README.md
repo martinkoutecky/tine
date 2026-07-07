@@ -51,7 +51,7 @@ see the project `CLAUDE.md`.
 | [0022](0022-logbook-clock-drawer-format.md) | Logbook CLOCK drawer parsing and writes live in one Rust module shared with wasm | Accepted |
 | [0023](0023-sheets-render-substrate.md) | Sheets lays out on CSS Grid max-content tracks (Phase-0 spike GO; table-auto rejected) | Accepted |
 | [0024](0024-sheets-header-row.md) | Sheets positional-grid header row is explicit opt-in (`tine.header:: true`), never auto-detected | Accepted |
-| [0025](0025-sheets-mode-boundaries.md) | Sheets mode boundaries: click-on-text edits, whitespace selects, Esc ladder, flow-out not wrap | Accepted |
+| [0025](0025-sheets-mode-boundaries.md) | Sheets mode boundaries: click selects, double-click edits, Esc ladder, flow-out not wrap | Accepted |
 | [0026](0026-sheets-field-schema.md) | Sheets field schema: `tine.fields::` scalar grammar, per-tag + per-view homes, declared-first columns, typed cells | Accepted |
 | [0027](0027-sheets-tags-writeback.md) | Tags write-back is span-guided and delta-shaped (first line only); tag boards use the Notion multi-group model | Accepted |
 | [0028](0028-sheets-formula-dsl.md) | Sheets formulas: Bases-model typed expression DSL, `tine.formula.<name>::` lines, errors as values, derived never stored | Accepted |

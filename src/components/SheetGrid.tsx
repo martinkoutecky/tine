@@ -11,12 +11,20 @@ import {
   cellSel,
   cellSurfaceKey,
   aggregateFooterPinned,
+  colSeamSel,
+  extendCellSelectionTo,
+  rowSeamSel,
   setCellSel,
   setAggregateFooterPinned,
   startCellEditing,
   toggleAggregateFooterPinned,
   type SheetSel,
 } from "../sheet/selection";
+import {
+  beginCellPointerSelection,
+  isSheetPointerInteractive,
+  sheetGridIdFromEventTarget,
+} from "../sheet/pointerSelection";
 import { setColumnWidth } from "../sheet/mutations";
 import { editorOffsetFromRenderedRange } from "../render/spans";
 import { isSheetCellHidden } from "../editor/properties";
@@ -59,8 +67,9 @@ function seamStyleFor(grid: HTMLElement, sel: SheetSel, matrix: { rows: number; 
   const gridRect = grid.getBoundingClientRect();
 
   if (sel.kind === "row-seam") {
-    const row = Math.max(0, Math.min(sel.at, matrix.rows - 1));
-    const cell = cellInGrid(grid, row, 0);
+    const row = sel.at <= 0 ? 0 : sel.at >= matrix.rows ? matrix.rows - 1 : sel.at;
+    const col = Math.max(0, Math.min(sel.anchor.col, matrix.cols - 1));
+    const cell = cellInGrid(grid, row, col);
     if (!cell) return null;
     const rect = cell.getBoundingClientRect();
     const y = sel.at <= 0 ? rect.top - gridRect.top : sel.at >= matrix.rows ? rect.bottom - gridRect.top : rect.top - gridRect.top;
@@ -68,15 +77,16 @@ function seamStyleFor(grid: HTMLElement, sel: SheetSel, matrix: { rows: number; 
     // otherwise land exactly on the overflow clip edge and paint nothing.
     const top = Math.max(0, Math.min(Math.round(y + grid.scrollTop - 1), grid.scrollHeight - 2));
     return {
-      left: "0px",
+      left: `${Math.round(rect.left - gridRect.left + grid.scrollLeft)}px`,
       top: `${top}px`,
-      width: `${grid.scrollWidth}px`,
+      width: `${Math.round(rect.width)}px`,
       height: "2px",
     };
   }
 
-  const col = Math.max(0, Math.min(sel.at, matrix.cols - 1));
-  const cell = cellInGrid(grid, 0, col);
+  const row = Math.max(0, Math.min(sel.anchor.row, matrix.rows - 1));
+  const col = sel.at <= 0 ? 0 : sel.at >= matrix.cols ? matrix.cols - 1 : sel.at;
+  const cell = cellInGrid(grid, row, col);
   if (!cell) return null;
   const rect = cell.getBoundingClientRect();
   const x = sel.at <= 0 ? rect.left - gridRect.left : sel.at >= matrix.cols ? rect.right - gridRect.left : rect.left - gridRect.left;
@@ -84,9 +94,9 @@ function seamStyleFor(grid: HTMLElement, sel: SheetSel, matrix: { rows: number; 
   const left = Math.max(0, Math.min(Math.round(x + grid.scrollLeft - 1), grid.scrollWidth - 2));
   return {
     left: `${left}px`,
-    top: "0px",
+    top: `${Math.round(rect.top - gridRect.top + grid.scrollTop)}px`,
     width: "2px",
-    height: `${grid.scrollHeight}px`,
+    height: `${Math.round(rect.height)}px`,
   };
 }
 
@@ -249,20 +259,25 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
   };
 
   const onPointerDown = (e: PointerEvent) => {
-    if (e.button !== 0 || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (sheetGridIdFromEventTarget(e.target) !== props.id || isSheetPointerInteractive(e.target)) return;
+    if (e.button !== 0 || e.ctrlKey || e.metaKey || e.altKey) return;
     const grid = e.currentTarget as HTMLDivElement;
-    const hit = hitRuling(grid, matrix(), e.clientX, e.clientY);
-    if (!hit) return;
+    const hit = e.shiftKey ? null : hitRuling(grid, matrix(), e.clientX, e.clientY);
+    if (!hit) {
+      beginCellPointerSelection(e, props.id);
+      return;
+    }
+
     e.preventDefault();
     e.stopPropagation();
 
     if (hit.kind === "row") {
-      setCellSel({ kind: "row-seam", gridId: props.id, at: hit.at, col: hit.col });
+      setCellSel(rowSeamSel(props.id, hit.at, hit.col));
       return;
     }
 
     if (hit.at <= 0) {
-      setCellSel({ kind: "col-seam", gridId: props.id, at: hit.at, row: hit.row });
+      setCellSel(colSeamSel(props.id, hit.at, hit.row));
       return;
     }
 
@@ -290,7 +305,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
         setColumnWidth(props.id, resizeCol, lastWidth);
         setResizing(false);
       } else {
-        setCellSel({ kind: "col-seam", gridId: props.id, at: hit.at, row: hit.row });
+        setCellSel(colSeamSel(props.id, hit.at, hit.row));
       }
       me.preventDefault();
     };
@@ -416,19 +431,22 @@ function SheetGridCell(props: { gridId: string; cell: MatrixCell; header: boolea
     return node ? blockBackgroundColor(facetsOf(node.raw, formatForBlock(id!)).properties) : undefined;
   });
   const onMouseDown = (e: MouseEvent) => {
-    if (e.button !== 0 || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.button !== 0 || e.ctrlKey || e.metaKey || e.altKey) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.shiftKey) extendCellSelectionTo(props.gridId, { row: props.cell.row, col: props.cell.col });
+    else setCellSel(sel());
+  };
+  const onDoubleClick = (e: MouseEvent) => {
+    if (e.button !== 0 || e.ctrlKey || e.metaKey || e.altKey) return;
     if (forbidsEditEntry(e)) return;
     e.preventDefault();
     e.stopPropagation();
     const blockId = props.cell.blockId;
-    if (!blockId) {
-      setCellSel(sel());
-      return;
-    }
+    if (!blockId) return;
     const node = doc.byId[blockId];
     const offset = node ? clickOffset(e, contentRef, node.raw) : null;
-    if (offset == null) setCellSel(sel());
-    else startCellEditing(sel(), offset);
+    startCellEditing(sel(), offset ?? undefined);
   };
   const openCellMenu = (e: MouseEvent) => {
     const blockId = props.cell.blockId;
@@ -464,12 +482,17 @@ function SheetGridCell(props: { gridId: string; cell: MatrixCell; header: boolea
       data-col={props.cell.col}
       style={bgColor() ? { background: bgColor() } : undefined}
       onMouseDown={onMouseDown}
+      onDblClick={onDoubleClick}
       onContextMenu={openCellMenu}
     >
       <Show when={props.cell.blockId}>
         <button
           class="sheet-cell-handle"
           title="Cell menu"
+          onPointerDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
           onMouseDown={(e) => {
             e.preventDefault();
             e.stopPropagation();

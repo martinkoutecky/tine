@@ -4,10 +4,13 @@ import { isSelected, resetStore, selectBlock, setDoc, type FeedPage, type Node a
 import { initParser } from "../render/parse";
 import {
   cellSel,
+  colSeamSel,
+  extendCellSelectionTo,
   handleCellSelectionKey,
   installCellSelectionHooks,
   lastCellFor,
   resetCellSelectionForTests,
+  rowSeamSel,
   setCellSel,
 } from "./selection";
 
@@ -157,6 +160,44 @@ describe("cell selection state", () => {
 
     press("Escape");
     expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 0, col: 0 });
+  });
+
+  it("mouse range helpers use the same range anchor/focus model as Shift+Arrow", () => {
+    loadGrid();
+    setCellSel({ gridId: "grid", row: 0, col: 1 });
+
+    expect(extendCellSelectionTo("grid", { row: 1, col: 0 })).toBe(true);
+    expect(cellSel()).toEqual({
+      kind: "range",
+      gridId: "grid",
+      anchor: { row: 0, col: 1 },
+      focus: { row: 1, col: 0 },
+    });
+
+    expect(extendCellSelectionTo("grid", { row: 1, col: 1 })).toBe(true);
+    expect(cellSel()).toEqual({
+      kind: "range",
+      gridId: "grid",
+      anchor: { row: 0, col: 1 },
+      focus: { row: 1, col: 1 },
+    });
+  });
+
+  it("seam selections carry the cell anchor used for movement and insertion", () => {
+    loadGrid();
+    setCellSel({ gridId: "grid", row: 1, col: 0 });
+
+    press("ArrowRight");
+    expect(cellSel()).toEqual(colSeamSel("grid", 1, 1));
+
+    press("ArrowUp");
+    expect(cellSel()).toEqual(colSeamSel("grid", 1, 0));
+
+    press("ArrowRight");
+    expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 0, col: 1 });
+
+    press("ArrowDown");
+    expect(cellSel()).toEqual(rowSeamSel("grid", 1, 1));
   });
 
   it("Escape from a nested grid cell walks up to the containing outer cell, then to outline selection", () => {

@@ -42,6 +42,7 @@ export interface RangeSel {
 export interface RowSeamSel {
   kind: "row-seam";
   gridId: string;
+  anchor: SheetPoint;
   col: number;
   at: number;
 }
@@ -49,6 +50,7 @@ export interface RowSeamSel {
 export interface ColSeamSel {
   kind: "col-seam";
   gridId: string;
+  anchor: SheetPoint;
   row: number;
   at: number;
 }
@@ -150,8 +152,26 @@ function isSeamSel(sel: SheetSel | null): sel is RowSeamSel | ColSeamSel {
   return sel?.kind === "row-seam" || sel?.kind === "col-seam";
 }
 
+export function rowSeamSel(gridId: string, at: number, col: number): RowSeamSel {
+  return { kind: "row-seam", gridId, at, col, anchor: { row: at, col } };
+}
+
+export function colSeamSel(gridId: string, at: number, row: number): ColSeamSel {
+  return { kind: "col-seam", gridId, at, row, anchor: { row, col: at } };
+}
+
 function normalizeSel(sel: SheetSelInput): SheetSel {
-  if ("kind" in sel && sel.kind) return { ...sel } as SheetSel;
+  if ("kind" in sel && sel.kind) {
+    if (sel.kind === "row-seam") {
+      const s = sel as RowSeamSel & { anchor?: SheetPoint };
+      return rowSeamSel(s.gridId, s.at, s.anchor?.col ?? s.col);
+    }
+    if (sel.kind === "col-seam") {
+      const s = sel as ColSeamSel & { anchor?: SheetPoint };
+      return colSeamSel(s.gridId, s.at, s.anchor?.row ?? s.row);
+    }
+    return { ...sel } as SheetSel;
+  }
   return { kind: "cell", gridId: sel.gridId, row: sel.row, col: sel.col };
 }
 
@@ -278,6 +298,33 @@ function setRangeOrCell(gridId: string, anchor: SheetPoint, focus: SheetPoint): 
   return true;
 }
 
+export function setCellRangeSelection(gridId: string, anchor: SheetPoint, focus: SheetPoint): boolean {
+  return setRangeOrCell(gridId, anchor, focus);
+}
+
+export function extendCellSelectionTo(gridId: string, focus: SheetPoint): boolean {
+  const sel = cellSel();
+  const anchor =
+    sel && sel.gridId === gridId && !isSeamSel(sel)
+      ? sel.kind === "range"
+        ? sel.anchor
+        : { row: sel.row, col: sel.col }
+      : focus;
+  return setRangeOrCell(gridId, anchor, focus);
+}
+
+export function selectTopRowSeam(gridId: string, col = 0): boolean {
+  const bounds = boundsForGrid(gridId);
+  if (bounds.rows <= 0 || bounds.cols <= 0) return false;
+  setCellSel(rowSeamSel(gridId, 0, Math.max(0, Math.min(col, bounds.cols - 1))));
+  return true;
+}
+
+export function selectTopRowSeamAfterEdit(gridId: string, col = 0): boolean {
+  endEdit("select-block");
+  return selectTopRowSeam(gridId, col);
+}
+
 export function enterGridSelection(gridId: string): boolean {
   if (!blockIsGridView(gridId)) return false;
   const target = clampCell(gridId, lastCellFor(gridId) ?? { row: 0, col: 0 });
@@ -333,17 +380,17 @@ function moveFromRowSeam(sel: RowSeamSel, dir: CellDirection): boolean {
 
   if (dir === "up") {
     if (sel.at <= 0) return flowOutVertical(sel, "up");
-    return setClampedCell(sel.gridId, sel.at - 1, sel.col);
+    return setClampedCell(sel.gridId, sel.at - 1, sel.anchor.col);
   }
   if (dir === "down") {
     if (sel.at >= bounds.rows) return flowOutVertical(sel, "down");
-    return setClampedCell(sel.gridId, sel.at, sel.col);
+    return setClampedCell(sel.gridId, sel.at, sel.anchor.col);
   }
   if (dir === "left") {
-    setCellSel({ ...sel, col: Math.max(0, sel.col - 1) });
+    setCellSel(rowSeamSel(sel.gridId, sel.at, Math.max(0, sel.anchor.col - 1)));
     return true;
   }
-  setCellSel({ ...sel, col: Math.min(bounds.cols - 1, sel.col + 1) });
+  setCellSel(rowSeamSel(sel.gridId, sel.at, Math.min(bounds.cols - 1, sel.anchor.col + 1)));
   return true;
 }
 
@@ -353,17 +400,17 @@ function moveFromColSeam(sel: ColSeamSel, dir: CellDirection): boolean {
 
   if (dir === "left") {
     if (sel.at <= 0) return exitLeft(sel);
-    return setClampedCell(sel.gridId, sel.row, sel.at - 1);
+    return setClampedCell(sel.gridId, sel.anchor.row, sel.at - 1);
   }
   if (dir === "right") {
     if (sel.at >= bounds.cols) return true;
-    return setClampedCell(sel.gridId, sel.row, sel.at);
+    return setClampedCell(sel.gridId, sel.anchor.row, sel.at);
   }
   if (dir === "up") {
-    setCellSel({ ...sel, row: Math.max(0, sel.row - 1) });
+    setCellSel(colSeamSel(sel.gridId, sel.at, Math.max(0, sel.anchor.row - 1)));
     return true;
   }
-  setCellSel({ ...sel, row: Math.min(bounds.rows - 1, sel.row + 1) });
+  setCellSel(colSeamSel(sel.gridId, sel.at, Math.min(bounds.rows - 1, sel.anchor.row + 1)));
   return true;
 }
 
@@ -393,7 +440,7 @@ export function moveCellSelectionFrom(sel: SheetSel, dir: CellDirection): boolea
 
   if (dir === "up") {
     if (SEAM_STEPPING) {
-      setCellSel({ kind: "row-seam", gridId: sel.gridId, at: sel.row, col: sel.col });
+      setCellSel(rowSeamSel(sel.gridId, sel.row, sel.col));
       return true;
     }
     if (sel.row <= 0) return flowOutVertical(sel, "up");
@@ -402,7 +449,7 @@ export function moveCellSelectionFrom(sel: SheetSel, dir: CellDirection): boolea
   }
   if (dir === "down") {
     if (SEAM_STEPPING) {
-      setCellSel({ kind: "row-seam", gridId: sel.gridId, at: sel.row + 1, col: sel.col });
+      setCellSel(rowSeamSel(sel.gridId, sel.row + 1, sel.col));
       return true;
     }
     if (sel.row >= bounds.rows - 1) return flowOutVertical(sel, "down");
@@ -411,7 +458,7 @@ export function moveCellSelectionFrom(sel: SheetSel, dir: CellDirection): boolea
   }
   if (dir === "left") {
     if (SEAM_STEPPING) {
-      setCellSel({ kind: "col-seam", gridId: sel.gridId, at: sel.col, row: sel.row });
+      setCellSel(colSeamSel(sel.gridId, sel.col, sel.row));
       return true;
     }
     if (sel.col <= 0) return exitLeft(sel);
@@ -419,7 +466,7 @@ export function moveCellSelectionFrom(sel: SheetSel, dir: CellDirection): boolea
     return true;
   }
   if (SEAM_STEPPING) {
-    setCellSel({ kind: "col-seam", gridId: sel.gridId, at: sel.col + 1, row: sel.row });
+    setCellSel(colSeamSel(sel.gridId, sel.col + 1, sel.row));
     return true;
   }
   if (sel.col >= bounds.cols - 1) return true;
@@ -557,13 +604,13 @@ function seamInsertTarget(sel: RowSeamSel | ColSeamSel): CellSel | null {
     if (sel.kind === "row-seam") {
       const rowId = insertRow(sel.gridId, sel.at);
       if (!rowId) return;
-      const col = Math.max(0, sel.col);
+      const col = Math.max(0, sel.anchor.col);
       if (!materializeCell(sel.gridId, sel.at, col)) return;
       target = { kind: "cell", gridId: sel.gridId, row: sel.at, col };
       return;
     }
     insertColumn(sel.gridId, sel.at);
-    const row = Math.max(0, sel.row);
+    const row = Math.max(0, sel.anchor.row);
     if (!materializeCell(sel.gridId, row, sel.at)) return;
     target = { kind: "cell", gridId: sel.gridId, row, col: sel.at };
   });
@@ -605,7 +652,7 @@ function deleteFromSeam(sel: RowSeamSel | ColSeamSel, side: "before" | "after"):
     const row = side === "before" ? sel.at - 1 : sel.at;
     if (row < 0 || row >= rowsForGrid(sel.gridId).length) return true;
     deleteRow(sel.gridId, row);
-    const next = nearestAfterRowDelete(sel.gridId, row, sel.col);
+    const next = nearestAfterRowDelete(sel.gridId, row, sel.anchor.col);
     if (next) setCellSel(next);
     else {
       clearCellSelectionOnly();
@@ -618,7 +665,7 @@ function deleteFromSeam(sel: RowSeamSel | ColSeamSel, side: "before" | "after"):
   const bounds = boundsForGrid(sel.gridId);
   if (col < 0 || col >= bounds.cols) return true;
   deleteColumn(sel.gridId, col);
-  const next = nearestAfterColumnDelete(sel.gridId, sel.row, col);
+  const next = nearestAfterColumnDelete(sel.gridId, sel.anchor.row, col);
   if (next) setCellSel(next);
   else {
     clearCellSelectionOnly();

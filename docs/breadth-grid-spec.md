@@ -694,9 +694,9 @@ Each phase is independently shippable and independently round-trip-tested.
    `tine.`-namespaced keys (`tine.view`, `tine.group-by`, `tine.span`,
    `tine.col-aggregates`, `tine.col-widths`, `tine.header`); values must be plain
    scalars / `=;`-delimited, never markdown-special (`[[]] (()) {{}} #`). No longer open.
-2. **Mode-boundary transitions** — where the caret/selection lands entering/exiting
-   a grid; click *into* a cell (edit) vs *onto* the grid (select); exact flow-out
-   behavior at borders. The part most likely to feel wrong if rushed (§4.1).
+2. ~~Mode-boundary transitions~~ — **RESOLVED (ADR 0025, amended Jul 7):** click
+   selects a cell; double-click/`Enter` edits; `Esc` walks edit→cell→outline;
+   vertical borders flow out without wrap.
 3. ~~Board move semantics~~ — **RESOLVED (§3.4):** dragging a card = **write the
    group-by field on that one block** (state → `cycleMarker`, property → set value),
    a local single-block edit that works on scattered query rows. Structural reparent

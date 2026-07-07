@@ -239,8 +239,8 @@ reorder; tags/page field write-back; multi-level (cross-hierarchy) ranges.
   ~2000 cells.
 - **ADR 0024** — §13.4 header row: explicit opt-in `tine.header:: true`, never
   auto-detected; positional face only.
-- **ADR 0025** — §13.2 mode boundaries: click-on-text edits (mousedown entry,
-  span→caret), click-on-whitespace selects cell, Esc ladder
+- **ADR 0025** — §13.2 mode boundaries: click selects a cell, double-click edits
+  with span→caret mapping, Esc ladder
   (edit→cell→outline), `←` past left exits, flow-out at top/bottom (no wrap),
   per-grid in-memory last-cell re-entry.
 - **ADR 0026** — Phase-6 field schema: `tine.fields:: name=type;…` scalar

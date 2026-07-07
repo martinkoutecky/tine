@@ -103,13 +103,36 @@ try {
   await cell.waitForExist({ timeout: 10000 });
   check("grid renders in real app", true);
 
-  // Click the cell text → edit mode (mousedown entry).
+  // Click selects; Enter edits; Esc returns to selection; double-click edits.
   await cell.click();
   await sleep(400);
-  const editing = await browser.execute(() => !!document.activeElement && document.activeElement.tagName === "TEXTAREA");
-  check("click-into-cell mounts editor", editing);
+  let editing = await browser.execute(() => !!document.activeElement && document.activeElement.tagName === "TEXTAREA");
+  check("clicking a cell selects without editing", !editing);
+  let selectedCells = await browser.$$(".sheet-cell-selected");
+  check("click selected exactly one cell", selectedCells.length === 1);
 
-  // Move to end of the cell text (click-to-caret lands mid-word at the click
+  await browser.keys(["Enter"]);
+  await sleep(300);
+  editing = await browser.execute(() => !!document.activeElement && document.activeElement.tagName === "TEXTAREA");
+  check("Enter edits selected cell", editing);
+
+  await browser.keys(["Escape"]);
+  await sleep(250);
+  editing = await browser.execute(() => !!document.activeElement && document.activeElement.tagName === "TEXTAREA");
+  selectedCells = await browser.$$(".sheet-cell-selected");
+  check("Esc from cell edit returns to selection", !editing && selectedCells.length === 1);
+
+  const dblClicked = await browser.execute(() => {
+    const el = document.querySelector('.sheet-cell[data-row="0"][data-col="0"]');
+    if (!el) return false;
+    el.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, button: 0 }));
+    return true;
+  });
+  await sleep(300);
+  editing = await browser.execute(() => !!document.activeElement && document.activeElement.tagName === "TEXTAREA");
+  check("double-click edits selected cell", dblClicked && editing);
+
+  // Move to end of the cell text (double-click-to-caret can land mid-word at the click
   // point — correct, but make the expected text deterministic), type, then
   // Enter — must COMMIT (not split the block).
   await browser.keys(["End"]);
@@ -145,8 +168,6 @@ try {
   const cell00 = await browser.$('.sheet-cell[data-row="0"][data-col="0"]');
   await cell00.click();
   await sleep(300);
-  await browser.keys(["Escape"]); // edit → cell selection on (0,0)
-  await sleep(200);
   await browser.keys(["ArrowDown"]); // cell -> row seam (seam stepping ON)
   await sleep(200);
   const seamShown = await browser.$$(".sheet-seam-selected");
@@ -172,8 +193,6 @@ try {
   const cellA = await browser.$('.sheet-cell[data-row="0"][data-col="1"]');
   await cellA.click();
   await sleep(300);
-  await browser.keys(["Escape"]); // cell selection (0,1) = "beta"
-  await sleep(150);
   await browser.keys(["Shift", "ArrowDown"]); // range (0,1)-(1,1)... shift over seam? range extension skips seams
   await sleep(150);
   await browser.keys(["Control", "d"]); // fill down
@@ -186,16 +205,19 @@ try {
   // Seed has a schema'd table: columns title=0, topic(enum)=1, shipped(checkbox)=2.
   const cbCell = await browser.$('.sheet-table .sheet-cell[data-row="0"][data-col="2"]');
   if (await cbCell.isExisting()) {
-    await cbCell.click(); // checkbox type: mousedown toggles, no editor
+    await browser.execute(() => {
+      const el = document.querySelector('.sheet-table .sheet-cell[data-row="0"][data-col="2"]');
+      el?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, button: 0 }));
+    });
     await sleep(2400);
     const diskCb = fs.readFileSync(JFILE, "utf8");
-    check("checkbox cell click wrote shipped:: true", diskCb.includes("shipped:: true"), JSON.stringify(diskCb));
+    check("checkbox cell double-click wrote shipped:: true", diskCb.includes("shipped:: true"), JSON.stringify(diskCb));
 
     // The empty enum cell's center can be obscured (cell handle) for a WD click;
     // the app's edit entry is mousedown anyway — dispatch it directly.
     await browser.execute(() => {
       const el = document.querySelector('.sheet-table .sheet-cell[data-row="0"][data-col="1"]');
-      el?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
+      el?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, button: 0 }));
     });
     await sleep(400);
     const items = await browser.execute(() =>
