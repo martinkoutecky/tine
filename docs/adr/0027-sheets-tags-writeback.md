@@ -55,6 +55,9 @@ list — no reconstruct-the-line writes):
   falls back to opening the block for manual editing.
 - The delta API keeps every gesture a single minimal edit — no
   full-line rewrites to drift formatting.
-- Org: same inline `#tag` form Tine already parses; the write path is
-  format-agnostic because it goes through spans, but 6c must verify against
-  the org corpus before enabling.
+- Org: OUT of scope for write-back (amended at 6c build time after checking
+  the corpus) — org tags are headline `htags` (`:tag:` suffixes carried on
+  the block, no inline span), not `#tag` inlines, so the span-guided
+  mechanism doesn't apply. Org tag boards still render; `writeTagDelta`
+  returns false on org blocks and moves refuse cleanly. An org write path
+  would be a separate, htags-shaped decision.
