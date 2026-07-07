@@ -13,7 +13,7 @@
 // any raw → lookup → hit (backend-known) or one parse (novel).
 import { parseBlock } from "./parse";
 import { DONE_MARKERS } from "../markers";
-import type { Block, Format } from "./ast";
+import type { Block, Format, Inline } from "./ast";
 
 export interface Facets {
   marker: string | null;
@@ -22,6 +22,7 @@ export interface Facets {
   headingLevel: number | null;
   scheduled: string | null;
   deadline: string | null;
+  tags: string[];
   properties: [string, string][];
 }
 
@@ -32,6 +33,7 @@ const EMPTY: Facets = {
   headingLevel: null,
   scheduled: null,
   deadline: null,
+  tags: [],
   properties: [],
 };
 
@@ -64,6 +66,7 @@ export function facetsFromDto(d: {
   heading_level?: number;
   scheduled?: string;
   deadline?: string;
+  tags?: string[];
   properties?: [string, string][];
 }): Facets {
   const marker = d.marker ?? null;
@@ -75,6 +78,7 @@ export function facetsFromDto(d: {
     headingLevel: d.heading_level ?? null,
     scheduled: d.scheduled ?? null,
     deadline: d.deadline ?? null,
+    tags: d.tags ?? [],
     properties: d.properties ?? [],
   };
 }
@@ -131,8 +135,82 @@ function deriveFacets(raw: string, format: Format): Facets {
     headingLevel,
     scheduled,
     deadline,
+    tags: tagsOf(blocks),
     properties,
   };
+}
+
+function pushTag(out: string[], seen: Set<string>, tag: string): void {
+  const t = tag.trim();
+  const key = t.toLowerCase();
+  if (!t || seen.has(key)) return;
+  seen.add(key);
+  out.push(t);
+}
+
+function inlineText(inlines: readonly Inline[]): string {
+  let out = "";
+  for (const i of inlines) {
+    switch (i.k) {
+      case "plain":
+      case "code":
+      case "verbatim":
+        out += i.text;
+        break;
+      case "emphasis":
+      case "subscript":
+      case "superscript":
+        out += inlineText(i.children);
+        break;
+      case "tag":
+        out += inlineText(i.children);
+        break;
+      case "link":
+        out += i.label && i.label.length ? inlineText(i.label) : i.url.type === "complex" ? i.url.link ?? "" : i.url.v;
+        break;
+      case "nested_link":
+        out += i.content;
+        break;
+      case "target":
+        out += i.text;
+        break;
+      case "entity":
+        out += i.unicode;
+        break;
+      case "latex":
+        out += i.body;
+        break;
+      case "hiccup":
+        out += i.v;
+        break;
+    }
+  }
+  return out;
+}
+
+function collectTagsFromInline(inlines: readonly Inline[], out: string[], seen: Set<string>): void {
+  for (const i of inlines) {
+    if (i.k === "tag") {
+      pushTag(out, seen, inlineText(i.children));
+      collectTagsFromInline(i.children, out, seen);
+    } else if (i.k === "emphasis" || i.k === "subscript" || i.k === "superscript") {
+      collectTagsFromInline(i.children, out, seen);
+    } else if (i.k === "link" && i.label) {
+      collectTagsFromInline(i.label, out, seen);
+    }
+  }
+}
+
+function tagsOf(blocks: readonly Block[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const b of blocks) {
+    if ((b.kind === "bullet" || b.kind === "heading") && b.htags) {
+      for (const tag of b.htags) pushTag(out, seen, tag);
+    }
+    if ("inline" in b && Array.isArray(b.inline)) collectTagsFromInline(b.inline, out, seen);
+  }
+  return out;
 }
 
 /** A block whose inline content is ONLY a SCHEDULED/DEADLINE planning timestamp

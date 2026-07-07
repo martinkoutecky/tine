@@ -138,6 +138,9 @@ export type CommandAction =
   | "today"
   | "query-builder"
   | "page-props"
+  | "sheet-grid"
+  | "sheet-table"
+  | "sheet-board"
   | "priority-a"
   | "priority-b"
   | "priority-c";
@@ -172,6 +175,9 @@ export const COMMANDS: Command[] = [
   { label: "Priority C", action: "priority-c", key: "C" },
   { label: "Scheduled", action: "scheduled" },
   { label: "Deadline", action: "deadline" },
+  { label: "Grid", action: "sheet-grid" },
+  { label: "Table", action: "sheet-table" },
+  { label: "Board", action: "sheet-board" },
   { label: "Heading 1", insert: "# " },
   { label: "Heading 2", insert: "## " },
   { label: "Heading 3", insert: "### " },

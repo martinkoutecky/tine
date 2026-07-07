@@ -5,6 +5,7 @@ export type SheetView = "table" | "grid" | "board";
 
 export interface SheetConfig {
   view: SheetView | null;
+  groupBy: string | null;
   header: boolean;
   colWidths: ReadonlyMap<number, number>;
 }
@@ -31,6 +32,7 @@ export function serializeColWidths(widths: ReadonlyMap<number, number>): string 
 
 export function sheetConfig(props: readonly [string, string][]): SheetConfig {
   let view: SheetView | null = null;
+  let groupBy: string | null = null;
   let header = false;
   let colWidths: ReadonlyMap<number, number> = new Map();
 
@@ -40,6 +42,8 @@ export function sheetConfig(props: readonly [string, string][]): SheetConfig {
     if (key === "tine.view") {
       const lower = value.toLowerCase();
       view = VIEWS.has(lower as SheetView) ? (lower as SheetView) : null;
+    } else if (key === "tine.group-by") {
+      groupBy = value || null;
     } else if (key === "tine.header") {
       header = value.toLowerCase() === "true";
     } else if (key === "tine.col-widths") {
@@ -47,7 +51,7 @@ export function sheetConfig(props: readonly [string, string][]): SheetConfig {
     }
   }
 
-  return { view, header, colWidths };
+  return { view, groupBy, header, colWidths };
 }
 
 /** Sheet config straight from a block's raw text, through the ONE block-property

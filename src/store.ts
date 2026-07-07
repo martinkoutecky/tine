@@ -156,6 +156,12 @@ export function blockIsGridView(id: string | undefined): boolean {
   return !!n && sheetConfigFromRaw(n.raw, formatForBlock(id)).view === "grid";
 }
 
+function blockIsOpaqueSheetView(id: string | undefined): boolean {
+  const n = id ? doc.byId[id] : undefined;
+  const view = n ? sheetConfigFromRaw(n.raw, formatForBlock(id)).view : null;
+  return view === "grid" || view === "table" || view === "board";
+}
+
 let idCounter = 0;
 function freshId(): string {
   return `b${Date.now().toString(36)}-${idCounter++}`;
@@ -571,7 +577,7 @@ const visibleData = createRoot(() =>
         index.set(id, order.length);
         order.push(id);
         const n = doc.byId[id];
-        if (n && !n.collapsed && n.children.length && !blockIsGridView(id)) walk(n.children);
+        if (n && !n.collapsed && n.children.length && !blockIsOpaqueSheetView(id)) walk(n.children);
       }
     };
     for (const p of mainPages()) walk(p.roots);
@@ -594,7 +600,7 @@ function pageVisibleOrder(pageName: string): string[] {
     for (const id of ids) {
       order.push(id);
       const n = doc.byId[id];
-      if (n && !n.collapsed && n.children.length && !blockIsGridView(id)) walk(n.children);
+      if (n && !n.collapsed && n.children.length && !blockIsOpaqueSheetView(id)) walk(n.children);
     }
   };
   walk(page.roots);
@@ -1215,17 +1221,38 @@ export function blockProperty(id: string, key: string): string | null {
 }
 
 /** Set (or remove, when value is null) a `key:: value` block property. Property
- *  lines live after the block's content lines, matching Logseq. */
+ *  lines live immediately after the first line, before body text, matching OG's
+ *  block-property placement and keeping every property writer on one path. */
 export function setBlockProperty(id: string, key: string, value: string | null) {
   const node = doc.byId[id];
   if (!node) return;
   pushUndo(`prop:${id}:${key}`, [node.page]);
-  const lines = node.raw.split("\n").filter((l) => {
-    const m = PROP_LINE.exec(l);
-    return !(m && m[1] === key);
-  });
-  if (value !== null) lines.push(`${key}:: ${value}`);
-  setDoc("byId", id, "raw", lines.join("\n"));
+  const lines = node.raw.split("\n");
+  const first = lines[0] ?? "";
+  // Canonical block shape: first line, planning lines, property lines, body.
+  // Scan ONLY the canonical head region (stop at the first body line) plus the
+  // legacy trailing property block (the old writer appended at the end), so a
+  // `key::`-looking line inside body text or a code fence is never touched or
+  // reordered — this regex is fence-unaware and must not reach into the body.
+  const PLANNING_LINE = /^\s*(SCHEDULED|DEADLINE):\s*</;
+  let i = 1;
+  while (i < lines.length && PLANNING_LINE.test(lines[i])) i++;
+  const planningEnd = i;
+  while (i < lines.length && PROP_LINE.test(lines[i])) i++;
+  const propsEnd = i;
+  let j = lines.length;
+  while (j > propsEnd && PROP_LINE.test(lines[j - 1] ?? "")) j--;
+  const notKey = (l: string) => PROP_LINE.exec(l)?.[1] !== key;
+  const props = lines.slice(planningEnd, propsEnd).filter(notKey);
+  if (value !== null) props.push(`${key}:: ${value}`);
+  const out = [
+    first,
+    ...lines.slice(1, planningEnd), // planning stays before properties (OG order)
+    ...props,
+    ...lines.slice(propsEnd, j), // body untouched
+    ...lines.slice(j).filter(notKey), // legacy trailing props: only the key is removed
+  ];
+  setDoc("byId", id, "raw", out.join("\n"));
   markDirty(node.page);
 }
 

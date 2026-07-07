@@ -104,6 +104,9 @@ pub struct BlockProjection {
     /// inside inline code is NOT a Timestamp, so never badged). `None` otherwise.
     pub scheduled: Option<String>,
     pub deadline: Option<String>,
+    /// Inline `#tag` / org headline tags, first-seen and de-duplicated. Page refs
+    /// stay separate in `refs_page`; this is only the tag field.
+    pub tags: Vec<String>,
 }
 
 impl BlockProjection {
@@ -174,6 +177,7 @@ impl DocBlock {
             let proj = crate::render::parse_projection(&self.raw, self.is_org);
             let (marker, priority, heading_level, properties) = header_facets(&proj.blocks);
             let (scheduled, deadline) = planning_dates(&proj.blocks, &self.raw);
+            let tags = tags_from_blocks(&proj.blocks);
             let visible = visible_minus_properties(&self.raw, &proj.blocks);
             let visible_lower = visible.to_lowercase();
             let refs_page = proj.refs.page;
@@ -193,6 +197,7 @@ impl DocBlock {
                 properties,
                 scheduled,
                 deadline,
+                tags,
             }
         })
     }
@@ -245,6 +250,104 @@ impl DocBlock {
     pub fn deadline(&self) -> Option<&str> {
         self.projection().deadline.as_deref()
     }
+
+    /// Inline `#tag` / org headline tags off the same lsdoc projection as the
+    /// other facets.
+    pub fn tags(&self) -> Vec<String> {
+        self.projection().tags.clone()
+    }
+}
+
+fn push_tag(out: &mut Vec<String>, seen: &mut std::collections::HashSet<String>, tag: String) {
+    let tag = tag.trim().to_string();
+    if tag.is_empty() {
+        return;
+    }
+    let key = tag.to_lowercase();
+    if seen.insert(key) {
+        out.push(tag);
+    }
+}
+
+fn tag_text(inlines: &[lsdoc::ast::Inline], out: &mut String) {
+    use lsdoc::ast::{Inline, Url};
+    for i in inlines {
+        match i {
+            Inline::Plain { text, .. }
+            | Inline::Code { text, .. }
+            | Inline::Verbatim { text, .. } => out.push_str(text),
+            Inline::Emphasis { children, .. }
+            | Inline::Subscript { children, .. }
+            | Inline::Superscript { children, .. }
+            | Inline::Tag { children, .. } => tag_text(children, out),
+            Inline::Link { url, label, .. } => {
+                if label.is_empty() {
+                    match url {
+                        Url::PageRef { v }
+                        | Url::BlockRef { v }
+                        | Url::Search { v }
+                        | Url::File { v }
+                        | Url::EmbedData { v } => out.push_str(v),
+                        Url::Complex { link, .. } => {
+                            if let Some(link) = link {
+                                out.push_str(link);
+                            }
+                        }
+                    }
+                } else {
+                    tag_text(label, out);
+                }
+            }
+            Inline::NestedLink { content, .. } => out.push_str(content),
+            Inline::Target { text, .. } => out.push_str(text),
+            Inline::Entity { unicode, .. } => out.push_str(unicode),
+            Inline::Latex { body, .. } => out.push_str(body),
+            Inline::Hiccup { v, .. } => out.push_str(v),
+            _ => {}
+        }
+    }
+}
+
+fn collect_tags_from_inline(
+    inlines: &[lsdoc::ast::Inline],
+    out: &mut Vec<String>,
+    seen: &mut std::collections::HashSet<String>,
+) {
+    use lsdoc::ast::Inline;
+    for i in inlines {
+        match i {
+            Inline::Tag { children, .. } => {
+                let mut text = String::new();
+                tag_text(children, &mut text);
+                push_tag(out, seen, text);
+                collect_tags_from_inline(children, out, seen);
+            }
+            Inline::Emphasis { children, .. }
+            | Inline::Subscript { children, .. }
+            | Inline::Superscript { children, .. } => collect_tags_from_inline(children, out, seen),
+            Inline::Link { label, .. } => collect_tags_from_inline(label, out, seen),
+            _ => {}
+        }
+    }
+}
+
+fn tags_from_blocks(blocks: &[lsdoc::ast::Block]) -> Vec<String> {
+    use lsdoc::ast::Block;
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for b in blocks {
+        match b {
+            Block::Bullet { htags, inline, .. } | Block::Heading { htags, inline, .. } => {
+                for tag in htags {
+                    push_tag(&mut out, &mut seen, tag.clone());
+                }
+                collect_tags_from_inline(inline, &mut out, &mut seen);
+            }
+            Block::Paragraph { inline, .. } => collect_tags_from_inline(inline, &mut out, &mut seen),
+            _ => {}
+        }
+    }
+    out
 }
 
 /// Block-header facets read off lsdoc's parsed blocks — the single source of truth

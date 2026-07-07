@@ -2,7 +2,7 @@ import { For, Show, Switch, Match, createMemo, createResource, createSignal, typ
 import { backend } from "../backend";
 import { openPage, openPageInNewTab } from "../router";
 import { openPageInSidebar, openPageContextMenu, dataRev, graphEpoch } from "../ui";
-import { setRaw, doc, formatForPage } from "../store";
+import { setRaw, doc, formatForPage, formatForBlock } from "../store";
 import { resolveBlockBatched } from "../resolveBatch";
 import { LiveRefGroup } from "./LiveRefGroup";
 import { QueryBuilder } from "./QueryBuilder";
@@ -10,7 +10,11 @@ import { parseQuery, type Clause } from "../editor/queryBuilder";
 import { foldAggregate, groupRows } from "../editor/queryAggregate";
 import { quoteEdnString, unquoteEdnString, splitTrailingMap, queryMacroExtents } from "../editor/edn";
 import { visibleBody } from "../render/block";
+import { facetsOf } from "../render/facets";
+import { sheetConfig } from "../sheet/config";
 import { InlineText } from "../render/inline";
+import { SheetTable } from "./SheetTable";
+import { SheetBoard } from "./SheetBoard";
 import type { PageKind, RefGroup } from "../types";
 
 const ADVANCED_RE = /\[\s*:find|:where|:find/;
@@ -85,6 +89,11 @@ export function QueryMacro(props: {
   // display defaults.
   const parsed = createMemo(() => splitQuery(arg()));
   const form = () => parsed().form;
+  const sheet = createMemo(() => {
+    if (!props.blockId || !doc.byId[props.blockId]) return null;
+    return sheetConfig(facetsOf(doc.byId[props.blockId].raw, formatForBlock(props.blockId)).properties);
+  });
+  const sheetFace = () => sheet()?.view === "table" || sheet()?.view === "board";
 
   // Rewrite just THIS {{query ...}} macro inside the owning block, preserving the
   // front-matter options and surrounding property lines (id::/collapsed::). The
@@ -269,6 +278,10 @@ export function QueryMacro(props: {
               </Show>
             </div>
           </Show>
+          <Show
+            when={sheetFace()}
+            fallback={
+              <>
           <div class="query-header">
             <span
               class="query-collapse"
@@ -458,6 +471,20 @@ export function QueryMacro(props: {
               </table>
             </Show>
           </Show>
+          </Show>
+              </>
+            }
+          >
+            <Show when={groups() && groups()!.length > 0} fallback={<div class="query-empty">No results</div>}>
+              <Switch>
+                <Match when={sheet()?.view === "table" && props.blockId}>
+                  <SheetTable ownerId={props.blockId!} rowSource="query" groups={groups() ?? []} />
+                </Match>
+                <Match when={sheet()?.view === "board" && props.blockId}>
+                  <SheetBoard ownerId={props.blockId!} rowSource="query" groupBy={sheet()?.groupBy} groups={groups() ?? []} />
+                </Match>
+              </Switch>
+            </Show>
           </Show>
         </Match>
       </Switch>

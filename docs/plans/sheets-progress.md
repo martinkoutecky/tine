@@ -121,7 +121,30 @@ to `~/research/tine`. Martin is unavailable for testing.
         doesn't copy children. Verified: npm test 47/442 + 16/167 green, tsc,
         e2e ALL PASS, range shot eyeballed.
       **PHASE 2 COMPLETE — the grid face is fully usable.**
-- [ ] **Phase 3 — field-keyed table + query rowSource + task kanban** (showcase)
+- [x] **Phase 3 — field-keyed table + query rowSource + task kanban** — DONE
+      Jul 7 2026 (codex + 2 orchestrator fixes). `src/sheet/fields.ts` = the
+      Field abstraction (state/priority/scheduled/deadline/tags/page/prop:<k>),
+      reads facets, writes route through marker (`setMarker` added beside
+      `cycleMarker`) / planning / `setBlockProperty`; tags+page read-only v1.
+      `SheetTable` (CSS Grid, row-title col, field columns, view-only sort,
+      state/priority click-cycle, prop inline input, children-only column-add
+      per §3.8) + `SheetBoard` (own grouped renderer, NOT the matrix; state/
+      priority/prop axes + `(none)`; card counts; facet-chip card faces;
+      pointer drag + Ctrl+←/→ card-move = single-block field write). Query
+      source: both faces branch inside QueryMacro reusing its `groups()`
+      resource; unloaded rows render DTO facets read-only until the page loads.
+      Rust: `tags` facet added to BlockProjection/DTO off the one lsdoc
+      projection (ADR 0009 pattern). Slash commands /grid /table /board.
+      **Orchestrator fixes:** (1) codex's `setBlockProperty` rewrite hoisted
+      ALL property-looking lines from anywhere in the body to the head —
+      fence-unaware reordering = data hazard; rewrote to scan ONLY the
+      canonical head region (planning→props) + the legacy trailing prop block,
+      never the body; regression tests pin fence safety, OG line order
+      (planning before props), and legacy-tail cleanup. (2) mock's tag regex
+      leaked `[#A]` priority as a `#A` tag (screenshot caught it; the real
+      lsdoc extractor verified clean by probe) — lookbehind fix. Verified:
+      npm 48+18 files green, tsc, cargo 270 (incl. new md+org table/board
+      round-trip fixtures), table+board shots eyeballed, e2e ALL PASS.
 - [ ] **Phase 4 — Hierarchify/Flatten + board + aggregates**
 - [ ] **Phase 5 — recursion + colors + polish**
 

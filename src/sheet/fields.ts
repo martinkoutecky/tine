@@ -1,0 +1,200 @@
+import { doc, formatForBlock, setRaw, setBlockProperty, setSchedule } from "../store";
+import { facetsOf, type Facets } from "../render/facets";
+import { isRenderHiddenProp } from "../render/block";
+import { leadingMarker, nextMarker, setMarker } from "../editor/marker";
+import { cycleMarkerSmart } from "../editor/repeat";
+import { MARKERS } from "../markers";
+import { MARKER_RE } from "../markers";
+import { workflow, timetrackingEnabled, logbookWithSecondSupport } from "../ui";
+
+export type FieldId =
+  | "state"
+  | "priority"
+  | "scheduled"
+  | "deadline"
+  | "tags"
+  | "page"
+  | `prop:${string}`;
+
+export interface FieldValue {
+  text: string;
+  raw?: string;
+}
+
+export function isFieldId(value: string): value is FieldId {
+  return (
+    value === "state" ||
+    value === "priority" ||
+    value === "scheduled" ||
+    value === "deadline" ||
+    value === "tags" ||
+    value === "page" ||
+    value.startsWith("prop:")
+  );
+}
+
+function facetsForBlock(id: string): Facets | null {
+  const n = doc.byId[id];
+  return n ? facetsOf(n.raw, formatForBlock(id)) : null;
+}
+
+export function fieldIdsForBlocks(ids: readonly string[], opts: { includePage?: boolean } = {}): FieldId[] {
+  const out: FieldId[] = [];
+  const props: FieldId[] = [];
+  const propSeen = new Set<string>();
+  let hasState = false;
+  let hasPriority = false;
+  let hasScheduled = false;
+  let hasDeadline = false;
+  let hasTags = false;
+
+  for (const id of ids) {
+    const f = facetsForBlock(id);
+    if (!f) continue;
+    hasState ||= !!f.marker;
+    hasPriority ||= !!f.priority;
+    hasScheduled ||= !!f.scheduled;
+    hasDeadline ||= !!f.deadline;
+    hasTags ||= f.tags.length > 0;
+    for (const [key] of f.properties) {
+      if (isRenderHiddenProp(key)) continue;
+      const field: FieldId = `prop:${key}`;
+      if (!propSeen.has(field)) {
+        propSeen.add(field);
+        props.push(field);
+      }
+    }
+  }
+
+  if (hasState) out.push("state");
+  if (hasPriority) out.push("priority");
+  if (hasScheduled) out.push("scheduled");
+  if (hasDeadline) out.push("deadline");
+  if (hasTags) out.push("tags");
+  out.push(...props);
+  if (opts.includePage) out.push("page");
+  return out;
+}
+
+export function fieldLabel(field: FieldId): string {
+  if (field.startsWith("prop:")) return field.slice(5);
+  if (field === "state") return "State";
+  if (field === "priority") return "Priority";
+  if (field === "scheduled") return "Scheduled";
+  if (field === "deadline") return "Deadline";
+  if (field === "tags") return "Tags";
+  return "Page";
+}
+
+export function readField(id: string, field: FieldId): FieldValue | null {
+  const n = doc.byId[id];
+  const f = facetsForBlock(id);
+  if (!n || !f) return null;
+  switch (field) {
+    case "state":
+      return f.marker ? { text: f.marker, raw: f.marker } : null;
+    case "priority":
+      return f.priority ? { text: `[#${f.priority}]`, raw: f.priority } : null;
+    case "scheduled":
+      return f.scheduled ? { text: f.scheduled, raw: f.scheduled } : null;
+    case "deadline":
+      return f.deadline ? { text: f.deadline, raw: f.deadline } : null;
+    case "tags":
+      return f.tags.length ? { text: f.tags.map((t) => `#${t}`).join(" "), raw: f.tags.join(" ") } : null;
+    case "page":
+      return { text: n.page, raw: n.page };
+    default: {
+      const key = field.slice(5);
+      const found = f.properties.find(([k]) => k === key);
+      return found ? { text: found[1], raw: found[1] } : null;
+    }
+  }
+}
+
+function parseDate(value: string): { y: number; m: number; d: number } | null {
+  const m = /^\s*(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  if (!m) return null;
+  return { y: Number(m[1]), m: Number(m[2]) - 1, d: Number(m[3]) };
+}
+
+export function writeField(id: string, field: FieldId, value: string): boolean {
+  const n = doc.byId[id];
+  if (!n) return false;
+  const trimmed = value.trim();
+
+  if (field === "state") {
+    const target = trimmed && MARKERS.includes(trimmed as (typeof MARKERS)[number]) ? trimmed : null;
+    const cur = leadingMarker(n.raw);
+    let raw: string;
+    if (target && target === nextMarker(cur, workflow())) {
+      raw = cycleMarkerSmart(n.raw, workflow(), {
+        format: formatForBlock(id),
+        enabled: timetrackingEnabled(),
+        withSeconds: logbookWithSecondSupport(),
+      }).raw;
+    } else {
+      raw = setMarker(n.raw, target);
+    }
+    if (raw !== n.raw) setRaw(id, raw);
+    return true;
+  }
+
+  if (field === "priority") {
+    setRaw(id, setPriorityRaw(n.raw, trimmed === "A" || trimmed === "B" || trimmed === "C" ? trimmed : null), {
+      timetracking: false,
+    });
+    return true;
+  }
+
+  if (field === "scheduled" || field === "deadline") {
+    const date = trimmed ? parseDate(trimmed) : null;
+    if (trimmed && !date) return false;
+    setSchedule(id, field, date);
+    return true;
+  }
+
+  if (field.startsWith("prop:")) {
+    setBlockProperty(id, field.slice(5), trimmed ? trimmed : null);
+    return true;
+  }
+
+  return false;
+}
+
+export function cycleField(id: string, field: "state" | "priority"): boolean {
+  const n = doc.byId[id];
+  if (!n) return false;
+  if (field === "state") {
+    const raw = cycleMarkerSmart(n.raw, workflow(), {
+      format: formatForBlock(id),
+      enabled: timetrackingEnabled(),
+      withSeconds: logbookWithSecondSupport(),
+    }).raw;
+    setRaw(id, raw, { timetracking: false });
+    return true;
+  }
+  const cur = facetsForBlock(id)?.priority ?? null;
+  const next = cur === "A" ? "B" : cur === "B" ? "C" : cur === "C" ? null : "A";
+  return writeField(id, "priority", next ?? "");
+}
+
+export function groupKeyForBlock(id: string, field: FieldId): string | null {
+  const v = readField(id, field);
+  if (!v) return null;
+  if (field === "priority" || field === "state") return v.raw ?? v.text;
+  if (field.startsWith("prop:")) return v.raw ?? v.text;
+  return v.text || null;
+}
+
+function setPriorityRaw(raw: string, level: "A" | "B" | "C" | null): string {
+  const lines = raw.split("\n");
+  const first = lines[0] ?? "";
+  const m = MARKER_RE.exec(first);
+  const markerEnd = m ? m[0].length : 0;
+  const head = first.slice(0, markerEnd);
+  let rest = first.slice(markerEnd).replace(/^\s+/, "");
+  rest = rest.replace(/^\[#[ABC]\]\s*/, "");
+  const prefix = head ? `${head} ` : "";
+  lines[0] = level ? (rest ? `${prefix}[#${level}] ${rest}` : `${prefix}[#${level}]`) : `${prefix}${rest}`;
+  return lines.join("\n");
+}

@@ -36,6 +36,33 @@ function leadingMarker(raw: string): string | null {
   const m = MARKER_RE.exec(raw);
   return m ? m[1] : null;
 }
+function priorityOf(raw: string): string | undefined {
+  const m = /(?:^|\s)\[#([ABC])\]/.exec(raw.split("\n", 1)[0] ?? "");
+  return m?.[1];
+}
+function planningOf(raw: string, tag: "SCHEDULED" | "DEADLINE"): string | undefined {
+  const m = new RegExp(`^${tag}:\\s*<([^>]+)>`, "m").exec(raw);
+  return m?.[1];
+}
+function tagsOf(raw: string): string[] {
+  const out: string[] = [];
+  // (?<!\[) keeps the [#A] priority token from leaking a fake #A tag.
+  const re = /#\[\[([^\]]+)\]\]|(?<!\[)#([\w/_.-]+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(raw))) {
+    const tag = (m[1] ?? m[2]).trim();
+    if (tag && !out.some((t) => t.toLowerCase() === tag.toLowerCase())) out.push(tag);
+  }
+  return out;
+}
+function propertyLines(raw: string): [string, string][] {
+  const out: [string, string][] = [];
+  for (const line of raw.split("\n")) {
+    const m = /^([A-Za-z0-9_./-]+):: ?(.*)$/.exec(line.trim());
+    if (m) out.push([m[1], m[2].trim()]);
+  }
+  return out;
+}
 
 let _id = 0;
 const nid = () => `mock-${_id++}`;
@@ -50,7 +77,11 @@ function b(raw: string, children: BlockDto[] = [], collapsed = false, properties
     collapsed,
     children,
     marker: leadingMarker(raw) ?? undefined,
-    properties,
+    priority: priorityOf(raw),
+    scheduled: planningOf(raw, "SCHEDULED"),
+    deadline: planningOf(raw, "DEADLINE"),
+    tags: tagsOf(raw),
+    properties: properties ?? propertyLines(raw),
   };
 }
 
@@ -242,6 +273,15 @@ const NAMED: PageDto[] = [
           ["tine.col-widths", "0=140;1=180;2=220"],
         ]
       ),
+      b(
+        "Field table demo\ntine.view:: table",
+        [
+          b("TODO [#A] Draft spec #sheets\nSCHEDULED: <2026-07-08 Wed>\nowner:: Martin\nestimate:: 2h"),
+          b("DOING Build table renderer #sheets\nowner:: Codex\nestimate:: 5h"),
+          b("DONE Verify screenshots\nDEADLINE: <2026-07-10 Fri>\nowner:: Codex"),
+        ]
+      ),
+      b("{{query (todo TODO DOING DONE)}}\ntine.view:: board\ntine.group-by:: state"),
     ],
   },
   // Namespace + page-icon demo: {{namespace}} renders the nested descendant tree,

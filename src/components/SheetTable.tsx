@@ -1,0 +1,479 @@
+import { For, Show, createMemo, createResource, createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { backend } from "../backend";
+import { doc, ensurePageLoaded, formatForBlock, formatForPage, pageByName } from "../store";
+import { facetsFromDto, facetsOf, type Facets } from "../render/facets";
+import { visibleBody, isRenderHiddenProp } from "../render/block";
+import { InlineText } from "../render/inline";
+import { editorOffsetFromRenderedRange } from "../render/spans";
+import { isBuiltinHidden } from "../editor/properties";
+import { forbidsEditEntry } from "../editor/editTargets";
+import { editingId, editingOwner } from "../editorController";
+import { SheetCellContext, type SheetCellCtx } from "../sheet/context";
+import {
+  cellOwner,
+  cellSel,
+  cellSurfaceKey,
+  registerSheetViewAdapter,
+  setCellSel,
+  startCellEditing,
+  type CellSel,
+} from "../sheet/selection";
+import {
+  cycleField,
+  fieldIdsForBlocks,
+  fieldLabel,
+  readField,
+  writeField,
+  type FieldId,
+  type FieldValue,
+} from "../sheet/fields";
+import type { BlockDto, RefGroup } from "../types";
+import { Editor, SurfaceContext } from "./Block";
+
+interface RowRecord {
+  id: string;
+  page: string;
+  dto?: BlockDto;
+}
+
+type SortState = { col: number; dir: 1 | -1 } | null;
+
+export function SheetTable(props: {
+  ownerId: string;
+  rowSource: "children" | "query";
+  groups?: readonly RefGroup[];
+}): JSX.Element {
+  const [sort, setSort] = createSignal<SortState>(null);
+  const [extraFields, setExtraFields] = createSignal<FieldId[]>([]);
+  const [addingColumn, setAddingColumn] = createSignal(false);
+  const [editingProp, setEditingProp] = createSignal<{ rowId: string; field: FieldId; initial: string } | null>(null);
+
+  const queryPages = createMemo(() => {
+    const map = new Map<string, RefGroup>();
+    for (const group of props.groups ?? []) map.set(`${group.kind}\0${group.page}`, group);
+    return [...map.values()];
+  });
+  const [pagesReady] = createResource(
+    () => (props.rowSource === "query" ? queryPages().map((g) => `${g.kind}:${g.page}`).join("\0") : null),
+    async () => {
+      await Promise.all(
+        queryPages().map(async (g) => {
+          if (pageByName(g.page)) return;
+          const dto = await backend().getPage(g.page, g.kind);
+          if (dto) ensurePageLoaded(dto);
+        })
+      );
+      return true;
+    }
+  );
+  void pagesReady;
+
+  const rows = createMemo<RowRecord[]>(() => {
+    if (props.rowSource === "children") {
+      return (doc.byId[props.ownerId]?.children ?? []).map((id) => ({
+        id,
+        page: doc.byId[id]?.page ?? doc.byId[props.ownerId]?.page ?? "",
+      }));
+    }
+    return (props.groups ?? []).flatMap((g) => g.blocks.map((b) => ({ id: b.id, page: g.page, dto: b })));
+  });
+
+  const fields = createMemo<FieldId[]>(() => {
+    const loadedIds = rows().filter((r) => doc.byId[r.id]).map((r) => r.id);
+    const observed = loadedIds.length === rows().length
+      ? fieldIdsForBlocks(loadedIds, { includePage: props.rowSource === "query" })
+      : fieldIdsForRecords(rows(), props.rowSource === "query");
+    const seen = new Set(observed);
+    const extra = extraFields().filter((f) => !seen.has(f));
+    return [...observed, ...extra];
+  });
+
+  const columns = createMemo(() => ["title" as const, ...fields()]);
+
+  const sortedRows = createMemo(() => {
+    const s = sort();
+    const rs = rows();
+    if (!s) return rs;
+    const col = columns()[s.col];
+    const value = (r: RowRecord) =>
+      col === "title" ? rowTitle(r) : fieldValue(r, col)?.text ?? "";
+    return [...rs].sort((a, b) => value(a).localeCompare(value(b)) * s.dir);
+  });
+
+  const sortHeader = (col: number) => {
+    setSort((cur) => {
+      if (!cur || cur.col !== col) return { col, dir: 1 };
+      if (cur.dir === 1) return { col, dir: -1 };
+      return null;
+    });
+  };
+  const sortArrow = (col: number) => {
+    const s = sort();
+    return s?.col === col ? (s.dir > 0 ? " ▲" : " ▼") : "";
+  };
+
+  const selected = (row: number, col: number) => {
+    const sel = cellSel();
+    if (!sel || sel.gridId !== props.ownerId) return false;
+    if (sel.kind === "cell") return sel.row === row && sel.col === col;
+    if (sel.kind === "range") return sel.focus.row === row && sel.focus.col === col;
+    return false;
+  };
+
+  const openPropInput = (rowId: string, field: FieldId, initial?: string) => {
+    setEditingProp({ rowId, field, initial: initial ?? readField(rowId, field)?.text ?? "" });
+  };
+
+  const activateCell = (sel: CellSel): boolean => {
+    const row = sortedRows()[sel.row];
+    const col = columns()[sel.col];
+    if (!row || !col) return true;
+    if (col === "title") return false;
+    if (!doc.byId[row.id]) return true;
+    if (col === "state") return cycleField(row.id, "state");
+    if (col === "priority") return cycleField(row.id, "priority");
+    if (col.startsWith("prop:")) {
+      openPropInput(row.id, col);
+      return true;
+    }
+    return true;
+  };
+
+  const overtype = (sel: CellSel, text: string): boolean => {
+    const row = sortedRows()[sel.row];
+    const col = columns()[sel.col];
+    if (!row || !col) return true;
+    if (col === "title") return false;
+    if (col.startsWith("prop:") && doc.byId[row.id]) openPropInput(row.id, col, text);
+    return true;
+  };
+
+  onMount(() => {
+    const dispose = registerSheetViewAdapter(props.ownerId, {
+      bounds: () => ({ rows: sortedRows().length, cols: columns().length }),
+      blockIdAt: (row, col) => (columns()[col] === "title" ? sortedRows()[row]?.id ?? null : null),
+      activate: activateCell,
+      overtype,
+    });
+    onCleanup(dispose);
+  });
+
+  const addPropertyColumn = (key: string) => {
+    const clean = key.trim();
+    if (!clean || /[:\s]/.test(clean)) return;
+    const field: FieldId = `prop:${clean}`;
+    setExtraFields((cur) => (cur.includes(field) ? cur : [...cur, field]));
+  };
+
+  return (
+    <Show when={rows().length > 0} fallback={<div class="sheet-table sheet-empty">empty table</div>}>
+      <div
+        class="sheet-table"
+        data-sheet-grid-id={props.ownerId}
+        style={{ "grid-template-columns": `minmax(180px, max-content) repeat(${fields().length}, max-content) ${props.rowSource === "children" ? "34px" : ""}` }}
+      >
+        <div class="sheet-cell sheet-header-cell sheet-title-header" onClick={() => sortHeader(0)}>
+          Block{sortArrow(0)}
+        </div>
+        <For each={fields()}>
+          {(field, i) => (
+            <div class="sheet-cell sheet-header-cell sheet-field-header" onClick={() => sortHeader(i() + 1)}>
+              {fieldLabel(field)}{sortArrow(i() + 1)}
+            </div>
+          )}
+        </For>
+        <Show when={props.rowSource === "children"}>
+          <div class="sheet-cell sheet-header-cell sheet-add-field">
+            <Show
+              when={addingColumn()}
+              fallback={
+                <button
+                  class="sheet-add-field-btn"
+                  title="Add property column"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setAddingColumn(true);
+                  }}
+                >
+                  +
+                </button>
+              }
+            >
+              <input
+                class="sheet-prop-input sheet-add-field-input"
+                autofocus
+                placeholder="property"
+                onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => {
+                  e.stopPropagation();
+                  if (e.key === "Enter") {
+                    addPropertyColumn(e.currentTarget.value);
+                    setAddingColumn(false);
+                  } else if (e.key === "Escape") {
+                    setAddingColumn(false);
+                  }
+                }}
+                onBlur={(e) => {
+                  addPropertyColumn(e.currentTarget.value);
+                  setAddingColumn(false);
+                }}
+              />
+            </Show>
+          </div>
+        </Show>
+        <For each={sortedRows()}>
+          {(row, rowIndex) => (
+            <>
+              <TitleCell
+                ownerId={props.ownerId}
+                row={row}
+                rowIndex={rowIndex()}
+                selected={selected(rowIndex(), 0)}
+              />
+              <For each={fields()}>
+                {(field, fieldIndex) => (
+                  <FieldCell
+                    ownerId={props.ownerId}
+                    row={row}
+                    field={field}
+                    rowIndex={rowIndex()}
+                    colIndex={fieldIndex() + 1}
+                    selected={selected(rowIndex(), fieldIndex() + 1)}
+                    editing={editingProp()?.rowId === row.id && editingProp()?.field === field}
+                    initial={editingProp()?.initial ?? ""}
+                    openPropInput={openPropInput}
+                    closePropInput={() => setEditingProp(null)}
+                  />
+                )}
+              </For>
+              <Show when={props.rowSource === "children"}>
+                <div class="sheet-cell sheet-row-tail" />
+              </Show>
+            </>
+          )}
+        </For>
+      </div>
+    </Show>
+  );
+}
+
+function recordFacets(row: RowRecord): Facets | null {
+  const n = doc.byId[row.id];
+  if (n) return facetsOf(n.raw, formatForBlock(row.id));
+  return row.dto ? facetsFromDto(row.dto) : null;
+}
+
+function fieldIdsForRecords(rows: readonly RowRecord[], includePage: boolean): FieldId[] {
+  const out: FieldId[] = [];
+  const props: FieldId[] = [];
+  const seenProps = new Set<string>();
+  let hasState = false;
+  let hasPriority = false;
+  let hasScheduled = false;
+  let hasDeadline = false;
+  let hasTags = false;
+  for (const r of rows) {
+    const f = recordFacets(r);
+    if (!f) continue;
+    hasState ||= !!f.marker;
+    hasPriority ||= !!f.priority;
+    hasScheduled ||= !!f.scheduled;
+    hasDeadline ||= !!f.deadline;
+    hasTags ||= f.tags.length > 0;
+    for (const [key] of f.properties) {
+      if (isRenderHiddenProp(key)) continue;
+      const field: FieldId = `prop:${key}`;
+      if (!seenProps.has(field)) {
+        seenProps.add(field);
+        props.push(field);
+      }
+    }
+  }
+  if (hasState) out.push("state");
+  if (hasPriority) out.push("priority");
+  if (hasScheduled) out.push("scheduled");
+  if (hasDeadline) out.push("deadline");
+  if (hasTags) out.push("tags");
+  out.push(...props);
+  if (includePage) out.push("page");
+  return out;
+}
+
+function fieldValue(row: RowRecord, field: FieldId): FieldValue | null {
+  if (doc.byId[row.id]) return readField(row.id, field);
+  const f = recordFacets(row);
+  if (!f) return null;
+  switch (field) {
+    case "state":
+      return f.marker ? { text: f.marker, raw: f.marker } : null;
+    case "priority":
+      return f.priority ? { text: `[#${f.priority}]`, raw: f.priority } : null;
+    case "scheduled":
+      return f.scheduled ? { text: f.scheduled, raw: f.scheduled } : null;
+    case "deadline":
+      return f.deadline ? { text: f.deadline, raw: f.deadline } : null;
+    case "tags":
+      return f.tags.length ? { text: f.tags.map((t) => `#${t}`).join(" "), raw: f.tags.join(" ") } : null;
+    case "page":
+      return { text: row.page, raw: row.page };
+    default: {
+      const key = field.slice(5);
+      const prop = f.properties.find(([k]) => k === key);
+      return prop ? { text: prop[1], raw: prop[1] } : null;
+    }
+  }
+}
+
+function rowRaw(row: RowRecord): string {
+  return doc.byId[row.id]?.raw ?? row.dto?.raw ?? "";
+}
+
+function rowTitle(row: RowRecord): string {
+  return visibleBody(rowRaw(row)).join(" ");
+}
+
+function clickOffset(e: MouseEvent, contentRef: HTMLDivElement | undefined, raw: string): number | null {
+  if (!contentRef) return null;
+  const d = document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null };
+  const range = d.caretRangeFromPoint?.(e.clientX, e.clientY);
+  if (!range) return null;
+  return editorOffsetFromRenderedRange(contentRef, range, raw, isBuiltinHidden);
+}
+
+function TitleCell(props: { ownerId: string; row: RowRecord; rowIndex: number; selected: boolean }): JSX.Element {
+  const cell = (): SheetCellCtx => ({ gridId: props.ownerId, row: props.rowIndex, col: 0 });
+  let contentRef: HTMLDivElement | undefined;
+  const editing = () => editingId() === props.row.id && editingOwner() === cellOwner(cell());
+  const fmt = () => (doc.byId[props.row.id] ? formatForBlock(props.row.id) : formatForPage(props.row.page));
+  const raw = () => rowRaw(props.row);
+
+  const onMouseDown = (e: MouseEvent) => {
+    if (e.button !== 0 || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (forbidsEditEntry(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (!doc.byId[props.row.id]) {
+      setCellSel(cell());
+      return;
+    }
+    startCellEditing(cell(), clickOffset(e, contentRef, raw()) ?? undefined);
+  };
+
+  return (
+    <div
+      class="sheet-cell sheet-title-cell"
+      classList={{ "sheet-cell-selected": props.selected }}
+      data-sheet-grid-id={props.ownerId}
+      data-block-id={props.row.id}
+      data-row={props.rowIndex}
+      data-col={0}
+      onMouseDown={onMouseDown}
+    >
+      <div class="sheet-cell-body" ref={contentRef}>
+        <Show
+          when={editing()}
+          fallback={<InlineText text={rowTitle(props.row)} format={fmt()} />}
+        >
+          <SheetCellContext.Provider value={cell()}>
+            <SurfaceContext.Provider value={cellSurfaceKey(props.ownerId)}>
+              <Editor id={props.row.id} />
+            </SurfaceContext.Provider>
+          </SheetCellContext.Provider>
+        </Show>
+      </div>
+    </div>
+  );
+}
+
+function FieldCell(props: {
+  ownerId: string;
+  row: RowRecord;
+  field: FieldId;
+  rowIndex: number;
+  colIndex: number;
+  selected: boolean;
+  editing: boolean;
+  initial: string;
+  openPropInput: (rowId: string, field: FieldId) => void;
+  closePropInput: () => void;
+}): JSX.Element {
+  const value = () => fieldValue(props.row, props.field);
+  const editable = () => !!doc.byId[props.row.id];
+  const select = () => setCellSel({ gridId: props.ownerId, row: props.rowIndex, col: props.colIndex });
+  const commit = (value: string) => {
+    if (editable()) writeField(props.row.id, props.field, value);
+    props.closePropInput();
+  };
+
+  const onMouseDown = (e: MouseEvent) => {
+    if (e.button !== 0 || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+    e.preventDefault();
+    e.stopPropagation();
+    select();
+    if (!editable()) return;
+    if (props.field === "state") cycleField(props.row.id, "state");
+    else if (props.field === "priority") cycleField(props.row.id, "priority");
+    else if (props.field.startsWith("prop:")) props.openPropInput(props.row.id, props.field);
+  };
+
+  return (
+    <div
+      class="sheet-cell sheet-field-cell"
+      classList={{
+        "sheet-cell-selected": props.selected,
+        "sheet-readonly-cell": !editable() || props.field === "tags" || props.field === "page" || props.field === "scheduled" || props.field === "deadline",
+      }}
+      data-sheet-grid-id={props.ownerId}
+      data-row={props.rowIndex}
+      data-col={props.colIndex}
+      onMouseDown={onMouseDown}
+    >
+      <Show
+        when={props.editing && props.field.startsWith("prop:")}
+        fallback={<FieldValueView field={props.field} value={value()} page={props.row.page} />}
+      >
+        <input
+          class="sheet-prop-input"
+          autofocus
+          value={props.initial}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => {
+            e.stopPropagation();
+            if (e.key === "Enter") commit(e.currentTarget.value);
+            else if (e.key === "Escape") props.closePropInput();
+          }}
+          onBlur={(e) => commit(e.currentTarget.value)}
+        />
+      </Show>
+    </div>
+  );
+}
+
+function FieldValueView(props: { field: FieldId; value: FieldValue | null; page: string }): JSX.Element {
+  const text = () => props.value?.text ?? "";
+  return (
+    <Show when={props.value}>
+      <Show when={props.field === "state"}>
+        <span class={`block-marker marker-${(props.value?.raw ?? "").toLowerCase()}`}>{props.value?.text}</span>
+      </Show>
+      <Show when={props.field === "priority"}>
+        <span class={`block-priority priority-${props.value?.raw}`}>{props.value?.text}</span>
+      </Show>
+      <Show when={props.field === "scheduled"}>
+        <span class="date-chip scheduled">{text()}</span>
+      </Show>
+      <Show when={props.field === "deadline"}>
+        <span class="date-chip deadline">{text()}</span>
+      </Show>
+      <Show when={props.field === "tags"}>
+        <For each={(props.value?.raw ?? "").split(/\s+/).filter(Boolean)}>
+          {(tag) => <span class="sheet-tag-chip">#{tag}</span>}
+        </For>
+      </Show>
+      <Show when={props.field !== "state" && props.field !== "priority" && props.field !== "scheduled" && props.field !== "deadline" && props.field !== "tags"}>
+        <InlineText text={text()} format={formatForPage(props.page)} />
+      </Show>
+    </Show>
+  );
+}

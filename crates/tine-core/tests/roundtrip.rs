@@ -223,6 +223,52 @@ fn sheets_org_positional_grid_encoding_round_trips() {
 }
 
 #[test]
+fn sheets_field_table_and_board_query_round_trip() {
+    let input = concat!(
+        "- Sheet phase 3 fixture\n",
+        "\t- Children field table\n",
+        "\t  tine.view:: table\n",
+        "\t\t- TODO [#A] Draft field layer #sheets\n",
+        "\t\t  owner:: Martin\n",
+        "\t\t- DOING Implement renderer\n",
+        "\t\t  owner:: Codex\n",
+        "\t- {{query (todo TODO DOING DONE)}}\n",
+        "\t  tine.view:: board\n",
+        "\t  tine.group-by:: state\n",
+    );
+
+    assert_roundtrip(input);
+}
+
+#[test]
+fn sheets_org_field_table_and_board_query_round_trip() {
+    let input = concat!(
+        "* Sheet phase 3 fixture\n",
+        "** Children field table\n",
+        ":PROPERTIES:\n",
+        ":tine.view: table\n",
+        ":END:\n",
+        "*** TODO [#A] Draft field layer :sheets:\n",
+        ":PROPERTIES:\n",
+        ":owner: Martin\n",
+        ":END:\n",
+        "*** DOING Implement renderer\n",
+        ":PROPERTIES:\n",
+        ":owner: Codex\n",
+        ":END:\n",
+        "** {{query (todo TODO DOING DONE)}}\n",
+        ":PROPERTIES:\n",
+        ":tine.view: board\n",
+        ":tine.group-by: state\n",
+        ":END:\n",
+    );
+
+    assert!(org::org_round_trips(input));
+    let out = org::serialize_org(&org::parse_org(input));
+    assert_eq!(out, input, "org sheet phase 3 fixture round-trip mismatch");
+}
+
+#[test]
 fn canonicalize_space_indent_to_tabs() {
     // Space-indented input (e.g. the shui-graph's contents.md uses 4 spaces) is
     // accepted with nesting preserved, and normalized to TABs on output —

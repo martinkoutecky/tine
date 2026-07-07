@@ -64,8 +64,18 @@ interface CellSelectionHooks {
   endActiveEdit: () => void;
 }
 
+export interface SheetViewAdapter {
+  bounds: () => { rows: number; cols: number };
+  blockIdAt?: (row: number, col: number) => string | null;
+  startEditing?: (sel: CellSelInput, offset?: number) => boolean;
+  activate?: (sel: CellSel) => boolean;
+  overtype?: (sel: CellSel, text: string) => boolean;
+  moveWithMod?: (sel: CellSel, dir: CellDirection) => boolean;
+}
+
 const [activeCellSel, writeCellSel] = createRoot(() => createSignal<SheetSel | null>(null));
 const lastByGrid = new Map<string, { row: number; col: number }>();
+const adapters = new Map<string, SheetViewAdapter>();
 
 let hooks: CellSelectionHooks = {
   clearOutlineSelection: clearSelection,
@@ -78,6 +88,17 @@ export function installCellSelectionHooks(next: Partial<CellSelectionHooks>): ()
   return () => {
     hooks = prev;
   };
+}
+
+export function registerSheetViewAdapter(gridId: string, adapter: SheetViewAdapter): () => void {
+  adapters.set(gridId, adapter);
+  return () => {
+    if (adapters.get(gridId) === adapter) adapters.delete(gridId);
+  };
+}
+
+function adapterFor(gridId: string): SheetViewAdapter | null {
+  return adapters.get(gridId) ?? null;
 }
 
 function clearCellSelectionOnly(): void {
@@ -152,6 +173,8 @@ export function matrixForGrid(gridId: string): SheetMatrix {
 }
 
 function boundsForGrid(gridId: string): { rows: number; cols: number } {
+  const adapter = adapterFor(gridId);
+  if (adapter) return adapter.bounds();
   const matrix = matrixForGrid(gridId);
   return { rows: matrix.rows, cols: matrix.rows === 0 ? 0 : matrix.cols };
 }
@@ -162,6 +185,8 @@ export function cellAt(sel: CellSelInput): MatrixCell | null {
 }
 
 export function cellBlockId(sel: CellSelInput): string | null {
+  const adapter = adapterFor(sel.gridId);
+  if (adapter?.blockIdAt) return adapter.blockIdAt(sel.row, sel.col);
   return cellAt(sel)?.blockId ?? null;
 }
 
@@ -197,6 +222,10 @@ function clampCell(gridId: string, wanted: { row: number; col: number }): CellSe
   };
 }
 
+function hasAdapter(gridId: string): boolean {
+  return adapters.has(gridId);
+}
+
 function clampPoint(gridId: string, wanted: SheetPoint): SheetPoint | null {
   const cell = clampCell(gridId, wanted);
   return cell ? { row: cell.row, col: cell.col } : null;
@@ -220,6 +249,8 @@ export function enterGridSelection(gridId: string): boolean {
 }
 
 export function startCellEditing(sel: CellSelInput, offset?: number): boolean {
+  const adapter = adapterFor(sel.gridId);
+  if (adapter?.startEditing) return adapter.startEditing(sel, offset);
   const blockId = cellBlockId(sel);
   if (!blockId) return false;
   const node = doc.byId[blockId];
@@ -304,6 +335,22 @@ export function moveCellSelectionFrom(sel: SheetSel, dir: CellDirection): boolea
 
   const bounds = boundsForGrid(sel.gridId);
   if (bounds.rows <= 0 || bounds.cols <= 0) return false;
+  if (hasAdapter(sel.gridId)) {
+    if (dir === "up") {
+      if (sel.row <= 0) return flowOutVertical(sel, "up");
+      return setClampedCell(sel.gridId, sel.row - 1, sel.col);
+    }
+    if (dir === "down") {
+      if (sel.row >= bounds.rows - 1) return flowOutVertical(sel, "down");
+      return setClampedCell(sel.gridId, sel.row + 1, sel.col);
+    }
+    if (dir === "left") {
+      if (sel.col <= 0) return exitLeft(sel);
+      return setClampedCell(sel.gridId, sel.row, sel.col - 1);
+    }
+    if (sel.col >= bounds.cols - 1) return true;
+    return setClampedCell(sel.gridId, sel.row, sel.col + 1);
+  }
 
   if (dir === "up") {
     if (SEAM_STEPPING) {
@@ -439,6 +486,8 @@ function replaceThroughMountedEditor(sel: CellSelInput, text: string): void {
 }
 
 function overtypeCell(sel: CellSel, text: string): boolean {
+  const adapter = adapterFor(sel.gridId);
+  if (adapter?.overtype) return adapter.overtype(sel, text);
   if (!cellBlockId(sel)) {
     const made = materializeCell(sel.gridId, sel.row, sel.col);
     if (!made) return true;
@@ -575,6 +624,9 @@ export function handleCellSelectionKey(e: KeyboardEvent): boolean {
   if (mod && !e.altKey && !e.shiftKey && (e.key === " " || e.code === "Space")) return selectColumns(sel);
   if (mod && !e.altKey && !e.shiftKey && key === "a") return selectAllGrid(sel.gridId);
   if (mod && !e.altKey && !e.shiftKey && arrowDir && !isSeamSel(sel)) {
+    const cell = focusCell(sel);
+    const adapter = adapterFor(cell.gridId);
+    if (adapter?.moveWithMod) return adapter.moveWithMod(cell, arrowDir as CellDirection);
     const next = moveSheetSelection(sel, arrowDir as SheetMoveDirection);
     if (next) setCellSel(next);
     return true;
@@ -596,7 +648,11 @@ export function handleCellSelectionKey(e: KeyboardEvent): boolean {
   if (plain && isSeamSel(sel) && e.key === "Backspace") return deleteFromSeam(sel, "before");
   if (plain && isSeamSel(sel) && e.key === "Delete") return deleteFromSeam(sel, "after");
   if (plain && (e.key === "Enter" || e.key === "F2")) {
-    if (!isSeamSel(sel)) startCellEditing(focusCell(sel));
+    if (!isSeamSel(sel)) {
+      const cell = focusCell(sel);
+      const adapter = adapterFor(cell.gridId);
+      if (!adapter?.activate?.(cell)) startCellEditing(cell);
+    }
     else editInsertedFromSeam(sel, null);
     return true;
   }

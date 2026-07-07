@@ -44,6 +44,7 @@ import {
   nextVisible,
   orderedListMarker,
   blockProperty,
+  setBlockProperty,
   pageToDto,
   blockSubtreeMarkdown,
   selectionMarkdown,
@@ -1167,5 +1168,50 @@ describe("toggleListItemAtIndex (positional checkbox toggle)", () => {
     load([b]);
     toggleListItemAtIndex(b.id, 0); // "Title" is not a checkbox line
     expect(doc.byId[b.id].raw).toBe("Title\n+ [ ] a");
+  });
+});
+
+describe("setBlockProperty placement & fence safety", () => {
+  it("inserts after the first line, before body text", () => {
+    const b = blk("Title\nbody line");
+    load([b]);
+    setBlockProperty(b.id, "tine.view", "grid");
+    expect(doc.byId[b.id].raw).toBe("Title\ntine.view:: grid\nbody line");
+  });
+
+  it("keeps planning lines before properties (OG order)", () => {
+    const b = blk("TODO task\nSCHEDULED: <2026-07-10 Fri>\nbody");
+    load([b]);
+    setBlockProperty(b.id, "effort", "2h");
+    expect(doc.byId[b.id].raw).toBe("TODO task\nSCHEDULED: <2026-07-10 Fri>\neffort:: 2h\nbody");
+  });
+
+  it("replaces an existing head property in place", () => {
+    const b = blk("Title\na:: 1\nb:: 2\nbody");
+    load([b]);
+    setBlockProperty(b.id, "a", "9");
+    expect(doc.byId[b.id].raw).toBe("Title\nb:: 2\na:: 9\nbody");
+  });
+
+  it("NEVER touches property-looking lines inside a code fence", () => {
+    const raw = "Title\n```\nfence:: not-a-prop\n```\ntail";
+    const b = blk(raw);
+    load([b]);
+    setBlockProperty(b.id, "x", "1");
+    expect(doc.byId[b.id].raw).toBe("Title\nx:: 1\n```\nfence:: not-a-prop\n```\ntail");
+    setBlockProperty(b.id, "fence", "rewrite");
+    // the fenced line is untouched; the new property lands in the head
+    expect(doc.byId[b.id].raw).toBe(
+      "Title\nx:: 1\nfence:: rewrite\n```\nfence:: not-a-prop\n```\ntail"
+    );
+  });
+
+  it("removes a legacy trailing property without disturbing the body", () => {
+    const b = blk("Title\nbody\nold:: legacy");
+    load([b]);
+    setBlockProperty(b.id, "old", "new");
+    expect(doc.byId[b.id].raw).toBe("Title\nold:: new\nbody");
+    setBlockProperty(b.id, "old", null);
+    expect(doc.byId[b.id].raw).toBe("Title\nbody");
   });
 });

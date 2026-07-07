@@ -9,6 +9,8 @@ const OUT = "/tmp/shot-sheets.png";
 const OUT_SEL = "/tmp/shot-sheets-sel.png";
 const OUT_RANGE = "/tmp/shot-sheets-range.png";
 const OUT_SEAM = "/tmp/shot-sheets-seam.png";
+const OUT_TABLE = "/tmp/shot-sheets-table.png";
+const OUT_BOARD = "/tmp/shot-sheets-board.png";
 
 const server = spawn("npx", ["vite", "preview", "--port", String(PORT), "--strictPort"], {
   stdio: "ignore",
@@ -79,7 +81,21 @@ try {
   await sleep(250);
   await page.screenshot({ path: OUT_SEAM, fullPage: true });
 
-  console.log(errors.length ? "ERRORS:\n" + errors.join("\n") : `wrote ${OUT}, ${OUT_SEL}, ${OUT_RANGE}, and ${OUT_SEAM}`);
+  await page.waitForSelector(".sheet-table", { timeout: 3000 });
+  await page.locator(".sheet-table").first().scrollIntoViewIfNeeded();
+  await sleep(250);
+  await page.screenshot({ path: OUT_TABLE, fullPage: true });
+
+  await page.waitForSelector(".sheet-board", { timeout: 3000 });
+  await page.locator(".sheet-board").first().scrollIntoViewIfNeeded();
+  await sleep(250);
+  await page.screenshot({ path: OUT_BOARD, fullPage: true });
+
+  console.log(
+    errors.length
+      ? "ERRORS:\n" + errors.join("\n")
+      : `wrote ${OUT}, ${OUT_SEL}, ${OUT_RANGE}, ${OUT_SEAM}, ${OUT_TABLE}, and ${OUT_BOARD}`
+  );
   await browser.close();
   server.kill("SIGKILL");
   process.exit(errors.length ? 1 : 0);

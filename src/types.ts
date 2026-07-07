@@ -17,6 +17,7 @@ export interface BlockDto {
   heading_level?: number;
   scheduled?: string;
   deadline?: string;
+  tags?: string[];
   properties?: [string, string][];
 }
 

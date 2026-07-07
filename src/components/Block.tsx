@@ -21,6 +21,7 @@ import {
   doc,
   pageByName,
   setRaw,
+  setBlockProperty,
   splitBlock,
   indentBlock,
   outdentBlock,
@@ -45,6 +46,7 @@ import {
   isBlockMoving,
   setBlockMoving,
   orderedListMarker,
+  withUndoUnit,
 } from "../store";
 import {
   clearFocusSurface,
@@ -107,6 +109,8 @@ import { SheetCellContext } from "../sheet/context";
 import { selectCellAfterEdit, moveCellAfterEdit } from "../sheet/selection";
 import { forbidsEditEntry } from "../editor/editTargets";
 import { SheetGrid } from "./SheetGrid";
+import { SheetTable } from "./SheetTable";
+import { SheetBoard } from "./SheetBoard";
 
 // Detect a block whose entire body is a single {{query}} / {{embed}} macro.
 function detectMacro(raw: string): { kind: "query" | "embed"; inner: string } | null {
@@ -375,22 +379,32 @@ export function Block(props: { id: string; hideRefCount?: boolean }): JSX.Elemen
         </div>
       </Show>
 
-      <Show when={!collapsed() && (hasChildren() || sheet().view === "grid")}>
-        <Show
-          when={sheet().view === "grid"}
-          fallback={
+      <Show when={!collapsed() && (hasChildren() || sheet().view === "grid" || sheet().view === "table" || sheet().view === "board")}>
+        <Switch>
+          <Match when={sheet().view === "grid"}>
+            <div class="block-sheet-container">
+              <SheetGrid id={props.id} />
+            </div>
+          </Match>
+          <Match when={sheet().view === "table"}>
+            <div class="block-sheet-container">
+              <SheetTable ownerId={props.id} rowSource="children" />
+            </div>
+          </Match>
+          <Match when={sheet().view === "board"}>
+            <div class="block-sheet-container">
+              <SheetBoard ownerId={props.id} rowSource="children" groupBy={sheet().groupBy} />
+            </div>
+          </Match>
+          <Match when={true}>
             <div class="block-children-container">
               <div class="block-children-left-border" />
               <div class="block-children">
                 <For each={node().children}>{(cid) => <Block id={cid} />}</For>
               </div>
             </div>
-          }
-        >
-          <div class="block-sheet-container">
-            <SheetGrid id={props.id} />
-          </div>
-        </Show>
+          </Match>
+        </Switch>
       </Show>
     </div>
   );
@@ -1239,6 +1253,21 @@ export function Editor(props: { id: string }): JSX.Element {
         replaceTrigger("");
         const rect = ref.getBoundingClientRect();
         openPageProps(doc.byId[props.id].page, rect.left, rect.bottom + 4);
+        return;
+      }
+      case "sheet-grid":
+      case "sheet-table":
+      case "sheet-board": {
+        const view = item.action === "sheet-grid" ? "grid" : item.action === "sheet-table" ? "table" : "board";
+        replaceTrigger("");
+        closeAc();
+        const page = doc.byId[props.id]?.page;
+        if (!page) return;
+        withUndoUnit(`sheet:view:${view}`, [page], () => {
+          setBlockProperty(props.id, "tine.view", view);
+          if (view === "board") setBlockProperty(props.id, "tine.group-by", "state");
+        });
+        endEdit("select-block");
         return;
       }
       case "today":

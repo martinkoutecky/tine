@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal, type JSX } from "solid-js";
+import { For, Match, Show, Switch, createEffect, createMemo, createSignal, type JSX } from "solid-js";
 import { doc, formatForBlock } from "../store";
 import { AstBody } from "../render/body";
 import { facetsOf } from "../render/facets";
@@ -19,6 +19,8 @@ import { isBuiltinHidden } from "../editor/properties";
 import { forbidsEditEntry } from "../editor/editTargets";
 import { editingId, editingOwner } from "../editorController";
 import { Editor, SurfaceContext } from "./Block";
+import { SheetTable } from "./SheetTable";
+import { SheetBoard } from "./SheetBoard";
 
 const MAX_GRID_DEPTH = 5;
 
@@ -409,13 +411,21 @@ function SheetBlock(props: { id: string; depth: number; cell?: SheetCellCtx; bod
               )}
             </Show>
           </div>
-          <Show when={children().length > 0 || config()?.view === "grid"}>
-            <Show
-              when={config()?.view === "grid"}
-              fallback={<SheetOutline ids={children()} depth={props.depth} />}
-            >
-              <SheetGridInner id={props.id} depth={props.depth} />
-            </Show>
+          <Show when={children().length > 0 || config()?.view === "grid" || config()?.view === "table" || config()?.view === "board"}>
+            <Switch>
+              <Match when={config()?.view === "grid"}>
+                <SheetGridInner id={props.id} depth={props.depth} />
+              </Match>
+              <Match when={config()?.view === "table"}>
+                <SheetTable ownerId={props.id} rowSource="children" />
+              </Match>
+              <Match when={config()?.view === "board"}>
+                <SheetBoard ownerId={props.id} rowSource="children" groupBy={config()?.groupBy} />
+              </Match>
+              <Match when={true}>
+                <SheetOutline ids={children()} depth={props.depth} />
+              </Match>
+            </Switch>
           </Show>
         </>
       )}

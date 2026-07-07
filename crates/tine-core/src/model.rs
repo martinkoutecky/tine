@@ -183,6 +183,8 @@ pub struct BlockDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deadline: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub properties: Vec<(String, String)>,
 }
 
@@ -3559,6 +3561,7 @@ pub fn block_to_dto(b: &DocBlock) -> BlockDto {
         heading_level: b.heading_level(),
         scheduled: b.scheduled().map(str::to_string),
         deadline: b.deadline().map(str::to_string),
+        tags: b.tags(),
         properties: b.properties(),
     }
 }

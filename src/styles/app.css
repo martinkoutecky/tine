@@ -3803,6 +3803,156 @@ body.file-drop-active::after {
   margin-top: 6px;
 }
 
+.sheet-table {
+  display: grid;
+  width: max-content;
+  max-width: 100%;
+  gap: 1px;
+  background: var(--border-color);
+  border: 1px solid var(--border-color);
+  overflow: auto;
+}
+.sheet-title-header,
+.sheet-field-header {
+  cursor: pointer;
+  user-select: none;
+}
+.sheet-field-cell {
+  min-width: 90px;
+}
+.sheet-readonly-cell {
+  cursor: default;
+}
+.sheet-row-tail {
+  min-width: 34px;
+  padding: 0;
+  background: var(--bg-secondary);
+}
+.sheet-add-field {
+  min-width: 34px;
+  padding: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.sheet-add-field-btn {
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.sheet-add-field-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+.sheet-prop-input {
+  width: 100%;
+  min-width: 90px;
+  box-sizing: border-box;
+  border: 1px solid var(--accent, #4c8bf5);
+  border-radius: 4px;
+  padding: 3px 5px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: inherit;
+}
+.sheet-add-field-input {
+  min-width: 112px;
+}
+.sheet-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 4px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--tag-color) 13%, transparent);
+  color: var(--tag-color);
+  font-size: 0.84em;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.sheet-board {
+  display: flex;
+  gap: 10px;
+  align-items: stretch;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+.sheet-board-column {
+  width: 240px;
+  flex: 0 0 240px;
+  display: flex;
+  flex-direction: column;
+  min-height: 120px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+}
+.sheet-board-drop {
+  outline: 2px solid var(--accent, #4c8bf5);
+  outline-offset: -2px;
+}
+.sheet-board-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  font-weight: 700;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border-color);
+}
+.sheet-board-count {
+  min-width: 22px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 20px;
+  text-align: center;
+}
+.sheet-board-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+}
+.sheet-board-card {
+  min-height: 42px;
+  padding: 7px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  cursor: pointer;
+  touch-action: none;
+}
+.sheet-board-card:hover {
+  border-color: color-mix(in srgb, var(--accent, #4c8bf5) 45%, var(--border-color));
+}
+.sheet-board-card-dragging {
+  opacity: 0.55;
+}
+.sheet-board-card-title {
+  font-size: 13px;
+  line-height: 1.35;
+  white-space: normal;
+}
+.sheet-board-card-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 5px;
+}
+.sheet-board-card .date-chip,
+.sheet-field-cell .date-chip {
+  margin-left: 0;
+}
+
 /* ------------------------------------------------------------- toasts */
 .toast-stack {
   position: fixed;
