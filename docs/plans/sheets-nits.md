@@ -297,7 +297,7 @@ interaction model, poor fit with outline scrolling).
 
 ## ROUND 4 (Jul 8 2026, daily-driving begins) — N27–N30
 
-## N27 — aggregate dropdown STILL collapses before a pick is possible  [IN PROGRESS — root-caused, orchestrator fix]
+## N27 — aggregate dropdown STILL collapses before a pick is possible  [FIXED — 2628c49, orchestrator; e2e locks the full flow]
 Symptoms (real app): click the big Σ → footer row appears; clicking the
 fn dropdown "flashes unrolled then collapses" — impossible to select.
 Sub-nit: when a cell is narrower than the dropdown, a scrollbar appears,
@@ -317,7 +317,7 @@ click opens the menu (None + 15 fns, current one marked), pick commits
 via setColumnAggregate. Kills the blur class entirely AND the width
 overflow (menu is portaled, adds nothing to the scroller).
 
-## N28 — /Grid should insert a single CELL, not an empty grid  [PROPOSED→ruling adopted; batch 7]
+## N28 — /Grid should insert a single CELL, not an empty grid  [FIXED — batch 7, 0fc6218]
 Martin's vision (verbatim intent): /Grid inserts a single cell which,
 thanks to the walkable edges, can be easily expanded. Change the
 `sheet-grid` slash action to seed one row + one cell (empty) in the same
@@ -325,13 +325,13 @@ undo unit as the `tine.view:: grid` property write, and enter the cell
 in EDIT mode so typing flows straight in (the /command was issued from
 edit mode — the user is typing).
 
-## N29 — "Kanban" is not findable in the / menu  [batch 7]
+## N29 — "Kanban" is not findable in the / menu  [FIXED — 2628c49, /kan surfaces Board]
 /Board exists but Martin searched "kanban" and got nothing. Add a
 "Kanban" match alias to the Board command (the `key` mechanism scores
 label + key) so /kan surfaces it. Consider label "Board (kanban)".
 
 ## N30 — query ↔ sheet integration (his design itch, verbatim: "overlap
-that is not yet clear in my mind")  [batch 7 — design adopted, ADR]
+that is not yet clear in my mind")  [FIXED — batch 7, 0fc6218, ADR 0030; verified in real app on the one-block shape: header+builder+switcher render above the board]
 He wants: query builder for MEMBERSHIP (which items), sheet face for the
 VIEW (editing/sorting/dragging). Today the two are mutually exclusive in
 the UI: giving a query block a sheet face HIDES the query header + the
