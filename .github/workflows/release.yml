@@ -241,7 +241,11 @@ jobs:
           node-version: 20
           cache: npm
 
-      - uses: dtolnay/rust-toolchain@stable
+      # Pinned to match the F-Droid build recipe EXACTLY (metadata/dev.tine.app.yml
+      # uses `rustup default 1.96.0`). Reproducible builds require the developer's
+      # APK and F-Droid's rebuild to use the same compiler, so this must not drift
+      # to `stable`. Bump both together.
+      - uses: dtolnay/rust-toolchain@1.96.0
         if: steps.sign.outputs.enabled == 'true'
         with:
           targets: aarch64-linux-android

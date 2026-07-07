@@ -12,6 +12,14 @@ edition = "2021"
 license = "AGPL-3.0-only"
 authors = ["Martin Koutecký"]
 
+# Reproducible builds (F-Droid #reproducible): strip machine-specific absolute
+# paths (cargo home, workspace root, /rustc/<hash>) from the compiled artifacts so
+# the APK is byte-identical regardless of WHERE it was built — the developer's CI
+# vs F-Droid's builder. Env-independent (unlike RUSTFLAGS=--remap-path-prefix,
+# which would need matching prefixes in both environments). Stable since Rust 1.81.
+[profile.release]
+trim-paths = "all"
+
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
