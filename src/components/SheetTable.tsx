@@ -28,7 +28,6 @@ import {
   cellSel,
   cellSurfaceKey,
   aggregateFooterPinned,
-  extendCellSelectionTo,
   registerSheetViewAdapter,
   setCellSel,
   setAggregateFooterPinned,
@@ -93,6 +92,19 @@ const SCHEMA_PROP_TYPES: SchemaMenuType[] = [
   "ref",
 ];
 
+function measuredGridTracks(grid: HTMLElement, count: number): string | null {
+  const cells = [...grid.children].filter((child): child is HTMLElement =>
+    child instanceof HTMLElement && child.classList.contains("sheet-cell")
+  );
+  const tracks: string[] = [];
+  for (const cell of cells.slice(0, count)) {
+    const width = cell.getBoundingClientRect().width;
+    if (width <= 0) return null;
+    tracks.push(`${Math.round(width)}px`);
+  }
+  return tracks.length === count ? tracks.join(" ") : null;
+}
+
 function compareSortKeys(a: SortKey, b: SortKey): number {
   if (a.kind === "number" && b.kind === "number") return a.value - b.value;
   return a.text.localeCompare(b.text);
@@ -106,12 +118,14 @@ export function SheetTable(props: {
   addRowLabel?: string;
   schemaPage?: string;
 }): JSX.Element {
+  let tableRef: HTMLDivElement | undefined;
   const [sort, setSort] = createSignal<SortState>(null);
   const [extraFields, setExtraFields] = createSignal<FieldId[]>([]);
   const [addingColumn, setAddingColumn] = createSignal(false);
   const [editingProp, setEditingProp] = createSignal<{ rowId: string; field: FieldId; initial: string } | null>(null);
   const [hovering, setHovering] = createSignal(false);
   const [footerEditingCount, setFooterEditingCount] = createSignal(0);
+  const [stableColumns, setStableColumns] = createSignal<string | null>(null);
   const sheetOverlay = useContext(SheetContainerOverlayContext);
   const sheetHovering = () => sheetOverlay?.hovering() ?? hovering();
   const config = createMemo(() => {
@@ -245,10 +259,12 @@ export function SheetTable(props: {
 
   const columns = createMemo(() => ["title" as const, ...fields()]);
   const hasActionColumn = () => props.rowSource === "children" || !!props.addRow;
-  const actionColumn = () => props.rowSource === "children" ? "58px" : hasActionColumn() ? "34px" : "";
-  const gridColumns = createMemo(() =>
+  const actionColumn = () => hasActionColumn() ? "96px" : "";
+  const baseGridColumns = createMemo(() =>
     `minmax(180px, max-content) repeat(${fields().length}, max-content) ${actionColumn()}`
   );
+  const editingInThisTable = () => editingOwner()?.startsWith(`sheet:${props.ownerId}:`) ?? false;
+  const gridColumns = createMemo(() => stableColumns() ?? baseGridColumns());
   const hasAggregates = createMemo(() => config().colAggregates.size > 0);
   const footerPinned = createMemo(() => aggregateFooterPinned(props.ownerId));
   const footerEditing = createMemo(() => footerEditingCount() > 0);
@@ -282,6 +298,28 @@ export function SheetTable(props: {
   });
 
   onCleanup(() => sheetOverlay?.setCorner(null));
+
+  const captureStableColumns = () => {
+    if (!tableRef) return;
+    const tracks = measuredGridTracks(tableRef, columns().length + (hasActionColumn() ? 1 : 0));
+    if (tracks) setStableColumns(tracks);
+  };
+
+  let wasEditing = false;
+  createEffect(() => {
+    const sel = cellSel();
+    baseGridColumns();
+    const editing = editingInThisTable();
+    if (wasEditing && !editing) {
+      wasEditing = false;
+      setStableColumns(null);
+      return;
+    }
+    wasEditing = editing;
+    if (!tableRef || editing) return;
+    if (sel && sel.gridId === props.ownerId && sel.kind !== "row-seam" && sel.kind !== "col-seam") captureStableColumns();
+    else setStableColumns(null);
+  });
 
   const sortedRows = createMemo(() => {
     const s = sort();
@@ -514,6 +552,9 @@ export function SheetTable(props: {
     if (sheetGridIdFromEventTarget(e.target) !== props.ownerId || isSheetPointerInteractive(e.target)) return;
     beginCellPointerSelection(e, props.ownerId);
   };
+  const stopSheetMouseDown = (e: MouseEvent) => {
+    if (e.button === 0) e.stopPropagation();
+  };
 
   return (
     <Show
@@ -523,19 +564,26 @@ export function SheetTable(props: {
           <span>empty table</span>
           <Show when={props.rowSource === "children" || props.addRow}>
             <button
-              class="sheet-add-field-btn sheet-add-row-btn"
+              class="sheet-add-row-ghost sheet-add-row-empty"
               title={props.addRowLabel ?? "Add row"}
               onClick={runAddRow}
-            />
+            >
+              <span class="sheet-ghost-plus">+</span>
+              <span>{props.addRowLabel ?? "Add row"}</span>
+            </button>
           </Show>
         </div>
       }
     >
       <div
+        ref={(el) => {
+          tableRef = el;
+        }}
         class="sheet-table"
         data-sheet-grid-id={props.ownerId}
         style={{ "grid-template-columns": gridColumns() }}
         onPointerDown={onPointerDown}
+        onMouseDown={stopSheetMouseDown}
         onPointerEnter={() => setHovering(true)}
         onPointerLeave={() => setHovering(false)}
         onContextMenu={openSheetMenu}
@@ -575,37 +623,21 @@ export function SheetTable(props: {
               fallback={
                 <Show
                   when={props.rowSource === "children"}
-                  fallback={
-                    <button
-                      class="sheet-add-field-btn sheet-add-row-btn"
-                      title={props.addRowLabel ?? "Add row"}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        runAddRow();
-                      }}
-                    />
-                  }
+                  fallback={<span class="sheet-add-column-spacer" />}
                 >
-                  <div class="sheet-header-actions">
-                    <button
-                      class="sheet-add-field-btn"
-                      title="Add property column"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setAddingColumn(true);
-                      }}
-                    >
-                      +
-                    </button>
-                    <button
-                      class="sheet-add-field-btn sheet-add-row-btn"
-                      title={props.addRowLabel ?? "Add row"}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        runAddRow();
-                      }}
-                    />
-                  </div>
+                  <button
+                    class="sheet-add-column-ghost"
+                    title="Add column"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setAddingColumn(true);
+                    }}
+                  >
+                    <span class="sheet-ghost-plus">+</span>
+                    <span class="sheet-ghost-label">Add column</span>
+                  </button>
                 </Show>
               }
             >
@@ -640,6 +672,7 @@ export function SheetTable(props: {
                 rowIndex={rowIndex()}
                 selected={selected(rowIndex(), 0)}
                 inRange={inRange(rowIndex(), 0)}
+                freezeColumns={captureStableColumns}
               />
               <For each={fields()}>
                 {(field, fieldIndex) => (
@@ -657,6 +690,7 @@ export function SheetTable(props: {
                     initial={editingProp()?.initial ?? ""}
                     openPropInput={openPropInput}
                     closePropInput={() => setEditingProp(null)}
+                    freezeColumns={captureStableColumns}
                   />
                 )}
               </For>
@@ -683,6 +717,21 @@ export function SheetTable(props: {
           <Show when={hasActionColumn()}>
             <div class="sheet-cell sheet-footer-cell sheet-row-tail" />
           </Show>
+        </Show>
+        <Show when={hasActionColumn()}>
+          <button
+            class="sheet-add-row-ghost"
+            title={props.addRowLabel ?? "Add row"}
+            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              runAddRow();
+            }}
+          >
+            <span class="sheet-ghost-plus">+</span>
+            <span class="sheet-ghost-label">{props.addRowLabel ?? "Add row"}</span>
+          </button>
         </Show>
         <Show when={!sheetOverlay && showFooterToggle()}>
           {footerToggle()}
@@ -756,7 +805,14 @@ function clickOffset(e: MouseEvent, contentRef: HTMLDivElement | undefined, raw:
   return editorOffsetFromRenderedRange(contentRef, range, raw, isBuiltinHidden);
 }
 
-function TitleCell(props: { ownerId: string; row: RowRecord; rowIndex: number; selected: boolean; inRange: boolean }): JSX.Element {
+function TitleCell(props: {
+  ownerId: string;
+  row: RowRecord;
+  rowIndex: number;
+  selected: boolean;
+  inRange: boolean;
+  freezeColumns: () => void;
+}): JSX.Element {
   const cell = (): SheetCellCtx => ({ gridId: props.ownerId, row: props.rowIndex, col: 0 });
   let contentRef: HTMLDivElement | undefined;
   const editing = () => editingId() === props.row.id && editingOwner() === cellOwner(cell());
@@ -767,18 +823,12 @@ function TitleCell(props: { ownerId: string; row: RowRecord; rowIndex: number; s
     return f ? blockBackgroundColor(f.properties) : undefined;
   });
 
-  const onMouseDown = (e: MouseEvent) => {
-    if (e.button !== 0 || e.ctrlKey || e.metaKey || e.altKey) return;
-    e.preventDefault();
-    e.stopPropagation();
-    if (e.shiftKey) extendCellSelectionTo(props.ownerId, { row: props.rowIndex, col: 0 });
-    else setCellSel(cell());
-  };
   const onDoubleClick = (e: MouseEvent) => {
     if (e.button !== 0 || e.ctrlKey || e.metaKey || e.altKey) return;
     if (forbidsEditEntry(e)) return;
     e.preventDefault();
     e.stopPropagation();
+    props.freezeColumns();
     if (!doc.byId[props.row.id]) {
       setCellSel(cell());
       return;
@@ -814,7 +864,6 @@ function TitleCell(props: { ownerId: string; row: RowRecord; rowIndex: number; s
       data-row={props.rowIndex}
       data-col={0}
       style={bgColor() ? { background: bgColor() } : undefined}
-      onMouseDown={onMouseDown}
       onDblClick={onDoubleClick}
       onContextMenu={openCellMenu}
     >
@@ -865,6 +914,7 @@ function FieldCell(props: {
   initial: string;
   openPropInput: (rowId: string, field: FieldId, initial?: string) => void;
   closePropInput: () => void;
+  freezeColumns: () => void;
 }): JSX.Element {
   const value = () => isFormulaField(props.field) ? formulaValueToFieldValue(props.formulaValue) : readFormulaRowField(props.row, props.field);
   const editable = () => !!doc.byId[props.row.id] && !isFormulaField(props.field);
@@ -896,17 +946,11 @@ function FieldCell(props: {
     ]);
   };
 
-  const onMouseDown = (e: MouseEvent) => {
-    if (e.button !== 0 || e.ctrlKey || e.metaKey || e.altKey) return;
-    e.preventDefault();
-    e.stopPropagation();
-    if (e.shiftKey) extendCellSelectionTo(props.ownerId, { row: props.rowIndex, col: props.colIndex });
-    else select();
-  };
   const onDoubleClick = (e: MouseEvent) => {
     if (e.button !== 0 || e.ctrlKey || e.metaKey || e.altKey) return;
     e.preventDefault();
     e.stopPropagation();
+    props.freezeColumns();
     select();
     if (!editable()) return;
     if (props.field === "state") cycleField(props.row.id, "state");
@@ -962,7 +1006,6 @@ function FieldCell(props: {
       data-row={props.rowIndex}
       data-col={props.colIndex}
       style={bgColor() ? { background: bgColor() } : undefined}
-      onMouseDown={onMouseDown}
       onDblClick={onDoubleClick}
       onContextMenu={openCellMenu}
     >

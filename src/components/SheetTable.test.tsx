@@ -46,20 +46,14 @@ function node(id: string, raw: string, parent: string | null, children: string[]
   return { id, raw, collapsed: false, parent, page: "Sheet", children };
 }
 
-function mouseDown(target: EventTarget, init: Partial<MouseEventInit> = {}): MouseEvent {
-  const event = new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0, ...init });
-  target.dispatchEvent(event);
-  return event;
-}
-
 function doubleClick(target: EventTarget): MouseEvent {
   const event = new MouseEvent("dblclick", { bubbles: true, cancelable: true, button: 0 });
   target.dispatchEvent(event);
   return event;
 }
 
-function pointer(type: string, x: number, y: number): Event {
-  return new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y });
+function pointer(type: string, x: number, y: number, init: Partial<MouseEventInit> = {}): Event {
+  return new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y, ...init });
 }
 
 function keydown(target: EventTarget, key: string): KeyboardEvent {
@@ -137,7 +131,7 @@ describe("SheetTable", () => {
     const { root, dispose } = mount(() => <Block id="table" />);
 
     const headers = [...root.querySelectorAll(".sheet-header-cell")].map((h) => h.textContent?.trim());
-    expect(headers).toEqual(["Block", "State", "Priority", "Scheduled", "Deadline", "Tags", "owner", "estimate", "+"]);
+    expect(headers).toEqual(["Block", "State", "Priority", "Scheduled", "Deadline", "Tags", "owner", "estimate", "+Add column"]);
     expect(root.querySelector(".sheet-col-stray")).toBeNull();
     expect(root.querySelector(".sheet-title-header")?.classList.contains("sheet-sticky-left")).toBe(true);
     expect(root.querySelector(".sheet-title-cell")?.classList.contains("sheet-sticky-left")).toBe(true);
@@ -150,8 +144,12 @@ describe("SheetTable", () => {
     loadTableDoc();
     const { root, dispose } = mount(() => <Block id="table" />);
 
-    mouseDown(cell(root, 0, 0));
+    cell(root, 0, 0).dispatchEvent(pointer("pointerdown", 0, 0));
     expect(cellSel()).toEqual({ kind: "cell", gridId: "table", row: 0, col: 0 });
+    expect(editingId()).toBeNull();
+
+    cell(root, 0, 1).dispatchEvent(pointer("pointerdown", 0, 0));
+    expect(cellSel()).toEqual({ kind: "cell", gridId: "table", row: 0, col: 1 });
     expect(editingId()).toBeNull();
 
     doubleClick(cell(root, 0, 0));
@@ -176,7 +174,7 @@ describe("SheetTable", () => {
     expect(cell(root, 1, 2).classList.contains("sheet-cell-selected")).toBe(true);
 
     setCellSel({ gridId: "table", row: 0, col: 0 });
-    mouseDown(cell(root, 1, 1), { shiftKey: true });
+    cell(root, 1, 1).dispatchEvent(pointer("pointerdown", 0, 0, { shiftKey: true }));
     expect(cellSel()).toEqual({
       kind: "range",
       gridId: "table",
@@ -185,6 +183,47 @@ describe("SheetTable", () => {
     });
 
     dispose();
+  });
+
+  it("keeps table column tracks unchanged when entering title edit", async () => {
+    const originalRect = HTMLElement.prototype.getBoundingClientRect;
+    const rect = (width: number): DOMRect => ({
+      x: 0,
+      y: 0,
+      left: 0,
+      top: 0,
+      right: width,
+      bottom: 30,
+      width,
+      height: 30,
+      toJSON: () => ({}),
+    } as DOMRect);
+    HTMLElement.prototype.getBoundingClientRect = function () {
+      if (this.classList.contains("sheet-title-header")) return rect(180);
+      if (this.classList.contains("sheet-field-header")) return rect(92);
+      if (this.classList.contains("sheet-add-field")) return rect(96);
+      if (this.classList.contains("sheet-title-cell")) return rect(180);
+      if (this.classList.contains("sheet-field-cell")) return rect(92);
+      if (this.classList.contains("sheet-row-tail")) return rect(96);
+      return originalRect.call(this);
+    };
+    loadTableDoc();
+    const { root, dispose } = mount(() => <Block id="table" />);
+    try {
+      const table = root.querySelector(".sheet-table") as HTMLElement;
+      cell(root, 0, 0).dispatchEvent(pointer("pointerdown", 0, 0));
+      await tick();
+      const before = table.style.gridTemplateColumns;
+
+      doubleClick(cell(root, 0, 0));
+      await tick();
+
+      expect(editingId()).toBe("r1");
+      expect(table.style.gridTemplateColumns).toBe(before);
+    } finally {
+      dispose();
+      HTMLElement.prototype.getBoundingClientRect = originalRect;
+    }
   });
 
   it("renders declared schema fields first, keeps empty declared columns, and marks strays", () => {
@@ -206,7 +245,7 @@ describe("SheetTable", () => {
     const { root, dispose } = mount(() => <Block id="table" />);
 
     const headers = [...root.querySelectorAll(".sheet-header-cell")].map((h) => h.textContent?.trim());
-    expect(headers).toEqual(["Block", "status", "owner", "missing", "stray", "+"]);
+    expect(headers).toEqual(["Block", "status", "owner", "missing", "stray", "+Add column"]);
     expect(cell(root, 0, 3).textContent?.replace("⋮", "").trim()).toBe("");
     const stray = [...root.querySelectorAll(".sheet-field-header")].find((h) => h.textContent?.trim() === "stray");
     expect(stray?.classList.contains("sheet-col-stray")).toBe(true);
@@ -227,7 +266,7 @@ describe("SheetTable", () => {
     const { root, dispose } = mount(() => <SheetTable ownerId="table" rowSource="children" schemaPage="Sheet" />);
 
     const headers = [...root.querySelectorAll(".sheet-header-cell")].map((h) => h.textContent?.trim());
-    expect(headers).toEqual(["Block", "status", "owner", "+"]);
+    expect(headers).toEqual(["Block", "status", "owner", "+Add column"]);
 
     dispose();
   });
@@ -644,7 +683,7 @@ describe("SheetTable", () => {
     });
     const { root, dispose } = mount(() => <Block id="table" />);
 
-    (root.querySelector(".sheet-add-row-btn") as HTMLButtonElement).click();
+    (root.querySelector(".sheet-add-row-ghost") as HTMLButtonElement).click();
     await tick();
 
     const children = doc.byId.table.children;
@@ -654,6 +693,40 @@ describe("SheetTable", () => {
     expect(doc.byId[id].parent).toBe("table");
     expect(editingId()).toBe(id);
     expect(editingOwner()).toBe("sheet:table:1:0");
+
+    dispose();
+  });
+
+  it("children add-column ghost adds an extra property column", () => {
+    loadTableDoc();
+    const { root, dispose } = mount(() => <Block id="table" />);
+
+    (root.querySelector(".sheet-add-column-ghost") as HTMLButtonElement).click();
+    const input = root.querySelector(".sheet-add-field-input") as HTMLInputElement;
+    input.value = "reviewer";
+    keydown(input, "Enter");
+
+    const headers = [...root.querySelectorAll(".sheet-header-cell")].map((h) => h.textContent?.trim());
+    expect(headers).toContain("reviewer");
+
+    dispose();
+  });
+
+  it("shows table add ghosts on hover without changing geometry", () => {
+    loadTableDoc();
+    const { root, dispose } = mount(() => <Block id="table" />);
+    const table = root.querySelector(".sheet-table") as HTMLElement;
+    const before = table.getBoundingClientRect();
+
+    expect(root.querySelector(".sheet-add-column-ghost")).not.toBeNull();
+    expect(root.querySelector(".sheet-add-row-ghost")).not.toBeNull();
+    pointerEnter(table);
+    const after = table.getBoundingClientRect();
+
+    expect(after.left).toBe(before.left);
+    expect(after.top).toBe(before.top);
+    expect(after.width).toBe(before.width);
+    expect(after.height).toBe(before.height);
 
     dispose();
   });
@@ -676,7 +749,7 @@ describe("SheetTable", () => {
 
     expect(root.textContent).toContain("Query row");
     expect(root.textContent).toContain("Page");
-    expect(root.querySelector(".sheet-add-field-btn")).toBeNull();
+    expect(root.querySelector(".sheet-add-column-ghost")).toBeNull();
     dispose();
   });
 
@@ -816,7 +889,7 @@ describe("SheetTable", () => {
     ));
 
     const headers = [...root.querySelectorAll(".sheet-header-cell")].map((h) => h.textContent?.trim());
-    expect(headers).toEqual(["Block", "price", "qty", "ƒtotal", "ƒtyped", "kind", "due", "+"]);
+    expect(headers).toEqual(["Block", "price", "qty", "ƒtotal", "ƒtyped", "kind", "due", "+Add column"]);
     expect(cell(root, 0, 3).classList.contains("sheet-number-cell")).toBe(true);
     expect(cell(root, 0, 3).textContent?.trim()).toBe("10");
     const bool = cell(root, 0, 4).querySelector('input[type="checkbox"]') as HTMLInputElement | null;

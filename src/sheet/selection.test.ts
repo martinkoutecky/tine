@@ -200,6 +200,41 @@ describe("cell selection state", () => {
     expect(cellSel()).toEqual(rowSeamSel("grid", 1, 1));
   });
 
+  it("walks the grid seam ladder with visible boundary seams", () => {
+    loadGrid();
+    setCellSel({ gridId: "grid", row: 1, col: 1 });
+
+    press("ArrowLeft");
+    expect(cellSel()).toEqual(colSeamSel("grid", 1, 1));
+
+    press("ArrowLeft");
+    expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 1, col: 0 });
+
+    press("ArrowLeft");
+    expect(cellSel()).toEqual(colSeamSel("grid", 0, 1));
+
+    press("ArrowLeft");
+    expect(cellSel()).toEqual(colSeamSel("grid", 0, 1));
+
+    setCellSel({ gridId: "grid", row: 0, col: 1 });
+    press("ArrowRight");
+    expect(cellSel()).toEqual(colSeamSel("grid", 2, 0));
+    press("ArrowRight");
+    expect(cellSel()).toEqual(colSeamSel("grid", 2, 0));
+
+    setCellSel({ gridId: "grid", row: 0, col: 0 });
+    press("ArrowUp");
+    expect(cellSel()).toEqual(rowSeamSel("grid", 0, 0));
+    press("ArrowUp");
+    expect(cellSel()).toEqual(rowSeamSel("grid", 0, 0));
+
+    setCellSel({ gridId: "grid", row: 1, col: 0 });
+    press("ArrowDown");
+    expect(cellSel()).toEqual(rowSeamSel("grid", 2, 0));
+    press("ArrowDown");
+    expect(cellSel()).toEqual(rowSeamSel("grid", 2, 0));
+  });
+
   it("Escape from a nested grid cell walks up to the containing outer cell, then to outline selection", () => {
     loadNestedGrid();
     setCellSel({ gridId: "host", row: 0, col: 0 });

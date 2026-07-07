@@ -218,7 +218,7 @@ describe("SheetGrid", () => {
     loadMdSheetDoc();
     const { root, dispose } = mount(() => <Block id="grid" />);
 
-    const grid = root.querySelector(".block-sheet-container > .sheet-grid") as HTMLElement | null;
+    const grid = root.querySelector(".block-sheet-container > .sheet-scroll > .sheet-grid") as HTMLElement | null;
     expect(grid).not.toBeNull();
     expect(grid!.style.gridTemplateColumns).toBe("120px max-content 88px");
     expect(grid!.style.gridTemplateColumns.trim().split(/\s+/)).toHaveLength(3);
@@ -396,8 +396,10 @@ describe("SheetGrid", () => {
       await settledMeasure();
       const grid = root.querySelector(".sheet-grid") as HTMLElement | null;
       const container = root.querySelector(".block-sheet-container") as HTMLElement | null;
+      const scroll = root.querySelector(".block-sheet-container > .sheet-scroll") as HTMLElement | null;
       expect(grid).not.toBeNull();
       expect(container).not.toBeNull();
+      expect(scroll?.firstElementChild).toBe(grid);
       expect(root.querySelector(".sheet-footer-cell")).toBeNull();
       expect(root.querySelector(".sheet-aggregate-corner-toggle")).toBeNull();
 
@@ -406,6 +408,8 @@ describe("SheetGrid", () => {
       expect(root.querySelector(".sheet-footer-cell")).toBeNull();
       let toggle = root.querySelector(".sheet-aggregate-corner-toggle") as HTMLButtonElement | null;
       expect(toggle).not.toBeNull();
+      expect(toggle!.parentElement).toBe(container);
+      expect(scroll!.contains(toggle!)).toBe(false);
       expect(rectSnapshot(container!)).toEqual(beforeHover);
 
       toggle!.click();

@@ -45,39 +45,39 @@ try {
   await page.locator(".switcher-input").fill("Sheets demo");
   await sleep(350);
   await page.locator(".switcher-row").first().click();
-  await page.waitForSelector(".block-sheet-container > .sheet-grid", { timeout: 5000 });
+  await page.waitForSelector(".block-sheet-container > .sheet-scroll > .sheet-grid", { timeout: 5000 });
   await page.waitForSelector(".sheet-cell .sheet-grid", { timeout: 5000 });
   await sleep(500);
   await page.screenshot({ path: OUT, fullPage: true });
 
-  const hole = page.locator(".block-sheet-container > .sheet-grid > .sheet-hole").first();
+  const hole = page.locator(".block-sheet-container > .sheet-scroll > .sheet-grid > .sheet-hole").first();
   if (await hole.count()) {
     await hole.click();
   } else {
-    const firstCell = page.locator(".block-sheet-container > .sheet-grid > .sheet-cell").first();
+    const firstCell = page.locator(".block-sheet-container > .sheet-scroll > .sheet-grid > .sheet-cell").first();
     const box = await firstCell.boundingBox();
     await firstCell.click({ position: { x: Math.max(1, (box?.width ?? 12) - 4), y: Math.max(1, (box?.height ?? 12) - 4) } });
   }
-  await page.waitForSelector(".block-sheet-container > .sheet-grid > .sheet-cell-selected", { timeout: 3000 });
+  await page.waitForSelector(".block-sheet-container > .sheet-scroll > .sheet-grid > .sheet-cell-selected", { timeout: 3000 });
   await sleep(250);
   await page.screenshot({ path: OUT_SEL, fullPage: true });
 
   const rangeDir = await page
-    .locator(".block-sheet-container > .sheet-grid > .sheet-cell-selected")
+    .locator(".block-sheet-container > .sheet-scroll > .sheet-grid > .sheet-cell-selected")
     .first()
     .evaluate((el) => (Number(el.getAttribute("data-col") || "0") > 0 ? "ArrowLeft" : "ArrowRight"));
   await page.keyboard.down("Shift");
   await page.keyboard.press(rangeDir);
   await page.keyboard.up("Shift");
-  await page.waitForSelector(".block-sheet-container > .sheet-grid > .sheet-cell-in-range", { timeout: 3000 });
+  await page.waitForSelector(".block-sheet-container > .sheet-scroll > .sheet-grid > .sheet-cell-in-range", { timeout: 3000 });
   await sleep(250);
   await page.screenshot({ path: OUT_RANGE, fullPage: true });
 
   await page.keyboard.press("Escape");
-  await page.waitForSelector(".block-sheet-container > .sheet-grid > .sheet-cell-selected", { timeout: 3000 });
+  await page.waitForSelector(".block-sheet-container > .sheet-scroll > .sheet-grid > .sheet-cell-selected", { timeout: 3000 });
 
   await page.keyboard.press("ArrowRight");
-  await page.waitForSelector(".block-sheet-container > .sheet-grid > .sheet-seam-selected", { timeout: 3000 });
+  await page.waitForSelector(".block-sheet-container > .sheet-scroll > .sheet-grid > .sheet-seam-selected", { timeout: 3000 });
   await sleep(250);
   await page.screenshot({ path: OUT_SEAM, fullPage: true });
 

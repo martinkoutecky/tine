@@ -15,6 +15,7 @@ import { sheetConfig } from "../sheet/config";
 import { InlineText } from "../render/inline";
 import { SheetTable } from "./SheetTable";
 import { SheetBoard } from "./SheetBoard";
+import { SheetContainer } from "./SheetContainer";
 import type { PageKind, RefGroup } from "../types";
 
 const ADVANCED_RE = /\[\s*:find|:where|:find/;
@@ -476,14 +477,18 @@ export function QueryMacro(props: {
             }
           >
             <Show when={groups() && groups()!.length > 0} fallback={<div class="query-empty">No results</div>}>
-              <Switch>
-                <Match when={sheet()?.view === "table" && props.blockId}>
-                  <SheetTable ownerId={props.blockId!} rowSource="query" groups={groups() ?? []} />
-                </Match>
-                <Match when={sheet()?.view === "board" && props.blockId}>
-                  <SheetBoard ownerId={props.blockId!} rowSource="query" groupBy={sheet()?.groupBy} groups={groups() ?? []} />
-                </Match>
-              </Switch>
+              <Show when={(sheet()?.view === "table" || sheet()?.view === "board") && props.blockId}>
+                <SheetContainer>
+                  <Switch>
+                    <Match when={sheet()?.view === "table"}>
+                      <SheetTable ownerId={props.blockId!} rowSource="query" groups={groups() ?? []} />
+                    </Match>
+                    <Match when={sheet()?.view === "board"}>
+                      <SheetBoard ownerId={props.blockId!} rowSource="query" groupBy={sheet()?.groupBy} groups={groups() ?? []} />
+                    </Match>
+                  </Switch>
+                </SheetContainer>
+              </Show>
             </Show>
           </Show>
         </Match>

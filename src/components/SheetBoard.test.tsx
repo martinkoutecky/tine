@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { createSignal, type JSX } from "solid-js";
 import { Block } from "./Block";
@@ -9,12 +9,14 @@ import { setToasts, setWorkflow, toasts } from "../ui";
 import { cellSel, handleCellSelectionKey, resetCellSelectionForTests, setCellSel } from "../sheet/selection";
 import { installBlockSelectionDrag } from "../blockDrag";
 import type { RefGroup } from "../types";
+import { backend } from "../backend";
 
 beforeAll(async () => {
   await initParser();
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   resetCellSelectionForTests();
   resetStore();
   setToasts([]);
@@ -369,6 +371,45 @@ describe("SheetBoard", () => {
     dispose();
   });
 
+  it("adds a session-only tag column and persists it when a card is moved there", async () => {
+    loadTagBoard({
+      move: "Read #alpha",
+    });
+    const { root, dispose } = mount(() => <Block id="board" />);
+
+    (root.querySelector(".sheet-board-add-tag-ghost") as HTMLButtonElement).click();
+    let input = root.querySelector(".sheet-board-add-tag-input") as HTMLInputElement;
+    input.value = "bad tag";
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    expect(root.querySelectorAll(".sheet-board-header")).toHaveLength(1);
+    expect(input.classList.contains("sheet-input-invalid")).toBe(true);
+
+    input.value = "gamma";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    await tick();
+
+    expect([...root.querySelectorAll(".sheet-board-header")].map((h) => h.textContent?.trim())).toEqual([
+      "alpha1",
+      "gamma0",
+    ]);
+
+    const card = root.querySelector('[data-block-id="move"]') as HTMLElement;
+    const target = root.querySelector('[data-board-col="1"]') as HTMLElement;
+    const prevElementFromPoint = document.elementFromPoint;
+    document.elementFromPoint = () => target;
+    card.dispatchEvent(pointer("pointerdown", 0, 0));
+    window.dispatchEvent(pointer("pointermove", 12, 0));
+    window.dispatchEvent(pointer("pointerup", 12, 0));
+    document.elementFromPoint = prevElementFromPoint;
+    await tick();
+
+    expect(doc.byId.move.raw).toBe("Read #gamma");
+    expect([...root.querySelectorAll(".sheet-board-header")].map((h) => h.textContent?.trim())).toEqual(["gamma1"]);
+
+    dispose();
+  });
+
   it("toasts once when a query-board move leaves the refreshed query rows", async () => {
     loadBoardDoc();
     let setGroups!: (groups: RefGroup[]) => void;
@@ -442,6 +483,58 @@ describe("SheetBoard", () => {
     const cards = [...root.querySelectorAll('[data-block-id="multi"]')] as HTMLElement[];
     expect(cards).toHaveLength(2);
     expect(cards.map((card) => card.classList.contains("sheet-cell-selected"))).toEqual([false, true]);
+
+    dispose();
+  });
+
+  it("renders a query board exactly once when the query block has board view props", async () => {
+    setDoc({
+      byId: {
+        query: node("query", "{{query (todo TODO)}}\ntine.view:: board\ntine.group-by:: state", null),
+        todo: node("todo", "TODO From query", null),
+      },
+      pages: [page(["query", "todo"])],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    vi.spyOn(backend(), "runQuery").mockResolvedValue(queryGroups(["todo"]));
+
+    const { root, dispose } = mount(() => <Block id="query" />);
+    await tick();
+    await tick();
+
+    expect(root.querySelectorAll(".sheet-board")).toHaveLength(1);
+    expect(root.querySelector(".block-sheet-container > .sheet-scroll > .sheet-board")).not.toBeNull();
+    expect(root.textContent).toContain("From query");
+
+    dispose();
+  });
+
+  it("renders exactly one board when the query macro shares its block with a heading (Martin's ghost board)", async () => {
+    // The §4 demo regression: heading + {{query}} + view props in ONE block, no
+    // children. detectMacro (exact-body) misses this shape, so the
+    // children-source face used to render a second, empty workflow board.
+    setDoc({
+      byId: {
+        query: node(
+          "query",
+          "## 4 · Task kanban\n{{query (todo TODO)}}\ntine.view:: board\ntine.group-by:: state",
+          null
+        ),
+        todo: node("todo", "TODO From query", null),
+      },
+      pages: [page(["query", "todo"])],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    vi.spyOn(backend(), "runQuery").mockResolvedValue(queryGroups(["todo"]));
+
+    const { root, dispose } = mount(() => <Block id="query" />);
+    await tick();
+    await tick();
+
+    expect(root.querySelectorAll(".sheet-board")).toHaveLength(1);
+    expect(root.textContent).toContain("From query");
 
     dispose();
   });

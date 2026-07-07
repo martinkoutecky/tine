@@ -103,7 +103,7 @@ describe("tag-page table", () => {
     expect(root.textContent).toContain("Tagged row");
     expect(root.textContent).toContain("Martin");
 
-    (root.querySelector(".sheet-add-row-btn") as HTMLButtonElement).click();
+    (root.querySelector(".sheet-add-row-ghost") as HTMLButtonElement).click();
     await tick();
     await tick();
 

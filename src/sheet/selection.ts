@@ -78,6 +78,9 @@ export interface SheetViewAdapter {
 
 const [activeCellSel, writeCellSel] = createRoot(() => createSignal<SheetSel | null>(null));
 const [aggregateFooterPins, writeAggregateFooterPins] = createRoot(() => createSignal<ReadonlySet<string>>(new Set<string>()));
+const [emptyTagColumns, writeEmptyTagColumns] = createRoot(() =>
+  createSignal<ReadonlyMap<string, ReadonlySet<string>>>(new Map())
+);
 const lastByGrid = new Map<string, { row: number; col: number }>();
 const adapters = new Map<string, SheetViewAdapter>();
 
@@ -113,6 +116,7 @@ export function resetCellSelectionForTests(): void {
   clearCellSelectionOnly();
   lastByGrid.clear();
   writeAggregateFooterPins(new Set<string>());
+  writeEmptyTagColumns(new Map());
 }
 
 export function aggregateFooterPinned(ownerId: string): boolean {
@@ -130,6 +134,48 @@ export function setAggregateFooterPinned(ownerId: string, pinned: boolean): void
 
 export function toggleAggregateFooterPinned(ownerId: string): void {
   setAggregateFooterPinned(ownerId, !aggregateFooterPinned(ownerId));
+}
+
+export function emptyTagColumnsForBoard(ownerId: string): readonly string[] {
+  return [...(emptyTagColumns().get(ownerId) ?? [])];
+}
+
+export function addEmptyTagColumn(ownerId: string, tag: string): void {
+  const clean = tag.trim();
+  if (!clean) return;
+  writeEmptyTagColumns((cur) => {
+    const next = new Map(cur);
+    const tags = new Set(next.get(ownerId) ?? []);
+    tags.add(clean);
+    next.set(ownerId, tags);
+    return next;
+  });
+}
+
+export function pruneEmptyTagColumns(ownerId: string, persisted: ReadonlySet<string>): void {
+  const current = emptyTagColumns().get(ownerId);
+  if (!current) return;
+  const nextTags = [...current].filter((tag) => !persisted.has(tag));
+  if (nextTags.length === current.size) return;
+  writeEmptyTagColumns((cur) => {
+    const next = new Map(cur);
+    if (nextTags.length) next.set(ownerId, new Set(nextTags));
+    else next.delete(ownerId);
+    return next;
+  });
+}
+
+export function clearEmptyTagColumns(ownerId?: string): void {
+  if (!ownerId) {
+    writeEmptyTagColumns(new Map());
+    return;
+  }
+  if (!emptyTagColumns().has(ownerId)) return;
+  writeEmptyTagColumns((cur) => {
+    const next = new Map(cur);
+    next.delete(ownerId);
+    return next;
+  });
 }
 
 export function isSheetCellOwner(owner: string | null): boolean {
@@ -379,11 +425,11 @@ function moveFromRowSeam(sel: RowSeamSel, dir: CellDirection): boolean {
   if (bounds.rows <= 0 || bounds.cols <= 0) return false;
 
   if (dir === "up") {
-    if (sel.at <= 0) return flowOutVertical(sel, "up");
+    if (sel.at <= 0) return true;
     return setClampedCell(sel.gridId, sel.at - 1, sel.anchor.col);
   }
   if (dir === "down") {
-    if (sel.at >= bounds.rows) return flowOutVertical(sel, "down");
+    if (sel.at >= bounds.rows) return true;
     return setClampedCell(sel.gridId, sel.at, sel.anchor.col);
   }
   if (dir === "left") {
@@ -399,7 +445,7 @@ function moveFromColSeam(sel: ColSeamSel, dir: CellDirection): boolean {
   if (bounds.rows <= 0 || bounds.cols <= 0) return false;
 
   if (dir === "left") {
-    if (sel.at <= 0) return exitLeft(sel);
+    if (sel.at <= 0) return true;
     return setClampedCell(sel.gridId, sel.anchor.row, sel.at - 1);
   }
   if (dir === "right") {

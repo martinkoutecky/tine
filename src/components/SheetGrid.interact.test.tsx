@@ -128,20 +128,14 @@ function keydown(target: EventTarget, key: string, init: Partial<KeyboardEvent> 
   return event;
 }
 
-function mouseDown(target: EventTarget, init: Partial<MouseEventInit> = {}): MouseEvent {
-  const event = new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0, ...init });
-  target.dispatchEvent(event);
-  return event;
-}
-
 function doubleClick(target: EventTarget, init: Partial<MouseEventInit> = {}): MouseEvent {
   const event = new MouseEvent("dblclick", { bubbles: true, cancelable: true, button: 0, ...init });
   target.dispatchEvent(event);
   return event;
 }
 
-function pointer(type: string, x: number, y: number): Event {
-  return new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y });
+function pointer(type: string, x: number, y: number, init: Partial<MouseEventInit> = {}): Event {
+  return new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y, ...init });
 }
 
 function textRange(root: globalThis.Node, needle: string, offset: number): Range {
@@ -225,13 +219,13 @@ describe("SheetGrid interaction", () => {
     const { root, dispose } = setup();
 
     stubCaretRange(null);
-    mouseDown(cell(root, 0, 1));
+    cell(root, 0, 1).dispatchEvent(pointer("pointerdown", 20, 15));
     expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 0, col: 1 });
     expect(cell(root, 0, 1).classList.contains("sheet-cell-selected")).toBe(true);
     expect(editingId()).toBeNull();
 
     const calls = stubCaretRange(textRange(cell(root, 0, 0), "Alpha", 2));
-    mouseDown(cell(root, 0, 0));
+    cell(root, 0, 0).dispatchEvent(pointer("pointerdown", 20, 15));
     await tick();
 
     expect(calls()).toBe(0);
@@ -244,6 +238,23 @@ describe("SheetGrid interaction", () => {
     expect(calls()).toBe(1);
     expect(editingId()).toBe("c1");
     expect(activeEditor(root).selectionStart).toBe(2);
+
+    dispose();
+  });
+
+  it("keeps grid column tracks unchanged when a selected cell enters edit", async () => {
+    const { root, dispose } = setup();
+    const grid = root.querySelector(".sheet-grid") as HTMLElement;
+
+    cell(root, 0, 1).dispatchEvent(pointer("pointerdown", 20, 15));
+    await tick();
+    const before = grid.style.gridTemplateColumns;
+
+    doubleClick(cell(root, 0, 1));
+    await tick();
+
+    expect(editingId()).toBe("c2");
+    expect(grid.style.gridTemplateColumns).toBe(before);
 
     dispose();
   });
@@ -270,7 +281,7 @@ describe("SheetGrid interaction", () => {
     dispose();
   });
 
-  it("moves selection with arrows through seams, including holes, and flows out vertically", async () => {
+  it("moves selection with arrows through seams, including holes, and keeps boundary seams visible", async () => {
     const { root, dispose } = setup();
 
     setCellSel({ gridId: "grid", row: 0, col: 0 });
@@ -295,16 +306,14 @@ describe("SheetGrid interaction", () => {
     expect(cellSel()).toEqual(rowSeamSel("grid", 0, 0));
 
     keydown(window, "ArrowUp");
-    expect(cellSel()).toBeNull();
-    expect(isSelected("before")).toBe(true);
+    expect(cellSel()).toEqual(rowSeamSel("grid", 0, 0));
 
     setCellSel({ gridId: "grid", row: 1, col: 0 });
     keydown(window, "ArrowDown");
     expect(cellSel()).toEqual(rowSeamSel("grid", 2, 0));
 
     keydown(window, "ArrowDown");
-    expect(cellSel()).toBeNull();
-    expect(isSelected("after")).toBe(true);
+    expect(cellSel()).toEqual(rowSeamSel("grid", 2, 0));
 
     dispose();
   });
@@ -407,6 +416,10 @@ describe("SheetGrid interaction", () => {
 
     expect(editingId()).toBeNull();
     expect(cellSel()).toEqual(rowSeamSel("c2", 0, 0));
+    const innerGrid = root.querySelector('.sheet-grid[data-sheet-grid-id="c2"]') as HTMLElement | null;
+    expect(innerGrid?.querySelector(":scope > .sheet-seam-selected")).not.toBeNull();
+    const outerGrid = root.querySelector('.sheet-grid[data-sheet-grid-id="grid"]') as HTMLElement | null;
+    expect(outerGrid?.querySelector(":scope > .sheet-seam-selected")).toBeNull();
 
     dispose();
   });
@@ -556,7 +569,7 @@ describe("SheetGrid interaction", () => {
     document.elementFromPoint = prevElementFromPoint;
 
     setCellSel({ gridId: "grid", row: 0, col: 1 });
-    mouseDown(cell(root, 1, 0), { shiftKey: true });
+    cell(root, 1, 0).dispatchEvent(pointer("pointerdown", 20, 15, { shiftKey: true }));
     expect(cellSel()).toEqual({
       kind: "range",
       gridId: "grid",
@@ -609,6 +622,13 @@ describe("SheetGrid interaction", () => {
       setCellSel(colSeamSel("grid", 1, 1));
       await tick();
       let seam = root.querySelector(".sheet-seam-selected") as HTMLElement | null;
+      expect(seam?.style.height).toBe("30px");
+      expect(seam?.style.top).toBe("30px");
+
+      setCellSel(colSeamSel("grid", 0, 1));
+      await tick();
+      seam = root.querySelector(".sheet-seam-selected") as HTMLElement | null;
+      expect(seam?.style.left).toBe("0px");
       expect(seam?.style.height).toBe("30px");
       expect(seam?.style.top).toBe("30px");
 

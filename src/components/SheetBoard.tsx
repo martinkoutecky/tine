@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, untrack, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { doc, ensurePageLoaded, formatForBlock, formatForPage, pageByName, readPageProperty } from "../store";
 import { facetsFromDto, facetsOf, type Facets } from "../render/facets";
@@ -10,6 +10,10 @@ import {
   cellOwner,
   cellSel,
   cellSurfaceKey,
+  addEmptyTagColumn,
+  clearEmptyTagColumns,
+  emptyTagColumnsForBoard,
+  pruneEmptyTagColumns,
   registerSheetViewAdapter,
   setCellSel,
   startCellEditing,
@@ -29,10 +33,11 @@ import { parseFields, sheetConfig, type FieldSpec } from "../sheet/config";
 import { formulasOf, mergeFormulas } from "../sheet/formulaFields";
 import { createFormulaFilterMemo } from "../sheet/formulaEval";
 import { MARKERS } from "../markers";
-import { openSheetCellContextMenu, openSheetContextMenu, pushToast, workflow } from "../ui";
+import { graphEpoch, openSheetCellContextMenu, openSheetContextMenu, pushToast, workflow } from "../ui";
 import { blockBackgroundColor } from "../blockColors";
 import type { BlockDto, RefGroup } from "../types";
 import { Editor, SurfaceContext } from "./Block";
+import { isBareTagName } from "../tags";
 
 interface RowRecord {
   id: string;
@@ -61,6 +66,8 @@ export function SheetBoard(props: {
     return isFieldId(normalized) ? normalized : "state";
   });
   const [drag, setDrag] = createSignal<{ id: string; col: number; row: number; overCol: number | null } | null>(null);
+  const [addingTag, setAddingTag] = createSignal(false);
+  const [tagInputInvalid, setTagInputInvalid] = createSignal(false);
   const config = createMemo(() => {
     const owner = doc.byId[props.ownerId];
     return sheetConfig(owner ? facetsOf(owner.raw, formatForBlock(props.ownerId)).properties : []);
@@ -132,9 +139,29 @@ export function SheetBoard(props: {
     setPendingEjection(null);
   });
 
-  const columns = createMemo<BoardColumn[]>(() => {
+  const baseColumns = createMemo<BoardColumn[]>(() => {
     const now = new Date();
     return buildColumns(rows(), groupBy(), schemaFields(), { formulas: formulas(), now });
+  });
+  const columns = createMemo<BoardColumn[]>(() => {
+    const cols = baseColumns();
+    if (groupBy() !== "tags") return cols;
+    const existing = new Set(cols.map((col) => col.key));
+    const empty = emptyTagColumnsForBoard(props.ownerId)
+      .filter((tag) => !existing.has(tag))
+      .map((tag): BoardColumn => ({ key: tag, label: tag, rows: [] }));
+    return [...cols, ...empty];
+  });
+  createEffect(() => {
+    if (groupBy() !== "tags") return;
+    pruneEmptyTagColumns(
+      props.ownerId,
+      new Set(baseColumns().map((col) => col.key).filter((key): key is string => key !== null))
+    );
+  });
+  createEffect(() => {
+    graphEpoch();
+    untrack(() => clearEmptyTagColumns(props.ownerId));
   });
   const maxRows = createMemo(() => Math.max(1, ...columns().map((c) => c.rows.length)));
   const formulaHintFields = createMemo(() => {
@@ -229,6 +256,20 @@ export function SheetBoard(props: {
     });
   };
 
+  const commitNewTagColumn = (value: string): boolean => {
+    const tag = value.trim();
+    const exists = columns().some((col) => col.key === tag);
+    if (!isBareTagName(tag) || exists) {
+      setTagInputInvalid(true);
+      if (tag && !exists) pushToast("Invalid tag name", "warn");
+      return false;
+    }
+    addEmptyTagColumn(props.ownerId, tag);
+    setAddingTag(false);
+    setTagInputInvalid(false);
+    return true;
+  };
+
   return (
     <Show when={columns().length > 0} fallback={<div class="sheet-board sheet-empty">empty board</div>}>
       <div
@@ -276,6 +317,49 @@ export function SheetBoard(props: {
             </section>
           )}
         </For>
+        <Show when={groupBy() === "tags"}>
+          <section class="sheet-board-column sheet-board-add-tag-column">
+            <Show
+              when={addingTag()}
+              fallback={
+                <button
+                  class="sheet-board-add-tag-ghost"
+                  title="Add tag column"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setAddingTag(true);
+                    setTagInputInvalid(false);
+                  }}
+                >
+                  <span class="sheet-ghost-plus">+</span>
+                  <span>new tag</span>
+                </button>
+              }
+            >
+              <input
+                class="sheet-board-add-tag-input"
+                classList={{ "sheet-input-invalid": tagInputInvalid() }}
+                autofocus
+                placeholder="new-tag"
+                onPointerDown={(e) => e.stopPropagation()}
+                onMouseDown={(e) => e.stopPropagation()}
+                onInput={() => setTagInputInvalid(false)}
+                onKeyDown={(e) => {
+                  e.stopPropagation();
+                  if (e.key === "Enter") commitNewTagColumn(e.currentTarget.value);
+                  else if (e.key === "Escape") {
+                    setAddingTag(false);
+                    setTagInputInvalid(false);
+                  }
+                }}
+                onBlur={() => {
+                  setAddingTag(false);
+                  setTagInputInvalid(false);
+                }}
+              />
+            </Show>
+          </section>
+        </Show>
       </div>
     </Show>
   );

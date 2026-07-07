@@ -76,7 +76,9 @@ const td = spawn(
 await sleep(3000);
 
 let failures = 0;
+let checks = 0;
 const check = (name, ok, extra = "") => {
+  checks++;
   console.log(`${ok ? "PASS" : "FAIL"}: ${name}${ok ? "" : "  " + extra}`);
   if (!ok) failures++;
 };
@@ -188,6 +190,44 @@ try {
   await sleep(2500);
   const disk4 = fs.readFileSync(JFILE, "utf8");
   check("two undos fully revert the seam insert (text, then structure)", disk4 === disk2, JSON.stringify(disk4));
+
+  const ladderStart = await browser.execute(() => {
+    const cell = document.querySelector('.sheet-grid .sheet-cell[data-row="0"][data-col="1"]');
+    if (!cell) return false;
+    cell.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, cancelable: true, button: 0, clientX: 20, clientY: 15 }));
+    cell.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, cancelable: true, button: 0, clientX: 20, clientY: 15 }));
+    return true;
+  });
+  await sleep(200);
+  await browser.keys(["ArrowLeft"]);
+  await sleep(150);
+  const ladderSeam = await browser.execute(() => {
+    const grid = document.querySelector(".sheet-grid");
+    return !!grid && [...grid.children].some((el) => el.classList.contains("sheet-seam-selected"));
+  });
+  await browser.keys(["ArrowLeft"]);
+  await sleep(150);
+  const ladderCell = await browser.execute(() => {
+    const selected = document.querySelector(".sheet-grid > .sheet-cell-selected");
+    return selected?.getAttribute("data-row") === "0" && selected?.getAttribute("data-col") === "0";
+  });
+  await browser.keys(["ArrowLeft"]);
+  await sleep(150);
+  const ladderBoundary = await browser.execute(() => {
+    const grid = document.querySelector(".sheet-grid");
+    return !!grid && [...grid.children].some((el) => el.classList.contains("sheet-seam-selected"));
+  });
+  await browser.keys(["ArrowLeft"]);
+  await sleep(150);
+  const ladderBoundaryStays = await browser.execute(() => {
+    const grid = document.querySelector(".sheet-grid");
+    return !!grid && [...grid.children].some((el) => el.classList.contains("sheet-seam-selected"));
+  });
+  check("seam ladder starts from §1 grid cell", ladderStart);
+  check("seam ladder cell-to-seam renders", ladderSeam);
+  check("seam ladder seam-to-cell renders", ladderCell);
+  check("seam ladder left boundary seam renders", ladderBoundary);
+  check("seam ladder boundary stays visible", ladderBoundaryStays);
 
   // --- Fill down (phase 2c) --------------------------------------------------
   const cellA = await browser.$('.sheet-cell[data-row="0"][data-col="1"]');
@@ -385,5 +425,5 @@ try {
   try { await browser?.deleteSession(); } catch {}
   td.kill();
 }
-console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURES`);
+console.log(failures === 0 ? `\nALL PASS (${checks} checks)` : `\n${failures} FAILURES (${checks} checks)`);
 process.exit(failures === 0 ? 0 : 1);

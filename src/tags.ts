@@ -8,8 +8,12 @@
 const TAG_UNSAFE = /[\s#,!?'":[\]]/;
 const TAG_TRAILING_DELIM = /[.;]$/;
 
+export function isBareTagName(pageName: string): boolean {
+  return !!pageName && !TAG_UNSAFE.test(pageName) && !TAG_TRAILING_DELIM.test(pageName);
+}
+
 export function tagRef(pageName: string): string {
-  return !pageName || TAG_UNSAFE.test(pageName) || TAG_TRAILING_DELIM.test(pageName)
+  return !isBareTagName(pageName)
     ? `#[[${pageName}]]`
     : `#${pageName}`;
 }

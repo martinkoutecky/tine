@@ -3937,12 +3937,18 @@ body.file-drop-active::after {
   position: relative;
   margin: 6px 0 10px var(--sheet-container-indent);
   max-width: 100%;
-  overflow-x: auto;
+  overflow: visible;
 }
 .block-sheet-container.sheet-breakout {
   width: var(--sheet-breakout-width, 100%);
   max-width: var(--sheet-breakout-width, 100%);
   margin-left: calc(var(--sheet-container-indent) - var(--sheet-breakout-shift, 0px));
+}
+.sheet-scroll {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 .sheet-grid {
   display: grid;
@@ -4158,8 +4164,8 @@ body.file-drop-active::after {
 }
 .sheet-aggregate-corner-toggle {
   position: absolute;
-  right: -7px;
-  bottom: -7px;
+  right: 0;
+  bottom: 0;
   z-index: 6;
   width: 24px;
   height: 24px;
@@ -4189,32 +4195,74 @@ body.file-drop-active::after {
   outline-offset: 2px;
 }
 .sheet-add-field {
-  min-width: 34px;
+  min-width: 96px;
   padding: 3px;
   display: flex;
   align-items: center;
   justify-content: center;
 }
-.sheet-header-actions {
+.sheet-add-column-spacer {
+  display: block;
+  width: 100%;
+  min-height: 24px;
+}
+.sheet-add-column-ghost,
+.sheet-add-row-ghost {
+  border: 1px dashed color-mix(in srgb, var(--border-color) 78%, transparent);
+  border-radius: 0;
+  background: color-mix(in srgb, var(--bg-secondary) 70%, transparent);
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease, color 120ms ease, background 120ms ease, border-color 120ms ease;
+}
+.sheet-add-column-ghost {
+  width: 100%;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 6px;
+  white-space: nowrap;
+}
+.sheet-add-row-ghost {
+  grid-column: 1 / -1;
+  min-height: 30px;
   display: flex;
   align-items: center;
-  gap: 4px;
+  justify-content: center;
+  gap: 6px;
+  padding: 4px 8px;
 }
-.sheet-add-field-btn {
-  width: 24px;
-  height: 24px;
-  border: 1px solid var(--border-color);
-  border-radius: 5px;
-  background: var(--bg-primary);
-  color: var(--text-secondary);
-  cursor: pointer;
+.sheet-table:hover .sheet-add-column-ghost,
+.sheet-table:focus-within .sheet-add-column-ghost,
+.sheet-table:hover .sheet-add-row-ghost,
+.sheet-table:focus-within .sheet-add-row-ghost,
+.sheet-add-row-empty {
+  opacity: 0.82;
+  pointer-events: auto;
 }
-.sheet-add-field-btn:hover {
+.sheet-add-column-ghost:hover,
+.sheet-add-column-ghost:focus-visible,
+.sheet-add-row-ghost:hover,
+.sheet-add-row-ghost:focus-visible {
   color: var(--text-primary);
+  border-color: var(--accent, #4c8bf5);
   background: var(--bg-tertiary);
 }
-.sheet-add-row-btn:empty::before {
-  content: "+";
+.sheet-ghost-plus {
+  font-weight: 700;
+  line-height: 1;
+}
+.sheet-ghost-label {
+  font-size: 12px;
+}
+.sheet-add-row-empty {
+  min-height: 26px;
+  padding: 3px 8px;
 }
 .sheet-prop-input {
   width: 100%;
@@ -4294,6 +4342,47 @@ body.file-drop-active::after {
   min-height: 120px;
   border: 1px solid var(--border-color);
   background: var(--bg-secondary);
+}
+.sheet-board-add-tag-column {
+  justify-content: center;
+  align-items: stretch;
+  border-style: dashed;
+  background: color-mix(in srgb, var(--bg-secondary) 68%, transparent);
+}
+.sheet-board-add-tag-ghost {
+  flex: 1;
+  min-height: 120px;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.sheet-board-add-tag-ghost:hover,
+.sheet-board-add-tag-ghost:focus-visible {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  outline: none;
+}
+.sheet-board-add-tag-input {
+  margin: 10px;
+  min-width: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--accent, #4c8bf5);
+  border-radius: 4px;
+  padding: 5px 7px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: inherit;
+}
+.sheet-board-add-tag-input.sheet-input-invalid {
+  border-color: var(--marker-todo);
+  box-shadow: 0 0 0 1px var(--marker-todo);
 }
 .sheet-board-drop {
   outline: 2px solid var(--accent, #4c8bf5);

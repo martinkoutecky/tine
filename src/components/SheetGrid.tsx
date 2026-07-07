@@ -12,7 +12,6 @@ import {
   cellSurfaceKey,
   aggregateFooterPinned,
   colSeamSel,
-  extendCellSelectionTo,
   rowSeamSel,
   setCellSel,
   setAggregateFooterPinned,
@@ -60,6 +59,19 @@ function columnTracks(cols: number, widths: ReadonlyMap<number, number>, preview
 
 function cellInGrid(grid: HTMLElement, row: number, col: number): HTMLElement | null {
   return grid.querySelector(`:scope > .sheet-cell[data-row="${row}"][data-col="${col}"]`) as HTMLElement | null;
+}
+
+function measuredColumnTracks(grid: HTMLElement, cols: number): string | null {
+  const tracks: string[] = [];
+  for (let col = 0; col < cols; col++) {
+    const cell =
+      cellInGrid(grid, 0, col) ??
+      grid.querySelector(`:scope > .sheet-cell[data-col="${col}"]`) as HTMLElement | null;
+    const width = cell?.getBoundingClientRect().width ?? 0;
+    if (width <= 0) return null;
+    tracks.push(`${Math.round(width)}px`);
+  }
+  return tracks.join(" ");
 }
 
 function seamStyleFor(grid: HTMLElement, sel: SheetSel, matrix: { rows: number; cols: number }): JSX.CSSProperties | null {
@@ -186,6 +198,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
   const [seamStyle, setSeamStyle] = createSignal<JSX.CSSProperties | null>(null);
   const [resizing, setResizing] = createSignal(false);
   const [hovering, setHovering] = createSignal(false);
+  const [stableColumns, setStableColumns] = createSignal<string | null>(null);
   const [footerEditingCount, setFooterEditingCount] = createSignal(0);
   const containerOverlay = useContext(SheetContainerOverlayContext);
   const sheetOverlay = props.depth === 0 ? containerOverlay : null;
@@ -199,6 +212,8 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
   );
   const matrix = createMemo(() => buildMatrix(rows()));
   const columns = createMemo(() => columnTracks(matrix().cols, config().colWidths));
+  const editingInThisGrid = () => editingOwner()?.startsWith(`sheet:${props.id}:`) ?? false;
+  const effectiveColumns = () => stableColumns() ?? columns();
   const hasAggregates = createMemo(() => config().colAggregates.size > 0);
   const footerPinned = createMemo(() => aggregateFooterPinned(props.id));
   const footerEditing = createMemo(() => footerEditingCount() > 0);
@@ -233,6 +248,28 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
 
   onCleanup(() => sheetOverlay?.setCorner(null));
 
+  const captureStableColumns = () => {
+    if (!gridRef) return;
+    const tracks = measuredColumnTracks(gridRef, matrix().cols);
+    if (tracks) setStableColumns(tracks);
+  };
+
+  let wasEditing = false;
+  createEffect(() => {
+    const sel = cellSel();
+    columns();
+    const editing = editingInThisGrid();
+    if (wasEditing && !editing) {
+      wasEditing = false;
+      setStableColumns(null);
+      return;
+    }
+    wasEditing = editing;
+    if (!gridRef || editing) return;
+    if (sel && sel.gridId === props.id && sel.kind !== "row-seam" && sel.kind !== "col-seam") captureStableColumns();
+    else setStableColumns(null);
+  });
+
   createEffect(() => {
     const sel = cellSel();
     const m = matrix();
@@ -255,7 +292,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
   };
 
   const restoreColumns = () => {
-    if (gridRef) gridRef.style.gridTemplateColumns = columns();
+    if (gridRef) gridRef.style.gridTemplateColumns = effectiveColumns();
   };
 
   const onPointerDown = (e: PointerEvent) => {
@@ -336,6 +373,10 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
     openSheetContextMenu(e.clientX, e.clientY, props.id, "grid", "children");
   };
 
+  const stopSheetMouseDown = (e: MouseEvent) => {
+    if (e.button === 0) e.stopPropagation();
+  };
+
   const columnValues = (col: number): string[] =>
     matrix().cells
       .filter((cell) => cell.col === col && !(config().header && cell.row === 0))
@@ -352,8 +393,9 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
           classList={{ "sheet-grid-resizing": resizing() }}
           data-sheet-grid-id={props.id}
           tabIndex={-1}
-          style={{ "grid-template-columns": columns() }}
+          style={{ "grid-template-columns": effectiveColumns() }}
           onPointerDown={onPointerDown}
+          onMouseDown={stopSheetMouseDown}
           onPointerEnter={() => setHovering(true)}
           onPointerLeave={() => setHovering(false)}
           onDblClick={onDoubleClick}
@@ -366,6 +408,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
                 cell={cell}
                 header={config().header && cell.row === 0}
                 depth={props.depth}
+                freezeColumns={captureStableColumns}
               />
             )}
           </For>
@@ -422,7 +465,7 @@ function clickOffset(e: MouseEvent, contentRef: HTMLDivElement | undefined, raw:
   return editorOffsetFromRenderedRange(contentRef, range, raw, isSheetCellHidden);
 }
 
-function SheetGridCell(props: { gridId: string; cell: MatrixCell; header: boolean; depth: number }): JSX.Element {
+function SheetGridCell(props: { gridId: string; cell: MatrixCell; header: boolean; depth: number; freezeColumns: () => void }): JSX.Element {
   const sel = (): SheetCellCtx => ({ gridId: props.gridId, row: props.cell.row, col: props.cell.col });
   let contentRef: HTMLDivElement | undefined;
   const bgColor = createMemo(() => {
@@ -430,18 +473,12 @@ function SheetGridCell(props: { gridId: string; cell: MatrixCell; header: boolea
     const node = id ? doc.byId[id] : null;
     return node ? blockBackgroundColor(facetsOf(node.raw, formatForBlock(id!)).properties) : undefined;
   });
-  const onMouseDown = (e: MouseEvent) => {
-    if (e.button !== 0 || e.ctrlKey || e.metaKey || e.altKey) return;
-    e.preventDefault();
-    e.stopPropagation();
-    if (e.shiftKey) extendCellSelectionTo(props.gridId, { row: props.cell.row, col: props.cell.col });
-    else setCellSel(sel());
-  };
   const onDoubleClick = (e: MouseEvent) => {
     if (e.button !== 0 || e.ctrlKey || e.metaKey || e.altKey) return;
     if (forbidsEditEntry(e)) return;
     e.preventDefault();
     e.stopPropagation();
+    props.freezeColumns();
     const blockId = props.cell.blockId;
     if (!blockId) return;
     const node = doc.byId[blockId];
@@ -481,7 +518,6 @@ function SheetGridCell(props: { gridId: string; cell: MatrixCell; header: boolea
       data-row={props.cell.row}
       data-col={props.cell.col}
       style={bgColor() ? { background: bgColor() } : undefined}
-      onMouseDown={onMouseDown}
       onDblClick={onDoubleClick}
       onContextMenu={openCellMenu}
     >
