@@ -19,6 +19,49 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   formula group-by axes, `tine.filter::` table/board filters that fail open with a
   visible chip, and a right-click formula/filter editor.
 
+## [0.4.4] - 2026-07-07
+
+### Added
+
+- **About tab in Settings** ([#32](https://github.com/martinkoutecky/tine/issues/32)).
+  Settings → About shows the version and build, links to the website, source, and
+  support (Ko-fi), and credits the people and AI collaborators behind Tine.
+- **Developer tools (WebKit Web Inspector), openable in release builds**
+  ([#31](https://github.com/martinkoutecky/tine/issues/31)). Press **Ctrl+Shift+J**,
+  run *Toggle developer tools* from the command palette, or right-click → *Inspect
+  Element* to open the inspector for theme/CSS debugging — the shortcut toggles it
+  closed too. Previously the inspector was only compiled into debug builds; it now
+  ships in releases. (The usual Ctrl+Shift+I / F12 are reserved by WebKitGTK itself
+  and never reach the app, so Tine uses Ctrl+Shift+J — Chrome's other devtools key —
+  which is remappable under Settings → Keyboard shortcuts.)
+- **Time entry in the SCHEDULED/DEADLINE date picker**
+  ([#30](https://github.com/martinkoutecky/tine/issues/30)). The `/scheduled` and
+  `/deadline` picker now has an **"Add time"** control: set an `HH:mm` clock time and
+  it's written the way Logseq does — `SCHEDULED: <2026-07-07 Tue 14:30>` (time after
+  the weekday, before any repeater). Tine already *rendered* a time on planning
+  timestamps; now you can enter one. Re-picking the date (or changing the repeater)
+  keeps an existing time instead of dropping it, and an `×` clears the time. Ranges
+  aren't supported (neither is in Logseq's planning timestamps).
+
+### Fixed
+
+- **Clicking right of a bullet that ends in a link now puts the caret after the
+  link, not before it** ([#34](https://github.com/martinkoutecky/tine/issues/34)).
+  Clicking past the end of a line whose last element is a `[[page]]`/`#tag`/link
+  used to drop the caret at the start of that element; it now lands at the end of
+  the line as expected.
+- **No more "Tine crashed" coredump when closing the app on Linux**
+  ([#28](https://github.com/martinkoutecky/tine/issues/28)). The app already closed
+  cleanly, but WebKitGTK's renderer subprocess ran the GPU driver's exit-time
+  teardown on the way out, which double-frees on many Mesa/driver combos (SIGABRT →
+  coredump notification), even on plain Intel graphics. Tine now terminates those
+  WebKit helper processes directly at quit — after saving — so the buggy teardown
+  never runs. GPU-accelerated rendering stays on for the whole session (the
+  `TINE_GPU=0` software-rendering fallback remains available but is no longer needed
+  for this). Linux only.
+
+## [0.4.3] — 2026-07-07
+
 ### Fixed
 
 - **Org files: block ids are written as a hidden `:PROPERTIES:` drawer, not a
@@ -857,7 +900,9 @@ takes over your graph.
 - macOS and Windows installers are currently **unsigned** — on macOS right-click →
   Open; on Windows choose *More info → Run anyway*.
 
-[Unreleased]: https://github.com/martinkoutecky/tine/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/martinkoutecky/tine/compare/v0.4.4...HEAD
+[0.4.4]: https://github.com/martinkoutecky/tine/compare/v0.4.3...v0.4.4
+[0.4.3]: https://github.com/martinkoutecky/tine/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/martinkoutecky/tine/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/martinkoutecky/tine/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/martinkoutecky/tine/compare/v0.3.5...v0.4.0

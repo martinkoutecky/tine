@@ -921,7 +921,7 @@ export function closeContextMenu() {
   setContextMenu(null);
 }
 
-export type SettingsTabId = "appearance" | "editor" | "journals" | "files" | "backups" | "graph" | "improve" | "shortcuts";
+export type SettingsTabId = "appearance" | "editor" | "journals" | "files" | "backups" | "graph" | "improve" | "shortcuts" | "about";
 
 export const [settingsOpen, setSettingsOpen] = createSignal(false);
 export const [settingsTabRequest, setSettingsTabRequest] = createSignal<SettingsTabId | null>(null);
@@ -1002,6 +1002,12 @@ export const [switcherMode, setSwitcherMode] = createSignal<SwitcherMode>("all")
 export function openSwitcher() {
   setSwitcherMode("all");
   setSwitcherOpen(true);
+}
+/** Toggle the WebView developer tools (WebKit Web Inspector) for theme/CSS
+ *  debugging (GH #31). No-op in the mock; on a release build it works because the
+ *  `devtools` Cargo feature is enabled. */
+export function openDevtools() {
+  void backend().openDevtools();
 }
 export function openCommandPalette() {
   setSwitcherMode("commands");

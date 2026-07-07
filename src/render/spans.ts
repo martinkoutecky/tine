@@ -9,11 +9,12 @@ export interface SpanDomAttrs {
   "data-so": string;
   "data-se"?: string;
   "data-sm"?: string;
+  "data-sce"?: string;
 }
 
 type SpanDomData =
   | { kind: "plain"; span: Span; spanMap?: SpanMap }
-  | { kind: "coarse"; start: number };
+  | { kind: "coarse"; start: number; end: number | null };
 
 function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n));
@@ -89,7 +90,13 @@ export function plainSpanAttrs(span: Span | undefined, spanMap?: SpanMap): SpanD
 }
 
 export function coarseSpanAttrs(span: Span | undefined): SpanDomAttrs | undefined {
-  return span ? { "data-so": String(span[0]) } : undefined;
+  // `data-sce` is the coarse end byte (one-past). Unlike `data-se` it does NOT
+  // promise byte-exact text mapping — a coarse element's rendered text usually
+  // differs from its source bytes (`**bold**`→"bold", aliased links, entities).
+  // It only lets a click resolve to whichever EDGE of the construct is nearer,
+  // so clicking to the right of a trailing link lands the caret after it (not
+  // before it — GH #34) rather than snapping to the span start.
+  return span ? { "data-so": String(span[0]), "data-sce": String(span[1]) } : undefined;
 }
 
 /** Span attrs for a plain whose RENDERED text differs from the AST text by the
@@ -161,7 +168,7 @@ function spanDataFromElement(el: Element): SpanDomData | null {
   const start = byteAttr(el, "data-so");
   if (start == null) return null;
   const end = byteAttr(el, "data-se");
-  if (end == null) return { kind: "coarse", start };
+  if (end == null) return { kind: "coarse", start, end: byteAttr(el, "data-sce") };
   if (end < start) return null;
   const spanMap = decodeSpanMap(el.getAttribute("data-sm"));
   if (spanMap === null) return null;
@@ -236,7 +243,15 @@ export function editorOffsetFromRenderedRange(
 
   let sourceByte: number | null;
   if (data.kind === "coarse") {
+    // Coarse elements map to an EDGE, not an interior byte. Pick the nearer one:
+    // a click landing in the second half of the rendered text (e.g. to the right
+    // of a trailing `[[link]]`) resolves to the span end, so the caret sits after
+    // the construct instead of before it (GH #34).
     sourceByte = data.start;
+    if (data.end != null) {
+      const { text, caret } = renderedTextCaret(el, range.startContainer, range.startOffset);
+      if (caret != null && text.length > 0 && caret * 2 >= text.length) sourceByte = data.end;
+    }
   } else {
     const { text, caret } = renderedTextCaret(el, range.startContainer, range.startOffset);
     if (caret == null) return null;

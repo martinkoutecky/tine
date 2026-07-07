@@ -61,6 +61,25 @@ describe("click-to-caret span mapping", () => {
     }
   });
 
+  it("puts the caret AFTER a trailing link when clicked to its right (GH #34)", () => {
+    // Clicking past the end of a block that ends in a link used to snap to the
+    // span START (caret before the first `[`); it must land after `]]` instead.
+    const raw = "asd [[xyz]]";
+    const { root, dispose } = mountedBody(raw);
+    try {
+      const link = root.querySelector("a.page-ref");
+      expect(link).toBeTruthy();
+      // A click on the right edge resolves into the link's text at its end.
+      expect(editorOffsetFromRenderedRange(root, elementRange(link!, link!.childNodes.length), raw, isBuiltinHidden))
+        .toBe(raw.length);
+      // ...while a click on the left edge still lands before it.
+      expect(editorOffsetFromRenderedRange(root, elementRange(link!, 0), raw, isBuiltinHidden))
+        .toBe(raw.indexOf("[[xyz]]"));
+    } finally {
+      dispose();
+    }
+  });
+
   it("accounts for hidden property lines between rendered regions", () => {
     const raw = "**bold**\nid:: abc\nplain";
     const { root, dispose } = mountedBody(raw);

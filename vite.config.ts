@@ -1,6 +1,7 @@
 import { defineConfig, type Plugin } from "vite";
 import solid from "vite-plugin-solid";
 import { fileURLToPath } from "node:url";
+import { execSync } from "node:child_process";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
@@ -9,6 +10,18 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 // Build timestamp, stamped at bundle time and shown in Settings so it's easy to
 // confirm the running binary is the latest (vs. a stale Syncthing copy).
 const BUILD_TIME = new Date().toISOString();
+
+// Short commit the bundle was built from — shown in About so an issue reporter
+// can name the exact build. Empty string if git isn't available (e.g. a source
+// tarball build); the About tab hides the row when it's empty.
+function gitCommit(): string {
+  try {
+    return execSync("git rev-parse --short HEAD", { encoding: "utf8" }).trim();
+  } catch {
+    return "";
+  }
+}
+const GIT_COMMIT = gitCommit();
 
 // The @twemoji/svg package holds one <codepoint>.svg per emoji at its root.
 const twemojiDir = fileURLToPath(new URL("./node_modules/@twemoji/svg", import.meta.url));
@@ -56,6 +69,7 @@ export default defineConfig({
   plugins: [solid(), twemojiAssets()],
   define: {
     __BUILD_TIME__: JSON.stringify(BUILD_TIME),
+    __GIT_COMMIT__: JSON.stringify(GIT_COMMIT),
   },
   clearScreen: false,
   server: {

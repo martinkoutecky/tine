@@ -22,7 +22,9 @@ custom-protocol = ["tauri/custom-protocol"]
 [dependencies]
 # `image-png` lets `tauri::image::Image::from_bytes` decode the PNG the lightbox
 # sends, so `copy_image_to_clipboard` can write it to the OS clipboard.
-tauri = { version = "2", features = ["image-png"] }
+# `devtools` ships the WebKit/WebView inspector in RELEASE builds too (it's on by
+# default only in debug), so users can open it for theme/CSS debugging (GH #31).
+tauri = { version = "2", features = ["image-png", "devtools"] }
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-process = "2"
@@ -48,3 +50,7 @@ tauri-plugin-updater = "2"
 # spellcheck via the textarea attribute alone, so no equivalent dep is needed.
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = "=2.0.2"
+# SIGKILL WebKitGTK's helper subprocesses at quit so they don't run their GL/EGL
+# driver atexit teardown (which double-frees → SIGABRT coredump on many Mesa/driver
+# combos). See platform::kill_webkit_children and GH #28.
+libc = "0.2"

@@ -1,0 +1,4 @@
+Tine is a fast, local-first outliner that reads and writes a real Logseq
+Markdown (and Org) graph on disk. It aims to feel like — and round-trip with —
+Logseq: the outliner, tasks and priorities, journals, page and block references,
+queries (with a visual builder), PDF and media, and HTML export.

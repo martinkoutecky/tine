@@ -422,6 +422,32 @@ pub(crate) fn read_asset(
     })
 }
 
+/// Quit the app cleanly. On Linux, first SIGKILL WebKitGTK's helper subprocesses so
+/// they don't run their buggy GL-driver atexit teardown and dump a SIGABRT core on
+/// exit (GH #28). The JS close handler calls this only AFTER `flushAll()`/
+/// `flushSession()` have resolved, so tearing the web process down hard loses no
+/// edits. Then hand off to Tauri's normal exit (the main process still tears down
+/// the way it always has — no dump there). On non-Linux this is just `app.exit(0)`.
+#[tauri::command]
+pub(crate) fn tine_quit(app: tauri::AppHandle) {
+    #[cfg(target_os = "linux")]
+    crate::platform::kill_webkit_children();
+    app.exit(0);
+}
+
+/// Toggle the WebView developer tools (WebKit Web Inspector) for theme/CSS
+/// debugging (GH #31). `open_devtools`/`close_devtools` are compiled in because
+/// we enable tauri's `devtools` feature unconditionally (see Cargo.toml) — so
+/// this works in shipped release builds, not just debug.
+#[tauri::command]
+pub(crate) fn tine_open_devtools(window: tauri::WebviewWindow) {
+    if window.is_devtools_open() {
+        window.close_devtools();
+    } else {
+        window.open_devtools();
+    }
+}
+
 #[tauri::command]
 pub(crate) fn read_local_image(
     path: String,

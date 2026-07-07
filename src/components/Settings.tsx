@@ -1,5 +1,6 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { ImproveTab } from "./ImproveTab";
+import { AboutTab } from "./AboutTab";
 import {
   settingsOpen,
   closeSettings,
@@ -127,6 +128,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "graph", label: "Graph" },
   { id: "improve", label: "Help improve Tine" },
   { id: "shortcuts", label: "Keyboard shortcuts" },
+  { id: "about", label: "About" },
 ];
 
 export function Settings(): JSX.Element {
@@ -243,6 +245,9 @@ export function Settings(): JSX.Element {
                   onRecord={(id) => setRecording(recording() === id ? null : id)}
                   onReset={resetShortcutOverride}
                 />
+              </Show>
+              <Show when={tab() === "about"}>
+                <AboutTab />
               </Show>
             </div>
           </div>

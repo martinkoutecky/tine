@@ -1,0 +1,3 @@
+Org files: block ids are now written as a hidden :PROPERTIES: drawer (matching
+Logseq) instead of a visible id:: line, so parking or referencing a block on an
+.org page no longer shows stray text and those spots survive a restart (#25).

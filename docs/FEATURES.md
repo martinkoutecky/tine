@@ -263,8 +263,10 @@ within a column; merged cells are still v2+.
   beside the box and still cycles on click. Checkboxes also show (read-only) on
   tasks surfaced in Linked References, query results, and embeds.
 - `SCHEDULED:` / `DEADLINE:` via a calendar **date picker** (`/scheduled`,
-  `/deadline`), including **recurring tasks** (`+1w` / `.+1w` / `++1w`) where
-  completing a repeater advances the date. You can type a planning line *anywhere*
+  `/deadline`), with an optional **clock time** ("Add time" → `HH:mm`, written as
+  `<2026-07-07 Tue 14:30>` like Logseq) and **recurring tasks** (`+1w` / `.+1w` /
+  `++1w`) where completing a repeater advances the date. Re-picking the date keeps
+  an existing time (and repeater). You can type a planning line *anywhere*
   in a block while editing; on exit it's moved to its canonical position (after the
   first line, before properties — OG's layout). A `SCHEDULED:`/`DEADLINE:` inside
   inline code or a code fence stays literal content (it's not a real timestamp), so
@@ -424,6 +426,11 @@ within a column; merged cells are still v2+.
   can recolor backgrounds, text, links, borders, and inline code. The cascade is
   built so your own `logseq/custom.css` loads last and takes priority. This is
   theme CSS compatibility, not plugin support.
+- **Developer tools** — `Ctrl+Shift+J`, *Toggle developer tools* in the command
+  palette, or right-click → *Inspect Element* opens the WebKit/WebView inspector for
+  theme and CSS debugging; the shortcut toggles it closed. Available in release
+  builds, not just debug. (`Ctrl+Shift+I` / `F12` are captured by WebKitGTK itself,
+  so Tine's default is `Ctrl+Shift+J` — remappable under Settings.)
 - ⊕ **Spell checking** in the editor (on by default, like Logseq) with red squiggles
   + right-click suggestions, using the system dictionaries. Unlike Logseq you can
   check **multiple languages at once** — Settings → Editor lists the dictionaries

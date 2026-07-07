@@ -184,6 +184,19 @@ export function App(): JSX.Element {
           // best-effort
         }
         closing = true;
+        // Quit via the backend so it can SIGKILL WebKitGTK's helper processes
+        // before they run their crash-y GL-driver exit teardown (GH #28). This
+        // never resolves (the process exits); the destroy()/close() below are only
+        // reached if the quit IPC didn't take (older backend, non-Linux edge), so
+        // the window still closes.
+        try {
+          await Promise.race([
+            backend().quit(),
+            new Promise((r) => setTimeout(r, 2000)),
+          ]);
+        } catch {
+          // fall through to the direct close below
+        }
         try {
           await w.destroy();
         } catch {

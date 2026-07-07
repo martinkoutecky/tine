@@ -25,8 +25,8 @@ use commands::{
     rename_page, resolve_block, resolve_blocks, resolve_sync_conflict, run_advanced_query,
     run_query, save_asset, save_page, save_pdf_area_image, search, set_default_journal_template,
     set_favorites, set_journal_title_format, set_preferred_format, set_preferred_workflow,
-    set_start_of_week, set_timetracking_enabled, sync_conflict_diff, trash_asset,
-    trash_journal_file, trash_sync_conflict, write_highlights,
+    set_start_of_week, set_timetracking_enabled, sync_conflict_diff, tine_open_devtools, tine_quit,
+    trash_asset, trash_journal_file, trash_sync_conflict, write_highlights,
 };
 use debug::{
     debug_enabled, debug_header, debug_info, debug_init, debug_log, diag, install_panic_logger,
@@ -393,7 +393,9 @@ pub fn run() {
             apply_spellcheck,
             list_spellcheck_dictionaries,
             debug_info,
-            debug_log
+            debug_log,
+            tine_quit,
+            tine_open_devtools
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

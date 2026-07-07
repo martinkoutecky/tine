@@ -1,0 +1,1 @@
+Fast local-first Logseq-compatible outliner

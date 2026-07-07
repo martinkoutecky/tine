@@ -3691,6 +3691,53 @@ body.file-drop-active::after {
   gap: 4px;
   cursor: pointer;
 }
+/* Optional clock-time row in the date picker (OG's "Add time"), above the repeat row. */
+.dp-time {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-color);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.dp-addtime {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--link-color);
+}
+.dp-addtime:hover {
+  text-decoration: underline;
+}
+.dp-time-label {
+  color: var(--text-muted);
+}
+.dp-time-input {
+  width: 58px;
+  padding: 3px 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.dp-time-input.invalid {
+  border-color: var(--marker-todo);
+}
+.dp-time-clear {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--marker-todo);
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 4px;
+}
 
 /* Sheet formula/filter editor */
 .formula-editor-overlay {
@@ -6171,3 +6218,134 @@ img.emoji {
 .welcome-choice-sub { color: var(--text-muted); font-size: .88rem; line-height: 1.4; }
 .welcome-busy { color: var(--text-muted); font-size: .9rem; margin: 16px 0 0; }
 .welcome-foot { color: var(--text-muted); font-size: .82rem; margin: 26px 0 0; }
+
+/* About tab (Settings → About, GH #32): identity, version/build, links, credits.
+   Read-only; styled to sit calmly among the other informational panes. */
+.about-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 460px;
+}
+.about-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.about-mark {
+  color: var(--accent);
+  flex: none;
+}
+.about-name {
+  font-size: 22px;
+  font-weight: 650;
+  line-height: 1.1;
+}
+.about-tagline {
+  color: var(--text-muted);
+  font-size: 13px;
+  margin-top: 2px;
+}
+.about-version {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.about-ver-num {
+  font-size: 14px;
+  font-weight: 550;
+}
+.about-commit {
+  color: var(--text-muted);
+  font-family: var(--ls-font-mono);
+  font-size: 12px;
+}
+.about-check {
+  margin-left: 4px;
+}
+.about-status,
+.about-build {
+  margin-top: -6px;
+}
+.about-links {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 2px;
+}
+.about-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 13.5px;
+  text-align: left;
+}
+.about-link:hover {
+  border-color: var(--accent);
+  background: var(--bg-secondary);
+}
+.about-link svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  color: var(--text-secondary);
+}
+.about-link:hover svg {
+  color: var(--accent);
+}
+.about-link-url {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.about-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+.about-dot {
+  color: var(--text-muted);
+}
+.about-linkbtn {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: inherit;
+}
+.about-linkbtn:hover {
+  text-decoration: underline;
+}
+.about-credits {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-color);
+}
+.about-credit-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.about-credit-who {
+  font-weight: 550;
+  font-size: 13px;
+}
+.about-credit-what {
+  color: var(--text-muted);
+  font-size: 12.5px;
+}

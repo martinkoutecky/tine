@@ -61,6 +61,17 @@ function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: num
   const repeater = (): string | null =>
     isScheduleTarget(props.which) && repUnit() ? `${repMode()}${Math.max(1, repNum())}${repUnit()}` : null;
 
+  // Optional clock time (`HH:mm`), like OG's "Add time". Seeded from the existing
+  // timestamp so re-picking a date keeps the time (OG preserves it — GH #30). Kept
+  // as independent state, applied on the same day-click that commits the date; a
+  // native `<input type="time">` always yields 24h `HH:mm` regardless of locale.
+  const [time, setTime] = createSignal<string | null>(sel?.time ?? null);
+  // Default seed when "Add time" is first clicked: the current local time.
+  const nowHHmm = () => {
+    const n = new Date();
+    return `${String(n.getHours()).padStart(2, "0")}:${String(n.getMinutes()).padStart(2, "0")}`;
+  };
+
   // Days laid out in weeks (leading blanks for the first-of-month offset).
   const grid = createMemo(() => {
     const { y, m } = view();
@@ -80,12 +91,11 @@ function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: num
   const writePickedDate = (y: number, m: number, d: number) => {
     const picked = fieldDate(y, m, d);
     if (isScheduleTarget(props.which)) {
-      if (repeater()) setSchedule(props.bid, props.which, { y, m, d }, repeater());
-      else writeField(props.bid, props.which, picked);
+      setSchedule(props.bid, props.which, { y, m, d }, repeater(), time());
       return;
     }
-    const time = props.which.fieldType === "datetime" ? propDateSelection(props.bid, props.which.field)?.time : null;
-    writeField(props.bid, props.which.field, time ? `${picked} ${time}` : picked);
+    const fieldTime = props.which.fieldType === "datetime" ? propDateSelection(props.bid, props.which.field)?.time : null;
+    writeField(props.bid, props.which.field, fieldTime ? `${picked} ${fieldTime}` : picked);
   };
   const pick = (d: number) => {
     writePickedDate(view().y, view().m, d);
@@ -161,6 +171,31 @@ function Picker(props: { bid: string; which: DatePickerTarget; x: number; y: num
           </For>
         </div>
         <Show when={isScheduleTarget(props.which)}>
+          <div class="dp-time" title="Optional clock time. Pick a day to apply it.">
+            <Show
+              when={time() !== null}
+              fallback={
+                <button class="dp-addtime" onClick={() => setTime(nowHHmm())}>
+                  + Add time
+                </button>
+              }
+            >
+              <span class="dp-time-label">Time</span>
+              <input
+                class="dp-time-input"
+                classList={{ invalid: !!time() && !/^\d{1,2}:\d{2}$/.test(time()!) }}
+                type="text"
+                inputmode="numeric"
+                placeholder="HH:mm"
+                maxlength="5"
+                value={time()!}
+                onInput={(e) => setTime(e.currentTarget.value || null)}
+              />
+              <button class="dp-time-clear" title="Remove time" onClick={() => setTime(null)}>
+                ×
+              </button>
+            </Show>
+          </div>
           <div class="dp-repeat" title="Pick a day to apply the repeat. On completion, a repeating task advances to its next date and reopens.">
             <select
               class="settings-select dp-rep-unit"
