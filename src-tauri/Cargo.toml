@@ -22,7 +22,9 @@ custom-protocol = ["tauri/custom-protocol"]
 [dependencies]
 # `image-png` lets `tauri::image::Image::from_bytes` decode the PNG the lightbox
 # sends, so `copy_image_to_clipboard` can write it to the OS clipboard.
-tauri = { version = "2", features = ["image-png"] }
+# `devtools` ships the WebKit/WebView inspector in RELEASE builds too (it's on by
+# default only in debug), so users can open it for theme/CSS debugging (GH #31).
+tauri = { version = "2", features = ["image-png", "devtools"] }
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-process = "2"

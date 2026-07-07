@@ -10,6 +10,7 @@
 import {
   openSwitcher,
   openCommandPalette,
+  openDevtools,
   toggleTheme,
   toggleSidebar,
   closeSwitcher,
@@ -91,6 +92,9 @@ const COMMANDS: CommandDef[] = [
   { id: "go/search", binding: "mod+k", label: "Search / quick switch", scope: "global", run: openSwitcher, global: true },
   { id: "go/find-in-page", binding: "mod+f", label: "Find in page", scope: "global", run: openInPageFind, global: true },
   { id: "command-palette/toggle", binding: "mod+shift+p", label: "Command palette", scope: "global", run: openCommandPalette, global: true },
+  // Toggle the WebKit Web Inspector for theme/CSS debugging (GH #31). mod+shift+i
+  // is the OG/Chrome/Firefox default; a mod-chord so it fires even while editing.
+  { id: "ui/toggle-devtools", binding: "mod+shift+i", label: "Toggle developer tools", scope: "global", run: openDevtools, global: true },
   { id: "go/journals", binding: "g j", label: "Go to journals", scope: "global", run: openJournals },
   { id: "go/keyboard-shortcuts", binding: "g s", label: "Go to keyboard shortcuts", scope: "global", run: () => openSettings("shortcuts") },
   // Browser-style history nav (per-tab back/forward). Special-cased in the

@@ -67,6 +67,9 @@ export interface Backend {
    *  the caller MUST have flushed pending edits first. Does not resolve — the
    *  process exits. */
   quit(): Promise<void>;
+  /** Toggle the WebView developer tools (WebKit Web Inspector) for theme/CSS
+   *  debugging. No-op on a build without devtools compiled in. */
+  openDevtools(): Promise<void>;
   /** Scaffold a brand-new demo graph (onboarding "create new graph"); returns
    *  the created graph's root path to then `loadGraph`. Creates the graph in
    *  `dir` if empty, else in a fresh `tine-demo` subfolder. */
@@ -351,6 +354,9 @@ class TauriBackend implements Backend {
   }
   quit() {
     return this.call<void>("tine_quit");
+  }
+  openDevtools() {
+    return this.call<void>("tine_open_devtools");
   }
   defaultGraphParent() {
     return this.call<string>("default_graph_parent");

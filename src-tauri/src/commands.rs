@@ -435,6 +435,19 @@ pub(crate) fn tine_quit(app: tauri::AppHandle) {
     app.exit(0);
 }
 
+/// Toggle the WebView developer tools (WebKit Web Inspector) for theme/CSS
+/// debugging (GH #31). `open_devtools`/`close_devtools` are compiled in because
+/// we enable tauri's `devtools` feature unconditionally (see Cargo.toml) — so
+/// this works in shipped release builds, not just debug.
+#[tauri::command]
+pub(crate) fn tine_open_devtools(window: tauri::WebviewWindow) {
+    if window.is_devtools_open() {
+        window.close_devtools();
+    } else {
+        window.open_devtools();
+    }
+}
+
 #[tauri::command]
 pub(crate) fn read_local_image(
     path: String,

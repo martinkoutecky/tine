@@ -110,6 +110,11 @@ describe("keyboard binding strings", () => {
     expect(byId["ui/toggle-help"]).toMatchObject({ binding: "shift+?", scope: "select" });
     expect(byId["go/keyboard-shortcuts"]).toMatchObject({ binding: "g s", scope: "select" });
   });
+
+  it("binds developer tools to mod+shift+i as a global command (#31)", () => {
+    const byId = Object.fromEntries(commandDefaults().map((c) => [c.id, c]));
+    expect(byId["ui/toggle-devtools"]).toMatchObject({ binding: "mod+shift+i", scope: "global" });
+  });
 });
 
 describe("find-in-page routing", () => {

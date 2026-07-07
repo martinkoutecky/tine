@@ -10,6 +10,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Developer tools (WebKit Web Inspector), openable in release builds**
+  ([#31](https://github.com/martinkoutecky/tine/issues/31)). Press **Ctrl+Shift+I**
+  (or run *Toggle developer tools* from the command palette) to open the inspector
+  for theme/CSS debugging — it toggles closed with the same shortcut. Previously the
+  inspector was only compiled into debug builds; it now ships in releases too.
 - **Time entry in the SCHEDULED/DEADLINE date picker**
   ([#30](https://github.com/martinkoutecky/tine/issues/30)). The `/scheduled` and
   `/deadline` picker now has an **"Add time"** control: set an `HH:mm` clock time and

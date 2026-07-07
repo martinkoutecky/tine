@@ -338,6 +338,9 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   can recolor backgrounds, text, links, borders, and inline code. The cascade is
   built so your own `logseq/custom.css` loads last and takes priority. This is
   theme CSS compatibility, not plugin support.
+- **Developer tools** — `Ctrl+Shift+I` (or *Toggle developer tools* in the command
+  palette) opens the WebKit/WebView inspector for theme and CSS debugging; the same
+  shortcut toggles it closed. Available in release builds, not just debug.
 - ⊕ **Spell checking** in the editor (on by default, like Logseq) with red squiggles
   + right-click suggestions, using the system dictionaries. Unlike Logseq you can
   check **multiple languages at once** — Settings → Editor lists the dictionaries

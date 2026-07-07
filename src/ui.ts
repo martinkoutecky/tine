@@ -933,6 +933,12 @@ export function openSwitcher() {
   setSwitcherMode("all");
   setSwitcherOpen(true);
 }
+/** Toggle the WebView developer tools (WebKit Web Inspector) for theme/CSS
+ *  debugging (GH #31). No-op in the mock; on a release build it works because the
+ *  `devtools` Cargo feature is enabled. */
+export function openDevtools() {
+  void backend().openDevtools();
+}
 export function openCommandPalette() {
   setSwitcherMode("commands");
   setSwitcherOpen(true);
