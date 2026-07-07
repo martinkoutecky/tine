@@ -445,6 +445,23 @@ pub(crate) fn tine_open_devtools(window: tauri::WebviewWindow) {
         window.close_devtools();
     } else {
         window.open_devtools();
+        // #31 follow-up: open the inspector as its OWN window (detached) instead of
+        // docked into the app. Docked, WebKitGTK puts the window's resize grip at the
+        // top of the inspector pane (confusing) and the inspector renders at the wrong
+        // scale on HiDPI/fractional displays; a separate top-level window avoids both.
+        // Best-effort + Linux-only: if detach isn't possible it stays docked (no worse
+        // than before). WebKitGTK's inspector keeps an attach button for docking back.
+        #[cfg(target_os = "linux")]
+        {
+            let _ = window.with_webview(|wv| {
+                use webkit2gtk::{WebInspectorExt, WebViewExt};
+                if let Some(inspector) = wv.inner().inspector() {
+                    if inspector.is_attached() {
+                        inspector.detach();
+                    }
+                }
+            });
+        }
     }
 }
 

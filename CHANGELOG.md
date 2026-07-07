@@ -8,6 +8,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Changed
+
+- **Developer tools now open as their own window** instead of docked into the app
+  ([#31](https://github.com/martinkoutecky/tine/issues/31)). Docked, WebKitGTK put
+  the window's resize grip at the top of the inspector pane and rendered the
+  inspector at the wrong scale on HiDPI/fractional displays. A separate top-level
+  window avoids both; WebKitGTK's inspector still has an attach button to dock it
+  back. Linux only.
+
 ### Fixed
 
 - **Crash (`SIGABRT`) when the sidebar, tabs, or switcher show a page whose name
