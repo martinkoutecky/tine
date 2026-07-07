@@ -28,12 +28,12 @@ function mount(node: () => JSX.Element): { root: HTMLDivElement; dispose: () => 
   return { root, dispose };
 }
 
-function page(roots: string[]): FeedPage {
+function page(roots: string[], preBlock: string | null = null): FeedPage {
   return {
     name: "Sheet",
     kind: "page",
     title: "Sheet",
-    preBlock: null,
+    preBlock,
     roots,
     format: "md",
     readOnly: false,
@@ -96,6 +96,114 @@ describe("SheetTable", () => {
 
     const headers = [...root.querySelectorAll(".sheet-header-cell")].map((h) => h.textContent?.trim());
     expect(headers).toEqual(["Block", "State", "Priority", "Scheduled", "Deadline", "Tags", "owner", "estimate", "+"]);
+    expect(root.querySelector(".sheet-col-stray")).toBeNull();
+
+    dispose();
+  });
+
+  it("renders declared schema fields first, keeps empty declared columns, and marks strays", () => {
+    setDoc({
+      byId: {
+        table: node(
+          "table",
+          "Table\ntine.view:: table\ntine.fields:: status=enum:todo,doing;owner=text;missing=number",
+          null,
+          ["r1", "r2"]
+        ),
+        r1: node("r1", "Row one\nstatus:: todo\nstray:: typo", "table"),
+        r2: node("r2", "Row two\nowner:: Martin", "table"),
+      },
+      pages: [page(["table"])],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    const { root, dispose } = mount(() => <Block id="table" />);
+
+    const headers = [...root.querySelectorAll(".sheet-header-cell")].map((h) => h.textContent?.trim());
+    expect(headers).toEqual(["Block", "status", "owner", "missing", "stray", "+"]);
+    expect(cell(root, 0, 3).textContent?.replace("⋮", "").trim()).toBe("");
+    const stray = [...root.querySelectorAll(".sheet-field-header")].find((h) => h.textContent?.trim() === "stray");
+    expect(stray?.classList.contains("sheet-col-stray")).toBe(true);
+
+    dispose();
+  });
+
+  it("uses schemaPage fields when the owner block has no schema", () => {
+    setDoc({
+      byId: {
+        table: node("table", "Table\ntine.view:: table", null, ["r1"]),
+        r1: node("r1", "Tagged row\nstatus:: todo", "table"),
+      },
+      pages: [page(["table"], "tine.fields:: status=enum:todo,done;owner=text")],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    const { root, dispose } = mount(() => <SheetTable ownerId="table" rowSource="children" schemaPage="Sheet" />);
+
+    const headers = [...root.querySelectorAll(".sheet-header-cell")].map((h) => h.textContent?.trim());
+    expect(headers).toEqual(["Block", "status", "owner", "+"]);
+
+    dispose();
+  });
+
+  it("renders declared prop types on the read side without changing the editor", () => {
+    setDoc({
+      byId: {
+        table: node(
+          "table",
+          [
+            "Table",
+            "tine.view:: table",
+            "tine.fields:: done=checkbox;amount=number;due=date;starts=datetime;status=enum:todo,done;items=list;assignee=ref;badDate=date;badStatus=enum:a,b;badFlag=checkbox;badRef=ref",
+          ].join("\n"),
+          null,
+          ["r1"]
+        ),
+        r1: node(
+          "r1",
+          [
+            "Typed row",
+            "done:: TRUE",
+            "amount:: 42",
+            "due:: 2026-07-08",
+            "starts:: 2026-07-08 09:30",
+            "status:: todo",
+            "items:: alpha, beta",
+            "assignee:: [[Alice]]",
+            "badDate:: someday",
+            "badStatus:: c",
+            "badFlag:: maybe",
+            "badRef:: Alice",
+          ].join("\n"),
+          "table"
+        ),
+      },
+      pages: [page(["table"])],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    const { root, dispose } = mount(() => <Block id="table" />);
+
+    const checkbox = cell(root, 0, 1).querySelector('input[type="checkbox"]') as HTMLInputElement | null;
+    expect(checkbox?.disabled).toBe(true);
+    expect(checkbox?.checked).toBe(true);
+    expect(cell(root, 0, 2).classList.contains("sheet-number-cell")).toBe(true);
+    expect(cell(root, 0, 3).querySelector(".date-chip")?.textContent).toBe("2026-07-08");
+    expect(cell(root, 0, 4).querySelector(".date-chip")?.textContent).toBe("2026-07-08 09:30");
+    expect(cell(root, 0, 5).querySelector(".sheet-tag-chip")?.textContent).toBe("todo");
+    expect([...cell(root, 0, 6).querySelectorAll(".sheet-tag-chip")].map((el) => el.textContent)).toEqual([
+      "alpha",
+      "beta",
+    ]);
+    expect(cell(root, 0, 7).querySelector(".page-ref")).not.toBeNull();
+    expect(cell(root, 0, 8).querySelector(".date-chip")).toBeNull();
+    expect(cell(root, 0, 8).textContent).toContain("someday");
+    expect(cell(root, 0, 9).querySelector(".sheet-tag-chip")).toBeNull();
+    expect(cell(root, 0, 9).textContent).toContain("c");
+    expect(cell(root, 0, 10).querySelector('input[type="checkbox"]')).toBeNull();
+    expect(cell(root, 0, 10).textContent).toContain("maybe");
+    expect(cell(root, 0, 11).querySelector(".page-ref")).toBeNull();
+    expect(cell(root, 0, 11).textContent).toContain("Alice");
 
     dispose();
   });

@@ -87,6 +87,31 @@ describe("SheetBoard", () => {
     dispose();
   });
 
+  it("orders prop enum group columns by the declared schema before extras and none", () => {
+    setDoc({
+      byId: {
+        board: node(
+          "board",
+          "Board\ntine.view:: board\ntine.group-by:: prop:status\ntine.fields:: status=enum:todo,doing,done",
+          null,
+          ["done", "blocked", "plain"]
+        ),
+        done: node("done", "Finished\nstatus:: done", "board"),
+        blocked: node("blocked", "Blocked\nstatus:: blocked", "board"),
+        plain: node("plain", "No status", "board"),
+      },
+      pages: [page(["board"])],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    const { root, dispose } = mount(() => <Block id="board" />);
+
+    const headers = [...root.querySelectorAll(".sheet-board-header")].map((h) => h.textContent?.trim());
+    expect(headers).toEqual(["todo0", "doing0", "done1", "blocked1", "(none)1"]);
+
+    dispose();
+  });
+
   it("renders a block highlight color on the card", () => {
     loadBoardDoc("TODO Write tests\nbackground-color:: blue\nowner:: Codex");
     const { root, dispose } = mount(() => <Block id="board" />);

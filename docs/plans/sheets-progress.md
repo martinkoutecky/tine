@@ -243,6 +243,17 @@ reorder; tags/page field write-back; multi-level (cross-hierarchy) ranges.
   span→caret), click-on-whitespace selects cell, Esc ladder
   (edit→cell→outline), `←` past left exits, flow-out at top/bottom (no wrap),
   per-grid in-memory last-cell re-entry.
+- **ADR 0026** — Phase-6 field schema: `tine.fields:: name=type;…` scalar
+  grammar (text/number/date/datetime/checkbox/list/enum/ref + built-ins as
+  `state=state` for ordering); homes = view block's props OR the tag page's
+  page properties (view wins); declared-first stable columns, strays italic
+  and never hidden; canonical stored forms checkbox `true`/`false`, dates ISO;
+  add-row seeds tag-only (no empty `key::` junk).
+- **ADR 0027** — Phase-6 tags write-back: delta-shaped (one tag add/remove per
+  call), FIRST LINE only, removal cut via the lsdoc Tag-inline span (never
+  regex); tag boards = Notion model (card in every matching column; move =
+  remove+add as one undo unit; `(none)` accepts drops only from single-valued
+  cards).
 - **Spec §3.1 "Org coverage"** (Martin's Jul 6 question): Sheets is
   format-agnostic — org carries geometry as headline nesting and config as
   `:PROPERTIES:` drawer keys (`:tine.view: grid`); dotted keys verified legal
@@ -267,12 +278,31 @@ Both validated round-trip-clean (md byte-identical; org passes
 `org_round_trips` — checked with the new `roundtrip_org_dir` example). They
 render as plain outlines until each phase lands.
 
-## Next step
+## Phase 6 — the supertag/database layer (IN PROGRESS)
 
-**Phase 6 — the supertag/database layer** (Martin approved Jul 7 2026):
-`tine.fields::` schema + typed cells + add-row + tags write-back + tag boards
-+ table conversions. Full plan: [sheets-phase6-plan.md](sheets-phase6-plan.md)
-— read it, settle its 6 design decisions (ADRs), then dispatch 6a→6d.
+Plan: [sheets-phase6-plan.md](sheets-phase6-plan.md). Decisions settled as
+ADR 0026 (schema) + ADR 0027 (tags write-back / tag boards).
+
+- **6a DONE (Jul 7)** — schema core: `tine.fields::` parse/serialize in
+  `src/sheet/config.ts` (`parseFields`/`serializeFields`, malformed-tolerant,
+  scalar-safe); schema resolution own-props → `schemaPage` page property
+  (TagPageTable passes its page); declared-first column ordering with
+  always-present declared columns + italic `sheet-col-stray` strays;
+  read-side typed rendering (checkbox/number-align/date badge/enum + list
+  chips/ref via InlineText); board enum column ordering (declared values
+  first, `(none)` always for enum group-by). Codex build + 4 orchestrator
+  verifications (both vitest configs 479+190, tsc, cargo, DOM header-order +
+  stray-class probe, screenshots incl. scrolled right edge). Mock demo table
+  gained a schema. Zero-schema rendering verified unchanged (regression
+  test). Deviation, per one-parser rule: query-block tables are
+  own-props-only (no tag-page fallback — Macro.tsx has no parsed tag handy
+  and a query-string regex was forbidden); revisit only if a real parsed tag
+  target appears.
+- **6b NEXT** — typed editing + add-row seeding + header schema menu.
+- 6c tags write-back + tag boards (ADR 0027), 6d pipe-table↔grid + CSV drop
+  + docs sync. Sample pages in tine-test/org-graph get a schema'd table when
+  6b makes it playable (render-only 6a isn't compelling to test).
+
 Martin's v1 UX nits are PARKED (his list, not yet captured) — batch later,
 don't interleave.
 

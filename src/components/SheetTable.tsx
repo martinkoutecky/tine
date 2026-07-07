@@ -1,6 +1,6 @@
-import { For, Show, createMemo, createResource, createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { For, Match, Show, Switch, createMemo, createResource, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { backend } from "../backend";
-import { doc, ensurePageLoaded, formatForBlock, formatForPage, pageByName } from "../store";
+import { doc, ensurePageLoaded, formatForBlock, formatForPage, pageByName, readPageProperty } from "../store";
 import { facetsFromDto, facetsOf, type Facets } from "../render/facets";
 import { visibleBody, isRenderHiddenProp } from "../render/block";
 import { InlineText } from "../render/inline";
@@ -27,7 +27,7 @@ import {
   type FieldId,
   type FieldValue,
 } from "../sheet/fields";
-import { sheetConfig } from "../sheet/config";
+import { parseFields, sheetConfig, type FieldSpec, type FieldType } from "../sheet/config";
 import { openDatePicker, openSheetCellContextMenu, openSheetContextMenu } from "../ui";
 import { blockBackgroundColor } from "../blockColors";
 import type { BlockDto, RefGroup } from "../types";
@@ -48,6 +48,7 @@ export function SheetTable(props: {
   groups?: readonly RefGroup[];
   addRow?: () => void | Promise<void>;
   addRowLabel?: string;
+  schemaPage?: string;
 }): JSX.Element {
   const [sort, setSort] = createSignal<SortState>(null);
   const [extraFields, setExtraFields] = createSignal<FieldId[]>([]);
@@ -57,6 +58,17 @@ export function SheetTable(props: {
   const config = createMemo(() => {
     const owner = doc.byId[props.ownerId];
     return sheetConfig(owner ? facetsOf(owner.raw, formatForBlock(props.ownerId)).properties : []);
+  });
+  const schemaFields = createMemo<readonly FieldSpec[]>(() => {
+    const own = config().fields;
+    if (own.length > 0) return own;
+    return props.schemaPage ? parseFields(readPageProperty(props.schemaPage, "tine.fields") ?? "") : [];
+  });
+  const schemaFieldSet = createMemo(() => new Set<FieldId>(schemaFields().map((s) => s.field)));
+  const fieldTypes = createMemo(() => {
+    const out = new Map<FieldId, FieldType>();
+    for (const spec of schemaFields()) out.set(spec.field, spec.type);
+    return out;
   });
 
   const queryPages = createMemo(() => {
@@ -96,7 +108,12 @@ export function SheetTable(props: {
       : fieldIdsForRecords(rows(), props.rowSource === "query");
     const seen = new Set(observed);
     const extra = extraFields().filter((f) => !seen.has(f));
-    return [...observed, ...extra];
+    const inferred = [...observed, ...extra];
+    const schema = schemaFields();
+    if (schema.length === 0) return inferred;
+    const declared = schema.map((s) => s.field);
+    const declaredSet = new Set(declared);
+    return [...declared, ...inferred.filter((f) => !declaredSet.has(f))];
   });
 
   const columns = createMemo(() => ["title" as const, ...fields()]);
@@ -221,7 +238,11 @@ export function SheetTable(props: {
         </div>
         <For each={fields()}>
           {(field, i) => (
-            <div class="sheet-cell sheet-header-cell sheet-field-header" onClick={() => sortHeader(i() + 1)}>
+            <div
+              class="sheet-cell sheet-header-cell sheet-field-header"
+              classList={{ "sheet-col-stray": schemaFieldSet().size > 0 && !schemaFieldSet().has(field) }}
+              onClick={() => sortHeader(i() + 1)}
+            >
               {fieldLabel(field)}{sortArrow(i() + 1)}
             </div>
           )}
@@ -296,6 +317,7 @@ export function SheetTable(props: {
                     ownerId={props.ownerId}
                     row={row}
                     field={field}
+                    fieldType={fieldTypes().get(field)}
                     rowIndex={rowIndex()}
                     colIndex={fieldIndex() + 1}
                     selected={selected(rowIndex(), fieldIndex() + 1)}
@@ -519,6 +541,7 @@ function FieldCell(props: {
   ownerId: string;
   row: RowRecord;
   field: FieldId;
+  fieldType?: FieldType;
   rowIndex: number;
   colIndex: number;
   selected: boolean;
@@ -575,6 +598,7 @@ function FieldCell(props: {
       classList={{
         "sheet-cell-selected": props.selected,
         "sheet-readonly-cell": !editable() || props.field === "tags" || props.field === "page",
+        "sheet-number-cell": props.field.startsWith("prop:") && props.fieldType === "number",
       }}
       data-sheet-grid-id={props.ownerId}
       data-block-id={props.row.id}
@@ -599,7 +623,7 @@ function FieldCell(props: {
       </Show>
       <Show
         when={props.editing && props.field.startsWith("prop:")}
-        fallback={<FieldValueView field={props.field} value={value()} page={props.row.page} />}
+        fallback={<FieldValueView field={props.field} fieldType={props.fieldType} value={value()} page={props.row.page} />}
       >
         <input
           class="sheet-prop-input"
@@ -619,7 +643,7 @@ function FieldCell(props: {
   );
 }
 
-function FieldValueView(props: { field: FieldId; value: FieldValue | null; page: string }): JSX.Element {
+function FieldValueView(props: { field: FieldId; fieldType?: FieldType; value: FieldValue | null; page: string }): JSX.Element {
   const text = () => props.value?.text ?? "";
   return (
     <Show when={props.value}>
@@ -640,9 +664,82 @@ function FieldValueView(props: { field: FieldId; value: FieldValue | null; page:
           {(tag) => <span class="sheet-tag-chip">#{tag}</span>}
         </For>
       </Show>
-      <Show when={props.field !== "state" && props.field !== "priority" && props.field !== "scheduled" && props.field !== "deadline" && props.field !== "tags"}>
+      <Show when={props.field.startsWith("prop:")}>
+        <PropValueView type={props.fieldType} value={props.value!} page={props.page} />
+      </Show>
+      <Show when={props.field === "page"}>
         <InlineText text={text()} format={formatForPage(props.page)} />
       </Show>
     </Show>
   );
+}
+
+function PropValueView(props: { type?: FieldType; value: FieldValue; page: string }): JSX.Element {
+  const text = () => props.value.text;
+  const raw = () => props.value.raw ?? props.value.text;
+  const checkbox = () => {
+    if (props.type !== "checkbox") return null;
+    const lower = raw().trim().toLowerCase();
+    if (lower === "true") return true;
+    if (lower === "false") return false;
+    return null;
+  };
+  const dateValue = () => {
+    if (props.type !== "date" && props.type !== "datetime") return null;
+    const value = raw().trim();
+    return validDateLike(value) ? value : null;
+  };
+  const enumValue = () => {
+    if (!isEnumFieldType(props.type)) return null;
+    const value = raw().trim();
+    return props.type.enum.includes(value) ? value : null;
+  };
+  const listValues = () =>
+    props.type === "list"
+      ? raw()
+          .split(",")
+          .map((v) => v.trim())
+          .filter(Boolean)
+      : [];
+  const refValue = () => {
+    if (props.type !== "ref") return null;
+    const value = raw().trim();
+    return /^\[\[[^\]\n\r]+\]\]$/.test(value) ? value : null;
+  };
+  return (
+    <Switch fallback={<InlineText text={text()} format={formatForPage(props.page)} />}>
+      <Match when={checkbox() !== null}>
+        <input class="sheet-checkbox" type="checkbox" checked={checkbox() === true} disabled />
+      </Match>
+      <Match when={dateValue()}>
+        {(value) => <span class="date-chip scheduled">{value()}</span>}
+      </Match>
+      <Match when={enumValue()}>
+        {(value) => <span class="sheet-tag-chip">{value()}</span>}
+      </Match>
+      <Match when={props.type === "list" && listValues().length > 0}>
+        <For each={listValues()}>{(value) => <span class="sheet-tag-chip">{value}</span>}</For>
+      </Match>
+      <Match when={refValue()}>
+        {(value) => <InlineText text={value()} format={formatForPage(props.page)} />}
+      </Match>
+    </Switch>
+  );
+}
+
+function isEnumFieldType(type: FieldType | undefined): type is { enum: readonly string[] } {
+  return typeof type === "object" && type !== null && "enum" in type;
+}
+
+function validDateLike(value: string): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?$/.exec(value);
+  if (!m) return false;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  const hh = m[4] == null ? 0 : Number(m[4]);
+  const mm = m[5] == null ? 0 : Number(m[5]);
+  if (mo < 1 || mo > 12 || hh > 23 || mm > 59) return false;
+  const dt = new Date(Date.UTC(y, mo - 1, d, hh, mm));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d;
 }

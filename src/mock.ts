@@ -274,16 +274,17 @@ const NAMED: PageDto[] = [
         ]
       ),
       b(
-        "Field table demo\ntine.view:: table\ntine.col-aggregates:: prop:estimate=sum",
+        "Field table demo\ntine.view:: table\ntine.col-aggregates:: prop:estimate=sum\ntine.fields:: state=state;owner=text;topic=enum:infra,ui,docs;points=number;shipped=checkbox;due=date;estimate=text",
         [
-          b("TODO [#A] Draft spec #sheets\nSCHEDULED: <2026-07-08 Wed>\nowner:: Martin\nestimate:: 2h"),
-          b("DOING Build table renderer #sheets\nowner:: Codex\nestimate:: 5h"),
-          b("DONE Verify screenshots\nDEADLINE: <2026-07-10 Fri>\nowner:: Codex"),
+          b("TODO [#A] Draft spec #sheets\nSCHEDULED: <2026-07-08 Wed>\nowner:: Martin\nestimate:: 2h\ntopic:: docs\npoints:: 3\nshipped:: false\ndue:: 2026-07-09"),
+          b("DOING Build table renderer #sheets\nowner:: Codex\nestimate:: 5h\ntopic:: ui\npoints:: 8\nshipped:: false\nnote:: stray column"),
+          b("DONE Verify screenshots\nDEADLINE: <2026-07-10 Fri>\nowner:: Codex\ntopic:: infra\npoints:: 1\nshipped:: true\ndue:: 2026-07-07"),
         ],
         false,
         [
           ["tine.view", "table"],
           ["tine.col-aggregates", "prop:estimate=sum"],
+          ["tine.fields", "state=state;owner=text;topic=enum:infra,ui,docs;points=number;shipped=checkbox;due=date;estimate=text"],
         ]
       ),
       b("{{query (todo TODO DOING DONE)}}\ntine.view:: board\ntine.group-by:: state"),

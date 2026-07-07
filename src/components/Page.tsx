@@ -530,6 +530,7 @@ export function TagPageTable(props: { pageName: string }): JSX.Element {
         groups={groups() ?? []}
         addRow={addRow}
         addRowLabel={`Add ${tagRef(props.pageName)} row`}
+        schemaPage={props.pageName}
       />
     </div>
   );

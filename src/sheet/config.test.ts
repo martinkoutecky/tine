@@ -1,5 +1,12 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import { serializeColAggregates, serializeColWidths, sheetConfig, sheetConfigFromRaw } from "./config";
+import {
+  parseFields,
+  serializeColAggregates,
+  serializeColWidths,
+  serializeFields,
+  sheetConfig,
+  sheetConfigFromRaw,
+} from "./config";
 import { initParser } from "../render/parse";
 
 // sheetConfigFromRaw reads properties through the one lsdoc-backed recognizer
@@ -17,6 +24,7 @@ describe("sheetConfig", () => {
 
     expect(cfg.view).toBe("grid");
     expect(cfg.header).toBe(true);
+    expect(cfg.fields).toEqual([]);
     expect(Array.from(cfg.colWidths.entries())).toEqual([
       [0, 120],
       [2, 200],
@@ -81,6 +89,7 @@ describe("sheetConfig", () => {
     expect(cfg.header).toBe(false);
     expect(cfg.colWidths.size).toBe(0);
     expect(cfg.colAggregates.size).toBe(0);
+    expect(cfg.fields).toEqual([]);
   });
 
   it("reads sheet config directly from md properties and org drawers", () => {
@@ -89,5 +98,63 @@ describe("sheetConfig", () => {
     expect(
       sheetConfigFromRaw("Grid\n:PROPERTIES:\n:tine.view: grid\n:tine.header: true\n:END:", "org")
     ).toMatchObject({ view: "grid", header: true });
+  });
+
+  it("parses valid field schemas including builtin and enum entries", () => {
+    expect(parseFields("state=state;owner=text;qty=number;status=enum:todo, doing,done;assignee=ref")).toEqual([
+      { field: "state", type: "builtin" },
+      { field: "prop:owner", type: "text" },
+      { field: "prop:qty", type: "number" },
+      { field: "prop:status", type: { enum: ["todo", "doing", "done"] } },
+      { field: "prop:assignee", type: "ref" },
+    ]);
+  });
+
+  it("skips malformed field schema entries without throwing", () => {
+    expect(
+      parseFields(
+        [
+          "state=text",
+          "owner=unknown",
+          "empty=enum:",
+          "bad[[name=text",
+          "hash=enum:todo,#done",
+          "tick=enum:`bad`",
+          "dup=text",
+          "dup=number",
+          "ok=checkbox",
+        ].join(";")
+      )
+    ).toEqual([
+      { field: "prop:dup", type: "text" },
+      { field: "prop:ok", type: "checkbox" },
+    ]);
+  });
+
+  it("reads tine.fields as part of the sheet config", () => {
+    const cfg = sheetConfig([["tine.fields", "state=state;done=checkbox"]]);
+    expect(cfg.fields).toEqual([
+      { field: "state", type: "builtin" },
+      { field: "prop:done", type: "checkbox" },
+    ]);
+  });
+
+  it("serializes field schemas in schema order and filters unsafe entries", () => {
+    expect(
+      serializeFields([
+        { field: "prop:status", type: { enum: ["todo", "doing", "done"] } },
+        { field: "state", type: "builtin" },
+        { field: "prop:owner", type: "text" },
+        { field: "prop:bad;key", type: "number" },
+        { field: "prop:badEnum", type: { enum: ["ok", "[[nope]]"] } },
+        { field: "priority", type: "text" },
+        { field: "prop:owner", type: "number" },
+      ])
+    ).toBe("status=enum:todo,doing,done;state=state;owner=text");
+  });
+
+  it("round-trips schemas accepted by parseFields through serializeFields", () => {
+    const value = "state=state;owner=text;qty=number;due=date;when=datetime;done=checkbox;labels=list;assignee=ref;status=enum:todo,doing";
+    expect(serializeFields(parseFields(value))).toBe(value);
   });
 });

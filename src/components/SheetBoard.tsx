@@ -1,6 +1,6 @@
 import { For, Show, createMemo, createResource, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { backend } from "../backend";
-import { doc, ensurePageLoaded, formatForBlock, formatForPage, pageByName } from "../store";
+import { doc, ensurePageLoaded, formatForBlock, formatForPage, pageByName, readPageProperty } from "../store";
 import { facetsFromDto, facetsOf, type Facets } from "../render/facets";
 import { visibleBody } from "../render/block";
 import { InlineText } from "../render/inline";
@@ -22,6 +22,7 @@ import {
   writeField,
   type FieldId,
 } from "../sheet/fields";
+import { parseFields, sheetConfig, type FieldSpec } from "../sheet/config";
 import { MARKERS } from "../markers";
 import { openSheetCellContextMenu, openSheetContextMenu, workflow } from "../ui";
 import { blockBackgroundColor } from "../blockColors";
@@ -47,12 +48,22 @@ export function SheetBoard(props: {
   rowSource: "children" | "query";
   groupBy?: string | null;
   groups?: readonly RefGroup[];
+  schemaPage?: string;
 }): JSX.Element {
   const groupBy = createMemo<FieldId>(() => {
     const raw = props.groupBy || "state";
     return isFieldId(raw) ? raw : "state";
   });
   const [drag, setDrag] = createSignal<{ id: string; col: number; row: number; overCol: number | null } | null>(null);
+  const config = createMemo(() => {
+    const owner = doc.byId[props.ownerId];
+    return sheetConfig(owner ? facetsOf(owner.raw, formatForBlock(props.ownerId)).properties : []);
+  });
+  const schemaFields = createMemo<readonly FieldSpec[]>(() => {
+    const own = config().fields;
+    if (own.length > 0) return own;
+    return props.schemaPage ? parseFields(readPageProperty(props.schemaPage, "tine.fields") ?? "") : [];
+  });
 
   const queryPages = createMemo(() => {
     const map = new Map<string, RefGroup>();
@@ -84,7 +95,7 @@ export function SheetBoard(props: {
     return (props.groups ?? []).flatMap((g) => g.blocks.map((b) => ({ id: b.id, page: g.page, dto: b })));
   });
 
-  const columns = createMemo<BoardColumn[]>(() => buildColumns(rows(), groupBy()));
+  const columns = createMemo<BoardColumn[]>(() => buildColumns(rows(), groupBy(), schemaFields()));
   const maxRows = createMemo(() => Math.max(1, ...columns().map((c) => c.rows.length)));
 
   const selected = (col: number, row: number) => {
@@ -179,10 +190,15 @@ export function SheetBoard(props: {
   );
 }
 
-function buildColumns(rows: readonly RowRecord[], groupBy: FieldId): BoardColumn[] {
+function buildColumns(rows: readonly RowRecord[], groupBy: FieldId, schema: readonly FieldSpec[] = []): BoardColumn[] {
   const keys = rows.map((row) => groupKey(row, groupBy));
   let order: (string | null)[];
-  if (groupBy === "state") {
+  const enumValues = enumValuesFor(schema, groupBy);
+  if (enumValues) {
+    order = [...enumValues];
+    for (const key of keys) if (key !== null && !order.includes(key)) order.push(key);
+    order.push(null);
+  } else if (groupBy === "state") {
     const standard = workflow() === "todo" ? ["TODO", "DOING", "DONE"] : ["LATER", "NOW", "DONE"];
     order = [
       ...standard,
@@ -194,13 +210,18 @@ function buildColumns(rows: readonly RowRecord[], groupBy: FieldId): BoardColumn
     order = [];
     for (const key of keys) if (key !== null && !order.includes(key)) order.push(key);
   }
-  if (keys.includes(null)) order.push(null);
+  if (keys.includes(null) && !order.includes(null)) order.push(null);
   if (order.length === 0) order = [null];
   return order.map((key) => ({
     key,
     label: key === null ? NONE_LABEL : groupBy === "priority" ? `[#${key}]` : key,
     rows: rows.filter((row, i) => keys[i] === key),
   }));
+}
+
+function enumValuesFor(schema: readonly FieldSpec[], field: FieldId): readonly string[] | null {
+  const spec = schema.find((s) => s.field === field);
+  return spec && typeof spec.type === "object" && "enum" in spec.type ? spec.type.enum : null;
 }
 
 function groupKey(row: RowRecord, field: FieldId): string | null {

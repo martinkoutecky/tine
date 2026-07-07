@@ -1,8 +1,23 @@
 import { facetsOf } from "../render/facets";
 import type { Format } from "../render/ast";
 import { isAggregateFn, type AggregateFn } from "./aggregate";
+import type { FieldId } from "./fields";
 
 export type SheetView = "table" | "grid" | "board";
+export type FieldType =
+  | "text"
+  | "number"
+  | "date"
+  | "datetime"
+  | "checkbox"
+  | "list"
+  | "ref"
+  | { enum: readonly string[] }
+  | "builtin";
+export interface FieldSpec {
+  field: FieldId;
+  type: FieldType;
+}
 
 export interface SheetConfig {
   view: SheetView | null;
@@ -10,9 +25,16 @@ export interface SheetConfig {
   header: boolean;
   colWidths: ReadonlyMap<number, number>;
   colAggregates: ReadonlyMap<string, AggregateFn>;
+  fields: readonly FieldSpec[];
 }
 
 const VIEWS = new Set<SheetView>(["table", "grid", "board"]);
+const BUILTIN_FIELDS = new Set<FieldId>(["state", "priority", "scheduled", "deadline", "tags", "page"]);
+const PROP_FIELD_TYPES = new Set<FieldType>(["text", "number", "date", "datetime", "checkbox", "list", "ref"]);
+
+function scalarSafe(value: string): boolean {
+  return value.trim() !== "" && !/(\[\[|\(\(|\{\{|#|`|[=;\n\r])/.test(value);
+}
 
 function parseColWidths(value: string): ReadonlyMap<number, number> {
   const out = new Map<number, number>();
@@ -32,6 +54,41 @@ function parseColAggregates(value: string): ReadonlyMap<string, AggregateFn> {
     const key = m[1].trim();
     const fn = m[2].toLowerCase();
     if (key && isAggregateFn(fn)) out.set(key, fn);
+  }
+  return out;
+}
+
+export function parseFields(value: string): readonly FieldSpec[] {
+  const out: FieldSpec[] = [];
+  const seen = new Set<string>();
+  for (const part of value.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq < 0) continue;
+    const name = part.slice(0, eq).trim();
+    const token = part.slice(eq + 1).trim();
+    if (!scalarSafe(name) || seen.has(name)) continue;
+
+    if (BUILTIN_FIELDS.has(name as FieldId)) {
+      if (token !== name) continue;
+      seen.add(name);
+      out.push({ field: name as FieldId, type: "builtin" });
+      continue;
+    }
+
+    let type: FieldType | null = null;
+    if (PROP_FIELD_TYPES.has(token as FieldType)) {
+      type = token as FieldType;
+    } else if (token.startsWith("enum:")) {
+      const values = token
+        .slice("enum:".length)
+        .split(",")
+        .map((v) => v.trim())
+        .filter(Boolean);
+      if (values.length > 0 && values.every(scalarSafe)) type = { enum: values };
+    }
+    if (!type) continue;
+    seen.add(name);
+    out.push({ field: `prop:${name}`, type });
   }
   return out;
 }
@@ -59,12 +116,40 @@ export function serializeColAggregates(aggregates: ReadonlyMap<string, Aggregate
     .join(";");
 }
 
+export function serializeFields(fields: readonly FieldSpec[]): string {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const spec of fields) {
+    if (BUILTIN_FIELDS.has(spec.field)) {
+      if (spec.type !== "builtin" || seen.has(spec.field)) continue;
+      seen.add(spec.field);
+      out.push(`${spec.field}=${spec.field}`);
+      continue;
+    }
+    if (!spec.field.startsWith("prop:")) continue;
+    const name = spec.field.slice(5).trim();
+    if (!scalarSafe(name) || seen.has(name)) continue;
+    let token: string | null = null;
+    if (typeof spec.type === "string") {
+      if (spec.type !== "builtin" && PROP_FIELD_TYPES.has(spec.type)) token = spec.type;
+    } else {
+      const values = spec.type.enum.map((v) => v.trim()).filter(Boolean);
+      if (values.length > 0 && values.every(scalarSafe)) token = `enum:${values.join(",")}`;
+    }
+    if (!token) continue;
+    seen.add(name);
+    out.push(`${name}=${token}`);
+  }
+  return out.join(";");
+}
+
 export function sheetConfig(props: readonly [string, string][]): SheetConfig {
   let view: SheetView | null = null;
   let groupBy: string | null = null;
   let header = false;
   let colWidths: ReadonlyMap<number, number> = new Map();
   let colAggregates: ReadonlyMap<string, AggregateFn> = new Map();
+  let fields: readonly FieldSpec[] = [];
 
   for (const [rawKey, rawValue] of props) {
     const key = rawKey.trim().toLowerCase();
@@ -80,10 +165,12 @@ export function sheetConfig(props: readonly [string, string][]): SheetConfig {
       colWidths = parseColWidths(value);
     } else if (key === "tine.col-aggregates") {
       colAggregates = parseColAggregates(value);
+    } else if (key === "tine.fields") {
+      fields = parseFields(value);
     }
   }
 
-  return { view, groupBy, header, colWidths, colAggregates };
+  return { view, groupBy, header, colWidths, colAggregates, fields };
 }
 
 /** Sheet config straight from a block's raw text, through the ONE block-property
