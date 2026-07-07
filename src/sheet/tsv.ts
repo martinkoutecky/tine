@@ -1,4 +1,5 @@
 export type TsvMatrix = string[][];
+export type DelimitedKind = "csv" | "tsv";
 
 function lines(text: string): string[] {
   const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
@@ -75,7 +76,9 @@ export function looksLikeDelimitedText(text: string): boolean {
   return /,(?=\S)/.test(text);
 }
 
-export function parseDelimitedText(text: string): TsvMatrix {
+export function parseDelimitedText(text: string, kind?: DelimitedKind): TsvMatrix {
+  if (kind === "tsv") return parseTsv(text);
+  if (kind === "csv") return parseCsv(text);
   return text.includes("\t") ? parseTsv(text) : parseCsv(text);
 }
 

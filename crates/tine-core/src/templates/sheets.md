@@ -44,7 +44,25 @@ icon:: ▦
 	  DEADLINE: <2026-07-10 Fri>
 	  owner:: Codex
 	  estimate:: 1
+- ## Typed reading list
+  tine.view:: table
+  tine.fields:: status=enum:todo,reading,done;rating=number;done=checkbox;owner=ref
+	- Bases study
+	  status:: reading
+	  rating:: 5
+	  done:: false
+	  owner:: [[Martin]]
+	- CSV import notes
+	  status:: todo
+	  rating:: 3
+	  done:: false
+	  owner:: [[Codex]]
 - ## Task board
 	- {{query (and (task TODO DOING DONE) #sheets-demo)}}
 	  tine.view:: board
 	  tine.group-by:: state
+- ## Topic board
+  tine.view:: board
+  tine.group-by:: tags
+	- Schema menu polish #schema #sheets-demo
+	- CSV drop walkthrough #interop #sheets-demo

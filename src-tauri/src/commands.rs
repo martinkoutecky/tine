@@ -471,6 +471,33 @@ pub(crate) fn import_asset(
     })
 }
 
+/// Read a dropped delimited-text file for the CSV/TSV → grid drop path.
+/// Deliberately NARROW: this is the only webview-reachable read of a
+/// caller-chosen path (everything else is gated to the graph/assets dirs),
+/// so it refuses anything that isn't the drop feature's file types — it must
+/// not grow into a general file-read primitive.
+#[tauri::command]
+pub(crate) fn read_text_file(path: String) -> Result<String, String> {
+    let p = std::path::Path::new(&path);
+    let ext_ok = p
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("csv") || e.eq_ignore_ascii_case("tsv"))
+        .unwrap_or(false);
+    if !ext_ok {
+        return Err("unsupported file type".into());
+    }
+    let meta = std::fs::metadata(p).map_err(|e| e.to_string())?;
+    if !meta.is_file() {
+        return Err("not a file".into());
+    }
+    const MAX_BYTES: u64 = 10 * 1024 * 1024;
+    if meta.len() > MAX_BYTES {
+        return Err("text file too large".into());
+    }
+    std::fs::read_to_string(p).map_err(|e| e.to_string())
+}
+
 /// Open a graph asset (by its `assets/`-relative name) in the OS default app,
 /// e.g. a video/audio file in the system player. Path-gated to the assets dir
 /// (canonicalized) so a crafted name can't open a file outside the graph.

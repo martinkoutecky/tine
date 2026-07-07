@@ -16,6 +16,11 @@ describe("sheet TSV/CSV parsing", () => {
     ]);
   });
 
+  it("lets callers choose CSV or TSV explicitly for file extensions", () => {
+    expect(parseDelimitedText("a,b\tc", "csv")).toEqual([["a", "b\tc"]]);
+    expect(parseDelimitedText("a,b\tc", "tsv")).toEqual([["a,b", "c"]]);
+  });
+
   it("serializes holes as empty TSV fields", () => {
     expect(serializeTsv([["a", null, "c"], [undefined, "e"]])).toBe("a\t\tc\n\te");
   });

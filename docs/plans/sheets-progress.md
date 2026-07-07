@@ -348,8 +348,40 @@ ADR 0026 (schema) + ADR 0027 (tags write-back / tag boards).
   two columns (removal itself matches case-insensitively; OG treats tags
   case-insensitively as pages) — revisit if it bites. Sample page gained a
   playable tag-board §7 (round-trip re-validated).
-- **6d NEXT** — pipe-table↔grid conversion + CSV/TSV file-drop + docs sync
-  (FEATURES/README/onboarding/website/screenshots).
+- **6d DONE (Jul 7) — PHASE 6 COMPLETE** — conversions + CSV drop + docs:
+  `src/sheet/conversions.ts`: pipe-table→grid (block context menu, offered
+  only when the body parses to leading blocks + exactly ONE trailing table;
+  cell raws sliced from source spans so `**bold**`/`[[refs]]` survive;
+  header row → `tine.header:: true`; aligns dropped; refuses when the block
+  already has children); grid→pipe-table (grid context menu; refuses every
+  lossy case with a specific toast — non-empty row raw, hidden props,
+  multiline/child-bearing cells, >30×200, and `|`-containing cells because
+  a RUNTIME PROBE against the real parser shows lsdoc does not round-trip
+  `\|` in table cells — the probe auto-upgrades if lsdoc ever does); both
+  directions one undo unit, byte-round-trip tested. CSV/TSV file-drop →
+  grid via the existing `tsv.ts` owner (extension-selected delimiter, 5000-
+  cell cap, one undo unit) reading through a NEW Tauri command
+  `read_text_file`. Docs synced: FEATURES, README bullet+pitch, CHANGELOG
+  Unreleased "Added", onboarding sheets.md template (typed table + tag
+  board), website/demo regenerated, SCREENSHOTS.md row, docs/img/sheets.png
+  refreshed; mock demo gained a tag board. Orchestrator fixes over codex:
+  (1) `read_text_file` took ANY absolute path from the webview — the only
+  ungated read in the IPC surface; extension-gated to .csv/.tsv with a
+  don't-grow-this comment; (2) grid→table rebuilt the host from
+  first-line+facets, silently DROPPING body lines — replaced with
+  strip-tine-props-only (verbatim preservation) + regression test;
+  (3) added a no-title-line refusal (setBlockProperty can't remove a line-0
+  property — known v1 limitation — so stripping would half-convert);
+  (4) reverted codex's drive-by `cargo fmt` noise across 8 unrelated Rust
+  files. E2E re-run on the rebuilt binary: 24 checks ALL PASS. Sample page
+  gained a §8 pipe table to convert (round-trip re-validated).
+
+**Phase 6 leftovers for a later pass** (deliberate): list chip editor
+(comma-text editing works); enum types are hand-edit-only in the header
+menu; tag columns key by exact string (`#ChoCo`≠`#choco` as columns, though
+removal matches case-insensitively); query-block tables don't inherit a tag
+page's schema (no parsed tag target at the call site); org tags write-back
+(htags-shaped, own decision needed).
 
 Martin's v1 UX nits are PARKED (his list, not yet captured) — batch later,
 don't interleave.

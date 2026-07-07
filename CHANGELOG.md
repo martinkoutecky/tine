@@ -8,6 +8,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Added
+
+- **Sheets: grids, databases, and boards over plain bullets.** Blocks can now
+  render as recursive grids, field tables, or boards with spreadsheet navigation,
+  typed `tine.fields::` schemas, editable task/property cells, tag boards with
+  write-back, aggregates, markdown pipe-table conversion, and CSV/TSV file-drop
+  import — all stored as ordinary Logseq markdown/org outlines plus `tine.*`
+  properties.
+
 ### Fixed
 
 - **Org files: block ids are written as a hidden `:PROPERTIES:` drawer, not a

@@ -2,11 +2,11 @@
 //! graph open/create/warm cache; backup snapshots; settings/session prefs;
 //! spellcheck WebKit integration; platform OS bridges; commands thin IPC.
 
+mod android_folder_picker;
+mod android_media;
 mod backup;
 mod commands;
 mod debug;
-mod android_folder_picker;
-mod android_media;
 mod graph;
 mod platform;
 mod settings;
@@ -21,9 +21,9 @@ use commands::{
     journal_content_days, journals_desc, list_journal_conflicts, list_orphan_assets, list_pages,
     list_sync_conflicts, list_templates, merge_pages, open_asset, page_aliases, page_icons,
     page_print_html, publish_html, query_facets, quick_switch, read_asset, read_custom_css,
-    read_highlights, read_journal_file, read_local_image, rename_file_to_page, rename_page,
-    resolve_block, resolve_blocks, resolve_sync_conflict, run_advanced_query, run_query,
-    save_asset, save_page, save_pdf_area_image, search, set_default_journal_template,
+    read_highlights, read_journal_file, read_local_image, read_text_file, rename_file_to_page,
+    rename_page, resolve_block, resolve_blocks, resolve_sync_conflict, run_advanced_query,
+    run_query, save_asset, save_page, save_pdf_area_image, search, set_default_journal_template,
     set_favorites, set_journal_title_format, set_preferred_format, set_preferred_workflow,
     set_start_of_week, set_timetracking_enabled, sync_conflict_diff, trash_asset,
     trash_journal_file, trash_sync_conflict, write_highlights,
@@ -365,6 +365,7 @@ pub fn run() {
             resolve_blocks,
             read_asset,
             read_local_image,
+            read_text_file,
             import_asset,
             save_asset,
             read_highlights,

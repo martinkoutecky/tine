@@ -39,6 +39,7 @@ import {
   selectedIds,
 } from "../store";
 import { canFlatten, flatten, hierarchify } from "../sheet/restructure";
+import { canConvertPipeTableToGrid, convertGridToPipeTable, convertPipeTableToGrid } from "../sheet/conversions";
 import { fieldIdsForBlocks, fieldLabel, isFieldId, type FieldId } from "../sheet/fields";
 import { copyStripCollapsed } from "../copySettings";
 import { copyOutline } from "../clipboard";
@@ -291,6 +292,18 @@ function SheetMenu(props: {
 
   return (
     <Show when={props.rowSource === "children"} fallback={<div class="ctx-item ctx-disabled">No structural actions</div>}>
+      <Show when={props.surface === "grid"}>
+        <div
+          class="ctx-item"
+          onClick={() => {
+            convertGridToPipeTable(props.ownerId);
+            props.close();
+          }}
+        >
+          Convert to pipe table
+        </div>
+        <div class="ctx-sep" />
+      </Show>
       <Show when={props.surface === "board" && boardField()}>
         {(field) => (
           <div class="ctx-item" onClick={() => doHierarchify(field())}>
@@ -617,6 +630,9 @@ function blockActions(id: string): { label: string; run: () => void; danger?: bo
         openExportModal(sel.length > 1 && sel.includes(id) ? sel : [id]);
       },
     },
+    ...(canConvertPipeTableToGrid(id)
+      ? [{ label: "Convert to grid", run: () => { convertPipeTableToGrid(id); } }]
+      : []),
     {
       label: "Cut block",
       run: () => {

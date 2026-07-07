@@ -163,8 +163,9 @@ Tine's first deliberately beyond-Logseq feature: render a block's children as a
 **recursive, editable, TreeSheets-style grid** — while everything round-trips to
 plain Logseq markdown (and org). Geometry is the outline shape; config is a few
 harmless `tine.*` properties (`tine.view:: grid`, `tine.header:: true`,
-`tine.col-widths:: 0=140`). Logseq renders the same file as an ordinary nested
-outline — no sidecars, no coordinates, no lock-in.
+`tine.col-widths:: 0=140`, `tine.fields:: qty=number;done=checkbox`). Logseq
+renders the same file as an ordinary nested outline — no sidecars, no
+coordinates, no lock-in.
 
 - **Positional grid** — a block with `tine.view:: grid` shows its children as
   rows and grandchildren as cells (sibling order = column). Ragged rows render
@@ -183,16 +184,25 @@ outline — no sidecars, no coordinates, no lock-in.
   row/column. Drag a column ruling to resize (double-click resets).
 - **Clipboard interop** — copy a range as TSV (+ an HTML table, so it pastes
   into real spreadsheets); paste TSV/CSV to fill and grow the grid; paste
-  indented text to build nested structure.
+  indented text to build nested structure. Dropping a `.csv` or `.tsv` file
+  onto a page creates a new grid block.
 - **Field tables** — `tine.view:: table` turns children or query results into an
   editable table whose columns come from facets: task state, priority,
   scheduled/deadline dates, tags, page, and block properties. Writable fields
-  write back to the source block.
+  write back to the source block. Optional `tine.fields::` schemas pin column
+  order and type cells as text, number, date/datetime, checkbox, list, ref, or
+  enum; the header menu edits that schema in place.
 - **Task kanban** — `tine.view:: board` groups task/query rows by state,
   priority, or a property; dragging a card or pressing `Ctrl+←/→` writes the
   grouping field back to the card.
+- **Tag boards** — boards can group by tags too: a multi-tag card appears in
+  each matching column, and moving it adds/removes the tag on that block.
 - **Hierarchify / Flatten** — commit a field grouping into the outline, or pull
   grouped children back up into a flat table.
+- **Conversions** — convert a markdown pipe table block into a grid, or export
+  a safe grid back to a pipe table. The conversion keeps markdown cell source
+  where the parser exposes spans, refuses lossy grids, and makes the whole
+  operation one undo step.
 - **Aggregates** — per-column summaries (sum, average, min/max, dates, filled,
   unique, checked, and more) live in a quiet footer and store only the selected
   aggregate token.
@@ -207,10 +217,9 @@ outline — no sidecars, no coordinates, no lock-in.
 - **Safety** — every grid gesture is a single undo step, and grid pages are
   byte-exact round-trip tested (md and org).
 
-V1 limits: `tags` and `page` columns are read-only; range operations are
-single-level within the current grid; board cards can move between columns but
-not reorder within a column; formulas, merged cells, schemas, and multi-value
-group-by are still v2+.
+V1 limits: `page` columns are read-only; range operations are single-level
+within the current grid; board cards can move between columns but not reorder
+within a column; formulas and merged cells are still v2+.
 
 ## Tasks, journals & dates
 

@@ -288,6 +288,19 @@ const NAMED: PageDto[] = [
         ]
       ),
       b("{{query (todo TODO DOING DONE)}}\ntine.view:: board\ntine.group-by:: state"),
+      b(
+        "Reading list by topic\ntine.view:: board\ntine.group-by:: tags",
+        [
+          b("Aaronson survey #reading"),
+          b("n-fold draft #reading #writing"),
+          b("ChoCo rebuttal #writing"),
+        ],
+        false,
+        [
+          ["tine.view", "board"],
+          ["tine.group-by", "tags"],
+        ]
+      ),
     ],
   },
   // Namespace + page-icon demo: {{namespace}} renders the nested descendant tree,
@@ -727,6 +740,9 @@ export function mockBackend(): Backend {
     },
     async importAsset(path: string, name?: string): Promise<string> {
       return name ?? path.split("/").pop() ?? path;
+    },
+    async readTextFile(_path: string): Promise<string> {
+      throw new Error("local text files are unavailable in the browser mock");
     },
     async openAsset(): Promise<void> {
       // no OS opener in the browser mock
