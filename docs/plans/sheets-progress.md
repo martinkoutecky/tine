@@ -403,6 +403,28 @@ Both full reports: `subagent-tasks/notes/sheets-phase6-review-{codex,opus}.md`
 (local). Notable: both P1s were v1-era paths — the whole-subsystem scope
 rule (not diff-only) is what caught them.
 
+## Phase 7 — formula columns (IN PROGRESS)
+
+Plan: [sheets-phase7-plan.md](sheets-phase7-plan.md); DSL decided in ADR 0028.
+
+- **7a DONE (Jul 7)** — the pure expression engine, `src/sheet/formula/`
+  (lexer + Pratt parser with offset-carrying parse errors, typed evaluator
+  with errors-as-values, stdlib per ADR, duration/date math with month-end
+  clamping, DAG cycle errors naming the chain, injected-`now` purity, and
+  the property-line armor: `((`→`( (` add-one-space/remove-one-space
+  inversion + `\#` escape-the-escape inside strings). Verification: purity
+  grep (no store/ui/Date.now imports), full 13-op × 7×7 coercion-matrix
+  test, 500-case seeded fuzz (print→parse identity + encode/decode fixed
+  points with `#`/`((`/quote/backslash strings), armor hand-analyzed;
+  531+204 tests, tsc, cargo all green. Grammar notes: numeric method
+  receivers need parens (`(2).round()`); `.length`/`.year` are
+  property-style members. Nothing user-visible yet (engine only).
+- **7b NEXT** — `tine.formula.*` config + `formula:<name>` computed columns
+  in tables (typed rendering by result type, ⚠ error chips, sort +
+  aggregates, memoization per data revision). tine-test gets a formulas
+  section when this lands. Deploys now go to `~/research/tine-sheets`.
+- 7c formula group-by + `tine.filter::` + validating editor; 7d docs/samples.
+
 **Phase 6 leftovers for a later pass** (deliberate): list chip editor
 (comma-text editing works); enum types are hand-edit-only in the header
 menu; tag columns key by exact string (`#ChoCo`≠`#choco` as columns, though
