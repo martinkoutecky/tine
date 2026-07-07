@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.4.3] — 2026-07-07
+
 ### Fixed
 
 - **Org files: block ids are written as a hidden `:PROPERTIES:` drawer, not a
