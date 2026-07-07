@@ -1,5 +1,8 @@
 import { createSignal, Show, type JSX } from "solid-js";
 import { switchGraph, createNewGraph } from "../graph";
+import { isTauri } from "../backend";
+import { WindowControls } from "./WindowChrome";
+import { osDrawsWindowControls } from "../nativeChrome";
 
 /** First-run onboarding. Shown (as a full-cover layer) when the app starts with
  *  no graph configured: choose to open an existing Logseq graph, or create a new
@@ -22,6 +25,15 @@ export function Welcome(props: { onClose?: () => void } = {}): JSX.Element {
 
   return (
     <div class="welcome-overlay">
+      {/* Frameless main window (decorations:false) → the topbar's window controls
+          are covered by this full-cover overlay, leaving no way to close the app on
+          first run (GH #36). Draw them here (drag strip + min/max/close) whenever the
+          OS isn't already drawing a frame. macOS/native-frame/mobile skip this. */}
+      <Show when={isTauri() && !osDrawsWindowControls()}>
+        <div class="welcome-winchrome" data-tauri-drag-region>
+          <WindowControls />
+        </div>
+      </Show>
       <div class="welcome-card">
         <Show when={props.onClose}>
           <button class="welcome-close" title="Close welcome" onClick={() => props.onClose?.()}>

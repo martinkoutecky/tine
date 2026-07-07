@@ -5562,6 +5562,21 @@ img.emoji {
   align-items: center;
   text-align: center;
 }
+/* Window controls (min/max/close) + drag strip on the frameless welcome overlay
+   (GH #36) — pinned top-right above the centered card, and a drag region so the
+   window can still be moved before a graph is open. */
+.welcome-winchrome {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 4px;
+  z-index: 1;
+}
 .welcome-mark { color: var(--link-color); margin-bottom: 14px; }
 .welcome-title {
   font-size: 1.9rem;
