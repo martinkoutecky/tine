@@ -3908,6 +3908,14 @@ body.file-drop-active::after {
   font-style: italic;
   color: var(--text-secondary);
 }
+.sheet-field-header.sheet-col-formula {
+  color: var(--text-primary);
+}
+.sheet-formula-marker {
+  margin-right: 4px;
+  color: var(--text-muted);
+  font-weight: 700;
+}
 .sheet-field-cell {
   min-width: 90px;
 }
@@ -4042,6 +4050,16 @@ body.file-drop-active::after {
   font-size: 0.84em;
   font-weight: 600;
   white-space: nowrap;
+}
+.sheet-formula-error {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--marker-todo) 14%, transparent);
+  color: var(--marker-todo);
+  font-size: 0.84em;
+  font-weight: 700;
 }
 .sheet-board {
   display: flex;

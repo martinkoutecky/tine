@@ -2,7 +2,7 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { initParser } from "../render/parse";
 import { doc, resetStore, setDoc, undo, type FeedPage, type Node } from "../store";
 import { setWorkflow } from "../ui";
-import { cycleField, fieldIdsForBlocks, readField, writeField, writeTagDelta } from "./fields";
+import { cycleField, fieldIdsForBlocks, fieldLabel, isFieldId, readField, writeField, writeTagDelta } from "./fields";
 
 beforeAll(async () => {
   await initParser();
@@ -65,6 +65,16 @@ describe("sheet fields", () => {
     expect(readField("a", "priority")).toEqual({ text: "[#A]", raw: "A" });
     expect(readField("a", "tags")).toEqual({ text: "#sheets", raw: "sheets" });
     expect(readField("a", "prop:owner")).toEqual({ text: "Martin", raw: "Martin" });
+  });
+
+  it("treats formula fields as read-only derived fields", () => {
+    loadRows();
+
+    expect(isFieldId("formula:total")).toBe(true);
+    expect(fieldLabel("formula:total")).toBe("total");
+    expect(readField("a", "formula:total")).toBeNull();
+    expect(writeField("a", "formula:total", "12")).toBe(false);
+    expect(doc.byId.a.raw).toContain("owner:: Martin");
   });
 
   it("writes state through marker machinery and cycles with the configured workflow", () => {

@@ -639,6 +639,73 @@ describe("SheetTable", () => {
     dispose();
   });
 
+  it("renders computed formula columns as read-only typed cells with sort, aggregate, and remove", () => {
+    setDoc({
+      byId: {
+        table: node(
+          "table",
+          [
+            "Table",
+            "tine.view:: table",
+            "tine.fields:: price=number;qty=number",
+            "tine.formula.total:: price * qty",
+            'tine.formula.typed:: if(kind == "date", due + "1d", if(kind == "bool", true, missing + 1))',
+            "tine.col-aggregates:: formula:total=sum",
+          ].join("\n"),
+          null,
+          ["r1", "r2", "r3"]
+        ),
+        r1: node("r1", "Bool\nprice:: 5\nqty:: 2\nkind:: bool", "table"),
+        r2: node("r2", "Date\nprice:: 1\nqty:: 2\nkind:: date\ndue:: 2026-07-08", "table"),
+        r3: node("r3", "Error\nprice:: 2\nqty:: 3\nkind:: err", "table"),
+      },
+      pages: [page(["table"])],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    const { root, dispose } = mount(() => (
+      <>
+        <Block id="table" />
+        <ContextMenu />
+      </>
+    ));
+
+    const headers = [...root.querySelectorAll(".sheet-header-cell")].map((h) => h.textContent?.trim());
+    expect(headers).toEqual(["Block", "price", "qty", "ƒtotal", "ƒtyped", "kind", "due", "+"]);
+    expect(cell(root, 0, 3).classList.contains("sheet-number-cell")).toBe(true);
+    expect(cell(root, 0, 3).textContent?.trim()).toBe("10");
+    const bool = cell(root, 0, 4).querySelector('input[type="checkbox"]') as HTMLInputElement | null;
+    expect(bool?.checked).toBe(true);
+    expect(bool?.disabled).toBe(true);
+    expect(cell(root, 1, 4).querySelector(".date-chip")?.textContent).toBe("2026-07-09");
+    const error = cell(root, 2, 4).querySelector(".sheet-formula-error") as HTMLElement | null;
+    expect(error?.getAttribute("title")).toContain("+ expects");
+    expect([...root.querySelectorAll(".sheet-aggregate-value")].map((el) => el.textContent?.trim())).toContain("18");
+
+    mouseDown(cell(root, 0, 3));
+    expect(cell(root, 0, 3).classList.contains("sheet-cell-selected")).toBe(true);
+    expect(root.querySelector("input.sheet-prop-input")).toBeNull();
+
+    const totalHeader = [...root.querySelectorAll(".sheet-field-header")].find((h) =>
+      h.textContent?.includes("total")
+    ) as HTMLElement | undefined;
+    totalHeader!.click();
+    expect([...root.querySelectorAll(".sheet-title-cell .sheet-cell-body")].map((c) => c.textContent?.trim())).toEqual([
+      "Date",
+      "Error",
+      "Bool",
+    ]);
+
+    contextMenu(totalHeader!);
+    expect([...document.querySelectorAll(".ctx-item")].map((el) => el.textContent?.trim())).toEqual(["Remove formula"]);
+    clickMenuItem("Remove formula");
+    expect(blockProperty("table", "tine.formula.total")).toBeNull();
+    expect(doc.byId.table.raw).not.toContain("tine.formula.total::");
+    expect(doc.byId.table.raw).toContain("tine.formula.typed::");
+
+    dispose();
+  });
+
   it("writes the selected field aggregate token", () => {
     loadTableDoc();
     const { root, dispose } = mount(() => <Block id="table" />);

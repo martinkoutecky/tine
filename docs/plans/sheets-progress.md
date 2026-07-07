@@ -419,11 +419,27 @@ Plan: [sheets-phase7-plan.md](sheets-phase7-plan.md); DSL decided in ADR 0028.
   531+204 tests, tsc, cargo all green. Grammar notes: numeric method
   receivers need parens (`(2).round()`); `.length`/`.year` are
   property-style members. Nothing user-visible yet (engine only).
-- **7b NEXT** — `tine.formula.*` config + `formula:<name>` computed columns
-  in tables (typed rendering by result type, ⚠ error chips, sort +
-  aggregates, memoization per data revision). tine-test gets a formulas
-  section when this lands. Deploys now go to `~/research/tine-sheets`.
-- 7c formula group-by + `tine.filter::` + validating editor; 7d docs/samples.
+- **7b DONE (Jul 7)** — computed columns: `formulasOf` collection
+  (`tine.formula.<name>` prefix, decode armor, view-over-page merge per
+  name), `formula:<name>` FieldId (read-only, `readField`/`writeField`
+  refuse), `formulaEval.ts` store-boundary (facet→FormulaValue conversion
+  table, Solid-memo results keyed on dataRev + row raws per ADR 0014,
+  bounded parse cache, 10k-evals warn), SheetTable renders ƒ-marked
+  columns after declared/before strays with typed rendering by result
+  type + ⚠ error chips (message on hover), sort + footer aggregates work,
+  header menu offers Remove formula. Orchestrator fixes over codex:
+  (1) scheduled/deadline facets ("2026-07-08 Wed") coerced to TEXT, which
+  broke `deadline < today()` — now isoDatePrefix→date (+ regression
+  tests); (2) unbounded module parse cache bounded at 500. Probe-verified
+  in the browser: `points * 2` → 6/16/2, `due-soon` boolean checkboxes
+  correct per row, parse-error column renders ⚠ chips carrying the
+  message. A suspected crash (referenced formula with a parse error
+  thrown from inside evaluate) probe-checked: NOT real — the engine
+  already converts it to an error value. E2E ALL PASS; deployed to
+  `~/research/tine-sheets`; tine-test gained a §9 formulas section
+  (round-trip re-validated).
+- **7c NEXT** — formula group-by + `tine.filter::` + the validating
+  formula editor; 7d docs/samples.
 
 **Phase 6 leftovers for a later pass** (deliberate): list chip editor
 (comma-text editing works); enum types are hand-edit-only in the header

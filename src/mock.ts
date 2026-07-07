@@ -274,7 +274,7 @@ const NAMED: PageDto[] = [
         ]
       ),
       b(
-        "Field table demo\ntine.view:: table\ntine.col-aggregates:: prop:estimate=sum\ntine.fields:: state=state;owner=text;topic=enum:infra,ui,docs;points=number;shipped=checkbox;due=date;estimate=text",
+        "Field table demo\ntine.view:: table\ntine.col-aggregates:: prop:estimate=sum\ntine.fields:: state=state;owner=text;topic=enum:infra,ui,docs;points=number;shipped=checkbox;due=date;estimate=text\ntine.formula.effort:: points * 2\ntine.formula.due-soon:: if(isEmpty(due), false, due < today() + \"14d\")\ntine.formula.broken:: points +",
         [
           b("TODO [#A] Draft spec #sheets\nSCHEDULED: <2026-07-08 Wed>\nowner:: Martin\nestimate:: 2h\ntopic:: docs\npoints:: 3\nshipped:: false\ndue:: 2026-07-09"),
           b("DOING Build table renderer #sheets\nowner:: Codex\nestimate:: 5h\ntopic:: ui\npoints:: 8\nshipped:: false\nnote:: stray column"),
@@ -285,6 +285,9 @@ const NAMED: PageDto[] = [
           ["tine.view", "table"],
           ["tine.col-aggregates", "prop:estimate=sum"],
           ["tine.fields", "state=state;owner=text;topic=enum:infra,ui,docs;points=number;shipped=checkbox;due=date;estimate=text"],
+          ["tine.formula.effort", "points * 2"],
+          ["tine.formula.due-soon", 'if(isEmpty(due), false, due < today() + "14d")'],
+          ["tine.formula.broken", "points +"],
         ]
       ),
       b("{{query (todo TODO DOING DONE)}}\ntine.view:: board\ntine.group-by:: state"),

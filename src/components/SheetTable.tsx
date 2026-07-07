@@ -15,7 +15,7 @@ import {
   withUndoUnit,
 } from "../store";
 import { facetsFromDto, facetsOf, type Facets } from "../render/facets";
-import { visibleBody, isRenderHiddenProp } from "../render/block";
+import { pageProperties, visibleBody, isRenderHiddenProp } from "../render/block";
 import { InlineText } from "../render/inline";
 import { editorOffsetFromRenderedRange } from "../render/spans";
 import { isBuiltinHidden } from "../editor/properties";
@@ -35,27 +35,36 @@ import {
   cycleField,
   fieldIdsForBlocks,
   fieldLabel,
+  isFormulaField,
   readField,
   writeField,
   type FieldId,
   type FieldValue,
 } from "../sheet/fields";
 import { parseFields, serializeFields, sheetConfig, type FieldSpec, type FieldType } from "../sheet/config";
+import { formulaFieldId, formulaNameFromField, formulasOf, mergeFormulas } from "../sheet/formulaFields";
+import {
+  createFormulaResultsMemo,
+  formulaResultKey,
+  formulaValueText,
+  formulaValueToFieldValue,
+  readFormulaRowField,
+  type FormulaEvalRow,
+} from "../sheet/formulaEval";
+import type { FormulaValue } from "../sheet/formula";
 import { isPlainDecimalNumber, parseIsoDateLike } from "../sheet/typed";
 import { openActionContextMenu, openDatePicker, openSheetCellContextMenu, openSheetContextMenu, type ContextMenuAction } from "../ui";
 import { blockBackgroundColor } from "../blockColors";
-import type { BlockDto, RefGroup } from "../types";
+import type { RefGroup } from "../types";
 import { Editor, SurfaceContext } from "./Block";
 import { SheetAggregateFooterCell } from "./SheetAggregateFooter";
 
-interface RowRecord {
-  id: string;
-  page: string;
-  dto?: BlockDto;
-}
+interface RowRecord extends FormulaEvalRow {}
 
 type SortState = { col: number; dir: 1 | -1 } | null;
+type SortKey = { kind: "number"; value: number; text: string } | { kind: "text"; text: string };
 type SchemaHome = { kind: "block"; id: string; value: string } | { kind: "page"; name: string; value: string };
+type FormulaHome = { kind: "block"; id: string } | { kind: "page"; name: string };
 type SchemaMenuType = "text" | "number" | "date" | "datetime" | "checkbox" | "list" | "ref";
 
 const BUILTIN_FIELDS = new Set<FieldId>(["state", "priority", "scheduled", "deadline", "tags", "page"]);
@@ -68,6 +77,11 @@ const SCHEMA_PROP_TYPES: SchemaMenuType[] = [
   "list",
   "ref",
 ];
+
+function compareSortKeys(a: SortKey, b: SortKey): number {
+  if (a.kind === "number" && b.kind === "number") return a.value - b.value;
+  return a.text.localeCompare(b.text);
+}
 
 export function SheetTable(props: {
   ownerId: string;
@@ -107,6 +121,26 @@ export function SheetTable(props: {
     for (const spec of schemaFields()) out.set(spec.field, spec.type);
     return out;
   });
+  const pageFormulas = createMemo<ReadonlyMap<string, string>>(() => {
+    if (!props.schemaPage) return new Map();
+    const page = pageByName(props.schemaPage);
+    return page ? formulasOf(pageProperties(page.preBlock, page.format)) : new Map();
+  });
+  const blockFormulas = createMemo<ReadonlyMap<string, string>>(() => {
+    const owner = doc.byId[props.ownerId];
+    return owner ? formulasOf(facetsOf(owner.raw, formatForBlock(props.ownerId)).properties) : new Map();
+  });
+  const formulas = createMemo(() => mergeFormulas(pageFormulas(), blockFormulas()));
+  const formulaHomes = createMemo(() => {
+    const out = new Map<string, FormulaHome>();
+    if (props.schemaPage) {
+      for (const name of pageFormulas().keys()) out.set(name, { kind: "page", name: props.schemaPage });
+    }
+    for (const name of blockFormulas().keys()) out.set(name, { kind: "block", id: props.ownerId });
+    return out;
+  });
+  const formulaFields = createMemo<FieldId[]>(() => [...formulas().keys()].map(formulaFieldId));
+  const formulaFieldSet = createMemo(() => new Set<FieldId>(formulaFields()));
 
   const queryPages = createMemo(() => {
     const map = new Map<string, RefGroup>();
@@ -137,6 +171,19 @@ export function SheetTable(props: {
     }
     return (props.groups ?? []).flatMap((g) => g.blocks.map((b) => ({ id: b.id, page: g.page, dto: b })));
   });
+  const formulaResults = createFormulaResultsMemo({
+    rows,
+    formulas,
+    ownerId: props.ownerId,
+  });
+  const formulaValue = (row: RowRecord, field: FieldId): FormulaValue | null => {
+    const name = formulaNameFromField(field);
+    if (!name) return null;
+    return formulaResults().get(formulaResultKey(row.id, name)) ?? null;
+  };
+  const rowFieldValue = (row: RowRecord, field: FieldId): FieldValue | null => {
+    return isFormulaField(field) ? formulaValueToFieldValue(formulaValue(row, field)) : readFormulaRowField(row, field);
+  };
 
   const fields = createMemo<FieldId[]>(() => {
     const loadedIds = rows().filter((r) => doc.byId[r.id]).map((r) => r.id);
@@ -147,10 +194,15 @@ export function SheetTable(props: {
     const extra = extraFields().filter((f) => !seen.has(f));
     const inferred = [...observed, ...extra];
     const schema = schemaFields();
-    if (schema.length === 0) return inferred;
     const declared = schema.map((s) => s.field);
     const declaredSet = new Set(declared);
-    return [...declared, ...inferred.filter((f) => !declaredSet.has(f))];
+    const formulas = formulaFields();
+    const formulasSet = formulaFieldSet();
+    return [
+      ...declared,
+      ...formulas,
+      ...inferred.filter((f) => !declaredSet.has(f) && !formulasSet.has(f)),
+    ];
   });
 
   const columns = createMemo(() => ["title" as const, ...fields()]);
@@ -166,9 +218,18 @@ export function SheetTable(props: {
     const rs = rows();
     if (!s) return rs;
     const col = columns()[s.col];
-    const value = (r: RowRecord) =>
-      col === "title" ? rowTitle(r) : fieldValue(r, col)?.text ?? "";
-    return [...rs].sort((a, b) => value(a).localeCompare(value(b)) * s.dir);
+    const value = (r: RowRecord): SortKey => {
+      if (col === "title") return { kind: "text", text: rowTitle(r) };
+      const formula = formulaValue(r, col);
+      if (formula?.kind === "number") return { kind: "number", value: formula.value, text: String(formula.value) };
+      const field = rowFieldValue(r, col);
+      const text = field?.raw ?? field?.text ?? "";
+      if (fieldTypes().get(col) === "number" && isPlainDecimalNumber(text.trim())) {
+        return { kind: "number", value: Number(text.trim()), text };
+      }
+      return { kind: "text", text };
+    };
+    return [...rs].sort((a, b) => compareSortKeys(value(a), value(b)) * s.dir);
   });
 
   const sortHeader = (col: number) => {
@@ -200,6 +261,20 @@ export function SheetTable(props: {
     if (home.kind === "block") setBlockProperty(home.id, "tine.fields", value || null);
     else setPageProperty(home.name, "tine.fields", value || null);
   };
+  const formulaWriteAllowed = (home: FormulaHome | null) => {
+    if (!home) return false;
+    if (home.kind === "block") return !blockPageReadOnly(home.id);
+    return !(pageByName(home.name)?.readOnly ?? false);
+  };
+  const removeFormula = (field: FieldId) => {
+    const name = formulaNameFromField(field);
+    if (!name) return;
+    const home = formulaHomes().get(name) ?? null;
+    if (!formulaWriteAllowed(home)) return;
+    const key = `tine.formula.${name}`;
+    if (home?.kind === "block") setBlockProperty(home.id, key, null);
+    else if (home) setPageProperty(home.name, key, null);
+  };
   const specForField = (field: FieldId, type: SchemaMenuType = "text"): FieldSpec | null => {
     if (BUILTIN_FIELDS.has(field)) return { field, type: "builtin" };
     return field.startsWith("prop:") ? { field, type } : null;
@@ -222,6 +297,14 @@ export function SheetTable(props: {
   const openFieldHeaderMenu = (e: MouseEvent, field: FieldId) => {
     e.preventDefault();
     e.stopPropagation();
+    if (isFormulaField(field)) {
+      const name = formulaNameFromField(field);
+      const home = name ? formulaHomes().get(name) ?? null : null;
+      openActionContextMenu(e.clientX, e.clientY, [
+        { label: "Remove formula", disabled: !formulaWriteAllowed(home), run: () => removeFormula(field) },
+      ]);
+      return;
+    }
     const declared = schemaFields().find((spec) => spec.field === field) ?? null;
     const disabled = !schemaWriteAllowed();
     const actions: ContextMenuAction[] = [];
@@ -359,10 +442,16 @@ export function SheetTable(props: {
           {(field, i) => (
             <div
               class="sheet-cell sheet-header-cell sheet-field-header"
-              classList={{ "sheet-col-stray": !!schemaHome() && !schemaFieldSet().has(field) }}
+              classList={{
+                "sheet-col-formula": isFormulaField(field),
+                "sheet-col-stray": !!schemaHome() && !schemaFieldSet().has(field) && !isFormulaField(field),
+              }}
               onClick={() => sortHeader(i() + 1)}
               onContextMenu={(e) => openFieldHeaderMenu(e, field)}
             >
+              <Show when={isFormulaField(field)}>
+                <span class="sheet-formula-marker">ƒ</span>
+              </Show>
               {fieldLabel(field)}{sortArrow(i() + 1)}
             </div>
           )}
@@ -446,6 +535,7 @@ export function SheetTable(props: {
                     row={row}
                     field={field}
                     fieldType={fieldTypes().get(field)}
+                    formulaValue={formulaValue(row, field)}
                     rowIndex={rowIndex()}
                     colIndex={fieldIndex() + 1}
                     selected={selected(rowIndex(), fieldIndex() + 1)}
@@ -470,7 +560,7 @@ export function SheetTable(props: {
                 ownerId={props.ownerId}
                 columnKey={field}
                 fn={config().colAggregates.get(field) ?? null}
-                values={sortedRows().map((row) => fieldValue(row, field))}
+                values={sortedRows().map((row) => rowFieldValue(row, field))}
                 showEmpty={hovering()}
               />
             )}
@@ -488,7 +578,7 @@ export function SheetTable(props: {
                   ownerId={props.ownerId}
                   columnKey={field}
                   fn={null}
-                  values={sortedRows().map((row) => fieldValue(row, field))}
+                  values={sortedRows().map((row) => rowFieldValue(row, field))}
                   showEmpty
                 />
               )}
@@ -543,31 +633,6 @@ function fieldIdsForRecords(rows: readonly RowRecord[], includePage: boolean): F
   out.push(...props);
   if (includePage) out.push("page");
   return out;
-}
-
-function fieldValue(row: RowRecord, field: FieldId): FieldValue | null {
-  if (doc.byId[row.id]) return readField(row.id, field);
-  const f = recordFacets(row);
-  if (!f) return null;
-  switch (field) {
-    case "state":
-      return f.marker ? { text: f.marker, raw: f.marker } : null;
-    case "priority":
-      return f.priority ? { text: `[#${f.priority}]`, raw: f.priority } : null;
-    case "scheduled":
-      return f.scheduled ? { text: f.scheduled, raw: f.scheduled } : null;
-    case "deadline":
-      return f.deadline ? { text: f.deadline, raw: f.deadline } : null;
-    case "tags":
-      return f.tags.length ? { text: f.tags.map((t) => `#${t}`).join(" "), raw: f.tags.join(" ") } : null;
-    case "page":
-      return { text: row.page, raw: row.page };
-    default: {
-      const key = field.slice(5);
-      const prop = f.properties.find(([k]) => k === key);
-      return prop ? { text: prop[1], raw: prop[1] } : null;
-    }
-  }
 }
 
 function rowRaw(row: RowRecord): string {
@@ -670,6 +735,7 @@ function FieldCell(props: {
   row: RowRecord;
   field: FieldId;
   fieldType?: FieldType;
+  formulaValue?: FormulaValue | null;
   rowIndex: number;
   colIndex: number;
   selected: boolean;
@@ -678,8 +744,8 @@ function FieldCell(props: {
   openPropInput: (rowId: string, field: FieldId, initial?: string) => void;
   closePropInput: () => void;
 }): JSX.Element {
-  const value = () => fieldValue(props.row, props.field);
-  const editable = () => !!doc.byId[props.row.id];
+  const value = () => isFormulaField(props.field) ? formulaValueToFieldValue(props.formulaValue) : readFormulaRowField(props.row, props.field);
+  const editable = () => !!doc.byId[props.row.id] && !isFormulaField(props.field);
   const select = () => setCellSel({ gridId: props.ownerId, row: props.rowIndex, col: props.colIndex });
   const bgColor = createMemo(() => {
     const f = recordFacets(props.row);
@@ -756,8 +822,10 @@ function FieldCell(props: {
       class="sheet-cell sheet-field-cell"
       classList={{
         "sheet-cell-selected": props.selected,
-        "sheet-readonly-cell": !editable() || props.field === "tags" || props.field === "page",
-        "sheet-number-cell": props.field.startsWith("prop:") && props.fieldType === "number",
+        "sheet-readonly-cell": !editable() || props.field === "tags" || props.field === "page" || isFormulaField(props.field),
+        "sheet-number-cell":
+          (props.field.startsWith("prop:") && props.fieldType === "number") ||
+          (isFormulaField(props.field) && props.formulaValue?.kind === "number"),
       }}
       data-sheet-grid-id={props.ownerId}
       data-block-id={props.row.id}
@@ -782,7 +850,15 @@ function FieldCell(props: {
       </Show>
       <Show
         when={props.editing && props.field.startsWith("prop:")}
-        fallback={<FieldValueView field={props.field} fieldType={props.fieldType} value={value()} page={props.row.page} />}
+        fallback={
+          <FieldValueView
+            field={props.field}
+            fieldType={props.fieldType}
+            value={value()}
+            formulaValue={props.formulaValue}
+            page={props.row.page}
+          />
+        }
       >
         <input
           class="sheet-prop-input"
@@ -815,7 +891,14 @@ function FieldCell(props: {
   );
 }
 
-function FieldValueView(props: { field: FieldId; fieldType?: FieldType; value: FieldValue | null; page: string }): JSX.Element {
+function FieldValueView(props: {
+  field: FieldId;
+  fieldType?: FieldType;
+  value: FieldValue | null;
+  formulaValue?: FormulaValue | null;
+  page: string;
+}): JSX.Element {
+  if (isFormulaField(props.field)) return <FormulaValueView value={props.formulaValue ?? null} />;
   const text = () => props.value?.text ?? "";
   return (
     <Show when={props.value}>
@@ -843,6 +926,40 @@ function FieldValueView(props: { field: FieldId; fieldType?: FieldType; value: F
         <InlineText text={text()} format={formatForPage(props.page)} />
       </Show>
     </Show>
+  );
+}
+
+function FormulaValueView(props: { value: FormulaValue | null }): JSX.Element {
+  return (
+    <Switch>
+      <Match when={props.value?.kind === "error"}>
+        <span class="sheet-formula-error" title={props.value?.kind === "error" ? props.value.message : ""}>
+          ⚠
+        </span>
+      </Match>
+      <Match when={props.value?.kind === "number"}>
+        {formulaValueText(props.value)}
+      </Match>
+      <Match when={props.value?.kind === "date"}>
+        <span class="date-chip scheduled">{formulaValueText(props.value)}</span>
+      </Match>
+      <Match when={props.value?.kind === "boolean"}>
+        <input
+          class="sheet-checkbox"
+          type="checkbox"
+          checked={props.value?.kind === "boolean" ? props.value.value : false}
+          disabled
+        />
+      </Match>
+      <Match when={props.value?.kind === "list"}>
+        <For each={props.value?.kind === "list" ? props.value.values : []}>
+          {(value) => <span class="sheet-tag-chip">{formulaValueText(value)}</span>}
+        </For>
+      </Match>
+      <Match when={props.value?.kind === "text" || props.value?.kind === "duration"}>
+        {formulaValueText(props.value)}
+      </Match>
+    </Switch>
   );
 }
 

@@ -19,7 +19,8 @@ export type FieldId =
   | "deadline"
   | "tags"
   | "page"
-  | `prop:${string}`;
+  | `prop:${string}`
+  | `formula:${string}`;
 
 export interface FieldValue {
   text: string;
@@ -34,8 +35,13 @@ export function isFieldId(value: string): value is FieldId {
     value === "deadline" ||
     value === "tags" ||
     value === "page" ||
-    value.startsWith("prop:")
+    value.startsWith("prop:") ||
+    value.startsWith("formula:")
   );
+}
+
+export function isFormulaField(field: FieldId): field is `formula:${string}` {
+  return field.startsWith("formula:");
 }
 
 function facetsForBlock(id: string): Facets | null {
@@ -174,6 +180,7 @@ export function fieldIdsForBlocks(ids: readonly string[], opts: { includePage?: 
 
 export function fieldLabel(field: FieldId): string {
   if (field.startsWith("prop:")) return field.slice(5);
+  if (isFormulaField(field)) return field.slice("formula:".length);
   if (field === "state") return "State";
   if (field === "priority") return "Priority";
   if (field === "scheduled") return "Scheduled";
@@ -183,6 +190,7 @@ export function fieldLabel(field: FieldId): string {
 }
 
 export function readField(id: string, field: FieldId): FieldValue | null {
+  if (isFormulaField(field)) return null;
   const n = doc.byId[id];
   const f = facetsForBlock(id);
   if (!n || !f) return null;
@@ -209,6 +217,7 @@ export function readField(id: string, field: FieldId): FieldValue | null {
 
 
 export function writeField(id: string, field: FieldId, value: string): boolean {
+  if (isFormulaField(field)) return false;
   const n = doc.byId[id];
   if (!n) return false;
   if (blockPageReadOnly(id)) return false; // org round-trip gate (review finding)
@@ -311,6 +320,7 @@ export function cycleField(id: string, field: "state" | "priority"): boolean {
 }
 
 export function groupKeyForBlock(id: string, field: FieldId): string | null {
+  if (isFormulaField(field)) return null;
   const v = readField(id, field);
   if (!v) return null;
   if (field === "priority" || field === "state") return v.raw ?? v.text;
@@ -319,6 +329,7 @@ export function groupKeyForBlock(id: string, field: FieldId): string | null {
 }
 
 export function groupKeysForBlock(input: GroupKeyInput, field: FieldId): (string | null)[] {
+  if (isFormulaField(field)) return [null];
   if (field === "tags") {
     const f = facetsForInput(input);
     return f && f.tags.length > 0 ? f.tags : [null];
