@@ -123,6 +123,9 @@ describe("SheetTable", () => {
     const headers = [...root.querySelectorAll(".sheet-header-cell")].map((h) => h.textContent?.trim());
     expect(headers).toEqual(["Block", "State", "Priority", "Scheduled", "Deadline", "Tags", "owner", "estimate", "+"]);
     expect(root.querySelector(".sheet-col-stray")).toBeNull();
+    expect(root.querySelector(".sheet-title-header")?.classList.contains("sheet-sticky-left")).toBe(true);
+    expect(root.querySelector(".sheet-title-cell")?.classList.contains("sheet-sticky-left")).toBe(true);
+    expect(root.querySelector(".sheet-field-header")?.classList.contains("sheet-sticky-left")).toBe(false);
 
     dispose();
   });
@@ -799,7 +802,11 @@ describe("SheetTable", () => {
     const table = root.querySelector(".sheet-table") as HTMLElement | null;
     expect(root.querySelector(".sheet-footer-cell")).toBeNull();
     pointerEnter(table!);
-    const adds = [...root.querySelectorAll(".sheet-footer-overlay .sheet-aggregate-add")] as HTMLButtonElement[];
+    const footer = root.querySelector(".sheet-table > .sheet-footer-cell") as HTMLElement | null;
+    expect(footer).not.toBeNull();
+    expect(root.querySelector(".sheet-footer-overlay")).toBeNull();
+    expect(footer!.style.position).not.toBe("absolute");
+    const adds = [...root.querySelectorAll(".sheet-table > .sheet-footer-cell .sheet-aggregate-add")] as HTMLButtonElement[];
     const estimateAdd = adds[adds.length - 1];
     expect(estimateAdd).not.toBeUndefined();
     estimateAdd.click();

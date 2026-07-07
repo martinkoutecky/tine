@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
 import { Block } from "./Block";
@@ -62,6 +62,53 @@ function pointerEnter(target: EventTarget): Event {
   const event = new Event("pointerenter", { bubbles: false, cancelable: true });
   target.dispatchEvent(event);
   return event;
+}
+
+function animationFrame(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
+
+function mockSheetLayout(width: () => number) {
+  const originalClientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
+  const originalScrollWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollWidth");
+  const originalResizeObserver = globalThis.ResizeObserver;
+  const observers: ResizeObserverCallback[] = [];
+
+  Object.defineProperty(HTMLElement.prototype, "clientWidth", {
+    configurable: true,
+    get() {
+      if (this.classList.contains("ls-block") || this.classList.contains("block-sheet-container")) return 200;
+      return 0;
+    },
+  });
+  Object.defineProperty(HTMLElement.prototype, "scrollWidth", {
+    configurable: true,
+    get() {
+      if (this.classList.contains("block-sheet-container") || this.classList.contains("sheet-grid")) return width();
+      return 0;
+    },
+  });
+  globalThis.ResizeObserver = class ResizeObserver {
+    constructor(callback: ResizeObserverCallback) {
+      observers.push(callback);
+    }
+    observe = vi.fn();
+    unobserve = vi.fn();
+    disconnect = vi.fn();
+  };
+
+  return {
+    trigger() {
+      for (const observer of observers) observer([], {} as ResizeObserver);
+    },
+    restore() {
+      if (originalClientWidth) Object.defineProperty(HTMLElement.prototype, "clientWidth", originalClientWidth);
+      else delete (HTMLElement.prototype as { clientWidth?: number }).clientWidth;
+      if (originalScrollWidth) Object.defineProperty(HTMLElement.prototype, "scrollWidth", originalScrollWidth);
+      else delete (HTMLElement.prototype as { scrollWidth?: number }).scrollWidth;
+      globalThis.ResizeObserver = originalResizeObserver;
+    },
+  };
 }
 
 function loadMdSheetDoc() {
@@ -131,10 +178,34 @@ describe("SheetGrid", () => {
     expect(grid!.style.gridTemplateColumns.trim().split(/\s+/)).toHaveLength(3);
     expect(grid!.querySelectorAll(":scope > .sheet-hole")).toHaveLength(2);
     expect(grid!.querySelectorAll(":scope > .sheet-header-cell")).toHaveLength(3);
+    expect(grid!.querySelector('.sheet-cell[data-col="0"]')?.classList.contains("sheet-sticky-left")).toBe(true);
+    expect(grid!.querySelector('.sheet-cell[data-col="1"]')?.classList.contains("sheet-sticky-left")).toBe(false);
     expect(root.textContent).not.toContain("tine.view");
     expect(root.querySelector(".sheet-cell .sheet-grid")).not.toBeNull();
 
     dispose();
+  });
+
+  it("toggles the breakout class when the natural sheet width exceeds the column", async () => {
+    let naturalWidth = 640;
+    const layout = mockSheetLayout(() => naturalWidth);
+    loadMdSheetDoc();
+    const { root, dispose } = mount(() => <Block id="grid" />);
+    try {
+      const container = root.querySelector(".block-sheet-container") as HTMLElement | null;
+      expect(container).not.toBeNull();
+      expect(container!.classList.contains("sheet-breakout")).toBe(true);
+      expect(root.querySelector(".sheet-cell .block-sheet-container")).toBeNull();
+
+      naturalWidth = 160;
+      layout.trigger();
+      await animationFrame();
+
+      expect(container!.classList.contains("sheet-breakout")).toBe(false);
+    } finally {
+      dispose();
+      layout.restore();
+    }
   });
 
   it("renders block highlight colors and writes them from the cell menu", () => {
@@ -265,7 +336,11 @@ describe("SheetGrid", () => {
     const grid = root.querySelector(".sheet-grid") as HTMLElement | null;
     expect(root.querySelector(".sheet-footer-cell")).toBeNull();
     pointerEnter(grid!);
-    const add = root.querySelector(".sheet-footer-overlay .sheet-aggregate-add") as HTMLButtonElement | null;
+    const footer = root.querySelector(".sheet-grid > .sheet-footer-cell") as HTMLElement | null;
+    expect(footer).not.toBeNull();
+    expect(root.querySelector(".sheet-footer-overlay")).toBeNull();
+    expect(footer!.style.position).not.toBe("absolute");
+    const add = root.querySelector(".sheet-grid > .sheet-footer-cell .sheet-aggregate-add") as HTMLButtonElement | null;
     expect(add).not.toBeNull();
     add!.click();
     const select = root.querySelector(".sheet-aggregate-select") as HTMLSelectElement | null;
@@ -275,6 +350,25 @@ describe("SheetGrid", () => {
     change(select!);
 
     expect(blockProperty("grid", "tine.col-aggregates")).toBe("0=sum");
+    dispose();
+  });
+
+  it("opens a sheet block as a full page from the sheet context menu", () => {
+    loadMdSheetDoc();
+    const { root, dispose } = mount(() => (
+      <>
+        <Block id="grid" />
+        <ContextMenu />
+      </>
+    ));
+    const grid = root.querySelector(".sheet-grid") as HTMLElement | null;
+    expect(grid).not.toBeNull();
+
+    contextMenu(grid!);
+    ([...document.querySelectorAll(".ctx-item")].find((el) => el.textContent?.trim() === "Open as full page") as HTMLElement).click();
+
+    expect(route()).toMatchObject({ kind: "page", name: "Sheet", pageKind: "page" });
+    expect((route() as { block?: string }).block).toBeTruthy();
     dispose();
   });
 });

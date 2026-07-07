@@ -386,19 +386,19 @@ export function Block(props: { id: string; hideRefCount?: boolean }): JSX.Elemen
       <Show when={!collapsed() && (hasChildren() || sheet().view === "grid" || sheet().view === "table" || sheet().view === "board")}>
         <Switch>
           <Match when={sheet().view === "grid"}>
-            <div class="block-sheet-container">
+            <SheetContainer>
               <SheetGrid id={props.id} />
-            </div>
+            </SheetContainer>
           </Match>
           <Match when={sheet().view === "table"}>
-            <div class="block-sheet-container">
+            <SheetContainer>
               <SheetTable ownerId={props.id} rowSource="children" />
-            </div>
+            </SheetContainer>
           </Match>
           <Match when={sheet().view === "board"}>
-            <div class="block-sheet-container">
+            <SheetContainer>
               <SheetBoard ownerId={props.id} rowSource="children" groupBy={sheet().groupBy} />
-            </div>
+            </SheetContainer>
           </Match>
           <Match when={true}>
             <div class="block-children-container">
@@ -410,6 +410,87 @@ export function Block(props: { id: string; hideRefCount?: boolean }): JSX.Elemen
           </Match>
         </Switch>
       </Show>
+    </div>
+  );
+}
+
+function px(value: string): number {
+  const n = Number.parseFloat(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function SheetContainer(props: { children: JSX.Element }): JSX.Element {
+  let el: HTMLDivElement | undefined;
+  let frame = 0;
+
+  const measure = () => {
+    if (!el) return;
+    frame = 0;
+    const nested = !!el.closest(".sheet-cell");
+    const surface = el.firstElementChild as HTMLElement | null;
+    const style = getComputedStyle(el);
+    const marginLeft = px(style.marginLeft);
+    const marginRight = px(style.marginRight);
+    const parentWidth = el.parentElement?.clientWidth ?? 0;
+    const normalWidth = Math.max(0, parentWidth - marginLeft - marginRight) || el.clientWidth;
+    const naturalWidth = Math.max(
+      el.scrollWidth,
+      surface?.scrollWidth ?? 0,
+      surface?.getBoundingClientRect().width ?? 0
+    );
+
+    const main = el.closest(".main-content") as HTMLElement | null;
+    if (main) {
+      const mainRect = main.getBoundingClientRect();
+      const parentRect = el.parentElement?.getBoundingClientRect();
+      const gutter = 20;
+      const targetLeft = mainRect.left + gutter;
+      const targetRight = mainRect.right - gutter;
+      const normalLeft = (parentRect?.left ?? el.getBoundingClientRect().left - marginLeft) + marginLeft;
+      const breakoutWidth = Math.max(normalWidth, Math.floor(targetRight - targetLeft));
+      const breakoutShift = Math.max(0, Math.round(normalLeft - targetLeft));
+      el.style.setProperty("--sheet-breakout-width", `${breakoutWidth}px`);
+      el.style.setProperty("--sheet-breakout-shift", `${breakoutShift}px`);
+    }
+
+    el.classList.toggle("sheet-breakout", !nested && naturalWidth > normalWidth + 1);
+  };
+
+  const scheduleMeasure = () => {
+    if (frame) return;
+    frame = requestAnimationFrame(measure);
+  };
+
+  onMount(() => {
+    if (!el) return;
+    measure();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", scheduleMeasure);
+      onCleanup(() => {
+        if (frame) cancelAnimationFrame(frame);
+        window.removeEventListener("resize", scheduleMeasure);
+      });
+      return;
+    }
+    const ro = new ResizeObserver(scheduleMeasure);
+    ro.observe(el);
+    if (el.firstElementChild) ro.observe(el.firstElementChild);
+    window.addEventListener("resize", scheduleMeasure);
+    onCleanup(() => {
+      if (frame) cancelAnimationFrame(frame);
+      ro.disconnect();
+      window.removeEventListener("resize", scheduleMeasure);
+    });
+  });
+
+  return (
+    <div
+      ref={(node) => {
+        el = node;
+      }}
+      class="block-sheet-container"
+    >
+      {props.children}
     </div>
   );
 }

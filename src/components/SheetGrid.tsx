@@ -314,7 +314,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
               />
             )}
           </For>
-          <Show when={hasAggregates()}>
+          <Show when={hasAggregates() || hovering()}>
             <For each={Array.from({ length: matrix().cols }, (_, col) => col)}>
               {(col) => (
                 <SheetAggregateFooterCell
@@ -322,25 +322,11 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
                   columnKey={`${col}`}
                   fn={config().colAggregates.get(`${col}`) ?? null}
                   values={columnValues(col)}
+                  stickyLeft={col === 0}
                   showEmpty={hovering()}
                 />
               )}
             </For>
-          </Show>
-          <Show when={!hasAggregates() && hovering()}>
-            <div class="sheet-footer-overlay" style={{ "grid-template-columns": columns() }}>
-              <For each={Array.from({ length: matrix().cols }, (_, col) => col)}>
-                {(col) => (
-                  <SheetAggregateFooterCell
-                    ownerId={props.id}
-                    columnKey={`${col}`}
-                    fn={null}
-                    values={columnValues(col)}
-                    showEmpty
-                  />
-                )}
-              </For>
-            </div>
           </Show>
           <Show when={seamStyle()}>
             {(style) => <div class="sheet-seam-selected" style={style()} />}
@@ -423,6 +409,7 @@ function SheetGridCell(props: { gridId: string; cell: MatrixCell; header: boolea
       class="sheet-cell"
       classList={{
         "sheet-header-cell": props.header,
+        "sheet-sticky-left": props.cell.col === 0,
         "sheet-hole": !props.cell.blockId,
         "sheet-cell-in-range": inSelectedRange(props.gridId, props.cell),
         "sheet-cell-selected": sameSelectedCell(props.gridId, props.cell),

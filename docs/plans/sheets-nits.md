@@ -1,9 +1,8 @@
 # Sheets — Martin's nit list (Jul 7 2026) + triage
 
-**Resume state (post-compaction):** batch 1 (N1) dispatched to codex
-(`subagent-tasks/sheets-nits-batch1-layout.md`) — verify on landing
-(wide-table screenshot proof, all gates, e2e), commit+push, deploy to
-`~/research/tine-sheets`. Then write + dispatch batch 2 = N2 (drag ghost +
+**Resume state:** batch 1 (N1) LANDED + verified (gates green, table
+sticky-left probe-proven in a live viewport — codex's fullPage screenshot
+artifact was NOT a real bug — e2e 30/30 twice). Batch 2 = N2 (drag ghost +
 grabbing cursor), N3 (Esc walks up from nested sub-grid to the containing
 cell), N4 (cell editor hides `tine.*`/hidden props — splitProps pattern),
 N5 guard (toast when a query-board move ejects the card from the refreshed
@@ -15,7 +14,17 @@ Captured verbatim-in-spirit from his post-Phase-7 testing; root causes
 investigated before triage. Batch polish pass runs against this list.
 Status legend: FIXED / IN PROGRESS / PROPOSED (needs Martin's call).
 
-## N1 — cramped layout (his biggest)  [IN PROGRESS — batch 1]
+## N1 — cramped layout (his biggest)  [FIXED — batch 1, Jul 7]
+Shipped: measured full-width breakout (ResizeObserver + CSS vars, 20px
+gutters; nested sheets in a `.sheet-cell` never break out); `.sheet-grid`/
+`.sheet-table`/`.sheet-board` max-width squeeze removed — the outer
+`.block-sheet-container` is the ONE scroll region; hover Σ footer is now
+an IN-FLOW row below the last row (overlay CSS deleted); sticky-left first
+column on grids + table title column (opaque, z-layered; sticky-TOP header
+punted — WebKitGTK page-scroller fiddliness, revisit on demand); context
+menu gains "Open as full page" (existing `zoomInto`, zoom path verified to
+render sheet faces). Verified: table sticky probe (scrollLeft=400, title
+pinned, breakout not under sidebar), wide-grid screenshot, e2e 30/30.
 Symptoms: (a) default main column keeps sheets narrow — they should span
 sidebar-to-sidebar by default; (b) even in wide mode a grid can stay
 narrow with hidden, horizontally-scrollable text; (c) hovering a grid

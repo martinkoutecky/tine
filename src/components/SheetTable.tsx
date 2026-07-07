@@ -487,7 +487,7 @@ export function SheetTable(props: {
         onPointerLeave={() => setHovering(false)}
         onContextMenu={openSheetMenu}
       >
-        <div class="sheet-cell sheet-header-cell sheet-title-header" onClick={() => sortHeader(0)}>
+        <div class="sheet-cell sheet-header-cell sheet-title-header sheet-sticky-left" onClick={() => sortHeader(0)}>
           Block{sortArrow(0)}
           <Show when={filterError()}>
             {(err) => (
@@ -611,8 +611,8 @@ export function SheetTable(props: {
             </>
           )}
         </For>
-        <Show when={hasAggregates()}>
-          <div class="sheet-cell sheet-footer-cell sheet-footer-title" />
+        <Show when={hasAggregates() || hovering()}>
+          <div class="sheet-cell sheet-footer-cell sheet-footer-title sheet-sticky-left" />
           <For each={fields()}>
             {(field) => (
               <SheetAggregateFooterCell
@@ -627,25 +627,6 @@ export function SheetTable(props: {
           <Show when={hasActionColumn()}>
             <div class="sheet-cell sheet-footer-cell sheet-row-tail" />
           </Show>
-        </Show>
-        <Show when={!hasAggregates() && hovering()}>
-          <div class="sheet-footer-overlay" style={{ "grid-template-columns": gridColumns() }}>
-            <div class="sheet-cell sheet-footer-cell sheet-footer-title" />
-            <For each={fields()}>
-              {(field) => (
-                <SheetAggregateFooterCell
-                  ownerId={props.ownerId}
-                  columnKey={field}
-                  fn={null}
-                  values={sortedRows().map((row) => rowFieldValue(row, field))}
-                  showEmpty
-                />
-              )}
-            </For>
-            <Show when={hasActionColumn()}>
-              <div class="sheet-cell sheet-footer-cell sheet-row-tail" />
-            </Show>
-          </div>
         </Show>
       </div>
     </Show>
@@ -757,7 +738,7 @@ function TitleCell(props: { ownerId: string; row: RowRecord; rowIndex: number; s
   return (
     <div
       class="sheet-cell sheet-title-cell"
-      classList={{ "sheet-cell-selected": props.selected }}
+      classList={{ "sheet-cell-selected": props.selected, "sheet-sticky-left": true }}
       data-sheet-grid-id={props.ownerId}
       data-block-id={props.row.id}
       data-row={props.rowIndex}

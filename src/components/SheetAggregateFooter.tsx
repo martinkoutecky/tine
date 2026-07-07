@@ -9,6 +9,7 @@ export function SheetAggregateFooterCell(props: {
   fn: AggregateFn | null;
   values: readonly (FieldValue | string | null | undefined)[];
   showEmpty?: boolean;
+  stickyLeft?: boolean;
 }): JSX.Element {
   const [editing, setEditing] = createSignal(false);
   const stop = (e: Event) => e.stopPropagation();
@@ -18,7 +19,13 @@ export function SheetAggregateFooterCell(props: {
   };
 
   return (
-    <div class="sheet-cell sheet-footer-cell" onPointerDown={stop} onMouseDown={stop} onClick={stop}>
+    <div
+      class="sheet-cell sheet-footer-cell"
+      classList={{ "sheet-sticky-left": !!props.stickyLeft }}
+      onPointerDown={stop}
+      onMouseDown={stop}
+      onClick={stop}
+    >
       <Show
         when={editing()}
         fallback={

@@ -307,6 +307,16 @@ function SheetMenu(props: {
 
   return (
     <>
+      <div
+        class="ctx-item"
+        onClick={() => {
+          zoomInto(props.ownerId);
+          props.close();
+        }}
+      >
+        Open as full page
+      </div>
+      <div class="ctx-sep" />
       <Show when={formulaActions()}>
         <div
           class="ctx-item"
