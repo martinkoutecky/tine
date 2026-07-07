@@ -100,17 +100,18 @@ it stays until the Σ affordance is clicked again (per-grid session-only UI
 state, not persisted). Configured aggregates keep the always-visible row
 (no jump — it is always present). This also structurally fixes N7.
 
-## N10 — descend INTO a sub-grid (Down from edit mode)  [batch 4]
-Martin (3rd batch): with the caret in edit mode inside a cell hosting a
-sub-grid, pressing Down should put the SUB-GRID in select mode — his
-ruling: "the sensible default is top edge selected". Context: batch 2
-shipped Esc-up only; Enter/descend was explicitly punted as a design
-question — now ruled. Rule set for the batch: Down from edit-in-host-cell
-descends (top edge of the sub-grid selected); Esc from the sub-grid walks
-back up (already shipped). Open sub-question (pick a default, flag it):
-Enter from SELECT mode on a sub-grid host cell — descend (ladder-
-consistent) vs edit the host's own text; default = descend, host text
-still editable via F2/typing-overtype.
+## N10 — descend INTO a sub-grid (caret navigation from edit mode)  [batch 4]
+Martin's ruling (final, Jul 7): **Enter on a selected cell ALWAYS enters
+edit mode** — never descends (a cell can host anything, including MULTIPLE
+grids, so "descend on Enter" would be ill-defined). The ladder strictly
+alternates select ↔ edit. Descent happens from EDIT mode via CARET
+navigation: caret Down from text above a sub-grid → that sub-grid in
+select mode, TOP edge selected; caret Up from text below a sub-grid →
+select mode, BOTTOM edge selected. (Multi-grid cells fall out naturally:
+the caret position picks the grid.) From the edge seam, arrows move into
+cells, Enter edits a sub-grid cell — recursion. Esc keeps the shipped
+batch-2 behavior (sub-grid selection → host CELL selection; Esc is "get
+me out", it may collapse rungs).
 
 ## N11 — seam selection should be cell-scoped, not column-scoped  [batch 4]
 TreeSheets distinguishes the edge between two CELLS from the edge between
