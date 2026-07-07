@@ -269,8 +269,12 @@ render as plain outlines until each phase lands.
 
 ## Next step
 
-Phase 0: build the disposable render spike + synthetic-graph query benchmark;
-record numbers + go/no-go above.
+**Phase 6 — the supertag/database layer** (Martin approved Jul 7 2026):
+`tine.fields::` schema + typed cells + add-row + tags write-back + tag boards
++ table conversions. Full plan: [sheets-phase6-plan.md](sheets-phase6-plan.md)
+— read it, settle its 6 design decisions (ADRs), then dispatch 6a→6d.
+Martin's v1 UX nits are PARKED (his list, not yet captured) — batch later,
+don't interleave.
 
 ## Working notes
 
