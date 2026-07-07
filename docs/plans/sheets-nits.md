@@ -15,9 +15,10 @@ batch 4 (N10–N14) SHIPPED `c762fcd`; master merge `60663d5` done. ROUND 2 (N15
 `33e0f0a` (batch 5; orchestrator additions: the REAL ghost-board gate —
 codex's fixed a strawman — plus two breakout-measure bugs: parity
 oscillation from reading the shifted margin, and parent-padding offset on
-the macro path; e2e = 39 checks). ROUND 3 (Jul 8) = N23–N26,
-batch 6 spec at `subagent-tasks/sheets-nits-batch6-round3.md`. Martin:
-"we're getting close … then I can start actually daily driving it".
+the macro path; e2e = 39 checks). ROUND 3 (N23–N26) SHIPPED
+`b2084d8` (e2e = 45 checks) + second master merge `2e05b02` (v0.4.5 in:
+emoji-crash fix, detached devtools, reproducible Android). ALL N1–N26
+CLOSED — Martin starts daily driving; expect "actual use" feedback next.
 
 Captured verbatim-in-spirit from his post-Phase-7 testing; root causes
 investigated before triage. Batch polish pass runs against this list.
@@ -244,7 +245,7 @@ row" = a ghost row spanning the bottom (faint +). Both zero-layout-shift
 (they occupy the existing tail space), discoverable in place, no
 mystery chips in the corner.
 
-## N23 — first-column cells: click doesn't select; left-ladder has a dead rung  [batch 6]
+## N23 — first-column cells: click doesn't select; left-ladder has a dead rung  [FIXED — batch 6, b2084d8 — hypothesis confirmed: sticky-left box-shadow swallowed the selection ring; the ladder was landing there invisibly]
 Round 3 (Jul 8): clicking a first-column cell does not (visibly) select
 it; from a second-column cell, Right-nav works but ArrowLeft gives
 seam(0|1) → NOTHING (dead press) → outer edge. The ladder math likely
@@ -253,14 +254,14 @@ the sticky-left cells; suspicion: the selected-state rendering is
 swallowed on `.sheet-sticky-left` cells — z-index/background/overlay) —
 REPRODUCE to confirm, may equally affect the table title column.
 
-## N24 — Esc from a selected seam inside a sub-grid deselects completely  [batch 6]
+## N24 — Esc from a selected seam inside a sub-grid deselects completely  [FIXED — batch 6, b2084d8]
 Confirmed in code: the Esc handler walks up (inner grid → host cell) only
 for `sel.kind === "cell"`; seam selections fall through to
 clearCellSelectionOnly() + selectBlock(innerGridId), which visually
 deselects. Fix: seams walk up exactly like cells (Esc from any sub-grid
 selection → host cell selection).
 
-## N25 — real kanban paints over an empty container box (REAL APP ONLY)  [batch 6]
+## N25 — real kanban paints over an empty container box (REAL APP ONLY)  [FIXED — batch 6, b2084d8 — real-app repro showed ONE board breaking across the query macro's rounded shell (ghost-board hypothesis disproven); sheet-face query macros drop the frame; e2e containment check added]
 Martin's screenshot: the §4 query board renders overlaid across an empty
 rounded box. jsdom tests + Chromium probes all pass — this shape only
 breaks in the REAL app (WebKitGTK, real backend DTO). The e2e seed never
@@ -272,7 +273,7 @@ SheetContainer/.sheet-scroll box (clipping/containment failure), fix, and
 lock with an e2e check asserting one visible board whose rect is
 CONTAINED in its container's rect.
 
-## N26 — pills should act on single click (Martin + my recommendation, adopted)  [batch 6]
+## N26 — pills should act on single click  [FIXED — batch 6, b2084d8 — controls operate on single click everywhere; regression from the batch-4/5 click-select rework]
 Clicking a cell with a TODO marker selects the cell; the marker pill
 itself should toggle on DIRECT single click. Ruling adopted: interactive
 chips are CONTROLS — state marker cycles, checkbox toggles (already
