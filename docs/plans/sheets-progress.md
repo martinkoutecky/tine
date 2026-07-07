@@ -419,6 +419,12 @@ don't interleave.
 
 ## Working notes
 
+- **Deploys (Martin, Jul 7): Sheets builds go to `~/research/tine-sheets`**;
+  `~/research/tine` stays on the master line so he can review master fixes
+  in parallel. Deploy after each verified chunk. Keep the tine-test
+  `Sheets demo` page current with each new feature (round-trip-validate
+  after edits).
+
 - **Branch hygiene:** the checkout had pre-existing uncommitted edits from
   another session (`docs/plans/theme-gallery.md`,
   `src-tauri/gen/schemas/acl-manifests.json`) — left untouched and uncommitted;
