@@ -1,4 +1,4 @@
-import { For, Show, createMemo, createResource, createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { doc, ensurePageLoaded, formatForBlock, formatForPage, pageByName, readPageProperty } from "../store";
 import { facetsFromDto, facetsOf, type Facets } from "../render/facets";
@@ -29,7 +29,7 @@ import { parseFields, sheetConfig, type FieldSpec } from "../sheet/config";
 import { formulasOf, mergeFormulas } from "../sheet/formulaFields";
 import { createFormulaFilterMemo } from "../sheet/formulaEval";
 import { MARKERS } from "../markers";
-import { openSheetCellContextMenu, openSheetContextMenu, workflow } from "../ui";
+import { openSheetCellContextMenu, openSheetContextMenu, pushToast, workflow } from "../ui";
 import { blockBackgroundColor } from "../blockColors";
 import type { BlockDto, RefGroup } from "../types";
 import { Editor, SurfaceContext } from "./Block";
@@ -118,6 +118,19 @@ export function SheetBoard(props: {
   });
   const rows = createMemo<RowRecord[]>(() => [...filterState().rows]);
   const filterError = () => filterState().error;
+  const queryRowsVersion = createMemo(() => (props.rowSource === "query" ? props.groups : null));
+  const [pendingEjection, setPendingEjection] =
+    createSignal<{ id: string; groups: readonly RefGroup[] | undefined } | null>(null);
+
+  createEffect(() => {
+    const pending = pendingEjection();
+    if (!pending) return;
+    if (queryRowsVersion() === pending.groups) return;
+    if (!allRows().some((row) => row.id === pending.id)) {
+      pushToast("Moved out of this query's results", "info");
+    }
+    setPendingEjection(null);
+  });
 
   const columns = createMemo<BoardColumn[]>(() => {
     const now = new Date();
@@ -146,6 +159,11 @@ export function SheetBoard(props: {
     return false;
   };
 
+  const noteQueryMove = (row: RowRecord) => {
+    if (props.rowSource !== "query") return;
+    setPendingEjection({ id: row.id, groups: props.groups });
+  };
+
   const moveCard = (sel: CellSel, dir: "left" | "right"): boolean => {
     const cols = columns();
     const from = cols[sel.col];
@@ -155,6 +173,7 @@ export function SheetBoard(props: {
     if (isFormulaField(groupBy())) return true;
     if (!row || !target || !doc.byId[row.id]) return true;
     if (moveRowToColumn(row, from.key, target.key, groupBy())) {
+      noteQueryMove(row);
       const nextCols = columns();
       const nextCol = Math.max(0, nextCols.findIndex((c) => c.key === target.key));
       const nextRows = nextCols[nextCol]?.rows ?? [];
@@ -167,6 +186,14 @@ export function SheetBoard(props: {
     const dispose = registerSheetViewAdapter(props.ownerId, {
       bounds: () => ({ rows: maxRows(), cols: columns().length }),
       blockIdAt: (row, col) => columns()[col]?.rows[row]?.id ?? null,
+      cellForBlock: (blockId) => {
+        const cols = columns();
+        for (let col = 0; col < cols.length; col++) {
+          const row = cols[col].rows.findIndex((r) => r.id === blockId);
+          if (row >= 0) return { kind: "cell", gridId: props.ownerId, row, col };
+        }
+        return null;
+      },
       activate: (sel) => {
         const row = columns()[sel.col]?.rows[sel.row];
         if (!row || !doc.byId[row.id]) return true;
@@ -187,7 +214,7 @@ export function SheetBoard(props: {
     const cols = columns();
     const from = cols[colIndex];
     const target = cols[targetCol];
-    if (from && target) moveRowToColumn(row, from.key, target.key, groupBy());
+    if (from && target && moveRowToColumn(row, from.key, target.key, groupBy())) noteQueryMove(row);
   };
 
   const openSheetMenu = (e: MouseEvent) => {
@@ -425,38 +452,82 @@ function BoardCard(props: {
   const beginPointerDrag = (e: PointerEvent) => {
     if (!props.canMove) return;
     if (e.button !== 0 || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+    const card = e.currentTarget as HTMLElement;
+    if (typeof card.setPointerCapture === "function" && typeof e.pointerId === "number") {
+      card.setPointerCapture(e.pointerId);
+    }
     const startX = e.clientX;
     const startY = e.clientY;
     let moved = false;
     let overCol: number | null = null;
+    let ghost: HTMLElement | null = null;
+    const dragState = () => ({ id: props.row.id, col: props.colIndex, row: props.rowIndex, overCol });
+    const updateGhost = (ev: PointerEvent) => {
+      if (ghost) ghost.style.transform = `translate(${Math.round(ev.clientX + 10)}px, ${Math.round(ev.clientY + 10)}px)`;
+    };
+    const createGhost = (ev: PointerEvent) => {
+      const rect = card.getBoundingClientRect();
+      ghost = card.cloneNode(true) as HTMLElement;
+      ghost.classList.add("sheet-board-drag-ghost");
+      ghost.classList.remove("sheet-cell-selected", "sheet-board-card-dragging");
+      ghost.setAttribute("aria-hidden", "true");
+      ghost.style.width = `${rect.width}px`;
+      ghost.style.minHeight = `${rect.height}px`;
+      document.body.appendChild(ghost);
+      document.body.classList.add("sheet-board-dragging");
+      updateGhost(ev);
+      props.setDrag(dragState());
+    };
+    const cleanup = () => {
+      ghost?.remove();
+      ghost = null;
+      document.body.classList.remove("sheet-board-dragging");
+      props.setDrag(null);
+    };
+    const removeListeners = () => {
+      window.removeEventListener("pointermove", onMove, true);
+      window.removeEventListener("pointerup", onUp, true);
+      window.removeEventListener("pointercancel", onCancel, true);
+      window.removeEventListener("blur", onCancel, true);
+      window.removeEventListener("keydown", onKeyDown, true);
+    };
     const onMove = (ev: PointerEvent) => {
       if (!moved && Math.hypot(ev.clientX - startX, ev.clientY - startY) < 4) return;
-      moved = true;
+      if (!moved) {
+        moved = true;
+        createGhost(ev);
+      } else updateGhost(ev);
       const el = (document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null)?.closest(".sheet-board-column") as HTMLElement | null;
       const idx = el ? Number(el.dataset.boardCol) : NaN;
-      overCol = Number.isFinite(idx) ? idx : null;
-      props.setDrag({ id: props.row.id, col: props.colIndex, row: props.rowIndex, overCol });
+      const nextOverCol = Number.isFinite(idx) ? idx : null;
+      if (nextOverCol !== overCol) {
+        overCol = nextOverCol;
+        props.setDrag(dragState());
+      }
       ev.preventDefault();
     };
     const onUp = (ev: PointerEvent) => {
-      document.removeEventListener("pointermove", onMove, true);
-      document.removeEventListener("pointerup", onUp, true);
-      document.removeEventListener("pointercancel", onCancel, true);
+      removeListeners();
       if (moved) {
         props.dropCard(props.row, props.colIndex, overCol);
-        props.setDrag(null);
+        cleanup();
         ev.preventDefault();
       }
     };
     const onCancel = () => {
-      document.removeEventListener("pointermove", onMove, true);
-      document.removeEventListener("pointerup", onUp, true);
-      document.removeEventListener("pointercancel", onCancel, true);
-      props.setDrag(null);
+      removeListeners();
+      cleanup();
     };
-    document.addEventListener("pointermove", onMove, true);
-    document.addEventListener("pointerup", onUp, true);
-    document.addEventListener("pointercancel", onCancel, true);
+    const onKeyDown = (ev: KeyboardEvent) => {
+      if (ev.key !== "Escape") return;
+      ev.preventDefault();
+      onCancel();
+    };
+    window.addEventListener("pointermove", onMove, true);
+    window.addEventListener("pointerup", onUp, true);
+    window.addEventListener("pointercancel", onCancel, true);
+    window.addEventListener("blur", onCancel, true);
+    window.addEventListener("keydown", onKeyDown, true);
   };
 
   const onClick = (e: MouseEvent) => {

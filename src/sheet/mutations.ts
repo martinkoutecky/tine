@@ -14,7 +14,7 @@ import {
   withUndoUnit,
 } from "../store";
 import { copyRich } from "../clipboard";
-import { isBuiltinHidden, joinProps, splitProps } from "../editor/properties";
+import { isSheetCellHidden, joinProps, splitProps } from "../editor/properties";
 import { parseOutline } from "../editor/outline";
 import { visibleBody } from "../render/block";
 import { serializeColAggregates, serializeColWidths, sheetConfigFromRaw } from "./config";
@@ -107,10 +107,10 @@ function cellText(blockId: string | null): string {
 }
 
 /** Replace a cell's visible text while KEEPING its hidden built-in properties
- *  (id::/collapsed::): clearing or overwriting a cell must never orphan a
+ *  (id::/collapsed::) and sheet config props: clearing or overwriting a cell must never orphan a
  *  ((ref)) pointing at it (review finding). Fence-aware via splitProps. */
 function writeCellVisible(id: string, visible: string): void {
-  const hidden = splitProps(doc.byId[id]?.raw ?? "", isBuiltinHidden).hidden;
+  const hidden = splitProps(doc.byId[id]?.raw ?? "", isSheetCellHidden).hidden;
   setRaw(id, hidden ? joinProps(visible, hidden) : visible, { timetracking: false });
 }
 

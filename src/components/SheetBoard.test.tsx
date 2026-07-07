@@ -1,11 +1,13 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { render } from "solid-js/web";
-import type { JSX } from "solid-js";
+import { createSignal, type JSX } from "solid-js";
 import { Block } from "./Block";
+import { SheetBoard } from "./SheetBoard";
 import { initParser } from "../render/parse";
 import { doc, resetStore, setDoc, type FeedPage, type Node as StoreNode } from "../store";
-import { setWorkflow } from "../ui";
+import { setToasts, setWorkflow, toasts } from "../ui";
 import { cellSel, handleCellSelectionKey, resetCellSelectionForTests, setCellSel } from "../sheet/selection";
+import type { RefGroup } from "../types";
 
 beforeAll(async () => {
   await initParser();
@@ -14,6 +16,7 @@ beforeAll(async () => {
 afterEach(() => {
   resetCellSelectionForTests();
   resetStore();
+  setToasts([]);
   setWorkflow("todo");
   document.body.innerHTML = "";
 });
@@ -87,6 +90,23 @@ function keydown(key: string, init: Partial<KeyboardEvent> = {}): KeyboardEvent 
 
 function pointer(type: string, x: number, y: number): Event {
   return new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y });
+}
+
+function tick(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function queryGroups(ids: string[]): RefGroup[] {
+  return [{
+    page: "Sheet",
+    kind: "page",
+    blocks: ids.map((id) => ({
+      id,
+      raw: doc.byId[id].raw,
+      collapsed: false,
+      children: [],
+    })),
+  }];
 }
 
 describe("SheetBoard", () => {
@@ -233,11 +253,37 @@ describe("SheetBoard", () => {
     document.elementFromPoint = () => target;
 
     card.dispatchEvent(pointer("pointerdown", 0, 0));
-    document.dispatchEvent(pointer("pointermove", 12, 0));
-    document.dispatchEvent(pointer("pointerup", 12, 0));
+    window.dispatchEvent(pointer("pointermove", 12, 0));
+    window.dispatchEvent(pointer("pointerup", 12, 0));
 
     expect(doc.byId.todo.raw.split("\n")[0]).toBe("DOING Write tests");
     expect(doc.byId.doing.raw.split("\n")[0]).toBe("DOING Implement board");
+
+    document.elementFromPoint = prevElementFromPoint;
+    dispose();
+  });
+
+  it("shows a floating drag ghost with grabbing cursor state and removes it on Escape", () => {
+    loadBoardDoc();
+    const { root, dispose } = mount(() => <Block id="board" />);
+    const card = root.querySelector('[data-block-id="todo"]') as HTMLElement;
+    const target = root.querySelector('[data-board-col="1"]') as HTMLElement;
+    const prevElementFromPoint = document.elementFromPoint;
+    document.elementFromPoint = () => target;
+
+    card.dispatchEvent(pointer("pointerdown", 0, 0));
+    window.dispatchEvent(pointer("pointermove", 12, 0));
+
+    const ghost = document.body.querySelector(".sheet-board-drag-ghost") as HTMLElement | null;
+    expect(ghost).not.toBeNull();
+    expect(ghost!.style.transform).toContain("translate(22px, 10px)");
+    expect(document.body.classList.contains("sheet-board-dragging")).toBe(true);
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+
+    expect(document.body.querySelector(".sheet-board-drag-ghost")).toBeNull();
+    expect(document.body.classList.contains("sheet-board-dragging")).toBe(false);
+    expect(doc.byId.todo.raw.split("\n")[0]).toBe("TODO Write tests");
 
     document.elementFromPoint = prevElementFromPoint;
     dispose();
@@ -288,12 +334,61 @@ describe("SheetBoard", () => {
     document.elementFromPoint = () => target;
 
     card.dispatchEvent(pointer("pointerdown", 0, 0));
-    document.dispatchEvent(pointer("pointermove", 12, 0));
-    document.dispatchEvent(pointer("pointerup", 12, 0));
+    window.dispatchEvent(pointer("pointermove", 12, 0));
+    window.dispatchEvent(pointer("pointerup", 12, 0));
 
     expect(doc.byId.move.raw).toBe("Read #beta");
 
     document.elementFromPoint = prevElementFromPoint;
+    dispose();
+  });
+
+  it("toasts once when a query-board move leaves the refreshed query rows", async () => {
+    loadBoardDoc();
+    let setGroups!: (groups: RefGroup[]) => void;
+    const Harness = () => {
+      const [groups, writeGroups] = createSignal<RefGroup[]>(queryGroups(["todo"]));
+      setGroups = writeGroups;
+      return <SheetBoard ownerId="board" rowSource="query" groupBy="state" groups={groups()} />;
+    };
+    const { dispose } = mount(() => <Harness />);
+
+    setCellSel({ gridId: "board", row: 0, col: 0 });
+    expect(handleCellSelectionKey(keydown("ArrowRight", { ctrlKey: true }))).toBe(true);
+    expect(toasts()).toHaveLength(0);
+
+    setGroups(queryGroups([]));
+    await tick();
+
+    expect(toasts().map((t) => [t.message, t.kind])).toEqual([
+      ["Moved out of this query's results", "info"],
+    ]);
+
+    setGroups(queryGroups([]));
+    await tick();
+    expect(toasts()).toHaveLength(1);
+
+    dispose();
+  });
+
+  it("does not toast when a query-board move remains in refreshed query rows", async () => {
+    loadBoardDoc();
+    let setGroups!: (groups: RefGroup[]) => void;
+    const Harness = () => {
+      const [groups, writeGroups] = createSignal<RefGroup[]>(queryGroups(["todo"]));
+      setGroups = writeGroups;
+      return <SheetBoard ownerId="board" rowSource="query" groupBy="state" groups={groups()} />;
+    };
+    const { dispose } = mount(() => <Harness />);
+
+    setCellSel({ gridId: "board", row: 0, col: 0 });
+    expect(handleCellSelectionKey(keydown("ArrowRight", { ctrlKey: true }))).toBe(true);
+
+    setGroups(queryGroups(["todo"]));
+    await tick();
+
+    expect(toasts()).toHaveLength(0);
+
     dispose();
   });
 

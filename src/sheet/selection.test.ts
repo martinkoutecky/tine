@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { startEditing, endEdit } from "../editorController";
-import { resetStore, selectBlock, setDoc, type FeedPage, type Node as StoreNode } from "../store";
+import { isSelected, resetStore, selectBlock, setDoc, type FeedPage, type Node as StoreNode } from "../store";
 import { initParser } from "../render/parse";
 import {
   cellSel,
@@ -55,6 +55,21 @@ function loadGrid() {
       c4: node("c4", "D", "r2"),
     },
     pages: [page(["grid"])],
+    feed: ["Sheet"],
+    loaded: true,
+  });
+}
+
+function loadNestedGrid() {
+  setDoc({
+    byId: {
+      outer: node("outer", "Outer\ntine.view:: grid", null, ["outer-row"]),
+      "outer-row": node("outer-row", "", "outer", ["host"]),
+      host: node("host", "Host\ntine.view:: grid", "outer-row", ["inner-row"]),
+      "inner-row": node("inner-row", "", "host", ["inner-cell"]),
+      "inner-cell": node("inner-cell", "Inner", "inner-row"),
+    },
+    pages: [page(["outer"])],
     feed: ["Sheet"],
     loaded: true,
   });
@@ -142,6 +157,18 @@ describe("cell selection state", () => {
 
     press("Escape");
     expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 0, col: 0 });
+  });
+
+  it("Escape from a nested grid cell walks up to the containing outer cell, then to outline selection", () => {
+    loadNestedGrid();
+    setCellSel({ gridId: "host", row: 0, col: 0 });
+
+    press("Escape");
+    expect(cellSel()).toEqual({ kind: "cell", gridId: "outer", row: 0, col: 0 });
+
+    press("Escape");
+    expect(cellSel()).toBeNull();
+    expect(isSelected("outer")).toBe(true);
   });
 
   it("selects full rows, columns, and the whole grid from cell mode", () => {

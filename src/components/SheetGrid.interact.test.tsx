@@ -159,6 +159,11 @@ function activeEditor(root: HTMLElement): HTMLTextAreaElement {
   return textarea;
 }
 
+function inputText(textarea: HTMLTextAreaElement, text: string): void {
+  textarea.value = text;
+  textarea.dispatchEvent(new Event("input", { bubbles: true }) as InputEvent);
+}
+
 function childrenSnapshot(): Record<string, string[]> {
   return Object.fromEntries(Object.entries(doc.byId).map(([id, n]) => [id, [...n.children]]));
 }
@@ -314,6 +319,42 @@ describe("SheetGrid interaction", () => {
       if (id === "c1") expect(doc.byId[id].raw).toBe("Z");
       else expect(doc.byId[id].raw).toBe(raw);
     }
+
+    dispose();
+  });
+
+  it("sheet-cell editing hides tine and built-in props, rejoins them on commit, and restores raw on Escape", async () => {
+    loadSheetDoc();
+    setDoc("byId", "c1", "raw", "Visible body\ntine.view:: grid\nid:: abc-123");
+    disposeKeys = installKeybindings();
+    const { root, dispose } = mount(() => <Block id="grid" />);
+
+    setCellSel({ gridId: "grid", row: 0, col: 0 });
+    keydown(window, "Enter");
+    await tick();
+
+    let editor = activeEditor(root);
+    expect(editor.value).toBe("Visible body");
+    inputText(editor, "Changed body");
+    expect(doc.byId.c1.raw).toBe("Changed body\ntine.view:: grid\nid:: abc-123");
+
+    keydown(editor, "Enter");
+    await tick();
+    expect(editingId()).toBeNull();
+    expect(doc.byId.c1.raw).toBe("Changed body\ntine.view:: grid\nid:: abc-123");
+
+    keydown(window, "Enter");
+    await tick();
+    editor = activeEditor(root);
+    inputText(editor, "Scratch");
+    expect(doc.byId.c1.raw).toBe("Scratch\ntine.view:: grid\nid:: abc-123");
+
+    keydown(editor, "Escape");
+    await tick();
+
+    expect(editingId()).toBeNull();
+    expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 0, col: 0 });
+    expect(doc.byId.c1.raw).toBe("Changed body\ntine.view:: grid\nid:: abc-123");
 
     dispose();
   });

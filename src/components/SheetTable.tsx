@@ -438,6 +438,11 @@ export function SheetTable(props: {
     const dispose = registerSheetViewAdapter(props.ownerId, {
       bounds: () => ({ rows: sortedRows().length, cols: columns().length }),
       blockIdAt: (row, col) => (columns()[col] === "title" ? sortedRows()[row]?.id ?? null : null),
+      cellForBlock: (blockId) => {
+        const row = sortedRows().findIndex((r) => r.id === blockId);
+        const col = columns().indexOf("title");
+        return row >= 0 && col >= 0 ? { kind: "cell", gridId: props.ownerId, row, col } : null;
+      },
       activate: activateCell,
       overtype,
     });

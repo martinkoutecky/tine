@@ -1,7 +1,7 @@
 import { createRoot, createSignal } from "solid-js";
 import { doc, clearSelection, selectBlock, prevVisible, nextVisible, blockIsGridView, withUndoUnit, blockPageReadOnly } from "../store";
 import { endEdit, startEditing } from "../editorController";
-import { isBuiltinHidden, splitProps } from "../editor/properties";
+import { isSheetCellHidden, splitProps } from "../editor/properties";
 import {
   registerEditingStartListener,
   registerModeResetListener,
@@ -67,6 +67,7 @@ interface CellSelectionHooks {
 export interface SheetViewAdapter {
   bounds: () => { rows: number; cols: number };
   blockIdAt?: (row: number, col: number) => string | null;
+  cellForBlock?: (blockId: string) => CellSel | null;
   startEditing?: (sel: CellSelInput, offset?: number) => boolean;
   activate?: (sel: CellSel) => boolean;
   overtype?: (sel: CellSel, text: string) => boolean;
@@ -190,6 +191,24 @@ export function cellBlockId(sel: CellSelInput): string | null {
   return cellAt(sel)?.blockId ?? null;
 }
 
+export function cellForBlockId(blockId: string): CellSel | null {
+  const rowId = doc.byId[blockId]?.parent ?? null;
+  const gridId = rowId ? doc.byId[rowId]?.parent ?? null : null;
+  if (gridId && blockIsGridView(gridId)) {
+    const cell = matrixForGrid(gridId).cells.find((c) => c.blockId === blockId);
+    if (cell) return { kind: "cell", gridId, row: cell.row, col: cell.col };
+  }
+  for (const [adapterGridId, adapter] of adapters) {
+    const cell = adapter.cellForBlock?.(blockId);
+    if (cell && cell.gridId === adapterGridId) return cell;
+  }
+  return null;
+}
+
+function enclosingCellForGrid(gridId: string): CellSel | null {
+  return cellForBlockId(gridId);
+}
+
 export function focusCell(sel: CellSel | RangeSel): CellSel {
   if (sel.kind === "cell") return sel;
   return { kind: "cell", gridId: sel.gridId, row: sel.focus.row, col: sel.focus.col };
@@ -256,7 +275,7 @@ export function startCellEditing(sel: CellSelInput, offset?: number): boolean {
   if (blockPageReadOnly(blockId)) return false; // org round-trip gate (review finding)
   const node = doc.byId[blockId];
   if (!node) return false;
-  const visibleLen = splitProps(node.raw, isBuiltinHidden).visible.length;
+  const visibleLen = splitProps(node.raw, isSheetCellHidden).visible.length;
   setCellSel({ kind: "cell", gridId: sel.gridId, row: sel.row, col: sel.col });
   startEditing(blockId, offset ?? visibleLen, cellOwner(sel));
   return true;
@@ -615,6 +634,13 @@ export function handleCellSelectionKey(e: KeyboardEvent): boolean {
     if (isRangeSel(sel)) {
       setCellSel({ kind: "cell", gridId: sel.gridId, row: sel.anchor.row, col: sel.anchor.col });
       return true;
+    }
+    if (sel.kind === "cell") {
+      const outer = enclosingCellForGrid(sel.gridId);
+      if (outer) {
+        setCellSel(outer);
+        return true;
+      }
     }
     clearCellSelectionOnly();
     selectBlock(sel.gridId);

@@ -16,7 +16,7 @@ import {
 } from "../sheet/selection";
 import { setColumnWidth } from "../sheet/mutations";
 import { editorOffsetFromRenderedRange } from "../render/spans";
-import { isBuiltinHidden } from "../editor/properties";
+import { isSheetCellHidden } from "../editor/properties";
 import { forbidsEditEntry } from "../editor/editTargets";
 import { editingId, editingOwner } from "../editorController";
 import { openSheetCellContextMenu, openSheetContextMenu } from "../ui";
@@ -360,7 +360,7 @@ function clickOffset(e: MouseEvent, contentRef: HTMLDivElement | undefined, raw:
   const d = document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null };
   const range = d.caretRangeFromPoint?.(e.clientX, e.clientY);
   if (!range) return null;
-  return editorOffsetFromRenderedRange(contentRef, range, raw, isBuiltinHidden);
+  return editorOffsetFromRenderedRange(contentRef, range, raw, isSheetCellHidden);
 }
 
 function SheetGridCell(props: { gridId: string; cell: MatrixCell; header: boolean; depth: number }): JSX.Element {

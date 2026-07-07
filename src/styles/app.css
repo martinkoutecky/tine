@@ -4253,7 +4253,7 @@ body.file-drop-active::after {
   border-radius: 6px;
   background: var(--bg-primary);
   color: var(--text-primary);
-  cursor: pointer;
+  cursor: grab;
   touch-action: none;
   position: relative;
 }
@@ -4266,6 +4266,22 @@ body.file-drop-active::after {
 .sheet-board-card-static {
   cursor: default;
   touch-action: auto;
+}
+.sheet-board-dragging,
+.sheet-board-dragging * {
+  cursor: grabbing !important;
+  -webkit-user-select: none !important;
+  user-select: none !important;
+}
+.sheet-board-drag-ghost {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 1000;
+  pointer-events: none;
+  opacity: 0.85;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.22);
+  transform: translate(-9999px, -9999px);
 }
 .sheet-board-card-title {
   font-size: 13px;

@@ -1,5 +1,24 @@
 import { describe, it, expect } from "vitest";
-import { caretInFence, readPropertyValue, upsertPropertyLine } from "./properties";
+import {
+  caretInFence,
+  isSheetCellHidden,
+  joinProps,
+  readPropertyValue,
+  splitProps,
+  upsertPropertyLine,
+} from "./properties";
+
+describe("sheet-cell property splitting", () => {
+  it("hides built-in and tine properties while preserving them byte-exactly on join", () => {
+    const raw = "Body line\ntine.view:: grid\nid:: abc-123";
+
+    const split = splitProps(raw, isSheetCellHidden);
+
+    expect(split.visible).toBe("Body line");
+    expect(split.hidden).toBe("tine.view:: grid\nid:: abc-123");
+    expect(joinProps("Changed body", split.hidden)).toBe("Changed body\ntine.view:: grid\nid:: abc-123");
+  });
+});
 
 describe("property line helpers", () => {
   it("reads a value case-insensitively", () => {

@@ -96,7 +96,7 @@ import { cycleMarkerSmart, toggleTaskDone } from "../editor/repeat";
 import { taskCheckboxState } from "../markers";
 import { applyTemplateVars } from "../editor/templateVars";
 import { caretAtFirstRow, caretAtLastRow } from "../editor/caretRows";
-import { splitProps, joinProps, isBuiltinHidden, hideAll, caretInFence } from "../editor/properties";
+import { splitProps, joinProps, isBuiltinHidden, isSheetCellHidden, hideAll, caretInFence } from "../editor/properties";
 import { normalizePlanning } from "../editor/planning";
 import { isAnnotationBlock, annotationInfo } from "../editor/annotation";
 import { AnnotationBody } from "./AnnotationBody";
@@ -927,6 +927,7 @@ export function Editor(props: { id: string }): JSX.Element {
   // returning to Tine resumes editing exactly where you left off.
   let savedSel: { start: number; end: number } | null = null;
   const node = () => doc.byId[props.id];
+  const sheetInitialRaw = sheetCell ? node()?.raw ?? "" : null;
   // Page format drives in-block list markers (`-` is an org bullet, not md).
   const pageFmt = (): "md" | "org" => (pageByName(node().page)?.format === "org" ? "org" : "md");
 
@@ -937,7 +938,7 @@ export function Editor(props: { id: string }): JSX.Element {
   const isAnnot = () => isAnnotationBlock(node().raw);
   // Annotation blocks hide ALL properties (edit only the highlight text); every
   // other block hides just the built-in id::/collapsed::. One fence-aware splitter.
-  const hideFn = () => (isAnnot() ? hideAll : isBuiltinHidden);
+  const hideFn = () => (isAnnot() ? hideAll : sheetCell ? isSheetCellHidden : isBuiltinHidden);
   const editorValue = createMemo(() => splitProps(node().raw, hideFn()).visible);
   const editorHeadingLevel = createMemo(() => {
     const visible = editorValue();
@@ -1681,6 +1682,7 @@ export function Editor(props: { id: string }): JSX.Element {
     unregisterFocusedEditorBridge = undefined;
   };
   onCleanup(unregisterFocusedEditor);
+  let sheetCanceling = false;
 
   const handleSheetCellKey = (e: KeyboardEvent, start: number, end: number, raw: string): boolean => {
     if (!sheetCell) return false;
@@ -1706,7 +1708,11 @@ export function Editor(props: { id: string }): JSX.Element {
     }
     if (plain && e.key === "Escape") {
       e.preventDefault();
-      commitAndSelect();
+      sheetCanceling = true;
+      if (sheetInitialRaw !== null && node().raw !== sheetInitialRaw) {
+        setRaw(props.id, sheetInitialRaw, { timetracking: false });
+      }
+      selectCellAfterEdit(sheetCell);
       return true;
     }
     if (plain && e.key === "Backspace" && start === 0 && end === 0) {
@@ -1987,6 +1993,7 @@ export function Editor(props: { id: string }): JSX.Element {
 
   const onBlur = () => {
     unregisterFocusedEditor();
+    if (sheetCanceling) return;
     // A block-move reorder blurs us momentarily — stay in edit mode (the move
     // handler refocuses and restores the caret). Commit as-is, don't normalize.
     if (isBlockMoving()) {
