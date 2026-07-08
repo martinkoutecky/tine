@@ -1982,13 +1982,46 @@ export function Editor(props: { id: string }): JSX.Element {
         return;
       }
     }
-    // Single-line/no text: maybe an image on the OS clipboard. Show an immediate
-    // "Pasting image…" hint when the clipboard clearly holds one (so there's no
-    // dead 1–2s), then render it instantly from the in-memory bytes and write to
-    // disk in the background.
-    const looksImage =
-      Array.from(e.clipboardData?.items ?? []).some((it) => it.type.startsWith("image/")) ||
-      (e.clipboardData?.types ?? []).some((t) => t.startsWith("image/") || t === "Files");
+    // Single-line/no text: maybe an image on the OS clipboard. Two paths:
+    //   1) The paste event's OWN image data (a DataTransferItem of kind "file",
+    //      type image/*). Chromium (Windows WebView2) and WKWebView (macOS)
+    //      expose it here and normalize Windows' CF_DIBV5/bitmap formats — the
+    //      ones screenshot tools like PixPin emit (#43) — into a clean PNG far
+    //      more reliably than the Rust arboard plugin does. Read it directly.
+    //   2) Linux WebKitGTK does NOT expose image data in the paste event, so
+    //      fall back to reading the OS clipboard via the Tauri plugin.
+    // The DataTransfer is only valid synchronously, so grab the File now (its
+    // reference stays live for the async arrayBuffer read).
+    const imageItem = Array.from(e.clipboardData?.items ?? []).find(
+      (it) => it.kind === "file" && it.type.startsWith("image/")
+    );
+    const imageFile = imageItem?.getAsFile() ?? null;
+    if (imageFile) {
+      e.preventDefault(); // no text to paste; keep the raw file bytes out of the block
+      const toastId = pushToast("Pasting image…", "info");
+      void (async () => {
+        let bytes: Uint8Array | null = null;
+        try {
+          bytes = new Uint8Array(await imageFile.arrayBuffer());
+        } catch {
+          bytes = null;
+        } finally {
+          dismissToast(toastId);
+        }
+        // Don't pass file.name: Chromium synthesizes "image.png" for a pasted
+        // screenshot, which would name it image.png/image_1.png. Fall through to
+        // the same timestamp+uniqueness naming a Linux clipboard paste gets.
+        if (bytes && bytes.length) insertAssetBytes(bytes);
+      })();
+      return;
+    }
+    // No image File in the event → try the OS clipboard (the Linux path). Show an
+    // immediate "Pasting image…" hint when the clipboard clearly holds one (so
+    // there's no dead 1–2s), then render it instantly from the in-memory bytes
+    // and write to disk in the background.
+    const looksImage = (e.clipboardData?.types ?? []).some(
+      (t) => t.startsWith("image/") || t === "Files"
+    );
     const toastId = looksImage ? pushToast("Pasting image…", "info") : 0;
     void (async () => {
       let bytes: Uint8Array | null = null;
