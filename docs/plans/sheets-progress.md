@@ -491,7 +491,18 @@ date cell (needs `setSchedule` time support).
 Martin's v1 UX nits are PARKED (his list, not yet captured) — batch later,
 don't interleave.
 
-## Round 5 — split view (Martin, Jul 8) [IN PROGRESS — S1 `d57411e` + S2 `db4b2a6` SHIPPED, S3 next]
+## Round 5 — split view (Martin, Jul 8) [S1 `d57411e` + S2 `db4b2a6` + S3 SHIPPED; S4 (tab drag + find + docs) dispatched]
+
+**S3 (the nav model) shipped Jul 8:** pane-select as the top Esc rung,
+spatial pane/seam/edge stepping (pure tree geometry), type-or-Enter on a
+seam/edge → embryo split with prefilled QuickSwitcher (cancel unsplits),
+mod+1..9 / mod+alt+arrows / mod+alt+shift+arrows (move tab via adoptTab),
+geometric nearest-pane targeting, origin-pane-scoped block selection.
+Keyboard-walk probe 9/9. Verification caught a stale-mode hazard: nothing
+exited pane-select on pointer interaction and the dispatch branch ran
+before the editing guard — entering the mode then clicking into a block
+swallowed ALL typing; fixed (pointerdown exits + !editing guard,
+fails-first test).
 
 **S2 (two panes work) shipped Jul 8:** PaneTree renderer + pointer seam
 resize; page panes load satellite-style (editing survives sibling
