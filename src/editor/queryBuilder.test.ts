@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   parseQuery,
   toDsl,
+  clauseToAdvanced,
   clauseLabel,
   addChild,
   removeAt,
@@ -237,5 +238,76 @@ describe("aggregate + group-by directives", () => {
     expect(clauseLabel({ kind: "aggregate", agg: "count", field: null })).toBe("count");
     expect(clauseLabel({ kind: "aggregate", agg: "sum", field: "hours" })).toBe("sum of hours");
     expect(clauseLabel({ kind: "groupBy", field: "status" })).toBe("group by status");
+  });
+});
+
+// The "⚙ advanced" pill conversion. Jul 8 regression: the old multi-line
+// skeleton did not parse as a {{query}} macro (lsdoc macros are single-line)
+// and silently REPLACED the user's simple query.
+describe("clauseToAdvanced", () => {
+  const conv = (dsl: string) => clauseToAdvanced(parseQuery(dsl));
+
+  it("converts a task query 1:1 and stays on one line", () => {
+    const r = conv("(task TODO DOING)");
+    expect(r).toEqual({
+      ok: true,
+      dsl: '[:find (pull ?b [*]) :where (task ?b "TODO" "DOING")]',
+      dropped: [],
+    });
+  });
+
+  it("NEVER emits a newline or a brace (macros cannot span lines; #{…} sets kill macro parsing)", () => {
+    for (const dsl of [
+      "(task TODO DOING)",
+      '(and (task TODO) [[Some Page]] (property status "open") (scheduled))',
+      '(or (priority A) (not (journal)))',
+      "",
+    ]) {
+      const r = conv(dsl);
+      expect(r.ok).toBe(true);
+      if (r.ok) {
+        expect(r.dsl).not.toContain("\n");
+        expect(r.dsl).not.toContain("{");
+        expect(r.dsl).not.toContain("}");
+      }
+    }
+  });
+
+  it("flattens a top-level and into sibling :where groups", () => {
+    const r = conv('(and (task TODO) [[Roadmap]] (namespace "Projects"))');
+    expect(r).toMatchObject({
+      ok: true,
+      dsl: '[:find (pull ?b [*]) :where (task ?b "TODO") (page-ref ?b "Roadmap") (namespace ?b "Projects")]',
+    });
+  });
+
+  it('expands between "any" into the faithful (or …) of the three fields', () => {
+    const r = conv('(between "2026-01-01" "2026-12-31")');
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.dsl).toContain('(or (between :journal ?b "2026-01-01" "2026-12-31")');
+      expect(r.dsl).toContain('(between :scheduled ?b');
+      expect(r.dsl).toContain('(between :deadline ?b');
+    }
+  });
+
+  it("drops result-shaping with a report instead of failing", () => {
+    const r = conv("(and (task TODO) (sort-by priority) (group-by page))");
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.dsl).toBe('[:find (pull ?b [*]) :where (task ?b "TODO")]');
+      expect(r.dropped).toEqual(["sort by priority", "group by page"]);
+    }
+  });
+
+  it("REFUSES (rather than loses) a clause with no advanced equivalent", () => {
+    const r = conv('"free text"');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.unsupported[0]).toContain("full-text");
+  });
+
+  it("an empty query seeds the default task clause", () => {
+    const r = conv("");
+    expect(r).toMatchObject({ ok: true, dsl: '[:find (pull ?b [*]) :where (task ?b "TODO" "DOING")]' });
   });
 });

@@ -12,6 +12,7 @@ import { backend } from "../backend";
 import {
   parseQuery,
   toDsl,
+  clauseToAdvanced,
   clauseLabel,
   addChild,
   removeAt,
@@ -28,7 +29,7 @@ import {
   type SortPreset,
 } from "../editor/queryBuilder";
 import { DATE_PRESETS, previewDate } from "../editor/dateExpr";
-import { queryBuilderAutoOpen, setQueryBuilderAutoOpen } from "../ui";
+import { pushToast, queryBuilderAutoOpen, setQueryBuilderAutoOpen } from "../ui";
 
 // Interactive query builder: an OG-style chip-bar over a {{query}} DSL string.
 // The DSL text is the single source of truth — we parse it to a tree, apply an
@@ -302,19 +303,19 @@ function PropNameInput(props: { onCommit: (key: string) => void }): JSX.Element 
   );
 }
 
-// The "switch to advanced" datalog skeleton: a working `(task …)` clause plus a
-// commented cheat-sheet of every head Tine's advanced mapper supports. Writing
-// `[:find …]` auto-flips the render path to runAdvancedQuery (Macro.tsx gates on
-// ADVANCED_RE), and the `;;` hints are EDN comments the engine skips (they are NOT
-// parsed as real filters). Unsupported lines you add are flagged, never guessed.
-const ADVANCED_SKELETON = `[:find (pull ?b [*])
- :where
- ;; Supported clauses (edit freely; unsupported ones are flagged, not guessed):
- ;;   (task ?b #{"TODO" "DOING"})   (priority ?b "A")   (page-ref ?b "Some Page")
- ;;   (property ?b :key "value")    (page-property ?b :key)    (page-tags ?b "tag")
- ;;   (scheduled ?b)  (deadline ?b)  (journal ?b)  (page ?b "Name")  (namespace ?b "Parent")
- ;;   (between ?b "2026-01-01" "2026-12-31")   combine with (and …) (or …) (not …)
- (task ?b #{"TODO" "DOING"})]`;
+// "Switch to advanced" converts the CURRENT builder tree to its single-line
+// Datalog equivalent (clauseToAdvanced) — it must never discard the query and
+// never write a multi-line macro: lsdoc `{{query …}}` macros don't span lines,
+// so the old multi-line skeleton made the block stop parsing as a query at all
+// and silently destroyed the user's simple query (Jul 8 data-mutation bug).
+// The clause cheat-sheet lives in the pill's tooltip instead of the file.
+const ADVANCED_CHEATSHEET =
+  'Convert this query to an advanced (Datalog) [:find …] form. Supported clauses: ' +
+  '(task ?b "TODO" "DOING"), (priority ?b "A"), (page-ref ?b "Page"), (property ?b :key "v"), ' +
+  '(page-property ?b :key), (page-tags ?b "tag"), (scheduled ?b), (deadline ?b), (journal ?b), ' +
+  '(page ?b "Name"), (namespace ?b "Parent"), (between ?b "2026-01-01" "2026-12-31"), ' +
+  'combined with (and …) (or …) (not …). Unsupported clauses are flagged, never guessed. ' +
+  'Keep it on ONE line and avoid #{…} sets — a query macro cannot span lines or contain braces.';
 
 export function QueryBuilder(props: {
   dsl: () => string;
@@ -344,8 +345,21 @@ export function QueryBuilder(props: {
       <SummarizeControl tree={tree} apply={apply} />
       <button
         class="qb-sort qb-advanced"
-        title="Switch to an advanced (Datalog) query — drops a [:find …] template with the supported clauses"
-        onClick={(e) => { stop(e); props.onChange(ADVANCED_SKELETON); }}
+        title={ADVANCED_CHEATSHEET}
+        onClick={(e) => {
+          stop(e);
+          const conv = clauseToAdvanced(tree());
+          if (!conv.ok) {
+            pushToast(`Can't auto-convert to Datalog: ${conv.unsupported.join(", ")} has no advanced equivalent — write the [:find …] form by hand`);
+            return;
+          }
+          props.onChange(conv.dsl);
+          pushToast(
+            conv.dropped.length
+              ? `Converted to an advanced Datalog query (dropped: ${conv.dropped.join(", ")}) — undo restores the simple form`
+              : "Converted to an advanced Datalog query — undo restores the simple form"
+          );
+        }}
       >
         ⚙ advanced
       </button>

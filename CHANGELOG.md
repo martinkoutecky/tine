@@ -38,6 +38,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **The query builder's "⚙ advanced" pill no longer destroys the query.**
+  Clicking it used to replace the simple query with a multi-line Datalog
+  template that a `{{query}}` macro cannot even hold (macros are single-line
+  and brace-free), so the block stopped rendering as a query and the original
+  filters were lost. It now *converts* the current query clause-by-clause to
+  an equivalent single-line `[:find …]` form, refuses (with a toast) when a
+  clause has no Datalog equivalent, and undo restores the simple form.
+
 - **Shift-clicking a link no longer selects text** ([#42](https://github.com/martinkoutecky/tine/issues/42)).
   Shift-clicking a `[[page]]`, `#tag`, or block reference opens it in the sidebar;
   the browser's native shift-range-selection is now suppressed so no stray text in

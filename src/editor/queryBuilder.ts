@@ -435,6 +435,101 @@ export function toDsl(root: Clause): string {
 }
 
 // ---------------------------------------------------------------------------
+// Simple-DSL → advanced (Datalog) conversion, for the builder's "⚙ advanced"
+// pill. Two hard rules learned from the Jul 8 data-mutation bug:
+//  1. The output MUST be SINGLE-LINE and BRACE-FREE — lsdoc macros
+//     ({{query …}}) never span lines AND their args cannot contain `{`/`}`
+//     (a `#{…}` EDN set turns the whole macro into plain text + a stray tag),
+//     so no `;;` comments and no set literals. `run_advanced_query` collects
+//     plain quoted strings identically (adv_strings ignores the set wrapper).
+//  2. NEVER discard the user's query: filters convert 1:1 to the clause heads
+//     `run_advanced_query` accepts; result-shaping (sort/aggregate/group-by)
+//     has no datalog home and is reported as dropped; a clause with no
+//     advanced equivalent makes the whole conversion REFUSE rather than lose
+//     content.
+// ---------------------------------------------------------------------------
+
+export type AdvancedConversion =
+  | { ok: true; dsl: string; dropped: string[] }
+  | { ok: false; unsupported: string[] };
+
+export function clauseToAdvanced(root: Clause): AdvancedConversion {
+  const unsupported: string[] = [];
+  const dropped: string[] = [];
+  const strs = (xs: string[]) => xs.map(quoteStr).join(" ");
+  const emit = (c: Clause): string | null => {
+    switch (c.kind) {
+      case "op": {
+        const kids = c.children.map(emit).filter((s): s is string => !!s);
+        if (!kids.length) return null;
+        if (c.op === "not") return `(not ${kids[0]})`;
+        if (kids.length === 1) return kids[0];
+        return `(${c.op} ${kids.join(" ")})`;
+      }
+      case "page":
+        return `(page-ref ?b ${quoteStr(c.name)})`;
+      case "task":
+        return c.markers.length ? `(task ?b ${strs(c.markers)})` : `(task ?b)`;
+      case "priority":
+        return c.levels.length ? `(priority ?b ${strs(c.levels)})` : `(priority ?b)`;
+      case "property":
+        return c.value === null
+          ? `(property ?b :${c.key})`
+          : `(property ?b :${c.key} ${quoteStr(c.value)})`;
+      case "pageProperty":
+        return c.value === null
+          ? `(page-property ?b :${c.key})`
+          : `(page-property ?b :${c.key} ${quoteStr(c.value)})`;
+      case "pageTags":
+        return c.tags.length ? `(page-tags ?b ${strs(c.tags)})` : null;
+      case "scheduled":
+        return `(scheduled ?b)`;
+      case "deadline":
+        return `(deadline ?b)`;
+      case "journal":
+        return `(journal ?b)`;
+      case "onPage":
+        return `(page ?b ${quoteStr(c.name)})`;
+      case "namespace":
+        return `(namespace ?b ${quoteStr(c.ns)})`;
+      case "between": {
+        const bounds = `?b ${quoteStr(c.start)} ${quoteStr(c.end)}`;
+        // "any" (simple default: journal OR scheduled OR deadline) has no
+        // single advanced head — expand it to the faithful (or …).
+        if (c.field === "any") {
+          return `(or (between :journal ${bounds}) (between :scheduled ${bounds}) (between :deadline ${bounds}))`;
+        }
+        return c.field === "journal" ? `(between ${bounds})` : `(between :${c.field} ${bounds})`;
+      }
+      case "sortBy":
+        dropped.push(`sort by ${c.field}`);
+        return null;
+      case "aggregate":
+        dropped.push(c.field ? `${c.agg}(${c.field})` : c.agg);
+        return null;
+      case "groupBy":
+        dropped.push(`group by ${c.field}`);
+        return null;
+      case "content":
+        unsupported.push(`full-text ${quoteStr(c.text)}`);
+        return null;
+      case "raw":
+        unsupported.push(c.text);
+        return null;
+    }
+  };
+  // Flatten a top-level (and …) into sibling :where groups — datalog groups
+  // are implicitly and-ed, and it reads like the cheat-sheet examples.
+  const groups =
+    root.kind === "op" && root.op === "and"
+      ? root.children.map(emit).filter((s): s is string => !!s)
+      : [emit(root)].filter((s): s is string => !!s);
+  if (unsupported.length) return { ok: false, unsupported };
+  const body = groups.length ? groups.join(" ") : `(task ?b "TODO" "DOING")`;
+  return { ok: true, dsl: `[:find (pull ?b [*]) :where ${body}]`, dropped };
+}
+
+// ---------------------------------------------------------------------------
 // Sort presets — the one-click sort options in the builder (single source of
 // truth for the buttons AND the chip label). `field`/`dir` are the DSL values;
 // the engine resolves them to a block facet: `priority` → `[#A]` marker, `page`
