@@ -22,7 +22,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - **Split view.** Panes now have their own tabs and history, TreeSheets-style
   pane/seam keyboard navigation with type-at-a-seam-to-split, `Ctrl+click` opens
   links in another pane, tabs can be dragged to another pane or seam, and the
-  layout persists across launches.
+  layout persists across launches. Pane-select mode (Esc from block-select, or
+  the palette) shows a hint pill and tints its target; arrows step strictly
+  directionally across panes, seams, per-pane edge segments (split just that
+  pane) and whole-window edges (split everything); selecting a pane focuses it,
+  `Delete` closes it, and `Ctrl+K` opens a page right there.
 
 ## [0.4.6] - 2026-07-08
 

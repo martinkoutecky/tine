@@ -59,3 +59,4 @@ see the project `CLAUDE.md`.
 | [0030](0030-query-view-unification.md) | Query view unification: query DSL owns membership, `tine.view::` owns presentation | Accepted |
 | [0031](0031-recursive-cell-form.md) | Recursive sheet cell form: compact and hosted grids with structural clipboard paste | Accepted |
 | [0032](0032-pane-split-tree-architecture.md) | Split view: pane-router factory + focused-pane shims, pane split-tree, single journals feed pane | Accepted |
+| [0033](0033-pane-select-nav-semantics.md) | Pane-select nav semantics: overlap-constrained stepping, pane-edge segments (split one pane vs the root), focus-follows-selection, 2-rung Esc ladder | Accepted |

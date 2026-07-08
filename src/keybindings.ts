@@ -158,7 +158,12 @@ function materializePaneSelection(prefill: string | null) {
   const paneId =
     target.kind === "seam"
       ? splitPaneAtSeam(target.path, source)
-      : splitRootAtEdge(target.side, source);
+      : target.kind === "pane-edge"
+        ? // Split ONLY that pane, new pane on the chosen side.
+          splitPane(target.paneId, target.side === "left" || target.side === "right" ? "row" : "col", {
+            position: target.side === "left" || target.side === "top" ? "before" : "after",
+          })
+        : splitRootAtEdge(target.side, source);
   if (!paneId) return;
   exitPaneSelect();
   if (prefill === null) focusPane(paneId); // mirror split — done
@@ -184,7 +189,10 @@ function handlePaneSelectKey(e: KeyboardEvent): boolean {
   if (!target) return false;
   const dir = directionForKey(e.key);
   if (dir && !e.ctrlKey && !e.metaKey && !e.altKey) {
-    movePaneSelection(layoutRoot(), dir);
+    const next = movePaneSelection(layoutRoot(), dir);
+    // Focus follows pane selection: Ctrl+K (and every focused-pane command)
+    // acts on the pane you SEE selected, not a stale earlier focus.
+    if (next.kind === "pane") focusPane(next.paneId);
     return true;
   }
   if (e.key === "Escape") {
@@ -199,6 +207,21 @@ function handlePaneSelectKey(e: KeyboardEvent): boolean {
       materializePaneSelection(null); // Enter on a seam/edge = mirror split
     }
     return true;
+  }
+  if ((e.key === "Delete" || e.key === "Backspace") && target.kind === "pane") {
+    if (closePane(target.paneId)) enterPaneSelect(focusedPaneId()); // stay in the mode on the survivor
+    return true;
+  }
+  // Ctrl+K on a seam/edge = split with an empty embryo switcher (same gesture
+  // as typing, for people who reach for Ctrl+K by reflex). On a pane target it
+  // falls through to the global handler, which now acts on the selected pane.
+  if (matchesCommand(e, "go/search")) {
+    if (target.kind !== "pane") {
+      materializePaneSelection("");
+      return true;
+    }
+    exitPaneSelect(); // switcher takes over; a lingering ring would lie
+    return false;
   }
   if (isPrintableKey(e)) {
     if (target.kind !== "pane") materializePaneSelection(e.key);
@@ -770,7 +793,11 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
       }
       if (hasSelection()) {
         clearSelection();
+        // Martin's 2-rung ladder (Jul 8): block-select climbs STRAIGHT to
+        // pane-select — the old "cleared but nothing selected" state between
+        // them was an invisible dead rung. Focus mode still peels first.
         if (focusMode()) void exitFocusMode();
+        else enterPaneSelectFromFocus();
         e.preventDefault();
         resetSeq();
         return;

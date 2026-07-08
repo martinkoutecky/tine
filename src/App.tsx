@@ -218,6 +218,16 @@ function PaneResizer(props: { dir: "row" | "col"; path: number[] }): JSX.Element
   );
 }
 
+// Highlight for a selected pane-edge SEGMENT: lives inside the owning pane so
+// it spans exactly that pane's side (splitting it splits only this pane).
+function PaneEdgeSegHighlight(props: { paneId: string }): JSX.Element {
+  const side = () => {
+    const t = paneSel();
+    return t?.kind === "pane-edge" && t.paneId === props.paneId ? t.side : null;
+  };
+  return <Show when={side()}>{(s) => <div class={`pane-edge-seg pane-edge-seg-${s()}`} />}</Show>;
+}
+
 function PaneTabSplitPreview(props: { paneId: string }): JSX.Element {
   const side = () => tabSplitPreviewSideForPane(props.paneId);
   return (
@@ -251,6 +261,7 @@ function PaneLeaf(props: { paneId: string }): JSX.Element {
               ref={(el) => router.setScrollerElement(el)}
             >
               <PaneTabSplitPreview paneId={props.paneId} />
+              <PaneEdgeSegHighlight paneId={props.paneId} />
               <div class="main-content-inner">
                 <PageView />
               </div>
@@ -268,6 +279,7 @@ function PaneLeaf(props: { paneId: string }): JSX.Element {
             data-pane-id={props.paneId}
           >
             <PaneTabSplitPreview paneId={props.paneId} />
+            <PaneEdgeSegHighlight paneId={props.paneId} />
             <TabBar
               router={router}
               dragRegion={false}
@@ -291,26 +303,37 @@ function PaneLeaf(props: { paneId: string }): JSX.Element {
 // user unsure whether arrows will do anything (Martin hit exactly this). The
 // pill is that indicator, and doubles as in-situ docs for the seam/edge tricks.
 export function PaneSelectHint(): JSX.Element {
-  const onSplitter = () => {
-    const t = paneSel();
-    return !!t && t.kind !== "pane";
-  };
+  const kind = () => paneSel()?.kind ?? null;
   return (
     <Show when={paneSel()}>
       <div class="pane-select-hint">
         <span class="pane-select-hint-title">Pane select</span>
         <Show
-          when={onSplitter()}
+          when={kind() !== "pane"}
           fallback={
-            <span>
-              <kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> move (edges split) · <kbd>Enter</kbd> focus pane ·{" "}
-              <kbd>Esc</kbd> exit
+            <span class="pane-select-hint-body">
+              <span>
+                <kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> move (onto seams &amp; edges) · <kbd>Enter</kbd> enter
+                pane · <kbd>Del</kbd> close pane
+              </span>
+              <span>
+                <kbd>Ctrl+K</kbd> open a page in this pane · <kbd>Esc</kbd> exit
+              </span>
             </span>
           }
         >
-          <span>
-            <kbd>Enter</kbd> split here · <span class="pane-select-hint-em">type a page name</span> to open it in the
-            new split · <kbd>Esc</kbd> exit
+          <span class="pane-select-hint-body">
+            <span>
+              <kbd>Enter</kbd> split here (mirrors the pane) ·{" "}
+              <span class="pane-select-hint-em">type a page name</span> (or <kbd>Ctrl+K</kbd>) to open it in the new
+              split
+            </span>
+            <span>
+              <Show when={kind() === "pane-edge"}>
+                <span>press outward again for the whole-window edge · </span>
+              </Show>
+              <kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> move · <kbd>Esc</kbd> exit
+            </span>
           </span>
         </Show>
       </div>

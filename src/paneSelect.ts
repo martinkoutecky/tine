@@ -1,10 +1,16 @@
 import { createSignal } from "solid-js";
 import type { LayoutNode } from "./panes";
 
+export type PaneEdgeSide = "left" | "right" | "top" | "bottom";
+
 export type PaneTarget =
   | { kind: "pane"; paneId: string }
   | { kind: "seam"; path: number[] }
-  | { kind: "edge"; side: "left" | "right" | "top" | "bottom" };
+  // A single pane's boundary segment on the window edge: splitting it splits
+  // ONLY that pane ("split the left half horizontally" — Martin's Jul 8 nit).
+  | { kind: "pane-edge"; paneId: string; side: PaneEdgeSide }
+  // The whole-window edge: splitting it splits the root layout.
+  | { kind: "edge"; side: PaneEdgeSide };
 
 export type PaneDirection = "left" | "right" | "up" | "down";
 
@@ -20,7 +26,13 @@ export interface SeamRect {
 }
 
 export interface EdgeRect {
-  side: "left" | "right" | "top" | "bottom";
+  side: PaneEdgeSide;
+  rect: Rect;
+}
+
+export interface PaneEdgeRect {
+  paneId: string;
+  side: PaneEdgeSide;
   rect: Rect;
 }
 
@@ -35,6 +47,7 @@ export interface PaneGeometry {
   panes: PaneRect[];
   seams: SeamRect[];
   edges: EdgeRect[];
+  paneEdges: PaneEdgeRect[];
 }
 
 const ROOT_RECT: Rect = { x: 0, y: 0, w: 1, h: 1 };
@@ -52,6 +65,10 @@ export function samePaneTarget(a: PaneTarget | null, b: PaneTarget | null): bool
   if (!a || !b || a.kind !== b.kind) return false;
   if (a.kind === "pane") return a.paneId === (b as Extract<PaneTarget, { kind: "pane" }>).paneId;
   if (a.kind === "edge") return a.side === (b as Extract<PaneTarget, { kind: "edge" }>).side;
+  if (a.kind === "pane-edge") {
+    const bb = b as Extract<PaneTarget, { kind: "pane-edge" }>;
+    return a.paneId === bb.paneId && a.side === bb.side;
+  }
   return samePath(a.path, (b as Extract<PaneTarget, { kind: "seam" }>).path);
 }
 
@@ -82,9 +99,26 @@ export function computePaneGeometry(root: LayoutNode, rect: Rect = ROOT_RECT): P
   };
 
   walk(root, rect, []);
+
+  // A pane's side lying ON the window boundary is its own target (splitting it
+  // splits just that pane); sides on internal boundaries are covered by seams.
+  const paneEdges: PaneEdgeRect[] = [];
+  for (const p of panes) {
+    const r = p.rect;
+    if (Math.abs(r.x - rect.x) < EPS)
+      paneEdges.push({ paneId: p.paneId, side: "left", rect: { x: r.x, y: r.y, w: 0, h: r.h } });
+    if (Math.abs(r.x + r.w - (rect.x + rect.w)) < EPS)
+      paneEdges.push({ paneId: p.paneId, side: "right", rect: { x: r.x + r.w, y: r.y, w: 0, h: r.h } });
+    if (Math.abs(r.y - rect.y) < EPS)
+      paneEdges.push({ paneId: p.paneId, side: "top", rect: { x: r.x, y: r.y, w: r.w, h: 0 } });
+    if (Math.abs(r.y + r.h - (rect.y + rect.h)) < EPS)
+      paneEdges.push({ paneId: p.paneId, side: "bottom", rect: { x: r.x, y: r.y + r.h, w: r.w, h: 0 } });
+  }
+
   return {
     panes,
     seams,
+    paneEdges,
     edges: [
       { side: "left", rect: { x: rect.x, y: rect.y, w: 0, h: rect.h } },
       { side: "right", rect: { x: rect.x + rect.w, y: rect.y, w: 0, h: rect.h } },
@@ -104,6 +138,8 @@ function targetRect(geom: PaneGeometry, target: PaneTarget): Rect | null {
       return geom.panes.find((p) => p.paneId === target.paneId)?.rect ?? null;
     case "seam":
       return geom.seams.find((s) => samePath(s.path, target.path))?.rect ?? null;
+    case "pane-edge":
+      return geom.paneEdges.find((e) => e.paneId === target.paneId && e.side === target.side)?.rect ?? null;
     case "edge":
       return geom.edges.find((e) => e.side === target.side)?.rect ?? null;
   }
@@ -113,6 +149,7 @@ function allTargets(geom: PaneGeometry): PaneTarget[] {
   return [
     ...geom.panes.map((p): PaneTarget => ({ kind: "pane", paneId: p.paneId })),
     ...geom.seams.map((s): PaneTarget => ({ kind: "seam", path: s.path })),
+    ...geom.paneEdges.map((e): PaneTarget => ({ kind: "pane-edge", paneId: e.paneId, side: e.side })),
     ...geom.edges.map((e): PaneTarget => ({ kind: "edge", side: e.side })),
   ];
 }
@@ -136,8 +173,27 @@ function crossDistance(from: { x: number; y: number }, to: { x: number; y: numbe
 
 function targetRank(t: PaneTarget): number {
   if (t.kind === "seam") return 0;
-  if (t.kind === "pane") return 1;
-  return 2;
+  if (t.kind === "pane-edge") return 1;
+  if (t.kind === "pane") return 2;
+  return 3;
+}
+
+// Cross-axis interval overlap: stepping down from a pane must only consider
+// targets that actually lie below IT (share horizontal extent), not whatever
+// center happens to be nearest — without this, ArrowDown from a tall right
+// pane selected the seam between the two LEFT panes (Martin's Jul 8 report).
+// Degenerate (zero-length) intervals count via closed containment.
+function crossSpan(rect: Rect, dir: PaneDirection): [number, number] {
+  return dir === "left" || dir === "right" ? [rect.y, rect.y + rect.h] : [rect.x, rect.x + rect.w];
+}
+
+function spansOverlap(a: [number, number], b: [number, number]): boolean {
+  const aDeg = a[1] - a[0] < EPS;
+  const bDeg = b[1] - b[0] < EPS;
+  if (aDeg && bDeg) return Math.abs(a[0] - b[0]) < EPS;
+  if (aDeg) return b[0] - EPS <= a[0] && a[0] <= b[1] + EPS;
+  if (bDeg) return a[0] - EPS <= b[0] && b[0] <= a[1] + EPS;
+  return Math.min(a[1], b[1]) - Math.max(a[0], b[0]) > EPS;
 }
 
 function resolveTarget(geom: PaneGeometry, target: PaneTarget | null): PaneTarget {
@@ -150,13 +206,33 @@ export function stepPaneTarget(root: LayoutNode, target: PaneTarget | null, dir:
   const current = resolveTarget(geom, target);
   const currentRect = targetRect(geom, current);
   if (!currentRect) return current;
+
+  // Pressing INTO a pane-edge segment again widens it to the whole-window edge
+  // (TreeSheets-style: the segment splits one pane, the full edge splits the
+  // root). The global edge sits at the same coordinate, so distance-stepping
+  // could never reach it.
+  const sideForDir: Record<PaneDirection, PaneEdgeSide> = { left: "left", right: "right", up: "top", down: "bottom" };
+  if (current.kind === "pane-edge" && current.side === sideForDir[dir]) {
+    // ...unless the segment already spans the whole edge (solo pane / full-
+    // height side pane): splitting either is identical, skip the ghost rung.
+    const edgeRect = geom.edges.find((e) => e.side === current.side)?.rect;
+    const seg = crossSpan(currentRect, dir);
+    const full = edgeRect ? crossSpan(edgeRect, dir) : null;
+    if (!full || Math.abs(seg[0] - full[0]) > EPS || Math.abs(seg[1] - full[1]) > EPS) {
+      return { kind: "edge", side: current.side };
+    }
+    return current;
+  }
+
   const from = center(currentRect);
+  const fromSpan = crossSpan(currentRect, dir);
   const candidates = allTargets(geom)
     .filter((candidate) => !samePaneTarget(candidate, current))
     .map((candidate) => ({ candidate, rect: targetRect(geom, candidate) }))
     .filter((x): x is { candidate: PaneTarget; rect: Rect } => !!x.rect)
     .map((x) => ({ ...x, c: center(x.rect) }))
     .filter((x) => isAhead(from, x.c, dir))
+    .filter((x) => spansOverlap(fromSpan, crossSpan(x.rect, dir)))
     .sort((a, b) => {
       const ap = primaryDistance(from, a.c, dir);
       const bp = primaryDistance(from, b.c, dir);

@@ -513,6 +513,29 @@ verbatim), App.tsx resolved (journals button + arg-safe openSwitcher). All
 gates + probes green post-merge (tsc, 268+18 vitest, 284 cargo, e2e 50/50,
 splitview 10/10, panenav 13/13, tabdrag 3/3).
 
+**Nit batch 2 (Jul 8 evening, Martin's second field report — ADR 0033):**
+(a) 2-rung Esc ladder (block-select → pane-select directly; the cleared-
+selection state between was an invisible dead rung — his "why 3x esc?");
+(b) overlap-constrained stepping (his screenshot: ArrowDown from a tall right
+pane selected the LEFT panes' seam — center-distance artifact; now targets
+must share cross-axis extent); (c) **pane-edge segments** — new target kind,
+Enter/type splits JUST that pane, outward-again widens to the whole-window
+edge (his "split only the left half" ask; rank on ties: seam > pane-edge >
+pane > edge; ghost rung skipped when segment == full edge); (d) focus follows
+pane selection (his Ctrl+K-goes-to-wrong-pane report; Ctrl+K on splitter
+targets = embryo split, on pane = exit mode + switcher); (e) Delete/Backspace
+closes the selected pane, mode stays on survivor; (f) pill now 2-line and
+target-aware (Del close / Ctrl+K / outward-again hints — he OK'd the size).
+Esc-from-edit investigated: block-select highlight + Enter-reenters WORK here
+(probe + dark-theme shot, `.block-main.selected` — NB the class is on
+block-main, NOT ls-block; a probe selector bug first hid this) — awaiting his
+exact repro if it recurs. His tine-test Syncthing conflict resolved (stale
+Jul 7 snapshot of Sheets demo from device QZ2JWDC, strictly older, deleted).
+Unit tests: paneSelect 7, keybindings 18 (necessity-proven: overlap+escalation
+tests fail on old geometry; 2-rung test fails without cascade change).
+NOTE: `git restore` after a necessity check WIPES uncommitted work — toggle
+via reversible in-place patches instead (paneSelect.ts had to be rewritten).
+
 **S4 (Jul 8): pointer tab drag** (drop on strip = reorder/adopt, pane body
 = move, seam/edge = split+move, Esc cancels; last HTML5-DnD site deleted),
 **pane-scoped Ctrl+F**, docs (CHANGELOG/README/FEATURES/BACKLOG).

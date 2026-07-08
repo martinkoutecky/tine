@@ -89,6 +89,18 @@ Pane-select mode = the top rung of the existing select→edit ladder:
   aware) is shown and the targeted pane is **tinted** (the bare 2px ring reads
   as the focused-pane indicator). The mode is also exposed as a **"Pane select
   mode" command** in the palette.
+- **Nav semantics v2 (Jul 8 evening, Martin's second field report — ADR
+  0033):** `Esc` from block-select climbs STRAIGHT to pane-select (the old
+  cleared-selection state between them was an invisible dead rung). Stepping
+  is **overlap-constrained** (targets must share cross-axis extent with the
+  current one — no diagonal jumps, no "down selects the left panes' seam").
+  New target kind: **pane-edge segments** (a pane's side on the window
+  boundary) — Enter/typing splits JUST that pane; pressing outward again
+  widens to the whole-window edge (root split). Rank on exact ties:
+  seam > pane-edge > pane > edge. **Focus follows pane selection** (Ctrl+K
+  acts on the visibly selected pane; on a splitter target Ctrl+K = embryo
+  split like typing). **Delete/Backspace closes the selected pane**, staying
+  in the mode.
 - **Arrows** move pane selection spatially (left/right/up/down across the
   tree, geometric nearest-neighbor like the sheet's 2-D stepping). **Seam
   stepping default ON** (as in Sheets): arrows also land on seams between

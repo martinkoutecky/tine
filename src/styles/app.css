@@ -404,6 +404,14 @@ body {
   color: var(--link-color);
 }
 
+/* Two-to-three stacked hint lines; Martin explicitly OK'd a bigger pill —
+   while splitting you don't need to see the content under it. */
+.pane-select-hint-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
 .pane-select-hint-em {
   font-weight: 600;
 }
@@ -485,6 +493,46 @@ body {
 }
 
 .pane-edge-highlight-bottom {
+  bottom: 0;
+}
+
+/* Pane-edge SEGMENT (one pane's side, not the whole window edge): rendered
+   inside the owning pane. Same paint as the global edge highlight. */
+.pane-edge-seg {
+  position: absolute;
+  z-index: 8;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--link-color) 72%, transparent);
+  box-shadow: 0 0 10px 2px color-mix(in srgb, var(--link-color) 45%, transparent);
+}
+
+.pane-edge-seg-left,
+.pane-edge-seg-right {
+  top: 0;
+  bottom: 0;
+  width: 8px;
+}
+
+.pane-edge-seg-left {
+  left: 0;
+}
+
+.pane-edge-seg-right {
+  right: 0;
+}
+
+.pane-edge-seg-top,
+.pane-edge-seg-bottom {
+  left: 0;
+  right: 0;
+  height: 8px;
+}
+
+.pane-edge-seg-top {
+  top: 0;
+}
+
+.pane-edge-seg-bottom {
   bottom: 0;
 }
 

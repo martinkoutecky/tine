@@ -64,14 +64,90 @@ describe("pane geometry", () => {
     const seam: PaneTarget = { kind: "seam", path: [] };
     expect(stepPaneTarget(root, { kind: "pane", paneId: "left" }, "right")).toEqual(seam);
     expect(stepPaneTarget(root, seam, "right")).toEqual({ kind: "pane", paneId: "right" });
+    // The pane's own edge segment outranks the (geometrically identical)
+    // global edge — splitting either is the same split here.
     expect(stepPaneTarget(root, { kind: "pane", paneId: "right" }, "right")).toEqual({
-      kind: "edge",
+      kind: "pane-edge",
+      paneId: "right",
       side: "right",
     });
     expect(stepPaneTarget(root, { kind: "edge", side: "right" }, "left")).toEqual({
       kind: "pane",
       paneId: "right",
     });
+  });
+
+  it("ArrowUp from one pane of a row split targets THAT pane's top segment, then the whole edge (Martin's Jul 8 nit)", () => {
+    const root: LayoutNode = {
+      kind: "split",
+      dir: "row",
+      ratio: 0.5,
+      children: [
+        { kind: "pane", paneId: "left" },
+        { kind: "pane", paneId: "right" },
+      ],
+    };
+
+    const seg = stepPaneTarget(root, { kind: "pane", paneId: "left" }, "up");
+    expect(seg).toEqual({ kind: "pane-edge", paneId: "left", side: "top" });
+    // pressing outward again widens to the whole-window edge (root split)
+    expect(stepPaneTarget(root, seg, "up")).toEqual({ kind: "edge", side: "top" });
+  });
+
+  it("requires directional overlap: down from a tall right pane hits its own bottom segment, never the left panes' seam", () => {
+    // Martin's Jul 8 screenshot layout: two panes stacked on the left, one
+    // tall pane on the right. ArrowDown from the right pane used to select
+    // the seam BETWEEN THE LEFT PANES (center-distance artifact).
+    const root: LayoutNode = {
+      kind: "split",
+      dir: "row",
+      ratio: 0.5,
+      children: [
+        {
+          kind: "split",
+          dir: "col",
+          ratio: 0.5,
+          children: [
+            { kind: "pane", paneId: "a" },
+            { kind: "pane", paneId: "b" },
+          ],
+        },
+        { kind: "pane", paneId: "c" },
+      ],
+    };
+
+    const down = stepPaneTarget(root, { kind: "pane", paneId: "c" }, "down");
+    expect(down).toEqual({ kind: "pane-edge", paneId: "c", side: "bottom" });
+    expect(stepPaneTarget(root, down, "down")).toEqual({ kind: "edge", side: "bottom" });
+
+    const up = stepPaneTarget(root, { kind: "pane", paneId: "c" }, "up");
+    expect(up).toEqual({ kind: "pane-edge", paneId: "c", side: "top" });
+    expect(stepPaneTarget(root, up, "up")).toEqual({ kind: "edge", side: "top" });
+  });
+
+  it("emits pane-edge segments only for sides on the window boundary", () => {
+    const root: LayoutNode = {
+      kind: "split",
+      dir: "row",
+      ratio: 0.5,
+      children: [
+        {
+          kind: "split",
+          dir: "col",
+          ratio: 0.5,
+          children: [
+            { kind: "pane", paneId: "a" },
+            { kind: "pane", paneId: "b" },
+          ],
+        },
+        { kind: "pane", paneId: "c" },
+      ],
+    };
+
+    const segs = computePaneGeometry(root).paneEdges.map((e) => `${e.paneId}:${e.side}`).sort();
+    // a: top+left; b: bottom+left; c: top+right+bottom. Internal sides (the
+    // seams) never appear.
+    expect(segs).toEqual(["a:left", "a:top", "b:bottom", "b:left", "c:bottom", "c:right", "c:top"].sort());
   });
 
   it("numbers panes in spatial reading order", () => {

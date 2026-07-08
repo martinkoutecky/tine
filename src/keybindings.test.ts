@@ -2,8 +2,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { closeInPageFind, inPageFindOpen } from "./inpageFind";
 import { commandDefaults, eventToBindingString, installKeybindings } from "./keybindings";
 import { closeSwitcher, focusMode, openSwitcher, setFocusMode, setPdfTarget, switcherOpen } from "./ui";
-import { focusedPaneId, layoutPaneIds, paneRouter, resetPaneLayoutToSingle, splitRootAtEdge } from "./panes";
+import { focusedPaneId, focusPane, layoutPaneIds, layoutRoot, paneRouter, resetPaneLayoutToSingle, splitRootAtEdge } from "./panes";
 import { exitPaneSelect, paneSel } from "./paneSelect";
+import { clearSelection, selectBlock } from "./store";
 import type { PaneSnapshot } from "./router";
 
 function keyEvent(init: Partial<KeyboardEvent>): KeyboardEvent {
@@ -129,6 +130,7 @@ afterEach(() => {
   setPdfTarget(null);
   setFocusMode(false);
   exitPaneSelect();
+  clearSelection();
   if (switcherOpen()) closeSwitcher();
   resetPaneLayoutToSingle(journalsSnapshot());
   if (inPageFindOpen()) closeInPageFind({ restoreFocus: false });
@@ -282,6 +284,76 @@ describe("pane-select Esc cascade", () => {
 
     expect(switcherOpen()).toBe(false);
     expect(layoutPaneIds()).toEqual(["main"]);
+    dispose();
+  });
+
+  it("Esc from block-select climbs STRAIGHT to pane-select (Martin's 2-rung ladder)", () => {
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+    selectBlock("some-block");
+
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "Escape", code: "Escape" }).event);
+
+    expect(paneSel()).toEqual({ kind: "pane", paneId: "main" });
+    dispose();
+  });
+
+  it("Delete on a selected pane closes it and stays in the mode on the survivor", () => {
+    resetPaneLayoutToSingle(pageSnapshot("Source"));
+    const extra = splitRootAtEdge("right", "main")!;
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "Escape", code: "Escape" }).event);
+    expect(paneSel()).toEqual({ kind: "pane", paneId: extra }); // focus followed the split
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "Delete", code: "Delete" }).event);
+
+    expect(layoutPaneIds()).toEqual(["main"]);
+    expect(paneSel()).toEqual({ kind: "pane", paneId: "main" });
+    dispose();
+  });
+
+  it("Ctrl+K on a selected pane exits the mode and opens the switcher for THAT pane", () => {
+    resetPaneLayoutToSingle(pageSnapshot("Source"));
+    splitRootAtEdge("right", "main");
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "Escape", code: "Escape" }).event);
+    const selected = paneSel();
+    expect(selected?.kind).toBe("pane");
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "k", code: "KeyK", ctrlKey: true }).event);
+
+    expect(paneSel()).toBeNull();
+    expect(switcherOpen()).toBe(true);
+    // focus-follows-selection means the switcher acts on the selected pane
+    expect(focusedPaneId()).toBe((selected as { paneId: string }).paneId);
+    dispose();
+  });
+
+  it("typing on a pane-edge SEGMENT splits only that pane, not the root", () => {
+    resetPaneLayoutToSingle(pageSnapshot("Source"));
+    splitRootAtEdge("right", "main"); // row [main, extra]
+    focusPane("main");
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "Escape", code: "Escape" }).event);
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "ArrowUp", code: "ArrowUp" }).event);
+    expect(paneSel()).toEqual({ kind: "pane-edge", paneId: "main", side: "top" });
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "z", code: "KeyZ" }).event);
+
+    // root is still the row split; only its LEFT branch became a col split
+    const root = layoutRoot();
+    expect(root.kind).toBe("split");
+    if (root.kind === "split") {
+      expect(root.dir).toBe("row");
+      expect(root.children[0].kind).toBe("split");
+      if (root.children[0].kind === "split") expect(root.children[0].dir).toBe("col");
+      expect(root.children[1].kind).toBe("pane");
+    }
+    expect(layoutPaneIds()).toHaveLength(3);
+    expect(switcherOpen()).toBe(true);
     dispose();
   });
 

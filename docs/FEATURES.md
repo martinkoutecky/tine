@@ -270,16 +270,24 @@ within a column; merged cells are still v2+.
 - **Move-tab bindings:** `Mod+Alt+Shift+Left/Right/Up/Down` moves the active tab
   to the nearest pane in that direction. Moving the last page tab out closes the
   emptied pane; the journals feed keeps its last tab.
-- **Esc pane-select ladder:** once overlays/editing/block selection have peeled
-  away, `Esc` enters pane-select mode (also available as *Pane select mode* in
-  the command palette). While active, a hint pill shows at the bottom of the
-  window and the targeted pane is tinted — another `Esc` exits, so watch the
-  pill to know which side of the toggle you're on. Arrow keys step through
-  panes, seams, and outer edges; `Enter` on a pane returns to it; `Enter` on a
-  seam/edge makes a **mirror split** (same content side by side, no dialog);
-  **typing** on a seam/edge opens a split with the switcher pre-filled with
-  what you typed — the fast "open/create that page in a new split" (commands
-  are hidden there; only pages, page creation, and blocks).
+- **Esc pane-select ladder:** `Esc` climbs edit → block-select → pane-select
+  (also available as *Pane select mode* in the command palette). While active,
+  a hint pill shows at the bottom of the window and the targeted pane is
+  tinted — another `Esc` exits, so watch the pill to know which side of the
+  toggle you're on.
+- **Pane-select targets:** arrows step through panes, seams, **pane-edge
+  segments** (one pane's side on the window boundary), and whole-window edges
+  — only in the direction pressed (targets must overlap the current one, no
+  diagonal jumps). Selecting a pane also **focuses** it, so `Ctrl+K` opens a
+  page in the pane you see selected. On a pane: `Enter` enters it,
+  `Delete`/`Backspace` closes it. On a seam/segment/edge: `Enter` makes a
+  **mirror split** (same content side by side, no dialog); **typing** (or
+  `Ctrl+K`) opens the split with the switcher pre-filled with what you typed —
+  the fast "open/create that page in a new split" (commands are hidden there;
+  only pages, page creation, and blocks). A segment splits **just that pane**;
+  pressing outward again widens it to the whole-window edge, which splits the
+  entire layout — so "split only the left half horizontally" and "split the
+  whole screen" are both two keystrokes away.
 - **Open to the side:** `Ctrl+click` a page link, tag, or block reference to open
   it in another pane, creating a right split when needed. In the `Ctrl+K` switcher,
   `Alt+Enter` opens the highlighted page/create/block result in the other pane.
