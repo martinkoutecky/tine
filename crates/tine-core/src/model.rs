@@ -3337,6 +3337,32 @@ fn parse_page_entry(e: PageEntry) -> Option<(PageEntry, Document, String)> {
     Some((e, d, rev))
 }
 
+/// Compound asset extensions that a downstream matcher keys on AS A WHOLE (e.g.
+/// drawio's editable SVG, whose `.drawio.svg` suffix is what surfaces the
+/// "Edit in draw.io" affordance). De-dup must insert its `_N` counter BEFORE the
+/// whole suffix — `flow.drawio.svg` must collide to `flow_1.drawio.svg`, NOT
+/// `flow.drawio_1.svg` (a naive last-dot split), which would still end in `.svg`
+/// but no longer match `\.drawio\.svg$` and silently lose the editor button
+/// (GH #38). Longest match wins; case-insensitive.
+const COMPOUND_ASSET_EXTS: &[&str] = &[".drawio.svg", ".excalidraw.svg", ".excalidraw.png"];
+
+/// Split an asset filename into (stem, extension) for de-dup counter insertion,
+/// preserving known compound extensions (see `COMPOUND_ASSET_EXTS`). Falls back
+/// to a last-dot split for ordinary single extensions.
+fn split_asset_stem_ext(name: &str) -> (String, String) {
+    let lower = name.to_ascii_lowercase();
+    for ext in COMPOUND_ASSET_EXTS {
+        if lower.ends_with(ext) {
+            let cut = name.len() - ext.len();
+            return (name[..cut].to_string(), name[cut..].to_string());
+        }
+    }
+    match name.rsplit_once('.') {
+        Some((s, e)) => (s.to_string(), format!(".{e}")),
+        None => (name.to_string(), String::new()),
+    }
+}
+
 fn reserve_asset(assets: &Path, name: &str) -> io::Result<(String, fs::File)> {
     top_level_asset_name(name)?;
     let create_new = |n: &str| {
@@ -3350,10 +3376,7 @@ fn reserve_asset(assets: &Path, name: &str) -> io::Result<(String, fs::File)> {
         Err(e) if e.kind() != io::ErrorKind::AlreadyExists => return Err(e),
         _ => {}
     }
-    let (stem, ext) = match name.rsplit_once('.') {
-        Some((s, e)) => (s.to_string(), format!(".{e}")),
-        None => (name.to_string(), String::new()),
-    };
+    let (stem, ext) = split_asset_stem_ext(name);
     let mut i = 1;
     loop {
         let candidate = format!("{stem}_{i}{ext}");
@@ -3960,6 +3983,22 @@ mod tests {
         // Extensionless names work too.
         assert_eq!(reserve_asset(&dir, "NOTES").unwrap().0, "NOTES");
         assert_eq!(reserve_asset(&dir, "NOTES").unwrap().0, "NOTES_1");
+        // Compound extensions (drawio/excalidraw editable assets) survive de-dup:
+        // the counter goes BEFORE the whole `.drawio.svg` suffix so the collided
+        // name still matches the editor affordance (GH #38). A naive last-dot
+        // split would have produced `flow.drawio_1.svg`.
+        assert_eq!(reserve_asset(&dir, "flow.drawio.svg").unwrap().0, "flow.drawio.svg");
+        assert_eq!(reserve_asset(&dir, "flow.drawio.svg").unwrap().0, "flow_1.drawio.svg");
+        assert_eq!(reserve_asset(&dir, "flow.drawio.svg").unwrap().0, "flow_2.drawio.svg");
+        // Case-insensitive suffix match, and .excalidraw.png too.
+        assert_eq!(reserve_asset(&dir, "S.DRAWIO.SVG").unwrap().0, "S.DRAWIO.SVG");
+        assert_eq!(reserve_asset(&dir, "S.DRAWIO.SVG").unwrap().0, "S_1.DRAWIO.SVG");
+        assert_eq!(reserve_asset(&dir, "art.excalidraw.png").unwrap().0, "art.excalidraw.png");
+        assert_eq!(reserve_asset(&dir, "art.excalidraw.png").unwrap().0, "art_1.excalidraw.png");
+        // An ordinary double-dotted name (not a known compound) still splits on
+        // the last dot — `my.file.txt` → `my.file_1.txt`.
+        assert_eq!(reserve_asset(&dir, "my.file.txt").unwrap().0, "my.file.txt");
+        assert_eq!(reserve_asset(&dir, "my.file.txt").unwrap().0, "my.file_1.txt");
         // Every reserved name is a real, distinct file on disk.
         for n in [
             "paper.pdf",
@@ -3967,6 +4006,13 @@ mod tests {
             "paper_2.pdf",
             "NOTES",
             "NOTES_1",
+            "flow.drawio.svg",
+            "flow_1.drawio.svg",
+            "flow_2.drawio.svg",
+            "art.excalidraw.png",
+            "art_1.excalidraw.png",
+            "my.file.txt",
+            "my.file_1.txt",
         ] {
             assert!(dir.join(n).exists(), "{n} reserved");
         }
