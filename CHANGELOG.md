@@ -38,6 +38,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Pasting a screenshot now works on Windows** ([#43](https://github.com/martinkoutecky/tine/issues/43),
+  reported by @msjsc001). `Ctrl+V` of an image copied by a Windows screenshot
+  tool (e.g. PixPin) did nothing; Tine now reads the image straight from the
+  paste event on Windows and macOS (falling back to the OS clipboard on Linux),
+  so the screenshot lands in `assets/` and inserts into the block directly.
+
 - **The query builder's "⚙ advanced" pill no longer destroys the query.**
   Clicking it used to replace the simple query with a multi-line Datalog
   template that a `{{query}}` macro cannot even hold (macros are single-line
