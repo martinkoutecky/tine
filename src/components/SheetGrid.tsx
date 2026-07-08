@@ -88,10 +88,15 @@ function seamStyleFor(grid: HTMLElement, sel: SheetSel, matrix: { rows: number; 
     // Clamp into the visible content box: the outermost boundary seams would
     // otherwise land exactly on the overflow clip edge and paint nothing.
     const top = Math.max(0, Math.min(Math.round(y + grid.scrollTop - 1), grid.scrollHeight - 2));
+    // Clamp the cross axis too: a bar whose right edge rounds 1px past
+    // scrollWidth momentarily grows the content and flashes a scrollbar on the
+    // subgrid (its overflow is `auto`, unlike the top level's clipped y-axis).
+    const width = Math.round(rect.width);
+    const left = Math.max(0, Math.min(Math.round(rect.left - gridRect.left + grid.scrollLeft), Math.max(0, grid.scrollWidth - width)));
     return {
-      left: `${Math.round(rect.left - gridRect.left + grid.scrollLeft)}px`,
+      left: `${left}px`,
       top: `${top}px`,
-      width: `${Math.round(rect.width)}px`,
+      width: `${width}px`,
       height: "2px",
     };
   }
@@ -104,11 +109,13 @@ function seamStyleFor(grid: HTMLElement, sel: SheetSel, matrix: { rows: number; 
   const x = sel.at <= 0 ? rect.left - gridRect.left : sel.at >= matrix.cols ? rect.right - gridRect.left : rect.left - gridRect.left;
   // Same boundary clamp as row seams (right-edge seam vs the overflow clip).
   const left = Math.max(0, Math.min(Math.round(x + grid.scrollLeft - 1), grid.scrollWidth - 2));
+  const height = Math.round(rect.height);
+  const top = Math.max(0, Math.min(Math.round(rect.top - gridRect.top + grid.scrollTop), Math.max(0, grid.scrollHeight - height)));
   return {
     left: `${left}px`,
-    top: `${Math.round(rect.top - gridRect.top + grid.scrollTop)}px`,
+    top: `${top}px`,
     width: "2px",
-    height: `${Math.round(rect.height)}px`,
+    height: `${height}px`,
   };
 }
 
@@ -291,6 +298,11 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
 
   const onPointerDown = (e: PointerEvent) => {
     if (sheetGridIdFromEventTarget(e.target) !== props.id || isSheetPointerInteractive(e.target)) return;
+    // A click inside a nested outline (a cell shown in outline mode, or a cell's
+    // rendered children) belongs to that block's own click-to-edit handler. The
+    // parent grid must not begin a cell selection here — doing so preventDefaults
+    // the pointerdown and the nested block can never be clicked into edit.
+    if (e.target instanceof Element && e.target.closest(".sheet-nested-lines")) return;
     if (e.button !== 0 || e.ctrlKey || e.metaKey || e.altKey) return;
     const grid = e.currentTarget as HTMLDivElement;
     const hit = e.shiftKey ? null : hitRuling(grid, matrix(), e.clientX, e.clientY);

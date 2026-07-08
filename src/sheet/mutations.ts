@@ -16,7 +16,7 @@ import {
 } from "../store";
 import { copyRich } from "../clipboard";
 import { isSheetCellHidden, joinProps, splitProps } from "../editor/properties";
-import { parseOutline } from "../editor/outline";
+import { parseOutline, type OutlineNode } from "../editor/outline";
 import { visibleBody } from "../render/block";
 import { serializeColAggregates, serializeColWidths, sheetConfigFromRaw } from "./config";
 import type { AggregateFn } from "./aggregate";
@@ -287,6 +287,40 @@ export function deleteColumn(gridId: string, col: number): void {
     }
     writeColWidths(gridId, shiftedForDelete(colWidths(gridId), col));
     writeColAggregates(gridId, shiftedAggregates(colAggregates(gridId), (m) => shiftedForDelete(m, col)));
+  });
+}
+
+export function deleteRows(gridId: string, top: number, bottom: number): void {
+  const rows = gridRows(gridId);
+  const page = gridPage(gridId);
+  if (!rows || !page) return;
+  const lo = Math.max(0, Math.min(top, bottom));
+  const hi = Math.min(rows.length - 1, Math.max(top, bottom));
+  if (lo > hi) return;
+  // Delete high-to-low so the captured row-id snapshot stays valid, all under
+  // one undo unit.
+  withUndoUnit("sheet:delete-rows", [page], () => {
+    for (let r = hi; r >= lo; r--) if (rows[r]) deleteBlock(rows[r]);
+  });
+}
+
+export function deleteColumns(gridId: string, left: number, right: number): void {
+  const rows = gridRows(gridId);
+  const page = gridPage(gridId);
+  if (!rows || !page) return;
+  const cols = colCount(rows);
+  const lo = Math.max(0, Math.min(left, right));
+  const hi = Math.min(cols - 1, Math.max(left, right));
+  if (lo > hi) return;
+  withUndoUnit("sheet:delete-columns", [page], () => {
+    for (let c = hi; c >= lo; c--) {
+      for (const rowId of rows) {
+        const cellId = doc.byId[rowId]?.children[c];
+        if (cellId) deleteBlock(cellId);
+      }
+      writeColWidths(gridId, shiftedForDelete(colWidths(gridId), c));
+      writeColAggregates(gridId, shiftedAggregates(colAggregates(gridId), (m) => shiftedForDelete(m, c)));
+    }
   });
 }
 
@@ -594,6 +628,21 @@ function looksIndentedOutline(text: string): boolean {
     .filter((line) => line.trim() !== "")
     .map((line) => /^ */.exec(line)?.[0].length ?? 0);
   return indents.length > 1 && new Set(indents).size > 1;
+}
+
+// When the clipboard text is exactly what we last copied from a grid, hand back
+// an OutlineNode that reconstructs the copied cells as a `tine.view:: grid`
+// host — so a paste OUTSIDE the grid surface (in a plain block editor) can
+// rebuild an actual subgrid instead of dumping the TSV text. Returns null when
+// the clipboard isn't our structural copy (caller falls through to text paste).
+export function structuralSheetPasteNode(text: string): OutlineNode | null {
+  if (!lastSheetCopy || lastSheetCopy.fingerprint !== text) return null;
+  const rows = parseOutline(lastSheetCopy.outlineMd);
+  if (!rows.length) return null;
+  // A single copied cell pastes as plain text, not a 1×1 "subgrid".
+  const cellCount = rows.reduce((sum, row) => sum + row.children.length, 0);
+  if (cellCount <= 1) return null;
+  return { raw: "tine.view:: grid", children: rows };
 }
 
 export function pasteStructuralSheetSelection(

@@ -11,10 +11,13 @@ import { decodeNavIntent, navDirectionForKey, type NavDirection } from "../navPr
 import { buildMatrix, type MatrixCell, type SheetMatrix } from "./matrix";
 import type { SheetCellCtx } from "./context";
 import {
+  clearSheetSelection,
   copySheetSelection,
   cutSheetSelection,
   deleteColumn,
+  deleteColumns,
   deleteRow,
+  deleteRows,
   fillSheetSelection,
   insertColumn,
   insertRow,
@@ -539,8 +542,38 @@ function moveCellTab(sel: SheetSel, dir: 1 | -1): boolean {
   return true;
 }
 
+// Shift+arrow while a seam is selected starts a range from the boundary (the
+// nit "shift-select works from cells but not edges"). A perpendicular arrow
+// grabs the two cells the seam straddles, anchored on the far side (mirroring a
+// cell's shift-extend); an arrow along the seam resolves it to the cell on the
+// line and extends from there. setRangeOrCell clamps and collapses at edges.
+function extendFromSeam(sel: RowSeamSel | ColSeamSel, dir: CellDirection): boolean {
+  if (sel.kind === "row-seam") {
+    const col = sel.anchor.col;
+    if (dir === "up" || dir === "down") {
+      const above = { row: sel.at - 1, col };
+      const below = { row: sel.at, col };
+      return dir === "up"
+        ? setRangeOrCell(sel.gridId, below, above)
+        : setRangeOrCell(sel.gridId, above, below);
+    }
+    const row = sel.at;
+    return setRangeOrCell(sel.gridId, { row, col }, { row, col: col + (dir === "right" ? 1 : -1) });
+  }
+  const row = sel.anchor.row;
+  if (dir === "left" || dir === "right") {
+    const left = { row, col: sel.at - 1 };
+    const right = { row, col: sel.at };
+    return dir === "left"
+      ? setRangeOrCell(sel.gridId, right, left)
+      : setRangeOrCell(sel.gridId, left, right);
+  }
+  const col = sel.at;
+  return setRangeOrCell(sel.gridId, { row, col }, { row: row + (dir === "down" ? 1 : -1), col });
+}
+
 function extendCellRange(sel: SheetSel, dir: CellDirection): boolean {
-  if (isSeamSel(sel)) return true;
+  if (isSeamSel(sel)) return extendFromSeam(sel, dir);
   const anchor = sel.kind === "range" ? sel.anchor : { row: sel.row, col: sel.col };
   const cur = sel.kind === "range" ? sel.focus : { row: sel.row, col: sel.col };
   const wanted =
@@ -691,6 +724,41 @@ function nearestAfterColumnDelete(gridId: string, row: number, deletedCol: numbe
   };
 }
 
+function reselectAfterRemoval(gridId: string, row: number, col: number): void {
+  const next = clampCell(gridId, { row, col });
+  if (next) setCellSel(next);
+  else {
+    clearCellSelectionOnly();
+    selectBlock(gridId);
+  }
+}
+
+// Backspace/Delete on a cell selection. An explicit range that spans a full
+// axis (whole row(s) or column(s)) REMOVES that structure; anything else — a
+// lone cell (even in a 1×N grid, hence the range-only gate), or a partial
+// block — clears contents. Martin's rule: selection shape disambiguates, so
+// there's no separate "delete row" command to reach for.
+function removeCellsOrClear(sel: CellSel | RangeSel): boolean {
+  const bounds = boundsForGrid(sel.gridId);
+  if (bounds.rows <= 0 || bounds.cols <= 0) return false;
+  if (sel.kind === "range") {
+    const rect = rectForSheetSelection(sel);
+    const fullRows = rect.left === 0 && rect.right === bounds.cols - 1;
+    const fullCols = rect.top === 0 && rect.bottom === bounds.rows - 1;
+    if (fullRows) {
+      deleteRows(sel.gridId, rect.top, rect.bottom);
+      reselectAfterRemoval(sel.gridId, rect.top, 0);
+      return true;
+    }
+    if (fullCols) {
+      deleteColumns(sel.gridId, rect.left, rect.right);
+      reselectAfterRemoval(sel.gridId, 0, rect.left);
+      return true;
+    }
+  }
+  return clearSheetSelection(sel);
+}
+
 function deleteFromSeam(sel: RowSeamSel | ColSeamSel, side: "before" | "after"): boolean {
   if (sel.kind === "row-seam") {
     const row = side === "before" ? sel.at - 1 : sel.at;
@@ -791,7 +859,7 @@ export function handleCellSelectionKey(e: KeyboardEvent): boolean {
     case "step":
       return moveCellSelectionFrom(sel, intent.dir);
     case "remove":
-      return isSeamSel(sel) ? deleteFromSeam(sel, intent.side) : false;
+      return isSeamSel(sel) ? deleteFromSeam(sel, intent.side) : removeCellsOrClear(sel);
     case "activate":
       if (!isSeamSel(sel)) {
         const cell = focusCell(sel);

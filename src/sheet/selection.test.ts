@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { startEditing, endEdit } from "../editorController";
-import { isSelected, resetStore, selectBlock, setDoc, type FeedPage, type Node as StoreNode } from "../store";
+import { doc, isSelected, resetStore, selectBlock, setDoc, type FeedPage, type Node as StoreNode } from "../store";
 import { initParser } from "../render/parse";
 import {
   cellSel,
@@ -160,6 +160,76 @@ describe("cell selection state", () => {
 
     press("Escape");
     expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 0, col: 0 });
+  });
+
+  it("Shift+Arrow from a col-seam straddles the two cells it divides", () => {
+    loadGrid();
+    setCellSel(colSeamSel("grid", 1, 0)); // seam between col 0 and col 1, row 0
+
+    press("ArrowRight", { shiftKey: true });
+    expect(cellSel()).toEqual({
+      kind: "range",
+      gridId: "grid",
+      anchor: { row: 0, col: 0 },
+      focus: { row: 0, col: 1 },
+    });
+
+    setCellSel(colSeamSel("grid", 1, 0));
+    press("ArrowLeft", { shiftKey: true });
+    expect(cellSel()).toEqual({
+      kind: "range",
+      gridId: "grid",
+      anchor: { row: 0, col: 1 },
+      focus: { row: 0, col: 0 },
+    });
+  });
+
+  it("Shift+Arrow from a row-seam straddles perpendicular, extends along parallel", () => {
+    loadGrid();
+    setCellSel(rowSeamSel("grid", 1, 0)); // seam between row 0 and row 1, col 0
+
+    press("ArrowDown", { shiftKey: true });
+    expect(cellSel()).toEqual({
+      kind: "range",
+      gridId: "grid",
+      anchor: { row: 0, col: 0 },
+      focus: { row: 1, col: 0 },
+    });
+
+    setCellSel(rowSeamSel("grid", 1, 0));
+    press("ArrowRight", { shiftKey: true }); // parallel: resolve to the cell on the seam, extend along
+    expect(cellSel()).toEqual({
+      kind: "range",
+      gridId: "grid",
+      anchor: { row: 1, col: 0 },
+      focus: { row: 1, col: 1 },
+    });
+  });
+
+  it("Delete on full-row/full-col selection removes structure; on a partial selection clears contents", () => {
+    loadGrid(); // 2×2: A,B / C,D
+    // Full row (Shift+Space selects the whole row as a range) → Delete removes it.
+    setCellSel({ gridId: "grid", row: 0, col: 0 });
+    press(" ", { shiftKey: true });
+    press("Backspace");
+    expect(doc.byId.grid.children).toHaveLength(1);
+    expect(doc.byId[doc.byId.grid.children[0]].children.map((id) => doc.byId[id].raw)).toEqual(["C", "D"]);
+
+    loadGrid();
+    // Full column (Ctrl+Space) → Delete removes it.
+    setCellSel({ gridId: "grid", row: 0, col: 0 });
+    press(" ", { ctrlKey: true });
+    press("Delete");
+    expect(doc.byId[doc.byId.grid.children[0]].children.map((id) => doc.byId[id].raw)).toEqual(["B"]);
+    expect(doc.byId[doc.byId.grid.children[1]].children.map((id) => doc.byId[id].raw)).toEqual(["D"]);
+
+    loadGrid();
+    // A lone cell clears contents, never removes structure.
+    setCellSel({ gridId: "grid", row: 0, col: 0 });
+    press("Backspace");
+    expect(doc.byId.grid.children).toHaveLength(2);
+    expect(doc.byId.c1.raw).toBe("");
+    expect(doc.byId.c2.raw).toBe("B");
   });
 
   it("mouse range helpers use the same range anchor/focus model as Shift+Arrow", () => {

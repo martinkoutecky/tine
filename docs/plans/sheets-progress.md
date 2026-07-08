@@ -669,6 +669,44 @@ Assessment (no new reasons against; the picture IMPROVED in rounds 1–4):
   outside the engine and the canvas face stays cleanly cards-only.
   Queued as Round 6, after split view.
 
+## Grid nits batch (Martin, Jul 8) [SHIPPED]
+
+Five field nits on the sheet grid, all fixed + verified:
+
+1. **Seam-select spawned a scrollbar** on a subgrid that fits. The 2px seam
+   bar rounded 1px past the content box; a nested subgrid is `overflow:auto`
+   (unlike the clipped top level) so it flashed a scrollbar. Fixed by clamping
+   the bar's cross axis so `pos+size ≤ scroll{Width,Height}`
+   (`seamStyleFor`, SheetGrid.tsx).
+2. **Shift-select didn't work from a seam** (only from cells). `extendFromSeam`:
+   a perpendicular shift+arrow straddles the two cells the seam divides
+   (anchored on the far side, mirroring a cell's extend); a parallel one
+   resolves to the cell on the line and extends along.
+3. **Outline-mode cells weren't clickable into edit.** The parent grid's
+   `onPointerDown` claimed the click and preventDefaulted it, so the nested
+   block's own mousedown edit-entry never fired. Fixed with a guard: bail when
+   the target is inside `.sheet-nested-lines`. (Confirmed real via a stale-vs-
+   fresh binary A/B: stale reproduced "months selected, no editor", fresh edits.)
+4. **No keyboard row/col removal or content clear.** `remove` now: an explicit
+   range spanning a full axis (whole rows/cols) → `deleteRows`/`deleteColumns`
+   (one undo unit); anything else — a lone cell, a partial block → clear
+   contents (`clearSheetSelection`). Selection SHAPE disambiguates (Martin's
+   rule); a lone cell never deletes structure (range-only gate, so a 1×N grid's
+   single cell still just clears).
+5. **Copy cells → paste in a block editor only pasted text.** `structuralSheet`
+   `PasteNode` hands the block editor a `tine.view:: grid` OutlineNode rebuilt
+   from the same in-memory structural copy, so a paste inside a block
+   reconstructs an actual subgrid (single-cell copies stay plain text).
+
+Verified: tsc; 668 node + 271 render vitest (5 new, necessity-toggled);
+`probe-sheet-nits.mjs` 6/6 + `e2e-sheets` 50/50 on the real binary.
+**E2E-harness lesson:** two spurious "regression" scares this session were
+both environmental — a lingering WebKitWebDriver holding port 4445, and the
+app reopening a probe's persisted `tine.graphPath` instead of `TINE_GRAPH`
+(so edits/asserts hit the wrong graph). Kill stale drivers + isolate graph
+state between probe runs; a clean HEAD binary reproduced the "failures"
+identically, which is what exonerated the diff.
+
 ## Working notes
 
 - **Deploys (Martin, Jul 7): Sheets builds go to `~/research/tine-sheets`**;

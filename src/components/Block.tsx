@@ -35,6 +35,7 @@ import {
   nextVisibleOrExtend,
   insertEmptyChildBlock,
   insertOutlineAfter,
+  insertOutlineChildren,
   deleteBlock,
   moveBlock,
   moveBlockFeed,
@@ -116,7 +117,7 @@ import { registerFocusedEditorCommandBridge, type MobileEditorCommandId } from "
 import { isRecordingAudio, setRecordingAudio, base64ToBytes } from "../mediaCapture";
 import { sheetConfig } from "../sheet/config";
 import { SheetCellContext } from "../sheet/context";
-import { appendSheetCellChild } from "../sheet/mutations";
+import { appendSheetCellChild, structuralSheetPasteNode } from "../sheet/mutations";
 import { cellBlockId, cellOwner, selectCellAfterEdit, moveCellAfterEdit, selectTopRowSeamAfterEdit } from "../sheet/selection";
 import { forbidsEditEntry } from "../editor/editTargets";
 import { SheetGrid } from "./SheetGrid";
@@ -2199,6 +2200,17 @@ export function Editor(props: { id: string }): JSX.Element {
   // for an image-only clipboard there is no text to paste.
   const onPaste = (e: ClipboardEvent) => {
     const text = e.clipboardData?.getData("text/plain") ?? "";
+    // A structural sheet copy (multiple grid cells) pasted into a block editor
+    // rebuilds an actual subgrid nested here, rather than dumping the flat TSV
+    // text (Martin's nit). Only fires when the clipboard is exactly our own
+    // sheet copy; anything else falls through to normal paste.
+    const sheetGridNode = structuralSheetPasteNode(text);
+    if (sheetGridNode) {
+      e.preventDefault();
+      commit(ref.value);
+      insertOutlineChildren(props.id, [sheetGridNode]);
+      return;
+    }
     // Multiline text pastes as a block outline (Logseq behavior).
     if (text.includes("\n")) {
       e.preventDefault();

@@ -26,6 +26,9 @@ import {
   pasteStructuralSheetSelection,
   pasteTextIntoSheetSelection,
   sheetSelectionText,
+  structuralSheetPasteNode,
+  deleteRows,
+  deleteColumns,
 } from "./mutations";
 import { parseDelimitedText } from "./tsv";
 
@@ -290,6 +293,43 @@ describe("sheet structural mutations", () => {
     expect(doc.byId[pr2].raw).toBe("");
     expect(doc.byId[pr2].children.map((id) => doc.byId[id].raw)).toEqual(["C", ""]);
 
+    undo();
+    expect(pageToDto("Sheet")).toEqual(before);
+  });
+
+  it("hands back a subgrid node for its own multi-cell copy, but not for other text or a single cell", async () => {
+    loadStructuralPasteDoc();
+    const sel = { kind: "range", gridId: "src", anchor: { row: 0, col: 0 }, focus: { row: 1, col: 1 } } as const;
+    const { text } = sheetSelectionText(sel);
+    await copySheetSelection(sel);
+
+    const node = structuralSheetPasteNode(text);
+    expect(node).not.toBeNull();
+    expect(node!.raw).toBe("tine.view:: grid");
+    expect(node!.children).toHaveLength(2); // one node per copied row
+    expect(node!.children[0].children.map((c) => c.raw.split("\n")[0])).toEqual(["A", "B"]);
+
+    // Not our clipboard → caller falls through to normal text paste.
+    expect(structuralSheetPasteNode("unrelated\ttext")).toBeNull();
+
+    // A single copied cell pastes as plain text, never a 1×1 "subgrid".
+    const one = { kind: "cell", gridId: "src", row: 0, col: 0 } as const;
+    const { text: oneText } = sheetSelectionText(one);
+    await copySheetSelection(one);
+    expect(structuralSheetPasteNode(oneText)).toBeNull();
+  });
+
+  it("deleteRows / deleteColumns remove full lines in one undo unit", () => {
+    const gridId = loadGrid(); // rows: [A,B,C], [D], []
+    const before = pageToDto("Sheet");
+    deleteRows(gridId, 0, 0);
+    expect(doc.byId[gridId].children).toHaveLength(2);
+    undo();
+    expect(pageToDto("Sheet")).toEqual(before);
+
+    deleteColumns(gridId, 0, 0);
+    // first row loses its first cell; row that had one cell is now empty
+    expect(doc.byId[doc.byId[gridId].children[0]].children.map((id) => doc.byId[id].raw)).toEqual(["B", "C"]);
     undo();
     expect(pageToDto("Sheet")).toEqual(before);
   });
