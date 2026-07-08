@@ -491,7 +491,16 @@ date cell (needs `setSchedule` time support).
 Martin's v1 UX nits are PARKED (his list, not yet captured) — batch later,
 don't interleave.
 
-## Round 5 — split view (Martin, Jul 8) [IN PROGRESS — spec written, S1 dispatched]
+## Round 5 — split view (Martin, Jul 8) [IN PROGRESS — S1 SHIPPED `d57411e`, S2 dispatched]
+
+**S1 (pane-router extraction) shipped Jul 8:** zero-behavior refactor, all
+gates + e2e 50/50 + two real-app probes green (capture-phase pointerdown
+precedes middle-click handling — the shim-design assumption — and the shim
+path opens background tabs correctly); binary deployed. Three S2 landmines
+found in verification and folded into the S2 spec
+(`subagent-tasks/split-s2-two-panes.md`): per-instance session clobber,
+`zoomedBlock()` via focused-pane shim, per-instance mobile popstate bridge.
+Open-target rulings (Martin's three usability questions) = spec §3a.
 
 **GO confirmed by Martin ("Ok - go for the split screen"). Spec =
 `docs/split-view-spec.md` (phases S1–S4); architecture facts =
