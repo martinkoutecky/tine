@@ -7,6 +7,7 @@ import {
   registerModeResetListener,
   registerOutlineSelectionListener,
 } from "../modeHooks";
+import { decodeNavIntent, navDirectionForKey, type NavDirection } from "../navProtocol";
 import { buildMatrix, type MatrixCell, type SheetMatrix } from "./matrix";
 import type { SheetCellCtx } from "./context";
 import {
@@ -399,7 +400,8 @@ export function selectCellAfterEdit(sel: SheetCellCtx): void {
   setCellSel(sel);
 }
 
-type CellDirection = "up" | "down" | "left" | "right";
+// The direction vocabulary IS the shared nav protocol's (ADR 0034).
+type CellDirection = NavDirection;
 
 function flowOutVertical(sel: { gridId: string }, dir: "up" | "down"): boolean {
   clearCellSelectionOnly();
@@ -634,11 +636,6 @@ function overtypeCellSelection(sel: CellSel | RangeSel, text: string): boolean {
   return overtypeCell(focusCell(sel), text);
 }
 
-function printableKey(e: KeyboardEvent): string | null {
-  if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return null;
-  return e.key.length === 1 ? e.key : null;
-}
-
 function pageForGrid(gridId: string): string | null {
   return doc.byId[gridId]?.page ?? null;
 }
@@ -741,35 +738,17 @@ export function handleCellSelectionKey(e: KeyboardEvent): boolean {
   if (!sel) return false;
   const mod = e.ctrlKey || e.metaKey;
   const key = e.key.toLowerCase();
-  const plain = !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey;
-  const arrowDir = e.key === "ArrowUp" ? "up"
-    : e.key === "ArrowDown" ? "down"
-    : e.key === "ArrowLeft" ? "left"
-    : e.key === "ArrowRight" ? "right"
-    : null;
+  const arrowDir = navDirectionForKey(e.key);
 
-  if (!mod && !e.altKey && e.key === "Escape") {
-    if (isRangeSel(sel)) {
-      setCellSel({ kind: "cell", gridId: sel.gridId, row: sel.anchor.row, col: sel.anchor.col });
-      return true;
-    }
-    const outer = enclosingCellForGrid(sel.gridId);
-    if (outer) {
-      setCellSel(outer);
-      return true;
-    }
-    clearCellSelectionOnly();
-    selectBlock(sel.gridId);
-    return true;
-  }
-  if (!mod && !e.altKey && e.shiftKey && arrowDir) return extendCellRange(sel, arrowDir);
+  // Sheet-specific chords first — mod/alt combos and Tab are surface commands,
+  // not navigation (the shared decoder declines them; ADR 0034).
   if (!mod && !e.altKey && e.shiftKey && (e.key === " " || e.code === "Space")) return selectRows(sel);
   if (mod && !e.altKey && !e.shiftKey && (e.key === " " || e.code === "Space")) return selectColumns(sel);
   if (mod && !e.altKey && !e.shiftKey && key === "a") return selectAllGrid(sel.gridId);
   if (mod && !e.altKey && !e.shiftKey && arrowDir && !isSeamSel(sel)) {
     const cell = focusCell(sel);
     const adapter = adapterFor(cell.gridId);
-    if (adapter?.moveWithMod) return adapter.moveWithMod(cell, arrowDir as CellDirection);
+    if (adapter?.moveWithMod) return adapter.moveWithMod(cell, arrowDir);
     const next = moveSheetSelection(sel, arrowDir as SheetMoveDirection);
     if (next) setCellSel(next);
     return true;
@@ -784,28 +763,45 @@ export function handleCellSelectionKey(e: KeyboardEvent): boolean {
     cutSheetSelection(sel);
     return true;
   }
-  if (plain && e.key === "ArrowUp") return moveCellSelectionFrom(sel, "up");
-  if (plain && e.key === "ArrowDown") return moveCellSelectionFrom(sel, "down");
-  if (plain && e.key === "ArrowLeft") return moveCellSelectionFrom(sel, "left");
-  if (plain && e.key === "ArrowRight") return moveCellSelectionFrom(sel, "right");
-  if (plain && isSeamSel(sel) && e.key === "Backspace") return deleteFromSeam(sel, "before");
-  if (plain && isSeamSel(sel) && e.key === "Delete") return deleteFromSeam(sel, "after");
-  if (plain && (e.key === "Enter" || e.key === "F2")) {
-    if (!isSeamSel(sel)) {
-      const cell = focusCell(sel);
-      const adapter = adapterFor(cell.gridId);
-      if (!adapter?.activate?.(cell)) startCellEditing(cell);
-    }
-    else editInsertedFromSeam(sel, null);
-    return true;
-  }
   if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key === "Tab" || e.code === "Tab")) {
     return moveCellTab(sel, e.shiftKey ? -1 : 1);
   }
 
-  const ch = printableKey(e);
-  if (ch) return isSeamSel(sel) ? editInsertedFromSeam(sel, ch) : overtypeCellSelection(sel, ch);
-  return false;
+  const intent = decodeNavIntent(e, { acceptF2: true });
+  if (!intent) return false;
+  switch (intent.kind) {
+    case "dismiss": {
+      // Down one rung: range → its anchor cell → the enclosing cell (hosted
+      // subgrid ascent) → the grid's outline block.
+      if (isRangeSel(sel)) {
+        setCellSel({ kind: "cell", gridId: sel.gridId, row: sel.anchor.row, col: sel.anchor.col });
+        return true;
+      }
+      const outer = enclosingCellForGrid(sel.gridId);
+      if (outer) {
+        setCellSel(outer);
+        return true;
+      }
+      clearCellSelectionOnly();
+      selectBlock(sel.gridId);
+      return true;
+    }
+    case "extend":
+      return extendCellRange(sel, intent.dir);
+    case "step":
+      return moveCellSelectionFrom(sel, intent.dir);
+    case "remove":
+      return isSeamSel(sel) ? deleteFromSeam(sel, intent.side) : false;
+    case "activate":
+      if (!isSeamSel(sel)) {
+        const cell = focusCell(sel);
+        const adapter = adapterFor(cell.gridId);
+        if (!adapter?.activate?.(cell)) startCellEditing(cell);
+      } else editInsertedFromSeam(sel, null);
+      return true;
+    case "overtype":
+      return isSeamSel(sel) ? editInsertedFromSeam(sel, intent.char) : overtypeCellSelection(sel, intent.char);
+  }
 }
 
 registerOutlineSelectionListener(() => clearCellSelectionOnly());

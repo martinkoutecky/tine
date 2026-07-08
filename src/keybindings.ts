@@ -71,6 +71,7 @@ import { startEditing } from "./editorController";
 import { copyOutline } from "./clipboard";
 import { closeInPageFind, inPageFindOpen, openInPageFind } from "./inpageFind";
 import { cellSel, enterGridSelection, handleCellSelectionKey, handleSheetPasteEvent } from "./sheet/selection";
+import { decodeNavIntent } from "./navProtocol";
 import {
   closePane,
   focusPane,
@@ -170,51 +171,16 @@ function materializePaneSelection(prefill: string | null) {
   else openSwitcher({ mode: "embryo", paneId, prefill });
 }
 
-function directionForKey(key: string): PaneDirection | null {
-  switch (key) {
-    case "ArrowLeft": return "left";
-    case "ArrowRight": return "right";
-    case "ArrowUp": return "up";
-    case "ArrowDown": return "down";
-    default: return null;
-  }
-}
-
-function isPrintableKey(e: KeyboardEvent): boolean {
-  return e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey;
-}
-
-function handlePaneSelectKey(e: KeyboardEvent): boolean {
+// Exported for src/navModel.contract.test.ts — the shared nav-model invariants
+// (ADR 0034) drive this handler and the sheet's handleCellSelectionKey with the
+// same key sequences.
+export function handlePaneSelectKey(e: KeyboardEvent): boolean {
   const target = paneSel();
   if (!target) return false;
-  const dir = directionForKey(e.key);
-  if (dir && !e.ctrlKey && !e.metaKey && !e.altKey) {
-    const next = movePaneSelection(layoutRoot(), dir);
-    // Focus follows pane selection: Ctrl+K (and every focused-pane command)
-    // acts on the pane you SEE selected, not a stale earlier focus.
-    if (next.kind === "pane") focusPane(next.paneId);
-    return true;
-  }
-  if (e.key === "Escape") {
-    exitPaneSelect();
-    return true;
-  }
-  if (e.key === "Enter") {
-    if (target.kind === "pane") {
-      exitPaneSelect();
-      focusPane(target.paneId);
-    } else {
-      materializePaneSelection(null); // Enter on a seam/edge = mirror split
-    }
-    return true;
-  }
-  if ((e.key === "Delete" || e.key === "Backspace") && target.kind === "pane") {
-    if (closePane(target.paneId)) enterPaneSelect(focusedPaneId()); // stay in the mode on the survivor
-    return true;
-  }
   // Ctrl+K on a seam/edge = split with an empty embryo switcher (same gesture
   // as typing, for people who reach for Ctrl+K by reflex). On a pane target it
   // falls through to the global handler, which now acts on the selected pane.
+  // A mod-chord, so it is a surface command, not nav — handled before decoding.
   if (matchesCommand(e, "go/search")) {
     if (target.kind !== "pane") {
       materializePaneSelection("");
@@ -223,11 +189,38 @@ function handlePaneSelectKey(e: KeyboardEvent): boolean {
     exitPaneSelect(); // switcher takes over; a lingering ring would lie
     return false;
   }
-  if (isPrintableKey(e)) {
-    if (target.kind !== "pane") materializePaneSelection(e.key);
-    return true;
+  const intent = decodeNavIntent(e);
+  if (!intent) return false;
+  switch (intent.kind) {
+    // Span extension (tree-aligned widening rungs) is backlogged; until it
+    // exists, shift+arrow steps like a plain arrow rather than going dead.
+    case "extend":
+    case "step": {
+      const next = movePaneSelection(layoutRoot(), intent.dir);
+      // Focus follows pane selection: Ctrl+K (and every focused-pane command)
+      // acts on the pane you SEE selected, not a stale earlier focus.
+      if (next.kind === "pane") focusPane(next.paneId);
+      return true;
+    }
+    case "dismiss":
+      exitPaneSelect();
+      return true;
+    case "activate":
+      if (target.kind === "pane") {
+        exitPaneSelect();
+        focusPane(target.paneId);
+      } else {
+        materializePaneSelection(null); // Enter on a seam/edge = mirror split
+      }
+      return true;
+    case "remove":
+      if (target.kind !== "pane") return false;
+      if (closePane(target.paneId)) enterPaneSelect(focusedPaneId()); // stay in the mode on the survivor
+      return true;
+    case "overtype":
+      if (target.kind !== "pane") materializePaneSelection(intent.char);
+      return true; // swallow stray typing even on a pane target
   }
-  return false;
 }
 
 function anyOverlayOpen(): boolean {

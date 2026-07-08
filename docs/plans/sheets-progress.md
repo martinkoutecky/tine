@@ -574,6 +574,23 @@ contiguous spans are splittable iff a subtree spans exactly those panes
 intermediate widening rungs (BACKLOG "Later"), non-aligned = no well-defined
 split, unsupported by design. probe-3col now 7/7 (lateral step added).
 
+**Follow-up 4 (his "is grid nav the same codebase?" question, ADR 0034):**
+one nav model, two steppers, one contract. Both surfaces now decode nav keys
+through `src/navProtocol.ts` (step/extend/activate/remove/overtype/dismiss;
+mod-chords never nav; PaneDirection/CellDirection = aliases of NavDirection).
+Steppers deliberately stay separate (sheet = logical lattice, panes =
+geometric tiling — forcing either through the other's substrate is a
+downgrade). `src/navModel.contract.test.ts` drives BOTH key handlers with the
+same key sequences in an equivalent 1×2 world and pins the shared invariants
+(boundary-first stepping, lateral slide to the NEIGHBOR's boundary,
+materialize-on-Enter, create-and-type, Escape descent). Teeth proven the hard
+way: the first "slides along" assertion (kind+key) passed with lateral
+DISABLED (generic stepping happened to hit the global edge), and so did the
+orientation-strengthened version — only the boundary-OWNER check (must land
+on the neighbor region's boundary) caught the break, failing named "split
+view" while sheets passed. Divergences documented in the ADR as intentional
+(shift-extend, remove semantics, widening ladder, F2).
+
 **S4 (Jul 8): pointer tab drag** (drop on strip = reorder/adopt, pane body
 = move, seam/edge = split+move, Esc cancels; last HTML5-DnD site deleted),
 **pane-scoped Ctrl+F**, docs (CHANGELOG/README/FEATURES/BACKLOG).

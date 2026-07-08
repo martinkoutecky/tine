@@ -1,5 +1,6 @@
 import { createSignal } from "solid-js";
 import type { LayoutNode } from "./panes";
+import type { NavDirection } from "./navProtocol";
 
 export type PaneEdgeSide = "left" | "right" | "top" | "bottom";
 
@@ -12,7 +13,9 @@ export type PaneTarget =
   // The whole-window edge: splitting it splits the root layout.
   | { kind: "edge"; side: PaneEdgeSide };
 
-export type PaneDirection = "left" | "right" | "up" | "down";
+// The direction vocabulary IS the shared nav protocol's (ADR 0034): pane-select
+// and sheet cell selection speak the same spatial language by construction.
+export type PaneDirection = NavDirection;
 
 export interface PaneRect {
   paneId: string;
