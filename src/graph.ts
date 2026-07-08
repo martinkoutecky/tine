@@ -6,6 +6,7 @@ import { setGraphMeta, setWorkflow, bumpGraphEpoch, setRightSidebar, graphMeta, 
 import { resetStore, flushAll } from "./store";
 import { clearAssetBlobCache } from "./assetCache";
 import { resetTabsToJournals, openPage } from "./router";
+import { resetPaneLayoutToSingle } from "./panes";
 import { journalTitle, setJournalTitleFormat } from "./journal";
 import { applyTemplateVars } from "./editor/templateVars";
 import { waitForWarmCache } from "./warmCache";
@@ -77,8 +78,10 @@ export async function loadGraphPath(path: string): Promise<void> {
   // Journals tab. On the initial startup load of the same graph, `restoreSession()`
   // has already set up the tabs and focused one — leave that untouched, else a
   // restored pinned page tab would revert to Journals after every relaunch.
-  // TODO(S2): explicit pane handle / pane iteration for graph switches.
-  if (switching) resetTabsToJournals();
+  if (switching) {
+    resetTabsToJournals();
+    resetPaneLayoutToSingle();
+  }
 }
 
 /** Load the graph's alias:: index so link/navigation can resolve aliases.
@@ -221,7 +224,6 @@ export async function createNewGraph(): Promise<void> {
   }
   await loadGraphPath(root);
   await seedTodayJournal();
-  // TODO(S2): explicit pane handle for the newly-created graph landing page.
   openPage("Welcome to Tine", "page"); // land on the tour, not the empty journal feed
 }
 

@@ -9,6 +9,7 @@
 import { createStore, produce, unwrap } from "solid-js/store";
 import { createSignal, createMemo, createRoot } from "solid-js";
 import type { BlockDto, Format, PageDto, PageKind } from "./types";
+import type { Route } from "./router";
 import { parseOutline, type OutlineNode } from "./editor/outline";
 import type { ExportNode } from "./editor/exportText";
 import { backend } from "./backend";
@@ -350,8 +351,15 @@ export async function deletePage(name: string, kind: PageKind): Promise<boolean>
 // open in the right sidebar, the page being edited, and any page with unsaved
 // edits are all kept (evicting a dirty page would lose those edits).
 const WORKING_SET_CAP = 80;
+let paneRouteProvider: () => Route[] = () => [];
+export function registerPaneRouteProvider(provider: () => Route[]) {
+  paneRouteProvider = provider;
+}
 function pinnedPages(): Set<string> {
   const pin = new Set<string>(doc.feed);
+  for (const r of paneRouteProvider()) {
+    if (r.kind === "page") pin.add(r.name);
+  }
   for (const it of rightSidebar()) pin.add(it.kind === "page" ? it.name : it.page);
   for (const name of dirtyPages()) pin.add(name);
   // Conflicted pages hold unsaved edits that aren't in `dirty` (the save batch
@@ -457,20 +465,20 @@ export function reloadDisposition(name: string): ReloadDisposition {
 }
 
 /** Load a single page and make it the main view. */
-export function loadSingle(dto: PageDto) {
+export function loadSingle(dto: PageDto, opts: { endEdit?: boolean } = {}) {
   upsertUnlessDirty(dto);
   setDoc("feed", [dto.name]);
   setDoc("loaded", true);
-  endEdit("page-navigation");
+  if (opts.endEdit !== false) endEdit("page-navigation");
   evictIfNeeded();
 }
 
 /** Load the journals feed as the main view. */
-export function loadFeed(dtos: PageDto[]) {
+export function loadFeed(dtos: PageDto[], opts: { endEdit?: boolean } = {}) {
   for (const d of dtos) upsertUnlessDirty(d);
   setDoc("feed", dtos.map((d) => d.name));
   setDoc("loaded", true);
-  endEdit("page-navigation");
+  if (opts.endEdit !== false) endEdit("page-navigation");
   evictIfNeeded();
 }
 
@@ -2099,7 +2107,7 @@ function canMoveItem(id: string, dir: 1 | -1): boolean {
 // calendar — non-displayed days like an uncreated 16th are skipped). Page.tsx
 // registers a loader so a down-move past the last loaded day pulls in more.
 let feedExtender: (() => Promise<boolean>) | null = null;
-export function setFeedExtender(fn: () => Promise<boolean>): void {
+export function setFeedExtender(fn: (() => Promise<boolean>) | null): void {
   feedExtender = fn;
 }
 

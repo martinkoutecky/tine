@@ -16,7 +16,8 @@ import {
   openFormulaEditor,
   type ContextMenuAction,
 } from "../ui";
-import { openPage, openPageInNewTab, openPageAtBlock, openJournals, route } from "../router";
+import { openPage, openPageInNewTab, openPageAtBlock } from "../router";
+import { closePane, layoutPaneIds, paneRouter } from "../panes";
 import { refreshAfterRename } from "../graph";
 import { backend } from "../backend";
 import { carryDay } from "../carry";
@@ -569,16 +570,17 @@ function PageMenu(props: {
           pushToast("Delete failed", "error");
           return;
         }
-        // TODO(S2): explicit pane handle; every pane showing this page must fall back.
-        const r = route();
-        // Deleted the page you're viewing → fall back to journals in place (the
-        // page is gone; don't open a new tab even on a pinned tab). Landing on the
-        // feed re-runs withToday, so a deleted today comes back empty.
-        if (r.kind === "page" && r.name === name) openJournals({ inPlace: true });
+        for (const paneId of layoutPaneIds()) {
+          const router = paneRouter(paneId);
+          const r = router.route();
+          if (r.kind !== "page" || r.name !== name) continue;
+          if (router.canGoBack()) router.goBack();
+          else if (!closePane(paneId)) router.openJournals({ inPlace: true });
+        }
         // Deleted a day IN the journals feed (in place, no navigation) → the feed
         // loader's withToday didn't re-run, so restore today's empty placeholder
         // here if it was the one deleted (#17). No-op for an older day.
-        else if (r.kind === "journals" && kind === "journal") restoreTodayJournalInFeed();
+        if (kind === "journal") restoreTodayJournalInFeed();
         pushToast(`Deleted “${name}”`, "success");
       })
       .catch(() => pushToast("Delete failed", "error"));

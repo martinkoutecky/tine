@@ -3,6 +3,7 @@ import { backend } from "../backend";
 import { switcherOpen, closeSwitcher, switcherMode, recentPages } from "../ui";
 import { openPage, openPageAtBlock, openPageInNewTab, openFile, openInNewTab, route } from "../router";
 import { paletteCommands } from "../keybindings";
+import { openRouteInOtherPane } from "../panes";
 import { fuzzyScore } from "../editor/autocomplete";
 import { visibleBody } from "../render/block";
 import { EmojiText } from "../render/emoji";
@@ -215,6 +216,25 @@ export function QuickSwitcher(): JSX.Element {
     closeSwitcher();
   };
 
+  const chooseOther = async (it: Item) => {
+    switch (it.t) {
+      case "page":
+        openRouteInOtherPane({ kind: "page", name: it.name, pageKind: it.pageKind, path: it.path });
+        break;
+      case "create":
+        await createPageFile(it.name);
+        openRouteInOtherPane({ kind: "page", name: it.name, pageKind: "page" });
+        break;
+      case "command":
+        it.run();
+        break;
+      case "block":
+        openRouteInOtherPane({ kind: "page", name: it.page, pageKind: it.pageKind, block: it.blockId });
+        break;
+    }
+    closeSwitcher();
+  };
+
   // Middle-click: open in a background tab and KEEP the switcher open, so you can
   // fan several results out without re-searching. A block opens zoomed into
   // itself (self-contained and durable — the tab shows exactly what you found);
@@ -227,7 +247,7 @@ export function QuickSwitcher(): JSX.Element {
     else if (it.t === "block") openPageInNewTab(it.page, it.pageKind, it.blockId);
   };
 
-  const createPage = async (name: string) => {
+  const createPageFile = async (name: string) => {
     try {
       await backend().savePage(
         { name, kind: "page", title: name, pre_block: null, blocks: [{ id: "", raw: "", collapsed: false, children: [] }] },
@@ -237,6 +257,10 @@ export function QuickSwitcher(): JSX.Element {
     } catch {
       // ignore — still navigate; the page will be created on first edit
     }
+  };
+
+  const createPage = async (name: string) => {
+    await createPageFile(name);
     openPage(name, "page");
   };
 
@@ -256,7 +280,10 @@ export function QuickSwitcher(): JSX.Element {
     } else if (e.key === "Enter") {
       e.preventDefault();
       const it = flat()[sel()];
-      if (it) choose(it);
+      if (it) {
+        if (e.altKey) void chooseOther(it);
+        else choose(it);
+      }
     } else if (e.key === "Escape") {
       e.preventDefault();
       closeSwitcher();

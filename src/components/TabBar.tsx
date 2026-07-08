@@ -51,14 +51,18 @@ function tabTitle(r: Route): string {
 // persist/restoreSession). Always shown — even a single tab is rendered, so the
 // pill signals that tabs exist (a feature OG Logseq lacks) without costing
 // extra vertical space.
-export function TabBar(props: { router: PaneRouter }): JSX.Element {
+export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneStrip?: boolean; focused?: boolean }): JSX.Element {
   let dragId: string | null = null;
   const router = props.router;
 
   return (
     // The tab strip fills the toolbar's middle, so its empty space is the main
     // window-drag handle (the tabs, being children, still click/drag-to-reorder).
-    <div class="tab-bar" data-tauri-drag-region>
+    <div
+      class="tab-bar"
+      classList={{ "pane-tab-bar": !!props.paneStrip, "pane-tab-focused": !!props.focused }}
+      data-tauri-drag-region={props.dragRegion === false ? undefined : ""}
+    >
       <For each={router.tabs()}>
         {(t) => (
           <div

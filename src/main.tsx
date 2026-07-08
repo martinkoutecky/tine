@@ -1,5 +1,6 @@
 import { render } from "solid-js/web";
 import { App } from "./App";
+import "./session";
 import { restoreSession } from "./router";
 import { initParser } from "./render/parse";
 import { applyTheme, applyAccent } from "./ui";

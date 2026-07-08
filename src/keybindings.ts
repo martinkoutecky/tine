@@ -60,6 +60,7 @@ import { startEditing } from "./editorController";
 import { copyOutline } from "./clipboard";
 import { closeInPageFind, inPageFindOpen, openInPageFind } from "./inpageFind";
 import { cellSel, enterGridSelection, handleCellSelectionKey, handleSheetPasteEvent } from "./sheet/selection";
+import { closePane, focusedPaneId, splitPane } from "./panes";
 
 interface Chord {
   mod: boolean;
@@ -118,6 +119,9 @@ const COMMANDS: CommandDef[] = [
   // macOS). mod-chords, so they fire mid-edit; remappable like everything here.
   { id: "tab/next", binding: "mod+pagedown", label: "Next tab", scope: "global", run: activateNextTab, global: true },
   { id: "tab/previous", binding: "mod+pageup", label: "Previous tab", scope: "global", run: activatePrevTab, global: true },
+  { id: "pane/split-right", binding: "mod+alt+\\", label: "Split right", scope: "global", run: () => void splitPane(focusedPaneId(), "row"), global: true },
+  { id: "pane/split-down", binding: "mod+alt+shift+\\", label: "Split down", scope: "global", run: () => void splitPane(focusedPaneId(), "col"), global: true },
+  { id: "pane/close", binding: "", label: "Close pane", scope: "global", run: () => void closePane(focusedPaneId()), global: true },
   { id: "ui/toggle-theme", binding: "t t", label: "Toggle dark / light", scope: "global", run: toggleTheme },
   { id: "ui/toggle-left-sidebar", binding: "t l", label: "Toggle left sidebar", scope: "global", run: toggleSidebar },
   { id: "ui/toggle-right-sidebar", binding: "t r", label: "Toggle right sidebar", scope: "global", run: toggleRightSidebar },

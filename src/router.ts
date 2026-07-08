@@ -9,11 +9,6 @@ import { createSignal, type Accessor } from "solid-js";
 import {
   pushRecent,
   resolveAlias,
-  sidebarOpen,
-  rightSidebarOpen,
-  rightSidebar,
-  applySidebarSession,
-  type SidebarItem,
 } from "./ui";
 import { doc, persistentBlockRef, extendFeedForScroll } from "./store";
 import { backend } from "./backend";
@@ -42,7 +37,20 @@ export interface Tab {
   pinned: boolean;
 }
 
+export interface SerializedTab {
+  history: Route[];
+  pos: number;
+  pinned: boolean;
+}
+
+export interface PaneSnapshot {
+  tabs: SerializedTab[];
+  activeIndex: number;
+  scrolls?: (number | null)[];
+}
+
 export interface PaneRouter {
+  paneId: string;
   tabs: Accessor<Tab[]>;
   activeId: Accessor<string>;
   setScrollerElement(el: HTMLElement | null): void;
@@ -80,6 +88,9 @@ export interface PaneRouter {
   activatePrevTab(): void;
   togglePin(id: string): void;
   reorderTab(dragId: string, targetId: string): void;
+  snapshot(): PaneSnapshot;
+  restoreSnapshot(snapshot: PaneSnapshot): boolean;
+  duplicateActiveSnapshot(): PaneSnapshot;
   scheduleSessionSave(): void;
   flushSession(): Promise<void>;
   restoreSession(): Promise<void>;
@@ -104,32 +115,45 @@ export function sameRoute(a: Route, b: Route): boolean {
   );
 }
 
-interface PersistedSession {
-  tabs: { history: Route[]; pos: number; pinned: boolean }[];
-  activeIndex: number;
-  // Per-tab scroll offset of each tab's CURRENT route, so a relaunch reopens each
-  // page scrolled where you left it (not just at the top). Parallel to `tabs`;
-  // optional for back-compat with older session files.
-  scrolls?: (number | null)[];
-  // Sidebar open/closed + the right sidebar's items - persisted here (the durable
-  // session file) rather than localStorage, which WebKitGTK doesn't keep across
-  // launches, so Tine reopens with the sidebars exactly as you left them.
-  leftSidebar?: boolean;
-  rightSidebar?: boolean;
-  rightSidebarItems?: SidebarItem[];
-}
-
 const CLOSED_CAP = 10;
 const MOBILE_HISTORY_STATE = { tineRouter: true };
 
 /** Stable partition: all pinned tabs first (in their relative order), then the
  *  unpinned ones. Pinned tabs always sit to the left of the strip (matches the
  *  OG plugin), so a pinned tab can't be visually stranded among unpinned ones. */
-function partitionPinned(list: Tab[]): Tab[] {
+export function partitionPinned(list: Tab[]): Tab[] {
   return [...list.filter((t) => t.pinned), ...list.filter((t) => !t.pinned)];
 }
 
-export function createPaneRouter(): PaneRouter {
+let sessionPersistence = {
+  schedule: () => {},
+  flush: async () => {},
+  restore: async () => {},
+};
+
+let lastTabCloseHandler: (paneId: string) => boolean = () => false;
+let navigationInterceptor: (paneId: string, route: Route, opts: { sticky?: boolean }) => boolean =
+  () => false;
+
+export function installSessionPersistence(handlers: {
+  schedule: () => void;
+  flush: () => Promise<void>;
+  restore: () => Promise<void>;
+}) {
+  sessionPersistence = handlers;
+}
+
+export function installLastTabCloseHandler(handler: (paneId: string) => boolean) {
+  lastTabCloseHandler = handler;
+}
+
+export function installNavigationInterceptor(
+  handler: (paneId: string, route: Route, opts: { sticky?: boolean }) => boolean
+) {
+  navigationInterceptor = handler;
+}
+
+export function createPaneRouter(paneId = "main"): PaneRouter {
   let counter = 0;
   const newId = () => `tab-${counter++}`;
 
@@ -164,8 +188,6 @@ export function createPaneRouter(): PaneRouter {
   let mobileHistoryBackPending = false;
   let handlingMobilePopState = false;
   let mobileHistoryListenerAttached = false;
-  let saveTimer: ReturnType<typeof setTimeout> | undefined;
-
   function setScrollerElement(el: HTMLElement | null) {
     scrollerElement = el;
   }
@@ -304,6 +326,7 @@ export function createPaneRouter(): PaneRouter {
   // pass `sticky`. Programmatic resets (graph switch, post-delete) pass `inPlace`
   // to force the active tab regardless of pin or reuse.
   function navigate(r: Route, opts: { sticky?: boolean } = {}) {
+    if (navigationInterceptor(paneId, r, opts)) return;
     rememberScroll(); // capture where we are before leaving this entry
     const active = activeTab();
     if (opts.sticky && navReuseTabs()) {
@@ -420,6 +443,7 @@ export function createPaneRouter(): PaneRouter {
   }
 
   function openInNewTab(r: Route, foreground = false) {
+    if (foreground && navigationInterceptor(paneId, r, {})) return;
     // Open a new tab. Default is *background* (no focus switch) - matches a
     // browser's middle-click. `foreground` is used by the sticky-tab redirect, so
     // a click on a pinned tab lands you on the new tab. New tabs are unpinned, so
@@ -466,6 +490,8 @@ export function createPaneRouter(): PaneRouter {
   }
 
   function setActiveTab(id: string) {
+    const next = tabs().find((t) => t.id === id);
+    if (next && navigationInterceptor(paneId, tabRoute(next), {})) return;
     rememberScroll(); // save the outgoing tab's scroll so switching back restores it
     setActiveId(id);
     persist();
@@ -478,7 +504,10 @@ export function createPaneRouter(): PaneRouter {
 
   async function closeTab(id: string) {
     const list = tabs();
-    if (list.length === 1) return; // always keep one tab
+    if (list.length === 1) {
+      if (route().kind !== "journals" && lastTabCloseHandler(paneId)) return;
+      return; // feed pane keeps its last tab
+    }
     const t = list.find((x) => x.id === id);
     // Pinned = sticky = "I want to keep this": confirm before closing, so an
     // accidental Ctrl+W (or middle-click) doesn't drop it. Uses the GTK dialog
@@ -559,116 +588,68 @@ export function createPaneRouter(): PaneRouter {
     persist();
   }
 
-  // ---- persistence (full session, backed by a real file via the backend) ----
-  //
-  // The whole tab session is saved on every change: each tab (not just pinned
-  // ones), in order, with its full back/forward history and which entry it's on,
-  // plus which tab is active. Routes already carry the zoomed-in block, so a tab
-  // zoomed into a bullet comes back zoomed. Persisted through the Rust backend to
-  // a file (WebKitGTK localStorage isn't durably persisted for this app), and
-  // restored once at startup by restoreSession().
-
-  function buildSession(): PersistedSession {
+  function snapshot(): PaneSnapshot {
     const list = tabs();
-    // Refresh the active tab's live scroll before snapshotting; background tabs keep
-    // their last-active offset (rememberScroll saved it when we left them).
     rememberScroll();
     return {
       tabs: list.map((t) => ({ history: t.history, pos: t.pos, pinned: t.pinned })),
       activeIndex: Math.max(0, list.findIndex((t) => t.id === activeId())),
       scrolls: list.map((t) => scrollByRoute.get(t.history[t.pos]) ?? null),
-      leftSidebar: sidebarOpen(),
-      rightSidebar: rightSidebarOpen(),
-      rightSidebarItems: rightSidebar(),
+    };
+  }
+
+  function parseSnapshot(s: PaneSnapshot): { tabs: Tab[]; active: number } | null {
+    const scrolls = Array.isArray(s?.scrolls) ? s.scrolls : [];
+    const restored: Tab[] = [];
+    (s?.tabs ?? []).forEach((t, i) => {
+      if (!t || !Array.isArray(t.history) || t.history.length === 0) return;
+      const pos = Math.min(Math.max(0, t.pos | 0), t.history.length - 1);
+      const tab: Tab = { id: newId(), history: t.history, pos, pinned: !!t.pinned };
+      restored.push(tab);
+      const sc = scrolls[i];
+      if (typeof sc === "number" && sc > 0) scrollByRoute.set(tab.history[pos], sc);
+    });
+    if (!restored.length) return null;
+    const activeTabId = restored[Math.min(Math.max(0, s.activeIndex | 0), restored.length - 1)].id;
+    const ordered = partitionPinned(restored);
+    const active = Math.max(0, ordered.findIndex((t) => t.id === activeTabId));
+    return { tabs: ordered, active };
+  }
+
+  function restoreSnapshot(s: PaneSnapshot): boolean {
+    const parsed = parseSnapshot(s);
+    if (!parsed) return false;
+    setTabs(parsed.tabs);
+    setActiveId(parsed.tabs[parsed.active].id);
+    return true;
+  }
+
+  function duplicateActiveSnapshot(): PaneSnapshot {
+    rememberScroll();
+    const active = activeTab();
+    return {
+      tabs: [{ history: active.history.map((r) => ({ ...r })), pos: active.pos, pinned: active.pinned }],
+      activeIndex: 0,
+      scrolls: [scrollByRoute.get(active.history[active.pos]) ?? null],
     };
   }
 
   function persist() {
-    // Light debounce: a burst of tab actions collapses to one backend write, and
-    // it serializes writes so concurrent saves don't race. 150ms is short enough
-    // that the user won't out-run it before quitting.
-    clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => {
-      void backend().saveSession(JSON.stringify(buildSession())).catch(() => {});
-    }, 150);
+    sessionPersistence.schedule();
   }
 
-  /** Debounced session save - also called by ui.ts when a sidebar is toggled, so
-   *  the open/closed state and items land in the durable session file. */
   const scheduleSessionSave = persist;
 
-  function parseSession(raw: string): { tabs: Tab[]; active: number } | null {
-    try {
-      const s = JSON.parse(raw) as PersistedSession;
-      const scrolls = Array.isArray(s?.scrolls) ? s.scrolls : [];
-      const restored: Tab[] = [];
-      // Index by the ORIGINAL position so a dropped (invalid) tab can't misalign the
-      // parallel `scrolls` array.
-      (s?.tabs ?? []).forEach((t, i) => {
-        if (!t || !Array.isArray(t.history) || t.history.length === 0) return;
-        const pos = Math.min(Math.max(0, t.pos | 0), t.history.length - 1);
-        const tab: Tab = { id: newId(), history: t.history, pos, pinned: !!t.pinned };
-        restored.push(tab);
-        // Re-seed the scroll for this tab's current route so restoreScrollFor (fired by
-        // the page view on show) lands it where it was, not at the top.
-        const sc = scrolls[i];
-        if (typeof sc === "number" && sc > 0) scrollByRoute.set(tab.history[pos], sc);
-      });
-      if (!restored.length) return null;
-      // Keep the active tab pointing at the same tab after we re-sort pinned-left
-      // (older sessions may have a mixed order).
-      const activeTabId = restored[Math.min(Math.max(0, s.activeIndex | 0), restored.length - 1)].id;
-      const ordered = partitionPinned(restored);
-      const active = Math.max(0, ordered.findIndex((t) => t.id === activeTabId));
-      return { tabs: ordered, active };
-    } catch {
-      return null;
-    }
-  }
-
-  /** Write the session immediately, bypassing the debounce. Called on window
-   *  close so a tab action taken right before quitting isn't lost. */
   async function flushSession(): Promise<void> {
-    clearTimeout(saveTimer);
-    try {
-      await backend().saveSession(JSON.stringify(buildSession()));
-    } catch {
-      // best-effort - session restore is non-critical
-    }
+    await sessionPersistence.flush();
   }
 
-  /** Load the saved tab session from the backend and apply it. Call once at
-   *  startup, before first paint. No-op if nothing was saved, it's unreadable, or
-   *  the user already changed the tabs (we never clobber live state). */
   async function restoreSession(): Promise<void> {
-    let raw: string | null = null;
-    try {
-      raw = await backend().loadSession();
-    } catch {
-      return; // backend unavailable - keep the default journals tab
-    }
-    if (!raw) return;
-    // Sidebars first - independent of the tab strip, so restore them even if the
-    // tab guard below bails. Runs before first paint (main.tsx awaits this), so the
-    // app renders with the sidebars as they were left.
-    try {
-      const s = JSON.parse(raw) as PersistedSession;
-      applySidebarSession({ left: s.leftSidebar, right: s.rightSidebar, items: s.rightSidebarItems });
-    } catch {
-      // malformed session - fall through; the tab restore below still tries.
-    }
-    // Guard against clobbering: only restore tabs while the strip is still the
-    // pristine single-journals default (the user hasn't navigated during the async
-    // read).
-    const cur = tabs();
-    if (cur.length !== 1 || cur[0].history.length !== 1 || cur[0].history[0].kind !== "journals") return;
-    const parsed = parseSession(raw);
-    if (!parsed) return;
-    setTabs(parsed.tabs);
-    setActiveId(parsed.tabs[parsed.active].id);
+    await sessionPersistence.restore();
   }
 
   return {
+    paneId,
     tabs,
     activeId,
     setScrollerElement,
@@ -697,13 +678,16 @@ export function createPaneRouter(): PaneRouter {
     activatePrevTab,
     togglePin,
     reorderTab,
+    snapshot,
+    restoreSnapshot,
+    duplicateActiveSnapshot,
     scheduleSessionSave,
     flushSession,
     restoreSession,
   };
 }
 
-export const mainPaneRouter = createPaneRouter();
+export const mainPaneRouter = createPaneRouter("main");
 
 let focusedRouterProvider: () => PaneRouter = () => mainPaneRouter;
 let mainRouterProvider: () => PaneRouter = () => mainPaneRouter;

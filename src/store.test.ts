@@ -71,6 +71,7 @@ import {
 } from "./ui";
 import { journalTitle } from "./journal";
 import type { BlockDto, PageDto } from "./types";
+import { resetPaneLayoutToSingle } from "./panes";
 
 let counter = 0;
 function blk(raw: string, children: BlockDto[] = []): BlockDto {
@@ -99,6 +100,10 @@ beforeAll(() => initParser());
 beforeEach(() => {
   counter = 0;
   resetStore();
+  resetPaneLayoutToSingle({
+    tabs: [{ history: [{ kind: "journals" }], pos: 0, pinned: false }],
+    activeIndex: 0,
+  });
   setFavorites([]);
   setRecentPages([]);
   setCopyIncludeSubtree(false); // copy prefs default OFF; reset so tests don't leak
@@ -744,6 +749,28 @@ describe("merge (Backspace at 0)", () => {
     const after = pageByName("·capture·")!;
     expect(after.roots.length).toBe(1);
     expect(doc.byId[after.roots[0]].raw).toBe("firstsecond");
+  });
+});
+
+describe("working-set eviction", () => {
+  const page = (name: string): PageDto => ({
+    name,
+    kind: "page",
+    title: name,
+    pre_block: null,
+    blocks: [blk(`${name} body`)],
+  });
+
+  it("pins every pane's active page route", () => {
+    resetPaneLayoutToSingle({
+      tabs: [{ history: [{ kind: "page", name: "Pinned", pageKind: "page" }], pos: 0, pinned: false }],
+      activeIndex: 0,
+    });
+    ensurePageLoaded(page("Pinned"));
+
+    for (let i = 0; i < 90; i++) ensurePageLoaded(page(`Page ${i}`));
+
+    expect(pageByName("Pinned")).toBeTruthy();
   });
 });
 

@@ -2,7 +2,7 @@
 // [[links]] and #tags), not an innerHTML string. Used to render a block when it
 // is not being edited.
 
-import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, type JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, useContext, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { mediaKind } from "../media";
 import { openPage, openPageInNewTab, openPageAtBlock, focusBlock } from "../router";
@@ -31,6 +31,7 @@ import { refreshAssetOnReturn } from "../assetRefresh";
 import { isMobilePlatform } from "../nativeChrome";
 import { resolveBlockBatched } from "../resolveBatch";
 import { doc, setRaw, formatForPage, formatForBlock } from "../store";
+import { PaneContext, focusedPaneId, openRouteInOtherPane } from "../panes";
 import { QueryMacro, EmbedMacro, VideoMacro, TweetMacro, YoutubeTimestamp, ClozeMacro, ZoteroMacro } from "../components/Macro";
 import { NamespaceMacro } from "../components/Namespace";
 
@@ -208,6 +209,7 @@ function flattenPeek(
 
 // A `[[page]]` / `#tag` anchor — shared by page_ref links, bare refs, and #tags.
 function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolean; spanAttrs?: SpanDomAttrs }): JSX.Element {
+  const pane = useContext(PaneContext);
   // The referenced page's `icon::`, shown as a prefix like OG (and Tine's own page
   // title / namespace macro). Emoji route through EmojiText → Twemoji SVG, since
   // WebKitGTK paints color-emoji webfonts blank. Reactive + batched + cached per
@@ -216,7 +218,9 @@ function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolean; span
   const kind = (): PageKind => (isJournalTitle(props.name) ? "journal" : "page");
   const open = (e: MouseEvent) => {
     e.stopPropagation();
-    if (e.shiftKey) openPageInSidebar(props.name, kind());
+    if (e.ctrlKey || e.metaKey)
+      openRouteInOtherPane({ kind: "page", name: props.name, pageKind: kind() }, pane?.paneId ?? focusedPaneId());
+    else if (e.shiftKey) openPageInSidebar(props.name, kind());
     else openPage(props.name, kind());
   };
 
@@ -939,6 +943,7 @@ function UserMacroView(props: { name: string; template: string; args: string[]; 
 // navigate to the source page on click and show a hover preview of the full
 // referenced block (mirrors OG); a missing target falls back to a short id.
 function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAttrs }): JSX.Element {
+  const pane = useContext(PaneContext);
   const [grp] = createResource(
     () => `${props.id} ${graphEpoch()}`, // resolve once per open graph; batched + cached
     () => resolveBlockBatched(props.id)
@@ -972,7 +977,12 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
         // Shift-click opens the referenced block in the right sidebar. Plain click:
         // Tine scrolls + flashes the block in context (default); the OG behavior —
         // zoom into the block as its own page — is opt-in (Settings → ref-click-zoom).
-        if (e.shiftKey) openBlockInSidebar({ uuid: props.id, page: g.page, pageKind: g.kind });
+        if (e.ctrlKey || e.metaKey)
+          openRouteInOtherPane(
+            { kind: "page", name: g.page, pageKind: g.kind, block: props.id },
+            pane?.paneId ?? focusedPaneId()
+          );
+        else if (e.shiftKey) openBlockInSidebar({ uuid: props.id, page: g.page, pageKind: g.kind });
         else if (refClickZoom()) focusBlock(props.id);
         else openPageAtBlock(g.page, g.kind, props.id);
       }}

@@ -1,6 +1,6 @@
 import { Show, Suspense, createEffect, lazy, on, onCleanup, onMount, type JSX } from "solid-js";
 import { Sidebar } from "./components/Sidebar";
-import { PageView } from "./components/Page";
+import { PageView, reloadJournalsFeedFromStart, toLoadablePage } from "./components/Page";
 import { QuickSwitcher } from "./components/QuickSwitcher";
 // pdf.js (~hundreds of KB) is heavy and most sessions never open a PDF — load
 // the viewer only when one is opened.
@@ -59,13 +59,26 @@ import {
   exitFocusMode,
   dataRev,
   installPaneTracker,
+  markConflict,
+  isConflicted,
   pushToast,
   refreshSyncConflicts,
 } from "./ui";
 import { applyZoom, installInterfaceZoomKeys, installInterfaceZoomWheel } from "./zoom";
-import { flushAll, appendToTodayJournal, captureToPage } from "./store";
+import {
+  doc,
+  flushAll,
+  appendToTodayJournal,
+  captureToPage,
+  isDirty,
+  isSaving,
+  pageByName,
+  reloadDisposition,
+  reloadPage,
+  restoreTodayJournalInFeed,
+} from "./store";
 import type { QuickCaptureAck, QuickCaptureRequest } from "./quickCaptureAck";
-import { backend, isTauri } from "./backend";
+import { backend, isTauri, type GraphChange } from "./backend";
 import { parserFailed } from "./render/parse";
 import { warnIfSoftwareRendering } from "./gpu";
 import { initSmoothScroll } from "./smoothScroll";
@@ -80,11 +93,175 @@ import { initLinkDefault } from "./editor/linkDefault";
 import { initDebug, dbg } from "./debug";
 import { WindowControls, ResizeGrips, installWindowChrome, maximized } from "./components/WindowChrome";
 import { initNativeChrome, isMac, isMobilePlatform, osDrawsWindowControls } from "./nativeChrome";
-import { PaneContext, mainRouter } from "./panes";
+import {
+  PaneContext,
+  closePane,
+  firstPaneId,
+  focusedPaneId,
+  layoutHasMultiplePanes,
+  layoutRoot,
+  paneRouter,
+  layoutPaneIds,
+  setSplitRatio,
+  type LayoutNode,
+} from "./panes";
+import { SurfaceContext } from "./components/Block";
+
+async function handleGraphChange(c: GraphChange) {
+  const routes = layoutPaneIds().map((paneId) => ({ paneId, router: paneRouter(paneId), route: paneRouter(paneId).route() }));
+  if (c.removed) {
+    const disp = reloadDisposition(c.name);
+    if (disp === "conflict") {
+      markConflict(c.name);
+      return;
+    }
+    if (disp === "skip") return;
+    for (const p of routes) {
+      if (p.route.kind === "page" && p.route.name === c.name) {
+        if (p.router.canGoBack()) p.router.goBack();
+        else if (!closePane(p.paneId)) p.router.openJournals({ inPlace: true });
+      }
+    }
+    if (c.kind === "journal" && routes.some((p) => p.route.kind === "journals")) {
+      restoreTodayJournalInFeed();
+      void reloadJournalsFeedFromStart().catch(() => {});
+    }
+    return;
+  }
+
+  const disp = reloadDisposition(c.name);
+  if (disp === "skip") return;
+  if (disp === "conflict") {
+    markConflict(c.name);
+    return;
+  }
+  if (routes.some((p) => p.route.kind === "page" && p.route.name === c.name)) {
+    const dto = await backend().getPage(c.name, c.kind);
+    if (dto) reloadPage(toLoadablePage(dto, c.name));
+    return;
+  }
+  if (c.kind === "journal" && routes.some((p) => p.route.kind === "journals")) {
+    if (pageByName(c.name)) {
+      const dto = await backend().getPage(c.name, c.kind);
+      if (dto) reloadPage(dto);
+      return;
+    }
+    if (doc.feed.some((n) => isDirty(n) || isConflicted(n) || isSaving(n))) return;
+    void reloadJournalsFeedFromStart().catch(() => {});
+    return;
+  }
+  if (pageByName(c.name) && !doc.feed.includes(c.name)) {
+    const dto = await backend().getPage(c.name, c.kind);
+    if (dto) reloadPage(dto);
+  }
+}
+
+export function PaneTree(props: { node: LayoutNode; path: number[] }): JSX.Element {
+  const n = () => props.node;
+  // Keyed leaf: PaneLeaf freezes its router (and its context providers) at
+  // mount, so a leaf whose paneId changes IN PLACE (layout restore, sibling
+  // collapse) must REMOUNT, not update — otherwise it keeps rendering the old
+  // pane's router/tabs.
+  const leafId = () => (n().kind === "pane" ? (n() as Extract<LayoutNode, { kind: "pane" }>).paneId : null);
+  return (
+    <Show
+      when={n().kind === "split" ? (n() as Extract<LayoutNode, { kind: "split" }>) : null}
+      fallback={
+        <Show when={leafId()} keyed>
+          {(id) => <PaneLeaf paneId={id} />}
+        </Show>
+      }
+    >
+      {(split) => {
+        return (
+          <div class={`pane-split pane-split-${split().dir}`}>
+            <div class="pane-branch" style={{ flex: `0 0 ${split().ratio * 100}%` }}>
+              <PaneTree node={split().children[0]} path={[...props.path, 0]} />
+            </div>
+            <PaneResizer dir={split().dir} path={props.path} />
+            <div class="pane-branch" style={{ flex: `0 0 ${(1 - split().ratio) * 100}%` }}>
+              <PaneTree node={split().children[1]} path={[...props.path, 1]} />
+            </div>
+          </div>
+        );
+      }}
+    </Show>
+  );
+}
+
+function PaneResizer(props: { dir: "row" | "col"; path: number[] }): JSX.Element {
+  return (
+    <div
+      class={`pane-resizer pane-resizer-${props.dir}`}
+      onPointerDown={(e) => {
+        e.preventDefault();
+        const box = (e.currentTarget.parentElement as HTMLElement).getBoundingClientRect();
+        const onMove = (ev: PointerEvent) => {
+          const raw =
+            props.dir === "row"
+              ? (ev.clientX - box.left) / Math.max(1, box.width)
+              : (ev.clientY - box.top) / Math.max(1, box.height);
+          setSplitRatio(props.path, raw);
+        };
+        const onUp = () => {
+          window.removeEventListener("pointermove", onMove);
+          window.removeEventListener("pointerup", onUp);
+        };
+        window.addEventListener("pointermove", onMove);
+        window.addEventListener("pointerup", onUp);
+      }}
+    />
+  );
+}
+
+function PaneLeaf(props: { paneId: string }): JSX.Element {
+  const router = paneRouter(props.paneId);
+  const multi = () => layoutHasMultiplePanes();
+  // STATIC per pane: context provider values freeze at mount, so the surface
+  // must not depend on the pane's current route. Page.tsx's endEditForSurface
+  // key uses the same mapping.
+  const surface = () => (props.paneId === "main" ? "main" : `pane:${props.paneId}`);
+  return (
+    <PaneContext.Provider value={{ paneId: props.paneId, router }}>
+      <SurfaceContext.Provider value={surface()}>
+        <Show
+          when={multi()}
+          fallback={
+            <main
+              class="main-content"
+              data-pane-id={props.paneId}
+              ref={(el) => router.setScrollerElement(el)}
+            >
+              <div class="main-content-inner">
+                <PageView />
+              </div>
+            </main>
+          }
+        >
+          <div
+            class="pane-leaf"
+            classList={{ "pane-focused": focusedPaneId() === props.paneId }}
+            data-pane-id={props.paneId}
+          >
+            <TabBar
+              router={router}
+              dragRegion={false}
+              paneStrip
+              focused={focusedPaneId() === props.paneId}
+            />
+            <main class="main-content pane-main-content" ref={(el) => router.setScrollerElement(el)}>
+              <div class="main-content-inner">
+                <PageView />
+              </div>
+            </main>
+          </div>
+        </Show>
+      </SurfaceContext.Provider>
+    </PaneContext.Provider>
+  );
+}
 
 export function App(): JSX.Element {
-  const router = mainRouter();
-
   // Startup debug trace (TINE_DEBUG=1 / --debug): forward UI milestones + errors
   // into the backend log so a remote "bad startup" is diagnosable in one file.
   onMount(() => void initDebug());
@@ -131,6 +308,15 @@ export function App(): JSX.Element {
     let unsub = () => {};
     void backend()
       .onConflictsChanged(() => void refreshSyncConflicts())
+      .then((u) => (unsub = u));
+    onCleanup(() => unsub());
+  });
+  // One graph-file watcher for every pane. PageView instances render pane
+  // content; they do not each own a backend subscription.
+  onMount(() => {
+    let unsub = () => {};
+    void backend()
+      .onGraphChanged((c) => void handleGraphChange(c))
       .then((u) => (unsub = u));
     onCleanup(() => unsub());
   });
@@ -471,8 +657,12 @@ export function App(): JSX.Element {
           {/* The tab strip is a desktop feature; on a phone it only crowds the
               single-row toolbar (and its pill clips). Hide it there, keeping a
               flex spacer so the right-side icons stay pinned to the edge. */}
-          <Show when={!isMobilePlatform} fallback={<div class="topbar-spacer" data-tauri-drag-region />}>
-            <TabBar router={router} />
+          <Show when={!isMobilePlatform && !layoutHasMultiplePanes()} fallback={<div class="topbar-spacer" data-tauri-drag-region />}>
+            {/* Keyed on the SOLE pane's id: after closing panes the survivor
+                need not be "main", and TabBar freezes its router at mount. */}
+            <Show when={firstPaneId(layoutRoot()) ?? "main"} keyed>
+              {(soloId) => <TabBar router={paneRouter(soloId)} />}
+            </Show>
           </Show>
           <div class="topbar-right">
             <CalendarJump />
@@ -543,17 +733,7 @@ export function App(): JSX.Element {
             window controls at the far right) spans the full window width and the
             right sidebar / PDF pane sit UNDER it — not beside the close button. */}
         <div class="content-row">
-          <PaneContext.Provider value={{ paneId: "main", router }}>
-            <main
-              class="main-content"
-              data-pane-id="main"
-              ref={(el) => router.setScrollerElement(el)}
-            >
-              <div class="main-content-inner">
-                <PageView />
-              </div>
-            </main>
-          </PaneContext.Provider>
+          <PaneTree node={layoutRoot()} path={[]} />
           <RightSidebar />
           <Show when={pdfTarget()}>
         <div class="pdf-pane" data-pane-id="pdf" style={{ flex: `0 0 ${pdfPaneWidth()}px`, width: `${pdfPaneWidth()}px` }}>

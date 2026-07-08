@@ -1,9 +1,10 @@
 // Small global UI state: theme, left sidebar, and the quick-switcher modal.
-import { createSignal } from "solid-js";
+import { createSignal, useContext } from "solid-js";
 import type { GraphMeta, JournalConflict, SyncConflict, PageKind } from "./types";
 import { backend, isTauri } from "./backend";
 // Zoom is route state; these are call-time only, so the ui↔router cycle is safe.
 import { route, focusBlock, scheduleSessionSave } from "./router";
+import { PaneContext } from "./paneContext";
 import { setJournalTitleFormat, isJournalTitle } from "./journal";
 
 const THEME_KEY = "logseq-claude.theme";
@@ -739,7 +740,7 @@ export function closeFormulaEditor() {
 // back/forward history, and a block can be opened pre-zoomed in its own tab
 // (middle-click a bullet). zoomedBlock derives from the current route.
 export function zoomedBlock(): string | null {
-  const r = route();
+  const r = useContext(PaneContext)?.router.route() ?? route();
   return r.kind === "page" ? r.block ?? null : null;
 }
 export function zoomInto(id: string) {

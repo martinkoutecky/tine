@@ -109,3 +109,9 @@ export function endEdit(_reason: EndEditReason) {
     setEditingOwner(null);
   });
 }
+
+export function endEditForSurface(reason: EndEditReason, surfaceKey: string) {
+  if (!editingId()) return;
+  const active = activeSurface();
+  if (!active || active === surfaceKey) endEdit(reason);
+}
