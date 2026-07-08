@@ -125,12 +125,14 @@ function cellText(blockId: string | null): string {
  *  (id::/collapsed::) and sheet config props: clearing or overwriting a cell must never orphan a
  *  ((ref)) pointing at it (review finding). Fence-aware via splitProps. */
 function writeCellVisible(id: string, visible: string): void {
-  const hidden = splitProps(doc.byId[id]?.raw ?? "", isSheetCellHidden).hidden;
-  setRaw(id, hidden ? joinProps(visible, hidden) : visible, { timetracking: false });
+  const fmt = formatForBlock(id);
+  const hidden = splitProps(doc.byId[id]?.raw ?? "", isSheetCellHidden, fmt).hidden;
+  setRaw(id, hidden ? joinProps(visible, hidden, fmt) : visible, { timetracking: false });
 }
 
-function rawWithoutId(raw: string): string {
-  return splitProps(raw, (key) => key.toLowerCase() === "id").visible;
+function rawWithoutId(id: string): string {
+  const raw = doc.byId[id]?.raw ?? "";
+  return splitProps(raw, (key) => key.toLowerCase() === "id", formatForBlock(id)).visible;
 }
 
 function escapeHtml(s: string): string {
@@ -387,8 +389,11 @@ export function cutSheetSelection(sel: SheetMutationSelection): void {
   clearSheetSelection(sel);
 }
 
-function compactGridConfigSplit(raw: string): { visible: string; hidden: string } {
-  return splitProps(raw, (key) => COMPACT_GRID_CONFIG_KEYS.has(key.toLowerCase()));
+function compactGridConfigSplit(
+  raw: string,
+  fmt: "md" | "org"
+): { visible: string; hidden: string } {
+  return splitProps(raw, (key) => COMPACT_GRID_CONFIG_KEYS.has(key.toLowerCase()), fmt);
 }
 
 function isCompactGridCell(id: string): boolean {
@@ -401,10 +406,13 @@ export function wrapCompactGridCell(cellId: string): string | null {
   const rowIds = [...node.children];
   for (const rowId of rowIds) if (!doc.byId[rowId]) return null;
 
-  const { visible, hidden } = compactGridConfigSplit(node.raw);
+  const fmt = formatForBlock(cellId);
+  const { visible, hidden } = compactGridConfigSplit(node.raw, fmt);
   const hostId = insertEmptyChildBlock(cellId, 0);
   if (!hostId) return null;
-  setRaw(hostId, hidden || "tine.view:: grid", { timetracking: false });
+  // joinProps wraps the config in a :PROPERTIES: drawer for org; md passes through.
+  const config = hidden || (fmt === "org" ? ":tine.view: grid" : "tine.view:: grid");
+  setRaw(hostId, joinProps("", config, fmt), { timetracking: false });
   if (!replaceChildOrders({ [cellId]: [hostId], [hostId]: rowIds })) return null;
   setRaw(cellId, visible, { timetracking: false });
   return hostId;
@@ -428,7 +436,7 @@ export function fillSheetSelection(sel: SheetMutationSelection, dir: "down" | "r
       const sources: string[] = [];
       for (let col = rect.left; col <= rect.right; col++) {
         const id = cellIdAt(sel.gridId, rect.top, col);
-        sources.push(id ? rawWithoutId(doc.byId[id]?.raw ?? "") : "");
+        sources.push(id ? rawWithoutId(id) : "");
       }
       for (let row = rect.top + 1; row <= rect.bottom; row++) {
         for (let col = rect.left; col <= rect.right; col++) {
@@ -442,12 +450,14 @@ export function fillSheetSelection(sel: SheetMutationSelection, dir: "down" | "r
     const sources: string[] = [];
     for (let row = rect.top; row <= rect.bottom; row++) {
       const id = cellIdAt(sel.gridId, row, rect.left);
-      sources.push(id ? rawWithoutId(doc.byId[id]?.raw ?? "") : "");
+      sources.push(id ? rawWithoutId(id) : "");
     }
     for (let row = rect.top; row <= rect.bottom; row++) {
       for (let col = rect.left + 1; col <= rect.right; col++) {
         const target = materializeCell(sel.gridId, row, col);
-        if (target) setRaw(target, sources[row - rect.top], { timetracking: false });
+        // writeCellVisible (not bare setRaw) so the target's own hidden id:: survives
+        // and no ((ref)) pointing at it is orphaned — same as the fill-down branch.
+        if (target) writeCellVisible(target, sources[row - rect.top]);
       }
     }
     return true;
@@ -626,7 +636,7 @@ export function pasteTextIntoSheetSelection(sel: SheetMutationSelection, text: s
         for (let c = 0; c < row.length; c++) {
           const id = materializeCell(sel.gridId, anchor.row + r, anchor.col + c);
           if (!id) return false;
-          setRaw(id, row[c], { timetracking: false });
+          writeCellVisible(id, row[c]);
         }
       }
       return true;
@@ -657,7 +667,7 @@ export function pasteTextIntoSheetSelection(sel: SheetMutationSelection, text: s
   const ok = withSheetUndo(sel.gridId, "sheet:paste-text", () => {
     const id = materializeCell(sel.gridId, anchor.row, anchor.col);
     if (!id) return false;
-    setRaw(id, text.replace(/\r\n/g, "\n").replace(/\r/g, "\n"), { timetracking: false });
+    writeCellVisible(id, text.replace(/\r\n/g, "\n").replace(/\r/g, "\n"));
     return true;
   }) ?? false;
   return ok ? { kind: "cell", gridId: sel.gridId, row: anchor.row, col: anchor.col } : null;

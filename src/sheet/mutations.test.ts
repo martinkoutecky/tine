@@ -17,6 +17,7 @@ import {
   deleteRow,
   copySheetSelection,
   appendSheetCellChild,
+  clearSheetSelection,
   fillSheetSelection,
   insertColumn,
   insertRow,
@@ -301,7 +302,12 @@ describe("sheet structural mutations", () => {
     const next = pasteTextIntoSheetSelection({ kind: "cell", gridId: "dst", row: 0, col: 0 }, "X\tY");
 
     expect(next).toEqual({ kind: "range", gridId: "dst", anchor: { row: 0, col: 0 }, focus: { row: 0, col: 1 } });
-    expect(doc.byId.dr1.children.map((id) => doc.byId[id].raw)).toEqual(["X", "Y"]);
+    // TSV paste replaces cell TEXT only: the target keeps its sheet config (and
+    // thus its subgrid children stay a grid) instead of being half-destroyed.
+    const [first, second] = doc.byId.dr1.children.map((id) => doc.byId[id].raw);
+    expect(first.split("\n")[0]).toBe("X");
+    expect(first).toContain("tine.view:: grid");
+    expect(second).toBe("Y");
   });
 
   it("escapes tabbed and multiline cell bodies into one parseable TSV scalar", () => {
@@ -329,5 +335,97 @@ describe("sheet structural mutations", () => {
 
     undo();
     expect(pageToDto("Sheet")).toEqual(before);
+  });
+});
+
+describe("org-format sheet writes", () => {
+  function orgNode(id: string, raw: string, parent: string | null, children: string[]) {
+    return { id, raw, collapsed: false, parent, page: "Org", children };
+  }
+
+  function loadOrgDoc(byId: Record<string, ReturnType<typeof orgNode>>, roots: string[]) {
+    setDoc({
+      byId,
+      pages: [{ name: "Org", kind: "page", title: "Org", preBlock: null, roots, format: "org", readOnly: false }],
+      feed: ["Org"],
+      loaded: true,
+    });
+  }
+
+  it("clearing a cell keeps its :PROPERTIES: drawer (id survives, refs not orphaned)", () => {
+    loadOrgDoc(
+      {
+        grid: orgNode("grid", "Grid\n:PROPERTIES:\n:tine.view: grid\n:END:", null, ["r1"]),
+        r1: orgNode("r1", "", "grid", ["c1", "c2"]),
+        c1: orgNode("c1", "Old\n:PROPERTIES:\n:id: keep-me\n:END:", "r1", []),
+        c2: orgNode("c2", "B", "r1", []),
+      },
+      ["grid"]
+    );
+
+    expect(clearSheetSelection({ kind: "cell", gridId: "grid", row: 0, col: 0 })).toBe(true);
+
+    expect(doc.byId.c1.raw).toBe(":PROPERTIES:\n:id: keep-me\n:END:");
+  });
+
+  it("pasting into a cell rebuilds the drawer at org's canonical spot", () => {
+    loadOrgDoc(
+      {
+        grid: orgNode("grid", "Grid\n:PROPERTIES:\n:tine.view: grid\n:END:", null, ["r1"]),
+        r1: orgNode("r1", "", "grid", ["c1"]),
+        c1: orgNode("c1", "Old\n:PROPERTIES:\n:id: keep-me\n:END:", "r1", []),
+      },
+      ["grid"]
+    );
+
+    pasteTextIntoSheetSelection({ kind: "cell", gridId: "grid", row: 0, col: 0 }, "New");
+
+    expect(doc.byId.c1.raw).toBe("New\n:PROPERTIES:\n:id: keep-me\n:END:");
+  });
+
+  it("wrapping a compact org cell grid moves the drawer config onto the host", () => {
+    loadOrgDoc(
+      {
+        grid: orgNode("grid", "Grid\n:PROPERTIES:\n:tine.view: grid\n:END:", null, ["r1"]),
+        r1: orgNode("r1", "", "grid", ["cell"]),
+        cell: orgNode("cell", "Cell\n:PROPERTIES:\n:tine.view: grid\n:END:", "r1", ["ir1"]),
+        ir1: orgNode("ir1", "", "cell", ["ic1"]),
+        ic1: orgNode("ic1", "X", "ir1", []),
+      },
+      ["grid"]
+    );
+
+    const child = appendSheetCellChild("cell");
+
+    expect(child).toBeTruthy();
+    expect(doc.byId.cell.raw).toBe("Cell");
+    expect(doc.byId.cell.children).toHaveLength(2);
+    const host = doc.byId.cell.children[0];
+    expect(doc.byId[host].raw).toBe(":PROPERTIES:\n:tine.view: grid\n:END:");
+    expect(doc.byId[host].children).toEqual(["ir1"]);
+  });
+});
+
+describe("fill preserves target hidden properties", () => {
+  it("fill-right merges the source into the target's visible text, keeping the target id::", () => {
+    setDoc({
+      byId: {
+        grid: { id: "grid", raw: "Grid\ntine.view:: grid", collapsed: false, parent: null, page: "Sheet", children: ["r1"] },
+        r1: { id: "r1", raw: "", collapsed: false, parent: "grid", page: "Sheet", children: ["a", "b"] },
+        a: { id: "a", raw: "A", collapsed: false, parent: "r1", page: "Sheet", children: [] },
+        b: { id: "b", raw: "B\nid:: keep", collapsed: false, parent: "r1", page: "Sheet", children: [] },
+      },
+      pages: [{ name: "Sheet", kind: "page", title: "Sheet", preBlock: null, roots: ["grid"], format: "md", readOnly: false }],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+
+    const ok = fillSheetSelection(
+      { kind: "range", gridId: "grid", anchor: { row: 0, col: 0 }, focus: { row: 0, col: 1 } },
+      "right"
+    );
+
+    expect(ok).toBe(true);
+    expect(doc.byId.b.raw).toBe("A\nid:: keep");
   });
 });
