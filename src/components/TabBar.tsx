@@ -1,15 +1,5 @@
 import { For, Show, type JSX } from "solid-js";
-import {
-  tabs,
-  activeId,
-  setActiveTab,
-  closeTab,
-  togglePin,
-  reorderTab,
-  routeTitle,
-  tabRoute,
-  type Route,
-} from "../router";
+import { routeTitle, type PaneRouter, type Route } from "../router";
 import { doc, formatForBlock } from "../store";
 import { splitProps, isBuiltinHidden, type PropFormat } from "../editor/properties";
 import { EmojiText } from "../render/emoji";
@@ -61,18 +51,19 @@ function tabTitle(r: Route): string {
 // persist/restoreSession). Always shown — even a single tab is rendered, so the
 // pill signals that tabs exist (a feature OG Logseq lacks) without costing
 // extra vertical space.
-export function TabBar(): JSX.Element {
+export function TabBar(props: { router: PaneRouter }): JSX.Element {
   let dragId: string | null = null;
+  const router = props.router;
 
   return (
     // The tab strip fills the toolbar's middle, so its empty space is the main
     // window-drag handle (the tabs, being children, still click/drag-to-reorder).
     <div class="tab-bar" data-tauri-drag-region>
-      <For each={tabs()}>
+      <For each={router.tabs()}>
         {(t) => (
           <div
             class="tab"
-            classList={{ active: t.id === activeId(), pinned: t.pinned }}
+            classList={{ active: t.id === router.activeId(), pinned: t.pinned }}
             draggable={true}
             onMouseDown={(e) => {
               // Stop the double-click (pin) gesture from word-selecting the label
@@ -95,16 +86,16 @@ export function TabBar(): JSX.Element {
             }}
             onDrop={(e) => {
               e.preventDefault();
-              if (dragId) reorderTab(dragId, t.id);
+              if (dragId) router.reorderTab(dragId, t.id);
               dragId = null;
             }}
             onDragEnd={() => (dragId = null)}
-            onClick={() => setActiveTab(t.id)}
-            onDblClick={() => togglePin(t.id)}
+            onClick={() => router.setActiveTab(t.id)}
+            onDblClick={() => router.togglePin(t.id)}
             onAuxClick={(e) => {
               if (e.button === 1) {
                 e.preventDefault();
-                closeTab(t.id);
+                router.closeTab(t.id);
               }
             }}
             title={
@@ -121,14 +112,14 @@ export function TabBar(): JSX.Element {
                 <EmojiText text="📌" />
               </span>
             </Show>
-            <span class="tab-title"><EmojiText text={tabTitle(tabRoute(t))} /></span>
+            <span class="tab-title"><EmojiText text={tabTitle(router.tabRoute(t))} /></span>
             {/* The last tab can't be closed (closeTab keeps one), so hide its ✕. */}
-            <Show when={tabs().length > 1}>
+            <Show when={router.tabs().length > 1}>
               <span
                 class="tab-close"
                 onClick={(e) => {
                   e.stopPropagation();
-                  closeTab(t.id);
+                  router.closeTab(t.id);
                 }}
               >
                 ✕

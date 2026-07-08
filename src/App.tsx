@@ -80,8 +80,11 @@ import { initLinkDefault } from "./editor/linkDefault";
 import { initDebug, dbg } from "./debug";
 import { WindowControls, ResizeGrips, installWindowChrome, maximized } from "./components/WindowChrome";
 import { initNativeChrome, isMac, isMobilePlatform, osDrawsWindowControls } from "./nativeChrome";
+import { PaneContext, mainRouter } from "./panes";
 
 export function App(): JSX.Element {
+  const router = mainRouter();
+
   // Startup debug trace (TINE_DEBUG=1 / --debug): forward UI milestones + errors
   // into the backend log so a remote "bad startup" is diagnosable in one file.
   onMount(() => void initDebug());
@@ -469,7 +472,7 @@ export function App(): JSX.Element {
               single-row toolbar (and its pill clips). Hide it there, keeping a
               flex spacer so the right-side icons stay pinned to the edge. */}
           <Show when={!isMobilePlatform} fallback={<div class="topbar-spacer" data-tauri-drag-region />}>
-            <TabBar />
+            <TabBar router={router} />
           </Show>
           <div class="topbar-right">
             <CalendarJump />
@@ -540,14 +543,20 @@ export function App(): JSX.Element {
             window controls at the far right) spans the full window width and the
             right sidebar / PDF pane sit UNDER it — not beside the close button. */}
         <div class="content-row">
-          <main class="main-content">
-            <div class="main-content-inner">
-              <PageView />
-            </div>
-          </main>
+          <PaneContext.Provider value={{ paneId: "main", router }}>
+            <main
+              class="main-content"
+              data-pane-id="main"
+              ref={(el) => router.setScrollerElement(el)}
+            >
+              <div class="main-content-inner">
+                <PageView />
+              </div>
+            </main>
+          </PaneContext.Provider>
           <RightSidebar />
           <Show when={pdfTarget()}>
-        <div class="pdf-pane" style={{ flex: `0 0 ${pdfPaneWidth()}px`, width: `${pdfPaneWidth()}px` }}>
+        <div class="pdf-pane" data-pane-id="pdf" style={{ flex: `0 0 ${pdfPaneWidth()}px`, width: `${pdfPaneWidth()}px` }}>
           <div
             class="pdf-pane-resizer"
             onMouseDown={(e) => {

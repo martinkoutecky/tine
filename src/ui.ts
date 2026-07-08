@@ -236,6 +236,10 @@ export async function refreshSyncConflicts(notify = false): Promise<void> {
 // --- which content pane is focused. Drives Ctrl+/- zoom routing (notes → whole
 // interface, pdf → the PDF's own scale). Transient session state, not persisted. ---
 export const [activePane, setActivePane] = createSignal<"notes" | "pdf">("notes");
+let paneFocusSetter: ((paneId: string) => void) | undefined;
+export function registerPaneFocusSetter(setter: (paneId: string) => void) {
+  paneFocusSetter = setter;
+}
 /** Track the focused pane from clicks / focus moves. Capture-phase so it sees
  *  every interaction regardless of stopPropagation downstream. The notes pane is
  *  the default — anything outside the PDF pane (editor, sidebar, chrome) counts as
@@ -243,7 +247,9 @@ export const [activePane, setActivePane] = createSignal<"notes" | "pdf">("notes"
 export function installPaneTracker(): () => void {
   const update = (e: Event) => {
     const t = e.target as Element | null;
-    setActivePane(t?.closest?.(".pdf-pane") ? "pdf" : "notes");
+    const paneId = t?.closest?.("[data-pane-id]")?.getAttribute("data-pane-id") ?? "main";
+    paneFocusSetter?.(paneId);
+    setActivePane(paneId === "pdf" ? "pdf" : "notes");
   };
   window.addEventListener("pointerdown", update, true);
   window.addEventListener("focusin", update, true);

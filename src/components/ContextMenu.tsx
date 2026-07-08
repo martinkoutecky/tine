@@ -569,6 +569,7 @@ function PageMenu(props: {
           pushToast("Delete failed", "error");
           return;
         }
+        // TODO(S2): explicit pane handle; every pane showing this page must fall back.
         const r = route();
         // Deleted the page you're viewing → fall back to journals in place (the
         // page is gone; don't open a new tab even on a pinned tab). Landing on the

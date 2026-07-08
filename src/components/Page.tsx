@@ -1,8 +1,9 @@
-import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, useContext, type JSX } from "solid-js";
 import { doc, mainPages, pageByName, reloadPage, loadSingle, loadFeed, appendFeed, emptyPage, isDirty, isSaving, reloadDisposition, setFeedExtender, flushAll, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, type FeedPage } from "../store";
-import { route, sameRoute, openPage, openJournals, openPageInNewTab, restoreScrollFor } from "../router";
+import { sameRoute, type PaneRouter } from "../router";
+import { PaneContext, focusedRouter } from "../panes";
 import {
-  zoomedBlock, zoomInto, isFavorite, toggleFavorite,
+  zoomedBlock, isFavorite, toggleFavorite,
   markConflict, isConflicted, graphEpoch, openPageInSidebar, openPageContextMenu, carryDays, showCarryButtons,
   agendaQuery, openPageProps, dataRev,
 } from "../ui";
@@ -31,6 +32,11 @@ const FEED_PAGE = 3;
 const PAGE_PROPS_HIDDEN = new Set(["alias", "icon", "tine.tag-table"]);
 const TAG_TABLE_PROP = "tine.tag-table";
 
+function paneRouterFromContext(): PaneRouter {
+  const ctx = useContext(PaneContext);
+  return ctx?.router ?? focusedRouter();
+}
+
 // OG always shows today's journal at the top of the feed, even with no file yet
 // (the file is created lazily on first edit — Tine writes on save). So prepend
 // an empty today page unless the newest journal on disk already is today.
@@ -41,6 +47,7 @@ function withToday(js: PageDto[]): PageDto[] {
 }
 
 export function PageView(): JSX.Element {
+  const router = paneRouterFromContext();
   const [ready, setReady] = createSignal(false);
   const [loadError, setLoadError] = createSignal<string | null>(null);
   let journalOffset = 0;
@@ -60,7 +67,7 @@ export function PageView(): JSX.Element {
   // reordering / closing another tab) mutates the `tabs` signal but not the active
   // route — without this, route() would re-fire this loader, remount the feed via
   // setReady(false), and reset scroll to the top.
-  const currentRoute = createMemo(route, undefined, { equals: sameRoute });
+  const currentRoute = createMemo(() => router.route(), undefined, { equals: sameRoute });
   createEffect(() => {
     const r = currentRoute();
     const epoch = graphEpoch(); // reload when the open graph changes
@@ -91,7 +98,7 @@ export function PageView(): JSX.Element {
         setReady(true);
         // Put the scroll back where it was when we last left this entry (back/
         // forward, or returning to this tab). A new page has no saved offset → top.
-        restoreScrollFor(r);
+        router.restoreScrollFor(r);
       } catch (e) {
         if (epoch !== graphEpoch()) return;
         setLoadError(String(e));
@@ -103,11 +110,12 @@ export function PageView(): JSX.Element {
   // Live external-change watcher: when the file watcher reports a page changed
   // on disk (Logseq / Syncthing), auto-reload it — unless it has unsaved edits
   // (→ conflict banner) or its editor is focused (don't yank the cursor).
+  // TODO(S2): explicit pane handle; hoist this to one app-level watcher that iterates panes.
   onMount(() => {
     let unsub = () => {};
     void backend()
       .onGraphChanged((c) => {
-        const r = route();
+        const r = router.route();
         if (c.removed) {
           // Deleted externally. If the page has unsaved local state, surface a CONFLICT
           // instead of silently navigating away (which would drop the in-memory edits) —
@@ -119,7 +127,7 @@ export function PageView(): JSX.Element {
             return;
           }
           if (disp === "skip") return; // being edited / move mid-flight — leave the caret
-          if (r.kind === "page" && r.name === c.name) openJournals({ inPlace: true });
+          if (r.kind === "page" && r.name === c.name) router.openJournals({ inPlace: true });
           return;
         }
         // One rule for "the changed page should/shouldn't be reloaded from disk"
@@ -173,7 +181,7 @@ export function PageView(): JSX.Element {
   });
 
   const loadMore = async () => {
-    if (route().kind !== "journals" || loadingMore || feedDone) return;
+    if (currentRoute().kind !== "journals" || loadingMore || feedDone) return;
     loadingMore = true;
     const js = await backend().journalsDesc(FEED_PAGE, journalOffset);
     journalOffset += js.length;
@@ -216,7 +224,7 @@ export function PageView(): JSX.Element {
                 {/* Agenda sits at the bottom of today's (the first) day, like OG.
                     Window is configurable (Settings → Journal) and keyed off the
                     item's scheduled/deadline date over the whole graph. */}
-                <Show when={i() === 0 && route().kind === "journals"}>
+                <Show when={i() === 0 && currentRoute().kind === "journals"}>
                   <div class="agenda-block">
                     <QueryMacro
                       body={agendaQuery()}
@@ -228,7 +236,7 @@ export function PageView(): JSX.Element {
               </>
             )}
           </For>
-          <Show when={route().kind === "journals" && mainPages().length === 0}>
+          <Show when={currentRoute().kind === "journals" && mainPages().length === 0}>
             <div class="page-load-error">
               No journal entries found in this graph.
               <div class="page-load-error-hint">
@@ -238,10 +246,10 @@ export function PageView(): JSX.Element {
               </div>
             </div>
           </Show>
-          <Show when={route().kind === "journals"}>
+          <Show when={currentRoute().kind === "journals"}>
             <LoadMore onHit={loadMore} />
           </Show>
-          <Show when={route().kind === "page" && mainPages()[0]}>
+          <Show when={currentRoute().kind === "page" && mainPages()[0]}>
             <Show when={mainPages()[0].kind === "page"}>
               <NamespaceHierarchy name={mainPages()[0].name} />
             </Show>
@@ -264,6 +272,7 @@ export function PageView(): JSX.Element {
 
 // A single zoomed-in block (its subtree) with an ancestor breadcrumb.
 function ZoomedView(props: { id: string }): JSX.Element {
+  const router = paneRouterFromContext();
   const ancestors = (): string[] => {
     const out: string[] = [];
     let p = doc.byId[props.id]?.parent ?? null;
@@ -282,7 +291,7 @@ function ZoomedView(props: { id: string }): JSX.Element {
       <div class="zoom-breadcrumb">
         <a
           class="crumb crumb-page"
-          onClick={() => openPage(pageName(), pageKind())}
+          onClick={() => router.openPage(pageName(), pageKind())}
         >
           {pageName()}
         </a>
@@ -290,7 +299,7 @@ function ZoomedView(props: { id: string }): JSX.Element {
           {(aid) => (
             <>
               <span class="crumb-sep">›</span>
-              <a class="crumb" onClick={() => zoomInto(aid)}>
+              <a class="crumb" onClick={() => router.focusBlock(aid)}>
                 <InlineText text={crumb(aid)} format={formatForBlock(aid)} />
               </a>
             </>
@@ -305,6 +314,7 @@ function ZoomedView(props: { id: string }): JSX.Element {
 }
 
 function PageSection(props: { page: FeedPage }): JSX.Element {
+  const router = paneRouterFromContext();
   const [renaming, setRenaming] = createSignal(false);
   const [newName, setNewName] = createSignal("");
   const startRename = () => {
@@ -330,7 +340,7 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
       // watcher reload), so every in-memory page is now potentially stale; reset
       // + reload so a stale copy can't be saved back and revert the rename.
       refreshAfterRename();
-      openPage(next, "page");
+      router.openPage(next, "page");
     } catch (e) {
       alert(`Rename failed: ${String(e)}`);
     }
@@ -364,12 +374,12 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
             title={props.page.kind === "page" ? "Double-click to rename (shift-click → sidebar, middle-click → new tab)" : "Shift-click to open in sidebar, middle-click → new tab"}
             onClick={(e) => {
               if (e.shiftKey) openPageInSidebar(props.page.name, props.page.kind);
-              else openPage(props.page.name, props.page.kind);
+              else router.openPage(props.page.name, props.page.kind);
             }}
             onAuxClick={(e) => {
               if (e.button === 1) {
                 e.preventDefault(); // middle-click → background tab, like a body link
-                openPageInNewTab(props.page.name, props.page.kind);
+                router.openPageInNewTab(props.page.name, props.page.kind);
               }
             }}
             onDblClick={startRename}
