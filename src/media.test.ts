@@ -57,6 +57,14 @@ describe("media helpers", () => {
       // empty/dot-prefixed ext is sanitized (leading dots stripped, lowercased)
       expect(captureAssetFileName(".JPG")).toMatch(/-\d+\.jpg$/);
       expect(captureAssetFileName("")).toMatch(/-\d+\.bin$/);
+      // COMPOUND extension (drawio's editable SVG) must survive intact — the name
+      // has to end in `.drawio.svg` or the "Edit in draw.io" affordance is lost,
+      // and the unique stem must prevent the backend de-dup from mangling it to
+      // `.drawio_1.svg` (GH #38 regression).
+      const d1 = captureAssetFileName("drawio.svg");
+      const d2 = captureAssetFileName("drawio.svg");
+      expect(d1).toMatch(/^20300102-030405-006-\d+\.drawio\.svg$/);
+      expect(d2).not.toBe(d1);
     } finally {
       vi.useRealTimers();
     }
