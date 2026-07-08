@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { closeInPageFind, inPageFindOpen } from "./inpageFind";
 import { commandDefaults, eventToBindingString, installKeybindings } from "./keybindings";
 import { closeSwitcher, focusMode, openSwitcher, setFocusMode, setPdfTarget, switcherOpen } from "./ui";
-import { layoutPaneIds, resetPaneLayoutToSingle, splitRootAtEdge } from "./panes";
+import { focusedPaneId, layoutPaneIds, paneRouter, resetPaneLayoutToSingle, splitRootAtEdge } from "./panes";
 import { exitPaneSelect, paneSel } from "./paneSelect";
 import type { PaneSnapshot } from "./router";
 
@@ -277,6 +277,27 @@ describe("pane-select Esc cascade", () => {
 
     expect(switcherOpen()).toBe(false);
     expect(layoutPaneIds()).toEqual(["main"]);
+    dispose();
+  });
+
+  it("Enter on a selected edge makes a MIRROR split — no switcher (Martin's Jul 8 ruling)", () => {
+    resetPaneLayoutToSingle(pageSnapshot("Source"));
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "Escape", code: "Escape" }).event);
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "ArrowRight", code: "ArrowRight" }).event);
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "Enter", code: "Enter" }).event);
+
+    expect(switcherOpen()).toBe(false); // mirror, not embryo
+    expect(paneSel()).toBeNull();
+    const ids = layoutPaneIds();
+    expect(ids).toHaveLength(2);
+    const newPane = ids.find((id) => id !== "main")!;
+    // The new pane mirrors the source content and takes focus.
+    const tabs = paneRouter(newPane).tabs();
+    expect(tabs[0].history[tabs[0].pos]).toMatchObject({ kind: "page", name: "Source" });
+    expect(focusedPaneId()).toBe(newPane);
     dispose();
   });
 });

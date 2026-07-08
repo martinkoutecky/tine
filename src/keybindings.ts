@@ -146,7 +146,12 @@ function enterPaneSelectFromFocus() {
   enterPaneSelect(ids.includes(focused) ? focused : ids[0] ?? "main");
 }
 
-function materializePaneSelection(prefill: string) {
+// Materialize a split at the selected seam/edge. Two flavors (Martin's Jul 8
+// ruling): Enter = a plain MIRROR split (the new pane keeps the duplicated
+// content, no dialog — the quick "same thing side by side"); typing = an
+// embryo split with the switcher prefilled with the typed char (the quick
+// "open/create THAT page in a new split"; embryo mode already hides commands).
+function materializePaneSelection(prefill: string | null) {
   const target = paneSel();
   if (!target || target.kind === "pane") return;
   const source = previousPaneSelectionTarget() ?? focusedPaneId();
@@ -156,7 +161,8 @@ function materializePaneSelection(prefill: string) {
       : splitRootAtEdge(target.side, source);
   if (!paneId) return;
   exitPaneSelect();
-  openSwitcher({ mode: "embryo", paneId, prefill });
+  if (prefill === null) focusPane(paneId); // mirror split — done
+  else openSwitcher({ mode: "embryo", paneId, prefill });
 }
 
 function directionForKey(key: string): PaneDirection | null {
@@ -190,7 +196,7 @@ function handlePaneSelectKey(e: KeyboardEvent): boolean {
       exitPaneSelect();
       focusPane(target.paneId);
     } else {
-      materializePaneSelection("");
+      materializePaneSelection(null); // Enter on a seam/edge = mirror split
     }
     return true;
   }
