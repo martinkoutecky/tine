@@ -1,0 +1,6 @@
+Added: search operators in Ctrl-K (AND / OR / -exclude / "phrase" / /regex/),
+inline diagrams via your own drawio or Excalidraw (#38), desktop voice memos
+(/record), a Journals button in the toolbar, and hover-peek preview cards for
+[[page]] links (#40). Fixed: queries using (property :key [[page]] / #tag) now
+return results; camera and voice-memo captures no longer overwrite each other's
+filenames; pasting a screenshot works on Windows (#43).

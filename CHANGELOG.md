@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.4.6] - 2026-07-08
+
 ### Added
 
 - **Search operators in Ctrl-K** ([#44](https://github.com/martinkoutecky/tine/issues/44)).
