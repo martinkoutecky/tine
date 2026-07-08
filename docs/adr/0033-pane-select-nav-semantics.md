@@ -27,19 +27,23 @@ the pane-select mode shipped in S3 (ADR 0032):
   intervals count via closed containment). No more diagonal or
   behind-the-other-column jumps.
 - **Pane-edge segments** are a new target kind `{kind: "pane-edge", paneId,
-  side}`: a pane's boundary side lying on the window edge. Enter/typing on a
-  segment splits ONLY that pane (new pane on that side). Pressing *outward
-  again* on a segment widens it to the whole-window edge (root split) —
-  TreeSheets' "edge of the left half, then the full edge". The widening rung
-  exists **even when the segment spans the full edge** (a full-height
-  column's side): the two splits still differ — nesting inside that pane
-  (quarter-width) vs splitting the root (half-width). Skipping it there made
-  root-direction splits unreachable (Martin's Jul 8 follow-up). Only a true
-  solo pane skips the rung (identical trees either way). Because segment and
-  edge can then occupy the same coordinates, a selected global edge
-  additionally **tints all panes** ("this splits the whole window") and the
-  hint pill names the scope. Rank order on exact ties:
-  seam > pane-edge > pane > edge.
+  side}`: EVERY side of every pane, internal sides included (follow-up #2: in
+  a 3-column layout the middle-top pane's right side must split JUST that
+  pane at its own height; only whole-boundary seams existed there).
+  Enter/typing on a segment splits ONLY that pane (new pane on that side).
+  Pressing *outward again* **widens the split scope at the same coordinate**:
+  pane side → a covering seam (strictly wider; an exactly-coinciding seam is
+  the same split and is skipped — it also shadows such segments by rank) →
+  the whole-window edge (root split). The edge rung exists even at equal
+  extent — nesting inside a full-height pane (quarter-width) differs from
+  splitting the root (half-width); root-direction splits were unreachable
+  when it was skipped (follow-up #1). Only a true solo pane skips it
+  (identical trees). A selected global edge **tints all panes** and the pill
+  names the scope. Rank on exact ties: seam > pane-edge > pane > edge.
+- **Steps must clear the current target's leading boundary**, not just its
+  center (follow-up #3): the global TOP edge's center was "ahead-right" of an
+  off-window-center pane's center and won ArrowRight with a near-zero
+  distance, selecting a perpendicular window edge.
 - **Focus follows pane selection.** Arrowing onto a pane target focuses it, so
   Ctrl+K (and every focused-pane command) acts on the pane that is visibly
   selected. Ctrl+K on a pane target also exits the mode (the switcher takes

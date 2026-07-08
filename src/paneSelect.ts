@@ -100,19 +100,19 @@ export function computePaneGeometry(root: LayoutNode, rect: Rect = ROOT_RECT): P
 
   walk(root, rect, []);
 
-  // A pane's side lying ON the window boundary is its own target (splitting it
-  // splits just that pane); sides on internal boundaries are covered by seams.
+  // EVERY side of every pane is a target — splitting it splits just that pane
+  // on that side, at that pane's extent. Internal sides matter too: in a
+  // 3-column layout the middle-top pane's right side splits ONLY that pane
+  // (its height), while the seam at the same coordinate inserts a full-height
+  // column (Martin's Jul 8 follow-up #2). Where a segment coincides exactly
+  // with a seam, the seam shadows it by rank — same split either way.
   const paneEdges: PaneEdgeRect[] = [];
   for (const p of panes) {
     const r = p.rect;
-    if (Math.abs(r.x - rect.x) < EPS)
-      paneEdges.push({ paneId: p.paneId, side: "left", rect: { x: r.x, y: r.y, w: 0, h: r.h } });
-    if (Math.abs(r.x + r.w - (rect.x + rect.w)) < EPS)
-      paneEdges.push({ paneId: p.paneId, side: "right", rect: { x: r.x + r.w, y: r.y, w: 0, h: r.h } });
-    if (Math.abs(r.y - rect.y) < EPS)
-      paneEdges.push({ paneId: p.paneId, side: "top", rect: { x: r.x, y: r.y, w: r.w, h: 0 } });
-    if (Math.abs(r.y + r.h - (rect.y + rect.h)) < EPS)
-      paneEdges.push({ paneId: p.paneId, side: "bottom", rect: { x: r.x, y: r.y + r.h, w: r.w, h: 0 } });
+    paneEdges.push({ paneId: p.paneId, side: "left", rect: { x: r.x, y: r.y, w: 0, h: r.h } });
+    paneEdges.push({ paneId: p.paneId, side: "right", rect: { x: r.x + r.w, y: r.y, w: 0, h: r.h } });
+    paneEdges.push({ paneId: p.paneId, side: "top", rect: { x: r.x, y: r.y, w: r.w, h: 0 } });
+    paneEdges.push({ paneId: p.paneId, side: "bottom", rect: { x: r.x, y: r.y + r.h, w: r.w, h: 0 } });
   }
 
   return {
@@ -196,6 +196,20 @@ function spansOverlap(a: [number, number], b: [number, number]): boolean {
   return Math.min(a[1], b[1]) - Math.max(a[0], b[0]) > EPS;
 }
 
+// A step must land at-or-beyond the CURRENT TARGET'S boundary in the pressed
+// direction, not merely beyond its center: a perpendicular window edge whose
+// center is barely "ahead" of an off-center pane's center otherwise wins with
+// a near-zero distance (Martin's Jul 8 report #3: ArrowRight from a pane left
+// of window-center selected the global TOP edge).
+function beyondLeadingBoundary(rect: Rect, c: { x: number; y: number }, dir: PaneDirection): boolean {
+  switch (dir) {
+    case "left": return c.x <= rect.x + EPS;
+    case "right": return c.x >= rect.x + rect.w - EPS;
+    case "up": return c.y <= rect.y + EPS;
+    case "down": return c.y >= rect.y + rect.h - EPS;
+  }
+}
+
 function resolveTarget(geom: PaneGeometry, target: PaneTarget | null): PaneTarget {
   if (target && targetRect(geom, target)) return target;
   return geom.panes[0] ? { kind: "pane", paneId: geom.panes[0].paneId } : { kind: "edge", side: "left" };
@@ -207,18 +221,30 @@ export function stepPaneTarget(root: LayoutNode, target: PaneTarget | null, dir:
   const currentRect = targetRect(geom, current);
   if (!currentRect) return current;
 
-  // Pressing INTO a pane-edge segment again widens it to the whole-window edge
-  // (TreeSheets-style: the segment splits one pane, the full edge splits the
-  // root). The global edge sits at the same coordinate, so distance-stepping
-  // could never reach it. Even when the segment spans the full edge (a
-  // full-height column's side), the two splits DIFFER — nesting inside that
-  // pane vs splitting the root — so the widening rung must stay (Martin's
-  // Jul 8 follow-up: root-direction splits were unreachable). Only a true
-  // solo pane produces identical trees either way; skip the ghost rung there.
+  // Pressing INTO a pane-edge segment again WIDENS the split scope at the
+  // same coordinate (TreeSheets' "edge of the left half, then the full
+  // edge"): pane side → a covering seam (splits across the whole boundary) →
+  // the whole-window edge (root split). Same-position-but-wider targets are
+  // unreachable by distance-stepping, so this ladder is the only way in.
+  // A seam must be STRICTLY wider (an exactly-coinciding seam is the same
+  // split); the window edge counts even at equal extent (nesting in the pane
+  // vs splitting the root differ) — except on a true solo pane, where the
+  // trees are identical either way.
   const sideForDir: Record<PaneDirection, PaneEdgeSide> = { left: "left", right: "right", up: "top", down: "bottom" };
   if (current.kind === "pane-edge" && current.side === sideForDir[dir]) {
-    if (root.kind === "pane") return current;
-    return { kind: "edge", side: current.side };
+    const horiz = dir === "left" || dir === "right";
+    const coord = horiz ? currentRect.x : currentRect.y;
+    const span = crossSpan(currentRect, dir);
+    const atCoord = (r: Rect) => Math.abs((horiz ? r.x : r.y) - coord) < EPS;
+    const coversStrictlyWider = (r: Rect) => {
+      const s = crossSpan(r, dir);
+      return s[0] <= span[0] + EPS && s[1] >= span[1] - EPS && s[1] - s[0] > span[1] - span[0] + EPS;
+    };
+    const seam = geom.seams.find((s) => atCoord(s.rect) && coversStrictlyWider(s.rect));
+    if (seam) return { kind: "seam", path: seam.path };
+    const edge = geom.edges.find((e) => e.side === current.side && atCoord(e.rect));
+    if (edge && root.kind !== "pane") return { kind: "edge", side: current.side };
+    return current;
   }
 
   const from = center(currentRect);
@@ -229,6 +255,7 @@ export function stepPaneTarget(root: LayoutNode, target: PaneTarget | null, dir:
     .filter((x): x is { candidate: PaneTarget; rect: Rect } => !!x.rect)
     .map((x) => ({ ...x, c: center(x.rect) }))
     .filter((x) => isAhead(from, x.c, dir))
+    .filter((x) => beyondLeadingBoundary(currentRect, x.c, dir))
     .filter((x) => spansOverlap(fromSpan, crossSpan(x.rect, dir)))
     .sort((a, b) => {
       const ap = primaryDistance(from, a.c, dir);

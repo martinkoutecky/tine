@@ -150,7 +150,7 @@ describe("pane geometry", () => {
     expect(stepPaneTarget(root, up, "up")).toEqual({ kind: "edge", side: "top" });
   });
 
-  it("emits pane-edge segments only for sides on the window boundary", () => {
+  it("emits pane-edge segments for ALL four sides of every pane (internal sides too)", () => {
     const root: LayoutNode = {
       kind: "split",
       dir: "row",
@@ -170,9 +170,52 @@ describe("pane geometry", () => {
     };
 
     const segs = computePaneGeometry(root).paneEdges.map((e) => `${e.paneId}:${e.side}`).sort();
-    // a: top+left; b: bottom+left; c: top+right+bottom. Internal sides (the
-    // seams) never appear.
-    expect(segs).toEqual(["a:left", "a:top", "b:bottom", "b:left", "c:bottom", "c:right", "c:top"].sort());
+    const all = ["a", "b", "c"].flatMap((p) => ["left", "right", "top", "bottom"].map((s) => `${p}:${s}`)).sort();
+    expect(segs).toEqual(all);
+  });
+
+  it("ArrowRight from an inner pane targets ITS right side, widening to the covering seam (Martin's 3-column report)", () => {
+    // Martin's Jul 8 layout: left guide, middle column split top/bottom,
+    // right guide — with the middle column slightly LEFT of window center.
+    // Bug 1: the global TOP edge's center was "ahead-right" of the pane's
+    // center and won with a near-zero distance (all panes tinted). Bug 2:
+    // the pane's right side is internal, so "split just this pane" had no
+    // target at all.
+    const root: LayoutNode = {
+      kind: "split",
+      dir: "row",
+      ratio: 0.32,
+      children: [
+        { kind: "pane", paneId: "a" },
+        {
+          kind: "split",
+          dir: "row",
+          ratio: 0.5,
+          children: [
+            {
+              kind: "split",
+              dir: "col",
+              ratio: 0.7,
+              children: [
+                { kind: "pane", paneId: "r" },
+                { kind: "pane", paneId: "d" },
+              ],
+            },
+            { kind: "pane", paneId: "b" },
+          ],
+        },
+      ],
+    };
+
+    // r's own right side first — Enter here splits JUST r (its height).
+    const first = stepPaneTarget(root, { kind: "pane", paneId: "r" }, "right");
+    expect(first).toEqual({ kind: "pane-edge", paneId: "r", side: "right" });
+    // outward again widens to the seam at the same coordinate (full-height
+    // column insert)...
+    const second = stepPaneTarget(root, first, "right");
+    expect(second).toEqual({ kind: "seam", path: [1] });
+    // ...and onward steps normally into the right pane.
+    expect(stepPaneTarget(root, second, "right")).toEqual({ kind: "pane", paneId: "b" });
   });
 
   it("numbers panes in spatial reading order", () => {

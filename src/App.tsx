@@ -333,7 +333,7 @@ export function PaneSelectHint(): JSX.Element {
             </span>
             <span>
               <Show when={kind() === "pane-edge"}>
-                <span>press outward again to split the whole window instead · </span>
+                <span>press outward again to widen the split · </span>
               </Show>
               <kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> move · <kbd>Esc</kbd> exit
             </span>

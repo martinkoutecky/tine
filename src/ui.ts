@@ -249,7 +249,16 @@ export function registerPaneFocusSetter(setter: (paneId: string) => void) {
 export function installPaneTracker(): () => void {
   const update = (e: Event) => {
     const t = e.target as Element | null;
-    const paneId = t?.closest?.("[data-pane-id]")?.getAttribute("data-pane-id") ?? "main";
+    const container = t?.closest?.("[data-pane-id]") ?? null;
+    // Focus landing OUTSIDE any pane (the Ctrl+K / palette input, dialogs —
+    // they are global overlays) must NOT steal pane focus: the overlay is
+    // pane-neutral and the command it runs targets focusedPaneId(). The old
+    // "?? main" default reset pane focus on EVERY switcher open, so palette
+    // splits and Ctrl+K picks always landed in "main" (Martin's Jul 8
+    // wrong-pane report). Deliberate pointer clicks outside keep the old
+    // main default.
+    if (e.type === "focusin" && !container) return;
+    const paneId = container?.getAttribute("data-pane-id") ?? "main";
     paneFocusSetter?.(paneId);
     setActivePane(paneId === "pdf" ? "pdf" : "notes");
   };

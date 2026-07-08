@@ -545,6 +545,25 @@ since segment and global edge can occupy the same coordinates, a selected
 global edge tints ALL panes and the pill names the scope ("split this pane"
 vs "split the whole window"). ADR 0033 amended.
 
+**Follow-up 2 (his 3-column screenshots) — THREE root causes:** (a) stepping
+compared candidates against the current target's CENTER: from a pane left of
+window-center, the global TOP edge's center was "ahead-right" with a
+near-zero primary distance and won ArrowRight (his "all panes lit up") — now
+candidates must clear the current target's LEADING BOUNDARY; (b) pane-edge
+segments existed only on window boundaries, so "split just this pane" had no
+target on internal sides — now ALL four sides of every pane are targets, and
+outward-again WIDENS at the same coordinate (segment → strictly-wider
+covering seam → global edge; exactly-coinciding seams shadow segments by
+rank, same split); (c) **the pane-focus tracker's focusin `?? "main"`
+default** — the Ctrl+K/palette overlay input's autofocus reset pane focus to
+main on EVERY open, which is the REAL cause of his "Ctrl+K acts on the wrong
+pane" nit (the arrows-focus fix was being undone) AND made palette splits
+land in main. focusin outside any pane container no longer steals focus
+(pointerdown keeps the main default — deliberate act). New
+paneTracker.test.tsx (3, jsdom) + probe-3col.mjs (6/6 real-app: palette
+split respects focus, palette open/close keeps focus, segment/seam walk,
+half-height segment split). All necessity-proven via in-place toggles.
+
 **S4 (Jul 8): pointer tab drag** (drop on strip = reorder/adopt, pane body
 = move, seam/edge = split+move, Esc cancels; last HTML5-DnD site deleted),
 **pane-scoped Ctrl+F**, docs (CHANGELOG/README/FEATURES/BACKLOG).
