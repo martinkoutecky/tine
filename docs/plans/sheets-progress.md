@@ -491,7 +491,22 @@ date cell (needs `setSchedule` time support).
 Martin's v1 UX nits are PARKED (his list, not yet captured) — batch later,
 don't interleave.
 
-## Round 5 — split view (Martin, Jul 8) [S1 `d57411e` + S2 `db4b2a6` + S3 SHIPPED; S4 (tab drag + find + docs) dispatched]
+## Round 5 — split view (Martin, Jul 8) [BUILD COMPLETE — S1–S4 ALL SHIPPED + deployed; awaiting Martin's daily-driving]
+
+**S4 (Jul 8): pointer tab drag** (drop on strip = reorder/adopt, pane body
+= move, seam/edge = split+move, Esc cancels; last HTML5-DnD site deleted),
+**pane-scoped Ctrl+F**, docs (CHANGELOG/README/FEATURES/BACKLOG).
+Supervisor fix: Ctrl+click-created panes now end with a SINGLE tab
+(duplicate navigated in place, matching the embryo flow). Real-app probes:
+split 10/10, nav 9/9, tab-drag 3/3, e2e 50/50. Probes live in
+subagent-tasks/probe-{splitview,panenav,tabdrag,auxclick,auxclick2}.mjs.
+NEXT: Martin's split-view nits → batch; then Round 6 = whiteboards-lite
+canvas face. Deferred from Round 5 (spec §5): N-feed decoupling (two
+journals panes), PDF/sidebar as pane leaves, stacked/ephemeral tabs,
+named layouts, per-pane zoom. Note: no split-view screenshot yet — the
+screenshot harness is mock-backend; take one via the real-app probes'
+saveScreenshot if README wants it (WebDriver screenshots can hang after
+edit sequences — known quirk).
 
 **S3 (the nav model) shipped Jul 8:** pane-select as the top Esc rung,
 spatial pane/seam/edge stepping (pure tree geometry), type-or-Enter on a
