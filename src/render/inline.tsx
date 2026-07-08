@@ -24,7 +24,11 @@ import { typographyMode } from "../ui";
 import { visibleBody } from "./block";
 import { AstBody } from "./body";
 import { backend } from "../backend";
-import { loadAssetBlob, loadLocalImageBlob } from "../assetCache";
+import { loadAssetBlob, loadLocalImageBlob, assetVersion } from "../assetCache";
+import { mediaEditorForAsset } from "../mediaEditors";
+import { mediaEditorCommand } from "../mediaEditorSettings";
+import { refreshAssetOnReturn } from "../assetRefresh";
+import { isMobilePlatform } from "../nativeChrome";
 import { resolveBlockBatched } from "../resolveBatch";
 import { doc, setRaw, formatForPage, formatForBlock } from "../store";
 import { QueryMacro, EmbedMacro, VideoMacro, TweetMacro, YoutubeTimestamp, ClozeMacro, ZoteroMacro } from "../components/Macro";
@@ -556,14 +560,21 @@ function AssetImage(props: {
     ...(props.height ? { height: props.height } : {}),
   });
   const external = /^(https?:|data:|blob:)/.test(props.url);
+  const rel = () => (external ? null : assetRelPath(props.url));
   // Served from a shared, graph-scoped blob cache so repeated references and
   // re-mounts don't re-read the file or mint duplicate blob URLs. The cache owns
   // the URL's lifetime (cleared on graph switch), so we don't revoke on unmount.
+  // The source key folds in the per-asset version (GH #38) so an external edit —
+  // which bumps that version after invalidating the cache — re-runs this resource
+  // and the <img> re-reads the new bytes from disk.
   const [diskSrc] = createResource(
-    () => (external ? null : props.url),
-    async (url) => {
-      const rel = assetRelPath(url);
-      return rel ? await loadAssetBlob(rel) : "";
+    () => {
+      const r = rel();
+      return r == null ? null : `${r} ${assetVersion(r)}`;
+    },
+    async () => {
+      const r = rel();
+      return r ? await loadAssetBlob(r) : "";
     }
   );
   const src = () => (external ? props.url : diskSrc());
@@ -623,6 +634,23 @@ function AssetImage(props: {
     }
   };
 
+  // "Edit in <external editor>" (GH #38): shown only for a graph asset whose
+  // filename matches a media-editor registry entry (e.g. *.drawio.svg). Launches
+  // the configured command (empty = OS opener) and marks the asset to refresh
+  // when Tine regains focus after the edit.
+  const editor = () =>
+    assetActions() && !isMobilePlatform ? mediaEditorForAsset(assetRelPath(props.url)) : undefined;
+  const onEditAsset = (e: MouseEvent) => {
+    e.stopPropagation();
+    const name = assetRelPath(props.url);
+    const ed = editor();
+    if (!name || !ed) return;
+    void backend()
+      .editAssetExternal(name, mediaEditorCommand(ed.settingKey))
+      .catch(() => pushToast(`Couldn't open ${ed.label.replace(/^Edit in /, "")}`, "error"));
+    refreshAssetOnReturn(name);
+  };
+
   return (
     <Show
       when={external || src()}
@@ -639,6 +667,14 @@ function AssetImage(props: {
         />
         <Show when={assetActions()}>
           <span class="asset-action-bar" aria-hidden="true">
+            <Show when={editor()}>
+              <button class="asset-action-btn" title={editor()!.label} onClick={onEditAsset}>
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M12 20h9" />
+                  <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                </svg>
+              </button>
+            </Show>
             <button class="asset-action-btn" title="Copy image" onClick={onCopyAsset}>
               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="9" y="9" width="11" height="11" rx="2" />

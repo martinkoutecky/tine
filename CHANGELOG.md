@@ -10,6 +10,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Diagrams via your own drawio / Excalidraw** ([#38](https://github.com/martinkoutecky/tine/issues/38),
+  proposed by @nataloko). Keep diagrams next to your notes as ordinary image
+  assets and edit them in the diagram app you already have — Tine bundles no
+  editor. A `/drawio` command creates a new editable `assets/…​.drawio.svg`,
+  inserts it as an image, and opens it in drawio; hovering any `*.drawio.svg` (or
+  `*.excalidraw.svg` / `.png`) shows an **Edit in …** button. When you switch back
+  to Tine the rendered image refreshes. Because the file is a normal image
+  reference, the same graph still renders in Logseq (round-trip intact). Configure
+  the editor commands (with autodetect for drawio) under **Settings → Files →
+  Diagram editors**; empty uses your system default opener. Desktop only.
+
 - **Hover peek for page links** ([#40](https://github.com/martinkoutecky/tine/issues/40)).
   Dwelling on a `[[page]]` or `#tag` opens a small read-only preview card of that
   page's blocks — a quick look without navigating away, like Logseq. The fetch is

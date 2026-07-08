@@ -557,6 +557,206 @@ pub(crate) fn open_asset(name: String, state: State<'_, AppState>) -> Result<(),
     }
 }
 
+/// Open a graph asset in a SPECIFIC external editor (drawio/Excalidraw/…) so a
+/// diagram can be edited in place. `command` is the user-configured command
+/// template for that editor (from Settings → Files); empty falls back to the OS
+/// opener, exactly like `open_asset`. The template is tokenised on whitespace:
+/// token[0] is the program, a `{}` inside any token is replaced by the asset
+/// path, and if no token contains `{}` the path is appended as the final arg.
+/// Spawned as an argv (no shell → no injection) through `opener_command`, which
+/// scrubs the WebKitGTK/AppImage env and detaches the child (so a Flatpak drawio
+/// doesn't inherit Tine's bundled `LD_LIBRARY_PATH`). Path-gated to `assets/`.
+/// (Template limitation: a program/arg cannot itself contain spaces — use PATH
+/// or a wrapper script. Fine for `flatpak run …`, `/usr/bin/drawio`, `drawio {}`.)
+#[tauri::command]
+pub(crate) fn edit_asset_external(
+    name: String,
+    command: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let target = with_graph(&state, |g| {
+        let assets = g.assets_path();
+        let canon_assets = assets.canonicalize().map_err(|e| e.to_string())?;
+        let canon = assets
+            .join(&name)
+            .canonicalize()
+            .map_err(|e| e.to_string())?;
+        if !canon.starts_with(&canon_assets) {
+            return Err("asset path escapes assets dir".to_string());
+        }
+        Ok(canon)
+    })?;
+    #[cfg(desktop)]
+    {
+        let target_str = target.to_string_lossy().to_string();
+        let trimmed = command.trim();
+        if trimmed.is_empty() {
+            // No editor configured → same OS opener as open_asset.
+            #[cfg(target_os = "linux")]
+            let prog = "xdg-open";
+            #[cfg(target_os = "macos")]
+            let prog = "open";
+            #[cfg(target_os = "windows")]
+            let prog = "explorer";
+            diag(format!("edit_asset_external: {name} -> {target_str} (opener {prog})"));
+            opener_command(prog)
+                .arg(&target)
+                .spawn()
+                .map_err(|e| e.to_string())?;
+            return Ok(());
+        }
+        let (prog, args) = build_editor_argv(trimmed, &target_str)
+            .ok_or_else(|| "empty editor command".to_string())?;
+        diag(format!("edit_asset_external: {name} -> {prog} {args:?}"));
+        opener_command(&prog)
+            .args(&args)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = (&name, &command, &target);
+        Err("editing an asset externally is not supported on this platform".into())
+    }
+}
+
+/// Best-effort autodetect of an installed external editor's launch command, by
+/// PROBING known install locations on disk — never executing anything (so a
+/// Flatpak wrapper can't leak its bundled env into the probe). Returns a command
+/// template suitable for `edit_asset_external`, or an empty string if not found
+/// (the caller then leaves the setting empty = OS opener). Currently knows
+/// `drawio`; other ids return empty.
+#[tauri::command]
+pub(crate) fn detect_media_editor(id: String) -> Result<String, String> {
+    #[cfg(desktop)]
+    {
+        if id == "drawio" {
+            return Ok(detect_drawio());
+        }
+        Ok(String::new())
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = id;
+        Ok(String::new())
+    }
+}
+
+/// Probe common drawio install sites without executing. Order: Flatpak exported
+/// launcher (checked as a FILE, per the reporter's note — not via `flatpak run`,
+/// which would inherit our env), then snap, then a `drawio` on PATH, then the
+/// platform app bundle. Returns a command template or "".
+#[cfg(desktop)]
+fn detect_drawio() -> String {
+    use std::path::Path;
+    #[cfg(target_os = "linux")]
+    {
+        // Flatpak: the exported bin is a plain wrapper file we can stat.
+        let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+        let flatpak_bins = [
+            home.as_ref().map(|h| h.join(".local/share/flatpak/exports/bin/com.jgraph.drawio.desktop")),
+            Some(std::path::PathBuf::from("/var/lib/flatpak/exports/bin/com.jgraph.drawio.desktop")),
+        ];
+        for b in flatpak_bins.into_iter().flatten() {
+            if b.exists() {
+                return "flatpak run com.jgraph.drawio.desktop {}".to_string();
+            }
+        }
+        if Path::new("/snap/bin/drawio").exists() {
+            return "/snap/bin/drawio {}".to_string();
+        }
+        if let Some(p) = which_on_path("drawio") {
+            return format!("{} {{}}", p.display());
+        }
+        String::new()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if Path::new("/Applications/draw.io.app").exists() {
+            return "open -a draw.io {}".to_string();
+        }
+        String::new()
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+            let exe = std::path::Path::new(&local).join("Programs\\draw.io\\draw.io.exe");
+            if exe.exists() {
+                return format!("{} {{}}", exe.display());
+            }
+        }
+        String::new()
+    }
+}
+
+/// Find an executable by name on `$PATH` (stat only, no exec). Linux/macOS.
+#[cfg(all(desktop, unix))]
+fn which_on_path(name: &str) -> Option<std::path::PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|dir| dir.join(name))
+        .find(|cand| cand.is_file())
+}
+
+/// Split a user command template into (program, args) for an editor launch,
+/// substituting `{}` in any token with the target path; if no token contains
+/// `{}`, the path is appended as the final arg. Whitespace-tokenised (v1: a
+/// program/arg cannot itself contain spaces — use PATH or a wrapper script).
+/// Returns None for a whitespace-only template.
+#[cfg(any(desktop, test))]
+fn build_editor_argv(command: &str, target: &str) -> Option<(String, Vec<String>)> {
+    let tokens: Vec<&str> = command.split_whitespace().collect();
+    let (prog, rest) = tokens.split_first()?;
+    let mut args: Vec<String> = Vec::new();
+    let mut substituted = false;
+    for tok in rest {
+        if tok.contains("{}") {
+            args.push(tok.replace("{}", target));
+            substituted = true;
+        } else {
+            args.push((*tok).to_string());
+        }
+    }
+    if !substituted {
+        args.push(target.to_string());
+    }
+    Some(((*prog).to_string(), args))
+}
+
+#[cfg(test)]
+mod editor_argv_tests {
+    use super::build_editor_argv;
+
+    #[test]
+    fn appends_path_when_no_placeholder() {
+        let (p, a) = build_editor_argv("drawio", "/g/assets/x.drawio.svg").unwrap();
+        assert_eq!(p, "drawio");
+        assert_eq!(a, vec!["/g/assets/x.drawio.svg"]);
+    }
+
+    #[test]
+    fn substitutes_a_placeholder_token() {
+        let (p, a) =
+            build_editor_argv("flatpak run com.jgraph.drawio.desktop {}", "/g/x.svg").unwrap();
+        assert_eq!(p, "flatpak");
+        assert_eq!(a, vec!["run", "com.jgraph.drawio.desktop", "/g/x.svg"]);
+    }
+
+    #[test]
+    fn substitutes_inside_a_token() {
+        let (p, a) = build_editor_argv("app --file={}", "/g/x.svg").unwrap();
+        assert_eq!(p, "app");
+        assert_eq!(a, vec!["--file=/g/x.svg"]);
+    }
+
+    #[test]
+    fn whitespace_only_is_none() {
+        assert!(build_editor_argv("   ", "/g/x.svg").is_none());
+        assert!(build_editor_argv("", "/g/x.svg").is_none());
+    }
+}
+
 /// Orphaned `assets/` files (no block references them) for the cleanup UI.
 #[tauri::command]
 pub(crate) fn list_orphan_assets(

@@ -84,6 +84,10 @@ import {
   insertedAssetMarkdownTarget,
   replaceInsertedAssetMarkdown,
 } from "../media";
+import { MEDIA_EDITORS } from "../mediaEditors";
+import { mediaEditorCommand } from "../mediaEditorSettings";
+import { refreshAssetOnReturn } from "../assetRefresh";
+import { isMobilePlatform } from "../nativeChrome";
 import { calcSource, wrapCalc, evalCalc } from "../editor/calc";
 import { QueryMacro, EmbedMacro } from "./Macro";
 import { workflow, zoomInto, openContextMenu, openDatePicker, openBlockInSidebar, graphMeta, dataRev, setQueryBuilderAutoOpen, openPageProps, pushToast, dismissToast, autoPairing, typographyMode, timetrackingEnabled, logbookWithSecondSupport } from "../ui";
@@ -987,6 +991,8 @@ export function Editor(props: { id: string }): JSX.Element {
       const showAllTemplates = !!q && "template".startsWith(q.toLowerCase()); // /t…/template lists them all
       const scored: { item: AcItem; s: number; idx: number }[] = [];
       COMMANDS.forEach((c, i) => {
+        // /drawio launches an external editor — desktop only (GH #38).
+        if (c.action === "drawio" && isMobilePlatform) return;
         const s = q ? commandScore(q, c) : 1;
         if (s > 0)
           scored.push({ item: { label: c.label, insert: c.insert, caret: c.caret, action: c.action }, s, idx: i });
@@ -1216,6 +1222,37 @@ export function Editor(props: { id: string }): JSX.Element {
     }
   };
 
+  // `/drawio` (GH #38): create a new blank *editable* .drawio.svg in assets/, insert
+  // it as an image reference, and open it in the external drawio editor. On return
+  // to Tine the rendered image refreshes (assetRefresh). Mirrors uploadAsset, but
+  // the file is created from the registry's blank template rather than picked.
+  const createDrawioDiagram = async () => {
+    const ed = MEDIA_EDITORS.find((e) => e.id === "drawio");
+    if (!ed?.blank) return;
+    try {
+      const bytes = new TextEncoder().encode(ed.blank.contents());
+      // The backend de-dups a colliding name to `<name>_N`.
+      const saved = await backend().saveAsset(`diagram.${ed.blank.ext}`, bytes);
+      const md = assetMarkdown(saved);
+      const pos = ref.selectionStart;
+      const nr = ref.value.slice(0, pos) + md + ref.value.slice(pos);
+      commit(nr); // reattach hidden id::/collapsed:: (nr is visible-only text)
+      const c = pos + md.length;
+      queueMicrotask(() => {
+        ref.value = nr;
+        ref.setSelectionRange(c, c);
+        ref.focus();
+        autosize();
+      });
+      void backend()
+        .editAssetExternal(saved, mediaEditorCommand(ed.settingKey))
+        .catch(() => pushToast("Couldn’t open draw.io", "error"));
+      refreshAssetOnReturn(saved);
+    } catch {
+      pushToast("Couldn’t create the diagram", "error");
+    }
+  };
+
   const selectAc = (item: AcItem) => {
     const t = ac();
     if (!t) return;
@@ -1279,6 +1316,10 @@ export function Editor(props: { id: string }): JSX.Element {
       case "upload-asset":
         replaceTrigger(""); // drop the "/upload" trigger text
         uploadAsset();
+        return;
+      case "drawio":
+        replaceTrigger(""); // drop the "/drawio" trigger text
+        void createDrawioDiagram();
         return;
       case "priority-a":
       case "priority-b":

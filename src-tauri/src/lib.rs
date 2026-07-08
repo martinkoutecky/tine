@@ -16,7 +16,8 @@ mod watcher;
 
 use backup::{get_backup_keep, list_backups, restore_backup, set_backup_keep};
 use commands::{
-    asset_trash_stats, block_ref_counts, block_referrers, delete_page, empty_asset_trash,
+    asset_trash_stats, block_ref_counts, block_referrers, delete_page, detect_media_editor,
+    edit_asset_external, empty_asset_trash,
     get_backlinks, get_page, get_page_by_path, get_unlinked_refs, graph_source_files, import_asset,
     journal_content_days, journals_desc, list_journal_conflicts, list_orphan_assets, list_pages,
     list_sync_conflicts, list_templates, merge_pages, open_asset, page_aliases, page_icons,
@@ -343,6 +344,8 @@ pub fn run() {
             open_external,
             copy_image_to_clipboard,
             open_asset,
+            edit_asset_external,
+            detect_media_editor,
             list_orphan_assets,
             trash_asset,
             asset_trash_stats,

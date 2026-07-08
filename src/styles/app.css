@@ -1933,6 +1933,17 @@ body {
   color: var(--text-primary);
   font-size: 13px;
 }
+/* Diagram-editor command row (Settings → Files; GH #38): input grows, autodetect
+   button sits beside it. */
+.media-editor-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.media-editor-row .settings-input {
+  flex: 1;
+  min-width: 0;
+}
 /* Spellcheck dictionary picker (Settings → Editor) */
 .spellcheck-dicts {
   display: flex;

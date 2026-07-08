@@ -19,6 +19,14 @@ describe("media helpers", () => {
     expect(mediaKind("plain")).toBe(null);
   });
 
+  it("classifies double-extension diagram assets by their LAST extension (GH #38)", () => {
+    // A convention-named editable SVG is an image (its last ext is .svg), so it
+    // renders through the normal image pipeline.
+    expect(mediaKind("../assets/flow.drawio.svg")).toBe("image");
+    expect(mediaKind("sketch.excalidraw.svg")).toBe("image");
+    expect(mediaKind("../assets/sketch.excalidraw.png")).toBe("image");
+  });
+
   it("assetMarkdown: ![] for image/video/audio, [] link for other", () => {
     expect(assetMarkdown("clip.mp4")).toBe("![](../assets/clip.mp4)");
     expect(assetMarkdown("song.mp3")).toBe("![](../assets/song.mp3)");

@@ -152,6 +152,7 @@ export type CommandAction =
   | "scheduled"
   | "deadline"
   | "upload-asset"
+  | "drawio"
   | "now-time"
   | "today"
   | "query-builder"
@@ -197,6 +198,7 @@ export const COMMANDS: Command[] = [
   { label: "Page reference", insert: "[[]]", caret: 2 },
   { label: "Link", insert: "[]()", caret: 1 },
   { label: "Upload an asset", action: "upload-asset" },
+  { label: "Draw.io diagram", action: "drawio" },
   { label: "Code block", insert: "```\n\n```", caret: 4 },
   { label: "Calculator", insert: "```calc\n\n```", caret: 8 },
   { label: "Quote", insert: "> " },

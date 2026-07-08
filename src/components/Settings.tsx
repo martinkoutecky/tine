@@ -82,6 +82,8 @@ import {
   DEFAULT_ASSET_NAME_FORMAT,
   STAMPED_ASSET_NAME_FORMAT,
 } from "../assetSettings";
+import { MEDIA_EDITORS } from "../mediaEditors";
+import { mediaEditorCommand, setMediaEditorCommand } from "../mediaEditorSettings";
 import { formatAssetName } from "../media";
 import { galleryThemes, selectedGalleryTheme, applyTheme as applyGalleryTheme } from "../themeGallery";
 import type { GalleryTheme } from "../styles/themes";
@@ -1613,7 +1615,69 @@ function FilesTab(): JSX.Element {
         </div>
       </Field>
 
+      <MediaEditorsSection />
+
       <AssetsTab />
+    </>
+  );
+}
+
+// Configurable external editors for diagram assets (GH #38): drawio, Excalidraw.
+// Each registry entry gets one command row; empty = the OS default opener. drawio
+// offers an autodetect probe.
+function MediaEditorsSection(): JSX.Element {
+  const [detecting, setDetecting] = createSignal<string | null>(null);
+  const autodetect = async (id: string, settingKey: string) => {
+    setDetecting(id);
+    try {
+      const cmd = await backend().detectMediaEditor(id);
+      if (cmd) {
+        setMediaEditorCommand(settingKey, cmd);
+        pushToast(`Found: ${cmd}`, "success");
+      } else {
+        pushToast("Couldn’t find it — set the command manually.", "error");
+      }
+    } catch {
+      pushToast("Autodetect failed.", "error");
+    } finally {
+      setDetecting(null);
+    }
+  };
+  return (
+    <>
+      <div class="settings-section">Diagram editors</div>
+      <div class="settings-hint" style={{ "margin-bottom": "8px" }}>
+        Edit diagram assets in your own installed app. A <code class="mono">/drawio</code> command
+        creates a new editable <code>.drawio.svg</code>; hovering any matching image shows an
+        “Edit in …” button. Leave a command blank to use the system default opener. A{" "}
+        <code class="mono">{"{}"}</code> in the command is replaced by the file path (otherwise it’s
+        appended). Desktop only; device-local.
+      </div>
+      <For each={MEDIA_EDITORS}>
+        {(ed) => (
+          <Field label={ed.settingLabel}>
+            <div class="media-editor-row">
+              <input
+                type="text"
+                class="settings-input mono"
+                placeholder="system default opener"
+                value={mediaEditorCommand(ed.settingKey)}
+                spellcheck={false}
+                onChange={(e) => setMediaEditorCommand(ed.settingKey, e.currentTarget.value)}
+              />
+              <Show when={ed.detectable}>
+                <button
+                  class="settings-btn"
+                  disabled={detecting() === ed.id}
+                  onClick={() => void autodetect(ed.id, ed.settingKey)}
+                >
+                  {detecting() === ed.id ? "Detecting…" : "Autodetect"}
+                </button>
+              </Show>
+            </div>
+          </Field>
+        )}
+      </For>
     </>
   );
 }

@@ -1,6 +1,16 @@
 # Excalidraw assets — light integration (render + "Edit in Excalidraw")
 
-Status: **spec, not started** (backlog P2). Decided Jul 5 2026.
+Status: **IMPLEMENTED** (Jul 8 2026) — superseded by the generic external
+media-editor registry built for GH #38 (`src/mediaEditors.ts`). Excalidraw is one
+registry entry; the "Edit in Excalidraw" affordance, the configurable command
+(Settings → Files → Diagram editors), the render path, and the focus-refresh all
+come from that shared seam. This document is kept for the design rationale and the
+export-with-*Embed scene* user workflow it documents. Only remaining gap vs. this
+spec: §2.4 (a bare `.excalidraw` scene-JSON attachment chip carrying the edit
+action) — the registry currently surfaces the edit button on rendered *images*
+only; add it to the attachment chip if a user asks.
+
+Original status: spec, not started (backlog P2). Decided Jul 5 2026.
 
 ## 1. Goal & non-goals
 

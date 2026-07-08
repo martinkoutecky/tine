@@ -644,6 +644,12 @@ export function mockBackend(): Backend {
     async openAsset(): Promise<void> {
       // no OS opener in the browser mock
     },
+    async editAssetExternal(): Promise<void> {
+      // no external editor in the browser mock
+    },
+    async detectMediaEditor(): Promise<string> {
+      return ""; // nothing to probe in the browser mock
+    },
     async listOrphanAssets() {
       return [
         { name: "old_screenshot_20260601_091500.png", size: 184_320, modified: 1_748_762_100 },

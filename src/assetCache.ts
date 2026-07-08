@@ -1,3 +1,4 @@
+import { createStore } from "solid-js/store";
 import { backend } from "./backend";
 
 // Cache of graph-asset blob URLs keyed by path relative to `assets/`. Without it
@@ -115,4 +116,29 @@ export function clearAssetBlobCache(): void {
     void p.then((url) => url && URL.revokeObjectURL(url)).catch(() => {});
   }
   cache.clear();
+}
+
+// Per-asset version counters (GH #38). An <img> served from a blob URL caches the
+// bytes at creation, so after an EXTERNAL app overwrites the file we must both
+// drop the cached blob AND change the reactive key a bound resource depends on —
+// invalidating the cache alone won't re-run a resource keyed on an unchanged URL.
+const [versions, setVersions] = createStore<Record<string, number>>({});
+
+/** Reactive version for `rel` — fold into a resource's source key so a bump re-runs it. */
+export function assetVersion(rel: string): number {
+  return versions[rel] ?? 0;
+}
+
+/** Drop the cached blob for a single `rel` (revoke + delete), so the next read hits disk. */
+export function invalidateAsset(rel: string): void {
+  const prior = cache.get(rel);
+  if (prior) void prior.then((url) => url && URL.revokeObjectURL(url)).catch(() => {});
+  cache.delete(rel);
+}
+
+/** Invalidate `rel` AND bump its reactive version, forcing bound <img>s to re-read
+ *  from disk. Use after an external editor overwrote the asset. */
+export function refreshAsset(rel: string): void {
+  invalidateAsset(rel);
+  setVersions(rel, (versions[rel] ?? 0) + 1);
 }

@@ -91,6 +91,17 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
 - **Orphaned-media cleanup** (Settings → Backups): scan for `assets/` files no block
   references and move them to the recoverable trash — deleting a block never deletes
   its media, so this is how unused files get reclaimed.
+- **Diagrams in your own drawio / Excalidraw** — Tine bundles no editor. drawio and
+  Excalidraw can save an *editable* SVG (the diagram lives inside the file), so one
+  `foo.drawio.svg` / `foo.excalidraw.svg` is both the rendered preview *and* the
+  editable source. `/drawio` creates a new editable `assets/…​.drawio.svg`, inserts
+  it as an image, and opens it in drawio; hovering any matching image shows an **Edit
+  in …** button. Switch back to Tine and the rendered image refreshes. It's a plain
+  image reference, so the graph still renders in Logseq. Set the editor commands
+  (drawio has an **Autodetect**) under **Settings → Files → Diagram editors**; empty
+  uses the system default opener. A `{}` in the command is replaced by the file path.
+  Desktop only. (For Excalidraw, export with *Embed scene* into `assets/` as
+  `name.excalidraw.svg`; there's no in-app "new Excalidraw".)
 
 ## Linking, references & queries
 

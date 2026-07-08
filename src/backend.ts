@@ -139,6 +139,13 @@ export interface Backend {
   /** Open a graph asset (by its `assets/`-relative name) in the OS default app —
    *  e.g. a video/audio file in the system player. */
   openAsset(name: string): Promise<void>;
+  /** Open a graph asset in a SPECIFIC external editor (drawio/Excalidraw/…) so a
+   *  diagram can be edited in place. `command` is that editor's configured command
+   *  template (empty = OS opener). See GH #38 / mediaEditors.ts. */
+  editAssetExternal(name: string, command: string): Promise<void>;
+  /** Best-effort autodetect of an installed editor's launch command (probes disk,
+   *  never executes). Returns a command template or "" if not found. */
+  detectMediaEditor(id: string): Promise<string>;
   /** Top-level `assets/` files no block references (orphans), for cleanup. */
   listOrphanAssets(): Promise<AssetInfo[]>;
   /** Move an orphaned asset to the recoverable trash. */
@@ -453,6 +460,12 @@ class TauriBackend implements Backend {
   }
   openAsset(name: string) {
     return this.call<void>("open_asset", { name });
+  }
+  editAssetExternal(name: string, command: string) {
+    return this.call<void>("edit_asset_external", { name, command });
+  }
+  detectMediaEditor(id: string) {
+    return this.call<string>("detect_media_editor", { id });
   }
   listOrphanAssets() {
     return this.call<AssetInfo[]>("list_orphan_assets");
