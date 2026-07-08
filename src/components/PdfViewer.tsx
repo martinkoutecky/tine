@@ -6,6 +6,7 @@ import { closePdf, pushToast, isConflicted, activePane } from "../ui";
 import { flushPage, isDirty, reloadHlsIfLoaded } from "../store";
 import { openPage } from "../router";
 import { hlsPageName } from "../pdf";
+import { decideWheelZoomGesture, type WheelZoomGestureState } from "../zoom";
 import type { Highlight, Rect } from "../types";
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
@@ -543,10 +544,15 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
   const zoomBy = (factor: number) =>
     setScale((s) => Math.min(4, Math.max(0.4, Math.round(s * factor * 100) / 100)));
 
-  // Ctrl/Cmd + wheel zooms (like a PDF reader); plain wheel scrolls normally.
+  // Ctrl/Cmd + wheel zooms (like a PDF reader); modifier-added momentum tails are only consumed.
+  let wheelZoomState: WheelZoomGestureState = {};
   const onWheel = (e: WheelEvent) => {
-    if (!e.ctrlKey && !e.metaKey) return;
+    const decision = decideWheelZoomGesture(wheelZoomState, e.ctrlKey || e.metaKey, e.timeStamp);
+    wheelZoomState = decision.state;
+    if (!decision.consume) return;
     e.preventDefault();
+    e.stopPropagation();
+    if (!decision.zoom) return;
     zoomBy(e.deltaY < 0 ? 1.1 : 1 / 1.1);
   };
 

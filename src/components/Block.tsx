@@ -92,12 +92,12 @@ import {
   replaceInsertedAssetMarkdown,
 } from "../media";
 import { MEDIA_EDITORS } from "../mediaEditors";
-import { mediaEditorCommand } from "../mediaEditorSettings";
+import { resolveMediaEditorCommand } from "../mediaEditorSettings";
 import { refreshAssetOnReturn } from "../assetRefresh";
 import { isMobilePlatform } from "../nativeChrome";
 import { calcSource, wrapCalc, evalCalc } from "../editor/calc";
 import { QueryMacro, EmbedMacro } from "./Macro";
-import { workflow, zoomInto, openContextMenu, openDatePicker, openBlockInSidebar, graphMeta, dataRev, setQueryBuilderAutoOpen, openPageProps, pushToast, dismissToast, autoPairing, typographyMode, timetrackingEnabled, logbookWithSecondSupport } from "../ui";
+import { workflow, zoomInto, zoomedBlock, openContextMenu, openDatePicker, openBlockInSidebar, graphMeta, dataRev, setQueryBuilderAutoOpen, openPageProps, pushToast, dismissToast, autoPairing, typographyMode, timetrackingEnabled, logbookWithSecondSupport } from "../ui";
 import { seedAssetBlob } from "../assetCache";
 import { openPageInNewTab } from "../router";
 import { blockRefCount } from "../blockRefCounts";
@@ -1329,8 +1329,12 @@ export function Editor(props: { id: string }): JSX.Element {
     if (!ed?.blank) return;
     try {
       const bytes = new TextEncoder().encode(ed.blank.contents());
-      // The backend de-dups a colliding name to `<name>_N`.
-      const saved = await backend().saveAsset(`diagram.${ed.blank.ext}`, bytes);
+      // Use the unique-stem asset convention (like a camera/mic capture), NOT a
+      // fixed `diagram.drawio.svg`: the backend de-dup splits on the LAST dot, so a
+      // colliding `diagram.drawio.svg` would become `diagram.drawio_1.svg` — which
+      // no longer ends in `.drawio.svg`, dropping the "Edit in draw.io" affordance
+      // (GH #38). A unique stem never collides, so the double extension survives.
+      const saved = await backend().saveAsset(captureAssetFileName(ed.blank.ext), bytes);
       const md = assetMarkdown(saved);
       const pos = ref.selectionStart;
       const nr = ref.value.slice(0, pos) + md + ref.value.slice(pos);
@@ -1342,8 +1346,9 @@ export function Editor(props: { id: string }): JSX.Element {
         ref.focus();
         autosize();
       });
+      const cmd = await resolveMediaEditorCommand(ed);
       void backend()
-        .editAssetExternal(saved, mediaEditorCommand(ed.settingKey))
+        .editAssetExternal(saved, cmd)
         .catch(() => pushToast("Couldn’t open draw.io", "error"));
       refreshAssetOnReturn(saved);
     } catch {
@@ -2061,7 +2066,7 @@ export function Editor(props: { id: string }): JSX.Element {
         const newId = insertOutlineAfter(props.id, [{ raw: "", children: [] }]);
         startEditing(newId, 0);
       } else {
-        splitBlock(props.id, start);
+        splitBlock(props.id, start, zoomedBlock() === props.id && doc.byId[props.id].children.length === 0);
       }
     } else if (e.key === "Backspace" && end === start) {
       // Auto-pair Backspace: caret between an empty pair (`(|)`) deletes both

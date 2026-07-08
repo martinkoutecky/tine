@@ -187,6 +187,38 @@ describe("split (Enter)", () => {
     // new empty block is first child
     expect(shape()).toEqual([["parent", [[""], ["child"]]]]);
   });
+
+  it("forceChild makes a leaf split create the first child", () => {
+    const dto = load([blk("parent", [blk("leaf")])]);
+    const id = dto.blocks[0].children[0].id;
+    splitBlock(id, "leaf".length, true);
+    const newId = doc.byId[id].children[0];
+    expect(doc.byId[newId].parent).toBe(id);
+    expect(shape()).toEqual([["parent", [["leaf", [[""]]]]]]);
+  });
+
+  it("without forceChild, splitting the same leaf still creates a sibling", () => {
+    const dto = load([blk("parent", [blk("leaf")])]);
+    const parentId = dto.blocks[0].id;
+    const id = dto.blocks[0].children[0].id;
+    splitBlock(id, "leaf".length, false);
+    const newId = doc.byId[parentId].children[1];
+    expect(doc.byId[newId].parent).toBe(parentId);
+    expect(doc.byId[id].children).toEqual([]);
+    expect(shape()).toEqual([["parent", [["leaf"], [""]]]]);
+  });
+
+  it("forceChild does not override the caret-at-start branch", () => {
+    const dto = load([blk("parent", [blk("leaf")])]);
+    const parentId = dto.blocks[0].id;
+    const id = dto.blocks[0].children[0].id;
+    splitBlock(id, 0, true);
+    const newId = doc.byId[parentId].children[0];
+    expect(newId).not.toBe(id);
+    expect(doc.byId[newId].parent).toBe(parentId);
+    expect(doc.byId[id].children).toEqual([]);
+    expect(shape()).toEqual([["parent", [[""], ["leaf"]]]]);
+  });
 });
 
 describe("indent (Tab) — the Enter-then-Tab case", () => {

@@ -9,7 +9,7 @@
 
 import { createStore } from "solid-js/store";
 import { backend } from "./backend";
-import { MEDIA_EDITORS } from "./mediaEditors";
+import { MEDIA_EDITORS, type MediaEditor } from "./mediaEditors";
 
 const [commands, setCommands] = createStore<Record<string, string>>({});
 
@@ -23,6 +23,29 @@ export function setMediaEditorCommand(settingKey: string, value: string): void {
   const v = value.trim();
   setCommands(settingKey, v);
   void backend().setAppString(settingKey, v).catch(() => {});
+}
+
+/** Resolve the launch command for an editor. Uses the user's configured template
+ *  if set; otherwise runs a one-time autodetect probe (`detect_media_editor`) and,
+ *  if it finds an install, persists it (so Settings → Files reflects it and we
+ *  don't re-probe every launch). Empty result ⇒ the caller falls back to the OS
+ *  opener. Without this, a first `/drawio` on a machine that has drawio installed
+ *  but no command configured would open the SVG in the OS default image viewer
+ *  (e.g. gwenview) instead of drawio (GH #38). */
+export async function resolveMediaEditorCommand(ed: MediaEditor): Promise<string> {
+  const existing = mediaEditorCommand(ed.settingKey);
+  if (existing) return existing;
+  if (!ed.detectable) return "";
+  try {
+    const found = (await backend().detectMediaEditor(ed.id)).trim();
+    if (found) {
+      setMediaEditorCommand(ed.settingKey, found);
+      return found;
+    }
+  } catch {
+    /* fall through to OS opener */
+  }
+  return "";
 }
 
 /** Load all persisted editor commands at startup (default = empty = OS opener). */

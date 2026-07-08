@@ -26,7 +26,7 @@ import { AstBody } from "./body";
 import { backend } from "../backend";
 import { loadAssetBlob, loadLocalImageBlob, assetVersion } from "../assetCache";
 import { mediaEditorForAsset } from "../mediaEditors";
-import { mediaEditorCommand } from "../mediaEditorSettings";
+import { resolveMediaEditorCommand } from "../mediaEditorSettings";
 import { refreshAssetOnReturn } from "../assetRefresh";
 import { isMobilePlatform } from "../nativeChrome";
 import { resolveBlockBatched } from "../resolveBatch";
@@ -644,13 +644,14 @@ function AssetImage(props: {
   // when Tine regains focus after the edit.
   const editor = () =>
     assetActions() && !isMobilePlatform ? mediaEditorForAsset(assetRelPath(props.url)) : undefined;
-  const onEditAsset = (e: MouseEvent) => {
+  const onEditAsset = async (e: MouseEvent) => {
     e.stopPropagation();
     const name = assetRelPath(props.url);
     const ed = editor();
     if (!name || !ed) return;
+    const cmd = await resolveMediaEditorCommand(ed);
     void backend()
-      .editAssetExternal(name, mediaEditorCommand(ed.settingKey))
+      .editAssetExternal(name, cmd)
       .catch(() => pushToast(`Couldn't open ${ed.label.replace(/^Edit in /, "")}`, "error"));
     refreshAssetOnReturn(name);
   };
