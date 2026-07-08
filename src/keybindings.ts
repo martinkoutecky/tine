@@ -256,6 +256,9 @@ const COMMANDS: CommandDef[] = [
   { id: "pane/split-right", binding: "mod+alt+\\", label: "Split right", scope: "global", run: () => void splitPane(focusedPaneId(), "row"), global: true },
   { id: "pane/split-down", binding: "mod+alt+shift+\\", label: "Split down", scope: "global", run: () => void splitPane(focusedPaneId(), "col"), global: true },
   { id: "pane/close", binding: "", label: "Close pane", scope: "global", run: () => void closePane(focusedPaneId()), global: true },
+  // Palette-discoverable entry into pane-select (it's otherwise only reachable
+  // via Esc-with-nothing-open, which users won't guess — Martin didn't).
+  { id: "pane/select-mode", binding: "", label: "Pane select mode (arrows move, Enter opens/splits)", scope: "global", run: enterPaneSelectFromFocus, global: true },
   ...Array.from({ length: 9 }, (_, i): CommandDef => ({
     id: `pane/focus-${i + 1}`,
     binding: `mod+${i + 1}`,

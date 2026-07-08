@@ -82,6 +82,13 @@ Pane-select mode = the top rung of the existing select→edit ladder:
 - **Enter the rung:** `Esc` from the outline's top level (block-selection at
   page root) enters pane-select mode; the focused pane shows a selection ring.
   `Enter`/`→`-equivalent descends back into the pane's content.
+- **Mode affordance (Jul 8, from Martin's field report):** because the same
+  `Esc` both enters and exits the rung, "press Esc repeatedly" leaves the user
+  on an unknown side of the toggle with arrows silently dead. While the mode is
+  active a **hint pill** (bottom-center: arrows/Enter/type/Esc legend, target-
+  aware) is shown and the targeted pane is **tinted** (the bare 2px ring reads
+  as the focused-pane indicator). The mode is also exposed as a **"Pane select
+  mode" command** in the palette.
 - **Arrows** move pane selection spatially (left/right/up/down across the
   tree, geometric nearest-neighbor like the sheet's 2-D stepping). **Seam
   stepping default ON** (as in Sheets): arrows also land on seams between

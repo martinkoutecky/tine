@@ -493,6 +493,26 @@ don't interleave.
 
 ## Round 5 — split view (Martin, Jul 8) [BUILD COMPLETE — S1–S4 ALL SHIPPED + deployed; awaiting Martin's daily-driving]
 
+**Post-round polish (Jul 8, from Martin's first field report):** he split via
+the palette, pressed Esc repeatedly, then arrows — and the seam "never lit
+up". Reproduced his exact flow in the real app (probe-martinflow.mjs): the
+mechanics were CORRECT the whole time (Esc #3 enters the mode, ArrowRight
+lights the seam) — the failure was pure affordance: the same Esc both enters
+and exits the rung, so "press Esc repeatedly" leaves you on an unknown side
+of the toggle with arrows silently dead, and the 2px ring reads as the
+focused-pane indicator. Shipped: (a) bottom-center **hint pill** while the
+mode is active (target-aware legend: pane vs seam/edge), (b) **tint** on the
+targeted pane, (c) **"Pane select mode" palette command** (that's where he
+went looking), (d) seam/edge highlights bumped 4→8px + glow (the right-edge
+sliver was nearly invisible). Visually verified via playwright shots (pane /
+seam / edge states); probe-panenav extended to 13 checks incl. palette entry.
+Same-day: **master v0.4.6 merged in** (search operators #44, /record voice
+memos, journals toolbar button, capture-naming + property-query fixes);
+CHANGELOG resolved (Sheets+Split view stay Unreleased; 0.4.6 = master
+verbatim), App.tsx resolved (journals button + arg-safe openSwitcher). All
+gates + probes green post-merge (tsc, 268+18 vitest, 284 cargo, e2e 50/50,
+splitview 10/10, panenav 13/13, tabdrag 3/3).
+
 **S4 (Jul 8): pointer tab drag** (drop on strip = reorder/adopt, pane body
 = move, seam/edge = split+move, Esc cancels; last HTML5-DnD site deleted),
 **pane-scoped Ctrl+F**, docs (CHANGELOG/README/FEATURES/BACKLOG).

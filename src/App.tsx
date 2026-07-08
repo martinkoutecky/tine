@@ -286,6 +286,38 @@ function PaneLeaf(props: { paneId: string }): JSX.Element {
   );
 }
 
+// Pane-select is a MODE entered/exited by the same key (Esc at the top of the
+// ladder), so without a persistent indicator "press Esc a few times" leaves the
+// user unsure whether arrows will do anything (Martin hit exactly this). The
+// pill is that indicator, and doubles as in-situ docs for the seam/edge tricks.
+export function PaneSelectHint(): JSX.Element {
+  const onSplitter = () => {
+    const t = paneSel();
+    return !!t && t.kind !== "pane";
+  };
+  return (
+    <Show when={paneSel()}>
+      <div class="pane-select-hint">
+        <span class="pane-select-hint-title">Pane select</span>
+        <Show
+          when={onSplitter()}
+          fallback={
+            <span>
+              <kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> move (edges split) · <kbd>Enter</kbd> focus pane ·{" "}
+              <kbd>Esc</kbd> exit
+            </span>
+          }
+        >
+          <span>
+            <kbd>Enter</kbd> split here · <span class="pane-select-hint-em">type a page name</span> to open it in the
+            new split · <kbd>Esc</kbd> exit
+          </span>
+        </Show>
+      </div>
+    </Show>
+  );
+}
+
 export function PaneEdgeHighlights(): JSX.Element {
   const edge = () => {
     const target = paneSel();
@@ -779,6 +811,7 @@ export function App(): JSX.Element {
             right sidebar / PDF pane sit UNDER it — not beside the close button. */}
         <div class="content-row">
           <PaneEdgeHighlights />
+          <PaneSelectHint />
           <PaneTree node={layoutRoot()} path={[]} />
           <RightSidebar />
           <Show when={pdfTarget()}>
