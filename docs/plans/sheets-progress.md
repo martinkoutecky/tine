@@ -491,7 +491,21 @@ date cell (needs `setSchedule` time support).
 Martin's v1 UX nits are PARKED (his list, not yet captured) — batch later,
 don't interleave.
 
-## Round 5 — split view (Martin, Jul 8) [IN PROGRESS — S1 SHIPPED `d57411e`, S2 dispatched]
+## Round 5 — split view (Martin, Jul 8) [IN PROGRESS — S1 `d57411e` + S2 `db4b2a6` SHIPPED, S3 next]
+
+**S2 (two panes work) shipped Jul 8:** PaneTree renderer + pointer seam
+resize; page panes load satellite-style (editing survives sibling
+navigation); one journals feed pane (interceptor dedup); split right/down
+`mod+alt+\` (duplicates current tab per §3a) + close pane; Ctrl+click +
+switcher Alt+Enter = open in other pane; focused-pane accent; session
+layout tree in src/session.ts (legacy-compatible both ways); app-level
+watcher; eviction pins; mobile single-pane guard. Real-app split probe
+10/10 + e2e 50/50. **Verification caught a real regression codex shipped:**
+`endEditForSurface` inside PageView's loader effect subscribed the loader
+to `editingId` — every startEditing re-ran it and instantly killed the
+edit (all sheet cell editing dead in the real app, invisible to jsdom).
+Fixed with a load-bearing `untrack()`. Plus the frozen-binding family
+(solo-pane topbar strip, keyed PaneLeaf remount, static surface keys).
 
 **S1 (pane-router extraction) shipped Jul 8:** zero-behavior refactor, all
 gates + e2e 50/50 + two real-app probes green (capture-phase pointerdown
