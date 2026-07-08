@@ -47,6 +47,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   lazy (only on hover, cached per open graph) and the preview is bounded, so it
   costs nothing until used.
 
+- **Space after a completed reference** ([#35](https://github.com/martinkoutecky/tine/issues/35),
+  contributed by @nataloko). Accepting a `[[page]]` or `((block))` autocompletion
+  now inserts a trailing space after the closing brackets so you can keep typing
+  without manually moving past them. On by default; toggle under Settings → Editor.
+
 ### Changed
 
 - **Foldable blocks are now discoverable in the right sidebar**
@@ -98,6 +103,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   `remove-built-in-properties`. The drawer is reattached at its canonical spot on
   save; a user property in the same drawer keeps it visible (only the built-in
   line is hidden).
+
+- **Welcome screen can be closed on Linux** ([#36](https://github.com/martinkoutecky/tine/issues/36),
+  contributed by @nataloko). Tine's frameless Linux window left the first-run
+  Welcome overlay with no window controls, so it couldn't be dismissed. The
+  overlay now draws its own close/window controls.
 
 ## [0.4.5] - 2026-07-07
 
