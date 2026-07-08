@@ -247,6 +247,28 @@ export function stepPaneTarget(root: LayoutNode, target: PaneTarget | null, dir:
     return current;
   }
 
+  // LATERAL movement along an edge (TreeSheets, Martin's Jul 8 follow-up #3):
+  // a perpendicular arrow on an edge segment slides to the ADJACENT pane's
+  // segment on the same side of the same line — "the top edge of the next
+  // column over" — instead of diving to the current pane's own perpendicular
+  // side. Falls through to generic stepping at the end of the line (which
+  // naturally turns the corner).
+  if (current.kind === "pane-edge") {
+    const horizSide = current.side === "top" || current.side === "bottom";
+    const isLateral = horizSide ? dir === "left" || dir === "right" : dir === "up" || dir === "down";
+    if (isLateral) {
+      const lineCoord = horizSide ? currentRect.y : currentRect.x;
+      const c0 = center(currentRect);
+      const along = geom.paneEdges
+        .filter((e) => e.side === current.side && e.paneId !== current.paneId)
+        .filter((e) => Math.abs((horizSide ? e.rect.y : e.rect.x) - lineCoord) < EPS)
+        .map((e) => ({ e, c: center(e.rect) }))
+        .filter((x) => isAhead(c0, x.c, dir))
+        .sort((a, b) => primaryDistance(c0, a.c, dir) - primaryDistance(c0, b.c, dir));
+      if (along[0]) return { kind: "pane-edge", paneId: along[0].e.paneId, side: current.side };
+    }
+  }
+
   const from = center(currentRect);
   const fromSpan = crossSpan(currentRect, dir);
   const candidates = allTargets(geom)

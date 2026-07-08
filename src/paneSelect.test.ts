@@ -216,6 +216,16 @@ describe("pane geometry", () => {
     expect(second).toEqual({ kind: "seam", path: [1] });
     // ...and onward steps normally into the right pane.
     expect(stepPaneTarget(root, second, "right")).toEqual({ kind: "pane", paneId: "b" });
+
+    // LATERAL: a perpendicular arrow on an edge segment slides along the
+    // line to the ADJACENT pane's same-side segment (TreeSheets), not into
+    // the current pane's own perpendicular side.
+    const topSeg = { kind: "pane-edge", paneId: "r", side: "top" } as const;
+    expect(stepPaneTarget(root, topSeg, "left")).toEqual({ kind: "pane-edge", paneId: "a", side: "top" });
+    expect(stepPaneTarget(root, topSeg, "right")).toEqual({ kind: "pane-edge", paneId: "b", side: "top" });
+    // at the end of the line, generic stepping takes over (turns the corner)
+    const leftmostTop = { kind: "pane-edge", paneId: "a", side: "top" } as const;
+    expect(stepPaneTarget(root, leftmostTop, "left")).toEqual({ kind: "pane-edge", paneId: "a", side: "left" });
   });
 
   it("numbers panes in spatial reading order", () => {

@@ -44,6 +44,19 @@ the pane-select mode shipped in S3 (ADR 0032):
   center (follow-up #3): the global TOP edge's center was "ahead-right" of an
   off-window-center pane's center and won ArrowRight with a near-zero
   distance, selecting a perpendicular window edge.
+- **Lateral edge navigation** (follow-up #4): a perpendicular arrow on an
+  edge segment slides ALONG the line to the adjacent pane's same-side
+  segment ("the top edge of the next column over" — TreeSheets), instead of
+  diving to the current pane's own perpendicular side. At the end of the
+  line, generic stepping resumes and naturally turns the corner. The pane's
+  perpendicular sides stay one hop away (arrow into the pane, then out).
+- **Contiguous multi-pane edge spans** ("split above the first two of three
+  columns") are splittable iff a SUBTREE spans exactly those panes — the
+  layout is a binary tree and splitting means wrapping a node. Tree-aligned
+  spans could become intermediate rungs of the widening ladder (pane side →
+  subtree side → window edge); non-aligned spans have no well-defined split
+  without restructuring and stay unsupported. Deferred to the backlog until
+  the need is real.
 - **Focus follows pane selection.** Arrowing onto a pane target focuses it, so
   Ctrl+K (and every focused-pane command) acts on the pane that is visibly
   selected. Ctrl+K on a pane target also exits the mode (the switcher takes

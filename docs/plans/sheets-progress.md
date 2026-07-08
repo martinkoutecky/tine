@@ -564,6 +564,16 @@ paneTracker.test.tsx (3, jsdom) + probe-3col.mjs (6/6 real-app: palette
 split respects focus, palette open/close keeps focus, segment/seam walk,
 half-height segment split). All necessity-proven via in-place toggles.
 
+**Follow-up 3 (his two-left-arrows sequence):** lateral edge navigation — a
+perpendicular arrow on an edge segment now SLIDES along the line to the
+adjacent pane's same-side segment (TreeSheets; was: dove to the pane's own
+perpendicular side), generic stepping resumes at the end of the line (turns
+the corner). His "two-thirds of the top edge" question answered in ADR 0033:
+contiguous spans are splittable iff a subtree spans exactly those panes
+(binary tree; split = wrap a node) — tree-aligned spans = possible future
+intermediate widening rungs (BACKLOG "Later"), non-aligned = no well-defined
+split, unsupported by design. probe-3col now 7/7 (lateral step added).
+
 **S4 (Jul 8): pointer tab drag** (drop on strip = reorder/adopt, pane body
 = move, seam/edge = split+move, Esc cancels; last HTML5-DnD site deleted),
 **pane-scoped Ctrl+F**, docs (CHANGELOG/README/FEATURES/BACKLOG).

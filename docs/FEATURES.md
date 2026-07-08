@@ -276,9 +276,11 @@ within a column; merged cells are still v2+.
   tinted — another `Esc` exits, so watch the pill to know which side of the
   toggle you're on.
 - **Pane-select targets:** arrows step through panes, seams, **pane-edge
-  segments** (one pane's side on the window boundary), and whole-window edges
-  — only in the direction pressed (targets must overlap the current one, no
-  diagonal jumps). Selecting a pane also **focuses** it, so `Ctrl+K` opens a
+  segments** (any side of any pane), and whole-window edges — only in the
+  direction pressed (targets must overlap the current one, no diagonal
+  jumps). On an edge segment, a perpendicular arrow **slides along the line**
+  to the adjacent pane's same-side segment; at the end of the line it turns
+  the corner. Selecting a pane also **focuses** it, so `Ctrl+K` opens a
   page in the pane you see selected. On a pane: `Enter` enters it,
   `Delete`/`Backspace` closes it. On a seam/segment/edge: `Enter` makes a
   **mirror split** (same content side by side, no dialog); **typing** (or
