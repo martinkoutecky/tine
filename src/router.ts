@@ -95,8 +95,10 @@ export interface PaneRouter {
   activatePrevTab(): void;
   togglePin(id: string): void;
   reorderTab(dragId: string, targetId: string): void;
+  moveTabToIndex(tabId: string, index: number): void;
+  extractTabForAdoption(id: string): { tab: AdoptedTab; emptied: boolean } | null;
   extractActiveTabForAdoption(): { tab: AdoptedTab; emptied: boolean } | null;
-  adoptTab(tab: AdoptedTab, foreground?: boolean): void;
+  adoptTab(tab: AdoptedTab, foreground?: boolean, index?: number): void;
   snapshot(): PaneSnapshot;
   restoreSnapshot(snapshot: PaneSnapshot): boolean;
   duplicateActiveSnapshot(): PaneSnapshot;
@@ -583,30 +585,41 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     persist();
   }
 
-  /** Move the dragged tab to the position of the target tab, then re-assert the
-   *  pinned-left invariant (a cross-group drag snaps back to its own group). */
-  function reorderTab(dragId: string, targetId: string) {
-    if (dragId === targetId) return;
+  /** Move a tab to a strip index, then re-assert the pinned-left invariant (a
+   *  cross-group drag snaps back to its own group). */
+  function moveTabToIndex(dragId: string, index: number) {
     const list = [...tabs()];
     const from = list.findIndex((t) => t.id === dragId);
-    const to = list.findIndex((t) => t.id === targetId);
-    if (from < 0 || to < 0) return;
+    if (from < 0) return;
+    let to = Math.min(Math.max(0, index | 0), list.length);
     const [moved] = list.splice(from, 1);
+    if (from < to) to -= 1;
     list.splice(to, 0, moved);
     setTabs(partitionPinned(list));
     persist();
   }
 
-  function extractActiveTabForAdoption(): { tab: AdoptedTab; emptied: boolean } | null {
+  /** Move the dragged tab to the position of the target tab. */
+  function reorderTab(dragId: string, targetId: string) {
+    if (dragId === targetId) return;
+    const list = tabs();
+    const to = list.findIndex((t) => t.id === targetId);
+    if (to < 0) return;
+    moveTabToIndex(dragId, to);
+  }
+
+  function extractTabForAdoption(id: string): { tab: AdoptedTab; emptied: boolean } | null {
     const list = tabs();
     const active = activeTab();
-    if (!active) return null;
-    rememberScroll();
+    const moving = list.find((t) => t.id === id);
+    if (!moving) return null;
+    if (list.length === 1 && tabRoute(moving).kind === "journals") return null;
+    if (active?.id === moving.id) rememberScroll();
     const moved: AdoptedTab = {
-      history: active.history,
-      pos: active.pos,
-      pinned: active.pinned,
-      scroll: scrollByRoute.get(tabRoute(active)) ?? null,
+      history: moving.history,
+      pos: moving.pos,
+      pinned: moving.pinned,
+      scroll: scrollByRoute.get(tabRoute(moving)) ?? null,
     };
     if (list.length === 1) {
       const id = newId();
@@ -615,21 +628,28 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
       persist();
       return { tab: moved, emptied: true };
     }
-    const idx = list.findIndex((t) => t.id === active.id);
-    const next = list.filter((t) => t.id !== active.id);
+    const idx = list.findIndex((t) => t.id === moving.id);
+    const next = list.filter((t) => t.id !== moving.id);
     setTabs(next);
-    setActiveId(next[Math.max(0, idx - 1)].id);
+    if (activeId() === moving.id) setActiveId(next[Math.max(0, idx - 1)].id);
     persist();
     return { tab: moved, emptied: false };
   }
 
-  function adoptTab(tab: AdoptedTab, foreground = true) {
+  function extractActiveTabForAdoption(): { tab: AdoptedTab; emptied: boolean } | null {
+    return extractTabForAdoption(activeId());
+  }
+
+  function adoptTab(tab: AdoptedTab, foreground = true, index?: number) {
     if (!tab.history.length) return;
     const id = newId();
     const pos = Math.min(Math.max(0, tab.pos | 0), tab.history.length - 1);
     const adopted: Tab = { id, history: tab.history, pos, pinned: tab.pinned };
     if (typeof tab.scroll === "number" && tab.scroll > 0) scrollByRoute.set(adopted.history[pos], tab.scroll);
-    setTabs(partitionPinned([...tabs(), adopted]));
+    const list = [...tabs()];
+    const to = typeof index === "number" ? Math.min(Math.max(0, index | 0), list.length) : list.length;
+    list.splice(to, 0, adopted);
+    setTabs(partitionPinned(list));
     if (foreground) setActiveId(id);
     persist();
   }
@@ -724,6 +744,8 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     activatePrevTab,
     togglePin,
     reorderTab,
+    moveTabToIndex,
+    extractTabForAdoption,
     extractActiveTabForAdoption,
     adoptTab,
     snapshot,

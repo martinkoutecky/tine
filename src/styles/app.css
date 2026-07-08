@@ -201,6 +201,7 @@ body {
 }
 
 .tab {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -222,6 +223,30 @@ body {
 
 .tab:hover {
   background: var(--bg-tertiary);
+}
+
+.tab.tab-dragging {
+  opacity: 0.58;
+}
+
+.tab.tab-drop-before::before,
+.tab.tab-drop-after::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  width: 2px;
+  border-radius: 999px;
+  background: var(--link-color);
+  pointer-events: none;
+}
+
+.tab.tab-drop-before::before {
+  left: -3px;
+}
+
+.tab.tab-drop-after::after {
+  right: -3px;
 }
 
 .tab-title {
@@ -298,6 +323,7 @@ body {
 .grip-se { bottom: 0; right: 0; width: 8px; height: 8px; cursor: nwse-resize; }
 
 .main-content {
+  position: relative;
   flex: 1;
   min-width: 0; /* shrink horizontally when the right sidebar/PDF pane is open */
   overflow-y: auto;
@@ -326,6 +352,7 @@ body {
 }
 
 .pane-leaf {
+  position: relative;
   flex: 1;
   min-width: 0;
   min-height: 0;
@@ -403,6 +430,44 @@ body {
 }
 
 .pane-edge-highlight-bottom {
+  bottom: 0;
+}
+
+.pane-tab-split-preview {
+  position: absolute;
+  z-index: 7;
+  pointer-events: none;
+  border: 2px solid color-mix(in srgb, var(--link-color) 72%, white 12%);
+  background: color-mix(in srgb, var(--link-color) 18%, transparent);
+}
+
+.pane-tab-split-preview-left,
+.pane-tab-split-preview-right {
+  top: 0;
+  bottom: 0;
+  width: 50%;
+}
+
+.pane-tab-split-preview-left {
+  left: 0;
+}
+
+.pane-tab-split-preview-right {
+  right: 0;
+}
+
+.pane-tab-split-preview-top,
+.pane-tab-split-preview-bottom {
+  left: 0;
+  right: 0;
+  height: 50%;
+}
+
+.pane-tab-split-preview-top {
+  top: 0;
+}
+
+.pane-tab-split-preview-bottom {
   bottom: 0;
 }
 

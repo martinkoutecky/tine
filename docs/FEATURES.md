@@ -256,6 +256,32 @@ V1 limits: `page` columns are read-only; range operations are single-level
 within the current grid; board cards can move between columns but not reorder
 within a column; merged cells are still v2+.
 
+## Split view
+
+- ⊕ **Panes with independent tabs and history** — split the workspace into
+  multiple note panes. Each pane has its own tab strip, active tab, back/forward
+  stack, scroll position, and focused-pane indicator; the layout is saved in the
+  session and restored on launch.
+- **Default split bindings:** `Mod+Alt+\` splits right and duplicates the current
+  tab; `Mod+Alt+Shift+\` splits down. The *Close pane* command is available from
+  the command palette.
+- **Pane focus bindings:** `Mod+1` … `Mod+9` focuses panes in spatial reading
+  order; `Mod+Alt+Left/Right/Up/Down` focuses the nearest pane in that direction.
+- **Move-tab bindings:** `Mod+Alt+Shift+Left/Right/Up/Down` moves the active tab
+  to the nearest pane in that direction. Moving the last page tab out closes the
+  emptied pane; the journals feed keeps its last tab.
+- **Esc pane-select ladder:** once overlays/editing/block selection have peeled
+  away, `Esc` enters pane-select mode. Arrow keys step through panes, seams, and
+  outer edges; `Enter` returns to a pane or materializes a selected seam/edge;
+  typing on a seam/edge opens a split and pre-fills the switcher.
+- **Open to the side:** `Ctrl+click` a page link, tag, or block reference to open
+  it in another pane, creating a right split when needed. In the `Ctrl+K` switcher,
+  `Alt+Enter` opens the highlighted page/create/block result in the other pane.
+- **Tab drag:** drag a tab within a strip to reorder it, onto another pane's strip
+  to move it at that position, onto a pane body to append and activate it there,
+  or onto a seam/pane edge to split that half and move the tab into the new pane.
+  `Esc` cancels an in-progress tab drag.
+
 ## Tasks, journals & dates
 
 - `TODO/DOING/DONE/NOW/LATER/WAITING/CANCELED`, two configurable workflows,

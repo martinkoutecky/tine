@@ -93,6 +93,8 @@ raw speed. (Comparisons are against current Logseq desktop core, no plugins.)
   runtime instead of Electron — typing stays in the frontend tree, reads hit an in-memory index.
 - **🗂️ Built-in tabs.** Middle-click anything to open it in a background tab; pin, drag-reorder,
   `Mod+W` to close. (Logseq core has none.)
+- **🪟 Split view.** Panes have their own tabs/history, keyboard pane/seam navigation, `Ctrl+click`
+  open-to-side, and tab drag to pane or seam.
 - **⏯️ Browser-style back/forward** — `Alt+Left` / `Alt+Right`, per-tab history, works mid-edit.
 - **🎯 Focus mode + dim-inactive-blocks** (`t f` / `t b`) — fade everything but the block you're on.
 - **⚡ Global quick-capture** — bind `tine --capture` to a desktop hotkey and a small always-on-top
@@ -134,7 +136,7 @@ and the **[demo](https://tine.page/demo/)** shows the rendered-content side of i
 | **Links, refs & queries** | `[[page]]` · `#tag` · `((block ref))` · `{{embed}}` with autocomplete; live linked/unlinked references; per-block ref counts; the macro set; a `{{query}}` engine with a visual builder; a scoped Datalog path. |
 | **Tasks, journals & dates** | Task workflows + priorities, scheduled/deadline with a date picker, recurring tasks, carry-forward, a multi-day journal feed, agenda, and a calendar. |
 | **PDF** | Zoomable virtualized viewer, in-PDF find, text + area (image) highlights stored Logseq-compatibly, each a bullet you can annotate. |
-| **Search & nav** | `Ctrl+K` switcher (titles + full text), command palette, namespace tree, tabs, back/forward, focus mode, global quick-capture, page icons. |
+| **Search & nav** | `Ctrl+K` switcher (titles + full text), command palette, namespace tree, tabs, split view, back/forward, focus mode, global quick-capture, page icons. |
 | **Your files** | Safe to run alongside Logseq mobile over Syncthing — conflict detection, format-preserving atomic saves, transactional rename, org-mode (byte-faithful or read-only), snapshots + trash. |
 | **Customize & export** | Remappable shortcuts with `?` help, built-in theme gallery + custom CSS, multi-language spell check, static HTML export with offline search, copy/export as Markdown, **export a page to PDF**. |
 
@@ -264,6 +266,10 @@ editable TreeSheets-style grid, field table, or board — while everything stays
 Logseq markdown/org (see [FEATURES.md](docs/FEATURES.md#sheets-2-d-grids)). It includes
 typed schemas, query-driven tables, task/tag boards, grouping, aggregates, markdown table
 conversion, computed columns, filters, and CSV/TSV import.
+
+**New — Split view:** panes with their own tabs/history, TreeSheets-style pane and seam
+navigation, `Ctrl+click` open-to-side, and tab drag to panes/seams (see
+[FEATURES.md](docs/FEATURES.md#split-view)).
 
 **Planned / under evaluation:** graph view and configurable typographic auto-replace.
 

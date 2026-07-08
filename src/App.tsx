@@ -7,7 +7,7 @@ import { QuickSwitcher } from "./components/QuickSwitcher";
 const PdfViewer = lazy(() =>
   import("./components/PdfViewer").then((m) => ({ default: m.PdfViewer }))
 );
-import { TabBar } from "./components/TabBar";
+import { TabBar, tabDropHighlightsPane, tabSplitPreviewSideForPane } from "./components/TabBar";
 import { ContextMenu } from "./components/ContextMenu";
 import { Toasts, Lightbox } from "./components/Toasts";
 import { AudioOverlay } from "./components/AudioOverlay";
@@ -195,6 +195,8 @@ function PaneResizer(props: { dir: "row" | "col"; path: number[] }): JSX.Element
     <div
       class={`pane-resizer pane-resizer-${props.dir}`}
       classList={{ "pane-seam-selected": samePaneTarget(paneSel(), { kind: "seam", path: props.path }) }}
+      data-pane-seam-path={props.path.join(".")}
+      data-pane-seam-dir={props.dir}
       onPointerDown={(e) => {
         e.preventDefault();
         const box = (e.currentTarget.parentElement as HTMLElement).getBoundingClientRect();
@@ -216,6 +218,15 @@ function PaneResizer(props: { dir: "row" | "col"; path: number[] }): JSX.Element
   );
 }
 
+function PaneTabSplitPreview(props: { paneId: string }): JSX.Element {
+  const side = () => tabSplitPreviewSideForPane(props.paneId);
+  return (
+    <Show when={side()}>
+      {(s) => <div class={`pane-tab-split-preview pane-tab-split-preview-${s()}`} />}
+    </Show>
+  );
+}
+
 function PaneLeaf(props: { paneId: string }): JSX.Element {
   const router = paneRouter(props.paneId);
   const multi = () => layoutHasMultiplePanes();
@@ -231,10 +242,15 @@ function PaneLeaf(props: { paneId: string }): JSX.Element {
           fallback={
             <main
               class="main-content"
-              classList={{ "pane-selected": samePaneTarget(paneSel(), { kind: "pane", paneId: props.paneId }) }}
+              classList={{
+                "pane-selected":
+                  samePaneTarget(paneSel(), { kind: "pane", paneId: props.paneId }) ||
+                  tabDropHighlightsPane(props.paneId),
+              }}
               data-pane-id={props.paneId}
               ref={(el) => router.setScrollerElement(el)}
             >
+              <PaneTabSplitPreview paneId={props.paneId} />
               <div class="main-content-inner">
                 <PageView />
               </div>
@@ -245,10 +261,13 @@ function PaneLeaf(props: { paneId: string }): JSX.Element {
             class="pane-leaf"
             classList={{
               "pane-focused": focusedPaneId() === props.paneId,
-              "pane-selected": samePaneTarget(paneSel(), { kind: "pane", paneId: props.paneId }),
+              "pane-selected":
+                samePaneTarget(paneSel(), { kind: "pane", paneId: props.paneId }) ||
+                tabDropHighlightsPane(props.paneId),
             }}
             data-pane-id={props.paneId}
           >
+            <PaneTabSplitPreview paneId={props.paneId} />
             <TabBar
               router={router}
               dragRegion={false}

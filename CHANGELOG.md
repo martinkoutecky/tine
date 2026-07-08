@@ -19,6 +19,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   formula group-by axes, `tine.filter::` table/board filters that fail open with a
   visible chip, and a right-click formula/filter editor.
 
+- **Split view.** Panes now have their own tabs and history, TreeSheets-style
+  pane/seam keyboard navigation with type-at-a-seam-to-split, `Ctrl+click` opens
+  links in another pane, tabs can be dragged to another pane or seam, and the
+  layout persists across launches.
+
 - **Diagrams via your own drawio / Excalidraw** ([#38](https://github.com/martinkoutecky/tine/issues/38),
   proposed by @nataloko). Keep diagrams next to your notes as ordinary image
   assets and edit them in the diagram app you already have — Tine bundles no

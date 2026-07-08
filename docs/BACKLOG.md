@@ -28,8 +28,10 @@ move them between tiers in place. When Next drains, review Later and promote (in
 
 - **Split view (Round 5, branch `sheets`)** — panes with the grid nav model
   (TreeSheets-style: selectable seams, typing at an edge opens a new split),
-  per-pane tabs/history, `Ctrl+click` → open in other pane. Martin's Jul 8 pick
-  over whiteboards-lite (which is queued behind it). Spec:
+  per-pane tabs/history, `Ctrl+click` → open in other pane, and tab drag to
+  panes/seams. **S1–S4 shipped on branch `sheets`; leave in Now until Martin
+  tests it, matching the Sheets branch discipline.** Martin's Jul 8 pick over
+  whiteboards-lite (which is queued behind it). Spec:
   [docs/split-view-spec.md](split-view-spec.md), ADR 0032.
 
 - **Inline-code property lookalikes parse as properties** (Martin, Jul 8 2026:

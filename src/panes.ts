@@ -7,6 +7,7 @@ import {
   installNavigationInterceptor,
   mainPaneRouter,
   tabRoute,
+  type AdoptedTab,
   type PaneSnapshot,
   type PaneRouter,
   type Route,
@@ -184,17 +185,25 @@ function splitSnapshotForNewPane(source: PaneRouter): PaneSnapshot {
   return snap;
 }
 
+function snapshotFromAdoptedTab(tab: AdoptedTab): PaneSnapshot {
+  return {
+    tabs: [{ history: tab.history, pos: tab.pos, pinned: tab.pinned }],
+    activeIndex: 0,
+    scrolls: [tab.scroll],
+  };
+}
+
 export function splitPane(
   paneId = focusedPaneId(),
   dir: "row" | "col" = "row",
-  opts: { focusNew?: boolean; position?: "before" | "after" } = {}
+  opts: { focusNew?: boolean; position?: "before" | "after"; snapshot?: PaneSnapshot } = {}
 ): string | null {
   if (isMobilePlatform) return null;
   if (!layoutPaneIds().includes(paneId)) return null;
   const newPaneId = freshPaneId();
   const source = paneRouter(paneId);
   const router = paneRouter(newPaneId);
-  router.restoreSnapshot(splitSnapshotForNewPane(source));
+  router.restoreSnapshot(opts.snapshot ?? splitSnapshotForNewPane(source));
   setLayoutRoot(splitLayoutNodeAt(layoutRoot(), paneId, dir, newPaneId, opts.position ?? "after"));
   if (opts.focusNew !== false) setFocusedPaneId(newPaneId);
   focusedRouter().scheduleSessionSave();
@@ -215,7 +224,11 @@ function nodeContainsPane(node: LayoutNode, paneId: string): boolean {
   return nodeContainsPane(node.children[0], paneId) || nodeContainsPane(node.children[1], paneId);
 }
 
-export function splitPaneAtSeam(path: number[], sourcePaneId: string | null): string | null {
+export function splitPaneAtSeam(
+  path: number[],
+  sourcePaneId: string | null,
+  opts: { focusNew?: boolean; snapshot?: PaneSnapshot } = {}
+): string | null {
   const split = nodeAtPath(layoutRoot(), path);
   if (!split || split.kind === "pane") return null;
   const source = sourcePaneId && layoutPaneIds().includes(sourcePaneId) ? sourcePaneId : null;
@@ -231,20 +244,22 @@ export function splitPaneAtSeam(path: number[], sourcePaneId: string | null): st
   if (!paneId) return null;
   return splitPane(paneId, split.dir, {
     position: sourceSide === 0 ? "after" : "before",
+    focusNew: opts.focusNew,
+    snapshot: opts.snapshot,
   });
 }
 
 export function splitRootAtEdge(
   side: "left" | "right" | "top" | "bottom",
   sourcePaneId = focusedPaneId(),
-  opts: { focusNew?: boolean } = {}
+  opts: { focusNew?: boolean; snapshot?: PaneSnapshot } = {}
 ): string | null {
   if (isMobilePlatform) return null;
   const ids = layoutPaneIds();
   const sourceId = ids.includes(sourcePaneId) ? sourcePaneId : ids[0];
   if (!sourceId) return null;
   const newPaneId = freshPaneId();
-  paneRouter(newPaneId).restoreSnapshot(splitSnapshotForNewPane(paneRouter(sourceId)));
+  paneRouter(newPaneId).restoreSnapshot(opts.snapshot ?? splitSnapshotForNewPane(paneRouter(sourceId)));
   const oldRoot = layoutRoot();
   const newLeaf: LayoutNode = { kind: "pane", paneId: newPaneId };
   const dir = side === "left" || side === "right" ? "row" : "col";
@@ -275,15 +290,7 @@ export function focusPane(paneId: string) {
   if (layoutPaneIds().includes(paneId)) setFocusedPaneId(paneId);
 }
 
-export function moveActiveTabToPane(sourcePaneId: string, targetPaneId: string): boolean {
-  if (sourcePaneId === targetPaneId) return false;
-  const ids = layoutPaneIds();
-  if (!ids.includes(sourcePaneId) || !ids.includes(targetPaneId)) return false;
-  const source = paneRouter(sourcePaneId);
-  if (source.tabs().length === 1 && source.route().kind === "journals") return false;
-  const moved = source.extractActiveTabForAdoption();
-  if (!moved) return false;
-  paneRouter(targetPaneId).adoptTab(moved.tab, true);
+function finishMovedTab(sourcePaneId: string, targetPaneId: string, moved: { emptied: boolean }) {
   setFocusedPaneId(targetPaneId);
   if (moved.emptied) {
     closePane(sourcePaneId);
@@ -291,7 +298,90 @@ export function moveActiveTabToPane(sourcePaneId: string, targetPaneId: string):
   } else {
     focusedRouter().scheduleSessionSave();
   }
+}
+
+export function moveTabToPane(
+  sourcePaneId: string,
+  tabId: string,
+  targetPaneId: string,
+  index?: number
+): boolean {
+  const ids = layoutPaneIds();
+  if (!ids.includes(sourcePaneId) || !ids.includes(targetPaneId)) return false;
+  const source = paneRouter(sourcePaneId);
+  if (!source.tabs().some((t) => t.id === tabId)) return false;
+  if (sourcePaneId === targetPaneId) {
+    if (typeof index === "number") source.moveTabToIndex(tabId, index);
+    else source.setActiveTab(tabId);
+    setFocusedPaneId(targetPaneId);
+    return true;
+  }
+  const moved = source.extractTabForAdoption(tabId);
+  if (!moved) return false;
+  paneRouter(targetPaneId).adoptTab(moved.tab, true, index);
+  finishMovedTab(sourcePaneId, targetPaneId, moved);
   return true;
+}
+
+export function moveActiveTabToPane(sourcePaneId: string, targetPaneId: string): boolean {
+  if (sourcePaneId === targetPaneId) return false;
+  return moveTabToPane(sourcePaneId, paneRouter(sourcePaneId).activeId(), targetPaneId);
+}
+
+export function moveTabToSplitPane(
+  sourcePaneId: string,
+  tabId: string,
+  targetPaneId: string,
+  side: "left" | "right" | "top" | "bottom"
+): string | null {
+  const ids = layoutPaneIds();
+  if (isMobilePlatform || !ids.includes(sourcePaneId) || !ids.includes(targetPaneId)) return null;
+  const source = paneRouter(sourcePaneId);
+  if (!source.tabs().some((t) => t.id === tabId)) return null;
+  const moved = source.extractTabForAdoption(tabId);
+  if (!moved) return null;
+  const newPaneId = splitPane(targetPaneId, side === "left" || side === "right" ? "row" : "col", {
+    position: side === "left" || side === "top" ? "before" : "after",
+    snapshot: snapshotFromAdoptedTab(moved.tab),
+  });
+  if (!newPaneId) return null;
+  finishMovedTab(sourcePaneId, newPaneId, moved);
+  return newPaneId;
+}
+
+export function moveTabToSeamSplit(sourcePaneId: string, tabId: string, path: number[]): string | null {
+  const ids = layoutPaneIds();
+  const split = nodeAtPath(layoutRoot(), path);
+  if (isMobilePlatform || !ids.includes(sourcePaneId) || !split || split.kind === "pane") return null;
+  const source = paneRouter(sourcePaneId);
+  if (!source.tabs().some((t) => t.id === tabId)) return null;
+  const moved = source.extractTabForAdoption(tabId);
+  if (!moved) return null;
+  const newPaneId = splitPaneAtSeam(path, sourcePaneId, {
+    snapshot: snapshotFromAdoptedTab(moved.tab),
+  });
+  if (!newPaneId) return null;
+  finishMovedTab(sourcePaneId, newPaneId, moved);
+  return newPaneId;
+}
+
+export function moveTabToRootEdge(
+  sourcePaneId: string,
+  tabId: string,
+  side: "left" | "right" | "top" | "bottom"
+): string | null {
+  const ids = layoutPaneIds();
+  if (isMobilePlatform || !ids.includes(sourcePaneId)) return null;
+  const source = paneRouter(sourcePaneId);
+  if (!source.tabs().some((t) => t.id === tabId)) return null;
+  const moved = source.extractTabForAdoption(tabId);
+  if (!moved) return null;
+  const newPaneId = splitRootAtEdge(side, sourcePaneId, {
+    snapshot: snapshotFromAdoptedTab(moved.tab),
+  });
+  if (!newPaneId) return null;
+  finishMovedTab(sourcePaneId, newPaneId, moved);
+  return newPaneId;
 }
 
 export function setSplitRatio(path: number[], ratio: number) {
@@ -314,10 +404,22 @@ export function setSplitRatio(path: number[], ratio: number) {
 export function openRouteInOtherPane(route: Route, sourcePaneId = focusedPaneId()): string | null {
   const ids = layoutPaneIds();
   let target = nearestPane(layoutRoot(), sourcePaneId) ?? ids.find((id) => id !== sourcePaneId) ?? null;
+  const created = !target;
   if (!target) target = splitPane(sourcePaneId, "row", { focusNew: false });
   if (!target) return null;
   const router = paneRouter(target);
-  router.openInNewTab(route, true);
+  if (created) {
+    // The split seeded this pane with ONE duplicate tab; navigate it in
+    // place so the pane ends up with a single tab whose back-history is the
+    // source context (matching the embryo-switcher flow) — openInNewTab here
+    // would leave a stray duplicate tab beside the target.
+    if (route.kind === "journals") router.openJournals();
+    else if (route.block) router.openPageAtBlock(route.name, route.pageKind, route.block);
+    else if (route.path) router.openFile(route.path, route.name, route.pageKind);
+    else router.openPage(route.name, route.pageKind);
+  } else {
+    router.openInNewTab(route, true);
+  }
   setFocusedPaneId(sourcePaneId);
   return target;
 }

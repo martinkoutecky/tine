@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   closeLayoutPane,
   focusPane,
+  openRouteInOtherPane,
   layoutPaneIds,
   layoutRoot,
   focusedPaneId,
@@ -153,5 +154,31 @@ describe("pane layout mutations", () => {
     focusPane(target);
 
     expect(hasSelection()).toBe(false);
+  });
+});
+
+describe("openRouteInOtherPane", () => {
+  it("a freshly-created pane ends with a SINGLE tab (target replaces the split duplicate)", () => {
+    resetPaneLayoutToSingle(pageSnapshot("Source"));
+
+    const target = openRouteInOtherPane({ kind: "page", name: "Dest", pageKind: "page" }, "main");
+
+    expect(target).not.toBeNull();
+    const tabs = paneRouter(target!).tabs();
+    expect(tabs).toHaveLength(1);
+    expect(tabs[0].history[tabs[0].pos]).toMatchObject({ kind: "page", name: "Dest" });
+    // Back-history keeps the source context (the duplicated entry).
+    expect(tabs[0].history.length).toBeGreaterThan(1);
+    expect(focusedPaneId()).toBe("main");
+  });
+
+  it("an EXISTING other pane gets the route as a new foreground tab", () => {
+    resetPaneLayoutToSingle(pageSnapshot("Source"));
+    const other = splitPane("main", "row", { focusNew: false })!;
+    const before = paneRouter(other).tabs().length;
+
+    openRouteInOtherPane({ kind: "page", name: "Dest", pageKind: "page" }, "main");
+
+    expect(paneRouter(other).tabs().length).toBe(before + 1);
   });
 });
