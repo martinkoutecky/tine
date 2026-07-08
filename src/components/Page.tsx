@@ -178,6 +178,29 @@ export function PageView(): JSX.Element {
     loadingMore = false;
   };
 
+  // GH #39: on macOS (WKWebView) the journal feed sometimes can't be scrolled on
+  // first open until the window is nudged — resizing it makes scrolling start.
+  // Cause: the feed content is injected ASYNCHRONOUSLY (after the load resolves,
+  // replacing the `.page-loading` placeholder), and WebKit doesn't always
+  // re-establish the scroll container's overflow region for content that grows
+  // after first paint. A resize forces the relayout that fixes it — so we force
+  // that relayout ourselves once the feed has content. Invisible + a no-op where
+  // the quirk doesn't occur (Linux/WebKitGTK, Chromium). Runs on the journals
+  // route whenever the feed transitions to non-empty.
+  createEffect(() => {
+    if (route().kind !== "journals") return;
+    if (!doc.loaded || doc.feed.length === 0) return; // re-runs when the feed populates
+    requestAnimationFrame(() => {
+      const el = document.querySelector<HTMLElement>(".main-content");
+      if (!el) return;
+      void el.scrollHeight; // read: flush pending layout
+      const prev = el.style.overflowY;
+      el.style.overflowY = "hidden"; // toggle the scroll box so WebKit recomputes
+      void el.offsetHeight; // read: apply the off state
+      el.style.overflowY = prev; // restore (scrollTop is preserved across this)
+    });
+  });
+
   // Let a cross-day move-down pull in older days when it runs off the last
   // loaded one (returns whether more was actually loaded).
   setFeedExtender(async () => {
