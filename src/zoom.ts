@@ -18,6 +18,21 @@ import { activePane } from "./ui";
 const ZOOM_KEY = "logseq-claude.zoom";
 const MIN = 0.5;
 const MAX = 3.0;
+// DOM WheelEvent has no trackpad phase/momentum flag. Treat wheel events separated
+// by at most this gap as one gesture so a modifier added during a macOS momentum
+// tail is consumed without becoming an accidental zoom.
+export const ZOOM_WHEEL_MOMENTUM_TAIL_MS = 400;
+
+export type WheelZoomGestureState = {
+  lastWheelTimeStamp?: number;
+  lastPlainWheelTimeStamp?: number;
+};
+
+export type WheelZoomGestureDecision = {
+  consume: boolean;
+  zoom: boolean;
+  state: WheelZoomGestureState;
+};
 
 function load(): number {
   try {
@@ -60,6 +75,32 @@ export const zoomIn = () => setZoom(interfaceZoom() * 1.1);
 export const zoomOut = () => setZoom(interfaceZoom() / 1.1);
 export const zoomReset = () => setZoom(1);
 
+export function decideWheelZoomGesture(
+  state: WheelZoomGestureState,
+  hasZoomModifier: boolean,
+  timeStamp: number
+): WheelZoomGestureDecision {
+  const sameGesture =
+    state.lastWheelTimeStamp !== undefined &&
+    timeStamp >= state.lastWheelTimeStamp &&
+    timeStamp - state.lastWheelTimeStamp <= ZOOM_WHEEL_MOMENTUM_TAIL_MS;
+  const nextState: WheelZoomGestureState = {
+    lastWheelTimeStamp: timeStamp,
+    lastPlainWheelTimeStamp: sameGesture ? state.lastPlainWheelTimeStamp : undefined,
+  };
+
+  if (!hasZoomModifier) {
+    nextState.lastPlainWheelTimeStamp = timeStamp;
+    return { consume: false, zoom: false, state: nextState };
+  }
+
+  return {
+    consume: true,
+    zoom: !(sameGesture && nextState.lastPlainWheelTimeStamp !== undefined),
+    state: nextState,
+  };
+}
+
 /** Ctrl/Cmd +/-/0 → interface zoom, but ONLY when the notes pane is focused; the
  *  PDF pane owns those keys for its own zoom (PdfViewer.onKeyZoom). Capture-phase
  *  so it precedes — and preventDefault suppresses — the webview's built-in page
@@ -84,14 +125,15 @@ export function installInterfaceZoomKeys(): () => void {
 }
 
 /** Ctrl/Cmd + mouse-wheel → interface zoom, routed by POINTER (not focus): a wheel
- *  over the PDF pane is left to PdfViewer's own Ctrl+wheel zoom. We preventDefault
- *  to suppress the webview's built-in wheel zoom (which would double-zoom and
- *  desync our tracked level), and coalesce a burst of trackpad/pinch events into at
- *  most one gentle step per frame so the whole-UI relayout stays smooth. Returns an
- *  uninstaller. */
+ *  over the PDF pane is left to PdfViewer's own Ctrl+wheel zoom. Modified wheel
+ *  events are always consumed to suppress the webview's built-in page zoom, but
+ *  macOS momentum tails where the modifier appeared mid-gesture do not change our
+ *  zoom. Deliberate zoom bursts are coalesced into at most one gentle step per
+ *  frame so the whole-UI relayout stays smooth. Returns an uninstaller. */
 export function installInterfaceZoomWheel(): () => void {
   let pending = 0;
   let raf = 0;
+  let wheelZoomState: WheelZoomGestureState = {};
   const flush = () => {
     raf = 0;
     const d = pending;
@@ -99,13 +141,16 @@ export function installInterfaceZoomWheel(): () => void {
     if (d !== 0) setZoom(interfaceZoom() * (d < 0 ? 1.1 : 1 / 1.1));
   };
   const onWheel = (e: WheelEvent) => {
-    if (!(e.ctrlKey || e.metaKey)) return; // plain scroll → normal scrolling
     const t = e.target as Element | null;
     if (t?.closest?.(".pdf-pane")) return; // over the PDF → its own wheel-zoom owns it
+    const decision = decideWheelZoomGesture(wheelZoomState, e.ctrlKey || e.metaKey, e.timeStamp);
+    wheelZoomState = decision.state;
+    if (!decision.consume) return; // plain scroll → normal scrolling
     e.preventDefault(); // own the gesture; stop the webview's native page zoom
     // Fully own ctrl+wheel: stop it reaching the feed's smooth-scroll handler
     // (Lenis listens on `.main-content`), which would otherwise scroll while zooming.
     e.stopPropagation();
+    if (!decision.zoom) return;
     pending += e.deltaY; // sign-based step is robust to wheel vs. line deltaMode
     if (!raf) raf = requestAnimationFrame(flush);
   };
