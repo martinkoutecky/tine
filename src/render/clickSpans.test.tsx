@@ -91,3 +91,48 @@ describe("click-to-caret span mapping", () => {
     }
   });
 });
+
+// GH #42: shift+click a [[page]] / block-ref opens it in the sidebar; the anchor
+// must suppress the browser's native shift-range-selection (preventDefault on the
+// shift mousedown) so text in the main editor isn't selected as a side effect.
+describe("shift+click ref suppresses native selection (GH #42)", () => {
+  // Solid delegates `mousedown` on `document`, so the host must be attached to
+  // the live document tree for the handler to fire when we dispatch.
+  function mountAttached(raw: string): { root: HTMLElement; dispose: () => void } {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => (
+      <div class="block-content"><AstBody raw={raw} /></div>
+    ), host);
+    return { root: host, dispose: () => { dispose(); host.remove(); } };
+  }
+  function shiftMouseDefaultPrevented(el: Element, shift: boolean): boolean {
+    const ev = new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0, shiftKey: shift });
+    el.dispatchEvent(ev);
+    return ev.defaultPrevented;
+  }
+
+  it("preventDefaults a shift+mousedown on a page-ref, but not a plain one", () => {
+    const { root, dispose } = mountAttached("see [[Some Page]] now");
+    try {
+      const link = root.querySelector("a.page-ref");
+      expect(link).toBeTruthy();
+      expect(shiftMouseDefaultPrevented(link!, true)).toBe(true);
+      expect(shiftMouseDefaultPrevented(link!, false)).toBe(false);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("preventDefaults a shift+mousedown on a #tag", () => {
+    const { root, dispose } = mountAttached("tagged #project here");
+    try {
+      const tag = root.querySelector("a.tag");
+      expect(tag).toBeTruthy();
+      expect(shiftMouseDefaultPrevented(tag!, true)).toBe(true);
+      expect(shiftMouseDefaultPrevented(tag!, false)).toBe(false);
+    } finally {
+      dispose();
+    }
+  });
+});

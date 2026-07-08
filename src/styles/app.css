@@ -2437,6 +2437,18 @@ body {
   opacity: 1;
 }
 
+/* GH #41: the right sidebar is a narrow research surface where the main pane's
+   hover-to-reveal fold arrow is easy to miss (users think blocks there can't be
+   folded — they can, it's the same live block). Keep foldable blocks' arrows
+   softly visible whenever the sidebar item is hovered, going full-strength on the
+   block itself. Scoped to the sidebar so the main outline stays clean. */
+.right-sidebar .rs-item:hover .collapse-toggle.has-children {
+  opacity: 0.45;
+}
+.right-sidebar .ls-block:hover > .block-main > .block-controls > .collapse-toggle.has-children {
+  opacity: 1;
+}
+
 .collapse-toggle .triangle {
   width: 14px;
   height: 14px;
@@ -2912,6 +2924,7 @@ body {
   color: var(--link-color);
   cursor: pointer;
   text-decoration: none;
+  position: relative; /* anchor for the hover-peek card (GH #40) */
 }
 
 .page-ref:hover {
@@ -2927,6 +2940,7 @@ body {
   color: var(--tag-color);
   cursor: pointer;
   text-decoration: none;
+  position: relative; /* anchor for the hover-peek card (GH #40) */
 }
 
 .tag:hover {
@@ -2975,6 +2989,46 @@ mark {
   color: var(--text-muted);
   font-style: italic;
   cursor: default;
+}
+
+/* Page hover-peek card (GH #40): same floating-card shell as .block-ref-preview,
+   with a page-name header and one indented line per block first-line. Lives
+   inside the <a>, so spans only — depth indent conveys nesting without <div>s. */
+.page-ref-preview {
+  position: absolute;
+  left: 0;
+  top: 100%;
+  z-index: 70;
+  margin-top: 4px;
+  min-width: 240px;
+  max-width: 460px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+  padding: 8px 12px;
+  font-size: 14px;
+  font-weight: normal;
+  font-style: normal;
+  white-space: normal;
+  text-decoration: none;
+  cursor: default;
+  color: var(--text-primary);
+  display: block;
+}
+.page-ref-preview-title {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+.page-ref-preview-line {
+  display: block;
+  color: var(--text-primary);
+  line-height: 1.5;
 }
 /* Per-referrer ancestor breadcrumb in the block-ref panel (OG :breadcrumb-show?). */
 .ref-breadcrumb {
