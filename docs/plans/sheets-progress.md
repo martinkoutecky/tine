@@ -536,6 +536,15 @@ tests fail on old geometry; 2-rung test fails without cascade change).
 NOTE: `git restore` after a necessity check WIPES uncommitted work — toggle
 via reversible in-place patches instead (paneSelect.ts had to be rewritten).
 
+**Nit batch 2 follow-up (same evening):** Martin caught that the "ghost rung
+skip" (segment spanning the full edge ≡ global edge) was WRONG — the two
+splits differ (nest inside the pane = quarter-width vs root split =
+half-width), so in row[L,R] the root-direction vertical split was
+unreachable. Widening now always available except on a true solo pane;
+since segment and global edge can occupy the same coordinates, a selected
+global edge tints ALL panes and the pill names the scope ("split this pane"
+vs "split the whole window"). ADR 0033 amended.
+
 **S4 (Jul 8): pointer tab drag** (drop on strip = reorder/adopt, pane body
 = move, seam/edge = split+move, Esc cancels; last HTML5-DnD site deleted),
 **pane-scoped Ctrl+F**, docs (CHANGELOG/README/FEATURES/BACKLOG).

@@ -210,18 +210,15 @@ export function stepPaneTarget(root: LayoutNode, target: PaneTarget | null, dir:
   // Pressing INTO a pane-edge segment again widens it to the whole-window edge
   // (TreeSheets-style: the segment splits one pane, the full edge splits the
   // root). The global edge sits at the same coordinate, so distance-stepping
-  // could never reach it.
+  // could never reach it. Even when the segment spans the full edge (a
+  // full-height column's side), the two splits DIFFER — nesting inside that
+  // pane vs splitting the root — so the widening rung must stay (Martin's
+  // Jul 8 follow-up: root-direction splits were unreachable). Only a true
+  // solo pane produces identical trees either way; skip the ghost rung there.
   const sideForDir: Record<PaneDirection, PaneEdgeSide> = { left: "left", right: "right", up: "top", down: "bottom" };
   if (current.kind === "pane-edge" && current.side === sideForDir[dir]) {
-    // ...unless the segment already spans the whole edge (solo pane / full-
-    // height side pane): splitting either is identical, skip the ghost rung.
-    const edgeRect = geom.edges.find((e) => e.side === current.side)?.rect;
-    const seg = crossSpan(currentRect, dir);
-    const full = edgeRect ? crossSpan(edgeRect, dir) : null;
-    if (!full || Math.abs(seg[0] - full[0]) > EPS || Math.abs(seg[1] - full[1]) > EPS) {
-      return { kind: "edge", side: current.side };
-    }
-    return current;
+    if (root.kind === "pane") return current;
+    return { kind: "edge", side: current.side };
   }
 
   const from = center(currentRect);

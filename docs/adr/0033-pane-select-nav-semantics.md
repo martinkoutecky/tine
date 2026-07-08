@@ -30,9 +30,16 @@ the pane-select mode shipped in S3 (ADR 0032):
   side}`: a pane's boundary side lying on the window edge. Enter/typing on a
   segment splits ONLY that pane (new pane on that side). Pressing *outward
   again* on a segment widens it to the whole-window edge (root split) —
-  TreeSheets' "edge of the left half, then the full edge". The ghost rung is
-  skipped when the segment already spans the full edge. Rank order on exact
-  ties: seam > pane-edge > pane > edge.
+  TreeSheets' "edge of the left half, then the full edge". The widening rung
+  exists **even when the segment spans the full edge** (a full-height
+  column's side): the two splits still differ — nesting inside that pane
+  (quarter-width) vs splitting the root (half-width). Skipping it there made
+  root-direction splits unreachable (Martin's Jul 8 follow-up). Only a true
+  solo pane skips the rung (identical trees either way). Because segment and
+  edge can then occupy the same coordinates, a selected global edge
+  additionally **tints all panes** ("this splits the whole window") and the
+  hint pill names the scope. Rank order on exact ties:
+  seam > pane-edge > pane > edge.
 - **Focus follows pane selection.** Arrowing onto a pane target focuses it, so
   Ctrl+K (and every focused-pane command) acts on the pane that is visibly
   selected. Ctrl+K on a pane target also exits the mode (the switcher takes

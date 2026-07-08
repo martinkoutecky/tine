@@ -286,8 +286,9 @@ within a column; merged cells are still v2+.
   the fast "open/create that page in a new split" (commands are hidden there;
   only pages, page creation, and blocks). A segment splits **just that pane**;
   pressing outward again widens it to the whole-window edge, which splits the
-  entire layout — so "split only the left half horizontally" and "split the
-  whole screen" are both two keystrokes away.
+  entire layout (all panes tint to show the scope) — so "split only the left
+  half" and "split the whole screen" are both two keystrokes away, in either
+  direction.
 - **Open to the side:** `Ctrl+click` a page link, tag, or block reference to open
   it in another pane, creating a right split when needed. In the `Ctrl+K` switcher,
   `Alt+Enter` opens the highlighted page/create/block result in the other pane.

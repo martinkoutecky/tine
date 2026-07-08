@@ -64,8 +64,7 @@ describe("pane geometry", () => {
     const seam: PaneTarget = { kind: "seam", path: [] };
     expect(stepPaneTarget(root, { kind: "pane", paneId: "left" }, "right")).toEqual(seam);
     expect(stepPaneTarget(root, seam, "right")).toEqual({ kind: "pane", paneId: "right" });
-    // The pane's own edge segment outranks the (geometrically identical)
-    // global edge — splitting either is the same split here.
+    // The pane's own edge segment outranks the (same-position) global edge.
     expect(stepPaneTarget(root, { kind: "pane", paneId: "right" }, "right")).toEqual({
       kind: "pane-edge",
       paneId: "right",
@@ -75,6 +74,32 @@ describe("pane geometry", () => {
       kind: "pane",
       paneId: "right",
     });
+  });
+
+  it("widens a FULL-span segment to the global edge too — nesting in the pane vs splitting the root differ (Martin's Jul 8 follow-up)", () => {
+    // row [left, right]: left's LEFT segment spans the full window height,
+    // yet Enter there nests a quarter-width column inside the left half while
+    // the global edge makes a half-width root column. Both must be reachable.
+    const root: LayoutNode = {
+      kind: "split",
+      dir: "row",
+      ratio: 0.5,
+      children: [
+        { kind: "pane", paneId: "left" },
+        { kind: "pane", paneId: "right" },
+      ],
+    };
+
+    const seg = stepPaneTarget(root, { kind: "pane", paneId: "left" }, "left");
+    expect(seg).toEqual({ kind: "pane-edge", paneId: "left", side: "left" });
+    expect(stepPaneTarget(root, seg, "left")).toEqual({ kind: "edge", side: "left" });
+  });
+
+  it("keeps the ghost rung skipped for a true solo pane (both splits are identical there)", () => {
+    const root: LayoutNode = { kind: "pane", paneId: "main" };
+    const seg = stepPaneTarget(root, { kind: "pane", paneId: "main" }, "right");
+    expect(seg).toEqual({ kind: "pane-edge", paneId: "main", side: "right" });
+    expect(stepPaneTarget(root, seg, "right")).toEqual(seg);
   });
 
   it("ArrowUp from one pane of a row split targets THAT pane's top segment, then the whole edge (Martin's Jul 8 nit)", () => {

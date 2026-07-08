@@ -496,6 +496,17 @@ body {
   bottom: 0;
 }
 
+/* Selecting a WHOLE-WINDOW edge tints every pane: it can sit at the same
+   coordinates as a single pane's segment, and the split scope must be
+   legible at a glance. */
+.pane-edge-global-tint {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--link-color) 6%, transparent);
+}
+
 /* Pane-edge SEGMENT (one pane's side, not the whole window edge): rendered
    inside the owning pane. Same paint as the global edge highlight. */
 .pane-edge-seg {

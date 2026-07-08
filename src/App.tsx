@@ -324,13 +324,16 @@ export function PaneSelectHint(): JSX.Element {
         >
           <span class="pane-select-hint-body">
             <span>
-              <kbd>Enter</kbd> split here (mirrors the pane) ·{" "}
-              <span class="pane-select-hint-em">type a page name</span> (or <kbd>Ctrl+K</kbd>) to open it in the new
+              <kbd>Enter</kbd>{" "}
+              <Show when={kind() === "edge"} fallback={<Show when={kind() === "pane-edge"} fallback={<span>split here (mirrors the pane)</span>}><span>split <span class="pane-select-hint-em">this pane</span></span></Show>}>
+                <span>split the <span class="pane-select-hint-em">whole window</span></span>
+              </Show>{" "}
+              · <span class="pane-select-hint-em">type a page name</span> (or <kbd>Ctrl+K</kbd>) to open it in the new
               split
             </span>
             <span>
               <Show when={kind() === "pane-edge"}>
-                <span>press outward again for the whole-window edge · </span>
+                <span>press outward again to split the whole window instead · </span>
               </Show>
               <kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> move · <kbd>Esc</kbd> exit
             </span>
@@ -348,7 +351,15 @@ export function PaneEdgeHighlights(): JSX.Element {
   };
   return (
     <Show when={edge()}>
-      {(side) => <div class={`pane-edge-highlight pane-edge-highlight-${side()}`} />}
+      {(side) => (
+        <>
+          {/* A global edge can sit exactly where a pane-edge segment was (a
+              full-height column's side): tint EVERYTHING so "this splits the
+              whole window" is visually distinct from "this splits one pane". */}
+          <div class="pane-edge-global-tint" />
+          <div class={`pane-edge-highlight pane-edge-highlight-${side()}`} />
+        </>
+      )}
     </Show>
   );
 }
