@@ -28,7 +28,7 @@ import { installBlockSelectionDrag } from "./blockDrag";
 import { loadGraphPath, persistedGraphPath, refreshAliases } from "./graph";
 import { checkForUpdate } from "./update";
 import { Welcome } from "./components/Welcome";
-import { goBack, goForward, canGoBack, canGoForward, flushSession } from "./router";
+import { goBack, goForward, canGoBack, canGoForward, flushSession, openJournals } from "./router";
 import {
   theme,
   toggleTheme,
@@ -472,6 +472,14 @@ export function App(): JSX.Element {
           </Show>
           <div class="topbar-right">
             <CalendarJump />
+            <button class="icon-btn" title="Journals" onClick={() => openJournals()}>
+              <svg viewBox="0 0 24 24" class="nav-icon">
+                <path d="M4 5h11a2 2 0 0 1 2 2v12H6a2 2 0 0 1-2-2V5z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
+                <line x1="8" y1="9" x2="14" y2="9" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+                <line x1="8" y1="12.5" x2="14" y2="12.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+                <path d="M17 5h3v14a2 2 0 0 1-2 2 1 1 0 0 1-1-1V5z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
+              </svg>
+            </button>
             <button class="icon-btn" title="Search (Ctrl+K)" onClick={openSwitcher}>
               <svg viewBox="0 0 24 24" class="nav-icon">
                 <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="1.7" />

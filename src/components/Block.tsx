@@ -81,6 +81,8 @@ import { editorOffsetFromRenderedRange } from "../render/spans";
 import {
   assetMarkdown,
   assetFileName,
+  captureAssetFileName,
+  recordingExt,
   insertedAssetMarkdownTarget,
   replaceInsertedAssetMarkdown,
 } from "../media";
@@ -1121,8 +1123,8 @@ export function Editor(props: { id: string }): JSX.Element {
   // Seed + insert an asset from raw bytes at the caret, then persist to assets/
   // in the background (repointing the link if the backend de-dups the name).
   // Shared by clipboard-image paste and mobile capture (camera / voice memo).
-  const insertAssetBytes = (bytes: Uint8Array, origName?: string) => {
-    const candidate = assetFileName(origName);
+  const insertAssetBytes = (bytes: Uint8Array, origName?: string, captureExt?: string) => {
+    const candidate = captureExt !== undefined ? captureAssetFileName(captureExt) : assetFileName(origName);
     // Cache key is the bare filename — assetRelPath() strips the `assets/` prefix
     // before loadAssetBlob() (see render/inline.tsx). Seed it so the asset renders
     // instantly, before the disk write lands.
@@ -1168,7 +1170,7 @@ export function Editor(props: { id: string }): JSX.Element {
       pushToast(`Couldn’t capture a photo (${String(err)})`, "error");
       return;
     }
-    if (res.status === "ok" && res.data) insertAssetBytes(base64ToBytes(res.data), `photo.${res.ext || "jpg"}`);
+    if (res.status === "ok" && res.data) insertAssetBytes(base64ToBytes(res.data), undefined, res.ext || "jpg");
   };
 
   // Mobile: toggle voice-memo recording. First tap starts (prompts for mic
@@ -1183,7 +1185,7 @@ export function Editor(props: { id: string }): JSX.Element {
         pushToast(`Couldn’t save the recording (${String(err)})`, "error");
         return;
       }
-      if (res.status === "ok" && res.data) insertAssetBytes(base64ToBytes(res.data), `voice-memo.${res.ext || "m4a"}`);
+      if (res.status === "ok" && res.data) insertAssetBytes(base64ToBytes(res.data), undefined, res.ext || "m4a");
       return;
     }
     let res;
@@ -1197,6 +1199,63 @@ export function Editor(props: { id: string }): JSX.Element {
       setRecordingAudio(true);
       pushToast("Recording… tap the mic again to stop", "info");
     }
+  };
+
+  // Desktop voice memo (/record): the Android start_recording/stop_recording Tauri
+  // commands are stubbed to error on desktop, so record entirely in the WebView with
+  // getUserMedia + MediaRecorder, then reuse insertAssetBytes with the real ext.
+  // First /record starts; second stops and inserts.
+  let desktopRecorder: MediaRecorder | undefined;
+  let desktopRecorderStream: MediaStream | undefined;
+  let desktopRecorderChunks: Blob[] = [];
+  const desktopVoiceMemoToggle = async () => {
+    if (isRecordingAudio() && desktopRecorder) {
+      // Second /record: stop; onstop (below) inserts the asset.
+      desktopRecorder.stop();
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      pushToast("Mic capture isn’t available here", "error");
+      return;
+    }
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      pushToast(`Couldn’t access the microphone (${String(err)})`, "error");
+      return;
+    }
+    let recorder: MediaRecorder;
+    try {
+      recorder = new MediaRecorder(stream);
+    } catch (err) {
+      stream.getTracks().forEach((t) => t.stop());
+      pushToast(`Couldn’t start recording (${String(err)})`, "error");
+      return;
+    }
+    desktopRecorder = recorder;
+    desktopRecorderStream = stream;
+    desktopRecorderChunks = [];
+    recorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) desktopRecorderChunks.push(e.data);
+    };
+    recorder.onstop = () => {
+      const chunks = desktopRecorderChunks;
+      const mime = recorder.mimeType;
+      desktopRecorderStream?.getTracks().forEach((t) => t.stop());
+      desktopRecorder = undefined;
+      desktopRecorderStream = undefined;
+      desktopRecorderChunks = [];
+      setRecordingAudio(false);
+      void (async () => {
+        const blob = new Blob(chunks, { type: mime });
+        const bytes = new Uint8Array(await blob.arrayBuffer());
+        if (bytes.length) insertAssetBytes(bytes, undefined, recordingExt(mime));
+      })();
+    };
+    recorder.start();
+    setRecordingAudio(true);
+    pushToast("Recording… run /record again to stop", "info");
   };
 
   const uploadAsset = async () => {
@@ -1316,6 +1375,10 @@ export function Editor(props: { id: string }): JSX.Element {
       case "upload-asset":
         replaceTrigger(""); // drop the "/upload" trigger text
         uploadAsset();
+        return;
+      case "record":
+        replaceTrigger(""); // drop the "/record" trigger text
+        void desktopVoiceMemoToggle();
         return;
       case "drawio":
         replaceTrigger(""); // drop the "/drawio" trigger text

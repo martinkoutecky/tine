@@ -30,6 +30,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   the editor commands (with autodetect for drawio) under **Settings → Files →
   Diagram editors**; empty uses your system default opener. Desktop only.
 
+- **Desktop voice memos** (`/record`). On desktop, `/record` starts a microphone
+  recording in the app (via the WebView's recorder) and a second `/record` stops
+  it and inserts the audio as an asset — no phone required. Previously mic capture
+  existed only on Android.
+
+- **Journals button in the toolbar.** A one-click "go to Journals" button now sits
+  next to the date-jump control in the top bar, so you no longer need the sidebar
+  to get back to today's journal.
+
 - **Hover peek for page links** ([#40](https://github.com/martinkoutecky/tine/issues/40)).
   Dwelling on a `[[page]]` or `#tag` opens a small read-only preview card of that
   page's blocks — a quick look without navigating away, like Logseq. The fetch is
@@ -46,6 +55,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   hovered, going full-strength on the block itself.
 
 ### Fixed
+
+- **Camera / voice-memo captures no longer overwrite each other's names.** Photos
+  and voice memos were being named `photo.jpg` / `voice-memo.m4a` (colliding to
+  `photo_1.jpg` / `voice-memo_1.m4a`), losing the timestamp naming that pasted
+  images get. Captures now get the same unique `yyyymmdd-hhmmss-…` name as a paste,
+  with their real extension.
 
 - **Pasting a screenshot now works on Windows** ([#43](https://github.com/martinkoutecky/tine/issues/43),
   reported by @msjsc001). `Ctrl+V` of an image copied by a Windows screenshot

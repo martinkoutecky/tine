@@ -3,6 +3,8 @@ import {
   mediaKind,
   assetMarkdown,
   assetFileName,
+  captureAssetFileName,
+  recordingExt,
   formatAssetName,
   insertedAssetMarkdownTarget,
   replaceInsertedAssetMarkdown,
@@ -40,6 +42,32 @@ describe("media helpers", () => {
     expect(assetFileName("a/b%c.png")).toBe("a_b_c.png");
     expect(assetFileName()).toMatch(/^\d{8}-\d{6}-\d{3}-\d+\.png$/); // paste has no name → unique stamp
     expect(assetFileName("noext")).toBe("noext");
+  });
+
+  it("captureAssetFileName: paste-style unique stem with the real capture ext", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date(2030, 0, 2, 3, 4, 5, 6));
+      const first = captureAssetFileName("jpg");
+      const second = captureAssetFileName("jpg");
+      // yyyymmdd- timestamp stem, real ext, counter uniqueness
+      expect(first).toMatch(/^20300102-030405-006-\d+\.jpg$/);
+      expect(second).toMatch(/^20300102-030405-006-\d+\.jpg$/);
+      expect(second).not.toBe(first);
+      // empty/dot-prefixed ext is sanitized (leading dots stripped, lowercased)
+      expect(captureAssetFileName(".JPG")).toMatch(/-\d+\.jpg$/);
+      expect(captureAssetFileName("")).toMatch(/-\d+\.bin$/);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("recordingExt: MediaRecorder mimeType → asset ext (codecs tail ignored)", () => {
+    expect(recordingExt("audio/webm")).toBe("webm");
+    expect(recordingExt("audio/webm;codecs=opus")).toBe("webm");
+    expect(recordingExt("audio/ogg;codecs=opus")).toBe("ogg");
+    expect(recordingExt("audio/mp4")).toBe("m4a");
+    expect(recordingExt("")).toBe("webm"); // unknown/empty → webm default
   });
 
   it("assetFileName: clipboard paste names are unique within the same second", () => {

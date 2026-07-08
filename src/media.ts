@@ -80,14 +80,16 @@ function formatAssetNameWithFallbackStem(
   template: string,
   original: string | undefined,
   now: Date,
-  fallbackStem?: string
+  fallbackStem?: string,
+  defaultExt: string = "png"
 ): string {
   const { yyyy, MM, dd, HH, mm, ss, stamp } = dateParts(now);
   const dot = original ? original.lastIndexOf(".") : -1;
   // A named file keeps its real extension (case preserved — "just the filename");
-  // a clipboard paste has none → png. An empty stem (paste) falls back to a
-  // sortable stamp, so %assetname is never blank.
-  const ext = dot > 0 ? original!.slice(dot + 1) : original ? "" : "png";
+  // a clipboard paste has none → default ext (png for clipboard images, the real
+  // capture ext for camera/mic). An empty stem (paste) falls back to a sortable
+  // stamp, so %assetname is never blank.
+  const ext = dot > 0 ? original!.slice(dot + 1) : original ? "" : defaultExt;
   const stem = sanitizeStem(dot > 0 ? original!.slice(0, dot) : original ?? "") || fallbackStem || stamp;
   const tokens: Record<string, string> = {
     "%yyyymmdd": `${yyyy}${MM}${dd}`,
@@ -113,7 +115,7 @@ function formatAssetNameWithFallbackStem(
   // Never drop the real extension, even if the template omits %ext — a media file
   // with no extension wouldn't render. (If %ext is present, it already ends here.)
   if (ext && !out.toLowerCase().endsWith(`.${ext.toLowerCase()}`)) out = `${out}.${ext}`;
-  return out || `${fallbackStem || stamp}.png`; // last-ditch guard (template was all separators)
+  return out || `${fallbackStem || stamp}.${defaultExt}`; // last-ditch guard (template was all separators)
 }
 
 export function formatAssetName(template: string, original: string | undefined, now: Date): string {
@@ -133,6 +135,31 @@ export function assetFileName(original?: string): string {
     formatAssetNameWithFallbackStem(assetNameFormat(), undefined, now, uniqueStem),
     uniqueStem
   );
+}
+
+/** Paste-style unique asset name for a device CAPTURE (camera / mic), but with
+ *  the capture's real extension instead of the clipboard-paste png default.
+ *  Captures have no source filename, so — like a paste — they get a
+ *  timestamp+ms+counter stem, guaranteeing uniqueness (the NAMED path would
+ *  collapse to `photo.jpg`/`photo_1.jpg`). */
+export function captureAssetFileName(ext: string): string {
+  const clean = (ext || "").replace(/^\.+/, "").toLowerCase() || "bin";
+  const now = new Date();
+  const uniqueStem = clipboardPasteStem(now);
+  return appendClipboardUniqueness(
+    formatAssetNameWithFallbackStem(assetNameFormat(), undefined, now, uniqueStem, clean),
+    uniqueStem
+  );
+}
+
+/** File extension for a MediaRecorder blob, derived from its `mimeType`
+ *  (which may carry a `;codecs=…` tail). Falls back to `webm` (the WebView's
+ *  usual default) for anything unrecognized. */
+export function recordingExt(mime: string): string {
+  const base = (mime || "").split(";")[0].trim().toLowerCase();
+  if (base === "audio/ogg") return "ogg";
+  if (base === "audio/mp4") return "m4a";
+  return "webm"; // audio/webm and unknown
 }
 
 export interface AssetMarkdownFixupTarget {
