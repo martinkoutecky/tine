@@ -638,6 +638,18 @@ function pageVisibleOrder(pageName: string): string[] {
   return order;
 }
 
+/** Visible order to resolve a block SELECTION against. The journals feed lives in
+ *  visibleData(); a routed single page is loaded via ensurePageLoaded and is NOT in
+ *  doc.feed, so its blocks aren't in visibleOrder() — fall back to that block's own
+ *  page order, mirroring prevVisible/nextVisible. Without this, block-select (Esc,
+ *  Arrow, Shift+Arrow) is dead on any routed page / reference / embed. */
+function selectionOrder(id: string | null): string[] {
+  if (!id) return [];
+  if (visibleData().index.has(id)) return visibleOrder();
+  const page = doc.byId[id]?.page;
+  return page ? pageVisibleOrder(page) : [];
+}
+
 export function prevVisible(id: string): string | null {
   const { order, index } = visibleData();
   const i = index.get(id);
@@ -1832,7 +1844,7 @@ export function selectedIds(): string[] {
   const a = selAnchor();
   const f = selFocus();
   if (!a || !f) return [];
-  const order = visibleOrder();
+  const order = selectionOrder(a);
   let i = order.indexOf(a);
   let j = order.indexOf(f);
   if (i < 0 || j < 0) return [];
@@ -1870,7 +1882,7 @@ export function hasSelection(): boolean {
 export function moveSelection(dir: 1 | -1, extend: boolean) {
   const f = selFocus();
   if (!f) return;
-  const order = visibleOrder();
+  const order = selectionOrder(f);
   const i = order.indexOf(f);
   const ni = i + dir;
   if (ni < 0 || ni >= order.length) return;
