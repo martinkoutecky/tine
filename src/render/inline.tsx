@@ -12,7 +12,7 @@ import { openPdf, openPageInSidebar, openBlockInSidebar, openPageContextMenu, op
 import { copyImageFromSrc } from "../copyImage";
 import { parseBlock, parserReady } from "./parse";
 import type { Inline, Url, MacroInline, TimestampInline, EmailValue, Block as AstBlock, Format } from "./ast";
-import type { BlockDto, PageKind } from "../types";
+import type { PageKind } from "../types";
 import { timestampText } from "./renderedText";
 import { EmojiText } from "./emoji";
 import { sanitizeRawHtml, rawHtmlLocalImages } from "./htmlSanitize";
@@ -35,6 +35,7 @@ import { PaneContext, focusedPaneId, openRouteInOtherPane } from "../panes";
 import { QueryMacro, EmbedMacro, VideoMacro, TweetMacro, YoutubeTimestamp, ClozeMacro, ZoteroMacro } from "../components/Macro";
 import { NamespaceMacro } from "../components/Namespace";
 import { guideTargetForLink, isGuidePageName } from "../guide";
+import { PeekPopup, PeekContext, capBlockTree } from "./PeekPopup";
 
 
 // ===========================================================================
@@ -184,33 +185,59 @@ function macroBody(s: MacroInline): string {
   return s.args.length ? `${s.name} ${s.args.join(", ")}` : s.name;
 }
 
-// How long the cursor must dwell on a link before its hover preview opens, and
-// how many block first-lines the preview renders (bounded so a hover on a huge
-// page never mounts the whole tree — perf directive).
-const PAGE_PEEK_DWELL_MS = 350;
-const PAGE_PEEK_LINE_CAP = 40;
+const PEEK_OPEN_MS = 350;
+const PEEK_CLOSE_MS = 150;
+const PEEK_BLOCK_CAP = 50;
 
-// Flatten a page's block tree to (first-line, depth) rows for the hover peek,
-// skipping empty bullets, stopping at PAGE_PEEK_LINE_CAP. Depth drives a small
-// indent so the preview conveys structure without block-level DOM (the card
-// lives inside an <a>, so it must stay spans-only — see PageRef).
-function flattenPeek(
-  blocks: BlockDto[],
-  depth = 0,
-  out: { text: string; depth: number }[] = [],
-): { text: string; depth: number }[] {
-  for (const b of blocks) {
-    if (out.length >= PAGE_PEEK_LINE_CAP) break;
-    const first = visibleBody(b.raw)[0] ?? "";
-    if (first.trim()) out.push({ text: first, depth });
-    if (b.children.length) flattenPeek(b.children, depth + 1, out);
-  }
-  return out;
+function createPeekBridge(disabled: () => boolean) {
+  const [open, setOpen] = createSignal(false);
+  let openT: ReturnType<typeof setTimeout> | undefined;
+  let closeT: ReturnType<typeof setTimeout> | undefined;
+  const clearOpen = () => {
+    if (openT) {
+      clearTimeout(openT);
+      openT = undefined;
+    }
+  };
+  const clearClose = () => {
+    if (closeT) {
+      clearTimeout(closeT);
+      closeT = undefined;
+    }
+  };
+  const anchorEnter = () => {
+    if (disabled()) return;
+    clearClose();
+    clearOpen();
+    openT = setTimeout(() => setOpen(true), PEEK_OPEN_MS);
+  };
+  const anchorLeave = () => {
+    clearOpen();
+    if (disabled()) return;
+    clearClose();
+    closeT = setTimeout(() => setOpen(false), PEEK_CLOSE_MS);
+  };
+  const popupEnter = () => {
+    if (disabled()) return;
+    clearClose();
+  };
+  const popupLeave = () => {
+    if (disabled()) return;
+    clearClose();
+    closeT = setTimeout(() => setOpen(false), PEEK_CLOSE_MS);
+  };
+  onCleanup(() => {
+    clearOpen();
+    clearClose();
+  });
+  return { open, anchorEnter, anchorLeave, popupEnter, popupLeave };
 }
 
 // A `[[page]]` / `#tag` anchor — shared by page_ref links, bare refs, and #tags.
 function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolean; blockId?: string; spanAttrs?: SpanDomAttrs }): JSX.Element {
   const pane = useContext(PaneContext);
+  const insidePeek = useContext(PeekContext);
+  let anchorEl: HTMLAnchorElement | undefined;
   const sourcePage = () => (props.blockId ? doc.byId[props.blockId]?.page : undefined);
   const targetName = () => guideTargetForLink(props.name, sourcePage());
   // The referenced page's `icon::`, shown as a prefix like OG (and Tine's own page
@@ -227,69 +254,66 @@ function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolean; bloc
     else openPage(targetName(), kind());
   };
 
-  // Hover peek (GH #40): after a short dwell, fetch the target page and show a
-  // read-only preview card — mirrors OG's page hover popup and Tine's own
-  // block-ref preview. The fetch is lazy (only once hovered) and cached per open
-  // graph via the resource key; leaving cancels a pending open so a cursor merely
-  // grazing links while reading never spawns popups.
-  const [peek, setPeek] = createSignal(false);
-  let dwell: ReturnType<typeof setTimeout> | undefined;
-  const cancelDwell = () => { if (dwell) { clearTimeout(dwell); dwell = undefined; } };
-  const enter = () => { cancelDwell(); dwell = setTimeout(() => setPeek(true), PAGE_PEEK_DWELL_MS); };
-  const leave = () => { cancelDwell(); setPeek(false); };
-  onCleanup(cancelDwell);
+  // Hover peek (GH #40): after a short dwell, fetch the target page and show its
+  // read-only RefBlocks tree in a portaled popup. The fetch is lazy and guarded:
+  // guide pages and links already inside a peek never arm another preview.
+  const peek = createPeekBridge(() => insidePeek || isGuidePageName(targetName()));
   const [preview] = createResource(
-    () => (peek() && !isGuidePageName(targetName()) ? `${targetName()}\0${graphEpoch()}` : null),
+    () => (peek.open() && !isGuidePageName(targetName()) ? `${targetName()}\0${graphEpoch()}` : null),
     () => backend().getPage(targetName(), kind()),
   );
+  const capped = createMemo(() => capBlockTree(preview()?.blocks ?? [], PEEK_BLOCK_CAP));
 
   return (
-    <a
-      class={props.tag ? "tag" : "page-ref"}
-      {...(props.spanAttrs ?? {})}
-      // Shift+click opens the page in the sidebar (via `open`); suppress the
-      // browser's native shift-range-selection so the main editor's text isn't
-      // selected as a side effect (GH #42).
-      onMouseDown={(e) => { if (e.shiftKey) e.preventDefault(); }}
-      onClick={open}
-      onMouseEnter={enter}
-      onMouseLeave={leave}
-      onAuxClick={(e) => {
-        if (e.button === 1) {
+    <>
+      <a
+        ref={anchorEl}
+        class={props.tag ? "tag" : "page-ref"}
+        {...(props.spanAttrs ?? {})}
+        // Shift+click opens the page in the sidebar (via `open`); suppress the
+        // browser's native shift-range-selection so the main editor's text isn't
+        // selected as a side effect (GH #42).
+        onMouseDown={(e) => { if (e.shiftKey) e.preventDefault(); }}
+        onClick={open}
+        onMouseEnter={peek.anchorEnter}
+        onMouseLeave={peek.anchorLeave}
+        onAuxClick={(e) => {
+          if (e.button === 1) {
+            e.preventDefault();
+            e.stopPropagation();
+            openPageInNewTab(targetName(), kind());
+          }
+        }}
+        onContextMenu={(e) => {
           e.preventDefault();
           e.stopPropagation();
-          openPageInNewTab(targetName(), kind());
-        }
-      }}
-      onContextMenu={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (!isGuidePageName(targetName())) openPageContextMenu(e.clientX, e.clientY, targetName());
-      }}
-    >
-      <Show when={icon()}>
-        <span class="page-icon page-ref-icon"><EmojiText text={icon()!} /></span>
-      </Show>
-      <Show when={props.tag} fallback={
-        <Show when={props.alias} fallback={<><span class="bracket">[[</span>{props.name}<span class="bracket">]]</span></>}>
-          {props.alias}
+          if (!isGuidePageName(targetName())) openPageContextMenu(e.clientX, e.clientY, targetName());
+        }}
+      >
+        <Show when={icon()}>
+          <span class="page-icon page-ref-icon"><EmojiText text={icon()!} /></span>
         </Show>
-      }>
-        #{props.name}
+        <Show when={props.tag} fallback={
+          <Show when={props.alias} fallback={<><span class="bracket">[[</span>{props.name}<span class="bracket">]]</span></>}>
+            {props.alias}
+          </Show>
+        }>
+          #{props.name}
+        </Show>
+      </a>
+      <Show when={peek.open() && preview() && capped().blocks.length > 0}>
+        <PeekPopup
+          anchor={() => anchorEl}
+          title={<span class="peek-popup-title-name"><EmojiText text={props.name} /></span>}
+          blocks={() => capped().blocks}
+          page={targetName()}
+          pageKind={kind()}
+          truncatedCount={() => capped().truncated}
+          onPointerEnter={peek.popupEnter}
+          onPointerLeave={peek.popupLeave}
+        />
       </Show>
-      <Show when={peek() && preview() && preview()!.blocks.length > 0}>
-        <span class="page-ref-preview" onMouseDown={(e) => e.stopPropagation()}>
-          <span class="page-ref-preview-title"><EmojiText text={props.name} /></span>
-          <For each={flattenPeek(preview()!.blocks)}>
-            {(ln) => (
-              <span class="page-ref-preview-line" style={{ "padding-left": `${ln.depth * 12}px` }}>
-                <InlineText text={ln.text} format={preview()!.format === "org" ? "org" : "md"} />
-              </span>
-            )}
-          </For>
-        </span>
-      </Show>
-    </a>
+    </>
   );
 }
 
@@ -953,64 +977,70 @@ function UserMacroView(props: { name: string; template: string; args: string[]; 
 // referenced block (mirrors OG); a missing target falls back to a short id.
 function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAttrs }): JSX.Element {
   const pane = useContext(PaneContext);
+  const insidePeek = useContext(PeekContext);
+  let anchorEl: HTMLSpanElement | undefined;
   const [grp] = createResource(
     () => `${props.id}\0${graphEpoch()}`, // resolve once per open graph; batched + cached
     () => resolveBlockBatched(props.id)
   );
-  const [hover, setHover] = createSignal(false);
+  const peek = createPeekBridge(() => insidePeek);
   // Visible text: an explicit label wins; otherwise the target's first line.
   const text = () => props.label ?? (grp() ? visibleBody(grp()!.blocks[0].raw)[0] : undefined);
   // Parse the referenced block's text with ITS page's format (org refs render org).
   const fmt = () => formatForPage(grp()?.page);
+  const capped = createMemo(() => capBlockTree(grp()?.blocks ?? [], PEEK_BLOCK_CAP));
   return (
-    <span
-      class="block-ref"
-      classList={{ "block-ref-missing": !grp() }}
-      {...(props.spanAttrs ?? {})}
-      title="Click to go to the block; shift-click → sidebar; right-click for more"
-      // Suppress native shift-range-selection when shift+click opens the sidebar (GH #42).
-      onMouseDown={(e) => { if (e.shiftKey) e.preventDefault(); }}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      onContextMenu={(e) => {
-        const g = grp();
-        if (!g) return; // missing target → let the default menu through
-        e.preventDefault();
-        e.stopPropagation();
-        openBlockRefContextMenu(e.clientX, e.clientY, props.id, g.page, g.kind);
-      }}
-      onClick={(e) => {
-        e.stopPropagation();
-        const g = grp();
-        if (!g) return;
-        // Shift-click opens the referenced block in the right sidebar. Plain click:
-        // Tine scrolls + flashes the block in context (default); the OG behavior —
-        // zoom into the block as its own page — is opt-in (Settings → ref-click-zoom).
-        if (e.ctrlKey || e.metaKey)
-          openRouteInOtherPane(
-            { kind: "page", name: g.page, pageKind: g.kind, block: props.id },
-            pane?.paneId ?? focusedPaneId()
-          );
-        else if (e.shiftKey) openBlockInSidebar({ uuid: props.id, page: g.page, pageKind: g.kind });
-        else if (refClickZoom()) focusBlock(props.id);
-        else openPageAtBlock(g.page, g.kind, props.id);
-      }}
-    >
-      <Show when={text() !== undefined} fallback={<>(({props.id.slice(0, 8)}))</>}>
-        <InlineText text={text()!} format={fmt()} />
+    <>
+      <span
+        ref={anchorEl}
+        class="block-ref"
+        classList={{ "block-ref-missing": !grp() }}
+        {...(props.spanAttrs ?? {})}
+        title="Click to go to the block; shift-click → sidebar; right-click for more"
+        // Suppress native shift-range-selection when shift+click opens the sidebar (GH #42).
+        onMouseDown={(e) => { if (e.shiftKey) e.preventDefault(); }}
+        onMouseEnter={peek.anchorEnter}
+        onMouseLeave={peek.anchorLeave}
+        onContextMenu={(e) => {
+          const g = grp();
+          if (!g) return; // missing target → let the default menu through
+          e.preventDefault();
+          e.stopPropagation();
+          openBlockRefContextMenu(e.clientX, e.clientY, props.id, g.page, g.kind);
+        }}
+        onClick={(e) => {
+          e.stopPropagation();
+          const g = grp();
+          if (!g) return;
+          // Shift-click opens the referenced block in the right sidebar. Plain click:
+          // Tine scrolls + flashes the block in context (default); the OG behavior —
+          // zoom into the block as its own page — is opt-in (Settings → ref-click-zoom).
+          if (e.ctrlKey || e.metaKey)
+            openRouteInOtherPane(
+              { kind: "page", name: g.page, pageKind: g.kind, block: props.id },
+              pane?.paneId ?? focusedPaneId()
+            );
+          else if (e.shiftKey) openBlockInSidebar({ uuid: props.id, page: g.page, pageKind: g.kind });
+          else if (refClickZoom()) focusBlock(props.id);
+          else openPageAtBlock(g.page, g.kind, props.id);
+        }}
+      >
+        <Show when={text() !== undefined} fallback={<>(({props.id.slice(0, 8)}))</>}>
+          <InlineText text={text()!} format={fmt()} />
+        </Show>
+      </span>
+      <Show when={peek.open() && grp() && capped().blocks.length > 0}>
+        <PeekPopup
+          anchor={() => anchorEl}
+          title={<span class="peek-popup-title-name">{grp()!.page}</span>}
+          blocks={() => capped().blocks}
+          page={grp()!.page}
+          pageKind={grp()!.kind}
+          truncatedCount={() => capped().truncated}
+          onPointerEnter={peek.popupEnter}
+          onPointerLeave={peek.popupLeave}
+        />
       </Show>
-      <Show when={hover() && grp()}>
-        <span class="block-ref-preview">
-          <span class="block-ref-preview-page">{grp()!.page}</span>
-          <For each={grp()!.blocks}>
-            {(b) => (
-              <span class="block-ref-preview-line">
-                <InlineText text={visibleBody(b.raw).join(" ")} format={fmt()} />
-              </span>
-            )}
-          </For>
-        </span>
-      </Show>
-    </span>
+    </>
   );
 }

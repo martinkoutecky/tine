@@ -18,6 +18,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- **Richer link hover previews.** Hovering a `[[page]]`, `#tag`, or block reference
+  now shows the target's real, read-only block tree — bullets, nesting, task markers,
+  priority, full multi-line bodies, and inline formatting — in a floating popup you can
+  move into and scroll, matching Logseq's page preview. (Previously it showed only the
+  first line of each block as plain text.) Block-reference previews now open after the
+  same short hover delay as page previews instead of instantly. Hovering never modifies
+  the graph.
+
 - **New parser (lsdoc v2).** Tine's block and inline parser was rebuilt from scratch
   as a two-phase, linear-time parser transcribed directly from Logseq's mldoc,
   replacing the previous optimistic scanner. It is more faithful to Logseq on

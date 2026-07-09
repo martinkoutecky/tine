@@ -1,13 +1,25 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { AstBody } from "./body";
 import { initParser } from "./parse";
 
-// GH #40: hovering a [[page]] link shows a read-only hover-peek card after a
+const PEEK_OPEN_MS = 350;
+const PEEK_CLOSE_MS = 150;
+
+// GH #40: hovering a [[page]] link shows a read-only hover-peek popup after a
 // short dwell. Uses the mock backend (jsdom => mockBackend), so getPage("Tine")
-// resolves to a real page with blocks. No server needed.
+// resolves to a real nested page. No server needed.
 beforeAll(async () => {
   await initParser();
+});
+
+beforeEach(() => {
+  vi.useFakeTimers();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  document.body.replaceChildren();
 });
 
 function mountAttached(raw: string): { root: HTMLElement; dispose: () => void } {
@@ -19,11 +31,16 @@ function mountAttached(raw: string): { root: HTMLElement; dispose: () => void } 
   return { root: host, dispose: () => { dispose(); host.remove(); } };
 }
 
-async function waitFor(fn: () => boolean, timeout = 2500): Promise<boolean> {
-  const start = Date.now();
-  while (Date.now() - start < timeout) {
+async function advance(ms: number) {
+  await vi.advanceTimersByTimeAsync(ms);
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+async function waitFor(fn: () => boolean, timeout = 1000): Promise<boolean> {
+  for (let elapsed = 0; elapsed < timeout; elapsed += 25) {
     if (fn()) return true;
-    await new Promise((r) => setTimeout(r, 25));
+    await advance(25);
   }
   return fn();
 }
@@ -35,48 +52,124 @@ function fireLeave(el: Element) {
   el.dispatchEvent(new MouseEvent("mouseleave", { bubbles: false }));
 }
 
+function popup(): HTMLElement | null {
+  return document.body.querySelector(".peek-popup");
+}
+
 describe("page hover-peek (GH #40)", () => {
-  it("renders a peek card with the target's block lines after dwell", async () => {
+  it("renders a portaled RefBlocks tree for a page after dwell", async () => {
     const { root, dispose } = mountAttached("A link to [[Tine]] here");
     try {
       const link = root.querySelector("a.page-ref")!;
       expect(link).toBeTruthy();
-      // No card before hover.
-      expect(root.querySelector(".page-ref-preview")).toBeFalsy();
+      expect(popup()).toBeFalsy();
+      expect(document.body.querySelector(".page-ref-preview-line")).toBeFalsy();
+
       fireEnter(link);
-      const shown = await waitFor(() => !!root.querySelector(".page-ref-preview-line"));
+      await advance(PEEK_OPEN_MS);
+      const shown = await waitFor(() => !!popup()?.querySelector(".ls-block"));
       expect(shown).toBe(true);
-      const card = root.querySelector(".page-ref-preview")!;
-      // Title = page name; at least one line from the Tine mock page.
-      expect(card.querySelector(".page-ref-preview-title")?.textContent).toContain("Tine");
-      expect(card.querySelectorAll(".page-ref-preview-line").length).toBeGreaterThan(0);
+
+      const card = popup()!;
+      expect(document.body.contains(card)).toBe(true);
+      expect(root.contains(card)).toBe(false);
+      expect(link.contains(card)).toBe(false);
+      expect(card.querySelector(".peek-popup-title-name")?.textContent).toContain("Tine");
+      expect(card.querySelector(".ls-block")).toBeTruthy();
+      expect(card.querySelector(".block-children")).toBeTruthy();
+      expect(document.body.querySelector(".page-ref-preview-line")).toBeFalsy();
     } finally {
       dispose();
     }
   });
 
-  it("dismisses the card on mouse leave", async () => {
+  it("does not open nested previews from links rendered inside the popup", async () => {
+    const { root, dispose } = mountAttached("A link to [[Tine]] here");
+    try {
+      const link = root.querySelector("a.page-ref")!;
+      fireEnter(link);
+      await advance(PEEK_OPEN_MS);
+      await waitFor(() => !!popup()?.querySelector(".ls-block"));
+
+      const nested = popup()!.querySelector("a.page-ref")!;
+      expect(nested).toBeTruthy();
+      fireEnter(nested);
+      await advance(PEEK_OPEN_MS);
+      await waitFor(() => document.body.querySelectorAll(".peek-popup").length === 1);
+      expect(document.body.querySelectorAll(".peek-popup")).toHaveLength(1);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("uses the close grace to bridge from anchor to popup", async () => {
     const { root, dispose } = mountAttached("go to [[Tine]] now");
     try {
       const link = root.querySelector("a.page-ref")!;
       fireEnter(link);
-      await waitFor(() => !!root.querySelector(".page-ref-preview"));
+      await advance(PEEK_OPEN_MS);
+      await waitFor(() => !!popup());
+      const card = popup()!;
+
       fireLeave(link);
-      const gone = await waitFor(() => !root.querySelector(".page-ref-preview"), 1000);
-      expect(gone).toBe(true);
+      await advance(PEEK_CLOSE_MS - 1);
+      expect(popup()).toBeTruthy();
+
+      fireEnter(card);
+      await advance(PEEK_CLOSE_MS + 1);
+      expect(popup()).toBeTruthy();
+
+      fireLeave(card);
+      await advance(PEEK_CLOSE_MS);
+      expect(popup()).toBeFalsy();
     } finally {
       dispose();
     }
   });
 
-  it("shows no card for a link whose target page does not exist", async () => {
+  it("dismisses the popup after anchor leave when the pointer does not enter it", async () => {
+    const { root, dispose } = mountAttached("go to [[Tine]] now");
+    try {
+      const link = root.querySelector("a.page-ref")!;
+      fireEnter(link);
+      await advance(PEEK_OPEN_MS);
+      await waitFor(() => !!popup());
+
+      fireLeave(link);
+      await advance(PEEK_CLOSE_MS);
+      expect(popup()).toBeFalsy();
+    } finally {
+      dispose();
+    }
+  });
+
+  it("shows no popup for a link whose target page does not exist", async () => {
     const { root, dispose } = mountAttached("dangling [[No Such Page 12345]] ref");
     try {
       const link = root.querySelector("a.page-ref")!;
       fireEnter(link);
-      // Give dwell + fetch time; the resource resolves to null => no card.
-      await new Promise((r) => setTimeout(r, 700));
-      expect(root.querySelector(".page-ref-preview")).toBeFalsy();
+      await advance(PEEK_OPEN_MS);
+      await waitFor(() => !!popup(), 300);
+      expect(popup()).toBeFalsy();
+    } finally {
+      dispose();
+    }
+  });
+
+  it("opens block-ref peeks only after dwell", async () => {
+    const { root, dispose } = mountAttached("Inline ref ((arch-1)) here");
+    try {
+      const ref = root.querySelector(".block-ref")!;
+      expect(ref).toBeTruthy();
+      fireEnter(ref);
+      await advance(PEEK_OPEN_MS - 1);
+      expect(popup()).toBeFalsy();
+
+      await advance(1);
+      const shown = await waitFor(() => !!popup()?.querySelector(".ls-block"));
+      expect(shown).toBe(true);
+      expect(popup()!.querySelector(".peek-popup-title-name")?.textContent).toContain("Tine");
+      expect(popup()!.querySelector(".ls-block")).toBeTruthy();
     } finally {
       dispose();
     }

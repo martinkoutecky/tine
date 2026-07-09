@@ -3434,44 +3434,48 @@ mark {
   cursor: default;
 }
 
-/* Page hover-peek card (GH #40): same floating-card shell as .block-ref-preview,
-   with a page-name header and one indented line per block first-line. Lives
-   inside the <a>, so spans only — depth indent conveys nesting without <div>s. */
-.page-ref-preview {
-  position: absolute;
-  left: 0;
-  top: 100%;
-  z-index: 70;
-  margin-top: 4px;
-  min-width: 240px;
-  max-width: 460px;
-  max-height: 320px;
+/* Portaled hover peek for page/tag/block refs. Coordinates are fixed viewport
+   positions computed from the trigger element, so sidebar overflow cannot clip it. */
+.peek-popup {
+  position: fixed;
+  z-index: 50;
+  width: min(600px, calc(100vw - 16px));
+  max-height: 600px;
   overflow-y: auto;
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: 8px;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
-  padding: 8px 12px;
+  padding: 8px;
   font-size: 14px;
   font-weight: normal;
   font-style: normal;
+  line-height: 1.45;
+  text-align: left;
   white-space: normal;
   text-decoration: none;
   cursor: default;
   color: var(--text-primary);
-  display: block;
 }
-.page-ref-preview-title {
-  display: block;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-muted);
-  margin-bottom: 4px;
+.peek-popup-title {
+  padding: 2px 4px 7px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--border-color);
 }
-.page-ref-preview-line {
-  display: block;
+.peek-popup-title-name {
+  font-size: 14px;
+  font-weight: 700;
   color: var(--text-primary);
-  line-height: 1.5;
+}
+.peek-popup-more {
+  margin-top: 6px;
+  padding: 6px 4px 0;
+  border-top: 1px solid var(--border-color);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.peek-popup .ls-block.ref-block {
+  margin: 0;
 }
 /* Per-referrer ancestor breadcrumb in the block-ref panel (OG :breadcrumb-show?). */
 .ref-breadcrumb {
@@ -5258,41 +5262,6 @@ body.file-drop-active::after {
   cursor: zoom-in;
 }
 
-/* ------------------------------------------------------ block-ref preview */
-.block-ref {
-  position: relative;
-}
-.block-ref-preview {
-  position: absolute;
-  left: 0;
-  top: 100%;
-  z-index: 70;
-  margin-top: 4px;
-  min-width: 240px;
-  max-width: 460px;
-  max-height: 320px;
-  overflow-y: auto;
-  background: var(--bg-primary);
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
-  padding: 8px 12px;
-  font-size: 14px;
-  white-space: normal;
-  cursor: default;
-  display: block;
-}
-.block-ref-preview-page {
-  display: block;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-muted);
-  margin-bottom: 4px;
-}
-.block-ref-preview-line {
-  display: block;
-  color: var(--text-primary);
-}
 .ref-filter {
   display: flex;
   flex-wrap: wrap;
