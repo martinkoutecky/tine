@@ -377,12 +377,13 @@ fn header_facets(
         Some(Block::Heading {
             marker,
             priority,
-            level,
+            size,
             ..
         }) => (
             marker.clone(),
             priority.clone(),
-            (1..=6u32).contains(level).then_some(*level as u8),
+            // ATX heading level lives in `.size`; `.level` is the nesting depth.
+            size.and_then(|s| (1..=6).contains(&s).then_some(s as u8)),
         ),
         _ => (None, None, None),
     };

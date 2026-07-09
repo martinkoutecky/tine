@@ -122,7 +122,9 @@ function deriveFacets(raw: string, format: Format): Facets {
     marker = head.marker ?? null;
     const p = head.priority;
     priority = p === "A" || p === "B" || p === "C" ? p : null;
-    const size = head.kind === "bullet" ? head.size ?? null : head.level;
+    // Both Bullet and Heading carry the ATX heading level in `.size` (Heading's
+    // `.level` is the nesting depth, NOT the heading size).
+    const size = head.size ?? null;
     if (size != null && size >= 1 && size <= 6) headingLevel = size;
   }
   const properties: [string, string][] = [];

@@ -111,7 +111,7 @@ export function renderBlocks(blocks: AstBlock[], blockId?: string, headingLevel?
               first inline-flow node), NOT to continuation constructs in the same block
               (e.g. a `> quote` under it) — matching OG. The heading level comes from
               the facet cache (facetsOf); we wrap just block 0. */}
-          <Show when={i() === 0 && headingLevel && isInlineFlow(b)} fallback={renderBlock(b, blockId)}>
+          <Show when={i() === 0 && headingLevel && isInlineFlow(b) && b.kind !== "heading"} fallback={renderBlock(b, blockId)}>
             <span class={`heading-text h${headingLevel}`} {...(coarseSpanAttrs(b.span) ?? {})}>{renderBlock(b, blockId)}</span>
           </Show>
         </>
@@ -130,8 +130,17 @@ function renderBlock(b: AstBlock, blockId?: string): JSX.Element {
   switch (b.kind) {
     case "paragraph":
     case "bullet":
-    case "heading":
       return renderInlines(b.inline, blockId);
+    case "heading": {
+      // A heading on a CONTINUATION line of a multiline block (i.e. not blocks[0],
+      // which renderBlocks styles from the facet cache) must still render at its
+      // own ATX size — Heading carries the size in `.size` (`.level` is nesting).
+      // Clamp to h1..h6; an out-of-range/absent size renders as plain inline text.
+      const sz = b.size;
+      return sz != null && sz >= 1 && sz <= 6
+        ? <span class={`heading-text h${sz}`} {...(coarseSpanAttrs(b.span) ?? {})}>{renderInlines(b.inline, blockId)}</span>
+        : renderInlines(b.inline, blockId);
+    }
     case "src":
       return b.lang === "calc"
         ? <CalcBlock src={b.code} spanAttrs={coarseSpanAttrs(b.span)} />
