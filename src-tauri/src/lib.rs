@@ -202,6 +202,11 @@ pub fn run() {
     let builder = builder.plugin(android_folder_picker::init());
     #[cfg(target_os = "android")]
     let builder = builder.plugin(android_media::init());
+    // Mobile has no xdg-open/open/explorer, so `open_external` routes URL opens
+    // through this plugin's platform Intent instead (GH #49). Desktop keeps its
+    // env-scrubbed spawn; the plugin is compiled/registered on mobile only.
+    #[cfg(mobile)]
+    let builder = builder.plugin(tauri_plugin_opener::init());
 
     builder
         .plugin(tauri_plugin_clipboard_manager::init())

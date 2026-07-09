@@ -109,12 +109,13 @@ pub(crate) fn gpu_env() -> GpuEnv {
 /// to http(s)/mailto; the URL is passed as a single argument (no shell), so it
 /// can't inject commands.
 #[tauri::command]
-pub(crate) fn open_external(url: String) -> Result<(), String> {
+pub(crate) fn open_external(app: tauri::AppHandle, url: String) -> Result<(), String> {
     if !(url.starts_with("http://") || url.starts_with("https://") || url.starts_with("mailto:")) {
         return Err("unsupported url scheme".into());
     }
     #[cfg(desktop)]
     {
+        let _ = &app;
         #[cfg(target_os = "linux")]
         let prog = "xdg-open";
         #[cfg(target_os = "macos")]
@@ -127,11 +128,17 @@ pub(crate) fn open_external(url: String) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
         Ok(())
     }
-    // Mobile: external open uses a platform intent, not a spawned binary; stub for now (M1).
+    // Mobile (Android/iOS): there is no xdg-open/open/explorer to spawn, so hand
+    // the URL to the platform via the opener plugin (an ACTION_VIEW Intent on
+    // Android). This is what makes the About/Help/Releases links actually open on
+    // Android — before this they fired a command that returned an error the
+    // frontend silently swallowed (GH #49).
     #[cfg(not(desktop))]
     {
-        let _ = url;
-        Err("external open is not supported on this platform".into())
+        use tauri_plugin_opener::OpenerExt;
+        app.opener()
+            .open_url(url, None::<&str>)
+            .map_err(|e| e.to_string())
     }
 }
 

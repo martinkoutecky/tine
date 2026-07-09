@@ -25,6 +25,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   off and left you on the Welcome screen with your graph "forgotten". Migration now
   runs before the webview starts, backfills over an empty new directory, and also
   recognises the older `dev.logseqclaude.app` layout.
+- **Android: external links now open.** Links on the About page (Changelog, Report
+  an issue, Website, Ko-fi, …) and the Help/Releases links did nothing on Android —
+  they tried to spawn a desktop opener that doesn't exist there. They now open via
+  the platform (an `ACTION_VIEW` intent). (GH #49)
 
 ## [0.4.7] - 2026-07-08
 

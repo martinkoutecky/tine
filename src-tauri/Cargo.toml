@@ -40,6 +40,12 @@ base64 = "0.22"
 dirs = "6"
 tine-core = { path = "../crates/tine-core" }
 
+# Mobile only: open http/mailto URLs via the OS (an ACTION_VIEW Intent on
+# Android). Desktop spawns xdg-open/open/explorer directly (env-scrubbed) in
+# platform::open_external, so it doesn't need this. See GH #49.
+[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
+tauri-plugin-opener = "2"
+
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-window-state = "2"
 tauri-plugin-single-instance = "2"
