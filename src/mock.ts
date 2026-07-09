@@ -835,6 +835,9 @@ export function mockBackend(): Backend {
     async saveSession(data: string): Promise<void> {
       mockSession = data;
     },
+    async takeIdentifierMigrationNotice(): Promise<boolean> {
+      return false;
+    },
     async gpuEnv(): Promise<GpuEnv> {
       return { software_forced: false, appimage: false };
     },

@@ -250,7 +250,7 @@ jobs:
           node-version: 20
           cache: npm
 
-      # Pinned to match the F-Droid build recipe EXACTLY (metadata/dev.tine.app.yml
+      # Pinned to match the F-Droid build recipe EXACTLY (metadata/page.tine.app.yml
       # uses `rustup default 1.96.0`). Reproducible builds require the developer's
       # APK and F-Droid's rebuild to use the same compiler, so this must not drift
       # to `stable`. Bump both together.
@@ -333,7 +333,7 @@ jobs:
         # Reproducible build (F-Droid #reproducible): canonicalize build-location paths
         # so the native lib's module-id hash matches F-Droid's rebuild regardless of
         # where each ran. Must stay identical to the RUSTFLAGS in the F-Droid recipe
-        # (metadata/dev.tine.app.yml). Paired with codegen-units=1 (Cargo.toml) and the
+        # (metadata/page.tine.app.yml). Paired with codegen-units=1 (Cargo.toml) and the
         # commit-time __BUILD_TIME__ (vite.config.ts).
         run: |
           export RUSTFLAGS="--remap-path-prefix=$GITHUB_WORKSPACE=/build --remap-path-prefix=$HOME/.cargo=/cargo"

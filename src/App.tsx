@@ -85,6 +85,24 @@ export function App(): JSX.Element {
   // into the backend log so a remote "bad startup" is diagnosable in one file.
   onMount(() => void initDebug());
 
+  // One-time notice after the dev.tine.app → page.tine.app identifier rename: the
+  // backend moved settings/session/backups to the new app-data dir, but some
+  // app-level prefs (window geometry, possibly shortcuts) may have reset. Sticky so
+  // the user actually sees it; the backend flag self-clears after this one read.
+  onMount(async () => {
+    try {
+      if (await backend().takeIdentifierMigrationNotice()) {
+        pushToast(
+          "Tine was renamed under the hood, so we moved your settings and backups across. A few app-level preferences (e.g. keyboard shortcuts) might need setting again — sorry about that!",
+          "info",
+          { sticky: true }
+        );
+      }
+    } catch {
+      // Non-Tauri/mock or an older backend without the command: nothing to notify.
+    }
+  });
+
   onMount(async () => {
     const graphPath = persistedGraphPath() || ((window as any).__GRAPH_PATH__ ?? "");
     dbg(`loading graph: ${graphPath || "(default/configured)"}`);

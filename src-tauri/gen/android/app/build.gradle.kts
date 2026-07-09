@@ -39,10 +39,10 @@ android {
     // resolves or downloads a newer NDK. Paired with removing other NDKs on the CI
     // runner (release.yml) so the tauri-CLI Rust link also uses exactly this one.
     ndkVersion = "26.3.11579264"
-    namespace = "dev.tine.app"
+    namespace = "page.tine.app"
     defaultConfig {
         manifestPlaceholders["usesCleartextTraffic"] = "false"
-        applicationId = "dev.tine.app"
+        applicationId = "page.tine.app"
         minSdk = 24
         targetSdk = 36
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
