@@ -27,6 +27,82 @@ pub fn slug(name: &str) -> String {
     out.trim_matches('-').to_string()
 }
 
+/// Per-export map from a page's display name (lowercased for case-insensitive
+/// lookup, matching Logseq's case-insensitive page identity) to its UNIQUE,
+/// GUARANTEED-NONEMPTY output slug. Built once per export (`build_slug_map`) and
+/// used as the single source of truth for every filename, cross-page link, and
+/// search-index entry — so a link can never diverge from the file it points at.
+type SlugMap = std::collections::HashMap<String, String>;
+
+/// FNV-1a 64-bit hash → 8 lowercase hex chars. Deterministic across runs (unlike
+/// std's `DefaultHasher`/`RandomState`, which are randomly seeded), so re-exports
+/// of the same graph produce identical filenames and diffs stay small.
+fn short_hash(s: &str) -> String {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in s.as_bytes() {
+        h ^= u64::from(*b);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{:08x}", (h & 0xffff_ffff) as u32)
+}
+
+/// The base slug for a page name, made NONEMPTY: `slug(name)` when it has any
+/// ASCII-alnum content, else a stable `page-<hash>` token (a title of only
+/// punctuation / non-ASCII would otherwise slug to the empty string).
+fn base_slug(name: &str) -> String {
+    let s = slug(name);
+    if s.is_empty() {
+        format!("page-{}", short_hash(name))
+    } else {
+        s
+    }
+}
+
+/// Build the per-export name→slug map guaranteeing every page a UNIQUE, NONEMPTY
+/// filename. `names` must be in a deterministic order (the caller sorts by name)
+/// so the same graph always yields the same assignment. On a collision the loser
+/// gets a stable `-<hash>` suffix (hash of its own name, so it's stable across
+/// runs — not a mutable counter); a `-<n>` counter is only a last resort if even
+/// the hashed slug collides. Returns the map plus the list of `(name, base,
+/// chosen)` renames so the caller can warn about them. O(n) over pages.
+fn build_slug_map(names: &[&str]) -> (SlugMap, Vec<(String, String, String)>) {
+    let mut map = SlugMap::with_capacity(names.len());
+    let mut used: HashSet<String> = HashSet::with_capacity(names.len());
+    let mut collisions = Vec::new();
+    for name in names {
+        let base = base_slug(name);
+        let mut chosen = base.clone();
+        if used.contains(&chosen) {
+            chosen = format!("{base}-{}", short_hash(name));
+            // Vanishingly unlikely, but stay correct: if the hashed slug also
+            // collides, disambiguate with a deterministic counter.
+            if used.contains(&chosen) {
+                let stem = chosen.clone();
+                let mut k = 2u32;
+                while used.contains(&chosen) {
+                    chosen = format!("{stem}-{k}");
+                    k += 1;
+                }
+            }
+            collisions.push((name.to_string(), base, chosen.clone()));
+        }
+        used.insert(chosen.clone());
+        map.insert(name.to_lowercase(), chosen);
+    }
+    (map, collisions)
+}
+
+/// Resolve a page name to its export slug via the per-export map (the single
+/// source of truth). Falls back to a raw `slug()` for a name not in the map — a
+/// reference to a page that isn't being exported (its link is dead either way),
+/// or the single-page print export (`ctx.slugs == None`, no cross-page files).
+fn page_slug(ctx: &Ctx, name: &str) -> String {
+    ctx.slugs
+        .and_then(|m| m.get(&name.to_lowercase()))
+        .cloned()
+        .unwrap_or_else(|| slug(name))
+}
+
 fn esc(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -239,7 +315,7 @@ fn decorate(html: &str, ctx: &Ctx, depth: u8) -> String {
             if let Some(page) = tag_attr(inner, "data-page") {
                 out.push_str(&format!(
                     "<a class=\"ref\" href=\"{}.html\">",
-                    slug(&unescape(page))
+                    page_slug(ctx, &unescape(page))
                 ));
                 strip_brackets = true;
                 continue;
@@ -249,7 +325,7 @@ fn decorate(html: &str, ctx: &Ctx, depth: u8) -> String {
             if let Some(page) = tag_attr(inner, "data-page") {
                 out.push_str(&format!(
                     "<a class=\"tag\" href=\"{}.html\">",
-                    slug(&unescape(page))
+                    page_slug(ctx, &unescape(page))
                 ));
                 continue;
             }
@@ -495,6 +571,11 @@ fn ref_target_text(raw: &str) -> String {
 struct Ctx<'a> {
     refs: &'a RefIndex,
     graph: Option<&'a Graph>,
+    /// The per-export unique/nonempty page-name→slug map (whole-graph site
+    /// export). `None` for the single-page print export and inline-decorator unit
+    /// tests, where there are no cross-page files — `page_slug` then falls back to
+    /// a raw `slug()`.
+    slugs: Option<&'a SlugMap>,
     /// When true (the single-page PDF/print export), rewrite each `data-asset`
     /// image `src` to a self-contained `data:` URI by reading the asset bytes,
     /// so the printed document needs no sibling `assets/` folder. The whole-graph
@@ -656,7 +737,7 @@ fn expand_macro(name: &str, args: &[String], ctx: &Ctx, depth: u8) -> String {
         "query" => render_query(graph, arg0, ctx, depth + 1),
         "embed" => render_embed(graph, arg0, ctx, depth + 1),
         "video" => render_video(arg0),
-        "namespace" => render_namespace(graph, arg0),
+        "namespace" => render_namespace(graph, arg0, ctx),
         // Unknown / can't-render-statically macro → muted literal (better than a blank).
         _ => format!(
             "<span class=\"macro-raw\">{{{{{} {}}}}}</span>",
@@ -714,7 +795,7 @@ fn render_embed(graph: &Graph, arg: &str, ctx: &Ctx, depth: u8) -> String {
             Some(doc) => {
                 let mut out = format!(
                     "<div class=\"embed page-embed\"><a class=\"embed-title ref\" href=\"{}.html\">{}</a><ul>",
-                    slug(page),
+                    page_slug(ctx, page),
                     esc(page)
                 );
                 for b in &doc.roots {
@@ -776,7 +857,7 @@ fn youtube_id(url: &str) -> Option<String> {
 }
 
 /// List the pages directly under a `{{namespace X}}` prefix as links.
-fn render_namespace(graph: &Graph, ns: &str) -> String {
+fn render_namespace(graph: &Graph, ns: &str, ctx: &Ctx) -> String {
     let prefix = format!("{}/", ns.trim());
     let mut children: Vec<String> = graph
         .list_pages()
@@ -799,7 +880,7 @@ fn render_namespace(graph: &Graph, ns: &str) -> String {
     for c in &children {
         out.push_str(&format!(
             "<li><a class=\"ref\" href=\"{}.html\">{}</a></li>",
-            slug(c),
+            page_slug(ctx, c),
             esc(c)
         ));
     }
@@ -1072,6 +1153,7 @@ pub fn page_print_html(graph: &Graph, name: &str, opts: PrintOpts) -> io::Result
     let ctx = Ctx {
         refs: &refs,
         graph: Some(graph),
+        slugs: None,
         inline_assets: true,
     };
     // `page_html` builds the heading + outline and wraps it in `shell`; we want the
@@ -1418,11 +1500,10 @@ pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
     let mut entries: Vec<_> = pages.iter().collect();
     entries.sort_by(|a, b| a.name.cmp(&b.name));
 
-    // Pass 1: parse every page, keep only the public ones, and build the block-ref
-    // index from them (a `((ref))` only resolves to a block that's actually
-    // exported). Slug + kind are captured here so pass 2 can render + link.
-    let mut public: Vec<(&str, String, PageKind, doc::Document)> = Vec::new();
-    let mut refs = RefIndex::new();
+    // Pass 1: parse every page, keep only the public ones. `entries` is already
+    // sorted by name, so `public` (and hence the slug assignment below) is
+    // deterministic across runs.
+    let mut public: Vec<(&str, PageKind, doc::Document)> = Vec::new();
     for e in entries {
         let Ok(content) = fs::read_to_string(&e.path) else {
             continue;
@@ -1431,9 +1512,33 @@ pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
         if !all_public && !page_is_public(parsed.pre_block.as_deref()) {
             continue;
         }
-        let slug = slug(&e.name);
-        collect_block_refs(&parsed.roots, &slug, &mut refs);
-        public.push((e.name.as_str(), slug, e.kind, parsed));
+        public.push((e.name.as_str(), e.kind, parsed));
+    }
+
+    // ONE source of truth: a unique, nonempty name→slug map for the exported set.
+    // Every filename, cross-page link, block-ref target, and search-index entry is
+    // driven from this map, so a link can never point at a file that a later page
+    // overwrote (DS#4). `slug(name)` is never recomputed independently downstream.
+    let names: Vec<&str> = public.iter().map(|(n, _, _)| *n).collect();
+    let (slugs, collisions) = build_slug_map(&names);
+    for (name, base, chosen) in &collisions {
+        eprintln!(
+            "tine export: page {name:?} slug {base:?} collides with another page; \
+             exporting it as {chosen:?}.html instead"
+        );
+    }
+    let slug_of = |name: &str| -> String {
+        slugs
+            .get(&name.to_lowercase())
+            .cloned()
+            .unwrap_or_else(|| slug(name))
+    };
+
+    // Build the block-ref index from the public pages, keyed to their final slugs
+    // (a `((ref))` only resolves to a block that's actually exported).
+    let mut refs = RefIndex::new();
+    for (name, _, parsed) in &public {
+        collect_block_refs(&parsed.roots, &slug_of(name), &mut refs);
     }
 
     // Pass 2: render each public page (collecting the per-block search index along
@@ -1444,17 +1549,20 @@ pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
     let mut sidebar_pages: Vec<serde_json::Value> = Vec::new();
     let mut count = 0;
     // The render context: the block-ref index + the graph (so `{{query}}`/`{{embed}}`/
-    // `{{namespace}}` macros can resolve against real data at publish time).
+    // `{{namespace}}` macros can resolve against real data at publish time) + the
+    // slug map (so cross-page links resolve to the actual written files).
     let ctx = Ctx {
         refs: &refs,
         graph: Some(graph),
+        slugs: Some(&slugs),
         inline_assets: false,
     };
-    for (name, slug, kind, parsed) in &public {
+    for (name, kind, parsed) in &public {
+        let slug = slug_of(name);
         let file = format!("{slug}.html");
         fs::write(
             out.join(&file),
-            page_html(name, slug, parsed, *kind, &ctx, &mut all_blocks),
+            page_html(name, &slug, parsed, *kind, &ctx, &mut all_blocks),
         )?;
         let journal = *kind == PageKind::Journal;
         let tag = if journal {
@@ -1519,6 +1627,7 @@ mod tests {
         let ctx = Ctx {
             refs,
             graph: None,
+            slugs: None,
             inline_assets: false,
         };
         decorate(&lsdoc::render_html(&body_blocks(raw), &md_opts()), &ctx, 0)
@@ -1752,6 +1861,91 @@ mod tests {
         assert!(
             index.contains("<aside class=\"sidebar\">"),
             "index uses the sidebar shell"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn publish_gives_distinct_nonempty_files_on_slug_collision() {
+        // DS#4: two titles that collapse to the same ASCII slug ("foo"), plus a
+        // title with NO ASCII-alnum chars (empty slug pre-fix). Pre-fix, `Foo!`
+        // and `Foo?` both write `foo.html` (the second silently overwrites the
+        // first) and `日本語` writes a degenerate `.html`. Post-fix every page must
+        // get a distinct, nonempty file, and every cross-page link must point at
+        // the file its target was actually written to.
+        let dir =
+            std::env::temp_dir().join(format!("tine-publish-collide-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq").join("config.edn"),
+            "{:publishing/all-pages-public? true}\n",
+        )
+        .unwrap();
+        // Each page links to the next so we can check the link map matches files.
+        fs::write(
+            dir.join("pages").join("Foo!.md"),
+            "- alpha body linking [[Foo?]]\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages").join("Foo?.md"),
+            "- bravo body linking [[日本語]]\n",
+        )
+        .unwrap();
+        fs::write(dir.join("pages").join("日本語.md"), "- charlie body\n").unwrap();
+
+        let g = Graph::open(&dir);
+        let (outdir, count) = publish_graph(&g).unwrap();
+        assert_eq!(count, 3, "all three public pages exported");
+        let out = std::path::Path::new(&outdir);
+
+        // The embedded page index (`__tinePages`) is the single source of truth
+        // name -> slug; parse it back out.
+        let sidx = fs::read_to_string(out.join("search-index.js")).unwrap();
+        let after = sidx.strip_prefix("window.__tinePages=").unwrap();
+        let json = &after[..after.find(";\n").unwrap()];
+        let pages: Vec<serde_json::Value> = serde_json::from_str(json).unwrap();
+        assert_eq!(pages.len(), 3, "three pages in the index");
+
+        // Every slug is nonempty + distinct, and names an existing, nonempty file.
+        let mut seen = std::collections::HashSet::new();
+        for p in &pages {
+            let s = p["slug"].as_str().unwrap();
+            assert!(!s.is_empty(), "slug must be nonempty: {p}");
+            assert!(seen.insert(s.to_string()), "slugs must be distinct: {s}");
+            let f = out.join(format!("{s}.html"));
+            assert!(f.exists(), "file for slug {s} exists");
+            assert!(fs::metadata(&f).unwrap().len() > 0, "file {s}.html nonempty");
+        }
+        // No page landed in a degenerate empty-slug file.
+        assert!(!out.join(".html").exists(), "no empty-slug .html file");
+
+        // Cross-page links point at the file each target was actually written to.
+        let name_slug = |name: &str| -> String {
+            pages
+                .iter()
+                .find(|p| p["title"] == name)
+                .unwrap_or_else(|| panic!("page {name} in index"))["slug"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        let foo_bang = name_slug("Foo!");
+        let foo_q = name_slug("Foo?");
+        let cjk = name_slug("日本語");
+        let bang_html = fs::read_to_string(out.join(format!("{foo_bang}.html"))).unwrap();
+        assert!(
+            bang_html.contains(&format!("href=\"{foo_q}.html\"")),
+            "Foo! links to Foo?'s real file ({foo_q}.html): {bang_html}"
+        );
+        let q_html = fs::read_to_string(out.join(format!("{foo_q}.html"))).unwrap();
+        assert!(
+            q_html.contains(&format!("href=\"{cjk}.html\"")),
+            "Foo? links to 日本語's real file ({cjk}.html): {q_html}"
         );
 
         let _ = fs::remove_dir_all(&dir);
