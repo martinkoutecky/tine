@@ -112,7 +112,7 @@
       </div>
       <div class="qa-item">
         <div class="qa-q">Queries?</div>
-        <div class="qa-a"><b class="g g-part">◑</b> Yes — the everyday queries work: <code>{{query (and (task TODO) (priority A))}}</code>, page-refs, block/page properties, <code>scheduled</code>/<code>deadline</code> ranges, boolean <code>and</code>/<code>or</code>/<code>not</code>, and <code>sort-by</code>. That's the bulk of real-world use, and there's a <em>visual query builder</em> so you don't have to remember the syntax. The gap is <b>raw Datalog</b> (<code>[:find … :where [?b :block/…]]</code>): a one-click <b>⚙ advanced</b> button drops a ready-to-edit template, and Tine translates the common clause heads (task, priority, page-ref, property, page-property, page-tags, page, namespace, scheduled, deadline, journal, between) but skips arbitrary entity–attribute joins, custom rules, and <code>:result-transform</code>/<code>:view</code> — and it <em>tells you</em> which clauses ran and which it ignored, instead of guessing a wrong answer. You can also <b>summarize</b> results (count/sum/average, group-by) with no code. Queries even run in the HTML export.</div>
+        <div class="qa-a"><b class="g g-part">◑</b> Yes — the everyday queries work: <code>{{query (and (task TODO) (priority A))}}</code>, page-refs, block/page properties, <code>scheduled</code>/<code>deadline</code> ranges, boolean <code>and</code>/<code>or</code>/<code>not</code>, and <code>sort-by</code>. That's the bulk of real-world use, and there's a <em>visual query builder</em> so you don't have to remember the syntax. The gap is <b>raw Datalog</b> (<code>[:find … :where [?b :block/…]]</code>): a one-click <b>⚙ advanced</b> button drops a ready-to-edit template (and a <b>← Simple</b> button converts it back to the visual builder), and Tine translates the common clause heads (task, priority, page-ref, property, page-property, page-tags, page, namespace, scheduled, deadline, journal, between) but skips arbitrary entity–attribute joins, custom rules, and <code>:result-transform</code>/<code>:view</code> — and it <em>tells you</em> which clauses ran and which it ignored, instead of guessing a wrong answer. You can also <b>summarize</b> results (count/sum/average, group-by) with no code. Queries even run in the HTML export.</div>
       </div>
       <div class="qa-item">
         <div class="qa-q">Do math on query results?</div>
@@ -155,7 +155,7 @@
           <tr><td class="feat">Task markers + checkboxes</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">TODO/DOING/NOW/LATER/WAITING/DONE/CANCELED; click the box to toggle.</td></tr>
           <tr><td class="feat">Priorities <code>[#A]</code></td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note"></td></tr>
           <tr><td class="feat">SCHEDULED / DEADLINE + repeaters</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">Repeating tasks roll forward on completion.</td></tr>
-          <tr><td class="feat">Logbook / time tracking</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-part">◑</b></td><td class="note">Logbook drawers round-trip and stay hidden like Logseq; no start/stop clock UI yet.</td></tr>
+          <tr><td class="feat">Logbook / time tracking</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note">Task-marker transitions clock in/out into an OG-compatible <code>:LOGBOOK:</code> drawer with computed durations (on by default, toggle in Settings; drawers round-trip and stay hidden).</td></tr>
           <tr><td class="feat">Footnotes</td><td class="st"><b class="g g-yes">✓</b></td><td class="st"><b class="g g-yes">✓</b></td><td class="note"></td></tr>
         </tbody>
       </table></div>
@@ -208,6 +208,9 @@
         <thead><tr><th>Feature</th><th>Logseq</th><th>Tine</th><th>Notes</th></tr></thead>
         <tbody>
           <tr><td class="feat">Performance on large graphs / older machines</td><td class="st"><b class="g g-part">◑</b></td><td class="st"><b class="g g-add">⊕</b></td><td class="note">The founding goal: a native Rust core + a lean UI, tuned for machines Logseq bogs down on.</td></tr>
+          <tr><td class="feat">Sheets — grids, field tables &amp; boards</td><td class="st"><b class="g g-no">✗</b></td><td class="st"><b class="g g-add">⊕</b></td><td class="note">Render a bullet and its children as a spreadsheet-style grid, a typed field table, or a Kanban board — with formula columns, filters, aggregates, group-by, and CSV/TSV import. Stays plain Markdown plus <code>tine.*</code> properties Logseq ignores.</td></tr>
+          <tr><td class="feat">Split view</td><td class="st"><b class="g g-part">◑</b></td><td class="st"><b class="g g-add">⊕</b></td><td class="note">Independent panes, each with its own tabs and history; <code>Ctrl</code>+click opens beside, drag a tab across, keyboard pane/seam navigation. Logseq has only the single right sidebar.</td></tr>
+          <tr><td class="feat">No-code query math &amp; grouping</td><td class="st"><b class="g g-part">◑</b></td><td class="st"><b class="g g-add">⊕</b></td><td class="note">The <b>∑ summarize</b> control counts / sums / averages a property and groups results with no code; in Logseq this needs a Clojure <code>:result-transform</code> / <code>:view</code>.</td></tr>
           <tr><td class="feat">Editor tabs</td><td class="st"><span class="plug">plugin</span></td><td class="st"><b class="g g-add">⊕</b></td><td class="note">Built in (Logseq needs a community plugin): middle-click / Ctrl+W, reorderable, restored on launch.</td></tr>
           <tr><td class="feat">Global quick capture</td><td class="st"><b class="g g-part">◑</b></td><td class="st"><b class="g g-add">⊕</b></td><td class="note"><code>tine --capture</code> mini-window into today's journal.</td></tr>
           <tr><td class="feat">Typographic replacements (<code>-&gt;</code> → →)</td><td class="st"><b class="g g-part">◑</b></td><td class="st"><b class="g g-add">⊕</b></td><td class="note">Optional render-time only; your <code>.md</code> keeps the ASCII.</td></tr>
@@ -224,7 +227,7 @@
         <li><b>The database version of Logseq</b> — Tine targets the file/Markdown model on purpose; that's what keeps your notes as plain files you own.</li>
       </ul>
 
-      <p class="asof">As of Tine v0.3.x · July 2026. This page is maintained by hand and will drift as features ship — <a href="https://github.com/martinkoutecky/tine/blob/master/docs/FEATURES.md">FEATURES.md</a> is the source of truth.</p>
+      <p class="asof">As of Tine v0.5.0 · July 2026. This page is maintained by hand and will drift as features ship — <a href="https://github.com/martinkoutecky/tine/blob/master/docs/FEATURES.md">FEATURES.md</a> is the source of truth.</p>
     </div>
   </section>
 
