@@ -410,8 +410,13 @@ export function renderRawHtml(text: string, spanAttrs?: SpanDomAttrs): JSX.Eleme
     const attrs = m[1];
     const src = /src\s*=\s*["']([^"']+)["']/i.exec(attrs)?.[1];
     if (src && /^https?:\/\//i.test(src)) {
-      const width = /width\s*=\s*["']?(\d+%?|\d+px)["']?/i.exec(attrs)?.[1];
-      const height = /height\s*=\s*["']?(\d+%?|\d+px)["']?/i.exec(attrs)?.[1];
+      const attrWidth = /width\s*=\s*["']?(\d+px|\d+%|\d+)["']?/i.exec(attrs)?.[1];
+      const attrHeight = /height\s*=\s*["']?(\d+px|\d+%|\d+)["']?/i.exec(attrs)?.[1];
+      const style = !attrWidth || !attrHeight ? /style\s*=\s*(["'])(.*?)\1/i.exec(attrs)?.[2] : undefined;
+      const styleWidth = style ? /(?:^|;)\s*width\s*:\s*(\d+px|\d+%)(?=\s*(?:;|$))/i.exec(style)?.[1] : undefined;
+      const styleHeight = style ? /(?:^|;)\s*height\s*:\s*(\d+px|\d+%)(?=\s*(?:;|$))/i.exec(style)?.[1] : undefined;
+      const width = attrWidth ?? styleWidth;
+      const height = attrHeight ?? styleHeight;
       return renderIframe(src, width, height, spanAttrs);
     }
   }

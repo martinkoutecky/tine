@@ -29,6 +29,17 @@ function html(node: () => JSX.Element): string {
 const inl = (xs: Inline[]) => html(() => renderInlines(xs));
 const blk = (xs: Block[]) => html(() => renderBlocks(xs));
 
+function mountedIframeWrap(raw: string): { wrap: HTMLElement; dispose: () => void } {
+  const div = document.createElement("div");
+  const dispose = render(() => renderInlines([{ k: "inline_html", text: raw }]), div);
+  const wrap = div.querySelector<HTMLElement>(".embed-iframe-wrap");
+  if (!wrap) {
+    dispose();
+    throw new Error(`expected iframe wrapper in ${div.innerHTML}`);
+  }
+  return { wrap, dispose };
+}
+
 describe("renderInlines", () => {
   it("plain + emphasis", () => {
     const h = inl([
@@ -101,6 +112,26 @@ describe("renderInlines", () => {
   // lsdoc v0.1.4: inline Clojure-hiccup renders its raw bracket text literally.
   it("inline hiccup renders raw text literally", () => {
     expect(inl([{ k: "hiccup", v: "[:span \"y\"]" }])).toContain("[:span");
+  });
+
+  it("uses iframe width and height from attrs or style", () => {
+    const attrEmbed = mountedIframeWrap('<iframe src="https://example.com/" width="35%" height="63%"></iframe>');
+    try {
+      expect(attrEmbed.wrap.style.width).toBe("35%");
+      expect(attrEmbed.wrap.style.height).toBe("63%");
+      expect(attrEmbed.wrap.style.aspectRatio).toBe("auto");
+    } finally {
+      attrEmbed.dispose();
+    }
+
+    const styleEmbed = mountedIframeWrap('<iframe src="https://translate.google.com/" style="width:350px;height:630px"></iframe>');
+    try {
+      expect(styleEmbed.wrap.style.width).toBe("350px");
+      expect(styleEmbed.wrap.style.height).toBe("630px");
+      expect(styleEmbed.wrap.style.aspectRatio).toBe("auto");
+    } finally {
+      styleEmbed.dispose();
+    }
   });
 });
 
