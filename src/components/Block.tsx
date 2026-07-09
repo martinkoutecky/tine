@@ -2100,7 +2100,7 @@ export function Editor(props: { id: string }): JSX.Element {
         }
         const n = doc.byId[props.id];
         const next = nextVisible(props.id);
-        if (n && splitProps(n.raw, hideFn(), pageFmt()).visible.trim() === "" && n.children.length === 0 && next) {
+        if (n && splitProps(n.raw, hideFn(), pageFmt()).visible.trim() === "" && n.children.length === 0 && next && doc.byId[next]?.page === n.page) {
           e.preventDefault();
           deleteBlock(props.id);
           startEditing(next, 0);
