@@ -179,7 +179,30 @@ function ActionMenu(props: { items: readonly ContextMenuAction[]; close: () => v
   );
 }
 
+/** "Show children as → Outline / Grid / Table" — flips the block's `tine.view` so its
+ *  child bullets render as a sheet (or back to an outline). Shared by the plain-bullet
+ *  BlockMenu and the in-sheet SheetCellMenu so both entry points behave identically. */
+function ShowChildrenAsSubmenu(props: { id: string; close: () => void }): JSX.Element {
+  const view = () => blockProperty(props.id, "tine.view") ?? "outline";
+  const setView = (next: "outline" | "grid" | "table") => {
+    setBlockProperty(props.id, "tine.view", next === "outline" ? null : next);
+    props.close();
+  };
+  const label = (name: string, active: boolean) => `${active ? "✓ " : ""}${name}`;
+  return (
+    <div class="ctx-item ctx-submenu">
+      <span>Show children as →</span>
+      <div class="ctx-submenu-menu">
+        <div class="ctx-item" onClick={() => setView("outline")}>{label("Outline", view() === "outline")}</div>
+        <div class="ctx-item" onClick={() => setView("grid")}>{label("Grid", view() === "grid")}</div>
+        <div class="ctx-item" onClick={() => setView("table")}>{label("Table", view() === "table")}</div>
+      </div>
+    </div>
+  );
+}
+
 function BlockMenu(props: { id: string; close: () => void }): JSX.Element {
+  const hasChildren = () => (doc.byId[props.id]?.children.length ?? 0) > 0;
   return (
     <>
       {/* Color row */}
@@ -213,6 +236,13 @@ function BlockMenu(props: { id: string; close: () => void }): JSX.Element {
         )}
       </For>
 
+      {/* Turn a plain outline into a grid/table in place. Only meaningful when the
+          block actually has children to lay out. */}
+      <Show when={hasChildren()}>
+        <div class="ctx-sep" />
+        <ShowChildrenAsSubmenu id={props.id} close={props.close} />
+      </Show>
+
       <div class="ctx-sep" />
       <MakeTemplate id={props.id} close={props.close} />
     </>
@@ -244,7 +274,6 @@ function ColorPalette(props: { id: string; close: () => void }): JSX.Element {
 }
 
 function SheetCellMenu(props: { id: string; remove?: SheetCellRemoveCtx; close: () => void }): JSX.Element {
-  const view = () => blockProperty(props.id, "tine.view") ?? "outline";
   const canDeleteRow = () => !!props.remove?.rowId && !!doc.byId[props.remove.rowId];
   const canDeleteColumn = () =>
     props.remove?.gridId != null && props.remove?.col != null && !!doc.byId[props.remove.gridId];
@@ -256,10 +285,6 @@ function SheetCellMenu(props: { id: string; remove?: SheetCellRemoveCtx; close: 
   const deleteColumnHere = () => {
     const { gridId, col } = props.remove ?? {};
     if (gridId != null && col != null) deleteColumn(gridId, col);
-    props.close();
-  };
-  const setView = (next: "outline" | "grid" | "table") => {
-    setBlockProperty(props.id, "tine.view", next === "outline" ? null : next);
     props.close();
   };
   const addChild = () => {
@@ -275,26 +300,12 @@ function SheetCellMenu(props: { id: string; remove?: SheetCellRemoveCtx; close: 
     }
     props.close();
   };
-  const label = (name: string, active: boolean) => `${active ? "✓ " : ""}${name}`;
 
   return (
     <>
       <ColorPalette id={props.id} close={props.close} />
       <div class="ctx-sep" />
-      <div class="ctx-item ctx-submenu">
-        <span>Show children as →</span>
-        <div class="ctx-submenu-menu">
-          <div class="ctx-item" onClick={() => setView("outline")}>
-            {label("Outline", view() === "outline")}
-          </div>
-          <div class="ctx-item" onClick={() => setView("grid")}>
-            {label("Grid", view() === "grid")}
-          </div>
-          <div class="ctx-item" onClick={() => setView("table")}>
-            {label("Table", view() === "table")}
-          </div>
-        </div>
-      </div>
+      <ShowChildrenAsSubmenu id={props.id} close={props.close} />
       <div
         class="ctx-item"
         onClick={addChild}

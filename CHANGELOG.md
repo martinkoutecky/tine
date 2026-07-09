@@ -10,6 +10,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Turn an outline into a grid/table from its bullet.** Right-clicking a plain
+  outline bullet that has children now offers **Show children as → Outline / Grid /
+  Table** — the convert-in-place gesture the Guide describes, which previously existed
+  only inside a sheet's own row menu. (Shared with that menu so both stay in sync.)
+
 - **Add formula… from a column header.** Right-clicking a table column header now
   offers **Add formula…** (it previously lived only on the table's ⋮/body menu, so
   the Guide's "right-click a column header" instruction pointed at a command that
