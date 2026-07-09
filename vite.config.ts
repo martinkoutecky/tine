@@ -8,19 +8,14 @@ import path from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 // Build timestamp, shown in Settings so it's easy to confirm the running binary is
-// the latest (vs. a stale Syncthing copy). Derived from the COMMIT time, not the
-// wall clock, so the bundle is byte-reproducible: F-Droid sets SOURCE_DATE_EPOCH
-// (commit unix time); elsewhere we read the same value from git. Both format the
-// identical unix seconds → identical UTC ISO string. Dev (no git) falls back to now.
+// the latest (vs. a stale Syncthing copy). Wall-clock by default, so "Built" tracks
+// the ACTUAL build moment — a re-deploy of the same commit, or a stale synced copy,
+// can no longer masquerade as fresh. Reproducible builds (F-Droid) set
+// SOURCE_DATE_EPOCH to the commit unix time; when present we pin to it so the bundle
+// stays byte-identical across machines. (We used to fall back to the *commit* time
+// even for local builds, which froze "Built" between commits even as you rebuilt.)
 function reproBuildTime(): string {
-  let epoch = process.env.SOURCE_DATE_EPOCH;
-  if (!epoch) {
-    try {
-      epoch = execSync("git show -s --format=%ct HEAD", { encoding: "utf8" }).trim();
-    } catch {
-      /* not a git checkout (e.g. bare source tarball) */
-    }
-  }
+  const epoch = process.env.SOURCE_DATE_EPOCH;
   return epoch ? new Date(Number(epoch) * 1000).toISOString() : new Date().toISOString();
 }
 const BUILD_TIME = reproBuildTime();
