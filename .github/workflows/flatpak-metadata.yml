@@ -1,0 +1,61 @@
+# Fast metadata checks for the Flatpak (no build): AppStream metainfo + .desktop
+# validation, plus the website↔Flathub SCREENSHOT COUPLING guard.
+#
+# The metainfo points its screenshots at https://tine.page/img/*.png, which are
+# served from website/img/*.png. If a website change renames/deletes one of those
+# files, the Flathub store screenshots silently break. This job fails when a
+# screenshot the metainfo references no longer exists in website/img/, so it CANNOT
+# be missed — it runs on both flatpak/** and website/img/** changes.
+name: Flatpak metadata
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "flatpak/**"
+      - "website/img/**"
+      - ".github/workflows/flatpak-metadata.yml"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install AppStream + desktop-file tools
+        run: sudo apt-get update && sudo apt-get install -y appstream desktop-file-utils
+
+      - name: Validate AppStream metainfo (strict — what Flathub review runs)
+        run: appstreamcli validate --explain flatpak/page.tine.app.metainfo.xml
+
+      - name: Validate .desktop entry
+        run: desktop-file-validate flatpak/page.tine.app.desktop
+
+      - name: Screenshot coupling — every metainfo screenshot must exist in website/img/
+        run: |
+          python3 - <<'PY'
+          import re, sys, os
+          meta = open("flatpak/page.tine.app.metainfo.xml").read()
+          urls = re.findall(r"https://tine\.page/img/([^<\s]+\.png)", meta)
+          if not urls:
+              print("No tine.page/img screenshots found in metainfo — nothing to check.")
+              sys.exit(0)
+          missing = [u for u in urls if not os.path.isfile(os.path.join("website/img", u))]
+          for u in urls:
+              print(("  OK  " if u not in missing else " MISS ") + f"website/img/{u}")
+          if missing:
+              print("\nERROR: the Flathub metainfo references screenshots that are not in "
+                    "website/img/ — the tine.page URLs will 404 and break the store listing.\n"
+                    "Fix: restore the file(s), or update the <image> URLs in "
+                    "flatpak/page.tine.app.metainfo.xml to match the new website paths.")
+              sys.exit(1)
+          print("\nAll metainfo screenshots are present in website/img/.")
+          PY
+
+      - name: Live reachability (informational — the site may lag a push)
+        continue-on-error: true
+        run: |
+          for u in $(grep -oE 'https://tine\.page/img/[^< ]+\.png' flatpak/page.tine.app.metainfo.xml); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -L "$u")
+            echo "$code  $u"
+          done

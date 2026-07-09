@@ -151,6 +151,15 @@ pub fn run() {
         diag("TINE_GPU=0 → set WEBKIT_DISABLE_DMABUF_RENDERER=1 (software compositing)");
     }
 
+    // Migrate the app-data dir left behind by the app-identifier renames
+    // (dev.logseqclaude.app / dev.tine.app -> page.tine.app) BEFORE building the
+    // webview. WebKitGTK's WebsiteDataManager creates the new-id data dir (and its
+    // empty localStorage store) as the Builder is assembled, so this has to happen
+    // first — otherwise the migration finds the new dir already populated and backs
+    // off, orphaning the user's graph/session (localStorage) + settings + backups.
+    // Records a one-shot flag; the frontend toasts about the (possible) prefs reset.
+    migrate_identifier::run_early();
+
     let builder = tauri::Builder::default();
 
     #[cfg(desktop)]
@@ -217,17 +226,6 @@ pub fn run() {
         })
         .setup(|app| {
             diag("setup() begin");
-            // FIRST, before anything reads settings/session/backups: migrate the
-            // app-data dir left behind by the dev.tine.app -> page.tine.app
-            // identifier rename. Records a one-shot notice so the frontend can
-            // toast that some app-level prefs may need re-setting.
-            let migrated = migrate_identifier::run(app.handle());
-            if migrated {
-                diag("migrated legacy dev.tine.app app-data dir → page.tine.app");
-            }
-            app.manage(migrate_identifier::MigrationNotice(
-                std::sync::atomic::AtomicBool::new(migrated),
-            ));
             // Eagerly open the graph if one was configured at startup.
             if let Some(root) = resolve_root("") {
                 let g = Graph::open(&root);

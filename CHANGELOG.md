@@ -34,6 +34,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   pane) and whole-window edges (split everything); selecting a pane focuses it,
   `Delete` closes it, and `Ctrl+K` opens a page right there.
 
+### Changed
+
+- **App identifier is now `page.tine.app`** (was `dev.tine.app`). This lets Tine
+  prove domain ownership (`tine.page`) for Flathub. On desktop the change is
+  invisible: on first launch Tine moves your existing settings, backups, open-tab
+  session **and your last-opened graph** from the old location to the new one, then
+  shows a one-time note that a few app-level preferences (e.g. window size) may need
+  setting again. (Android sideloads are a fresh app at the OS level and re-pick the
+  graph folder once.)
+
+### Fixed
+
+- **The identifier migration now actually runs.** The first cut migrated too late —
+  after WebKitGTK had already created the new (empty) data directory — so it backed
+  off and left you on the Welcome screen with your graph "forgotten". Migration now
+  runs before the webview starts, backfills over an empty new directory, and also
+  recognises the older `dev.logseqclaude.app` layout.
+
 ## [0.4.7] - 2026-07-08
 
 ### Fixed
