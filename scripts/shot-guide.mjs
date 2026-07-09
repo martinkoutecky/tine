@@ -49,6 +49,18 @@ try {
 
   await page.locator(".help-menu-item", { hasText: "Guide" }).first().click();
   await page.waitForSelector(".page-guide-banner", { timeout: 8000 });
+
+  // Formulas guide page (new): capture its live computed column.
+  await page.locator("a.page-ref", { hasText: "Features/Formulas" }).first().click();
+  await page.waitForSelector(".sheet-table", { timeout: 8000 });
+  await sleep(400);
+  await page.screenshot({ path: `${OUT}/guide-formulas-light.png`, fullPage: true });
+
+  // Back to the guide index for the Sheets shots.
+  await page.locator(".help-corner-btn").click();
+  await page.waitForSelector(".help-menu", { timeout: 5000 });
+  await page.locator(".help-menu-item", { hasText: "Guide" }).first().click();
+  await page.waitForSelector(".page-guide-banner", { timeout: 8000 });
   await page.locator("a.page-ref", { hasText: "Features/Sheets" }).first().click();
   await page.waitForSelector(".sheet-grid", { timeout: 8000 });
   await page.waitForSelector(".sheet-table", { timeout: 8000 });
@@ -64,7 +76,7 @@ try {
     console.error("ERRORS:\n" + errors.join("\n"));
     process.exit(1);
   }
-  console.log(`wrote ${OUT}/guide-help-menu.png, ${OUT}/guide-light.png, ${OUT}/guide-dark.png`);
+  console.log(`wrote ${OUT}/guide-help-menu.png, ${OUT}/guide-formulas-light.png, ${OUT}/guide-light.png, ${OUT}/guide-dark.png`);
 } finally {
   server.kill("SIGTERM");
 }

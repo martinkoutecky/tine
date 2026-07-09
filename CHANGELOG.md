@@ -10,6 +10,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Guide: a Formulas how-to page, and Sheets how-tos that teach the real
+  gestures.** The in-app Guide gains a from-zero **Features/Formulas** page — what a
+  formula column is, right-click a column → Add/Edit formula, the IF/THEN/ELSE and
+  value-picker faces, the `</> raw` toggle, and honest limits (single-level `if`,
+  nested arithmetic needs raw). The Sheets guide's "Create one yourself" sections now
+  teach `/Grid`, `/Table`, `/Board`, **Show children as →** conversion, edge-grow,
+  ghost Add-row/column buttons, and the board **Group by** picker instead of telling
+  you to hand-type `tine.header::` / `tine.fields::` (those move to "under the hood"
+  notes).
+
 - **Sheets: grids, databases, and boards over plain bullets.** Blocks can now
   render as recursive grids, field tables, or boards with spreadsheet navigation,
   typed `tine.fields::` schemas, editable task/property cells, tag boards with

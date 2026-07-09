@@ -384,7 +384,12 @@ within a column; merged cells are still v2+.
   inside that virtual namespace, guide pages are hidden from search/page lists/backlinks,
   and **Copy the guide into your graph** creates the complete editable
   `tine-guide/...` namespace with inter-guide links rewritten, without overwriting
-  existing copied pages.
+  existing copied pages. The bundled set covers Sheets, **Formulas** (a from-zero
+  walkthrough of the visual formula editor), Quick capture, PDF annotation, Tips &
+  shortcuts, and the Feature showcase. The Sheets how-tos teach the friendly
+  gestures — `/Grid`, `/Table`, `/Board`, **Show children as →**, edge-grow, ghost
+  Add-row/column buttons, and the board **Group by** picker — rather than hand-typed
+  `tine.*` properties.
 - ⊕ **Right-click page rows in the left sidebar** (favorites, recents, all pages,
   namespace tree) for the full page menu, including trash-backed Delete. Logseq core
   has page-title journal delete, but not sidebar-row delete.

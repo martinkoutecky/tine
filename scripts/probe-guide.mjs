@@ -90,6 +90,16 @@ function copiedSheetsFile() {
   });
 }
 
+function copiedFormulasFile() {
+  return graphFiles().find((p) => {
+    const rel = path.relative(G, p);
+    if (!rel.startsWith("pages/")) return false;
+    if (!/\.(md|org)$/.test(p)) return false;
+    const body = fs.readFileSync(p, "utf8");
+    return body.includes("# Formulas") && body.includes("tine.formula.plan::");
+  });
+}
+
 function copiedIndexFile() {
   return graphFiles().find((p) => {
     const rel = path.relative(G, p);
@@ -200,18 +210,53 @@ try {
   }));
   check("copied Guide index is in the user's graph", copiedIndexState.title.includes("tine-guide/Tine Guide") && !copiedIndexState.guideBanner && copiedIndexState.copyButtons === 0, JSON.stringify(copiedIndexState));
 
+  // The copied Guide index links every guide page near the top (reliably mounted).
+  // Open the Formulas page first, assert its live computed column, then hop to the
+  // Sheets page via the Formulas page's own [[Features/Sheets]] link.
+  check("copy writes the Formulas guide page under graph pages", !!copiedFormulasFile(), graphFiles().join("\n"));
+  const clickedCopiedFormulas = await browser.execute(() => {
+    const link = [...document.querySelectorAll("a.page-ref")]
+      .find((el) => (el.textContent || "").includes("tine-guide/Features/Formulas"));
+    link?.setAttribute("data-probe", "copied-formulas-link");
+    return !!link;
+  });
+  check("found rewritten Formulas link in copied Guide index", clickedCopiedFormulas);
+  if (clickedCopiedFormulas) await browser.$('[data-probe="copied-formulas-link"]').click();
+  await browser.waitUntil(async () => {
+    const title = await browser.execute(() => document.querySelector(".page-title")?.textContent?.trim() ?? "");
+    return title.includes("tine-guide/Features/Formulas");
+  }, { timeout: 10000, timeoutMsg: "Copied Guide index link did not open copied Formulas page" });
+  await browser.$(".sheet-table").waitForExist({ timeout: 10000 });
+  const planState = await browser.execute(() => {
+    const table = [...document.querySelectorAll(".sheet-table")].find((t) =>
+      [...t.querySelectorAll(".sheet-header-cell")].some((h) => (h.textContent || "").includes("plan"))
+    );
+    if (!table) return { plan: null, title: document.querySelector(".page-title")?.textContent?.trim() ?? "" };
+    const headers = [...table.querySelectorAll(".sheet-header-cell")].map((h) => (h.textContent || "").trim());
+    const col = headers.findIndex((h) => h.includes("plan"));
+    const plan = [0, 1].map((row) =>
+      (table.querySelector(`.sheet-field-cell[data-row="${row}"][data-col="${col}"]`)?.textContent || "").trim()
+    );
+    return { plan, title: document.querySelector(".page-title")?.textContent?.trim() ?? "" };
+  });
+  check(
+    "Formulas page computes the plan column live",
+    Array.isArray(planState.plan) && planState.plan[0] === "quick task" && planState.plan[1] === "focus block",
+    JSON.stringify(planState)
+  );
+
   const clickedCopiedSheets = await browser.execute(() => {
     const link = [...document.querySelectorAll("a.page-ref")]
       .find((el) => (el.textContent || "").includes("tine-guide/Features/Sheets"));
     link?.setAttribute("data-probe", "copied-sheets-link");
     return !!link;
   });
-  check("found rewritten Sheets link in copied Guide index", clickedCopiedSheets);
+  check("found rewritten Sheets link on copied Formulas page", clickedCopiedSheets);
   if (clickedCopiedSheets) await browser.$('[data-probe="copied-sheets-link"]').click();
   await browser.waitUntil(async () => {
     const title = await browser.execute(() => document.querySelector(".page-title")?.textContent?.trim() ?? "");
     return title.includes("tine-guide/Features/Sheets");
-  }, { timeout: 10000, timeoutMsg: "Copied Guide index link did not open copied Sheets page" });
+  }, { timeout: 10000, timeoutMsg: "Formulas page link did not open copied Sheets page" });
 
   await browser.$(".sheet-grid").waitForExist({ timeout: 10000 });
   await browser.$(".sheet-table").waitForExist({ timeout: 10000 });

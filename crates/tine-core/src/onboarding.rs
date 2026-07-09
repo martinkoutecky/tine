@@ -33,6 +33,7 @@ const PAGES: &[(&str, &str)] = &[
         include_str!("templates/tips.md"),
     ),
     ("Features/Sheets", include_str!("templates/sheets.md")),
+    ("Features/Formulas", include_str!("templates/formulas.md")),
     ("Features/PDF annotation", include_str!("templates/pdf.md")),
     ("Feature showcase", include_str!("templates/showcase.md")),
     ("Project/Roadmap", include_str!("templates/roadmap.md")),
@@ -58,6 +59,10 @@ const GUIDE_TEMPLATES: &[GuideTemplate] = &[
     GuideTemplate {
         title: "Features/Sheets",
         markdown: include_str!("templates/sheets.md"),
+    },
+    GuideTemplate {
+        title: "Features/Formulas",
+        markdown: include_str!("templates/formulas.md"),
     },
     GuideTemplate {
         title: "Features/Quick capture",
@@ -388,6 +393,7 @@ mod tests {
         let copied = [
             "Tine Guide",
             "Features/Sheets",
+            "Features/Formulas",
             "Features/Quick capture",
             "Features/PDF annotation",
             "Features/Tips & shortcuts",

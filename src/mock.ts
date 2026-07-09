@@ -454,6 +454,7 @@ function mockGuidePages(): GuidePage[] {
     mockGuidePage("Tine Guide", [
       b("# Tine Guide", [
         b("[[Features/Sheets]] - create grids, tables, boards, queries, and formulas"),
+        b("[[Features/Formulas]] - build read-only computed columns with the visual editor"),
         b("[[Features/Quick capture]] - capture into your graph from anywhere"),
         b("[[Features/PDF annotation]] - highlight PDFs beside your notes"),
         b("[[Features/Tips & shortcuts]] - learn the daily commands"),
@@ -488,6 +489,27 @@ function mockGuidePages(): GuidePage[] {
         b("1. Type a heading block and add `tine.view:: grid` under it."),
         b("2. Add child rows, one bullet per row and one child bullet per cell."),
         b("3. What you should see: the outline renders as a live grid."),
+      ]),
+    ]),
+    mockGuidePage("Features/Formulas", [
+      b("# Formulas"),
+      b(
+        "## A formula in action\ntine.view:: table\ntine.fields:: task=text;hours=number;done=checkbox\ntine.formula.plan:: if(hours > 3, \"focus block\", \"quick task\")",
+        [
+          b("Sketch the outline\nhours:: 2\ndone:: true"),
+          b("Write the first draft\nhours:: 5\ndone:: false"),
+        ],
+        false,
+        [
+          ["tine.view", "table"],
+          ["tine.fields", "task=text;hours=number;done=checkbox"],
+          ["tine.formula.plan", 'if(hours > 3, "focus block", "quick task")'],
+        ]
+      ),
+      b("## Create one yourself", [
+        b("1. Make a table with a numeric field, then right-click a column header and choose Add formula."),
+        b("2. Build the value from the visual faces, or use the `</> raw` box to type it."),
+        b("3. What you should see: a read-only computed column that evaluates live."),
       ]),
     ]),
     mockGuidePage("Features/Quick capture", [b("# Global quick-capture"), b("## Create one yourself", [b("1. Bind `tine --capture` to a desktop shortcut."), b("2. What you should see: a capture box opens over any app.")])]),
