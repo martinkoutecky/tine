@@ -38,6 +38,7 @@ body:
         - Linux
         - macOS
         - Windows
+        - Android
         - Other
     validations:
       required: false
@@ -51,6 +52,7 @@ body:
         - Linux .rpm
         - macOS .dmg
         - Windows .exe
+        - Android .apk
         - Built from source
         - Other
     validations:
