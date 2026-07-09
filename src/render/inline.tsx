@@ -361,19 +361,15 @@ function renderLink(s: Extract<Inline, { k: "link" }>, blockId?: string, spanMod
   if (s.image) {
     const { width, height } = parseImageMetaBrace(s.metadata);
     const alt = s.label && s.label.length ? astText(s.label) : "";
+    if (/\.pdf$/i.test(dest)) return <PdfAssetLink dest={dest} label={alt} spanAttrs={spanAttrs} />;
     const k = mediaKind(dest);
     if (k === "video" || k === "audio")
       return <MediaEmbed url={dest} kind={k} alt={alt} width={width} blockId={blockId} spanAttrs={spanAttrs} />;
     return <AssetImage url={dest} alt={alt} width={width} height={height} blockId={blockId} spanAttrs={spanAttrs} />;
   }
   if (/\.pdf$/i.test(dest)) {
-    const filename = dest.split("/").pop() ?? dest;
-    const labelStr = s.label && s.label.length ? astText(s.label) : filename;
-    return (
-      <a class="external-link pdf-link" {...(spanAttrs ?? {})} onClick={(e) => { e.stopPropagation(); openPdf(filename, labelStr || filename); }}>
-        📄 {labelStr || filename}
-      </a>
-    );
+    const labelStr = s.label && s.label.length ? astText(s.label) : pdfFilenameFromDest(dest);
+    return <PdfAssetLink dest={dest} label={labelStr} spanAttrs={spanAttrs} />;
   }
   return (
     <span class="link-copy-wrap">
@@ -387,6 +383,23 @@ function renderLink(s: Extract<Inline, { k: "link" }>, blockId?: string, spanMod
       </a>
       <CopyButton text={dest} title="Copy link" class="copy-inline" />
     </span>
+  );
+}
+
+function pdfFilenameFromDest(dest: string): string {
+  const normalized = dest.replace(/\\/g, "/");
+  const rel = assetRelPath(normalized);
+  const path = rel ?? normalized;
+  return path.split("/").pop() || path;
+}
+
+function PdfAssetLink(props: { dest: string; label?: string; spanAttrs?: SpanDomAttrs }): JSX.Element {
+  const filename = pdfFilenameFromDest(props.dest);
+  const label = props.label || filename;
+  return (
+    <a class="external-link pdf-link" {...(props.spanAttrs ?? {})} onClick={(e) => { e.stopPropagation(); openPdf(filename, label); }}>
+      📄 {label}
+    </a>
   );
 }
 
@@ -523,8 +536,9 @@ export function MathView(props: { tex: string; display: boolean; spanAttrs?: Spa
 
 // Resolve the path of a graph asset relative to the `assets/` dir.
 function assetRelPath(url: string): string | null {
-  const i = url.indexOf("assets/");
-  return i === -1 ? null : url.slice(i + "assets/".length);
+  const normalized = url.replace(/\\/g, "/");
+  const i = normalized.toLowerCase().indexOf("assets/");
+  return i === -1 ? null : normalized.slice(i + "assets/".length);
 }
 
 // The width `%` CSS resolves against is the nearest BLOCK-level ancestor's

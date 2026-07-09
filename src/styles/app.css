@@ -6649,6 +6649,20 @@ img.emoji {
   height: 100%;
 }
 
+.pdf-load-error {
+  margin: 16px;
+  padding: 12px;
+  border: 1px solid var(--error, #d33);
+  border-radius: 6px;
+  color: var(--text-color);
+  background: rgba(211, 51, 51, 0.1);
+  line-height: 1.4;
+}
+
+.pdf-load-error code {
+  color: var(--error, #d33);
+}
+
 .pdf-toolbar {
   height: 40px;
   flex: 0 0 40px;

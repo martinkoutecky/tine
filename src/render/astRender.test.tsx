@@ -89,6 +89,19 @@ describe("renderInlines", () => {
     expect(h).toContain("inline-image");
   });
 
+  it("image-syntax PDF renders as a PDF link, not an image", () => {
+    const h = inl([{ k: "link", url: { type: "search", v: "../assets/paper.pdf" }, full: "![](../assets/paper.pdf)", image: true }]);
+    expect(h).toContain('class="external-link pdf-link"');
+    expect(h).toContain("paper.pdf");
+    expect(h).not.toContain("inline-image");
+  });
+
+  it("PDF links accept Windows-style backslash asset paths", () => {
+    const h = inl([{ k: "link", url: { type: "search", v: "..\\assets\\paper.pdf" }, full: "[paper](..\\assets\\paper.pdf)" }]);
+    expect(h).toContain('class="external-link pdf-link"');
+    expect(h).toContain("paper.pdf");
+  });
+
   it("latex inline", () => {
     expect(inl([{ k: "latex", mode: "Inline", body: "x^2" }])).toContain('class="math"');
   });

@@ -46,6 +46,7 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
   let areaDrag: { page: number; wrap: HTMLElement; startX: number; startY: number; band: HTMLDivElement } | null =
     null;
   const [scale, setScale] = createSignal(1.4);
+  const [loadError, setLoadError] = createSignal<string | null>(null);
   // Page indicator: total pages + the page currently filling the viewport, and a
   // separately-tracked editable field (so a scroll doesn't fight the user typing).
   const [numPages, setNumPages] = createSignal(0);
@@ -154,6 +155,26 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
   const fitWidthScale = () => (dims[1] ? clampScale((scrollRef.clientWidth - 32) / dims[1].w) : 1);
   const fitHeightScale = () => (dims[1] ? clampScale((scrollRef.clientHeight - 24) / dims[1].h) : 1);
 
+  function failPdf(message: string) {
+    if (loadError()) return;
+    setLoadError(message);
+    io?.disconnect();
+    io = null;
+    clearTimeout(zoomTimer);
+    clearTimeout(textTimer);
+    clearTimeout(findDebounce);
+    for (const k of Object.keys(tasks)) {
+      tasks[Number(k)]?.cancel();
+      delete tasks[Number(k)];
+    }
+    pdfDoc = null;
+  }
+
+  function errorMessage(action: string, err?: unknown): string {
+    const detail = err instanceof Error ? err.message : err ? String(err) : "";
+    return detail ? `${action}: ${detail}` : action;
+  }
+
   // Build all page wrappers once, sized for the current scale. Cheap: no
   // rasterization — just sized placeholders that the IntersectionObserver fills
   // in as they scroll into view.
@@ -232,7 +253,13 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
     tasks[n]?.cancel();
     delete tasks[n];
 
-    const page = await pdfDoc.getPage(n);
+    let page: pdfjs.PDFPageProxy;
+    try {
+      page = await pdfDoc.getPage(n);
+    } catch (err) {
+      failPdf(errorMessage("Couldn't render this PDF page", err));
+      return;
+    }
     if (scale() !== s || !pageEls[n]) return; // zoomed again while awaiting
     const viewport = page.getViewport({ scale: s });
     // First time we touch this page, learn its real unscaled size and correct the
@@ -271,8 +298,10 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
     tasks[n] = task;
     try {
       await task.promise;
-    } catch {
-      return; // cancelled by a newer zoom
+    } catch (err) {
+      if ((err as { name?: string } | undefined)?.name === "RenderingCancelledException") return;
+      failPdf(errorMessage("Couldn't render this PDF page", err));
+      return;
     }
     if (scale() !== s) return;
     delete tasks[n];
@@ -347,7 +376,13 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
   }
   async function buildTextLayer(n: number, atScale: number) {
     if (!pdfDoc || !textLayers[n]) return;
-    const page = await pdfDoc.getPage(n);
+    let page: pdfjs.PDFPageProxy;
+    try {
+      page = await pdfDoc.getPage(n);
+    } catch (err) {
+      failPdf(errorMessage("Couldn't read this PDF page", err));
+      return;
+    }
     if (renderedScale[n] !== atScale || !textLayers[n]) return; // re-rastered since
     const viewport = page.getViewport({ scale: atScale });
 
@@ -363,7 +398,13 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
       }
     }
 
-    const textContent = await page.getTextContent();
+    let textContent: Awaited<ReturnType<pdfjs.PDFPageProxy["getTextContent"]>>;
+    try {
+      textContent = await page.getTextContent();
+    } catch (err) {
+      failPdf(errorMessage("Couldn't read this PDF text", err));
+      return;
+    }
     if (renderedScale[n] !== atScale || !textLayers[n]) return;
     const tl = textLayers[n];
     tl.innerHTML = "";
@@ -436,22 +477,42 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
   }
 
   onMount(async () => {
-    setHighlights(await backend().readHighlights(props.filename));
+    setLoadError(null);
+    try {
+      setHighlights(await backend().readHighlights(props.filename));
+    } catch {
+      setHighlights([]);
+    }
     baseIds = highlights().map((h) => h.id); // load baseline for the 3-way merge
     let bytes: Uint8Array;
     try {
       bytes = await backend().readAsset(props.filename);
-    } catch {
+    } catch (err) {
+      failPdf(errorMessage("Couldn't read this PDF asset", err));
       return;
     }
-    if (!bytes.length) return;
-    pdfDoc = await pdfjs.getDocument({ data: bytes }).promise;
+    if (!bytes.length) {
+      failPdf("Couldn't read this PDF asset: file is empty");
+      return;
+    }
+    try {
+      pdfDoc = await pdfjs.getDocument({ data: bytes }).promise;
+    } catch (err) {
+      failPdf(errorMessage("Couldn't load this PDF", err));
+      return;
+    }
     // Measure ONLY page 1 up front (for fit-width + as the size estimate for the
     // rest). Every other page is sized from that estimate and corrected to its
     // real size the first time it renders — so first paint doesn't wait on N
     // page-dict parses. Uniform PDFs (the common case) never visibly shift.
     const doc = pdfDoc;
-    const p1 = await doc.getPage(1);
+    let p1: pdfjs.PDFPageProxy;
+    try {
+      p1 = await doc.getPage(1);
+    } catch (err) {
+      failPdf(errorMessage("Couldn't read this PDF's first page", err));
+      return;
+    }
     const vp1 = p1.getViewport({ scale: 1 });
     dims[1] = { w: vp1.width, h: vp1.height };
     dimsKnown.clear();
@@ -1038,15 +1099,20 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
           </button>
         </div>
       </Show>
-      <div
-        class="pdf-scroll"
-        classList={{ "area-mode": areaMode() }}
-        ref={scrollRef}
-        onMouseDown={onAreaDown}
-        onMouseUp={onMouseUp}
-        onWheel={onWheel}
-        onScroll={onScroll}
-      />
+      <Show
+        when={!loadError()}
+        fallback={<div class="pdf-load-error">Couldn't open this PDF: <code>{loadError()}</code></div>}
+      >
+        <div
+          class="pdf-scroll"
+          classList={{ "area-mode": areaMode() }}
+          ref={scrollRef}
+          onMouseDown={onAreaDown}
+          onMouseUp={onMouseUp}
+          onWheel={onWheel}
+          onScroll={onScroll}
+        />
+      </Show>
       <Show when={menu()}>
         <div class="pdf-color-menu" style={{ left: `${menu()!.x}px`, top: `${menu()!.y + 8}px` }}>
           <For each={COLORS}>
