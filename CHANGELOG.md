@@ -97,6 +97,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Backups now include nested pages.** Graph backup and restore copied only the
+  top level of `journals/` and `pages/`, so pages inside sub-namespace folders were
+  silently omitted — and the backup still reported success. Both now recurse the
+  whole tree (skipping hidden and symlinked directories), and the completeness
+  check counts every Markdown/Org file.
+
+- **PDF highlight migration can no longer clobber another PDF's data.** When two
+  PDFs had asset filenames differing only by case or space-vs-underscore, migrating
+  one PDF's highlights to the new storage key could read and then delete the *other*
+  live PDF's `.edn` and highlight files. Migration now skips the legacy key whenever
+  it belongs to a different PDF still in the graph.
+
+- **`##` headings render on every line of a multi-line block.** In a block spanning
+  several lines, only the first line's heading was styled; `##`/`###` on later lines
+  rendered as plain text. Each heading line now renders at its level.
+
+- **Typing in a very long block no longer jumps the caret to the bottom.** In a
+  block taller than the window, each keystroke scrolled the view so the caret sat at
+  the bottom edge. The editor now holds the scroll position steady as the block
+  resizes.
+
 - **Sheets: removing a just-added table column takes effect immediately.** A column
   added via *Add column* lived only in an in-memory signal, so removing it from the
   schema left it on screen until an app restart. It's now cleared on removal, and an
