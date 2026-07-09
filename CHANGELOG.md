@@ -10,68 +10,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
-- **Turn an outline into a grid/table from its bullet.** Right-clicking a plain
-  outline bullet that has children now offers **Show children as → Outline / Grid /
-  Table** — the convert-in-place gesture the Guide describes, which previously existed
-  only inside a sheet's own row menu. (Shared with that menu so both stay in sync.)
-
-- **Add formula… from a column header.** Right-clicking a table column header now
-  offers **Add formula…** (it previously lived only on the table's ⋮/body menu, so
-  the Guide's "right-click a column header" instruction pointed at a command that
-  wasn't there). Works whether the header is a plain field or an existing formula
-  column.
-
-### Changed
-
-- **Richer link hover previews.** Hovering a `[[page]]`, `#tag`, or block reference
-  now shows the target's real, read-only block tree — bullets, nesting, task markers,
-  priority, full multi-line bodies, and inline formatting — in a floating popup you can
-  move into and scroll, matching Logseq's page preview. (Previously it showed only the
-  first line of each block as plain text.) Block-reference previews now open after the
-  same short hover delay as page previews instead of instantly. Hovering never modifies
-  the graph.
-
-- **New parser (lsdoc v2).** Tine's block and inline parser was rebuilt from scratch
-  as a two-phase, linear-time parser transcribed directly from Logseq's mldoc,
-  replacing the previous optimistic scanner. It is more faithful to Logseq on
-  real-world graphs and parses in guaranteed linear time; on any construct it has not
-  yet transcribed it is designed to fail safely rather than silently mis-parse.
-
-### Fixed
-
-- **Removing a just-added table column takes effect immediately.** A column added
-  via *Add column* lived only in an in-memory signal, so removing it from the schema
-  left it on screen until an app restart. It's now cleared on removal, and an
-  added-but-undeclared column gets its own **Remove column** in the header menu.
-
-- **An empty day (or page) shows a bullet to type into again.** Deleting the last
-  block via *Delete block* / a multi-block selection (which bypass the Backspace
-  last-block guard) left the page with nothing to click. It now re-seeds the same
-  phantom empty bullet a brand-new day gets — present to type into, but only written
-  to disk once you actually type.
-
-- **Long cell text wraps instead of stretching the whole table.** Sheet columns are
-  capped with `fit-content()` and cells wrap, so one long note grows its row taller
-  rather than blowing the table out horizontally. The in-cell value editor no longer
-  overflows a narrow column (e.g. a numeric cell) past its right edge.
-
-- **A conflicted page can be deleted again.** When a page's on-disk copy changes
-  underneath an open edit (e.g. a Syncthing-delivered update), its save is refused
-  until the conflict is resolved — but deleting it also flushed-first and aborted on
-  that impossible save, so the page could be *neither* saved *nor* deleted. Delete is
-  itself a resolution now: the on-disk version still moves to `.tine-trash`
-  (recoverable) and the page is removed.
-
-- **Guide: a Formulas how-to page, and Sheets how-tos that teach the real
-  gestures.** The in-app Guide gains a from-zero **Features/Formulas** page — what a
-  formula column is, right-click a column → Add/Edit formula, the IF/THEN/ELSE and
-  value-picker faces, the `</> raw` toggle, and honest limits (single-level `if`,
-  nested arithmetic needs raw). The Sheets guide's "Create one yourself" sections now
-  teach `/Grid`, `/Table`, `/Board`, **Show children as →** conversion, edge-grow,
-  ghost Add-row/column buttons, and the board **Group by** picker instead of telling
-  you to hand-type `tine.header::` / `tine.fields::` (those move to "under the hood"
-  notes).
-
 - **Sheets: grids, databases, and boards over plain bullets.** Blocks can now
   render as recursive grids, field tables, or boards with spreadsheet navigation,
   typed `tine.fields::` schemas, editable task/property cells, tag boards with
@@ -80,14 +18,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   properties. Phase 7 adds typed `tine.formula.<name>::` computed columns and
   formula group-by axes, `tine.filter::` table/board filters that fail open with a
   visible chip, and a right-click formula/filter editor.
-
-- **Query builder: a way back from "advanced".** The visual query builder's
-  "⚙ advanced" switch to raw Datalog is no longer one-way — advanced query blocks
-  now show a **← Simple** control that returns to the visual builder. Within a
-  session it restores the exact pre-conversion query (including the sort/aggregate/
-  group-by clauses the Datalog form drops); for a query authored directly as raw
-  Datalog it reverse-parses the recognized clause set, disabling the toggle with an
-  explanation when the query can't be represented visually.
 
 - **Sheets: grids grow from their edges, and boards have a group-by picker.** A
   grid is never a dead end — an empty grid shows a clickable placeholder cell
@@ -107,13 +37,30 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   copy as a subgrid at the caret. This fixes the accidental double-nested grid and
   needs no modifier — the paste mode is the signal (ADR 0037).
 
+- **Turn an outline into a grid/table from its bullet.** Right-clicking a plain
+  outline bullet that has children now offers **Show children as → Outline / Grid /
+  Table** — the convert-in-place gesture the Guide describes, which previously existed
+  only inside a sheet's own row menu. (Shared with that menu so both stay in sync.)
+
+- **Add formula… from a column header.** Right-clicking a table column header now
+  offers **Add formula…** (it previously lived only on the table's ⋮/body menu, so
+  the Guide's "right-click a column header" instruction pointed at a command that
+  wasn't there). Works whether the header is a plain field or an existing formula
+  column.
+
 - **In-app Guide.** Help → Guide and the *Open Guide* command now open bundled,
   read-only how-to pages for Sheets, quick capture, PDF annotation, tips, and the
   feature showcase. Guide pages live only in memory under `Tine-guide/` until you
   explicitly use **Copy the guide into your graph**, which creates the complete
   editable `tine-guide/...` namespace, rewrites inter-guide links to the copied
   pages, includes referenced guide assets, and skips existing copied pages without
-  overwriting user edits.
+  overwriting user edits. A from-zero **Features/Formulas** page covers what a
+  formula column is, right-click a column → Add/Edit formula, the IF/THEN/ELSE and
+  value-picker faces, the `</> raw` toggle, and honest limits (single-level `if`,
+  nested arithmetic needs raw); the Sheets guide's "Create one yourself" sections
+  teach `/Grid`, `/Table`, `/Board`, **Show children as →** conversion, edge-grow,
+  ghost Add-row/column buttons, and the board **Group by** picker rather than
+  telling you to hand-type `tine.header::` / `tine.fields::`.
 
 - **Split view.** Panes now have their own tabs and history, TreeSheets-style
   pane/seam keyboard navigation with type-at-a-seam-to-split, `Ctrl+click` opens
@@ -126,6 +73,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- **New parser (lsdoc v2).** Tine's block and inline parser was rebuilt from scratch
+  as a two-phase, linear-time parser transcribed directly from Logseq's mldoc,
+  replacing the previous optimistic scanner. It is more faithful to Logseq on
+  real-world graphs and parses in guaranteed linear time; on any construct it has not
+  yet transcribed it is designed to fail safely rather than silently mis-parse.
+
+- **Richer link hover previews.** Hovering a `[[page]]`, `#tag`, or block reference
+  now shows the target's real, read-only block tree — bullets, nesting, task markers,
+  priority, full multi-line bodies, and inline formatting — in a floating popup you can
+  move into and scroll, matching Logseq's page preview. (Previously it showed only the
+  first line of each block as plain text.) Block-reference previews now open after the
+  same short hover delay as page previews instead of instantly. Hovering never modifies
+  the graph.
+
 - **App identifier is now `page.tine.app`** (was `dev.tine.app`). This lets Tine
   prove domain ownership (`tine.page`) for Flathub. On desktop the change is
   invisible: on first launch Tine moves your existing settings, backups, open-tab
@@ -136,11 +97,43 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Sheets: removing a just-added table column takes effect immediately.** A column
+  added via *Add column* lived only in an in-memory signal, so removing it from the
+  schema left it on screen until an app restart. It's now cleared on removal, and an
+  added-but-undeclared column gets its own **Remove column** in the header menu.
+
+- **Sheets: long cell text wraps instead of stretching the whole table.** Sheet
+  columns are capped with `fit-content()` and cells wrap, so one long note grows its
+  row taller rather than blowing the table out horizontally. The in-cell value editor
+  no longer overflows a narrow column (e.g. a numeric cell) past its right edge.
+
+- **An empty day (or page) shows a bullet to type into again.** Deleting the last
+  block via *Delete block* / a multi-block selection (which bypass the Backspace
+  last-block guard) left the page with nothing to click. It now re-seeds the same
+  phantom empty bullet a brand-new day gets — present to type into, but only written
+  to disk once you actually type.
+
+- **A conflicted page can be deleted again.** When a page's on-disk copy changes
+  underneath an open edit (e.g. a Syncthing-delivered update), its save is refused
+  until the conflict is resolved — but deleting it also flushed-first and aborted on
+  that impossible save, so the page could be *neither* saved *nor* deleted. Delete is
+  itself a resolution now: the on-disk version still moves to `.tine-trash`
+  (recoverable) and the page is removed.
+
+- **Query builder: a way back from "advanced".** The visual query builder's
+  "⚙ advanced" switch to raw Datalog was one-way — advanced query blocks now show a
+  **← Simple** control that returns to the visual builder. Within a session it
+  restores the exact pre-conversion query (including the sort/aggregate/group-by
+  clauses the Datalog form drops); for a query authored directly as raw Datalog it
+  reverse-parses the recognized clause set, disabling the toggle with an explanation
+  when the query can't be represented visually.
+
 - **The identifier migration now actually runs.** The first cut migrated too late —
   after WebKitGTK had already created the new (empty) data directory — so it backed
   off and left you on the Welcome screen with your graph "forgotten". Migration now
   runs before the webview starts, backfills over an empty new directory, and also
   recognises the older `dev.logseqclaude.app` layout.
+
 - **Android: external links now open.** Links on the About page (Changelog, Report
   an issue, Website, Ko-fi, …) and the Help/Releases links did nothing on Android —
   they tried to spawn a desktop opener that doesn't exist there. They now open via
