@@ -6,6 +6,7 @@ import { ContextMenu } from "./ContextMenu";
 import { initParser } from "../render/parse";
 import { backend } from "../backend";
 import { blockProperty, doc, resetStore, setDoc, undo, type FeedPage, type Node as StoreNode } from "../store";
+import { clearSimpleForm, getSimpleForm, stashSimpleForm } from "../editor/queryBuilder";
 import type { RefGroup } from "../types";
 
 beforeAll(async () => {
@@ -14,6 +15,7 @@ beforeAll(async () => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  clearSimpleForm("query");
   resetStore();
   localStorage.clear();
   document.body.innerHTML = "";
@@ -89,6 +91,25 @@ function loadQueryDoc(queryRaw: string) {
     pages: [page(["query", "todo"])],
     feed: ["Sheet"],
     loaded: true,
+  });
+  vi.spyOn(backend(), "runQuery").mockResolvedValue(queryGroups(["todo"]));
+}
+
+function loadAdvancedQueryDoc(queryRaw: string) {
+  setDoc({
+    byId: {
+      query: node("query", queryRaw, null),
+      todo: node("todo", "TODO From query\nowner:: Martin", null),
+    },
+    pages: [page(["query", "todo"])],
+    feed: ["Sheet"],
+    loaded: true,
+  });
+  vi.spyOn(backend(), "runAdvancedQuery").mockResolvedValue({
+    groups: queryGroups(["todo"]),
+    ran: ["task"],
+    ignored: [],
+    supported: true,
   });
   vi.spyOn(backend(), "runQuery").mockResolvedValue(queryGroups(["todo"]));
 }
@@ -213,6 +234,36 @@ describe("QueryMacro sheet integration", () => {
     expect(blockProperty("query", "tine.view")).toBeNull();
     expect(root.querySelectorAll(".query-table")).toHaveLength(1);
     expect(root.querySelectorAll(".sheet-table")).toHaveLength(0);
+
+    dispose();
+  });
+
+  it("shows an enabled Simple toggle for stashed advanced queries and restores the builder", async () => {
+    const simpleDsl = "(and (task TODO) (sort-by priority desc))";
+    stashSimpleForm("query", simpleDsl);
+    loadAdvancedQueryDoc('{{query [:find (pull ?b [*]) :where (task ?b "TODO")]}}');
+
+    const { root, dispose } = mount(() => (
+      <>
+        <Block id="query" />
+        <ContextMenu />
+      </>
+    ));
+    await settleQuery();
+
+    const button = [...root.querySelectorAll("button")].find(
+      (el) => el.textContent?.trim() === "← Simple"
+    ) as HTMLButtonElement | undefined;
+    expect(button).not.toBeUndefined();
+    expect(button!.disabled).toBe(false);
+    expect(root.querySelector(".qb-bar")).toBeNull();
+
+    button!.click();
+    await settleQuery();
+
+    expect(doc.byId.query.raw).toBe(`{{query ${simpleDsl}}}`);
+    expect(getSimpleForm("query")).toBeUndefined();
+    expect(root.querySelector(".qb-bar")).not.toBeNull();
 
     dispose();
   });

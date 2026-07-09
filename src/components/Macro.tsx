@@ -6,7 +6,14 @@ import { blockProperty, doc, formatForPage, formatForBlock, setBlockProperty, se
 import { resolveBlockBatched } from "../resolveBatch";
 import { LiveRefGroup } from "./LiveRefGroup";
 import { QueryBuilder } from "./QueryBuilder";
-import { parseQuery, type Clause } from "../editor/queryBuilder";
+import {
+  advancedToClause,
+  clearSimpleForm,
+  getSimpleForm,
+  parseQuery,
+  toDsl,
+  type Clause,
+} from "../editor/queryBuilder";
 import { foldAggregate, groupRows } from "../editor/queryAggregate";
 import { quoteEdnString, unquoteEdnString, splitTrailingMap, queryMacroExtents } from "../editor/edn";
 import { visibleBody } from "../render/block";
@@ -166,6 +173,48 @@ export function QueryMacro(props: {
   };
 
   const isAdvanced = () => ADVANCED_RE.test(arg());
+  const simpleBackDsl = createMemo<string | null>(() => {
+    const blockId = props.blockId;
+    if (!blockId || !isAdvanced()) return null;
+    const stashed = getSimpleForm(blockId);
+    if (stashed !== undefined) return stashed;
+    const c = advancedToClause(form());
+    return c ? toDsl(c) : null;
+  });
+  const simpleBackTitle = () =>
+    simpleBackDsl() !== null
+      ? "Back to the visual query builder"
+      : "This advanced query can't be converted back to the visual builder automatically — edit it as raw text, or rebuild it visually.";
+  const backToSimple = (e: MouseEvent) => {
+    e.stopPropagation();
+    const blockId = props.blockId;
+    if (!blockId) return;
+    const stashed = getSimpleForm(blockId);
+    if (stashed !== undefined) {
+      applyDsl(stashed);
+      clearSimpleForm(blockId);
+      return;
+    }
+    const c = advancedToClause(form());
+    if (c) applyDsl(toDsl(c));
+  };
+  const simpleBackButton = () => (
+    <span
+      class="query-simple-toggle-wrap"
+      title={simpleBackTitle()}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <button
+        type="button"
+        class="qb-sort query-simple-toggle"
+        title={simpleBackTitle()}
+        disabled={simpleBackDsl() === null}
+        onClick={backToSimple}
+      >
+        ← Simple
+      </button>
+    </span>
+  );
   const currentPage = () => (props.blockId ? doc.byId[props.blockId]?.page : undefined);
   const [advInfo, setAdvInfo] = createSignal<{ ran: string[]; ignored: string[]; supported: boolean } | null>(
     null
@@ -297,12 +346,14 @@ export function QueryMacro(props: {
         <Switch>
           <Match when={isAdvanced() && advInfo() && !advInfo()!.supported}>
             <div class="query-unsupported">
+              <Show when={props.blockId}>{simpleBackButton()}</Show>
               Advanced (datalog) query: no supported clauses. <code>{`{{${props.body}}}`}</code>
             </div>
           </Match>
           <Match when={true}>
             <Show when={isAdvanced() && advInfo()?.supported}>
               <div class="query-adv-note">
+                <Show when={props.blockId}>{simpleBackButton()}</Show>
                 Partial datalog — ran: {advInfo()!.ran.join(", ") || "—"}
                 <Show when={advInfo()!.ignored.length > 0}>
                   {` · ignored: ${advInfo()!.ignored.join(", ")}`}

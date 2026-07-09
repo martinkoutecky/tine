@@ -5811,6 +5811,27 @@ img.emoji {
   border-style: solid;
   border-color: var(--link-color);
 }
+.qb-sort:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  color: var(--text-muted);
+  border-color: var(--border-color);
+}
+.qb-sort:disabled:hover {
+  color: var(--text-muted);
+  border-color: var(--border-color);
+}
+.query-simple-toggle-wrap {
+  display: inline-flex;
+  margin-right: 6px;
+  font-style: normal;
+}
+.query-simple-toggle {
+  margin-right: 0;
+}
+.query-simple-toggle:disabled {
+  pointer-events: none;
+}
 /* Empty-query call-to-action: a labelled pill instead of a bare round "+". */
 .qb-add-prominent {
   width: auto;

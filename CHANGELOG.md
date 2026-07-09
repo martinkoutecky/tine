@@ -19,6 +19,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   formula group-by axes, `tine.filter::` table/board filters that fail open with a
   visible chip, and a right-click formula/filter editor.
 
+- **Query builder: a way back from "advanced".** The visual query builder's
+  "⚙ advanced" switch to raw Datalog is no longer one-way — advanced query blocks
+  now show a **← Simple** control that returns to the visual builder. Within a
+  session it restores the exact pre-conversion query (including the sort/aggregate/
+  group-by clauses the Datalog form drops); for a query authored directly as raw
+  Datalog it reverse-parses the recognized clause set, disabling the toggle with an
+  explanation when the query can't be represented visually.
+
 - **In-app Guide.** Help → Guide and the *Open Guide* command now open bundled,
   read-only how-to pages for Sheets, quick capture, PDF annotation, tips, and the
   feature showcase. Guide pages live only in memory under `Tine-guide/` until you

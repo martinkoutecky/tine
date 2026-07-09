@@ -166,7 +166,11 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   `page-property`, `priority`, `page`, `namespace`, `page-tags`, `scheduled`,
   `deadline`, `journal`, page-refs, boolean `or/and/not`, `:today`/`:current-page`-style
   inputs) map onto the same engine; any unsupported part is **flagged** in the result
-  rather than silently dropped or wrongly answered.
+  rather than silently dropped or wrongly answered. The "⚙ advanced" switch is
+  **two-way**: an advanced block shows a **← Simple** control that returns to the
+  visual builder — restoring the exact pre-conversion query within a session, or
+  reverse-parsing recognized raw Datalog otherwise (and disabling itself, with a
+  tooltip, when the query has no visual representation).
 
 ## Sheets (2-D grids)
 

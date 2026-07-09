@@ -2,7 +2,7 @@ icon:: ▦
 
 - # Sheets
 	- Sheets turn ordinary outline branches into 2-D views. The same file still opens in Logseq as nested bullets with harmless `tine.*` properties.
-	- The reading list derives an `effort` formula from `rating`; derived values are never stored on rows.
+	- Formula columns derive values live (the *Typed reading list* below computes `effort` from `rating`); derived values are shown, never written onto the rows.
 - ## Positional grid
   tine.view:: grid
   tine.header:: true
