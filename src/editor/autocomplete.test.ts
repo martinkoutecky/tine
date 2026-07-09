@@ -4,6 +4,7 @@ import {
   applyCompletion,
   withRefCompletionSpace,
   autoPairEdit,
+  fullWidthRefReplace,
   pageInsert,
   tagInsert,
   filterCommands,
@@ -44,6 +45,22 @@ describe("autoPairEdit (OG-style [[ ]] auto-pairing)", () => {
 
   it("leaves a literal ] alone when no ] follows", () => {
     expect(autoPairEdit("a]", 2, "]")).toBeNull();
+  });
+});
+
+describe("fullWidthRefReplace (Chinese IME full-width page refs)", () => {
+  it("normalizes full-width double brackets to an auto-paired page ref", () => {
+    expect(fullWidthRefReplace("【【", 2)).toEqual({ value: "[[]]", caret: 2 });
+    expect(fullWidthRefReplace("see 【【", 6)).toEqual({ value: "see [[]]", caret: 6 });
+  });
+
+  it("ignores a lone full-width opening bracket", () => {
+    expect(fullWidthRefReplace("a【", 2)).toBeNull();
+  });
+
+  it("leaves the existing ASCII [[ path to autoPairEdit", () => {
+    expect(fullWidthRefReplace("[[", 2)).toBeNull();
+    expect(autoPairEdit("[[", 2, "[")).toEqual({ value: "[[]]", caret: 2 });
   });
 });
 

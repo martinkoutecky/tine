@@ -6,6 +6,7 @@ import {
   applyCompletion,
   withRefCompletionSpace,
   autoPairEdit,
+  fullWidthRefReplace,
   pageInsert,
   tagInsert,
   orderAcItems,
@@ -1548,13 +1549,35 @@ export function Editor(props: { id: string }): JSX.Element {
   });
 
   let acTimer: ReturnType<typeof setTimeout> | undefined;
+  const refreshAutocompleteAfterInput = () => {
+    // Close the popup synchronously when the trigger ends (instant), but debounce
+    // the page/template IPC fetch so holding down a key doesn't fire a backend
+    // round-trip per character.
+    if (!detectTrigger(ref.value, ref.selectionStart)) {
+      clearTimeout(acTimer);
+      closeAc();
+      return;
+    }
+    clearTimeout(acTimer);
+    acTimer = setTimeout(() => void updateAutocomplete(), 90);
+  };
+  const applyFullWidthRefReplace = () => {
+    const paired = fullWidthRefReplace(ref.value, ref.selectionStart);
+    if (!paired) return false;
+    ref.value = paired.value;
+    ref.setSelectionRange(paired.caret, paired.caret);
+    return true;
+  };
   const onInput = (e: InputEvent) => {
     // Editor keystroke post-processing on a single inserted char (not paste/IME/
     // delete). All branches edit ref.value BEFORE commit so the store sees it.
     if (e.inputType === "insertText" && e.data && e.data.length === 1 && !e.isComposing) {
       const ch = e.data;
       let handled = false;
-      if (autoPairing()) {
+      if (ch === "【") {
+        handled = applyFullWidthRefReplace();
+      }
+      if (!handled && autoPairing()) {
         // Opt-in general auto-pairing (brackets/quotes), which also folds in the
         // `[[`/`((`/`{{` doubling so it composes with — not fights — page-ref pairing.
         const r = autoPairInsertOnInput(ref.value, ref.selectionStart, ch);
@@ -1584,16 +1607,13 @@ export function Editor(props: { id: string }): JSX.Element {
     }
     commit(ref.value);
     autosize();
-    // Close the popup synchronously when the trigger ends (instant), but debounce
-    // the page/template IPC fetch so holding down a key doesn't fire a backend
-    // round-trip per character.
-    if (!detectTrigger(ref.value, ref.selectionStart)) {
-      clearTimeout(acTimer);
-      closeAc();
-      return;
-    }
-    clearTimeout(acTimer);
-    acTimer = setTimeout(() => void updateAutocomplete(), 90);
+    refreshAutocompleteAfterInput();
+  };
+  const onCompositionEnd = () => {
+    if (!applyFullWidthRefReplace()) return;
+    commit(ref.value);
+    autosize();
+    refreshAutocompleteAfterInput();
   };
 
   // Move the block up/down among siblings, keeping edit mode + caret (the DOM
@@ -2340,6 +2360,7 @@ export function Editor(props: { id: string }): JSX.Element {
         value={isCalc() ? (calcLive() ?? "") : editorValue()}
         placeholder={cap?.bulletHint?.()}
         onInput={onInput}
+        onCompositionEnd={onCompositionEnd}
         onKeyDown={onKeyDown}
         onFocus={() => {
           noteSurfaceFocused(surfaceKey);

@@ -90,6 +90,15 @@ export function autoPairEdit(
   return null;
 }
 
+/** Normalize Chinese IME full-width page-ref openers to the existing ASCII
+ *  auto-paired ref form. `value`/`caret` are the post-input textarea state. */
+export function fullWidthRefReplace(value: string, caret: number): { value: string; caret: number } | null {
+  if (caret >= 2 && value.slice(caret - 2, caret) === "【【") {
+    return { value: value.slice(0, caret - 2) + "[[]]" + value.slice(caret), caret };
+  }
+  return null;
+}
+
 /** Replace [start,end) in `raw` with `insert`; caret lands at
  *  `start + caretInInsert` (defaults to end of the inserted text). */
 export function applyCompletion(
