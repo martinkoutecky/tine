@@ -21,9 +21,13 @@ cd "$ROOT"
 DEST="${TINE_DEPLOY_DEST:-$HOME/research/tine}"
 BIN="$ROOT/target/release/tine"
 
-# 1) Toolchain (cargo/rustc live outside the repo — see scripts/env.sh).
+# 1) Toolchain (cargo/rustc live outside the repo — see scripts/env.sh). env.sh is
+#    written for interactive shells and appends to $LD_LIBRARY_PATH, so relax
+#    nounset just around it.
+set +u
 # shellcheck source=/dev/null
 source "$ROOT/scripts/env.sh"
+set -u
 
 # 2) Frontend FIRST — this is the step a raw cargo build skips. Also stamps the
 #    wall-clock build time into the bundle (vite.config.ts reproBuildTime).
