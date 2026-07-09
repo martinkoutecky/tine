@@ -79,6 +79,7 @@ fn do_backup(app: &tauri::AppHandle, suffix: &str) -> (usize, bool) {
             Err(_) => break, // other error → fall through; copy below is best-effort
         }
     }
+    let live_text_n = count_md_recursive(&journals) + count_md_recursive(&pages);
     let (cj, fj) = copy_md_dir(&journals, &dest.join(dir_name(&journals)));
     let (cp, fp) = copy_md_dir(&pages, &dest.join(dir_name(&pages)));
     let (ca, fa) = copy_asset_sidecars_dir(&assets, &dest.join(dir_name(&assets)));
@@ -94,12 +95,13 @@ fn do_backup(app: &tauri::AppHandle, suffix: &str) -> (usize, bool) {
             failed += 1;
         }
     }
+    let complete = failed == 0 && cj + cp == live_text_n;
     if n == 0 {
         let _ = std::fs::remove_dir_all(&dest);
-        return (0, failed == 0);
+        return (0, complete);
     }
     prune_backups(&base, backup_keep(app));
-    (n, failed == 0)
+    (n, complete)
 }
 
 fn backup_keep(app: &tauri::AppHandle) -> usize {
@@ -176,13 +178,16 @@ pub(crate) fn list_backups(app: tauri::AppHandle) -> Result<Vec<BackupInfo>, Str
 
 fn count_md_recursive(dir: &std::path::Path) -> usize {
     let mut n = 0;
-    if let Ok(rd) = std::fs::read_dir(dir) {
-        for e in rd.flatten() {
-            let p = e.path();
-            if p.is_dir() {
-                n += count_md_recursive(&p);
-            } else if is_graph_text(&p) {
-                n += 1;
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        if let Ok(rd) = std::fs::read_dir(&d) {
+            for e in rd.flatten() {
+                let p = e.path();
+                if is_graph_text(&p) {
+                    n += 1;
+                } else if is_visible_real_dir(&e).unwrap_or(false) {
+                    stack.push(p);
+                }
             }
         }
     }
@@ -281,25 +286,57 @@ fn restore_md_dir(src: &std::path::Path, dest: &std::path::Path) -> std::io::Res
         return Ok(());
     }
     std::fs::create_dir_all(dest)?;
-    let mut restored: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for e in std::fs::read_dir(src)?.flatten() {
+    let mut restored: std::collections::HashSet<std::path::PathBuf> =
+        std::collections::HashSet::new();
+    restore_md_copy(src, dest, std::path::Path::new(""), &mut restored)?;
+    delete_unrestored_md(dest, std::path::Path::new(""), &restored)?;
+    Ok(())
+}
+
+fn restore_md_copy(
+    src: &std::path::Path,
+    dest: &std::path::Path,
+    rel: &std::path::Path,
+    restored: &mut std::collections::HashSet<std::path::PathBuf>,
+) -> std::io::Result<()> {
+    for e in std::fs::read_dir(src)? {
+        let e = e?;
         let p = e.path();
+        let rel_child = rel.join(e.file_name());
         if is_graph_text(&p) {
-            if let Some(name) = p.file_name() {
-                let target = dest.join(name);
-                atomic_copy(&p, &target)?;
-                restored.insert(name.to_string_lossy().into_owned());
+            let target = dest.join(&rel_child);
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent)?;
             }
+            atomic_copy(&p, &target)?;
+            restored.insert(rel_child);
+        } else if is_visible_real_dir(&e)? {
+            std::fs::create_dir_all(dest.join(&rel_child))?;
+            restore_md_copy(&p, dest, &rel_child, restored)?;
         }
     }
-    for e in std::fs::read_dir(dest)?.flatten() {
+    Ok(())
+}
+
+fn delete_unrestored_md(
+    dest: &std::path::Path,
+    rel: &std::path::Path,
+    restored: &std::collections::HashSet<std::path::PathBuf>,
+) -> std::io::Result<()> {
+    let dir = dest.join(rel);
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    for e in std::fs::read_dir(&dir)? {
+        let e = e?;
         let p = e.path();
+        let rel_child = rel.join(e.file_name());
         if is_graph_text(&p) {
-            if let Some(name) = p.file_name() {
-                if !restored.contains(name.to_string_lossy().as_ref()) {
-                    let _ = std::fs::remove_file(&p);
-                }
+            if !restored.contains(&rel_child) {
+                let _ = std::fs::remove_file(&p);
             }
+        } else if is_visible_real_dir(&e)? {
+            delete_unrestored_md(dest, &rel_child, restored)?;
         }
     }
     Ok(())
@@ -383,6 +420,18 @@ fn is_asset_sidecar(p: &std::path::Path) -> bool {
     matches!(p.extension().and_then(|x| x.to_str()), Some("edn"))
 }
 
+fn is_visible_real_dir(e: &std::fs::DirEntry) -> std::io::Result<bool> {
+    let hidden = e
+        .file_name()
+        .to_str()
+        .map(|s| s.starts_with('.'))
+        .unwrap_or(true);
+    if hidden {
+        return Ok(false);
+    }
+    e.file_type().map(|ft| ft.is_dir())
+}
+
 fn dir_name(p: &std::path::Path) -> String {
     p.file_name()
         .and_then(|s| s.to_str())
@@ -402,8 +451,8 @@ fn copy_md_dir(src: &std::path::Path, dest: &std::path::Path) -> (usize, usize) 
     // tell an empty-at-backup dir from a missing one, and leaves destination .md
     // extras in place (mixing current files into the restored snapshot).
     let _ = std::fs::create_dir_all(dest);
-    let rd = match std::fs::read_dir(src) {
-        Ok(rd) => rd,
+    match std::fs::read_dir(src) {
+        Ok(_) => {}
         // A genuinely-absent source dir (e.g. a graph with no pages/) is not a
         // failure — there's nothing to snapshot. But a dir we CAN'T read
         // (permission / I/O) MUST count as failed, so a pre-restore safety
@@ -411,18 +460,49 @@ fn copy_md_dir(src: &std::path::Path, dest: &std::path::Path) -> (usize, usize) 
         // refuse to proceed without a trustworthy rollback.
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (0, 0),
         Err(_) => return (0, 1),
-    };
+    }
     let (mut copied, mut failed) = (0usize, 0usize);
-    for e in rd.flatten() {
-        let p = e.path();
-        if !is_graph_text(&p) {
-            continue;
-        }
-        let Some(name) = p.file_name() else { continue };
-        if std::fs::create_dir_all(dest).is_ok() && std::fs::copy(&p, dest.join(name)).is_ok() {
-            copied += 1;
-        } else {
-            failed += 1;
+    let mut stack = vec![(src.to_path_buf(), std::path::PathBuf::new())];
+    while let Some((dir, rel)) = stack.pop() {
+        let target_dir = dest.join(&rel);
+        let _ = std::fs::create_dir_all(&target_dir);
+        let rd = match std::fs::read_dir(&dir) {
+            Ok(rd) => rd,
+            Err(_) => {
+                failed += 1;
+                continue;
+            }
+        };
+        for entry in rd {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(_) => {
+                    failed += 1;
+                    continue;
+                }
+            };
+            let p = entry.path();
+            let rel_child = rel.join(entry.file_name());
+            if is_graph_text(&p) {
+                let target = dest.join(&rel_child);
+                let copied_ok = target
+                    .parent()
+                    .map(std::fs::create_dir_all)
+                    .unwrap_or(Ok(()))
+                    .is_ok()
+                    && std::fs::copy(&p, &target).is_ok();
+                if copied_ok {
+                    copied += 1;
+                } else {
+                    failed += 1;
+                }
+            } else {
+                match is_visible_real_dir(&entry) {
+                    Ok(true) => stack.push((p, rel_child)),
+                    Ok(false) => {}
+                    Err(_) => failed += 1,
+                }
+            }
         }
     }
     (copied, failed)
@@ -577,6 +657,60 @@ mod tests {
             std::fs::read(dest.join("nested").join("image.png")).unwrap(),
             b"keep"
         );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn graph_text_backup_and_restore_include_nested_pages() {
+        let root = scratch("nested-md");
+        let graph = root.join("graph");
+        let pages = graph.join("pages");
+        let journals = graph.join("journals");
+        let backup = root.join("backup");
+        std::fs::create_dir_all(pages.join("client-a")).unwrap();
+        std::fs::create_dir_all(&journals).unwrap();
+        std::fs::write(pages.join("Top.md"), b"top\n").unwrap();
+        std::fs::write(pages.join("client-a").join("Deep.md"), b"deep\n").unwrap();
+        std::fs::write(journals.join("2026_07_09.md"), b"journal\n").unwrap();
+
+        let live_pages = count_md_recursive(&pages);
+        let live_journals = count_md_recursive(&journals);
+        let (copied_pages, failed_pages) = copy_md_dir(&pages, &backup.join("pages"));
+        let (copied_journals, failed_journals) = copy_md_dir(&journals, &backup.join("journals"));
+        let copied = copied_pages + copied_journals;
+        let failed = failed_pages + failed_journals;
+        let complete = failed == 0 && copied == live_pages + live_journals;
+
+        assert_eq!(live_pages, 2);
+        assert_eq!(live_journals, 1);
+        assert!(complete);
+        assert_eq!(
+            std::fs::read(backup.join("pages").join("Top.md")).unwrap(),
+            b"top\n"
+        );
+        assert_eq!(
+            std::fs::read(backup.join("pages").join("client-a").join("Deep.md")).unwrap(),
+            b"deep\n"
+        );
+        assert_eq!(
+            std::fs::read(backup.join("journals").join("2026_07_09.md")).unwrap(),
+            b"journal\n"
+        );
+
+        std::fs::write(pages.join("client-a").join("Deep.md"), b"corrupt\n").unwrap();
+        std::fs::write(pages.join("client-a").join("Stale.md"), b"stale\n").unwrap();
+        std::fs::write(pages.join("client-a").join("notes.txt"), b"keep\n").unwrap();
+        restore_md_dir(&backup.join("pages"), &pages).unwrap();
+        assert_eq!(
+            std::fs::read(pages.join("client-a").join("Deep.md")).unwrap(),
+            b"deep\n"
+        );
+        assert!(!pages.join("client-a").join("Stale.md").exists());
+        assert_eq!(
+            std::fs::read(pages.join("client-a").join("notes.txt")).unwrap(),
+            b"keep\n"
+        );
+
         let _ = std::fs::remove_dir_all(&root);
     }
 }
