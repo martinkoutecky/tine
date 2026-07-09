@@ -82,6 +82,17 @@ function loadSheetDoc() {
   });
 }
 
+function loadEmptyGridDoc() {
+  setDoc({
+    byId: {
+      grid: node("grid", "Blank\ntine.view:: grid", null),
+    },
+    pages: [page(["grid"])],
+    feed: ["Sheet"],
+    loaded: true,
+  });
+}
+
 function loadSheetDocWithSubgrid() {
   loadSheetDoc();
   setDoc({
@@ -168,6 +179,12 @@ function doubleClick(target: EventTarget, init: Partial<MouseEventInit> = {}): M
 
 function pointer(type: string, x: number, y: number, init: Partial<MouseEventInit> = {}): Event {
   return new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y, ...init });
+}
+
+function pointerEnter(target: EventTarget): Event {
+  const event = new Event("pointerenter", { bubbles: false, cancelable: true });
+  target.dispatchEvent(event);
+  return event;
 }
 
 function textRange(root: globalThis.Node, needle: string, offset: number): Range {
@@ -280,6 +297,79 @@ function clickMenuItem(label: string): void {
 }
 
 describe("SheetGrid interaction", () => {
+  it("empty grid placeholder creates the first row and cell and enters edit", async () => {
+    loadEmptyGridDoc();
+    const { root, dispose } = mount(() => <Block id="grid" />);
+
+    expect(root.textContent).not.toContain("empty grid");
+    const placeholder = root.querySelector(".sheet-grid-placeholder") as HTMLElement | null;
+    expect(placeholder).not.toBeNull();
+    expect(placeholder!.tabIndex).toBe(0);
+
+    placeholder!.click();
+    await tick();
+
+    expect(doc.byId.grid.children).toHaveLength(1);
+    const rowId = doc.byId.grid.children[0];
+    expect(doc.byId[rowId].children).toHaveLength(1);
+    const cellId = doc.byId[rowId].children[0];
+    expect(editingId()).toBe(cellId);
+    expect(activeEditor(root).value).toBe("");
+
+    dispose();
+  });
+
+  it("top-level grid edge buttons grow columns and rows", async () => {
+    const { root, dispose } = setup();
+    const grid = root.querySelector('.sheet-grid[data-sheet-grid-id="grid"]') as HTMLElement | null;
+    expect(grid).not.toBeNull();
+
+    pointerEnter(grid!);
+
+    const addCol = grid!.querySelector(":scope > .sheet-grid-add-col") as HTMLButtonElement | null;
+    const addRow = grid!.querySelector(":scope > .sheet-grid-add-row") as HTMLButtonElement | null;
+    expect(addCol).not.toBeNull();
+    expect(addRow).not.toBeNull();
+    expect(addCol!.classList.contains("sheet-grid-add-visible")).toBe(true);
+    expect(addRow!.classList.contains("sheet-grid-add-visible")).toBe(true);
+
+    addCol!.click();
+    await tick();
+
+    expect(doc.byId.r1.children).toHaveLength(3);
+    expect(editingId()).toBe(doc.byId.r1.children[2]);
+
+    const nextAddRow = grid!.querySelector(":scope > .sheet-grid-add-row") as HTMLButtonElement | null;
+    expect(nextAddRow).not.toBeNull();
+    nextAddRow!.click();
+    await tick();
+
+    expect(doc.byId.grid.children).toHaveLength(3);
+    const rowId = doc.byId.grid.children[2];
+    expect(doc.byId[rowId].children).toHaveLength(1);
+    expect(editingId()).toBe(doc.byId[rowId].children[0]);
+
+    dispose();
+  });
+
+  it("nested grids do not render edge growth buttons", () => {
+    loadSheetDocWithSubgrid();
+    disposeKeys = installKeybindings();
+    const { root, dispose } = mount(() => <Block id="grid" />);
+    const outer = root.querySelector('.sheet-grid[data-sheet-grid-id="grid"]') as HTMLElement | null;
+    const inner = root.querySelector('.sheet-grid[data-sheet-grid-id="c2"]') as HTMLElement | null;
+    expect(outer).not.toBeNull();
+    expect(inner).not.toBeNull();
+
+    pointerEnter(outer!);
+
+    expect(outer!.querySelector(":scope > .sheet-grid-add-col")).not.toBeNull();
+    expect(inner!.querySelector(":scope > .sheet-grid-add-col")).toBeNull();
+    expect(inner!.querySelector(":scope > .sheet-grid-add-row")).toBeNull();
+
+    dispose();
+  });
+
   it("single-click selects and double-click enters edit with click-point caret", async () => {
     const { root, dispose } = setup();
 

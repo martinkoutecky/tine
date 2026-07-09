@@ -21,6 +21,7 @@ import { visibleBody } from "../render/block";
 import { serializeColAggregates, serializeColWidths, sheetConfigFromRaw } from "./config";
 import type { AggregateFn } from "./aggregate";
 import { looksLikeDelimitedText, parseDelimitedText, serializeTsv } from "./tsv";
+import type { FieldId } from "./fields";
 
 export interface SheetPoint {
   row: number;
@@ -365,6 +366,12 @@ export function setColumnAggregate(ownerId: string, key: string, fn: AggregateFn
     else next.delete(key);
     writeColAggregates(ownerId, next);
   });
+}
+
+export function setBoardGroupBy(gridId: string, field: FieldId): void {
+  const page = gridPage(gridId);
+  if (!page) return;
+  withUndoUnit("sheet:group-by", [page], () => setBlockProperty(gridId, "tine.group-by", field));
 }
 
 export function sheetSelectionText(sel: SheetMutationSelection): { text: string; html: string } {

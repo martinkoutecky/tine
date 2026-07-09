@@ -27,6 +27,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   Datalog it reverse-parses the recognized clause set, disabling the toggle with an
   explanation when the query can't be represented visually.
 
+- **Sheets: grids grow from their edges, and boards have a group-by picker.** A
+  grid is never a dead end — an empty grid shows a clickable placeholder cell
+  instead of inert "empty grid" text, and hovering a top-level grid reveals **+**
+  affordances on its right and bottom edges that add a column or row (one undo,
+  cursor lands in the new cell). Boards now expose their grouping: a **Group by**
+  dropdown above the columns and a matching **Group by →** submenu in the board
+  right-click menu let you regroup by State, Priority, Tags, or any field —
+  previously the axis was fixed to `state` at creation and only changeable by
+  hand-editing `tine.group-by::`.
+
 - **In-app Guide.** Help → Guide and the *Open Guide* command now open bundled,
   read-only how-to pages for Sheets, quick capture, PDF annotation, tips, and the
   feature showcase. Guide pages live only in memory under `Tine-guide/` until you

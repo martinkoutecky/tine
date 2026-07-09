@@ -43,9 +43,9 @@ import {
 } from "../store";
 import { canFlatten, flatten, hierarchify } from "../sheet/restructure";
 import { canConvertPipeTableToGrid, convertGridToPipeTable, convertPipeTableToGrid } from "../sheet/conversions";
-import { appendSheetCellChild, deleteColumn } from "../sheet/mutations";
+import { appendSheetCellChild, deleteColumn, setBoardGroupBy } from "../sheet/mutations";
 import { cellForBlockId, cellOwner, setCellSel } from "../sheet/selection";
-import { fieldIdsForBlocks, fieldLabel, isFieldId, type FieldId } from "../sheet/fields";
+import { boardGroupByOptions, fieldIdsForBlocks, fieldLabel, isFieldId, type FieldId } from "../sheet/fields";
 import { startEditing } from "../editorController";
 import { copyStripCollapsed } from "../copySettings";
 import { copyOutline } from "../clipboard";
@@ -358,6 +358,15 @@ function SheetMenu(props: {
     props.close();
   };
   const boardField = () => (props.groupBy && isFieldId(props.groupBy) ? props.groupBy : null);
+  const boardGroupField = (): FieldId => {
+    const raw = props.groupBy || "state";
+    const normalized = raw.startsWith("formula.") ? `formula:${raw.slice("formula.".length)}` : raw;
+    return isFieldId(normalized) ? normalized : "state";
+  };
+  const doGroupBy = (field: FieldId) => {
+    setBoardGroupBy(props.ownerId, field);
+    props.close();
+  };
 
   return (
     <>
@@ -407,6 +416,26 @@ function SheetMenu(props: {
           }}
         >
           Edit filter…
+        </div>
+        <div class="ctx-sep" />
+      </Show>
+      <Show when={props.surface === "board"}>
+        <div class="ctx-item ctx-submenu">
+          <span>Group by →</span>
+          <div class="ctx-submenu-menu">
+            <For each={boardGroupByOptions(props.ownerId)}>
+              {(field) => (
+                <div
+                  class="ctx-item"
+                  classList={{ "ctx-active": field === boardGroupField() }}
+                  onClick={() => doGroupBy(field)}
+                >
+                  {field === boardGroupField() ? "✓ " : ""}
+                  {fieldLabel(field)}
+                </div>
+              )}
+            </For>
+          </div>
         </div>
         <div class="ctx-sep" />
       </Show>

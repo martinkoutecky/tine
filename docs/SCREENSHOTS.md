@@ -46,6 +46,7 @@ Scripts write to the gitignored `screenshots/` dir; the README set is then
 | `carry.png`          | Carry-unfinished-tasks buttons on a journal        | `shot-features.mjs` → `feat-carry.png` (clipped) | carry UI/buttons change |
 | `query.png`          | Query results + visual query-builder chip bar      | `shot-features.mjs` → `feat-query.png`           | query rendering or the builder bar changes |
 | `sheets.png`         | Sheets grid/table/board composite                  | `shot-sheets.mjs` → `shot-sheets.png`            | sheet schema table, formula columns/filter chip, tag board, grid/table/board rendering, or controls change |
+| _(probe only)_       | Grid hover-`+` edge affordances + board Group-by toolbar | `shot-chunk2.mjs` → `/tmp/shot-chunk2-{grid,board}.png` | grid edge-grow affordances or board group-by picker change (verification probe, not a curated README image) |
 | `quick-capture.png`  | Quick-capture mini-window with slash menu open     | `shot-capture.mjs` → `rm-quick-capture.png`      | capture window, slash menu, or editor-parity changes |
 | `pdf.png`            | PDF pane + text highlight + area (image) highlight | `shot-tabs-pdf.mjs` → `feat-pdf.png`             | PDF viewer, highlight rendering (text/area), or pane layout changes |
 | `settings.png`       | Settings modal (shortcuts shown)                   | `shot-settings.mjs` → `settings.png`             | Settings modal gains/loses controls (**watch mode, first-day-of-week**, themes, snapshots) |

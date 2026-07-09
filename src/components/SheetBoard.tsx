@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, untrack, type JSX } from "solid-js";
 import { backend } from "../backend";
-import { doc, ensurePageLoaded, formatForBlock, formatForPage, pageByName, readPageProperty } from "../store";
+import { blockPageReadOnly, doc, ensurePageLoaded, formatForBlock, formatForPage, pageByName, readPageProperty } from "../store";
 import { facetsFromDto, facetsOf, type Facets } from "../render/facets";
 import { pageProperties, visibleBody, isRenderHiddenProp } from "../render/block";
 import { InlineText } from "../render/inline";
@@ -20,8 +20,10 @@ import {
   type CellSel,
 } from "../sheet/selection";
 import {
+  boardGroupByOptions,
   fieldIdsForBlocks,
   cycleField,
+  fieldLabel,
   groupKeysForBlock,
   isFieldId,
   isFormulaField,
@@ -33,6 +35,7 @@ import {
 import { parseFields, sheetConfig, type FieldSpec } from "../sheet/config";
 import { formulasOf, mergeFormulas } from "../sheet/formulaFields";
 import { createFormulaFilterMemo } from "../sheet/formulaEval";
+import { setBoardGroupBy } from "../sheet/mutations";
 import { MARKERS } from "../markers";
 import { graphEpoch, openDatePicker, openSheetCellContextMenu, openSheetContextMenu, pushToast, workflow } from "../ui";
 import { blockBackgroundColor } from "../blockColors";
@@ -65,6 +68,11 @@ export function SheetBoard(props: {
     const raw = props.groupBy || "state";
     const normalized = raw.startsWith("formula.") ? `formula:${raw.slice("formula.".length)}` : raw;
     return isFieldId(normalized) ? normalized : "state";
+  });
+  const groupByOptions = createMemo<FieldId[]>(() => {
+    const options = boardGroupByOptions(props.ownerId);
+    const current = groupBy();
+    return options.includes(current) ? options : [...options, current];
   });
   const [drag, setDrag] = createSignal<{ id: string; col: number; row: number; overCol: number | null } | null>(null);
   const [addingTag, setAddingTag] = createSignal(false);
@@ -272,97 +280,116 @@ export function SheetBoard(props: {
   };
 
   return (
-    <Show when={columns().length > 0} fallback={<div class="sheet-board sheet-empty">empty board</div>}>
-      <div
-        class="sheet-board"
-        classList={{ "sheet-filter-broken": !!filterError() }}
-        data-sheet-grid-id={props.ownerId}
-        onContextMenu={openSheetMenu}
-      >
-        <Show when={filterError()}>
-          {(err) => (
-            <span class="sheet-filter-error" title={err()}>
-              Filter disabled
-            </span>
-          )}
-        </Show>
-        <For each={columns()}>
-          {(col, colIndex) => (
-            <section
-              class="sheet-board-column"
-              classList={{ "sheet-board-drop": drag()?.overCol === colIndex() }}
-              data-board-col={colIndex()}
-            >
-              <header class="sheet-board-header">
-                <span>{col.label}</span>
-                <span class="sheet-board-count">{col.rows.length}</span>
-              </header>
-              <div class="sheet-board-cards">
-                <For each={col.rows}>
-                  {(row, rowIndex) => (
-                    <BoardCard
-                      ownerId={props.ownerId}
-                      row={row}
-                      groupBy={groupBy()}
-                      colIndex={colIndex()}
-                      rowIndex={rowIndex()}
-                      selected={selected(colIndex(), rowIndex())}
-                      dragging={drag()?.id === row.id && drag()?.col === colIndex() && drag()?.row === rowIndex()}
-                      canMove={!isFormulaField(groupBy())}
-                      setDrag={setDrag}
-                      dropCard={dropCard}
-                    />
-                  )}
-                </For>
-              </div>
-            </section>
-          )}
-        </For>
-        <Show when={groupBy() === "tags"}>
-          <section class="sheet-board-column sheet-board-add-tag-column">
-            <Show
-              when={addingTag()}
-              fallback={
-                <button
-                  class="sheet-board-add-tag-ghost"
-                  title="Add tag column"
-                  onClick={(e) => {
+    <div class="sheet-board-wrap">
+      <Show when={!blockPageReadOnly(props.ownerId)}>
+        <div class="sheet-board-toolbar">
+          <span>Group by</span>
+          <select
+            class="sheet-board-groupby"
+            value={groupBy()}
+            aria-label="Group by"
+            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onChange={(e) => setBoardGroupBy(props.ownerId, e.currentTarget.value as FieldId)}
+          >
+            <For each={groupByOptions()}>
+              {(field) => <option value={field}>{fieldLabel(field)}</option>}
+            </For>
+          </select>
+        </div>
+      </Show>
+      <Show when={columns().length > 0} fallback={<div class="sheet-board sheet-empty">empty board</div>}>
+        <div
+          class="sheet-board"
+          classList={{ "sheet-filter-broken": !!filterError() }}
+          data-sheet-grid-id={props.ownerId}
+          onContextMenu={openSheetMenu}
+        >
+          <Show when={filterError()}>
+            {(err) => (
+              <span class="sheet-filter-error" title={err()}>
+                Filter disabled
+              </span>
+            )}
+          </Show>
+          <For each={columns()}>
+            {(col, colIndex) => (
+              <section
+                class="sheet-board-column"
+                classList={{ "sheet-board-drop": drag()?.overCol === colIndex() }}
+                data-board-col={colIndex()}
+              >
+                <header class="sheet-board-header">
+                  <span>{col.label}</span>
+                  <span class="sheet-board-count">{col.rows.length}</span>
+                </header>
+                <div class="sheet-board-cards">
+                  <For each={col.rows}>
+                    {(row, rowIndex) => (
+                      <BoardCard
+                        ownerId={props.ownerId}
+                        row={row}
+                        groupBy={groupBy()}
+                        colIndex={colIndex()}
+                        rowIndex={rowIndex()}
+                        selected={selected(colIndex(), rowIndex())}
+                        dragging={drag()?.id === row.id && drag()?.col === colIndex() && drag()?.row === rowIndex()}
+                        canMove={!isFormulaField(groupBy())}
+                        setDrag={setDrag}
+                        dropCard={dropCard}
+                      />
+                    )}
+                  </For>
+                </div>
+              </section>
+            )}
+          </For>
+          <Show when={groupBy() === "tags"}>
+            <section class="sheet-board-column sheet-board-add-tag-column">
+              <Show
+                when={addingTag()}
+                fallback={
+                  <button
+                    class="sheet-board-add-tag-ghost"
+                    title="Add tag column"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setAddingTag(true);
+                      setTagInputInvalid(false);
+                    }}
+                  >
+                    <span class="sheet-ghost-plus">+</span>
+                    <span>new tag</span>
+                  </button>
+                }
+              >
+                <input
+                  class="sheet-board-add-tag-input"
+                  classList={{ "sheet-input-invalid": tagInputInvalid() }}
+                  autofocus
+                  placeholder="new-tag"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onInput={() => setTagInputInvalid(false)}
+                  onKeyDown={(e) => {
                     e.stopPropagation();
-                    setAddingTag(true);
-                    setTagInputInvalid(false);
+                    if (e.key === "Enter") commitNewTagColumn(e.currentTarget.value);
+                    else if (e.key === "Escape") {
+                      setAddingTag(false);
+                      setTagInputInvalid(false);
+                    }
                   }}
-                >
-                  <span class="sheet-ghost-plus">+</span>
-                  <span>new tag</span>
-                </button>
-              }
-            >
-              <input
-                class="sheet-board-add-tag-input"
-                classList={{ "sheet-input-invalid": tagInputInvalid() }}
-                autofocus
-                placeholder="new-tag"
-                onPointerDown={(e) => e.stopPropagation()}
-                onMouseDown={(e) => e.stopPropagation()}
-                onInput={() => setTagInputInvalid(false)}
-                onKeyDown={(e) => {
-                  e.stopPropagation();
-                  if (e.key === "Enter") commitNewTagColumn(e.currentTarget.value);
-                  else if (e.key === "Escape") {
+                  onBlur={() => {
                     setAddingTag(false);
                     setTagInputInvalid(false);
-                  }
-                }}
-                onBlur={() => {
-                  setAddingTag(false);
-                  setTagInputInvalid(false);
-                }}
-              />
-            </Show>
-          </section>
-        </Show>
-      </div>
-    </Show>
+                  }}
+                />
+              </Show>
+            </section>
+          </Show>
+        </div>
+      </Show>
+    </div>
   );
 }
 

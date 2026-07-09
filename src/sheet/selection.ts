@@ -694,6 +694,17 @@ function seamInsertTarget(sel: RowSeamSel | ColSeamSel): CellSel | null {
   return target;
 }
 
+export function growSheetEdge(gridId: string, edge: "row" | "col"): CellSel | null {
+  const b = boundsForGrid(gridId);
+  const target =
+    edge === "col"
+      ? seamInsertTarget(colSeamSel(gridId, b.cols, 0))
+      : seamInsertTarget(rowSeamSel(gridId, b.rows, 0));
+  if (!target) return null;
+  setCellSel(target);
+  return target;
+}
+
 function editInsertedFromSeam(sel: RowSeamSel | ColSeamSel, text: string | null): boolean {
   const target = seamInsertTarget(sel);
   if (!target) return true;

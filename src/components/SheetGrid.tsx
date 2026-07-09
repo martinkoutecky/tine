@@ -12,6 +12,7 @@ import {
   cellSurfaceKey,
   aggregateFooterPinned,
   colSeamSel,
+  growSheetEdge,
   rowSeamSel,
   setCellSel,
   setAggregateFooterPinned,
@@ -208,7 +209,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
   const [stableColumns, setStableColumns] = createSignal<string | null>(null);
   const containerOverlay = useContext(SheetContainerOverlayContext);
   const sheetOverlay = props.depth === 0 ? containerOverlay : null;
-  const sheetHovering = () => sheetOverlay?.hovering() ?? hovering();
+  const sheetHovering = () => (sheetOverlay?.hovering() ?? false) || hovering();
   const config = createMemo(() => configForBlock(props.id));
   const rows = createMemo(() =>
     blockChildren(props.id).map((id) => ({
@@ -224,6 +225,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
   const footerPinned = createMemo(() => aggregateFooterPinned(props.id));
   const showFooter = createMemo(() => hasAggregates() || footerPinned());
   const showFooterToggle = createMemo(() => !hasAggregates() && (sheetHovering() || footerPinned()));
+  const readOnly = () => blockPageReadOnly(props.id);
 
   const toggleFooter = (e: MouseEvent) => {
     e.preventDefault();
@@ -383,6 +385,25 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
     if (e.button === 0) e.stopPropagation();
   };
 
+  const stopGrowPointer = (e: MouseEvent | PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const growAndEdit = (edge: "row" | "col") => {
+    if (readOnly()) return;
+    const target = growSheetEdge(props.id, edge);
+    if (target) startCellEditing(target);
+  };
+
+  const activateEmptyGrid = (e: MouseEvent | KeyboardEvent) => {
+    if (readOnly()) return;
+    if (e instanceof KeyboardEvent && e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
+    e.stopPropagation();
+    growAndEdit("row");
+  };
+
   const columnValues = (col: number): string[] =>
     matrix().cells
       .filter((cell) => cell.col === col && !(config().header && cell.row === 0))
@@ -390,7 +411,26 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
 
   return (
     <Show when={props.depth < MAX_GRID_DEPTH} fallback={<SheetOutline ids={blockChildren(props.id)} depth={props.depth} />}>
-      <Show when={rows().length > 0} fallback={<div class="sheet-grid sheet-empty">empty grid</div>}>
+      <Show
+        when={rows().length > 0}
+        fallback={
+          <div
+            class="sheet-grid"
+            data-sheet-grid-id={props.id}
+            style={{ "grid-template-columns": "max-content" }}
+          >
+            <div
+              class="sheet-cell sheet-grid-placeholder"
+              tabIndex={readOnly() ? undefined : 0}
+              role={readOnly() ? undefined : "button"}
+              onPointerDown={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={activateEmptyGrid}
+              onKeyDown={activateEmptyGrid}
+            />
+          </div>
+        }
+      >
         <div
           ref={(el) => {
             gridRef = el;
@@ -434,6 +474,36 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
           </Show>
           <Show when={!sheetOverlay && showFooterToggle()}>
             {footerToggle()}
+          </Show>
+          <Show when={props.depth === 0 && !readOnly()}>
+            <button
+              type="button"
+              class="sheet-grid-add-col"
+              classList={{ "sheet-grid-add-visible": sheetHovering() }}
+              title="Add column"
+              onPointerDown={stopGrowPointer}
+              onMouseDown={stopGrowPointer}
+              onClick={(e) => {
+                stopGrowPointer(e);
+                growAndEdit("col");
+              }}
+            >
+              +
+            </button>
+            <button
+              type="button"
+              class="sheet-grid-add-row"
+              classList={{ "sheet-grid-add-visible": sheetHovering() }}
+              title="Add row"
+              onPointerDown={stopGrowPointer}
+              onMouseDown={stopGrowPointer}
+              onClick={(e) => {
+                stopGrowPointer(e);
+                growAndEdit("row");
+              }}
+            >
+              +
+            </button>
           </Show>
           <Show when={seamStyle()}>
             {(style) => <div class="sheet-seam-selected" style={style()} />}

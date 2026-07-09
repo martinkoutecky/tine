@@ -183,6 +183,17 @@ export function fieldIdsForBlocks(ids: readonly string[], opts: { includePage?: 
   return out;
 }
 
+export function boardGroupByOptions(ownerId: string): FieldId[] {
+  const out: FieldId[] = ["state", "priority", "tags"];
+  const seen = new Set<FieldId>(out);
+  for (const field of fieldIdsForBlocks(doc.byId[ownerId]?.children ?? [])) {
+    if (!field.startsWith("prop:") || seen.has(field)) continue;
+    seen.add(field);
+    out.push(field);
+  }
+  return out;
+}
+
 export function fieldLabel(field: FieldId): string {
   if (field.startsWith("prop:")) return field.slice(5);
   if (isFormulaField(field)) return field.slice("formula:".length);

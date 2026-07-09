@@ -197,6 +197,11 @@ coordinates, no lock-in.
   target (TreeSheets-style): arrow onto a seam, then **type to insert a
   row/column right there**; `Backspace`/`Delete` on a seam removes the adjacent
   row/column. Drag a column ruling to resize (double-click resets).
+- **Edge growth** — a grid is never a dead end. Hovering a top-level grid reveals
+  **+** affordances on its right and bottom edges that add a column or row (one
+  undo, cursor lands in the new cell); an empty grid shows a clickable placeholder
+  cell instead of inert text. (Deliberately different from tables' "Add row/Add
+  column" ghost buttons — grids grow positionally on their 2-D edges.)
 - **Clipboard interop** — copy a range as TSV (+ an HTML table, so it pastes
   into real spreadsheets); paste TSV/CSV to fill and grow the grid; paste
   indented text to build nested structure. Dropping a `.csv` or `.tsv` file
@@ -222,7 +227,10 @@ coordinates, no lock-in.
   and never stored back onto blocks.
 - **Task kanban** — `tine.view:: board` groups task/query rows by state,
   priority, or a property; dragging a card or pressing `Ctrl+←/→` writes the
-  grouping field back to the card.
+  grouping field back to the card. A **Group by** dropdown above the columns (and
+  a matching **Group by →** submenu in the board right-click menu) changes the
+  grouping axis — State, Priority, Tags, or any field — without hand-editing
+  `tine.group-by::`.
 - **Tag boards** — boards can group by tags too: a multi-tag card appears in
   each matching column, and moving it adds/removes the tag on that block.
 - **Formula group-by and fail-open filters** — boards can group on computed axes

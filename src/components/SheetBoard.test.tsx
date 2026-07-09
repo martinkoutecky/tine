@@ -2,10 +2,11 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { render } from "solid-js/web";
 import { createSignal, type JSX } from "solid-js";
 import { Block } from "./Block";
+import { ContextMenu } from "./ContextMenu";
 import { SheetBoard } from "./SheetBoard";
 import { initParser } from "../render/parse";
-import { doc, hasSelection, resetStore, setDoc, type FeedPage, type Node as StoreNode } from "../store";
-import { setToasts, setWorkflow, toasts } from "../ui";
+import { blockProperty, doc, hasSelection, resetStore, setDoc, undo, type FeedPage, type Node as StoreNode } from "../store";
+import { closeContextMenu, openSheetContextMenu, setToasts, setWorkflow, toasts } from "../ui";
 import { cellSel, handleCellSelectionKey, resetCellSelectionForTests, setCellSel } from "../sheet/selection";
 import { installBlockSelectionDrag } from "../blockDrag";
 import type { RefGroup } from "../types";
@@ -17,6 +18,7 @@ beforeAll(async () => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  closeContextMenu();
   resetCellSelectionForTests();
   resetStore();
   setToasts([]);
@@ -95,6 +97,12 @@ function pointer(type: string, x: number, y: number): Event {
   return new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y });
 }
 
+function contextMenu(target: EventTarget): MouseEvent {
+  const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 20, clientY: 30 });
+  target.dispatchEvent(event);
+  return event;
+}
+
 function tick(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
@@ -113,6 +121,109 @@ function queryGroups(ids: string[]): RefGroup[] {
 }
 
 describe("SheetBoard", () => {
+  it("changes group-by from the board context menu submenu and undo restores it", async () => {
+    setDoc({
+      byId: {
+        board: node("board", "Board\ntine.view:: board\ntine.group-by:: state", null, ["todo", "doing", "plain"]),
+        todo: node("todo", "TODO Write tests #alpha\nowner:: Codex", "board"),
+        doing: node("doing", "DOING Implement board #beta", "board"),
+        plain: node("plain", "No marker", "board"),
+      },
+      pages: [page(["board"])],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    const { root, dispose } = mount(() => (
+      <>
+        <Block id="board" />
+        <ContextMenu />
+      </>
+    ));
+
+    const board = root.querySelector(".sheet-board") as HTMLElement | null;
+    expect(board).not.toBeNull();
+    contextMenu(board!);
+
+    const submenu = [...document.querySelectorAll(".ctx-submenu")].find((el) =>
+      el.textContent?.includes("Group by")
+    ) as HTMLElement | undefined;
+    expect(submenu).toBeTruthy();
+    const items = [...submenu!.querySelectorAll(".ctx-submenu-menu > .ctx-item")] as HTMLElement[];
+    expect(items.map((el) => el.textContent?.trim())).toEqual(["✓ State", "Priority", "Tags", "owner"]);
+    expect(items[0].classList.contains("ctx-active")).toBe(true);
+
+    items.find((el) => el.textContent?.trim() === "Tags")!.click();
+    await tick();
+
+    expect(blockProperty("board", "tine.group-by")).toBe("tags");
+    expect([...root.querySelectorAll(".sheet-board-header")].map((h) => h.textContent?.trim())).toEqual([
+      "alpha1",
+      "beta1",
+      "(none)1",
+    ]);
+
+    undo();
+    await tick();
+
+    expect(blockProperty("board", "tine.group-by")).toBe("state");
+    expect([...root.querySelectorAll(".sheet-board-header")].map((h) => h.textContent?.trim())).toEqual([
+      "TODO1",
+      "DOING1",
+      "DONE0",
+      "(none)1",
+    ]);
+
+    dispose();
+  });
+
+  it("header group-by select writes the property and regroups", async () => {
+    setDoc({
+      byId: {
+        board: node("board", "Board\ntine.view:: board\ntine.group-by:: state", null, ["a", "b", "plain"]),
+        a: node("a", "TODO [#A] Write tests", "board"),
+        b: node("b", "DOING [#B] Implement board", "board"),
+        plain: node("plain", "No priority", "board"),
+      },
+      pages: [page(["board"])],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    const { root, dispose } = mount(() => <Block id="board" />);
+    const select = root.querySelector(".sheet-board-groupby") as HTMLSelectElement | null;
+    expect(select).not.toBeNull();
+    expect(select!.value).toBe("state");
+
+    select!.value = "priority";
+    select!.dispatchEvent(new Event("change", { bubbles: true }));
+    await tick();
+
+    expect(blockProperty("board", "tine.group-by")).toBe("priority");
+    expect([...root.querySelectorAll(".sheet-board-header")].map((h) => h.textContent?.trim())).toEqual([
+      "[#A]1",
+      "[#B]1",
+      "[#C]0",
+      "(none)1",
+    ]);
+
+    dispose();
+  });
+
+  it("group-by submenu is gated to board sheet context menus", async () => {
+    loadBoardDoc();
+    const { root, dispose } = mount(() => <ContextMenu />);
+
+    openSheetContextMenu(20, 30, "board", "grid", "children");
+    await tick();
+    expect(root.textContent).not.toContain("Group by");
+
+    openSheetContextMenu(20, 30, "board", "table", "children");
+    await tick();
+    expect(root.textContent).not.toContain("Group by");
+    expect(root.querySelector(".sheet-board-groupby")).toBeNull();
+
+    dispose();
+  });
+
   it("groups cards by state with counts and a trailing none column", () => {
     loadBoardDoc();
     const { root, dispose } = mount(() => <Block id="board" />);
@@ -504,7 +615,7 @@ describe("SheetBoard", () => {
     await tick();
 
     expect(root.querySelectorAll(".sheet-board")).toHaveLength(1);
-    expect(root.querySelector(".block-sheet-container > .sheet-scroll > .sheet-board")).not.toBeNull();
+    expect(root.querySelector(".block-sheet-container > .sheet-scroll > .sheet-board-wrap > .sheet-board")).not.toBeNull();
     expect(root.textContent).toContain("From query");
 
     dispose();
