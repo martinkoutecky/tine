@@ -5,7 +5,7 @@ import { FormulaEditor } from "./FormulaEditor";
 import { initParser } from "../render/parse";
 import { blockProperty, doc, resetStore, setDoc, type FeedPage, type Node as StoreNode } from "../store";
 import { closeFormulaEditor, openFormulaEditor } from "../ui";
-import { encodeFormulaExpr } from "../sheet/formula";
+import { decodeFormulaExpr, encodeFormulaExpr } from "../sheet/formula";
 
 beforeAll(async () => {
   await initParser();
@@ -55,10 +55,22 @@ function input(target: EventTarget): Event {
   return event;
 }
 
+function change(target: EventTarget): Event {
+  const event = new Event("change", { bubbles: true, cancelable: true });
+  target.dispatchEvent(event);
+  return event;
+}
+
 function saveButton(root: ParentNode): HTMLButtonElement {
   const button = [...root.querySelectorAll(".formula-editor-btn")]
     .find((el) => el.textContent?.trim() === "Save") as HTMLButtonElement | undefined;
   if (!button) throw new Error("missing Save button");
+  return button;
+}
+
+function rawToggle(root: ParentNode): HTMLButtonElement {
+  const button = root.querySelector(".formula-editor-raw-toggle") as HTMLButtonElement | null;
+  if (!button) throw new Error("missing raw toggle");
   return button;
 }
 
@@ -165,6 +177,7 @@ describe("FormulaEditor", () => {
       formulas: [],
       fields: ["points"],
     });
+    rawToggle(root).click();
     textarea = root.querySelector(".formula-editor-textarea") as HTMLTextAreaElement;
     textarea.value = "";
     input(textarea);
@@ -172,6 +185,129 @@ describe("FormulaEditor", () => {
 
     expect(blockProperty("table", "tine.filter")).toBeNull();
     expect(doc.byId.table.raw).toBe("Table");
+    dispose();
+  });
+
+  it("opens a conditional formula as an IF/THEN/ELSE face", () => {
+    loadEditorDoc();
+    const { root, dispose } = mount(() => <FormulaEditor />);
+    openFormulaEditor({
+      mode: "edit",
+      ownerId: "table",
+      x: 10,
+      y: 10,
+      name: "next",
+      expr: 'if(isEmpty(status), "todo", status)',
+      formulas: [],
+      fields: ["status"],
+      home: { kind: "block", id: "table" },
+    });
+
+    const face = root.querySelector(".formula-builder-if");
+    expect(face).not.toBeNull();
+    expect(face?.textContent).toContain("IF");
+    expect(face?.textContent).toContain("THEN");
+    expect(face?.textContent).toContain("ELSE");
+    expect(root.querySelector(".formula-editor-textarea")).toBeNull();
+    dispose();
+  });
+
+  it("changing the operator in a comparison rewrites the expression text", () => {
+    loadEditorDoc();
+    const { root, dispose } = mount(() => <FormulaEditor />);
+    openFormulaEditor({
+      mode: "filter",
+      ownerId: "table",
+      x: 10,
+      y: 10,
+      expr: "points > 2",
+      formulas: [],
+      fields: ["points"],
+    });
+
+    const op = root.querySelector(".formula-builder-operator") as HTMLSelectElement;
+    op.value = "<=";
+    change(op);
+    rawToggle(root).click();
+
+    const textarea = root.querySelector(".formula-editor-textarea") as HTMLTextAreaElement;
+    expect(textarea.value).toBe("points <= 2");
+    dispose();
+  });
+
+  it("selecting a field in a value face rewrites the expression text", () => {
+    loadEditorDoc();
+    const { root, dispose } = mount(() => <FormulaEditor />);
+    openFormulaEditor({
+      mode: "edit",
+      ownerId: "table",
+      x: 10,
+      y: 10,
+      name: "label",
+      expr: '"todo"',
+      formulas: [],
+      fields: ["status", "points"],
+      home: { kind: "block", id: "table" },
+    });
+
+    (root.querySelector(".formula-builder-value-face") as HTMLButtonElement).click();
+    const status = [...root.querySelectorAll(".formula-builder-pick-field")]
+      .find((el) => el.textContent?.trim() === "status") as HTMLButtonElement;
+    status.click();
+    rawToggle(root).click();
+
+    const textarea = root.querySelector(".formula-editor-textarea") as HTMLTextAreaElement;
+    expect(textarea.value).toBe("status");
+    dispose();
+  });
+
+  it("preserves an unrepresentable expression verbatim through the raw-expression face on save", () => {
+    loadEditorDoc();
+    const { root, dispose } = mount(() => <FormulaEditor />);
+    const original = "((price + qty) * (tax - discount)) / count";
+    openFormulaEditor({
+      mode: "add",
+      ownerId: "table",
+      x: 10,
+      y: 10,
+      expr: original,
+      formulas: [],
+      fields: ["price", "qty", "tax", "discount", "count"],
+    });
+
+    const name = root.querySelector(".formula-editor-input") as HTMLInputElement;
+    name.value = "complex";
+    input(name);
+    const raw = root.querySelector(".formula-builder-root-raw input") as HTMLInputElement;
+    expect(raw).not.toBeNull();
+    expect(raw.value).toBe(original);
+    saveButton(root).click();
+
+    expect(decodeFormulaExpr(blockProperty("table", "tine.formula.complex") ?? "")).toBe(original);
+    dispose();
+  });
+
+  it("the raw toggle round-trips builder to textarea and back without changing the expression", () => {
+    loadEditorDoc();
+    const { root, dispose } = mount(() => <FormulaEditor />);
+    openFormulaEditor({
+      mode: "filter",
+      ownerId: "table",
+      x: 10,
+      y: 10,
+      expr: "points > 2",
+      formulas: [],
+      fields: ["points"],
+    });
+
+    rawToggle(root).click();
+    let textarea = root.querySelector(".formula-editor-textarea") as HTMLTextAreaElement;
+    expect(textarea.value).toBe("points > 2");
+    rawToggle(root).click();
+    expect(root.querySelector(".formula-builder-operator")).not.toBeNull();
+    rawToggle(root).click();
+    textarea = root.querySelector(".formula-editor-textarea") as HTMLTextAreaElement;
+    expect(textarea.value).toBe("points > 2");
     dispose();
   });
 });

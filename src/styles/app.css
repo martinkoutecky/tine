@@ -4170,6 +4170,16 @@ body.file-drop-active::after {
   color: var(--text-secondary);
   font-size: 12px;
 }
+.formula-editor-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.formula-editor-raw-toggle {
+  font-size: 11px;
+  padding: 2px 7px;
+}
 .formula-editor-input,
 .formula-editor-textarea {
   width: 100%;
@@ -4219,6 +4229,101 @@ body.file-drop-active::after {
 .formula-editor-chip:hover {
   background: var(--bg-tertiary);
   color: var(--text-primary);
+}
+.formula-builder {
+  min-height: 66px;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+}
+.formula-builder-if,
+.formula-builder-condition,
+.formula-builder-condition-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px 6px;
+}
+.formula-builder-keyword {
+  align-self: center;
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.2;
+  padding: 3px 6px;
+}
+.formula-builder-value-face {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.formula-builder-operator {
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 12px;
+  padding: 2px 6px;
+  height: 24px;
+}
+.formula-builder-operator:focus,
+.formula-builder-raw-inline:focus {
+  outline: none;
+  border-color: var(--link-color);
+}
+.formula-builder-picker {
+  min-width: 232px;
+}
+.formula-builder-literal-row {
+  display: flex;
+  gap: 4px;
+  padding: 2px 4px;
+}
+.formula-builder-transform-args,
+.formula-builder-raw-commit {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px;
+}
+.formula-builder-transform-title {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+.formula-builder-raw-face {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  border: 1px dashed var(--border-color);
+  border-radius: 11px;
+  background: var(--bg-primary);
+  padding: 1px 6px;
+}
+.formula-builder-root-raw {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+.formula-builder-raw-inline {
+  min-width: 9em;
+  max-width: 100%;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font: 12px var(--mono-font, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+}
+.formula-builder-raw-inline.invalid,
+.formula-builder-raw-input.invalid {
+  color: var(--marker-todo);
+}
+.formula-builder-raw-error {
+  color: var(--marker-todo);
+  font-size: 11px;
 }
 .formula-editor-actions {
   display: flex;

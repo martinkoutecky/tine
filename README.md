@@ -100,7 +100,7 @@ raw speed. (Comparisons are against current Logseq desktop core, no plugins.)
 - **⚡ Global quick-capture** — bind `tine --capture` to a desktop hotkey and a small always-on-top
   box pops from *any* app with the full editor, filing a bullet to today's journal.
 - **🔁 Carry unfinished tasks forward** to today (last 7 / 30 / 365 days, or a configurable N).
-- **▦ Sheets** — recursive grids, markdown databases, typed field tables, formula columns + filters, task/tag boards, aggregates, colors, and CSV import over plain bullets.
+- **▦ Sheets** — recursive grids, markdown databases, typed field tables, formula columns + filters with a visual builder, task/tag boards, aggregates, colors, and CSV import over plain bullets.
 - **🛟 A real data-safety story** — conflict detection instead of silent overwrites, launch
   snapshots with one-click restore, and delete-to-trash; built to live safely on a graph you also
   edit from Logseq mobile over Syncthing.
@@ -265,7 +265,7 @@ file a good report, are in **[CONTRIBUTING.md](CONTRIBUTING.md)**.
 editable TreeSheets-style grid, field table, or board — while everything stays plain
 Logseq markdown/org (see [FEATURES.md](docs/FEATURES.md#sheets-2-d-grids)). It includes
 typed schemas, query-driven tables, task/tag boards, grouping, aggregates, markdown table
-conversion, computed columns, filters, and CSV/TSV import.
+conversion, computed columns with a visual formula builder, filters, and CSV/TSV import.
 
 **New — Split view:** panes with their own tabs/history, TreeSheets-style pane and seam
 navigation, `Ctrl+click` open-to-side, and tab drag to panes/seams (see

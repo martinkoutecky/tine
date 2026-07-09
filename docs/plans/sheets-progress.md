@@ -472,6 +472,21 @@ Plan: [sheets-phase7-plan.md](sheets-phase7-plan.md); DSL decided in ADR 0028.
   the page) and re-validated; binary rebuilt with the new onboarding
   template and deployed to `~/research/tine-sheets`.
 
+## Formula builder (Jul 9)
+
+The formula editor now defaults to a visual builder over the existing expression
+text. It mirrors QueryBuilder's data-safety model: parse text to the formula
+AST, edit immutable AST nodes through faces, deparse via `astToExpr`, and keep
+`encodeFormulaExpr` only for property-line storage armor. The round-trip gate is
+`parse(astToExpr(parse(s).ast)).ast == parse(s).ast`.
+
+MVP faces cover conditional `if(cond, then, else)`, comparison/boolean operators,
+value leaves, formula refs, literals, and member transforms from the current
+stdlib. Unsupported roots and subexpressions render as raw-expression faces; a
+root raw face is seeded from the original text so a valid but unrepresented
+formula saves verbatim unless the user edits it. The popup keeps the `</> raw`
+toggle for the old validating textarea.
+
 **Phase 7 leftovers** (deliberate): org-graph sample has no formula
 section yet (Martin actively testing; add on request); custom
 `values`-expression footer summaries; formula rename in the editor

@@ -228,10 +228,12 @@ coordinates, no lock-in.
   a non-boolean, or any row evaluates to an error, filtering is disabled for the
   whole view and Tine shows a **Filter disabled** chip instead of quietly hiding
   rows.
-- **Validating formula editor** — right-click a table or board and choose **Add
-  formula…** or **Edit filter…**. The popup live-validates the expression with a
-  caret marker, offers field/formula/stdlib chips, and keeps Save disabled until
-  the expression parses.
+- **Visual formula builder** — right-click a table or board and choose **Add
+  formula…** or **Edit filter…**. The popup opens on query-builder-style faces
+  for IF/THEN/ELSE, comparisons/booleans, leaves, formulas, literals, and
+  member transforms, with a `</> raw` toggle back to the validating textarea.
+  Expressions the builder cannot model render as raw-expression faces and save
+  verbatim, so hand-written formulas are never silently rewritten.
 - **Hierarchify / Flatten** — commit a field grouping into the outline, or pull
   grouped children back up into a flat table.
 - **Conversions** — convert a markdown pipe table block into a grid, or export
