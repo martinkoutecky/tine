@@ -5427,7 +5427,8 @@ ol.md-list { list-style: decimal; }
   grid-column: 2;
   font-family: inherit;
   font-size: inherit;
-  line-height: inherit;
+  line-height: 1.6;
+  min-height: 0;
   padding: 0;
   white-space: pre;
   overflow-x: auto;

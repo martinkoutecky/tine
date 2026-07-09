@@ -42,6 +42,13 @@ export function wrapCalc(inner: string): string {
   return "```calc\n" + inner + "\n```";
 }
 
+/** Serialize the calc editor's visible buffer for an exit commit. Accept either
+ *  the normal bare expression buffer or an already-fenced calc value, and always
+ *  write one canonical ```calc fence. */
+export function serializeCalcExitCommit(text: string): string {
+  return wrapCalc(calcSource(text) ?? text);
+}
+
 type Tok =
   | { t: "num"; v: number }
   | { t: "name"; v: string }

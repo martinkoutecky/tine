@@ -95,7 +95,7 @@ import { MEDIA_EDITORS } from "../mediaEditors";
 import { resolveMediaEditorCommand } from "../mediaEditorSettings";
 import { refreshAssetOnReturn } from "../assetRefresh";
 import { isMobilePlatform } from "../nativeChrome";
-import { calcSource, wrapCalc, evalCalc } from "../editor/calc";
+import { calcSource, serializeCalcExitCommit, evalCalc } from "../editor/calc";
 import { QueryMacro, EmbedMacro } from "./Macro";
 import { workflow, zoomInto, zoomedBlock, openContextMenu, openDatePicker, openBlockInSidebar, graphMeta, dataRev, setQueryBuilderAutoOpen, openPageProps, pushToast, dismissToast, autoPairing, typographyMode, timetrackingEnabled, logbookWithSecondSupport } from "../ui";
 import { seedAssetBlob } from "../assetCache";
@@ -910,18 +910,25 @@ export function Editor(props: { id: string }): JSX.Element {
     if (visible.includes("\n")) return null;
     return facetsOf(visible, pageFmt()).headingLevel;
   });
-  // Live calc preview: when this block is a ```calc fence, show the SAME results
-  // panel as the rendered view, recomputed on every keystroke (onInput commits
-  // to node().raw live, so editorValue() is current). Matches OG's calculator,
-  // which stays live while you type instead of only computing after you exit.
+  // Live calc preview: when this editor opened on a ```calc fence, show the SAME
+  // results panel as the rendered view, recomputed on every keystroke (onInput
+  // commits to node().raw live, so editorValue() is current). Matches OG's
+  // calculator, which stays live while you type instead of only computing after
+  // you exit.
   // A ```calc block edits like OG: the textarea shows ONLY the fence-stripped
   // expressions (calcLive), with a line-number gutter + live results beside it,
-  // and the fence is re-added on commit. `calcLive()` is non-null iff this is a
-  // calc block (so isCalc()), and `calcRows()` evaluates each expression line.
-  const calcLive = createMemo(() => calcSource(editorValue()));
-  const isCalc = () => calcLive() !== null;
+  // and the fence is re-added on commit. Calc mode is captured at editor mount,
+  // not re-derived from the latest committed raw, so an exit commit can still
+  // preserve the fence even if the committed raw is temporarily malformed.
+  const editingCalc = calcSource(editorValue()) !== null;
+  const calcLive = createMemo(() => {
+    if (!editingCalc) return null;
+    return calcSource(editorValue()) ?? editorValue();
+  });
+  const isCalc = () => editingCalc;
   const calcRows = createMemo(() => (isCalc() ? evalCalc(calcLive() ?? "") : []));
-  const commit = (text: string, opts?: { timetracking?: boolean }) => {
+  const commit = (text: string, opts?: { timetracking?: boolean; calc?: boolean }) => {
+    const commitAsCalc = opts?.calc ?? isCalc();
     // For calc, `text` is the bare expressions the user sees — re-fence it.
     // Keep any trailing space the user left (or that a `/priority` insert added as
     // a typing convenience) in the live buffer — OG keeps it while you edit and
@@ -934,13 +941,14 @@ export function Editor(props: { id: string }): JSX.Element {
     // unchanged, don't rewrite. Needed for org, where reattaching the hidden
     // drawer canonicalizes its position — so `next === raw` alone wouldn't catch
     // a block whose drawer wasn't already canonical, and would churn the file.
-    if (!isCalc() && text === editorValue()) return;
-    const visible = isCalc() ? wrapCalc(text) : text;
+    if (!commitAsCalc && text === editorValue()) return;
+    const visible = commitAsCalc ? serializeCalcExitCommit(text) : text;
     const next = joinProps(visible, splitProps(node().raw, hideFn(), pageFmt()).hidden, pageFmt());
     // No-op commit (text that reconstructs the identical raw): don't mark the page
     // dirty or push undo — avoids churn and can't rewrite the block's bytes.
     if (next === node().raw) return;
-    setRaw(props.id, next, opts);
+    const setRawOpts = opts && "timetracking" in opts ? { timetracking: opts.timetracking } : undefined;
+    setRaw(props.id, next, setRawOpts);
   };
 
   // Nest/un-nest an in-block list item by ±2 leading spaces (Tab/Shift-Tab when
@@ -2177,7 +2185,8 @@ export function Editor(props: { id: string }): JSX.Element {
     // SCHEDULED/DEADLINE planning line to its canonical position (OG layout) as we
     // commit — type-anywhere-while-editing, normalize-on-exit (M1c). The editor is
     // closing, so there is no caret to preserve.
-    commit(normalizePlanning(ref.value, pageFmt()));
+    const calcExit = isCalc();
+    commit(calcExit ? ref.value : normalizePlanning(ref.value, pageFmt()), calcExit ? { calc: true } : undefined);
     // Only clear if no other block grabbed editing focus.
     if (editingId() === props.id) endEdit("blur");
   };

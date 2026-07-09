@@ -1,5 +1,11 @@
-import { describe, it, expect } from "vitest";
-import { calcSource, evalCalc, wrapCalc } from "./calc";
+import { describe, it, expect, beforeAll } from "vitest";
+import { initParser } from "../render/parse";
+import { calcSource, evalCalc, serializeCalcExitCommit, wrapCalc } from "./calc";
+import { normalizePlanning } from "./planning";
+
+beforeAll(async () => {
+  await initParser();
+});
 
 // Just the output column, for terse assertions.
 const out = (src: string) => evalCalc(src).map((l) => l.output);
@@ -67,5 +73,23 @@ describe("wrapCalc / round-trip", () => {
   });
   it("re-fences edited expressions (incl. a newly added line)", () => {
     expect(wrapCalc("1 + 2\n100 + 10%")).toBe("```calc\n1 + 2\n100 + 10%\n```");
+  });
+});
+
+describe("calc exit commit serialization", () => {
+  it("re-fences the bare edit buffer and skips planning normalization", () => {
+    const edited = "1 + 1\n2 + 2\nSCHEDULED: <2026-07-06 Mon>";
+
+    expect(normalizePlanning(edited, "md")).toBe("1 + 1\nSCHEDULED: <2026-07-06 Mon>\n2 + 2");
+
+    const committed = serializeCalcExitCommit(edited);
+    expect(committed).toBe("```calc\n1 + 1\n2 + 2\nSCHEDULED: <2026-07-06 Mon>\n```");
+    expect(calcSource(committed)).toBe(edited);
+    expect(evalCalc(calcSource(committed)!).map((line) => line.input)).toEqual(edited.split("\n"));
+  });
+
+  it("does not double-fence an already fenced calc value", () => {
+    const raw = "```calc\n1 + 2\n```";
+    expect(serializeCalcExitCommit(raw)).toBe(raw);
   });
 });
