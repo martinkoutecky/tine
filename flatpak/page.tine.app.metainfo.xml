@@ -36,12 +36,18 @@
   <url type="bugtracker">https://github.com/martinkoutecky/tine/issues</url>
   <url type="vcs-browser">https://github.com/martinkoutecky/tine</url>
 
-  <!-- TODO(human/CI): confirm these screenshot URLs are reachable and stable on
-       tine.page (they are copied from website/img/*.png). Flathub requires at
-       least one working screenshot; images should be PNG/JPEG and reasonably
-       sized. Replace/extend as needed. -->
+  <!-- Screenshots are served from tine.page (copied from website/img/*.png),
+       which is deployed by the website's GitHub Pages workflow. -->
   <screenshots>
     <screenshot type="default">
+      <caption>Sheets — grid, field table, and board over plain bullets</caption>
+      <image>https://tine.page/img/web-sheets.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Split view with pane-select highlighting</caption>
+      <image>https://tine.page/img/web-split.png</image>
+    </screenshot>
+    <screenshot>
       <caption>Journals view</caption>
       <image>https://tine.page/img/hero.png</image>
     </screenshot>
@@ -80,6 +86,9 @@
   </keywords>
 
   <releases>
+    <release version="0.5.0" date="2026-07-09">
+      <url type="details">https://github.com/martinkoutecky/tine/blob/master/CHANGELOG.md</url>
+    </release>
     <release version="0.4.7" date="2026-07-08">
       <url type="details">https://github.com/martinkoutecky/tine/blob/master/CHANGELOG.md</url>
     </release>

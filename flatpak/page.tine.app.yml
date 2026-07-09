@@ -94,15 +94,12 @@ modules:
       - install -Dm644 src-tauri/icons/32x32.png      /app/share/icons/hicolor/32x32/apps/page.tine.app.png
     sources:
       # The app source, pinned to an exact commit (Flathub requires a pinned
-      # commit, not a moving tag/branch).
-      # ⚠️ RE-PIN BEFORE BUILDING: v0.4.7 still carries the OLD identifier
-      # (dev.tine.app) internally — this Flatpak's id is page.tine.app, so the
-      # source MUST be re-pinned to the FIRST released tag/commit that ships the
-      # page.tine.app identifier (the rename landed on master after v0.4.7).
+      # commit, not a moving tag/branch). v0.5.0 is the first release carrying the
+      # page.tine.app identifier.
       - type: git
         url: https://github.com/martinkoutecky/tine.git
-        tag: v0.4.7
-        commit: 9ac44b995a11f1365e08f5683878ad103c132439
+        tag: v0.5.0
+        commit: ef5c0ab7ea5e5a8eac3c28f6f5275b2d1b667dc9
       # Vendored dependency sources (generated — do not hand-edit).
       - cargo-sources.json
       - node-sources.json
