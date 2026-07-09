@@ -90,6 +90,23 @@ function copiedSheetsFile() {
   });
 }
 
+function copiedIndexFile() {
+  return graphFiles().find((p) => {
+    const rel = path.relative(G, p);
+    if (!rel.startsWith("pages/")) return false;
+    if (!/\.(md|org)$/.test(p)) return false;
+    const body = fs.readFileSync(p, "utf8");
+    return body.includes("# Tine Guide") && body.includes("[[tine-guide/Features/Sheets]]");
+  });
+}
+
+function copiedGuidePageFiles() {
+  return graphFiles().filter((p) => {
+    const rel = path.relative(G, p);
+    return rel.startsWith("pages/") && /\.(md|org)$/.test(p) && rel.includes("tine-guide");
+  });
+}
+
 async function clickButtonByText(selector, pattern) {
   return browser.execute((sel, source) => {
     const re = new RegExp(source);
@@ -145,18 +162,56 @@ try {
   const pagesAfterOpen = graphFiles().filter((p) => path.relative(G, p).startsWith("pages/"));
   check("opening bundled Guide wrote no graph page files", pagesAfterOpen.length === 0, pagesAfterOpen.join("\n"));
 
-  const clickedSheets = await browser.execute(() => {
+  const copied = await clickButtonByText(".guide-copy-btn", /^Copy the guide into your graph$/);
+  check("clicked Copy the guide into your graph on Guide index", copied);
+
+  for (let i = 0; i < 30 && (!copiedSheetsFile() || !copiedIndexFile()); i += 1) await sleep(250);
+  const copiedFile = copiedSheetsFile();
+  const copiedIndex = copiedIndexFile();
+  check("copy writes the whole guide namespace under graph pages", copiedGuidePageFiles().length >= 6, graphFiles().join("\n"));
+  check("copy writes a rewritten Tine Guide index", !!copiedIndex, graphFiles().join("\n"));
+  check("copy writes a real Sheets markdown page under graph pages", !!copiedFile, graphFiles().join("\n"));
+  if (copiedFile) {
+    const rel = path.relative(G, copiedFile);
+    const body = fs.readFileSync(copiedFile, "utf8");
+    check("Sheets copy file is the lowercase tine-guide namespace", rel.includes("tine-guide") || rel.includes("tine_guide"), rel);
+    check("Sheets copy file contains Logseq markdown guide content", body.includes("- # Sheets") && body.includes("Create one yourself"), body.slice(0, 400));
+  }
+  if (copiedIndex) {
+    const body = fs.readFileSync(copiedIndex, "utf8");
+    check("copied Guide index rewrites Sheets link", body.includes("[[tine-guide/Features/Sheets]]"), body.slice(0, 600));
+    check("copied Guide index has no dangling unprefixed Sheets link", !body.includes("[[Features/Sheets]]"), body.slice(0, 600));
+  }
+  check("copy writes referenced Guide assets", fs.existsSync(`${G}/assets/quick-capture.png`), graphFiles().join("\n"));
+
+  await browser.waitUntil(async () => {
+    const state = await browser.execute(() => ({
+      title: document.querySelector(".page-title")?.textContent?.trim() ?? "",
+      guideBanner: !!document.querySelector(".page-guide-banner"),
+      copyButtons: document.querySelectorAll(".guide-copy-btn").length,
+    }));
+    return state.title.includes("tine-guide/Tine Guide") && !state.guideBanner && state.copyButtons === 0;
+  }, { timeout: 10000, timeoutMsg: "Whole-guide copy did not navigate to the real copied Guide index" });
+  const copiedIndexState = await browser.execute(() => ({
+    title: document.querySelector(".page-title")?.textContent?.trim() ?? "",
+    guideBanner: !!document.querySelector(".page-guide-banner"),
+    copyButtons: document.querySelectorAll(".guide-copy-btn").length,
+    readOnlyBlocks: document.querySelectorAll(".block-content-wrapper.read-only").length,
+  }));
+  check("copied Guide index is in the user's graph", copiedIndexState.title.includes("tine-guide/Tine Guide") && !copiedIndexState.guideBanner && copiedIndexState.copyButtons === 0, JSON.stringify(copiedIndexState));
+
+  const clickedCopiedSheets = await browser.execute(() => {
     const link = [...document.querySelectorAll("a.page-ref")]
-      .find((el) => (el.textContent || "").includes("Features/Sheets"));
-    link?.setAttribute("data-probe", "guide-sheets-link");
+      .find((el) => (el.textContent || "").includes("tine-guide/Features/Sheets"));
+    link?.setAttribute("data-probe", "copied-sheets-link");
     return !!link;
   });
-  check("found Sheets guide link", clickedSheets);
-  if (clickedSheets) await browser.$('[data-probe="guide-sheets-link"]').click();
+  check("found rewritten Sheets link in copied Guide index", clickedCopiedSheets);
+  if (clickedCopiedSheets) await browser.$('[data-probe="copied-sheets-link"]').click();
   await browser.waitUntil(async () => {
     const title = await browser.execute(() => document.querySelector(".page-title")?.textContent?.trim() ?? "");
-    return title.includes("Features/Sheets");
-  }, { timeout: 10000, timeoutMsg: "Guide Sheets page did not open" });
+    return title.includes("tine-guide/Features/Sheets");
+  }, { timeout: 10000, timeoutMsg: "Copied Guide index link did not open copied Sheets page" });
 
   await browser.$(".sheet-grid").waitForExist({ timeout: 10000 });
   await browser.$(".sheet-table").waitForExist({ timeout: 10000 });
@@ -181,45 +236,9 @@ try {
       guideBanner: !!document.querySelector(".page-guide-banner"),
     };
   });
-  check("Sheets guide page shows live grid/table", sheetState.gridCount > 0 && sheetState.tableCount > 0, JSON.stringify(sheetState));
-  check("formula column evaluates in Guide", Array.isArray(sheetState.effort) && sheetState.effort[0] === "10" && sheetState.effort[1] === "6", JSON.stringify(sheetState));
-  check("Guide Sheets page is read-only", sheetState.guideBanner && sheetState.readOnlyBlocks > 0, JSON.stringify(sheetState));
-
-  await browser.execute(() => {
-    const block = document.querySelector(".block-content-wrapper.read-only");
-    block?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-  });
-  await sleep(350);
-  const editorOnGuide = await browser.execute(() => !!document.querySelector(".block-editor"));
-  check("clicking Guide block does not open editor", !editorOnGuide);
-
-  const copied = await clickButtonByText(".guide-copy-btn", /^Copy into my graph$/);
-  check("clicked Copy into my graph on Sheets guide", copied);
-
-  for (let i = 0; i < 30 && !copiedSheetsFile(); i += 1) await sleep(250);
-  const copiedFile = copiedSheetsFile();
-  check("copy writes a real markdown page under graph pages", !!copiedFile, graphFiles().join("\n"));
-  if (copiedFile) {
-    const rel = path.relative(G, copiedFile);
-    const body = fs.readFileSync(copiedFile, "utf8");
-    check("copy file is the lowercase tine-guide namespace", rel.includes("tine-guide") || rel.includes("tine_guide"), rel);
-    check("copy file contains Logseq markdown guide content", body.includes("- # Sheets") && body.includes("Create one yourself"), body.slice(0, 400));
-  }
-
-  await browser.waitUntil(async () => {
-    const state = await browser.execute(() => ({
-      guideBanner: !!document.querySelector(".page-guide-banner"),
-      copyButtons: document.querySelectorAll(".guide-copy-btn").length,
-    }));
-    return !state.guideBanner && state.copyButtons === 0;
-  }, { timeout: 10000, timeoutMsg: "Copied guide page did not navigate to the real graph page" });
-  const copiedState = await browser.execute(() => ({
-    title: document.querySelector(".page-title")?.textContent?.trim() ?? "",
-    guideBanner: !!document.querySelector(".page-guide-banner"),
-    copyButtons: document.querySelectorAll(".guide-copy-btn").length,
-    readOnlyBlocks: document.querySelectorAll(".block-content-wrapper.read-only").length,
-  }));
-  check("copied page is no longer a bundled Guide page", !copiedState.guideBanner && copiedState.copyButtons === 0, JSON.stringify(copiedState));
+  check("rewritten link navigates to copied Sheets page", sheetState.title.includes("tine-guide/Features/Sheets") && !sheetState.guideBanner, JSON.stringify(sheetState));
+  check("copied Sheets page shows live grid/table", sheetState.gridCount > 0 && sheetState.tableCount > 0, JSON.stringify(sheetState));
+  check("formula column evaluates in copied Sheets page", Array.isArray(sheetState.effort) && sheetState.effort[0] === "10" && sheetState.effort[1] === "6", JSON.stringify(sheetState));
   const editableBlock = await browser.execute(() => {
     const block = [...document.querySelectorAll(".block-content-wrapper:not(.read-only)")]
       .find((el) => (el.textContent || "").includes("Sheets turn ordinary") || (el.textContent || "").includes("Create one yourself"));
@@ -229,7 +248,7 @@ try {
   check("copied page has a normal editable text block", editableBlock);
   if (editableBlock) await browser.$('[data-probe="editable-copy-block"]').click();
   await browser.$(".block-editor").waitForExist({ timeout: 5000 });
-  check("copied page is editable", true);
+  check("copied Sheets page is editable", true);
 
   console.log(failures === 0 ? `\nALL PASS (${checks} checks)` : `\n${failures} FAILED of ${checks}`);
 } catch (e) {

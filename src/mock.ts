@@ -497,6 +497,28 @@ function mockGuidePages(): GuidePage[] {
   ];
 }
 
+function mockGuideCopyName(title: string): string {
+  return `tine-guide/${title}`;
+}
+
+function rewriteMockGuideRefs(raw: string, copied: Map<string, string>): string {
+  return raw.replace(/\[\[([^\]]+)\]\]/g, (match, target: string) => {
+    const to = copied.get(target.trim().toLowerCase());
+    return to ? `[[${to}]]` : match;
+  });
+}
+
+function cloneGuideBlockForCopy(block: BlockDto, copied: Map<string, string>): BlockDto {
+  const raw = rewriteMockGuideRefs(block.raw, copied);
+  return {
+    ...block,
+    id: nid(),
+    raw,
+    children: block.children.map((child) => cloneGuideBlockForCopy(child, copied)),
+    properties: propertyLines(raw),
+  };
+}
+
 export function mockBackend(): Backend {
   const all = [...PAGES, ...NAMED];
   const find = (name: string) =>
@@ -604,13 +626,31 @@ export function mockBackend(): Backend {
     async guidePages(): Promise<GuidePage[]> {
       return mockGuidePages().map((g) => ({ ...g, page: clonePage(g.page) }));
     },
-    async copyGuidePage(title: string): Promise<GuideCopyResult> {
-      const name = `tine-guide/${title}`;
-      if (find(name)) return { name, created: false };
-      const guide = mockGuidePages().find((g) => g.title.toLowerCase() === title.toLowerCase());
-      const blocks = guide ? guide.page.blocks.map(cloneBlock) : [b(`# ${title}`)];
-      all.push({ name, kind: "page", title: name, pre_block: null, blocks, format: "md", read_only: false, guide: false });
-      return { name, created: true };
+    async copyGuideIntoGraph(title: string): Promise<GuideCopyResult> {
+      const guides = mockGuidePages();
+      const viewed = guides.find((g) => g.title.toLowerCase() === title.trim().toLowerCase());
+      if (!viewed) throw new Error("unknown bundled guide page");
+      const copied = new Map(guides.map((g) => [g.title.toLowerCase(), mockGuideCopyName(g.title)]));
+      const createdPages: string[] = [];
+      const skippedPages: string[] = [];
+      for (const guide of guides) {
+        const name = mockGuideCopyName(guide.title);
+        if (find(name)) {
+          skippedPages.push(name);
+          continue;
+        }
+        const blocks = guide.page.blocks.map((block) => cloneGuideBlockForCopy(block, copied));
+        all.push({ name, kind: "page", title: name, pre_block: null, blocks, format: "md", read_only: false, guide: false });
+        createdPages.push(name);
+      }
+      if (!mockAssets["quick-capture.png"]) mockAssets["quick-capture.png"] = new Uint8Array([0]);
+      return {
+        name: mockGuideCopyName(viewed.title),
+        created: createdPages.length > 0,
+        created_pages: createdPages,
+        skipped_pages: skippedPages,
+        copied_assets: ["quick-capture.png"],
+      };
     },
     async setGuideAnnounced(announced: boolean): Promise<void> {
       mockGuideAnnounced = announced;

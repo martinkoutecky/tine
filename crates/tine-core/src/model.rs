@@ -1354,7 +1354,7 @@ impl Graph {
     }
 
     /// Create a Markdown page file with `content` if that logical page does not
-    /// already exist. Used by the explicit "Copy into my graph" guide action:
+    /// already exist. Used by the explicit guide-copy action:
     /// it is intentionally raw Markdown, not a serialized DTO, so copied guide
     /// pages stay ordinary Logseq template pages byte-for-byte.
     ///

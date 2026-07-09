@@ -90,8 +90,8 @@ export interface Backend {
   savePage(page: PageDto, baseRev: string | null, force?: boolean): Promise<string>;
   /** Bundled read-only Guide pages, compiled from the same templates as the demo graph. */
   guidePages(): Promise<GuidePage[]>;
-  /** Explicitly copy one bundled guide page into the real graph under `tine-guide/`. */
-  copyGuidePage(title: string): Promise<GuideCopyResult>;
+  /** Copy the bundled Guide into the real graph under `tine-guide/`. */
+  copyGuideIntoGraph(title: string): Promise<GuideCopyResult>;
   /** Persist the graph-local one-time Guide announcement flag. */
   setGuideAnnounced(announced: boolean): Promise<void>;
   getBacklinks(name: string): Promise<RefGroup[]>;
@@ -407,8 +407,8 @@ class TauriBackend implements Backend {
   guidePages() {
     return this.call<GuidePage[]>("guide_pages");
   }
-  copyGuidePage(title: string) {
-    return this.call<GuideCopyResult>("copy_guide_page", { title });
+  copyGuideIntoGraph(title: string) {
+    return this.call<GuideCopyResult>("copy_guide_into_graph", { title });
   }
   setGuideAnnounced(announced: boolean) {
     return this.call<void>("set_guide_announced", { announced });

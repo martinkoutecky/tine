@@ -66,18 +66,20 @@ export async function openGuide(): Promise<void> {
   }
 }
 
-export async function copyGuidePageToGraph(pageName: string): Promise<void> {
+export async function copyGuideIntoGraph(pageName: string): Promise<void> {
   const page = pageByName(pageName);
   const title = guideTitleFromName(page?.name ?? pageName);
   try {
-    const result = await backend().copyGuidePage(title);
+    const result = await backend().copyGuideIntoGraph(title);
     pushToast(
-      result.created ? `Copied "${title}" into your graph.` : `Opening your existing "${result.name}".`,
+      result.created
+        ? "Copied the guide into your graph under tine-guide/."
+        : "The guide is already in your graph - opened it.",
       "success"
     );
     openPage(result.name, "page");
   } catch (e) {
-    pushToast(`Couldn't copy "${title}" into your graph. (${String(e)})`, "error");
+    pushToast(`Couldn't copy the Guide into your graph. (${String(e)})`, "error");
   }
 }
 

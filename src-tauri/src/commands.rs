@@ -162,12 +162,12 @@ pub(crate) fn guide_pages() -> Vec<tine_core::onboarding::GuidePage> {
 }
 
 #[tauri::command]
-pub(crate) fn copy_guide_page(
+pub(crate) fn copy_guide_into_graph(
     title: String,
     state: State<'_, AppState>,
 ) -> Result<tine_core::onboarding::GuideCopyResult, String> {
     let result: Result<tine_core::onboarding::GuideCopyResult, String> = with_graph(&state, |g| {
-        tine_core::onboarding::copy_guide_page_into_graph(g, &title).map_err(|e| e.to_string())
+        tine_core::onboarding::copy_guide_into_graph(g, &title).map_err(|e| e.to_string())
     });
     result
 }

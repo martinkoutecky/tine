@@ -23,7 +23,7 @@ import { journalTitle } from "../journal";
 import { endEditForSurface, startEditing } from "../editorController";
 import type { PageDto, RefGroup } from "../types";
 import { tagRef } from "../tags";
-import { copyGuidePageToGraph, ensureGuidePagesLoaded, isGuidePageName } from "../guide";
+import { copyGuideIntoGraph, ensureGuidePagesLoaded, isGuidePageName } from "../guide";
 
 export const FEED_PAGE = 3;
 let journalOffset = 0;
@@ -407,8 +407,8 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
           <TagTableToggle page={props.page} />
         </Show>
         <Show when={props.page.guide}>
-          <button class="guide-copy-btn" onClick={() => void copyGuidePageToGraph(props.page.name)}>
-            Copy into my graph
+          <button class="guide-copy-btn" onClick={() => void copyGuideIntoGraph(props.page.name)}>
+            Copy the guide into your graph
           </button>
         </Show>
         <Show when={!props.page.guide}>
@@ -471,7 +471,9 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
       <Show when={props.page.guide}>
         <div class="page-guide-banner">
           Bundled Guide page - read-only and not written to your graph.
-          <button onClick={() => void copyGuidePageToGraph(props.page.name)}>Copy into my graph</button>
+          <button onClick={() => void copyGuideIntoGraph(props.page.name)}>
+            Copy the guide into your graph
+          </button>
         </div>
       </Show>
       <Show when={props.page.readOnly && !props.page.guide}>

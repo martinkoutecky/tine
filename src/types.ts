@@ -57,6 +57,9 @@ export interface GuidePage {
 export interface GuideCopyResult {
   name: string;
   created: boolean;
+  created_pages?: string[];
+  skipped_pages?: string[];
+  copied_assets?: string[];
 }
 
 export interface TemplateDto {

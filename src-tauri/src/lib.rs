@@ -18,7 +18,7 @@ mod watcher;
 use backup::{get_backup_keep, list_backups, restore_backup, set_backup_keep};
 use commands::{
     asset_trash_stats, block_ref_counts, block_referrers, delete_page, detect_media_editor,
-    copy_guide_page, edit_asset_external, empty_asset_trash,
+    copy_guide_into_graph, edit_asset_external, empty_asset_trash,
     get_backlinks, get_page, get_page_by_path, get_unlinked_refs, graph_source_files, import_asset,
     guide_pages, journal_content_days, journals_desc, list_journal_conflicts, list_orphan_assets, list_pages,
     list_sync_conflicts, list_templates, merge_pages, open_asset, page_aliases, page_icons,
@@ -330,7 +330,7 @@ pub fn run() {
             graph_source_files,
             save_page,
             guide_pages,
-            copy_guide_page,
+            copy_guide_into_graph,
             get_backlinks,
             get_unlinked_refs,
             warm_done,
