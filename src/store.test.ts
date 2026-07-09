@@ -1207,6 +1207,19 @@ describe("save engine (persistence)", () => {
     expect(await forceSave("Test")).toBe(true);
     expect(saveSpy.mock.calls.at(-1)![2]).toBe(true); // force flag
   });
+
+  it("deletes a CONFLICTED page rather than leaving it undeletable", async () => {
+    load([blk("x")]);
+    markDirty("Test");
+    saveSpy.mockRejectedValueOnce(new Error("conflict"));
+    await flushPage("Test"); // the save is now refused until the conflict is resolved
+    expect(isConflicted("Test")).toBe(true);
+    // Regression: deletePage used to flush-first and abort on the (impossible) flush,
+    // so a conflicted page could be neither saved nor deleted. Delete IS a resolution;
+    // the on-disk version still goes to .tine-trash (recoverable).
+    expect(await deletePage("Test", "page")).toBe(true);
+    expect(pageByName("Test")).toBeUndefined();
+  });
 });
 
 describe("undo survives a self-write reload echo (Ctrl+Z of a delete)", () => {

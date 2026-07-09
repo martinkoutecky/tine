@@ -377,6 +377,21 @@ export function SheetTable(props: {
     if (home?.kind === "block") setBlockProperty(home.id, key, null);
     else if (home) setPageProperty(home.name, key, null);
   };
+  // Start a brand-new formula column from a column header. The same command lives
+  // on the table's ⋮ / body menu, but a column header is where users look for it
+  // (and where the Guide points), so offer it here too.
+  const addFormula = (x: number, y: number) => {
+    openFormulaEditor({
+      mode: "add",
+      ownerId: props.ownerId,
+      schemaPage: props.schemaPage,
+      x,
+      y,
+      expr: "",
+      formulas: formulaEntries(),
+      fields: formulaHintFields(),
+    });
+  };
   const specForField = (field: FieldId, type: SchemaMenuType = "text"): FieldSpec | null => {
     if (BUILTIN_FIELDS.has(field)) return { field, type: "builtin" };
     return field.startsWith("prop:") ? { field, type } : null;
@@ -423,6 +438,7 @@ export function SheetTable(props: {
           },
         },
         { label: "Remove formula", disabled: !formulaWriteAllowed(home), run: () => removeFormula(field) },
+        { label: "Add formula…", disabled: !schemaWriteAllowed(), run: () => addFormula(e.clientX, e.clientY) },
       ]);
       return;
     }
@@ -447,6 +463,7 @@ export function SheetTable(props: {
     } else {
       actions.push({ label: "Remove from schema", disabled, run: () => removeFieldFromSchema(field) });
     }
+    actions.push({ label: "Add formula…", disabled, run: () => addFormula(e.clientX, e.clientY) });
     if (actions.length) openActionContextMenu(e.clientX, e.clientY, actions);
   };
 

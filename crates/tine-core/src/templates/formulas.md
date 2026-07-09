@@ -15,7 +15,7 @@ icon:: 🧮
 	- The **plan** column is a formula. Tine reads `hours` from each row and shows *focus block* or *quick task* — you never type it, and it updates the moment `hours` changes.
 - ## Add one yourself
 	- 1. Make a table (see [[Features/Sheets]]) with at least one field to compute from, for example a `hours=number` column.
-	- 2. **Right-click a column header** on the table (or board) and choose **Add formula…**. Give it a short lowercase name like `plan`.
+	- 2. **Right-click a table column header** — or right-click the table body / open its **⋮** menu — and choose **Add formula…**. Give it a short lowercase name like `plan`.
 	- 3. The **visual builder** opens. You build the value by clicking *faces* — no syntax to memorize. Press **Save** and a read-only column appears, filling in live.
 	- 4. To change it later, right-click the formula column and choose **Edit formula…**.
 - ## The building blocks

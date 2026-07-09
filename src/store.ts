@@ -345,9 +345,14 @@ export function forgetPage(name: string) {
  *  resurrecting a just-typed, never-saved page. Returns backend success. */
 export async function deletePage(name: string, kind: PageKind): Promise<boolean> {
   // Capture the current (possibly unsaved) content first, so the recoverable trash
-  // copy is the LATEST version — not the stale bytes on disk. If it can't be saved
-  // (an unresolved external conflict), abort rather than trash a stale file.
-  if ((isDirty(name) || isConflicted(name)) && !(await flushPage(name))) return false;
+  // copy is the LATEST version — not the stale bytes on disk. A CONFLICTED page can
+  // never flush (its save stays refused until the conflict is resolved); blocking
+  // the delete on that flush made such a page *undeletable* — the user could neither
+  // save nor discard it. Deleting is itself a resolution ("I don't want this page"),
+  // and the on-disk version still lands in .tine-trash (recoverable), so a conflict
+  // must not veto the delete. For a merely-dirty page we still flush first (to trash
+  // the latest bytes) and abort only if that genuinely fails.
+  if (isDirty(name) && !isConflicted(name) && !(await flushPage(name))) return false;
   // Tombstone first so any queued/in-flight save no-ops during the delete, but
   // DON'T drop the in-memory page until the backend actually deletes it — if the
   // delete fails, the page (and its unsaved edits) must survive.

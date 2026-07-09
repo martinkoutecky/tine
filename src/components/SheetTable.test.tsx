@@ -1028,6 +1028,7 @@ describe("SheetTable", () => {
     expect([...document.querySelectorAll(".ctx-item")].map((el) => el.textContent?.trim())).toEqual([
       "Edit formula…",
       "Remove formula",
+      "Add formula…", // a column header can also start a fresh formula column
     ]);
     clickMenuItem("Remove formula");
     expect(blockProperty("table", "tine.formula.total")).toBeNull();

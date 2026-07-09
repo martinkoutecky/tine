@@ -10,6 +10,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Add formula… from a column header.** Right-clicking a table column header now
+  offers **Add formula…** (it previously lived only on the table's ⋮/body menu, so
+  the Guide's "right-click a column header" instruction pointed at a command that
+  wasn't there). Works whether the header is a plain field or an existing formula
+  column.
+
+### Fixed
+
+- **A conflicted page can be deleted again.** When a page's on-disk copy changes
+  underneath an open edit (e.g. a Syncthing-delivered update), its save is refused
+  until the conflict is resolved — but deleting it also flushed-first and aborted on
+  that impossible save, so the page could be *neither* saved *nor* deleted. Delete is
+  itself a resolution now: the on-disk version still moves to `.tine-trash`
+  (recoverable) and the page is removed.
+
 - **Guide: a Formulas how-to page, and Sheets how-tos that teach the real
   gestures.** The in-app Guide gains a from-zero **Features/Formulas** page — what a
   formula column is, right-click a column → Add/Edit formula, the IF/THEN/ELSE and
