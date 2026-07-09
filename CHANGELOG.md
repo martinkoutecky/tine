@@ -22,8 +22,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - **In-app Guide.** Help → Guide and the *Open Guide* command now open bundled,
   read-only how-to pages for Sheets, quick capture, PDF annotation, tips, and the
   feature showcase. Guide pages live only in memory under `Tine-guide/` until you
-  explicitly use **Copy into my graph**, which creates or opens an editable
-  `tine-guide/...` page without overwriting existing notes.
+  explicitly use **Copy the guide into your graph**, which creates the complete
+  editable `tine-guide/...` namespace, rewrites inter-guide links to the copied
+  pages, includes referenced guide assets, and skips existing copied pages without
+  overwriting user edits.
 
 - **Split view.** Panes now have their own tabs and history, TreeSheets-style
   pane/seam keyboard navigation with type-at-a-seam-to-split, `Ctrl+click` opens

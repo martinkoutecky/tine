@@ -102,8 +102,8 @@ raw speed. (Comparisons are against current Logseq desktop core, no plugins.)
 - **🔁 Carry unfinished tasks forward** to today (last 7 / 30 / 365 days, or a configurable N).
 - **▦ Sheets** — recursive grids, markdown databases, typed field tables, formula columns + filters with a visual builder, task/tag boards, aggregates, colors, and CSV import over plain bullets.
 - **📖 In-app Guide** — Help → Guide opens bundled, read-only how-to pages beside your own
-  graph, and **Copy into my graph** turns any guide page into an editable `tine-guide/…`
-  sandbox without touching the originals.
+  graph, and **Copy the guide into your graph** creates an editable, interlinked
+  `tine-guide/…` sandbox without touching the originals.
 - **🛟 A real data-safety story** — conflict detection instead of silent overwrites, launch
   snapshots with one-click restore, and delete-to-trash; built to live safely on a graph you also
   edit from Logseq mobile over Syncthing.

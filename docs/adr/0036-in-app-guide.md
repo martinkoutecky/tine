@@ -12,7 +12,8 @@ their own graph is open, with live Tine rendering and links to adjacent features
 The hard constraint is data safety. A guide page should behave like a page for
 rendering, navigation, and tabs, but it must not silently become a real file in the
 user's graph. The only write the Guide is allowed to perform is the explicit
-"Copy into my graph" action, and that action must never overwrite an existing note.
+"Copy the guide into your graph" action, and that action must never overwrite an
+existing note.
 
 ## Decision
 
@@ -26,17 +27,20 @@ and normal edit/rename/context-menu actions. The save boundary refuses to persis
 `guide` page, and the core graph write path has the same guard as a second line of
 defense.
 
-The only mutation path is `copy_guide_page`, which writes markdown under the real
-`tine-guide/` namespace if that page does not exist, opens the existing page if it
-does, and then navigates to the real graph page. The one-time Guide announcement is
-stored in graph config metadata, not browser localStorage, so it survives WebKit's
-storage behavior and stays graph-scoped.
+The only mutation path is `copy_guide_into_graph`, which copies the complete
+bundled guide set under the real `tine-guide/` namespace. It rewrites links whose
+targets are other bundled guide pages to point at the copied namespace, copies
+referenced bundled assets into `assets/` without clobbering existing files, skips
+any existing `tine-guide/*` pages, and then navigates to the copied counterpart of
+the guide page the user was viewing. The one-time Guide announcement is stored in
+graph config metadata, not browser localStorage, so it survives WebKit's storage
+behavior and stays graph-scoped.
 
 ## Consequences
 
 The Guide can reuse the normal page renderer, tabs, and link interactions without
-inventing a separate documentation viewer. It also gives users an editable sandbox
-that remains plain Logseq markdown after copy.
+inventing a separate documentation viewer. It also gives users an editable,
+interlinked sandbox namespace that remains plain Logseq markdown after copy.
 
 The cost is that page-like code now has to respect a second non-persistent page
 class in addition to organic read-only pages. Any new persistence, search, or page

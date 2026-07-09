@@ -364,8 +364,9 @@ within a column; merged cells are still v2+.
 - **In-app Guide** — Help → Guide (or the *Open Guide* command) loads bundled,
   read-only how-to pages under the virtual `Tine-guide/` namespace. Guide links stay
   inside that virtual namespace, guide pages are hidden from search/page lists/backlinks,
-  and **Copy into my graph** creates or opens an editable `tine-guide/...` page without
-  overwriting an existing one.
+  and **Copy the guide into your graph** creates the complete editable
+  `tine-guide/...` namespace with inter-guide links rewritten, without overwriting
+  existing copied pages.
 - ⊕ **Right-click page rows in the left sidebar** (favorites, recents, all pages,
   namespace tree) for the full page menu, including trash-backed Delete. Logseq core
   has page-title journal delete, but not sidebar-row delete.
