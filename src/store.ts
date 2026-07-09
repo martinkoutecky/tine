@@ -74,6 +74,8 @@ export interface FeedPage {
   format: Format;
   /** True for an org page Tine can't round-trip — shown but not editable. */
   readOnly: boolean;
+  /** Bundled in-app Guide page: read-only and ephemeral. */
+  guide: boolean;
   /** Graph-root-relative file this page was loaded from. Sent back on save so a
    *  page pinned to a SPECIFIC file (a duplicate-day stray, #21) saves to its own
    *  file, not the canonical one. Empty/absent for a brand-new page (resolved by
@@ -215,6 +217,7 @@ function toFeedPage(dto: PageDto, byId: Record<string, Node>): FeedPage {
     roots,
     format: dto.format ?? "md",
     readOnly: dto.read_only ?? false,
+    guide: dto.guide ?? false,
     path: dto.path,
   };
 }
@@ -297,6 +300,20 @@ export function ensurePageLoaded(dto: PageDto) {
   if (doc.pages.some((p) => p.name === dto.name)) return;
   upsertPage(dto);
   evictIfNeeded();
+}
+
+/** Load/reload bundled Guide pages into the working set without making them the
+ *  main feed. Re-open uses this to re-derive the read-only virtual pages from
+ *  the backend templates instead of trusting stale in-memory copies. */
+export function loadGuidePages(dtos: PageDto[]) {
+  for (const dto of dtos) {
+    upsertPage({ ...dto, read_only: true, guide: true });
+  }
+  evictIfNeeded();
+}
+
+export function isGuidePage(name: string): boolean {
+  return pageByName(name)?.guide ?? false;
 }
 
 /** Drop a page from the working set + feed and clear its dirty/baseline/conflict
@@ -553,6 +570,7 @@ export function pageToDto(pageName: string): PageDto | null {
     // Pin the save to the exact file this page came from (#21). Absent for a
     // brand-new page → the backend resolves the file by name, as before.
     path: p.path,
+    guide: p.guide,
   };
 }
 

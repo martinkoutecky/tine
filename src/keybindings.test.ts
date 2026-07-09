@@ -158,6 +158,15 @@ describe("keyboard binding strings", () => {
     expect(byId["pane/select-mode"]).toMatchObject({ binding: "", scope: "global" });
   });
 
+  it("exposes Open Guide as a palette command without a default chord", () => {
+    const byId = Object.fromEntries(commandDefaults().map((c) => [c.id, c]));
+    expect(byId["guide/open"]).toMatchObject({
+      binding: "",
+      label: "Open Guide",
+      scope: "global",
+    });
+  });
+
   it("binds developer tools to mod+shift+j as a global command (#31)", () => {
     // Ctrl+Shift+I / F12 / Ctrl+Shift+C are grabbed by WebKitGTK's own inspector;
     // mod+shift+j (Chrome's console shortcut) is free and reaches the dispatcher.

@@ -3,7 +3,7 @@
 // backend's shape so the UI behaves identically.
 
 import type { Backend, GpuEnv, DebugInfo } from "./backend";
-import type { BlockDto, GraphMeta, Highlight, PageDto, PageEntry, RefGroup } from "./types";
+import type { BlockDto, GraphMeta, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, RefGroup } from "./types";
 import { SAMPLE_PDF_B64 } from "./sample-pdf";
 import { hlsPageName } from "./pdf";
 import { MARKER_RE } from "./markers";
@@ -382,6 +382,7 @@ const mockHighlights: Record<string, { label: string; highlights: Highlight[] }>
 // In-memory UI session for the browser mock (no backend file).
 let mockSession: string | null = null;
 let mockLinkFirstMatch = false;
+let mockGuideAnnounced = false;
 const mockAssets: Record<string, Uint8Array> = {};
 const mockAppBools: Record<string, boolean> = {};
 const mockAppStrings: Record<string, string> = {};
@@ -421,6 +422,79 @@ function decodeB64(b64: string): Uint8Array {
   const arr = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
   return arr;
+}
+
+function cloneBlock(block: BlockDto): BlockDto {
+  return { ...block, children: block.children.map(cloneBlock) };
+}
+
+function clonePage(page: PageDto): PageDto {
+  return { ...page, blocks: page.blocks.map(cloneBlock) };
+}
+
+function mockGuidePage(title: string, blocks: BlockDto[]): GuidePage {
+  return {
+    title,
+    markdown: `- # ${title}\n`,
+    page: {
+      name: `Tine-guide/${title}`,
+      kind: "page",
+      title,
+      pre_block: null,
+      blocks,
+      format: "md",
+      read_only: true,
+      guide: true,
+    },
+  };
+}
+
+function mockGuidePages(): GuidePage[] {
+  return [
+    mockGuidePage("Tine Guide", [
+      b("# Tine Guide", [
+        b("[[Features/Sheets]] - create grids, tables, boards, queries, and formulas"),
+        b("[[Features/Quick capture]] - capture into your graph from anywhere"),
+        b("[[Features/PDF annotation]] - highlight PDFs beside your notes"),
+        b("[[Features/Tips & shortcuts]] - learn the daily commands"),
+      ]),
+    ]),
+    mockGuidePage("Features/Sheets", [
+      b("# Sheets"),
+      b(
+        "## Positional grid\ntine.view:: grid\ntine.header:: true",
+        [
+          b("", [b("Area"), b("Owner"), b("Notes")]),
+          b("", [b("Spec"), b("Martin"), b("Keep v1 narrow")]),
+          b("", [b("Build"), b("Codex"), b("Live grid in the Guide")]),
+        ],
+        false,
+        [["tine.view", "grid"], ["tine.header", "true"]]
+      ),
+      b(
+        "## Formula table\ntine.view:: table\ntine.fields:: status=enum:todo,reading,done;rating=number;done=checkbox\ntine.formula.effort:: rating * 2",
+        [
+          b("Bases study\nstatus:: reading\nrating:: 5\ndone:: false"),
+          b("CSV import notes\nstatus:: todo\nrating:: 3\ndone:: false"),
+        ],
+        false,
+        [
+          ["tine.view", "table"],
+          ["tine.fields", "status=enum:todo,reading,done;rating=number;done=checkbox"],
+          ["tine.formula.effort", "rating * 2"],
+        ]
+      ),
+      b("## Create one yourself", [
+        b("1. Type a heading block and add `tine.view:: grid` under it."),
+        b("2. Add child rows, one bullet per row and one child bullet per cell."),
+        b("3. What you should see: the outline renders as a live grid."),
+      ]),
+    ]),
+    mockGuidePage("Features/Quick capture", [b("# Global quick-capture"), b("## Create one yourself", [b("1. Bind `tine --capture` to a desktop shortcut."), b("2. What you should see: a capture box opens over any app.")])]),
+    mockGuidePage("Features/PDF annotation", [b("# PDF annotation"), b("## Create one yourself", [b("1. Drop a PDF into the graph and open it."), b("2. What you should see: highlights become linked note blocks.")])]),
+    mockGuidePage("Features/Tips & shortcuts", [b("# Tips & shortcuts"), b("## Create one yourself", [b("1. Press Ctrl+K and run a command."), b("2. What you should see: the command runs without leaving the page.")])]),
+    mockGuidePage("Feature showcase", [b("# Feature showcase"), b("## Create one yourself", [b("1. Create one block per construct you want to inspect."), b("2. What you should see: each construct renders live.")])]),
+  ];
 }
 
 export function mockBackend(): Backend {
@@ -478,6 +552,7 @@ export function mockBackend(): Backend {
         logbook_with_second_support: true,
         logbook_enabled_in_timestamped_blocks: true,
         logbook_enabled_in_all_blocks: false,
+        guide_announced: mockGuideAnnounced,
         macros: {
           // Demo user macros so the kitchen-sink exercises inline and block expansions.
           poem: "Roses are $1, violets are $2.",
@@ -525,6 +600,20 @@ export function mockBackend(): Backend {
     },
     async savePage(_page: PageDto, _baseRev: string | null, _force?: boolean): Promise<string> {
       return "mock-rev"; // no-op in mock
+    },
+    async guidePages(): Promise<GuidePage[]> {
+      return mockGuidePages().map((g) => ({ ...g, page: clonePage(g.page) }));
+    },
+    async copyGuidePage(title: string): Promise<GuideCopyResult> {
+      const name = `tine-guide/${title}`;
+      if (find(name)) return { name, created: false };
+      const guide = mockGuidePages().find((g) => g.title.toLowerCase() === title.toLowerCase());
+      const blocks = guide ? guide.page.blocks.map(cloneBlock) : [b(`# ${title}`)];
+      all.push({ name, kind: "page", title: name, pre_block: null, blocks, format: "md", read_only: false, guide: false });
+      return { name, created: true };
+    },
+    async setGuideAnnounced(announced: boolean): Promise<void> {
+      mockGuideAnnounced = announced;
     },
     async createGraph(_dir: string): Promise<string> {
       return "/mock/new-graph"; // no real scaffolding in the browser mock

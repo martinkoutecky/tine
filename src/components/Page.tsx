@@ -23,6 +23,7 @@ import { journalTitle } from "../journal";
 import { endEditForSurface, startEditing } from "../editorController";
 import type { PageDto, RefGroup } from "../types";
 import { tagRef } from "../tags";
+import { copyGuidePageToGraph, ensureGuidePagesLoaded, isGuidePageName } from "../guide";
 
 export const FEED_PAGE = 3;
 let journalOffset = 0;
@@ -102,6 +103,13 @@ export function PageView(): JSX.Element {
           else feedDone = false;
           loadFeed(withToday(js), { endEdit: false });
         } else {
+          if (isGuidePageName(r.name)) {
+            await ensureGuidePagesLoaded(true);
+            if (epoch !== graphEpoch()) return;
+            setReady(true);
+            router.restoreScrollFor(r);
+            return;
+          }
           // A path-pinned route (#21) loads that SPECIFIC file — the way to reach a
           // duplicate-day stray that shares a (kind,name) with the canonical day;
           // everything else resolves by name as before.
@@ -230,16 +238,18 @@ export function PageView(): JSX.Element {
             <LoadMore onHit={loadMore} />
           </Show>
           <Show when={currentRoute().kind === "page" && pagesToRender()[0]}>
-            <Show when={pagesToRender()[0].kind === "page"}>
+            <Show when={pagesToRender()[0].kind === "page" && !pagesToRender()[0].guide}>
               <NamespaceHierarchy name={pagesToRender()[0].name} />
             </Show>
             <Show
-              when={pagesToRender()[0].kind === "page" && tagTableEnabled(pagesToRender()[0].name)}
-              fallback={<LinkedReferences name={pagesToRender()[0].name} />}
+              when={pagesToRender()[0].kind === "page" && !pagesToRender()[0].guide && tagTableEnabled(pagesToRender()[0].name)}
+              fallback={<Show when={!pagesToRender()[0].guide}><LinkedReferences name={pagesToRender()[0].name} /></Show>}
             >
               <TagPageTable pageName={pagesToRender()[0].name} />
             </Show>
-            <UnlinkedReferences name={pagesToRender()[0].name} />
+            <Show when={!pagesToRender()[0].guide}>
+              <UnlinkedReferences name={pagesToRender()[0].name} />
+            </Show>
           </Show>
         </div>
       }>
@@ -298,6 +308,7 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
   const [renaming, setRenaming] = createSignal(false);
   const [newName, setNewName] = createSignal("");
   const startRename = () => {
+    if (props.page.guide || props.page.readOnly) return;
     if (props.page.kind !== "page") return; // journals are named by their date
     setNewName(props.page.name);
     setRenaming(true);
@@ -351,9 +362,9 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
           <h1
             class="page-title"
             classList={{ "journal-title": props.page.kind === "journal" }}
-            title={props.page.kind === "page" ? "Double-click to rename (shift-click → sidebar, middle-click → new tab)" : "Shift-click to open in sidebar, middle-click → new tab"}
+            title={props.page.guide ? "Bundled Guide page" : props.page.kind === "page" ? "Double-click to rename (shift-click → sidebar, middle-click → new tab)" : "Shift-click to open in sidebar, middle-click → new tab"}
             onClick={(e) => {
-              if (e.shiftKey) openPageInSidebar(props.page.name, props.page.kind);
+              if (e.shiftKey && !props.page.guide) openPageInSidebar(props.page.name, props.page.kind);
               else router.openPage(props.page.name, props.page.kind);
             }}
             onAuxClick={(e) => {
@@ -364,6 +375,7 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
             }}
             onDblClick={startRename}
             onContextMenu={(e) => {
+              if (props.page.guide) return;
               e.preventDefault();
               openPageContextMenu(e.clientX, e.clientY, props.page.name, props.page.kind);
             }}
@@ -390,9 +402,17 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
             <EmojiText text={props.page.title} />
           </h1>
         </Show>
-        <CarryActions page={props.page} />
-        <TagTableToggle page={props.page} />
-        <button
+        <Show when={!props.page.guide}>
+          <CarryActions page={props.page} />
+          <TagTableToggle page={props.page} />
+        </Show>
+        <Show when={props.page.guide}>
+          <button class="guide-copy-btn" onClick={() => void copyGuidePageToGraph(props.page.name)}>
+            Copy into my graph
+          </button>
+        </Show>
+        <Show when={!props.page.guide}>
+          <button
             class="page-gear"
             title="Page properties (alias, public, tags, icon, title)"
             onClick={(e) => openPageProps(props.page.name, e.clientX, e.clientY)}
@@ -406,23 +426,24 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
                 stroke-linejoin="round"
               />
             </svg>
-        </button>
-        <button
-          class="fav-star"
-          classList={{ active: isFavorite(props.page.name) }}
-          title={isFavorite(props.page.name) ? "Unfavorite" : "Add to favorites"}
-          onClick={() => toggleFavorite(props.page.name, props.page.kind)}
-        >
-          <svg viewBox="0 0 24 24" class="star-icon" aria-hidden="true">
-            <path
-              d="M12 3.5l2.6 5.27 5.82.85-4.21 4.1.99 5.79L12 16.77l-5.2 2.73.99-5.79-4.21-4.1 5.82-.85z"
-              fill={isFavorite(props.page.name) ? "currentColor" : "none"}
-              stroke="currentColor"
-              stroke-width="1.6"
-              stroke-linejoin="round"
-            />
-          </svg>
-        </button>
+          </button>
+          <button
+            class="fav-star"
+            classList={{ active: isFavorite(props.page.name) }}
+            title={isFavorite(props.page.name) ? "Unfavorite" : "Add to favorites"}
+            onClick={() => toggleFavorite(props.page.name, props.page.kind)}
+          >
+            <svg viewBox="0 0 24 24" class="star-icon" aria-hidden="true">
+              <path
+                d="M12 3.5l2.6 5.27 5.82.85-4.21 4.1.99 5.79L12 16.77l-5.2 2.73.99-5.79-4.21-4.1 5.82-.85z"
+                fill={isFavorite(props.page.name) ? "currentColor" : "none"}
+                stroke="currentColor"
+                stroke-width="1.6"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </button>
+        </Show>
       </div>
       <Show when={aliasNames(props.page.preBlock, props.page.format).length}>
         <div class="page-aliases" title="Also known as — other names that link here">
@@ -447,7 +468,13 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
           </For>
         </div>
       </Show>
-      <Show when={props.page.readOnly}>
+      <Show when={props.page.guide}>
+        <div class="page-guide-banner">
+          Bundled Guide page - read-only and not written to your graph.
+          <button onClick={() => void copyGuidePageToGraph(props.page.name)}>Copy into my graph</button>
+        </div>
+      </Show>
+      <Show when={props.page.readOnly && !props.page.guide}>
         <div class="page-readonly-banner" title="Tine can't reproduce this .org file byte-for-byte, so it's shown read-only to avoid corrupting it. Edit it in Logseq/Emacs.">
           Read-only — this <code>.org</code> file uses a structure Tine can't safely
           round-trip yet, so it won't be edited here.

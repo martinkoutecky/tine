@@ -6,6 +6,8 @@ import type {
   AdvancedQueryResult,
   AssetInfo,
   GraphMeta,
+  GuideCopyResult,
+  GuidePage,
   Highlight,
   PageDto,
   PageEntry,
@@ -86,6 +88,12 @@ export interface Backend {
    *  rejects with "conflict" if the file changed on disk since then (unless
    *  `force`). Returns the new on-disk rev to use as the next baseline. */
   savePage(page: PageDto, baseRev: string | null, force?: boolean): Promise<string>;
+  /** Bundled read-only Guide pages, compiled from the same templates as the demo graph. */
+  guidePages(): Promise<GuidePage[]>;
+  /** Explicitly copy one bundled guide page into the real graph under `tine-guide/`. */
+  copyGuidePage(title: string): Promise<GuideCopyResult>;
+  /** Persist the graph-local one-time Guide announcement flag. */
+  setGuideAnnounced(announced: boolean): Promise<void>;
   getBacklinks(name: string): Promise<RefGroup[]>;
   getUnlinkedRefs(name: string): Promise<RefGroup[]>;
   /** True once the background whole-graph warm has built derived graph-open caches. */
@@ -395,6 +403,15 @@ class TauriBackend implements Backend {
   }
   savePage(page: PageDto, baseRev: string | null, force = false) {
     return this.call<string>("save_page", { page, baseRev, force });
+  }
+  guidePages() {
+    return this.call<GuidePage[]>("guide_pages");
+  }
+  copyGuidePage(title: string) {
+    return this.call<GuideCopyResult>("copy_guide_page", { title });
+  }
+  setGuideAnnounced(announced: boolean) {
+    return this.call<void>("set_guide_announced", { announced });
   }
   getBacklinks(name: string) {
     return this.call<RefGroup[]>("get_backlinks", { name });

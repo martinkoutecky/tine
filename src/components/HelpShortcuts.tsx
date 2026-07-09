@@ -10,6 +10,7 @@ import {
 } from "../ui";
 import { BUILTIN_KEYS, type BuiltinKeyDef, type ShortcutScope } from "../keybindings";
 import { EmojiText } from "../render/emoji";
+import { openGuide } from "../guide";
 import "../styles/help.css";
 
 const REPO = "https://github.com/martinkoutecky/tine";
@@ -18,7 +19,12 @@ type HelpItem =
   | { label: string; detail: string; run: () => void }
   | { label: string; detail: string; href: string };
 
-const HELP_ITEMS: HelpItem[] = [
+export const HELP_ITEMS: HelpItem[] = [
+  {
+    label: "Guide",
+    detail: "Open the in-app how-to guide",
+    run: () => void openGuide(),
+  },
   {
     label: "Keyboard shortcuts",
     detail: "Open Settings on the shortcuts tab",

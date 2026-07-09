@@ -40,6 +40,7 @@ import {
   pageByName,
   carryUnfinished,
   ensurePageLoaded,
+  loadGuidePages,
   exportNodesFor,
   prevVisible,
   nextVisible,
@@ -1093,6 +1094,26 @@ describe("save engine (persistence)", () => {
     expect(await flushPage("Test")).toBe(false);
     expect(isDirty("Test")).toBe(true);
     expect(await flushPage("Test")).toBe(true); // retry succeeds
+  });
+
+  it("no-ops guide-flagged pages at the persistence boundary", async () => {
+    load([blk("real page keeps doc.loaded true")]);
+    loadGuidePages([
+      {
+        name: "Tine-guide/Features/Sheets",
+        kind: "page",
+        title: "Features/Sheets",
+        pre_block: null,
+        blocks: [blk("guide block")],
+        read_only: true,
+        guide: true,
+      },
+    ]);
+    markDirty("Tine-guide/Features/Sheets");
+
+    expect(await flushPage("Tine-guide/Features/Sheets")).toBe(true);
+    expect(saveSpy).not.toHaveBeenCalled();
+    expect(isDirty("Tine-guide/Features/Sheets")).toBe(false);
   });
 
   it("a tombstoned (deleted) page is never written", async () => {

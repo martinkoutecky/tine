@@ -14,6 +14,7 @@ import { CUSTOM_CSS_STYLE_ID, ensureLsShimStyle } from "./lsShim";
 import { ensureThemeStyle } from "./themeGallery";
 import { isMobile, platformKind } from "./platform";
 import type { BlockDto } from "./types";
+import { maybeShowGuideAnnouncement } from "./guide";
 
 const GRAPH_KEY = "tine.graphPath";
 
@@ -73,6 +74,7 @@ export async function loadGraphPath(path: string): Promise<void> {
   void loadAliases();
   if (!switching) void pruneSidebarBlocks();
   await ensureJournalTemplate();
+  maybeShowGuideAnnouncement();
   // On a genuine graph SWITCH, close ALL the old graph's tabs (their histories
   // point at pages that don't exist in the new graph) and land on a single fresh
   // Journals tab. On the initial startup load of the same graph, `restoreSession()`

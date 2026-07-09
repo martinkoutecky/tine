@@ -81,7 +81,7 @@ export interface PaneRouter {
   focusBlock(id: string | null): void;
   openPageAtBlock(name: string, pageKind: "journal" | "page", blockId: string): void;
   openInNewTab(r: Route, foreground?: boolean): void;
-  openPageInNewTab(name: string, pageKind?: "journal" | "page", block?: string): void;
+  openPageInNewTab(name: string, pageKind?: "journal" | "page", block?: string, foreground?: boolean): void;
   canGoBack(): boolean;
   canGoForward(): boolean;
   goBack(): void;
@@ -114,6 +114,8 @@ export function tabRoute(t: Tab): Route {
 export function routeTitle(r: Route): string {
   if (r.kind === "journals") return "Journals";
   if (r.name.startsWith("hls__")) return r.name.slice(5);
+  if (r.name === `${GUIDE_DISPLAY_PREFIX}Tine Guide`) return "Guide";
+  if (isGuideRouteName(r.name)) return r.name.slice(GUIDE_DISPLAY_PREFIX.length);
   return r.name;
 }
 
@@ -128,6 +130,11 @@ export function sameRoute(a: Route, b: Route): boolean {
 
 const CLOSED_CAP = 10;
 const MOBILE_HISTORY_STATE = { tineRouter: true };
+const GUIDE_DISPLAY_PREFIX = "Tine-guide/";
+
+function isGuideRouteName(name: string): boolean {
+  return name.startsWith(GUIDE_DISPLAY_PREFIX);
+}
 
 /** Stable partition: all pinned tabs first (in their relative order), then the
  *  unpinned ones. Pinned tabs always sit to the left of the strip (matches the
@@ -373,9 +380,9 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     opts: { inPlace?: boolean } = {}
   ) {
     // Resolve aliases so the route + working-set key use the canonical page name.
-    if (pageKind === "page") name = resolveAlias(name);
+    if (pageKind === "page" && !isGuideRouteName(name)) name = resolveAlias(name);
     navigate({ kind: "page", name, pageKind }, { sticky: !opts.inPlace });
-    pushRecent(name, pageKind);
+    if (!isGuideRouteName(name)) pushRecent(name, pageKind);
   }
 
   function openJournals(opts: { inPlace?: boolean } = {}) {
@@ -468,11 +475,12 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
   function openPageInNewTab(
     name: string,
     pageKind: "journal" | "page" = "page",
-    block?: string
+    block?: string,
+    foreground = false
   ) {
-    if (pageKind === "page") name = resolveAlias(name);
-    openInNewTab({ kind: "page", name, pageKind, block });
-    pushRecent(name, pageKind);
+    if (pageKind === "page" && !isGuideRouteName(name)) name = resolveAlias(name);
+    openInNewTab({ kind: "page", name, pageKind, block }, foreground);
+    if (!isGuideRouteName(name)) pushRecent(name, pageKind);
   }
 
   // ---- back / forward ----
@@ -833,9 +841,10 @@ export function openInNewTab(r: Route, foreground = false) {
 export function openPageInNewTab(
   name: string,
   pageKind: "journal" | "page" = "page",
-  block?: string
+  block?: string,
+  foreground = false
 ) {
-  focusedRouterInstance().openPageInNewTab(name, pageKind, block);
+  focusedRouterInstance().openPageInNewTab(name, pageKind, block, foreground);
 }
 
 export function canGoBack(): boolean {

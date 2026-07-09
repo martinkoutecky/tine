@@ -995,6 +995,19 @@ body {
   background: var(--bg-tertiary);
   color: var(--text-primary);
 }
+.guide-copy-btn {
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  padding: 4px 9px;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+.guide-copy-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
 .tag-page-table {
   margin: 8px 0 14px 28px;
   overflow-x: auto;
@@ -2603,6 +2616,32 @@ body {
   border-radius: 4px;
   background: var(--bg-secondary);
   color: var(--text-secondary);
+}
+.page-guide-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  font-size: 13px;
+  border: 1px solid var(--border-color);
+  border-left: 3px solid var(--accent, #10b981);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+}
+.page-guide-banner button {
+  margin-left: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  padding: 4px 9px;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.page-guide-banner button:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
 }
 .block-content-wrapper.read-only {
   cursor: default;

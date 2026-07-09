@@ -43,6 +43,20 @@ export interface PageDto {
    *  SPECIFIC file (a duplicate-day stray, #21) saves to its own file rather than
    *  being re-resolved by name to the canonical one. Empty for a brand-new page. */
   path?: string;
+  /** Bundled in-app Guide page: read-only, ephemeral, and excluded from normal
+   *  graph persistence/search/reference surfaces. */
+  guide?: boolean;
+}
+
+export interface GuidePage {
+  title: string;
+  markdown: string;
+  page: PageDto;
+}
+
+export interface GuideCopyResult {
+  name: string;
+  created: boolean;
 }
 
 export interface TemplateDto {
@@ -177,6 +191,7 @@ export interface GraphMeta {
   logbook_with_second_support: boolean; // :logbook/settings :with-second-support?, default true
   logbook_enabled_in_timestamped_blocks: boolean;
   logbook_enabled_in_all_blocks: boolean;
+  guide_announced: boolean; // :tine/guide-announced?, default false
 }
 
 export interface Rect {
