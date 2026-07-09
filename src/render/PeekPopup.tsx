@@ -80,14 +80,22 @@ export function PeekPopup(props: {
 
   onMount(() => {
     const close = () => props.onPointerLeave();
+    // Dismiss when the PAGE BEHIND scrolls, but NOT when the user scrolls the
+    // popup's own overflow body (or drags its scrollbar) — capture-phase scroll
+    // fires for every scroller, so filter out events originating inside the popup.
+    const onScroll = (e: Event) => {
+      const t = e.target as Node | null;
+      if (popupEl && t && (popupEl === t || popupEl.contains(t))) return;
+      close();
+    };
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") close();
     };
-    window.addEventListener("scroll", close, true);
+    window.addEventListener("scroll", onScroll, true);
     window.addEventListener("resize", close);
     window.addEventListener("keydown", onKeyDown);
     onCleanup(() => {
-      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("resize", close);
       window.removeEventListener("keydown", onKeyDown);
     });

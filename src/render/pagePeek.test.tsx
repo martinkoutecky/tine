@@ -143,6 +143,36 @@ describe("page hover-peek (GH #40)", () => {
     }
   });
 
+  it("keeps the popup open when scrolling inside it, but closes on page scroll", async () => {
+    const { root, dispose } = mountAttached("scroll test [[Tine]] here");
+    try {
+      const link = root.querySelector("a.page-ref")!;
+      fireEnter(link);
+      await advance(PEEK_OPEN_MS);
+      await waitFor(() => !!popup());
+      const card = popup()!;
+
+      // Move the pointer onto the popup so the anchor-leave bridge is satisfied
+      // and only the scroll listener governs dismissal.
+      fireLeave(link);
+      fireEnter(card);
+      await advance(PEEK_CLOSE_MS + 1);
+      expect(popup()).toBeTruthy();
+
+      // Scrolling the popup's own body (or dragging its scrollbar) must NOT close it.
+      card.dispatchEvent(new Event("scroll"));
+      await advance(PEEK_CLOSE_MS + 1);
+      expect(popup()).toBeTruthy();
+
+      // Scrolling the page behind the popup DOES dismiss it.
+      document.dispatchEvent(new Event("scroll"));
+      await advance(PEEK_CLOSE_MS + 1);
+      expect(popup()).toBeFalsy();
+    } finally {
+      dispose();
+    }
+  });
+
   it("shows no popup for a link whose target page does not exist", async () => {
     const { root, dispose } = mountAttached("dangling [[No Such Page 12345]] ref");
     try {
