@@ -250,22 +250,31 @@ function PaneLeaf(props: { paneId: string }): JSX.Element {
         <Show
           when={multi()}
           fallback={
-            <main
-              class="main-content"
+            // Non-scrolling relative shell holds the pane-select overlays; the
+            // scroller is the inner <main>. Mirrors the multi-pane .pane-leaf —
+            // without it, the pane-edge highlight lived INSIDE the scroller and
+            // scrolled off-screen on a tall page, so arrows in pane-select mode
+            // looked like they did nothing on a solo pane (Martin's report).
+            <div
+              class="main-content-shell"
               classList={{
                 "pane-selected":
                   samePaneTarget(paneSel(), { kind: "pane", paneId: props.paneId }) ||
                   tabDropHighlightsPane(props.paneId),
               }}
-              data-pane-id={props.paneId}
-              ref={(el) => router.setScrollerElement(el)}
             >
               <PaneTabSplitPreview paneId={props.paneId} />
               <PaneEdgeSegHighlight paneId={props.paneId} />
-              <div class="main-content-inner">
-                <PageView />
-              </div>
-            </main>
+              <main
+                class="main-content"
+                data-pane-id={props.paneId}
+                ref={(el) => router.setScrollerElement(el)}
+              >
+                <div class="main-content-inner">
+                  <PageView />
+                </div>
+              </main>
+            </div>
           }
         >
           <div

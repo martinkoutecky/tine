@@ -329,6 +329,21 @@ body {
   overflow-y: auto;
 }
 
+/* Solo-pane shell: a non-scrolling, positioned wrapper so the pane-select
+   overlays (edge segment, tab-split preview) don't scroll with the content.
+   Takes the flex slot .main-content used to occupy in .content-row. */
+.main-content-shell {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
+
+.main-content-shell > .main-content {
+  flex: 1;
+}
+
 .pane-split {
   flex: 1;
   min-width: 0;

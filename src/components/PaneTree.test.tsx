@@ -104,4 +104,23 @@ describe("PaneTree", () => {
     expect(root.querySelector(".pane-resizer")?.classList.contains("pane-seam-selected")).toBe(true);
     dispose();
   });
+
+  it("renders the solo-pane edge highlight OUTSIDE the scroller (so it doesn't scroll away)", () => {
+    // Single pane (the afterEach reset leaves exactly this). Target its right
+    // edge, as ArrowRight in pane-select does on a solo pane.
+    setPaneSel({ kind: "pane-edge", paneId: "main", side: "right" });
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const dispose = render(() => <PaneTree node={layoutRoot()} path={[]} />, root);
+
+    const seg = root.querySelector(".pane-edge-seg");
+    expect(seg).not.toBeNull();
+    // Regression guard: the highlight must NOT live inside .main-content (the
+    // scroll container) — there it scrolled off-screen on a tall page and the
+    // arrows looked dead. It belongs to the non-scrolling shell.
+    const scroller = root.querySelector(".main-content");
+    expect(scroller?.contains(seg)).toBe(false);
+    expect(root.querySelector(".main-content-shell")?.contains(seg)).toBe(true);
+    dispose();
+  });
 });
