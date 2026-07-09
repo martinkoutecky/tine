@@ -30,3 +30,6 @@ scripts/app-icon-1024.png
 # deferred-work list. Working artifacts between Martin and Claude, not shared.
 /subagent-tasks
 /DEFERRED.md
+
+# Private Reddit outreach data — keep locally, never publish
+reddit-backup/

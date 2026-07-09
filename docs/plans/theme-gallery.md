@@ -35,10 +35,19 @@ hand-vetted set, not a scraper.
 - **`AppearanceTab()`** — `src/components/Settings.tsx:322`. Today it holds only
   the light/dark `theme-switch`. The gallery is a new subsection *in this tab*, so
   3(a) "an Appearance pane" already exists; we extend it. No new tab/route.
-- **Theme mode state** — `src/ui.ts`: `theme` signal, persisted to `localStorage`
-  under `THEME_KEY = "logseq-claude.theme"`, applied to `<html data-theme>` at
-  startup (`applyTheme()` called once). The gallery selection follows this exact
-  pattern (a second signal + key + startup apply).
+- **Theme mode state** — `src/ui.ts`: `theme` signal, applied to
+  `<html data-theme>` at startup (`applyTheme()` called once). NOTE it persists via
+  `localStorage` (`THEME_KEY`), which the BACKLOG flags as a known bug — **WebKitGTK
+  localStorage does not survive a restart** (memory `tine-localstorage-ephemeral`).
+  The gallery must NOT repeat this: persist the selection through the backend (see
+  Design §1), not localStorage.
+- **App-level persistence that survives restart** — the generic
+  `get_app_string`/`set_app_string` (+ bool) backend, written to
+  `tine-settings.json`. Frontend API: `backend().getAppString(key, fallback)` /
+  `setAppString(key, value)` (`backend.ts:248`). Device-local settings
+  (`copySettings.ts`, `spellcheckSettings.ts`) use exactly this and read back at
+  startup via an `init…()`. This is app config, NOT graph data — it does not touch
+  the user's `logseq/` folder, so it's consistent with the data-safety non-goal.
 - **Shim + custom.css injection** — `src/lsShim.ts` defines
   `LS_SHIM_STYLE_ID = "tine-ls-shim"` and `CUSTOM_CSS_STYLE_ID = "tine-custom-css"`.
   `graph.ts:injectCustomCss()` (~147) calls `ensureLsShimStyle()` then appends the
@@ -73,11 +82,15 @@ theme.css (bundled)  →  #tine-ls-shim  →  #tine-theme  →  #tine-custom-css
   still appends `#tine-custom-css` last (it already appends last; just guarantee the
   theme node exists before it, mirroring how the shim is ensured).
 
-Put `ensureThemeStyle()` + `applyTheme(id)` + the selection signal in a new
-`src/themeGallery.ts` (peer of `lsShim.ts`), and call `applyTheme(stored)` at
-startup next to `applyTheme()` (mode) in the same place `ensureLsShimStyle()` /
-`applyTheme()` are wired (`main.tsx` / `App.tsx` startup). Persist the selected id
-in `localStorage` under `"logseq-claude.theme-gallery"`.
+Put `ensureThemeStyle()` + `applyTheme(id)` + the selection signal + an
+`initThemeGallery()` in a new `src/themeGallery.ts` (peer of `lsShim.ts`,
+structured like `spellcheckSettings.ts`). **Persist the selected id via
+`backend().setAppString("theme.gallery", id)` and read it back at startup with
+`initThemeGallery()` → `getAppString("theme.gallery", "")`** (survives restart;
+NOT localStorage — see current-state note). `initThemeGallery()` is called at
+startup next to where `ensureLsShimStyle()` / mode `applyTheme()` are wired
+(`main.tsx` / `App.tsx`); it awaits the stored id then applies it. Until it
+resolves, no theme is applied (stock look) — acceptable, it's one IPC round-trip.
 
 **Interaction with light/dark:** a theme may define colors for both `data-theme`
 blocks or only one. Each bundled theme's CSS should scope its overrides the same
