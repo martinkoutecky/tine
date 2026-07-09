@@ -792,39 +792,55 @@ impl Graph {
     /// parsed back to a date, so it drops out of the feed and the day looks
     /// empty. Rename such files to their stem — but only when the stem file
     /// doesn't already exist (never clobber/merge). Returns how many were fixed.
+    pub fn has_journal_filename_migrations(&self) -> bool {
+        let dir = self.journals_path();
+        let Ok(rd) = fs::read_dir(&dir) else {
+            return false;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            if self.journal_filename_migration_target(&p).is_some() {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn journal_filename_migration_target(&self, p: &std::path::Path) -> Option<PathBuf> {
+        // Both formats — an org graph's title-named journals are `.org`.
+        let ext = match p.extension().and_then(|x| x.to_str()) {
+            Some(e @ ("md" | "org")) => e,
+            _ => return None,
+        };
+        let stem = p.file_stem().and_then(|s| s.to_str())?;
+        if JournalDate::from_file_stem(stem).is_some() {
+            return None; // already a plausible date stem (yyyy_MM_dd / yyyy-MM-dd) — leave it
+        }
+        // A title-named ("Jun 18th, 2026.md", "Thursday, 25-06-2026.org") or
+        // otherwise non-stem journal file: normalize it to the graph's filename
+        // format so it round-trips with OG and is recognized in the feed.
+        let d = self.journal_format.parse(stem)?;
+        let want = self.journal_format.file_stem(d);
+        if want == stem {
+            return None; // already in the graph's filename format
+        }
+        let target = self.journals_path().join(format!("{want}.{ext}"));
+        if target.exists() {
+            return None; // don't clobber an existing stem file
+        }
+        Some(target)
+    }
+
     pub fn migrate_journal_filenames(&self) -> usize {
         let dir = self.journals_path();
         let Ok(rd) = fs::read_dir(&dir) else { return 0 };
         let mut n = 0;
         for e in rd.flatten() {
             let p = e.path();
-            // Both formats — an org graph's title-named journals are `.org`.
-            let ext = match p.extension().and_then(|x| x.to_str()) {
-                Some(e @ ("md" | "org")) => e,
-                _ => continue,
-            };
-            let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else {
-                continue;
-            };
-            if JournalDate::from_file_stem(stem).is_some() {
-                continue; // already a plausible date stem (yyyy_MM_dd / yyyy-MM-dd) — leave it
-            }
-            // A title-named ("Jun 18th, 2026.md", "Thursday, 25-06-2026.org") or
-            // otherwise non-stem journal file: normalize it to the graph's filename
-            // format so it round-trips with OG and is recognized in the feed.
-            let Some(d) = self.journal_format.parse(stem) else {
-                continue;
-            }; // not a date
-            let want = self.journal_format.file_stem(d);
-            if want == stem {
-                continue; // already in the graph's filename format
-            }
-            let target = dir.join(format!("{want}.{ext}"));
-            if target.exists() {
-                continue; // don't clobber an existing stem file
-            }
-            if fs::rename(&p, &target).is_ok() {
-                n += 1;
+            if let Some(target) = self.journal_filename_migration_target(&p) {
+                if fs::rename(&p, &target).is_ok() {
+                    n += 1;
+                }
             }
         }
         n

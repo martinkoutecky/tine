@@ -2,7 +2,7 @@ use crate::settings::{settings_path, update_settings};
 use crate::state::AppState;
 use std::path::PathBuf;
 use tauri::{Manager, State};
-use tine_core::model::atomic_copy;
+use tine_core::model::{atomic_copy, Graph};
 
 // Snapshot the graph's markdown into the OS app-data dir on open, keeping the
 // last few. Local-only (outside the graph, so Syncthing never sees it); a safety
@@ -23,6 +23,14 @@ pub(crate) fn backup_async(app: tauri::AppHandle) {
     });
 }
 
+pub(crate) fn backup_graph_now(
+    app: &tauri::AppHandle,
+    graph: &Graph,
+    suffix: &str,
+) -> (usize, bool) {
+    do_backup_source(app, BackupSource::from_graph(graph), suffix)
+}
+
 /// Take one snapshot of the current graph now (synchronous). Returns the number
 /// of files copied (0 = nothing to back up). Reads the keep count from the local
 /// app-settings file and prunes old snapshots afterwards. `suffix` tags special
@@ -33,26 +41,44 @@ pub(crate) fn backup_async(app: tauri::AppHandle) {
 /// proceed without a full rollback snapshot.
 fn do_backup(app: &tauri::AppHandle, suffix: &str) -> (usize, bool) {
     // Grab just the paths under the lock, then copy from disk lock-free.
-    let (journals, pages, assets, cfg, root) = {
+    let source = {
         let state: State<'_, AppState> = app.state();
         let guard = state.graph.read().unwrap();
         match guard.as_ref() {
-            Some(g) => (
-                g.journals_path(),
-                g.pages_path(),
-                g.assets_path(),
-                g.root.join("logseq").join("config.edn"),
-                g.root.clone(),
-            ),
+            Some(g) => BackupSource::from_graph(g),
             None => return (0, false),
         }
     };
+    do_backup_source(app, source, suffix)
+}
+
+struct BackupSource {
+    journals: PathBuf,
+    pages: PathBuf,
+    assets: PathBuf,
+    cfg: PathBuf,
+    root: PathBuf,
+}
+
+impl BackupSource {
+    fn from_graph(g: &Graph) -> Self {
+        Self {
+            journals: g.journals_path(),
+            pages: g.pages_path(),
+            assets: g.assets_path(),
+            cfg: g.root.join("logseq").join("config.edn"),
+            root: g.root.clone(),
+        }
+    }
+}
+
+fn do_backup_source(app: &tauri::AppHandle, source: BackupSource, suffix: &str) -> (usize, bool) {
     let Ok(data_dir) = app.path().app_data_dir() else {
         return (0, false);
     };
     let base = data_dir
         .join("backups")
-        .join(sanitize_id(&root.display().to_string()));
+        .join(sanitize_id(&source.root.display().to_string()));
     let stamp = backup_stamp();
     let name = if suffix.is_empty() {
         stamp
@@ -79,16 +105,16 @@ fn do_backup(app: &tauri::AppHandle, suffix: &str) -> (usize, bool) {
             Err(_) => break, // other error → fall through; copy below is best-effort
         }
     }
-    let live_text_n = count_md_recursive(&journals) + count_md_recursive(&pages);
-    let (cj, fj) = copy_md_dir(&journals, &dest.join(dir_name(&journals)));
-    let (cp, fp) = copy_md_dir(&pages, &dest.join(dir_name(&pages)));
-    let (ca, fa) = copy_asset_sidecars_dir(&assets, &dest.join(dir_name(&assets)));
+    let live_text_n = count_md_recursive(&source.journals) + count_md_recursive(&source.pages);
+    let (cj, fj) = copy_md_dir(&source.journals, &dest.join(dir_name(&source.journals)));
+    let (cp, fp) = copy_md_dir(&source.pages, &dest.join(dir_name(&source.pages)));
+    let (ca, fa) = copy_asset_sidecars_dir(&source.assets, &dest.join(dir_name(&source.assets)));
     let mut n = cj + cp + ca;
     let mut failed = fj + fp + fa;
-    if cfg.exists() {
+    if source.cfg.exists() {
         let out = dest.join("logseq");
         if std::fs::create_dir_all(&out).is_ok()
-            && std::fs::copy(&cfg, out.join("config.edn")).is_ok()
+            && std::fs::copy(&source.cfg, out.join("config.edn")).is_ok()
         {
             n += 1;
         } else {

@@ -1,4 +1,4 @@
-use crate::backup::backup_async;
+use crate::backup::{backup_async, backup_graph_now};
 use crate::state::AppState;
 use std::path::Path;
 use std::sync::atomic::Ordering;
@@ -28,6 +28,37 @@ pub(crate) fn resolve_root(path: &str) -> Option<String> {
     std::env::args().nth(1)
 }
 
+struct LoadedGraph {
+    graph: Graph,
+    meta: GraphMeta,
+    launch_backup_done: bool,
+}
+
+fn open_graph_for_load(
+    root: &str,
+    take_launch_backup: impl FnOnce(&Graph) -> (usize, bool),
+) -> LoadedGraph {
+    let graph = Graph::open(root);
+    let meta = graph.meta();
+    let needs_migration = graph.has_journal_filename_migrations();
+    let (backup_n, backup_complete) = if needs_migration {
+        take_launch_backup(&graph)
+    } else {
+        (0, false)
+    };
+    let launch_backup_done = backup_n > 0 && backup_complete;
+    if needs_migration && launch_backup_done {
+        // Recover any journals mis-saved under their title (see method docs),
+        // but only after the launch snapshot has captured the original names.
+        graph.migrate_journal_filenames();
+    }
+    LoadedGraph {
+        graph,
+        meta,
+        launch_backup_done,
+    }
+}
+
 #[tauri::command]
 pub(crate) fn load_graph(
     path: String,
@@ -36,10 +67,11 @@ pub(crate) fn load_graph(
 ) -> Result<GraphMeta, String> {
     let root = resolve_root(&path)
         .ok_or_else(|| "no graph path provided (set TINE_GRAPH or pass a path)".to_string())?;
-    let graph = Graph::open(&root);
-    let meta = graph.meta();
-    // Recover any journals mis-saved under their title (see method docs).
-    graph.migrate_journal_filenames();
+    let LoadedGraph {
+        graph,
+        meta,
+        launch_backup_done,
+    } = open_graph_for_load(&root, |graph| backup_graph_now(&app, graph, ""));
     let warm_generation = begin_warm_cache(&state);
     *state.graph.write().unwrap() = Some(Arc::new(graph));
     // Nudge the watcher so it re-targets the new graph's dirs at once (in inotify
@@ -47,7 +79,9 @@ pub(crate) fn load_graph(
     if let Some(tx) = state.watch_ctl.lock().unwrap().as_ref() {
         let _ = tx.send(());
     }
-    backup_async(app.clone());
+    if !launch_backup_done {
+        backup_async(app.clone());
+    }
     warm_cache_async(app, warm_generation);
     Ok(meta)
 }
@@ -148,4 +182,88 @@ pub(crate) fn warm_cache_async(app: tauri::AppHandle, warm_generation: u64) {
 #[tauri::command]
 pub(crate) fn warm_done(state: State<'_, AppState>) -> bool {
     state.warm_done.load(Ordering::Acquire)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::{Path, PathBuf};
+
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("tine-graph-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("journals")).unwrap();
+        std::fs::create_dir_all(dir.join("pages")).unwrap();
+        dir
+    }
+
+    fn copy_graph_text_dir(src: &Path, dest: &Path) -> (usize, bool) {
+        let _ = std::fs::create_dir_all(dest);
+        let mut copied = 0usize;
+        let mut failed = false;
+        let Ok(rd) = std::fs::read_dir(src) else {
+            return (0, false);
+        };
+        for entry in rd {
+            let Ok(entry) = entry else {
+                failed = true;
+                continue;
+            };
+            let p = entry.path();
+            if !matches!(
+                p.extension().and_then(|x| x.to_str()),
+                Some("md") | Some("org")
+            ) {
+                continue;
+            }
+            if std::fs::copy(&p, dest.join(entry.file_name())).is_ok() {
+                copied += 1;
+            } else {
+                failed = true;
+            }
+        }
+        (copied, !failed)
+    }
+
+    #[test]
+    fn graph_load_snapshots_original_journal_filename_before_migration() {
+        let dir = scratch("pre-migrate-backup");
+        std::fs::create_dir_all(dir.join("logseq")).unwrap();
+        std::fs::write(
+            dir.join("logseq").join("config.edn"),
+            "{:preferred-format \"Org\"\n :journal/page-title-format \"EEEE, dd-MM-yyyy\"}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("journals").join("Thursday, 25-06-2026.org"),
+            "* original title-named journal\n",
+        )
+        .unwrap();
+        let backup = dir.join("backup");
+
+        let loaded = open_graph_for_load(dir.to_str().unwrap(), |g| {
+            copy_graph_text_dir(&g.journals_path(), &backup.join("journals"))
+        });
+
+        assert!(loaded.launch_backup_done, "pre-migration backup ran");
+        assert!(
+            backup
+                .join("journals")
+                .join("Thursday, 25-06-2026.org")
+                .exists(),
+            "backup must contain the original pre-migration filename"
+        );
+        assert!(
+            dir.join("journals").join("2026_06_25.org").exists(),
+            "load still migrates the journal filename"
+        );
+        assert!(
+            !dir.join("journals")
+                .join("Thursday, 25-06-2026.org")
+                .exists(),
+            "live graph was renamed"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
