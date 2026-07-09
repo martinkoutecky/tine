@@ -280,6 +280,10 @@ export interface Backend {
   loadSession(): Promise<string | null>;
   /** Persist the UI session JSON. */
   saveSession(data: string): Promise<void>;
+  /** True exactly ONCE if this launch migrated the app-data dir left by the
+   *  dev.tine.app → page.tine.app identifier rename (so the UI can explain that
+   *  some app-level prefs may need re-setting). Self-clears after the first call. */
+  takeIdentifierMigrationNotice(): Promise<boolean>;
   /** What the backend knows about the rendering path, for the CPU-rendering
    *  warning (see `gpu.ts`). A silent driver fallback is detected in the webview
    *  (WebGL renderer); this just supplies why/where context for the message. */
@@ -710,6 +714,9 @@ class TauriBackend implements Backend {
   }
   saveSession(data: string) {
     return this.call<void>("save_session", { data });
+  }
+  takeIdentifierMigrationNotice() {
+    return this.call<boolean>("take_identifier_migration_notice");
   }
   gpuEnv() {
     return this.call<GpuEnv>("gpu_env");

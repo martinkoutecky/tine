@@ -1,4 +1,4 @@
-package dev.tine.app
+package page.tine.app
 
 import android.app.Activity
 import android.content.ContentUris

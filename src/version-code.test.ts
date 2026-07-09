@@ -1,7 +1,7 @@
 // Guard: the Android versionCode in tauri.conf.json must stay in lockstep with
 // the semver `version`, and must stay readable by F-Droid's autoupdate checker.
 //
-// F-Droid (metadata/dev.tine.app.yml, UpdateCheckMode: Tags) reads BOTH the
+// F-Droid (metadata/page.tine.app.yml, UpdateCheckMode: Tags) reads BOTH the
 // versionName and the integer versionCode straight out of this file at every
 // git tag, via UpdateCheckData regexes. Tauri derives the same versionCode by
 // `major*1e6 + minor*1e3 + patch` when it's not set explicitly, so if someone
@@ -34,7 +34,7 @@ describe("Android versionCode (F-Droid autoupdate)", () => {
     expect(explicit).toBe(deriveVersionCode(conf.version));
   });
 
-  // These are the exact regexes in metadata/dev.tine.app.yml's UpdateCheckData
+  // These are the exact regexes in metadata/page.tine.app.yml's UpdateCheckData
   // field. If the JSON shape changes so they stop matching, F-Droid autoupdate
   // silently stops detecting new releases — catch it here.
   it("stays readable by the F-Droid UpdateCheckData regexes", () => {

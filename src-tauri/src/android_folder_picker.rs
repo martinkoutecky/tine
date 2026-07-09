@@ -8,7 +8,7 @@ use tauri::{
 };
 
 #[cfg(target_os = "android")]
-const PLUGIN_IDENTIFIER: &str = "dev.tine.app";
+const PLUGIN_IDENTIFIER: &str = "page.tine.app";
 
 #[derive(Debug, Deserialize, Serialize)]
 pub(crate) struct GraphFolderPickResult {

@@ -8,6 +8,7 @@ mod backup;
 mod commands;
 mod debug;
 mod graph;
+mod migrate_identifier;
 mod platform;
 mod settings;
 mod spellcheck;
@@ -216,6 +217,17 @@ pub fn run() {
         })
         .setup(|app| {
             diag("setup() begin");
+            // FIRST, before anything reads settings/session/backups: migrate the
+            // app-data dir left behind by the dev.tine.app -> page.tine.app
+            // identifier rename. Records a one-shot notice so the frontend can
+            // toast that some app-level prefs may need re-setting.
+            let migrated = migrate_identifier::run(app.handle());
+            if migrated {
+                diag("migrated legacy dev.tine.app app-data dir → page.tine.app");
+            }
+            app.manage(migrate_identifier::MigrationNotice(
+                std::sync::atomic::AtomicBool::new(migrated),
+            ));
             // Eagerly open the graph if one was configured at startup.
             if let Some(root) = resolve_root("") {
                 let g = Graph::open(&root);
@@ -386,6 +398,7 @@ pub fn run() {
             restore_backup,
             load_session,
             save_session,
+            migrate_identifier::take_identifier_migration_notice,
             gpu_env,
             get_smooth_scroll,
             set_smooth_scroll,
