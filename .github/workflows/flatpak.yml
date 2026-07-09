@@ -1,0 +1,73 @@
+# Flatpak build test — validates the Flathub no-network manifest by actually
+# building it (offline vendored cargo + npm sources) in a privileged flatpak
+# container, and uploads an installable .flatpak bundle. This is the build-test we
+# can't run locally (the dev sandbox can't nest bwrap / mount proc).
+#
+# It does NOT submit to Flathub. It builds the CURRENTLY CHECKED-OUT tree (which
+# carries the page.tine.app identifier) by deriving a `dir`-source manifest from the
+# committed Flathub manifest — so flatpak/page.tine.app.yml stays the single source
+# of truth (its git source stays pinned for the real Flathub submission).
+name: Flatpak build test
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "flatpak/**"
+      - ".github/workflows/flatpak.yml"
+
+# One in-flight build per ref; newer pushes cancel older runs.
+concurrency:
+  group: flatpak-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  flatpak-builder:
+    name: build (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-48
+      options: --privileged
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Derive a CI manifest that builds the checked-out tree
+        run: |
+          python3 - <<'PY'
+          # Replace the Flathub git source (pinned to a released tag) with a local
+          # `dir` source so CI builds THIS commit. The vendored cargo/node source
+          # files are unchanged (referenced relative to the manifest dir).
+          src = open("flatpak/page.tine.app.yml").read()
+          i = src.index("    sources:")
+          src = src[:i] + (
+              "    sources:\n"
+              "      - type: dir\n"
+              "        path: ..\n"
+              "      - cargo-sources.json\n"
+              "      - node-sources.json\n"
+          )
+          open("flatpak/page.tine.app.ci.yml", "w").write(src)
+          print("wrote flatpak/page.tine.app.ci.yml")
+          PY
+
+      - name: Build
+        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: tine.flatpak
+          manifest-path: flatpak/page.tine.app.ci.yml
+          cache-key: flatpak-builder-${{ github.sha }}
+          arch: ${{ matrix.arch }}
+          # Validation of appstream metainfo + .desktop is on by default in the
+          # action; leave it on so we catch Flathub lint failures here.
+
+      - name: Upload .flatpak bundle
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: tine-flatpak-${{ matrix.arch }}
+          path: tine.flatpak
+          if-no-files-found: ignore
