@@ -16,6 +16,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   wasn't there). Works whether the header is a plain field or an existing formula
   column.
 
+### Changed
+
+- **New parser (lsdoc v2).** Tine's block and inline parser was rebuilt from scratch
+  as a two-phase, linear-time parser transcribed directly from Logseq's mldoc,
+  replacing the previous optimistic scanner. It is more faithful to Logseq on
+  real-world graphs and parses in guaranteed linear time; on any construct it has not
+  yet transcribed it is designed to fail safely rather than silently mis-parse.
+
 ### Fixed
 
 - **Removing a just-added table column takes effect immediately.** A column added
