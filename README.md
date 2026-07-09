@@ -101,6 +101,9 @@ raw speed. (Comparisons are against current Logseq desktop core, no plugins.)
   box pops from *any* app with the full editor, filing a bullet to today's journal.
 - **🔁 Carry unfinished tasks forward** to today (last 7 / 30 / 365 days, or a configurable N).
 - **▦ Sheets** — recursive grids, markdown databases, typed field tables, formula columns + filters with a visual builder, task/tag boards, aggregates, colors, and CSV import over plain bullets.
+- **📖 In-app Guide** — Help → Guide opens bundled, read-only how-to pages beside your own
+  graph, and **Copy into my graph** turns any guide page into an editable `tine-guide/…`
+  sandbox without touching the originals.
 - **🛟 A real data-safety story** — conflict detection instead of silent overwrites, launch
   snapshots with one-click restore, and delete-to-trash; built to live safely on a graph you also
   edit from Logseq mobile over Syncthing.
@@ -136,7 +139,7 @@ and the **[demo](https://tine.page/demo/)** shows the rendered-content side of i
 | **Links, refs & queries** | `[[page]]` · `#tag` · `((block ref))` · `{{embed}}` with autocomplete; live linked/unlinked references; per-block ref counts; the macro set; a `{{query}}` engine with a visual builder; a scoped Datalog path. |
 | **Tasks, journals & dates** | Task workflows + priorities, scheduled/deadline with a date picker, recurring tasks, carry-forward, a multi-day journal feed, agenda, and a calendar. |
 | **PDF** | Zoomable virtualized viewer, in-PDF find, text + area (image) highlights stored Logseq-compatibly, each a bullet you can annotate. |
-| **Search & nav** | `Ctrl+K` switcher (titles + full text), command palette, namespace tree, tabs, split view, back/forward, focus mode, global quick-capture, page icons. |
+| **Search & nav** | `Ctrl+K` switcher (titles + full text), command palette, in-app Guide, namespace tree, tabs, split view, back/forward, focus mode, global quick-capture, page icons. |
 | **Your files** | Safe to run alongside Logseq mobile over Syncthing — conflict detection, format-preserving atomic saves, transactional rename, org-mode (byte-faithful or read-only), snapshots + trash. |
 | **Customize & export** | Remappable shortcuts with `?` help, built-in theme gallery + custom CSS, multi-language spell check, static HTML export with offline search, copy/export as Markdown, **export a page to PDF**. |
 

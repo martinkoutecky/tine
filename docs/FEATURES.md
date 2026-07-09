@@ -361,6 +361,11 @@ within a column; merged cells are still v2+.
   "Namespace" header + nested descendant tree), an automatic **"Hierarchy"** section
   (breadcrumb paths of descendant pages) on any namespaced page, and read-only
   **"aka" alias chips** on pages reachable by another name.
+- **In-app Guide** — Help → Guide (or the *Open Guide* command) loads bundled,
+  read-only how-to pages under the virtual `Tine-guide/` namespace. Guide links stay
+  inside that virtual namespace, guide pages are hidden from search/page lists/backlinks,
+  and **Copy into my graph** creates or opens an editable `tine-guide/...` page without
+  overwriting an existing one.
 - ⊕ **Right-click page rows in the left sidebar** (favorites, recents, all pages,
   namespace tree) for the full page menu, including trash-backed Delete. Logseq core
   has page-title journal delete, but not sidebar-row delete.

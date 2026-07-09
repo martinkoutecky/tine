@@ -19,6 +19,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   formula group-by axes, `tine.filter::` table/board filters that fail open with a
   visible chip, and a right-click formula/filter editor.
 
+- **In-app Guide.** Help → Guide and the *Open Guide* command now open bundled,
+  read-only how-to pages for Sheets, quick capture, PDF annotation, tips, and the
+  feature showcase. Guide pages live only in memory under `Tine-guide/` until you
+  explicitly use **Copy into my graph**, which creates or opens an editable
+  `tine-guide/...` page without overwriting existing notes.
+
 - **Split view.** Panes now have their own tabs and history, TreeSheets-style
   pane/seam keyboard navigation with type-at-a-seam-to-split, `Ctrl+click` opens
   links in another pane, tabs can be dragged to another pane or seam, and the
