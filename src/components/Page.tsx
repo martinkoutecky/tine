@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, untrack, useContext, type JSX } from "solid-js";
-import { doc, mainPages, pageByName, loadFeed, appendFeed, emptyPage, ensurePageLoaded, setFeedExtender, flushAll, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, type FeedPage } from "../store";
+import { doc, mainPages, pageByName, loadFeed, appendFeed, emptyPage, ensurePageLoaded, setFeedExtender, flushAll, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, type FeedPage } from "../store";
 import { sameRoute, type PaneRouter } from "../router";
 import { PaneContext, focusedRouter } from "../panes";
 import {
@@ -307,6 +307,15 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
   const router = paneRouterFromContext();
   const [renaming, setRenaming] = createSignal(false);
   const [newName, setNewName] = createSignal("");
+  // A page emptied of its last block (explicit Delete bypasses the Backspace
+  // last-block guard) would render nothing to type into. Re-seed the phantom empty
+  // bullet — same shape a brand-new day gets — so there's always a bullet present;
+  // it only persists once the user types (ensureEmptyBlock leaves it non-dirty).
+  createEffect(() => {
+    if (props.page.roots.length === 0 && !props.page.readOnly) {
+      ensureEmptyBlock(props.page.name);
+    }
+  });
   const startRename = () => {
     if (props.page.guide || props.page.readOnly) return;
     if (props.page.kind !== "page") return; // journals are named by their date

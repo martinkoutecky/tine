@@ -1801,6 +1801,26 @@ export function deleteBlock(id: string) {
   deleteBlockInternal(id);
 }
 
+/** Re-seed the phantom empty bullet on a page emptied of its last block. Explicit
+ *  "Delete block" / selection-delete bypass the Backspace last-block guard, so a page
+ *  CAN reach zero roots — and then has nothing to type into. Mirrors {@link emptyPage}
+ *  exactly: an editable blank root that is deliberately NOT marked dirty, so — like a
+ *  brand-new day — it shows a bullet to write in but only persists to disk once the
+ *  user actually types (the edit path marks it dirty then). Returns the new id, or
+ *  null if the page is missing, read-only, or already non-empty. */
+export function ensureEmptyBlock(pageName: string): string | null {
+  const page = pageByName(pageName);
+  if (!page || page.readOnly || page.roots.length) return null;
+  const id = freshId();
+  setDoc(
+    produce((s) => {
+      s.byId[id] = { id, raw: "", collapsed: false, parent: null, page: pageName, children: [] };
+      s.pages[s.pages.findIndex((p) => p.name === pageName)].roots.push(id);
+    })
+  );
+  return id;
+}
+
 // ---------------------------------------------------------------------------
 // Multi-block selection (Escape from editing; Shift+Arrows extend) + ops
 // ---------------------------------------------------------------------------

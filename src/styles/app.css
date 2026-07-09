@@ -4518,7 +4518,11 @@ body.file-drop-active::after {
   color: var(--text-primary);
   font-size: 14px;
   line-height: 1.45;
-  white-space: nowrap;
+  /* Wrap long text within the column's fit-content() cap (see baseGridColumns)
+     instead of stretching the column to the full unwrapped line. Short values stay
+     one line; a long note wraps and grows the row taller, not the table wider. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   position: relative;
 }
 .sheet-cell-handle {
@@ -4703,6 +4707,13 @@ body.file-drop-active::after {
   cursor: pointer;
   user-select: none;
 }
+/* The Block/title column's 180px floor used to come from its minmax() track; the
+   track is now fit-content()-capped (to wrap long block text), so keep the floor on
+   the cells themselves. */
+.sheet-title-header,
+.sheet-title-cell {
+  min-width: 180px;
+}
 .sheet-field-header.sheet-col-stray {
   font-style: italic;
   color: var(--text-secondary);
@@ -4874,7 +4885,10 @@ body.file-drop-active::after {
 }
 .sheet-prop-input {
   width: 100%;
-  min-width: 90px;
+  /* Was 90px — in a narrow column (e.g. a numeric "count") that forced the editor
+     wider than its cell, so the edit box overflowed the cell's right edge. 0 lets it
+     track the cell width (the cell keeps its own 48px min-width). */
+  min-width: 0;
   box-sizing: border-box;
   border: 1px solid var(--accent, #4c8bf5);
   border-radius: 4px;

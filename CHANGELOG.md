@@ -18,6 +18,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Removing a just-added table column takes effect immediately.** A column added
+  via *Add column* lived only in an in-memory signal, so removing it from the schema
+  left it on screen until an app restart. It's now cleared on removal, and an
+  added-but-undeclared column gets its own **Remove column** in the header menu.
+
+- **An empty day (or page) shows a bullet to type into again.** Deleting the last
+  block via *Delete block* / a multi-block selection (which bypass the Backspace
+  last-block guard) left the page with nothing to click. It now re-seeds the same
+  phantom empty bullet a brand-new day gets — present to type into, but only written
+  to disk once you actually type.
+
+- **Long cell text wraps instead of stretching the whole table.** Sheet columns are
+  capped with `fit-content()` and cells wrap, so one long note grows its row taller
+  rather than blowing the table out horizontally. The in-cell value editor no longer
+  overflows a narrow column (e.g. a numeric cell) past its right edge.
+
 - **A conflicted page can be deleted again.** When a page's on-disk copy changes
   underneath an open edit (e.g. a Syncthing-delivered update), its save is refused
   until the conflict is resolved — but deleting it also flushed-first and aborted on

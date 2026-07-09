@@ -259,8 +259,16 @@ export function SheetTable(props: {
   const columns = createMemo(() => ["title" as const, ...fields()]);
   const hasActionColumn = () => props.rowSource === "children" || !!props.addRow;
   const actionColumn = () => hasActionColumn() ? "96px" : "";
+  // Cap column growth with fit-content() so a long cell wraps (see `.sheet-cell`
+  // white-space) instead of stretching its column to the full unwrapped line —
+  // an uncapped `max-content` track made one long value blow the table out
+  // horizontally. Users can still resize wider (stableColumns overrides this).
   const baseGridColumns = createMemo(() =>
-    `minmax(180px, max-content) repeat(${fields().length}, max-content) ${actionColumn()}`
+    // NB: fit-content() is NOT valid inside minmax() — that voids the whole
+    // grid-template-columns and collapses the table to one column. Use bare
+    // fit-content() tracks; the title cell keeps its own min-width (`.sheet-cell`
+    // / `.sheet-title-header`), so the 180px floor is preserved.
+    `fit-content(420px) repeat(${fields().length}, fit-content(320px)) ${actionColumn()}`
   );
   const editingInThisTable = () => editingOwner()?.startsWith(`sheet:${props.ownerId}:`) ?? false;
   const gridColumns = createMemo(() => stableColumns() ?? baseGridColumns());
@@ -410,6 +418,10 @@ export function SheetTable(props: {
   };
   const removeFieldFromSchema = (field: FieldId) => {
     writeSchemaFields(schemaFields().filter((spec) => spec.field !== field));
+    // Also drop it from the in-memory "added column" set — otherwise a column added
+    // via "Add column" (which only lives in extraFields) lingers on screen after
+    // being removed from the schema, until an app restart clears the signal.
+    setExtraFields((cur) => cur.filter((f) => f !== field));
   };
   const openFieldHeaderMenu = (e: MouseEvent, field: FieldId) => {
     e.preventDefault();
@@ -462,6 +474,12 @@ export function SheetTable(props: {
       actions.push({ label: "Remove from schema", disabled, run: () => removeFieldFromSchema(field) });
     } else {
       actions.push({ label: "Remove from schema", disabled, run: () => removeFieldFromSchema(field) });
+    }
+    // A column added via "Add column" but never declared lives only in extraFields
+    // (no schema entry to "Remove from schema"). Give it its own removal so it isn't
+    // stuck on screen until restart.
+    if (!declared && extraFields().includes(field)) {
+      actions.push({ label: "Remove column", run: () => setExtraFields((cur) => cur.filter((f) => f !== field)) });
     }
     actions.push({ label: "Add formula…", disabled, run: () => addFormula(e.clientX, e.clientY) });
     if (actions.length) openActionContextMenu(e.clientX, e.clientY, actions);

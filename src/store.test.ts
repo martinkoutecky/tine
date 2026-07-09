@@ -7,6 +7,7 @@ import { initParser } from "./render/parse";
 import { clearSeededFacets } from "./render/facets";
 import {
   doc,
+  setDoc,
   resetStore,
   loadSingle,
   loadFeed,
@@ -24,6 +25,7 @@ import {
   outdentBlock,
   mergeWithPrev,
   deleteBlock,
+  ensureEmptyBlock,
   toggleCollapse,
   visibleOrder,
   setRaw,
@@ -759,6 +761,41 @@ describe("merge (Backspace at 0)", () => {
     expect(shape()).toEqual([["next"]]);
     expect(editingId()).toBe(next);
     expect(takeCaretFor(next!)).toBe(0);
+  });
+
+  it("deleting the last block empties the page (the trigger for the phantom bullet)", () => {
+    const dto = load([blk("only")]);
+    deleteBlock(dto.blocks[0].id);
+    expect(doc.pages[0].roots).toHaveLength(0); // nothing to type into → PageSection re-seeds
+    const id = ensureEmptyBlock("Test");
+    expect(doc.pages[0].roots).toEqual([id]);
+    expect(doc.byId[id!].raw).toBe("");
+  });
+
+  it("ensureEmptyBlock seeds a phantom, non-dirty root that mirrors emptyPage", () => {
+    setDoc({
+      byId: {},
+      pages: [{ name: "Empty", kind: "page", title: "Empty", preBlock: null, roots: [], format: "md", readOnly: false, guide: false }],
+      feed: ["Empty"],
+      loaded: true,
+    });
+    const id = ensureEmptyBlock("Empty");
+    expect(id).not.toBeNull();
+    expect(doc.pages[0].roots).toEqual([id]);
+    expect(doc.byId[id!].raw).toBe("");
+    expect(isDirty("Empty")).toBe(false); // won't save to disk until the user types
+    expect(ensureEmptyBlock("Empty")).toBeNull(); // idempotent — no second phantom
+  });
+
+  it("ensureEmptyBlock refuses a read-only page", () => {
+    setDoc({
+      byId: {},
+      pages: [{ name: "RO", kind: "page", title: "RO", preBlock: null, roots: [], format: "md", readOnly: true, guide: false }],
+      feed: ["RO"],
+      loaded: true,
+    });
+    expect(ensureEmptyBlock("RO")).toBeNull();
+    expect(doc.pages[0].roots).toHaveLength(0);
   });
 
   // The quick-capture window edits a scratch page that's never part of the main

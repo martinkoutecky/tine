@@ -822,6 +822,34 @@ describe("SheetTable", () => {
     dispose();
   });
 
+  it("removes an added (extraFields-only) column via the header menu — no restart needed", () => {
+    loadTableDoc();
+    const { root, dispose } = mount(() => (
+      <>
+        <Block id="table" />
+        <ContextMenu />
+      </>
+    ));
+    const headerLabels = () => [...root.querySelectorAll(".sheet-header-cell")].map((h) => h.textContent?.trim());
+
+    (root.querySelector(".sheet-add-column-ghost") as HTMLButtonElement).click();
+    const input = root.querySelector(".sheet-add-field-input") as HTMLInputElement;
+    input.value = "reviewer";
+    keydown(input, "Enter");
+    expect(headerLabels()).toContain("reviewer");
+
+    // Regression: the added column lived only in the in-memory extraFields signal, so
+    // removing it left it on screen until an app restart. It must vanish immediately.
+    const reviewerHeader = [...root.querySelectorAll(".sheet-field-header")].find(
+      (h) => h.textContent?.trim() === "reviewer"
+    )!;
+    contextMenu(reviewerHeader);
+    clickMenuItem("Remove column");
+    expect(headerLabels()).not.toContain("reviewer");
+
+    dispose();
+  });
+
   it("shows table add ghosts on hover without changing geometry", () => {
     loadTableDoc();
     const { root, dispose } = mount(() => <Block id="table" />);
