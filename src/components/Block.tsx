@@ -784,6 +784,21 @@ interface AcItem {
   blockRef?: { uuid: string; page: string; kind: import("../types").PageKind };
 }
 
+/** Nearest ancestor that actually scrolls vertically — used to pin the scroll
+ *  position across a textarea autosize measure (WebKitGTK reveals the caret on
+ *  the transient height:auto collapse, jumping tall blocks to the bottom). */
+function nearestScrollableY(el: HTMLElement): HTMLElement | null {
+  let n: HTMLElement | null = el.parentElement;
+  while (n) {
+    if (n.scrollHeight > n.clientHeight) {
+      const oy = getComputedStyle(n).overflowY;
+      if (oy === "auto" || oy === "scroll" || oy === "overlay") return n;
+    }
+    n = n.parentElement;
+  }
+  return null;
+}
+
 /** First visible (non-`key:: value`) line of a block's raw markdown — what the
  *  block-reference picker shows as the candidate's label. */
 function blockFirstLine(raw: string): string {
@@ -1482,8 +1497,19 @@ export function Editor(props: { id: string }): JSX.Element {
   // is the immediate variant for mount (avoids a one-frame collapsed flash).
   const resizeNow = () => {
     if (!ref || !ref.isConnected) return;
+    // Setting height:auto transiently collapses the textarea to measure its
+    // content height. When the block is TALLER than the viewport, that collapse
+    // makes WebKitGTK scroll-jump the enclosing scroller to keep the caret in
+    // view — so every keystroke pinned the caret to the bottom edge of the
+    // screen (Martin's report). Preserve the scroller's scrollTop across the
+    // measure so autosize stays visually invisible.
+    const scroller = nearestScrollableY(ref);
+    const prevTop = scroller?.scrollTop;
     ref.style.height = "auto";
     ref.style.height = `${ref.scrollHeight}px`;
+    if (scroller && prevTop !== undefined && scroller.scrollTop !== prevTop) {
+      scroller.scrollTop = prevTop;
+    }
   };
   let autosizeRaf: number | undefined;
   const autosize = () => {
