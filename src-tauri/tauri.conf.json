@@ -44,7 +44,7 @@
     "targets": ["appimage", "deb", "rpm", "nsis", "dmg"],
     "createUpdaterArtifacts": true,
     "android": {
-      "versionCode": 4007
+      "versionCode": 5000
     },
     "icon": [
       "icons/32x32.png",
