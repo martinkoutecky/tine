@@ -289,8 +289,9 @@ export interface Backend {
   /** Persist the UI session JSON. */
   saveSession(data: string): Promise<void>;
   /** True exactly ONCE if this launch migrated the app-data dir left by the
-   *  dev.tine.app → page.tine.app identifier rename (so the UI can explain that
-   *  some app-level prefs may need re-setting). Self-clears after the first call. */
+   *  desktop identifier rename chain dev.tine.app / page.tine.app ->
+   *  page.tine.Tine (so the UI can explain that some app-level prefs may need
+   *  re-setting). Self-clears after the first call. */
   takeIdentifierMigrationNotice(): Promise<boolean>;
   /** What the backend knows about the rendering path, for the CPU-rendering
    *  warning (see `gpu.ts`). A silent driver fallback is detected in the webview

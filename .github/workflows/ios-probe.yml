@@ -56,7 +56,7 @@ jobs:
         run: cargo build --lib -p tine --target aarch64-apple-ios-sim
 
       # --- HARD GATE 2: does the Xcode project generate? ---------------------
-      # Validates the bundle identifier (page.tine.app), Info.plist, and plugin
+      # Validates the bundle identifier (page.tine.Tine), Info.plist, and plugin
       # wiring. --ci skips the interactive prompts.
       - name: tauri ios init
         run: npx tauri ios init --ci --verbose

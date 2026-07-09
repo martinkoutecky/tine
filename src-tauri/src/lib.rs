@@ -151,13 +151,15 @@ pub fn run() {
         diag("TINE_GPU=0 → set WEBKIT_DISABLE_DMABUF_RENDERER=1 (software compositing)");
     }
 
-    // Migrate the app-data dir left behind by the app-identifier renames
-    // (dev.logseqclaude.app / dev.tine.app -> page.tine.app) BEFORE building the
-    // webview. WebKitGTK's WebsiteDataManager creates the new-id data dir (and its
-    // empty localStorage store) as the Builder is assembled, so this has to happen
-    // first — otherwise the migration finds the new dir already populated and backs
-    // off, orphaning the user's graph/session (localStorage) + settings + backups.
-    // Records a one-shot flag; the frontend toasts about the (possible) prefs reset.
+    // Migrate the desktop app-data dir left behind by the app-identifier renames
+    // (dev.logseqclaude.app / dev.tine.app / page.tine.app -> page.tine.Tine)
+    // BEFORE building the webview. WebKitGTK's WebsiteDataManager creates the
+    // new-id data dir (and its empty localStorage store) as the Builder is
+    // assembled, so this has to happen first — otherwise the migration finds the
+    // new dir already populated and backs off, orphaning the user's graph/session
+    // (localStorage) + settings + backups. Records a one-shot flag; the frontend
+    // toasts about the (possible) prefs reset. Android intentionally keeps
+    // page.tine.app and run_early() is a no-op there.
     migrate_identifier::run_early();
 
     let builder = tauri::Builder::default();

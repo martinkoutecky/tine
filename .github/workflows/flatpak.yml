@@ -4,8 +4,8 @@
 # can't run locally (the dev sandbox can't nest bwrap / mount proc).
 #
 # It does NOT submit to Flathub. It builds the CURRENTLY CHECKED-OUT tree (which
-# carries the page.tine.app identifier) by deriving a `dir`-source manifest from the
-# committed Flathub manifest — so flatpak/page.tine.app.yml stays the single source
+# carries the page.tine.Tine identifier) by deriving a `dir`-source manifest from the
+# committed Flathub manifest — so flatpak/page.tine.Tine.yml stays the single source
 # of truth (its git source stays pinned for the real Flathub submission).
 name: Flatpak build test
 
@@ -41,7 +41,7 @@ jobs:
           # Replace the Flathub git source (pinned to a released tag) with a local
           # `dir` source so CI builds THIS commit. The vendored cargo/node source
           # files are unchanged (referenced relative to the manifest dir).
-          src = open("flatpak/page.tine.app.yml").read()
+          src = open("flatpak/page.tine.Tine.yml").read()
           i = src.index("    sources:")
           src = src[:i] + (
               "    sources:\n"
@@ -50,15 +50,15 @@ jobs:
               "      - cargo-sources.json\n"
               "      - node-sources.json\n"
           )
-          open("flatpak/page.tine.app.ci.yml", "w").write(src)
-          print("wrote flatpak/page.tine.app.ci.yml")
+          open("flatpak/page.tine.Tine.ci.yml", "w").write(src)
+          print("wrote flatpak/page.tine.Tine.ci.yml")
           PY
 
       - name: Build
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
           bundle: tine.flatpak
-          manifest-path: flatpak/page.tine.app.ci.yml
+          manifest-path: flatpak/page.tine.Tine.ci.yml
           cache-key: flatpak-builder-${{ github.sha }}
           arch: ${{ matrix.arch }}
           # Validation of appstream metainfo + .desktop is on by default in the

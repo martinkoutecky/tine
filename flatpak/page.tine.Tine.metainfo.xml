@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Copyright 2026 Martin Koutecký -->
 <component type="desktop-application">
-  <id>page.tine.app</id>
+  <id>page.tine.Tine</id>
 
   <name>Tine</name>
   <summary>Fast Logseq-compatible outliner</summary>
@@ -30,7 +30,7 @@
     </ul>
   </description>
 
-  <launchable type="desktop-id">page.tine.app.desktop</launchable>
+  <launchable type="desktop-id">page.tine.Tine.desktop</launchable>
 
   <url type="homepage">https://tine.page</url>
   <url type="bugtracker">https://github.com/martinkoutecky/tine/issues</url>

@@ -26,16 +26,16 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y appstream desktop-file-utils
 
       - name: Validate AppStream metainfo (strict — what Flathub review runs)
-        run: appstreamcli validate --explain flatpak/page.tine.app.metainfo.xml
+        run: appstreamcli validate --explain flatpak/page.tine.Tine.metainfo.xml
 
       - name: Validate .desktop entry
-        run: desktop-file-validate flatpak/page.tine.app.desktop
+        run: desktop-file-validate flatpak/page.tine.Tine.desktop
 
       - name: Screenshot coupling — every metainfo screenshot must exist in website/img/
         run: |
           python3 - <<'PY'
           import re, sys, os
-          meta = open("flatpak/page.tine.app.metainfo.xml").read()
+          meta = open("flatpak/page.tine.Tine.metainfo.xml").read()
           urls = re.findall(r"https://tine\.page/img/([^<\s]+\.png)", meta)
           if not urls:
               print("No tine.page/img screenshots found in metainfo — nothing to check.")
@@ -47,7 +47,7 @@ jobs:
               print("\nERROR: the Flathub metainfo references screenshots that are not in "
                     "website/img/ — the tine.page URLs will 404 and break the store listing.\n"
                     "Fix: restore the file(s), or update the <image> URLs in "
-                    "flatpak/page.tine.app.metainfo.xml to match the new website paths.")
+                    "flatpak/page.tine.Tine.metainfo.xml to match the new website paths.")
               sys.exit(1)
           print("\nAll metainfo screenshots are present in website/img/.")
           PY
@@ -55,7 +55,7 @@ jobs:
       - name: Live reachability (informational — the site may lag a push)
         continue-on-error: true
         run: |
-          for u in $(grep -oE 'https://tine\.page/img/[^< ]+\.png' flatpak/page.tine.app.metainfo.xml); do
+          for u in $(grep -oE 'https://tine\.page/img/[^< ]+\.png' flatpak/page.tine.Tine.metainfo.xml); do
             code=$(curl -s -o /dev/null -w '%{http_code}' -L "$u")
             echo "$code  $u"
           done

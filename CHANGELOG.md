@@ -89,13 +89,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   same short hover delay as page previews instead of instantly. Hovering never modifies
   the graph.
 
-- **App identifier is now `page.tine.app`** (was `dev.tine.app`). This lets Tine
-  prove domain ownership (`tine.page`) for Flathub. On desktop the change is
+- **Desktop app identifier is now `page.tine.Tine`** (was `dev.tine.app`, then
+  briefly `page.tine.app`). This lets Tine prove domain ownership (`tine.page`)
+  for Flathub. On desktop the change is
   invisible: on first launch Tine moves your existing settings, backups, open-tab
   session **and your last-opened graph** from the old location to the new one, then
   shows a one-time note that a few app-level preferences (e.g. window size) may need
-  setting again. (Android sideloads are a fresh app at the OS level and re-pick the
-  graph folder once.)
+  setting again. (Android stays `page.tine.app` and keeps its existing APK data.)
 
 ### Fixed
 
