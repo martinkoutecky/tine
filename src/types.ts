@@ -87,10 +87,14 @@ export interface AssetInfo {
   modified: number | null;
 }
 
-/** Count + total bytes of the recoverable asset trash (logseq/.tine-trash). */
+/** Asset trash totals plus protected non-asset recovery entries in logseq/.tine-trash. */
 export interface TrashStats {
   count: number;
   bytes: number;
+  pages: number;
+  journals: number;
+  conflicts: number;
+  other: number;
 }
 
 /** One file in a journal-day conflict (duplicate files for the same date). */

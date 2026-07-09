@@ -1686,7 +1686,14 @@ function AssetsTab(): JSX.Element {
   const [list, setList] = createSignal<AssetInfo[]>([]);
   const [busy, setBusy] = createSignal(false);
   const [scanned, setScanned] = createSignal(false);
-  const [trashInfo, setTrashInfo] = createSignal<TrashStats>({ count: 0, bytes: 0 });
+  const [trashInfo, setTrashInfo] = createSignal<TrashStats>({
+    count: 0,
+    bytes: 0,
+    pages: 0,
+    journals: 0,
+    conflicts: 0,
+    other: 0,
+  });
 
   const fmtSize = (n: number) =>
     n >= 1 << 20 ? `${(n / (1 << 20)).toFixed(1)} MB` : n >= 1024 ? `${Math.round(n / 1024)} KB` : `${n} B`;
@@ -1695,6 +1702,17 @@ function AssetsTab(): JSX.Element {
       ? ""
       : new Date(secs * 1000).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
   const total = () => list().reduce((s, a) => s + a.size, 0);
+  const protectedTrashCount = () =>
+    trashInfo().pages + trashInfo().journals + trashInfo().conflicts + trashInfo().other;
+  const protectedTrashLabel = () =>
+    [
+      trashInfo().pages ? `${trashInfo().pages} page${trashInfo().pages === 1 ? "" : "s"}` : "",
+      trashInfo().journals ? `${trashInfo().journals} journal${trashInfo().journals === 1 ? "" : "s"}` : "",
+      trashInfo().conflicts ? `${trashInfo().conflicts} conflict${trashInfo().conflicts === 1 ? "" : "s"}` : "",
+      trashInfo().other ? `${trashInfo().other} other` : "",
+    ]
+      .filter(Boolean)
+      .join(", ");
 
   const refreshTrash = async () => {
     try {
@@ -1746,15 +1764,15 @@ function AssetsTab(): JSX.Element {
     if (!info.count) return;
     if (
       !(await backend().confirm(
-        `Permanently delete ${info.count} file${info.count === 1 ? "" : "s"} (${fmtSize(info.bytes)}) in the trash?\n\n` +
-          `This cannot be undone — the files are removed from logseq/.tine-trash for good.`
+        `Permanently delete ${info.count} asset file${info.count === 1 ? "" : "s"} (${fmtSize(info.bytes)}) in the trash?\n\n` +
+          `This cannot be undone. Page, journal, and conflict recovery files in logseq/.tine-trash will be kept.`
       ))
     )
       return;
     try {
       const n = await backend().emptyAssetTrash();
-      setTrashInfo({ count: 0, bytes: 0 });
-      pushToast(`Emptied trash (${n} file${n === 1 ? "" : "s"})`, "success");
+      setTrashInfo((t) => ({ ...t, count: 0, bytes: 0 }));
+      pushToast(`Emptied asset trash (${n} file${n === 1 ? "" : "s"})`, "success");
     } catch (e) {
       pushToast(`Couldn’t empty trash: ${String(e)}`, "error");
     }
@@ -1772,12 +1790,17 @@ function AssetsTab(): JSX.Element {
             class="settings-btn settings-btn-danger"
             style={{ "margin-left": "8px" }}
             onClick={() => void emptyTrash()}
-            title="Permanently delete everything in logseq/.tine-trash"
+            title="Permanently delete asset files in logseq/.tine-trash"
           >
-            Empty trash ({trashInfo().count})
+            Empty asset trash ({trashInfo().count})
           </button>
         </Show>
       </div>
+      <Show when={protectedTrashCount() > 0}>
+        <div class="settings-hint settings-block">
+          Protected recovery trash kept: {protectedTrashLabel()}
+        </div>
+      </Show>
       <div class="settings-hint settings-block">
         Files in <code>assets/</code> that no block links to. Deleting a block never
         deletes its media (a safety net), so unused files can accumulate — review and

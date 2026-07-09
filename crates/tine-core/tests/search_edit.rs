@@ -634,7 +634,7 @@ fn delete_page_moves_to_trash_recoverable() {
     assert!(!root.join("pages").join("Doomed.md").exists());
     assert!(g.load_named("Doomed", PageKind::Page).unwrap().is_none());
     // ...but recoverable from the local trash (content intact).
-    let trash = root.join("logseq").join(".tine-trash");
+    let trash = root.join("logseq").join(".tine-trash").join("pages");
     let trashed: Vec<_> = std::fs::read_dir(&trash).unwrap().flatten().collect();
     assert_eq!(trashed.len(), 1, "deleted file should be in the trash");
     let body = std::fs::read_to_string(trashed[0].path()).unwrap();

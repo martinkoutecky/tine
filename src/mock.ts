@@ -923,7 +923,7 @@ export function mockBackend(): Backend {
       // no-op in the browser mock
     },
     async assetTrashStats() {
-      return { count: 3, bytes: 1_572_864 };
+      return { count: 3, bytes: 1_572_864, pages: 1, journals: 0, conflicts: 0, other: 0 };
     },
     async emptyAssetTrash(): Promise<number> {
       return 3;

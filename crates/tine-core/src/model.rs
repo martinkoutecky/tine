@@ -219,11 +219,17 @@ pub struct AssetInfo {
     pub modified: Option<u64>,
 }
 
-/// Count + total bytes of the recoverable asset trash (`logseq/.tine-trash`).
+/// Count + total bytes of recoverable asset trash. `count`/`bytes` are asset
+/// entries only; the other counters are protected non-asset recovery files that
+/// share `logseq/.tine-trash` for backward compatibility.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct TrashStats {
     pub count: u64,
     pub bytes: u64,
+    pub pages: u64,
+    pub journals: u64,
+    pub conflicts: u64,
+    pub other: u64,
 }
 
 /// One file participating in a journal-day conflict: its on-disk filename, a
@@ -1106,7 +1112,7 @@ impl Graph {
         let win_cacheable = self.path_is_cacheable(&win);
         // Stage-before-commit (L5): move the conflict copy out first, then write the
         // merged winner; roll the move back if the write fails.
-        let trash = self.root.join("logseq").join(".tine-trash");
+        let trash = typed_trash_dir(&self.root, TrashEntryKind::Conflict);
         fs::create_dir_all(&trash)?;
         let conf_name = conf.file_name().and_then(|s| s.to_str()).unwrap_or("file");
         let staged = trash.join(format!("{}__{conf_name}", trash_stamp()));
@@ -1133,7 +1139,7 @@ impl Graph {
                 "no such conflict file",
             ));
         }
-        let trash = self.root.join("logseq").join(".tine-trash");
+        let trash = typed_trash_dir(&self.root, TrashEntryKind::Conflict);
         let name = conf.file_name().and_then(|s| s.to_str()).unwrap_or("file");
         let dest = trash.join(format!("{}__{name}", trash_stamp()));
         move_to_trash(&conf, &dest, &trash)
@@ -1169,7 +1175,7 @@ impl Graph {
                 "no such journal file",
             ));
         }
-        let trash = self.root.join("logseq").join(".tine-trash");
+        let trash = typed_trash_dir(&self.root, TrashEntryKind::Journal);
         let dest = trash.join(format!("{}__{name}", trash_stamp()));
         move_to_trash(&src, &dest, &trash)?;
         Ok(())
@@ -1275,7 +1281,13 @@ impl Graph {
         // failure aborts the merge cleanly before any write — and if the dst write
         // then fails we roll the move back, so neither the merge nor the source is
         // lost. On success src sits in the recoverable trash.
-        let trash = self.root.join("logseq").join(".tine-trash");
+        let trash = typed_trash_dir(
+            &self.root,
+            match self.entry_for_path(&src).map(|e| e.kind) {
+                Some(PageKind::Journal) => TrashEntryKind::Journal,
+                _ => TrashEntryKind::Page,
+            },
+        );
         fs::create_dir_all(&trash)?;
         let src_name = src.file_name().and_then(|s| s.to_str()).unwrap_or("file");
         let staged = trash.join(format!("{}__{src_name}", trash_stamp()));
@@ -2445,7 +2457,13 @@ impl Graph {
             return Err(twin_error(name));
         }
         if let Some(entry) = self.find_entry(name, kind) {
-            let trash = self.root.join("logseq").join(".tine-trash");
+            let trash = typed_trash_dir(
+                &self.root,
+                match entry.kind {
+                    PageKind::Journal => TrashEntryKind::Journal,
+                    PageKind::Page => TrashEntryKind::Page,
+                },
+            );
             let fname = entry
                 .path
                 .file_name()
@@ -2574,43 +2592,47 @@ impl Graph {
         if !src.is_file() {
             return Err(io::Error::new(io::ErrorKind::NotFound, "no such asset"));
         }
-        let trash = self.root.join("logseq").join(".tine-trash");
+        let trash = typed_trash_dir(&self.root, TrashEntryKind::Asset);
         let dest = trash.join(format!("{}__{name}", trash_stamp()));
         move_to_trash(&src, &dest, &trash)?;
         Ok(())
     }
 
-    /// File count + total bytes currently in the asset trash (`logseq/.tine-trash`).
-    /// Lets the UI show "Empty trash (N)" without listing the directory itself.
+    /// File count + total bytes currently in the asset trash. Non-asset recovery
+    /// entries are counted separately so an asset cleanup cannot silently sweep
+    /// pages, journals, or sync-conflict copies.
     pub fn asset_trash_stats(&self) -> TrashStats {
-        let trash = self.root.join("logseq").join(".tine-trash");
-        let mut stats = TrashStats::default();
-        if let Ok(rd) = fs::read_dir(&trash) {
-            for entry in rd.flatten() {
-                if entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
-                    stats.count += 1;
-                    stats.bytes += entry.metadata().map(|m| m.len()).unwrap_or(0);
-                }
-            }
-        }
-        stats
+        trash_stats(&trash_root(&self.root))
     }
 
-    /// Permanently delete everything in the asset trash. Returns the number of
-    /// files removed. The trash lives under `logseq/.tine-trash`, so we only ever
-    /// touch that directory — never `assets/`, `pages/`, or `journals/`.
+    /// Permanently delete asset-type entries in the asset trash. Returns the
+    /// number of entries removed. Page, journal, conflict, and unknown legacy
+    /// entries stay recoverable in `logseq/.tine-trash`.
     pub fn empty_asset_trash(&self) -> io::Result<u64> {
-        let trash = self.root.join("logseq").join(".tine-trash");
+        let trash = trash_root(&self.root);
         let mut removed = 0;
         match fs::read_dir(&trash) {
             Ok(rd) => {
                 for entry in rd.flatten() {
-                    let path = entry.path();
-                    let ok = match entry.file_type() {
-                        Ok(ft) if ft.is_dir() => fs::remove_dir_all(&path).is_ok(),
-                        _ => fs::remove_file(&path).is_ok(),
-                    };
-                    if ok {
+                    let Ok(ft) = entry.file_type() else { continue };
+                    if ft.is_dir() {
+                        if trash_dir_kind(&entry.path()) == Some(TrashEntryKind::Asset) {
+                            for asset_entry in fs::read_dir(entry.path())?.flatten() {
+                                let path = asset_entry.path();
+                                let ok = match asset_entry.file_type() {
+                                    Ok(ft) if ft.is_dir() => fs::remove_dir_all(&path).is_ok(),
+                                    Ok(_) => fs::remove_file(&path).is_ok(),
+                                    Err(_) => false,
+                                };
+                                if ok {
+                                    removed += 1;
+                                }
+                            }
+                        }
+                    } else if classify_legacy_trash_entry(&entry.path(), ft)
+                        == TrashEntryKind::Asset
+                        && fs::remove_file(entry.path()).is_ok()
+                    {
                         removed += 1;
                     }
                 }
@@ -3900,6 +3922,196 @@ fn collect_block_asset_refs(b: &DocBlock, into: &mut std::collections::HashSet<S
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TrashEntryKind {
+    Asset,
+    Page,
+    Journal,
+    Conflict,
+    Other,
+}
+
+impl TrashEntryKind {
+    fn dir_name(self) -> Option<&'static str> {
+        match self {
+            TrashEntryKind::Asset => Some("assets"),
+            TrashEntryKind::Page => Some("pages"),
+            TrashEntryKind::Journal => Some("journals"),
+            TrashEntryKind::Conflict => Some("conflicts"),
+            TrashEntryKind::Other => None,
+        }
+    }
+}
+
+fn trash_root(root: &Path) -> PathBuf {
+    root.join("logseq").join(".tine-trash")
+}
+
+fn typed_trash_dir(root: &Path, kind: TrashEntryKind) -> PathBuf {
+    trash_root(root).join(kind.dir_name().unwrap_or("other"))
+}
+
+fn trash_dir_kind(path: &Path) -> Option<TrashEntryKind> {
+    match path.file_name().and_then(|s| s.to_str()) {
+        Some("assets") => Some(TrashEntryKind::Asset),
+        Some("pages") => Some(TrashEntryKind::Page),
+        Some("journals") => Some(TrashEntryKind::Journal),
+        Some("conflicts") => Some(TrashEntryKind::Conflict),
+        _ => None,
+    }
+}
+
+fn add_trash_stat(stats: &mut TrashStats, kind: TrashEntryKind, bytes: u64) {
+    match kind {
+        TrashEntryKind::Asset => {
+            stats.count += 1;
+            stats.bytes += bytes;
+        }
+        TrashEntryKind::Page => stats.pages += 1,
+        TrashEntryKind::Journal => stats.journals += 1,
+        TrashEntryKind::Conflict => stats.conflicts += 1,
+        TrashEntryKind::Other => stats.other += 1,
+    }
+}
+
+fn trash_stats(trash: &Path) -> TrashStats {
+    let mut stats = TrashStats::default();
+    let Ok(rd) = fs::read_dir(trash) else {
+        return stats;
+    };
+    for entry in rd.flatten() {
+        let Ok(ft) = entry.file_type() else { continue };
+        let path = entry.path();
+        if ft.is_dir() {
+            if let Some(kind) = trash_dir_kind(&path) {
+                add_typed_trash_dir_stats(&path, kind, &mut stats);
+            } else {
+                stats.other += 1;
+            }
+            continue;
+        }
+        let bytes = entry.metadata().map(|m| m.len()).unwrap_or(0);
+        add_trash_stat(&mut stats, classify_legacy_trash_entry(&path, ft), bytes);
+    }
+    stats
+}
+
+fn add_typed_trash_dir_stats(path: &Path, kind: TrashEntryKind, stats: &mut TrashStats) {
+    let Ok(rd) = fs::read_dir(path) else { return };
+    for entry in rd.flatten() {
+        let bytes = entry
+            .file_type()
+            .ok()
+            .filter(|ft| ft.is_file())
+            .and_then(|_| entry.metadata().ok())
+            .map(|m| m.len())
+            .unwrap_or(0);
+        add_trash_stat(stats, kind, bytes);
+    }
+}
+
+fn classify_legacy_trash_entry(path: &Path, ft: fs::FileType) -> TrashEntryKind {
+    if !ft.is_file() {
+        return TrashEntryKind::Other;
+    }
+    let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+        return TrashEntryKind::Other;
+    };
+    let original = legacy_trash_original_name(name);
+    let original_path = Path::new(original);
+    if path_is_sync_conflict(original_path) {
+        return TrashEntryKind::Conflict;
+    }
+    let ext = original_path
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_ascii_lowercase());
+    if matches!(ext.as_deref(), Some("md" | "org")) {
+        return original_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .filter(|stem| crate::date::JournalDate::from_file_stem(stem).is_some())
+            .map(|_| TrashEntryKind::Journal)
+            .unwrap_or(TrashEntryKind::Page);
+    }
+    if legacy_name_is_asset(original) {
+        TrashEntryKind::Asset
+    } else {
+        TrashEntryKind::Other
+    }
+}
+
+fn legacy_trash_original_name(name: &str) -> &str {
+    name.split_once("__")
+        .map(|(_, original)| original)
+        .unwrap_or(name)
+}
+
+fn legacy_name_is_asset(name: &str) -> bool {
+    if name.starts_with('.') || name.contains('/') || name.contains('\\') || name.ends_with(".edn")
+    {
+        return false;
+    }
+    let Some(ext) = Path::new(name)
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_ascii_lowercase())
+    else {
+        return false;
+    };
+    matches!(
+        ext.as_str(),
+        "png"
+            | "jpg"
+            | "jpeg"
+            | "gif"
+            | "webp"
+            | "avif"
+            | "svg"
+            | "bmp"
+            | "tif"
+            | "tiff"
+            | "heic"
+            | "heif"
+            | "pdf"
+            | "mp4"
+            | "mov"
+            | "m4v"
+            | "webm"
+            | "mkv"
+            | "avi"
+            | "mp3"
+            | "wav"
+            | "m4a"
+            | "ogg"
+            | "flac"
+            | "aac"
+            | "opus"
+            | "txt"
+            | "csv"
+            | "tsv"
+            | "json"
+            | "yaml"
+            | "yml"
+            | "zip"
+            | "tar"
+            | "gz"
+            | "tgz"
+            | "7z"
+            | "rar"
+            | "doc"
+            | "docx"
+            | "xls"
+            | "xlsx"
+            | "ppt"
+            | "pptx"
+            | "odt"
+            | "ods"
+            | "odp"
+            | "rtf"
+    )
+}
+
 fn trash_stamp() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -4877,6 +5089,33 @@ mod tests {
         assert_eq!(Graph::open(&dir2).empty_asset_trash().unwrap(), 0);
         let _ = fs::remove_dir_all(&dir);
         let _ = fs::remove_dir_all(&dir2);
+    }
+
+    #[test]
+    fn empty_asset_trash_keeps_legacy_trashed_pages() {
+        let dir = scratch("empty-trash-keeps-pages");
+        let trash = dir.join("logseq").join(".tine-trash");
+        fs::create_dir_all(&trash).unwrap();
+        let asset = trash.join("123-0__unused.png");
+        let page = trash.join("123-1__Recovered Page.md");
+        fs::write(&asset, b"img").unwrap();
+        fs::write(&page, b"- recovered page\n").unwrap();
+
+        let g = Graph::open(&dir);
+        let stats = g.asset_trash_stats();
+        assert_eq!(stats.count, 1, "legacy asset trash is asset-counted");
+        assert_eq!(stats.pages, 1, "legacy page trash is protected-counted");
+        assert_eq!(g.empty_asset_trash().unwrap(), 1);
+        assert!(
+            !asset.exists(),
+            "legacy asset trash entry should be deleted"
+        );
+        assert!(page.exists(), "legacy page trash entry must survive");
+        let stats = g.asset_trash_stats();
+        assert_eq!(stats.count, 0, "asset trash should be empty");
+        assert_eq!(stats.pages, 1, "page trash should still be counted");
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

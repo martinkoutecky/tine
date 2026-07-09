@@ -1897,7 +1897,7 @@ fn resolve_sync_conflict_merges_and_trashes() {
         "conflict copy not moved"
     );
     assert!(g.list_sync_conflicts().is_empty(), "conflict still listed");
-    let trash = root.join("logseq").join(".tine-trash");
+    let trash = root.join("logseq").join(".tine-trash").join("conflicts");
     let trashed: Vec<_> = std::fs::read_dir(&trash).unwrap().flatten().collect();
     assert!(
         trashed
