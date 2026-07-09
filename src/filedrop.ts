@@ -7,9 +7,29 @@
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { backend } from "./backend";
 import { assetFileName, assetMarkdown } from "./media";
-import { doc, insertOutlineAfter, visibleOrder } from "./store";
+import { matrixGridNode, delimitedCellCount } from "./sheet/conversions";
+import { parseDelimitedText, type DelimitedKind } from "./sheet/tsv";
+import { doc, insertOutlineAfter, visibleOrder, withUndoUnit } from "./store";
 import { pushToast } from "./ui";
 import type { OutlineNode } from "./editor/outline";
+
+const MAX_DROPPED_CELLS = 5000;
+
+function basename(path: string): string {
+  return path.split(/[\\/]/).pop() ?? "";
+}
+
+function delimitedKind(path: string): DelimitedKind | null {
+  const lower = basename(path).toLowerCase();
+  if (lower.endsWith(".csv")) return "csv";
+  if (lower.endsWith(".tsv")) return "tsv";
+  return null;
+}
+
+function titleWithoutExtension(path: string, kind: DelimitedKind): string {
+  const name = basename(path);
+  return name.slice(0, Math.max(0, name.length - kind.length - 1)) || "Dropped table";
+}
 
 /** Install the OS file-drop handler. Returns an uninstaller. No-op outside the
  *  Tauri shell (browser mock / tests). */
@@ -47,11 +67,24 @@ export async function installFileDrop(): Promise<() => void> {
     try {
       const nodes: OutlineNode[] = [];
       for (const path of paths) {
-        const orig = path.split(/[\\/]/).pop() || undefined;
+        const kind = delimitedKind(path);
+        if (kind) {
+          const text = await backend().readTextFile(path);
+          const matrix = parseDelimitedText(text, kind);
+          const cells = delimitedCellCount(matrix);
+          if (cells > MAX_DROPPED_CELLS) {
+            pushToast(`"${basename(path)}" has ${cells} cells; CSV/TSV drops are limited to ${MAX_DROPPED_CELLS}.`, "error");
+            continue;
+          }
+          nodes.push(matrixGridNode(titleWithoutExtension(path, kind), matrix));
+          continue;
+        }
+        const orig = basename(path) || undefined;
         const saved = await backend().importAsset(path, assetFileName(orig));
         nodes.push({ raw: assetMarkdown(saved), children: [] });
       }
-      insertOutlineAfter(afterId, nodes);
+      if (!nodes.length) return;
+      withUndoUnit("file-drop", [doc.byId[afterId].page], () => insertOutlineAfter(afterId, nodes));
       pushToast(`Inserted ${nodes.length} file${nodes.length === 1 ? "" : "s"}`, "success");
     } catch (e) {
       pushToast(`Couldn't insert dropped file: ${String(e)}`, "error");

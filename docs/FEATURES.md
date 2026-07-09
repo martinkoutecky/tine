@@ -166,7 +166,158 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   `page-property`, `priority`, `page`, `namespace`, `page-tags`, `scheduled`,
   `deadline`, `journal`, page-refs, boolean `or/and/not`, `:today`/`:current-page`-style
   inputs) map onto the same engine; any unsupported part is **flagged** in the result
-  rather than silently dropped or wrongly answered.
+  rather than silently dropped or wrongly answered. The "⚙ advanced" switch is
+  **two-way**: an advanced block shows a **← Simple** control that returns to the
+  visual builder — restoring the exact pre-conversion query within a session, or
+  reverse-parsing recognized raw Datalog otherwise (and disabling itself, with a
+  tooltip, when the query has no visual representation).
+
+## Sheets (2-D grids)
+
+Tine's first deliberately beyond-Logseq feature: render a block's children as a
+**recursive, editable, TreeSheets-style grid** — while everything round-trips to
+plain Logseq markdown (and org). Geometry is the outline shape; config is a few
+harmless `tine.*` properties (`tine.view:: grid`, `tine.header:: true`,
+`tine.col-widths:: 0=140`, `tine.fields:: qty=number;done=checkbox`). Logseq
+renders the same file as an ordinary nested outline — no sidecars, no
+coordinates, no lock-in.
+
+- **Positional grid** — a block with `tine.view:: grid` shows its children as
+  rows and grandchildren as cells (sibling order = column). Ragged rows render
+  holes; empty cells are just empty bullets. Optional header row
+  (`tine.header:: true`).
+- **Cells are real blocks** — click selects a cell; double-click, `Enter`, or
+  `F2` edits it like any block (links, refs, tags all live). Nested children
+  render inside the cell, and a cell can itself be a grid (recursion).
+- **Full spreadsheet keyboard** — 2-D arrow navigation with a
+  selection↔edit ladder (`Enter`/`Esc`), `Tab` cell-walk, type-to-overtype,
+  `Shift+arrow` range select (plus row/column/grid selection),
+  `Ctrl+arrow` content moves, `Ctrl+D`/`Ctrl+R` fill down/right.
+- **Seams** — the boundary between rows/columns is a first-class selection
+  target (TreeSheets-style): arrow onto a seam, then **type to insert a
+  row/column right there**; `Backspace`/`Delete` on a seam removes the adjacent
+  row/column. Drag a column ruling to resize (double-click resets).
+- **Edge growth** — a grid is never a dead end. Hovering a top-level grid reveals
+  **+** affordances on its right and bottom edges that add a column or row (one
+  undo, cursor lands in the new cell); an empty grid shows a clickable placeholder
+  cell instead of inert text. (Deliberately different from tables' "Add row/Add
+  column" ghost buttons — grids grow positionally on their 2-D edges.)
+- **Clipboard interop** — copy a range as TSV (+ an HTML table, so it pastes
+  into real spreadsheets); paste TSV/CSV to fill and grow the grid; paste
+  indented text to build nested structure. Dropping a `.csv` or `.tsv` file
+  onto a page creates a new grid block.
+- **Paste: nest vs splat by mode** — paste while cells are **selected** (not
+  editing) **splats** a copied region into the surrounding grid, anchored at the
+  selection's top-left: it grows the grid to fit, pads short rows, and overwrites
+  the footprint (one undo; a toast offers Undo if it replaced non-empty cells).
+  Paste while **editing** a cell **nests** the copy as a subgrid at the caret.
+  No modifier — the mode you're already in is the signal (ADR 0037).
+- **Field tables** — `tine.view:: table` turns children or query results into an
+  editable table whose columns come from facets: task state, priority,
+  scheduled/deadline dates, tags, page, and block properties. Writable fields
+  write back to the source block. Optional `tine.fields::` schemas pin column
+  order and type cells as text, number, date/datetime, checkbox, list, ref, or
+  enum; the header menu edits that schema in place.
+- **Formula columns and filters** — add read-only computed columns with one
+  property per expression:
+  `tine.formula.effort:: points * 2`,
+  `tine.formula.due-soon:: if(isEmpty(deadline), false, deadline < today() + "7d")`,
+  and filter rows with `tine.filter:: status != "done" && formula.due-soon`.
+  The DSL is a JS-flavored, typed expression subset: field names are bare
+  identifiers, formulas can reference `formula.<name>`, and the stdlib is
+  deliberately small (`if`, `isEmpty`; text `.contains/.lower/.trim/.replace/.length`;
+  number `.round/.floor/.ceil/.abs/.toFixed(n)`; date `now()`, `today()`,
+  `.format(fmt)`, `.year/.month/.day`, `.relative()`; list
+  `.length/.join(sep)/.contains(x)`). Errors are values: a bad formula renders an
+  ⚠ chip with the message on hover, and formula values are derived at render time
+  and never stored back onto blocks.
+- **Task kanban** — `tine.view:: board` groups task/query rows by state,
+  priority, or a property; dragging a card or pressing `Ctrl+←/→` writes the
+  grouping field back to the card. A **Group by** dropdown above the columns (and
+  a matching **Group by →** submenu in the board right-click menu) changes the
+  grouping axis — State, Priority, Tags, or any field — without hand-editing
+  `tine.group-by::`.
+- **Tag boards** — boards can group by tags too: a multi-tag card appears in
+  each matching column, and moving it adds/removes the tag on that block.
+- **Formula group-by and fail-open filters** — boards can group on computed axes
+  with `tine.group-by:: formula.due-soon`; formula axes are read-only, so moving a
+  card cannot rewrite a derived value. `tine.filter::` works on tables and boards
+  with the same evaluator. Honesty rule: if the filter has a parse error, returns
+  a non-boolean, or any row evaluates to an error, filtering is disabled for the
+  whole view and Tine shows a **Filter disabled** chip instead of quietly hiding
+  rows.
+- **Visual formula builder** — right-click a table or board and choose **Add
+  formula…** or **Edit filter…**. The popup opens on query-builder-style faces
+  for IF/THEN/ELSE, comparisons/booleans, leaves, formulas, literals, and
+  member transforms, with a `</> raw` toggle back to the validating textarea.
+  Expressions the builder cannot model render as raw-expression faces and save
+  verbatim, so hand-written formulas are never silently rewritten.
+- **Hierarchify / Flatten** — commit a field grouping into the outline, or pull
+  grouped children back up into a flat table.
+- **Conversions** — convert a markdown pipe table block into a grid, or export
+  a safe grid back to a pipe table. The conversion keeps markdown cell source
+  where the parser exposes spans, refuses lossy grids, and makes the whole
+  operation one undo step.
+- **Aggregates** — per-column summaries (sum, average, min/max, dates, filled,
+  unique, checked, and more) live in a quiet footer and store only the selected
+  aggregate token.
+- **Cell polish** — cells/cards render Logseq block highlight colors, cell
+  menus can switch child rendering between outline/grid/table or zoom into the
+  cell, and scheduled/deadline table cells use the same date picker as normal
+  blocks.
+- **Tag-page tables** — a tag page with tagged references can opt into a table
+  view (`tine.tag-table:: true`) and add new tagged rows to today's journal.
+- **Slash commands** — `/grid`, `/table`, and `/board` convert the current block
+  into the corresponding sheet face.
+- **Safety** — every grid gesture is a single undo step, and grid pages are
+  byte-exact round-trip tested (md and org).
+
+V1 limits: `page` columns are read-only; range operations are single-level
+within the current grid; board cards can move between columns but not reorder
+within a column; merged cells are still v2+.
+
+## Split view
+
+- ⊕ **Panes with independent tabs and history** — split the workspace into
+  multiple note panes. Each pane has its own tab strip, active tab, back/forward
+  stack, scroll position, and focused-pane indicator; the layout is saved in the
+  session and restored on launch.
+- **Default split bindings:** `Mod+Alt+\` splits right and duplicates the current
+  tab; `Mod+Alt+Shift+\` splits down. The *Close pane* command is available from
+  the command palette.
+- **Pane focus bindings:** `Mod+1` … `Mod+9` focuses panes in spatial reading
+  order; `Mod+Alt+Left/Right/Up/Down` focuses the nearest pane in that direction.
+- **Move-tab bindings:** `Mod+Alt+Shift+Left/Right/Up/Down` moves the active tab
+  to the nearest pane in that direction. Moving the last page tab out closes the
+  emptied pane; the journals feed keeps its last tab.
+- **Esc pane-select ladder:** `Esc` climbs edit → block-select → pane-select
+  (also available as *Pane select mode* in the command palette). While active,
+  a hint pill shows at the bottom of the window and the targeted pane is
+  tinted — another `Esc` exits, so watch the pill to know which side of the
+  toggle you're on.
+- **Pane-select targets:** arrows step through panes, seams, **pane-edge
+  segments** (any side of any pane), and whole-window edges — only in the
+  direction pressed (targets must overlap the current one, no diagonal
+  jumps). On an edge segment, a perpendicular arrow **slides along the line**
+  to the adjacent pane's same-side segment; at the end of the line it turns
+  the corner. Selecting a pane also **focuses** it, so `Ctrl+K` opens a
+  page in the pane you see selected. On a pane: `Enter` enters it,
+  `Delete`/`Backspace` closes it. On a seam/segment/edge: `Enter` makes a
+  **mirror split** (same content side by side, no dialog); **typing** (or
+  `Ctrl+K`) opens the split with the switcher pre-filled with what you typed —
+  the fast "open/create that page in a new split" (commands are hidden there;
+  only pages, page creation, and blocks). A segment splits **just that pane**;
+  pressing outward again widens it to the whole-window edge, which splits the
+  entire layout (all panes tint to show the scope) — so "split only the left
+  half" and "split the whole screen" are both two keystrokes away, in either
+  direction.
+- **Open to the side:** `Ctrl+click` a page link, tag, or block reference to open
+  it in another pane, creating a right split when needed. In the `Ctrl+K` switcher,
+  `Alt+Enter` opens the highlighted page/create/block result in the other pane.
+- **Tab drag:** drag a tab within a strip to reorder it, onto another pane's strip
+  to move it at that position, onto a pane body to append and activate it there,
+  or onto a seam/pane edge to split that half and move the tab into the new pane.
+  `Esc` cancels an in-progress tab drag.
 
 ## Tasks, journals & dates
 
@@ -228,6 +379,17 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   "Namespace" header + nested descendant tree), an automatic **"Hierarchy"** section
   (breadcrumb paths of descendant pages) on any namespaced page, and read-only
   **"aka" alias chips** on pages reachable by another name.
+- **In-app Guide** — Help → Guide (or the *Open Guide* command) loads bundled,
+  read-only how-to pages under the virtual `Tine-guide/` namespace. Guide links stay
+  inside that virtual namespace, guide pages are hidden from search/page lists/backlinks,
+  and **Copy the guide into your graph** creates the complete editable
+  `tine-guide/...` namespace with inter-guide links rewritten, without overwriting
+  existing copied pages. The bundled set covers Sheets, **Formulas** (a from-zero
+  walkthrough of the visual formula editor), Quick capture, PDF annotation, Tips &
+  shortcuts, and the Feature showcase. The Sheets how-tos teach the friendly
+  gestures — `/Grid`, `/Table`, `/Board`, **Show children as →**, edge-grow, ghost
+  Add-row/column buttons, and the board **Group by** picker — rather than hand-typed
+  `tine.*` properties.
 - ⊕ **Right-click page rows in the left sidebar** (favorites, recents, all pages,
   namespace tree) for the full page menu, including trash-backed Delete. Logseq core
   has page-title journal delete, but not sidebar-row delete.

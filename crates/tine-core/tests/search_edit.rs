@@ -329,6 +329,7 @@ fn new_journal_appears_in_journals_desc_via_cache() {
         format: Default::default(),
         read_only: false,
         path: String::new(),
+        guide: false,
     };
     g.save_page(&dto, None).expect("save new journal");
 
@@ -896,6 +897,7 @@ fn new_journal_saved_with_date_stem_not_title() {
         format: Default::default(),
         read_only: false,
         path: String::new(),
+        guide: false,
     };
     g.save_page(&dto, None).expect("save new journal");
     // It must land on the date-stem file, and reopening must show it in the feed.

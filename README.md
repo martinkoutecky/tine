@@ -93,11 +93,17 @@ raw speed. (Comparisons are against current Logseq desktop core, no plugins.)
   runtime instead of Electron — typing stays in the frontend tree, reads hit an in-memory index.
 - **🗂️ Built-in tabs.** Middle-click anything to open it in a background tab; pin, drag-reorder,
   `Mod+W` to close. (Logseq core has none.)
+- **🪟 Split view.** Panes have their own tabs/history, keyboard pane/seam navigation, `Ctrl+click`
+  open-to-side, and tab drag to pane or seam.
 - **⏯️ Browser-style back/forward** — `Alt+Left` / `Alt+Right`, per-tab history, works mid-edit.
 - **🎯 Focus mode + dim-inactive-blocks** (`t f` / `t b`) — fade everything but the block you're on.
 - **⚡ Global quick-capture** — bind `tine --capture` to a desktop hotkey and a small always-on-top
   box pops from *any* app with the full editor, filing a bullet to today's journal.
 - **🔁 Carry unfinished tasks forward** to today (last 7 / 30 / 365 days, or a configurable N).
+- **▦ Sheets** — recursive grids, markdown databases, typed field tables, formula columns + filters with a visual builder, task/tag boards, aggregates, colors, and CSV import over plain bullets.
+- **📖 In-app Guide** — Help → Guide opens bundled, read-only how-to pages beside your own
+  graph, and **Copy the guide into your graph** creates an editable, interlinked
+  `tine-guide/…` sandbox without touching the originals.
 - **🛟 A real data-safety story** — conflict detection instead of silent overwrites, launch
   snapshots with one-click restore, and delete-to-trash; built to live safely on a graph you also
   edit from Logseq mobile over Syncthing.
@@ -108,6 +114,10 @@ raw speed. (Comparisons are against current Logseq desktop core, no plugins.)
   <img src="docs/img/quick-capture.png" alt="Global quick-capture mini-window" width="32%">
   <img src="docs/img/focus-dim.png" alt="Focus mode with inactive blocks dimmed" width="32%">
   <img src="docs/img/tabs.png" alt="Built-in tabs" width="32%">
+</p>
+
+<p align="center">
+  <img src="docs/img/sheets.png" alt="Sheets grid, field table, and task board" width="640">
 </p>
 
 <p align="center">
@@ -129,7 +139,7 @@ and the **[demo](https://tine.page/demo/)** shows the rendered-content side of i
 | **Links, refs & queries** | `[[page]]` · `#tag` · `((block ref))` · `{{embed}}` with autocomplete; live linked/unlinked references; per-block ref counts; the macro set; a `{{query}}` engine with a visual builder; a scoped Datalog path. |
 | **Tasks, journals & dates** | Task workflows + priorities, scheduled/deadline with a date picker, recurring tasks, carry-forward, a multi-day journal feed, agenda, and a calendar. |
 | **PDF** | Zoomable virtualized viewer, in-PDF find, text + area (image) highlights stored Logseq-compatibly, each a bullet you can annotate. |
-| **Search & nav** | `Ctrl+K` switcher (titles + full text), command palette, namespace tree, tabs, back/forward, focus mode, global quick-capture, page icons. |
+| **Search & nav** | `Ctrl+K` switcher (titles + full text), command palette, in-app Guide, namespace tree, tabs, split view, back/forward, focus mode, global quick-capture, page icons. |
 | **Your files** | Safe to run alongside Logseq mobile over Syncthing — conflict detection, format-preserving atomic saves, transactional rename, org-mode (byte-faithful or read-only), snapshots + trash. |
 | **Customize & export** | Remappable shortcuts with `?` help, built-in theme gallery + custom CSS, multi-language spell check, static HTML export with offline search, copy/export as Markdown, **export a page to PDF**. |
 
@@ -254,8 +264,17 @@ file a good report, are in **[CONTRIBUTING.md](CONTRIBUTING.md)**.
 
 ## Roadmap & non-goals
 
-**Planned / under evaluation:** graph view, configurable typographic auto-replace, and **broader
-coverage of advanced Datalog queries** (a scoped subset works today — see above).
+**New — Sheets (2-D grids + databases):** render a block's children as a recursive,
+editable TreeSheets-style grid, field table, or board — while everything stays plain
+Logseq markdown/org (see [FEATURES.md](docs/FEATURES.md#sheets-2-d-grids)). It includes
+typed schemas, query-driven tables, task/tag boards, grouping, aggregates, markdown table
+conversion, computed columns with a visual formula builder, filters, and CSV/TSV import.
+
+**New — Split view:** panes with their own tabs/history, TreeSheets-style pane and seam
+navigation, `Ctrl+click` open-to-side, and tab drag to panes/seams (see
+[FEATURES.md](docs/FEATURES.md#split-view)).
+
+**Planned / under evaluation:** graph view and configurable typographic auto-replace.
 
 **Mobile:** Tine has a **native Android build** (Tauri v2) as of 0.4.0 — it opens and edits your real
 Logseq graph on the phone over your own sync, alongside the Logseq mobile app. iOS is being scoped.

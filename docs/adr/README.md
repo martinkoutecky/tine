@@ -49,4 +49,18 @@ see the project `CLAUDE.md`.
 | [0020](0020-sync-conflict-merge.md) | Sync-conflict copies: detect + block-tree merge from one shared alignment; resolve only through the safe save path | Accepted |
 | [0021](0021-pdf-export.md) | PDF export reuses the HTML render + the webview's own print engine (hidden iframe + `window.print()`), no new deps | Accepted |
 | [0022](0022-logbook-clock-drawer-format.md) | Logbook CLOCK drawer parsing and writes live in one Rust module shared with wasm | Accepted |
-| [0023](0023-sigkill-webkit-children-on-exit.md) | SIGKILL WebKitGTK's helper processes at quit (Linux) to prevent the GL-driver exit-teardown coredump | Accepted |
+| [0023](0023-sheets-render-substrate.md) | Sheets lays out on CSS Grid max-content tracks (Phase-0 spike GO; table-auto rejected) | Accepted |
+| [0024](0024-sheets-header-row.md) | Sheets positional-grid header row is explicit opt-in (`tine.header:: true`), never auto-detected | Accepted |
+| [0025](0025-sheets-mode-boundaries.md) | Sheets mode boundaries: click selects, double-click edits, Esc ladder, flow-out not wrap | Accepted |
+| [0026](0026-sheets-field-schema.md) | Sheets field schema: `tine.fields::` scalar grammar, per-tag + per-view homes, declared-first columns, typed cells | Accepted |
+| [0027](0027-sheets-tags-writeback.md) | Tags write-back is span-guided and delta-shaped (first line only); tag boards use the Notion multi-group model | Accepted |
+| [0028](0028-sheets-formula-dsl.md) | Sheets formulas: Bases-model typed expression DSL, `tine.formula.<name>::` lines, errors as values, derived never stored | Accepted |
+| [0029](0029-sigkill-webkit-children-on-exit.md) | SIGKILL WebKitGTK's helper processes at quit (Linux) to prevent the GL-driver exit-teardown coredump (was master's 0023; renumbered in the sheets merge) | Accepted |
+| [0030](0030-query-view-unification.md) | Query view unification: query DSL owns membership, `tine.view::` owns presentation | Accepted |
+| [0031](0031-recursive-cell-form.md) | Recursive sheet cell form: compact and hosted grids with structural clipboard paste | Accepted |
+| [0032](0032-pane-split-tree-architecture.md) | Split view: pane-router factory + focused-pane shims, pane split-tree, single journals feed pane | Accepted |
+| [0033](0033-pane-select-nav-semantics.md) | Pane-select nav semantics: overlap-constrained stepping, pane-edge segments (split one pane vs the root), focus-follows-selection, 2-rung Esc ladder | Accepted |
+| [0034](0034-one-nav-model-two-steppers.md) | One spatial nav model for sheets and panes: shared key protocol (navProtocol.ts), deliberately separate steppers (lattice vs tiling), dual-harness contract test pins the shared invariants | Accepted |
+| [0035](0035-sheets-formula-builder-text-truth.md) | Sheets formula builder: expression text stays authoritative, AST edits deparse through a round-trip gate, unsupported shapes stay raw | Accepted |
+| [0036](0036-in-app-guide.md) | In-app Guide pages are read-only bundled templates with explicit copy-into-graph writes | Accepted |
+| [0037](0037-sheet-paste-mode-nest-vs-splat.md) | Sheet paste: edit mode nests a subgrid, select mode splats the region into the grid (amends 0031) | Accepted |

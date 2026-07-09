@@ -25,7 +25,8 @@ export const RENDER_HIDDEN_PROPS: ReadonlySet<string> = new Set([
 /** Whether a property key is hidden from the rendered chips: a built-in internal
  *  key (case-insensitive) OR one the user listed in `:block-hidden-properties`. */
 export function isRenderHiddenProp(key: string, userHidden: readonly string[] = []): boolean {
-  return RENDER_HIDDEN_PROPS.has(key.toLowerCase()) || userHidden.includes(key);
+  const lower = key.toLowerCase();
+  return lower.startsWith("tine.") || RENDER_HIDDEN_PROPS.has(lower) || userHidden.some((k) => k.toLowerCase() === lower);
 }
 
 const PROP_RE = /^[A-Za-z0-9_./-]+::\s?.*$/;

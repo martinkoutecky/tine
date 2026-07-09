@@ -9,6 +9,7 @@
 import { createStore, produce, unwrap } from "solid-js/store";
 import { createSignal, createMemo, createRoot } from "solid-js";
 import type { BlockDto, Format, PageDto, PageKind } from "./types";
+import type { Route } from "./router";
 import { parseOutline, type OutlineNode } from "./editor/outline";
 import type { ExportNode } from "./editor/exportText";
 import { backend } from "./backend";
@@ -23,13 +24,15 @@ import {
   logbookWithSecondSupport,
   removeDeletedPageFromNavigation,
 } from "./ui";
-import { seedFacets, facetsFromDto, clearSeededFacets } from "./render/facets";
+import { seedFacets, facetsFromDto, clearSeededFacets, facetsOf } from "./render/facets";
 import { journalTitle } from "./journal";
 import { upsertPropertyLine, readPropertyValue, splitProps, joinProps, isBuiltinHidden } from "./editor/properties";
 import { copyIncludeSubtree, copyStripCollapsed } from "./copySettings";
 import { trimBlockTrailingSpace } from "./editor/format";
 import { OPEN_MARKERS, MARKER_RE } from "./markers";
 import { editingId, endEdit, startEditing } from "./editorController";
+import { notifyModeReset, notifyOutlineSelectionStarted } from "./modeHooks";
+import { sheetConfigFromRaw } from "./sheet/config";
 import { applyMarkerTransition } from "./logbook";
 import {
   markDirty,
@@ -71,6 +74,8 @@ export interface FeedPage {
   format: Format;
   /** True for an org page Tine can't round-trip — shown but not editable. */
   readOnly: boolean;
+  /** Bundled in-app Guide page: read-only and ephemeral. */
+  guide: boolean;
   /** Graph-root-relative file this page was loaded from. Sent back on save so a
    *  page pinned to a SPECIFIC file (a duplicate-day stray, #21) saves to its own
    *  file, not the canonical one. Empty/absent for a brand-new page (resolved by
@@ -149,6 +154,17 @@ export function formatForBlock(id: string | undefined): Format {
   return formatForPage(id ? doc.byId[id]?.page : undefined);
 }
 
+export function blockIsGridView(id: string | undefined): boolean {
+  const n = id ? doc.byId[id] : undefined;
+  return !!n && sheetConfigFromRaw(n.raw, formatForBlock(id)).view === "grid";
+}
+
+function blockIsOpaqueSheetView(id: string | undefined): boolean {
+  const n = id ? doc.byId[id] : undefined;
+  const view = n ? sheetConfigFromRaw(n.raw, formatForBlock(id)).view : null;
+  return view === "grid" || view === "table" || view === "board";
+}
+
 let idCounter = 0;
 function freshId(): string {
   return `b${Date.now().toString(36)}-${idCounter++}`;
@@ -201,6 +217,7 @@ function toFeedPage(dto: PageDto, byId: Record<string, Node>): FeedPage {
     roots,
     format: dto.format ?? "md",
     readOnly: dto.read_only ?? false,
+    guide: dto.guide ?? false,
     path: dto.path,
   };
 }
@@ -285,6 +302,20 @@ export function ensurePageLoaded(dto: PageDto) {
   evictIfNeeded();
 }
 
+/** Load/reload bundled Guide pages into the working set without making them the
+ *  main feed. Re-open uses this to re-derive the read-only virtual pages from
+ *  the backend templates instead of trusting stale in-memory copies. */
+export function loadGuidePages(dtos: PageDto[]) {
+  for (const dto of dtos) {
+    upsertPage({ ...dto, read_only: true, guide: true });
+  }
+  evictIfNeeded();
+}
+
+export function isGuidePage(name: string): boolean {
+  return pageByName(name)?.guide ?? false;
+}
+
 /** Drop a page from the working set + feed and clear its dirty/baseline/conflict
  *  state — WITHOUT touching disk. Use when the page no longer exists on disk and
  *  the user accepts that (e.g. resolving an external-deletion conflict with "use
@@ -337,8 +368,15 @@ export async function deletePage(name: string, kind: PageKind): Promise<boolean>
 // open in the right sidebar, the page being edited, and any page with unsaved
 // edits are all kept (evicting a dirty page would lose those edits).
 const WORKING_SET_CAP = 80;
+let paneRouteProvider: () => Route[] = () => [];
+export function registerPaneRouteProvider(provider: () => Route[]) {
+  paneRouteProvider = provider;
+}
 function pinnedPages(): Set<string> {
   const pin = new Set<string>(doc.feed);
+  for (const r of paneRouteProvider()) {
+    if (r.kind === "page") pin.add(r.name);
+  }
   for (const it of rightSidebar()) pin.add(it.kind === "page" ? it.name : it.page);
   for (const name of dirtyPages()) pin.add(name);
   // Conflicted pages hold unsaved edits that aren't in `dirty` (the save batch
@@ -404,6 +442,7 @@ export function resetStore() {
   clearSeededFacets();
   setDoc({ byId: {}, pages: [], feed: [], loaded: false });
   endEdit("graph-switch");
+  notifyModeReset();
 }
 
 // A navigation/feed load must NOT replace a page that has unsaved edits (or an
@@ -443,20 +482,20 @@ export function reloadDisposition(name: string): ReloadDisposition {
 }
 
 /** Load a single page and make it the main view. */
-export function loadSingle(dto: PageDto) {
+export function loadSingle(dto: PageDto, opts: { endEdit?: boolean } = {}) {
   upsertUnlessDirty(dto);
   setDoc("feed", [dto.name]);
   setDoc("loaded", true);
-  endEdit("page-navigation");
+  if (opts.endEdit !== false) endEdit("page-navigation");
   evictIfNeeded();
 }
 
 /** Load the journals feed as the main view. */
-export function loadFeed(dtos: PageDto[]) {
+export function loadFeed(dtos: PageDto[], opts: { endEdit?: boolean } = {}) {
   for (const d of dtos) upsertUnlessDirty(d);
   setDoc("feed", dtos.map((d) => d.name));
   setDoc("loaded", true);
-  endEdit("page-navigation");
+  if (opts.endEdit !== false) endEdit("page-navigation");
   evictIfNeeded();
 }
 
@@ -531,6 +570,7 @@ export function pageToDto(pageName: string): PageDto | null {
     // Pin the save to the exact file this page came from (#21). Absent for a
     // brand-new page → the backend resolves the file by name, as before.
     path: p.path,
+    guide: p.guide,
   };
 }
 
@@ -563,7 +603,7 @@ const visibleData = createRoot(() =>
         index.set(id, order.length);
         order.push(id);
         const n = doc.byId[id];
-        if (n && !n.collapsed && n.children.length) walk(n.children);
+        if (n && !n.collapsed && n.children.length && !blockIsOpaqueSheetView(id)) walk(n.children);
       }
     };
     for (const p of mainPages()) walk(p.roots);
@@ -586,7 +626,7 @@ function pageVisibleOrder(pageName: string): string[] {
     for (const id of ids) {
       order.push(id);
       const n = doc.byId[id];
-      if (n && !n.collapsed && n.children.length) walk(n.children);
+      if (n && !n.collapsed && n.children.length && !blockIsOpaqueSheetView(id)) walk(n.children);
     }
   };
   walk(page.roots);
@@ -653,6 +693,7 @@ type UndoEntry = SnapEntry | RawEntry;
 const undoStack: UndoEntry[] = [];
 let redoStack: UndoEntry[] = [];
 let lastUndoTag: string | null = null;
+let undoSuppressionDepth = 0;
 
 /** Discard all undo/redo history. Called on graph switch/reset so old-graph
  *  snapshots can't be replayed into a different graph. */
@@ -660,6 +701,7 @@ export function clearUndoHistory() {
   undoStack.length = 0;
   redoStack = [];
   lastUndoTag = null;
+  undoSuppressionDepth = 0;
 }
 
 /** Does an undo entry reference page `name`? A raw entry by its `page`; a snap
@@ -734,6 +776,7 @@ function snapEntry(affected?: string[] | null): SnapEntry {
  *  op changes, including a cross-page move's source AND destination, or undo
  *  would miss a page. `tag` resets the typing-coalesce marker. */
 function pushUndo(tag: string, affected?: string[]) {
+  if (undoSuppressionDepth > 0) return;
   undoStack.push(snapEntry(affected));
   if (undoStack.length > 200) undoStack.shift();
   redoStack = [];
@@ -743,6 +786,7 @@ function pushUndo(tag: string, affected?: string[]) {
 /** Record an O(1) inverse patch for a single-block text edit (typing). A typing
  *  burst in one block coalesces to a single entry holding the pre-burst text. */
 function pushRawUndo(id: string, prevRaw: string) {
+  if (undoSuppressionDepth > 0) return;
   const tag = `type:${id}`;
   if (tag === lastUndoTag) return; // mid-burst: keep the first (pre-burst) raw
   undoStack.push({ kind: "raw", id, raw: prevRaw, page: doc.byId[id].page });
@@ -802,6 +846,30 @@ function applyEntry(e: UndoEntry): UndoEntry {
   return inverse;
 }
 
+export function withUndoUnit<T>(tag: string, pages: string[], fn: () => T): T {
+  if (undoSuppressionDepth > 0) return fn();
+
+  const undoBefore = undoStack.slice();
+  const redoBefore = redoStack.slice();
+  const tagBefore = lastUndoTag;
+  pushUndo(tag, pages);
+  undoSuppressionDepth++;
+  try {
+    return fn();
+  } catch (err) {
+    undoSuppressionDepth--;
+    const entry = undoStack[undoStack.length - 1];
+    if (entry) applyEntry(entry);
+    undoStack.length = 0;
+    undoStack.push(...undoBefore);
+    redoStack = redoBefore;
+    lastUndoTag = tagBefore;
+    throw err;
+  } finally {
+    if (undoSuppressionDepth > 0) undoSuppressionDepth--;
+  }
+}
+
 export function undo() {
   if (!undoStack.length) return;
   redoStack.push(applyEntry(undoStack.pop()!));
@@ -837,6 +905,78 @@ export function setRaw(id: string, raw: string, opts?: { timetracking?: boolean 
   pushRawUndo(id, prev);
   setDoc("byId", id, "raw", next);
   markDirty(doc.byId[id].page);
+}
+
+export function insertEmptyChildBlock(parentId: string, at: number): string | null {
+  const parent = doc.byId[parentId];
+  if (!parent || at < 0 || at > parent.children.length) return null;
+  pushUndo(`insert-child:${parentId}`, [parent.page]);
+  const id = freshId();
+  const pageName = parent.page;
+  setDoc(
+    produce((s) => {
+      s.byId[id] = { id, raw: "", collapsed: false, parent: parentId, page: pageName, children: [] };
+      s.byId[parentId].children.splice(at, 0, id);
+    })
+  );
+  markDirty(pageName);
+  return id;
+}
+
+/** Replace child ordering for existing blocks under existing parents.
+ *  Callers must pass permutations of existing child ids; this helper owns the
+ *  produce-level tree write so higher-level sheet code stays out of store shape. */
+export function replaceChildOrders(nextByParent: Record<string, readonly string[]>): boolean {
+  const parentIds = Object.keys(nextByParent);
+  if (!parentIds.length) return false;
+  const pages = new Set<string>();
+  for (const parentId of parentIds) {
+    const parent = doc.byId[parentId];
+    if (!parent) return false;
+    pages.add(parent.page);
+    for (const childId of nextByParent[parentId]) {
+      const child = doc.byId[childId];
+      if (!child || child.page !== parent.page) return false;
+    }
+  }
+  pushUndo("replace-child-orders", [...pages]);
+  setDoc(
+    produce((s) => {
+      for (const parentId of parentIds) {
+        const next = [...nextByParent[parentId]];
+        s.byId[parentId].children = next;
+        for (const childId of next) s.byId[childId].parent = parentId;
+      }
+    })
+  );
+  for (const pageName of pages) markDirty(pageName);
+  return true;
+}
+
+/** Append parsed outline blocks as children of `parentId`.
+ *  Shared by normal editor paste (via parseOutline) and sheet indented paste. */
+export function insertOutlineChildren(parentId: string, nodes: OutlineNode[]): string | null {
+  if (!nodes.length) return null;
+  const parent = doc.byId[parentId];
+  if (!parent) return null;
+  const pageName = parent.page;
+  let lastId: string | null = null;
+  pushUndo("paste-children", [pageName]);
+  setDoc(
+    produce((s) => {
+      const create = (n: OutlineNode, par: string): string => {
+        const id = freshId();
+        const childIds = n.children.map((c) => create(c, id));
+        s.byId[id] = { id, raw: n.raw, collapsed: false, parent: par, page: pageName, children: childIds };
+        return id;
+      };
+      const created = nodes.map((n) => create(n, parentId));
+      s.byId[parentId].children.push(...created);
+      lastId = created[created.length - 1] ?? null;
+    })
+  );
+  markDirty(pageName);
+  return lastId;
 }
 
 /** Enter: split the block at `offset`. Built-in `id::`/`collapsed::` props are
@@ -1014,6 +1154,10 @@ export function mergeWithPrev(id: string): boolean {
  *  Returns the last top-level inserted block id (to focus). */
 export function insertOutlineAfter(afterId: string, nodes: OutlineNode[]): string {
   if (!nodes.length) return afterId;
+  // Read-only gate at the choke point — file drops (and any future caller)
+  // must not mutate a page the round-trip self-check marked read-only
+  // (Phase-6 review finding, validated).
+  if (blockPageReadOnly(afterId)) return afterId;
   pushUndo("paste", [doc.byId[afterId].page]);
   const parent = doc.byId[afterId].parent;
   const pageName = doc.byId[afterId].page;
@@ -1082,47 +1226,90 @@ async function captureOutlineInto(name: string, kind: PageKind, nodes: OutlineNo
   } else {
     // Empty (or brand-new) page: seed an empty anchor root, append after it, then
     // drop the anchor — reuses insertOutlineAfter's subtree creation rather than a
-    // bespoke root builder.
-    pushUndo("capture", [name]);
-    const anchor = freshId();
-    setDoc(
-      produce((s) => {
-        s.byId[anchor] = { id: anchor, raw: "", collapsed: false, parent: null, page: name, children: [] };
-        s.pages[s.pages.findIndex((p) => p.name === name)].roots.push(anchor);
-      })
-    );
-    markDirty(name);
-    insertOutlineAfter(anchor, nodes);
-    deleteBlock(anchor);
+    // bespoke root builder. One undo unit: the anchor/insert/delete sequence used
+    // to push three undo entries, so one undo left the anchor + row behind
+    // (Phase-6 review finding, validated).
+    withUndoUnit("capture", [name], () => {
+      const anchor = freshId();
+      setDoc(
+        produce((s) => {
+          s.byId[anchor] = { id: anchor, raw: "", collapsed: false, parent: null, page: name, children: [] };
+          s.pages[s.pages.findIndex((p) => p.name === name)].roots.push(anchor);
+        })
+      );
+      markDirty(name);
+      insertOutlineAfter(anchor, nodes);
+      deleteBlock(anchor);
+    });
   }
   return await flushPage(name);
 }
 
 const PROP_LINE = /^([A-Za-z0-9_./-]+):: ?(.*)$/;
 
-/** Current value of a `key:: value` block property, or null. */
+/** Current value of a block property, read through the ONE lsdoc-backed
+ *  recognizer (facetsOf) — a raw line scan here returned property-lookalikes
+ *  from code fences/body text and silently suppressed real config writes
+ *  (review finding). Case-insensitive key match, like OG. */
 export function blockProperty(id: string, key: string): string | null {
   const node = doc.byId[id];
   if (!node) return null;
-  for (const line of node.raw.split("\n")) {
-    const m = PROP_LINE.exec(line);
-    if (m && m[1] === key) return m[2].trim();
+  const lower = key.toLowerCase();
+  for (const [k, v] of facetsOf(node.raw, formatForBlock(id)).properties) {
+    if (k.toLowerCase() === lower) return v.trim();
   }
   return null;
 }
 
+/** Whether a block lives on a read-only page (the org round-trip gate) — sheet
+ *  write paths outside the block editor must consult this before mutating. */
+export function blockPageReadOnly(id: string): boolean {
+  const n = doc.byId[id];
+  return n ? (pageByName(n.page)?.readOnly ?? false) : false;
+}
+
 /** Set (or remove, when value is null) a `key:: value` block property. Property
- *  lines live after the block's content lines, matching Logseq. */
+ *  lines live immediately after the first line, before body text, matching OG's
+ *  block-property placement and keeping every property writer on one path. */
 export function setBlockProperty(id: string, key: string, value: string | null) {
   const node = doc.byId[id];
   if (!node) return;
   pushUndo(`prop:${id}:${key}`, [node.page]);
-  const lines = node.raw.split("\n").filter((l) => {
-    const m = PROP_LINE.exec(l);
-    return !(m && m[1] === key);
-  });
-  if (value !== null) lines.push(`${key}:: ${value}`);
-  setDoc("byId", id, "raw", lines.join("\n"));
+  if (formatForBlock(id) === "org") {
+    // ORG blocks carry properties in a `:PROPERTIES:` drawer — writing a
+    // markdown `key:: value` line into org renders as visible body text and is
+    // NOT read back as a property (same class as GH #25 for id::). Mirrors
+    // rawWithBlockId's canonical placement: title, planning, drawer, body.
+    setDoc("byId", id, "raw", orgRawWithProperty(node.raw, key, value));
+    markDirty(node.page);
+    return;
+  }
+  const lines = node.raw.split("\n");
+  const first = lines[0] ?? "";
+  // Canonical block shape: first line, planning lines, property lines, body.
+  // Scan ONLY the canonical head region (stop at the first body line) plus the
+  // legacy trailing property block (the old writer appended at the end), so a
+  // `key::`-looking line inside body text or a code fence is never touched or
+  // reordered — this regex is fence-unaware and must not reach into the body.
+  const PLANNING_LINE = /^\s*(SCHEDULED|DEADLINE):\s*</;
+  let i = 1;
+  while (i < lines.length && PLANNING_LINE.test(lines[i])) i++;
+  const planningEnd = i;
+  while (i < lines.length && PROP_LINE.test(lines[i])) i++;
+  const propsEnd = i;
+  let j = lines.length;
+  while (j > propsEnd && PROP_LINE.test(lines[j - 1] ?? "")) j--;
+  const notKey = (l: string) => PROP_LINE.exec(l)?.[1] !== key;
+  const props = lines.slice(planningEnd, propsEnd).filter(notKey);
+  if (value !== null) props.push(`${key}:: ${value}`);
+  const out = [
+    first,
+    ...lines.slice(1, planningEnd), // planning stays before properties (OG order)
+    ...props,
+    ...lines.slice(propsEnd, j), // body untouched
+    ...lines.slice(j).filter(notKey), // legacy trailing props: only the key is removed
+  ];
+  setDoc("byId", id, "raw", out.join("\n"));
   markDirty(node.page);
 }
 
@@ -1282,7 +1469,18 @@ export function setSchedule(
   if (!node) return;
   pushUndo(`sched:${id}:${which}`, [node.page]);
   const tag = which === "scheduled" ? "SCHEDULED" : "DEADLINE";
-  const lines = node.raw.split("\n").filter((l) => !new RegExp(`^${tag}:`).test(l.trim()));
+  // Remove the old planning line ONLY from the canonical head region (the run of
+  // planning/property lines right after the first line) — a `SCHEDULED:` inside a
+  // code fence or body text is content and must never be touched (review finding:
+  // the old any-line filter deleted fenced planning-lookalikes).
+  const all = node.raw.split("\n");
+  const isHeadLine = (l: string) => /^\s*(SCHEDULED|DEADLINE):/.test(l) || PROP_LINE.test(l);
+  let headEnd = 1;
+  while (headEnd < all.length && isHeadLine(all[headEnd])) headEnd++;
+  const lines = [
+    ...all.slice(0, headEnd).filter((l, i) => i === 0 || !new RegExp(`^${tag}:`).test(l.trim())),
+    ...all.slice(headEnd),
+  ];
   if (date) {
     const wd = WEEKDAYS[new Date(date.y, date.m, date.d).getDay()];
     const hhmm = time ? normalizeHHmm(time) : null;
@@ -1369,6 +1567,41 @@ export function rawWithBlockId(raw: string, uuid: string, format: Format): strin
   return [title, ...scheduled, ...deadline, ":PROPERTIES:", `:id: ${uuid}`, ":END:", ...body].join(
     "\n"
   );
+}
+
+/** `raw` with an org drawer property set/updated/removed. Operates ONLY on the
+ *  first `:PROPERTIES:` drawer in the canonical head region (title, planning,
+ *  drawer, body — the same placement rawWithBlockId uses); body text and code
+ *  blocks are never scanned. Removing the last property removes the drawer. */
+function orgRawWithProperty(raw: string, key: string, value: string | null): string {
+  const lines = raw.split("\n");
+  const start = lines.findIndex((l) => l.trim().toUpperCase() === ":PROPERTIES:");
+  const end =
+    start >= 0 ? lines.findIndex((l, i) => i > start && l.trim().toUpperCase() === ":END:") : -1;
+  const keyRe = new RegExp(`^:${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}:\\s*`, "i");
+  if (start >= 0 && end > start) {
+    const inner = lines.slice(start + 1, end).filter((l) => !keyRe.test(l.trim()));
+    if (value !== null) inner.push(`:${key}: ${value}`);
+    if (inner.length === 0) {
+      // Drawer emptied: drop it entirely.
+      return [...lines.slice(0, start), ...lines.slice(end + 1)].join("\n");
+    }
+    return [...lines.slice(0, start + 1), ...inner, ...lines.slice(end)].join("\n");
+  }
+  if (value === null) return raw; // nothing to remove
+  // No drawer yet: title, SCHEDULED*, DEADLINE*, drawer, rest (rawWithBlockId's rule).
+  const [title, ...rest] = lines;
+  const isPlan = (l: string) => l.startsWith("SCHEDULED") || l.startsWith("DEADLINE");
+  let planEnd = 0;
+  while (planEnd < rest.length && isPlan(rest[planEnd])) planEnd++;
+  return [
+    title,
+    ...rest.slice(0, planEnd),
+    ":PROPERTIES:",
+    `:${key}: ${value}`,
+    ":END:",
+    ...rest.slice(planEnd),
+  ].join("\n");
 }
 
 /** Ensure a block has a persistent id (assigned lazily, like OG) AND that it's
@@ -1544,7 +1777,8 @@ function deleteBlockInternal(id: string) {
         node.parent === null
           ? s.pages[s.pages.findIndex((p) => p.name === pageName)].roots
           : s.byId[node.parent!].children;
-      arr.splice(arr.indexOf(id), 1);
+      const ix = arr.indexOf(id);
+      if (ix >= 0) arr.splice(ix, 1);
       const rm = (bid: string) => {
         for (const c of s.byId[bid].children) rm(c);
         delete s.byId[bid];
@@ -1590,6 +1824,7 @@ export function isSelected(id: string): boolean {
 }
 export function selectBlock(id: string) {
   endEdit("select-block");
+  notifyOutlineSelectionStarted(id);
   setSelAnchor(id);
   setSelFocus(id);
 }
@@ -1600,6 +1835,7 @@ export function clearSelection() {
 /** Extend the current block selection's focus to `id` (mouse-drag / shift-click).
  *  Starts a fresh selection anchored at `id` if none is active. */
 export function extendSelectionTo(id: string) {
+  notifyOutlineSelectionStarted(id);
   if (selAnchor() === null) setSelAnchor(id);
   setSelFocus(id);
 }
@@ -1889,7 +2125,7 @@ function canMoveItem(id: string, dir: 1 | -1): boolean {
 // calendar — non-displayed days like an uncreated 16th are skipped). Page.tsx
 // registers a loader so a down-move past the last loaded day pulls in more.
 let feedExtender: (() => Promise<boolean>) | null = null;
-export function setFeedExtender(fn: () => Promise<boolean>): void {
+export function setFeedExtender(fn: (() => Promise<boolean>) | null): void {
   feedExtender = fn;
 }
 

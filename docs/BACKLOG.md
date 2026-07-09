@@ -20,7 +20,30 @@ move them between tiers in place. When Next drains, review Later and promote (in
 
 ## Now (being built)
 
-_Empty. (The "Help improve Tine" lsdoc↔mldoc diff panel — [ADR 0018](adr/0018-in-app-lsdoc-mldoc-diff-panel.md) — shipped once the `parse_document_json` lsdoc-wasm export landed.)_
+- **Sheets** — the breadth/grid/table/board layout engine, Tine's first deliberately
+  beyond-OG feature. **Being built on branch `sheets` ONLY** (Martin's Jul 6 2026
+  standing order; never merged to master until he returns and tests). Spec:
+  [docs/breadth-grid-spec.md](breadth-grid-spec.md); live build state:
+  [docs/plans/sheets-progress.md](plans/sheets-progress.md).
+
+- **Split view (Round 5, branch `sheets`)** — panes with the grid nav model
+  (TreeSheets-style: selectable seams, typing at an edge opens a new split),
+  per-pane tabs/history, `Ctrl+click` → open in other pane, and tab drag to
+  panes/seams. **S1–S4 shipped on branch `sheets`; leave in Now until Martin
+  tests it, matching the Sheets branch discipline.** Martin's Jul 8 pick over
+  whiteboards-lite (which is queued behind it). Spec:
+  [docs/split-view-spec.md](split-view-spec.md), ADR 0032.
+
+- **Inline-code property lookalikes parse as properties** (Martin, Jul 8 2026:
+  fix in Now, "should be treated as code"). A bullet whose text STARTS with an
+  inline-code span containing `::` — e.g. a line beginning with
+  backtick-`tine.view:: grid`-backtick — is recognized as a property line and
+  hidden, because property recognition runs on raw lines before inline parsing.
+  Expected: a line-leading inline-code span suppresses property recognition (it
+  is code, not metadata). Touches the ONE property-line recognizer (and check
+  what OG/mldoc does for the parity record before changing behavior — if OG has
+  the same bug we deviate deliberately). Found while authoring the tine-test
+  [[Sheets guide]] page.
 
 ---
 
@@ -43,6 +66,12 @@ _(**Shipped & released**, removed from the queue: **#23 paste-URL-over-selection
 
 | Item | Notes |
 |---|---|
+| **Pane-select: tree-aligned intermediate widening rungs** (Martin, Jul 8 2026) | The outward-widening ladder currently jumps pane side → covering seam → whole-window edge. Contiguous multi-pane edge spans ("split above two of three columns") are splittable iff a SUBTREE spans exactly those panes (the layout is a binary tree; splitting = wrapping a node) — those tree-aligned spans could become intermediate rungs (subtree-edge target kind + a wrap-node-at-path split primitive + cross-pane highlight rendering). Non-aligned spans have no well-defined split and stay unsupported (ADR 0033). Deferred until daily driving shows the need. |
+| **Nav-model unification candidates** (ADR 0034) | The sheets/panes shared key protocol + contract test shipped Jul 8 2026 (`src/navProtocol.ts`, `src/navModel.contract.test.ts`). Two divergences documented as intentional but open to later unification if Martin wants: (a) shift+arrow — sheets extend a range, panes just step (would become span-widening once tree-aligned rungs exist, see the entry above); (b) remove — sheets delete a row/col *at a seam* (Backspace=before/Delete=after), panes close *a region*; sided seam-deletion for panes would close whole subtrees at once (several panes) — recoverable (views, not data) but aggressive. |
+| **Guide copy: overwrite-to-update a stale `tine-guide/` copy** | Deferred. The current guide-copy action is intentionally non-destructive: it copies missing pages and assets but never overwrites an existing copied page because the user may have edited it. A future refresh flow should make stale-copy replacement explicit and reviewable. |
+| **Grid edge-grow + board group-by picker — two intentional scoping limits** (Jul 9 2026) | Shipped in the sheets follow-up (grids grow via hover-`+` edge affordances; boards get a Group-by dropdown + right-click submenu). Two deliberate narrowings, both recoverable: (a) the on-screen `+` edge affordances render on **top-level grids only** — nested-in-cell subgrids (`overflow:auto` would clip an outside affordance) keep keyboard seam-insert; add an inner-inset variant if daily driving wants it. (b) the board group-by option list is built from the owner block's **literal children**, so a `{{query}}` board only offers State/Priority/Tags plus any prop fields of literal children — property axes present only in query *results* aren't auto-listed (still settable by hand or via the exotic-value passthrough in the header select). |
+| **Sheet paste: "Paste special →" menu + insert-and-shift + fused drag-move** (Jul 9 2026) | Follow-ons to the mode-based nest/splat paste (ADR 0037), all deliberately unbuilt in v1: (a) a **"Paste special →"** context-menu override to force nest-a-region / splat-a-single / **insert-and-shift** (push existing cells right/down instead of the current destructive overwrite); (b) a **fused single-undo drag-move** — today "cut then paste elsewhere" composes a move as two atomic undos because there is no drag gesture for grid cells. Add if daily driving wants a non-destructive or draggable move. |
+| **Contextual Guide nudges (E3)** | Lightweight "New to this? Open Guide" links in Sheets/formula/table context menus and adjacent feature surfaces. Deferred because the main Guide entry points, announcement, and copy flow now exist; add this only where daily use shows a real discoverability gap. |
 | **Rendered-copy fidelity — residual math-typeset-to-text open** | The Jul 3 2026 pass (`f1c5721`) made *Copy / export → Rendered* resolve on-screen block refs + user macros; the Jul 5 2026 pass closed the actionable fidelity gaps from [the plan](plans/rendered-copy-fidelity.md): ~~math delimiters stripped~~ now inline/block math copies as `$…$` / `$$…$$` (TeX stays re-parseable), ~~off-screen refs fall back to bare uuid~~ the export modal pre-warms the async block-ref cache before copy, ~~provider macros stay literal~~ `{{embed}}`/`{{query}}`/media macros resolve to text forms, and ~~multi-line refs only copy the first line~~ the **Resolve refs fully** export toggle expands full visible ref bodies. **Still open by Martin's call:** full math-typeset-to-plain-text remains unresolved; the safe default is still TeX-with-delimiters, with only an off-by-default trivial `mathAsUnicode` approximation for cases like `E=mc²`. |
 | **Quick-capture browser extension (Firefox)** | Snap a page/selection/link into today's journal or an inbox page via a capture template. Prefer a watched drop-file (no open port; rides the existing file-watch + journal-append). |
 | **Git integration** ([#33](https://github.com/martinkoutecky/tine/issues/33)) — *research done, Martin deciding* | "Dumb" shell-git: call the system `git` binary (must be installed) to auto commit/push after changes + on app close, per the reporter (who links `logseq-plugin-git` as the model). **Research complete — design decisions deliberately still open (Martin thinking on it).** Findings: OG uses shell-git via **dugite** (init→add→commit) but is **commit-only, never auto-pushes** (auto-commit off by default, 60 s timer + opt-in commit-on-close, auto-inits the repo); the referenced plugin is a UX layer that adds Commit/Push/Pull buttons + an opt-in auto-push on window-hide. So #33 = OG's commit **plus** auto-push, which OG deliberately avoids. Open decisions: push-default vs commit-only; trigger model (debounced-on-change vs 60 s timer vs on-close); **system git vs bundled** (dugite bundles its own, #33 wants system git); **rejected-push / conflict / no-auth handling — the data-safety call, since it writes the real graph** (neither OG nor the plugin handles it, both just toast git stderr); commit-message format; in-place `.git` vs OG's `--separate-git-dir`. Full research + per-decision precedent: `subagent-tasks/notes/git-integration-research.md`. |

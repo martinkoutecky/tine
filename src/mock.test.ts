@@ -16,6 +16,13 @@ describe("mock backend", () => {
     expect(groups.some((g) => g.page === "Jun 14th, 2026")).toBe(true);
   });
 
+  it("query (tag name) matches hashtag references", async () => {
+    const b = mockBackend();
+    const groups = await b.runQuery('(tag "sheets")');
+    const raws = groups.flatMap((g) => g.blocks.map((bl) => bl.raw));
+    expect(raws.some((r) => r.includes("#sheets"))).toBe(true);
+  });
+
   it("block ref counts cover bare + labeled forms", async () => {
     const b = mockBackend();
     const counts = await b.getBlockRefCounts();

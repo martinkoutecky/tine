@@ -25,11 +25,22 @@ import {
   focusMode,
   exitFocusMode,
   switcherOpen,
+  switcherEmbryo,
   settingsOpen,
   carryDays,
+  audioPlayer,
+  contextMenu,
+  datePicker,
+  exportModal,
+  formulaEditor,
+  helpPopupOpen,
+  lightbox,
+  pagePropsPanel,
+  pdfExportPage,
   pushToast,
   openPdfExport,
   pdfTarget,
+  welcomeOpen,
 } from "./ui";
 import { carryDaysBack } from "./carry";
 import {
@@ -54,10 +65,36 @@ import {
   selectionMarkdown,
   clearSelection,
   selectedIds,
+  blockIsGridView,
 } from "./store";
 import { startEditing } from "./editorController";
 import { copyOutline } from "./clipboard";
 import { closeInPageFind, inPageFindOpen, openInPageFind } from "./inpageFind";
+import { cellSel, enterGridSelection, handleCellSelectionKey, handleSheetPasteEvent } from "./sheet/selection";
+import { decodeNavIntent } from "./navProtocol";
+import {
+  closePane,
+  focusPane,
+  focusedPaneId,
+  layoutHasMultiplePanes,
+  layoutPaneIds,
+  layoutRoot,
+  moveActiveTabToPane,
+  splitPane,
+  splitPaneAtSeam,
+  splitRootAtEdge,
+} from "./panes";
+import {
+  enterPaneSelect,
+  exitPaneSelect,
+  movePaneSelection,
+  nearestPaneInDirection,
+  paneSel,
+  previousPaneSelectionTarget,
+  readingOrderPanes,
+  type PaneDirection,
+} from "./paneSelect";
+import { openGuide } from "./guide";
 
 interface Chord {
   mod: boolean;
@@ -87,9 +124,127 @@ interface CommandDef {
 
 const isMac = typeof navigator !== "undefined" && /Mac/.test(navigator.platform);
 
+function focusPaneByNumber(n: number) {
+  if (!layoutHasMultiplePanes()) return;
+  const pane = readingOrderPanes(layoutRoot())[n - 1];
+  if (pane) focusPane(pane.paneId);
+}
+
+function focusPaneInDirection(dir: PaneDirection) {
+  if (!layoutHasMultiplePanes()) return;
+  const target = nearestPaneInDirection(layoutRoot(), focusedPaneId(), dir);
+  if (target) focusPane(target);
+}
+
+function moveActiveTabInDirection(dir: PaneDirection) {
+  if (!layoutHasMultiplePanes()) return;
+  const target = nearestPaneInDirection(layoutRoot(), focusedPaneId(), dir);
+  if (target) moveActiveTabToPane(focusedPaneId(), target);
+}
+
+function enterPaneSelectFromFocus() {
+  const ids = layoutPaneIds();
+  const focused = focusedPaneId();
+  enterPaneSelect(ids.includes(focused) ? focused : ids[0] ?? "main");
+}
+
+// Materialize a split at the selected seam/edge. Two flavors (Martin's Jul 8
+// ruling): Enter = a plain MIRROR split (the new pane keeps the duplicated
+// content, no dialog — the quick "same thing side by side"); typing = an
+// embryo split with the switcher prefilled with the typed char (the quick
+// "open/create THAT page in a new split"; embryo mode already hides commands).
+function materializePaneSelection(prefill: string | null) {
+  const target = paneSel();
+  if (!target || target.kind === "pane") return;
+  const source = previousPaneSelectionTarget() ?? focusedPaneId();
+  const paneId =
+    target.kind === "seam"
+      ? splitPaneAtSeam(target.path, source)
+      : target.kind === "pane-edge"
+        ? // Split ONLY that pane, new pane on the chosen side.
+          splitPane(target.paneId, target.side === "left" || target.side === "right" ? "row" : "col", {
+            position: target.side === "left" || target.side === "top" ? "before" : "after",
+          })
+        : splitRootAtEdge(target.side, source);
+  if (!paneId) return;
+  exitPaneSelect();
+  if (prefill === null) focusPane(paneId); // mirror split — done
+  else openSwitcher({ mode: "embryo", paneId, prefill });
+}
+
+// Exported for src/navModel.contract.test.ts — the shared nav-model invariants
+// (ADR 0034) drive this handler and the sheet's handleCellSelectionKey with the
+// same key sequences.
+export function handlePaneSelectKey(e: KeyboardEvent): boolean {
+  const target = paneSel();
+  if (!target) return false;
+  // Ctrl+K on a seam/edge = split with an empty embryo switcher (same gesture
+  // as typing, for people who reach for Ctrl+K by reflex). On a pane target it
+  // falls through to the global handler, which now acts on the selected pane.
+  // A mod-chord, so it is a surface command, not nav — handled before decoding.
+  if (matchesCommand(e, "go/search")) {
+    if (target.kind !== "pane") {
+      materializePaneSelection("");
+      return true;
+    }
+    exitPaneSelect(); // switcher takes over; a lingering ring would lie
+    return false;
+  }
+  const intent = decodeNavIntent(e);
+  if (!intent) return false;
+  switch (intent.kind) {
+    // Span extension (tree-aligned widening rungs) is backlogged; until it
+    // exists, shift+arrow steps like a plain arrow rather than going dead.
+    case "extend":
+    case "step": {
+      const next = movePaneSelection(layoutRoot(), intent.dir);
+      // Focus follows pane selection: Ctrl+K (and every focused-pane command)
+      // acts on the pane you SEE selected, not a stale earlier focus.
+      if (next.kind === "pane") focusPane(next.paneId);
+      return true;
+    }
+    case "dismiss":
+      exitPaneSelect();
+      return true;
+    case "activate":
+      if (target.kind === "pane") {
+        exitPaneSelect();
+        focusPane(target.paneId);
+      } else {
+        materializePaneSelection(null); // Enter on a seam/edge = mirror split
+      }
+      return true;
+    case "remove":
+      if (target.kind !== "pane") return false;
+      if (closePane(target.paneId)) enterPaneSelect(focusedPaneId()); // stay in the mode on the survivor
+      return true;
+    case "overtype":
+      if (target.kind !== "pane") materializePaneSelection(intent.char);
+      return true; // swallow stray typing even on a pane target
+  }
+}
+
+function anyOverlayOpen(): boolean {
+  return !!(
+    switcherOpen() ||
+    settingsOpen() ||
+    datePicker() ||
+    formulaEditor() ||
+    pagePropsPanel() ||
+    exportModal() ||
+    contextMenu() ||
+    helpPopupOpen() ||
+    lightbox() ||
+    audioPlayer() ||
+    pdfExportPage() ||
+    welcomeOpen()
+  );
+}
+
 // Default command table. Editor command ids mirror OG Logseq where practical.
 const COMMANDS: CommandDef[] = [
   { id: "go/search", binding: "mod+k", label: "Search / quick switch", scope: "global", run: openSwitcher, global: true },
+  { id: "guide/open", binding: "", label: "Open Guide", scope: "global", run: () => void openGuide(), global: true },
   { id: "go/find-in-page", binding: "mod+f", label: "Find in page", scope: "global", run: openInPageFind, global: true },
   { id: "command-palette/toggle", binding: "mod+shift+p", label: "Command palette", scope: "global", run: openCommandPalette, global: true },
   // Toggle the WebKit Web Inspector for theme/CSS debugging (GH #31). The usual
@@ -116,6 +271,28 @@ const COMMANDS: CommandDef[] = [
   // macOS). mod-chords, so they fire mid-edit; remappable like everything here.
   { id: "tab/next", binding: "mod+pagedown", label: "Next tab", scope: "global", run: activateNextTab, global: true },
   { id: "tab/previous", binding: "mod+pageup", label: "Previous tab", scope: "global", run: activatePrevTab, global: true },
+  { id: "pane/split-right", binding: "mod+alt+\\", label: "Split right", scope: "global", run: () => void splitPane(focusedPaneId(), "row"), global: true },
+  { id: "pane/split-down", binding: "mod+alt+shift+\\", label: "Split down", scope: "global", run: () => void splitPane(focusedPaneId(), "col"), global: true },
+  { id: "pane/close", binding: "", label: "Close pane", scope: "global", run: () => void closePane(focusedPaneId()), global: true },
+  // Palette-discoverable entry into pane-select (it's otherwise only reachable
+  // via Esc-with-nothing-open, which users won't guess — Martin didn't).
+  { id: "pane/select-mode", binding: "", label: "Pane select mode (arrows move, Enter opens/splits)", scope: "global", run: enterPaneSelectFromFocus, global: true },
+  ...Array.from({ length: 9 }, (_, i): CommandDef => ({
+    id: `pane/focus-${i + 1}`,
+    binding: `mod+${i + 1}`,
+    label: `Focus pane ${i + 1}`,
+    scope: "global",
+    run: () => focusPaneByNumber(i + 1),
+    global: true,
+  })),
+  { id: "pane/focus-left", binding: "mod+alt+left", label: "Focus pane left", scope: "global", run: () => focusPaneInDirection("left"), global: true },
+  { id: "pane/focus-right", binding: "mod+alt+right", label: "Focus pane right", scope: "global", run: () => focusPaneInDirection("right"), global: true },
+  { id: "pane/focus-up", binding: "mod+alt+up", label: "Focus pane up", scope: "global", run: () => focusPaneInDirection("up"), global: true },
+  { id: "pane/focus-down", binding: "mod+alt+down", label: "Focus pane down", scope: "global", run: () => focusPaneInDirection("down"), global: true },
+  { id: "pane/move-tab-left", binding: "mod+alt+shift+left", label: "Move tab to pane left", scope: "global", run: () => moveActiveTabInDirection("left"), global: true },
+  { id: "pane/move-tab-right", binding: "mod+alt+shift+right", label: "Move tab to pane right", scope: "global", run: () => moveActiveTabInDirection("right"), global: true },
+  { id: "pane/move-tab-up", binding: "mod+alt+shift+up", label: "Move tab to pane up", scope: "global", run: () => moveActiveTabInDirection("up"), global: true },
+  { id: "pane/move-tab-down", binding: "mod+alt+shift+down", label: "Move tab to pane down", scope: "global", run: () => moveActiveTabInDirection("down"), global: true },
   { id: "ui/toggle-theme", binding: "t t", label: "Toggle dark / light", scope: "global", run: toggleTheme },
   { id: "ui/toggle-left-sidebar", binding: "t l", label: "Toggle left sidebar", scope: "global", run: toggleSidebar },
   { id: "ui/toggle-right-sidebar", binding: "t r", label: "Toggle right sidebar", scope: "global", run: toggleRightSidebar },
@@ -296,6 +473,38 @@ export const BUILTIN_KEYS: BuiltinKeyDef[] = [
     scope: "select",
     binding: "enter",
     label: "Edit the last selected block",
+  },
+  {
+    id: "builtin/sheet/select-cell",
+    scope: "select",
+    binding: "click",
+    label: "Select a sheet cell",
+    details: "Double-click, Enter, or F2 edits the selected cell.",
+  },
+  {
+    id: "builtin/sheet/move",
+    scope: "select",
+    binding: "arrow keys",
+    label: "Move sheet cell selection",
+    details: "Esc leaves a sheet; typing replaces the focused cell.",
+  },
+  {
+    id: "builtin/sheet/range",
+    scope: "select",
+    binding: "drag / shift+click / shift+arrows",
+    label: "Select a sheet range",
+  },
+  {
+    id: "builtin/sheet/copy-cut",
+    scope: "select",
+    binding: "mod+c / mod+x / paste",
+    label: "Copy, cut, or paste sheet cells",
+  },
+  {
+    id: "builtin/sheet/fill",
+    scope: "select",
+    binding: "mod+d / mod+r",
+    label: "Fill sheet selection down or right",
   },
 ];
 
@@ -480,6 +689,10 @@ function handleSelectionKey(e: KeyboardEvent): boolean {
   if (matchesCommand(e, "editor/indent")) return indentSelection(), true;
   if (matchesCommand(e, "editor/move-block-down")) return moveSelectionItems(1), true;
   if (matchesCommand(e, "editor/move-block-up")) return moveSelectionItems(-1), true;
+  if (e.key === "Enter" || e.key === "ArrowRight") {
+    const ids = selectedIds();
+    if (ids.length === 1 && blockIsGridView(ids[0]) && enterGridSelection(ids[0])) return true;
+  }
   if (e.key === "ArrowDown") return moveSelection(1, e.shiftKey), true;
   if (e.key === "ArrowUp") return moveSelection(-1, e.shiftKey), true;
   if (e.key === "Backspace" || e.key === "Delete") return deleteSelection(), true;
@@ -537,6 +750,15 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
     const chord = eventToChord(e);
     const editing = isEditableTarget(e.target);
 
+    // !editing guard: pane-select must NEVER eat keys while a text field has
+    // focus — a stale mode (entered via Esc, then click into a block) would
+    // otherwise swallow every printable/arrow/Enter and break typing.
+    if (paneSel() && !editing && handlePaneSelectKey(e)) {
+      e.preventDefault();
+      resetSeq();
+      return;
+    }
+
     // Escape, in priority order, so focus mode peels off one layer at a time
     // (Logseq-like): overlays first; then if editing a block's text let the
     // editor exit text-editing (don't exit focus yet); then a selected block
@@ -550,16 +772,27 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
         return;
       }
       if (switcherOpen() || settingsOpen()) {
+        const embryo = switcherEmbryo();
         closeSwitcher();
+        if (embryo) closePane(embryo.paneId);
         closeSettings();
         e.preventDefault();
         resetSeq();
         return;
       }
       if (editing) return; // defer to the editor's own Esc (capture phase)
+      if (cellSel() && handleCellSelectionKey(e)) {
+        e.preventDefault();
+        resetSeq();
+        return;
+      }
       if (hasSelection()) {
         clearSelection();
+        // Martin's 2-rung ladder (Jul 8): block-select climbs STRAIGHT to
+        // pane-select — the old "cleared but nothing selected" state between
+        // them was an invisible dead rung. Focus mode still peels first.
         if (focusMode()) void exitFocusMode();
+        else enterPaneSelectFromFocus();
         e.preventDefault();
         resetSeq();
         return;
@@ -570,6 +803,13 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
         resetSeq();
         return;
       }
+      if (anyOverlayOpen()) {
+        resetSeq();
+        return;
+      }
+      enterPaneSelectFromFocus();
+      e.preventDefault();
+      resetSeq();
       return;
     }
 
@@ -587,6 +827,15 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
       resetSeq();
       goForward();
       return;
+    }
+
+    // Cell-selection mode keys (no editor focused).
+    if (!editing && cellSel()) {
+      if (handleCellSelectionKey(e)) {
+        e.preventDefault();
+        resetSeq();
+        return;
+      }
     }
 
     // Block-selection mode keys (no editor focused).
@@ -638,13 +887,20 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
   const clearSuper = () => {
     superDown = false;
   };
+  const pasteHandler = (e: ClipboardEvent) => {
+    if (isEditableTarget(e.target)) return;
+    if (!cellSel()) return;
+    if (handleSheetPasteEvent(e)) e.preventDefault();
+  };
 
   window.addEventListener("keydown", handler, true);
+  window.addEventListener("paste", pasteHandler, true);
   window.addEventListener("keydown", superTracker, true);
   window.addEventListener("keyup", superTracker, true);
   window.addEventListener("blur", clearSuper);
   return () => {
     window.removeEventListener("keydown", handler, true);
+    window.removeEventListener("paste", pasteHandler, true);
     window.removeEventListener("keydown", superTracker, true);
     window.removeEventListener("keyup", superTracker, true);
     window.removeEventListener("blur", clearSuper);

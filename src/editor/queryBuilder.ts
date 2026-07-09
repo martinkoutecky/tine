@@ -451,6 +451,19 @@ export function toDsl(root: Clause): string {
   return clauseDsl(root);
 }
 
+// Pre-conversion simple DSL, kept so the "← Simple" toggle can restore the exact
+// query (incl. sort/aggregate/group-by that clauseToAdvanced drops) within a session.
+const simpleFormStash = new Map<string, string>();
+export function stashSimpleForm(blockId: string, dsl: string): void {
+  simpleFormStash.set(blockId, dsl);
+}
+export function getSimpleForm(blockId: string): string | undefined {
+  return simpleFormStash.get(blockId);
+}
+export function clearSimpleForm(blockId: string): void {
+  simpleFormStash.delete(blockId);
+}
+
 // ---------------------------------------------------------------------------
 // Simple-DSL → advanced (Datalog) conversion, for the builder's "⚙ advanced"
 // pill. Two hard rules learned from the Jul 8 data-mutation bug:
@@ -544,6 +557,274 @@ export function clauseToAdvanced(root: Clause): AdvancedConversion {
   if (unsupported.length) return { ok: false, unsupported };
   const body = groups.length ? groups.join(" ") : `(task ?b "TODO" "DOING")`;
   return { ok: true, dsl: `[:find (pull ?b [*]) :where ${body}]`, dropped };
+}
+
+// ---------------------------------------------------------------------------
+// Advanced (Datalog) → simple-DSL conversion. This is intentionally strict: it
+// only accepts the single-line `clauseToAdvanced` shape and the closed set of
+// supported clause heads. Arbitrary Datalog must stay raw text.
+// ---------------------------------------------------------------------------
+
+type AdvancedTok =
+  | { t: "(" | ")" | "[" | "]" }
+  | { t: "word"; v: string }
+  | { t: "str"; v: string };
+
+function tokenizeAdvanced(src: string): AdvancedTok[] | null {
+  const toks: AdvancedTok[] = [];
+  let i = 0;
+  while (i < src.length) {
+    const c = src[i];
+    if (/\s/.test(c)) {
+      i++;
+    } else if (c === "(" || c === ")" || c === "[" || c === "]") {
+      toks.push({ t: c });
+      i++;
+    } else if (c === '"') {
+      let j = i + 1;
+      let s = "";
+      while (j < src.length && src[j] !== '"') {
+        if (src[j] === "\\" && (src[j + 1] === '"' || src[j + 1] === "\\")) {
+          s += src[j + 1];
+          j += 2;
+        } else {
+          s += src[j++];
+        }
+      }
+      if (j >= src.length) return null;
+      toks.push({ t: "str", v: s });
+      i = j + 1;
+    } else {
+      let j = i;
+      while (j < src.length && !/\s/.test(src[j]) && !"()[]".includes(src[j])) j++;
+      if (j === i) return null;
+      toks.push({ t: "word", v: src.slice(i, j) });
+      i = j;
+    }
+  }
+  return toks;
+}
+
+interface AdvancedCur {
+  pos: number;
+}
+
+function takeAdvancedSym(toks: AdvancedTok[], cur: AdvancedCur, sym: "(" | ")" | "[" | "]"): boolean {
+  if (toks[cur.pos]?.t !== sym) return false;
+  cur.pos++;
+  return true;
+}
+
+function takeAdvancedWord(toks: AdvancedTok[], cur: AdvancedCur): string | null {
+  const t = toks[cur.pos];
+  if (t?.t !== "word") return null;
+  cur.pos++;
+  return t.v;
+}
+
+function takeAdvancedStr(toks: AdvancedTok[], cur: AdvancedCur): string | null {
+  const t = toks[cur.pos];
+  if (t?.t !== "str") return null;
+  cur.pos++;
+  return t.v;
+}
+
+function expectAdvancedWord(toks: AdvancedTok[], cur: AdvancedCur, word: string): boolean {
+  const t = toks[cur.pos];
+  if (t?.t !== "word" || t.v !== word) return false;
+  cur.pos++;
+  return true;
+}
+
+function takeAdvancedValue(toks: AdvancedTok[], cur: AdvancedCur): string | null {
+  const t = toks[cur.pos];
+  if (t?.t === "str") {
+    cur.pos++;
+    return t.v;
+  }
+  if (t?.t === "word" && !t.v.startsWith("?") && !t.v.startsWith(":")) {
+    cur.pos++;
+    return t.v;
+  }
+  return null;
+}
+
+function collapseAnyBetween(children: Clause[]): Clause | null {
+  if (children.length !== 3) return null;
+  const fields: BetweenField[] = ["journal", "scheduled", "deadline"];
+  const first = children[0];
+  if (!first || first.kind !== "between") return null;
+  for (let i = 0; i < fields.length; i++) {
+    const c = children[i];
+    if (
+      !c ||
+      c.kind !== "between" ||
+      c.field !== fields[i] ||
+      c.start !== first.start ||
+      c.end !== first.end
+    ) {
+      return null;
+    }
+  }
+  return { kind: "between", field: "any", start: first.start, end: first.end };
+}
+
+function parseAdvancedChildren(toks: AdvancedTok[], cur: AdvancedCur): Clause[] | null {
+  const children: Clause[] = [];
+  while (toks[cur.pos] && toks[cur.pos].t !== ")") {
+    const child = parseAdvancedExpr(toks, cur);
+    if (!child) return null;
+    children.push(child);
+  }
+  return children.length ? children : null;
+}
+
+function parseAdvancedExpr(toks: AdvancedTok[], cur: AdvancedCur): Clause | null {
+  if (!takeAdvancedSym(toks, cur, "(")) return null;
+  const head = takeAdvancedWord(toks, cur);
+  if (!head) return null;
+
+  switch (head) {
+    case "and":
+    case "or": {
+      const children = parseAdvancedChildren(toks, cur);
+      if (!children || !takeAdvancedSym(toks, cur, ")")) return null;
+      if (head === "or") return collapseAnyBetween(children) ?? { kind: "op", op: "or", children };
+      return { kind: "op", op: "and", children };
+    }
+    case "not": {
+      const child = parseAdvancedExpr(toks, cur);
+      if (!child || !takeAdvancedSym(toks, cur, ")")) return null;
+      return { kind: "op", op: "not", children: [child] };
+    }
+    case "page-ref": {
+      if (!expectAdvancedWord(toks, cur, "?b")) return null;
+      const name = takeAdvancedStr(toks, cur);
+      if (name == null || !takeAdvancedSym(toks, cur, ")")) return null;
+      return { kind: "page", name };
+    }
+    case "task": {
+      if (!expectAdvancedWord(toks, cur, "?b")) return null;
+      const markers: string[] = [];
+      while (toks[cur.pos] && toks[cur.pos].t !== ")") {
+        const marker = takeAdvancedValue(toks, cur);
+        if (marker == null) return null;
+        markers.push(marker);
+      }
+      if (!takeAdvancedSym(toks, cur, ")")) return null;
+      return { kind: "task", markers };
+    }
+    case "priority": {
+      if (!expectAdvancedWord(toks, cur, "?b")) return null;
+      const levels: string[] = [];
+      while (toks[cur.pos] && toks[cur.pos].t !== ")") {
+        const level = takeAdvancedValue(toks, cur);
+        if (level == null) return null;
+        levels.push(level);
+      }
+      if (!takeAdvancedSym(toks, cur, ")")) return null;
+      return { kind: "priority", levels };
+    }
+    case "property":
+    case "page-property": {
+      if (!expectAdvancedWord(toks, cur, "?b")) return null;
+      const key = takeAdvancedWord(toks, cur);
+      if (!key?.startsWith(":")) return null;
+      let value: string | null = null;
+      if (toks[cur.pos]?.t !== ")") {
+        value = takeAdvancedStr(toks, cur);
+        if (value == null) return null;
+      }
+      if (!takeAdvancedSym(toks, cur, ")")) return null;
+      return head === "property"
+        ? { kind: "property", key: normPropKey(key), value }
+        : { kind: "pageProperty", key: normPropKey(key), value };
+    }
+    case "page-tags": {
+      if (!expectAdvancedWord(toks, cur, "?b")) return null;
+      const tags: string[] = [];
+      while (toks[cur.pos] && toks[cur.pos].t !== ")") {
+        const tag = takeAdvancedValue(toks, cur);
+        if (tag == null) return null;
+        tags.push(tag);
+      }
+      if (!tags.length || !takeAdvancedSym(toks, cur, ")")) return null;
+      return { kind: "pageTags", tags };
+    }
+    case "scheduled":
+      if (!expectAdvancedWord(toks, cur, "?b") || !takeAdvancedSym(toks, cur, ")")) return null;
+      return { kind: "scheduled" };
+    case "deadline":
+      if (!expectAdvancedWord(toks, cur, "?b") || !takeAdvancedSym(toks, cur, ")")) return null;
+      return { kind: "deadline" };
+    case "journal":
+      if (!expectAdvancedWord(toks, cur, "?b") || !takeAdvancedSym(toks, cur, ")")) return null;
+      return { kind: "journal" };
+    case "page": {
+      if (!expectAdvancedWord(toks, cur, "?b")) return null;
+      const name = takeAdvancedStr(toks, cur);
+      if (name == null || !takeAdvancedSym(toks, cur, ")")) return null;
+      return { kind: "onPage", name };
+    }
+    case "namespace": {
+      if (!expectAdvancedWord(toks, cur, "?b")) return null;
+      const ns = takeAdvancedStr(toks, cur);
+      if (ns == null || !takeAdvancedSym(toks, cur, ")")) return null;
+      return { kind: "namespace", ns };
+    }
+    case "between": {
+      const first = takeAdvancedWord(toks, cur);
+      let field: BetweenField;
+      if (first === "?b") {
+        field = "journal";
+      } else if (
+        first === ":journal" ||
+        first === ":scheduled" ||
+        first === ":deadline"
+      ) {
+        field = first.slice(1) as BetweenField;
+        if (!expectAdvancedWord(toks, cur, "?b")) return null;
+      } else {
+        return null;
+      }
+      const start = takeAdvancedStr(toks, cur);
+      const end = takeAdvancedStr(toks, cur);
+      if (start == null || end == null || !takeAdvancedSym(toks, cur, ")")) return null;
+      return { kind: "between", field, start, end };
+    }
+    default:
+      return null;
+  }
+}
+
+function parseAdvancedFind(toks: AdvancedTok[], cur: AdvancedCur): boolean {
+  return (
+    takeAdvancedSym(toks, cur, "[") &&
+    expectAdvancedWord(toks, cur, ":find") &&
+    takeAdvancedSym(toks, cur, "(") &&
+    expectAdvancedWord(toks, cur, "pull") &&
+    expectAdvancedWord(toks, cur, "?b") &&
+    takeAdvancedSym(toks, cur, "[") &&
+    expectAdvancedWord(toks, cur, "*") &&
+    takeAdvancedSym(toks, cur, "]") &&
+    takeAdvancedSym(toks, cur, ")") &&
+    expectAdvancedWord(toks, cur, ":where")
+  );
+}
+
+export function advancedToClause(datalog: string): Clause | null {
+  const toks = tokenizeAdvanced(datalog.trim());
+  if (!toks) return null;
+  const cur: AdvancedCur = { pos: 0 };
+  if (!parseAdvancedFind(toks, cur)) return null;
+  const clauses: Clause[] = [];
+  while (toks[cur.pos] && toks[cur.pos].t !== "]") {
+    const c = parseAdvancedExpr(toks, cur);
+    if (!c) return null;
+    clauses.push(c);
+  }
+  if (!clauses.length || !takeAdvancedSym(toks, cur, "]") || cur.pos !== toks.length) return null;
+  return clauses.length === 1 ? clauses[0] : { kind: "op", op: "and", children: clauses };
 }
 
 // ---------------------------------------------------------------------------

@@ -64,6 +64,10 @@ pub struct Config {
     pub enable_timetracking: bool,
     /// `:logbook/settings` — OG logbook write/display settings.
     pub logbook: LogbookSettings,
+    /// Tine-owned graph-local flag for the one-time bundled Guide announcement.
+    /// Stored in `logseq/config.edn` so it survives WebKitGTK's ephemeral
+    /// localStorage and stays scoped to the graph.
+    pub guide_announced: bool,
 }
 
 /// Logseq's default journal formats (verified against
@@ -121,6 +125,7 @@ impl Default for Config {
             macros: HashMap::new(),
             enable_timetracking: true,
             logbook: LogbookSettings::default(),
+            guide_announced: false,
         }
     }
 }
@@ -200,6 +205,7 @@ impl Config {
             enabled_in_all_blocks: nested_bool(edn, ":logbook/settings", ":enabled-in-all-blocks")
                 .unwrap_or(false),
         };
+        cfg.guide_announced = bool_value(edn, ":tine/guide-announced?").unwrap_or(false);
         cfg
     }
 }
@@ -290,6 +296,31 @@ impl Graph {
     pub fn set_timetracking_enabled(&self, enabled: bool) -> io::Result<()> {
         let key = ":feature/enable-timetracking?";
         let val = if enabled { "true" } else { "false" };
+        let path = self.root.join("logseq").join("config.edn");
+        crate::model::atomic_update(&path, &CONFIG_LOCK, |content| {
+            let mut content = content.to_string();
+
+            if let Some(start) = find_keyword(&content, key) {
+                let after = start + key.len();
+                match next_value_span(&content, after, content.len()) {
+                    Some((vstart, vend, _)) if vend > vstart => {
+                        content.replace_range(vstart..vend, val)
+                    }
+                    _ => content.insert_str(after, &format!(" {val}")),
+                }
+            } else if let Some(brace) = content.find('{') {
+                content.insert_str(brace + 1, &format!("\n {key} {val}\n"));
+            } else {
+                content = format!("{{{key} {val}}}\n");
+            }
+            Ok(content)
+        })
+    }
+
+    /// Persist the one-time in-app Guide announcement flag, graph-locally.
+    pub fn set_guide_announced(&self, announced: bool) -> io::Result<()> {
+        let key = ":tine/guide-announced?";
+        let val = if announced { "true" } else { "false" };
         let path = self.root.join("logseq").join("config.edn");
         crate::model::atomic_update(&path, &CONFIG_LOCK, |content| {
             let mut content = content.to_string();

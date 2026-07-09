@@ -2,7 +2,10 @@
 //! Logseq markdown, plus structural and canonicalization checks.
 
 use pretty_assertions::assert_eq;
-use tine_core::doc::{self, DocBlock};
+use tine_core::{
+    doc::{self, DocBlock},
+    org,
+};
 
 /// Assert byte-exact round-trip.
 fn assert_roundtrip(input: &str) {
@@ -157,6 +160,122 @@ fn inline_syntax_preserved_in_raw() {
     // Inline markup is rendered later; here we just ensure it survives I/O.
     let input = "- **bold** and *italic* and `code`\n- a [[Page Ref]] and #tag and ((uuid-here))\n- $$E=mc^2$$ math\n";
     assert_roundtrip(input);
+}
+
+#[test]
+fn sheets_positional_grid_encoding_round_trips() {
+    let input = concat!(
+        "- Sheet fixture\n",
+        "  tine.view:: grid\n",
+        "  tine.header:: true\n",
+        "  tine.col-widths:: 0=120;2=88\n",
+        "  tine.col-aggregates:: 0=count;2=unique\n",
+        "\t-\n",
+        "\t\t- Column A\n",
+        "\t\t- Column B\n",
+        "\t\t- Column C\n",
+        "\t-\n",
+        "\t\t- TODO Cell with [[Page Ref]]\n",
+        "\t\t- Nested grid\n",
+        "\t\t  tine.view:: grid\n",
+        "\t\t\t-\n",
+        "\t\t\t\t- Inner A1\n",
+        "\t\t\t\t- Inner A2\n",
+        "\t\t\t-\n",
+        "\t\t\t\t- Inner B1\n",
+        "\t\t- Plain tail\n",
+        "\t-\n",
+    );
+
+    assert_roundtrip(input);
+}
+
+#[test]
+fn sheets_org_positional_grid_encoding_round_trips() {
+    let input = concat!(
+        "* Sheet fixture\n",
+        ":PROPERTIES:\n",
+        ":tine.view: grid\n",
+        ":tine.header: true\n",
+        ":tine.col-widths: 0=120;2=88\n",
+        ":tine.col-aggregates: 0=count;2=unique\n",
+        ":END:\n",
+        "**\n",
+        "*** Column A\n",
+        "*** Column B\n",
+        "*** Column C\n",
+        "**\n",
+        "*** TODO Cell with [[Page Ref]]\n",
+        "*** Nested grid\n",
+        ":PROPERTIES:\n",
+        ":tine.view: grid\n",
+        ":END:\n",
+        "****\n",
+        "***** Inner A1\n",
+        "***** Inner A2\n",
+        "****\n",
+        "***** Inner B1\n",
+        "*** Plain tail\n",
+        "**\n",
+    );
+
+    assert!(org::org_round_trips(input));
+    let out = org::serialize_org(&org::parse_org(input));
+    assert_eq!(out, input, "org sheet fixture round-trip mismatch");
+}
+
+#[test]
+fn sheets_field_table_and_board_query_round_trip() {
+    let input = concat!(
+        "- Sheet phase 3 fixture\n",
+        "\t- Children field table\n",
+        "\t  tine.view:: table\n",
+        "\t  tine.fields:: state=state;owner=text;status=enum:todo,doing,done;page=page\n",
+        "\t  tine.formula.total:: price * qty\n",
+        "\t  tine.filter:: formula.total > 2\n",
+        "\t  tine.col-aggregates:: prop:owner=unique;state=checked\n",
+        "\t\t- TODO [#A] Draft field layer #sheets\n",
+        "\t\t  owner:: Martin\n",
+        "\t\t- DOING Implement renderer\n",
+        "\t\t  owner:: Codex\n",
+        "\t- {{query (todo TODO DOING DONE)}}\n",
+        "\t  tine.view:: board\n",
+        "\t  tine.group-by:: state\n",
+    );
+
+    assert_roundtrip(input);
+}
+
+#[test]
+fn sheets_org_field_table_and_board_query_round_trip() {
+    let input = concat!(
+        "* Sheet phase 3 fixture\n",
+        "** Children field table\n",
+        ":PROPERTIES:\n",
+        ":tine.view: table\n",
+        ":tine.fields: state=state;owner=text;status=enum:todo,doing,done;page=page\n",
+        ":tine.formula.total: price * qty\n",
+        ":tine.filter: formula.total > 2\n",
+        ":tine.col-aggregates: prop:owner=unique;state=checked\n",
+        ":END:\n",
+        "*** TODO [#A] Draft field layer :sheets:\n",
+        ":PROPERTIES:\n",
+        ":owner: Martin\n",
+        ":END:\n",
+        "*** DOING Implement renderer\n",
+        ":PROPERTIES:\n",
+        ":owner: Codex\n",
+        ":END:\n",
+        "** {{query (todo TODO DOING DONE)}}\n",
+        ":PROPERTIES:\n",
+        ":tine.view: board\n",
+        ":tine.group-by: state\n",
+        ":END:\n",
+    );
+
+    assert!(org::org_round_trips(input));
+    let out = org::serialize_org(&org::parse_org(input));
+    assert_eq!(out, input, "org sheet phase 3 fixture round-trip mismatch");
 }
 
 #[test]

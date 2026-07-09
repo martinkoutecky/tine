@@ -2,11 +2,11 @@
 //! graph open/create/warm cache; backup snapshots; settings/session prefs;
 //! spellcheck WebKit integration; platform OS bridges; commands thin IPC.
 
+mod android_folder_picker;
+mod android_media;
 mod backup;
 mod commands;
 mod debug;
-mod android_folder_picker;
-mod android_media;
 mod graph;
 mod migrate_identifier;
 mod platform;
@@ -18,16 +18,16 @@ mod watcher;
 use backup::{get_backup_keep, list_backups, restore_backup, set_backup_keep};
 use commands::{
     asset_trash_stats, block_ref_counts, block_referrers, delete_page, detect_media_editor,
-    edit_asset_external, empty_asset_trash,
+    copy_guide_into_graph, edit_asset_external, empty_asset_trash,
     get_backlinks, get_page, get_page_by_path, get_unlinked_refs, graph_source_files, import_asset,
-    journal_content_days, journals_desc, list_journal_conflicts, list_orphan_assets, list_pages,
+    guide_pages, journal_content_days, journals_desc, list_journal_conflicts, list_orphan_assets, list_pages,
     list_sync_conflicts, list_templates, merge_pages, open_asset, page_aliases, page_icons,
     page_print_html, publish_html, query_facets, quick_switch, read_asset, read_custom_css,
-    read_highlights, read_journal_file, read_local_image, rename_file_to_page, rename_page,
-    resolve_block, resolve_blocks, resolve_sync_conflict, run_advanced_query, run_query,
-    save_asset, save_page, save_pdf_area_image, search, set_default_journal_template,
+    read_highlights, read_journal_file, read_local_image, read_text_file, rename_file_to_page,
+    rename_page, resolve_block, resolve_blocks, resolve_sync_conflict, run_advanced_query,
+    run_query, save_asset, save_page, save_pdf_area_image, search, set_default_journal_template,
     set_favorites, set_journal_title_format, set_preferred_format, set_preferred_workflow,
-    set_start_of_week, set_timetracking_enabled, sync_conflict_diff, tine_open_devtools, tine_quit,
+    set_guide_announced, set_start_of_week, set_timetracking_enabled, sync_conflict_diff, tine_open_devtools, tine_quit,
     trash_asset, trash_journal_file, trash_sync_conflict, write_highlights,
 };
 use debug::{
@@ -334,6 +334,8 @@ pub fn run() {
             get_page,
             graph_source_files,
             save_page,
+            guide_pages,
+            copy_guide_into_graph,
             get_backlinks,
             get_unlinked_refs,
             warm_done,
@@ -351,6 +353,7 @@ pub fn run() {
             set_favorites,
             set_preferred_workflow,
             set_timetracking_enabled,
+            set_guide_announced,
             set_preferred_format,
             set_journal_title_format,
             set_default_journal_template,
@@ -383,6 +386,7 @@ pub fn run() {
             resolve_blocks,
             read_asset,
             read_local_image,
+            read_text_file,
             import_asset,
             save_asset,
             read_highlights,

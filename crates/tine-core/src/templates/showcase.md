@@ -102,3 +102,8 @@ icon:: 🧪
   #+END_NOTE
 - A footnote reference[^1] in a sentence.
 - [^1]: And here is the footnote body.
+- # Create one yourself
+- 1. Make a scratch page and add one bullet per construct you want to test: links, tables, code, tasks, embeds, queries, and callouts.
+- 2. Keep each example small and label it with a heading so it is easy to scan.
+- 3. Add page properties such as `title::` or `icon::` at the top when the whole page needs metadata.
+- 4. What you should see: each example renders live while staying ordinary Logseq Markdown.

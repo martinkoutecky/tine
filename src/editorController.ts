@@ -1,6 +1,7 @@
 import { batch, createSignal } from "solid-js";
 import { renderedBlocks } from "./lazyObserve";
 import { clearSelection } from "./store";
+import { notifyEditingStarted } from "./modeHooks";
 
 // Where to put the caret when a block starts editing. Either a concrete offset
 // (clicks, splits, most callers) OR a column descriptor for cross-block Up/Down
@@ -67,6 +68,7 @@ export function noteSurfaceFocused(surfaceKey: string) {
 }
 
 export function startEditing(id: string, offset: CaretPos = 0, owner: string | null = null) {
+  notifyEditingStarted(id, owner);
   // Latch the block so that when editing ends its body renders eagerly (no
   // deferred raw-text placeholder frame on blur). A just-created block goes
   // straight to the editor and is never rendered through AstBody first, so without
@@ -106,4 +108,10 @@ export function endEdit(_reason: EndEditReason) {
     setEditingId(null);
     setEditingOwner(null);
   });
+}
+
+export function endEditForSurface(reason: EndEditReason, surfaceKey: string) {
+  if (!editingId()) return;
+  const active = activeSurface();
+  if (!active || active === surfaceKey) endEdit(reason);
 }

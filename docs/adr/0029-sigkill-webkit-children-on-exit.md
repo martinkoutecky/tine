@@ -1,4 +1,4 @@
-# 0023. SIGKILL WebKitGTK's helper processes at quit (Linux)
+# 0029. SIGKILL WebKitGTK's helper processes at quit (Linux)
 
 - **Status:** Accepted
 - **Date:** 2026-07-07

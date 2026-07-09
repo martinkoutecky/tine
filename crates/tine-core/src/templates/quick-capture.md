@@ -14,6 +14,12 @@ icon:: ⚡
 	- **Leave the title empty** → the text is appended to **today's journal**. This is the fast path: hotkey, type, done.
 	- **Type a page title** (the field at the top of the window) → it's filed to that **page** instead, created if it doesn't exist yet. Perfect for "add this to my Reading notes" without leaving what you're doing.
 	- It's the real editor in there: `[[` page links, `#` tags, `/` slash commands, and nested bullets all work.
+- ## Create one yourself
+	- 1. Open your desktop environment's keyboard-shortcut settings.
+	- 2. Add a custom shortcut whose command is `tine --capture`.
+	- 3. Press the shortcut while another app is focused, then type a quick note.
+	- 4. Leave the title empty for today's journal, or type a page title to file it there.
+	- 5. What you should see: the capture box saves real Logseq bullets into your graph without switching windows.
 - ## Tune the Enter key
 	- By default **Enter** starts a new bullet and **Ctrl+Shift+Enter** files the capture (so you can jot several lines first). Prefer Enter-to-file? Open Settings and flip **Quick-capture: Enter key**.
 	- The box auto-grows as you type, and it keeps your draft if it loses focus — only **Esc** or filing it clears the text.

@@ -166,6 +166,7 @@ fn search_cache_reflects_saves_and_deletes() {
         format: Default::default(),
         read_only: false,
         path: String::new(),
+        guide: false,
     };
     g.save_page(&page, None).unwrap();
     let hits = g.search("zonkwort", 10);
@@ -208,6 +209,7 @@ fn search_ignores_hidden_property_metadata() {
         format: Default::default(),
         read_only: false,
         path: String::new(),
+        guide: false,
     };
     g.save_page(&page, None).unwrap();
     assert_eq!(
@@ -368,6 +370,7 @@ fn consecutive_self_saves_do_not_conflict() {
         format: Default::default(),
         read_only: false,
         path: String::new(),
+        guide: false,
     };
     // 1) date picker inserts a SCHEDULED line (page is new — no baseline yet).
     let r1 = g
@@ -451,6 +454,7 @@ fn noop_save_does_not_bump_cache_generation() {
         format: Default::default(),
         read_only: false,
         path: String::new(),
+        guide: false,
     };
     let r1 = g.save_page(&mk("hello"), None).unwrap();
     let gen1 = g.cache_generation();
@@ -500,6 +504,7 @@ fn self_write_marker_does_not_outlive_its_save() {
         format: Default::default(),
         read_only: false,
         path: String::new(),
+        guide: false,
     };
     g.save_page(&page, None).unwrap(); // sets, then self-removes, the marker
     let path = root.join("pages").join("C.md");
@@ -542,6 +547,7 @@ fn disk_rev_fast_path_is_fresh_and_detects_external_change() {
         format: Default::default(),
         read_only: false,
         path: String::new(),
+        guide: false,
     };
     g.save_page(&page, None).unwrap(); // populates disk_revs[R] (marker self-removed)
     let path = root.join("pages").join("R.md");
@@ -599,6 +605,7 @@ fn self_write_is_not_reported_as_external_change() {
         format: Default::default(),
         read_only: false,
         path: String::new(),
+        guide: false,
     };
     g.save_page(&page, None).unwrap();
 

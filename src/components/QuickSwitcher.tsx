@@ -1,8 +1,9 @@
 import { For, Show, createSignal, createResource, createEffect, createMemo, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
-import { switcherOpen, closeSwitcher, switcherMode, recentPages } from "../ui";
+import { switcherOpen, closeSwitcher, switcherMode, switcherEmbryo, recentPages } from "../ui";
 import { openPage, openPageAtBlock, openPageInNewTab, openFile, openInNewTab, route } from "../router";
 import { paletteCommands } from "../keybindings";
+import { closePane, focusPane, openRouteInOtherPane, paneRouter } from "../panes";
 import { fuzzyScore } from "../editor/autocomplete";
 import { parseSearchQuery, matcherMatches, matchHighlight, type SearchMatcher } from "../editor/searchQuery";
 import { visibleBody } from "../render/block";
@@ -110,6 +111,7 @@ export function QuickSwitcher(): JSX.Element {
 
   const sections = createMemo<Section[]>(() => {
     const q = query().trim();
+    const embryoPane = switcherEmbryo()?.paneId ?? null;
     const out: Section[] = [];
 
     if (commandsOnly()) {
@@ -147,7 +149,7 @@ export function QuickSwitcher(): JSX.Element {
     if (!exact) out.push({ header: "Create", items: [{ t: "create", name: q }] });
 
     // Commands matching the query.
-    const cmds = commandItems(q);
+    const cmds = embryoPane ? [] : commandItems(q);
     if (cmds.length) out.push({ header: "Commands", items: cmds });
 
     // Blocks. Gather every match (backend order), then page the whole set so a
@@ -192,7 +194,7 @@ export function QuickSwitcher(): JSX.Element {
 
   createEffect(() => {
     if (switcherOpen()) {
-      setQuery("");
+      setQuery(switcherEmbryo()?.prefill ?? "");
       setSel(0);
       queueMicrotask(() => inputRef?.focus());
     }
@@ -204,6 +206,11 @@ export function QuickSwitcher(): JSX.Element {
   });
 
   const choose = (it: Item) => {
+    const embryo = switcherEmbryo();
+    if (embryo) {
+      void chooseEmbryo(it, embryo.paneId);
+      return;
+    }
     switch (it.t) {
       case "page":
         it.path ? openFile(it.path, it.name, it.pageKind) : openPage(it.name, it.pageKind);
@@ -222,6 +229,46 @@ export function QuickSwitcher(): JSX.Element {
     closeSwitcher();
   };
 
+  const chooseEmbryo = async (it: Item, paneId: string) => {
+    const router = paneRouter(paneId);
+    switch (it.t) {
+      case "page":
+        it.path ? router.openFile(it.path, it.name, it.pageKind) : router.openPage(it.name, it.pageKind);
+        break;
+      case "create":
+        await createPageFile(it.name);
+        router.openPage(it.name, "page");
+        break;
+      case "block":
+        router.openPageAtBlock(it.page, it.pageKind, it.blockId);
+        break;
+      case "command":
+        it.run();
+        break;
+    }
+    focusPane(paneId);
+    closeSwitcher();
+  };
+
+  const chooseOther = async (it: Item) => {
+    switch (it.t) {
+      case "page":
+        openRouteInOtherPane({ kind: "page", name: it.name, pageKind: it.pageKind, path: it.path });
+        break;
+      case "create":
+        await createPageFile(it.name);
+        openRouteInOtherPane({ kind: "page", name: it.name, pageKind: "page" });
+        break;
+      case "command":
+        it.run();
+        break;
+      case "block":
+        openRouteInOtherPane({ kind: "page", name: it.page, pageKind: it.pageKind, block: it.blockId });
+        break;
+    }
+    closeSwitcher();
+  };
+
   // Middle-click: open in a background tab and KEEP the switcher open, so you can
   // fan several results out without re-searching. A block opens zoomed into
   // itself (self-contained and durable — the tab shows exactly what you found);
@@ -234,7 +281,7 @@ export function QuickSwitcher(): JSX.Element {
     else if (it.t === "block") openPageInNewTab(it.page, it.pageKind, it.blockId);
   };
 
-  const createPage = async (name: string) => {
+  const createPageFile = async (name: string) => {
     try {
       await backend().savePage(
         { name, kind: "page", title: name, pre_block: null, blocks: [{ id: "", raw: "", collapsed: false, children: [] }] },
@@ -244,6 +291,10 @@ export function QuickSwitcher(): JSX.Element {
     } catch {
       // ignore — still navigate; the page will be created on first edit
     }
+  };
+
+  const createPage = async (name: string) => {
+    await createPageFile(name);
     openPage(name, "page");
   };
 
@@ -263,11 +314,20 @@ export function QuickSwitcher(): JSX.Element {
     } else if (e.key === "Enter") {
       e.preventDefault();
       const it = flat()[sel()];
-      if (it) choose(it);
+      if (it) {
+        if (e.altKey && !switcherEmbryo()) void chooseOther(it);
+        else choose(it);
+      }
     } else if (e.key === "Escape") {
       e.preventDefault();
-      closeSwitcher();
+      cancelSwitcher();
     }
+  };
+
+  const cancelSwitcher = () => {
+    const embryo = switcherEmbryo();
+    closeSwitcher();
+    if (embryo) closePane(embryo.paneId);
   };
 
   // Running flat index for a given (section, itemIndex), to match the cursor.
@@ -280,7 +340,7 @@ export function QuickSwitcher(): JSX.Element {
 
   return (
     <Show when={switcherOpen()}>
-      <div class="switcher-overlay" onClick={closeSwitcher}>
+      <div class="switcher-overlay" onClick={cancelSwitcher}>
         <div class="switcher" onClick={(e) => e.stopPropagation()}>
           <input
             ref={inputRef}

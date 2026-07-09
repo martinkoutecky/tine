@@ -168,6 +168,23 @@ one harmless property-page in OG — expected; the namespace keeps them grouped.
 Throughout the rest of this doc, bare `view::` / `group-by::` / `span::` refer to
 these `tine.`-prefixed names.
 
+**Org coverage (decided Jul 6 2026 — Sheets is format-agnostic, not md-only).**
+Both carriers of grid state exist in org: geometry = headline nesting (org's
+block tree), config = the block's `:PROPERTIES:` drawer (`:tine.view: grid`
+instead of `tine.view:: grid`). Verified against the parsers: lsdoc's org
+drawer keys reject only `:`/space/newline (`block_common.rs` `drawer_property`,
+matching mldoc `drawer.ml`), so dotted `tine.*` keys are legal; `tine-core`
+reads org drawer properties through the same one-recognizer path as md
+(`doc.rs:99`); facets derive format-aware (`facetsOf(raw, format)`), so the
+engine reads fields identically on both. Empty cell = empty bullet in md
+(canonical form: bare `-`, NO trailing space) / bare `**` headline in org (both
+corpus-validated). The write side inherits org's existing gate: pages that fail
+the org round-trip self-check are read-only in Tine, so grid *editing* is
+gated exactly like block editing — no new rule. Every phase's round-trip
+fixtures must include an org variant. Emacs org-mode users get bonus graceful
+degradation: property drawers fold away by default. Sample pages for both
+formats: `tine-test/pages/Sheets demo.md`, `org-graph/pages/Sheets demo.org`.
+
 ### 3.2 Positional grid (`children` + `positional`)
 Two outline levels carry the 2-D geometry:
 - the grid node's **children = rows**;
@@ -677,9 +694,9 @@ Each phase is independently shippable and independently round-trip-tested.
    `tine.`-namespaced keys (`tine.view`, `tine.group-by`, `tine.span`,
    `tine.col-aggregates`, `tine.col-widths`, `tine.header`); values must be plain
    scalars / `=;`-delimited, never markdown-special (`[[]] (()) {{}} #`). No longer open.
-2. **Mode-boundary transitions** — where the caret/selection lands entering/exiting
-   a grid; click *into* a cell (edit) vs *onto* the grid (select); exact flow-out
-   behavior at borders. The part most likely to feel wrong if rushed (§4.1).
+2. ~~Mode-boundary transitions~~ — **RESOLVED (ADR 0025, amended Jul 7):** click
+   selects a cell; double-click/`Enter` edits; `Esc` walks edit→cell→outline;
+   vertical borders flow out without wrap.
 3. ~~Board move semantics~~ — **RESOLVED (§3.4):** dragging a card = **write the
    group-by field on that one block** (state → `cycleMarker`, property → set value),
    a local single-block edit that works on scattered query rows. Structural reparent

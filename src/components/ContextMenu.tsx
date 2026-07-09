@@ -13,12 +13,17 @@ import {
   openPageProps,
   openExportModal,
   openPdfExport,
+  openFormulaEditor,
+  type ContextMenuAction,
+  type SheetCellRemoveCtx,
 } from "../ui";
-import { openPage, openPageInNewTab, openPageAtBlock, openJournals, route } from "../router";
+import { openPage, openPageInNewTab, openPageAtBlock } from "../router";
+import { closePane, layoutPaneIds, paneRouter } from "../panes";
 import { refreshAfterRename } from "../graph";
 import { backend } from "../backend";
 import { carryDay } from "../carry";
 import { journalTitle } from "../journal";
+import { BLOCK_COLOR_NAMES, BLOCK_COLOR_SWATCH } from "../blockColors";
 import {
   doc,
   ensureBlockId,
@@ -36,6 +41,12 @@ import {
   restoreTodayJournalInFeed,
   selectedIds,
 } from "../store";
+import { canFlatten, flatten, hierarchify } from "../sheet/restructure";
+import { canConvertPipeTableToGrid, convertGridToPipeTable, convertPipeTableToGrid } from "../sheet/conversions";
+import { appendSheetCellChild, deleteColumn, setBoardGroupBy } from "../sheet/mutations";
+import { cellForBlockId, cellOwner, setCellSel } from "../sheet/selection";
+import { boardGroupByOptions, fieldIdsForBlocks, fieldLabel, isFieldId, type FieldId } from "../sheet/fields";
+import { startEditing } from "../editorController";
 import { copyStripCollapsed } from "../copySettings";
 import { copyOutline } from "../clipboard";
 import type { PageKind } from "../types";
@@ -52,18 +63,6 @@ async function copyBlockRef(id: string, fmt: (uuid: string) => string, okMsg: st
   await backend().writeText(fmt(uuid));
   pushToast(okMsg, "success");
 }
-
-// Block background colors, matching Logseq's built-in set.
-const COLORS = ["yellow", "red", "pink", "green", "blue", "purple", "gray"];
-const COLOR_BG: Record<string, string> = {
-  yellow: "#fbe69e",
-  red: "#f5a3a3",
-  pink: "#f3b0d4",
-  green: "#a6e3b4",
-  blue: "#a8c9f0",
-  purple: "#cdb4ee",
-  gray: "#d3d6da",
-};
 
 // Right-click context menu. Universal over its target: a block (full editing
 // menu — colors, headings, open/copy/cut, collapse, numbered list) or a page
@@ -94,6 +93,13 @@ export function ContextMenu(): JSX.Element {
                   close={close}
                 />
               </Match>
+              <Match when={m().kind === "sheet-cell"}>
+                <SheetCellMenu
+                  id={(m() as { blockId: string }).blockId}
+                  remove={(m() as { remove?: SheetCellRemoveCtx }).remove}
+                  close={close}
+                />
+              </Match>
               <Match when={m().kind === "page"}>
                 <PageMenu
                   name={(m() as { name: string }).name}
@@ -103,6 +109,24 @@ export function ContextMenu(): JSX.Element {
                   close={close}
                 />
               </Match>
+              <Match when={m().kind === "sheet"}>
+                <SheetMenu
+                  ownerId={(m() as { ownerId: string }).ownerId}
+                  surface={(m() as { surface: "grid" | "table" | "board" }).surface}
+                  rowSource={(m() as { rowSource: "children" | "query" }).rowSource}
+                  groupBy={(m() as { groupBy?: string | null }).groupBy}
+                  schemaPage={(m() as { schemaPage?: string }).schemaPage}
+                  fields={(m() as { fields?: readonly string[] }).fields}
+                  formulas={(m() as { formulas?: readonly [string, string][] }).formulas}
+                  filter={(m() as { filter?: string | null }).filter}
+                  x={m().x}
+                  y={m().y}
+                  close={close}
+                />
+              </Match>
+              <Match when={m().kind === "action-menu"}>
+                <ActionMenu items={(m() as { items: readonly ContextMenuAction[] }).items} close={close} />
+              </Match>
             </Switch>
           </div>
         </div>
@@ -111,29 +135,55 @@ export function ContextMenu(): JSX.Element {
   );
 }
 
+function ActionMenu(props: { items: readonly ContextMenuAction[]; close: () => void }): JSX.Element {
+  const run = (item: ContextMenuAction) => {
+    if (item.disabled) return;
+    item.run?.();
+    props.close();
+  };
+
+  return (
+    <For each={props.items}>
+      {(item) => (
+        <Show
+          when={item.children?.length}
+          fallback={
+            <div
+              class="ctx-item"
+              classList={{ "ctx-disabled": !!item.disabled, danger: !!item.danger }}
+              onClick={() => run(item)}
+            >
+              {item.label}
+            </div>
+          }
+        >
+          <div class="ctx-item ctx-submenu" classList={{ "ctx-disabled": !!item.disabled }}>
+            <span>{item.label}</span>
+            <div class="ctx-submenu-menu">
+              <For each={item.children ?? []}>
+                {(child) => (
+                  <div
+                    class="ctx-item"
+                    classList={{ "ctx-disabled": !!child.disabled, danger: !!child.danger }}
+                    onClick={() => run(child)}
+                  >
+                    {child.label}
+                  </div>
+                )}
+              </For>
+            </div>
+          </div>
+        </Show>
+      )}
+    </For>
+  );
+}
+
 function BlockMenu(props: { id: string; close: () => void }): JSX.Element {
   return (
     <>
       {/* Color row */}
-      <div class="ctx-row ctx-colors">
-        <button
-          class="ctx-color ctx-color-none"
-          title="No background"
-          onClick={() => { setBlockProperty(props.id, "background-color", null); props.close(); }}
-        >
-          ✕
-        </button>
-        <For each={COLORS}>
-          {(c) => (
-            <button
-              class="ctx-color"
-              title={c}
-              style={{ background: COLOR_BG[c] }}
-              onClick={() => { toggleBlockProperty(props.id, "background-color", c); props.close(); }}
-            />
-          )}
-        </For>
-      </div>
+      <ColorPalette id={props.id} close={props.close} />
 
       {/* Heading row */}
       <div class="ctx-row ctx-headings">
@@ -167,6 +217,283 @@ function BlockMenu(props: { id: string; close: () => void }): JSX.Element {
       <MakeTemplate id={props.id} close={props.close} />
     </>
   );
+}
+
+function ColorPalette(props: { id: string; close: () => void }): JSX.Element {
+  return (
+    <div class="ctx-row ctx-colors">
+      <button
+        class="ctx-color ctx-color-none"
+        title="No background"
+        onClick={() => { setBlockProperty(props.id, "background-color", null); props.close(); }}
+      >
+        ✕
+      </button>
+      <For each={BLOCK_COLOR_NAMES}>
+        {(c) => (
+          <button
+            class="ctx-color"
+            title={c}
+            style={{ background: BLOCK_COLOR_SWATCH[c] }}
+            onClick={() => { toggleBlockProperty(props.id, "background-color", c); props.close(); }}
+          />
+        )}
+      </For>
+    </div>
+  );
+}
+
+function SheetCellMenu(props: { id: string; remove?: SheetCellRemoveCtx; close: () => void }): JSX.Element {
+  const view = () => blockProperty(props.id, "tine.view") ?? "outline";
+  const canDeleteRow = () => !!props.remove?.rowId && !!doc.byId[props.remove.rowId];
+  const canDeleteColumn = () =>
+    props.remove?.gridId != null && props.remove?.col != null && !!doc.byId[props.remove.gridId];
+  const deleteRow = () => {
+    const rowId = props.remove?.rowId;
+    if (rowId && doc.byId[rowId]) deleteBlock(rowId);
+    props.close();
+  };
+  const deleteColumnHere = () => {
+    const { gridId, col } = props.remove ?? {};
+    if (gridId != null && col != null) deleteColumn(gridId, col);
+    props.close();
+  };
+  const setView = (next: "outline" | "grid" | "table") => {
+    setBlockProperty(props.id, "tine.view", next === "outline" ? null : next);
+    props.close();
+  };
+  const addChild = () => {
+    const sel = cellForBlockId(props.id);
+    const child = appendSheetCellChild(props.id);
+    if (child) {
+      if (sel) {
+        setCellSel(sel);
+        startEditing(child, 0, cellOwner(sel));
+      } else {
+        startEditing(child, 0);
+      }
+    }
+    props.close();
+  };
+  const label = (name: string, active: boolean) => `${active ? "✓ " : ""}${name}`;
+
+  return (
+    <>
+      <ColorPalette id={props.id} close={props.close} />
+      <div class="ctx-sep" />
+      <div class="ctx-item ctx-submenu">
+        <span>Show children as →</span>
+        <div class="ctx-submenu-menu">
+          <div class="ctx-item" onClick={() => setView("outline")}>
+            {label("Outline", view() === "outline")}
+          </div>
+          <div class="ctx-item" onClick={() => setView("grid")}>
+            {label("Grid", view() === "grid")}
+          </div>
+          <div class="ctx-item" onClick={() => setView("table")}>
+            {label("Table", view() === "table")}
+          </div>
+        </div>
+      </div>
+      <div
+        class="ctx-item"
+        onClick={addChild}
+      >
+        Add child bullet
+      </div>
+      <div
+        class="ctx-item"
+        onClick={() => {
+          zoomInto(props.id);
+          props.close();
+        }}
+      >
+        Zoom into cell
+      </div>
+      <Show when={canDeleteRow() || canDeleteColumn()}>
+        <div class="ctx-sep" />
+        <Show when={canDeleteRow()}>
+          <div class="ctx-item danger" onClick={deleteRow}>
+            Delete row
+          </div>
+        </Show>
+        <Show when={canDeleteColumn()}>
+          <div class="ctx-item danger" onClick={deleteColumnHere}>
+            Delete column
+          </div>
+        </Show>
+      </Show>
+    </>
+  );
+}
+
+function sheetFields(ownerId: string): FieldId[] {
+  return fieldIdsForBlocks(doc.byId[ownerId]?.children ?? []).filter(
+    (field): field is FieldId => field === "state" || field === "priority" || field.startsWith("prop:")
+  );
+}
+
+function SheetMenu(props: {
+  ownerId: string;
+  surface: "grid" | "table" | "board";
+  rowSource: "children" | "query";
+  groupBy?: string | null;
+  schemaPage?: string;
+  fields?: readonly string[];
+  formulas?: readonly [string, string][];
+  filter?: string | null;
+  x: number;
+  y: number;
+  close: () => void;
+}): JSX.Element {
+  const fields = () => sheetFields(props.ownerId);
+  const formulaFields = () => props.fields ?? fields().map(formulaReferenceName).filter((v): v is string => !!v);
+  const formulaActions = () => props.surface === "table" || props.surface === "board";
+  const doHierarchify = (field: FieldId) => {
+    hierarchify(props.ownerId, field);
+    props.close();
+  };
+  const doFlatten = () => {
+    flatten(props.ownerId);
+    props.close();
+  };
+  const boardField = () => (props.groupBy && isFieldId(props.groupBy) ? props.groupBy : null);
+  const boardGroupField = (): FieldId => {
+    const raw = props.groupBy || "state";
+    const normalized = raw.startsWith("formula.") ? `formula:${raw.slice("formula.".length)}` : raw;
+    return isFieldId(normalized) ? normalized : "state";
+  };
+  const doGroupBy = (field: FieldId) => {
+    setBoardGroupBy(props.ownerId, field);
+    props.close();
+  };
+
+  return (
+    <>
+      <div
+        class="ctx-item"
+        onClick={() => {
+          zoomInto(props.ownerId);
+          props.close();
+        }}
+      >
+        Open as full page
+      </div>
+      <div class="ctx-sep" />
+      <Show when={formulaActions()}>
+        <div
+          class="ctx-item"
+          onClick={() => {
+            openFormulaEditor({
+              mode: "add",
+              ownerId: props.ownerId,
+              schemaPage: props.schemaPage,
+              x: props.x,
+              y: props.y,
+              expr: "",
+              formulas: props.formulas ?? [],
+              fields: formulaFields(),
+            });
+            props.close();
+          }}
+        >
+          Add formula…
+        </div>
+        <div
+          class="ctx-item"
+          onClick={() => {
+            openFormulaEditor({
+              mode: "filter",
+              ownerId: props.ownerId,
+              schemaPage: props.schemaPage,
+              x: props.x,
+              y: props.y,
+              expr: props.filter ?? "",
+              formulas: props.formulas ?? [],
+              fields: formulaFields(),
+            });
+            props.close();
+          }}
+        >
+          Edit filter…
+        </div>
+        <div class="ctx-sep" />
+      </Show>
+      <Show when={props.surface === "board"}>
+        <div class="ctx-item ctx-submenu">
+          <span>Group by →</span>
+          <div class="ctx-submenu-menu">
+            <For each={boardGroupByOptions(props.ownerId)}>
+              {(field) => (
+                <div
+                  class="ctx-item"
+                  classList={{ "ctx-active": field === boardGroupField() }}
+                  onClick={() => doGroupBy(field)}
+                >
+                  {field === boardGroupField() ? "✓ " : ""}
+                  {fieldLabel(field)}
+                </div>
+              )}
+            </For>
+          </div>
+        </div>
+        <div class="ctx-sep" />
+      </Show>
+      <Show when={props.rowSource === "children"} fallback={<div class="ctx-item ctx-disabled">No structural actions</div>}>
+      <Show when={props.surface === "grid"}>
+        <div
+          class="ctx-item"
+          onClick={() => {
+            convertGridToPipeTable(props.ownerId);
+            props.close();
+          }}
+        >
+          Convert to pipe table
+        </div>
+        <div class="ctx-sep" />
+      </Show>
+      <Show when={props.surface === "board" && boardField()}>
+        {(field) => (
+          <div class="ctx-item" onClick={() => doHierarchify(field())}>
+            Hierarchify into columns
+          </div>
+        )}
+      </Show>
+      <Show
+        when={fields().length > 0}
+        fallback={<div class="ctx-item ctx-disabled">Hierarchify by →</div>}
+      >
+        <div class="ctx-item ctx-submenu">
+          <span>Hierarchify by →</span>
+          <div class="ctx-submenu-menu">
+            <For each={fields()}>
+              {(field) => (
+                <div class="ctx-item" onClick={() => doHierarchify(field)}>
+                  {fieldLabel(field)}
+                </div>
+              )}
+            </For>
+          </div>
+        </div>
+      </Show>
+      <div
+        class="ctx-item"
+        classList={{ "ctx-disabled": !canFlatten(props.ownerId) }}
+        onClick={() => {
+          if (canFlatten(props.ownerId)) doFlatten();
+        }}
+      >
+        Flatten
+      </div>
+      </Show>
+    </>
+  );
+}
+
+function formulaReferenceName(field: FieldId): string | null {
+  if (field.startsWith("formula:")) return null;
+  if (field.startsWith("prop:")) return field.slice(5);
+  return field;
 }
 
 // Right-click menu for an INLINE block ref `((uuid))` — acts on the referenced
@@ -303,15 +630,17 @@ function PageMenu(props: {
           pushToast("Delete failed", "error");
           return;
         }
-        const r = route();
-        // Deleted the page you're viewing → fall back to journals in place (the
-        // page is gone; don't open a new tab even on a pinned tab). Landing on the
-        // feed re-runs withToday, so a deleted today comes back empty.
-        if (r.kind === "page" && r.name === name) openJournals({ inPlace: true });
+        for (const paneId of layoutPaneIds()) {
+          const router = paneRouter(paneId);
+          const r = router.route();
+          if (r.kind !== "page" || r.name !== name) continue;
+          if (router.canGoBack()) router.goBack();
+          else if (!closePane(paneId)) router.openJournals({ inPlace: true });
+        }
         // Deleted a day IN the journals feed (in place, no navigation) → the feed
         // loader's withToday didn't re-run, so restore today's empty placeholder
         // here if it was the one deleted (#17). No-op for an older day.
-        else if (r.kind === "journals" && kind === "journal") restoreTodayJournalInFeed();
+        if (kind === "journal") restoreTodayJournalInFeed();
         pushToast(`Deleted “${name}”`, "success");
       })
       .catch(() => pushToast("Delete failed", "error"));
@@ -458,6 +787,9 @@ function blockActions(id: string): { label: string; run: () => void; danger?: bo
         openExportModal(sel.length > 1 && sel.includes(id) ? sel : [id]);
       },
     },
+    ...(canConvertPipeTableToGrid(id)
+      ? [{ label: "Convert to grid", run: () => { convertPipeTableToGrid(id); } }]
+      : []),
     {
       label: "Cut block",
       run: () => {

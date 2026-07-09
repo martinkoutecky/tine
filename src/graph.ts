@@ -6,6 +6,7 @@ import { setGraphMeta, setWorkflow, bumpGraphEpoch, setRightSidebar, graphMeta, 
 import { resetStore, flushAll } from "./store";
 import { clearAssetBlobCache } from "./assetCache";
 import { resetTabsToJournals, openPage } from "./router";
+import { resetPaneLayoutToSingle } from "./panes";
 import { journalTitle, setJournalTitleFormat } from "./journal";
 import { applyTemplateVars } from "./editor/templateVars";
 import { waitForWarmCache } from "./warmCache";
@@ -13,6 +14,7 @@ import { CUSTOM_CSS_STYLE_ID, ensureLsShimStyle } from "./lsShim";
 import { ensureThemeStyle } from "./themeGallery";
 import { isMobile, platformKind } from "./platform";
 import type { BlockDto } from "./types";
+import { maybeShowGuideAnnouncement } from "./guide";
 
 const GRAPH_KEY = "tine.graphPath";
 
@@ -72,12 +74,16 @@ export async function loadGraphPath(path: string): Promise<void> {
   void loadAliases();
   if (!switching) void pruneSidebarBlocks();
   await ensureJournalTemplate();
+  maybeShowGuideAnnouncement();
   // On a genuine graph SWITCH, close ALL the old graph's tabs (their histories
   // point at pages that don't exist in the new graph) and land on a single fresh
   // Journals tab. On the initial startup load of the same graph, `restoreSession()`
   // has already set up the tabs and focused one — leave that untouched, else a
   // restored pinned page tab would revert to Journals after every relaunch.
-  if (switching) resetTabsToJournals();
+  if (switching) {
+    resetTabsToJournals();
+    resetPaneLayoutToSingle();
+  }
 }
 
 /** Load the graph's alias:: index so link/navigation can resolve aliases.

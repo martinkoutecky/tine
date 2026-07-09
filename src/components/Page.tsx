@@ -1,10 +1,11 @@
-import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js";
-import { doc, mainPages, pageByName, reloadPage, loadSingle, loadFeed, appendFeed, emptyPage, isDirty, isSaving, reloadDisposition, setFeedExtender, flushAll, formatForBlock, type FeedPage } from "../store";
-import { route, sameRoute, openPage, openJournals, openPageInNewTab, restoreScrollFor } from "../router";
+import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, untrack, useContext, type JSX } from "solid-js";
+import { doc, mainPages, pageByName, loadFeed, appendFeed, emptyPage, ensurePageLoaded, setFeedExtender, flushAll, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, type FeedPage } from "../store";
+import { sameRoute, type PaneRouter } from "../router";
+import { PaneContext, focusedRouter } from "../panes";
 import {
-  zoomedBlock, zoomInto, isFavorite, toggleFavorite,
-  markConflict, isConflicted, graphEpoch, openPageInSidebar, openPageContextMenu, carryDays, showCarryButtons,
-  agendaQuery, openPageProps,
+  zoomedBlock, isFavorite, toggleFavorite,
+  graphEpoch, openPageInSidebar, openPageContextMenu, carryDays, showCarryButtons,
+  agendaQuery, openPageProps, dataRev,
 } from "../ui";
 import { carryDay, carryPrevDay, carryDaysBack } from "../carry";
 import { backend } from "../backend";
@@ -13,65 +14,102 @@ import { Block } from "./Block";
 import { LinkedReferences } from "./LinkedReferences";
 import { UnlinkedReferences } from "./UnlinkedReferences";
 import { QueryMacro } from "./Macro";
+import { SheetTable } from "./SheetTable";
 import { NamespaceCrumb, NamespaceHierarchy } from "./Namespace";
 import { pageProperties, aliasNames, visibleBody } from "../render/block";
 import { InlineText } from "../render/inline";
 import { EmojiText } from "../render/emoji";
 import { journalTitle } from "../journal";
-import type { PageDto } from "../types";
+import { endEditForSurface, startEditing } from "../editorController";
+import type { PageDto, RefGroup } from "../types";
+import { tagRef } from "../tags";
+import { copyGuideIntoGraph, ensureGuidePagesLoaded, isGuidePageName } from "../guide";
 
-const FEED_PAGE = 3;
+export const FEED_PAGE = 3;
+let journalOffset = 0;
+let loadingMore = false;
+let feedDone = false;
 
 // Page properties NOT shown in the under-title property list: `alias` is surfaced
 // as "aka" chips above, and `icon` is consumed as the page icon next to the title
 // (OG hides it too). Other internal/metadata page props could be added here.
-const PAGE_PROPS_HIDDEN = new Set(["alias", "icon"]);
+const PAGE_PROPS_HIDDEN = new Set(["alias", "icon", "tine.tag-table"]);
+const TAG_TABLE_PROP = "tine.tag-table";
+
+function paneContextFromContext() {
+  const ctx = useContext(PaneContext);
+  return ctx ?? { paneId: "main", router: focusedRouter() };
+}
+
+function paneRouterFromContext(): PaneRouter {
+  return paneContextFromContext().router;
+}
 
 // OG always shows today's journal at the top of the feed, even with no file yet
 // (the file is created lazily on first edit — Tine writes on save). So prepend
 // an empty today page unless the newest journal on disk already is today.
-function withToday(js: PageDto[]): PageDto[] {
+export function withToday(js: PageDto[]): PageDto[] {
   const title = journalTitle(new Date());
   if (js.some((p) => p.name === title)) return js;
   return [emptyPage(title, "journal"), ...js];
 }
 
+export function toLoadablePage(dto: PageDto, name: string): PageDto {
+  return dto.blocks.length
+    ? dto
+    : { ...dto, blocks: [{ id: `new-${name}`, raw: "", collapsed: false, children: [] }] };
+}
+
+export async function reloadJournalsFeedFromStart() {
+  const js = await backend().journalsDesc(FEED_PAGE, 0);
+  journalOffset = js.length;
+  feedDone = js.length < FEED_PAGE;
+  loadFeed(withToday(js), { endEdit: false });
+}
+
 export function PageView(): JSX.Element {
+  const pane = paneContextFromContext();
+  const router = pane.router;
   const [ready, setReady] = createSignal(false);
   const [loadError, setLoadError] = createSignal<string | null>(null);
-  let journalOffset = 0;
-  let loadingMore = false;
-  let feedDone = false;
-
-  // A non-existent page opens as a single empty bullet; but a page that *exists*
-  // with properties and zero bullets (e.g. `title::`-only) must keep its
-  // pre-block — otherwise editing it would save an empty file and drop the
-  // properties. So preserve the DTO and only add an editable block.
-  const toLoadable = (dto: PageDto, name: string): PageDto =>
-    dto.blocks.length
-      ? dto
-      : { ...dto, blocks: [{ id: `new-${name}`, raw: "", collapsed: false, children: [] }] };
 
   // Depend on the active route BY VALUE: opening a background tab (or pinning /
   // reordering / closing another tab) mutates the `tabs` signal but not the active
   // route — without this, route() would re-fire this loader, remount the feed via
   // setReady(false), and reset scroll to the top.
-  const currentRoute = createMemo(route, undefined, { equals: sameRoute });
+  const currentRoute = createMemo(() => router.route(), undefined, { equals: sameRoute });
   createEffect(() => {
     const r = currentRoute();
     const epoch = graphEpoch(); // reload when the open graph changes
     setReady(false);
     setLoadError(null);
+    // Surface keys are STATIC per pane (matching PaneLeaf's frozen provider
+    // value — Solid context values don't react to route changes): the main
+    // pane is "main" whatever it shows, every other pane is pane:{id}.
+    // untrack is LOAD-BEARING: endEditForSurface reads editingId/activeSurface,
+    // and without it this loader effect subscribes to them — so every
+    // startEditing re-ran the loader, which instantly ended the fresh edit
+    // (killed sheet cell editing) and re-fetched the feed per keystroke.
+    untrack(() =>
+      endEditForSurface("page-navigation", pane.paneId === "main" ? "main" : `pane:${pane.paneId}`)
+    );
     void (async () => {
       try {
         if (r.kind === "journals") {
-          feedDone = false;
           const js = await backend().journalsDesc(FEED_PAGE, 0);
           if (epoch !== graphEpoch()) return; // graph switched mid-load — drop it
           journalOffset = js.length;
           if (js.length < FEED_PAGE) feedDone = true;
-          loadFeed(withToday(js));
+          else feedDone = false;
+          loadFeed(withToday(js), { endEdit: false });
         } else {
+          if (isGuidePageName(r.name)) {
+            await ensureGuidePagesLoaded(true);
+            if (epoch !== graphEpoch()) return;
+            setReady(true);
+            router.restoreScrollFor(r);
+            return;
+          }
           // A path-pinned route (#21) loads that SPECIFIC file — the way to reach a
           // duplicate-day stray that shares a (kind,name) with the canonical day;
           // everything else resolves by name as before.
@@ -82,12 +120,12 @@ export function PageView(): JSX.Element {
           // null = page doesn't exist yet → start a fresh empty page. A failed
           // read throws and is caught below, so we never overwrite a page whose
           // load errored with empty content.
-          loadSingle(dto ? toLoadable(dto, r.name) : emptyPage(r.name, r.pageKind));
+          ensurePageLoaded(dto ? toLoadablePage(dto, r.name) : emptyPage(r.name, r.pageKind));
         }
         setReady(true);
         // Put the scroll back where it was when we last left this entry (back/
         // forward, or returning to this tab). A new page has no saved offset → top.
-        restoreScrollFor(r);
+        router.restoreScrollFor(r);
       } catch (e) {
         if (epoch !== graphEpoch()) return;
         setLoadError(String(e));
@@ -96,80 +134,8 @@ export function PageView(): JSX.Element {
     })();
   });
 
-  // Live external-change watcher: when the file watcher reports a page changed
-  // on disk (Logseq / Syncthing), auto-reload it — unless it has unsaved edits
-  // (→ conflict banner) or its editor is focused (don't yank the cursor).
-  onMount(() => {
-    let unsub = () => {};
-    void backend()
-      .onGraphChanged((c) => {
-        const r = route();
-        if (c.removed) {
-          // Deleted externally. If the page has unsaved local state, surface a CONFLICT
-          // instead of silently navigating away (which would drop the in-memory edits) —
-          // the user can Keep-mine to recreate it (audit M5). Otherwise reload journals
-          // in place (it no longer exists), even on a pinned tab.
-          const disp = reloadDisposition(c.name);
-          if (disp === "conflict") {
-            markConflict(c.name);
-            return;
-          }
-          if (disp === "skip") return; // being edited / move mid-flight — leave the caret
-          if (r.kind === "page" && r.name === c.name) openJournals({ inPlace: true });
-          return;
-        }
-        // One rule for "the changed page should/shouldn't be reloaded from disk"
-        // (reloadDisposition, src/store.ts): "conflict" = has unsaved edits → never
-        // clobber; "skip" = a block on it is being edited or a move is mid-flight →
-        // leave the caret alone; "reload" = safe to take the disk version. This used
-        // to be hand-coded (and could drift) in each of the branches below.
-        const disp = reloadDisposition(c.name);
-        if (disp === "skip") return;
-        if (disp === "conflict") {
-          markConflict(c.name);
-          return;
-        }
-        if (r.kind === "page" && r.name === c.name) {
-          void (async () => {
-            const dto = await backend().getPage(c.name, c.kind);
-            if (dto) loadSingle(toLoadable(dto, c.name));
-          })();
-          return;
-        }
-        if (r.kind === "journals" && c.kind === "journal") {
-          void (async () => {
-            if (pageByName(c.name)) {
-              // Refresh just the changed day in place — a full feed reload would
-              // also drop OTHER loaded days' unsaved edits.
-              const dto = await backend().getPage(c.name, c.kind);
-              if (dto) reloadPage(dto);
-              return;
-            }
-            // A new journal file appeared (e.g. today created elsewhere): pull
-            // the feed to include it, but only if no OTHER loaded day is dirty.
-            if (doc.feed.some((n) => isDirty(n) || isConflicted(n) || isSaving(n))) return;
-            const js = await backend().journalsDesc(FEED_PAGE, 0);
-            journalOffset = js.length;
-            feedDone = js.length < FEED_PAGE;
-            loadFeed(withToday(js));
-          })();
-          return;
-        }
-        // Satellite page (open only in the sidebar / as a query result) changed
-        // on disk: keep its live copy fresh.
-        if (pageByName(c.name) && !doc.feed.includes(c.name)) {
-          void (async () => {
-            const dto = await backend().getPage(c.name, c.kind);
-            if (dto) reloadPage(dto);
-          })();
-        }
-      })
-      .then((u) => (unsub = u));
-    onCleanup(() => unsub());
-  });
-
   const loadMore = async () => {
-    if (route().kind !== "journals" || loadingMore || feedDone) return;
+    if (currentRoute().kind !== "journals" || loadingMore || feedDone) return;
     loadingMore = true;
     const js = await backend().journalsDesc(FEED_PAGE, journalOffset);
     journalOffset += js.length;
@@ -177,6 +143,17 @@ export function PageView(): JSX.Element {
     else feedDone = true;
     loadingMore = false;
   };
+
+  createEffect(() => {
+    if (currentRoute().kind !== "journals") return;
+    const extender = async () => {
+      const before = doc.feed.length;
+      await loadMore();
+      return doc.feed.length > before;
+    };
+    setFeedExtender(extender);
+    onCleanup(() => setFeedExtender(null));
+  });
 
   // GH #39: on macOS (WKWebView) the journal feed sometimes can't be scrolled on
   // first open until the window is nudged — resizing it makes scrolling start.
@@ -188,7 +165,7 @@ export function PageView(): JSX.Element {
   // the quirk doesn't occur (Linux/WebKitGTK, Chromium). Runs on the journals
   // route whenever the feed transitions to non-empty.
   createEffect(() => {
-    if (route().kind !== "journals") return;
+    if (currentRoute().kind !== "journals") return;
     if (!doc.loaded || doc.feed.length === 0) return; // re-runs when the feed populates
     requestAnimationFrame(() => {
       const el = document.querySelector<HTMLElement>(".main-content");
@@ -201,18 +178,18 @@ export function PageView(): JSX.Element {
     });
   });
 
-  // Let a cross-day move-down pull in older days when it runs off the last
-  // loaded one (returns whether more was actually loaded).
-  setFeedExtender(async () => {
-    const before = doc.feed.length;
-    await loadMore();
-    return doc.feed.length > before;
-  });
-
+  const pagesToRender = () => {
+    const r = currentRoute();
+    if (r.kind === "journals") return mainPages();
+    const p = pageByName(r.name);
+    return p ? [p] : [];
+  };
   const zoomValid = () => {
-    const z = zoomedBlock();
+    const r = currentRoute();
+    const z = r.kind === "page" ? r.block ?? null : zoomedBlock();
     return z && doc.byId[z] ? z : null;
   };
+  const contentReady = () => ready() && (currentRoute().kind !== "journals" || doc.loaded);
 
   return (
     <Show when={!loadError()} fallback={
@@ -225,17 +202,17 @@ export function PageView(): JSX.Element {
         </div>
       </div>
     }>
-    <Show when={ready() && doc.loaded} fallback={<div class="page-loading" />}>
+    <Show when={contentReady()} fallback={<div class="page-loading" />}>
       <Show when={zoomValid()} fallback={
         <div class="page">
-          <For each={mainPages()}>
+          <For each={pagesToRender()}>
             {(p, i) => (
               <>
                 <PageSection page={p} />
                 {/* Agenda sits at the bottom of today's (the first) day, like OG.
                     Window is configurable (Settings → Journal) and keyed off the
                     item's scheduled/deadline date over the whole graph. */}
-                <Show when={i() === 0 && route().kind === "journals"}>
+                <Show when={i() === 0 && currentRoute().kind === "journals"}>
                   <div class="agenda-block">
                     <QueryMacro
                       body={agendaQuery()}
@@ -247,7 +224,7 @@ export function PageView(): JSX.Element {
               </>
             )}
           </For>
-          <Show when={route().kind === "journals" && mainPages().length === 0}>
+          <Show when={currentRoute().kind === "journals" && mainPages().length === 0}>
             <div class="page-load-error">
               No journal entries found in this graph.
               <div class="page-load-error-hint">
@@ -257,15 +234,22 @@ export function PageView(): JSX.Element {
               </div>
             </div>
           </Show>
-          <Show when={route().kind === "journals"}>
+          <Show when={currentRoute().kind === "journals"}>
             <LoadMore onHit={loadMore} />
           </Show>
-          <Show when={route().kind === "page" && mainPages()[0]}>
-            <Show when={mainPages()[0].kind === "page"}>
-              <NamespaceHierarchy name={mainPages()[0].name} />
+          <Show when={currentRoute().kind === "page" && pagesToRender()[0]}>
+            <Show when={pagesToRender()[0].kind === "page" && !pagesToRender()[0].guide}>
+              <NamespaceHierarchy name={pagesToRender()[0].name} />
             </Show>
-            <LinkedReferences name={mainPages()[0].name} />
-            <UnlinkedReferences name={mainPages()[0].name} />
+            <Show
+              when={pagesToRender()[0].kind === "page" && !pagesToRender()[0].guide && tagTableEnabled(pagesToRender()[0].name)}
+              fallback={<Show when={!pagesToRender()[0].guide}><LinkedReferences name={pagesToRender()[0].name} /></Show>}
+            >
+              <TagPageTable pageName={pagesToRender()[0].name} />
+            </Show>
+            <Show when={!pagesToRender()[0].guide}>
+              <UnlinkedReferences name={pagesToRender()[0].name} />
+            </Show>
           </Show>
         </div>
       }>
@@ -278,6 +262,7 @@ export function PageView(): JSX.Element {
 
 // A single zoomed-in block (its subtree) with an ancestor breadcrumb.
 function ZoomedView(props: { id: string }): JSX.Element {
+  const router = paneRouterFromContext();
   const ancestors = (): string[] => {
     const out: string[] = [];
     let p = doc.byId[props.id]?.parent ?? null;
@@ -296,7 +281,7 @@ function ZoomedView(props: { id: string }): JSX.Element {
       <div class="zoom-breadcrumb">
         <a
           class="crumb crumb-page"
-          onClick={() => openPage(pageName(), pageKind())}
+          onClick={() => router.openPage(pageName(), pageKind())}
         >
           {pageName()}
         </a>
@@ -304,7 +289,7 @@ function ZoomedView(props: { id: string }): JSX.Element {
           {(aid) => (
             <>
               <span class="crumb-sep">›</span>
-              <a class="crumb" onClick={() => zoomInto(aid)}>
+              <a class="crumb" onClick={() => router.focusBlock(aid)}>
                 <InlineText text={crumb(aid)} format={formatForBlock(aid)} />
               </a>
             </>
@@ -319,9 +304,11 @@ function ZoomedView(props: { id: string }): JSX.Element {
 }
 
 function PageSection(props: { page: FeedPage }): JSX.Element {
+  const router = paneRouterFromContext();
   const [renaming, setRenaming] = createSignal(false);
   const [newName, setNewName] = createSignal("");
   const startRename = () => {
+    if (props.page.guide || props.page.readOnly) return;
     if (props.page.kind !== "page") return; // journals are named by their date
     setNewName(props.page.name);
     setRenaming(true);
@@ -344,7 +331,7 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
       // watcher reload), so every in-memory page is now potentially stale; reset
       // + reload so a stale copy can't be saved back and revert the rename.
       refreshAfterRename();
-      openPage(next, "page");
+      router.openPage(next, "page");
     } catch (e) {
       alert(`Rename failed: ${String(e)}`);
     }
@@ -375,19 +362,20 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
           <h1
             class="page-title"
             classList={{ "journal-title": props.page.kind === "journal" }}
-            title={props.page.kind === "page" ? "Double-click to rename (shift-click → sidebar, middle-click → new tab)" : "Shift-click to open in sidebar, middle-click → new tab"}
+            title={props.page.guide ? "Bundled Guide page" : props.page.kind === "page" ? "Double-click to rename (shift-click → sidebar, middle-click → new tab)" : "Shift-click to open in sidebar, middle-click → new tab"}
             onClick={(e) => {
-              if (e.shiftKey) openPageInSidebar(props.page.name, props.page.kind);
-              else openPage(props.page.name, props.page.kind);
+              if (e.shiftKey && !props.page.guide) openPageInSidebar(props.page.name, props.page.kind);
+              else router.openPage(props.page.name, props.page.kind);
             }}
             onAuxClick={(e) => {
               if (e.button === 1) {
                 e.preventDefault(); // middle-click → background tab, like a body link
-                openPageInNewTab(props.page.name, props.page.kind);
+                router.openPageInNewTab(props.page.name, props.page.kind);
               }
             }}
             onDblClick={startRename}
             onContextMenu={(e) => {
+              if (props.page.guide) return;
               e.preventDefault();
               openPageContextMenu(e.clientX, e.clientY, props.page.name, props.page.kind);
             }}
@@ -414,8 +402,17 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
             <EmojiText text={props.page.title} />
           </h1>
         </Show>
-        <CarryActions page={props.page} />
-        <button
+        <Show when={!props.page.guide}>
+          <CarryActions page={props.page} />
+          <TagTableToggle page={props.page} />
+        </Show>
+        <Show when={props.page.guide}>
+          <button class="guide-copy-btn" onClick={() => void copyGuideIntoGraph(props.page.name)}>
+            Copy the guide into your graph
+          </button>
+        </Show>
+        <Show when={!props.page.guide}>
+          <button
             class="page-gear"
             title="Page properties (alias, public, tags, icon, title)"
             onClick={(e) => openPageProps(props.page.name, e.clientX, e.clientY)}
@@ -429,23 +426,24 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
                 stroke-linejoin="round"
               />
             </svg>
-        </button>
-        <button
-          class="fav-star"
-          classList={{ active: isFavorite(props.page.name) }}
-          title={isFavorite(props.page.name) ? "Unfavorite" : "Add to favorites"}
-          onClick={() => toggleFavorite(props.page.name, props.page.kind)}
-        >
-          <svg viewBox="0 0 24 24" class="star-icon" aria-hidden="true">
-            <path
-              d="M12 3.5l2.6 5.27 5.82.85-4.21 4.1.99 5.79L12 16.77l-5.2 2.73.99-5.79-4.21-4.1 5.82-.85z"
-              fill={isFavorite(props.page.name) ? "currentColor" : "none"}
-              stroke="currentColor"
-              stroke-width="1.6"
-              stroke-linejoin="round"
-            />
-          </svg>
-        </button>
+          </button>
+          <button
+            class="fav-star"
+            classList={{ active: isFavorite(props.page.name) }}
+            title={isFavorite(props.page.name) ? "Unfavorite" : "Add to favorites"}
+            onClick={() => toggleFavorite(props.page.name, props.page.kind)}
+          >
+            <svg viewBox="0 0 24 24" class="star-icon" aria-hidden="true">
+              <path
+                d="M12 3.5l2.6 5.27 5.82.85-4.21 4.1.99 5.79L12 16.77l-5.2 2.73.99-5.79-4.21-4.1 5.82-.85z"
+                fill={isFavorite(props.page.name) ? "currentColor" : "none"}
+                stroke="currentColor"
+                stroke-width="1.6"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </button>
+        </Show>
       </div>
       <Show when={aliasNames(props.page.preBlock, props.page.format).length}>
         <div class="page-aliases" title="Also known as — other names that link here">
@@ -470,7 +468,15 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
           </For>
         </div>
       </Show>
-      <Show when={props.page.readOnly}>
+      <Show when={props.page.guide}>
+        <div class="page-guide-banner">
+          Bundled Guide page - read-only and not written to your graph.
+          <button onClick={() => void copyGuideIntoGraph(props.page.name)}>
+            Copy the guide into your graph
+          </button>
+        </div>
+      </Show>
+      <Show when={props.page.readOnly && !props.page.guide}>
         <div class="page-readonly-banner" title="Tine can't reproduce this .org file byte-for-byte, so it's shown read-only to avoid corrupting it. Edit it in Logseq/Emacs.">
           Read-only — this <code>.org</code> file uses a structure Tine can't safely
           round-trip yet, so it won't be edited here.
@@ -479,6 +485,69 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
       <div class="page-blocks">
         <For each={props.page.roots}>{(id) => <Block id={id} />}</For>
       </div>
+    </div>
+  );
+}
+
+function tagTableEnabled(pageName: string): boolean {
+  return readPageProperty(pageName, TAG_TABLE_PROP)?.toLowerCase() === "true";
+}
+
+function quoteQueryString(value: string): string {
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, "\\\"")}"`;
+}
+
+function tagQuery(pageName: string): string {
+  return `(tag ${quoteQueryString(pageName)})`;
+}
+
+function taggedCount(groups: readonly RefGroup[] | undefined): number {
+  return groups?.reduce((sum, group) => sum + group.blocks.length, 0) ?? 0;
+}
+
+export function TagTableToggle(props: { page: FeedPage }): JSX.Element {
+  const [groups] = createResource(
+    () => (props.page.kind === "page" ? `${props.page.name}\0${dataRev()}` : null),
+    () => backend().runQuery(tagQuery(props.page.name))
+  );
+  const enabled = () => tagTableEnabled(props.page.name);
+  const visible = () => props.page.kind === "page" && (enabled() || taggedCount(groups()) > 0);
+  return (
+    <Show when={visible()}>
+      <button
+        class="tag-table-toggle"
+        classList={{ active: enabled() }}
+        title={enabled() ? "Hide tag table" : "Show tagged blocks as a table"}
+        onClick={() => setPageProperty(props.page.name, TAG_TABLE_PROP, enabled() ? null : "true")}
+      >
+        ⊞ Table
+      </button>
+    </Show>
+  );
+}
+
+export function TagPageTable(props: { pageName: string }): JSX.Element {
+  const [groups] = createResource(
+    () => `${props.pageName}\0${dataRev()}`,
+    () => backend().runQuery(tagQuery(props.pageName))
+  );
+  const addRow = async () => {
+    const ok = await appendToTodayJournal(`${tagRef(props.pageName)} `);
+    if (!ok) return;
+    const today = pageByName(journalTitle(new Date()));
+    const id = today?.roots[today.roots.length - 1];
+    if (id && doc.byId[id]) startEditing(id, doc.byId[id].raw.length);
+  };
+  return (
+    <div class="tag-page-table">
+      <SheetTable
+        ownerId={`tag-page:${encodeURIComponent(props.pageName)}`}
+        rowSource="query"
+        groups={groups() ?? []}
+        addRow={addRow}
+        addRowLabel={`Add ${tagRef(props.pageName)} row`}
+        schemaPage={props.pageName}
+      />
     </div>
   );
 }

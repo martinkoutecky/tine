@@ -2,7 +2,7 @@
 // [[links]] and #tags), not an innerHTML string. Used to render a block when it
 // is not being edited.
 
-import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, type JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, useContext, type JSX } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { mediaKind } from "../media";
 import { openPage, openPageInNewTab, openPageAtBlock, focusBlock } from "../router";
@@ -31,8 +31,10 @@ import { refreshAssetOnReturn } from "../assetRefresh";
 import { isMobilePlatform } from "../nativeChrome";
 import { resolveBlockBatched } from "../resolveBatch";
 import { doc, setRaw, formatForPage, formatForBlock } from "../store";
+import { PaneContext, focusedPaneId, openRouteInOtherPane } from "../panes";
 import { QueryMacro, EmbedMacro, VideoMacro, TweetMacro, YoutubeTimestamp, ClozeMacro, ZoteroMacro } from "../components/Macro";
 import { NamespaceMacro } from "../components/Namespace";
+import { guideTargetForLink, isGuidePageName } from "../guide";
 
 
 // ===========================================================================
@@ -119,11 +121,11 @@ function renderInline(s: Inline, blockId?: string, spanMode = true): JSX.Element
       return renderLink(s, blockId, spanMode);
     case "nested_link":
       // Logseq `[[a [[b]] c]]` — best-effort: route the whole inner as a page ref.
-      return <PageRef name={s.content} spanAttrs={spanMode ? coarseSpanAttrs(s.span) : undefined} />;
+      return <PageRef name={s.content} blockId={blockId} spanAttrs={spanMode ? coarseSpanAttrs(s.span) : undefined} />;
     case "target":
       return <span class="org-target" {...((spanMode ? coarseSpanAttrs(s.span) : undefined) ?? {})}>{s.text}</span>;
     case "tag":
-      return <PageRef name={astText(s.children)} tag spanAttrs={spanMode ? coarseSpanAttrs(s.span) : undefined} />;
+      return <PageRef name={astText(s.children)} blockId={blockId} tag spanAttrs={spanMode ? coarseSpanAttrs(s.span) : undefined} />;
     case "macro":
       return renderMacroBody(macroBody(s), blockId, s.args);
     case "latex":
@@ -207,17 +209,22 @@ function flattenPeek(
 }
 
 // A `[[page]]` / `#tag` anchor — shared by page_ref links, bare refs, and #tags.
-function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolean; spanAttrs?: SpanDomAttrs }): JSX.Element {
+function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolean; blockId?: string; spanAttrs?: SpanDomAttrs }): JSX.Element {
+  const pane = useContext(PaneContext);
+  const sourcePage = () => (props.blockId ? doc.byId[props.blockId]?.page : undefined);
+  const targetName = () => guideTargetForLink(props.name, sourcePage());
   // The referenced page's `icon::`, shown as a prefix like OG (and Tine's own page
   // title / namespace macro). Emoji route through EmojiText → Twemoji SVG, since
   // WebKitGTK paints color-emoji webfonts blank. Reactive + batched + cached per
   // graph; an icon-less graph costs one IPC and no re-render (see pageIconBatch).
-  const icon = () => pageIcon(props.name);
-  const kind = (): PageKind => (isJournalTitle(props.name) ? "journal" : "page");
+  const icon = () => (isGuidePageName(targetName()) ? null : pageIcon(targetName()));
+  const kind = (): PageKind => (isGuidePageName(targetName()) ? "page" : isJournalTitle(targetName()) ? "journal" : "page");
   const open = (e: MouseEvent) => {
     e.stopPropagation();
-    if (e.shiftKey) openPageInSidebar(props.name, kind());
-    else openPage(props.name, kind());
+    if (e.ctrlKey || e.metaKey)
+      openRouteInOtherPane({ kind: "page", name: targetName(), pageKind: kind() }, pane?.paneId ?? focusedPaneId());
+    else if (e.shiftKey && !isGuidePageName(targetName())) openPageInSidebar(targetName(), kind());
+    else openPage(targetName(), kind());
   };
 
   // Hover peek (GH #40): after a short dwell, fetch the target page and show a
@@ -232,8 +239,8 @@ function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolean; span
   const leave = () => { cancelDwell(); setPeek(false); };
   onCleanup(cancelDwell);
   const [preview] = createResource(
-    () => (peek() ? `${props.name} ${graphEpoch()}` : null),
-    () => backend().getPage(props.name, kind()),
+    () => (peek() && !isGuidePageName(targetName()) ? `${targetName()}\0${graphEpoch()}` : null),
+    () => backend().getPage(targetName(), kind()),
   );
 
   return (
@@ -251,13 +258,13 @@ function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolean; span
         if (e.button === 1) {
           e.preventDefault();
           e.stopPropagation();
-          openPageInNewTab(props.name, kind());
+          openPageInNewTab(targetName(), kind());
         }
       }}
       onContextMenu={(e) => {
         e.preventDefault();
         e.stopPropagation();
-        openPageContextMenu(e.clientX, e.clientY, props.name);
+        if (!isGuidePageName(targetName())) openPageContextMenu(e.clientX, e.clientY, targetName());
       }}
     >
       <Show when={icon()}>
@@ -320,7 +327,7 @@ function renderLink(s: Extract<Inline, { k: "link" }>, blockId?: string, spanMod
   const spanAttrs = spanMode ? coarseSpanAttrs(s.span) : undefined;
   if (url.type === "page_ref") {
     const alias = s.label && s.label.length ? renderInlines(s.label, blockId, spanMode) : undefined;
-    return <PageRef name={url.v} alias={alias} spanAttrs={spanAttrs} />;
+    return <PageRef name={url.v} alias={alias} blockId={blockId} spanAttrs={spanAttrs} />;
   }
   if (url.type === "block_ref") {
     const label = s.label && s.label.length ? astText(s.label) : undefined;
@@ -570,7 +577,7 @@ function AssetImage(props: {
   const [diskSrc] = createResource(
     () => {
       const r = rel();
-      return r == null ? null : `${r} ${assetVersion(r)}`;
+      return r == null ? null : `${r}\0${assetVersion(r)}`;
     },
     async () => {
       const r = rel();
@@ -940,8 +947,9 @@ function UserMacroView(props: { name: string; template: string; args: string[]; 
 // navigate to the source page on click and show a hover preview of the full
 // referenced block (mirrors OG); a missing target falls back to a short id.
 function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAttrs }): JSX.Element {
+  const pane = useContext(PaneContext);
   const [grp] = createResource(
-    () => `${props.id} ${graphEpoch()}`, // resolve once per open graph; batched + cached
+    () => `${props.id}\0${graphEpoch()}`, // resolve once per open graph; batched + cached
     () => resolveBlockBatched(props.id)
   );
   const [hover, setHover] = createSignal(false);
@@ -973,7 +981,12 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
         // Shift-click opens the referenced block in the right sidebar. Plain click:
         // Tine scrolls + flashes the block in context (default); the OG behavior —
         // zoom into the block as its own page — is opt-in (Settings → ref-click-zoom).
-        if (e.shiftKey) openBlockInSidebar({ uuid: props.id, page: g.page, pageKind: g.kind });
+        if (e.ctrlKey || e.metaKey)
+          openRouteInOtherPane(
+            { kind: "page", name: g.page, pageKind: g.kind, block: props.id },
+            pane?.paneId ?? focusedPaneId()
+          );
+        else if (e.shiftKey) openBlockInSidebar({ uuid: props.id, page: g.page, pageKind: g.kind });
         else if (refClickZoom()) focusBlock(props.id);
         else openPageAtBlock(g.page, g.kind, props.id);
       }}

@@ -53,3 +53,15 @@ export function cycleMarker(raw: string, workflow: Workflow): { raw: string; del
   lines[0] = newFirst;
   return { raw: lines.join("\n"), delta: newPrefixLen - oldPrefixLen };
 }
+
+/** Set the leading task marker explicitly, using the same first-line anchoring
+ *  as cycleMarker. `null` removes any existing marker. */
+export function setMarker(raw: string, marker: string | null): string {
+  const lines = raw.split("\n");
+  const first = lines[0] ?? "";
+  const cur = leadingMarker(raw);
+  let rest = first;
+  if (cur) rest = first.slice(cur.length).replace(/^ /, "");
+  lines[0] = marker ? (rest ? `${marker} ${rest}` : marker) : rest;
+  return lines.join("\n");
+}

@@ -157,6 +157,22 @@ pub(crate) fn save_page(
 }
 
 #[tauri::command]
+pub(crate) fn guide_pages() -> Vec<tine_core::onboarding::GuidePage> {
+    tine_core::onboarding::bundled_guide_pages()
+}
+
+#[tauri::command]
+pub(crate) fn copy_guide_into_graph(
+    title: String,
+    state: State<'_, AppState>,
+) -> Result<tine_core::onboarding::GuideCopyResult, String> {
+    let result: Result<tine_core::onboarding::GuideCopyResult, String> = with_graph(&state, |g| {
+        tine_core::onboarding::copy_guide_into_graph(g, &title).map_err(|e| e.to_string())
+    });
+    result
+}
+
+#[tauri::command]
 pub(crate) fn get_backlinks(
     name: String,
     state: State<'_, AppState>,
@@ -299,6 +315,19 @@ pub(crate) fn set_timetracking_enabled(
 ) -> Result<(), String> {
     with_graph(&state, |g| {
         g.set_timetracking_enabled(enabled)
+            .map_err(|e| e.to_string())
+    })?;
+    refresh_graph(&state);
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) fn set_guide_announced(
+    announced: bool,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    with_graph(&state, |g| {
+        g.set_guide_announced(announced)
             .map_err(|e| e.to_string())
     })?;
     refresh_graph(&state);
@@ -512,6 +541,40 @@ pub(crate) fn import_asset(
         g.import_asset(std::path::Path::new(&path), name.as_deref())
             .map_err(|e| e.to_string())
     })
+}
+
+/// Read a dropped delimited-text file for the CSV/TSV → grid drop path.
+/// Deliberately NARROW: this is the only webview-reachable read of a
+/// caller-chosen path (everything else is gated to the graph/assets dirs),
+/// so it refuses anything that isn't the drop feature's file types — it must
+/// not grow into a general file-read primitive.
+#[tauri::command]
+pub(crate) fn read_text_file(path: String) -> Result<String, String> {
+    fn delimited_ext(p: &std::path::Path) -> bool {
+        p.extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.eq_ignore_ascii_case("csv") || e.eq_ignore_ascii_case("tsv"))
+            .unwrap_or(false)
+    }
+    let p = std::path::Path::new(&path);
+    if !delimited_ext(p) {
+        return Err("unsupported file type".into());
+    }
+    // Re-check on the RESOLVED path too — a symlink named x.csv pointing at an
+    // arbitrary file must not pass the extension gate (review finding).
+    let resolved = std::fs::canonicalize(p).map_err(|e| e.to_string())?;
+    if !delimited_ext(&resolved) {
+        return Err("unsupported file type".into());
+    }
+    let meta = std::fs::metadata(&resolved).map_err(|e| e.to_string())?;
+    if !meta.is_file() {
+        return Err("not a file".into());
+    }
+    const MAX_BYTES: u64 = 10 * 1024 * 1024;
+    if meta.len() > MAX_BYTES {
+        return Err("text file too large".into());
+    }
+    std::fs::read_to_string(&resolved).map_err(|e| e.to_string())
 }
 
 /// Open a graph asset (by its `assets/`-relative name) in the OS default app,

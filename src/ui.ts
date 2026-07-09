@@ -1,9 +1,11 @@
 // Small global UI state: theme, left sidebar, and the quick-switcher modal.
-import { createSignal } from "solid-js";
+import { createSignal, useContext } from "solid-js";
 import type { GraphMeta, JournalConflict, SyncConflict, PageKind } from "./types";
 import { backend, isTauri } from "./backend";
 // Zoom is route state; these are call-time only, so the ui↔router cycle is safe.
 import { route, focusBlock, scheduleSessionSave } from "./router";
+import { PaneContext } from "./paneContext";
+import { exitPaneSelect } from "./paneSelect";
 import { setJournalTitleFormat, isJournalTitle } from "./journal";
 
 const THEME_KEY = "logseq-claude.theme";
@@ -236,6 +238,10 @@ export async function refreshSyncConflicts(notify = false): Promise<void> {
 // --- which content pane is focused. Drives Ctrl+/- zoom routing (notes → whole
 // interface, pdf → the PDF's own scale). Transient session state, not persisted. ---
 export const [activePane, setActivePane] = createSignal<"notes" | "pdf">("notes");
+let paneFocusSetter: ((paneId: string) => void) | undefined;
+export function registerPaneFocusSetter(setter: (paneId: string) => void) {
+  paneFocusSetter = setter;
+}
 /** Track the focused pane from clicks / focus moves. Capture-phase so it sees
  *  every interaction regardless of stopPropagation downstream. The notes pane is
  *  the default — anything outside the PDF pane (editor, sidebar, chrome) counts as
@@ -243,12 +249,30 @@ export const [activePane, setActivePane] = createSignal<"notes" | "pdf">("notes"
 export function installPaneTracker(): () => void {
   const update = (e: Event) => {
     const t = e.target as Element | null;
-    setActivePane(t?.closest?.(".pdf-pane") ? "pdf" : "notes");
+    const container = t?.closest?.("[data-pane-id]") ?? null;
+    // Focus landing OUTSIDE any pane (the Ctrl+K / palette input, dialogs —
+    // they are global overlays) must NOT steal pane focus: the overlay is
+    // pane-neutral and the command it runs targets focusedPaneId(). The old
+    // "?? main" default reset pane focus on EVERY switcher open, so palette
+    // splits and Ctrl+K picks always landed in "main" (Martin's Jul 8
+    // wrong-pane report). Deliberate pointer clicks outside keep the old
+    // main default.
+    if (e.type === "focusin" && !container) return;
+    const paneId = container?.getAttribute("data-pane-id") ?? "main";
+    paneFocusSetter?.(paneId);
+    setActivePane(paneId === "pdf" ? "pdf" : "notes");
   };
-  window.addEventListener("pointerdown", update, true);
+  const pointerdown = (e: Event) => {
+    // Any click exits pane-select (standard modal behavior); without this the
+    // mode goes stale — the ring lingers and, worse, its keyboard handler
+    // would still be armed after the user clicks off to do something else.
+    exitPaneSelect();
+    update(e);
+  };
+  window.addEventListener("pointerdown", pointerdown, true);
   window.addEventListener("focusin", update, true);
   return () => {
-    window.removeEventListener("pointerdown", update, true);
+    window.removeEventListener("pointerdown", pointerdown, true);
     window.removeEventListener("focusin", update, true);
   };
 }
@@ -689,15 +713,43 @@ export function isConflicted(name: string): boolean {
   return conflicts().includes(name);
 }
 
-// Date picker popup for SCHEDULED / DEADLINE (and editing existing ones).
+// Date picker popup for SCHEDULED / DEADLINE and typed sheet date properties.
+export type DatePickerTarget =
+  | "scheduled"
+  | "deadline"
+  | { field: `prop:${string}`; fieldType: "date" | "datetime" };
 export const [datePicker, setDatePicker] = createSignal<
-  { blockId: string; which: "scheduled" | "deadline"; x: number; y: number } | null
+  { blockId: string; which: DatePickerTarget; x: number; y: number } | null
 >(null);
-export function openDatePicker(blockId: string, which: "scheduled" | "deadline", x: number, y: number) {
+export function openDatePicker(blockId: string, which: DatePickerTarget, x: number, y: number) {
   setDatePicker({ blockId, which, x, y });
 }
 export function closeDatePicker() {
   setDatePicker(null);
+}
+
+// Sheet formula/filter editor popup. Mounted at the app root like DatePicker so
+// table/board menus can open one positioned editor without owning popup state.
+export type FormulaEditorHome = { kind: "block"; id: string } | { kind: "page"; name: string };
+export type FormulaEditorMode = "add" | "edit" | "filter";
+export interface FormulaEditorTarget {
+  mode: FormulaEditorMode;
+  ownerId: string;
+  schemaPage?: string;
+  x: number;
+  y: number;
+  name?: string;
+  expr: string;
+  formulas: readonly [string, string][];
+  fields: readonly string[];
+  home?: FormulaEditorHome | null;
+}
+export const [formulaEditor, setFormulaEditor] = createSignal<FormulaEditorTarget | null>(null);
+export function openFormulaEditor(target: FormulaEditorTarget) {
+  setFormulaEditor(target);
+}
+export function closeFormulaEditor() {
+  setFormulaEditor(null);
 }
 
 // Block zoom: focus a single block's subtree (click its bullet). Zoom is part of
@@ -705,7 +757,7 @@ export function closeDatePicker() {
 // back/forward history, and a block can be opened pre-zoomed in its own tab
 // (middle-click a bullet). zoomedBlock derives from the current route.
 export function zoomedBlock(): string | null {
-  const r = route();
+  const r = useContext(PaneContext)?.router.route() ?? route();
   return r.kind === "page" ? r.block ?? null : null;
 }
 export function zoomInto(id: string) {
@@ -820,10 +872,36 @@ export async function pruneSidebarBlocks(): Promise<void> {
 
 // Right-click context menu — universal over its target (a block or a page),
 // mirroring the sidebar's two reference kinds.
+/** Structural-removal context for a sheet cell's right-click menu. `rowId` is the
+ *  row block to drop (works for grid + table, sort-safe). `gridId`/`col` enable a
+ *  positional column delete (grid only; tables remove columns via "Remove from
+ *  schema" on the header instead). */
+export type SheetCellRemoveCtx = { rowId?: string; gridId?: string; col?: number };
+
 export type CtxTarget =
   | { kind: "block"; blockId: string }
   | { kind: "page"; name: string; pageKind: "journal" | "page" }
-  | { kind: "blockref"; uuid: string; page: string; pageKind: "journal" | "page" };
+  | { kind: "blockref"; uuid: string; page: string; pageKind: "journal" | "page" }
+  | { kind: "sheet-cell"; blockId: string; remove?: SheetCellRemoveCtx }
+  | {
+      kind: "sheet";
+      ownerId: string;
+      surface: "grid" | "table" | "board";
+      rowSource: "children" | "query";
+      groupBy?: string | null;
+      schemaPage?: string;
+      fields?: readonly string[];
+      formulas?: readonly [string, string][];
+      filter?: string | null;
+    }
+  | { kind: "action-menu"; items: readonly ContextMenuAction[] };
+export interface ContextMenuAction {
+  label: string;
+  run?: () => void;
+  disabled?: boolean;
+  danger?: boolean;
+  children?: readonly ContextMenuAction[];
+}
 export const [contextMenu, setContextMenu] = createSignal<
   ({ x: number; y: number } & CtxTarget) | null
 >(null);
@@ -846,6 +924,28 @@ export function openBlockRefContextMenu(
   pageKind: "journal" | "page" = "page"
 ) {
   setContextMenu({ x, y, kind: "blockref", uuid, page, pageKind });
+}
+export function openSheetCellContextMenu(x: number, y: number, blockId: string, remove?: SheetCellRemoveCtx) {
+  setContextMenu({ x, y, kind: "sheet-cell", blockId, remove });
+}
+export function openSheetContextMenu(
+  x: number,
+  y: number,
+  ownerId: string,
+  surface: "grid" | "table" | "board",
+  rowSource: "children" | "query",
+  groupBy?: string | null,
+  opts: {
+    schemaPage?: string;
+    fields?: readonly string[];
+    formulas?: readonly [string, string][];
+    filter?: string | null;
+  } = {}
+) {
+  setContextMenu({ x, y, kind: "sheet", ownerId, surface, rowSource, groupBy, ...opts });
+}
+export function openActionContextMenu(x: number, y: number, items: readonly ContextMenuAction[]) {
+  setContextMenu({ x, y, kind: "action-menu", items });
 }
 export function closeContextMenu() {
   setContextMenu(null);
@@ -890,20 +990,23 @@ export interface Toast {
   sticky?: boolean; // stays until the user closes it (✕); no auto-dismiss
   // Optional action button (e.g. "Download"). Runs, then dismisses the toast.
   action?: { label: string; run: () => void };
+  onDismiss?: () => void;
 }
 let toastSeq = 0;
 export const [toasts, setToasts] = createSignal<Toast[]>([]);
 export function pushToast(
   message: string,
   kind: Toast["kind"] = "info",
-  opts: { sticky?: boolean; action?: { label: string; run: () => void } } = {}
+  opts: { sticky?: boolean; action?: { label: string; run: () => void }; onDismiss?: () => void } = {}
 ): number {
   const id = ++toastSeq;
-  setToasts([...toasts(), { id, message, kind, sticky: opts.sticky, action: opts.action }]);
+  setToasts([...toasts(), { id, message, kind, sticky: opts.sticky, action: opts.action, onDismiss: opts.onDismiss }]);
   if (!opts.sticky) setTimeout(() => dismissToast(id), 3200);
   return id;
 }
 export function dismissToast(id: number) {
+  const toast = toasts().find((t) => t.id === id);
+  toast?.onDismiss?.();
   setToasts(toasts().filter((t) => t.id !== id));
 }
 
@@ -929,8 +1032,13 @@ export const [switcherOpen, setSwitcherOpen] = createSignal(false);
 // palette (⌘⇧P), commands only.
 export type SwitcherMode = "all" | "commands";
 export const [switcherMode, setSwitcherMode] = createSignal<SwitcherMode>("all");
-export function openSwitcher() {
+export const [switcherEmbryo, setSwitcherEmbryo] =
+  createSignal<{ paneId: string; prefill: string } | null>(null);
+export function openSwitcher(opts?: { mode?: "embryo"; paneId?: string; prefill?: string }) {
   setSwitcherMode("all");
+  setSwitcherEmbryo(opts?.mode === "embryo" && opts.paneId
+    ? { paneId: opts.paneId, prefill: opts.prefill ?? "" }
+    : null);
   setSwitcherOpen(true);
 }
 /** Toggle the WebView developer tools (WebKit Web Inspector) for theme/CSS
@@ -941,10 +1049,12 @@ export function openDevtools() {
 }
 export function openCommandPalette() {
   setSwitcherMode("commands");
+  setSwitcherEmbryo(null);
   setSwitcherOpen(true);
 }
 export function closeSwitcher() {
   setSwitcherOpen(false);
+  setSwitcherEmbryo(null);
 }
 
 // PDF export: the page whose export-options dialog is open (null = closed). Set by

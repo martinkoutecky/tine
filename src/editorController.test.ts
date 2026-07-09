@@ -5,6 +5,7 @@ import {
   editingId,
   editingOwner,
   endEdit,
+  endEditForSurface,
   focusSurfaceFor,
   noteSurfaceFocused,
   startEditing,
@@ -46,5 +47,16 @@ describe("editorController", () => {
 
     startEditing("block-c", 0, "owner-c");
     expect(focusSurfaceFor("block-c")).toBeUndefined();
+  });
+
+  it("only ends editing for navigation in the active surface", () => {
+    noteSurfaceFocused("pane:a");
+    startEditing("block-a", 0, null);
+
+    endEditForSurface("page-navigation", "pane:b");
+    expect(editingId()).toBe("block-a");
+
+    endEditForSurface("page-navigation", "pane:a");
+    expect(editingId()).toBeNull();
   });
 });

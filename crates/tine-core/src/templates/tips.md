@@ -4,6 +4,11 @@ icon:: ⌨️
 	- A quick tour of the things that aren't obvious on day one. (Shortcuts are remappable in Settings.)
 - ## Find anything — Ctrl+K
 	- **Ctrl+K** opens the quick switcher: jump to a page, search the text of any block, or run a command — all from one box. **Ctrl+Shift+P** opens the command palette (commands only).
+- ## Create one yourself
+	- 1. Press **Ctrl+K**.
+	- 2. Type part of a page name, a block phrase, or a command such as `Open Guide`.
+	- 3. Press **Enter** on the highlighted result.
+	- 4. What you should see: Tine jumps to the page/block or runs the command without leaving your graph.
 - ## Slash commands — /
 	- Type **/** at the start of a bullet for a menu: tasks, headings, a code block, a `/calc` live calculator, dates (Scheduled / Deadline), callouts, queries, a math block, asset upload, and more.
 - ## Tabs

@@ -6,6 +6,8 @@ import type {
   AdvancedQueryResult,
   AssetInfo,
   GraphMeta,
+  GuideCopyResult,
+  GuidePage,
   Highlight,
   PageDto,
   PageEntry,
@@ -86,6 +88,12 @@ export interface Backend {
    *  rejects with "conflict" if the file changed on disk since then (unless
    *  `force`). Returns the new on-disk rev to use as the next baseline. */
   savePage(page: PageDto, baseRev: string | null, force?: boolean): Promise<string>;
+  /** Bundled read-only Guide pages, compiled from the same templates as the demo graph. */
+  guidePages(): Promise<GuidePage[]>;
+  /** Copy the bundled Guide into the real graph under `tine-guide/`. */
+  copyGuideIntoGraph(title: string): Promise<GuideCopyResult>;
+  /** Persist the graph-local one-time Guide announcement flag. */
+  setGuideAnnounced(announced: boolean): Promise<void>;
   getBacklinks(name: string): Promise<RefGroup[]>;
   getUnlinkedRefs(name: string): Promise<RefGroup[]>;
   /** True once the background whole-graph warm has built derived graph-open caches. */
@@ -214,6 +222,9 @@ export interface Backend {
   /** Copy a file (by absolute path) into assets/, returning the stored name.
    *  `name` (optional) is the desired stored filename (timestamped). */
   importAsset(path: string, name?: string): Promise<string>;
+  /** Read a dropped UTF-8 text file by absolute path. Used only for explicit
+   *  local file drops such as CSV/TSV import. */
+  readTextFile(path: string): Promise<string>;
   /** Native yes/no confirmation dialog. Returns true if the user confirms.
    *  Uses the GTK dialog plugin, NOT window.confirm — the latter silently
    *  returns true without showing anything in this WebKitGTK build, which would
@@ -392,6 +403,15 @@ class TauriBackend implements Backend {
   }
   savePage(page: PageDto, baseRev: string | null, force = false) {
     return this.call<string>("save_page", { page, baseRev, force });
+  }
+  guidePages() {
+    return this.call<GuidePage[]>("guide_pages");
+  }
+  copyGuideIntoGraph(title: string) {
+    return this.call<GuideCopyResult>("copy_guide_into_graph", { title });
+  }
+  setGuideAnnounced(announced: boolean) {
+    return this.call<void>("set_guide_announced", { announced });
   }
   getBacklinks(name: string) {
     return this.call<RefGroup[]>("get_backlinks", { name });
@@ -584,6 +604,9 @@ class TauriBackend implements Backend {
   }
   importAsset(path: string, name?: string) {
     return this.call<string>("import_asset", { path, name });
+  }
+  readTextFile(path: string) {
+    return this.call<string>("read_text_file", { path });
   }
   async confirm(message: string, title?: string): Promise<boolean> {
     const { ask } = await import("@tauri-apps/plugin-dialog");

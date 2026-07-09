@@ -11,6 +11,9 @@ export const PROP_LINE = /^([A-Za-z0-9_./-]+):: ?(.*)$/;
 const BUILTIN_HIDDEN = new Set(["id", "collapsed", "logseq.order-list-type"]);
 /** Hide just the built-in `id::`/`collapsed::` properties (normal blocks). */
 export const isBuiltinHidden = (key: string): boolean => BUILTIN_HIDDEN.has(key);
+/** Hide metadata that should not surface while editing through a sheet cell. */
+export const isSheetCellHidden = (key: string): boolean =>
+  isBuiltinHidden(key) || key.toLowerCase().startsWith("tine.");
 /** Hide every property (annotation blocks edit only their text). */
 export const hideAll = (_key: string): boolean => true;
 

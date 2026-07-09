@@ -23,6 +23,7 @@ import {
   doc,
   pageByName,
   setRaw,
+  setBlockProperty,
   splitBlock,
   indentBlock,
   outdentBlock,
@@ -32,7 +33,9 @@ import {
   prevVisible,
   nextVisible,
   nextVisibleOrExtend,
+  insertEmptyChildBlock,
   insertOutlineAfter,
+  insertOutlineChildren,
   deleteBlock,
   moveBlock,
   moveBlockFeed,
@@ -47,6 +50,8 @@ import {
   isBlockMoving,
   setBlockMoving,
   orderedListMarker,
+  withUndoUnit,
+  blockIsGridView,
 } from "../store";
 import {
   clearFocusSurface,
@@ -102,7 +107,7 @@ import { cycleMarkerSmart, toggleTaskDone } from "../editor/repeat";
 import { taskCheckboxState } from "../markers";
 import { applyTemplateVars } from "../editor/templateVars";
 import { caretAtFirstRow, caretAtLastRow } from "../editor/caretRows";
-import { splitProps, joinProps, isBuiltinHidden, hideAll, caretInFence } from "../editor/properties";
+import { splitProps, joinProps, isBuiltinHidden, isSheetCellHidden, hideAll, caretInFence } from "../editor/properties";
 import { normalizePlanning } from "../editor/planning";
 import { isAnnotationBlock, annotationInfo } from "../editor/annotation";
 import { AnnotationBody } from "./AnnotationBody";
@@ -110,6 +115,36 @@ import { logbookInfo, type LogbookInfo } from "../logbook";
 import { inPageFindPreservesEditorBlur } from "../inpageFind";
 import { registerFocusedEditorCommandBridge, type MobileEditorCommandId } from "../editorCommandBridge";
 import { isRecordingAudio, setRecordingAudio, base64ToBytes } from "../mediaCapture";
+import { sheetConfig } from "../sheet/config";
+import { SheetCellContext } from "../sheet/context";
+import { appendSheetCellChild, structuralSheetPasteNode } from "../sheet/mutations";
+import { cellBlockId, cellOwner, selectCellAfterEdit, moveCellAfterEdit, selectTopRowSeamAfterEdit } from "../sheet/selection";
+import { forbidsEditEntry } from "../editor/editTargets";
+import { SheetGrid } from "./SheetGrid";
+import { SheetTable } from "./SheetTable";
+import { SheetBoard } from "./SheetBoard";
+import { blockBackgroundColor } from "../blockColors";
+import { SheetContainer } from "./SheetContainer";
+
+type SheetSlashView = "grid" | "table" | "board";
+
+export function applySheetViewSlashAction(id: string, view: SheetSlashView): string | null {
+  const node = doc.byId[id];
+  if (!node) return null;
+  let seededCellId: string | null = null;
+  withUndoUnit(`sheet:view:${view}`, [node.page], () => {
+    const shouldSeedGrid = view === "grid" && (doc.byId[id]?.children.length ?? 0) === 0;
+    setBlockProperty(id, "tine.view", view);
+    if (view === "board") setBlockProperty(id, "tine.group-by", "state");
+    if (shouldSeedGrid) {
+      const rowId = insertEmptyChildBlock(id, 0);
+      if (rowId) seededCellId = insertEmptyChildBlock(rowId, 0);
+    }
+  });
+  endEdit("select-block");
+  if (seededCellId) startEditing(seededCellId, 0);
+  return seededCellId;
+}
 
 // Detect a block whose entire body is a single {{query}} / {{embed}} macro.
 function detectMacro(raw: string): { kind: "query" | "embed"; inner: string } | null {
@@ -121,15 +156,16 @@ function detectMacro(raw: string): { kind: "query" | "embed"; inner: string } | 
   return { kind: m[1] as "query" | "embed", inner: `${m[1]}${m[2]}` };
 }
 
+// Any body LINE that is exactly a {{query …}} macro (same recognizer as
+// detectMacro, applied per line — the macro may share the block with a heading
+// or other text). Not fence-aware; a fenced {{query}} inside a block that ALSO
+// declares tine.view:: table/board is not a real case.
+function bodyContainsQueryMacro(raw: string): boolean {
+  return raw.split("\n").some((l) => /^\{\{query\b[\s\S]*\}\}$/.test(l.trim()));
+}
+
 // (Rendered-property hidden set lives in render/block.ts as RENDER_HIDDEN_PROPS /
 // isRenderHiddenProp, shared with body.tsx's renderProps.)
-
-// Logseq's built-in block background colors → a soft tint for rendering.
-const BLOCK_BG: Record<string, string> = {
-  yellow: "rgba(251,230,158,0.45)", red: "rgba(245,163,163,0.4)", pink: "rgba(243,176,212,0.4)",
-  green: "rgba(166,227,180,0.4)", blue: "rgba(168,201,240,0.4)", purple: "rgba(205,180,238,0.4)",
-  gray: "rgba(211,214,218,0.5)",
-};
 
 // Pointer-based drag reorder (HTML5 DnD is unreliable in WebKitGTK).
 const [dragId, setDragId] = createSignal<string | null>(null);
@@ -242,12 +278,27 @@ export function Block(props: { id: string; hideRefCount?: boolean }): JSX.Elemen
   };
   const hasChildren = () => node().children.length > 0;
   const collapsed = () => node().collapsed;
+  const fmt = () => pageByName(node().page)?.format ?? "md";
+  const blockFacets = createMemo(() => {
+    const n = node();
+    return n ? facetsOf(n.raw, fmt()) : null;
+  });
+  // A table/board view on a block whose body CONTAINS a {{query}} macro belongs
+  // to the query results (the macro path renders it, rowSource: query) — the
+  // children-source face here would render a SECOND, empty sheet below it. The
+  // macro need not be the whole body: the §4 demo block is a heading +
+  // {{query}} + tine.view:: board in ONE block, which the exact-body
+  // detectMacro misses. Grid stays children-source even on a query block.
+  const sheet = createMemo(() => {
+    const cfg = sheetConfig(blockFacets()?.properties ?? []);
+    if ((cfg.view === "table" || cfg.view === "board") && bodyContainsQueryMacro(node().raw)) {
+      return { ...cfg, view: null };
+    }
+    return cfg;
+  });
   // Heading level of THIS block's first line, so the bullet column can match the
   // (taller) heading line box and the bullet stays centered on it.
-  const headingLevel = createMemo(() => {
-    const n = node();
-    return n ? facetsOf(n.raw, pageByName(n.page)?.format ?? "md").headingLevel : null;
-  });
+  const headingLevel = createMemo(() => blockFacets()?.headingLevel ?? null);
   const editorVisibleValue = createMemo(() => {
     const n = node();
     if (!n) return "";
@@ -377,56 +428,35 @@ export function Block(props: { id: string; hideRefCount?: boolean }): JSX.Elemen
         </div>
       </Show>
 
-      <Show when={hasChildren() && !collapsed()}>
-        <div class="block-children-container">
-          <div class="block-children-left-border" />
-          <div class="block-children">
-            <For each={node().children}>{(cid) => <Block id={cid} />}</For>
-          </div>
-        </div>
+      <Show when={!collapsed() && (hasChildren() || sheet().view === "grid" || sheet().view === "table" || sheet().view === "board")}>
+        <Switch>
+          <Match when={sheet().view === "grid"}>
+            <SheetContainer>
+              <SheetGrid id={props.id} />
+            </SheetContainer>
+          </Match>
+          <Match when={sheet().view === "table"}>
+            <SheetContainer>
+              <SheetTable ownerId={props.id} rowSource="children" />
+            </SheetContainer>
+          </Match>
+          <Match when={sheet().view === "board"}>
+            <SheetContainer>
+              <SheetBoard ownerId={props.id} rowSource="children" groupBy={sheet().groupBy} />
+            </SheetContainer>
+          </Match>
+          <Match when={true}>
+            <div class="block-children-container">
+              <div class="block-children-left-border" />
+              <div class="block-children">
+                <For each={node().children}>{(cid) => <Block id={cid} />}</For>
+              </div>
+            </div>
+          </Match>
+        </Switch>
       </Show>
     </div>
   );
-}
-
-// Interactive targets that must NOT enter edit on mousedown (mirrors OG's
-// target-forbidden-edit?). Their own handlers run on click — after our
-// mousedown — so entering edit first would swap the DOM out from under them.
-const FORBID_EDIT_SELECTOR = [
-  "a",
-  "button",
-  "input",
-  "textarea",
-  "select",
-  "video",
-  "audio",
-  "iframe",
-  "details",
-  "summary",
-  ".block-ref",
-  ".block-marker",
-  ".clock-badge",
-  ".date-chip",
-  ".hl-prefix",
-  ".inline-image-wrap",
-  ".media-embed-wrap",
-  ".embed-iframe-wrap",
-  // Query-macro controls: they run their own action on CLICK (toggle collapse,
-  // rename title, navigate to a result page, sort a column) and used to block
-  // the block's edit via click-phase stopPropagation — which no longer suffices
-  // now that edit entry is on mousedown. Opt them out here instead.
-  ".query-collapse",
-  ".query-title-editable",
-  ".query-page",
-  ".query-crumb",
-  ".qt-page",
-  ".query-table th",
-].join(", ");
-
-function forbidsEditEntry(e: MouseEvent): boolean {
-  const target = e.target as Element | null;
-  const hit = target?.closest?.(FORBID_EDIT_SELECTOR);
-  return !!hit && (e.currentTarget as Element).contains(hit);
 }
 
 // --- Click / drag gesture on rendered block content -------------------------
@@ -443,6 +473,14 @@ function forbidsEditEntry(e: MouseEvent): boolean {
 // Deliberately NOT OG's mousedown-instant-edit: that races the native
 // selection against the DOM swap (the inconsistency Martin observed in OG).
 const DRAG_THRESHOLD_PX = 4;
+const SHEET_CELL_BLOCKED_EDITOR_COMMANDS = new Set([
+  "editor/indent",
+  "editor/outdent",
+  "editor/move-block-up",
+  "editor/move-block-down",
+  "editor/select-block-up",
+  "editor/select-block-down",
+]);
 
 interface EditGesture {
   blockId: string;
@@ -556,8 +594,7 @@ function Rendered(props: { id: string; owner?: string; trailing?: JSX.Element })
     return facets().properties.filter(([k]) => !isRenderHiddenProp(k, extra));
   };
   const bgColor = () => {
-    const v = facets().properties.find(([k]) => k === "background-color")?.[1];
-    return v ? BLOCK_BG[v] ?? v : undefined;
+    return blockBackgroundColor(facets().properties);
   };
 
   const body = (
@@ -846,6 +883,7 @@ function templateToOutline(
 export function Editor(props: { id: string }): JSX.Element {
   // Non-null only inside the quick-capture window (see CaptureCtx).
   const cap = useContext(CaptureCtx);
+  const sheetCell = useContext(SheetCellContext);
   // Which surface (main pane / a specific sidebar item) this editor lives in —
   // drives edit-focus arbitration when the same block renders in several surfaces.
   const surfaceKey = useContext(SurfaceContext);
@@ -854,6 +892,7 @@ export function Editor(props: { id: string }): JSX.Element {
   // returning to Tine resumes editing exactly where you left off.
   let savedSel: { start: number; end: number } | null = null;
   const node = () => doc.byId[props.id];
+  const sheetInitialRaw = sheetCell ? node()?.raw ?? "" : null;
   // Page format drives in-block list markers (`-` is an org bullet, not md).
   const pageFmt = (): "md" | "org" => (pageByName(node().page)?.format === "org" ? "org" : "md");
 
@@ -864,7 +903,7 @@ export function Editor(props: { id: string }): JSX.Element {
   const isAnnot = () => isAnnotationBlock(node().raw);
   // Annotation blocks hide ALL properties (edit only the highlight text); every
   // other block hides just the built-in id::/collapsed::. One fence-aware splitter.
-  const hideFn = () => (isAnnot() ? hideAll : isBuiltinHidden);
+  const hideFn = () => (isAnnot() ? hideAll : sheetCell ? isSheetCellHidden : isBuiltinHidden);
   const editorValue = createMemo(() => splitProps(node().raw, hideFn(), pageFmt()).visible);
   const editorHeadingLevel = createMemo(() => {
     const visible = editorValue();
@@ -1374,6 +1413,15 @@ export function Editor(props: { id: string }): JSX.Element {
         openPageProps(doc.byId[props.id].page, rect.left, rect.bottom + 4);
         return;
       }
+      case "sheet-grid":
+      case "sheet-table":
+      case "sheet-board": {
+        const view = item.action === "sheet-grid" ? "grid" : item.action === "sheet-table" ? "table" : "board";
+        replaceTrigger("");
+        closeAc();
+        applySheetViewSlashAction(props.id, view);
+        return;
+      }
       case "today":
         replaceTrigger(pageInsert(todayJournalName()));
         return;
@@ -1709,6 +1757,153 @@ export function Editor(props: { id: string }): JSX.Element {
     unregisterFocusedEditorBridge = undefined;
   };
   onCleanup(unregisterFocusedEditor);
+  let sheetCanceling = false;
+
+  const sheetFaceGridId = (id: string): string | null => {
+    if (blockIsGridView(id)) return id;
+    return (doc.byId[id]?.children ?? []).find((child) => blockIsGridView(child)) ?? null;
+  };
+  const sheetVisibleLength = (id: string): number =>
+    splitProps(doc.byId[id]?.raw ?? "", isSheetCellHidden).visible.length;
+  const deepestLastSheetOutline = (id: string): string => {
+    let cur = id;
+    for (;;) {
+      if (sheetFaceGridId(cur)) return cur;
+      const children = doc.byId[cur]?.children ?? [];
+      if (!children.length) return cur;
+      cur = children[children.length - 1];
+    }
+  };
+  const nextSheetOutline = (id: string, hostId: string): string | null => {
+    if (!sheetFaceGridId(id)) {
+      const firstChild = doc.byId[id]?.children[0];
+      if (firstChild) return firstChild;
+    }
+    let cur = id;
+    while (cur !== hostId) {
+      const parent = doc.byId[cur]?.parent ?? null;
+      if (!parent) return null;
+      const siblings = doc.byId[parent]?.children ?? [];
+      const idx = siblings.indexOf(cur);
+      if (idx >= 0 && idx + 1 < siblings.length) return siblings[idx + 1];
+      cur = parent;
+    }
+    return null;
+  };
+  const prevSheetOutline = (id: string, hostId: string): string | "host" | null => {
+    const parent = doc.byId[id]?.parent ?? null;
+    if (!parent) return null;
+    const siblings = doc.byId[parent]?.children ?? [];
+    const idx = siblings.indexOf(id);
+    if (idx > 0) return deepestLastSheetOutline(siblings[idx - 1]);
+    if (parent === hostId) return "host";
+    return parent;
+  };
+
+  const handleSheetCellKey = (e: KeyboardEvent, start: number, end: number, raw: string): boolean => {
+    if (!sheetCell) return false;
+    const plain = !e.ctrlKey && !e.metaKey && !e.altKey;
+    const commitAndSelect = () => {
+      commit(raw);
+      selectCellAfterEdit(sheetCell);
+    };
+    const commitAndMove = (dir: "up" | "down" | "left" | "right" | "tab-forward" | "tab-back") => {
+      commit(raw);
+      moveCellAfterEdit(sheetCell, dir);
+    };
+    const commitAndStartSheetEdit = (id: string, offset: number) => {
+      startEditing(id, offset, cellOwner(sheetCell));
+    };
+    const commitAndAscend = () => {
+      commit(raw);
+      const hostId = cellBlockId(sheetCell);
+      if (hostId && props.id !== hostId) {
+        const prev = prevSheetOutline(props.id, hostId);
+        if (prev === "host") commitAndStartSheetEdit(hostId, sheetVisibleLength(hostId));
+        else if (prev) commitAndStartSheetEdit(prev, sheetVisibleLength(prev));
+        else moveCellAfterEdit(sheetCell, "up");
+        return;
+      }
+      moveCellAfterEdit(sheetCell, "up");
+    };
+    const commitAndDescend = () => {
+      const nestedGridId = sheetFaceGridId(props.id);
+      commit(raw);
+      if (nestedGridId) selectTopRowSeamAfterEdit(nestedGridId);
+      else {
+        const hostId = cellBlockId(sheetCell);
+        const next = hostId
+          ? props.id === hostId
+            ? doc.byId[hostId]?.children[0] ?? null
+            : nextSheetOutline(props.id, hostId)
+          : null;
+        if (next) commitAndStartSheetEdit(next, 0);
+        else moveCellAfterEdit(sheetCell, "down");
+      }
+    };
+    const commitAndAppendChild = () => {
+      commit(raw);
+      const hostId = cellBlockId(sheetCell) ?? props.id;
+      const childId = appendSheetCellChild(hostId);
+      if (childId) commitAndStartSheetEdit(childId, 0);
+    };
+
+    if (!e.ctrlKey && !e.metaKey && e.altKey && e.key === "Enter") {
+      e.preventDefault();
+      commitAndAppendChild();
+      return true;
+    }
+    if (plain && e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      commitAndSelect();
+      return true;
+    }
+    if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key === "Tab" || e.code === "Tab")) {
+      e.preventDefault();
+      commitAndMove(e.shiftKey ? "tab-back" : "tab-forward");
+      return true;
+    }
+    if (plain && e.key === "Escape") {
+      e.preventDefault();
+      sheetCanceling = true;
+      if (sheetInitialRaw !== null && node().raw !== sheetInitialRaw) {
+        setRaw(props.id, sheetInitialRaw, { timetracking: false });
+      }
+      selectCellAfterEdit(sheetCell);
+      return true;
+    }
+    if (plain && e.key === "Backspace" && start === 0 && end === 0) {
+      e.preventDefault();
+      return true;
+    }
+    if (plain && !e.shiftKey && start === end && e.key === "ArrowLeft" && start === 0) {
+      e.preventDefault();
+      commitAndMove("left");
+      return true;
+    }
+    if (plain && !e.shiftKey && start === end && e.key === "ArrowRight" && start === raw.length) {
+      e.preventDefault();
+      commitAndMove("right");
+      return true;
+    }
+    if (plain && !e.shiftKey && start === end && e.key === "ArrowUp") {
+      const before = raw.slice(0, start);
+      if (!before.includes("\n") && caretAtFirstRow(ref, start)) {
+        e.preventDefault();
+        commitAndAscend();
+        return true;
+      }
+    }
+    if (plain && !e.shiftKey && start === end && e.key === "ArrowDown") {
+      const after = raw.slice(start);
+      if (!after.includes("\n") && caretAtLastRow(ref, start)) {
+        e.preventDefault();
+        commitAndDescend();
+        return true;
+      }
+    }
+    return false;
+  };
 
   const onKeyDown = (e: KeyboardEvent) => {
     const start = ref.selectionStart;
@@ -1739,6 +1934,8 @@ export function Editor(props: { id: string }): JSX.Element {
         return;
       }
     }
+
+    if (handleSheetCellKey(e, start, end, raw)) return;
 
     // Auto-pair wrap on a SELECTION (OG parity, always-on — independent of the
     // opt-in empty-caret auto-pairing). Typing any of `SELECTION_WRAP` around
@@ -1800,6 +1997,10 @@ export function Editor(props: { id: string }): JSX.Element {
     // returns false to fall through — select-block does this off the block edge
     // so the textarea extends the selection by a wrapped line.
     const cmd = editorCommandFor(e);
+    if (sheetCell && cmd && SHEET_CELL_BLOCKED_EDITOR_COMMANDS.has(cmd)) {
+      e.preventDefault();
+      return;
+    }
     if (cmd && runEditorCmd[cmd]?.(e)) return;
 
     // Quick-capture window key handling (cap set only there). Runs AFTER the
@@ -1949,6 +2150,7 @@ export function Editor(props: { id: string }): JSX.Element {
 
   const onBlur = () => {
     unregisterFocusedEditor();
+    if (sheetCanceling) return;
     // A block-move reorder blurs us momentarily — stay in edit mode (the move
     // handler refocuses and restores the caret). Commit as-is, don't normalize.
     if (isBlockMoving()) {
@@ -2003,12 +2205,23 @@ export function Editor(props: { id: string }): JSX.Element {
   // for an image-only clipboard there is no text to paste.
   const onPaste = (e: ClipboardEvent) => {
     const text = e.clipboardData?.getData("text/plain") ?? "";
+    // A structural sheet copy (multiple grid cells) pasted into a block editor
+    // rebuilds an actual subgrid nested here, rather than dumping the flat TSV
+    // text (Martin's nit). Only fires when the clipboard is exactly our own
+    // sheet copy; anything else falls through to normal paste.
+    const sheetGridNode = structuralSheetPasteNode(text);
+    if (sheetGridNode) {
+      e.preventDefault();
+      commit(ref.value);
+      insertOutlineChildren(props.id, [sheetGridNode]);
+      return;
+    }
     // Multiline text pastes as a block outline (Logseq behavior).
     if (text.includes("\n")) {
       e.preventDefault();
       const start = ref.selectionStart;
       const end = ref.selectionEnd;
-      if (isCalc() || caretInFence(ref.value, start)) {
+      if (sheetCell || isCalc() || caretInFence(ref.value, start)) {
         const newRaw = ref.value.slice(0, start) + text + ref.value.slice(end);
         commit(newRaw);
         const pos = start + text.length;

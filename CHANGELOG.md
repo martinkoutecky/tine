@@ -8,6 +8,70 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Added
+
+- **Guide: a Formulas how-to page, and Sheets how-tos that teach the real
+  gestures.** The in-app Guide gains a from-zero **Features/Formulas** page — what a
+  formula column is, right-click a column → Add/Edit formula, the IF/THEN/ELSE and
+  value-picker faces, the `</> raw` toggle, and honest limits (single-level `if`,
+  nested arithmetic needs raw). The Sheets guide's "Create one yourself" sections now
+  teach `/Grid`, `/Table`, `/Board`, **Show children as →** conversion, edge-grow,
+  ghost Add-row/column buttons, and the board **Group by** picker instead of telling
+  you to hand-type `tine.header::` / `tine.fields::` (those move to "under the hood"
+  notes).
+
+- **Sheets: grids, databases, and boards over plain bullets.** Blocks can now
+  render as recursive grids, field tables, or boards with spreadsheet navigation,
+  typed `tine.fields::` schemas, editable task/property cells, tag boards with
+  write-back, aggregates, markdown pipe-table conversion, and CSV/TSV file-drop
+  import — all stored as ordinary Logseq markdown/org outlines plus `tine.*`
+  properties. Phase 7 adds typed `tine.formula.<name>::` computed columns and
+  formula group-by axes, `tine.filter::` table/board filters that fail open with a
+  visible chip, and a right-click formula/filter editor.
+
+- **Query builder: a way back from "advanced".** The visual query builder's
+  "⚙ advanced" switch to raw Datalog is no longer one-way — advanced query blocks
+  now show a **← Simple** control that returns to the visual builder. Within a
+  session it restores the exact pre-conversion query (including the sort/aggregate/
+  group-by clauses the Datalog form drops); for a query authored directly as raw
+  Datalog it reverse-parses the recognized clause set, disabling the toggle with an
+  explanation when the query can't be represented visually.
+
+- **Sheets: grids grow from their edges, and boards have a group-by picker.** A
+  grid is never a dead end — an empty grid shows a clickable placeholder cell
+  instead of inert "empty grid" text, and hovering a top-level grid reveals **+**
+  affordances on its right and bottom edges that add a column or row (one undo,
+  cursor lands in the new cell). Boards now expose their grouping: a **Group by**
+  dropdown above the columns and a matching **Group by →** submenu in the board
+  right-click menu let you regroup by State, Priority, Tags, or any field —
+  previously the axis was fixed to `state` at creation and only changeable by
+  hand-editing `tine.group-by::`.
+
+- **Sheets: paste nests or splats depending on mode.** Pasting a copied grid
+  region while cells are **selected** now **splats** it into the surrounding grid
+  (anchored at the selection's top-left, growing/padding/overwriting the footprint
+  in one undo, with a toast to undo if it replaced non-empty cells) instead of
+  burying it as a nested grid. Pasting while **editing** a cell still **nests** the
+  copy as a subgrid at the caret. This fixes the accidental double-nested grid and
+  needs no modifier — the paste mode is the signal (ADR 0037).
+
+- **In-app Guide.** Help → Guide and the *Open Guide* command now open bundled,
+  read-only how-to pages for Sheets, quick capture, PDF annotation, tips, and the
+  feature showcase. Guide pages live only in memory under `Tine-guide/` until you
+  explicitly use **Copy the guide into your graph**, which creates the complete
+  editable `tine-guide/...` namespace, rewrites inter-guide links to the copied
+  pages, includes referenced guide assets, and skips existing copied pages without
+  overwriting user edits.
+
+- **Split view.** Panes now have their own tabs and history, TreeSheets-style
+  pane/seam keyboard navigation with type-at-a-seam-to-split, `Ctrl+click` opens
+  links in another pane, tabs can be dragged to another pane or seam, and the
+  layout persists across launches. Pane-select mode (Esc from block-select, or
+  the palette) shows a hint pill and tints its target; arrows step strictly
+  directionally across panes, seams, per-pane edge segments (split just that
+  pane) and whole-window edges (split everything); selecting a pane focuses it,
+  `Delete` closes it, and `Ctrl+K` opens a page right there.
+
 ### Changed
 
 - **App identifier is now `page.tine.app`** (was `dev.tine.app`). This lets Tine

@@ -170,6 +170,11 @@ async function doSave(name: string, force: boolean): Promise<boolean> {
   const token = graphToken;
   const dto = pageToDto(name);
   if (!dto) return false;
+  if (dto.guide) {
+    console.warn("Refusing to persist ephemeral bundled Guide page", name);
+    dirty.delete(name);
+    return true;
+  }
   dirty.delete(name);
   try {
     const rev = await backend().savePage(dto, baseRev.get(name) ?? null, force);

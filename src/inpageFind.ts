@@ -1,8 +1,9 @@
 import { batch, createRoot, createSignal } from "solid-js";
-import { doc, mainPages, setDoc } from "./store";
+import { doc, mainPages, pageByName, setDoc, type FeedPage } from "./store";
 import { renderedBlockText, type RenderedTextOptions } from "./render/renderedText";
 import { renderedBlocks } from "./lazyObserve";
 import type { Format } from "./types";
+import { focusedPaneId, layoutPaneIds, paneRouter } from "./panes";
 
 export interface InPageFindMatch {
   blockId: string;
@@ -33,12 +34,14 @@ const state = createRoot(() => {
   const [activeIndex, setActiveIndex] = createSignal(-1);
   const [focusRequest, setFocusRequest] = createSignal(0);
   const [preserveEditorBlur, setPreserveEditorBlur] = createSignal(false);
+  const [paneId, setPaneId] = createSignal<string | null>(null);
   return {
     open, setOpen,
     query, setQuery,
     activeIndex, setActiveIndex,
     focusRequest, setFocusRequest,
     preserveEditorBlur, setPreserveEditorBlur,
+    paneId, setPaneId,
   };
 });
 
@@ -50,6 +53,7 @@ export const inPageFindOpen = state.open;
 export const inPageFindQuery = state.query;
 export const inPageFindActiveIndex = state.activeIndex;
 export const inPageFindFocusRequest = state.focusRequest;
+export const inPageFindPaneId = state.paneId;
 
 export function inPageFindPreservesEditorBlur(): boolean {
   return state.preserveEditorBlur();
@@ -106,7 +110,7 @@ function currentMatchesFor(query: string): InPageFindMatch[] {
       walk(n.children, format);
     }
   };
-  for (const p of mainPages()) walk(p.roots, p.format);
+  for (const p of pagesForInPageFind()) walk(p.roots, p.format);
   return out;
 }
 
@@ -114,9 +118,31 @@ export function inPageFindMatches(): InPageFindMatch[] {
   return currentMatchesFor(state.query());
 }
 
+export function scopedInPageFindMatchesForQuery(query: string): InPageFindMatch[] {
+  return currentMatchesFor(query);
+}
+
+function notesPaneId(id: string | null): string {
+  const ids = layoutPaneIds();
+  return id && ids.includes(id) ? id : ids[0] ?? "main";
+}
+
+function currentFindPaneId(): string {
+  return notesPaneId(state.paneId() ?? focusedPaneId());
+}
+
+function pagesForInPageFind(): FeedPage[] {
+  const router = paneRouter(currentFindPaneId());
+  const r = router.route();
+  if (r.kind === "journals") return mainPages();
+  const page = pageByName(r.name);
+  return page ? [page] : [];
+}
+
 export function openInPageFind() {
   if (typeof document !== "undefined") restoreFocusEl = document.activeElement as HTMLElement | null;
   batch(() => {
+    state.setPaneId(notesPaneId(focusedPaneId()));
     state.setPreserveEditorBlur(true);
     state.setOpen(true);
     state.setFocusRequest((n) => n + 1);
@@ -131,6 +157,7 @@ export function closeInPageFind(opts: { restoreFocus?: boolean } = {}) {
   batch(() => {
     state.setOpen(false);
     state.setActiveIndex(-1);
+    state.setPaneId(null);
   });
   clearInPageFindHighlights();
   if (!restoreFocus) {
@@ -193,8 +220,13 @@ function blockSelector(id: string): string {
   return `.ls-block[data-block-id="${esc}"]`;
 }
 
-function blockElement(id: string): HTMLElement | null {
-  return document.querySelector(blockSelector(id)) as HTMLElement | null;
+function paneSelector(id: string): string {
+  const esc = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(id) : id.replace(/"/g, '\\"');
+  return `[data-pane-id="${esc}"]`;
+}
+
+export function inPageFindBlockElement(id: string, paneId = currentFindPaneId()): HTMLElement | null {
+  return (document.querySelector(paneSelector(paneId)) as HTMLElement | null)?.querySelector(blockSelector(id)) as HTMLElement | null;
 }
 
 export async function revealInPageFindMatch(match: InPageFindMatch): Promise<boolean> {
@@ -204,7 +236,7 @@ export async function revealInPageFindMatch(match: InPageFindMatch): Promise<boo
   expandAncestorsForFind(match.blockId);
   for (let i = 0; i < 20; i++) {
     await new Promise((r) => requestAnimationFrame(r));
-    const el = blockElement(match.blockId);
+    const el = inPageFindBlockElement(match.blockId);
     if (el) {
       el.scrollIntoView({ block: "center", behavior: "smooth" });
       return true;
@@ -327,7 +359,7 @@ export function refreshInPageFindHighlights() {
   const rangeCache = new Map<string, Range[]>();
   for (let i = 0; i < matches.length; i++) {
     const m = matches[i];
-    const block = blockElement(m.blockId);
+    const block = inPageFindBlockElement(m.blockId);
     const root = block?.querySelector(".block-content") as HTMLElement | null;
     if (!root) continue;
     let blockRanges = rangeCache.get(m.blockId);

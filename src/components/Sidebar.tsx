@@ -62,7 +62,7 @@ export function Sidebar(): JSX.Element {
           type="text"
           placeholder="Search"
           readonly
-          onClick={openSwitcher}
+          onClick={() => openSwitcher()}
         />
       </div>
 
@@ -166,7 +166,7 @@ export function Sidebar(): JSX.Element {
               )}
             </For>
             <Show when={allPages().length > ALL_PAGES_CAP}>
-              <div class="nav-page nav-page-more" onClick={openSwitcher}>
+              <div class="nav-page nav-page-more" onClick={() => openSwitcher()}>
                 +{allPages().length - ALL_PAGES_CAP} more — search to open…
               </div>
             </Show>

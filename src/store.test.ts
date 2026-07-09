@@ -2,7 +2,9 @@
 // the prior Qt attempt got wrong (caret lost on indent/split/merge). No DOM
 // needed; these are pure operations on the store.
 
-import { describe, it, expect, beforeEach, afterEach, vi, type MockInstance } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi, type MockInstance } from "vitest";
+import { initParser } from "./render/parse";
+import { clearSeededFacets } from "./render/facets";
 import {
   doc,
   resetStore,
@@ -38,17 +40,20 @@ import {
   pageByName,
   carryUnfinished,
   ensurePageLoaded,
+  loadGuidePages,
   exportNodesFor,
   prevVisible,
   nextVisible,
   orderedListMarker,
   blockProperty,
+  setBlockProperty,
+  setSchedule,
   pageToDto,
   blockSubtreeMarkdown,
   selectionMarkdown,
   toggleListItemAtIndex,
+  withUndoUnit,
   readSchedule,
-  setSchedule,
 } from "./store";
 import { editingId, startEditing, takeCaretFor } from "./editorController";
 import { exportOutline, DEFAULT_EXPORT_OPTIONS } from "./editor/exportText";
@@ -67,14 +72,19 @@ import {
 } from "./ui";
 import { journalTitle } from "./journal";
 import type { BlockDto, PageDto } from "./types";
+import { resetPaneLayoutToSingle } from "./panes";
 
 let counter = 0;
 function blk(raw: string, children: BlockDto[] = []): BlockDto {
   return { id: `t${counter++}`, raw, collapsed: false, children };
 }
-function load(blocks: BlockDto[]): PageDto {
-  const dto: PageDto = { name: "Test", kind: "page", title: "Test", pre_block: null, blocks };
+function load(blocks: BlockDto[], format?: "md" | "org"): PageDto {
+  const dto: PageDto = { name: "Test", kind: "page", title: "Test", pre_block: null, blocks, ...(format ? { format } : {}) };
   loadSingle(dto);
+  // Test DTOs carry no `properties`, so the DTO-seeded facet cache would hold
+  // empty facets and mask the derive-from-raw path (the real backend always
+  // ships properties). Clear seeds so facetsOf derives from raw here.
+  clearSeededFacets();
   return dto;
 }
 
@@ -86,9 +96,15 @@ function shape(ids: string[] = doc.pages[0].roots): any[] {
   });
 }
 
+beforeAll(() => initParser());
+
 beforeEach(() => {
   counter = 0;
   resetStore();
+  resetPaneLayoutToSingle({
+    tabs: [{ history: [{ kind: "journals" }], pos: 0, pinned: false }],
+    activeIndex: 0,
+  });
   setFavorites([]);
   setRecentPages([]);
   setCopyIncludeSubtree(false); // copy prefs default OFF; reset so tests don't leak
@@ -769,6 +785,28 @@ describe("merge (Backspace at 0)", () => {
   });
 });
 
+describe("working-set eviction", () => {
+  const page = (name: string): PageDto => ({
+    name,
+    kind: "page",
+    title: name,
+    pre_block: null,
+    blocks: [blk(`${name} body`)],
+  });
+
+  it("pins every pane's active page route", () => {
+    resetPaneLayoutToSingle({
+      tabs: [{ history: [{ kind: "page", name: "Pinned", pageKind: "page" }], pos: 0, pinned: false }],
+      activeIndex: 0,
+    });
+    ensurePageLoaded(page("Pinned"));
+
+    for (let i = 0; i < 90; i++) ensurePageLoaded(page(`Page ${i}`));
+
+    expect(pageByName("Pinned")).toBeTruthy();
+  });
+});
+
 describe("collapse / visible order", () => {
   it("collapsed blocks hide their children, and persist collapsed:: in raw", () => {
     const dto = load([blk("p", [blk("c1"), blk("c2")]), blk("q")]);
@@ -783,6 +821,32 @@ describe("collapse / visible order", () => {
     expect(doc.byId[p].raw).toContain("collapsed:: true");
     toggleCollapse(p);
     expect(doc.byId[p].raw).not.toContain("collapsed::");
+  });
+
+  it("treats grid blocks as opaque in visible order", () => {
+    const grid = blk("grid\ntine.view:: grid", [
+      blk("", [blk("r1c1"), blk("r1c2")]),
+      blk("", [blk("r2c1")]),
+    ]);
+    grid.properties = [["tine.view", "grid"]];
+    const plain = blk("plain", [blk("plain child")]);
+    const dto = load([grid, plain]);
+
+    expect(visibleOrder().map((id) => doc.byId[id].raw.split("\n")[0])).toEqual([
+      "grid",
+      "plain",
+      "plain child",
+    ]);
+
+    toggleCollapse(dto.blocks[0].id);
+    expect(visibleOrder().map((id) => doc.byId[id].raw.split("\n")[0])).toEqual([
+      "grid",
+      "plain",
+      "plain child",
+    ]);
+
+    toggleCollapse(dto.blocks[1].id);
+    expect(visibleOrder().map((id) => doc.byId[id].raw.split("\n")[0])).toEqual(["grid", "plain"]);
   });
 });
 
@@ -814,6 +878,57 @@ describe("undo / redo", () => {
     expect(shape()).toEqual([["first", [["second"]]]]);
     undo();
     expect(shape()).toEqual([["first"], ["second"]]);
+  });
+
+  it("withUndoUnit coalesces multiple raw edits into one undo step", () => {
+    const dto = load([blk("one"), blk("two")]);
+    const [a, b] = dto.blocks;
+
+    withUndoUnit("composite", ["Test"], () => {
+      setRaw(a.id, "ONE");
+      setRaw(b.id, "TWO");
+    });
+
+    expect(doc.byId[a.id].raw).toBe("ONE");
+    expect(doc.byId[b.id].raw).toBe("TWO");
+
+    undo();
+    expect(doc.byId[a.id].raw).toBe("one");
+    expect(doc.byId[b.id].raw).toBe("two");
+  });
+
+  it("withUndoUnit rolls back a throwing composite and leaves no undo entry", () => {
+    const dto = load([blk("one"), blk("two")]);
+    const [a, b] = dto.blocks;
+
+    expect(() =>
+      withUndoUnit("throwing", ["Test"], () => {
+        setRaw(a.id, "ONE");
+        setRaw(b.id, "TWO");
+        throw new Error("boom");
+      })
+    ).toThrow("boom");
+
+    expect(doc.byId[a.id].raw).toBe("one");
+    expect(doc.byId[b.id].raw).toBe("two");
+    undo();
+    expect(doc.byId[a.id].raw).toBe("one");
+    expect(doc.byId[b.id].raw).toBe("two");
+  });
+
+  it("withUndoUnit redo works after undo", () => {
+    const dto = load([blk("one"), blk("two")]);
+    const [a, b] = dto.blocks;
+
+    withUndoUnit("composite", ["Test"], () => {
+      setRaw(a.id, "ONE");
+      setRaw(b.id, "TWO");
+    });
+
+    undo();
+    redo();
+    expect(doc.byId[a.id].raw).toBe("ONE");
+    expect(doc.byId[b.id].raw).toBe("TWO");
   });
 });
 
@@ -981,6 +1096,26 @@ describe("save engine (persistence)", () => {
     expect(await flushPage("Test")).toBe(true); // retry succeeds
   });
 
+  it("no-ops guide-flagged pages at the persistence boundary", async () => {
+    load([blk("real page keeps doc.loaded true")]);
+    loadGuidePages([
+      {
+        name: "Tine-guide/Features/Sheets",
+        kind: "page",
+        title: "Features/Sheets",
+        pre_block: null,
+        blocks: [blk("guide block")],
+        read_only: true,
+        guide: true,
+      },
+    ]);
+    markDirty("Tine-guide/Features/Sheets");
+
+    expect(await flushPage("Tine-guide/Features/Sheets")).toBe(true);
+    expect(saveSpy).not.toHaveBeenCalled();
+    expect(isDirty("Tine-guide/Features/Sheets")).toBe(false);
+  });
+
   it("a tombstoned (deleted) page is never written", async () => {
     load([blk("x")]);
     markDirty("Test");
@@ -1120,6 +1255,99 @@ describe("toggleListItemAtIndex (positional checkbox toggle)", () => {
     load([b]);
     toggleListItemAtIndex(b.id, 0); // "Title" is not a checkbox line
     expect(doc.byId[b.id].raw).toBe("Title\n+ [ ] a");
+  });
+});
+
+describe("setBlockProperty placement & fence safety", () => {
+  it("inserts after the first line, before body text", () => {
+    const b = blk("Title\nbody line");
+    load([b]);
+    setBlockProperty(b.id, "tine.view", "grid");
+    expect(doc.byId[b.id].raw).toBe("Title\ntine.view:: grid\nbody line");
+  });
+
+  it("keeps planning lines before properties (OG order)", () => {
+    const b = blk("TODO task\nSCHEDULED: <2026-07-10 Fri>\nbody");
+    load([b]);
+    setBlockProperty(b.id, "effort", "2h");
+    expect(doc.byId[b.id].raw).toBe("TODO task\nSCHEDULED: <2026-07-10 Fri>\neffort:: 2h\nbody");
+  });
+
+  it("replaces an existing head property in place", () => {
+    const b = blk("Title\na:: 1\nb:: 2\nbody");
+    load([b]);
+    setBlockProperty(b.id, "a", "9");
+    expect(doc.byId[b.id].raw).toBe("Title\nb:: 2\na:: 9\nbody");
+  });
+
+  it("NEVER touches property-looking lines inside a code fence", () => {
+    const raw = "Title\n```\nfence:: not-a-prop\n```\ntail";
+    const b = blk(raw);
+    load([b]);
+    setBlockProperty(b.id, "x", "1");
+    expect(doc.byId[b.id].raw).toBe("Title\nx:: 1\n```\nfence:: not-a-prop\n```\ntail");
+    setBlockProperty(b.id, "fence", "rewrite");
+    // the fenced line is untouched; the new property lands in the head
+    expect(doc.byId[b.id].raw).toBe(
+      "Title\nx:: 1\nfence:: rewrite\n```\nfence:: not-a-prop\n```\ntail"
+    );
+  });
+
+  it("removes a legacy trailing property without disturbing the body", () => {
+    const b = blk("Title\nbody\nold:: legacy");
+    load([b]);
+    setBlockProperty(b.id, "old", "new");
+    expect(doc.byId[b.id].raw).toBe("Title\nold:: new\nbody");
+    setBlockProperty(b.id, "old", null);
+    expect(doc.byId[b.id].raw).toBe("Title\nbody");
+  });
+});
+
+describe("setBlockProperty org drawer (review fix)", () => {
+  it("creates a drawer at the canonical position on an org block", () => {
+    const b = blk("Title\nbody");
+    load([b], "org");
+    setBlockProperty(b.id, "tine.view", "grid");
+    expect(doc.byId[b.id].raw).toBe("Title\n:PROPERTIES:\n:tine.view: grid\n:END:\nbody");
+  });
+
+  it("updates in an existing drawer and keeps planning above it", () => {
+    const b = blk("TODO t\nSCHEDULED: <2026-07-10 Fri>\n:PROPERTIES:\n:tine.view: grid\n:END:\nbody");
+    load([b], "org");
+    setBlockProperty(b.id, "tine.view", "table");
+    expect(doc.byId[b.id].raw).toBe(
+      "TODO t\nSCHEDULED: <2026-07-10 Fri>\n:PROPERTIES:\n:tine.view: table\n:END:\nbody"
+    );
+  });
+
+  it("removing the last property removes the drawer", () => {
+    const b = blk("Title\n:PROPERTIES:\n:tine.view: grid\n:END:\nbody");
+    load([b], "org");
+    setBlockProperty(b.id, "tine.view", null);
+    expect(doc.byId[b.id].raw).toBe("Title\nbody");
+  });
+});
+
+describe("setSchedule fence safety (review fix)", () => {
+  it("never deletes a SCHEDULED lookalike inside a code fence", () => {
+    const raw = "Task\n```\nSCHEDULED: <2026-01-01 Thu>\n```\ntail";
+    const b = blk(raw);
+    load([b]);
+    setSchedule(b.id, "scheduled", { y: 2026, m: 6, d: 15 });
+    expect(doc.byId[b.id].raw).toBe(
+      "Task\nSCHEDULED: <2026-07-15 Wed>\n```\nSCHEDULED: <2026-01-01 Thu>\n```\ntail"
+    );
+    setSchedule(b.id, "scheduled", null);
+    expect(doc.byId[b.id].raw).toBe(raw);
+  });
+});
+
+describe("blockProperty via the one recognizer (review fix)", () => {
+  it("ignores property lookalikes inside code fences", () => {
+    const b = blk("Grid\ntine.view:: grid\n```\ntine.col-widths:: 0=120\n```");
+    load([b]);
+    expect(blockProperty(b.id, "tine.col-widths")).toBe(null);
+    expect(blockProperty(b.id, "tine.view")).toBe("grid");
   });
 });
 

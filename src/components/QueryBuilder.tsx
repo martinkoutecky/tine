@@ -13,6 +13,7 @@ import {
   parseQuery,
   toDsl,
   clauseToAdvanced,
+  stashSimpleForm,
   clauseLabel,
   addChild,
   removeAt,
@@ -353,6 +354,7 @@ export function QueryBuilder(props: {
             pushToast(`Can't auto-convert to Datalog: ${conv.unsupported.join(", ")} has no advanced equivalent — write the [:find …] form by hand`);
             return;
           }
+          if (props.blockId) stashSimpleForm(props.blockId, props.dsl());
           props.onChange(conv.dsl);
           pushToast(
             conv.dropped.length

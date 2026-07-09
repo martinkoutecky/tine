@@ -3,7 +3,7 @@
 // backend's shape so the UI behaves identically.
 
 import type { Backend, GpuEnv, DebugInfo } from "./backend";
-import type { BlockDto, GraphMeta, Highlight, PageDto, PageEntry, RefGroup } from "./types";
+import type { BlockDto, GraphMeta, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, RefGroup } from "./types";
 import { SAMPLE_PDF_B64 } from "./sample-pdf";
 import { hlsPageName } from "./pdf";
 import { MARKER_RE } from "./markers";
@@ -36,15 +36,53 @@ function leadingMarker(raw: string): string | null {
   const m = MARKER_RE.exec(raw);
   return m ? m[1] : null;
 }
+function priorityOf(raw: string): string | undefined {
+  const m = /(?:^|\s)\[#([ABC])\]/.exec(raw.split("\n", 1)[0] ?? "");
+  return m?.[1];
+}
+function planningOf(raw: string, tag: "SCHEDULED" | "DEADLINE"): string | undefined {
+  const m = new RegExp(`^${tag}:\\s*<([^>]+)>`, "m").exec(raw);
+  return m?.[1];
+}
+function tagsOf(raw: string): string[] {
+  const out: string[] = [];
+  // (?<!\[) keeps the [#A] priority token from leaking a fake #A tag.
+  const re = /#\[\[([^\]]+)\]\]|(?<!\[)#([\w/_.-]+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(raw))) {
+    const tag = (m[1] ?? m[2]).trim();
+    if (tag && !out.some((t) => t.toLowerCase() === tag.toLowerCase())) out.push(tag);
+  }
+  return out;
+}
+function propertyLines(raw: string): [string, string][] {
+  const out: [string, string][] = [];
+  for (const line of raw.split("\n")) {
+    const m = /^([A-Za-z0-9_./-]+):: ?(.*)$/.exec(line.trim());
+    if (m) out.push([m[1], m[2].trim()]);
+  }
+  return out;
+}
 
 let _id = 0;
 const nid = () => `mock-${_id++}`;
 
-function b(raw: string, children: BlockDto[] = [], collapsed = false): BlockDto {
+function b(raw: string, children: BlockDto[] = [], collapsed = false, properties?: [string, string][]): BlockDto {
   // Mirror the real backend: a block carrying an `id::` property uses that uuid as
   // its store id (so block refs resolve to it and the count badge keys correctly).
   const m = raw.match(/^\s*id::\s*(.+)$/m);
-  return { id: m ? m[1].trim() : nid(), raw, collapsed, children, marker: leadingMarker(raw) ?? undefined };
+  return {
+    id: m ? m[1].trim() : nid(),
+    raw,
+    collapsed,
+    children,
+    marker: leadingMarker(raw) ?? undefined,
+    priority: priorityOf(raw),
+    scheduled: planningOf(raw, "SCHEDULED"),
+    deadline: planningOf(raw, "DEADLINE"),
+    tags: tagsOf(raw),
+    properties: properties ?? propertyLines(raw),
+  };
 }
 
 function mockPagePath(p: PageDto): string {
@@ -202,6 +240,72 @@ const NAMED: PageDto[] = [
       b("Block-ref target: the **Related Work** section\nid:: 64b9c0e2-0000-0000-0000-000000000000"),
     ],
   },
+  {
+    name: "Sheets demo",
+    kind: "page",
+    title: "Sheets demo",
+    pre_block: null,
+    blocks: [
+      b(
+        "Readonly grid demo\ntine.view:: grid\ntine.header:: true\ntine.col-widths:: 0=140;1=180;2=220",
+        [
+          b("", [b("Project"), b("Status"), b("Notes")]),
+          b("", [
+            b("TODO Ship [[Tine]] sheet"),
+            b(
+              "Nested sub-grid\ntine.view:: grid",
+              [
+                b("", [b("Inner A"), b("Inner B")]),
+                b("", [b("Inner C")]),
+              ],
+              false,
+              [["tine.view", "grid"]]
+            ),
+            b("Uses tree geometry only"),
+          ]),
+          b("", [b("Ragged row"), b("missing note cell")]),
+          b("", [b("Done"), b("Read-only"), b("Phase 2 adds interaction")]),
+        ],
+        false,
+        [
+          ["tine.view", "grid"],
+          ["tine.header", "true"],
+          ["tine.col-widths", "0=140;1=180;2=220"],
+        ]
+      ),
+      b(
+        "Field table demo\ntine.view:: table\ntine.col-aggregates:: prop:estimate=sum\ntine.fields:: state=state;owner=text;topic=enum:infra,ui,docs;points=number;shipped=checkbox;due=date;estimate=text\ntine.formula.effort:: points * 2\ntine.formula.due-soon:: if(isEmpty(due), false, due < today() + \"14d\")\ntine.formula.broken:: points +",
+        [
+          b("TODO [#A] Draft spec #sheets\nSCHEDULED: <2026-07-08 Wed>\nowner:: Martin\nestimate:: 2h\ntopic:: docs\npoints:: 3\nshipped:: false\ndue:: 2026-07-09"),
+          b("DOING Build table renderer #sheets\nowner:: Codex\nestimate:: 5h\ntopic:: ui\npoints:: 8\nshipped:: false\nnote:: stray column"),
+          b("DONE Verify screenshots\nDEADLINE: <2026-07-10 Fri>\nowner:: Codex\ntopic:: infra\npoints:: 1\nshipped:: true\ndue:: 2026-07-07"),
+        ],
+        false,
+        [
+          ["tine.view", "table"],
+          ["tine.col-aggregates", "prop:estimate=sum"],
+          ["tine.fields", "state=state;owner=text;topic=enum:infra,ui,docs;points=number;shipped=checkbox;due=date;estimate=text"],
+          ["tine.formula.effort", "points * 2"],
+          ["tine.formula.due-soon", 'if(isEmpty(due), false, due < today() + "14d")'],
+          ["tine.formula.broken", "points +"],
+        ]
+      ),
+      b("{{query (todo TODO DOING DONE)}}\ntine.view:: board\ntine.group-by:: state"),
+      b(
+        "Reading list by topic\ntine.view:: board\ntine.group-by:: tags",
+        [
+          b("Aaronson survey #reading"),
+          b("n-fold draft #reading #writing"),
+          b("ChoCo rebuttal #writing"),
+        ],
+        false,
+        [
+          ["tine.view", "board"],
+          ["tine.group-by", "tags"],
+        ]
+      ),
+    ],
+  },
   // Namespace + page-icon demo: {{namespace}} renders the nested descendant tree,
   // each page showing its `icon::`.
   {
@@ -278,6 +382,7 @@ const mockHighlights: Record<string, { label: string; highlights: Highlight[] }>
 // In-memory UI session for the browser mock (no backend file).
 let mockSession: string | null = null;
 let mockLinkFirstMatch = false;
+let mockGuideAnnounced = false;
 const mockAssets: Record<string, Uint8Array> = {};
 const mockAppBools: Record<string, boolean> = {};
 const mockAppStrings: Record<string, string> = {};
@@ -317,6 +422,123 @@ function decodeB64(b64: string): Uint8Array {
   const arr = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
   return arr;
+}
+
+function cloneBlock(block: BlockDto): BlockDto {
+  return { ...block, children: block.children.map(cloneBlock) };
+}
+
+function clonePage(page: PageDto): PageDto {
+  return { ...page, blocks: page.blocks.map(cloneBlock) };
+}
+
+function mockGuidePage(title: string, blocks: BlockDto[]): GuidePage {
+  return {
+    title,
+    markdown: `- # ${title}\n`,
+    page: {
+      name: `Tine-guide/${title}`,
+      kind: "page",
+      title,
+      pre_block: null,
+      blocks,
+      format: "md",
+      read_only: true,
+      guide: true,
+    },
+  };
+}
+
+function mockGuidePages(): GuidePage[] {
+  return [
+    mockGuidePage("Tine Guide", [
+      b("# Tine Guide", [
+        b("[[Features/Sheets]] - create grids, tables, boards, queries, and formulas"),
+        b("[[Features/Formulas]] - build read-only computed columns with the visual editor"),
+        b("[[Features/Quick capture]] - capture into your graph from anywhere"),
+        b("[[Features/PDF annotation]] - highlight PDFs beside your notes"),
+        b("[[Features/Tips & shortcuts]] - learn the daily commands"),
+      ]),
+    ]),
+    mockGuidePage("Features/Sheets", [
+      b("# Sheets"),
+      b(
+        "## Positional grid\ntine.view:: grid\ntine.header:: true",
+        [
+          b("", [b("Area"), b("Owner"), b("Notes")]),
+          b("", [b("Spec"), b("Martin"), b("Keep v1 narrow")]),
+          b("", [b("Build"), b("Codex"), b("Live grid in the Guide")]),
+        ],
+        false,
+        [["tine.view", "grid"], ["tine.header", "true"]]
+      ),
+      b(
+        "## Formula table\ntine.view:: table\ntine.fields:: status=enum:todo,reading,done;rating=number;done=checkbox\ntine.formula.effort:: rating * 2",
+        [
+          b("Bases study\nstatus:: reading\nrating:: 5\ndone:: false"),
+          b("CSV import notes\nstatus:: todo\nrating:: 3\ndone:: false"),
+        ],
+        false,
+        [
+          ["tine.view", "table"],
+          ["tine.fields", "status=enum:todo,reading,done;rating=number;done=checkbox"],
+          ["tine.formula.effort", "rating * 2"],
+        ]
+      ),
+      b("## Create one yourself", [
+        b("1. Type a heading block and add `tine.view:: grid` under it."),
+        b("2. Add child rows, one bullet per row and one child bullet per cell."),
+        b("3. What you should see: the outline renders as a live grid."),
+      ]),
+    ]),
+    mockGuidePage("Features/Formulas", [
+      b("# Formulas"),
+      b(
+        "## A formula in action\ntine.view:: table\ntine.fields:: task=text;hours=number;done=checkbox\ntine.formula.plan:: if(hours > 3, \"focus block\", \"quick task\")",
+        [
+          b("Sketch the outline\nhours:: 2\ndone:: true"),
+          b("Write the first draft\nhours:: 5\ndone:: false"),
+        ],
+        false,
+        [
+          ["tine.view", "table"],
+          ["tine.fields", "task=text;hours=number;done=checkbox"],
+          ["tine.formula.plan", 'if(hours > 3, "focus block", "quick task")'],
+        ]
+      ),
+      b("## Create one yourself", [
+        b("1. Make a table with a numeric field, then right-click a column header and choose Add formula."),
+        b("2. Build the value from the visual faces, or use the `</> raw` box to type it."),
+        b("3. What you should see: a read-only computed column that evaluates live."),
+      ]),
+    ]),
+    mockGuidePage("Features/Quick capture", [b("# Global quick-capture"), b("## Create one yourself", [b("1. Bind `tine --capture` to a desktop shortcut."), b("2. What you should see: a capture box opens over any app.")])]),
+    mockGuidePage("Features/PDF annotation", [b("# PDF annotation"), b("## Create one yourself", [b("1. Drop a PDF into the graph and open it."), b("2. What you should see: highlights become linked note blocks.")])]),
+    mockGuidePage("Features/Tips & shortcuts", [b("# Tips & shortcuts"), b("## Create one yourself", [b("1. Press Ctrl+K and run a command."), b("2. What you should see: the command runs without leaving the page.")])]),
+    mockGuidePage("Feature showcase", [b("# Feature showcase"), b("## Create one yourself", [b("1. Create one block per construct you want to inspect."), b("2. What you should see: each construct renders live.")])]),
+  ];
+}
+
+function mockGuideCopyName(title: string): string {
+  return `tine-guide/${title}`;
+}
+
+function rewriteMockGuideRefs(raw: string, copied: Map<string, string>): string {
+  return raw.replace(/\[\[([^\]]+)\]\]/g, (match, target: string) => {
+    const to = copied.get(target.trim().toLowerCase());
+    return to ? `[[${to}]]` : match;
+  });
+}
+
+function cloneGuideBlockForCopy(block: BlockDto, copied: Map<string, string>): BlockDto {
+  const raw = rewriteMockGuideRefs(block.raw, copied);
+  return {
+    ...block,
+    id: nid(),
+    raw,
+    children: block.children.map((child) => cloneGuideBlockForCopy(child, copied)),
+    properties: propertyLines(raw),
+  };
 }
 
 export function mockBackend(): Backend {
@@ -374,6 +596,7 @@ export function mockBackend(): Backend {
         logbook_with_second_support: true,
         logbook_enabled_in_timestamped_blocks: true,
         logbook_enabled_in_all_blocks: false,
+        guide_announced: mockGuideAnnounced,
         macros: {
           // Demo user macros so the kitchen-sink exercises inline and block expansions.
           poem: "Roses are $1, violets are $2.",
@@ -421,6 +644,38 @@ export function mockBackend(): Backend {
     },
     async savePage(_page: PageDto, _baseRev: string | null, _force?: boolean): Promise<string> {
       return "mock-rev"; // no-op in mock
+    },
+    async guidePages(): Promise<GuidePage[]> {
+      return mockGuidePages().map((g) => ({ ...g, page: clonePage(g.page) }));
+    },
+    async copyGuideIntoGraph(title: string): Promise<GuideCopyResult> {
+      const guides = mockGuidePages();
+      const viewed = guides.find((g) => g.title.toLowerCase() === title.trim().toLowerCase());
+      if (!viewed) throw new Error("unknown bundled guide page");
+      const copied = new Map(guides.map((g) => [g.title.toLowerCase(), mockGuideCopyName(g.title)]));
+      const createdPages: string[] = [];
+      const skippedPages: string[] = [];
+      for (const guide of guides) {
+        const name = mockGuideCopyName(guide.title);
+        if (find(name)) {
+          skippedPages.push(name);
+          continue;
+        }
+        const blocks = guide.page.blocks.map((block) => cloneGuideBlockForCopy(block, copied));
+        all.push({ name, kind: "page", title: name, pre_block: null, blocks, format: "md", read_only: false, guide: false });
+        createdPages.push(name);
+      }
+      if (!mockAssets["quick-capture.png"]) mockAssets["quick-capture.png"] = new Uint8Array([0]);
+      return {
+        name: mockGuideCopyName(viewed.title),
+        created: createdPages.length > 0,
+        created_pages: createdPages,
+        skipped_pages: skippedPages,
+        copied_assets: ["quick-capture.png"],
+      };
+    },
+    async setGuideAnnounced(announced: boolean): Promise<void> {
+      mockGuideAnnounced = announced;
     },
     async createGraph(_dir: string): Promise<string> {
       return "/mock/new-graph"; // no real scaffolding in the browser mock
@@ -502,6 +757,11 @@ export function mockBackend(): Backend {
           const m = leadingMarker(b.raw);
           return !!m && set.includes(m);
         });
+      }
+      const tag = /\(\s*tag\s+(?:"((?:[^"\\]|\\.)*)"|([^) \t\r\n]+))\s*\)/i.exec(query);
+      if (tag) {
+        const n = (tag[1] ?? tag[2] ?? "").replace(/\\"/g, "\"").replace(/\\\\/g, "\\").toLowerCase();
+        return collect((b) => pageRefs(b.raw).some((r) => r.toLowerCase() === n));
       }
       const ref = pageRefs(query)[0];
       if (ref) {
@@ -640,6 +900,9 @@ export function mockBackend(): Backend {
     },
     async importAsset(path: string, name?: string): Promise<string> {
       return name ?? path.split("/").pop() ?? path;
+    },
+    async readTextFile(_path: string): Promise<string> {
+      throw new Error("local text files are unavailable in the browser mock");
     },
     async openAsset(): Promise<void> {
       // no OS opener in the browser mock

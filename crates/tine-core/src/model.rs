@@ -183,6 +183,8 @@ pub struct BlockDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deadline: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub properties: Vec<(String, String)>,
 }
 
@@ -298,6 +300,11 @@ pub struct PageDto {
     /// yet; then save resolves the path by name, exactly as before.
     #[serde(default)]
     pub path: String,
+    /// True for bundled in-app Guide pages. Guide pages are ephemeral/read-only
+    /// virtual pages and must never be persisted into the user's graph by the
+    /// normal save/writeback path.
+    #[serde(default)]
+    pub guide: bool,
 }
 
 pub struct Graph {
@@ -452,6 +459,9 @@ pub struct GraphMeta {
     pub logbook_enabled_in_timestamped_blocks: bool,
     /// `:logbook/settings :enabled-in-all-blocks` effective value.
     pub logbook_enabled_in_all_blocks: bool,
+    /// Tine-owned graph-local flag: whether this graph has already seen the
+    /// one-time in-app Guide announcement.
+    pub guide_announced: bool,
 }
 
 impl Graph {
@@ -525,6 +535,7 @@ impl Graph {
                 .logbook
                 .enabled_in_timestamped_blocks,
             logbook_enabled_in_all_blocks: self.config.logbook.enabled_in_all_blocks,
+            guide_announced: self.config.guide_announced,
         }
     }
 
@@ -1340,6 +1351,34 @@ impl Graph {
                 primary
             }
         }
+    }
+
+    /// Create a Markdown page file with `content` if that logical page does not
+    /// already exist. Used by the explicit guide-copy action:
+    /// it is intentionally raw Markdown, not a serialized DTO, so copied guide
+    /// pages stay ordinary Logseq template pages byte-for-byte.
+    ///
+    /// Returns `true` when a file was created and `false` when an existing page
+    /// won. Existing content is never overwritten.
+    pub fn create_markdown_page_if_absent(&self, name: &str, content: &str) -> io::Result<bool> {
+        if self.find_entry(name, PageKind::Page).is_some() {
+            return Ok(false);
+        }
+        let path = self.pages_path().join(format!(
+            "{}.md",
+            encode_page_name(name, self.config.file_name_format)
+        ));
+        let lock = self.page_lock(&path);
+        let _guard = lock.lock().unwrap();
+        if self.find_entry(name, PageKind::Page).is_some() || path.exists() {
+            return Ok(false);
+        }
+        fs::create_dir_all(self.pages_path())?;
+        atomic_write(&path, content.as_bytes())?;
+        *self.page_list_cache.write().unwrap() = None;
+        self.cache_gen
+            .fetch_add(1, std::sync::atomic::Ordering::Release);
+        Ok(true)
     }
 
     /// Whether BOTH a `.md` and a `.org` file exist for the same logical page —
@@ -3086,6 +3125,11 @@ impl Graph {
     /// wrote it), returns an `AlreadyExists` "conflict" error WITHOUT writing,
     /// so the caller can surface it and keep the in-memory edits.
     pub fn save_page(&self, page: &PageDto, base_rev: Option<&str>) -> io::Result<String> {
+        if page.guide {
+            #[cfg(debug_assertions)]
+            eprintln!("attempted to persist an ephemeral bundled Guide page");
+            return Ok("guide-ephemeral".into());
+        }
         let (path, cache) = self.save_target(page)?;
         // Serialize against any other writer of THIS page (a PDF highlight write
         // of the same `hls__` page, or another save) for the whole
@@ -3129,6 +3173,11 @@ impl Graph {
 
     /// Save a page unconditionally (the user chose "keep mine" over a conflict).
     pub fn force_save_page(&self, page: &PageDto) -> io::Result<String> {
+        if page.guide {
+            #[cfg(debug_assertions)]
+            eprintln!("attempted to force-persist an ephemeral bundled Guide page");
+            return Ok("guide-ephemeral".into());
+        }
         let (path, cache) = self.save_target(page)?;
         let lock = self.page_lock(&path);
         let _guard = lock.lock().unwrap();
@@ -3582,6 +3631,7 @@ pub fn block_to_dto(b: &DocBlock) -> BlockDto {
         heading_level: b.heading_level(),
         scheduled: b.scheduled().map(str::to_string),
         deadline: b.deadline().map(str::to_string),
+        tags: b.tags(),
         properties: b.properties(),
     }
 }
@@ -3612,6 +3662,26 @@ fn page_dto(entry: &PageEntry, doc: &Document) -> PageDto {
         format: Format::from_path(&entry.path),
         read_only: false,
         path: String::new(),
+        guide: false,
+    }
+}
+
+/// Build a Markdown page DTO from raw Logseq Markdown without touching disk.
+/// Used by the bundled in-app Guide so it reuses the same document parser and
+/// DTO projection as normal graph pages.
+pub fn markdown_page_dto(name: &str, title: &str, markdown: &str) -> PageDto {
+    let doc = doc::parse(markdown);
+    PageDto {
+        name: name.to_string(),
+        kind: PageKind::Page,
+        title: title.to_string(),
+        pre_block: doc.pre_block.clone(),
+        blocks: doc.roots.iter().map(block_to_dto).collect(),
+        rev: None,
+        format: Format::Md,
+        read_only: false,
+        path: String::new(),
+        guide: false,
     }
 }
 
@@ -4539,6 +4609,42 @@ mod tests {
     }
 
     #[test]
+    fn guide_flagged_pages_are_never_written_to_graph_files() {
+        let dir = scratch("guide-no-save");
+        let g = Graph::open(&dir);
+        let page = PageDto {
+            name: "Tine-guide/Features/Sheets".into(),
+            kind: PageKind::Page,
+            title: "Features/Sheets".into(),
+            pre_block: None,
+            blocks: vec![BlockDto {
+                id: "guide-block".into(),
+                raw: "This is an ephemeral guide block".into(),
+                collapsed: false,
+                ..Default::default()
+            }],
+            rev: None,
+            format: Format::Md,
+            read_only: true,
+            path: String::new(),
+            guide: true,
+        };
+
+        assert_eq!(g.save_page(&page, None).unwrap(), "guide-ephemeral");
+        assert_eq!(g.force_save_page(&page).unwrap(), "guide-ephemeral");
+        let files: Vec<_> = fs::read_dir(dir.join("pages"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        assert!(
+            files.is_empty(),
+            "guide save guard must be load-bearing; wrote files: {files:?}"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn org_journal_recognized_and_listed() {
         let dir = scratch("org-journal");
         fs::write(
@@ -4603,6 +4709,7 @@ mod tests {
             format: Format::Md,
             read_only: false,
             path: String::new(),
+            guide: false,
         };
         assert!(g.save_page(&page, None).is_err(), "save refused on twin");
         assert!(
@@ -4852,6 +4959,7 @@ mod tests {
             format: Format::Org,
             read_only: false,
             path: String::new(),
+            guide: false,
         };
         g.save_page(&page, None).unwrap();
         assert!(
@@ -5055,6 +5163,7 @@ mod tests {
             format: Format::Md,
             read_only: false,
             path: String::new(),
+            guide: false,
         }
     }
 

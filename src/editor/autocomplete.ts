@@ -2,6 +2,7 @@
 // trigger at the caret, and apply a chosen completion. No DOM — unit-testable.
 
 import { TEMPLATE_VARS } from "./templateVars";
+import { tagRef } from "../tags";
 
 export type TriggerKind = "page" | "tag" | "command" | "block";
 
@@ -129,7 +130,7 @@ export function withRefCompletionSpace(
 
 /** Build the inserted text for a tag (`#name` or `#[[multi word]]`). */
 export function tagInsert(name: string): string {
-  return /\s/.test(name) ? `#[[${name}]]` : `#${name}`;
+  return tagRef(name);
 }
 
 /** Order the `[[`/`#` completion list, deciding which item is the DEFAULT (first,
@@ -158,6 +159,9 @@ export type CommandAction =
   | "today"
   | "query-builder"
   | "page-props"
+  | "sheet-grid"
+  | "sheet-table"
+  | "sheet-board"
   | "priority-a"
   | "priority-b"
   | "priority-c";
@@ -192,6 +196,11 @@ export const COMMANDS: Command[] = [
   { label: "Priority C", action: "priority-c", key: "C" },
   { label: "Scheduled", action: "scheduled" },
   { label: "Deadline", action: "deadline" },
+  { label: "Grid", action: "sheet-grid" },
+  { label: "Table", action: "sheet-table" },
+  // "Kanban" alias: the fuzzy matcher scores label + key, so /kanban (and /kan)
+  // surfaces the Board command even though its display name stays "Board".
+  { label: "Board", action: "sheet-board", key: "Kanban" },
   { label: "Heading 1", insert: "# " },
   { label: "Heading 2", insert: "## " },
   { label: "Heading 3", insert: "### " },

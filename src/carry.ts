@@ -66,6 +66,7 @@ async function report(n: number, today: string, sources: string[]): Promise<void
     pushToast("Carry couldn't be saved — resolve the conflict; your moved tasks are kept in the editor.", "error");
     return;
   }
+  // TODO(S2): explicit pane handle for the journals feed pane.
   openJournals({ inPlace: true }); // a carry reloads the feed in place, not a new tab
   pushToast(n ? `Carried ${n} item${n === 1 ? "" : "s"} to today` : "No unfinished tasks to carry");
 }
