@@ -36,6 +36,7 @@ import { QueryMacro, EmbedMacro, VideoMacro, TweetMacro, YoutubeTimestamp, Cloze
 import { NamespaceMacro } from "../components/Namespace";
 import { guideTargetForLink, isGuidePageName } from "../guide";
 import { PeekPopup, PeekContext, capBlockTree } from "./PeekPopup";
+import { annotationInfoForBlock, pdfFileFromPreBlock } from "../editor/annotation";
 
 
 // ===========================================================================
@@ -1002,6 +1003,10 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
   const text = () => props.label ?? (grp() ? visibleBody(grp()!.blocks[0].raw)[0] : undefined);
   // Parse the referenced block's text with ITS page's format (org refs render org).
   const fmt = () => formatForPage(grp()?.page);
+  const annotation = () => {
+    const block = grp()?.blocks[0];
+    return block ? annotationInfoForBlock(block) : null;
+  };
   const capped = createMemo(() => capBlockTree(grp()?.blocks ?? [], PEEK_BLOCK_CAP));
   return (
     <>
@@ -1010,7 +1015,9 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
         class="block-ref"
         classList={{ "block-ref-missing": !grp() }}
         {...(props.spanAttrs ?? {})}
-        title="Click to go to the block; shift-click → sidebar; right-click for more"
+        title={annotation()
+          ? "Click to open the highlight in its PDF; shift-click → sidebar; right-click for more"
+          : "Click to go to the block; shift-click → sidebar; right-click for more"}
         // Suppress native shift-range-selection when shift+click opens the sidebar (GH #42).
         onMouseDown={(e) => { if (e.shiftKey) e.preventDefault(); }}
         onMouseEnter={peek.anchorEnter}
@@ -1026,6 +1033,20 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
           e.stopPropagation();
           const g = grp();
           if (!g) return;
+          const ann = annotation();
+          // OG opens a referenced PDF annotation at its source page. Modifier
+          // clicks retain Tine's existing pane/sidebar navigation semantics.
+          if (ann && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+            void backend()
+              .getPage(g.page, g.kind)
+              .then((page) => {
+                const file = pdfFileFromPreBlock(page?.pre_block);
+                if (file) openPdf(file, file, ann.hlPage);
+                else pushToast("Couldn't find the PDF for this highlight", "error");
+              })
+              .catch(() => pushToast("Couldn't open the PDF for this highlight", "error"));
+            return;
+          }
           // Shift-click opens the referenced block in the right sidebar. Plain click:
           // Tine scrolls + flashes the block in context (default); the OG behavior —
           // zoom into the block as its own page — is opt-in (Settings → ref-click-zoom).

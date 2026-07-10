@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { setDoc } from "../store";
-import { pdfFileForPage } from "./annotation";
+import { annotationInfoForBlock, pdfFileForPage, pdfFileFromPreBlock } from "./annotation";
 
 // pdfFileForPage reduces an hls__ page's `file-path::` to a basename. A graph
 // edited on Windows can carry backslash paths, so the split must handle BOTH
@@ -25,8 +25,33 @@ describe("pdfFileForPage", () => {
     expect(pdfFileForPage("hls__book")).toBe("book_123.pdf");
   });
 
+  it("keeps spaces while reading the complete file-path property", () => {
+    seed("file-path:: C:\\Users\\me\\graph\\assets\\A Book With Spaces.pdf");
+    expect(pdfFileForPage("hls__book")).toBe("A Book With Spaces.pdf");
+  });
+
   it("returns null when the page has no file-path", () => {
     seed("some:: other\n");
     expect(pdfFileForPage("hls__book")).toBeNull();
+  });
+});
+
+describe("annotation block metadata", () => {
+  it("uses parsed properties when present", () => {
+    expect(annotationInfoForBlock({
+      raw: "highlight",
+      properties: [["ls-type", "annotation"], ["hl-page", "42"], ["hl-color", "red"]],
+    })).toEqual({ color: "red", hlPage: 42 });
+  });
+
+  it("falls back to raw properties for older DTOs", () => {
+    expect(annotationInfoForBlock({
+      raw: "highlight\nhl-page:: 7\nhl-color:: blue\nls-type:: annotation",
+    })).toEqual({ color: "blue", hlPage: 7 });
+  });
+
+  it("rejects ordinary blocks and malformed empty file paths", () => {
+    expect(annotationInfoForBlock({ raw: "ordinary block" })).toBeNull();
+    expect(pdfFileFromPreBlock("file-path::   ")).toBeNull();
   });
 });
