@@ -313,6 +313,23 @@ pub struct PageDto {
     pub guide: bool,
 }
 
+/// What enabling managed sync would change in the plain-text projection.
+///
+/// The migration is deliberately inspectable before it writes: every block needs
+/// a durable Logseq-compatible id so a later edit made by OG Logseq or a plain
+/// editor can be reconciled against the CRDT without guessing its identity.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SyncIdentityPlan {
+    pub pages: usize,
+    pub blocks: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SyncIdentityMigration {
+    pub pages_changed: usize,
+    pub blocks_changed: usize,
+}
+
 pub struct Graph {
     pub root: PathBuf,
     pub config: Config,
@@ -3441,6 +3458,62 @@ impl Graph {
         was_cached.then_some(entry)
     }
 
+    /// Count blocks that still need a durable on-disk identity before managed
+    /// sync can be enabled. This is read-only and suitable for a confirmation UI.
+    pub fn sync_identity_plan(&self) -> io::Result<SyncIdentityPlan> {
+        let mut plan = SyncIdentityPlan { pages: 0, blocks: 0 };
+        for entry in self.list_pages() {
+            let page = self.load_page(&entry)?;
+            let missing = count_missing_sync_ids(&page.blocks, page.format);
+            if missing != 0 {
+                plan.pages += 1;
+                plan.blocks += missing;
+            }
+        }
+        Ok(plan)
+    }
+
+    /// Persist exact block identities through the ordinary guarded page-save
+    /// path. All pages are parsed and validated before the first write. A race
+    /// with an external writer can still stop the write phase part-way through;
+    /// that is safe and resumable because adding an id is semantically inert and
+    /// the next run skips every block already migrated.
+    pub fn migrate_sync_identities(&self) -> io::Result<SyncIdentityMigration> {
+        let mut prepared = Vec::new();
+        for entry in self.list_pages() {
+            let page = self.load_page(&entry)?;
+            let missing = count_missing_sync_ids(&page.blocks, page.format);
+            if missing == 0 {
+                continue;
+            }
+            if page.read_only {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!("{} is read-only and cannot receive sync identities", page.path),
+                ));
+            }
+            prepared.push((page_with_persisted_sync_ids(&page)?, missing));
+        }
+
+        let mut result = SyncIdentityMigration {
+            pages_changed: 0,
+            blocks_changed: 0,
+        };
+        for (page, missing) in prepared {
+            self.save_page(&page, page.rev.as_deref())?;
+            result.pages_changed += 1;
+            result.blocks_changed += missing;
+        }
+        Ok(result)
+    }
+
+    /// Return a save-ready clone whose every block id is represented in the
+    /// page's native Logseq syntax. Managed-sync saves use this for new blocks
+    /// created after the one-time graph migration.
+    pub fn page_with_sync_ids(&self, page: &PageDto) -> io::Result<PageDto> {
+        page_with_persisted_sync_ids(page)
+    }
+
     /// Resolve the file a save writes to, and whether it participates in the
     /// `(kind,name)` page cache. A page pinned to a specific file (`page.path` set
     /// — a duplicate-day stray, #21) writes to THAT exact file and stays OUT of the
@@ -4016,6 +4089,106 @@ fn dto_to_doc(b: &BlockDto, is_org: bool) -> DocBlock {
         is_org,
         proj: std::sync::OnceLock::new(),
     }
+}
+
+fn persisted_sync_id(raw: &str, format: Format) -> Option<String> {
+    let mut block = DocBlock::new(raw);
+    block.is_org = format == Format::Org;
+    block.property("id").filter(|id| !id.is_empty())
+}
+
+fn count_missing_sync_ids(blocks: &[BlockDto], format: Format) -> usize {
+    blocks
+        .iter()
+        .map(|block| {
+            usize::from(persisted_sync_id(&block.raw, format).is_none())
+                + count_missing_sync_ids(&block.children, format)
+        })
+        .sum()
+}
+
+fn org_raw_with_sync_id(raw: &str, id: &str) -> String {
+    let newline = if raw.contains("\r\n") { "\r\n" } else { "\n" };
+    let mut offset = 0usize;
+    let mut in_drawer = false;
+    for segment in raw.split_inclusive('\n') {
+        let line = segment.trim_end_matches(['\r', '\n']);
+        let trimmed = line.trim();
+        if trimmed.eq_ignore_ascii_case(":PROPERTIES:") {
+            in_drawer = true;
+        } else if in_drawer && trimmed.eq_ignore_ascii_case(":END:") {
+            let indent_len = line.len() - line.trim_start().len();
+            let indent = &line[..indent_len];
+            let mut out = String::with_capacity(raw.len() + id.len() + 7);
+            out.push_str(&raw[..offset]);
+            out.push_str(indent);
+            out.push_str(":ID: ");
+            out.push_str(id);
+            out.push_str(newline);
+            out.push_str(&raw[offset..]);
+            return out;
+        }
+        offset += segment.len();
+    }
+
+    let separator = if raw.is_empty() || raw.ends_with('\n') {
+        ""
+    } else {
+        newline
+    };
+    format!("{raw}{separator}:PROPERTIES:{newline}:ID: {id}{newline}:END:")
+}
+
+fn raw_with_sync_id(raw: &str, id: &str, format: Format) -> String {
+    if format == Format::Org {
+        return org_raw_with_sync_id(raw, id);
+    }
+    let separator = if raw.is_empty() || raw.ends_with('\n') {
+        ""
+    } else {
+        "\n"
+    };
+    format!("{raw}{separator}id:: {id}")
+}
+
+fn persist_block_sync_ids(
+    block: &mut BlockDto,
+    format: Format,
+    seen: &mut std::collections::HashSet<String>,
+) -> io::Result<()> {
+    let persisted = persisted_sync_id(&block.raw, format);
+    let id = match persisted {
+        Some(id) => id,
+        None => {
+            if block.id.is_empty() {
+                block.id = Uuid::new_v4().to_string();
+            }
+            block.raw = raw_with_sync_id(&block.raw, &block.id, format);
+            block.id.clone()
+        }
+    };
+    if !seen.insert(id.clone()) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("duplicate persisted block id {id}"),
+        ));
+    }
+    // The persisted id is the cross-device identity. Align an in-memory id that
+    // may have been freshly assigned by a cold/path load before seeding the CRDT.
+    block.id = id;
+    for child in &mut block.children {
+        persist_block_sync_ids(child, format, seen)?;
+    }
+    Ok(())
+}
+
+fn page_with_persisted_sync_ids(page: &PageDto) -> io::Result<PageDto> {
+    let mut page = page.clone();
+    let mut seen = std::collections::HashSet::new();
+    for block in &mut page.blocks {
+        persist_block_sync_ids(block, page.format, &mut seen)?;
+    }
+    Ok(page)
 }
 
 /// Build a page DTO from a cached document. `read_only` is left false here (the
@@ -4625,6 +4798,47 @@ mod tests {
         assign_doc_uuids(std::slice::from_mut(&mut parent));
         assert_eq!(parent.uuid, "x");
         assert_ne!(parent.children[0].uuid, "x");
+    }
+
+    #[test]
+    fn sync_identity_projection_persists_every_markdown_block() {
+        let page = markdown_page_dto("Sync", "Sync", "- parent\n\t- child\n");
+        let ids = [page.blocks[0].id.clone(), page.blocks[0].children[0].id.clone()];
+        let migrated = page_with_persisted_sync_ids(&page).unwrap();
+        assert!(migrated.blocks[0].raw.ends_with(&format!("id:: {}", ids[0])));
+        assert!(migrated.blocks[0].children[0]
+            .raw
+            .ends_with(&format!("id:: {}", ids[1])));
+        assert_eq!(count_missing_sync_ids(&migrated.blocks, Format::Md), 0);
+        // Resuming the migration is byte-stable and does not add duplicate ids.
+        let resumed = page_with_persisted_sync_ids(&migrated).unwrap();
+        assert_eq!(resumed.blocks[0].raw, migrated.blocks[0].raw);
+        assert_eq!(
+            resumed.blocks[0].children[0].raw,
+            migrated.blocks[0].children[0].raw
+        );
+    }
+
+    #[test]
+    fn sync_identity_projection_extends_an_org_drawer() {
+        let mut page = markdown_page_dto("Org", "Org", "- placeholder\n");
+        page.format = Format::Org;
+        page.blocks[0].raw = "Task\n:PROPERTIES:\n:foo: bar\n:END:".into();
+        let id = page.blocks[0].id.clone();
+        let migrated = page_with_persisted_sync_ids(&page).unwrap();
+        assert_eq!(
+            migrated.blocks[0].raw,
+            format!("Task\n:PROPERTIES:\n:foo: bar\n:ID: {id}\n:END:")
+        );
+        assert_eq!(persisted_sync_id(&migrated.blocks[0].raw, Format::Org), Some(id));
+    }
+
+    #[test]
+    fn sync_identity_projection_rejects_duplicate_persisted_ids() {
+        let page = markdown_page_dto("Dup", "Dup", "- a\n  id:: same\n- b\n  id:: same\n");
+        let err = page_with_persisted_sync_ids(&page).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("duplicate persisted block id same"));
     }
 
     #[test]
