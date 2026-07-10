@@ -1,6 +1,7 @@
 use crate::settings::{settings_path, update_settings};
 use crate::state::{slot_for_context, GraphContext};
 use sha2::{Digest, Sha256};
+use std::io::Read;
 use std::path::PathBuf;
 use tauri::Manager;
 use tine_core::model::{atomic_copy, Graph};
@@ -68,13 +69,19 @@ impl BackupSource {
 const SNAPSHOT_SCHEMA: u32 = 2;
 const SNAPSHOT_MANIFEST: &str = "snapshot.json";
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct SnapshotFile {
+    path: String,
+    sha256: String,
+}
+
 #[derive(serde::Serialize, serde::Deserialize)]
 struct SnapshotManifest {
     schema: u32,
     root: String,
     journals_dir: String,
     pages_dir: String,
-    files: usize,
+    files: Vec<SnapshotFile>,
     complete: bool,
 }
 
@@ -115,6 +122,61 @@ fn read_manifest(dir: &std::path::Path) -> Option<SnapshotManifest> {
     let bytes = std::fs::read(dir.join(SNAPSHOT_MANIFEST)).ok()?;
     let manifest: SnapshotManifest = serde_json::from_slice(&bytes).ok()?;
     (manifest.schema == SNAPSHOT_SCHEMA && manifest.complete).then_some(manifest)
+}
+
+fn hash_snapshot_file(path: &std::path::Path) -> std::io::Result<String> {
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn snapshot_inventory(dir: &std::path::Path) -> std::io::Result<Vec<SnapshotFile>> {
+    let mut files = Vec::new();
+    let mut stack = vec![(dir.to_path_buf(), PathBuf::new())];
+    while let Some((current, rel)) = stack.pop() {
+        for entry in std::fs::read_dir(&current)? {
+            let entry = entry?;
+            let file_type = entry.file_type()?;
+            let rel_child = rel.join(entry.file_name());
+            if file_type.is_dir() {
+                stack.push((entry.path(), rel_child));
+            } else if file_type.is_file()
+                && rel_child != std::path::Path::new(SNAPSHOT_MANIFEST)
+                && rel_child != std::path::Path::new(".snapshot.json.tmp")
+            {
+                let path = rel_child
+                    .components()
+                    .map(|component| component.as_os_str().to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join("/");
+                files.push(SnapshotFile {
+                    path,
+                    sha256: hash_snapshot_file(&entry.path())?,
+                });
+            } else if !file_type.is_file() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "snapshot contains a non-regular entry",
+                ));
+            }
+        }
+    }
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(files)
+}
+
+fn verify_snapshot(dir: &std::path::Path, manifest: &SnapshotManifest) -> bool {
+    snapshot_inventory(dir)
+        .map(|files| files == manifest.files)
+        .unwrap_or(false)
 }
 
 fn do_backup_source(app: &tauri::AppHandle, source: BackupSource, suffix: &str) -> (usize, bool) {
@@ -172,6 +234,12 @@ fn do_backup_source(app: &tauri::AppHandle, source: BackupSource, suffix: &str) 
         return (0, complete);
     }
     if complete {
+        let Ok(files) = snapshot_inventory(&dest) else {
+            return (n, false);
+        };
+        if files.len() != n {
+            return (n, false);
+        }
         let manifest = SnapshotManifest {
             schema: SNAPSHOT_SCHEMA,
             root: std::fs::canonicalize(&source.root)
@@ -180,7 +248,7 @@ fn do_backup_source(app: &tauri::AppHandle, source: BackupSource, suffix: &str) 
                 .to_string(),
             journals_dir: source.journals_dir,
             pages_dir: source.pages_dir,
-            files: n,
+            files,
             complete: true,
         };
         if write_manifest(&dest, &manifest).is_err() || std::fs::rename(&dest, &final_dest).is_err()
@@ -260,14 +328,14 @@ pub(crate) fn list_backups(
                 .unwrap_or_else(|_| slot.graph.root.clone())
                 .display()
                 .to_string();
-            if manifest.root != current_root {
+            if manifest.root != current_root || !verify_snapshot(&p, &manifest) {
                 continue;
             }
             let stamp = match p.file_name().and_then(|s| s.to_str()) {
                 Some(s) => s.to_string(),
                 None => continue,
             };
-            let files = manifest.files;
+            let files = manifest.files.len();
             out.push(BackupInfo { stamp, files });
         }
     }
@@ -347,6 +415,9 @@ pub(crate) fn restore_backup(
         std::fs::canonicalize(&slot.graph.root).unwrap_or_else(|_| slot.graph.root.clone());
     if manifest.root != current_root.display().to_string() {
         return Err("backup belongs to a different graph".into());
+    }
+    if !verify_snapshot(&src, &manifest) {
+        return Err("backup contents do not match the verified manifest".into());
     }
     let safe_dir = |raw: &str| -> Result<PathBuf, String> {
         let rel = std::path::Path::new(raw);
@@ -743,15 +814,19 @@ mod tests {
             root: root.display().to_string(),
             journals_dir: "diary".into(),
             pages_dir: "archive/pages".into(),
-            files: 3,
+            files: Vec::new(),
             complete: true,
         };
         write_manifest(&root, &manifest).unwrap();
         let read = read_manifest(&root).unwrap();
         assert_eq!(read.pages_dir, "archive/pages");
+        assert!(verify_snapshot(&root, &read));
+        std::fs::write(root.join("journals.md"), "- changed\n").unwrap();
+        assert!(!verify_snapshot(&root, &read));
+        std::fs::remove_file(root.join("journals.md")).unwrap();
         std::fs::write(
             root.join(SNAPSHOT_MANIFEST),
-            r#"{"schema":2,"root":"x","journals_dir":"journals","pages_dir":"pages","files":1,"complete":false}"#,
+            r#"{"schema":2,"root":"x","journals_dir":"journals","pages_dir":"pages","files":[],"complete":false}"#,
         )
         .unwrap();
         assert!(read_manifest(&root).is_none());

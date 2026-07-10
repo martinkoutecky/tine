@@ -28,8 +28,9 @@ invariant's wording ("a safety snapshot you can restore") and its actual scope.
   ("notes, config, and PDF highlights — not media files") rather than implying
   whole-graph coverage.
 - A restorable snapshot is published only after every selected file was copied and
-  a versioned manifest binding it to the canonical graph root was fsynced. Partial
-  or legacy-unverified directories are not offered as normal restore points.
+  a versioned manifest binding it to the canonical graph root, with a SHA-256
+  inventory of every file, was fsynced. Partial, modified, or legacy-unverified
+  directories are not offered as normal restore points.
 - The manifest records the snapshot's configured page/journal directories; restore
   uses those recorded graph-relative paths and rebuilds the live `Graph` afterward.
 

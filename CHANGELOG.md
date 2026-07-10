@@ -30,9 +30,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   overlapping graph windows are refused, and every graph-scoped IPC is pinned to
   the window binding that issued it.
 - **Backups are root-bound and complete before they become restorable.** Snapshot
-  namespaces use a canonical-root digest, complete snapshots carry a v2 manifest,
-  partial/legacy-unverified directories are hidden from normal restore, and restore
-  rebuilds the live graph using the snapshot's recorded directories.
+  namespaces use a canonical-root digest, complete snapshots carry a hash-verified
+  v2 manifest, partial/legacy-unverified directories are hidden from normal restore,
+  and restore rebuilds the live graph using the snapshot's recorded directories.
 - **Exact duplicate-journal navigation cannot edit the canonical file by mistake.**
   Loading a path-pinned file replaces a same-name working-set slot and preserves
   that exact path through save and undo.
