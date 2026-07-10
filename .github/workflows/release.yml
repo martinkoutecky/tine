@@ -349,6 +349,20 @@ jobs:
             > src-tauri/gen/android/app/tauri.properties
           echo "Android version → $v (code $code)"
 
+      # The desktop/Flatpak identifier is page.tine.Tine (Flathub forbids IDs ending
+      # in .app), but Android deliberately keeps applicationId page.tine.app to protect
+      # the F-Droid listing + installed users. `tauri android build` derives the Java
+      # package path from tauri.conf.json's `identifier`, and the committed gen/android
+      # project is page.tine.app — so with the desktop id in place the build looks for
+      # java/page/tine/Tine and fails ("Project directory … does not exist"). Pin the
+      # identifier back to page.tine.app for the Android build only (ephemeral checkout;
+      # desktop jobs are unaffected). This is exactly how it built pre-rename (v0.5.0).
+      - name: Pin Android identifier to page.tine.app
+        if: steps.sign.outputs.enabled == 'true'
+        run: |
+          node -e "const f='./src-tauri/tauri.conf.json',c=require(f);c.identifier='page.tine.app';require('fs').writeFileSync(f,JSON.stringify(c,null,2)+'\n');"
+          echo "Android identifier → $(node -p "require('./src-tauri/tauri.conf.json').identifier")"
+
       - name: Build signed Android APK
         if: steps.sign.outputs.enabled == 'true'
         # Reproducible build (F-Droid #reproducible): canonicalize build-location paths
