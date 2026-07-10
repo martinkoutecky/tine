@@ -313,9 +313,20 @@ function blockLines(b: Block, o: RenderedTextOptions): string[] {
 
 const INLINE_FLOW = new Set(["paragraph", "heading", "bullet"]);
 
+let renderedBlockTextCallCount = 0;
+
+export function resetRenderedBlockTextCallCountForTests() {
+  renderedBlockTextCallCount = 0;
+}
+
+export function renderedBlockTextCallCountForTests(): number {
+  return renderedBlockTextCallCount;
+}
+
 /** The visible plain text of one block body (multi-line). Mirrors the renderer:
  *  consecutive inline-flow blocks are newline-joined; structural blocks stack. */
 export function renderedBlockText(raw: string, format: Format, o: RenderedTextOptions): string {
+  renderedBlockTextCallCount++;
   const blocks = parseBlock(raw, format === "org");
   const lines: string[] = [];
   for (const b of blocks) {

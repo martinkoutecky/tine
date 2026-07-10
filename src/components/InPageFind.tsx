@@ -1,4 +1,4 @@
-import { Show, createEffect, onCleanup, onMount, type JSX } from "solid-js";
+import { Show, createEffect, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import {
   closeInPageFind,
   inPageFindActiveIndex,
@@ -11,13 +11,34 @@ import {
   stepInPageFind,
 } from "../inpageFind";
 
+const FIND_QUERY_DEBOUNCE_MS = 110;
+
 export function InPageFind(): JSX.Element {
   let inputEl: HTMLInputElement | undefined;
+  let queryTimer: ReturnType<typeof setTimeout> | undefined;
+  const [draftQuery, setDraftQuery] = createSignal(inPageFindQuery());
   const matchCount = () => inPageFindMatches().length;
   const countText = () => {
     const count = matchCount();
     if (count) return `${inPageFindActiveIndex() + 1} / ${count}`;
-    return inPageFindQuery().trim() ? "No results" : "";
+    return draftQuery().trim() && draftQuery() === inPageFindQuery() ? "No results" : "";
+  };
+  const cancelScheduledQuery = () => {
+    clearTimeout(queryTimer);
+    queryTimer = undefined;
+  };
+  const commitQuery = (q = draftQuery()) => {
+    cancelScheduledQuery();
+    setInPageFindQuery(q);
+  };
+  const scheduleQuery = (q: string) => {
+    setDraftQuery(q);
+    cancelScheduledQuery();
+    queryTimer = setTimeout(() => commitQuery(q), FIND_QUERY_DEBOUNCE_MS);
+  };
+  const closeFind = () => {
+    cancelScheduledQuery();
+    closeInPageFind();
   };
 
   createEffect(() => {
@@ -30,10 +51,17 @@ export function InPageFind(): JSX.Element {
   createEffect(() => {
     inPageFindFocusRequest();
     if (!inPageFindOpen()) return;
+    setDraftQuery(inPageFindQuery());
     queueMicrotask(() => {
       inputEl?.focus();
       inputEl?.select();
     });
+  });
+
+  createEffect(() => {
+    if (inPageFindOpen()) return;
+    cancelScheduledQuery();
+    setDraftQuery(inPageFindQuery());
   });
 
   onMount(() => {
@@ -43,6 +71,7 @@ export function InPageFind(): JSX.Element {
     onCleanup(() => {
       window.removeEventListener("scroll", refresh, true);
       window.removeEventListener("resize", refresh);
+      cancelScheduledQuery();
     });
   });
 
@@ -53,15 +82,16 @@ export function InPageFind(): JSX.Element {
           ref={inputEl}
           class="inpage-find-input"
           placeholder="Find in page"
-          value={inPageFindQuery()}
-          onInput={(e) => setInPageFindQuery(e.currentTarget.value)}
+          value={draftQuery()}
+          onInput={(e) => scheduleQuery(e.currentTarget.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
               e.preventDefault();
+              if (queryTimer) commitQuery();
               stepInPageFind(e.shiftKey ? -1 : 1);
             } else if (e.key === "Escape") {
               e.preventDefault();
-              closeInPageFind();
+              closeFind();
             }
           }}
         />
@@ -86,7 +116,7 @@ export function InPageFind(): JSX.Element {
             <path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
         </button>
-        <button class="icon-btn" title="Close (Esc)" onClick={() => closeInPageFind()}>
+        <button class="icon-btn" title="Close (Esc)" onClick={closeFind}>
           <svg viewBox="0 0 24 24" class="nav-icon" aria-hidden="true">
             <path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
           </svg>
@@ -95,4 +125,3 @@ export function InPageFind(): JSX.Element {
     </Show>
   );
 }
-

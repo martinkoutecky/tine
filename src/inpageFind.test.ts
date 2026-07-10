@@ -1,6 +1,13 @@
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { initParser } from "./render/parse";
-import { collectInPageFindMatches, findTextOccurrences, scopedInPageFindMatchesForQuery, type InPageFindBlock } from "./inpageFind";
+import {
+  clearInPageFindRenderedTextCacheForTests,
+  collectInPageFindMatches,
+  findTextOccurrences,
+  scopedInPageFindMatchesForQuery,
+  type InPageFindBlock,
+} from "./inpageFind";
+import { renderedBlockTextCallCountForTests, resetRenderedBlockTextCallCountForTests } from "./render/renderedText";
 import { focusPane, resetPaneLayoutToSingle, restorePaneLayout } from "./panes";
 import { resetStore, setDoc } from "./store";
 import type { PaneSnapshot } from "./router";
@@ -20,6 +27,8 @@ const journalsSnapshot = (): PaneSnapshot => ({
 });
 
 afterEach(() => {
+  clearInPageFindRenderedTextCacheForTests();
+  resetRenderedBlockTextCallCountForTests();
   resetStore();
   resetPaneLayoutToSingle(journalsSnapshot());
 });
@@ -57,6 +66,62 @@ describe("in-page find model", () => {
       { start: 0, end: 2 },
       { start: 2, end: 4 },
     ]);
+  });
+
+  it("keeps the same occurrence order and count across a many-block fixture", () => {
+    const blocks: InPageFindBlock[] = Array.from({ length: 48 }, (_, i) => ({
+      id: `root-${i}`,
+      raw: i % 6 === 0 ? `needle root ${i} needle` : `plain root ${i}`,
+      children: [
+        {
+          id: `child-${i}`,
+          raw: i % 10 === 0 ? `child [[Needle Page ${i}]]` : `child ${i}`,
+          children: i % 15 === 0 ? [{ id: `grand-${i}`, raw: `grand needle ${i}`, children: [] }] : [],
+        },
+      ],
+    }));
+
+    const matches = collectInPageFindMatches(blocks, "needle", "md");
+
+    expect(matches.map((m) => `${m.blockId}:${m.ordinalInBlock}:${m.start}-${m.end}`)).toEqual([
+      "root-0:0:0-6",
+      "root-0:1:14-20",
+      "child-0:0:8-14",
+      "grand-0:0:6-12",
+      "root-6:0:0-6",
+      "root-6:1:14-20",
+      "child-10:0:8-14",
+      "root-12:0:0-6",
+      "root-12:1:15-21",
+      "grand-15:0:6-12",
+      "root-18:0:0-6",
+      "root-18:1:15-21",
+      "child-20:0:8-14",
+      "root-24:0:0-6",
+      "root-24:1:15-21",
+      "root-30:0:0-6",
+      "root-30:1:15-21",
+      "child-30:0:8-14",
+      "grand-30:0:6-12",
+      "root-36:0:0-6",
+      "root-36:1:15-21",
+      "child-40:0:8-14",
+      "root-42:0:0-6",
+      "root-42:1:15-21",
+      "grand-45:0:6-12",
+    ]);
+  });
+
+  it("reuses per-block rendered text across rapid query revisions", () => {
+    const blocks: InPageFindBlock[] = Array.from({ length: 80 }, (_, i) => ({
+      id: `block-${i}`,
+      raw: `needle target ${i} with [[Needle Page]]`,
+      children: [],
+    }));
+
+    for (const query of ["n", "ne", "nee", "need"]) collectInPageFindMatches(blocks, query, "md");
+
+    expect(renderedBlockTextCallCountForTests()).toBe(80);
   });
 
   it("searches the focused page pane instead of the journals feed", () => {

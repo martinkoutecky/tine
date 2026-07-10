@@ -1,4 +1,4 @@
-import { batch, createRoot, createSignal } from "solid-js";
+import { batch, createMemo, createRoot, createSignal } from "solid-js";
 import { doc, mainPages, pageByName, setDoc, type FeedPage } from "./store";
 import { renderedBlockText, type RenderedTextOptions } from "./render/renderedText";
 import { renderedBlocks } from "./lazyObserve";
@@ -20,6 +20,14 @@ export interface InPageFindBlock {
 
 const FIND_HIGHLIGHT = "tine-find";
 const FIND_ACTIVE_HIGHLIGHT = "tine-find-active";
+const RENDERED_TEXT_CACHE_LIMIT = 4096;
+const HIGHLIGHT_BLOCK_CHUNK_SIZE = 40;
+
+interface RenderedTextCacheEntry {
+  raw: string;
+  format: Format;
+  text: string;
+}
 
 const renderedTextOptions: RenderedTextOptions = {
   typographicGlyphs: false,
@@ -28,6 +36,29 @@ const renderedTextOptions: RenderedTextOptions = {
   removeProperties: false,
 };
 
+const renderedTextCache = new Map<string, RenderedTextCacheEntry>();
+
+function cachedRenderedBlockText(blockId: string, raw: string, format: Format): string {
+  const cached = renderedTextCache.get(blockId);
+  if (cached && cached.raw === raw && cached.format === format) {
+    renderedTextCache.delete(blockId);
+    renderedTextCache.set(blockId, cached);
+    return cached.text;
+  }
+  const text = renderedBlockText(raw, format, renderedTextOptions);
+  renderedTextCache.set(blockId, { raw, format, text });
+  while (renderedTextCache.size > RENDERED_TEXT_CACHE_LIMIT) {
+    const oldest = renderedTextCache.keys().next().value;
+    if (oldest === undefined) break;
+    renderedTextCache.delete(oldest);
+  }
+  return text;
+}
+
+export function clearInPageFindRenderedTextCacheForTests() {
+  renderedTextCache.clear();
+}
+
 const state = createRoot(() => {
   const [open, setOpen] = createSignal(false);
   const [query, setQuery] = createSignal("");
@@ -35,6 +66,7 @@ const state = createRoot(() => {
   const [focusRequest, setFocusRequest] = createSignal(0);
   const [preserveEditorBlur, setPreserveEditorBlur] = createSignal(false);
   const [paneId, setPaneId] = createSignal<string | null>(null);
+  const matches = createMemo(() => currentMatchesFor(query()));
   return {
     open, setOpen,
     query, setQuery,
@@ -42,11 +74,13 @@ const state = createRoot(() => {
     focusRequest, setFocusRequest,
     preserveEditorBlur, setPreserveEditorBlur,
     paneId, setPaneId,
+    matches,
   };
 });
 
 let restoreFocusEl: HTMLElement | null = null;
 let revealToken = 0;
+let highlightToken = 0;
 let overlayRoot: HTMLDivElement | null = null;
 
 export const inPageFindOpen = state.open;
@@ -84,7 +118,7 @@ export function collectInPageFindMatches(
   const out: InPageFindMatch[] = [];
   const walk = (bs: readonly InPageFindBlock[]) => {
     for (const b of bs) {
-      const text = renderedBlockText(b.raw, format, renderedTextOptions);
+      const text = cachedRenderedBlockText(b.id, b.raw, format);
       findTextOccurrences(text, q).forEach((m, ordinalInBlock) => {
         out.push({ blockId: b.id, ordinalInBlock, start: m.start, end: m.end });
       });
@@ -103,7 +137,7 @@ function currentMatchesFor(query: string): InPageFindMatch[] {
     for (const id of ids) {
       const n = doc.byId[id];
       if (!n) continue;
-      const text = renderedBlockText(n.raw, format, renderedTextOptions);
+      const text = cachedRenderedBlockText(id, n.raw, format);
       findTextOccurrences(text, q).forEach((m, ordinalInBlock) => {
         out.push({ blockId: id, ordinalInBlock, start: m.start, end: m.end });
       });
@@ -115,7 +149,7 @@ function currentMatchesFor(query: string): InPageFindMatch[] {
 }
 
 export function inPageFindMatches(): InPageFindMatch[] {
-  return currentMatchesFor(state.query());
+  return state.matches();
 }
 
 export function scopedInPageFindMatchesForQuery(query: string): InPageFindMatch[] {
@@ -174,7 +208,7 @@ export function closeInPageFind(opts: { restoreFocus?: boolean } = {}) {
 
 export function setInPageFindQuery(query: string) {
   state.setQuery(query);
-  const matches = currentMatchesFor(query);
+  const matches = inPageFindMatches();
   if (!matches.length) {
     state.setActiveIndex(-1);
     clearInPageFindHighlights();
@@ -229,13 +263,20 @@ export function inPageFindBlockElement(id: string, paneId = currentFindPaneId())
   return (document.querySelector(paneSelector(paneId)) as HTMLElement | null)?.querySelector(blockSelector(id)) as HTMLElement | null;
 }
 
+function animationFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof requestAnimationFrame !== "undefined") requestAnimationFrame(() => resolve());
+    else setTimeout(resolve, 0);
+  });
+}
+
 export async function revealInPageFindMatch(match: InPageFindMatch): Promise<boolean> {
   const node = doc.byId[match.blockId];
   if (!node) return false;
   renderedBlocks.add(match.blockId);
   expandAncestorsForFind(match.blockId);
   for (let i = 0; i < 20; i++) {
-    await new Promise((r) => requestAnimationFrame(r));
+    await animationFrame();
     const el = inPageFindBlockElement(match.blockId);
     if (el) {
       el.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -333,15 +374,52 @@ function applyCssHighlights(ranges: Range[], active: Range | null): boolean {
 }
 
 export function clearInPageFindHighlights() {
+  highlightToken++;
   if (typeof CSS !== "undefined") {
     ((CSS as unknown as { highlights?: Map<string, unknown> }).highlights as any)?.delete?.(FIND_HIGHLIGHT);
     ((CSS as unknown as { highlights?: Map<string, unknown> }).highlights as any)?.delete?.(FIND_ACTIVE_HIGHLIGHT);
   }
   clearOverlayHighlights();
+  if (typeof document === "undefined") return;
   document.querySelectorAll(".inpage-find-active-block").forEach((el) => el.classList.remove("inpage-find-active-block"));
 }
 
+function blockIdForElement(el: Element): string | null {
+  return el.getAttribute("data-block-id");
+}
+
+function currentFindPaneElement(): HTMLElement | null {
+  return document.querySelector(paneSelector(currentFindPaneId())) as HTMLElement | null;
+}
+
+function isViewportVisible(el: HTMLElement, clipRect?: DOMRect): boolean {
+  const rect = el.getBoundingClientRect();
+  const height = window.innerHeight || document.documentElement.clientHeight;
+  const width = window.innerWidth || document.documentElement.clientWidth;
+  if (rect.bottom < 0 || rect.right < 0 || rect.top > height || rect.left > width) return false;
+  if (!clipRect) return true;
+  return rect.bottom >= clipRect.top && rect.top <= clipRect.bottom && rect.right >= clipRect.left && rect.left <= clipRect.right;
+}
+
+function visibleFindBlockElements(): HTMLElement[] {
+  const pane = currentFindPaneElement();
+  if (!pane) return [];
+  const paneRect = pane.getBoundingClientRect();
+  return Array.from(pane.querySelectorAll(".ls-block[data-block-id]")).filter((el): el is HTMLElement => {
+    const htmlEl = el as HTMLElement;
+    const content = htmlEl.querySelector(".block-content") as HTMLElement | null;
+    return !!content && isViewportVisible(htmlEl, paneRect);
+  });
+}
+
+function resetCssHighlights() {
+  if (typeof CSS === "undefined") return;
+  ((CSS as unknown as { highlights?: Map<string, unknown> }).highlights as any)?.delete?.(FIND_HIGHLIGHT);
+  ((CSS as unknown as { highlights?: Map<string, unknown> }).highlights as any)?.delete?.(FIND_ACTIVE_HIGHLIGHT);
+}
+
 export function refreshInPageFindHighlights() {
+  const token = ++highlightToken;
   if (!state.open() || typeof document === "undefined") {
     clearInPageFindHighlights();
     return;
@@ -354,27 +432,60 @@ export function refreshInPageFindHighlights() {
   }
   const matches = inPageFindMatches();
   const activeIdx = state.activeIndex();
-  const ranges: Range[] = [];
-  let activeRange: Range | null = null;
-  const rangeCache = new Map<string, Range[]>();
+  const activeMatch = matches[activeIdx] ?? null;
+  const candidates = visibleFindBlockElements();
+  if (activeMatch) {
+    const activeBlock = inPageFindBlockElement(activeMatch.blockId);
+    if (activeBlock && !candidates.includes(activeBlock)) candidates.push(activeBlock);
+  }
+  const candidateIds = new Set(candidates.map(blockIdForElement).filter((id): id is string => !!id));
+  if (!candidateIds.size) {
+    resetCssHighlights();
+    clearOverlayHighlights();
+    return;
+  }
+  const matchesByBlock = new Map<string, { ordinalInBlock: number; matchIndex: number }[]>();
   for (let i = 0; i < matches.length; i++) {
     const m = matches[i];
-    const block = inPageFindBlockElement(m.blockId);
+    if (!candidateIds.has(m.blockId)) continue;
+    const bucket = matchesByBlock.get(m.blockId);
+    if (bucket) bucket.push({ ordinalInBlock: m.ordinalInBlock, matchIndex: i });
+    else matchesByBlock.set(m.blockId, [{ ordinalInBlock: m.ordinalInBlock, matchIndex: i }]);
+  }
+  void refreshInPageFindHighlightsChunked(token, candidates, matchesByBlock, query, activeIdx);
+}
+
+async function refreshInPageFindHighlightsChunked(
+  token: number,
+  candidates: HTMLElement[],
+  matchesByBlock: Map<string, { ordinalInBlock: number; matchIndex: number }[]>,
+  query: string,
+  activeIdx: number,
+) {
+  const ranges: Range[] = [];
+  let activeRange: Range | null = null;
+  for (let i = 0; i < candidates.length; i++) {
+    if (i > 0 && i % HIGHLIGHT_BLOCK_CHUNK_SIZE === 0) await animationFrame();
+    if (token !== highlightToken) return;
+    const block = candidates[i];
+    const blockId = blockIdForElement(block);
+    if (!blockId) continue;
+    const blockMatches = matchesByBlock.get(blockId);
+    if (!blockMatches?.length) continue;
     const root = block?.querySelector(".block-content") as HTMLElement | null;
     if (!root) continue;
-    let blockRanges = rangeCache.get(m.blockId);
-    if (!blockRanges) {
-      blockRanges = textRanges(root, query);
-      rangeCache.set(m.blockId, blockRanges);
-    }
-    const range = blockRanges[m.ordinalInBlock];
-    if (!range) continue;
-    if (i === activeIdx) {
-      activeRange = range;
-      block?.classList.add("inpage-find-active-block");
-    } else {
-      ranges.push(range);
+    const blockRanges = textRanges(root, query);
+    for (const m of blockMatches) {
+      const range = blockRanges[m.ordinalInBlock];
+      if (!range) continue;
+      if (m.matchIndex === activeIdx) {
+        activeRange = range;
+        block.classList.add("inpage-find-active-block");
+      } else {
+        ranges.push(range);
+      }
     }
   }
+  if (token !== highlightToken) return;
   if (!applyCssHighlights(ranges, activeRange)) applyOverlayHighlights(ranges, activeRange);
 }
