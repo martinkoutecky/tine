@@ -18,6 +18,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Android release builds use the stable `page.tine.app` application ID.** The
+  desktop-only app-ID rename no longer makes Tauri search for a nonexistent Java
+  package, which had prevented the signed APK from being produced for v0.5.1 and
+  v0.5.2.
+- **Flatpak's offline dependency bundle is current and checked before releases.**
+  Dependency-lock changes now trigger the Flatpak build-test on `master`, while
+  release tags no longer start that separate non-release workflow.
 - **PDF highlight block references now open the source PDF at the highlighted
   page.** Plain-clicking an annotation `((block-ref))` follows OG Logseq behavior,
   including PDF filenames containing spaces; modifier-click navigation remains
