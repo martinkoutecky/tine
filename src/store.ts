@@ -23,6 +23,7 @@ import {
   timetrackingEnabled,
   logbookWithSecondSupport,
   removeDeletedPageFromNavigation,
+  bumpDataRev,
 } from "./ui";
 import { seedFacets, facetsFromDto, clearSeededFacets, facetsOf } from "./render/facets";
 import { journalTitle } from "./journal";
@@ -366,6 +367,12 @@ export async function deletePage(name: string, kind: PageKind): Promise<boolean>
   }
   forgetPage(name); // success — now drop it from the working set + feed
   removeDeletedPageFromNavigation(name, kind);
+  // A page delete changes every live query / backlink result (the backend already
+  // dropped its derived cache + bumped cache_gen in delete_page). Nudge dataRev so
+  // open {{query}} panels re-run and drop the deleted page's rows — otherwise they
+  // keep showing the stale cached result (only the block whose node was purged from
+  // byId visibly disappears, leaving the rest of the deleted page's rows behind).
+  bumpDataRev();
   return true;
 }
 

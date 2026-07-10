@@ -71,6 +71,7 @@ import {
   setFavorites,
   setRecentPages,
   seedFavorites,
+  dataRev,
 } from "./ui";
 import { journalTitle } from "./journal";
 import type { BlockDto, PageDto } from "./types";
@@ -1256,6 +1257,15 @@ describe("save engine (persistence)", () => {
     // the on-disk version still goes to .tine-trash (recoverable).
     expect(await deletePage("Test", "page")).toBe(true);
     expect(pageByName("Test")).toBeUndefined();
+  });
+
+  it("bumps dataRev on delete so live queries drop the deleted page's rows", async () => {
+    load([blk("x")]);
+    const before = dataRev();
+    // Necessity: without the bumpDataRev() in deletePage, open {{query}} panels keep
+    // their stale cached result and the deleted page's rows linger.
+    expect(await deletePage("Test", "page")).toBe(true);
+    expect(dataRev()).toBeGreaterThan(before);
   });
 });
 

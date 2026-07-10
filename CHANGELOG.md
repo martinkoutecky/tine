@@ -8,6 +8,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- **Deleting a page now refreshes live queries.** After deleting a page, open
+  `{{query}}` panels re-run immediately and drop the deleted page's rows, instead of
+  lingering with a stale result until the next edit.
+
 ## [0.5.2] - 2026-07-10
 
 In-app Guide link/reference fixes, context menus that stay on-screen, faster
