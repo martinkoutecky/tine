@@ -1,0 +1,5 @@
+Fixed default journal templates requiring a refresh, Linked References task/tag
+filters missing child-block data, imported collapsed headings losing their
+parent, and scheduled/deadline dates becoming plain text when followed by body
+content. Android and iOS now hide the desktop self-updater and direct users to
+their app distribution channel.

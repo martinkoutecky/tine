@@ -8,8 +8,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-07-10
+
+Focused bug-fix release for journal templates, linked-reference filters,
+imported collapsed headings, planning-date rendering, and mobile update UI.
+
 ### Fixed
 
+- **Default journal templates appear on the initial Journals view without a
+  manual refresh.** Template content is persisted before graph resources reload,
+  including when an empty journal file already exists. (GH #73)
+- **Linked References filters include task states, tags, and page references
+  from descendant blocks.** Facet counts and include/exclude filtering now match
+  each complete displayed backlink tree. (GH #59)
+- **Collapsed heading blocks produced by importers no longer lose their parent
+  heading.** A heading immediately before the first list is narrowly recovered
+  as the collapsed parent when it carries `collapsed:: true`; ordinary Markdown
+  introductions and page properties remain unchanged. (GH #67)
 - **Scheduled and deadline dates remain rendered as clickable date chips when
   body text follows the planning line.** The trailing body stays visible, while
   mid-text and code lookalikes remain ordinary content. (GH #75)
