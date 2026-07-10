@@ -3,7 +3,7 @@ import { render } from "solid-js/web";
 import { createSignal, type JSX } from "solid-js";
 import { Block } from "./Block";
 import { ContextMenu } from "./ContextMenu";
-import { SheetBoard } from "./SheetBoard";
+import { __sheetBoardTestHooks, SheetBoard } from "./SheetBoard";
 import { initParser } from "../render/parse";
 import { blockProperty, doc, hasSelection, resetStore, setDoc, undo, type FeedPage, type Node as StoreNode } from "../store";
 import { closeContextMenu, openSheetContextMenu, setToasts, setWorkflow, toasts } from "../ui";
@@ -17,6 +17,7 @@ beforeAll(async () => {
 });
 
 afterEach(() => {
+  __sheetBoardTestHooks.onGroupingRowWalk = undefined;
   vi.restoreAllMocks();
   closeContextMenu();
   resetCellSelectionForTests();
@@ -119,6 +120,11 @@ function queryGroups(ids: string[]): RefGroup[] {
       children: [],
     })),
   }];
+}
+
+function boardColumnBlockIds(root: ParentNode, col: number): string[] {
+  return [...root.querySelectorAll(`[data-board-col="${col}"] [data-block-id]`)]
+    .map((card) => (card as HTMLElement).dataset.blockId ?? "");
 }
 
 describe("SheetBoard", () => {
@@ -441,6 +447,37 @@ describe("SheetBoard", () => {
     expect(headers).toEqual(["alpha1", "beta2", "(none)1"]);
     expect(root.querySelectorAll('[data-block-id="multi"]')).toHaveLength(2);
     expect(root.querySelector('[data-board-col="2"] [data-block-id="empty"]')).not.toBeNull();
+
+    dispose();
+  });
+
+  it("groups tag boards in one row walk while preserving multi-tag membership and order", () => {
+    loadTagBoard({
+      alphaBeta: "Alpha beta #alpha #beta",
+      gamma: "Gamma #gamma",
+      none: "No tags",
+      betaDeltaAlpha: "Beta delta alpha #beta #delta #alpha",
+      delta: "Delta #delta",
+      gammaBeta: "Gamma beta #gamma #beta",
+    });
+    const walked: string[] = [];
+    __sheetBoardTestHooks.onGroupingRowWalk = (rowId) => walked.push(rowId);
+
+    const { root, dispose } = mount(() => <Block id="board" />);
+
+    expect([...root.querySelectorAll(".sheet-board-header")].map((h) => h.textContent?.trim())).toEqual([
+      "alpha2",
+      "beta3",
+      "gamma2",
+      "delta2",
+      "(none)1",
+    ]);
+    expect(boardColumnBlockIds(root, 0)).toEqual(["alphaBeta", "betaDeltaAlpha"]);
+    expect(boardColumnBlockIds(root, 1)).toEqual(["alphaBeta", "betaDeltaAlpha", "gammaBeta"]);
+    expect(boardColumnBlockIds(root, 2)).toEqual(["gamma", "gammaBeta"]);
+    expect(boardColumnBlockIds(root, 3)).toEqual(["betaDeltaAlpha", "delta"]);
+    expect(boardColumnBlockIds(root, 4)).toEqual(["none"]);
+    expect(walked).toEqual(["alphaBeta", "gamma", "none", "betaDeltaAlpha", "delta", "gammaBeta"]);
 
     dispose();
   });

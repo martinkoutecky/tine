@@ -57,6 +57,10 @@ interface BoardColumn {
 
 const NONE_LABEL = "(none)";
 
+export const __sheetBoardTestHooks: {
+  onGroupingRowWalk?: (rowId: string) => void;
+} = {};
+
 export function SheetBoard(props: {
   ownerId: string;
   rowSource: "children" | "query";
@@ -399,8 +403,31 @@ function buildColumns(
   schema: readonly FieldSpec[] = [],
   opts: { formulas?: ReadonlyMap<string, string>; now?: Date } = {}
 ): BoardColumn[] {
-  const keySets = rows.map((row) => groupKeysForBlock(row, groupBy, opts));
-  const keys = keySets.map((ks) => ks[0] ?? null);
+  const rowsByKey = new Map<string | null, RowRecord[]>();
+  const keys: (string | null)[] = [];
+  const allKeys: (string | null)[] = [];
+  const seenAllKeys = new Set<string | null>();
+  let hasNull = false;
+  let hasFormulaError = false;
+  for (const row of rows) {
+    __sheetBoardTestHooks.onGroupingRowWalk?.(row.id);
+    const rowKeys = groupKeysForBlock(row, groupBy, opts);
+    keys.push(rowKeys[0] ?? null);
+    const seenForRow = new Set<string | null>();
+    for (const key of rowKeys) {
+      hasNull ||= key === null;
+      hasFormulaError ||= key === "(error)";
+      if (!seenAllKeys.has(key)) {
+        seenAllKeys.add(key);
+        allKeys.push(key);
+      }
+      if (seenForRow.has(key)) continue;
+      seenForRow.add(key);
+      const bucket = rowsByKey.get(key);
+      if (bucket) bucket.push(row);
+      else rowsByKey.set(key, [row]);
+    }
+  }
   let order: (string | null)[];
   const enumValues = enumValuesFor(schema, groupBy);
   if (isFormulaField(groupBy)) {
@@ -418,9 +445,7 @@ function buildColumns(
     }
   } else if (groupBy === "tags") {
     order = [];
-    for (const ks of keySets) {
-      for (const key of ks) if (key !== null && !order.includes(key)) order.push(key);
-    }
+    for (const key of allKeys) if (key !== null) order.push(key);
   } else if (enumValues) {
     order = [...enumValues];
     for (const key of keys) if (key !== null && !order.includes(key)) order.push(key);
@@ -437,15 +462,15 @@ function buildColumns(
     order = [];
     for (const key of keys) if (key !== null && !order.includes(key)) order.push(key);
   }
-  if (keySets.some((ks) => ks.includes(null)) && !order.includes(null)) order.push(null);
-  if (isFormulaField(groupBy) && keySets.some((ks) => ks.includes("(error)")) && !order.includes("(error)")) {
+  if (hasNull && !order.includes(null)) order.push(null);
+  if (isFormulaField(groupBy) && hasFormulaError && !order.includes("(error)")) {
     order.push("(error)");
   }
   if (order.length === 0) order = [null];
   return order.map((key) => ({
     key,
     label: key === null ? NONE_LABEL : groupBy === "priority" ? `[#${key}]` : key,
-    rows: rows.filter((_row, i) => keySets[i].includes(key)),
+    rows: rowsByKey.get(key) ?? [],
   }));
 }
 
