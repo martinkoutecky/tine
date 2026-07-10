@@ -10,6 +10,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Scheduled and deadline dates remain rendered as clickable date chips when
+  body text follows the planning line.** The trailing body stays visible, while
+  mid-text and code lookalikes remain ordinary content. (GH #75)
 - **Android and iOS no longer expose the desktop self-updater.** Mobile builds
   skip the startup update toast, hide the About tab's manual update action, and
   direct users to their app distribution channel instead. (GH #48)

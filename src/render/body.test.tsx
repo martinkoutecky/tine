@@ -63,6 +63,16 @@ describe("AstBody (no-IO degrade path)", () => {
     expect(h).toContain("ship it");
     expect(h).not.toContain("2026-07-06"); // standalone planning line → badge, not body
   });
+
+  it("removes schedule chrome without eating a following body line (#75)", async () => {
+    const h = await htmlOf(() => AstBody({
+      raw: "Task\nSCHEDULED: <2026-07-13 Mon>\nnotes after the schedule",
+      blockId: "issue-75-schedule-body",
+    }));
+    expect(h).toContain("Task");
+    expect(h).toContain("notes after the schedule");
+    expect(h).not.toContain("2026-07-13");
+  });
 });
 
 describe("estimateBodyReserve (placeholder height proxy)", () => {

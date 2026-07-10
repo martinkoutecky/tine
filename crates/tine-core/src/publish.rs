@@ -619,11 +619,9 @@ fn ast_plain_text(blocks: &[Block]) -> String {
 /// Parse + property/planning-filter one block body the way `render_block` does — the
 /// shared front of the render and search-index paths (one lsdoc parse per call).
 fn body_blocks(raw: &str) -> Vec<Block> {
-    crate::render::parse_block(raw, false)
+    crate::doc::strip_planning_lines(crate::render::parse_block(raw, false), raw)
         .into_iter()
-        .filter(|b| {
-            !matches!(b, Block::Properties { .. }) && !crate::doc::block_is_standalone_planning(b)
-        })
+        .filter(|b| !matches!(b, Block::Properties { .. }))
         .collect()
 }
 
@@ -2204,7 +2202,7 @@ mod tests {
         .unwrap();
         fs::write(
             dir.join("pages").join("Main.md"),
-            "- TODO [#A] do the thing\n  SCHEDULED: <2026-07-10 Fri>\n\
+            "- TODO [#A] do the thing\n  SCHEDULED: <2026-07-10 Fri>\n  notes after the schedule\n\
              - DONE finished it\n\
              - a note\n  status:: open\n\
              - {{query (task TODO)}}\n\
@@ -2231,6 +2229,17 @@ mod tests {
             "priority badge"
         );
         assert!(main.contains("SCHEDULED:"), "scheduled line");
+        assert!(
+            main.contains("notes after the schedule"),
+            "body after schedule"
+        );
+        let scheduled_trailers = main.matches("class=\"planning scheduled\"").count();
+        assert!(scheduled_trailers > 0, "scheduled trailer rendered");
+        assert_eq!(
+            main.matches("2026-07-10 Fri").count(),
+            scheduled_trailers,
+            "each planning date renders only in trailer chrome, not again in the body"
+        );
         assert!(
             main.contains("class=\"task-checkbox checked\"") && main.contains("class=\"b done\""),
             "DONE checked + muted"

@@ -11,7 +11,7 @@ import { toggleListItemAtIndex, doc, formatForBlock } from "../store";
 import { graphMeta } from "../ui";
 import { isRenderHiddenProp, isPropertyLine } from "./block";
 import { isQuarantined, parserReady } from "./parse";
-import { parseBody, isStandalonePlanning } from "./facets";
+import { parseBody, stripPlanningLines } from "./facets";
 import { observeNear, unobserveNear, renderedBlocks } from "../lazyObserve";
 
 function escapeHtml(code: string): string {
@@ -360,12 +360,11 @@ function AstList(props: { items: AstListItem[]; blockId?: string; cbItems: AstLi
 function bodyBlocks(raw: string, isOrg: boolean): AstBlock[] {
   const parsed = parseBody(raw, isOrg ? "org" : "md");
   if (isQuarantined(parsed)) return parsed;
-  // Drop `properties` (chips in chrome) and STANDALONE planning lines (date badges in
-  // chrome). A block with a mid-text/inline `SCHEDULED:` timestamp is NOT standalone —
-  // keep it whole so its body text renders (the old `.some(timestamp)` dropped the
-  // entire bullet, silently eating the text — audit C1).
-  return parsed.filter(
-    (b) => b.kind !== "properties" && !isStandalonePlanning(b) && !isEmptyInlineFlow(b)
+  // Drop `properties` (chips in chrome), then remove only the parser-confirmed
+  // whole-line planning timestamp from its inline flow. A trailing body line can
+  // share that Paragraph (#75), so filtering the entire block would eat content.
+  return stripPlanningLines(parsed, raw).filter(
+    (b) => b.kind !== "properties" && !isEmptyInlineFlow(b)
   );
 }
 

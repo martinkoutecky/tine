@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { beforeAll, describe, it, expect } from "vitest";
 import { seedFacets, facetsOf, clearSeededFacets, facetsFromDto, EMPTY_FACETS } from "./facets";
+import { initParser } from "./parse";
 
 describe("facet cache (audit P2)", () => {
   it("never evicts seeded facets — a page far larger than the old 4096 cap is all hits", () => {
@@ -31,5 +32,24 @@ describe("facet cache (audit P2)", () => {
     expect(facetsFromDto({ priority: "A" }).priority).toBe("A");
     expect(facetsFromDto({ priority: "X" }).priority).toBe(null);
     expect(facetsFromDto({}).marker).toBe(null);
+  });
+});
+
+describe("planning facets", () => {
+  beforeAll(async () => {
+    await initParser();
+  });
+
+  it("keeps a schedule clickable when body text follows (#75)", () => {
+    const raw = "Task\nSCHEDULED: <2026-07-13 Mon>\nnotes after the schedule";
+    expect(facetsOf(raw, "md").scheduled).toBe("2026-07-13 Mon");
+    expect(facetsOf("Überblick\nSCHEDULED: <2026-07-14 Tue>\n続き", "md").scheduled).toBe(
+      "2026-07-14 Tue"
+    );
+  });
+
+  it("does not promote a mid-text planning timestamp to date chrome", () => {
+    const raw = "Discuss SCHEDULED: <2026-07-13 Mon> inline\nnotes after it";
+    expect(facetsOf(raw, "md").scheduled).toBeNull();
   });
 });

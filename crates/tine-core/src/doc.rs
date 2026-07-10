@@ -396,32 +396,46 @@ fn header_facets(
     (marker, priority, heading_level, properties)
 }
 
-/// SCHEDULED / DEADLINE display text (`<…>` content) for whichever top-level block
-/// lsdoc tagged with a real `Scheduled`/`Deadline` `Timestamp` — so a `SCHEDULED:`
-/// inside inline code (which lsdoc parses as `Code`, not a Timestamp) is never
-/// badged. The display is sliced faithfully from that block's span in `raw` (exact
-/// original text); the lsdoc input is `"- " + raw.trim_start()`, so a span `[s,e)`
-/// maps to raw `[s-2+lead, e-2+lead)`.
+/// Map a parser span from the re-bulleted input (`"- " + raw.trim_start()`) to
+/// its original raw slice, but only when the span occupies a whole source line.
+/// Horizontal whitespace around the token is allowed. A parser-recognized
+/// `Discuss SCHEDULED: <…> inline` therefore fails this boundary check without
+/// introducing a second planning-line parser.
+fn standalone_source_line<'a>(raw: &'a str, span: &lsdoc::ast::Span) -> Option<&'a str> {
+    let lead = raw.len() - raw.trim_start().len();
+    let start = span.0.checked_sub(2)?.checked_add(lead)?;
+    let end = span.1.checked_sub(2)?.checked_add(lead)?;
+    let source = raw.get(start..end)?;
+    let line_start = raw[..start].rfind('\n').map_or(0, |i| i + 1);
+    let line_end = raw[end..].find('\n').map_or(raw.len(), |i| end + i);
+    if !raw[line_start..start].trim().is_empty() || !raw[end..line_end].trim().is_empty() {
+        return None;
+    }
+    Some(source)
+}
+
+/// SCHEDULED / DEADLINE display text (`<…>` content) for parser-recognized
+/// Timestamp nodes that occupy a whole source line. lsdoc can put a trailing body
+/// line in the SAME Paragraph as the planning timestamp (#75), so the older
+/// whole-AST-block `is_standalone_planning` check rejected a genuine planning line.
 fn planning_dates(blocks: &[lsdoc::ast::Block], raw: &str) -> (Option<String>, Option<String>) {
     use lsdoc::ast::{Block, Inline};
-    let lead = raw.len() - raw.trim_start().len();
     let mut scheduled = None;
     let mut deadline = None;
     for b in blocks {
-        let (inlines, span) = match b {
-            Block::Bullet { inline, span, .. }
-            | Block::Heading { inline, span, .. }
-            | Block::Paragraph { inline, span, .. } => (inline, span),
+        let inlines = match b {
+            Block::Bullet { inline, .. }
+            | Block::Heading { inline, .. }
+            | Block::Paragraph { inline, .. } => inline,
             _ => continue,
         };
-        // Only a STANDALONE planning line is a date badge. lsdoc v0.2.0 also makes a
-        // mid-text `SCHEDULED:` a Timestamp; that's body text, not a badge (and the
-        // frontend keeps it in the body), so this must agree (audit C1).
-        if !is_standalone_planning(inlines) {
-            continue;
-        }
         for i in inlines {
-            let Inline::Timestamp { ts, .. } = i else {
+            let Inline::Timestamp {
+                ts,
+                span: Some(span),
+                ..
+            } = i
+            else {
                 continue;
             };
             let slot = match ts.as_str() {
@@ -432,48 +446,83 @@ fn planning_dates(blocks: &[lsdoc::ast::Block], raw: &str) -> (Option<String>, O
             if slot.is_some() {
                 continue;
             }
-            if let Some(sp) = span {
-                let rs = (sp.0.saturating_sub(2) + lead).min(raw.len());
-                let re = (sp.1.saturating_sub(2) + lead).min(raw.len());
-                *slot = angle_after(&raw[rs..re.max(rs)], ts);
-            }
+            let Some(line) = standalone_source_line(raw, span) else {
+                continue;
+            };
+            *slot = angle_after(line, ts);
         }
     }
     (scheduled, deadline)
 }
 
-/// A block whose inline content is ONLY a SCHEDULED/DEADLINE planning timestamp (plus
-/// blank text / line breaks) — the standalone planning line that becomes a date badge.
-/// A mid-text timestamp leaves real content, so it is NOT standalone.
-fn is_standalone_planning(inlines: &[lsdoc::ast::Inline]) -> bool {
-    use lsdoc::ast::Inline;
-    let mut planning = false;
-    for i in inlines {
-        match i {
-            Inline::Timestamp { ts, .. } if ts == "Scheduled" || ts == "Deadline" => {
-                planning = true
-            }
-            Inline::Break { .. } | Inline::HardBreak { .. } => {}
-            Inline::Plain { text, .. } if text.trim().is_empty() => {}
-            _ => return false,
-        }
-    }
-    planning
+fn inline_is_break(i: &lsdoc::ast::Inline) -> bool {
+    matches!(
+        i,
+        lsdoc::ast::Inline::Break { .. } | lsdoc::ast::Inline::HardBreak { .. }
+    )
 }
 
-/// True if `b` is a STANDALONE planning block — an inline-flow block whose only
-/// inline content is a SCHEDULED/DEADLINE timestamp (the line the editor draws as a
-/// date badge and the renderer drops from the body). Public for the static HTML
-/// export (`publish.rs`), which mirrors the frontend `bodyBlocks` filter (drop
-/// `Properties` + standalone-planning) so the published body matches the app.
-pub(crate) fn block_is_standalone_planning(b: &lsdoc::ast::Block) -> bool {
-    use lsdoc::ast::Block;
-    match b {
-        Block::Paragraph { inline, .. }
-        | Block::Bullet { inline, .. }
-        | Block::Heading { inline, .. } => is_standalone_planning(inline),
-        _ => false,
+fn inline_is_empty(i: &lsdoc::ast::Inline) -> bool {
+    use lsdoc::ast::Inline;
+    inline_is_break(i) || matches!(i, Inline::Plain { text, .. } if text.trim().is_empty())
+}
+
+/// Remove parser-confirmed whole-line planning timestamps from the body AST without
+/// deleting body content that shares their Paragraph (#75). The neighboring line
+/// break is removed with the planning token; mid-text timestamps are untouched.
+pub(crate) fn strip_planning_lines(
+    mut blocks: Vec<lsdoc::ast::Block>,
+    raw: &str,
+) -> Vec<lsdoc::ast::Block> {
+    use lsdoc::ast::{Block, Inline};
+    if !raw.contains("SCHEDULED:") && !raw.contains("DEADLINE:") {
+        return blocks;
     }
+    blocks.retain_mut(|b| {
+        let inlines = match b {
+            Block::Paragraph { inline, .. }
+            | Block::Bullet { inline, .. }
+            | Block::Heading { inline, .. } => inline,
+            _ => return true,
+        };
+        let planning: Vec<usize> = inlines
+            .iter()
+            .enumerate()
+            .filter_map(|(index, i)| match i {
+                Inline::Timestamp {
+                    ts,
+                    span: Some(span),
+                    ..
+                } if (ts == "Scheduled" || ts == "Deadline")
+                    && standalone_source_line(raw, span).is_some() =>
+                {
+                    Some(index)
+                }
+                _ => None,
+            })
+            .collect();
+        if planning.is_empty() {
+            return true;
+        }
+
+        let mut remove = vec![false; inlines.len()];
+        for index in planning {
+            remove[index] = true;
+            if inlines.get(index + 1).is_some_and(inline_is_break) {
+                remove[index + 1] = true;
+            } else if index > 0 && inlines.get(index - 1).is_some_and(inline_is_break) {
+                remove[index - 1] = true;
+            }
+        }
+        let mut index = 0;
+        inlines.retain(|_| {
+            let keep = !remove[index];
+            index += 1;
+            keep
+        });
+        !inlines.iter().all(inline_is_empty)
+    });
+    blocks
 }
 
 /// The `<…>` content following a `SCHEDULED:` / `DEADLINE:` keyword in `slice`.
@@ -1066,6 +1115,17 @@ mod projection_tests {
             "code-embedded planning is not badged"
         );
         assert_eq!(DocBlock::new("plain block").scheduled(), None);
+    }
+
+    #[test]
+    fn schedule_stays_a_facet_when_body_text_follows() {
+        let b = DocBlock::new("Task\nSCHEDULED: <2026-07-13 Mon>\nnotes after the schedule");
+        assert_eq!(b.scheduled(), Some("2026-07-13 Mon"));
+        let utf8 = DocBlock::new("Überblick\nSCHEDULED: <2026-07-14 Tue>\n続き");
+        assert_eq!(utf8.scheduled(), Some("2026-07-14 Tue"));
+        let mid =
+            DocBlock::new("Discuss SCHEDULED: <2026-07-13 Mon> inline\nnotes after the timestamp");
+        assert_eq!(mid.scheduled(), None);
     }
 
     #[test]

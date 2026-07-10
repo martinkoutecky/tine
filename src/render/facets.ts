@@ -219,44 +219,93 @@ function tagsOf(blocks: readonly Block[]): string[] {
   return out;
 }
 
-/** A block whose inline content is ONLY a SCHEDULED/DEADLINE planning timestamp
- *  (plus blank text / line breaks) — the standalone planning line that becomes a date
- *  BADGE (and is dropped from the rendered body). lsdoc v0.2.0 also makes a MID-TEXT
- *  `SCHEDULED: <…>` a real `Timestamp`; such a block has other content, so it is NOT
- *  standalone — it must render normally (the timestamp inline in place), never be
- *  dropped (that silently ate body text) or badged. */
-export function isStandalonePlanning(b: Block): boolean {
-  if (!("inline" in b) || !Array.isArray(b.inline) || b.inline.length === 0) return false;
-  let planning = false;
-  for (const i of b.inline) {
-    if (i.k === "timestamp" && (i.ts === "Scheduled" || i.ts === "Deadline")) {
-      planning = true;
-      continue;
-    }
-    if (i.k === "break" || i.k === "hardbreak") continue;
-    if (i.k === "plain" && i.text.trim() === "") continue;
-    return false; // real content alongside the timestamp → not standalone
-  }
-  return planning;
+const UTF8_ENCODER = new TextEncoder();
+const UTF8_DECODER = new TextDecoder();
+
+/** Map an lsdoc span from the re-bulleted parser input (`"- " + raw.trimStart()`)
+ *  back to the original raw bytes. Return the spanned source only when it occupies
+ *  a whole source line (surrounding horizontal whitespace is allowed). This is the
+ *  crucial distinction between a real planning line and mid-text
+ *  `Discuss SCHEDULED: <…>`: lsdoc recognizes both as Timestamp, while only the
+ *  former belongs in header chrome. */
+function standaloneSourceLine(raw: string, span: readonly [number, number] | undefined): string | null {
+  if (!span || span[0] < 2 || span[1] < span[0]) return null;
+  const trimmed = raw.trimStart();
+  const leading = raw.slice(0, raw.length - trimmed.length);
+  const leadBytes = UTF8_ENCODER.encode(leading).length;
+  const bytes = UTF8_ENCODER.encode(raw);
+  const start = span[0] - 2 + leadBytes;
+  const end = span[1] - 2 + leadBytes;
+  if (start < 0 || end < start || end > bytes.length) return null;
+
+  let lineStart = start;
+  while (lineStart > 0 && bytes[lineStart - 1] !== 0x0a) lineStart--;
+  let lineEnd = end;
+  while (lineEnd < bytes.length && bytes[lineEnd] !== 0x0a) lineEnd++;
+  const before = UTF8_DECODER.decode(bytes.slice(lineStart, start));
+  const after = UTF8_DECODER.decode(bytes.slice(end, lineEnd));
+  if (before.trim() !== "" || after.trim() !== "") return null;
+  return UTF8_DECODER.decode(bytes.slice(start, end));
 }
 
-/** SCHEDULED/DEADLINE display text for the date badge — ONLY from a standalone planning
- *  line (a mid-text or inline-code `SCHEDULED:` is body text, not a badge). The faithful
- *  `<…>` text is read from `raw` by an ASCII-safe regex (NOT a byte-span slice: lsdoc
- *  spans are byte offsets, JS string indices are UTF-16 units). The backend ships these
- *  for loaded blocks; this only runs for the edited block. */
+function planningLineText(i: Inline, raw: string): string | null {
+  if (i.k !== "timestamp" || (i.ts !== "Scheduled" && i.ts !== "Deadline")) return null;
+  return standaloneSourceLine(raw, i.span);
+}
+
+function angleText(line: string): string | null {
+  const lt = line.indexOf("<");
+  const gt = lt < 0 ? -1 : line.indexOf(">", lt + 1);
+  return lt >= 0 && gt > lt ? line.slice(lt + 1, gt) : null;
+}
+
+/** Remove genuine whole-line planning timestamps from the body AST while preserving
+ *  any following text in the SAME paragraph. lsdoc represents
+ *  `title\nSCHEDULED\nbody` as a planning Timestamp + Break + body Plain in one
+ *  Paragraph, so filtering the whole AST block either leaks the timestamp into the
+ *  body or deletes the body. Parser spans let us remove only the source line. */
+export function stripPlanningLines(blocks: Block[], raw: string): Block[] {
+  // Normal blocks must retain the pre-fix one-filter hot path: scrolling a large
+  // page mounts thousands of bodies, and allocating a second AST array for every
+  // block measurably regresses that path. This is only a cheap candidate gate;
+  // lsdoc Timestamp + source-span boundaries still decide semantics below.
+  if (!raw.includes("SCHEDULED:") && !raw.includes("DEADLINE:")) return blocks;
+  return blocks.map((b) => {
+    if (b.kind !== "paragraph" && b.kind !== "bullet" && b.kind !== "heading") return b;
+    const planning = new Set<number>();
+    b.inline.forEach((i, index) => {
+      if (planningLineText(i, raw) !== null) planning.add(index);
+    });
+    if (planning.size === 0) return b;
+
+    const remove = new Set(planning);
+    for (const index of planning) {
+      const next = b.inline[index + 1];
+      const prev = b.inline[index - 1];
+      if (next?.k === "break" || next?.k === "hardbreak") remove.add(index + 1);
+      else if (prev?.k === "break" || prev?.k === "hardbreak") remove.add(index - 1);
+    }
+    return { ...b, inline: b.inline.filter((_, index) => !remove.has(index)) };
+  });
+}
+
+/** SCHEDULED/DEADLINE display text for date chrome. The Timestamp comes from lsdoc;
+ *  its parser-provided byte span proves the token occupies a whole source line, so
+ *  mid-text and inline-code lookalikes remain ordinary body content. */
 function planningDates(blocks: Block[], raw: string): { scheduled: string | null; deadline: string | null } {
-  const standalone = blocks.filter(isStandalonePlanning);
-  const has = (kind: string) =>
-    standalone.some((b) => "inline" in b && b.inline.some((i) => i.k === "timestamp" && i.ts === kind));
-  const grab = (kw: string): string | null => {
-    const m = new RegExp(kw + "\\s*<([^>]+)>").exec(raw);
-    return m ? m[1] : null;
-  };
-  return {
-    scheduled: has("Scheduled") ? grab("SCHEDULED:") : null,
-    deadline: has("Deadline") ? grab("DEADLINE:") : null,
-  };
+  let scheduled: string | null = null;
+  let deadline: string | null = null;
+  for (const b of blocks) {
+    if (b.kind !== "paragraph" && b.kind !== "bullet" && b.kind !== "heading") continue;
+    for (const i of b.inline) {
+      const line = planningLineText(i, raw);
+      if (line === null || i.k !== "timestamp") continue;
+      const value = angleText(line);
+      if (i.ts === "Scheduled" && scheduled === null) scheduled = value;
+      if (i.ts === "Deadline" && deadline === null) deadline = value;
+    }
+  }
+  return { scheduled, deadline };
 }
 
 export { EMPTY as EMPTY_FACETS };
