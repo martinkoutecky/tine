@@ -19,6 +19,7 @@ dist
 
 # Local scratch
 /scratch
+/.osc-metadata/
 samples/*/publish
 screenshots/
 scripts/app-icon-1024.png
