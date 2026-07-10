@@ -439,13 +439,18 @@ pub(crate) fn resolve_blocks(
 #[tauri::command]
 pub(crate) fn read_asset(
     name: String,
+    max_bytes: Option<u64>,
     state: State<'_, AppState>,
 ) -> Result<tauri::ipc::Response, String> {
     // Return RAW bytes (not a JSON number[]), so a multi-MB PDF/image isn't
     // serialized element-by-element and re-parsed on the JS side — the frontend
     // receives an ArrayBuffer directly.
     with_graph(&state, |g| {
-        g.read_asset(&name)
+        max_bytes
+            .map_or_else(
+                || g.read_asset(&name),
+                |limit| g.read_asset_limited(&name, limit),
+            )
             .map(tauri::ipc::Response::new)
             .map_err(|e| e.to_string())
     })

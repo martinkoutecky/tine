@@ -1229,6 +1229,108 @@ export function Editor(props: { id: string }): JSX.Element {
     })();
   };
 
+  const insertStoredAssets = (names: string[]) => {
+    if (!names.length) return;
+    const markdown = names.map(assetMarkdown).join("\n");
+    const start = ref.selectionStart;
+    const end = ref.selectionEnd;
+    const newRaw = ref.value.slice(0, start) + markdown + ref.value.slice(end);
+    commit(newRaw);
+    const pos = start + markdown.length;
+    queueMicrotask(() => {
+      ref.value = newRaw;
+      ref.setSelectionRange(pos, pos);
+      ref.focus();
+      autosize();
+    });
+  };
+
+  const MAX_BYTE_CLIPBOARD_FILE = 64 * 1024 * 1024;
+  const MAX_CLIPBOARD_FILES = 32;
+
+  /** Import file-manager paths without materializing their bytes in the WebView.
+   * If a platform exposes only browser File objects, save those sequentially so
+   * at most one bounded byte buffer/base64 IPC payload is live at a time. */
+  const pasteClipboardFiles = async (eventFiles: File[]) => {
+    const toastId = pushToast("Pasting files…", "info");
+    let skipped = 0;
+    let nativeUnavailable = false;
+    const stored: string[] = [];
+    try {
+      const native = await backend().clipboardFiles().catch(() => {
+        nativeUnavailable = true;
+        return { files: [], skipped: 0, truncated: false };
+      });
+      skipped += native.skipped;
+      if (native.files.length) {
+        for (const file of native.files) {
+          try {
+            stored.push(await trackAssetWrite(backend().importAsset(file.path, assetFileName(file.name))));
+          } catch {
+            skipped += 1;
+          }
+        }
+      } else {
+        const files = eventFiles.slice(0, MAX_CLIPBOARD_FILES);
+        skipped += Math.max(0, eventFiles.length - files.length);
+        // Keep the screenshot/image behavior: image-only clipboard payloads use
+        // timestamp names and optimistic rendering rather than synthetic names
+        // such as Chromium's generic "image.png".
+        if (files.length === 1 && files[0].type.startsWith("image/")) {
+          const image = files[0];
+          if (image.size > MAX_BYTE_CLIPBOARD_FILE) skipped += 1;
+          else {
+            try {
+              const bytes = new Uint8Array(await image.arrayBuffer());
+              if (bytes.length) insertAssetBytes(bytes);
+              else skipped += 1;
+            } catch {
+              skipped += 1;
+            }
+          }
+          return;
+        }
+        for (const file of files) {
+          if (file.size > MAX_BYTE_CLIPBOARD_FILE) {
+            skipped += 1;
+            continue;
+          }
+          try {
+            const bytes = new Uint8Array(await file.arrayBuffer());
+            if (!bytes.length) {
+              skipped += 1;
+              continue;
+            }
+            const candidate = assetFileName(file.name || undefined);
+            const saved = await trackAssetWrite(backend().saveAsset(candidate, bytes));
+            stored.push(saved);
+            try {
+              seedAssetBlob(saved, bytes);
+            } catch {
+              // The durable asset + link are authoritative; cache warming is optional.
+            }
+          } catch {
+            skipped += 1;
+          }
+        }
+      }
+      insertStoredAssets(stored);
+    } finally {
+      dismissToast(toastId);
+      if (stored.length) {
+        pushToast(`Inserted ${stored.length} file${stored.length === 1 ? "" : "s"}`, "success");
+      }
+      if (skipped) {
+        pushToast(
+          `Skipped ${skipped} item${skipped === 1 ? "" : "s"}; folders and byte-only files over 64 MiB aren't pasted`,
+          "error"
+        );
+      } else if (nativeUnavailable && !eventFiles.length) {
+        pushToast("Couldn't read copied files; use Upload or drag-and-drop instead", "error");
+      }
+    }
+  };
+
   // Mobile: take/pick a photo (Android camera plugin) → insert at the caret.
   const capturePhotoCmd = async () => {
     let res;
@@ -2268,12 +2370,30 @@ export function Editor(props: { id: string }): JSX.Element {
   onMount(() => window.addEventListener("focus", onWindowFocus));
   onCleanup(() => window.removeEventListener("focus", onWindowFocus));
 
-  // Paste an image from the clipboard. WebKitGTK's <textarea> paste event does
-  // not expose image data, so we read the OS clipboard directly (Tauri plugin)
-  // and insert an asset link. Text paste proceeds normally (no preventDefault);
-  // for an image-only clipboard there is no text to paste.
+  // Paste copied files/images as graph assets. Native file lists use path-based
+  // imports; browser-only file payloads use a bounded byte fallback. Ordinary
+  // text keeps the existing structural/outline/link behavior below.
   const onPaste = (e: ClipboardEvent) => {
     const text = e.clipboardData?.getData("text/plain") ?? "";
+    // File managers commonly include path text alongside the real file-list
+    // clipboard flavor. Claim the paste synchronously so those paths never land
+    // as text; actual paths are accepted only from the native clipboard API.
+    const clipboardItems = Array.from(e.clipboardData?.items ?? []);
+    const eventFiles = clipboardItems
+      .filter((item) => item.kind === "file")
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => file !== null);
+    const clipboardTypes = Array.from(e.clipboardData?.types ?? []);
+    const hasFileFlavor =
+      eventFiles.length > 0 ||
+      clipboardTypes.some((type) =>
+        type === "Files" || type === "text/uri-list" || type === "x-special/gnome-copied-files"
+      );
+    if (hasFileFlavor) {
+      e.preventDefault();
+      void pasteClipboardFiles(eventFiles);
+      return;
+    }
     // A structural sheet copy (multiple grid cells) pasted into a block editor
     // rebuilds an actual subgrid nested here, rather than dumping the flat TSV
     // text (Martin's nit). Only fires when the clipboard is exactly our own
@@ -2342,7 +2462,7 @@ export function Editor(props: { id: string }): JSX.Element {
     //      fall back to reading the OS clipboard via the Tauri plugin.
     // The DataTransfer is only valid synchronously, so grab the File now (its
     // reference stays live for the async arrayBuffer read).
-    const imageItem = Array.from(e.clipboardData?.items ?? []).find(
+    const imageItem = clipboardItems.find(
       (it) => it.kind === "file" && it.type.startsWith("image/")
     );
     const imageFile = imageItem?.getAsFile() ?? null;

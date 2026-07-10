@@ -50,6 +50,22 @@ function imagePasteEvent(file: File): Event {
   return event;
 }
 
+function filePasteEvent(files: File[], text = ""): Event {
+  const event = new Event("paste", { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "clipboardData", {
+    value: {
+      getData: (type: string) => type === "text/plain" ? text : "",
+      items: files.map((file) => ({ kind: "file", type: file.type, getAsFile: () => file })),
+      types: ["Files", "text/plain"],
+    },
+  });
+  return event;
+}
+
+async function settle() {
+  for (let i = 0; i < 6; i++) await tick();
+}
+
 describe("asset paste durability", () => {
   it("rolls back the inserted asset link if saveAsset rejects", async () => {
     loadSingle(page("Assets", [blk("asset-1", "")]));
@@ -73,12 +89,86 @@ describe("asset paste durability", () => {
       textarea!.setSelectionRange(0, 0);
       textarea!.dispatchEvent(imagePasteEvent(new File([new Uint8Array([1, 2, 3])], "paste.png", { type: "image/png" })));
 
-      await tick();
-      await tick();
-      await tick();
+      await settle();
 
       expect(backend().saveAsset).toHaveBeenCalledOnce();
       expect(doc.byId[id].raw).not.toContain("../assets/");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("prefers native file paths over accompanying clipboard path text", async () => {
+    loadSingle(page("Assets", [blk("asset-native", "")]));
+    const id = pageByName("Assets")!.roots[0];
+    startEditing(id, 0);
+    vi.spyOn(backend(), "clipboardFiles").mockResolvedValue({
+      files: [{ path: "C:\\Users\\me\\report.pdf", name: "report.pdf", size: 123 }],
+      skipped: 0,
+      truncated: false,
+    });
+    vi.spyOn(backend(), "importAsset").mockResolvedValue("report.pdf");
+
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
+    ));
+    try {
+      const textarea = root.querySelector("textarea")! as HTMLTextAreaElement;
+      const event = filePasteEvent([], "C:\\Users\\me\\report.pdf");
+      textarea.dispatchEvent(event);
+      await settle();
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(backend().importAsset).toHaveBeenCalledWith("C:\\Users\\me\\report.pdf", "report.pdf");
+      expect(doc.byId[id].raw).toBe("[report.pdf](../assets/report.pdf)");
+      expect(doc.byId[id].raw).not.toContain("C:\\Users");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("saves a byte-only clipboard file and inserts its asset link", async () => {
+    loadSingle(page("Assets", [blk("asset-bytes", "")]));
+    const id = pageByName("Assets")!.roots[0];
+    startEditing(id, 0);
+    vi.spyOn(backend(), "clipboardFiles").mockResolvedValue({ files: [], skipped: 0, truncated: false });
+    vi.spyOn(backend(), "saveAsset").mockResolvedValue("notes.pdf");
+
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
+    ));
+    try {
+      const textarea = root.querySelector("textarea")! as HTMLTextAreaElement;
+      textarea.dispatchEvent(filePasteEvent([new File([new Uint8Array([1, 2, 3])], "notes.pdf", { type: "application/pdf" })]));
+      await settle();
+
+      expect(backend().saveAsset).toHaveBeenCalledOnce();
+      await vi.waitFor(() => expect(doc.byId[id].raw).toBe("[notes.pdf](../assets/notes.pdf)"));
+    } finally {
+      dispose();
+    }
+  });
+
+  it("does not materialize an oversized byte-only clipboard file", async () => {
+    loadSingle(page("Assets", [blk("asset-huge", "")]));
+    const id = pageByName("Assets")!.roots[0];
+    startEditing(id, 0);
+    vi.spyOn(backend(), "clipboardFiles").mockResolvedValue({ files: [], skipped: 0, truncated: false });
+    const save = vi.spyOn(backend(), "saveAsset");
+    const arrayBuffer = vi.fn();
+    const huge = { name: "huge.zip", type: "application/zip", size: 64 * 1024 * 1024 + 1, arrayBuffer } as unknown as File;
+
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
+    ));
+    try {
+      const textarea = root.querySelector("textarea")! as HTMLTextAreaElement;
+      textarea.dispatchEvent(filePasteEvent([huge]));
+      await settle();
+
+      expect(arrayBuffer).not.toHaveBeenCalled();
+      expect(save).not.toHaveBeenCalled();
+      expect(doc.byId[id].raw).toBe("");
     } finally {
       dispose();
     }

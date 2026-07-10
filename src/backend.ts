@@ -51,6 +51,18 @@ export type GraphFolderPickResult =
   | { status: "picked"; path: string }
   | { status: "permission-requested" | "permission-needed" | "cancelled"; path?: string };
 
+export interface ClipboardAssetFile {
+  path: string;
+  name: string;
+  size: number;
+}
+
+export interface ClipboardFileList {
+  files: ClipboardAssetFile[];
+  skipped: number;
+  truncated: boolean;
+}
+
 /** Result of an Android media-capture command (camera / voice memo). When
  *  `status === "ok"`, `data` is base64-encoded file bytes and `ext` its
  *  extension (no dot). Other statuses carry no data. */
@@ -206,7 +218,7 @@ export interface Backend {
   listTemplates(): Promise<TemplateDto[]>;
   resolveBlock(uuid: string): Promise<RefGroup | null>;
   resolveBlocks(uuids: string[]): Promise<(RefGroup | null)[]>;
-  readAsset(name: string): Promise<Uint8Array>;
+  readAsset(name: string, maxBytes?: number): Promise<Uint8Array>;
   /** Read an image from an absolute path OUTSIDE the graph (raw-HTML `<img>` the
    *  user opted into via Settings). Rejects when the opt-in is off or the path
    *  isn't a permitted image. */
@@ -222,6 +234,9 @@ export interface Backend {
   /** Copy a file (by absolute path) into assets/, returning the stored name.
    *  `name` (optional) is the desired stored filename (timestamped). */
   importAsset(path: string, name?: string): Promise<string>;
+  /** Paths explicitly copied in the OS file manager. Empty when the clipboard
+   *  has no native file-list flavor or the platform cannot expose one. */
+  clipboardFiles(): Promise<ClipboardFileList>;
   /** Read a dropped UTF-8 text file by absolute path. Used only for explicit
    *  local file drops such as CSV/TSV import. */
   readTextFile(path: string): Promise<string>;
@@ -513,10 +528,10 @@ class TauriBackend implements Backend {
   resolveBlocks(uuids: string[]) {
     return this.call<(RefGroup | null)[]>("resolve_blocks", { uuids });
   }
-  async readAsset(name: string) {
+  async readAsset(name: string, maxBytes?: number) {
     // read_asset now returns raw bytes (tauri::ipc::Response) → an ArrayBuffer,
     // not a JSON number[] — far cheaper for large PDFs/images.
-    const buf = await this.call<ArrayBuffer>("read_asset", { name });
+    const buf = await this.call<ArrayBuffer>("read_asset", { name, maxBytes });
     return new Uint8Array(buf);
   }
   async readLocalImage(path: string) {
@@ -605,6 +620,9 @@ class TauriBackend implements Backend {
   }
   importAsset(path: string, name?: string) {
     return this.call<string>("import_asset", { path, name });
+  }
+  clipboardFiles() {
+    return this.call<ClipboardFileList>("clipboard_files");
   }
   readTextFile(path: string) {
     return this.call<string>("read_text_file", { path });

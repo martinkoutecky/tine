@@ -1,5 +1,130 @@
 use crate::commands::decode_asset_b64;
 
+const MAX_CLIPBOARD_FILES: usize = 32;
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ClipboardAssetFile {
+    path: String,
+    name: String,
+    size: u64,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ClipboardFileList {
+    files: Vec<ClipboardAssetFile>,
+    skipped: usize,
+    truncated: bool,
+}
+
+/// Read paths copied by the OS file manager. This runs only on an explicit
+/// paste gesture; Tine never monitors the clipboard. Paths are canonicalized and
+/// restricted to regular files before they cross into the WebView. Directories
+/// are intentionally skipped rather than recursively importing arbitrary trees.
+#[cfg(desktop)]
+fn read_clipboard_files() -> Result<ClipboardFileList, String> {
+    use clipboard_rs::{Clipboard, ClipboardContext};
+
+    let context = ClipboardContext::new().map_err(|e| e.to_string())?;
+    let paths = context.get_files().map_err(|e| e.to_string())?;
+    Ok(clipboard_file_list(paths))
+}
+
+fn clipboard_file_list(paths: Vec<String>) -> ClipboardFileList {
+    use std::path::Path;
+
+    let truncated = paths.len() > MAX_CLIPBOARD_FILES;
+    let mut files = Vec::new();
+    let mut skipped = paths.len().saturating_sub(MAX_CLIPBOARD_FILES);
+
+    for raw in paths.into_iter().take(MAX_CLIPBOARD_FILES) {
+        let original = Path::new(&raw);
+        let name = original
+            .file_name()
+            .and_then(|value| value.to_str())
+            .map(str::to_owned);
+        let Ok(path) = std::fs::canonicalize(original) else {
+            skipped += 1;
+            continue;
+        };
+        let Ok(metadata) = std::fs::metadata(&path) else {
+            skipped += 1;
+            continue;
+        };
+        let Some(name) = name else {
+            skipped += 1;
+            continue;
+        };
+        if !metadata.is_file() {
+            skipped += 1;
+            continue;
+        }
+        files.push(ClipboardAssetFile {
+            path: path.to_string_lossy().into_owned(),
+            name,
+            size: metadata.len(),
+        });
+    }
+
+    ClipboardFileList {
+        files,
+        skipped,
+        truncated,
+    }
+}
+
+#[tauri::command]
+pub(crate) async fn clipboard_files() -> Result<ClipboardFileList, String> {
+    #[cfg(desktop)]
+    return tauri::async_runtime::spawn_blocking(read_clipboard_files)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    #[cfg(not(desktop))]
+    return Ok(ClipboardFileList {
+        files: Vec::new(),
+        skipped: 0,
+        truncated: false,
+    });
+}
+
+#[cfg(test)]
+mod clipboard_file_tests {
+    use super::*;
+
+    #[test]
+    fn validates_regular_files_and_skips_directories() {
+        let root =
+            std::env::temp_dir().join(format!("tine-clipboard-files-{}", std::process::id()));
+        let dir = root.join("folder");
+        let file = root.join("report.pdf");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&file, b"pdf").unwrap();
+
+        let result = clipboard_file_list(vec![
+            file.to_string_lossy().into_owned(),
+            dir.to_string_lossy().into_owned(),
+            root.join("missing.txt").to_string_lossy().into_owned(),
+        ]);
+        assert_eq!(result.files.len(), 1);
+        assert_eq!(result.files[0].name, "report.pdf");
+        assert_eq!(result.files[0].size, 3);
+        assert_eq!(result.skipped, 2);
+        assert!(!result.truncated);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn caps_the_number_of_clipboard_entries() {
+        let result = clipboard_file_list(vec!["missing".into(); MAX_CLIPBOARD_FILES + 4]);
+        assert!(result.truncated);
+        assert_eq!(result.files.len(), 0);
+        assert_eq!(result.skipped, MAX_CLIPBOARD_FILES + 4);
+    }
+}
+
 /// On Linux, hand a PNG to the OS clipboard via `wl-copy` (Wayland) or `xclip`/
 /// `xsel` (X11). These tools FORK a daemon that serves the selection until it's
 /// replaced — which is exactly what an image clipboard needs. `arboard` (what the

@@ -49,6 +49,9 @@ tauri-plugin-opener = "2"
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-window-state = "2"
 tauri-plugin-single-instance = "2"
+# Read OS-native copied-file lists (CF_HDROP / NSPasteboard file URLs /
+# text/uri-list). Image support stays with Tauri's existing clipboard plugin.
+clipboard-rs = { version = "0.3.5", default-features = false }
 # In-app self-update (Win/Linux; macOS stays manual — unsigned). The updater
 # verifies each artifact against `plugins.updater.pubkey` (minisign); process lets
 # the frontend relaunch after `downloadAndInstall()`. See docs/adr + release.yml.

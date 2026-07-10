@@ -37,7 +37,7 @@ use graph::{
     app_platform, begin_warm_cache, create_graph, default_graph_parent, load_graph, resolve_root,
     warm_cache_async, warm_done,
 };
-use platform::{copy_image_to_clipboard, gpu_env, open_external};
+use platform::{clipboard_files, copy_image_to_clipboard, gpu_env, open_external};
 use settings::{
     get_app_bool, get_app_string, get_capture_enter_files, get_link_first_match, get_smooth_scroll,
     load_session, save_session, set_app_bool, set_app_string, set_capture_enter_files,
@@ -363,6 +363,7 @@ pub fn run() {
             read_custom_css,
             open_external,
             copy_image_to_clipboard,
+            clipboard_files,
             open_asset,
             edit_asset_external,
             detect_media_editor,

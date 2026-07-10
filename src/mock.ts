@@ -878,7 +878,8 @@ export function mockBackend(): Backend {
     async resolveBlocks(uuids: string[]): Promise<(RefGroup | null)[]> {
       return Promise.all(uuids.map((u) => this.resolveBlock(u)));
     },
-    async readAsset(name: string): Promise<Uint8Array> {
+    async readAsset(name: string, maxBytes?: number): Promise<Uint8Array> {
+      void maxBytes;
       if (mockAssets[name]) return mockAssets[name];
       if (name === "sample.pdf") return decodeB64(SAMPLE_PDF_B64);
       if (name === "voice_memo.wav") return decodeB64(SILENT_WAV_B64);
@@ -900,6 +901,9 @@ export function mockBackend(): Backend {
     },
     async importAsset(path: string, name?: string): Promise<string> {
       return name ?? path.split("/").pop() ?? path;
+    },
+    async clipboardFiles() {
+      return { files: [], skipped: 0, truncated: false };
     },
     async readTextFile(_path: string): Promise<string> {
       throw new Error("local text files are unavailable in the browser mock");

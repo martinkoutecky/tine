@@ -40,6 +40,7 @@ describe("media helpers", () => {
     // Default template is %assetname.%ext (the bare original name), ext case kept.
     expect(assetFileName("My Holiday Clip.MP4")).toBe("My_Holiday_Clip.MP4");
     expect(assetFileName("a/b%c.png")).toBe("a_b_c.png");
+    expect(assetFileName("draft [final](1)?.pdf")).toBe("draft_final_1.pdf");
     expect(assetFileName()).toMatch(/^\d{8}-\d{6}-\d{3}-\d+\.png$/); // paste has no name → unique stamp
     expect(assetFileName("noext")).toBe("noext");
   });

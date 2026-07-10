@@ -38,9 +38,14 @@ export function assetMarkdown(name: string): string {
   return mediaKind(name) ? `![](../assets/${name})` : `[${name}](../assets/${name})`;
 }
 
-/** Sanitize a filename STEM like OG: spaces/%/slashes → `_`, collapse + trim. */
+/** Sanitize a filename stem for both the filesystem and the Markdown link that
+ * will reference it. Keep Unicode names, but remove separators, control chars,
+ * platform-forbidden punctuation, and Markdown destination delimiters. */
 function sanitizeStem(s: string): string {
-  return s.replace(/[ %/\\]+/g, "_").replace(/_+/g, "_").replace(/^_+|_+$/g, "");
+  return s
+    .replace(/[\u0000-\u001f\u007f %/\\<>:"|?*#\[\]()]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
 }
 
 function dateParts(now: Date) {
@@ -89,7 +94,8 @@ function formatAssetNameWithFallbackStem(
   // a clipboard paste has none → default ext (png for clipboard images, the real
   // capture ext for camera/mic). An empty stem (paste) falls back to a sortable
   // stamp, so %assetname is never blank.
-  const ext = dot > 0 ? original!.slice(dot + 1) : original ? "" : defaultExt;
+  const rawExt = dot > 0 ? original!.slice(dot + 1) : original ? "" : defaultExt;
+  const ext = rawExt.replace(/[^A-Za-z0-9.]+/g, "_").replace(/^\.+|\.+$/g, "");
   const stem = sanitizeStem(dot > 0 ? original!.slice(0, dot) : original ?? "") || fallbackStem || stamp;
   const tokens: Record<string, string> = {
     "%yyyymmdd": `${yyyy}${MM}${dd}`,
@@ -111,7 +117,11 @@ function formatAssetNameWithFallbackStem(
   // A filename is joined onto assets/ directly, so no separators may survive;
   // collapse accidental `..`; drop leading/trailing dots (an empty %ext leaves a
   // trailing ".") so a template can't yield a hidden or traversal name.
-  out = out.replace(/[/\\]+/g, "_").replace(/\.{2,}/g, ".").replace(/^\.+|\.+$/g, "");
+  out = out
+    .replace(/[\u0000-\u001f\u007f/\\<>:"|?*#\[\]()]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/\.{2,}/g, ".")
+    .replace(/^\.+|\.+$/g, "");
   // Never drop the real extension, even if the template omits %ext — a media file
   // with no extension wouldn't render. (If %ext is present, it already ends here.)
   if (ext && !out.toLowerCase().endsWith(`.${ext.toLowerCase()}`)) out = `${out}.${ext}`;

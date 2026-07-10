@@ -541,9 +541,11 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
     baseIds = highlights().map((h) => h.id); // load baseline for the 3-way merge
     let bytes: Uint8Array;
     try {
-      bytes = await backend().readAsset(props.filename);
+      bytes = await backend().readAsset(props.filename, MAX_PDF_BYTES);
     } catch (err) {
-      failPdf(errorMessage("Couldn't read this PDF asset", err));
+      if (String(err).includes("asset exceeds"))
+        failPdf("This PDF is larger than 256 MiB and can't be opened safely.");
+      else failPdf(errorMessage("Couldn't read this PDF asset", err));
       return;
     }
     if (!bytes.length) {

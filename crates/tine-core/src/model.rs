@@ -2819,6 +2819,35 @@ impl Graph {
         fs::read(self.assets_path().join(name))
     }
 
+    /// Read an asset only if its current on-disk size is within `max_bytes`.
+    /// The post-read check closes the metadata/read race if another process grows
+    /// the file between those operations.
+    pub fn read_asset_limited(&self, name: &str, max_bytes: u64) -> io::Result<Vec<u8>> {
+        top_level_asset_name(name)?;
+        let path = self.assets_path().join(name);
+        let metadata = fs::metadata(&path)?;
+        if !metadata.is_file() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "asset is not a regular file",
+            ));
+        }
+        if metadata.len() > max_bytes {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("asset exceeds {} byte limit", max_bytes),
+            ));
+        }
+        let bytes = fs::read(path)?;
+        if bytes.len() as u64 > max_bytes {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("asset exceeds {} byte limit", max_bytes),
+            ));
+        }
+        Ok(bytes)
+    }
+
     /// Write raw bytes (e.g. a pasted image) into `assets/`, returning the
     /// stored filename (de-duplicated if it already exists).
     pub fn save_asset(&self, name: &str, bytes: &[u8]) -> io::Result<String> {
@@ -5743,6 +5772,20 @@ mod tests {
             .unwrap();
         assert_eq!(saved, "source_20260626_120000.png");
         assert!(dir.join("assets").join(&saved).exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn read_asset_limited_rejects_before_returning_oversized_bytes() {
+        let dir = scratch("read-asset-limited");
+        let assets = dir.join("assets");
+        fs::create_dir_all(&assets).unwrap();
+        fs::write(assets.join("large.pdf"), b"12345").unwrap();
+        let g = Graph::open(&dir);
+        assert_eq!(g.read_asset_limited("large.pdf", 5).unwrap(), b"12345");
+        let err = g.read_asset_limited("large.pdf", 4).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("asset exceeds 4 byte limit"));
         let _ = fs::remove_dir_all(&dir);
     }
 
