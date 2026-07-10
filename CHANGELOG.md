@@ -8,6 +8,38 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-07-10
+
+Data-safety hardening, an application-ID correction, and PDF fixes. No feature changes.
+
+### Changed
+
+- **Application identifier corrected to `page.tine.Tine`** (was `page.tine.app`).
+  Flathub forbids IDs ending in `.app`, so the desktop/Flatpak identifier was
+  renamed. Your data directory (settings, session, backups) migrates automatically
+  on first launch and remains reversible via backups. The Android application ID is
+  unchanged.
+- **"Empty trash" for orphaned media now deletes only asset files.** Deleted pages,
+  duplicate journals, and sync-conflict copies are kept in typed trash subfolders and
+  are never swept by the asset cleanup; the Settings action is relabeled and shows the
+  protected recovery counts.
+
+### Fixed
+
+- **Pasted/captured media durability.** The app now waits for asset bytes to be
+  written before it can close, and rolls back the inserted link if the write fails —
+  a note can no longer end up referencing an asset that never reached disk.
+- **Journals are snapshotted before launch-time filename migration.** The safety
+  backup now captures the original filenames first; if the snapshot cannot be taken,
+  the rename is skipped rather than mutating journals without a recoverable copy.
+- **HTML export no longer overwrites pages on slug collisions.** Titles that differ
+  only in punctuation (`Foo!` vs `Foo?`) or use non-ASCII scripts now get unique,
+  non-empty filenames, and all internal links point at the file actually written.
+- **PDF links.** Image-syntax PDF references (`![](…file.pdf)`) render as a PDF link
+  instead of a broken image; backslash paths are normalized; an unloadable PDF shows
+  an error instead of a blank viewer with runaway memory. (GH #61 — the highlight
+  block-reference click-to-open behavior is still being finished.)
+
 ## [0.5.0] - 2026-07-09
 
 ### Added
