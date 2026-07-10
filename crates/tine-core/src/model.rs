@@ -326,7 +326,7 @@ pub struct Graph {
     /// re-parsing the entire tree on every keystroke. `None` = not yet built.
     // `Arc<Document>` so a cache snapshot or a save's scoped-invalidation copy is
     // an O(1) refcount bump, not a deep clone of the whole page (see cache_upsert).
-    cache: RwLock<Option<Vec<(PageEntry, Arc<Document>)>>>,
+    cache: RwLock<Option<Arc<Vec<(PageEntry, Arc<Document>)>>>>,
     /// Companion index for `cache`: `(kind, page_key(name)) -> Vec slot`. The Vec
     /// stays the source of truth for whole-graph iteration; this makes warm
     /// by-name cache probes O(1). `None` means "rebuild from the Vec on next
@@ -1950,18 +1950,27 @@ impl Graph {
         // Publish cache + revs atomically under the cache lock (cache → disk_revs
         // order), so no reader observes a fresh rev paired with a stale cache.
         let mut guard = self.cache.write().unwrap();
-        *guard = Some(pages);
+        *guard = Some(Arc::new(pages));
         *self.cache_index.write().unwrap() = Some(index);
         *self.disk_revs.write().unwrap() = revs;
         drop(guard);
     }
 
-    /// Run `f` over every parsed page, building the cache on first use. The
-    /// borrow is held for the duration of `f`, so callers get references without
-    /// cloning the documents.
+    /// Run `f` over every parsed page, building the cache on first use.
+    ///
+    /// `f` scans a consistent snapshot: a concurrent save/delete may or may not be
+    /// visible depending on whether it published before this method cloned the
+    /// snapshot Arc, but the scan never sees torn or partially-mutated cache
+    /// contents. The cache read lock is held only while cloning the Arc; mutations
+    /// use copy-on-write under `cache.write()` when a scan still holds an older
+    /// snapshot.
     pub fn with_pages<T>(&self, f: impl FnOnce(&[(PageEntry, Arc<Document>)]) -> T) -> T {
-        if let Some(pages) = self.cache.read().unwrap().as_ref() {
-            return f(pages);
+        let snapshot = {
+            let guard = self.cache.read().unwrap();
+            guard.as_ref().map(Arc::clone)
+        };
+        if let Some(snapshot) = snapshot {
+            return f(snapshot.as_slice());
         }
         // Single-flight build: serialize builders on `build_lock` (NOT the cache
         // lock) so the whole-graph parse happens once, not once per racing caller,
@@ -1983,7 +1992,11 @@ impl Graph {
             }
         }
         drop(_bl);
-        f(self.cache.read().unwrap().as_ref().unwrap())
+        let snapshot = {
+            let guard = self.cache.read().unwrap();
+            guard.as_ref().map(Arc::clone).unwrap()
+        };
+        f(snapshot.as_slice())
     }
 
     /// Eagerly build the page cache plus graph-open derived maps (call once after
@@ -2095,6 +2108,7 @@ impl Graph {
         let mut guard = self.cache.write().unwrap();
         let cache_built = guard.is_some();
         if let Some(pages) = guard.as_mut() {
+            let pages = Arc::make_mut(pages);
             match self.cached_page_index(pages, entry.kind, &entry.name) {
                 Some(i) => {
                     let slot = &mut pages[i];
@@ -2213,6 +2227,7 @@ impl Graph {
         let mut guard = self.cache.write().unwrap();
         let mut alias_touched = false;
         if let Some(pages) = guard.as_mut() {
+            let pages = Arc::make_mut(pages);
             if let Some(i) = self.cached_page_index(pages, kind, name) {
                 alias_touched = doc_has_alias(&pages[i].1);
             }
@@ -4885,6 +4900,127 @@ mod tests {
             g.find_entry("New", PageKind::Page).is_some(),
             "find_entry index must reflect a file added via the cold sync_file branch"
         );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn with_pages_snapshot_does_not_block_cache_upsert() {
+        let dir = scratch("with-pages-snapshot-nonblocking");
+        fs::write(dir.join("pages").join("A.md"), "- old\n").unwrap();
+        let g = Arc::new(Graph::open(&dir));
+        g.warm_cache();
+
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let scan_graph = Arc::clone(&g);
+        let scan = std::thread::spawn(move || {
+            scan_graph.with_pages(|pages| {
+                assert!(!pages.is_empty());
+                entered_tx.send(()).unwrap();
+                release_rx
+                    .recv_timeout(std::time::Duration::from_secs(2))
+                    .expect("test should release the blocked snapshot scan");
+            });
+        });
+
+        entered_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("snapshot scan should enter its closure");
+
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let write_graph = Arc::clone(&g);
+        let path = dir.join("pages").join("B.md");
+        fs::write(&path, "- new\n").unwrap();
+        let writer = std::thread::spawn(move || {
+            let content = "- new\n";
+            let entry = PageEntry {
+                name: "B".to_string(),
+                kind: PageKind::Page,
+                date_key: None,
+                rel_path: "pages/B.md".to_string(),
+                path: path.clone(),
+            };
+            write_graph.cache_upsert(entry, parse_doc(&path, content), content_rev(content));
+            done_tx.send(()).unwrap();
+        });
+
+        let writer_finished_while_scan_blocked = done_rx
+            .recv_timeout(std::time::Duration::from_millis(300))
+            .is_ok();
+        release_tx.send(()).unwrap();
+        scan.join().unwrap();
+        writer.join().unwrap();
+
+        assert!(
+            writer_finished_while_scan_blocked,
+            "cache_upsert must not wait for a with_pages closure to finish"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn with_pages_snapshot_survives_concurrent_upsert() {
+        let dir = scratch("with-pages-snapshot-consistent");
+        let path = dir.join("pages").join("A.md");
+        fs::write(&path, "- old body\n").unwrap();
+        let g = Arc::new(Graph::open(&dir));
+        g.warm_cache();
+
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let (observed_tx, observed_rx) = std::sync::mpsc::channel();
+        let scan_graph = Arc::clone(&g);
+        let scan = std::thread::spawn(move || {
+            scan_graph.with_pages(|pages| {
+                let (_, doc) = pages
+                    .iter()
+                    .find(|(entry, _)| entry.kind == PageKind::Page && entry.name == "A")
+                    .expect("cached page exists");
+                let before = doc.roots[0].raw.clone();
+                entered_tx.send(()).unwrap();
+                release_rx
+                    .recv_timeout(std::time::Duration::from_secs(2))
+                    .expect("test should release the blocked snapshot scan");
+                let after = doc.roots[0].raw.clone();
+                observed_tx.send((before, after)).unwrap();
+            });
+        });
+
+        entered_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("snapshot scan should enter its closure");
+
+        let new_content = "- new body\n";
+        fs::write(&path, new_content).unwrap();
+        let entry = PageEntry {
+            name: "A".to_string(),
+            kind: PageKind::Page,
+            date_key: None,
+            rel_path: "pages/A.md".to_string(),
+            path: path.clone(),
+        };
+        g.cache_upsert(
+            entry,
+            parse_doc(&path, new_content),
+            content_rev(new_content),
+        );
+
+        release_tx.send(()).unwrap();
+        let (before, after) = observed_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("snapshot scan should report observed values");
+        scan.join().unwrap();
+
+        assert_eq!(before, "old body");
+        assert_eq!(
+            after, "old body",
+            "a with_pages scan must keep iterating its original snapshot"
+        );
+        let loaded = g
+            .load_named("A", PageKind::Page)
+            .unwrap()
+            .expect("page remains loadable");
+        assert_eq!(loaded.blocks[0].raw, "new body");
         let _ = fs::remove_dir_all(&dir);
     }
 
