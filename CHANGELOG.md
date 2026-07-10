@@ -8,8 +8,29 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Added
+
+- **Files copied in the OS file manager can be pasted directly into a block.**
+  Tine imports regular files into `assets/` and inserts Logseq-compatible links;
+  multiple files are supported, directories are skipped, native file paths avoid
+  loading large files into the webview, and byte-only clipboard payloads are capped
+  at 64 MiB per file.
+
 ### Fixed
 
+- **PDF highlight block references now open the source PDF at the highlighted
+  page.** Plain-clicking an annotation `((block-ref))` follows OG Logseq behavior,
+  including PDF filenames containing spaces; modifier-click navigation remains
+  available. (GH #61)
+- **PDF viewing is bounded against malformed or extreme files.** Tine rejects PDFs
+  over 256 MiB before reading them into memory, caps page/layout and canvas
+  allocations, validates page dimensions, downsamples unusually large valid pages,
+  and releases pdf.js resources on failure instead of risking a blank runaway
+  viewer. (GH #61)
+- **Area highlights now round-trip OG Logseq's `hl-stamp::` metadata.** Newly
+  created area annotations copy the EDN image timestamp exactly, while text
+  highlights correctly omit the property and existing foreign properties remain
+  untouched. (GH #61)
 - **Deleting a page now refreshes live queries.** After deleting a page, open
   `{{query}}` panels re-run immediately and drop the deleted page's rows, instead of
   lingering with a stale result until the next edit.
