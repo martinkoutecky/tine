@@ -2,8 +2,8 @@
     {
         "type": "git",
         "url": "https://github.com/martinkoutecky/lsdoc",
-        "commit": "6cdc56863890643984ba8f96683209f2a7ebdd05",
-        "dest": "flatpak-cargo/git/lsdoc-6cdc568"
+        "commit": "f55ce6ad4db9635b51eacf1aa803c8821626425f",
+        "dest": "flatpak-cargo/git/lsdoc-f55ce6a"
     },
     {
         "type": "archive",
@@ -679,6 +679,19 @@
         "type": "inline",
         "contents": "{\"package\": \"1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327\", \"files\": {}}",
         "dest": "cargo/vendor/chrono-0.4.45",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/clipboard-rs/clipboard-rs-0.3.5.crate",
+        "sha256": "d1c988a897ea030e32f0668c90b0192800e0c561b3d941fc366f9ad5a1bf26ba",
+        "dest": "cargo/vendor/clipboard-rs-0.3.5"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"d1c988a897ea030e32f0668c90b0192800e0c561b3d941fc366f9ad5a1bf26ba\", \"files\": {}}",
+        "dest": "cargo/vendor/clipboard-rs-0.3.5",
         "dest-filename": ".cargo-checksum.json"
     },
     {
@@ -2868,12 +2881,12 @@
     {
         "type": "shell",
         "commands": [
-            "cp -r --reflink=auto \"flatpak-cargo/git/lsdoc-6cdc568/.\" \"cargo/vendor/lsdoc\""
+            "cp -r --reflink=auto \"flatpak-cargo/git/lsdoc-f55ce6a/.\" \"cargo/vendor/lsdoc\""
         ]
     },
     {
         "type": "inline",
-        "contents": "[package]\nname = \"lsdoc\"\nversion = \"0.5.0\"\nedition = \"2021\"\nlicense = \"AGPL-3.0-only\"\ndescription = \"A from-scratch native-Rust parser for Logseq-flavored Markdown and Org, behavior-equivalent to Logseq's mldoc.\"\nrepository = \"https://github.com/martinkoutecky/lsdoc\"\n\n[dependencies]\nmemchr = \"2\"\nserde_json = \"1\"\n\n[dependencies.phf]\nversion = \"0.11\"\nfeatures = [\"macros\"]\n\n[dependencies.serde]\nversion = \"1\"\nfeatures = [\"derive\"]\n",
+        "contents": "[package]\nname = \"lsdoc\"\nversion = \"0.5.1\"\nedition = \"2021\"\nlicense = \"AGPL-3.0-only\"\ndescription = \"A from-scratch native-Rust parser for Logseq-flavored Markdown and Org, behavior-equivalent to Logseq's mldoc.\"\nrepository = \"https://github.com/martinkoutecky/lsdoc\"\n\n[dependencies]\nmemchr = \"2\"\nserde_json = \"1\"\n\n[dependencies.phf]\nversion = \"0.11\"\nfeatures = [\"macros\"]\n\n[dependencies.serde]\nversion = \"1\"\nfeatures = [\"derive\"]\n",
         "dest": "cargo/vendor/lsdoc",
         "dest-filename": "Cargo.toml"
     },
@@ -3271,6 +3284,19 @@
         "type": "inline",
         "contents": "{\"package\": \"0cde0dfb48d25d2b4862161a4d5fcc0e3c24367869ad306b0c9ec0073bfed92d\", \"files\": {}}",
         "dest": "cargo/vendor/objc2-core-text-0.3.2",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/objc2-core-video/objc2-core-video-0.3.2.crate",
+        "sha256": "d425caf1df73233f29fd8a5c3e5edbc30d2d4307870f802d18f00d83dc5141a6",
+        "dest": "cargo/vendor/objc2-core-video-0.3.2"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"d425caf1df73233f29fd8a5c3e5edbc30d2d4307870f802d18f00d83dc5141a6\", \"files\": {}}",
+        "dest": "cargo/vendor/objc2-core-video-0.3.2",
         "dest-filename": ".cargo-checksum.json"
     },
     {
@@ -6422,6 +6448,19 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/windows/windows-0.59.0.crate",
+        "sha256": "7f919aee0a93304be7f62e8e5027811bbba96bcb1de84d6618be56e43f8a32a1",
+        "dest": "cargo/vendor/windows-0.59.0"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"7f919aee0a93304be7f62e8e5027811bbba96bcb1de84d6618be56e43f8a32a1\", \"files\": {}}",
+        "dest": "cargo/vendor/windows-0.59.0",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
         "url": "https://static.crates.io/crates/windows/windows-0.61.3.crate",
         "sha256": "9babd3a767a4c1aef6900409f85f5d53ce2544ccdfaa86dad48c91782c6d6893",
         "dest": "cargo/vendor/windows-0.61.3"
@@ -6443,6 +6482,19 @@
         "type": "inline",
         "contents": "{\"package\": \"3beeceb5e5cfd9eb1d76b381630e82c4241ccd0d27f1a39ed41b2760b255c5e8\", \"files\": {}}",
         "dest": "cargo/vendor/windows-collections-0.2.0",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/windows-core/windows-core-0.59.0.crate",
+        "sha256": "810ce18ed2112484b0d4e15d022e5f598113e220c53e373fb31e67e21670c1ce",
+        "dest": "cargo/vendor/windows-core-0.59.0"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"810ce18ed2112484b0d4e15d022e5f598113e220c53e373fb31e67e21670c1ce\", \"files\": {}}",
+        "dest": "cargo/vendor/windows-core-0.59.0",
         "dest-filename": ".cargo-checksum.json"
     },
     {
@@ -6482,6 +6534,19 @@
         "type": "inline",
         "contents": "{\"package\": \"fc6a41e98427b19fe4b73c550f060b59fa592d7d686537eebf9385621bfbad8e\", \"files\": {}}",
         "dest": "cargo/vendor/windows-future-0.2.1",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/windows-implement/windows-implement-0.59.0.crate",
+        "sha256": "83577b051e2f49a058c308f17f273b570a6a758386fc291b5f6a934dd84e48c1",
+        "dest": "cargo/vendor/windows-implement-0.59.0"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"83577b051e2f49a058c308f17f273b570a6a758386fc291b5f6a934dd84e48c1\", \"files\": {}}",
+        "dest": "cargo/vendor/windows-implement-0.59.0",
         "dest-filename": ".cargo-checksum.json"
     },
     {
@@ -6573,6 +6638,19 @@
         "type": "inline",
         "contents": "{\"package\": \"7781fa89eaf60850ac3d2da7af8e5242a5ea78d1a11c49bf2910bb5a73853eb5\", \"files\": {}}",
         "dest": "cargo/vendor/windows-result-0.4.1",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/windows-strings/windows-strings-0.3.1.crate",
+        "sha256": "87fa48cc5d406560701792be122a10132491cff9d0aeb23583cc2dcafc847319",
+        "dest": "cargo/vendor/windows-strings-0.3.1"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"87fa48cc5d406560701792be122a10132491cff9d0aeb23583cc2dcafc847319\", \"files\": {}}",
+        "dest": "cargo/vendor/windows-strings-0.3.1",
         "dest-filename": ".cargo-checksum.json"
     },
     {
@@ -6755,6 +6833,19 @@
         "type": "inline",
         "contents": "{\"package\": \"e4060a1da109b9d0326b7262c8e12c84df67cc0dbc9e33cf49e01ccc2eb63631\", \"files\": {}}",
         "dest": "cargo/vendor/windows-version-0.1.7",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/windows-win/windows-win-3.0.0.crate",
+        "sha256": "58e23e33622b3b52f948049acbec9bcc34bf6e26d74176b88941f213c75cf2dc",
+        "dest": "cargo/vendor/windows-win-3.0.0"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"58e23e33622b3b52f948049acbec9bcc34bf6e26d74176b88941f213c75cf2dc\", \"files\": {}}",
+        "dest": "cargo/vendor/windows-win-3.0.0",
         "dest-filename": ".cargo-checksum.json"
     },
     {
@@ -7669,7 +7760,7 @@
     },
     {
         "type": "inline",
-        "contents": "[source.vendored-sources]\ndirectory = \"cargo/vendor\"\n\n[source.crates-io]\nreplace-with = \"vendored-sources\"\n\n[source.\"https://github.com/martinkoutecky/lsdoc\"]\ngit = \"https://github.com/martinkoutecky/lsdoc\"\nreplace-with = \"vendored-sources\"\ntag = \"v0.5.0\"\n",
+        "contents": "[source.vendored-sources]\ndirectory = \"cargo/vendor\"\n\n[source.crates-io]\nreplace-with = \"vendored-sources\"\n\n[source.\"https://github.com/martinkoutecky/lsdoc\"]\ngit = \"https://github.com/martinkoutecky/lsdoc\"\nreplace-with = \"vendored-sources\"\ntag = \"v0.5.1\"\n",
         "dest": "cargo",
         "dest-filename": "config"
     }
