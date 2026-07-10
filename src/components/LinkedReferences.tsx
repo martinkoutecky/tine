@@ -3,7 +3,7 @@ import { backend } from "../backend";
 import { openPage, openPageInNewTab } from "../router";
 import { openPageInSidebar, openPageContextMenu } from "../ui";
 import { LiveRefGroup } from "./LiveRefGroup";
-import type { RefGroup } from "../types";
+import type { BlockDto, RefGroup } from "../types";
 
 const norm = (s: string) => s.trim().toLowerCase();
 
@@ -35,6 +35,26 @@ function refsInRaw(raw: string): string[] {
   return out;
 }
 
+/** Filter facets contributed by a backlink root and its visible descendants.
+ *  OG's reference filter treats task states like TODO as facets too. Keep one
+ *  value per root (so counts are backlink counts, not repeated-token counts). */
+function filterFacets(block: BlockDto, target: string): Map<string, string> {
+  const facets = new Map<string, string>();
+  const visit = (current: BlockDto) => {
+    for (const ref of refsInRaw(current.raw)) {
+      const key = norm(ref);
+      if (key !== norm(target) && !facets.has(key)) facets.set(key, ref);
+    }
+    if (current.marker) {
+      const key = norm(current.marker);
+      if (!facets.has(key)) facets.set(key, current.marker);
+    }
+    for (const child of current.children) visit(child);
+  };
+  visit(block);
+  return facets;
+}
+
 // The "Linked References" section (backlinks). Live, editable, collapsible, and
 // filterable by co-referenced page (click a chip: include → exclude → off),
 // mirroring OG's reference filter.
@@ -49,18 +69,20 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
   // Reload the saved filter when the page changes.
   createEffect(() => setFilters(loadFilters(props.name)));
 
-  // Co-referenced pages (other pages mentioned alongside the target), with counts.
+  // Co-referenced pages/tags and task states in each backlink tree, with counts.
   const coRefs = createMemo(() => {
-    const counts: Record<string, number> = {};
+    const counts = new Map<string, { name: string; count: number }>();
     for (const g of groups() ?? []) {
       for (const b of g.blocks) {
-        for (const r of refsInRaw(b.raw)) {
-          if (norm(r) === norm(props.name)) continue;
-          counts[r] = (counts[r] ?? 0) + 1;
+        for (const [key, name] of filterFacets(b, props.name)) {
+          const previous = counts.get(key);
+          counts.set(key, { name: previous?.name ?? name, count: (previous?.count ?? 0) + 1 });
         }
       }
     }
-    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    return [...counts.values()]
+      .map(({ name, count }) => [name, count] as const)
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   });
 
   const shown = createMemo<RefGroup[]>(() => {
@@ -72,8 +94,8 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
       .map((g) => ({
         ...g,
         blocks: g.blocks.filter((b) => {
-          const rs = refsInRaw(b.raw).map(norm);
-          return ins.every((i) => rs.includes(i)) && outs.every((o) => !rs.includes(o));
+          const facets = filterFacets(b, props.name);
+          return ins.every((i) => facets.has(i)) && outs.every((o) => !facets.has(o));
         }),
       }))
       .filter((g) => g.blocks.length > 0);

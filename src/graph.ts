@@ -94,11 +94,14 @@ export async function loadGraphPath(
       // ignore
     }
   }
+  // A default journal template writes today's journal to disk. Do that before
+  // invalidating graph-backed resources so the first Journals refetch observes
+  // the populated file instead of caching the synthetic blank page (#73).
+  await ensureJournalTemplate();
   bumpGraphEpoch();
   void injectCustomCss();
   void loadAliases();
   if (!switching) void pruneSidebarBlocks();
-  await ensureJournalTemplate();
   maybeShowGuideAnnouncement();
   // On a genuine graph SWITCH, close ALL the old graph's tabs (their histories
   // point at pages that don't exist in the new graph) and land on a single fresh
@@ -176,8 +179,18 @@ async function ensureJournalTemplate(): Promise<void> {
       children: b.children.map(resolve),
     });
     await backend().savePage(
-      { name: title, kind: "journal", title, pre_block: null, blocks: tmpl.blocks.map(resolve) },
-      null, // brand-new journal — no baseline
+      {
+        name: title,
+        kind: "journal",
+        title,
+        pre_block: existing?.pre_block ?? null,
+        blocks: tmpl.blocks.map(resolve),
+        // An empty journal may already exist on disk. Preserve its concrete file
+        // and format rather than re-resolving it as a new canonical markdown page.
+        path: existing?.path,
+        format: existing?.format,
+      },
+      existing?.rev ?? null,
       false
     );
   } catch {
