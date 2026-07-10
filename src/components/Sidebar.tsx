@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js";
 import { openJournals, openPage, openPageInNewTab, openFile, openInNewTab, route } from "../router";
-import { openSwitcher, favorites, recentPages, openPageContextMenu, graphMeta } from "../ui";
+import { openSwitcher, favorites, recentPages, openPageContextMenu, graphMeta, openPageInSidebar } from "../ui";
 import { switchGraph, createNewGraph } from "../graph";
 import { allPages as allGraphPages, pageListLabel } from "../pages";
 import { EmojiText } from "../render/emoji";
@@ -43,6 +43,12 @@ export function Sidebar(): JSX.Element {
   };
   const openEntry = (path: string, name: string) => {
     path ? openFile(path, name, "page") : openPage(name, "page");
+  };
+  // Shift+click on a sidebar page row opens it in the right sidebar (mirrors the
+  // center-pane page-link behavior; GH #63). The onMouseDown guard suppresses the
+  // browser's native shift-range text-selection (same fix as inline links, GH #42).
+  const shiftGuard = (e: MouseEvent) => {
+    if (e.shiftKey) e.preventDefault();
   };
   const openRowMenu = (e: MouseEvent, name: string, kind: PageKind) => {
     e.preventDefault();
@@ -90,7 +96,10 @@ export function Sidebar(): JSX.Element {
                 <div
                   class="nav-page"
                   classList={{ active: isActive(fav.name) }}
-                  onClick={() => openPage(fav.name, fav.kind)}
+                  onMouseDown={shiftGuard}
+                  onClick={(e) =>
+                    e.shiftKey ? openPageInSidebar(fav.name, fav.kind) : openPage(fav.name, fav.kind)
+                  }
                   onAuxClick={(e) => {
                     if (e.button === 1) {
                       e.preventDefault();
@@ -117,7 +126,10 @@ export function Sidebar(): JSX.Element {
                 <div
                   class="nav-page"
                   classList={{ active: isActive(r.name) }}
-                  onClick={() => openPage(r.name, r.kind)}
+                  onMouseDown={shiftGuard}
+                  onClick={(e) =>
+                    e.shiftKey ? openPageInSidebar(r.name, r.kind) : openPage(r.name, r.kind)
+                  }
                   onAuxClick={(e) => {
                     if (e.button === 1) {
                       e.preventDefault();
@@ -150,7 +162,10 @@ export function Sidebar(): JSX.Element {
                 <div
                   class="nav-page"
                   classList={{ active: isActive(p.name, p.path) }}
-                  onClick={() => openEntry(p.path, p.name)}
+                  onMouseDown={shiftGuard}
+                  onClick={(e) =>
+                    e.shiftKey ? openPageInSidebar(p.name, "page") : openEntry(p.path, p.name)
+                  }
                   onAuxClick={(e) => {
                     if (e.button === 1) {
                       e.preventDefault();

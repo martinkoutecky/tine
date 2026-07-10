@@ -1,6 +1,7 @@
 import { For, Show, createMemo, createResource, createSignal, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { openPage } from "../router";
+import { openPageInSidebar } from "../ui";
 import { allPageNames } from "../pages";
 import { EmojiText } from "../render/emoji";
 import type { PageKind } from "../types";
@@ -84,7 +85,14 @@ function NsNodeView(props: {
         </Show>
         <span
           class="ns-node-label"
-          onClick={() => openPage(props.node.full, "page")}
+          // Shift+click opens in the right sidebar (GH #63); onMouseDown guard
+          // suppresses native shift-range text-selection.
+          onMouseDown={(e) => { if (e.shiftKey) e.preventDefault(); }}
+          onClick={(e) =>
+            e.shiftKey
+              ? openPageInSidebar(props.node.full, "page")
+              : openPage(props.node.full, "page")
+          }
           onContextMenu={(e) => props.onPageContextMenu?.(e, props.node.full, "page")}
         >
           {props.node.seg}
