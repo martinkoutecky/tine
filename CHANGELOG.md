@@ -8,6 +8,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-07-10
+
+Multi-window graph management, direct file-manager asset paste, PDF and query
+fixes, Android/Flatpak release repair, and comprehensive graph data-safety
+hardening.
+
 ### Added
 
 - **Multiple graphs can stay open in independent desktop windows.** The graph

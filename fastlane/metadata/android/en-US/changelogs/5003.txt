@@ -1,0 +1,6 @@
+Added: keep multiple graphs open in independent windows; paste files directly
+from the OS file manager. Fixed: graph operations are root-contained and pinned
+to the correct window; backups are complete, root-bound, and hash-verified;
+duplicate journals cannot save to the wrong file; media links follow durable
+writes; config updates and rename rollback preserve data. Also fixes PDF
+annotations/resource bounds, live-query refresh, and Android release packaging.
