@@ -4,6 +4,7 @@
 // backups, help-improve) and it needs no separate window plumbing.
 import { createSignal, onMount, Show, type JSX } from "solid-js";
 import { backend, isTauri } from "../backend";
+import { platformKind } from "../platform";
 import { checkForUpdateNow, openReleasesPage } from "../update";
 
 const WEBSITE = "https://tine.page";
@@ -30,9 +31,18 @@ export function AboutTab(): JSX.Element {
   const [version, setVersion] = createSignal("");
   const [status, setStatus] = createSignal("");
   const [checking, setChecking] = createSignal(false);
+  const [updatePlatform, setUpdatePlatform] = createSignal<"loading" | "desktop" | "mobile" | "unavailable">(
+    isTauri() ? "loading" : "unavailable"
+  );
 
   onMount(async () => {
     if (!isTauri()) return;
+    try {
+      setUpdatePlatform((await platformKind()) === "desktop" ? "desktop" : "mobile");
+    } catch {
+      // Fail closed: an unknown native platform must not expose the desktop updater.
+      setUpdatePlatform("unavailable");
+    }
     try {
       const { getVersion } = await import("@tauri-apps/api/app");
       setVersion(await getVersion());
@@ -73,12 +83,17 @@ export function AboutTab(): JSX.Element {
         <Show when={__GIT_COMMIT__}>
           <span class="about-commit mono">· {__GIT_COMMIT__}</span>
         </Show>
-        <Show when={isTauri()}>
+        <Show when={updatePlatform() === "desktop"}>
           <button class="btn-secondary about-check" onClick={check} disabled={checking()}>
             {checking() ? "Checking…" : "Check for updates"}
           </button>
         </Show>
       </div>
+      <Show when={updatePlatform() === "mobile"}>
+        <div class="settings-hint about-status">
+          Updates arrive through your app's distribution channel.
+        </div>
+      </Show>
       <Show when={status()}>
         <div class="settings-hint about-status">
           {status()}{" "}

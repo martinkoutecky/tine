@@ -8,6 +8,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- **Android and iOS no longer expose the desktop self-updater.** Mobile builds
+  skip the startup update toast, hide the About tab's manual update action, and
+  direct users to their app distribution channel instead. (GH #48)
+
 ## [0.5.3] - 2026-07-10
 
 Multi-window graph management, direct file-manager asset paste, PDF and query

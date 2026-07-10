@@ -8,14 +8,17 @@
 // Tauri v2 updater — `check()` → `downloadAndInstall()` → `relaunch()` — so the
 // update applies in place. On **macOS** (bundle is unsigned → Gatekeeper would
 // reject a self-replaced app) and outside Tauri, fall back to opening the releases
-// page in the browser. The updater is inert until a signed release with a
-// `latest.json` exists; any failure (no manifest yet, bad signature, offline) is
-// caught and also falls back to the releases page — it can never brick the app.
+// page in the browser. Android/iOS update through their distribution channel, so
+// both the notifier and installer are disabled there. The updater is inert until
+// a signed release with a `latest.json` exists; any failure (no manifest yet, bad
+// signature, offline) is caught and also falls back to the releases page — it can
+// never brick the app.
 //
 // Deliberately quiet: Tauri-only check, silent on ANY failure (offline, rate-
 // limited, blocked) — it must never block startup or nag with an error.
 
 import { isTauri, backend } from "./backend";
+import { platformKind } from "./platform";
 import { pushToast, dismissToast } from "./ui";
 
 const REPO = "martinkoutecky/tine";
@@ -36,11 +39,21 @@ function isNewer(a: [number, number, number], b: [number, number, number]): bool
   return false;
 }
 
-/** True only where an in-place self-update is safe: the packaged Tauri app on a
- *  non-macOS OS. (macOS bundles are unsigned; replacing one re-triggers Gatekeeper
- *  quarantine, so those get the manual download path instead.) */
-function canSelfUpdate(): boolean {
-  return isTauri() && !/\bMac/i.test(typeof navigator !== "undefined" ? navigator.userAgent : "");
+type UpdateMode = "self" | "manual" | "unavailable";
+
+/** Resolve update behavior conservatively. Mobile builds update through their
+ * distribution channel; a platform-detection failure must therefore fail closed
+ * instead of accidentally exposing the desktop updater. */
+async function updateMode(): Promise<UpdateMode> {
+  if (!isTauri()) return "unavailable";
+  try {
+    if ((await platformKind()) !== "desktop") return "unavailable";
+  } catch {
+    return "unavailable";
+  }
+  return /\bMac/i.test(typeof navigator !== "undefined" ? navigator.userAgent : "")
+    ? "manual"
+    : "self";
 }
 
 /** Open the GitHub releases page in the system browser (the manual fallback). */
@@ -52,7 +65,9 @@ function openReleases(): void {
  *  in place and relaunch; everything else (macOS, browser, or any failure) → open
  *  the releases page. Never throws. */
 async function applyUpdateOrOpen(): Promise<void> {
-  if (!canSelfUpdate()) {
+  const mode = await updateMode();
+  if (mode === "unavailable") return;
+  if (mode === "manual") {
     openReleases();
     return;
   }
@@ -78,7 +93,7 @@ async function applyUpdateOrOpen(): Promise<void> {
 /** Check GitHub for a newer published release; toast if there is one. Resolves
  *  silently (never throws) in every failure case. */
 export async function checkForUpdate(): Promise<void> {
-  if (!isTauri()) return;
+  if ((await updateMode()) === "unavailable") return;
   try {
     const { getVersion } = await import("@tauri-apps/api/app");
     const cur = parseVer(await getVersion());
@@ -120,7 +135,7 @@ export type UpdateStatus =
  *  button can show feedback. If a newer release exists, kicks off the same
  *  download-or-open flow as the startup toast. Never throws. */
 export async function checkForUpdateNow(): Promise<UpdateStatus> {
-  if (!isTauri()) return { kind: "unavailable" };
+  if ((await updateMode()) === "unavailable") return { kind: "unavailable" };
   try {
     const { getVersion } = await import("@tauri-apps/api/app");
     const curStr = await getVersion();
