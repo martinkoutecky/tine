@@ -23,8 +23,10 @@ samples/*/publish
 screenshots/
 scripts/app-icon-1024.png
 
-# Local agent working agreement (per-machine, not shared)
+# Local agent working agreement (per-machine, not shared). AGENTS.md is the
+# shared source of truth (read by Codex + Claude); CLAUDE.md just @imports it.
 /CLAUDE.md
+/AGENTS.md
 
 # Local agent scratch — subagent task specs + notes, and the internal
 # deferred-work list. Working artifacts between Martin and Claude, not shared.
