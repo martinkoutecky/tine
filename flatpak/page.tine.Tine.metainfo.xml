@@ -86,6 +86,9 @@
   </keywords>
 
   <releases>
+    <release version="0.5.1" date="2026-07-10">
+      <url type="details">https://github.com/martinkoutecky/tine/blob/master/CHANGELOG.md</url>
+    </release>
     <release version="0.5.0" date="2026-07-09">
       <url type="details">https://github.com/martinkoutecky/tine/blob/master/CHANGELOG.md</url>
     </release>

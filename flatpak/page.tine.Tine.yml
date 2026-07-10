@@ -98,8 +98,8 @@ modules:
       # page.tine.Tine identifier.
       - type: git
         url: https://github.com/martinkoutecky/tine.git
-        tag: v0.5.0
-        commit: ef5c0ab7ea5e5a8eac3c28f6f5275b2d1b667dc9
+        tag: v0.5.1
+        commit: ae013f8c5cceb598de66022cd7f3c7f494d20421
       # Vendored dependency sources (generated — do not hand-edit).
       - cargo-sources.json
       - node-sources.json
