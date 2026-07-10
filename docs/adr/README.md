@@ -64,3 +64,4 @@ see the project `CLAUDE.md`.
 | [0035](0035-sheets-formula-builder-text-truth.md) | Sheets formula builder: expression text stays authoritative, AST edits deparse through a round-trip gate, unsupported shapes stay raw | Accepted |
 | [0036](0036-in-app-guide.md) | In-app Guide pages are read-only bundled templates with explicit copy-into-graph writes | Accepted |
 | [0037](0037-sheet-paste-mode-nest-vs-splat.md) | Sheet paste: edit mode nests a subgrid, select mode splats the region into the grid (amends 0031) | Accepted |
+| [0038](0038-multi-window-multi-graph.md) | Multi-window, multi-graph (#70/#56/#55): one process, per-window graph map; #55 ships first single-graph; desktop-only | Proposed |
