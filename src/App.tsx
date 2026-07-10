@@ -63,6 +63,8 @@ import {
   isConflicted,
   pushToast,
   refreshSyncConflicts,
+  graphTransitioning,
+  setGraphTransitioning,
 } from "./ui";
 import { applyZoom, installInterfaceZoomKeys, installInterfaceZoomWheel } from "./zoom";
 import {
@@ -107,6 +109,7 @@ import {
 } from "./panes";
 import { paneSel, samePaneTarget } from "./paneSelect";
 import { SurfaceContext } from "./components/Block";
+import { endEdit } from "./editorController";
 
 async function handleGraphChange(c: GraphChange) {
   const routes = layoutPaneIds().map((paneId) => ({ paneId, router: paneRouter(paneId), route: paneRouter(paneId).route() }));
@@ -508,13 +511,21 @@ export function App(): JSX.Element {
   onMount(() => {
     if (!isTauri()) return;
     let unlisten = () => {};
-    let closing = false;
+    let closeInProgress = false;
+    let allowClose = false;
     void (async () => {
       const { getCurrentWindow } = await import("@tauri-apps/api/window");
       const w = getCurrentWindow();
       unlisten = await w.onCloseRequested(async (e) => {
-        if (closing) return; // second pass (from close() below) — let it through
+        if (allowClose) return; // second pass (from close() below) — let it through
         e.preventDefault();
+        if (closeInProgress) return;
+        closeInProgress = true;
+        setGraphTransitioning(true);
+        const active = document.activeElement;
+        if (active instanceof HTMLElement) active.blur();
+        endEdit("graph-switch");
+        await Promise.resolve();
         // Try to persist everything. Cap the wait so a genuinely stuck save IPC
         // can't wedge the window open forever — but a timeout counts as "not
         // saved", not "safe to discard".
@@ -534,11 +545,23 @@ export function App(): JSX.Element {
           // Native GTK confirm — window.confirm silently returns true in this
           // WebKitGTK build, which would quit and discard the unsaved edits with
           // no prompt at all. The whole point here is to NOT lose them silently.
-          const quit = await backend().confirm(
-            "Tine has unsaved changes that couldn't be saved (a conflict or a stuck save).\n\nClose this window anyway and lose them?",
-            "Unsaved changes"
-          );
-          if (!quit) return; // stay open
+          let quit = false;
+          try {
+            quit = await backend().confirm(
+              "Tine has unsaved changes that couldn't be saved (a conflict or a stuck save).\n\nClose this window anyway and lose them?",
+              "Unsaved changes"
+            );
+          } catch {
+            pushToast("Couldn't confirm closing the window. Your unsaved changes are still open.", "error");
+            closeInProgress = false;
+            setGraphTransitioning(false);
+            return;
+          }
+          if (!quit) {
+            closeInProgress = false;
+            setGraphTransitioning(false);
+            return; // stay open
+          }
         }
         // Persist the final tab session too — the 150ms debounce may not have
         // fired if the last tab action came right before quitting. Capped so a
@@ -548,7 +571,7 @@ export function App(): JSX.Element {
         } catch {
           // best-effort
         }
-        closing = true;
+        allowClose = true;
         // Close only this graph window. The backend exits the process (including
         // Linux WebKit cleanup) only when this is the final graph window.
         try {
@@ -782,6 +805,11 @@ export function App(): JSX.Element {
         <div class="parser-error-banner" role="alert">
           The block renderer failed to load — text is shown unformatted. Please reload Tine;
           if this persists, report it.
+        </div>
+      </Show>
+      <Show when={graphTransitioning()}>
+        <div class="graph-transition-shield" role="status" aria-live="polite">
+          Finishing graph operation…
         </div>
       </Show>
       <Show when={sidebarOpen()}>

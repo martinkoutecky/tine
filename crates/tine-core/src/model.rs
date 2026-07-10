@@ -493,6 +493,80 @@ impl FindEntryIndex {
     }
 }
 
+/// Validate one config-controlled graph directory. Logseq permits nested relative
+/// directories, but an absolute path, traversal component, or symlinked existing
+/// ancestor outside the graph would turn ordinary save/delete/restore operations
+/// into writes against unrelated files.
+fn validate_managed_dir(root: &Path, raw: &str, label: &str) -> io::Result<()> {
+    if raw.is_empty() || raw.contains('\\') {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("invalid {label} directory: {raw:?}"),
+        ));
+    }
+    let rel = Path::new(raw);
+    if rel.is_absolute()
+        || rel
+            .components()
+            .any(|c| !matches!(c, std::path::Component::Normal(_)))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{label} directory must be a safe relative path: {raw:?}"),
+        ));
+    }
+    let candidate = root.join(rel);
+    if !path_stays_within_root(root, &candidate) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{label} directory escapes graph root: {raw:?}"),
+        ));
+    }
+    Ok(())
+}
+
+/// Containment check for both existing and not-yet-created targets. Canonicalize
+/// the deepest existing ancestor so a symlink in the path cannot smuggle a later
+/// filename outside the graph. The runtime root is already canonical, while the
+/// fallback keeps disposable direct-`Graph::open` fixtures working as before.
+fn path_stays_within_root(root: &Path, target: &Path) -> bool {
+    let canonical_root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let mut existing = target;
+    while !existing.exists() {
+        let Some(parent) = existing.parent() else {
+            return false;
+        };
+        existing = parent;
+    }
+    fs::canonicalize(existing)
+        .map(|p| p.starts_with(&canonical_root))
+        .unwrap_or(false)
+}
+
+#[cfg(test)]
+thread_local! {
+    static FAIL_NEXT_RENAME_SOURCE_REMOVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+fn rename_source_remove_failpoint() -> io::Result<()> {
+    FAIL_NEXT_RENAME_SOURCE_REMOVE.with(|flag| {
+        if flag.replace(false) {
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "injected source remove failure",
+            ))
+        } else {
+            Ok(())
+        }
+    })
+}
+
+#[cfg(not(test))]
+fn rename_source_remove_failpoint() -> io::Result<()> {
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphMeta {
     pub root: String,
@@ -536,6 +610,17 @@ pub struct GraphMeta {
 }
 
 impl Graph {
+    /// Open a graph for use by the application, rejecting any configured page or
+    /// journal directory that can escape the selected graph. `Graph::open` stays
+    /// available for the many in-crate disposable fixtures, but runtime graph
+    /// binding must use this checked entry point.
+    pub fn open_checked(root: impl AsRef<Path>) -> io::Result<Graph> {
+        let graph = Self::open(root);
+        validate_managed_dir(&graph.root, &graph.config.journals_dir, "journals")?;
+        validate_managed_dir(&graph.root, &graph.config.pages_dir, "pages")?;
+        Ok(graph)
+    }
+
     /// Open a graph directory, reading `logseq/config.edn` if present.
     pub fn open(root: impl AsRef<Path>) -> Graph {
         let root = root.as_ref().to_path_buf();
@@ -676,6 +761,9 @@ impl Graph {
             return None;
         }
         let abs = base.join(tail);
+        if !path_stays_within_root(&self.root, &abs) {
+            return None;
+        }
         match abs.extension().and_then(|e| e.to_str()) {
             Some("md") | Some("org") => Some(abs),
             _ => None,
@@ -2576,7 +2664,10 @@ impl Graph {
         // Phase 3 — commit, tracking writes for rollback. For a move, write the new
         // file BEFORE removing the old one, so a crash mid-rename duplicates a page
         // rather than losing it.
-        let mut written: Vec<&Edit> = Vec::new();
+        // Track the currently-executing move as soon as its destination exists.
+        // `source_removed` distinguishes a failure while unlinking the source
+        // from a later failure, so rollback also repairs the edit that failed.
+        let mut written: Vec<(&Edit, bool)> = Vec::new();
         let result: io::Result<()> = (|| {
             for e in &edits {
                 self.note_self_write(&e.dst, content_rev(&e.new_content));
@@ -2586,10 +2677,12 @@ impl Graph {
                     }
                 }
                 atomic_write(&e.dst, e.new_content.as_bytes())?;
+                written.push((e, false));
                 if e.is_move && e.dst != e.src {
+                    rename_source_remove_failpoint()?;
                     fs::remove_file(&e.src)?;
                 }
-                written.push(e);
+                written.last_mut().unwrap().1 = true;
             }
             Ok(())
         })();
@@ -2597,12 +2690,14 @@ impl Graph {
             // Roll back in reverse, and drop the self-write markers for bytes that
             // won't survive the rollback so they can't later suppress a real
             // external change (M1).
-            for e in written.iter().rev() {
+            for (e, source_removed) in written.iter().rev() {
                 if e.is_move && e.dst != e.src {
                     let _ = fs::remove_file(&e.dst);
                     self.recent_writes.lock().unwrap().remove(&e.dst);
-                    self.note_self_write(&e.src, content_rev(&e.orig));
-                    let _ = atomic_write(&e.src, e.orig.as_bytes());
+                    if *source_removed {
+                        self.note_self_write(&e.src, content_rev(&e.orig));
+                        let _ = atomic_write(&e.src, e.orig.as_bytes());
+                    }
                 } else {
                     self.note_self_write(&e.dst, content_rev(&e.orig));
                     let _ = atomic_write(&e.dst, e.orig.as_bytes());
@@ -3372,7 +3467,14 @@ impl Graph {
         if self.has_twin(&page.name, page.kind) {
             return Err(twin_error(&page.name));
         }
-        Ok((self.path_for(&page.name, page.kind), true))
+        let path = self.path_for(&page.name, page.kind);
+        if !path_stays_within_root(&self.root, &path) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "page path escapes graph root",
+            ));
+        }
+        Ok((path, true))
     }
 
     /// Save a page, refusing to clobber an external change. If the file on disk
@@ -4421,19 +4523,47 @@ pub fn atomic_copy(src: &Path, dst: &Path) -> io::Result<()> {
 pub fn atomic_update(
     path: &Path,
     lock: &std::sync::Mutex<()>,
-    edit: impl FnOnce(&str) -> io::Result<String>,
+    edit: impl Fn(&str) -> io::Result<String>,
+) -> io::Result<()> {
+    atomic_update_with_hook(path, lock, edit, |_| {})
+}
+
+fn atomic_update_with_hook(
+    path: &Path,
+    lock: &std::sync::Mutex<()>,
+    edit: impl Fn(&str) -> io::Result<String>,
+    before_recheck: impl Fn(usize),
 ) -> io::Result<()> {
     let _guard = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    let content = match fs::read_to_string(path) {
-        Ok(s) => s,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => "{}\n".to_string(),
-        Err(e) => return Err(e),
-    };
-    let next = edit(&content)?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+    for attempt in 0..4 {
+        let baseline = match fs::read_to_string(path) {
+            Ok(s) => Some(s),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+            Err(e) => return Err(e),
+        };
+        let next = edit(baseline.as_deref().unwrap_or("{}\n"))?;
+        // CONFIG_LOCK serializes Tine writers, but Logseq/Syncthing do not take
+        // it. Re-read immediately before publish and retry the key-local edit on
+        // their new bytes instead of overwriting an external update with our stale
+        // full-file copy.
+        before_recheck(attempt);
+        let current = match fs::read_to_string(path) {
+            Ok(s) => Some(s),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+            Err(e) => return Err(e),
+        };
+        if current != baseline {
+            continue;
+        }
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        return atomic_write(path, next.as_bytes());
     }
-    atomic_write(path, next.as_bytes())
+    Err(io::Error::new(
+        io::ErrorKind::WouldBlock,
+        "config changed repeatedly during update",
+    ))
 }
 
 #[cfg(test)]
@@ -5379,6 +5509,29 @@ mod tests {
         assert!(other.contains("[[Beta]]"), "ref rewritten to [[Beta]]");
         assert!(!other.contains("[[Alpha]]"), "no stale [[Alpha]] left");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rename_rolls_back_destination_when_source_remove_fails() {
+        let dir = scratch("rename-remove-failure");
+        let original = "- alpha body\n";
+        let ref_original = "- see [[Alpha]] here\n";
+        fs::write(dir.join("pages/Alpha.md"), original).unwrap();
+        fs::write(dir.join("pages/Other.md"), ref_original).unwrap();
+        let g = Graph::open(&dir);
+        g.warm_cache();
+        FAIL_NEXT_RENAME_SOURCE_REMOVE.with(|flag| flag.set(true));
+        assert!(g.rename_page("Alpha", "Beta").is_err());
+        assert_eq!(
+            fs::read_to_string(dir.join("pages/Alpha.md")).unwrap(),
+            original
+        );
+        assert!(!dir.join("pages/Beta.md").exists());
+        assert_eq!(
+            fs::read_to_string(dir.join("pages/Other.md")).unwrap(),
+            ref_original
+        );
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -6465,6 +6618,104 @@ mod tests {
         ] {
             assert_eq!(g.resolve_rel(bad), None, "should reject {bad:?}");
         }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn checked_open_rejects_configured_directories_outside_graph() {
+        let dir = scratch("checked-open-layout");
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        for config in [
+            "{:pages-directory \"../outside\"}\n",
+            "{:journals-directory \"/tmp/tine-outside\"}\n",
+            "{:pages-directory \"pages\\\\escape\"}\n",
+        ] {
+            fs::write(dir.join("logseq/config.edn"), config).unwrap();
+            assert!(Graph::open_checked(&dir).is_err(), "accepted {config:?}");
+        }
+        fs::write(
+            dir.join("logseq/config.edn"),
+            "{:pages-directory \"archive/pages\" :journals-directory \"diary\"}\n",
+        )
+        .unwrap();
+        assert!(Graph::open_checked(&dir).is_ok());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn atomic_update_retries_on_external_change_without_losing_it() {
+        let dir = scratch("atomic-update-external");
+        let path = dir.join("config.edn");
+        fs::write(&path, "{:base 1}\n").unwrap();
+        let lock = std::sync::Mutex::new(());
+        let injected = std::sync::atomic::AtomicBool::new(false);
+        atomic_update_with_hook(
+            &path,
+            &lock,
+            |content| Ok(content.replace('}', " :mine 3}")),
+            |_| {
+                if !injected.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                    fs::write(&path, "{:base 1 :external 2}\n").unwrap();
+                }
+            },
+        )
+        .unwrap();
+        let final_content = fs::read_to_string(&path).unwrap();
+        assert!(final_content.contains(":external 2"));
+        assert!(final_content.contains(":mine 3"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn checked_open_and_resolve_reject_symlink_escape() {
+        use std::os::unix::fs::symlink;
+        let dir = scratch("checked-open-symlink");
+        let outside =
+            std::env::temp_dir().join(format!("tine-checked-open-outside-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&outside);
+        fs::create_dir_all(&outside).unwrap();
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        symlink(&outside, dir.join("pages-link")).unwrap();
+        fs::write(
+            dir.join("logseq/config.edn"),
+            "{:pages-directory \"pages-link\"}\n",
+        )
+        .unwrap();
+        assert!(Graph::open_checked(&dir).is_err());
+
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        symlink(&outside, dir.join("pages/escape")).unwrap();
+        let g = Graph::open(&dir);
+        assert!(g.resolve_rel("pages/escape/foreign.md").is_none());
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&outside);
+    }
+
+    #[test]
+    fn journal_filename_format_cannot_escape_graph_on_save() {
+        let dir = scratch("journal-format-escape");
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq/config.edn"),
+            "{:journal/file-name-format \"../../yyyy_MM_dd\"}\n",
+        )
+        .unwrap();
+        let g = Graph::open_checked(&dir).unwrap();
+        let page = PageDto {
+            name: "Jul 10th, 2026".into(),
+            kind: PageKind::Journal,
+            title: "Jul 10th, 2026".into(),
+            pre_block: None,
+            blocks: vec![],
+            format: Format::Md,
+            rev: None,
+            read_only: false,
+            path: String::new(),
+            guide: false,
+        };
+        assert!(g.save_page(&page, None).is_err());
+        assert!(!dir.parent().unwrap().join("2026_07_10.md").exists());
         let _ = fs::remove_dir_all(&dir);
     }
 

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, RwLock};
-use tauri::ipc::{CommandArg, CommandItem, InvokeError};
+use tauri::ipc::{CommandArg, CommandItem, InvokeBody, InvokeError};
 use tauri::{Runtime, State, WebviewWindow};
 use tine_core::model::Graph;
 
@@ -12,15 +12,21 @@ pub(crate) type WindowKey = String;
 pub(crate) struct GraphSlot {
     pub(crate) graph: Arc<Graph>,
     pub(crate) root_key: PathBuf,
+    /// Unique lease for this exact window→graph binding. Frontend mutations carry
+    /// it so an IPC queued before an in-place graph switch cannot execute against
+    /// the replacement graph after the window label is rebound.
+    pub(crate) binding_generation: u64,
     pub(crate) warm_done: AtomicBool,
     pub(crate) warm_generation: AtomicU64,
 }
 
 impl GraphSlot {
     pub(crate) fn new(graph: Graph, root_key: PathBuf) -> Self {
+        static NEXT_BINDING: AtomicU64 = AtomicU64::new(1);
         Self {
             graph: Arc::new(graph),
             root_key,
+            binding_generation: NEXT_BINDING.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             warm_done: AtomicBool::new(false),
             warm_generation: AtomicU64::new(0),
         }
@@ -54,11 +60,14 @@ impl GraphRegistry {
     }
 
     pub(crate) fn bind(&mut self, window: WindowKey, slot: Arc<GraphSlot>) -> Result<(), String> {
-        if let Some(owner) = self.by_root.get(&slot.root_key) {
-            if owner != &window {
+        for (root, owner) in &self.by_root {
+            if owner != &window
+                && (root.starts_with(&slot.root_key) || slot.root_key.starts_with(root))
+            {
                 return Err(format!(
-                    "graph {} is already owned by window {owner}",
-                    slot.root_key.display()
+                    "graph {} overlaps graph {} already owned by window {owner}",
+                    slot.root_key.display(),
+                    root.display()
                 ));
             }
         }
@@ -90,17 +99,29 @@ pub(crate) struct AppState {
 pub(crate) struct GraphContext<'a, R: Runtime = tauri::Wry> {
     pub(crate) state: State<'a, AppState>,
     pub(crate) window: WebviewWindow<R>,
+    binding_generation: Option<u64>,
 }
 
 impl<'r, 'de: 'r, R: Runtime> CommandArg<'de, R> for GraphContext<'r, R> {
     fn from_command(command: CommandItem<'de, R>) -> Result<Self, InvokeError> {
+        let binding_generation = match command.message.payload() {
+            InvokeBody::Json(value) => value
+                .get("bindingGeneration")
+                .or_else(|| value.get("binding_generation"))
+                .and_then(|v| v.as_u64()),
+            InvokeBody::Raw(_) => None,
+        };
         let state: State<'r, AppState> = command
             .message
             .state_ref()
             .try_get()
             .ok_or_else(|| InvokeError::from("AppState is not managed"))?;
         let window = WebviewWindow::<R>::from_command(command)?;
-        Ok(Self { state, window })
+        Ok(Self {
+            state,
+            window,
+            binding_generation,
+        })
     }
 }
 
@@ -122,18 +143,27 @@ pub(crate) fn slot_for_window(state: &AppState, window: &str) -> Result<Arc<Grap
         .ok_or_else(|| format!("no graph loaded for window {window}"))
 }
 
+pub(crate) fn slot_for_context(ctx: &GraphContext<'_>) -> Result<Arc<GraphSlot>, String> {
+    let slot = slot_for_window(&ctx.state, ctx.window.label())?;
+    let generation = ctx.binding_generation.ok_or("missing-graph-binding")?;
+    if generation != slot.binding_generation {
+        return Err("stale-graph-binding".into());
+    }
+    Ok(slot)
+}
+
 pub(crate) fn with_graph<T>(
     ctx: &GraphContext<'_>,
     f: impl FnOnce(&Graph) -> Result<T, String>,
 ) -> Result<T, String> {
-    let slot = slot_for_window(&ctx.state, ctx.window.label())?;
+    let slot = slot_for_context(ctx)?;
     f(&slot.graph)
 }
 
 pub(crate) fn refresh_graph(ctx: &GraphContext<'_>) -> Result<(), String> {
     let label = ctx.window.label().to_string();
     let old = slot_for_window(&ctx.state, &label)?;
-    let graph = Graph::open(&old.root_key);
+    let graph = Graph::open_checked(&old.root_key).map_err(|e| e.to_string())?;
     graph.migrate_journal_filenames();
     let replacement = Arc::new(GraphSlot::new(graph, old.root_key.clone()));
     replacement.warm_done.store(
@@ -185,6 +215,25 @@ mod tests {
         registry.bind("main".into(), graph(&base)).unwrap();
         assert!(registry.bind("graph-1".into(), graph(&base)).is_err());
         assert!(registry.slot("graph-1").is_none());
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn registry_rejects_ancestor_and_descendant_graph_roots() {
+        let base =
+            std::env::temp_dir().join(format!("tine-registry-nested-{}", std::process::id()));
+        let parent = base.join("parent");
+        let child = parent.join("pages").join("child");
+        let sibling = base.join("sibling");
+
+        let mut registry = GraphRegistry::default();
+        registry.bind("main".into(), graph(&parent)).unwrap();
+        assert!(registry.bind("child".into(), graph(&child)).is_err());
+        assert!(registry.bind("sibling".into(), graph(&sibling)).is_ok());
+
+        let mut reverse = GraphRegistry::default();
+        reverse.bind("child".into(), graph(&child)).unwrap();
+        assert!(reverse.bind("parent".into(), graph(&parent)).is_err());
         let _ = std::fs::remove_dir_all(base);
     }
 }

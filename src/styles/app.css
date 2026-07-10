@@ -7199,3 +7199,15 @@ img.emoji {
   color: var(--text-muted);
   font-size: 12.5px;
 }
+
+.graph-transition-shield {
+  position: fixed;
+  inset: 0;
+  z-index: 100000;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--bg-primary) 55%, transparent);
+  color: var(--text-secondary);
+  font-size: 13px;
+  cursor: progress;
+}

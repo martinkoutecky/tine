@@ -954,6 +954,11 @@ export function closeContextMenu() {
 export type SettingsTabId = "appearance" | "editor" | "journals" | "files" | "backups" | "graph" | "improve" | "shortcuts" | "about";
 
 export const [settingsOpen, setSettingsOpen] = createSignal(false);
+
+// A graph switch/restore/close is a quiescent state transition: once true, the
+// current editor has been committed and no UI interaction may create another
+// mutation until the transition either installs the new graph or aborts.
+export const [graphTransitioning, setGraphTransitioning] = createSignal(false);
 export const [settingsTabRequest, setSettingsTabRequest] = createSignal<SettingsTabId | null>(null);
 export function openSettings(tab?: SettingsTabId) {
   if (tab) setSettingsTabRequest(tab);

@@ -1,4 +1,4 @@
-use crate::state::{slot_for_window, GraphContext};
+use crate::state::{slot_for_context, GraphContext};
 use std::path::PathBuf;
 use tauri::Manager;
 
@@ -27,7 +27,7 @@ static SETTINGS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// parsed object (an unparseable existing file is treated as `{}`, the prior behavior).
 pub(crate) fn update_settings(
     app: &tauri::AppHandle,
-    mutate: impl FnOnce(&mut serde_json::Value),
+    mutate: impl Fn(&mut serde_json::Value),
 ) -> Result<(), String> {
     let p = settings_path(app).ok_or("no app-data dir")?;
     tine_core::model::atomic_update(&p, &SETTINGS_LOCK, |content| {
@@ -216,7 +216,7 @@ pub(crate) fn set_app_string(
     app: tauri::AppHandle,
 ) -> Result<(), String> {
     update_settings(&app, |json| {
-        json[&key] = serde_json::Value::String(value);
+        json[&key] = serde_json::Value::String(value.clone());
     })
 }
 
@@ -264,7 +264,7 @@ pub(crate) fn load_session(
     app: tauri::AppHandle,
     state: GraphContext<'_>,
 ) -> Result<Option<String>, String> {
-    let slot = slot_for_window(&state.state, state.window.label())?;
+    let slot = slot_for_context(&state)?;
     let path = session_path(&app, &slot.root_key).ok_or("no app-data dir")?;
     if !path.exists() {
         let _migration = SESSION_MIGRATION_LOCK.lock().unwrap();
@@ -290,7 +290,7 @@ pub(crate) fn save_session(
     // Unique temp name per write so two concurrent saves (a burst of tab actions)
     // can't clobber each other's temp file before the rename.
     static SEQ: AtomicU64 = AtomicU64::new(0);
-    let slot = slot_for_window(&state.state, state.window.label())?;
+    let slot = slot_for_context(&state)?;
     let p = session_path(&app, &slot.root_key).ok_or("no app-data dir")?;
     if let Some(parent) = p.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;

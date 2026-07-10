@@ -2,7 +2,7 @@
 // persisting the choice so it reopens next launch.
 
 import { backend } from "./backend";
-import { setGraphMeta, setWorkflow, bumpGraphEpoch, setRightSidebar, graphMeta, graphEpoch, setAliasMap, seedFavorites, pruneSidebarBlocks, pushToast, refreshJournalConflicts, refreshSyncConflicts, clearRecent } from "./ui";
+import { setGraphMeta, setWorkflow, bumpGraphEpoch, setRightSidebar, graphMeta, graphEpoch, setAliasMap, seedFavorites, pruneSidebarBlocks, pushToast, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning } from "./ui";
 import { resetStore, flushAll } from "./store";
 import { clearAssetBlobCache } from "./assetCache";
 import { resetTabsToJournals, openPage, restoreSession, flushSession } from "./router";
@@ -15,6 +15,7 @@ import { ensureThemeStyle } from "./themeGallery";
 import { isMobile, platformKind } from "./platform";
 import type { BlockDto } from "./types";
 import { maybeShowGuideAnnouncement } from "./guide";
+import { endEdit } from "./editorController";
 
 const GRAPH_KEY = "tine.graphPath";
 
@@ -28,7 +29,25 @@ export function persistedGraphPath(): string {
 
 /** Load a graph by path ("" → backend uses env/CLI). Updates meta, persists a
  *  non-empty path, and reloads the views. */
-export async function loadGraphPath(path: string): Promise<void> {
+export type LoadGraphPathOutcome =
+  | { kind: "loaded" | "already_current"; root: string }
+  | { kind: "focused_existing" | "aborted" };
+
+export async function loadGraphPath(
+  path: string,
+  options: { forceRefresh?: boolean; transitionHeld?: boolean } = {}
+): Promise<LoadGraphPathOutcome> {
+  const ownsTransition = !options.transitionHeld;
+  if (graphTransitioning() && ownsTransition) return { kind: "aborted" };
+  if (ownsTransition) {
+    setGraphTransitioning(true);
+    const active = document.activeElement;
+    if (active instanceof HTMLElement) active.blur();
+    endEdit("graph-switch");
+    // Let the textarea blur handler commit its final buffer before we inspect dirty.
+    await Promise.resolve();
+  }
+  try {
   // Whether we're switching to a *different* graph than last time. Only then do
   // we drop the persisted right-sidebar items; reopening the same graph at
   // startup keeps them (and we prune stale block refs below).
@@ -44,13 +63,15 @@ export async function loadGraphPath(path: string): Promise<void> {
   const flushed = await flushAll();
   if (hadGraph && !flushed) {
     pushToast("Some pages couldn't be saved — resolve conflicts before switching graphs.", "error");
-    return;
+    return { kind: "aborted" };
   }
   if (hadGraph) await flushSession();
   const result = await backend().loadGraph(path);
-  if (result.kind === "focused_existing") return;
+  if (result.kind === "focused_existing") return { kind: "focused_existing" };
   const meta = result.meta;
-  if (result.kind === "already_current" && hadGraph) return;
+  if (result.kind === "already_current" && hadGraph && !options.forceRefresh) {
+    return { kind: "already_current", root: meta.root };
+  }
   resetStore();
   clearAssetBlobCache(); // old graph's image blob URLs must not leak into the new one
   if (switching) {
@@ -92,6 +113,10 @@ export async function loadGraphPath(path: string): Promise<void> {
     // Upgrade/first-bind fallback: main.tsx may have probed the old global
     // session before the backend knew which graph this webview would own.
     await restoreSession();
+  }
+  return { kind: result.kind, root: meta.root };
+  } finally {
+    if (ownsTransition) setGraphTransitioning(false);
   }
 }
 
@@ -233,7 +258,11 @@ export async function createNewGraph(): Promise<void> {
     pushToast(`Couldn't create the graph. (${String(e)})`, "error");
     return;
   }
-  await loadGraphPath(root);
+  const loaded = await loadGraphPath(root);
+  if (loaded.kind !== "loaded" || loaded.root !== root) {
+    pushToast(`Created the graph at ${root}, but kept the current graph open.`, "info");
+    return;
+  }
   await seedTodayJournal();
   openPage("Welcome to Tine", "page"); // land on the tour, not the empty journal feed
 }

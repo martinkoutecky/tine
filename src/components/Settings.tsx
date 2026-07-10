@@ -7,6 +7,7 @@ import {
   settingsTabRequest,
   clearSettingsTabRequest,
   setJournalTemplate,
+  setGraphTransitioning,
   theme,
   toggleTheme,
   workflow,
@@ -989,6 +990,7 @@ function BackupsTab(): JSX.Element {
     )
       return;
     setBusy(true);
+    setGraphTransitioning(true);
     try {
       // Persist current edits first so the pre-restore safety snapshot captures
       // them (and the reload below doesn't write stale edits over the restore).
@@ -1000,12 +1002,13 @@ function BackupsTab(): JSX.Element {
       }
       await backend().restoreBackup(b.stamp);
       const root = graphMeta()?.root ?? "";
-      await loadGraphPath(root); // reopen from the restored files
+      await loadGraphPath(root, { forceRefresh: true, transitionHeld: true }); // rebuild restored files
       pushToast(`Restored snapshot from ${when}`, "success");
       void refresh();
     } catch (e) {
       pushToast(`Restore failed: ${String(e)}`, "error");
     } finally {
+      setGraphTransitioning(false);
       setBusy(false);
     }
   };

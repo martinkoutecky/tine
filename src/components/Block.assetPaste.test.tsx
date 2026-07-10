@@ -67,7 +67,7 @@ async function settle() {
 }
 
 describe("asset paste durability", () => {
-  it("rolls back the inserted asset link if saveAsset rejects", async () => {
+  it("does not insert an asset link if saveAsset rejects", async () => {
     loadSingle(page("Assets", [blk("asset-1", "")]));
     const id = pageByName("Assets")!.roots[0];
     startEditing(id, 0);
@@ -93,6 +93,38 @@ describe("asset paste durability", () => {
 
       expect(backend().saveAsset).toHaveBeenCalledOnce();
       expect(doc.byId[id].raw).not.toContain("../assets/");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("inserts the Markdown reference only after asset bytes are durable", async () => {
+    loadSingle(page("Assets", [blk("asset-delayed", "")]));
+    const id = pageByName("Assets")!.roots[0];
+    startEditing(id, 0);
+    vi.stubGlobal("URL", {
+      ...URL,
+      createObjectURL: vi.fn(() => "blob:asset"),
+      revokeObjectURL: vi.fn(),
+    });
+    let finish!: (name: string) => void;
+    vi.spyOn(backend(), "saveAsset").mockImplementation(
+      () => new Promise<string>((resolve) => { finish = resolve; })
+    );
+
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
+    ));
+    try {
+      const textarea = root.querySelector("textarea")! as HTMLTextAreaElement;
+      textarea.dispatchEvent(imagePasteEvent(new File([new Uint8Array([1])], "paste.png", { type: "image/png" })));
+      await settle();
+      expect(backend().saveAsset).toHaveBeenCalledOnce();
+      expect(doc.byId[id].raw).toBe("");
+
+      finish("durable.png");
+      await settle();
+      expect(doc.byId[id].raw).toBe("![](../assets/durable.png)");
     } finally {
       dispose();
     }

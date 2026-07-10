@@ -577,6 +577,22 @@ describe("page-scoped structural undo", () => {
     expect(pageByName("Today")!.path).toBe("journals/Friday, 26-06-2026.md");
   });
 
+  it("an exact path load replaces a same-name canonical page instead of editing the wrong file", () => {
+    const canonical: PageDto = {
+      name: "Today", kind: "journal", title: "Today", pre_block: null,
+      blocks: [blk("canonical")], path: "journals/2026_06_26.md",
+    };
+    const stray: PageDto = {
+      name: "Today", kind: "journal", title: "Today", pre_block: null,
+      blocks: [blk("stray")], path: "journals/Friday, 26-06-2026.md",
+    };
+    loadSingle(canonical);
+    ensurePageLoaded(stray);
+    expect(pageByName("Today")!.path).toBe("journals/Friday, 26-06-2026.md");
+    expect(doc.byId[pageByName("Today")!.roots[0]].raw).toBe("stray");
+    expect(pageToDto("Today")!.path).toBe("journals/Friday, 26-06-2026.md");
+  });
+
   it("undo removes an op-added node from byId entirely (root-walk purge, no leak)", () => {
     const today = journal("Today", [blk("t1")]);
     loadFeed([today]);

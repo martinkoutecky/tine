@@ -220,7 +220,7 @@ function graphDisplayName(): string {
 }
 
 export interface KnownGraphOpenDeps {
-  switchInPlace(path: string): Promise<void>;
+  switchInPlace(path: string): Promise<unknown>;
   openNewWindow(path: string): Promise<unknown>;
 }
 

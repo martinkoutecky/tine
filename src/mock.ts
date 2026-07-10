@@ -579,7 +579,7 @@ export function mockBackend(): Backend {
 
   return {
     async loadGraph() {
-      return { kind: "loaded" as const, meta: {
+      return { kind: "loaded" as const, binding_generation: 1, meta: {
         root: "/mock/graph",
         journals_dir: "journals",
         pages_dir: "pages",

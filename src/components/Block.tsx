@@ -90,9 +90,6 @@ import {
   assetFileName,
   captureAssetFileName,
   recordingExt,
-  insertedAssetMarkdownTarget,
-  replaceInsertedAssetMarkdown,
-  removeInsertedAssetMarkdown,
 } from "../media";
 import { MEDIA_EDITORS } from "../mediaEditors";
 import { resolveMediaEditorCommand } from "../mediaEditorSettings";
@@ -1188,16 +1185,27 @@ export function Editor(props: { id: string }): JSX.Element {
   // Seed + insert an asset from raw bytes at the caret, then persist to assets/
   // in the background (repointing the link if the backend de-dups the name).
   // Shared by clipboard-image paste and mobile capture (camera / voice memo).
-  const insertAssetBytes = (bytes: Uint8Array, origName?: string, captureExt?: string) => {
+  const insertAssetBytes = async (bytes: Uint8Array, origName?: string, captureExt?: string) => {
     const candidate = captureExt !== undefined ? captureAssetFileName(captureExt) : assetFileName(origName);
     // Cache key is the bare filename — assetRelPath() strips the `assets/` prefix
     // before loadAssetBlob() (see render/inline.tsx). Seed it so the asset renders
     // instantly, before the disk write lands.
     seedAssetBlob(candidate, bytes);
-    const md = assetMarkdown(candidate);
+    let stored: string;
+    try {
+      // Data before reference: a crash may leave an orphan asset, but can never
+      // persist a note that points at bytes which existed only in WebView memory.
+      stored = await trackAssetWrite(backend().saveAsset(candidate, bytes));
+    } catch {
+      pushToast(`Couldn’t save to assets/`, "error");
+      return;
+    }
+    if (stored !== candidate) seedAssetBlob(stored, bytes);
+    const md = assetMarkdown(stored);
+    // The user may have kept typing while a large capture was being fsynced; use
+    // the current selection instead of replaying a stale pre-write offset.
     const start = ref.selectionStart;
     const newRaw = ref.value.slice(0, start) + md + ref.value.slice(ref.selectionEnd);
-    const fixupTarget = insertedAssetMarkdownTarget(newRaw, md, start);
     commit(newRaw);
     const pos = start + md.length;
     queueMicrotask(() => {
@@ -1206,27 +1214,6 @@ export function Editor(props: { id: string }): JSX.Element {
       ref.focus();
       autosize();
     });
-    void (async () => {
-      let stored: string;
-      try {
-        stored = await trackAssetWrite(backend().saveAsset(candidate, bytes));
-      } catch {
-        const cur = node().raw;
-        const rolledBack = removeInsertedAssetMarkdown(cur, candidate, fixupTarget);
-        if (rolledBack !== cur) commit(rolledBack);
-        pushToast(`Couldn’t save to assets/`, "error");
-        return;
-      }
-      // The backend de-dups a colliding name (e.g. two inserts in the same second)
-      // to `<name>_1.ext`; repoint the link + blob to the ACTUAL stored file so the
-      // block never references a wrong/missing asset and the real file isn't orphaned.
-      if (stored && stored !== candidate) {
-        seedAssetBlob(stored, bytes);
-        const cur = node().raw;
-        const fixed = replaceInsertedAssetMarkdown(cur, candidate, stored, fixupTarget);
-        if (fixed !== cur) commit(fixed);
-      }
-    })();
   };
 
   const insertStoredAssets = (names: string[]) => {

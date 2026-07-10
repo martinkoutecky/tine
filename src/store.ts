@@ -285,6 +285,7 @@ function upsertPage(dto: PageDto) {
  *  needless reload that would otherwise reset block identities and invalidate the
  *  undo history for content we already hold. */
 function pageContentMatches(dto: PageDto, page: FeedPage): boolean {
+  if ((dto.path ?? "") !== (page.path ?? "")) return false;
   if ((dto.pre_block ?? null) !== (page.preBlock ?? null)) return false;
   const eq = (b: BlockDto, id: string): boolean => {
     const n = doc.byId[id];
@@ -299,7 +300,13 @@ function pageContentMatches(dto: PageDto, page: FeedPage): boolean {
  *  same live, editable nodes as the main view). Idempotent: never clobbers an
  *  already-loaded page's in-progress edits. */
 export function ensurePageLoaded(dto: PageDto) {
-  if (doc.pages.some((p) => p.name === dto.name)) return;
+  const existing = doc.pages.find((p) => p.name === dto.name);
+  if (existing && (existing.path ?? "") === (dto.path ?? "")) return;
+  // A path-pinned route may intentionally load a duplicate-day stray with the
+  // same logical title as the canonical journal. Replace the name slot with the
+  // exact requested file instead of silently keeping (and then editing/saving)
+  // the canonical file. Full simultaneous duplicate identity is tracked by the
+  // file-identity ADR; this closes the wrong-target write immediately.
   upsertPage(dto);
   evictIfNeeded();
 }

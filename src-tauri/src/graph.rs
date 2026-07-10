@@ -62,8 +62,8 @@ struct LoadedGraph {
 fn open_graph_for_load(
     root: &str,
     take_launch_backup: impl FnOnce(&Graph) -> (usize, bool),
-) -> LoadedGraph {
-    let graph = Graph::open(root);
+) -> Result<LoadedGraph, String> {
+    let graph = Graph::open_checked(root).map_err(|e| format!("unsafe graph layout: {e}"))?;
     let meta = graph.meta();
     let needs_migration = graph.has_journal_filename_migrations();
     let (backup_n, backup_complete) = if needs_migration {
@@ -77,11 +77,11 @@ fn open_graph_for_load(
         // but only after the launch snapshot has captured the original names.
         graph.migrate_journal_filenames();
     }
-    LoadedGraph {
+    Ok(LoadedGraph {
         graph,
         meta,
         launch_backup_done,
-    }
+    })
 }
 
 #[tauri::command]
@@ -109,6 +109,7 @@ pub(crate) fn load_graph_for_label(
             let slot = slot_for_window(&state, &owner)?;
             return Ok(LoadGraphResult::AlreadyCurrent {
                 meta: slot.graph.meta(),
+                binding_generation: slot.binding_generation,
             });
         }
         if let Some(existing) = app.get_webview_window(&owner) {
@@ -126,7 +127,7 @@ pub(crate) fn load_graph_for_label(
         graph,
         meta,
         launch_backup_done,
-    } = open_graph_for_load(&root, |graph| backup_graph_now(app, graph, ""));
+    } = open_graph_for_load(&root, |graph| backup_graph_now(app, graph, ""))?;
     let slot = Arc::new(GraphSlot::new(graph, root_key));
     let warm_generation = begin_warm_cache(&slot);
     state
@@ -147,8 +148,12 @@ pub(crate) fn load_graph_for_label(
             .unwrap_or("Graph");
         let _ = window.set_title(&format!("Tine — {name}"));
     }
+    let binding_generation = slot.binding_generation;
     warm_cache_async(app.clone(), window_label.to_string(), slot, warm_generation);
-    Ok(LoadGraphResult::Loaded { meta })
+    Ok(LoadGraphResult::Loaded {
+        meta,
+        binding_generation,
+    })
 }
 
 #[tauri::command]
@@ -162,7 +167,7 @@ pub(crate) fn open_graph_window(
         let id = state.next_window.fetch_add(1, Ordering::Relaxed);
         let label = format!("graph-{id}");
         let result = load_graph_for_label(path, &app, &label, &state)?;
-        if let LoadGraphResult::Loaded { ref meta } = result {
+        if let LoadGraphResult::Loaded { ref meta, .. } = result {
             let name = Path::new(&meta.root)
                 .file_name()
                 .and_then(|value| value.to_str())
@@ -210,9 +215,17 @@ pub(crate) fn open_graph_window(
 #[derive(serde::Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum LoadGraphResult {
-    Loaded { meta: GraphMeta },
-    AlreadyCurrent { meta: GraphMeta },
-    FocusedExisting { window_label: String },
+    Loaded {
+        meta: GraphMeta,
+        binding_generation: u64,
+    },
+    AlreadyCurrent {
+        meta: GraphMeta,
+        binding_generation: u64,
+    },
+    FocusedExisting {
+        window_label: String,
+    },
 }
 
 fn dir_is_empty(p: &Path) -> bool {
@@ -384,7 +397,8 @@ mod tests {
 
         let loaded = open_graph_for_load(dir.to_str().unwrap(), |g| {
             copy_graph_text_dir(&g.journals_path(), &backup.join("journals"))
-        });
+        })
+        .unwrap();
 
         assert!(loaded.launch_backup_done, "pre-migration backup ran");
         assert!(

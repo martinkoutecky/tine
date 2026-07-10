@@ -78,7 +78,7 @@ export interface KnownGraph {
 }
 
 export type LoadGraphResult =
-  | { kind: "loaded" | "already_current"; meta: GraphMeta }
+  | { kind: "loaded" | "already_current"; meta: GraphMeta; binding_generation: number }
   | { kind: "focused_existing"; window_label: string };
 
 export interface Backend {
@@ -387,6 +387,7 @@ export function isTauri(): boolean {
 class TauriBackend implements Backend {
   private invoke!: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
   private ready: Promise<void>;
+  private bindingGeneration = 0;
 
   constructor() {
     this.ready = import("@tauri-apps/api/core").then((m) => {
@@ -396,11 +397,16 @@ class TauriBackend implements Backend {
 
   private async call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
     await this.ready;
-    return this.invoke<T>(cmd, args);
+    const leasedArgs = this.bindingGeneration
+      ? { ...(args ?? {}), bindingGeneration: this.bindingGeneration }
+      : args;
+    return this.invoke<T>(cmd, leasedArgs);
   }
 
-  loadGraph(path: string) {
-    return this.call<LoadGraphResult>("load_graph", { path });
+  async loadGraph(path: string) {
+    const result = await this.call<LoadGraphResult>("load_graph", { path });
+    if (result.kind !== "focused_existing") this.bindingGeneration = result.binding_generation;
+    return result;
   }
   openGraphWindow(path: string) {
     return this.call<LoadGraphResult>("open_graph_window", { path });
