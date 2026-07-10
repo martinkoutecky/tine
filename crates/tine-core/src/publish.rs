@@ -3,11 +3,12 @@
 //! become real anchors between the generated files.
 
 use crate::doc::{self, DocBlock};
-use crate::model::{BlockDto, Graph, PageKind};
+use crate::model::{BlockDto, Graph, PageKind, RefGroup};
 use crate::refs::block_id;
 use lsdoc::ast::{Block, Inline, Url};
 use serde_json::json;
-use std::collections::HashSet;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io;
 
@@ -33,6 +34,73 @@ pub fn slug(name: &str) -> String {
 /// used as the single source of truth for every filename, cross-page link, and
 /// search-index entry — so a link can never diverge from the file it points at.
 type SlugMap = std::collections::HashMap<String, String>;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum QueryCacheKey {
+    Simple(String),
+    Advanced(String),
+}
+
+type QueryCache = RefCell<HashMap<QueryCacheKey, Vec<RefGroup>>>;
+
+#[cfg(test)]
+mod publish_test_counts {
+    use crate::model::Graph;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Mutex, MutexGuard};
+
+    static SERIAL: Mutex<()> = Mutex::new(());
+    static ACTIVE_ROOT: Mutex<Option<PathBuf>> = Mutex::new(None);
+    static QUERY_RUNS: AtomicUsize = AtomicUsize::new(0);
+    static PAGE_DOC_LOADS: AtomicUsize = AtomicUsize::new(0);
+
+    pub(super) struct Guard {
+        _serial: MutexGuard<'static, ()>,
+    }
+
+    pub(super) fn count_for(root: &Path) -> Guard {
+        let serial = SERIAL.lock().unwrap();
+        *ACTIVE_ROOT.lock().unwrap() = Some(root.to_path_buf());
+        QUERY_RUNS.store(0, Ordering::SeqCst);
+        PAGE_DOC_LOADS.store(0, Ordering::SeqCst);
+        Guard { _serial: serial }
+    }
+
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            *ACTIVE_ROOT.lock().unwrap() = None;
+        }
+    }
+
+    fn active_for(graph: &Graph) -> bool {
+        ACTIVE_ROOT
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|root| root == &graph.root)
+    }
+
+    pub(super) fn bump_query_run(graph: &Graph) {
+        if active_for(graph) {
+            QUERY_RUNS.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    pub(super) fn bump_page_doc_load(graph: &Graph) {
+        if active_for(graph) {
+            PAGE_DOC_LOADS.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    pub(super) fn query_runs() -> usize {
+        QUERY_RUNS.load(Ordering::SeqCst)
+    }
+
+    pub(super) fn page_doc_loads() -> usize {
+        PAGE_DOC_LOADS.load(Ordering::SeqCst)
+    }
+}
 
 /// FNV-1a 64-bit hash → 8 lowercase hex chars. Deterministic across runs (unlike
 /// std's `DefaultHasher`/`RandomState`, which are randomly seeded), so re-exports
@@ -581,6 +649,13 @@ struct Ctx<'a> {
     /// so the printed document needs no sibling `assets/` folder. The whole-graph
     /// site export keeps the relative `../assets/<file>` links (`false`).
     inline_assets: bool,
+    /// Export-local `{{query}}` memo. Whole-graph publish sets this so repeated
+    /// macros do one graph scan per distinct source; print export/tests leave it
+    /// `None` and keep the old direct call path.
+    query_cache: Option<&'a QueryCache>,
+    /// Pass-1 parsed public page documents, keyed by Logseq page identity. Page
+    /// embeds use this before falling back to disk for non-public/unseen pages.
+    pages: Option<&'a HashMap<String, &'a doc::Document>>,
 }
 
 /// lsdoc render options for a Markdown block body (the canonical skeleton the export decorates).
@@ -749,9 +824,34 @@ fn expand_macro(name: &str, args: &[String], ctx: &Ctx, depth: u8) -> String {
 
 /// Run a `{{query …}}` against the graph and render its results as a bordered block.
 fn render_query(graph: &Graph, src: &str, ctx: &Ctx, depth: u8) -> String {
-    let groups = if crate::query::is_advanced(src) {
+    let is_advanced = crate::query::is_advanced(src);
+    let groups = if let Some(cache) = ctx.query_cache {
+        let key = if is_advanced {
+            QueryCacheKey::Advanced(src.to_string())
+        } else {
+            QueryCacheKey::Simple(src.to_string())
+        };
+        let cached = cache.borrow().get(&key).cloned();
+        if let Some(groups) = cached {
+            groups
+        } else {
+            #[cfg(test)]
+            publish_test_counts::bump_query_run(graph);
+            let groups = if is_advanced {
+                crate::query::run_advanced_query(graph, src, None).groups
+            } else {
+                crate::query::run_query(graph, src)
+            };
+            cache.borrow_mut().insert(key, groups.clone());
+            groups
+        }
+    } else if is_advanced {
+        #[cfg(test)]
+        publish_test_counts::bump_query_run(graph);
         crate::query::run_advanced_query(graph, src, None).groups
     } else {
+        #[cfg(test)]
+        publish_test_counts::bump_query_run(graph);
         crate::query::run_query(graph, src)
     };
     let total: usize = groups.iter().map(|g| g.blocks.len()).sum();
@@ -791,19 +891,14 @@ fn render_embed(graph: &Graph, arg: &str, ctx: &Ctx, depth: u8) -> String {
     }
     if let Some(page) = arg.strip_prefix("[[").and_then(|s| s.strip_suffix("]]")) {
         let page = page.trim();
+        if let Some(doc) = ctx
+            .pages
+            .and_then(|pages| pages.get(&crate::refs::page_key(page)).copied())
+        {
+            return render_page_embed_doc(page, doc, ctx, depth);
+        }
         return match load_page_doc(graph, page) {
-            Some(doc) => {
-                let mut out = format!(
-                    "<div class=\"embed page-embed\"><a class=\"embed-title ref\" href=\"{}.html\">{}</a><ul>",
-                    page_slug(ctx, page),
-                    esc(page)
-                );
-                for b in &doc.roots {
-                    render_embedded_block(b, &mut out, ctx, depth);
-                }
-                out.push_str("</ul></div>");
-                out
-            }
+            Some(doc) => render_page_embed_doc(page, &doc, ctx, depth),
             None => "<div class=\"embed embed-missing\">Embedded page not found.</div>".into(),
         };
     }
@@ -888,10 +983,25 @@ fn render_namespace(graph: &Graph, ns: &str, ctx: &Ctx) -> String {
     out
 }
 
+fn render_page_embed_doc(page: &str, doc: &doc::Document, ctx: &Ctx, depth: u8) -> String {
+    let mut out = format!(
+        "<div class=\"embed page-embed\"><a class=\"embed-title ref\" href=\"{}.html\">{}</a><ul>",
+        page_slug(ctx, page),
+        esc(page)
+    );
+    for b in &doc.roots {
+        render_embedded_block(b, &mut out, ctx, depth);
+    }
+    out.push_str("</ul></div>");
+    out
+}
+
 /// Read + parse a page's file by name (for `{{embed [[Page]]}}`), case-insensitively.
 fn load_page_doc(graph: &Graph, name: &str) -> Option<doc::Document> {
     let pages = graph.list_pages();
     let e = pages.iter().find(|e| e.name.eq_ignore_ascii_case(name))?;
+    #[cfg(test)]
+    publish_test_counts::bump_page_doc_load(graph);
     let content = fs::read_to_string(&e.path).ok()?;
     Some(doc::parse(&content))
 }
@@ -1155,6 +1265,8 @@ pub fn page_print_html(graph: &Graph, name: &str, opts: PrintOpts) -> io::Result
         graph: Some(graph),
         slugs: None,
         inline_assets: true,
+        query_cache: None,
+        pages: None,
     };
     // `page_html` builds the heading + outline and wraps it in `shell`; we want the
     // same body but the print shell, so mirror its body build here.
@@ -1541,6 +1653,12 @@ pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
         collect_block_refs(&parsed.roots, &slug_of(name), &mut refs);
     }
 
+    let page_docs: HashMap<String, &doc::Document> = public
+        .iter()
+        .map(|(name, _, parsed)| (crate::refs::page_key(name), parsed))
+        .collect();
+    let query_cache: QueryCache = RefCell::new(HashMap::new());
+
     // Pass 2: render each public page (collecting the per-block search index along
     // the way), accumulate the sidebar page index (`__tinePages`) and the static
     // no-JS all-pages list shown in the index page's <main>.
@@ -1556,6 +1674,8 @@ pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
         graph: Some(graph),
         slugs: Some(&slugs),
         inline_assets: false,
+        query_cache: Some(&query_cache),
+        pages: Some(&page_docs),
     };
     for (name, kind, parsed) in &public {
         let slug = slug_of(name);
@@ -1629,6 +1749,8 @@ mod tests {
             graph: None,
             slugs: None,
             inline_assets: false,
+            query_cache: None,
+            pages: None,
         };
         decorate(&lsdoc::render_html(&body_blocks(raw), &md_opts()), &ctx, 0)
     }
@@ -2132,6 +2254,110 @@ mod tests {
         );
         // video → youtube iframe
         assert!(main.contains("youtube.com/embed/abc123"), "video iframe");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn publish_memoizes_repeated_query_macros() {
+        let dir = std::env::temp_dir().join(format!(
+            "tine-publish-query-memo-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq").join("config.edn"),
+            "{:publishing/all-pages-public? true}\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages").join("Tasks.md"),
+            "- TODO repeated query memo target\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages").join("Dashboard.md"),
+            "- {{query (task TODO)}}\n\
+             - {{query (task TODO)}}\n\
+             - {{query (task TODO)}}\n\
+             - {{query (task TODO)}}\n\
+             - {{query (task TODO)}}\n",
+        )
+        .unwrap();
+
+        let g = Graph::open(&dir);
+        let _guard = publish_test_counts::count_for(&dir);
+        let (outdir, _) = publish_graph(&g).unwrap();
+
+        assert_eq!(
+            publish_test_counts::query_runs(),
+            1,
+            "same query source should be evaluated once per export"
+        );
+        let dash =
+            fs::read_to_string(std::path::Path::new(&outdir).join("dashboard.html")).unwrap();
+        assert_eq!(
+            dash.matches("class=\"query\"").count(),
+            5,
+            "each macro occurrence still renders independently"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn publish_reuses_pass1_docs_for_repeated_page_embeds() {
+        let dir = std::env::temp_dir().join(format!(
+            "tine-publish-embed-reuse-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq").join("config.edn"),
+            "{:publishing/all-pages-public? true}\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages").join("Target.md"),
+            "- shared embed target\n  id:: 33333333-3333-3333-3333-333333333333\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages").join("Org Page.org"),
+            "public:: true\n* org fixture page\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages").join("Dashboard.md"),
+            "- {{embed [[Target]]}}\n\
+             - {{embed [[Target]]}}\n\
+             - {{embed [[Target]]}}\n\
+             - {{embed [[Target]]}}\n",
+        )
+        .unwrap();
+
+        let g = Graph::open(&dir);
+        let _guard = publish_test_counts::count_for(&dir);
+        let (outdir, _) = publish_graph(&g).unwrap();
+
+        assert_eq!(
+            publish_test_counts::page_doc_loads(),
+            0,
+            "public page embeds should reuse pass-1 parsed docs, not reload from disk"
+        );
+        let dash =
+            fs::read_to_string(std::path::Path::new(&outdir).join("dashboard.html")).unwrap();
+        assert_eq!(
+            dash.matches("shared embed target").count(),
+            4,
+            "each embed occurrence still renders"
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }
