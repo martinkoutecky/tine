@@ -56,6 +56,15 @@ const GUIDE_TEMPLATES: &[GuideTemplate] = &[
         title: "Tine Guide",
         markdown: include_str!("templates/guide.md"),
     },
+    // Welcome + Roadmap are link/block-ref targets of the other guide pages
+    // (showcase → [[Welcome to Tine]]; welcome → [[Project/Roadmap]] + a block
+    // over on Roadmap). The guide set must stay *closed* under its own links, or
+    // those links dangle in the in-app guide and in the copied-into-graph copy.
+    // The `guide_link_set_is_closed` test enforces this invariant.
+    GuideTemplate {
+        title: "Welcome to Tine",
+        markdown: include_str!("templates/welcome.md"),
+    },
     GuideTemplate {
         title: "Features/Sheets",
         markdown: include_str!("templates/sheets.md"),
@@ -79,6 +88,10 @@ const GUIDE_TEMPLATES: &[GuideTemplate] = &[
     GuideTemplate {
         title: "Feature showcase",
         markdown: include_str!("templates/showcase.md"),
+    },
+    GuideTemplate {
+        title: "Project/Roadmap",
+        markdown: include_str!("templates/roadmap.md"),
     },
 ];
 
@@ -386,6 +399,53 @@ mod tests {
             .expect("sheets guide is bundled");
         assert!(sheets.markdown.contains("Create one yourself"));
         assert!(sheets.page.blocks.iter().any(|b| b.raw.contains("Positional grid")));
+    }
+
+    /// Bare `[[…]]` link targets in a markdown body (labelled links, embeds, and
+    /// queries all wrap a `[[…]]`, so one scan covers them). Non-nested; a nested
+    /// `[[a [[b]] c]]` yields harmless fragments that never match a demo title.
+    fn extract_page_links(markdown: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut rest = markdown;
+        while let Some(i) = rest.find("[[") {
+            let after = &rest[i + 2..];
+            let Some(j) = after.find("]]") else { break };
+            out.push(after[..j].trim().to_string());
+            rest = &after[j + 2..];
+        }
+        out
+    }
+
+    #[test]
+    fn guide_link_set_is_closed_over_demo_pages() {
+        // Every guide page that another guide page links to must itself be a
+        // bundled guide page — otherwise the link dangles in the in-app guide AND
+        // in the copied-into-graph copy (the bug that shipped when Welcome/Roadmap
+        // were in PAGES but not GUIDE_TEMPLATES). We flag ONLY targets that are
+        // real demo pages (in PAGES); links to stub pages like [[Martin]] are a
+        // deliberate Logseq affordance (click-to-create) and stay out of the guide.
+        use std::collections::HashSet;
+        let guide: HashSet<String> = GUIDE_TEMPLATES
+            .iter()
+            .map(|t| crate::refs::page_key(t.title))
+            .collect();
+        let demo: HashSet<String> =
+            PAGES.iter().map(|(t, _)| crate::refs::page_key(t)).collect();
+        for t in GUIDE_TEMPLATES {
+            for target in extract_page_links(t.markdown) {
+                let key = crate::refs::page_key(&target);
+                if demo.contains(&key) {
+                    assert!(
+                        guide.contains(&key),
+                        "guide page {:?} links to demo page {:?}, which is not in \
+                         GUIDE_TEMPLATES — the link dangles in the in-app guide and \
+                         in copy-into-graph. Add it to GUIDE_TEMPLATES.",
+                        t.title,
+                        target
+                    );
+                }
+            }
+        }
     }
 
     #[test]

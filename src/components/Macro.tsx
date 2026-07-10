@@ -2,7 +2,7 @@ import { For, Show, Switch, Match, createMemo, createResource, createSignal, typ
 import { backend } from "../backend";
 import { openPage, openPageInNewTab } from "../router";
 import { openPageInSidebar, openPageContextMenu, dataRev, graphEpoch } from "../ui";
-import { blockProperty, doc, formatForPage, formatForBlock, setBlockProperty, setRaw, withUndoUnit } from "../store";
+import { blockProperty, doc, formatForPage, formatForBlock, resolveGuidePageDto, setBlockProperty, setRaw, withUndoUnit } from "../store";
 import { resolveBlockBatched } from "../resolveBatch";
 import { LiveRefGroup } from "./LiveRefGroup";
 import { QueryBuilder } from "./QueryBuilder";
@@ -766,7 +766,9 @@ export function EmbedMacro(props: { body: string }): JSX.Element {
     }
     const pageRef = /^\[\[([^\]]+)\]\]$/.exec(t);
     if (pageRef) {
-      const p = await backend().getPage(pageRef[1], "page");
+      // Backend miss → the virtual in-app Guide, matched by bare title (the embed
+      // carries no source context to remap the name). No-op for real graphs.
+      const p = (await backend().getPage(pageRef[1], "page")) ?? resolveGuidePageDto(pageRef[1]);
       return p ? { page: p.name, kind: "page" as PageKind, blocks: p.blocks, embedId: undefined } : null;
     }
     return null;

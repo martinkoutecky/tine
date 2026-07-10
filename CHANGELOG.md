@@ -10,6 +10,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Links and block references now work on the in-app Guide.** Guide pages linked to
+  `[[Welcome to Tine]]` and `[[Project/Roadmap]]`, which weren't part of the bundled
+  guide set, so those links opened a blank page; and block references / embeds
+  (`((…))`, `{{embed …}}`) never resolved because the Guide is virtual (never written
+  to disk) while resolution only scanned the on-disk graph. The guide set is now closed
+  under its own links (a test enforces it), and refs/embeds fall back to the loaded
+  guide pages. Everything resolves consistently in the in-app Guide, in the
+  copied-into-graph copy, and in the published website demo.
 - **Page aliases typed as the first bullet now work.** Writing `alias:: book` as the
   first bullet on a page (the natural outliner action, matching Logseq) now registers
   the page alias, so `#book`/`[[book]]` references resolve to that page and appear in

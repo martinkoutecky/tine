@@ -1,4 +1,5 @@
 import { backend } from "./backend";
+import { resolveGuideBlockRef } from "./store";
 import { graphEpoch } from "./ui";
 import type { RefGroup } from "./types";
 
@@ -35,12 +36,16 @@ function flush() {
     .resolveBlocks(batch)
     .then((results) =>
       batch.forEach((id, i) => {
-        const group = results[i] ?? null;
+        // Backend miss → try the virtual in-app Guide (never on disk). No-op for
+        // real graphs, so disk resolutions always win.
+        const group = results[i] ?? resolveGuideBlockRef(id);
         if (group && cacheRev === batchRev && graphEpoch() === batchRev) resolvedCache.set(id, group);
         resolvers.get(id)?.(group);
       })
     )
-    .catch(() => batch.forEach((id) => resolvers.get(id)?.(null)));
+    .catch(() =>
+      batch.forEach((id) => resolvers.get(id)?.(resolveGuideBlockRef(id)))
+    );
 }
 
 /** Resolve one block reference — coalesced into a shared batch and memoized for

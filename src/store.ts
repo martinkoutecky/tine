@@ -8,7 +8,7 @@
 
 import { createStore, produce, unwrap } from "solid-js/store";
 import { createSignal, createMemo, createRoot } from "solid-js";
-import type { BlockDto, Format, PageDto, PageKind } from "./types";
+import type { BlockDto, Format, PageDto, PageKind, RefGroup } from "./types";
 import type { Route } from "./router";
 import { parseOutline, type OutlineNode } from "./editor/outline";
 import type { ExportNode } from "./editor/exportText";
@@ -578,6 +578,55 @@ export function pageToDto(pageName: string): PageDto | null {
     path: p.path,
     guide: p.guide,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Virtual-guide resolution
+//
+// The in-app Guide is virtual — its pages live only in this store, never on
+// disk — so the backend `((uuid))` / `{{embed [[page]]}}` resolvers (which scan
+// the on-disk graph) can't see them. These fall back to the LOADED guide pages
+// and are consulted ONLY on a backend miss, so a real-graph ref/embed always
+// prefers the disk resolver and these never shadow it.
+// ---------------------------------------------------------------------------
+
+/** The block id (`id:: <uuid>` trailer) a guide node exposes to `((uuid))`
+ *  references — matching the backend, which keys a block by its persisted id::. */
+function guideBlockDurableId(raw: string): string | null {
+  const m = /(?:^|\n)id:: *(\S+)/i.exec(raw);
+  return m ? m[1] : null;
+}
+
+function findGuideNode(ids: string[], uuid: string): string | null {
+  for (const id of ids) {
+    const n = doc.byId[id];
+    if (!n) continue;
+    if (id === uuid || guideBlockDurableId(n.raw) === uuid) return id;
+    const child = findGuideNode(n.children, uuid);
+    if (child) return child;
+  }
+  return null;
+}
+
+/** Resolve a `((uuid))` block reference / block embed against the loaded guide
+ *  pages. Returns null for any id not owned by a loaded guide page, so real
+ *  refs fall through to the backend/disk resolver unchanged. */
+export function resolveGuideBlockRef(uuid: string): RefGroup | null {
+  for (const p of doc.pages) {
+    if (!p.guide) continue;
+    const hit = findGuideNode(p.roots, uuid);
+    if (hit) return { page: p.name, kind: p.kind, blocks: [toDto(hit)] };
+  }
+  return null;
+}
+
+/** Serialize a loaded guide page (matched by its bare title, e.g.
+ *  "Features/Tips & shortcuts") to a PageDto for in-app `{{embed [[page]]}}` —
+ *  the embed macro carries no source context to remap the name, so we match on
+ *  title. Null for non-guide/unloaded titles → the backend/disk path wins. */
+export function resolveGuidePageDto(title: string): PageDto | null {
+  const p = doc.pages.find((x) => x.guide && x.title === title);
+  return p ? pageToDto(p.name) : null;
 }
 
 // ---------------------------------------------------------------------------
