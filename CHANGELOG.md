@@ -10,6 +10,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Context menus no longer open off-screen.** A right-click menu near the bottom of the
+  window (e.g. deleting a namespace low in the sidebar) now opens *upward* when there isn't
+  room below, and is clamped horizontally, so all of its items stay reachable.
 - **Links and block references now work on the in-app Guide.** Guide pages linked to
   `[[Welcome to Tine]]` and `[[Project/Roadmap]]`, which weren't part of the bundled
   guide set, so those links opened a blank page; and block references / embeds

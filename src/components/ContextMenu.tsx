@@ -1,4 +1,4 @@
-import { For, Show, Switch, Match, createSignal, type JSX } from "solid-js";
+import { For, Show, Switch, Match, createEffect, createSignal, type JSX } from "solid-js";
 import {
   contextMenu,
   closeContextMenu,
@@ -69,16 +69,63 @@ async function copyBlockRef(id: string, fmt: (uuid: string) => string, okMsg: st
 // reference (open / open in sidebar / new tab / copy ref). The target is
 // whatever you right-clicked, so right-clicking a [[page]] acts on the page,
 // not the block that contains it.
+/** Viewport-clamped placement for a menu opened at (x, y). Opens DOWN from the
+ *  cursor by default; opens UP (bottom anchored at the cursor) when opening down
+ *  would overflow the bottom edge; clamps to the window when the menu is larger
+ *  than the viewport in either axis. Pure so the flip logic is unit-testable
+ *  (the DOM can't lay out in jsdom). `margin` keeps a small gap from the edge. */
+export function placeContextMenu(
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  vw: number,
+  vh: number,
+  margin = 6,
+): { left: number; top: number } {
+  const left = Math.max(margin, Math.min(x, vw - w - margin));
+  let top = y + h > vh - margin ? y - h : y;
+  if (top < margin) top = margin;
+  return { left, top };
+}
+
 export function ContextMenu(): JSX.Element {
   const close = () => closeContextMenu();
+  let menuEl: HTMLDivElement | undefined;
+  const [place, setPlace] = createSignal<{ left: number; top: number } | null>(null);
+
+  // Viewport-aware placement. The menu opens at the click point, but a tall menu
+  // opened low (e.g. "Delete namespace" near the sidebar bottom, GH nit) would
+  // spill past the bottom edge and clip its own items out of reach. After it
+  // renders, measure it and open UPWARD when there isn't room below (anchoring its
+  // bottom at the cursor), and clamp horizontally, so every item stays on-screen.
+  // Applies to every menu kind. Hidden for the one frame before measurement to
+  // avoid a visible jump.
+  createEffect(() => {
+    const cm = contextMenu();
+    setPlace(null);
+    if (!cm) return;
+    const { x, y } = cm;
+    requestAnimationFrame(() => {
+      const el = menuEl;
+      if (!el || !contextMenu()) return;
+      const r = el.getBoundingClientRect();
+      setPlace(placeContextMenu(x, y, r.width, r.height, window.innerWidth, window.innerHeight));
+    });
+  });
 
   return (
     <Show when={contextMenu()}>
       {(m) => (
         <div class="ctx-overlay" onClick={close} onContextMenu={(e) => { e.preventDefault(); close(); }}>
           <div
+            ref={menuEl}
             class="ctx-menu"
-            style={{ left: `${m().x}px`, top: `${m().y}px` }}
+            style={{
+              left: `${place()?.left ?? m().x}px`,
+              top: `${place()?.top ?? m().y}px`,
+              visibility: place() ? "visible" : "hidden",
+            }}
             onClick={(e) => e.stopPropagation()}
           >
             <Switch>
