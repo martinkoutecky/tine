@@ -8,6 +8,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- **Page aliases typed as the first bullet now work.** Writing `alias:: book` as the
+  first bullet on a page (the natural outliner action, matching Logseq) now registers
+  the page alias, so `#book`/`[[book]]` references resolve to that page and appear in
+  its backlinks — previously the alias only took effect when set via the page
+  properties panel. (GH #62)
+- **Shift-click in the left sidebar opens the page in the right sidebar.** Shift-clicking
+  a favorite, recent, all-pages, or namespace-tree entry now opens it in the side panel
+  (as inline links already did) instead of navigating in the center pane and selecting
+  text. (GH #63)
+- **Query-builder dropdowns no longer render behind the backlinks section.** (GH #64)
+- **Enter inside a fenced code block inserts a newline** instead of splitting off a new
+  bullet and breaking the fence. (GH #66)
+
 ## [0.5.1] - 2026-07-10
 
 Data-safety hardening, an application-ID correction, and PDF fixes. No feature changes.

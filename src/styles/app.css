@@ -5723,6 +5723,15 @@ img.emoji {
      chip dropdowns anchor to their own .qb-chip-wrap, not this box) and is a
      no-op on layout. Disappears entirely under TINE_GPU=0 (software path). */
   transform: translateZ(0);
+  /* translateZ(0) makes this box its own stacking context, which would otherwise
+     TRAP the builder dropdowns' z-index:60 inside it — so the later-in-DOM
+     .linked-references section (a plain block) painted on top of an open picker
+     that overhangs downward (GH #64). Lifting the whole box to a positive z-index
+     in the shared page stacking context makes it (dropdowns included) paint above
+     the references. All ancestors up to the scroll container are plain blocks, so
+     z-index:1 resolves against the page/main-content context. */
+  position: relative;
+  z-index: 1;
 }
 .query-block.query-sheet-block {
   border: 0;
