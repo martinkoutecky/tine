@@ -1,16 +1,69 @@
 use crate::settings::{settings_path, update_settings};
 use crate::state::AppState;
-use std::collections::HashMap;
-use std::path::PathBuf;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 use tauri::{Emitter, Manager, State};
-use tine_core::model::PageKind;
+use tine_core::{model::PageKind, Graph};
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 struct GraphChange {
     name: String,
     kind: PageKind,
     removed: bool,
+}
+
+#[derive(Default)]
+struct Pending {
+    paths: HashSet<PathBuf>,
+    need_full: bool,
+}
+
+impl Pending {
+    fn add_event(&mut self, event: notify::Event) {
+        if event.need_rescan() || !event_is_plain_page_file_op(&event) {
+            self.need_full = true;
+            return;
+        }
+        self.paths.extend(event.paths);
+    }
+}
+
+fn is_page_file_path(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|x| x.to_str()),
+        Some("md") | Some("org")
+    )
+}
+
+fn path_is_existing_dir(path: &Path) -> bool {
+    std::fs::metadata(path).map(|m| m.is_dir()).unwrap_or(false)
+}
+
+fn all_concrete_page_file_paths(event: &notify::Event) -> bool {
+    !event.paths.is_empty()
+        && event
+            .paths
+            .iter()
+            .all(|p| is_page_file_path(p) && !path_is_existing_dir(p))
+}
+
+fn event_is_plain_page_file_op(event: &notify::Event) -> bool {
+    use notify::event::{CreateKind, EventKind, ModifyKind, RemoveKind, RenameMode};
+
+    if !all_concrete_page_file_paths(event) {
+        return false;
+    }
+    match event.kind {
+        EventKind::Create(CreateKind::File) => true,
+        EventKind::Modify(ModifyKind::Data(_)) | EventKind::Modify(ModifyKind::Metadata(_)) => true,
+        EventKind::Modify(ModifyKind::Name(
+            RenameMode::From | RenameMode::To | RenameMode::Both,
+        )) => true,
+        EventKind::Remove(RemoveKind::File) => true,
+        _ => false,
+    }
 }
 
 /// Recursively collect every `.md`/`.org` page file under `dir` with its
@@ -50,6 +103,118 @@ fn collect_page_files(dir: &std::path::Path, out: &mut HashMap<PathBuf, (SystemT
     }
 }
 
+fn collect_graph_page_files(dirs: &[PathBuf; 2]) -> HashMap<PathBuf, (SystemTime, u64)> {
+    let mut current: HashMap<PathBuf, (SystemTime, u64)> = HashMap::new();
+    for dir in dirs {
+        collect_page_files(dir, &mut current);
+    }
+    current
+}
+
+fn file_snapshot(path: &Path) -> Option<(SystemTime, u64)> {
+    let md = std::fs::metadata(path).ok()?;
+    if !md.is_file() {
+        return None;
+    }
+    Some((md.modified().ok()?, md.len()))
+}
+
+fn full_diff_reconcile(
+    graph: &Graph,
+    snap: &mut HashMap<PathBuf, (SystemTime, u64)>,
+    current: HashMap<PathBuf, (SystemTime, u64)>,
+) -> (Vec<GraphChange>, bool) {
+    let mut changes: Vec<GraphChange> = Vec::new();
+    // A sync-tool conflict copy appearing/vanishing isn't a page change (it's
+    // never cached), but the conflicts panel must refresh — track it and emit
+    // `conflicts-changed` once.
+    let mut conflicts_dirty = false;
+    for (p, m) in &current {
+        if snap.get(p) != Some(m) {
+            if tine_core::model::path_is_sync_conflict(p) {
+                conflicts_dirty = true;
+            } else if let Some(en) = graph.sync_file(p) {
+                changes.push(GraphChange {
+                    name: en.name,
+                    kind: en.kind,
+                    removed: false,
+                });
+            }
+        }
+    }
+    for p in snap.keys() {
+        if !current.contains_key(p) {
+            if tine_core::model::path_is_sync_conflict(p) {
+                conflicts_dirty = true;
+            } else if let Some(en) = graph.forget_file(p) {
+                changes.push(GraphChange {
+                    name: en.name,
+                    kind: en.kind,
+                    removed: true,
+                });
+            }
+        }
+    }
+    *snap = current;
+    (changes, conflicts_dirty)
+}
+
+fn incremental_reconcile(
+    graph: &Graph,
+    snap: &mut HashMap<PathBuf, (SystemTime, u64)>,
+    paths: &HashSet<PathBuf>,
+) -> (Vec<GraphChange>, bool) {
+    let mut changes: Vec<GraphChange> = Vec::new();
+    let mut conflicts_dirty = false;
+
+    for p in paths {
+        if let Some(m) = file_snapshot(p) {
+            if snap.get(p) != Some(&m) {
+                if tine_core::model::path_is_sync_conflict(p) {
+                    conflicts_dirty = true;
+                } else if let Some(en) = graph.sync_file(p) {
+                    changes.push(GraphChange {
+                        name: en.name,
+                        kind: en.kind,
+                        removed: false,
+                    });
+                }
+                snap.insert(p.clone(), m);
+            }
+        } else if snap.contains_key(p) {
+            if tine_core::model::path_is_sync_conflict(p) {
+                conflicts_dirty = true;
+            } else if let Some(en) = graph.forget_file(p) {
+                changes.push(GraphChange {
+                    name: en.name,
+                    kind: en.kind,
+                    removed: true,
+                });
+            }
+            snap.remove(p);
+        }
+    }
+
+    (changes, conflicts_dirty)
+}
+
+fn reconcile_pending(
+    graph: &Graph,
+    dirs: &[PathBuf; 2],
+    snap: &mut HashMap<PathBuf, (SystemTime, u64)>,
+    paths: &HashSet<PathBuf>,
+    need_full: bool,
+) -> (Vec<GraphChange>, bool, bool) {
+    if need_full || paths.is_empty() {
+        let current = collect_graph_page_files(dirs);
+        let (changes, conflicts_dirty) = full_diff_reconcile(graph, snap, current);
+        (changes, conflicts_dirty, true)
+    } else {
+        let (changes, conflicts_dirty) = incremental_reconcile(graph, snap, paths);
+        (changes, conflicts_dirty, false)
+    }
+}
+
 /// Watch the graph dirs for external changes (Logseq, Syncthing) and reconcile
 /// them into the cache, emitting `graph-changed` so the UI can reload. Two
 /// mechanisms, switchable at runtime via the device-local `watch_mode` setting:
@@ -69,6 +234,7 @@ fn collect_page_files(dir: &std::path::Path, out: &mut HashMap<PathBuf, (SystemT
 pub(crate) fn start_watcher(app: tauri::AppHandle) {
     use notify::Watcher;
     let (tx, rx) = std::sync::mpsc::channel::<()>();
+    let pending = Arc::new(Mutex::new(Pending::default()));
     if let Ok(mut slot) = app.state::<AppState>().watch_ctl.lock() {
         *slot = Some(tx.clone());
     }
@@ -104,6 +270,9 @@ pub(crate) fn start_watcher(app: tauri::AppHandle) {
                 snap.clear();
                 baseline = false;
                 last_dirs = dirs.clone();
+                if let Ok(mut p) = pending.lock() {
+                    *p = Pending::default();
+                }
                 if let Some(w) = watcher.as_mut() {
                     for d in &watched {
                         let _ = w.unwatch(d);
@@ -116,14 +285,16 @@ pub(crate) fn start_watcher(app: tauri::AppHandle) {
             if inotify {
                 if watcher.is_none() {
                     let txc = tx.clone();
+                    let pendingc = pending.clone();
                     watcher =
                         notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-                            // Any successful event wakes the loop for a full rescan;
-                            // we don't trust per-event detail (renames arrive as
-                            // remove+create, etc.) — the rescan is the source of truth.
-                            if res.is_ok() {
-                                let _ = txc.send(());
+                            if let Ok(mut p) = pendingc.lock() {
+                                match res {
+                                    Ok(event) => p.add_event(event),
+                                    Err(_) => p.need_full = true,
+                                }
                             }
+                            let _ = txc.send(());
                         })
                         .ok();
                     watched.clear();
@@ -148,46 +319,25 @@ pub(crate) fn start_watcher(app: tauri::AppHandle) {
 
             // --- reconcile (identical in both modes) ---
             if let (Some(ds), Some(graph)) = (dirs.as_ref(), graph.as_ref()) {
-                let mut current: HashMap<PathBuf, (SystemTime, u64)> = HashMap::new();
-                for dir in ds {
-                    collect_page_files(dir, &mut current);
-                }
                 if !baseline {
-                    snap = current;
+                    snap = collect_graph_page_files(ds);
                     baseline = true; // first scan establishes the baseline; emit nothing
                 } else {
-                    let mut changes: Vec<GraphChange> = Vec::new();
-                    // A sync-tool conflict copy appearing/vanishing isn't a page
-                    // change (it's never cached), but the conflicts panel must
-                    // refresh — track it and emit `conflicts-changed` once.
-                    let mut conflicts_dirty = false;
-                    for (p, m) in &current {
-                        if snap.get(p) != Some(m) {
-                            if tine_core::model::path_is_sync_conflict(p) {
-                                conflicts_dirty = true;
-                            } else if let Some(en) = graph.sync_file(p) {
-                                changes.push(GraphChange {
-                                    name: en.name,
-                                    kind: en.kind,
-                                    removed: false,
-                                });
-                            }
+                    let (paths, event_need_full) = if inotify {
+                        if let Ok(mut p) = pending.lock() {
+                            let paths = std::mem::take(&mut p.paths);
+                            let need_full = p.need_full;
+                            p.need_full = false;
+                            (paths, need_full)
+                        } else {
+                            (HashSet::new(), true)
                         }
-                    }
-                    for p in snap.keys() {
-                        if !current.contains_key(p) {
-                            if tine_core::model::path_is_sync_conflict(p) {
-                                conflicts_dirty = true;
-                            } else if let Some(en) = graph.forget_file(p) {
-                                changes.push(GraphChange {
-                                    name: en.name,
-                                    kind: en.kind,
-                                    removed: true,
-                                });
-                            }
-                        }
-                    }
-                    snap = current;
+                    } else {
+                        (HashSet::new(), true)
+                    };
+                    let need_full = event_need_full || !inotify;
+                    let (changes, conflicts_dirty, _) =
+                        reconcile_pending(graph, ds, &mut snap, &paths, need_full);
                     for c in changes {
                         let _ = app.emit("graph-changed", c);
                     }
@@ -263,6 +413,120 @@ pub(crate) fn set_watch_mode(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct TempGraph {
+        root: PathBuf,
+    }
+
+    impl TempGraph {
+        fn new(name: &str) -> Self {
+            static NEXT: AtomicUsize = AtomicUsize::new(0);
+            let root = std::env::temp_dir().join(format!(
+                "tine-watch-{name}-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(root.join("journals")).unwrap();
+            std::fs::create_dir_all(root.join("pages")).unwrap();
+            Self { root }
+        }
+
+        fn path(&self, rel: &str) -> PathBuf {
+            self.root.join(rel)
+        }
+
+        fn write(&self, rel: &str, content: &str) {
+            let path = self.path(rel);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
+            std::fs::write(path, content).unwrap();
+        }
+
+        fn remove(&self, rel: &str) {
+            std::fs::remove_file(self.path(rel)).unwrap();
+        }
+
+        fn rename(&self, from: &str, to: &str) {
+            let to = self.path(to);
+            if let Some(parent) = to.parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
+            std::fs::rename(self.path(from), to).unwrap();
+        }
+    }
+
+    impl Drop for TempGraph {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    fn graph_dirs(graph: &Graph) -> [PathBuf; 2] {
+        [graph.journals_path(), graph.pages_path()]
+    }
+
+    fn warm_cache(graph: &Graph) {
+        let _ = graph.search("__watcher_warm_cache__", 1);
+    }
+
+    fn sorted_changes(mut changes: Vec<GraphChange>) -> Vec<GraphChange> {
+        fn kind_key(kind: PageKind) -> &'static str {
+            match kind {
+                PageKind::Journal => "journal",
+                PageKind::Page => "page",
+            }
+        }
+        changes.sort_by(|a, b| {
+            (a.removed, kind_key(a.kind), a.name.as_str()).cmp(&(
+                b.removed,
+                kind_key(b.kind),
+                b.name.as_str(),
+            ))
+        });
+        changes
+    }
+
+    fn rel_paths(tg: &TempGraph, rels: &[&str]) -> HashSet<PathBuf> {
+        rels.iter().map(|rel| tg.path(rel)).collect()
+    }
+
+    fn assert_incremental_matches_full(
+        name: &str,
+        setup: impl FnOnce(&TempGraph),
+        mutate: impl FnOnce(&TempGraph) -> HashSet<PathBuf>,
+    ) {
+        let tg = TempGraph::new(name);
+        setup(&tg);
+
+        let inc_graph = Graph::open(&tg.root);
+        let full_graph = Graph::open(&tg.root);
+        warm_cache(&inc_graph);
+        warm_cache(&full_graph);
+
+        let dirs = graph_dirs(&inc_graph);
+        let mut inc_snap = collect_graph_page_files(&dirs);
+        let mut full_snap = inc_snap.clone();
+
+        let paths = mutate(&tg);
+
+        let (inc_changes, inc_conflicts_dirty) =
+            incremental_reconcile(&inc_graph, &mut inc_snap, &paths);
+        let fresh = collect_graph_page_files(&dirs);
+        let (full_changes, full_conflicts_dirty) =
+            full_diff_reconcile(&full_graph, &mut full_snap, fresh.clone());
+
+        assert_eq!(inc_snap, fresh, "incremental snap must match full scan");
+        assert_eq!(full_snap, fresh, "full snap must match fresh scan");
+        assert_eq!(inc_conflicts_dirty, full_conflicts_dirty);
+        assert_eq!(
+            sorted_changes(inc_changes),
+            sorted_changes(full_changes),
+            "incremental changes must match full-diff changes"
+        );
+    }
 
     #[test]
     fn collect_page_files_descends_subdirectories() {
@@ -295,5 +559,169 @@ mod tests {
             vec!["Archive/Deep/Deeper/deep.md", "Archive/mid.org", "top.md"]
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn incremental_create_top_level_file_matches_full_diff() {
+        assert_incremental_matches_full(
+            "create-top",
+            |tg| tg.write("pages/Seed.md", "- seed\n"),
+            |tg| {
+                tg.write("pages/New.md", "- new\n");
+                rel_paths(tg, &["pages/New.md"])
+            },
+        );
+    }
+
+    #[test]
+    fn incremental_create_nested_file_matches_full_diff() {
+        assert_incremental_matches_full(
+            "create-nested",
+            |tg| tg.write("pages/Seed.md", "- seed\n"),
+            |tg| {
+                tg.write("pages/sub/New.md", "- nested\n");
+                rel_paths(tg, &["pages/sub/New.md"])
+            },
+        );
+    }
+
+    #[test]
+    fn incremental_modify_len_change_matches_full_diff() {
+        assert_incremental_matches_full(
+            "modify-len",
+            |tg| tg.write("pages/Edit.md", "- one\n"),
+            |tg| {
+                std::thread::sleep(Duration::from_millis(20));
+                tg.write("pages/Edit.md", "- one\n- two\n");
+                rel_paths(tg, &["pages/Edit.md"])
+            },
+        );
+    }
+
+    #[test]
+    fn incremental_modify_same_len_mtime_change_matches_full_diff() {
+        assert_incremental_matches_full(
+            "modify-same-len",
+            |tg| tg.write("pages/Edit.md", "- alpha\n"),
+            |tg| {
+                std::thread::sleep(Duration::from_millis(20));
+                tg.write("pages/Edit.md", "- beta!\n");
+                rel_paths(tg, &["pages/Edit.md"])
+            },
+        );
+    }
+
+    #[test]
+    fn incremental_remove_top_level_file_matches_full_diff() {
+        assert_incremental_matches_full(
+            "remove-top",
+            |tg| {
+                tg.write("pages/Keep.md", "- keep\n");
+                tg.write("pages/Delete.md", "- delete\n");
+            },
+            |tg| {
+                tg.remove("pages/Delete.md");
+                rel_paths(tg, &["pages/Delete.md"])
+            },
+        );
+    }
+
+    #[test]
+    fn incremental_remove_nested_file_matches_full_diff() {
+        assert_incremental_matches_full(
+            "remove-nested",
+            |tg| {
+                tg.write("pages/Keep.md", "- keep\n");
+                tg.write("pages/sub/Delete.md", "- delete\n");
+            },
+            |tg| {
+                tg.remove("pages/sub/Delete.md");
+                rel_paths(tg, &["pages/sub/Delete.md"])
+            },
+        );
+    }
+
+    #[test]
+    fn incremental_rename_within_pages_matches_full_diff() {
+        assert_incremental_matches_full(
+            "rename-within-pages",
+            |tg| tg.write("pages/Old.md", "- renamed\n"),
+            |tg| {
+                tg.rename("pages/Old.md", "pages/New.md");
+                rel_paths(tg, &["pages/Old.md", "pages/New.md"])
+            },
+        );
+    }
+
+    #[test]
+    fn incremental_rename_across_tree_matches_full_diff() {
+        assert_incremental_matches_full(
+            "rename-across-tree",
+            |tg| tg.write("pages/JournalMove.md", "- moved\n"),
+            |tg| {
+                tg.rename("pages/JournalMove.md", "journals/2026_07_10.md");
+                rel_paths(tg, &["pages/JournalMove.md", "journals/2026_07_10.md"])
+            },
+        );
+    }
+
+    #[test]
+    fn incremental_burst_union_matches_full_diff() {
+        assert_incremental_matches_full(
+            "burst-union",
+            |tg| {
+                tg.write("pages/Edit.md", "- edit before\n");
+                tg.write("pages/Delete.md", "- delete\n");
+                tg.write("pages/Keep.md", "- keep\n");
+            },
+            |tg| {
+                std::thread::sleep(Duration::from_millis(20));
+                tg.write("pages/Edit.md", "- edit after\n");
+                tg.remove("pages/Delete.md");
+                tg.write("pages/Create.md", "- create\n");
+                tg.write("pages/sub/Nested.md", "- nested\n");
+                rel_paths(
+                    tg,
+                    &[
+                        "pages/Edit.md",
+                        "pages/Delete.md",
+                        "pages/Create.md",
+                        "pages/sub/Nested.md",
+                    ],
+                )
+            },
+        );
+    }
+
+    #[test]
+    fn reconcile_pending_need_full_uses_full_scan_branch() {
+        let tg = TempGraph::new("need-full");
+        tg.write("pages/Seed.md", "- seed\n");
+
+        let inc_graph = Graph::open(&tg.root);
+        let full_graph = Graph::open(&tg.root);
+        warm_cache(&inc_graph);
+        warm_cache(&full_graph);
+
+        let dirs = graph_dirs(&inc_graph);
+        let mut inc_snap = collect_graph_page_files(&dirs);
+        let mut full_snap = inc_snap.clone();
+
+        tg.write(
+            "pages/sub/CreatedByDirEvent.md",
+            "- created through dir op\n",
+        );
+        let incomplete_paths = rel_paths(&tg, &["pages/Seed.md"]);
+        let (inc_changes, inc_conflicts_dirty, used_full) =
+            reconcile_pending(&inc_graph, &dirs, &mut inc_snap, &incomplete_paths, true);
+        let fresh = collect_graph_page_files(&dirs);
+        let (full_changes, full_conflicts_dirty) =
+            full_diff_reconcile(&full_graph, &mut full_snap, fresh.clone());
+
+        assert!(used_full, "need_full must bypass incremental reconcile");
+        assert_eq!(inc_snap, fresh);
+        assert_eq!(full_snap, fresh);
+        assert_eq!(inc_conflicts_dirty, full_conflicts_dirty);
+        assert_eq!(sorted_changes(inc_changes), sorted_changes(full_changes));
     }
 }
