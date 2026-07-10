@@ -2218,8 +2218,8 @@ checksum = "953f07c43838f8e6f9758cab68bf5bed85465e7587ebe0b823f1bcd81978ad3a"
 
 [[package]]
 name = "lsdoc"
-version = "0.5.0"
-source = "git+https://github.com/martinkoutecky/lsdoc?tag=v0.5.0#6cdc56863890643984ba8f96683209f2a7ebdd05"
+version = "0.5.1"
+source = "git+https://github.com/martinkoutecky/lsdoc?tag=v0.5.1#f55ce6ad4db9635b51eacf1aa803c8821626425f"
 dependencies = [
  "memchr",
  "phf 0.11.3",
@@ -4460,7 +4460,7 @@ dependencies = [
 
 [[package]]
 name = "tine"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "base64 0.22.1",
  "dirs",
@@ -4483,7 +4483,7 @@ dependencies = [
 
 [[package]]
 name = "tine-core"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "ammonia",
  "chrono",

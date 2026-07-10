@@ -1,0 +1,5 @@
+Fixed: in-app Guide links and block references now resolve (in the guide, in
+the copied-into-graph copy, and in the web demo); context menus opened near the
+bottom of the window now open upward instead of running off-screen. Changed:
+parser updated (lsdoc 0.5.1) for closer Logseq reference parity and lexer speed.
+Faster sheet table and board mounting on large sheets.

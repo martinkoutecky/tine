@@ -57,8 +57,8 @@ dependencies = [
 
 [[package]]
 name = "lsdoc"
-version = "0.5.0"
-source = "git+https://github.com/martinkoutecky/lsdoc?tag=v0.5.0#6cdc56863890643984ba8f96683209f2a7ebdd05"
+version = "0.5.1"
+source = "git+https://github.com/martinkoutecky/lsdoc?tag=v0.5.1#f55ce6ad4db9635b51eacf1aa803c8821626425f"
 dependencies = [
  "memchr",
  "phf",

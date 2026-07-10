@@ -8,6 +8,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-07-10
+
+In-app Guide link/reference fixes, context menus that stay on-screen, faster
+sheet mounting, and a parser refresh (lsdoc 0.5.1). No new features.
+
 ### Fixed
 
 - **Context menus no longer open off-screen.** A right-click menu near the bottom of the
@@ -42,6 +47,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   virtualization. Selection, keyboard navigation and drag still work over the whole
   sheet. On a synthetic 2000-row table this cut initial mount cost by ~2.6×. (The grid
   view gets the same treatment in a follow-up.)
+
+### Changed
+
+- **Parser updated to lsdoc 0.5.1.** Page-reference and backlink extraction now follow
+  Logseq/mldoc semantics more closely, alongside lexer performance improvements. Purely
+  a parser refresh — your files are unchanged.
 
 ## [0.5.1] - 2026-07-10
 
