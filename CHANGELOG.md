@@ -18,6 +18,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Mobile builds no longer show desktop self-update controls.** Android and iOS
+  skip the startup update toast and hide the About tab's "Check for updates"
+  action; updates arrive through the app's distribution channel instead.
 - **Android release builds use the stable `page.tine.app` application ID.** The
   desktop-only app-ID rename no longer makes Tauri search for a nonexistent Java
   package, which had prevented the signed APK from being produced for v0.5.1 and

@@ -4,6 +4,7 @@
 // backups, help-improve) and it needs no separate window plumbing.
 import { createSignal, onMount, Show, type JSX } from "solid-js";
 import { backend, isTauri } from "../backend";
+import { isMobile } from "../platform";
 import { checkForUpdateNow, openReleasesPage } from "../update";
 
 const WEBSITE = "https://tine.page";
@@ -30,9 +31,15 @@ export function AboutTab(): JSX.Element {
   const [version, setVersion] = createSignal("");
   const [status, setStatus] = createSignal("");
   const [checking, setChecking] = createSignal(false);
+  const [mobile, setMobile] = createSignal<boolean | null>(isTauri() ? null : false);
 
   onMount(async () => {
     if (!isTauri()) return;
+    try {
+      setMobile(await isMobile());
+    } catch {
+      setMobile(false);
+    }
     try {
       const { getVersion } = await import("@tauri-apps/api/app");
       setVersion(await getVersion());
@@ -73,12 +80,17 @@ export function AboutTab(): JSX.Element {
         <Show when={__GIT_COMMIT__}>
           <span class="about-commit mono">· {__GIT_COMMIT__}</span>
         </Show>
-        <Show when={isTauri()}>
+        <Show when={isTauri() && mobile() === false}>
           <button class="btn-secondary about-check" onClick={check} disabled={checking()}>
             {checking() ? "Checking…" : "Check for updates"}
           </button>
         </Show>
       </div>
+      <Show when={isTauri() && mobile() === true}>
+        <div class="settings-hint about-status">
+          Updates arrive through your app's distribution channel.
+        </div>
+      </Show>
       <Show when={status()}>
         <div class="settings-hint about-status">
           {status()}{" "}

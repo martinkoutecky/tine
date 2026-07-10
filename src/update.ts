@@ -7,15 +7,17 @@
 // Installer (the toast's action): on **Windows/Linux** in the packaged app, run the
 // Tauri v2 updater — `check()` → `downloadAndInstall()` → `relaunch()` — so the
 // update applies in place. On **macOS** (bundle is unsigned → Gatekeeper would
-// reject a self-replaced app) and outside Tauri, fall back to opening the releases
-// page in the browser. The updater is inert until a signed release with a
-// `latest.json` exists; any failure (no manifest yet, bad signature, offline) is
-// caught and also falls back to the releases page — it can never brick the app.
+// reject a self-replaced app), on mobile (Android/iOS update through their
+// distribution channel), and outside Tauri, fall back to opening the releases page
+// in the browser. The updater is inert until a signed release with a `latest.json`
+// exists; any failure (no manifest yet, bad signature, offline) is caught and also
+// falls back to the releases page — it can never brick the app.
 //
 // Deliberately quiet: Tauri-only check, silent on ANY failure (offline, rate-
 // limited, blocked) — it must never block startup or nag with an error.
 
 import { isTauri, backend } from "./backend";
+import { isMobile } from "./platform";
 import { pushToast, dismissToast } from "./ui";
 
 const REPO = "martinkoutecky/tine";
@@ -36,11 +38,24 @@ function isNewer(a: [number, number, number], b: [number, number, number]): bool
   return false;
 }
 
+async function mobileUpdaterUnavailable(): Promise<boolean> {
+  try {
+    return await isMobile();
+  } catch {
+    return false;
+  }
+}
+
 /** True only where an in-place self-update is safe: the packaged Tauri app on a
- *  non-macOS OS. (macOS bundles are unsigned; replacing one re-triggers Gatekeeper
- *  quarantine, so those get the manual download path instead.) */
-function canSelfUpdate(): boolean {
-  return isTauri() && !/\bMac/i.test(typeof navigator !== "undefined" ? navigator.userAgent : "");
+ *  non-macOS, non-mobile OS. (macOS bundles are unsigned; replacing one
+ *  re-triggers Gatekeeper quarantine. Android/iOS update through their app
+ *  distribution channel.) */
+async function canSelfUpdate(): Promise<boolean> {
+  return (
+    isTauri() &&
+    !(await mobileUpdaterUnavailable()) &&
+    !/\bMac/i.test(typeof navigator !== "undefined" ? navigator.userAgent : "")
+  );
 }
 
 /** Open the GitHub releases page in the system browser (the manual fallback). */
@@ -52,7 +67,7 @@ function openReleases(): void {
  *  in place and relaunch; everything else (macOS, browser, or any failure) → open
  *  the releases page. Never throws. */
 async function applyUpdateOrOpen(): Promise<void> {
-  if (!canSelfUpdate()) {
+  if (!(await canSelfUpdate())) {
     openReleases();
     return;
   }
@@ -79,6 +94,7 @@ async function applyUpdateOrOpen(): Promise<void> {
  *  silently (never throws) in every failure case. */
 export async function checkForUpdate(): Promise<void> {
   if (!isTauri()) return;
+  if (await mobileUpdaterUnavailable()) return;
   try {
     const { getVersion } = await import("@tauri-apps/api/app");
     const cur = parseVer(await getVersion());
@@ -121,6 +137,7 @@ export type UpdateStatus =
  *  download-or-open flow as the startup toast. Never throws. */
 export async function checkForUpdateNow(): Promise<UpdateStatus> {
   if (!isTauri()) return { kind: "unavailable" };
+  if (await mobileUpdaterUnavailable()) return { kind: "unavailable" };
   try {
     const { getVersion } = await import("@tauri-apps/api/app");
     const curStr = await getVersion();
