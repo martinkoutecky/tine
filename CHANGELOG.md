@@ -23,6 +23,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - **Enter inside a fenced code block inserts a newline** instead of splitting off a new
   bullet and breaking the fence. (GH #66)
 
+### Performance
+
+- **Large sheet tables and boards mount much faster.** A row's / card's heavy content
+  (title parsing, value chips, formula results) is now rendered lazily as it scrolls
+  near the viewport instead of all at once, mirroring the existing block-body
+  virtualization. Selection, keyboard navigation and drag still work over the whole
+  sheet. On a synthetic 2000-row table this cut initial mount cost by ~2.6×. (The grid
+  view gets the same treatment in a follow-up.)
+
 ## [0.5.1] - 2026-07-10
 
 Data-safety hardening, an application-ID correction, and PDF fixes. No feature changes.

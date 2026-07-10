@@ -17,6 +17,7 @@ import {
 import { facetsFromDto, facetsOf, type Facets } from "../render/facets";
 import { pageProperties, visibleBody, isRenderHiddenProp } from "../render/block";
 import { InlineText } from "../render/inline";
+import { observeNear, unobserveNear } from "../lazyObserve";
 import { editorOffsetFromRenderedRange } from "../render/spans";
 import { isBuiltinHidden } from "../editor/properties";
 import { forbidsEditEntry } from "../editor/editTargets";
@@ -693,41 +694,58 @@ export function SheetTable(props: {
           </div>
         </Show>
         <For each={sortedRows()}>
-          {(row, rowIndex) => (
-            <>
-              <TitleCell
-                ownerId={props.ownerId}
-                row={row}
-                rowIndex={rowIndex()}
-                selected={selected(rowIndex(), 0)}
-                inRange={inRange(rowIndex(), 0)}
-                freezeColumns={captureStableColumns}
-              />
-              <For each={fields()}>
-                {(field, fieldIndex) => (
-                  <FieldCell
-                    ownerId={props.ownerId}
-                    row={row}
-                    field={field}
-                    fieldType={fieldTypes().get(field)}
-                    formulaValue={formulaValue(row, field)}
-                    rowIndex={rowIndex()}
-                    colIndex={fieldIndex() + 1}
-                    selected={selected(rowIndex(), fieldIndex() + 1)}
-                    inRange={inRange(rowIndex(), fieldIndex() + 1)}
-                    editing={editingProp()?.rowId === row.id && editingProp()?.field === field}
-                    initial={editingProp()?.initial ?? ""}
-                    openPropInput={openPropInput}
-                    closePropInput={() => setEditingProp(null)}
-                    freezeColumns={captureStableColumns}
-                  />
-                )}
-              </For>
-              <Show when={hasActionColumn()}>
-                <div class="sheet-cell sheet-row-tail" />
-              </Show>
-            </>
-          )}
+          {(row, rowIndex) => {
+            // Per-row "near the viewport" gate (see renderedSheetRows above). Only
+            // the title cell observes; the shared signal drives every cell in the
+            // row so we spend ONE IntersectionObserver entry per row, not per cell.
+            const [near, setNear] = createSignal(renderedSheetRows.has(row.id));
+            const observeRow = (el: Element) => {
+              if (near()) return;
+              observeNear(el, () => {
+                renderedSheetRows.add(row.id);
+                setNear(true);
+              });
+              onCleanup(() => unobserveNear(el));
+            };
+            return (
+              <>
+                <TitleCell
+                  ownerId={props.ownerId}
+                  row={row}
+                  rowIndex={rowIndex()}
+                  selected={selected(rowIndex(), 0)}
+                  inRange={inRange(rowIndex(), 0)}
+                  near={near()}
+                  observeRow={observeRow}
+                  freezeColumns={captureStableColumns}
+                />
+                <For each={fields()}>
+                  {(field, fieldIndex) => (
+                    <FieldCell
+                      ownerId={props.ownerId}
+                      row={row}
+                      field={field}
+                      fieldType={fieldTypes().get(field)}
+                      formulaValue={formulaValue(row, field)}
+                      rowIndex={rowIndex()}
+                      colIndex={fieldIndex() + 1}
+                      selected={selected(rowIndex(), fieldIndex() + 1)}
+                      inRange={inRange(rowIndex(), fieldIndex() + 1)}
+                      near={near()}
+                      editing={editingProp()?.rowId === row.id && editingProp()?.field === field}
+                      initial={editingProp()?.initial ?? ""}
+                      openPropInput={openPropInput}
+                      closePropInput={() => setEditingProp(null)}
+                      freezeColumns={captureStableColumns}
+                    />
+                  )}
+                </For>
+                <Show when={hasActionColumn()}>
+                  <div class="sheet-cell sheet-row-tail" />
+                </Show>
+              </>
+            );
+          }}
         </For>
         <Show when={showFooter()}>
           <div class="sheet-cell sheet-footer-cell sheet-footer-title sheet-sticky-left" />
@@ -834,12 +852,31 @@ function clickOffset(e: MouseEvent, contentRef: HTMLDivElement | undefined, raw:
   return editorOffsetFromRenderedRange(contentRef, range, raw, isBuiltinHidden);
 }
 
+// Lazy-mount virtualization (P2): a table row's heavy cell CONTENT (title
+// InlineText parse, value-view chips, the hover handle) is deferred until the
+// row first comes near the viewport, mirroring the block-body pattern
+// ([[tine-block-virtualization]], lazyObserve.ts). The .sheet-cell divs, their
+// data-row/col attrs, selection classes and event handlers stay mounted for
+// EVERY row so selection, keyboard nav and drag hit-testing keep working
+// off-screen. Render-once-keep: a row that has rendered once (latched by block
+// id) renders eagerly forever — no placeholder↔real churn on re-sort/remount.
+// Module-level so it survives remount and is shared across surfaces; bounded by
+// the working set of rows ever brought near the viewport.
+const renderedSheetRows = new Set<string>();
+
+// Test seam: reset the render-once latch so a fresh mount defers again.
+export function resetSheetRowVirtualizationForTests() {
+  renderedSheetRows.clear();
+}
+
 function TitleCell(props: {
   ownerId: string;
   row: RowRecord;
   rowIndex: number;
   selected: boolean;
   inRange: boolean;
+  near: boolean;
+  observeRow: (el: Element) => void;
   freezeColumns: () => void;
 }): JSX.Element {
   const cell = (): SheetCellCtx => ({ gridId: props.ownerId, row: props.rowIndex, col: 0 });
@@ -893,10 +930,11 @@ function TitleCell(props: {
       data-row={props.rowIndex}
       data-col={0}
       style={bgColor() ? { background: bgColor() } : undefined}
+      ref={props.observeRow}
       onDblClick={onDoubleClick}
       onContextMenu={openCellMenu}
     >
-      <Show when={doc.byId[props.row.id]}>
+      <Show when={props.near && doc.byId[props.row.id]}>
         <button
           class="sheet-cell-handle"
           title="Cell menu"
@@ -916,7 +954,14 @@ function TitleCell(props: {
       <div class="sheet-cell-body" ref={contentRef}>
         <Show
           when={editing()}
-          fallback={<InlineText text={rowTitle(props.row)} format={fmt()} />}
+          fallback={
+            <Show
+              when={props.near}
+              fallback={<span class="sheet-cell-defer">{rowTitle(props.row)}</span>}
+            >
+              <InlineText text={rowTitle(props.row)} format={fmt()} />
+            </Show>
+          }
         >
           <SheetCellContext.Provider value={cell()}>
             <SurfaceContext.Provider value={cellSurfaceKey(props.ownerId)}>
@@ -939,6 +984,7 @@ function FieldCell(props: {
   colIndex: number;
   selected: boolean;
   inRange: boolean;
+  near: boolean;
   editing: boolean;
   initial: string;
   openPropInput: (rowId: string, field: FieldId, initial?: string) => void;
@@ -1072,7 +1118,7 @@ function FieldCell(props: {
       onDblClick={onDoubleClick}
       onContextMenu={openCellMenu}
     >
-      <Show when={editable()}>
+      <Show when={props.near && editable()}>
         <button
           class="sheet-cell-handle"
           title="Cell menu"
@@ -1092,14 +1138,19 @@ function FieldCell(props: {
       <Show
         when={props.editing && props.field.startsWith("prop:")}
         fallback={
-          <FieldValueView
-            field={props.field}
-            fieldType={props.fieldType}
-            value={displayValue()}
-            formulaValue={props.formulaValue}
-            page={props.row.page}
-            onControlClick={runControlAction}
-          />
+          <Show
+            when={props.near}
+            fallback={<span class="sheet-cell-defer">{displayValue()?.text ?? ""}</span>}
+          >
+            <FieldValueView
+              field={props.field}
+              fieldType={props.fieldType}
+              value={displayValue()}
+              formulaValue={props.formulaValue}
+              page={props.row.page}
+              onControlClick={runControlAction}
+            />
+          </Show>
         }
       >
         <input

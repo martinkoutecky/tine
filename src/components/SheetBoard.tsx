@@ -1,4 +1,5 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, untrack, type JSX } from "solid-js";
+import { observeNear, unobserveNear } from "../lazyObserve";
 import { backend } from "../backend";
 import { blockPageReadOnly, doc, ensurePageLoaded, formatForBlock, formatForPage, pageByName, readPageProperty } from "../store";
 import { facetsFromDto, facetsOf, type Facets } from "../render/facets";
@@ -564,6 +565,20 @@ function rowTitle(row: RowRecord): string {
   return visibleBody(rowRaw(row))[0] ?? "";
 }
 
+// Lazy-mount virtualization (P2): a board card's heavy content (title
+// InlineText parse, chips, hover handle) is deferred until the card first comes
+// near the viewport, mirroring the table (SheetTable.tsx) and the block-body
+// pattern ([[tine-block-virtualization]]). The <article> shell, its data-row/col
+// attrs, selection class and drag handlers stay mounted for EVERY card so
+// selection / keyboard nav / drag hit-testing keep working off-screen.
+// Render-once-keep: a card rendered once (latched by block id) renders eagerly
+// forever. Module-level, shared across surfaces, bounded by the working set.
+const renderedBoardCards = new Set<string>();
+
+export function resetBoardCardVirtualizationForTests() {
+  renderedBoardCards.clear();
+}
+
 function BoardCard(props: {
   ownerId: string;
   row: RowRecord;
@@ -579,6 +594,15 @@ function BoardCard(props: {
   const cell = (): SheetCellCtx => ({ gridId: props.ownerId, row: props.rowIndex, col: props.colIndex });
   const editing = () => editingId() === props.row.id && editingOwner() === cellOwner(cell());
   const fmt = () => (doc.byId[props.row.id] ? formatForBlock(props.row.id) : formatForPage(props.row.page));
+  const [near, setNear] = createSignal(renderedBoardCards.has(props.row.id));
+  const observeCard = (el: Element) => {
+    if (near()) return;
+    observeNear(el, () => {
+      renderedBoardCards.add(props.row.id);
+      setNear(true);
+    });
+    onCleanup(() => unobserveNear(el));
+  };
   const bgColor = createMemo(() => {
     const f = recordFacets(props.row);
     return f ? blockBackgroundColor(f.properties) : undefined;
@@ -731,8 +755,9 @@ function BoardCard(props: {
       onDblClick={onDoubleClick}
       onContextMenu={openCellMenu}
       style={bgColor() ? { background: bgColor() } : undefined}
+      ref={observeCard}
     >
-      <Show when={doc.byId[props.row.id]}>
+      <Show when={near() && doc.byId[props.row.id]}>
         <button
           class="sheet-cell-handle sheet-card-handle"
           title="Card menu"
@@ -752,12 +777,15 @@ function BoardCard(props: {
       <Show
         when={editing()}
         fallback={
-          <>
+          <Show
+            when={near()}
+            fallback={<div class="sheet-board-card-title sheet-cell-defer">{rowTitle(props.row)}</div>}
+          >
             <div class="sheet-board-card-title">
               <InlineText text={rowTitle(props.row)} format={fmt()} />
             </div>
             <CardChips row={props.row} groupBy={props.groupBy} onFieldClick={onChipClick} />
-          </>
+          </Show>
         }
       >
         <SheetCellContext.Provider value={cell()}>

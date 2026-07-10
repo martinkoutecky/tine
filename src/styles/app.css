@@ -4641,6 +4641,13 @@ body.file-drop-active::after {
 .sheet-cell-body:empty {
   min-height: 1.45em;
 }
+/* Deferred (off-screen) sheet cell / card content: cheap raw-text placeholder
+   shown until the row/card comes near the viewport (P2 lazy-mount). Wraps like a
+   real cell so the one-time render-in doesn't jump the row height. */
+.sheet-cell-defer {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .sheet-grid-placeholder {
   min-width: 72px;
   min-height: 30px;
