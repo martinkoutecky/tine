@@ -18,9 +18,10 @@ may tag, publish, comment, and close issues.
 4. Regenerate the canonical Guide/demo site and prove the checked-in
    `website/demo/` output, bundled Guide pages, links, block references, and
    assets are current.
-5. Run the complete Linux release E2E catalog against the production-protocol
-   candidate binary. Retain screenshots, DOM, console/backend logs, graph diff,
-   JUnit, and JSON on failure.
+5. Run the complete Linux release E2E catalog (`npm run e2e:linux:release`)
+   against the production-protocol candidate binary. Retain screenshots, DOM,
+   console/backend logs, graph diff, JUnit, and JSON on failure. See
+   `docs/UI-REGRESSION-TESTING.md` for the exact binary and evidence contract.
 6. Run the Windows x64 smoke suite when available. It is advisory until the
    release policy explicitly promotes it.
 7. Push the exact candidate and run ordinary CI plus the manual release
