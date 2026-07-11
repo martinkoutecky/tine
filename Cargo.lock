@@ -2234,8 +2234,8 @@ checksum = "953f07c43838f8e6f9758cab68bf5bed85465e7587ebe0b823f1bcd81978ad3a"
 
 [[package]]
 name = "lsdoc"
-version = "0.5.1"
-source = "git+https://github.com/martinkoutecky/lsdoc?tag=v0.5.1#f55ce6ad4db9635b51eacf1aa803c8821626425f"
+version = "0.5.2"
+source = "git+https://github.com/martinkoutecky/lsdoc?tag=v0.5.2#ff73f29b062ddd5f6a8f0a232886a1514111d998"
 dependencies = [
  "memchr",
  "phf 0.11.3",

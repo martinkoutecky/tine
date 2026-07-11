@@ -8,6 +8,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Changed
+
+- **The shared parser is updated to lsdoc 0.5.2.** Both the native core and the
+  vendored browser WASM parser use the same released parser build.
+
 ### Fixed
 
 - **Release CI catches platform-only compilation and stale Flatpak sources before
