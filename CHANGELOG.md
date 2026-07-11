@@ -8,6 +8,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.5.6] - 2026-07-11
+
+Parser-integration and release-recovery patch: lsdoc 0.5.2, private and
+reproducible Help-panel reports, and complete cross-platform release guards.
+
 ### Changed
 
 - **The shared parser is updated to lsdoc 0.5.2.** Both the native core and the
@@ -1457,7 +1462,13 @@ takes over your graph.
 - macOS and Windows installers are currently **unsigned** — on macOS right-click →
   Open; on Windows choose *More info → Run anyway*.
 
-[Unreleased]: https://github.com/martinkoutecky/tine/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/martinkoutecky/tine/compare/v0.5.6...HEAD
+[0.5.6]: https://github.com/martinkoutecky/tine/compare/v0.5.5...v0.5.6
+[0.5.5]: https://github.com/martinkoutecky/tine/compare/v0.5.4...v0.5.5
+[0.5.4]: https://github.com/martinkoutecky/tine/compare/v0.5.3...v0.5.4
+[0.5.3]: https://github.com/martinkoutecky/tine/compare/v0.5.2...v0.5.3
+[0.5.2]: https://github.com/martinkoutecky/tine/compare/v0.5.1...v0.5.2
+[0.5.1]: https://github.com/martinkoutecky/tine/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/martinkoutecky/tine/compare/v0.4.7...v0.5.0
 [0.4.7]: https://github.com/martinkoutecky/tine/compare/v0.4.6...v0.4.7
 [0.4.6]: https://github.com/martinkoutecky/tine/compare/v0.4.5...v0.4.6
