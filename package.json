@@ -1,24 +1,26 @@
 {
   "name": "tine",
-  "version": "0.5.4",
+  "version": "0.5.6",
   "private": true,
   "license": "AGPL-3.0-only",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "node scripts/check-wasm-pin.mjs && vite build",
+    "build": "node scripts/check-wasm-pin.mjs && node scripts/check-lsdoc-oracle-sync.mjs && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
     "app": "tauri dev",
     "test": "vitest run && vitest run --config vitest.render.config.ts",
     "test:render": "vitest run --config vitest.render.config.ts",
     "build:wasm": "node scripts/build-wasm.mjs",
+    "check:lsdoc-oracle": "node scripts/check-lsdoc-oracle-sync.mjs",
     "e2e:caret": "CARET_LABEL=release-required CARET_MODE=agenda node scripts/e2e-caret.mjs",
     "e2e:multigraph": "node scripts/e2e-multigraph.mjs",
     "screenshot": "node scripts/screenshot.mjs",
     "bench": "node scripts/bench.mjs"
   },
   "dependencies": {
+    "@fontsource-variable/noto-emoji": "^5.2.12",
     "@fontsource/inter": "^5.2.8",
     "@tauri-apps/api": "^2.1.1",
     "@tauri-apps/plugin-clipboard-manager": "^2.3.2",

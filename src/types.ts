@@ -178,6 +178,8 @@ export interface DiffRow {
 
 /** The full block-level diff of a conflict copy against its winner. */
 export interface SyncConflictDiff {
+  base_rev: string;
+  conflict_rev: string;
   rows: DiffRow[];
   mine_pre: string | null;
   theirs_pre: string | null;

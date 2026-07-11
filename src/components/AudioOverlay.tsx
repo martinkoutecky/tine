@@ -9,8 +9,7 @@
 
 import { For, Show, createEffect, createResource, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { audioPlayer, setAudioPlayer } from "../ui";
-import { isTauri } from "../backend";
-import { loadAssetBlob } from "../assetCache";
+import { backend, isTauri } from "../backend";
 
 /** Bare `assets/`-relative path of a media URL (mirrors inline.tsx's helper). */
 function relOf(url: string): string | null {
@@ -93,14 +92,14 @@ function drawWave(canvas: HTMLCanvasElement | undefined, peaks: number[] | null,
 }
 
 export function AudioOverlay(): JSX.Element {
-  // Resolve to a playable URL: a blob for graph assets (same path as the inline
+  // Resolve to a range-aware native URL for graph assets (same path as the inline
   // embed), or the direct URL for external/http audio.
   const [src] = createResource(
     () => audioPlayer()?.url ?? null,
     async (u) => {
       if (isExternal(u)) return u;
       const r = relOf(u);
-      return r ? await loadAssetBlob(r) : "";
+      return r ? await backend().streamAsset(r) : "";
     }
   );
 

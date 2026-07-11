@@ -97,12 +97,12 @@ afterEach(() => {
 });
 
 describe("default journal template graph bind", () => {
-  it("persists the template before invalidating the initial journals view", async () => {
+  it("invalidates stale loads before awaiting template work, then refreshes after save", async () => {
     const { loadGraphPath, events } = await loadHarness(null);
 
     await loadGraphPath(META.root);
 
-    expect(events).toEqual(["save-template", "bump-epoch"]);
+    expect(events).toEqual(["bump-epoch", "save-template", "bump-epoch"]);
   });
 
   it("uses an empty journal's revision as the conflict baseline", async () => {

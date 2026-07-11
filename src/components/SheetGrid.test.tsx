@@ -209,6 +209,53 @@ function loadOrgSheetDoc() {
 }
 
 describe("SheetGrid", () => {
+  it("caps and progressively discloses a very wide grid", () => {
+    const pageName = "Sheet";
+    const byId: Record<string, Node> = {};
+    const rowIds = ["wide-row-0", "wide-row-1", "wide-row-2"];
+    for (let row = 0; row < 3; row++) {
+      const cellIds = Array.from({ length: 20_000 }, (_, col) => `wide-cell-${row}-${col}`);
+      byId[rowIds[row]] = node(rowIds[row], "", pageName, "wide-grid", cellIds);
+      for (const cellId of cellIds) byId[cellId] = node(cellId, cellId, pageName, rowIds[row]);
+    }
+    byId["wide-grid"] = node("wide-grid", "Wide\ntine.view:: grid", pageName, null, rowIds);
+    setDoc({ byId, pages: [page("md", ["wide-grid"])], feed: [pageName], loaded: true });
+
+    const { root, dispose } = mount(() => <Block id="wide-grid" />);
+    const grid = root.querySelector(".sheet-grid") as HTMLElement;
+    expect(grid.querySelectorAll(":scope > .sheet-cell")).toHaveLength(600);
+    expect(grid.querySelector(".sheet-load-more-columns")?.textContent).toContain("1-200 of 20000");
+    (grid.querySelector(".sheet-load-more-columns") as HTMLButtonElement).click();
+    expect(grid.querySelectorAll(":scope > .sheet-cell")).toHaveLength(1_200);
+    expect(grid.querySelectorAll(":scope > .sheet-cell").length).toBeLessThanOrEqual(2_000);
+    dispose();
+  });
+
+  it("progressively discovers and discloses a large ragged grid without mounting its full rectangle", async () => {
+    const pageName = "Sheet";
+    const byId: Record<string, Node> = {};
+    const rowIds: string[] = [];
+    for (let row = 0; row < 500; row++) {
+      const rowId = `large-row-${row}`;
+      const cellIds = Array.from({ length: row === 499 ? 3 : 1 }, (_, col) => `large-cell-${row}-${col}`);
+      rowIds.push(rowId);
+      byId[rowId] = node(rowId, "", pageName, "large-grid", cellIds);
+      for (const cellId of cellIds) byId[cellId] = node(cellId, cellId, pageName, rowId);
+    }
+    byId["large-grid"] = node("large-grid", "Large\ntine.view:: grid", pageName, null, rowIds);
+    setDoc({ byId, pages: [page("md", ["large-grid"])], feed: [pageName], loaded: true });
+
+    const { root, dispose } = mount(() => <Block id="large-grid" />);
+    const grid = root.querySelector(".sheet-grid") as HTMLElement;
+    expect(grid.querySelectorAll(":scope > .sheet-cell")).toHaveLength(200);
+    await vi.waitFor(() => expect(grid.querySelectorAll(":scope > .sheet-cell")).toHaveLength(600));
+    expect(grid.querySelector(".sheet-load-more")?.textContent).toContain("200 of 500");
+    (grid.querySelector(".sheet-load-more") as HTMLButtonElement).click();
+    expect(grid.querySelectorAll(":scope > .sheet-cell")).toHaveLength(1200);
+    expect(grid.querySelector(".sheet-load-more")?.textContent).toContain("400 of 500");
+    dispose();
+  });
+
   it("renders a read-only positional grid with widths, holes, headers, hidden tine props, and nested grids", () => {
     loadMdSheetDoc();
     const { root, dispose } = mount(() => <Block id="grid" />);

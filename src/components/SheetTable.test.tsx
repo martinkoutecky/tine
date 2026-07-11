@@ -1,14 +1,22 @@
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { render } from "solid-js/web";
-import type { JSX } from "solid-js";
-import { Block } from "./Block";
+import { createSignal, type JSX } from "solid-js";
+import { Block, SurfaceContext } from "./Block";
 import { ContextMenu } from "./ContextMenu";
-import { SheetTable } from "./SheetTable";
+import { __sheetTableTestHooks, SheetTable } from "./SheetTable";
 import { DatePicker } from "./DatePicker";
 import { initParser } from "../render/parse";
-import { blockProperty, doc, readPageProperty, resetStore, setDoc, type FeedPage, type Node as StoreNode } from "../store";
+import { blockProperty, doc, readPageProperty, resetStore, setDoc, setRaw, type FeedPage, type Node as StoreNode } from "../store";
 import { setWorkflow } from "../ui";
-import { cellSel, resetCellSelectionForTests, setCellSel } from "../sheet/selection";
+import {
+  cellSel,
+  cellForBlockId,
+  handleCellSelectionKey,
+  resetCellSelectionForTests,
+  setCellRangeSelection,
+  setCellSel,
+  startCellEditing,
+} from "../sheet/selection";
 import { editingId, editingOwner } from "../editorController";
 import type { RefGroup } from "../types";
 
@@ -17,6 +25,7 @@ beforeAll(async () => {
 });
 
 afterEach(() => {
+  __sheetTableTestHooks.onIndexRow = undefined;
   resetCellSelectionForTests();
   resetStore();
   setWorkflow("todo");
@@ -121,6 +130,253 @@ function loadTableDoc() {
 }
 
 describe("SheetTable", () => {
+  it("keeps a same-UUID journal twin DTO-only when the page twin is preloaded", async () => {
+    const shared = "same-id";
+    setDoc({
+      byId: {
+        table: node("table", "Table\ntine.view:: table", null),
+        [shared]: { ...node(shared, "Loaded page row", null), page: "Twin" },
+      },
+      pages: [
+        page(["table"]),
+        { ...page([shared]), name: "Twin", title: "Twin", kind: "page" },
+      ],
+      feed: ["Sheet"], loaded: true,
+    });
+    const groups: RefGroup[] = [
+      { page: "Twin", kind: "page", blocks: [{ id: shared, raw: "Page DTO", collapsed: false, children: [] }] },
+      { page: "Twin", kind: "journal", blocks: [{ id: shared, raw: "Journal DTO", collapsed: false, children: [] }] },
+    ];
+    const { root, dispose } = mount(() => <SheetTable ownerId="table" rowSource="query" groups={groups} />);
+    expect([...root.querySelectorAll(".sheet-title-cell .sheet-cell-body")].map((el) => el.textContent?.trim()))
+      .toEqual(["Loaded page row", "Journal DTO"]);
+
+    cell(root, 0, 0).dispatchEvent(pointer("pointerdown", 0, 0));
+    const pageSelection = cellSel();
+    expect(pageSelection?.kind === "cell" ? pageSelection.rowId : null).toBe(`page\0Twin\0${shared}`);
+    expect(handleCellSelectionKey(new KeyboardEvent("keydown", { key: "ArrowDown" }))).toBe(true);
+    const journalSelection = cellSel();
+    expect(journalSelection?.kind === "cell" ? journalSelection.rowId : null).toBe(`journal\0Twin\0${shared}`);
+
+    cell(root, 0, 0).dispatchEvent(pointer("pointerdown", 0, 0, { shiftKey: true }));
+    const range = cellSel();
+    expect(range?.kind).toBe("range");
+    if (range?.kind === "range") {
+      expect(range.anchorRowId).toBe(`journal\0Twin\0${shared}`);
+      expect(range.focusRowId).toBe(`page\0Twin\0${shared}`);
+    }
+
+    expect(startCellEditing({ gridId: "table", surfaceId: "main", row: 1, col: 0 })).toBe(false);
+
+    doubleClick(cell(root, 1, 0));
+    await tick();
+    expect(editingId()).toBeNull();
+    expect(root.querySelector("textarea.block-editor")).toBeNull();
+    expect(doc.byId[shared].raw).toBe("Loaded page row");
+    dispose();
+  });
+
+  it("scopes one sheet rendered in two panes to the pane that started editing", async () => {
+    setDoc({
+      byId: {
+        table: node("table", "Table\ntine.view:: table", null, ["r1"]),
+        r1: node("r1", "Alpha", "table"),
+      },
+      pages: [page(["table"])], feed: ["Sheet"], loaded: true,
+    });
+    const { root, dispose } = mount(() => <>
+      <SurfaceContext.Provider value="pane:left"><SheetTable ownerId="table" rowSource="children" /></SurfaceContext.Provider>
+      <SurfaceContext.Provider value="pane:right"><SheetTable ownerId="table" rowSource="children" /></SurfaceContext.Provider>
+    </>);
+    const right = root.querySelector<HTMLElement>('[data-sheet-surface-id="pane:right"][data-row="0"][data-col="0"]')!;
+    doubleClick(right);
+    await Promise.resolve();
+    expect(root.querySelectorAll("textarea.block-editor")).toHaveLength(1);
+    expect(right.querySelector("textarea.block-editor")).not.toBeNull();
+    dispose();
+  });
+
+  it("keeps a title editor attached to its row identity while sorting reorders rows", async () => {
+    setDoc({
+      byId: {
+        table: node("table", "Table\ntine.view:: table", null, ["a", "b"]),
+        a: node("a", "Alpha", "table"),
+        b: node("b", "Beta", "table"),
+      },
+      pages: [page(["table"])], feed: ["Sheet"], loaded: true,
+    });
+    const { root, dispose } = mount(() => <Block id="table" />);
+    (root.querySelector(".sheet-title-header") as HTMLElement).click();
+    doubleClick(cell(root, 0, 0));
+    const editor = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+    editor.value = "Zulu";
+    editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "Zulu" }));
+    await Promise.resolve();
+    expect(editingId()).toBe("a");
+    expect(root.querySelectorAll("textarea.block-editor")).toHaveLength(1);
+    expect((root.querySelector("textarea.block-editor") as HTMLTextAreaElement).value).toBe("Zulu");
+    dispose();
+  });
+
+  it("keeps sorted range endpoints attached to their row identities", async () => {
+    setDoc({
+      byId: {
+        table: node("table", "Table\ntine.view:: table", null, ["a", "b", "c"]),
+        a: node("a", "Alpha", "table"),
+        b: node("b", "Beta", "table"),
+        c: node("c", "Charlie", "table"),
+      },
+      pages: [page(["table"])], feed: ["Sheet"], loaded: true,
+    });
+    const { root, dispose } = mount(() => <Block id="table" />);
+    (root.querySelector(".sheet-title-header") as HTMLElement).click();
+    setCellRangeSelection("table", { row: 1, col: 0 }, { row: 0, col: 0 }, "main");
+    const before = cellSel();
+    expect(before?.kind === "range" ? before.anchorRowId : null).toBe("b");
+    expect(before?.kind === "range" ? before.focusRowId : null).toBe("a");
+
+    setRaw("a", "Zulu");
+    await tick();
+
+    const selected = cellSel();
+    expect(selected?.kind).toBe("range");
+    if (selected?.kind === "range") {
+      expect(selected.anchor).toEqual({ row: 0, col: 0 });
+      expect(selected.focus).toEqual({ row: 2, col: 0 });
+      expect(selected.anchorRowId).toBe("b");
+      expect(selected.focusRowId).toBe("a");
+    }
+    expect(cell(root, 2, 0).dataset.sheetRowId).toBe("a");
+    expect(cell(root, 2, 0).classList.contains("sheet-cell-selected")).toBe(true);
+    dispose();
+  });
+
+  it("keeps B selected and editable when schema removal shifts it into A's column", async () => {
+    setDoc({
+      byId: {
+        table: node("table", "Table\ntine.view:: table\ntine.fields:: a=text;b=text;c=text", null, ["r1"]),
+        r1: node("r1", "Row\na:: A\nb:: B\nc:: C", "table"),
+      },
+      pages: [page(["table"])], feed: ["Sheet"], loaded: true,
+    });
+    const { root, dispose } = mount(() => <Block id="table" />);
+    cell(root, 0, 2).dispatchEvent(pointer("pointerdown", 0, 0));
+    const before = cellSel();
+    expect(before?.kind === "cell" ? before.columnId : null).toBe("prop:b");
+
+    setRaw("table", "Table\ntine.view:: table\ntine.fields:: b=text;c=text", { timetracking: false });
+    await tick();
+
+    const selected = cellSel();
+    expect(selected?.kind === "cell" ? { col: selected.col, columnId: selected.columnId } : null)
+      .toEqual({ col: 1, columnId: "prop:b" });
+    handleCellSelectionKey(new KeyboardEvent("keydown", { key: "Enter" }));
+    const input = root.querySelector("input.sheet-prop-input") as HTMLInputElement | null;
+    expect(input?.value).toBe("B");
+    dispose();
+  });
+
+  it("uses the cached row index for repeated navigation in a large query table", () => {
+    const blocks = Array.from({ length: 5_000 }, (_, i) => ({
+      id: `q${i}`,
+      raw: `Row ${i}`,
+      collapsed: false,
+      children: [],
+    }));
+    setDoc({
+      byId: { table: node("table", "Table\ntine.view:: table", null) },
+      pages: [page(["table"])], feed: ["Sheet"], loaded: true,
+    });
+    let indexed = 0;
+    __sheetTableTestHooks.onIndexRow = () => indexed++;
+    const { dispose } = mount(() => (
+      <SheetTable ownerId="table" rowSource="query" groups={[{ page: "Remote", kind: "page", blocks }]} />
+    ));
+    setCellSel({ gridId: "table", surfaceId: "main", rowId: "page\0Remote\0q0", columnId: "title", row: 0, col: 0 });
+    expect(indexed).toBe(5_000);
+    for (let i = 0; i < 20; i++) handleCellSelectionKey(new KeyboardEvent("keydown", { key: "ArrowDown" }));
+    expect(indexed).toBe(5_000);
+    dispose();
+  });
+
+  it("extends the query window before a refreshed off-window range can edit", async () => {
+    const filler = Array.from({ length: 270 }, (_, i) => ({ id: `f${i}`, raw: `Row ${i}`, collapsed: false, children: [] }));
+    const a = { id: "live-a", raw: "Alpha", collapsed: false, children: [] };
+    const b = { id: "live-b", raw: "Beta", collapsed: false, children: [] };
+    const remote: FeedPage = {
+      name: "Remote", kind: "page", title: "Remote", preBlock: null, roots: [a.id, b.id],
+      format: "md", readOnly: false, guide: false,
+    };
+    setDoc({
+      byId: {
+        table: node("table", "Table\ntine.view:: table", null),
+        [a.id]: { ...node(a.id, a.raw, null), page: remote.name },
+        [b.id]: { ...node(b.id, b.raw, null), page: remote.name },
+      },
+      pages: [page(["table"]), remote], feed: ["Sheet"], loaded: true,
+    });
+    const group = (blocks: typeof filler): RefGroup[] => [{ page: remote.name, kind: "page", blocks }];
+    const [groups, setGroups] = createSignal(group([a, b, ...filler]));
+    const { root, dispose } = mount(() => <SheetTable ownerId="table" rowSource="query" groups={groups()} />);
+    setCellRangeSelection("table", { row: 0, col: 0 }, { row: 1, col: 0 }, "main");
+
+    setGroups(group([...filler.slice(0, 250), a, ...filler.slice(250, 259), b, ...filler.slice(259)]));
+
+    const selected = cellSel();
+    expect(selected?.kind === "range" ? selected.anchor.row : -1).toBe(250);
+    expect(selected?.kind === "range" ? selected.focus.row : -1).toBe(260);
+    expect(root.querySelector('[data-row="260"][data-col="0"]')).not.toBeNull();
+    expect(handleCellSelectionKey(new KeyboardEvent("keydown", { key: "Enter" }))).toBe(true);
+    await tick();
+    expect(root.querySelector('[data-row="260"] textarea.block-editor')).not.toBeNull();
+    dispose();
+  });
+
+  it("uses the 100k row index for repeated cellForBlock nested-ascent lookups without rescanning", () => {
+    const target = "live-target";
+    const blocks = Array.from({ length: 100_000 }, (_, i) => ({
+      id: i === 0 ? target : `q${i}`,
+      raw: `Row ${i}`,
+      collapsed: false,
+      children: [],
+    }));
+    const remote: FeedPage = {
+      name: "Remote", kind: "page", title: "Remote", preBlock: null, roots: [target],
+      format: "md", readOnly: false, guide: false,
+    };
+    setDoc({
+      byId: {
+        table: node("table", "Table\ntine.view:: table", null),
+        [target]: { ...node(target, "Row 0", null), page: remote.name },
+      },
+      pages: [page(["table"]), remote], feed: ["Sheet"], loaded: true,
+    });
+    let indexed = 0;
+    __sheetTableTestHooks.onIndexRow = () => indexed++;
+    const { dispose } = mount(() => (
+      <SheetTable ownerId="table" rowSource="query" groups={[{ page: remote.name, kind: "page", blocks }]} />
+    ));
+    expect(indexed).toBe(100_000);
+    for (let i = 0; i < 50; i++) {
+      expect(cellForBlockId(target, "main")?.rowId).toBe(`page\0Remote\0${target}`);
+    }
+    expect(indexed).toBe(100_000);
+    dispose();
+  });
+
+  it("does not navigate selection into rows beyond the rendered window", () => {
+    const ids = Array.from({ length: 201 }, (_, i) => `r${i}`);
+    const byId: Record<string, StoreNode> = { table: node("table", "Table\ntine.view:: table", null, ids) };
+    for (const [i, id] of ids.entries()) byId[id] = node(id, `Row ${i}`, "table");
+    setDoc({ byId, pages: [page(["table"])], feed: ["Sheet"], loaded: true });
+    const { root, dispose } = mount(() => <Block id="table" />);
+    setCellSel({ gridId: "table", row: 199, col: 0 });
+    handleCellSelectionKey(new KeyboardEvent("keydown", { key: "ArrowDown" }));
+    const selected = cellSel();
+    expect(selected?.kind === "cell" ? selected.row : -1).not.toBe(200);
+    expect(root.querySelector('[data-row="200"]')).toBeNull();
+    dispose();
+  });
   it("renders children rows with observed field columns in stable order", () => {
     loadTableDoc();
     const { root, dispose } = mount(() => <Block id="table" />);
@@ -802,7 +1058,7 @@ describe("SheetTable", () => {
     expect(doc.byId[id].raw).toBe("");
     expect(doc.byId[id].parent).toBe("table");
     expect(editingId()).toBe(id);
-    expect(editingOwner()).toBe("sheet:table:1:0");
+    expect(editingOwner()).toBe(`sheet:main:table:${id}:title`);
 
     dispose();
   });
@@ -936,6 +1192,34 @@ describe("SheetTable", () => {
     ]);
     expect([...root.querySelectorAll(".sheet-aggregate-value")].map((el) => el.textContent?.trim())).toContain("8");
 
+    dispose();
+  });
+
+  it("clears a selected range when filtering removes either stable row endpoint", async () => {
+    setDoc({
+      byId: {
+        table: node(
+          "table",
+          "Table\ntine.view:: table\ntine.fields:: points=number\ntine.filter:: points > 2",
+          null,
+          ["r1", "r2", "r3"]
+        ),
+        r1: node("r1", "One\npoints:: 1", "table"),
+        r2: node("r2", "Three\npoints:: 3", "table"),
+        r3: node("r3", "Five\npoints:: 5", "table"),
+      },
+      pages: [page(["table"])], feed: ["Sheet"], loaded: true,
+    });
+    const { dispose } = mount(() => <Block id="table" />);
+    setCellRangeSelection("table", { row: 0, col: 0 }, { row: 1, col: 0 }, "main");
+    expect(cellSel()?.kind).toBe("range");
+
+    setRaw("r2", "Three\npoints:: 0");
+    await tick();
+
+    expect(cellSel()).toBeNull();
+    expect(handleCellSelectionKey(new KeyboardEvent("keydown", { key: "Enter" }))).toBe(false);
+    expect(doc.byId.r3.raw).toBe("Five\npoints:: 5");
     dispose();
   });
 

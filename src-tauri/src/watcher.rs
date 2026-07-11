@@ -33,8 +33,95 @@ impl Pending {
             self.need_full = true;
             return;
         }
-        self.paths.extend(event.paths);
+        let managed_sync_event = event.paths.iter().all(|path| {
+            path.components()
+                .any(|component| component.as_os_str() == ".tine-sync")
+        });
+        if event_is_plain_page_file_op(&event) || managed_sync_event {
+            self.paths.extend(event.paths);
+        } else {
+            self.need_full = true;
+        }
     }
+}
+
+fn is_page_file_path(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|x| x.to_str()),
+        Some("md") | Some("org")
+    )
+}
+
+fn path_is_existing_dir(path: &Path) -> bool {
+    std::fs::metadata(path).map(|m| m.is_dir()).unwrap_or(false)
+}
+
+fn all_concrete_page_file_paths(event: &notify::Event) -> bool {
+    !event.paths.is_empty()
+        && event
+            .paths
+            .iter()
+            .all(|p| is_page_file_path(p) && !path_is_existing_dir(p))
+}
+
+fn event_is_plain_page_file_op(event: &notify::Event) -> bool {
+    use notify::event::{CreateKind, EventKind, ModifyKind, RemoveKind, RenameMode};
+
+    if !all_concrete_page_file_paths(event) {
+        return false;
+    }
+    match event.kind {
+        EventKind::Create(CreateKind::File) => true,
+        EventKind::Modify(ModifyKind::Data(_)) | EventKind::Modify(ModifyKind::Metadata(_)) => true,
+        EventKind::Modify(ModifyKind::Name(
+            RenameMode::From | RenameMode::To | RenameMode::Both,
+        )) => true,
+        EventKind::Remove(RemoveKind::File) => true,
+        _ => false,
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FileStamp {
+    modified: SystemTime,
+    len: u64,
+    identity: u128,
+    changed: i128,
+}
+
+fn metadata_stamp(md: &std::fs::Metadata) -> Option<FileStamp> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        return Some(FileStamp {
+            modified: md.modified().ok()?,
+            len: md.len(),
+            identity: ((md.dev() as u128) << 64) | md.ino() as u128,
+            changed: (md.ctime() as i128) * 1_000_000_000 + md.ctime_nsec() as i128,
+        });
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        return Some(FileStamp {
+            modified: md.modified().ok()?,
+            len: md.len(),
+            identity: md.creation_time() as u128,
+            changed: md.last_write_time() as i128,
+        });
+    }
+    #[cfg(not(any(unix, windows)))]
+    Some(FileStamp {
+        modified: md.modified().ok()?,
+        len: md.len(),
+        identity: md
+            .created()
+            .ok()?
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .ok()?
+            .as_nanos(),
+        changed: 0,
+    })
 }
 
 /// Recursively collect every `.md`/`.org` page file under `dir` with its
@@ -43,7 +130,7 @@ impl Pending {
 /// `list_md` walk: match page files by extension (the metadata read is needed for
 /// mtime/len anyway), skip hidden dirs and symlinked dirs (no cycles, no escaping
 /// the watched tree). Scoped to the dir passed in (journals/ or pages/).
-fn collect_page_files(dir: &std::path::Path, out: &mut HashMap<PathBuf, (SystemTime, u64)>) {
+fn collect_page_files(dir: &std::path::Path, out: &mut HashMap<PathBuf, FileStamp>) {
     let mut stack = vec![dir.to_path_buf()];
     while let Some(d) = stack.pop() {
         let Ok(rd) = std::fs::read_dir(&d) else {
@@ -51,13 +138,19 @@ fn collect_page_files(dir: &std::path::Path, out: &mut HashMap<PathBuf, (SystemT
         };
         for e in rd.flatten() {
             let p = e.path();
+            let Ok(file_type) = e.file_type() else {
+                continue;
+            };
             if matches!(
                 p.extension().and_then(|x| x.to_str()),
                 Some("md") | Some("org")
             ) {
-                if let Ok(md) = e.metadata() {
-                    if let Ok(m) = md.modified() {
-                        out.insert(p, (m, md.len()));
+                // Never follow a page-looking symlink. Besides cycles, a
+                // `secret.md` symlink could otherwise expose outside bytes.
+                if file_type.is_file() {
+                    let Ok(md) = e.metadata() else { continue };
+                    if let Some(stamp) = metadata_stamp(&md) {
+                        out.insert(p, stamp);
                     }
                 }
                 continue;
@@ -67,33 +160,33 @@ fn collect_page_files(dir: &std::path::Path, out: &mut HashMap<PathBuf, (SystemT
                 .and_then(|s| s.to_str())
                 .map(|s| s.starts_with('.'))
                 .unwrap_or(true);
-            if !hidden && e.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
+            if !hidden && file_type.is_dir() {
                 stack.push(p);
             }
         }
     }
 }
 
-fn collect_graph_page_files(dirs: &[PathBuf; 2]) -> HashMap<PathBuf, (SystemTime, u64)> {
-    let mut current: HashMap<PathBuf, (SystemTime, u64)> = HashMap::new();
+fn collect_graph_page_files(dirs: &[PathBuf; 2]) -> HashMap<PathBuf, FileStamp> {
+    let mut current: HashMap<PathBuf, FileStamp> = HashMap::new();
     for dir in dirs {
         collect_page_files(dir, &mut current);
     }
     current
 }
 
-fn file_snapshot(path: &Path) -> Option<(SystemTime, u64)> {
+fn file_snapshot(path: &Path) -> Option<FileStamp> {
     let md = std::fs::metadata(path).ok()?;
     if !md.is_file() {
         return None;
     }
-    Some((md.modified().ok()?, md.len()))
+    metadata_stamp(&md)
 }
 
 fn full_diff_reconcile(
     graph: &Graph,
-    snap: &mut HashMap<PathBuf, (SystemTime, u64)>,
-    mut current: HashMap<PathBuf, (SystemTime, u64)>,
+    snap: &mut HashMap<PathBuf, FileStamp>,
+    mut current: HashMap<PathBuf, FileStamp>,
 ) -> (Vec<GraphChange>, bool, Vec<String>) {
     let mut changes: Vec<GraphChange> = Vec::new();
     let mut errors = Vec::new();
@@ -158,7 +251,7 @@ fn full_diff_reconcile(
 
 fn incremental_reconcile(
     graph: &Graph,
-    snap: &mut HashMap<PathBuf, (SystemTime, u64)>,
+    snap: &mut HashMap<PathBuf, FileStamp>,
     paths: &HashSet<PathBuf>,
 ) -> (Vec<GraphChange>, bool, Vec<String>) {
     let mut changes: Vec<GraphChange> = Vec::new();
@@ -172,25 +265,26 @@ fn incremental_reconcile(
     ordered.sort_by_key(|path| file_snapshot(path).is_none());
     for p in ordered {
         if let Some(m) = file_snapshot(p) {
-            if snap.get(p) != Some(&m) {
-                if tine_core::model::path_is_sync_conflict(p) {
-                    conflicts_dirty = true;
-                } else {
-                    match graph.sync_file_checked(p) {
-                        Ok(Some(en)) => changes.push(GraphChange {
-                            name: en.name,
-                            kind: en.kind,
-                            removed: false,
-                        }),
-                        Ok(None) => {}
-                        Err(error) => {
-                            errors.push(format!("{}: {error}", p.display()));
-                            continue;
-                        }
+            // This path came from an explicit OS event. Always compare its
+            // content even if a sync/copy tool preserved mtime and length;
+            // the graph reconciliation already suppresses Tine's own/unchanged bytes.
+            if tine_core::model::path_is_sync_conflict(p) {
+                conflicts_dirty = true;
+            } else {
+                match graph.sync_file_checked(p) {
+                    Ok(Some(en)) => changes.push(GraphChange {
+                        name: en.name,
+                        kind: en.kind,
+                        removed: false,
+                    }),
+                    Ok(None) => {}
+                    Err(error) => {
+                        errors.push(format!("{}: {error}", p.display()));
+                        continue;
                     }
                 }
-                snap.insert(p.clone(), m);
             }
+            snap.insert(p.clone(), m);
         } else if snap.contains_key(p) {
             if tine_core::model::path_is_sync_conflict(p) {
                 conflicts_dirty = true;
@@ -218,7 +312,7 @@ fn incremental_reconcile(
 fn reconcile_pending(
     graph: &Graph,
     dirs: &[PathBuf; 2],
-    snap: &mut HashMap<PathBuf, (SystemTime, u64)>,
+    snap: &mut HashMap<PathBuf, FileStamp>,
     paths: &HashSet<PathBuf>,
     need_full: bool,
 ) -> (Vec<GraphChange>, bool, bool, Vec<String>) {
@@ -268,7 +362,7 @@ pub(crate) fn start_watcher(app: tauri::AppHandle) {
             slot: Arc<GraphSlot>,
             dirs: [PathBuf; 2],
             sync_dir: PathBuf,
-            snap: HashMap<PathBuf, (SystemTime, u64)>,
+            snap: HashMap<PathBuf, FileStamp>,
             baseline: bool,
             last_sync_error: Option<String>,
         }
@@ -641,7 +735,7 @@ mod tests {
         std::fs::write(dir.join("Archive/notes.txt"), "ignored\n").unwrap();
         std::fs::write(dir.join(".hidden/skip.md"), "- s\n").unwrap();
 
-        let mut out: HashMap<PathBuf, (SystemTime, u64)> = HashMap::new();
+        let mut out: HashMap<PathBuf, FileStamp> = HashMap::new();
         collect_page_files(&dir, &mut out);
         let mut names: Vec<String> = out
             .keys()
@@ -658,6 +752,28 @@ mod tests {
             vec!["Archive/Deep/Deeper/deep.md", "Archive/mid.org", "top.md"]
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn collect_page_files_does_not_follow_page_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let dir = std::env::temp_dir().join(format!("tine-watch-link-{}", std::process::id()));
+        let outside =
+            std::env::temp_dir().join(format!("tine-watch-outside-{}.md", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_file(&outside);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&outside, "- outside\n").unwrap();
+        symlink(&outside, dir.join("secret.md")).unwrap();
+
+        let mut out = HashMap::new();
+        collect_page_files(&dir, &mut out);
+        assert!(out.is_empty());
+
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::remove_file(&outside).ok();
     }
 
     #[test]
@@ -708,6 +824,28 @@ mod tests {
                 rel_paths(tg, &["pages/Edit.md"])
             },
         );
+    }
+
+    #[test]
+    fn explicit_event_reconciles_even_when_snapshot_metadata_is_equal() {
+        let tg = TempGraph::new("explicit-same-metadata");
+        tg.write("pages/Edit.md", "- alpha\n");
+        let graph = Graph::open(&tg.root);
+        warm_cache(&graph);
+        let path = tg.path("pages/Edit.md");
+        tg.write("pages/Edit.md", "- bravo\n"); // equal byte length
+        let stamp = file_snapshot(&path).unwrap();
+        // Simulate a sync tool preserving every snapshot field: the explicit
+        // notify path must still reach Graph::sync_file's content comparison.
+        let mut snap = HashMap::from([(path.clone(), stamp)]);
+        let (changes, conflicts_dirty, errors) =
+            incremental_reconcile(&graph, &mut snap, &HashSet::from([path]));
+        assert!(!conflicts_dirty);
+        assert!(errors.is_empty());
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].name, "Edit");
+        assert_eq!(changes[0].kind, PageKind::Page);
+        assert!(!changes[0].removed);
     }
 
     #[test]

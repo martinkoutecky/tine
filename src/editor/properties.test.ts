@@ -70,6 +70,22 @@ describe("caretInFence", () => {
     const raw = "before\n```\nconst x = 1;";
     expect(caretInFence(raw, raw.indexOf("const"))).toBe(true);
   });
+
+  it("does not close a four-character fence with a shorter run", () => {
+    const raw = "````text\nalpha\n```\nid:: literal-code\n````\nid:: real-id";
+    expect(caretInFence(raw, raw.indexOf("literal-code"))).toBe(true);
+    const { visible, hidden } = splitProps(raw, isBuiltinHidden);
+    expect(visible).toContain("id:: literal-code");
+    expect(hidden).toBe("id:: real-id");
+  });
+
+  it("uses the opening run length for tilde fences too", () => {
+    const raw = "~~~~text\n~~~\ncollapsed:: literal-code\n~~~~\ncollapsed:: true";
+    expect(caretInFence(raw, raw.indexOf("literal-code"))).toBe(true);
+    const { visible, hidden } = splitProps(raw, isBuiltinHidden);
+    expect(visible).toContain("collapsed:: literal-code");
+    expect(hidden).toBe("collapsed:: true");
+  });
 });
 
 // GH #37: org block-property drawers (`:PROPERTIES:`/`:id:`/`:END:`) must be

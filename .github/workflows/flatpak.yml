@@ -10,6 +10,7 @@
 name: Flatpak build test
 
 on:
+  workflow_call:
   workflow_dispatch:
   push:
     # A branch filter is intentional: GitHub does not evaluate `paths` for tag
@@ -28,7 +29,7 @@ on:
 
 # One in-flight build per ref; newer pushes cancel older runs.
 concurrency:
-  group: flatpak-${{ github.ref }}
+  group: flatpak-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

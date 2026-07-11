@@ -4,7 +4,13 @@ import { AstBody } from "../render/body";
 import { visibleBody } from "../render/block";
 import { facetsOf } from "../render/facets";
 import { sheetConfig } from "../sheet/config";
-import { buildMatrix, type MatrixCell } from "../sheet/matrix";
+import {
+  buildMatrixWindow,
+  noteMatrixWindowColumns,
+  observeMatrixDimensions,
+  type MatrixCell,
+} from "../sheet/matrix";
+import { collectAggregateColumns } from "../sheet/aggregate";
 import { SheetCellContext, type SheetCellCtx } from "../sheet/context";
 import {
   cellOwner,
@@ -14,6 +20,8 @@ import {
   colSeamSel,
   growSheetEdge,
   rowSeamSel,
+  registerSheetVisibilityHook,
+  registerSheetViewAdapter,
   setCellSel,
   setAggregateFooterPinned,
   startCellEditing,
@@ -39,6 +47,8 @@ import { SheetAggregateCornerToggle, SheetAggregateFooterCell } from "./SheetAgg
 import { SheetContainerOverlayContext } from "./SheetContainerOverlay";
 
 const MAX_GRID_DEPTH = 5;
+export const GRID_RENDER_PAGE = 200;
+export const GRID_RENDER_CELL_LIMIT = 2_000;
 
 function configForBlock(id: string) {
   const node = doc.byId[id];
@@ -49,9 +59,9 @@ function blockChildren(id: string): string[] {
   return doc.byId[id]?.children ?? [];
 }
 
-function columnTracks(cols: number, widths: ReadonlyMap<number, number>, preview?: { col: number; px: number }): string {
+function columnTracks(cols: number, widths: ReadonlyMap<number, number>, preview?: { col: number; px: number }, start = 0): string {
   const tracks: string[] = [];
-  for (let col = 0; col < cols; col++) {
+  for (let col = start; col < start + cols; col++) {
     const px = preview?.col === col ? preview.px : widths.get(col);
     tracks.push(px == null ? "max-content" : `${px}px`);
   }
@@ -62,9 +72,9 @@ function cellInGrid(grid: HTMLElement, row: number, col: number): HTMLElement | 
   return grid.querySelector(`:scope > .sheet-cell[data-row="${row}"][data-col="${col}"]`) as HTMLElement | null;
 }
 
-function measuredColumnTracks(grid: HTMLElement, cols: number): string | null {
+function measuredColumnTracks(grid: HTMLElement, cols: number, start = 0): string | null {
   const tracks: string[] = [];
-  for (let col = 0; col < cols; col++) {
+  for (let col = start; col < start + cols; col++) {
     const cell =
       cellInGrid(grid, 0, col) ??
       grid.querySelector(`:scope > .sheet-cell[data-col="${col}"]`) as HTMLElement | null;
@@ -75,17 +85,19 @@ function measuredColumnTracks(grid: HTMLElement, cols: number): string | null {
   return tracks.join(" ");
 }
 
-function seamStyleFor(grid: HTMLElement, sel: SheetSel, matrix: { rows: number; cols: number }): JSX.CSSProperties | null {
+function seamStyleFor(grid: HTMLElement, sel: SheetSel, matrix: { rows: number; cols: number; rowStart: number; colStart: number }): JSX.CSSProperties | null {
   if ((sel.kind !== "row-seam" && sel.kind !== "col-seam") || matrix.rows <= 0 || matrix.cols <= 0) return null;
   const gridRect = grid.getBoundingClientRect();
 
   if (sel.kind === "row-seam") {
-    const row = sel.at <= 0 ? 0 : sel.at >= matrix.rows ? matrix.rows - 1 : sel.at;
-    const col = Math.max(0, Math.min(sel.anchor.col, matrix.cols - 1));
+    const firstRow = matrix.rowStart;
+    const lastRow = matrix.rowStart + matrix.rows - 1;
+    const row = sel.at <= firstRow ? firstRow : sel.at > lastRow ? lastRow : sel.at;
+    const col = Math.max(matrix.colStart, Math.min(sel.anchor.col, matrix.colStart + matrix.cols - 1));
     const cell = cellInGrid(grid, row, col);
     if (!cell) return null;
     const rect = cell.getBoundingClientRect();
-    const y = sel.at <= 0 ? rect.top - gridRect.top : sel.at >= matrix.rows ? rect.bottom - gridRect.top : rect.top - gridRect.top;
+    const y = sel.at <= firstRow ? rect.top - gridRect.top : sel.at > lastRow ? rect.bottom - gridRect.top : rect.top - gridRect.top;
     // Clamp into the visible content box: the outermost boundary seams would
     // otherwise land exactly on the overflow clip edge and paint nothing.
     const top = Math.max(0, Math.min(Math.round(y + grid.scrollTop - 1), grid.scrollHeight - 2));
@@ -102,12 +114,14 @@ function seamStyleFor(grid: HTMLElement, sel: SheetSel, matrix: { rows: number; 
     };
   }
 
-  const row = Math.max(0, Math.min(sel.anchor.row, matrix.rows - 1));
-  const col = sel.at <= 0 ? 0 : sel.at >= matrix.cols ? matrix.cols - 1 : sel.at;
+  const row = Math.max(matrix.rowStart, Math.min(sel.anchor.row, matrix.rowStart + matrix.rows - 1));
+  const firstCol = matrix.colStart;
+  const lastCol = matrix.colStart + matrix.cols - 1;
+  const col = sel.at <= firstCol ? firstCol : sel.at > lastCol ? lastCol : sel.at;
   const cell = cellInGrid(grid, row, col);
   if (!cell) return null;
   const rect = cell.getBoundingClientRect();
-  const x = sel.at <= 0 ? rect.left - gridRect.left : sel.at >= matrix.cols ? rect.right - gridRect.left : rect.left - gridRect.left;
+  const x = sel.at <= firstCol ? rect.left - gridRect.left : sel.at > lastCol ? rect.right - gridRect.left : rect.left - gridRect.left;
   // Same boundary clamp as row seams (right-edge seam vs the overflow clip).
   const left = Math.max(0, Math.min(Math.round(x + grid.scrollLeft - 1), grid.scrollWidth - 2));
   const height = Math.round(rect.height);
@@ -120,22 +134,23 @@ function seamStyleFor(grid: HTMLElement, sel: SheetSel, matrix: { rows: number; 
   };
 }
 
-function trackEdges(grid: HTMLElement, rows: number, cols: number): { rowEdges: number[]; colEdges: number[] } | null {
+function trackEdges(grid: HTMLElement, rows: number, cols: number, rowStart = 0, colStart = 0): { rowEdges: number[]; colEdges: number[] } | null {
   if (rows <= 0 || cols <= 0) return null;
   const gridRect = grid.getBoundingClientRect();
   const colEdges: number[] = [];
   for (let at = 0; at <= cols; at++) {
+    const col = colStart + at;
     if (at === 0) {
-      const first = cellInGrid(grid, 0, 0);
+      const first = cellInGrid(grid, rowStart, colStart);
       if (!first) return null;
       colEdges.push(first.getBoundingClientRect().left - gridRect.left);
     } else if (at === cols) {
-      const last = cellInGrid(grid, 0, cols - 1);
+      const last = cellInGrid(grid, rowStart, colStart + cols - 1);
       if (!last) return null;
       colEdges.push(last.getBoundingClientRect().right - gridRect.left);
     } else {
-      const prev = cellInGrid(grid, 0, at - 1);
-      const next = cellInGrid(grid, 0, at);
+      const prev = cellInGrid(grid, rowStart, col - 1);
+      const next = cellInGrid(grid, rowStart, col);
       if (!prev || !next) return null;
       colEdges.push((prev.getBoundingClientRect().right + next.getBoundingClientRect().left) / 2 - gridRect.left);
     }
@@ -143,17 +158,18 @@ function trackEdges(grid: HTMLElement, rows: number, cols: number): { rowEdges: 
 
   const rowEdges: number[] = [];
   for (let at = 0; at <= rows; at++) {
+    const row = rowStart + at;
     if (at === 0) {
-      const first = cellInGrid(grid, 0, 0);
+      const first = cellInGrid(grid, rowStart, colStart);
       if (!first) return null;
       rowEdges.push(first.getBoundingClientRect().top - gridRect.top);
     } else if (at === rows) {
-      const last = cellInGrid(grid, rows - 1, 0);
+      const last = cellInGrid(grid, rowStart + rows - 1, colStart);
       if (!last) return null;
       rowEdges.push(last.getBoundingClientRect().bottom - gridRect.top);
     } else {
-      const prev = cellInGrid(grid, at - 1, 0);
-      const next = cellInGrid(grid, at, 0);
+      const prev = cellInGrid(grid, row - 1, colStart);
+      const next = cellInGrid(grid, row, colStart);
       if (!prev || !next) return null;
       rowEdges.push((prev.getBoundingClientRect().bottom + next.getBoundingClientRect().top) / 2 - gridRect.top);
     }
@@ -182,8 +198,10 @@ type RulingHit =
   | { kind: "col"; at: number; row: number }
   | { kind: "row"; at: number; col: number };
 
-function hitRuling(grid: HTMLElement, matrix: { rows: number; cols: number }, clientX: number, clientY: number): RulingHit | null {
-  const edges = trackEdges(grid, matrix.rows, matrix.cols);
+function hitRuling(grid: HTMLElement, matrix: { rows: number; cols: number; rowStart?: number; colStart?: number }, clientX: number, clientY: number): RulingHit | null {
+  const rowStart = matrix.rowStart ?? 0;
+  const colStart = matrix.colStart ?? 0;
+  const edges = trackEdges(grid, matrix.rows, matrix.cols, rowStart, colStart);
   if (!edges) return null;
   const rect = grid.getBoundingClientRect();
   const x = clientX - rect.left;
@@ -191,9 +209,9 @@ function hitRuling(grid: HTMLElement, matrix: { rows: number; cols: number }, cl
   const col = nearestEdge(edges.colEdges, x);
   const row = nearestEdge(edges.rowEdges, y);
   if (col && (!row || col.dist <= row.dist)) {
-    return { kind: "col", at: col.at, row: trackIndexAt(edges.rowEdges, y) };
+    return { kind: "col", at: colStart + col.at, row: rowStart + trackIndexAt(edges.rowEdges, y) };
   }
-  if (row) return { kind: "row", at: row.at, col: trackIndexAt(edges.colEdges, x) };
+  if (row) return { kind: "row", at: rowStart + row.at, col: colStart + trackIndexAt(edges.colEdges, x) };
   return null;
 }
 
@@ -202,6 +220,7 @@ export function SheetGrid(props: { id: string }): JSX.Element {
 }
 
 function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
+  const surfaceId = useContext(SurfaceContext);
   let gridRef: HTMLDivElement | undefined;
   const [seamStyle, setSeamStyle] = createSignal<JSX.CSSProperties | null>(null);
   const [resizing, setResizing] = createSignal(false);
@@ -211,21 +230,102 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
   const sheetOverlay = props.depth === 0 ? containerOverlay : null;
   const sheetHovering = () => (sheetOverlay?.hovering() ?? false) || hovering();
   const config = createMemo(() => configForBlock(props.id));
-  const rows = createMemo(() =>
-    blockChildren(props.id).map((id) => ({
-      id,
-      cellIds: blockChildren(id),
-    }))
-  );
-  const matrix = createMemo(() => buildMatrix(rows()));
-  const columns = createMemo(() => columnTracks(matrix().cols, config().colWidths));
-  const editingInThisGrid = () => editingOwner()?.startsWith(`sheet:${props.id}:`) ?? false;
-  const effectiveColumns = () => stableColumns() ?? columns();
+  const rowIds = createMemo(() => blockChildren(props.id));
   const hasAggregates = createMemo(() => config().colAggregates.size > 0);
   const footerPinned = createMemo(() => aggregateFooterPinned(props.id));
   const showFooter = createMemo(() => hasAggregates() || footerPinned());
+  const [renderLimit, setRenderLimit] = createSignal(GRID_RENDER_PAGE);
+  const [rowStart, setRowStart] = createSignal(0);
+  const [columnLimit, setColumnLimit] = createSignal(GRID_RENDER_PAGE);
+  const [columnStart, setColumnStart] = createSignal(0);
+  const [discoveredCols, setDiscoveredCols] = createSignal(1);
+  const renderedRows = createMemo(() => Math.min(Math.max(0, rowIds().length - rowStart()), renderLimit()));
+  const windowRows = createMemo(() => rowIds()
+    .slice(rowStart(), rowStart() + renderedRows())
+    .map((id) => ({ id, cellIds: blockChildren(id) })));
+  const fullColumnCount = () => discoveredCols();
+  let stopDimensionObservation: (() => void) | null = null;
+  createEffect(() => {
+    const ids = rowIds();
+    ids.length;
+    stopDimensionObservation?.();
+    stopDimensionObservation = observeMatrixDimensions(
+      props.id,
+      ids,
+      (rowId) => blockChildren(rowId).length,
+      setDiscoveredCols,
+    );
+  });
+  onCleanup(() => stopDimensionObservation?.());
+  createEffect(() => {
+    let cols = 1;
+    for (const row of windowRows()) cols = Math.max(cols, row.cellIds.length);
+    noteMatrixWindowColumns(props.id, cols);
+  });
+  const renderedCols = createMemo(() => Math.min(
+    Math.max(0, fullColumnCount() - columnStart()),
+    columnLimit(),
+    Math.max(1, Math.floor(GRID_RENDER_CELL_LIMIT / Math.max(1, renderedRows()))),
+  ));
+  const matrix = createMemo(() => buildMatrixWindow(windowRows(), {
+    totalRows: rowIds().length,
+    totalCols: fullColumnCount(),
+    rowStart: rowStart(),
+    colStart: columnStart(),
+    visibleCols: renderedCols(),
+  }));
+  const columns = createMemo(() => columnTracks(renderedCols(), config().colWidths, undefined, columnStart()));
+  const editingInThisGrid = () => editingOwner()?.startsWith(`sheet:${surfaceId}:${props.id}:`) ?? false;
+  const effectiveColumns = () => stableColumns() ?? columns();
   const showFooterToggle = createMemo(() => !hasAggregates() && (sheetHovering() || footerPinned()));
   const readOnly = () => blockPageReadOnly(props.id);
+
+  const ensureSelectionVisible = (sel: SheetSel) => {
+    if (!sel || sel.gridId !== props.id || (sel.surfaceId && sel.surfaceId !== surfaceId)) return;
+    const wanted = sel.kind === "row-seam"
+      ? Math.max(1, sel.at)
+      : sel.kind === "range"
+        ? Math.max(sel.anchor.row, sel.focus.row) + 1
+        : sel.row + 1;
+    if ((wanted <= rowStart() || wanted > rowStart() + renderedRows()) && wanted <= rowIds().length) {
+      const next = Math.ceil(wanted / GRID_RENDER_PAGE) * GRID_RENDER_PAGE;
+      if (next * renderedCols() <= GRID_RENDER_CELL_LIMIT) {
+        setRowStart(0);
+        setRenderLimit(next);
+      } else {
+        const capacity = Math.max(1, Math.floor(GRID_RENDER_CELL_LIMIT / Math.max(1, renderedCols())));
+        setRowStart(Math.floor((wanted - 1) / capacity) * capacity);
+        setRenderLimit(capacity);
+      }
+    }
+    const wantedCol = sel.kind === "col-seam"
+      ? Math.max(1, sel.at)
+      : sel.kind === "range"
+        ? Math.max(sel.anchor.col, sel.focus.col) + 1
+        : sel.col + 1;
+    if ((wantedCol <= columnStart() || wantedCol > columnStart() + renderedCols()) && wantedCol <= fullColumnCount()) {
+      const next = Math.ceil(wantedCol / GRID_RENDER_PAGE) * GRID_RENDER_PAGE;
+      if (next * renderedRows() <= GRID_RENDER_CELL_LIMIT) {
+        setColumnStart(0);
+        setColumnLimit(next);
+      } else {
+        const capacity = Math.max(1, Math.floor(GRID_RENDER_CELL_LIMIT / Math.max(1, renderedRows())));
+        setColumnStart(Math.floor((wantedCol - 1) / capacity) * capacity);
+        setColumnLimit(capacity);
+      }
+    }
+  };
+
+  createEffect(() => {
+    const sel = cellSel();
+    if (sel) ensureSelectionVisible(sel);
+  });
+
+  onCleanup(registerSheetVisibilityHook(props.id, ensureSelectionVisible, surfaceId));
+  onCleanup(registerSheetViewAdapter(props.id, {
+    bounds: () => ({ rows: rowIds().length, cols: rowIds().length ? fullColumnCount() : 0 }),
+    blockIdAt: (row, col) => blockChildren(rowIds()[row] ?? "")[col] ?? null,
+  }, surfaceId));
 
   const toggleFooter = (e: MouseEvent) => {
     e.preventDefault();
@@ -253,7 +353,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
 
   const captureStableColumns = () => {
     if (!gridRef) return;
-    const tracks = measuredColumnTracks(gridRef, matrix().cols);
+    const tracks = measuredColumnTracks(gridRef, renderedCols(), columnStart());
     if (tracks) setStableColumns(tracks);
   };
 
@@ -275,7 +375,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
 
   createEffect(() => {
     const sel = cellSel();
-    const m = matrix();
+    matrix();
     columns();
     if (!gridRef || !sel || sel.gridId !== props.id || (sel.kind !== "row-seam" && sel.kind !== "col-seam")) {
       setSeamStyle(null);
@@ -283,7 +383,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
     }
     const update = () => {
       if (!gridRef) return;
-      setSeamStyle(seamStyleFor(gridRef, sel, m));
+      setSeamStyle(seamStyleFor(gridRef, sel, { rows: renderedRows(), cols: renderedCols(), rowStart: rowStart(), colStart: columnStart() }));
     };
     update();
     if (typeof requestAnimationFrame === "function") requestAnimationFrame(update);
@@ -291,7 +391,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
 
   const previewColumn = (col: number, px: number) => {
     if (!gridRef) return;
-    gridRef.style.gridTemplateColumns = columnTracks(matrix().cols, config().colWidths, { col, px });
+    gridRef.style.gridTemplateColumns = columnTracks(renderedCols(), config().colWidths, { col, px }, columnStart());
   };
 
   const restoreColumns = () => {
@@ -307,7 +407,12 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
     if (e.target instanceof Element && e.target.closest(".sheet-nested-lines")) return;
     if (e.button !== 0 || e.ctrlKey || e.metaKey || e.altKey) return;
     const grid = e.currentTarget as HTMLDivElement;
-    const hit = e.shiftKey ? null : hitRuling(grid, matrix(), e.clientX, e.clientY);
+    const hit = e.shiftKey ? null : hitRuling(
+      grid,
+      { rows: renderedRows(), cols: renderedCols(), rowStart: rowStart(), colStart: columnStart() },
+      e.clientX,
+      e.clientY,
+    );
     if (!hit) {
       beginCellPointerSelection(e, props.id);
       return;
@@ -317,12 +422,12 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
     e.stopPropagation();
 
     if (hit.kind === "row") {
-      setCellSel(rowSeamSel(props.id, hit.at, hit.col));
+      setCellSel(rowSeamSel(props.id, hit.at, hit.col, surfaceId));
       return;
     }
 
     if (hit.at <= 0) {
-      setCellSel(colSeamSel(props.id, hit.at, hit.row));
+      setCellSel(colSeamSel(props.id, hit.at, hit.row, surfaceId));
       return;
     }
 
@@ -350,7 +455,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
         setColumnWidth(props.id, resizeCol, lastWidth);
         setResizing(false);
       } else {
-        setCellSel(colSeamSel(props.id, hit.at, hit.row));
+        setCellSel(colSeamSel(props.id, hit.at, hit.row, surfaceId));
       }
       me.preventDefault();
     };
@@ -368,7 +473,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
 
   const onDoubleClick = (e: MouseEvent) => {
     const grid = e.currentTarget as HTMLDivElement;
-    const hit = hitRuling(grid, matrix(), e.clientX, e.clientY);
+    const hit = hitRuling(grid, { rows: renderedRows(), cols: renderedCols(), rowStart: rowStart(), colStart: columnStart() }, e.clientX, e.clientY);
     if (hit?.kind !== "col" || hit.at <= 0) return;
     e.preventDefault();
     e.stopPropagation();
@@ -392,7 +497,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
 
   const growAndEdit = (edge: "row" | "col") => {
     if (readOnly()) return;
-    const target = growSheetEdge(props.id, edge);
+    const target = growSheetEdge(props.id, edge, surfaceId);
     if (target) startCellEditing(target);
   };
 
@@ -404,19 +509,31 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
     growAndEdit("row");
   };
 
-  const columnValues = (col: number): string[] =>
-    matrix().cells
-      .filter((cell) => cell.col === col && !(config().header && cell.row === 0))
-      .map((cell) => (cell.blockId ? visibleBody(doc.byId[cell.blockId]?.raw ?? "").join(" ") : ""));
+  const aggregateColumns = createMemo(() => {
+    const configured = Array.from({ length: renderedCols() }, (_, index) => columnStart() + index)
+      .filter((col) => config().colAggregates.has(`${col}`));
+    const aggregateRows = function* () {
+      const ids = rowIds();
+      for (let row = config().header ? 1 : 0; row < ids.length; row++) {
+        yield { cellIds: blockChildren(ids[row]) };
+      }
+    };
+    return collectAggregateColumns(
+      aggregateRows(),
+      configured,
+      (id) => (id ? visibleBody(doc.byId[id]?.raw ?? "").join(" ") : ""),
+    );
+  });
 
   return (
     <Show when={props.depth < MAX_GRID_DEPTH} fallback={<SheetOutline ids={blockChildren(props.id)} depth={props.depth} />}>
       <Show
-        when={rows().length > 0}
+        when={rowIds().length > 0}
         fallback={
           <div
             class="sheet-grid"
             data-sheet-grid-id={props.id}
+            data-sheet-surface-id={surfaceId}
             style={{ "grid-template-columns": "max-content" }}
           >
             <div
@@ -438,6 +555,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
           class="sheet-grid"
           classList={{ "sheet-grid-resizing": resizing() }}
           data-sheet-grid-id={props.id}
+          data-sheet-surface-id={surfaceId}
           tabIndex={-1}
           style={{ "grid-template-columns": effectiveColumns() }}
           onPointerDown={onPointerDown}
@@ -451,6 +569,7 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
             {(cell) => (
               <SheetGridCell
                 gridId={props.id}
+                surfaceId={surfaceId}
                 cell={cell}
                 header={config().header && cell.row === 0}
                 depth={props.depth}
@@ -458,14 +577,84 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
               />
             )}
           </For>
+          <Show when={rowStart() > 0}>
+            <button
+              type="button"
+              class="sheet-add-row-ghost sheet-load-more sheet-load-more-rows"
+              style={{ "grid-column": "1 / -1" }}
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                const capacity = Math.max(1, Math.floor(GRID_RENDER_CELL_LIMIT / Math.max(1, renderedCols())));
+                setRowStart(Math.max(0, rowStart() - capacity));
+              }}
+            >
+              Show previous rows
+            </button>
+          </Show>
+          <Show when={rowStart() + renderedRows() < rowIds().length}>
+            <button
+              type="button"
+              class="sheet-add-row-ghost sheet-load-more"
+              style={{ "grid-column": "1 / -1" }}
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                const nextLimit = Math.min(
+                  renderLimit() + GRID_RENDER_PAGE,
+                  Math.floor(GRID_RENDER_CELL_LIMIT / renderedCols()),
+                );
+                if (nextLimit > renderedRows()) setRenderLimit(nextLimit);
+                else setRowStart(rowStart() + renderedRows());
+              }}
+            >
+              {renderedRows() * renderedCols() < GRID_RENDER_CELL_LIMIT ? "Load more rows" : "Show next rows"}
+              ({rowStart() + 1}-{rowStart() + renderedRows()} of {rowIds().length})
+            </button>
+          </Show>
+          <Show when={columnStart() > 0}>
+            <button
+              type="button"
+              class="sheet-add-row-ghost sheet-load-more sheet-load-more-columns"
+              style={{ "grid-column": "1 / -1" }}
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                const capacity = Math.max(1, Math.floor(GRID_RENDER_CELL_LIMIT / Math.max(1, renderedRows())));
+                setColumnStart(Math.max(0, columnStart() - capacity));
+              }}
+            >
+              Show previous columns
+            </button>
+          </Show>
+          <Show when={columnStart() + renderedCols() < fullColumnCount()}>
+            <button
+              type="button"
+              class="sheet-add-row-ghost sheet-load-more sheet-load-more-columns"
+              style={{ "grid-column": "1 / -1" }}
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                const nextLimit = Math.min(
+                  columnLimit() + GRID_RENDER_PAGE,
+                  Math.floor(GRID_RENDER_CELL_LIMIT / Math.max(1, renderedRows())),
+                );
+                if (nextLimit > renderedCols()) setColumnLimit(nextLimit);
+                else setColumnStart(columnStart() + renderedCols());
+              }}
+            >
+              {renderedCols() * renderedRows() < GRID_RENDER_CELL_LIMIT ? "Load more columns" : "Show next columns"}
+              ({columnStart() + 1}-{columnStart() + renderedCols()} of {fullColumnCount()})
+            </button>
+          </Show>
           <Show when={showFooter()}>
-            <For each={Array.from({ length: matrix().cols }, (_, col) => col)}>
+            <For each={Array.from({ length: renderedCols() }, (_, index) => columnStart() + index)}>
               {(col) => (
                 <SheetAggregateFooterCell
                   ownerId={props.id}
                   columnKey={`${col}`}
                   fn={config().colAggregates.get(`${col}`) ?? null}
-                  values={columnValues(col)}
+                  values={aggregateColumns().get(col) ?? []}
                   stickyLeft={col === 0}
                   showEmpty={footerPinned()}
                 />
@@ -514,17 +703,17 @@ function SheetGridInner(props: { id: string; depth: number }): JSX.Element {
   );
 }
 
-function sameSelectedCell(gridId: string, cell: MatrixCell): boolean {
+function sameSelectedCell(gridId: string, surfaceId: string, cell: MatrixCell): boolean {
   const sel = cellSel();
-  if (!sel || sel.gridId !== gridId) return false;
+  if (!sel || sel.gridId !== gridId || (sel.surfaceId && sel.surfaceId !== surfaceId)) return false;
   if (sel.kind === "cell") return sel.row === cell.row && sel.col === cell.col;
   if (sel.kind === "range") return sel.focus.row === cell.row && sel.focus.col === cell.col;
   return false;
 }
 
-function inSelectedRange(gridId: string, cell: MatrixCell): boolean {
+function inSelectedRange(gridId: string, surfaceId: string, cell: MatrixCell): boolean {
   const sel = cellSel();
-  if (!sel || sel.kind !== "range" || sel.gridId !== gridId) return false;
+  if (!sel || sel.kind !== "range" || sel.gridId !== gridId || (sel.surfaceId && sel.surfaceId !== surfaceId)) return false;
   const top = Math.min(sel.anchor.row, sel.focus.row);
   const bottom = Math.max(sel.anchor.row, sel.focus.row);
   const left = Math.min(sel.anchor.col, sel.focus.col);
@@ -540,8 +729,8 @@ function clickOffset(e: MouseEvent, contentRef: HTMLDivElement | undefined, raw:
   return editorOffsetFromRenderedRange(contentRef, range, raw, isSheetCellHidden);
 }
 
-function SheetGridCell(props: { gridId: string; cell: MatrixCell; header: boolean; depth: number; freezeColumns: () => void }): JSX.Element {
-  const sel = (): SheetCellCtx => ({ gridId: props.gridId, row: props.cell.row, col: props.cell.col });
+function SheetGridCell(props: { gridId: string; surfaceId: string; cell: MatrixCell; header: boolean; depth: number; freezeColumns: () => void }): JSX.Element {
+  const sel = (): SheetCellCtx => ({ gridId: props.gridId, surfaceId: props.surfaceId, row: props.cell.row, col: props.cell.col });
   let contentRef: HTMLDivElement | undefined;
   const bgColor = createMemo(() => {
     const id = props.cell.blockId;
@@ -590,10 +779,11 @@ function SheetGridCell(props: { gridId: string; cell: MatrixCell; header: boolea
         "sheet-header-cell": props.header,
         "sheet-sticky-left": props.cell.col === 0,
         "sheet-hole": !props.cell.blockId,
-        "sheet-cell-in-range": inSelectedRange(props.gridId, props.cell),
-        "sheet-cell-selected": sameSelectedCell(props.gridId, props.cell),
+        "sheet-cell-in-range": inSelectedRange(props.gridId, props.surfaceId, props.cell),
+        "sheet-cell-selected": sameSelectedCell(props.gridId, props.surfaceId, props.cell),
       }}
       data-sheet-grid-id={props.gridId}
+      data-sheet-surface-id={props.surfaceId}
       data-block-id={props.cell.blockId ?? undefined}
       data-row={props.cell.row}
       data-col={props.cell.col}
@@ -684,7 +874,7 @@ function SheetBlock(props: {
             >
               {(cell) => (
                 <SheetCellContext.Provider value={cell()}>
-                  <SurfaceContext.Provider value={cellSurfaceKey(cell().gridId)}>
+                  <SurfaceContext.Provider value={cellSurfaceKey(cell().gridId, cell().surfaceId)}>
                     <Editor id={props.id} />
                   </SurfaceContext.Provider>
                 </SheetCellContext.Provider>

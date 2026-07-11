@@ -24,7 +24,7 @@ import { typographyMode } from "../ui";
 import { visibleBody } from "./block";
 import { AstBody } from "./body";
 import { backend } from "../backend";
-import { loadAssetBlob, loadLocalImageBlob, assetVersion } from "../assetCache";
+import { acquireAssetBlob, acquireLocalImageBlob, assetVersion } from "../assetCache";
 import { mediaEditorForAsset } from "../mediaEditors";
 import { resolveMediaEditorCommand } from "../mediaEditorSettings";
 import { refreshAssetOnReturn } from "../assetRefresh";
@@ -473,9 +473,22 @@ function RawHtmlContent(props: { text: string; spanAttrs?: SpanDomAttrs }): JSX.
     if (!host || !allowLocalFileImages()) return;
     const locals = rawHtmlLocalImages(props.text);
     if (!locals.some(Boolean)) return;
+    let active = true;
+    const releases: (() => void)[] = [];
     host.querySelectorAll("img").forEach((img, idx) => {
       const path = locals[idx];
-      if (path) void loadLocalImageBlob(path).then((url) => { if (url) img.src = url; });
+      if (path) void acquireLocalImageBlob(path).then((lease) => {
+        if (!active) {
+          lease.release();
+          return;
+        }
+        releases.push(lease.release);
+        if (lease.url) img.src = lease.url;
+      });
+    });
+    onCleanup(() => {
+      active = false;
+      releases.forEach((release) => release());
     });
   });
   return <span ref={host} class="raw-html" innerHTML={clean()} {...(props.spanAttrs ?? {})} />;
@@ -618,16 +631,31 @@ function AssetImage(props: {
   // The source key folds in the per-asset version (GH #38) so an external edit —
   // which bumps that version after invalidating the cache — re-runs this resource
   // and the <img> re-reads the new bytes from disk.
-  const [diskSrc] = createResource(
-    () => {
-      const r = rel();
-      return r == null ? null : `${r}\0${assetVersion(r)}`;
-    },
-    async () => {
-      const r = rel();
-      return r ? await loadAssetBlob(r) : "";
+  const [diskSrc, setDiskSrc] = createSignal("");
+  createEffect(() => {
+    const r = rel();
+    if (!r) {
+      setDiskSrc("");
+      return;
     }
-  );
+    // Subscribe to external-edit invalidation before starting the acquisition.
+    assetVersion(r);
+    let active = true;
+    let release: (() => void) | undefined;
+    setDiskSrc("");
+    void acquireAssetBlob(r).then((lease) => {
+      if (!active) {
+        lease.release();
+        return;
+      }
+      release = lease.release;
+      setDiskSrc(lease.url);
+    });
+    onCleanup(() => {
+      active = false;
+      release?.();
+    });
+  });
   const src = () => (external ? props.url : diskSrc());
 
   let wrapEl: HTMLSpanElement | undefined;
@@ -780,7 +808,7 @@ function renderImgMacro(body: string): JSX.Element {
   );
 }
 
-// Video/audio asset: try inline playback (a streaming-ish blob-URL <video>/<audio
+// Video/audio asset: try inline playback through Tauri's range-aware native asset
 // controls>), and on a media error — typically WebKitGTK lacking the mp4/h264
 // codec — fall back to a click-to-open chip that launches the OS default player.
 // Matches the user's "inline when it works, otherwise open externally" intent.
@@ -797,10 +825,10 @@ function MediaEmbed(props: {
   // player with a waveform scrubber instead of stretching the inline control.
   const external = /^(https?:|data:|blob:)/.test(props.url);
   const rel = () => assetRelPath(props.url);
-  // Graph assets load over IPC into a blob URL (lazy); external URLs play directly.
+  // Graph media uses native range requests; never copy a multi-GB file into a Blob.
   const [blob] = createResource(
     () => (external ? null : rel()),
-    async (r) => (r ? await loadAssetBlob(r) : "")
+    async (r) => (r ? await backend().streamAsset(r) : "")
   );
   const src = () => (external ? props.url : blob());
   const label = () =>

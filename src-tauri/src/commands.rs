@@ -2,7 +2,7 @@
 use crate::debug::diag;
 #[cfg(desktop)]
 use crate::platform::opener_command;
-use crate::state::{refresh_graph, with_graph, GraphContext};
+use crate::state::{refresh_graph, slot_for_context, with_graph, GraphContext};
 use std::sync::Arc;
 use tine_core::model::{PageDto, PageEntry, PageKind, RefGroup};
 
@@ -417,12 +417,19 @@ pub(crate) fn read_custom_css(state: GraphContext<'_>) -> Result<String, String>
 }
 
 #[tauri::command]
-pub(crate) fn search(
+pub(crate) async fn search(
     query: String,
     limit: usize,
+    lane: Option<String>,
     state: GraphContext<'_>,
 ) -> Result<Vec<RefGroup>, String> {
-    with_graph(&state, |g| Ok(g.search(&query, limit)))
+    let graph = Arc::clone(&slot_for_context(&state)?.graph);
+    tauri::async_runtime::spawn_blocking(move || match lane.as_deref() {
+        Some(lane) => graph.search_latest(lane, &query, limit),
+        None => graph.search(&query, limit),
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -480,6 +487,21 @@ pub(crate) fn read_asset(
             .map(tauri::ipc::Response::new)
             .map_err(|e| e.to_string())
     })
+}
+
+/// Validate one graph media file and return its top-level asset name for the
+/// range-aware `tine-media:` protocol. The protocol revalidates against the
+/// requesting window's current graph on every request.
+#[tauri::command]
+pub(crate) fn stream_asset_path(
+    name: String,
+    state: GraphContext<'_>,
+) -> Result<String, String> {
+    let slot = slot_for_context(&state)?;
+    slot.graph
+        .stream_asset_path(&name)
+        .map_err(|e| e.to_string())?;
+    Ok(format!("{}/{}", slot.binding_generation, name))
 }
 
 /// Quit the app cleanly. On Linux, first SIGKILL WebKitGTK's helper subprocesses so
@@ -763,7 +785,6 @@ pub(crate) fn detect_media_editor(id: String) -> Result<String, String> {
 /// platform app bundle. Returns a command template or "".
 #[cfg(desktop)]
 fn detect_drawio() -> String {
-    use std::path::Path;
     #[cfg(target_os = "linux")]
     {
         // Flatpak: the exported bin is a plain wrapper file we can stat.
@@ -780,7 +801,7 @@ fn detect_drawio() -> String {
                 return "flatpak run com.jgraph.drawio.desktop {}".to_string();
             }
         }
-        if Path::new("/snap/bin/drawio").exists() {
+        if std::path::Path::new("/snap/bin/drawio").exists() {
             return "/snap/bin/drawio {}".to_string();
         }
         if let Some(p) = which_on_path("drawio") {
@@ -790,15 +811,23 @@ fn detect_drawio() -> String {
     }
     #[cfg(target_os = "macos")]
     {
-        if Path::new("/Applications/draw.io.app").exists() {
+        if std::path::Path::new("/Applications/draw.io.app").exists() {
             return "open -a draw.io {}".to_string();
         }
         String::new()
     }
     #[cfg(target_os = "windows")]
     {
-        detect_drawio_windows_with(std::env::var_os, |path| path.is_file())
+        detect_drawio_windows()
     }
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn detect_drawio_windows() -> String {
+    detect_drawio_windows_with(
+        |name: &'static str| std::env::var_os(name),
+        |path| path.is_file(),
+    )
 }
 
 /// Windows installers can be per-user (`LOCALAPPDATA`) or per-machine
@@ -808,7 +837,11 @@ fn detect_drawio() -> String {
 #[cfg(any(target_os = "windows", test))]
 fn detect_drawio_windows_with<V, F>(mut var: V, mut is_file: F) -> String
 where
-    V: FnMut(&str) -> Option<std::ffi::OsString>,
+    // Every probed environment name below is a string literal. Expressing that
+    // lifetime avoids passing the generic `std::env::var_os` function item
+    // through a higher-ranked `FnMut(&str)` bound, which MSVC rejects as "not
+    // general enough" even though host builds accept it.
+    V: FnMut(&'static str) -> Option<std::ffi::OsString>,
     F: FnMut(&std::path::Path) -> bool,
 {
     let locations = [
@@ -906,7 +939,7 @@ fn build_editor_argv(command: &str, target: &str) -> Result<(String, Vec<String>
 
 #[cfg(test)]
 mod editor_argv_tests {
-    use super::{build_editor_argv, detect_drawio_windows_with};
+    use super::{build_editor_argv, detect_drawio_windows, detect_drawio_windows_with};
     use std::{ffi::OsString, path::PathBuf};
 
     #[test]
@@ -1011,6 +1044,14 @@ mod editor_argv_tests {
         let command = detect_drawio_windows_with(|_| Some(OsString::from("/missing")), |_| false);
         assert!(command.is_empty());
     }
+
+    #[test]
+    fn windows_autodetect_real_callbacks_compile_and_run() {
+        // This wrapper is the exact Windows call site. Keeping it compiled in
+        // host tests catches callback lifetime regressions even before the
+        // Windows CI runner builds the cfg(target_os = "windows") branch.
+        let _ = detect_drawio_windows();
+    }
 }
 
 /// Orphaned `assets/` files (no block references them) for the cleanup UI.
@@ -1082,7 +1123,8 @@ pub(crate) fn resolve_sync_conflict(
     winner: String,
     conflict: String,
     decisions: std::collections::HashMap<String, String>,
-    base_rev: Option<String>,
+    base_rev: String,
+    conflict_rev: String,
     pre_choice: Option<String>,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
@@ -1091,7 +1133,8 @@ pub(crate) fn resolve_sync_conflict(
             &winner,
             &conflict,
             &decisions,
-            base_rev.as_deref(),
+            &base_rev,
+            &conflict_rev,
             pre_choice.as_deref().unwrap_or("union"),
         )
         .map_err(|e| {

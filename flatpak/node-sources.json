@@ -419,6 +419,13 @@
     },
     {
         "type": "file",
+        "url": "https://registry.npmjs.org/@fontsource-variable/noto-emoji/-/noto-emoji-5.2.12.tgz",
+        "sha512": "6e028a55dd4469373e13ca3a5205d6db78951018f6cc29d1aea5e926e21f590a7dc78689e0d2a6ed2e850f15aee0edd28efc1836be45d9d7e08aaa8cc45c0fc9",
+        "dest-filename": "8a55dd4469373e13ca3a5205d6db78951018f6cc29d1aea5e926e21f590a7dc78689e0d2a6ed2e850f15aee0edd28efc1836be45d9d7e08aaa8cc45c0fc9",
+        "dest": "flatpak-node/npm-cache/_cacache/content-v2/sha512/6e/02"
+    },
+    {
+        "type": "file",
         "url": "https://registry.npmjs.org/@fontsource/inter/-/inter-5.2.8.tgz",
         "sha512": "3faaf95a72682a235557ecef5b6c4cd7780d74584012943d750247b779da2ef7e0f8b905da576048b885e13e3595fd5240233d42692a3d39f84c7e7af0845a82",
         "dest-filename": "f95a72682a235557ecef5b6c4cd7780d74584012943d750247b779da2ef7e0f8b905da576048b885e13e3595fd5240233d42692a3d39f84c7e7af0845a82",
@@ -4104,6 +4111,12 @@
         "contents": "5e621ade89e852910872fb351d7f3083c1bcb416\t{\"key\": \"make-fetch-happen:request-cache:https://registry.npmjs.org/balanced-match/-/balanced-match-1.0.2.tgz\", \"integrity\": \"sha512-3oSeUO0TMV67hN1AmbXsK4yaqU7tjiHlbxRDZOpH0KW9+CeX4bRAaX0Anxt0tx2MrpRpWwQaPwIlISEJhYU5Pw==\", \"time\": 0, \"size\": 2668, \"metadata\": {\"url\": \"https://registry.npmjs.org/balanced-match/-/balanced-match-1.0.2.tgz\", \"reqHeaders\": {}, \"resHeaders\": {}}}",
         "dest-filename": "be90b3954e2f6e7b35b521e65a5016fd963aa11c3d6c88ccd9e0b61c069e",
         "dest": "flatpak-node/npm-cache/_cacache/index-v5/7d/ad"
+    },
+    {
+        "type": "inline",
+        "contents": "60152590bd93aa54c44e4dcd816c320c7492e39a\t{\"key\": \"make-fetch-happen:request-cache:https://registry.npmjs.org/@fontsource-variable/noto-emoji/-/noto-emoji-5.2.12.tgz\", \"integrity\": \"sha512-bgKKVd1EaTc+E8o6UgXW23iVEBj2zCnRrqXpJuIfWQp9x4aJ4NKm7S6FDxWu4O3SjvwYNr5F2dfgiqqMxFwPyQ==\", \"time\": 0, \"size\": 1165617, \"metadata\": {\"url\": \"https://registry.npmjs.org/@fontsource-variable/noto-emoji/-/noto-emoji-5.2.12.tgz\", \"reqHeaders\": {}, \"resHeaders\": {}}}",
+        "dest-filename": "a765f61a6069c296c0860da959d7d3a88b884cd42c9cc8a45961292e0d12",
+        "dest": "flatpak-node/npm-cache/_cacache/index-v5/d7/d1"
     },
     {
         "type": "inline",

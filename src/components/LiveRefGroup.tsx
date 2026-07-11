@@ -5,6 +5,7 @@ import { Block, SurfaceContext } from "./Block";
 import { RefBlocks } from "./RefBlocks";
 import { observeNear, unobserveNear } from "../lazyObserve";
 import type { BlockDto, PageKind } from "../types";
+import { graphEpoch, graphMeta } from "../ui";
 
 // The "near the viewport" lazy-mount observer is shared app-wide (block bodies
 // use it too) — see src/lazyObserve.ts.
@@ -33,11 +34,22 @@ export function LiveRefGroup(props: { page: string; kind: PageKind; blocks: Bloc
   const [ready] = createResource(
     () => (near() ? { p: props.page, k: props.kind } : null),
     async ({ p, k }) => {
-      if (!pageByName(p)) {
-        const dto = await backend().getPage(p, k);
-        if (dto) ensurePageLoaded(dto);
-      }
-      return true;
+      const occupied = pageByName(p);
+      if (occupied) return occupied.kind === k;
+      const epoch = graphEpoch();
+      const root = graphMeta()?.root ?? "";
+      const dto = await backend().getPage(p, k);
+      // The component may have unmounted while this read was in flight. Never
+      // let an old graph's DTO enter the new graph's shared working set.
+      if (graphEpoch() !== epoch || (graphMeta()?.root ?? "") !== root) return false;
+      // Page names are not unique across kinds, while the frontend working set
+      // is name-keyed. Refuse a page/journal twin that occupied the slot during
+      // the await, and reject a mismatched backend response defensively.
+      const after = pageByName(p);
+      if (after) return after.kind === k;
+      if (!dto || dto.name !== p || dto.kind !== k) return false;
+      ensurePageLoaded(dto);
+      return pageByName(p)?.kind === k;
     }
   );
 

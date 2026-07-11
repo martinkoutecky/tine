@@ -71,6 +71,25 @@ function boardDoc() {
 }
 
 describe("sheet lazy-mount virtualization", () => {
+  it("caps the mounted table matrix and offers progressive disclosure", () => {
+    (globalThis as any).IntersectionObserver = NoopIO;
+    const ids = Array.from({ length: 500 }, (_, i) => `r${i}`);
+    const fields = Array.from({ length: 30 }, (_, i) => `f${i}=text`).join(";");
+    const byId: Record<string, StoreNode> = {
+      table: node("table", `Table\ntine.view:: table\ntine.fields:: ${fields}`, null, ids),
+    };
+    for (const [i, id] of ids.entries()) byId[id] = node(id, `row ${i}\nf0:: value`, "table");
+    setDoc({ byId, pages: [page(["table"])], feed: ["Sheet"], loaded: true });
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const dispose = render(() => <Block id="table" />, root);
+    expect(root.querySelectorAll(".sheet-title-cell").length).toBe(200);
+    expect(root.querySelectorAll(".sheet-cell").length).toBeLessThan(7000);
+    expect(root.querySelector(".sheet-load-more")?.textContent).toContain("200 of 500");
+    dispose();
+    root.remove();
+  });
+
   it("table: eager path renders content, no placeholders; scaffolding always present", () => {
     setDoc(tableDoc());
     const root = document.createElement("div");

@@ -1,10 +1,8 @@
-import { For, Match, Show, Switch, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, useContext, type JSX } from "solid-js";
-import { backend } from "../backend";
+import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup, onMount, useContext, type JSX } from "solid-js";
 import {
   blockPageReadOnly,
   blockProperty,
   doc,
-  ensurePageLoaded,
   formatForBlock,
   formatForPage,
   insertEmptyChildBlock,
@@ -29,7 +27,10 @@ import {
   cellSel,
   cellSurfaceKey,
   aggregateFooterPinned,
+  clearSelectedSheetInstance,
   registerSheetViewAdapter,
+  rebaseSelectedCell,
+  rebaseSelectedRange,
   setCellSel,
   setAggregateFooterPinned,
   startCellEditing,
@@ -53,9 +54,11 @@ import {
   createFormulaFilterMemo,
   createFormulaResultsMemo,
   formulaResultKey,
+  formulaRowKey,
   formulaValueText,
   formulaValueToFieldValue,
   readFormulaRowField,
+  liveFormulaRowNode,
   type FormulaEvalRow,
 } from "../sheet/formulaEval";
 import type { FormulaValue } from "../sheet/formula";
@@ -73,8 +76,11 @@ import type { RefGroup } from "../types";
 import { Editor, SurfaceContext } from "./Block";
 import { SheetAggregateCornerToggle, SheetAggregateFooterCell } from "./SheetAggregateFooter";
 import { SheetContainerOverlayContext } from "./SheetContainerOverlay";
+import { hydrateVisibleQueryPages, SHEET_RENDER_PAGE } from "../sheet/queryHydration";
 
 interface RowRecord extends FormulaEvalRow {}
+
+export const __sheetTableTestHooks: { onIndexRow?: (rowId: string) => void } = {};
 
 type SortState = { col: number; dir: 1 | -1 } | null;
 type SortKey = { kind: "number"; value: number; text: string } | { kind: "text"; text: string };
@@ -119,6 +125,7 @@ export function SheetTable(props: {
   addRowLabel?: string;
   schemaPage?: string;
 }): JSX.Element {
+  const surfaceId = useContext(SurfaceContext);
   let tableRef: HTMLDivElement | undefined;
   const [sort, setSort] = createSignal<SortState>(null);
   const [extraFields, setExtraFields] = createSignal<FieldId[]>([]);
@@ -174,26 +181,6 @@ export function SheetTable(props: {
   const formulaFields = createMemo<FieldId[]>(() => [...formulas().keys()].map(formulaFieldId));
   const formulaFieldSet = createMemo(() => new Set<FieldId>(formulaFields()));
 
-  const queryPages = createMemo(() => {
-    const map = new Map<string, RefGroup>();
-    for (const group of props.groups ?? []) map.set(`${group.kind}\0${group.page}`, group);
-    return [...map.values()];
-  });
-  const [pagesReady] = createResource(
-    () => (props.rowSource === "query" ? queryPages().map((g) => `${g.kind}:${g.page}`).join("\0") : null),
-    async () => {
-      await Promise.all(
-        queryPages().map(async (g) => {
-          if (pageByName(g.page)) return;
-          const dto = await backend().getPage(g.page, g.kind);
-          if (dto) ensurePageLoaded(dto);
-        })
-      );
-      return true;
-    }
-  );
-  void pagesReady;
-
   const allRows = createMemo<RowRecord[]>(() => {
     if (props.rowSource === "children") {
       return (doc.byId[props.ownerId]?.children ?? []).map((id) => ({
@@ -201,7 +188,7 @@ export function SheetTable(props: {
         page: doc.byId[id]?.page ?? doc.byId[props.ownerId]?.page ?? "",
       }));
     }
-    return (props.groups ?? []).flatMap((g) => g.blocks.map((b) => ({ id: b.id, page: g.page, dto: b })));
+    return (props.groups ?? []).flatMap((g) => g.blocks.map((b) => ({ id: b.id, page: g.page, kind: g.kind, dto: b })));
   });
   const filterState = createFormulaFilterMemo({
     rows: allRows,
@@ -219,14 +206,14 @@ export function SheetTable(props: {
   const formulaValue = (row: RowRecord, field: FieldId): FormulaValue | null => {
     const name = formulaNameFromField(field);
     if (!name) return null;
-    return formulaResults().get(formulaResultKey(row.id, name)) ?? null;
+    return formulaResults().get(formulaResultKey(row, name)) ?? null;
   };
   const rowFieldValue = (row: RowRecord, field: FieldId): FieldValue | null => {
     return isFormulaField(field) ? formulaValueToFieldValue(formulaValue(row, field)) : readFormulaRowField(row, field);
   };
 
   const fields = createMemo<FieldId[]>(() => {
-    const loadedIds = rows().filter((r) => doc.byId[r.id]).map((r) => r.id);
+    const loadedIds = rows().filter((r) => liveFormulaRowNode(r)).map((r) => r.id);
     const observed = loadedIds.length === rows().length
       ? fieldIdsForBlocks(loadedIds, { includePage: props.rowSource === "query" })
       : fieldIdsForRecords(rows(), props.rowSource === "query");
@@ -258,6 +245,7 @@ export function SheetTable(props: {
   const formulaEntries = () => [...formulas().entries()];
 
   const columns = createMemo(() => ["title" as const, ...fields()]);
+  const columnIndex = createMemo(() => new Map(columns().map((column, index) => [column, index] as const)));
   const hasActionColumn = () => props.rowSource === "children" || !!props.addRow;
   const actionColumn = () => hasActionColumn() ? "96px" : "";
   // Cap column growth with fit-content() so a long cell wraps (see `.sheet-cell`
@@ -271,7 +259,7 @@ export function SheetTable(props: {
     // / `.sheet-title-header`), so the 180px floor is preserved.
     `fit-content(420px) repeat(${fields().length}, fit-content(320px)) ${actionColumn()}`
   );
-  const editingInThisTable = () => editingOwner()?.startsWith(`sheet:${props.ownerId}:`) ?? false;
+  const editingInThisTable = () => editingOwner()?.startsWith(`sheet:${surfaceId}:${props.ownerId}:`) ?? false;
   const gridColumns = createMemo(() => stableColumns() ?? baseGridColumns());
   const hasAggregates = createMemo(() => config().colAggregates.size > 0);
   const footerPinned = createMemo(() => aggregateFooterPinned(props.ownerId));
@@ -341,6 +329,62 @@ export function SheetTable(props: {
       return { kind: "text", text };
     };
     return [...rs].sort((a, b) => compareSortKeys(value(a), value(b)) * s.dir);
+  });
+  const [renderLimit, setRenderLimit] = createSignal(SHEET_RENDER_PAGE);
+  createEffect(() => {
+    props.groups;
+    setRenderLimit(SHEET_RENDER_PAGE);
+  });
+  const displayedRows = createMemo(() => sortedRows().slice(0, renderLimit()));
+  const rowIndexes = createMemo(() => {
+    const byRowKey = new Map<string, number>();
+    const byBlockId = new Map<string, { row: number; rowKey: string } | null>();
+    sortedRows().forEach((row, index) => {
+      __sheetTableTestHooks.onIndexRow?.(row.id);
+      const rowKey = formulaRowKey(row);
+      byRowKey.set(rowKey, index);
+      if (liveFormulaRowNode(row)) {
+        if (byBlockId.has(row.id)) byBlockId.set(row.id, null);
+        else byBlockId.set(row.id, { row: index, rowKey });
+      }
+    });
+    return { byRowKey, byBlockId };
+  });
+  const sortedRowIndex = () => rowIndexes().byRowKey;
+  const ensureDisplayedThrough = (row: number) => {
+    if (row < 0 || row < displayedRows().length) return;
+    setRenderLimit(Math.min(sortedRows().length, Math.ceil((row + 1) / SHEET_RENDER_PAGE) * SHEET_RENDER_PAGE));
+  };
+  createEffect(() => {
+    const sel = cellSel();
+    if (!sel || sel.gridId !== props.ownerId || sel.surfaceId !== surfaceId) return;
+    if (sel.kind === "cell" && sel.rowId) {
+      const row = sortedRowIndex().get(sel.rowId);
+      const col = sel.columnId ? columnIndex().get(sel.columnId as "title" | FieldId) : sel.col;
+      if (row !== undefined && col !== undefined) {
+        ensureDisplayedThrough(row);
+        rebaseSelectedCell(props.ownerId, surfaceId, sel.rowId, { row, col }, columns()[col]);
+      }
+      else clearSelectedSheetInstance(props.ownerId, surfaceId);
+    } else if (sel.kind === "range" && sel.anchorRowId && sel.focusRowId) {
+      const anchor = sortedRowIndex().get(sel.anchorRowId);
+      const focus = sortedRowIndex().get(sel.focusRowId);
+      const anchorCol = sel.anchorColumnId ? columnIndex().get(sel.anchorColumnId as "title" | FieldId) : sel.anchor.col;
+      const focusCol = sel.focusColumnId ? columnIndex().get(sel.focusColumnId as "title" | FieldId) : sel.focus.col;
+      if (anchor !== undefined && focus !== undefined && anchorCol !== undefined && focusCol !== undefined) {
+        ensureDisplayedThrough(Math.max(anchor, focus));
+        rebaseSelectedRange(
+          props.ownerId,
+          surfaceId,
+          sel.anchorRowId,
+          { row: anchor, col: anchorCol },
+          sel.focusRowId,
+          { row: focus, col: focusCol },
+          columns()[anchorCol],
+          columns()[focusCol]
+        );
+      } else clearSelectedSheetInstance(props.ownerId, surfaceId);
+    }
   });
 
   const sortHeader = (col: number) => {
@@ -488,12 +532,12 @@ export function SheetTable(props: {
 
   const selected = (row: number, col: number) => {
     const sel = cellSel();
-    if (!sel || sel.gridId !== props.ownerId) return false;
+    if (!sel || sel.gridId !== props.ownerId || (sel.surfaceId && sel.surfaceId !== surfaceId)) return false;
     if (sel.kind === "cell") return sel.row === row && sel.col === col;
     if (sel.kind === "range") return sel.focus.row === row && sel.focus.col === col;
     return false;
   };
-  const inRange = (row: number, col: number) => cellIsInRange(props.ownerId, row, col);
+  const inRange = (row: number, col: number) => cellIsInRange(props.ownerId, row, col, surfaceId);
 
   const openPropInput = (rowId: string, field: FieldId, initial?: string) => {
     setEditingProp({ rowId, field, initial: initial ?? readField(rowId, field)?.text ?? "" });
@@ -510,8 +554,8 @@ export function SheetTable(props: {
     const id = withUndoUnit("sheet:table-add-row", [owner.page], () => insertEmptyChildBlock(props.ownerId, at));
     if (!id) return;
     queueMicrotask(() => {
-      const rowIndex = sortedRows().findIndex((row) => row.id === id);
-      if (rowIndex >= 0) startCellEditing({ gridId: props.ownerId, row: rowIndex, col: 0 }, 0);
+      const rowIndex = sortedRows().findIndex((row) => row.id === id && !!liveFormulaRowNode(row));
+      if (rowIndex !== undefined) startCellEditing({ gridId: props.ownerId, surfaceId, rowId: id, columnId: "title", row: rowIndex, col: 0 }, 0);
     });
   };
   const runAddRow = () => {
@@ -519,12 +563,19 @@ export function SheetTable(props: {
     else void props.addRow?.();
   };
 
+  const pointForSelection = (sel: CellSel) => {
+    const row = sel.rowId ? sortedRowIndex().get(sel.rowId) : sel.row;
+    const col = sel.columnId ? columnIndex().get(sel.columnId as "title" | FieldId) : sel.col;
+    return row === undefined || col === undefined || row >= displayedRows().length ? null : { row, col };
+  };
+
   const activateCell = (sel: CellSel): boolean => {
-    const row = sortedRows()[sel.row];
-    const col = columns()[sel.col];
+    const point = pointForSelection(sel);
+    const row = point ? sortedRows()[point.row] : undefined;
+    const col = point ? columns()[point.col] : undefined;
     if (!row || !col) return true;
     if (col === "title") return false;
-    if (!doc.byId[row.id]) return true;
+    if (!liveFormulaRowNode(row)) return true;
     if (col === "state") return cycleField(row.id, "state");
     if (col === "priority") return cycleField(row.id, "priority");
     if (col === "scheduled" || col === "deadline") return true;
@@ -536,27 +587,46 @@ export function SheetTable(props: {
   };
 
   const overtype = (sel: CellSel, text: string): boolean => {
-    const row = sortedRows()[sel.row];
-    const col = columns()[sel.col];
+    const point = pointForSelection(sel);
+    const row = point ? sortedRows()[point.row] : undefined;
+    const col = point ? columns()[point.col] : undefined;
     if (!row || !col) return true;
     if (col === "title") return false;
-    if (propUsesInlineInput(col) && doc.byId[row.id]) openPropInput(row.id, col, text);
-    else if ((col === "scheduled" || col === "deadline") && doc.byId[row.id]) writeField(row.id, col, text);
+    if (propUsesInlineInput(col) && liveFormulaRowNode(row)) openPropInput(row.id, col, text);
+    else if ((col === "scheduled" || col === "deadline") && liveFormulaRowNode(row)) writeField(row.id, col, text);
     return true;
   };
 
   onMount(() => {
     const dispose = registerSheetViewAdapter(props.ownerId, {
-      bounds: () => ({ rows: sortedRows().length, cols: columns().length }),
-      blockIdAt: (row, col) => (columns()[col] === "title" ? sortedRows()[row]?.id ?? null : null),
+      bounds: () => ({ rows: displayedRows().length, cols: columns().length }),
+      rowIdAt: (row) => {
+        const candidate = displayedRows()[row];
+        return candidate ? formulaRowKey(candidate) : null;
+      },
+      columnIdAt: (_row, col) => columns()[col] ?? null,
+      blockIdAt: (row, col, rowId, stableColumnId) => {
+        const resolvedCol = stableColumnId ? columnIndex().get(stableColumnId as "title" | FieldId) : col;
+        if (resolvedCol === undefined || columns()[resolvedCol] !== "title") return null;
+        if (rowId) {
+          const index = sortedRowIndex().get(rowId);
+          const candidate = index === undefined || index >= displayedRows().length ? null : sortedRows()[index];
+          return candidate && liveFormulaRowNode(candidate) ? candidate.id : null;
+        }
+        const candidate = displayedRows()[row];
+        return candidate && liveFormulaRowNode(candidate) ? candidate.id : null;
+      },
       cellForBlock: (blockId) => {
-        const row = sortedRows().findIndex((r) => r.id === blockId);
-        const col = columns().indexOf("title");
-        return row >= 0 && col >= 0 ? { kind: "cell", gridId: props.ownerId, row, col } : null;
+        const match = rowIndexes().byBlockId.get(blockId);
+        const row = match && match.row < displayedRows().length ? match.row : undefined;
+        const col = columnIndex().get("title");
+        return row !== undefined && col !== undefined
+          ? { kind: "cell", gridId: props.ownerId, surfaceId, rowId: match!.rowKey, columnId: "title", row, col }
+          : null;
       },
       activate: activateCell,
       overtype,
-    });
+    }, surfaceId);
     onCleanup(dispose);
   });
 
@@ -611,6 +681,7 @@ export function SheetTable(props: {
         }}
         class="sheet-table"
         data-sheet-grid-id={props.ownerId}
+        data-sheet-surface-id={surfaceId}
         style={{ "grid-template-columns": gridColumns() }}
         onPointerDown={onPointerDown}
         onMouseDown={stopSheetMouseDown}
@@ -693,17 +764,23 @@ export function SheetTable(props: {
             </Show>
           </div>
         </Show>
-        <For each={sortedRows()}>
+        <For each={displayedRows()}>
           {(row, rowIndex) => {
             // Per-row "near the viewport" gate (see renderedSheetRows above). Only
             // the title cell observes; the shared signal drives every cell in the
             // row so we spend ONE IntersectionObserver entry per row, not per cell.
             const [near, setNear] = createSignal(renderedSheetRows.has(row.id));
             const observeRow = (el: Element) => {
-              if (near()) return;
+              if (near()) {
+                if (props.rowSource === "query") void hydrateVisibleQueryPages([row], props.groups);
+                return;
+              }
               observeNear(el, () => {
                 renderedSheetRows.add(row.id);
                 setNear(true);
+                if (props.rowSource === "query") {
+                  void hydrateVisibleQueryPages([row], props.groups);
+                }
               });
               onCleanup(() => unobserveNear(el));
             };
@@ -711,6 +788,7 @@ export function SheetTable(props: {
               <>
                 <TitleCell
                   ownerId={props.ownerId}
+                  surfaceId={surfaceId}
                   row={row}
                   rowIndex={rowIndex()}
                   selected={selected(rowIndex(), 0)}
@@ -723,6 +801,7 @@ export function SheetTable(props: {
                   {(field, fieldIndex) => (
                     <FieldCell
                       ownerId={props.ownerId}
+                      surfaceId={surfaceId}
                       row={row}
                       field={field}
                       fieldType={fieldTypes().get(field)}
@@ -747,6 +826,19 @@ export function SheetTable(props: {
             );
           }}
         </For>
+        <Show when={displayedRows().length < sortedRows().length}>
+          <button
+            class="sheet-add-row-ghost sheet-load-more"
+            style={{ "grid-column": "1 / -1" }}
+            onClick={(e) => {
+              e.stopPropagation();
+              setRenderLimit((limit) => limit + SHEET_RENDER_PAGE);
+            }}
+          >
+            Load {Math.min(SHEET_RENDER_PAGE, sortedRows().length - displayedRows().length)} more rows
+            ({displayedRows().length} of {sortedRows().length})
+          </button>
+        </Show>
         <Show when={showFooter()}>
           <div class="sheet-cell sheet-footer-cell sheet-footer-title sheet-sticky-left" />
           <For each={fields()}>
@@ -788,7 +880,7 @@ export function SheetTable(props: {
 }
 
 function recordFacets(row: RowRecord): Facets | null {
-  const n = doc.byId[row.id];
+  const n = liveFormulaRowNode(row);
   if (n) return facetsOf(n.raw, formatForBlock(row.id));
   return row.dto ? facetsFromDto(row.dto) : null;
 }
@@ -836,12 +928,12 @@ function formulaReferenceName(field: FieldId): string | null {
 }
 
 function rowRaw(row: RowRecord): string {
-  return doc.byId[row.id]?.raw ?? row.dto?.raw ?? "";
+  return liveFormulaRowNode(row)?.raw ?? row.dto?.raw ?? "";
 }
 
 function rowTitle(row: RowRecord): string {
   const title = visibleBody(rowRaw(row)).join(" ");
-  return title.trim() === "" && (doc.byId[row.id]?.children.length ?? row.dto?.children.length ?? 0) > 0 ? "—" : title;
+  return title.trim() === "" && (liveFormulaRowNode(row)?.children.length ?? row.dto?.children.length ?? 0) > 0 ? "—" : title;
 }
 
 function clickOffset(e: MouseEvent, contentRef: HTMLDivElement | undefined, raw: string): number | null {
@@ -871,6 +963,7 @@ export function resetSheetRowVirtualizationForTests() {
 
 function TitleCell(props: {
   ownerId: string;
+  surfaceId: string;
   row: RowRecord;
   rowIndex: number;
   selected: boolean;
@@ -879,10 +972,17 @@ function TitleCell(props: {
   observeRow: (el: Element) => void;
   freezeColumns: () => void;
 }): JSX.Element {
-  const cell = (): SheetCellCtx => ({ gridId: props.ownerId, row: props.rowIndex, col: 0 });
+  const cell = (): SheetCellCtx => ({
+    gridId: props.ownerId,
+    surfaceId: props.surfaceId,
+    rowId: formulaRowKey(props.row),
+    columnId: "title",
+    row: props.rowIndex,
+    col: 0,
+  });
   let contentRef: HTMLDivElement | undefined;
   const editing = () => editingId() === props.row.id && editingOwner() === cellOwner(cell());
-  const fmt = () => (doc.byId[props.row.id] ? formatForBlock(props.row.id) : formatForPage(props.row.page));
+  const fmt = () => (liveFormulaRowNode(props.row) ? formatForBlock(props.row.id) : formatForPage(props.row.page));
   const raw = () => rowRaw(props.row);
   const bgColor = createMemo(() => {
     const f = recordFacets(props.row);
@@ -895,21 +995,21 @@ function TitleCell(props: {
     e.preventDefault();
     e.stopPropagation();
     props.freezeColumns();
-    if (!doc.byId[props.row.id]) {
+    if (!liveFormulaRowNode(props.row)) {
       setCellSel(cell());
       return;
     }
     startCellEditing(cell(), clickOffset(e, contentRef, raw()) ?? undefined);
   };
   const openCellMenu = (e: MouseEvent) => {
-    if (!doc.byId[props.row.id]) return;
+    if (!liveFormulaRowNode(props.row)) return;
     e.preventDefault();
     e.stopPropagation();
     setCellSel(cell());
     openSheetCellContextMenu(e.clientX, e.clientY, props.row.id);
   };
   const openCellMenuFromHandle = (e: MouseEvent) => {
-    if (!doc.byId[props.row.id]) return;
+    if (!liveFormulaRowNode(props.row)) return;
     e.preventDefault();
     e.stopPropagation();
     setCellSel(cell());
@@ -926,7 +1026,10 @@ function TitleCell(props: {
         "sheet-sticky-left": true,
       }}
       data-sheet-grid-id={props.ownerId}
+      data-sheet-surface-id={props.surfaceId}
       data-block-id={props.row.id}
+      data-sheet-row-id={formulaRowKey(props.row)}
+      data-sheet-column-id="title"
       data-row={props.rowIndex}
       data-col={0}
       style={bgColor() ? { background: bgColor() } : undefined}
@@ -934,7 +1037,7 @@ function TitleCell(props: {
       onDblClick={onDoubleClick}
       onContextMenu={openCellMenu}
     >
-      <Show when={props.near && doc.byId[props.row.id]}>
+      <Show when={props.near && liveFormulaRowNode(props.row)}>
         <button
           class="sheet-cell-handle"
           title="Cell menu"
@@ -964,7 +1067,7 @@ function TitleCell(props: {
           }
         >
           <SheetCellContext.Provider value={cell()}>
-            <SurfaceContext.Provider value={cellSurfaceKey(props.ownerId)}>
+            <SurfaceContext.Provider value={cellSurfaceKey(props.ownerId, props.surfaceId)}>
               <Editor id={props.row.id} />
             </SurfaceContext.Provider>
           </SheetCellContext.Provider>
@@ -976,6 +1079,7 @@ function TitleCell(props: {
 
 function FieldCell(props: {
   ownerId: string;
+  surfaceId: string;
   row: RowRecord;
   field: FieldId;
   fieldType?: FieldType;
@@ -997,8 +1101,15 @@ function FieldCell(props: {
     if (current) return current;
     return props.field.startsWith("prop:") && props.fieldType === "checkbox" ? { text: "false", raw: "false" } : null;
   };
-  const editable = () => !!doc.byId[props.row.id] && !isFormulaField(props.field);
-  const select = () => setCellSel({ gridId: props.ownerId, row: props.rowIndex, col: props.colIndex });
+  const editable = () => !!liveFormulaRowNode(props.row) && !isFormulaField(props.field);
+  const select = () => setCellSel({
+    gridId: props.ownerId,
+    surfaceId: props.surfaceId,
+    rowId: formulaRowKey(props.row),
+    columnId: props.field,
+    row: props.rowIndex,
+    col: props.colIndex,
+  });
   const inlinePropEditor = () =>
     props.field.startsWith("prop:") &&
     props.fieldType !== "checkbox" &&
@@ -1110,6 +1221,9 @@ function FieldCell(props: {
           (isFormulaField(props.field) && props.formulaValue?.kind === "number"),
       }}
       data-sheet-grid-id={props.ownerId}
+      data-sheet-surface-id={props.surfaceId}
+      data-sheet-row-id={formulaRowKey(props.row)}
+      data-sheet-column-id={props.field}
       data-block-id={props.row.id}
       data-row={props.rowIndex}
       data-col={props.colIndex}

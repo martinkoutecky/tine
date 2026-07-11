@@ -9,6 +9,7 @@ mod commands;
 mod debug;
 mod graph;
 mod migrate_identifier;
+mod media_protocol;
 mod platform;
 mod settings;
 mod spellcheck;
@@ -29,7 +30,7 @@ use commands::{
     resolve_sync_conflict, run_advanced_query, run_query, save_asset, save_page,
     save_pdf_area_image, search, set_default_journal_template, set_favorites, set_guide_announced,
     set_journal_title_format, set_preferred_format, set_preferred_workflow, set_start_of_week,
-    set_timetracking_enabled, sync_conflict_diff, tine_open_devtools, tine_quit, trash_asset,
+    set_timetracking_enabled, stream_asset_path, sync_conflict_diff, tine_open_devtools, tine_quit, trash_asset,
     trash_journal_file, trash_sync_conflict, write_highlights,
 };
 use debug::{
@@ -142,6 +143,18 @@ mod multi_window_tests {
         let argv = vec!["tine".to_string(), "--capture".to_string()];
         assert!(forwarded_graph_path(&argv, "/tmp").is_none());
     }
+
+    #[test]
+    fn graph_window_creation_stays_out_of_synchronous_windows_handlers() {
+        // Windows WebView2 can deadlock the process if WebviewWindowBuilder is
+        // reached from a synchronous command or event callback. Guard both
+        // entry points: Shift-click IPC and single-instance argv forwarding.
+        let graph_source = include_str!("graph.rs");
+        let lib_source = include_str!("lib.rs");
+        assert!(graph_source.contains("pub(crate) async fn open_graph_window("));
+        assert!(lib_source.contains("tauri::async_runtime::spawn(async move"));
+        assert!(lib_source.contains("open_graph_window(path, command_app.clone(), state).await"));
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -225,7 +238,10 @@ pub fn run() {
     // page.tine.app and run_early() is a no-op there.
     migrate_identifier::run_early();
 
-    let builder = tauri::Builder::default();
+    let builder = tauri::Builder::default().register_uri_scheme_protocol(
+        "tine-media",
+        |ctx, request| media_protocol::respond(ctx, request),
+    );
 
     #[cfg(desktop)]
     let builder = builder
@@ -237,8 +253,14 @@ pub fn run() {
             if argv.iter().any(|a| a == "--capture") {
                 show_capture(app);
             } else if let Some(path) = forwarded_graph_path(&argv, &cwd) {
-                let state = app.state::<AppState>();
-                let _ = open_graph_window(path, app.clone(), state);
+                // WebView2 deadlocks if a WebviewWindow is built directly from
+                // a synchronous event handler. Use the async command path so
+                // Windows' event loop remains available while Tauri creates it.
+                let command_app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let state = command_app.state::<AppState>();
+                    let _ = open_graph_window(path, command_app.clone(), state).await;
+                });
             } else {
                 focus_last_graph_window(app);
             }
@@ -481,6 +503,7 @@ pub fn run() {
             resolve_block,
             resolve_blocks,
             read_asset,
+            stream_asset_path,
             read_local_image,
             read_text_file,
             import_asset,

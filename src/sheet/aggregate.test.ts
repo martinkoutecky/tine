@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aggregate } from "./aggregate";
+import { aggregate, collectAggregateColumns } from "./aggregate";
 
 describe("sheet aggregate", () => {
   it("computes numeric summaries and counts skipped values", () => {
@@ -43,5 +43,16 @@ describe("sheet aggregate", () => {
     expect(aggregate("average", [])).toBe("0");
     expect(aggregate("earliest", [""])).toBe("(1 skipped)");
     expect(aggregate("unique", [])).toBe("0");
+  });
+
+  it("collects only requested ragged columns in one row pass", () => {
+    const columns = collectAggregateColumns([
+      { cellIds: ["a", "b"] },
+      { cellIds: ["c"] },
+      { cellIds: ["d", "e", "f"] },
+    ], [0, 2], (id) => id ?? "");
+    expect(columns.get(0)).toEqual(["a", "c", "d"]);
+    expect(columns.get(2)).toEqual(["", "", "f"]);
+    expect(columns.has(1)).toBe(false);
   });
 });

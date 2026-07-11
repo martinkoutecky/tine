@@ -5,8 +5,7 @@
 # Cargo crate and every npm package is pre-materialized as manifest `sources`:
 #   flatpak/cargo-sources.json  <- flatpak-cargo-generator.py  (from Cargo.lock)
 #   flatpak/node-sources.json   <- flatpak-node-generator npm   (from package-lock.json)
-# See subagent-tasks/notes/flathub-offline-build.md for how these were generated,
-# the authoritative sources, and the REMAINING build-test + submission steps.
+# See flatpak/README.md for regeneration and verification commands.
 #
 # Runtime: org.gnome.Platform//48 — a Tauri Linux app needs webkit2gtk-4.1, which
 # ships in the GNOME runtime (not the bare freedesktop runtime). GNOME 48 is the

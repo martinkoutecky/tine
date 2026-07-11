@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, type JSX } from "solid-js";
 import { openJournals, openPage, openPageInNewTab, openFile, openInNewTab, route } from "../router";
-import { openSwitcher, favorites, recentPages, openPageContextMenu, graphMeta, openPageInSidebar, pushToast } from "../ui";
+import { openSwitcher, favorites, recentPages, openPageContextMenu, graphMeta, openPageInSidebar, pushToast, resolveAlias } from "../ui";
 import { switchGraph, createNewGraph, loadGraphPath } from "../graph";
 import { backend } from "../backend";
 import { allPages as allGraphPages, pageListLabel } from "../pages";
@@ -13,6 +13,38 @@ import type { PageKind } from "../types";
 // navigation O(pages); past a few hundred the list isn't scannable anyway, so we
 // show the first N alphabetically and point the rest at search (Ctrl-K).
 const ALL_PAGES_CAP = 300;
+
+export function sidebarPageTarget(name: string, kind: PageKind): { name: string; kind: PageKind } {
+  return { name: kind === "page" ? resolveAlias(name) : name, kind };
+}
+
+export interface SidebarPageOpenDeps {
+  normal: (name: string, kind: PageKind) => void;
+  sidebar: (name: string, kind: PageKind) => void;
+  newTab: (name: string, kind: PageKind) => void;
+  context: (x: number, y: number, name: string, kind: PageKind) => void;
+}
+
+const sidebarPageOpenDeps: SidebarPageOpenDeps = {
+  normal: openPage,
+  sidebar: openPageInSidebar,
+  newTab: openPageInNewTab,
+  context: openPageContextMenu,
+};
+
+export function openSidebarPageTarget(
+  name: string,
+  kind: PageKind,
+  gesture: "normal" | "sidebar" | "new-tab" | "context",
+  point: { x: number; y: number } = { x: 0, y: 0 },
+  deps: SidebarPageOpenDeps = sidebarPageOpenDeps,
+) {
+  const target = sidebarPageTarget(name, kind);
+  if (gesture === "normal") deps.normal(target.name, target.kind);
+  else if (gesture === "sidebar") deps.sidebar(target.name, target.kind);
+  else if (gesture === "new-tab") deps.newTab(target.name, target.kind);
+  else deps.context(point.x, point.y, target.name, target.kind);
+}
 
 export function Sidebar(): JSX.Element {
   // The whole-graph page list is the shared, graph-epoch-keyed resource (see
@@ -93,28 +125,32 @@ export function Sidebar(): JSX.Element {
           <div class="nav-section">
             <div class="nav-section-header">FAVORITES</div>
             <For each={favorites()}>
-              {(fav) => (
+              {(fav) => {
+                const target = () => sidebarPageTarget(fav.name, fav.kind);
+                return (
                 <div
                   class="nav-page"
-                  classList={{ active: isActive(fav.name) }}
+                  classList={{ active: isActive(target().name) }}
                   onMouseDown={shiftGuard}
-                  onClick={(e) =>
-                    e.shiftKey ? openPageInSidebar(fav.name, fav.kind) : openPage(fav.name, fav.kind)
-                  }
+                  onClick={(e) => openSidebarPageTarget(fav.name, fav.kind, e.shiftKey ? "sidebar" : "normal")}
                   onAuxClick={(e) => {
                     if (e.button === 1) {
                       e.preventDefault();
-                      openPageInNewTab(fav.name, fav.kind);
+                      openSidebarPageTarget(fav.name, fav.kind, "new-tab");
                     }
                   }}
-                  onContextMenu={(e) => openRowMenu(e, fav.name, fav.kind)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    openSidebarPageTarget(fav.name, fav.kind, "context", { x: e.clientX, y: e.clientY });
+                  }}
                 >
                   {/* ⭐ + name via EmojiText: WebKitGTK's Skia COLRv1 path
                       crashes painting a raw color-emoji glyph on hardened
                       libstdc++ (#29); Twemoji <img> never touches the font. */}
                   <EmojiText text={`⭐ ${fav.name}`} />
                 </div>
-              )}
+                );
+              }}
             </For>
           </div>
         </Show>
@@ -123,25 +159,29 @@ export function Sidebar(): JSX.Element {
           <div class="nav-section">
             <div class="nav-section-header">RECENT</div>
             <For each={recentPages()}>
-              {(r) => (
+              {(r) => {
+                const target = () => sidebarPageTarget(r.name, r.kind);
+                return (
                 <div
                   class="nav-page"
-                  classList={{ active: isActive(r.name) }}
+                  classList={{ active: isActive(target().name) }}
                   onMouseDown={shiftGuard}
-                  onClick={(e) =>
-                    e.shiftKey ? openPageInSidebar(r.name, r.kind) : openPage(r.name, r.kind)
-                  }
+                  onClick={(e) => openSidebarPageTarget(r.name, r.kind, e.shiftKey ? "sidebar" : "normal")}
                   onAuxClick={(e) => {
                     if (e.button === 1) {
                       e.preventDefault();
-                      openPageInNewTab(r.name, r.kind);
+                      openSidebarPageTarget(r.name, r.kind, "new-tab");
                     }
                   }}
-                  onContextMenu={(e) => openRowMenu(e, r.name, r.kind)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    openSidebarPageTarget(r.name, r.kind, "context", { x: e.clientX, y: e.clientY });
+                  }}
                 >
                   <EmojiText text={r.name.startsWith("hls__") ? r.name.slice(5) : r.name} />
                 </div>
-              )}
+                );
+              }}
             </For>
           </div>
         </Show>

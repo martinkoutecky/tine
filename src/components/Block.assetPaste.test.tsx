@@ -5,6 +5,7 @@ import { backend } from "../backend";
 import { initParser } from "../render/parse";
 import { doc, loadSingle, pageByName, resetStore } from "../store";
 import { startEditing } from "../editorController";
+import { setToasts, toasts } from "../ui";
 import type { BlockDto, PageDto } from "../types";
 import { Block } from "./Block";
 
@@ -16,6 +17,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   resetStore();
+  setToasts([]);
   document.body.innerHTML = "";
 });
 
@@ -44,7 +46,9 @@ function imagePasteEvent(file: File): Event {
     value: {
       getData: () => "",
       items: [{ kind: "file", type: "image/png", getAsFile: () => file }],
-      types: ["Files", "image/png"],
+      // Chromium/WebView2 commonly exposes MIME on DataTransferItem.type while
+      // the top-level types list contains only the generic Files sentinel.
+      types: ["Files"],
     },
   });
   return event;
@@ -125,6 +129,103 @@ describe("asset paste durability", () => {
       finish("durable.png");
       await settle();
       expect(doc.byId[id].raw).toBe("![](../assets/durable.png)");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("routes a Windows-style screenshot directly through image bytes", async () => {
+    loadSingle(page("Assets", [blk("asset-win-shot", "")]));
+    const id = pageByName("Assets")!.roots[0];
+    startEditing(id, 0);
+    vi.stubGlobal("URL", {
+      ...URL,
+      createObjectURL: vi.fn(() => "blob:asset"),
+      revokeObjectURL: vi.fn(),
+    });
+    const native = vi.spyOn(backend(), "clipboardFiles").mockResolvedValue({
+      files: [],
+      skipped: 1,
+      truncated: false,
+    });
+    vi.spyOn(backend(), "saveAsset").mockResolvedValue("screenshot.png");
+
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
+    ));
+    try {
+      const textarea = root.querySelector("textarea")! as HTMLTextAreaElement;
+      textarea.dispatchEvent(imagePasteEvent(new File([new Uint8Array([1, 2, 3])], "image.png", { type: "image/png" })));
+      await settle();
+
+      // The native reader sees a pseudo path, then the event image bytes win and
+      // suppress that bogus skipped count instead of showing GH #78's error.
+      expect(native).toHaveBeenCalledOnce();
+      expect(backend().saveAsset).toHaveBeenCalledOnce();
+      expect(doc.byId[id].raw).toBe("![](../assets/screenshot.png)");
+      expect(toasts().some((toast) => toast.message.startsWith("Skipped "))).toBe(false);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("does not materialize an oversized screenshot image", async () => {
+    loadSingle(page("Assets", [blk("asset-huge-shot", "")]));
+    const id = pageByName("Assets")!.roots[0];
+    startEditing(id, 0);
+    vi.spyOn(backend(), "clipboardFiles").mockResolvedValue({ files: [], skipped: 0, truncated: false });
+    const save = vi.spyOn(backend(), "saveAsset");
+    const arrayBuffer = vi.fn();
+    const huge = {
+      name: "image.png",
+      type: "image/png",
+      size: 64 * 1024 * 1024 + 1,
+      arrayBuffer,
+    } as unknown as File;
+
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
+    ));
+    try {
+      const textarea = root.querySelector("textarea")! as HTMLTextAreaElement;
+      textarea.dispatchEvent(imagePasteEvent(huge));
+      await settle();
+      expect(arrayBuffer).not.toHaveBeenCalled();
+      expect(save).not.toHaveBeenCalled();
+      expect(doc.byId[id].raw).toBe("");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("keeps mixed copied files on the generic native-file path", async () => {
+    loadSingle(page("Assets", [blk("asset-mixed", "")]));
+    const id = pageByName("Assets")!.roots[0];
+    startEditing(id, 0);
+    const native = vi.spyOn(backend(), "clipboardFiles").mockResolvedValue({
+      files: [
+        { path: "C:\\photo.png", name: "photo.png", size: 3 },
+        { path: "C:\\report.pdf", name: "report.pdf", size: 3 },
+      ],
+      skipped: 0,
+      truncated: false,
+    });
+    vi.spyOn(backend(), "importAsset")
+      .mockResolvedValueOnce("photo.png")
+      .mockResolvedValueOnce("report.pdf");
+
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Assets")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
+    ));
+    try {
+      const textarea = root.querySelector("textarea")! as HTMLTextAreaElement;
+      textarea.dispatchEvent(filePasteEvent([
+        new File([new Uint8Array([1])], "photo.png", { type: "image/png" }),
+        new File([new Uint8Array([2])], "report.pdf", { type: "application/pdf" }),
+      ]));
+      await settle();
+      expect(native).toHaveBeenCalledOnce();
+      expect(doc.byId[id].raw).toBe("![](../assets/photo.png)\n[report.pdf](../assets/report.pdf)");
     } finally {
       dispose();
     }

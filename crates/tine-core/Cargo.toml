@@ -10,11 +10,15 @@ serde_json = { workspace = true }
 uuid = { workspace = true }
 slotmap = { version = "1", features = ["serde"] }
 ammonia = "4"
-lsdoc = { git = "https://github.com/martinkoutecky/lsdoc", tag = "v0.5.1" }
+lsdoc = { git = "https://github.com/martinkoutecky/lsdoc", tag = "v0.5.2" }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 regex = "1"
 loro = "=1.13.6"
 sha2 = "0.10"
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
 pretty_assertions = "1"

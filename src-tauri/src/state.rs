@@ -31,6 +31,24 @@ impl GraphSlot {
             warm_generation: AtomicU64::new(0),
         }
     }
+
+    /// Re-open the graph object for the same window/root without revoking the
+    /// frontend's lease. A binding generation identifies a window -> graph-root
+    /// assignment, not the particular in-memory `Graph` instance. Minting a new
+    /// generation here made every later command from that window stale after a
+    /// config refresh, including autosaves.
+    fn refreshed(graph: Graph, old: &GraphSlot) -> Self {
+        Self {
+            graph: Arc::new(graph),
+            root_key: old.root_key.clone(),
+            binding_generation: old.binding_generation,
+            warm_done: AtomicBool::new(old.warm_done.load(std::sync::atomic::Ordering::Acquire)),
+            warm_generation: AtomicU64::new(
+                old.warm_generation
+                    .load(std::sync::atomic::Ordering::Acquire),
+            ),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -174,11 +192,7 @@ pub(crate) fn refresh_graph(ctx: &GraphContext<'_>) -> Result<(), String> {
             .project_all_managed_sync()
             .map_err(|error| format!("managed sync could not project after reload: {error}"))?;
     }
-    let replacement = Arc::new(GraphSlot::new(graph, old.root_key.clone()));
-    replacement.warm_done.store(
-        old.warm_done.load(std::sync::atomic::Ordering::Acquire),
-        std::sync::atomic::Ordering::Release,
-    );
+    let replacement = Arc::new(GraphSlot::refreshed(graph, &old));
     ctx.state.graphs.write().unwrap().bind(label, replacement)?;
     poke_watcher(&ctx.state);
     Ok(())
@@ -198,6 +212,29 @@ mod tests {
         std::fs::create_dir_all(root.join("pages")).unwrap();
         std::fs::create_dir_all(root.join("journals")).unwrap();
         Arc::new(GraphSlot::new(Graph::open(root), root.to_path_buf()))
+    }
+
+    #[test]
+    fn same_root_refresh_preserves_frontend_binding_lease() {
+        let base =
+            std::env::temp_dir().join(format!("tine-slot-refresh-{}", std::process::id()));
+        let old = graph(&base);
+        old.warm_done.store(true, std::sync::atomic::Ordering::Release);
+        old.warm_generation
+            .store(7, std::sync::atomic::Ordering::Release);
+
+        let replacement = GraphSlot::refreshed(Graph::open(&base), &old);
+
+        assert_eq!(replacement.binding_generation, old.binding_generation);
+        assert_eq!(replacement.root_key, old.root_key);
+        assert!(replacement.warm_done.load(std::sync::atomic::Ordering::Acquire));
+        assert_eq!(
+            replacement
+                .warm_generation
+                .load(std::sync::atomic::Ordering::Acquire),
+            7
+        );
+        let _ = std::fs::remove_dir_all(base);
     }
 
     #[test]

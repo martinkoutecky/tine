@@ -8,8 +8,132 @@ import { backend } from "./backend";
 // blob URL per asset for the lifetime of the open graph; it MUST be cleared on a
 // graph switch (the URLs point at the old graph's bytes, and a new graph could
 // reuse a filename). Stores the in-flight promise so concurrent mounts of the
-// same asset share one read.
-const cache = new Map<string, Promise<string>>();
+// same asset share one read. Bound both count and retained backing bytes: Blob
+// URLs keep their Blob alive even after every image unmounts.
+interface CacheEntry {
+  promise: Promise<string>;
+  bytes: number;
+  leases: number;
+  evicted: boolean;
+}
+export interface BlobLease { url: string; release: () => void }
+const cache = new Map<string, CacheEntry>();
+// Entries evicted from the retained LRU while still displayed remain keyed here
+// (but do not count toward the idle cache cap), so a repeated reference shares
+// the same live Blob instead of rereading/duplicating it.
+const liveEntries = new Map<string, CacheEntry>();
+const MAX_CACHE_ENTRIES = 128;
+const MAX_CACHE_BYTES = 128 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 32 * 1024 * 1024;
+let cacheBytes = 0;
+const MAX_ACTIVE_READS = 2;
+let activeReads = 0;
+const readQueue: (() => void)[] = [];
+
+function startQueuedReads() {
+  while (activeReads < MAX_ACTIVE_READS && readQueue.length) {
+    activeReads++;
+    readQueue.shift()!();
+  }
+}
+
+function limitedRead<T>(task: () => Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    readQueue.push(() => {
+      void task().then(resolve, reject).finally(() => {
+        activeReads--;
+        startQueuedReads();
+      });
+    });
+    startQueuedReads();
+  });
+}
+
+export function __assetCacheStatsForTests(): { entries: number; bytes: number } {
+  return { entries: cache.size, bytes: cacheBytes };
+}
+
+function touch(key: string, entry: CacheEntry) {
+  cache.delete(key);
+  cache.set(key, entry);
+}
+
+function evictEntry(key: string, entry: CacheEntry, reusable = true) {
+  if (cache.get(key) !== entry) return;
+  cache.delete(key);
+  cacheBytes = Math.max(0, cacheBytes - entry.bytes);
+  entry.evicted = true;
+  if (entry.leases > 0 && reusable) {
+    liveEntries.set(key, entry);
+  } else if (entry.leases === 0) {
+    void entry.promise.then((url) => url && URL.revokeObjectURL(url)).catch(() => {});
+  }
+}
+
+function prune(protectedKey: string) {
+  while (cache.size > MAX_CACHE_ENTRIES || cacheBytes > MAX_CACHE_BYTES) {
+    // Pending entries contain no Blob bytes and represent active consumers. Do
+    // not evict them merely because many images were requested at once; reads
+    // are separately bounded by MAX_ACTIVE_READS.
+    const oldest = [...cache.entries()].find(([key, entry]) => key !== protectedKey && entry.bytes > 0);
+    if (!oldest) break;
+    evictEntry(oldest[0], oldest[1]);
+  }
+}
+
+function cachedBlob(key: string, read: () => Promise<Uint8Array>, typePath: string): CacheEntry {
+  const hit = cache.get(key);
+  if (hit) {
+    touch(key, hit);
+    return hit;
+  }
+  const live = liveEntries.get(key);
+  if (live) return live;
+  const entry: CacheEntry = { promise: Promise.resolve(""), bytes: 0, leases: 0, evicted: false };
+  // Publish identity before starting the limiter: its first two tasks begin
+  // synchronously, and must see themselves in the cache.
+  cache.set(key, entry);
+  prune(key);
+  entry.promise = limitedRead(async () => {
+    try {
+      // It may have been evicted while waiting behind earlier image reads. Do
+      // not start an IPC allocation for a URL nobody is waiting to cache.
+      if (cache.get(key) !== entry) return "";
+      const bytes = await read();
+      if (!bytes.length) return "";
+      const url = URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: mimeFromExt(typePath) }));
+      if (cache.get(key) === entry) {
+        entry.bytes = bytes.byteLength;
+        cacheBytes += entry.bytes;
+        prune(key);
+      }
+      return url;
+    } catch {
+      if (cache.get(key) === entry) cache.delete(key);
+      return "";
+    }
+  });
+  return entry;
+}
+
+async function acquire(entry: CacheEntry): Promise<BlobLease> {
+  entry.leases++;
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    entry.leases = Math.max(0, entry.leases - 1);
+    if (entry.evicted && entry.leases === 0) {
+      for (const [key, candidate] of liveEntries) {
+        if (candidate === entry) liveEntries.delete(key);
+      }
+      void entry.promise.then((url) => url && URL.revokeObjectURL(url)).catch(() => {});
+    }
+  };
+  const url = await entry.promise;
+  if (!url) release();
+  return { url, release };
+}
 
 function mimeFromExt(path: string): string {
   const ext = path.split(".").pop()?.toLowerCase();
@@ -60,41 +184,17 @@ function mimeFromExt(path: string): string {
 
 /** A blob URL for the asset at `rel` (relative to `assets/`), reading it over IPC
  *  at most once per open graph. Resolves to "" if the asset is missing/unreadable. */
-export function loadAssetBlob(rel: string): Promise<string> {
-  const hit = cache.get(rel);
-  if (hit) return hit;
-  const p = (async () => {
-    try {
-      const bytes = await backend().readAsset(rel);
-      if (!bytes.length) return "";
-      return URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: mimeFromExt(rel) }));
-    } catch {
-      return "";
-    }
-  })();
-  cache.set(rel, p);
-  return p;
+export function acquireAssetBlob(rel: string): Promise<BlobLease> {
+  return acquire(cachedBlob(rel, () => backend().readAsset(rel, MAX_IMAGE_BYTES), rel));
 }
 
 /** A blob URL for an image at an ABSOLUTE local `path` outside the graph, read over
  *  the gated `read_local_image` IPC (raw-HTML `<img>` the user opted into). Cached
  *  under a `local:` key so repeat references share one read; resolves to "" if the
  *  opt-in is off or the file is missing/unreadable/too big. */
-export function loadLocalImageBlob(path: string): Promise<string> {
+export function acquireLocalImageBlob(path: string): Promise<BlobLease> {
   const key = `local:${path}`;
-  const hit = cache.get(key);
-  if (hit) return hit;
-  const p = (async () => {
-    try {
-      const bytes = await backend().readLocalImage(path);
-      if (!bytes.length) return "";
-      return URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: mimeFromExt(path) }));
-    } catch {
-      return "";
-    }
-  })();
-  cache.set(key, p);
-  return p;
+  return acquire(cachedBlob(key, () => backend().readLocalImage(path), path));
 }
 
 /** Pre-populate the cache for `rel` from in-memory bytes (e.g. a just-pasted
@@ -103,19 +203,42 @@ export function loadLocalImageBlob(path: string): Promise<string> {
  *  cache an empty result). Revokes any prior URL for this rel. */
 export function seedAssetBlob(rel: string, bytes: Uint8Array): string {
   const prior = cache.get(rel);
-  if (prior) void prior.then((url) => url && URL.revokeObjectURL(url)).catch(() => {});
+  if (prior) evictEntry(rel, prior, false);
+  const livePrior = liveEntries.get(rel);
+  if (livePrior) {
+    liveEntries.delete(rel);
+    livePrior.evicted = true;
+    if (livePrior.leases === 0) {
+      void livePrior.promise.then((old) => old && URL.revokeObjectURL(old)).catch(() => {});
+    }
+  }
   const url = URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: mimeFromExt(rel) }));
-  cache.set(rel, Promise.resolve(url));
+  if (bytes.byteLength > MAX_CACHE_BYTES) {
+    // The caller already owns these bytes (paste/capture), so this is not a read
+    // amplification path. Avoid graph-lifetime retention; revoke after the
+    // mounted image has had ample time to consume the URL.
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    return url;
+  }
+  const entry: CacheEntry = {
+    promise: Promise.resolve(url),
+    bytes: bytes.byteLength,
+    leases: 0,
+    evicted: false,
+  };
+  cache.set(rel, entry);
+  cacheBytes += entry.bytes;
+  prune(rel);
   return url;
 }
 
 /** Revoke every cached blob URL and empty the cache. Call on graph switch so the
  *  next graph's images aren't served stale blobs from the previous one. */
 export function clearAssetBlobCache(): void {
-  for (const p of cache.values()) {
-    void p.then((url) => url && URL.revokeObjectURL(url)).catch(() => {});
-  }
-  cache.clear();
+  for (const [key, entry] of [...cache.entries()]) evictEntry(key, entry, false);
+  for (const entry of liveEntries.values()) entry.evicted = true;
+  liveEntries.clear();
+  cacheBytes = 0;
 }
 
 // Per-asset version counters (GH #38). An <img> served from a blob URL caches the
@@ -132,8 +255,15 @@ export function assetVersion(rel: string): number {
 /** Drop the cached blob for a single `rel` (revoke + delete), so the next read hits disk. */
 export function invalidateAsset(rel: string): void {
   const prior = cache.get(rel);
-  if (prior) void prior.then((url) => url && URL.revokeObjectURL(url)).catch(() => {});
-  cache.delete(rel);
+  if (prior) evictEntry(rel, prior, false);
+  const live = liveEntries.get(rel);
+  if (live) {
+    liveEntries.delete(rel);
+    live.evicted = true;
+    if (live.leases === 0) {
+      void live.promise.then((url) => url && URL.revokeObjectURL(url)).catch(() => {});
+    }
+  }
 }
 
 /** Invalidate `rel` AND bump its reactive version, forcing bound <img>s to re-read

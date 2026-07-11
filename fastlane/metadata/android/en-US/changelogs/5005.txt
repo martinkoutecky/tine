@@ -1,0 +1,4 @@
+Improved Sheets correctness and performance across split panes, sorting and
+pagination. Fixed wrapped-block caret navigation, edit-mode punctuation spacing,
+Windows graph-window and screenshot-paste failures, page rename/sidebar state,
+and several read-only Org and collapse edge cases.

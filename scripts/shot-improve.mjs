@@ -15,6 +15,8 @@ const server = spawn("npx", ["vite", "preview", "--port", String(PORT), "--stric
 const wait = async (u, t = 40) => { for (let i = 0; i < t; i++) { try { const r = await fetch(u); if (r.ok) return; } catch {} await sleep(250); } throw new Error("no server"); };
 
 const FIXTURE = {
+  tineVersion: "0.5.6-test",
+  lsdocVersion: "v0.5.2",
   stats: { files: 128, totalBytes: 486213 },
   lsdocAvailable: true,
   bench: {
@@ -24,7 +26,7 @@ const FIXTURE = {
   findings: [
     {
       type: "divergence",
-      rel: "pages/meeting notes.md",
+      rel: "graph-file-0001.md",
       lineStart: 14,
       lineEnd: 14,
       contextDependent: false,
@@ -38,7 +40,7 @@ const FIXTURE = {
     },
     {
       type: "divergence",
-      rel: "journals/2026_06_30.md",
+      rel: "graph-file-0002.md",
       lineStart: 3,
       lineEnd: 5,
       contextDependent: true,

@@ -1,6 +1,6 @@
 import { createMemo, type Accessor } from "solid-js";
 import { dataRev } from "../ui";
-import { doc, formatForBlock } from "../store";
+import { doc, formatForBlock, pageByName, type Node as StoreNode } from "../store";
 import { facetsFromDto, facetsOf } from "../render/facets";
 import { evaluate, parseFormula, type Ast, type FormulaValue, type ParseResult } from "./formula";
 import {
@@ -13,12 +13,24 @@ import {
 } from "./formula/value";
 import { isPlainDecimalNumber, isoDatePrefix } from "./typed";
 import { readField, type FieldId, type FieldValue } from "./fields";
-import type { BlockDto } from "../types";
+import type { BlockDto, PageKind } from "../types";
 
 export interface FormulaEvalRow {
   id: string;
   page: string;
+  kind?: PageKind;
   dto?: BlockDto;
+}
+
+export function formulaRowKey(row: Pick<FormulaEvalRow, "id" | "page" | "kind">): string {
+  return row.kind ? `${row.kind}\0${row.page}\0${row.id}` : row.id;
+}
+
+export function liveFormulaRowNode(row: FormulaEvalRow): StoreNode | null {
+  const node = doc.byId[row.id];
+  if (!node || node.page !== row.page) return null;
+  if (row.kind && pageByName(row.page)?.kind !== row.kind) return null;
+  return node;
 }
 
 interface FormulaResultsOptions {
@@ -60,13 +72,13 @@ function fieldIdForName(name: string): FieldId {
   return BUILTIN_FIELD_NAMES.has(name) ? (name as FieldId) : `prop:${name}`;
 }
 
-export function formulaResultKey(rowId: string, formulaName: string): string {
-  return `${rowId}\0${formulaName}`;
+export function formulaResultKey(row: string | FormulaEvalRow, formulaName: string): string {
+  return `${typeof row === "string" ? row : formulaRowKey(row)}\0${formulaName}`;
 }
 
 export function readFormulaRowField(row: FormulaEvalRow, field: FieldId): FieldValue | null {
   if (field.startsWith("formula:")) return null;
-  if (doc.byId[row.id]) return readField(row.id, field);
+  if (liveFormulaRowNode(row)) return readField(row.id, field);
 
   const f = row.dto ? facetsFromDto(row.dto) : null;
   if (!f) return null;
@@ -166,9 +178,10 @@ export function evaluateFormulaForRow(
 }
 
 function observeFormulaRow(row: FormulaEvalRow): void {
-  if (doc.byId[row.id]) {
+  const node = liveFormulaRowNode(row);
+  if (node) {
     // Track the same fine-grained raw dependency ordinary sheet cells read.
-    void facetsOf(doc.byId[row.id].raw, formatForBlock(row.id));
+    void facetsOf(node.raw, formatForBlock(row.id));
   }
 }
 
@@ -188,7 +201,7 @@ export function createFormulaResultsMemo(opts: FormulaResultsOptions): Accessor<
       for (const name of names) {
         evaluations += 1;
         opts.onEvaluate?.();
-        out.set(formulaResultKey(row.id, name), evaluateFormulaForRow(row, name, formulas, now));
+        out.set(formulaResultKey(row, name), evaluateFormulaForRow(row, name, formulas, now));
       }
     }
 

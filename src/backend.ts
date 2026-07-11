@@ -226,7 +226,8 @@ export interface Backend {
     winner: string,
     conflict: string,
     decisions: Record<string, MergeDecision>,
-    baseRev?: string,
+    baseRev: string,
+    conflictRev: string,
     preChoice?: "mine" | "theirs" | "union"
   ): Promise<void>;
   /** Discard a conflict copy without merging (move it to the recoverable trash). */
@@ -234,12 +235,15 @@ export interface Backend {
   /** Subscribe to the watcher's `conflicts-changed` event (a conflict copy
    *  appeared or vanished). Returns an unlisten fn. */
   onConflictsChanged(cb: () => void): Promise<() => void>;
-  search(query: string, limit: number): Promise<RefGroup[]>;
+  search(query: string, limit: number, lane?: string): Promise<RefGroup[]>;
   quickSwitch(query: string, limit: number): Promise<PageEntry[]>;
   listTemplates(): Promise<TemplateDto[]>;
   resolveBlock(uuid: string): Promise<RefGroup | null>;
   resolveBlocks(uuids: string[]): Promise<(RefGroup | null)[]>;
   readAsset(name: string, maxBytes?: number): Promise<Uint8Array>;
+  /** Native range-aware URL for audio/video. Unlike `readAsset`, this never
+   *  copies the whole media file through IPC. */
+  streamAsset(name: string): Promise<string>;
   /** Read an image from an absolute path OUTSIDE the graph (raw-HTML `<img>` the
    *  user opted into via Settings). Rejects when the opt-in is off or the path
    *  isn't a permitted image. */
@@ -394,12 +398,14 @@ export function isTauri(): boolean {
 
 class TauriBackend implements Backend {
   private invoke!: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
+  private convertFileSrc!: (path: string, protocol?: string) => string;
   private ready: Promise<void>;
   private bindingGeneration = 0;
 
   constructor() {
     this.ready = import("@tauri-apps/api/core").then((m) => {
       this.invoke = m.invoke;
+      this.convertFileSrc = m.convertFileSrc;
     });
   }
 
@@ -569,8 +575,8 @@ class TauriBackend implements Backend {
   trashAsset(name: string) {
     return this.call<void>("trash_asset", { name });
   }
-  search(query: string, limit: number) {
-    return this.call<RefGroup[]>("search", { query, limit });
+  search(query: string, limit: number, lane?: string) {
+    return this.call<RefGroup[]>("search", { query, limit, lane });
   }
   quickSwitch(query: string, limit: number) {
     return this.call<PageEntry[]>("quick_switch", { query, limit });
@@ -589,6 +595,10 @@ class TauriBackend implements Backend {
     // not a JSON number[] — far cheaper for large PDFs/images.
     const buf = await this.call<ArrayBuffer>("read_asset", { name, maxBytes });
     return new Uint8Array(buf);
+  }
+  async streamAsset(name: string) {
+    const path = await this.call<string>("stream_asset_path", { name });
+    return this.convertFileSrc(path, "tine-media");
   }
   async readLocalImage(path: string) {
     const buf = await this.call<ArrayBuffer>("read_local_image", { path });
@@ -656,14 +666,16 @@ class TauriBackend implements Backend {
     winner: string,
     conflict: string,
     decisions: Record<string, MergeDecision>,
-    baseRev?: string,
+    baseRev: string,
+    conflictRev: string,
     preChoice?: "mine" | "theirs" | "union"
   ) {
     return this.call<void>("resolve_sync_conflict", {
       winner,
       conflict,
       decisions,
-      baseRev: baseRev ?? null,
+      baseRev,
+      conflictRev,
       preChoice: preChoice ?? "union",
     });
   }

@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { initParser } from "../render/parse";
 import {
   blockProperty,
@@ -33,6 +33,7 @@ import {
 } from "./mutations";
 import { parseDelimitedText } from "./tsv";
 import { setToasts, toasts } from "../ui";
+import { observeMatrixDimensions } from "./matrix";
 
 let counter = 0;
 function blk(raw: string, children: BlockDto[] = []): BlockDto {
@@ -167,6 +168,41 @@ describe("sheet structural mutations", () => {
     expect(gridShape(gridId)).toEqual([["A", "B", "C"], ["D"], []]);
     expect(blockProperty(gridId, "tine.col-widths")).toBe("0=120;1=77;2=88");
     expect(blockProperty(gridId, "tine.col-aggregates")).toBe("0=sum;1=max;2=average");
+  });
+
+  it("invalidates off-window dimensions across insert, delete, and undo", () => {
+    vi.useFakeTimers();
+    try {
+      const tall = blk("Tall\ntine.view:: grid", Array.from({ length: 201 }, (_, row) =>
+        blk("", row === 200 ? [blk("A"), blk("B")] : [])
+      ));
+      tall.properties = [["tine.view", "grid"]];
+      loadSingle({ name: "Sheet", kind: "page", title: "Sheet", pre_block: null, blocks: [tall] });
+      let cols = 0;
+      const stop = observeMatrixDimensions(
+        tall.id,
+        doc.byId[tall.id].children,
+        (rowId) => doc.byId[rowId]?.children.length ?? 0,
+        (next) => { cols = next; },
+      );
+      vi.runAllTimers();
+      expect(cols).toBe(2);
+
+      insertColumn(tall.id, 1);
+      vi.runAllTimers();
+      expect(cols).toBe(3);
+
+      undo();
+      vi.runAllTimers();
+      expect(cols).toBe(2);
+
+      deleteColumn(tall.id, 1);
+      vi.runAllTimers();
+      expect(cols).toBe(1);
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("materializes a hole by appending exactly the missing cells", () => {
@@ -458,6 +494,67 @@ describe("sheet structural mutations", () => {
     undo();
     expect(pageToDto("Sheet")).toEqual(before);
   });
+
+  it.each(["table", "board"])(
+    "refuses positional clear/cut/fill on a %s owner with nested blocks",
+    (view) => {
+      setDoc({
+        byId: {
+          owner: {
+            id: "owner",
+            raw: `View\ntine.view:: ${view}`,
+            collapsed: false,
+            parent: null,
+            page: "Sheet",
+            children: ["row"],
+          },
+          row: {
+            id: "row",
+            raw: "Visible row",
+            collapsed: false,
+            parent: "owner",
+            page: "Sheet",
+            children: ["nested"],
+          },
+          nested: {
+            id: "nested",
+            raw: "must survive",
+            collapsed: false,
+            parent: "row",
+            page: "Sheet",
+            children: [],
+          },
+        },
+        pages: [{
+          name: "Sheet",
+          kind: "page",
+          title: "Sheet",
+          preBlock: null,
+          roots: ["owner"],
+          format: "md",
+          readOnly: false,
+          guide: false,
+        }],
+        feed: ["Sheet"],
+        loaded: true,
+      });
+      const cell = { kind: "cell", gridId: "owner", row: 0, col: 0 } as const;
+      const range = {
+        kind: "range",
+        gridId: "owner",
+        anchor: { row: 0, col: 0 },
+        focus: { row: 0, col: 1 },
+      } as const;
+
+      expect(clearSheetSelection(cell)).toBe(false);
+      cutSheetSelection(cell);
+      expect(fillSheetSelection(range, "right")).toBe(false);
+
+      expect(doc.byId.row.raw).toBe("Visible row");
+      expect(doc.byId.nested.raw).toBe("must survive");
+      expect(doc.byId.row.children).toEqual(["nested"]);
+    },
+  );
 
   it("hands back a subgrid node for its own multi-cell copy, but not for other text or a single cell", async () => {
     loadStructuralPasteDoc();

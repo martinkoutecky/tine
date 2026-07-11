@@ -1,6 +1,16 @@
 import { createMemo, createRoot, createSignal } from "solid-js";
-import { describe, expect, it } from "vitest";
-import { createFormulaResultsMemo, fieldValueToFormulaValue, formulaResultKey, formulaValueText } from "./formulaEval";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { initParser } from "../render/parse";
+import { resetStore, setDoc, type FeedPage, type Node } from "../store";
+import {
+  createFormulaResultsMemo,
+  fieldValueToFormulaValue,
+  formulaResultKey,
+  formulaRowKey,
+  formulaValueText,
+  liveFormulaRowNode,
+  readFormulaRowField,
+} from "./formulaEval";
 import {
   booleanValue,
   nullValue,
@@ -15,6 +25,14 @@ function dateValue(source: string): FormulaValue {
   if (!parsed) throw new Error(`Bad date fixture ${source}`);
   return parsed;
 }
+
+afterEach(() => {
+  resetStore();
+});
+
+beforeAll(async () => {
+  await initParser();
+});
 
 describe("formula eval context", () => {
   it("converts field values to FormulaValue using the documented table", () => {
@@ -63,5 +81,46 @@ describe("formula eval context", () => {
       expect(evaluations).toBe(1);
       dispose();
     });
+  });
+
+  it("keeps same-UUID page and journal rows distinct and only reads the matching live node", () => {
+    const loaded: Node = {
+      id: "same-id",
+      raw: "Loaded page row\nscore:: 1",
+      collapsed: false,
+      parent: null,
+      page: "Twin",
+      children: [],
+    };
+    const page: FeedPage = {
+      name: "Twin",
+      kind: "page",
+      title: "Twin",
+      preBlock: null,
+      roots: [loaded.id],
+      format: "md",
+      readOnly: false,
+      guide: false,
+    };
+    setDoc({ byId: { [loaded.id]: loaded }, pages: [page], feed: [page.name], loaded: true });
+
+    const pageRow = {
+      id: loaded.id,
+      page: page.name,
+      kind: "page" as const,
+      dto: { id: loaded.id, raw: "Page DTO\nscore:: 7", collapsed: false, children: [], properties: [["score", "7"] as [string, string]] },
+    };
+    const journalRow = {
+      id: loaded.id,
+      page: page.name,
+      kind: "journal" as const,
+      dto: { id: loaded.id, raw: "Journal DTO\nscore:: 9", collapsed: false, children: [], properties: [["score", "9"] as [string, string]] },
+    };
+
+    expect(formulaRowKey(pageRow)).not.toBe(formulaRowKey(journalRow));
+    expect(liveFormulaRowNode(pageRow)?.raw).toBe(loaded.raw);
+    expect(liveFormulaRowNode(journalRow)).toBeNull();
+    expect(readFormulaRowField(pageRow, "prop:score")?.text).toBe("1");
+    expect(readFormulaRowField(journalRow, "prop:score")?.text).toBe("9");
   });
 });

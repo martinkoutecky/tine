@@ -24,6 +24,7 @@ import { serializeColAggregates, serializeColWidths, sheetConfigFromRaw } from "
 import type { AggregateFn } from "./aggregate";
 import { looksLikeDelimitedText, parseDelimitedText, serializeTsv } from "./tsv";
 import type { FieldId } from "./fields";
+import { invalidateMatrixDimensions } from "./matrix";
 
 export interface SheetPoint {
   row: number;
@@ -113,7 +114,12 @@ function rectRows(rect: SheetRect): number {
 }
 
 function cellIdAt(gridId: string, row: number, col: number): string | null {
-  const rowId = doc.byId[gridId]?.children[row];
+  // Coordinate-based mutations are valid only for positional grids. Field
+  // tables and boards register with the shared selection layer too, but their
+  // screen rows/columns are sorted/query-derived records and fields — they do
+  // NOT correspond to owner.children[row].children[col]. Treating them as a
+  // grid can silently clear an unrelated nested child on Delete/Cut.
+  const rowId = gridRows(gridId)?.[row];
   return rowId ? (doc.byId[rowId]?.children[col] ?? null) : null;
 }
 
@@ -174,6 +180,9 @@ function sheetBounds(gridId: string): { rows: number; cols: number } {
 }
 
 function withSheetUndo<T>(gridId: string, tag: string, fn: () => T): T | null {
+  // Defense in depth for every coordinate-based compound mutation. Non-grid
+  // sheet surfaces must mutate through their adapter's row-id/field semantics.
+  if (!gridRows(gridId)) return null;
   const page = gridPage(gridId);
   if (!page) return null;
   return withUndoUnit(tag, [page], fn);
@@ -251,7 +260,9 @@ export function insertRow(gridId: string, at: number): string | null {
   const rows = gridRows(gridId);
   const page = gridPage(gridId);
   if (!rows || !page || at < 0 || at > rows.length) return null;
-  return withUndoUnit("sheet:insert-row", [page], () => insertEmptyChildBlock(gridId, at));
+  const result = withUndoUnit("sheet:insert-row", [page], () => insertEmptyChildBlock(gridId, at));
+  if (result) invalidateMatrixDimensions(gridId);
+  return result;
 }
 
 export function deleteRow(gridId: string, row: number): void {
@@ -259,6 +270,7 @@ export function deleteRow(gridId: string, row: number): void {
   const page = gridPage(gridId);
   if (!rows || !page || row < 0 || row >= rows.length) return;
   withUndoUnit("sheet:delete-row", [page], () => deleteBlock(rows[row]));
+  invalidateMatrixDimensions(gridId);
 }
 
 export function insertColumn(gridId: string, at: number): void {
@@ -275,6 +287,7 @@ export function insertColumn(gridId: string, at: number): void {
     writeColWidths(gridId, shiftedForInsert(colWidths(gridId), at));
     writeColAggregates(gridId, shiftedAggregates(colAggregates(gridId), (m) => shiftedForInsert(m, at)));
   });
+  invalidateMatrixDimensions(gridId);
 }
 
 export function deleteColumn(gridId: string, col: number): void {
@@ -291,6 +304,7 @@ export function deleteColumn(gridId: string, col: number): void {
     writeColWidths(gridId, shiftedForDelete(colWidths(gridId), col));
     writeColAggregates(gridId, shiftedAggregates(colAggregates(gridId), (m) => shiftedForDelete(m, col)));
   });
+  invalidateMatrixDimensions(gridId);
 }
 
 export function deleteRows(gridId: string, top: number, bottom: number): void {
@@ -305,6 +319,7 @@ export function deleteRows(gridId: string, top: number, bottom: number): void {
   withUndoUnit("sheet:delete-rows", [page], () => {
     for (let r = hi; r >= lo; r--) if (rows[r]) deleteBlock(rows[r]);
   });
+  invalidateMatrixDimensions(gridId);
 }
 
 export function deleteColumns(gridId: string, left: number, right: number): void {
@@ -325,6 +340,7 @@ export function deleteColumns(gridId: string, left: number, right: number): void
       writeColAggregates(gridId, shiftedAggregates(colAggregates(gridId), (m) => shiftedForDelete(m, c)));
     }
   });
+  invalidateMatrixDimensions(gridId);
 }
 
 export function materializeCell(gridId: string, row: number, col: number): string | null {
@@ -334,7 +350,7 @@ export function materializeCell(gridId: string, row: number, col: number): strin
   const rowId = rows[row];
   const existing = doc.byId[rowId]?.children[col];
   if (existing) return existing;
-  return withUndoUnit("sheet:materialize-cell", [page], () => {
+  const result = withUndoUnit("sheet:materialize-cell", [page], () => {
     let made: string | null = null;
     while ((doc.byId[rowId]?.children.length ?? 0) <= col) {
       made = insertEmptyChildBlock(rowId, doc.byId[rowId]?.children.length ?? 0);
@@ -342,6 +358,8 @@ export function materializeCell(gridId: string, row: number, col: number): strin
     }
     return doc.byId[rowId]?.children[col] ?? made;
   });
+  if (result) invalidateMatrixDimensions(gridId);
+  return result;
 }
 
 export function setColumnWidth(gridId: string, col: number, px: number | null): void {

@@ -500,9 +500,10 @@ within a column; merged cells are still v2+.
 - **Help improve Tine** (Settings tab) — runs Tine's parser (lsdoc) against
   Logseq's own parser (mldoc) over your graph, locally, and reports any place they
   disagree plus a parse-speed comparison. Every divergence snippet is **anonymized**
-  (words scrubbed, markup structure kept) and **re-verified to still reproduce the
-  divergence** before it's shown, so it's safe to paste into a bug report. mldoc is
-  loaded only on demand; nothing is uploaded.
+  (source page name and words scrubbed; URL schemes retained but hosts and paths
+  replaced; markup structure kept) and **re-verified to still reproduce the
+  divergence** before it's shown. Copied reports include the Tine version used.
+  mldoc is loaded only on demand; nothing is uploaded.
 - Light/dark themes, a built-in theme gallery (Default, Nord, Solarized, Gruvbox),
   accent color, custom CSS, wide mode (`t w`), document mode (`t d`). Gallery
   themes are app-level and device-local: Tine stores only the selected theme id in

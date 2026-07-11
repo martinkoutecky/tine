@@ -20,7 +20,14 @@ export function sheetCellFromEventTarget(target: EventTarget | null, gridId: str
   const row = Number(cell.dataset.row);
   const col = Number(cell.dataset.col);
   if (!Number.isInteger(row) || !Number.isInteger(col)) return null;
-  return { gridId, row, col };
+  return {
+    gridId,
+    surfaceId: cell.dataset.sheetSurfaceId,
+    rowId: cell.dataset.sheetRowId,
+    columnId: cell.dataset.sheetColumnId,
+    row,
+    col,
+  };
 }
 
 export function beginCellPointerSelection(e: PointerEvent, gridId: string): boolean {
@@ -33,7 +40,7 @@ export function beginCellPointerSelection(e: PointerEvent, gridId: string): bool
   e.stopPropagation();
 
   if (e.shiftKey) {
-    extendCellSelectionTo(gridId, { row: anchor.row, col: anchor.col });
+    extendCellSelectionTo(gridId, { row: anchor.row, col: anchor.col }, anchor.surfaceId);
     return true;
   }
 
@@ -53,7 +60,7 @@ export function beginCellPointerSelection(e: PointerEvent, gridId: string): bool
     if (focus.row === lastRow && focus.col === lastCol) return;
     lastRow = focus.row;
     lastCol = focus.col;
-    setCellRangeSelection(gridId, { row: anchor.row, col: anchor.col }, { row: focus.row, col: focus.col });
+    setCellRangeSelection(gridId, { row: anchor.row, col: anchor.col }, { row: focus.row, col: focus.col }, anchor.surfaceId);
   };
   const removeListeners = () => {
     window.removeEventListener("pointermove", onMove, true);

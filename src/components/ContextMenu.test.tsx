@@ -35,14 +35,14 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
   const node = (id: string, raw: string, parent: string | null, children: string[]): StoreNode => ({
     id, raw, collapsed: false, parent, page: "P", children,
   });
-  function load() {
+  function load(readOnly = false) {
     setDoc({
       byId: {
         parent: node("parent", "Parent", null, ["child"]),
         child: node("child", "Child", "parent", []),
         leaf: node("leaf", "Leaf", null, []),
       },
-      pages: [{ name: "P", kind: "page", title: "P", preBlock: null, roots: ["parent", "leaf"], format: "md", readOnly: false, guide: false }],
+      pages: [{ name: "P", kind: "page", title: "P", preBlock: null, roots: ["parent", "leaf"], format: "md", readOnly, guide: false }],
       feed: ["P"],
       loaded: true,
     });
@@ -68,6 +68,20 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     const dispose = mount(() => <ContextMenu />);
     openContextMenu(10, 10, "leaf");
     expect(menuLabels().some((l) => l.startsWith("Show children as"))).toBe(false);
+    dispose();
+  });
+
+  it("offers only view/copy actions on a read-only page", () => {
+    load(true);
+    const dispose = mount(() => <ContextMenu />);
+    openContextMenu(10, 10, "parent");
+    const labels = menuLabels();
+    expect(labels).toContain("Zoom into block");
+    expect(labels).toContain("Copy block");
+    expect(labels).not.toContain("Delete block");
+    expect(labels).not.toContain("Collapse all");
+    expect(labels).not.toContain("Numbered list");
+    expect(document.querySelector(".ctx-headings")).toBeNull();
     dispose();
   });
 });

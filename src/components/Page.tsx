@@ -10,7 +10,7 @@ import {
 import { carryDay, carryPrevDay, carryDaysBack } from "../carry";
 import { backend } from "../backend";
 import { switchGraph, refreshAfterRename } from "../graph";
-import { Block } from "./Block";
+import { Block, OutlineScopeContext } from "./Block";
 import { LinkedReferences } from "./LinkedReferences";
 import { UnlinkedReferences } from "./UnlinkedReferences";
 import { QueryMacro } from "./Macro";
@@ -297,7 +297,12 @@ function ZoomedView(props: { id: string }): JSX.Element {
         </For>
       </div>
       <div class="page-blocks zoomed-block">
-        <Block id={props.id} />
+        {/* A zoom root is a viewing boundary: reveal its immediate subtree even
+            when collapsed on the parent page, without mutating collapsed::.
+            Descendants still honor their own individual collapse state. */}
+        <OutlineScopeContext.Provider value={{ roots: [props.id], forceExpandedRoot: props.id }}>
+          <Block id={props.id} forceExpanded />
+        </OutlineScopeContext.Provider>
       </div>
     </div>
   );
@@ -339,7 +344,7 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
       // The backend rewrote refs across many pages via the self-write guard (no
       // watcher reload), so every in-memory page is now potentially stale; reset
       // + reload so a stale copy can't be saved back and revert the rename.
-      refreshAfterRename();
+      refreshAfterRename(props.page.name, next);
       router.openPage(next, "page");
     } catch (e) {
       alert(`Rename failed: ${String(e)}`);
