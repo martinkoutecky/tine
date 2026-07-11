@@ -2,7 +2,7 @@
 // outside Tauri (browser dev / Playwright screenshots). Mirrors the real
 // backend's shape so the UI behaves identically.
 
-import type { Backend, GpuEnv, DebugInfo } from "./backend";
+import type { Backend, GpuEnv, DebugInfo, InstalledPluginRecord } from "./backend";
 import type { BlockDto, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, RefGroup } from "./types";
 import { SAMPLE_PDF_B64 } from "./sample-pdf";
 import { hlsPageName } from "./pdf";
@@ -66,6 +66,8 @@ function propertyLines(raw: string): [string, string][] {
 
 let _id = 0;
 const nid = () => `mock-${_id++}`;
+const mockPlugins: InstalledPluginRecord[] = [];
+const mockPluginEntries = new Map<string, Uint8Array>();
 
 function b(raw: string, children: BlockDto[] = [], collapsed = false, properties?: [string, string][]): BlockDto {
   // Mirror the real backend: a block carrying an `id::` property uses that uuid as
@@ -620,6 +622,36 @@ export function mockBackend(): Backend {
     async forgetKnownGraph() {},
     async appPlatform(): Promise<"android" | "ios" | "desktop"> {
       return "desktop";
+    },
+    async listInstalledPlugins() {
+      return mockPlugins.map((plugin) => ({ ...plugin }));
+    },
+    async installPlugin(manifestJson: string, wasm: Uint8Array) {
+      const manifest = JSON.parse(manifestJson) as { id: string; version: string };
+      const key = `${manifest.id}@${manifest.version}`;
+      mockPluginEntries.set(key, wasm.slice());
+      const record: InstalledPluginRecord = {
+        manifest_json: manifestJson,
+        sha256: "mock",
+        selected: false,
+        enabled: false,
+      };
+      mockPlugins.push(record);
+      return { ...record };
+    },
+    async readPluginEntry(id: string, version: string) {
+      const entry = mockPluginEntries.get(`${id}@${version}`);
+      if (!entry) throw new Error("plugin version is not installed");
+      return entry.slice();
+    },
+    async setPluginEnabled(id: string, version: string, enabled: boolean) {
+      for (const record of mockPlugins) {
+        const manifest = JSON.parse(record.manifest_json) as { id: string; version: string };
+        if (manifest.id === id) {
+          record.selected = manifest.version === version;
+          record.enabled = record.selected && enabled;
+        }
+      }
     },
     async quit(): Promise<void> {
       // No-op in the mock/screenshot harness — there's no process to exit.

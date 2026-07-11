@@ -77,6 +77,13 @@ export interface KnownGraph {
   name: string;
 }
 
+export interface InstalledPluginRecord {
+  manifest_json: string;
+  sha256: string;
+  selected: boolean;
+  enabled: boolean;
+}
+
 export type LoadGraphResult =
   | { kind: "loaded" | "already_current"; meta: GraphMeta; binding_generation: number }
   | { kind: "focused_existing"; window_label: string };
@@ -89,6 +96,12 @@ export interface Backend {
   listKnownGraphs(): Promise<KnownGraph[]>;
   forgetKnownGraph(path: string): Promise<void>;
   appPlatform(): Promise<"android" | "ios" | "desktop">;
+  /** Immutable, app-local plugin packages. Installation stores bytes but never
+   * executes them; enabling is an explicit second step after host validation. */
+  listInstalledPlugins(): Promise<InstalledPluginRecord[]>;
+  installPlugin(manifestJson: string, wasm: Uint8Array): Promise<InstalledPluginRecord>;
+  readPluginEntry(id: string, version: string): Promise<Uint8Array>;
+  setPluginEnabled(id: string, version: string, enabled: boolean): Promise<void>;
   defaultGraphParent(): Promise<string>;
   /** Quit the app. On Linux this first SIGKILLs WebKitGTK's helper subprocesses so
    *  they don't dump a SIGABRT core on exit (GH #28 — GL driver atexit double-free);
@@ -425,6 +438,22 @@ class TauriBackend implements Backend {
   }
   appPlatform() {
     return this.call<"android" | "ios" | "desktop">("app_platform");
+  }
+  listInstalledPlugins() {
+    return this.call<InstalledPluginRecord[]>("list_installed_plugins");
+  }
+  installPlugin(manifestJson: string, wasm: Uint8Array) {
+    return this.call<InstalledPluginRecord>("install_plugin", {
+      manifestJson,
+      wasmB64: bytesToBase64(wasm),
+    });
+  }
+  async readPluginEntry(id: string, version: string) {
+    const buffer = await this.call<ArrayBuffer>("read_plugin_entry", { id, version });
+    return new Uint8Array(buffer);
+  }
+  setPluginEnabled(id: string, version: string, enabled: boolean) {
+    return this.call<void>("set_plugin_enabled", { id, version, enabled });
   }
   quit() {
     return this.call<void>("tine_quit");

@@ -15,6 +15,7 @@ import {
   fuzzyScore,
   type Trigger,
 } from "../editor/autocomplete";
+import { pluginManager } from "../plugins/manager";
 import { autoPairInsertOnInput, wrapSelectionEdit, doubleRefKind, backspacePairEdit, SELECTION_WRAP } from "../editor/autopair";
 import { typoTypeReplace } from "../render/typography";
 import { linkFirstMatch } from "../editor/linkDefault";
@@ -316,7 +317,11 @@ export function Block(props: { id: string; hideRefCount?: boolean }): JSX.Elemen
   const readOnly = () => pageByName(node().page)?.readOnly ?? false;
 
   return (
-    <div class="ls-block" classList={{ collapsed: collapsed() }} data-block-id={props.id}>
+    <div
+      class="ls-block"
+      classList={{ collapsed: collapsed(), "plugin-thread-lines": pluginManager.hasDeclarativeDecoration("thread-lines") }}
+      data-block-id={props.id}
+    >
       <div
         class="block-main"
         classList={{
@@ -778,6 +783,7 @@ interface AcItem {
   insert?: string;
   caret?: number;
   action?: import("../editor/autocomplete").CommandAction;
+  plugin?: { pluginId: string; contributionId: string; insertText?: string };
   templateNodes?: import("../types").BlockDto[];
   /** A `((block reference))` candidate: insert `((uuid))` and persist id::. */
   blockRef?: { uuid: string; page: string; kind: import("../types").PageKind };
@@ -1061,11 +1067,29 @@ export function Editor(props: { id: string }): JSX.Element {
         if (s > 0)
           scored.push({ item: { label: c.label, insert: c.insert, caret: c.caret, action: c.action }, s, idx: i });
       });
+      pluginManager.slashCommands().forEach(({ pluginId, contribution }, i) => {
+        const s = q ? fuzzyScore(q, contribution.title) : 1;
+        if (s > 0) {
+          scored.push({
+            item: {
+              label: contribution.title,
+              sub: "Plugin",
+              plugin: { pluginId, contributionId: contribution.id, insertText: contribution.insertText },
+            },
+            s,
+            idx: COMMANDS.length + i,
+          });
+        }
+      });
       if (q) {
         tmpls.forEach((tp, j) => {
           const s = showAllTemplates ? 1 : fuzzyScore(q, tp.name);
           if (s > 0)
-            scored.push({ item: { label: `Template: ${tp.name}`, templateNodes: tp.blocks }, s, idx: COMMANDS.length + j });
+            scored.push({
+              item: { label: `Template: ${tp.name}`, templateNodes: tp.blocks },
+              s,
+              idx: COMMANDS.length + pluginManager.slashCommands().length + j,
+            });
         });
       }
       scored.sort((a, b) => b.s - a.s || a.idx - b.idx);
@@ -1483,6 +1507,44 @@ export function Editor(props: { id: string }): JSX.Element {
       const { uuid, page, kind } = item.blockRef;
       replaceTrigger(`((${uuid}))`);
       void persistBlockRefTarget(uuid, page, kind);
+      return;
+    }
+    if (item.plugin) {
+      const before = ref.value;
+      const node = doc.byId[props.id];
+      let depth = 0;
+      let parentId = node.parent;
+      while (parentId && doc.byId[parentId] && depth < 1_000) {
+        depth++;
+        parentId = doc.byId[parentId].parent;
+      }
+      const plugin = item.plugin;
+      closeAc();
+      void pluginManager
+        .invokeSlashCommand(plugin.pluginId, plugin.contributionId, {
+          id: node.id,
+          raw: node.raw,
+          parentId: node.parent,
+          depth,
+        })
+        .then((effects) => {
+          if (ref.value !== before) {
+            pushToast("Plugin result was not inserted because the block changed while it ran.", "info");
+            return;
+          }
+          const effect = effects.find((candidate) => candidate.kind === "insert-at-caret");
+          const text = effect?.kind === "insert-at-caret" ? effect.text : plugin.insertText;
+          if (text === undefined) return;
+          const result = applyCompletion(before, t.start, t.end, text);
+          commit(result.raw);
+          queueMicrotask(() => {
+            ref.value = result.raw;
+            ref.setSelectionRange(result.caret, result.caret);
+            ref.focus();
+            autosize();
+          });
+        })
+        .catch((error) => pushToast(`Plugin slash command failed: ${String(error)}`, "error"));
       return;
     }
     if (item.templateNodes) {

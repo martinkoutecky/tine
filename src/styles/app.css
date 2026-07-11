@@ -3054,6 +3054,20 @@ body {
   border-left-color: var(--guide-hover);
 }
 
+/* Host-owned rendering for the plugin `thread-lines` decoration. The guest can
+   request this known visual vocabulary but cannot inject CSS or DOM. */
+.plugin-thread-lines > .block-children-container > .block-children > .ls-block > .block-main::before {
+  content: "";
+  position: absolute;
+  left: -3px;
+  top: 0;
+  width: calc(var(--ls-block-indent) - 19px);
+  height: 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--guide-color) 82%, transparent);
+  border-bottom-left-radius: 6px;
+  pointer-events: none;
+}
+
 /* editor */
 .editor-wrap {
   position: relative;

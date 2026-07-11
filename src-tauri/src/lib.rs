@@ -10,6 +10,7 @@ mod debug;
 mod graph;
 mod migrate_identifier;
 mod platform;
+mod plugins;
 mod settings;
 mod spellcheck;
 mod state;
@@ -39,6 +40,7 @@ use graph::{
     open_graph_window, resolve_root, startup_graph_path, warm_done,
 };
 use platform::{clipboard_files, copy_image_to_clipboard, gpu_env, open_external};
+use plugins::{install_plugin, list_installed_plugins, read_plugin_entry, set_plugin_enabled};
 use settings::{
     forget_known_graph, get_app_bool, get_app_string, get_capture_enter_files,
     get_link_first_match, get_smooth_scroll, list_known_graphs, load_session, save_session,
@@ -498,6 +500,10 @@ pub fn run() {
             save_session,
             list_known_graphs,
             forget_known_graph,
+            install_plugin,
+            list_installed_plugins,
+            read_plugin_entry,
+            set_plugin_enabled,
             migrate_identifier::take_identifier_migration_notice,
             gpu_env,
             get_smooth_scroll,

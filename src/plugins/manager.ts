@@ -1,0 +1,381 @@
+import { createSignal } from "solid-js";
+import { backend, type InstalledPluginRecord } from "../backend";
+import { doc, setRaw } from "../store";
+import { pushToast } from "../ui";
+import { platformKind } from "../platform";
+import {
+  parsePluginManifest,
+  supportsPlatform,
+  type PluginCommandContribution,
+  type PluginManifest,
+  type PluginPlatform,
+  type PluginSlashCommandContribution,
+} from "./manifest";
+import {
+  PLUGIN_PROTOCOL_VERSION,
+  type PluginBlockSnapshot,
+  type PluginEffect,
+  type PluginEvent,
+} from "./protocol";
+import { PluginRuntime } from "./runtime";
+
+export interface ManagedPlugin {
+  manifest: PluginManifest;
+  sha256: string;
+  selected: boolean;
+  enabled: boolean;
+  running: boolean;
+  error?: string;
+}
+
+export interface ManagedCommand {
+  pluginId: string;
+  contribution: PluginCommandContribution;
+}
+
+export interface ManagedSlashCommand {
+  pluginId: string;
+  contribution: PluginSlashCommandContribution;
+}
+
+type ActivePlugin = {
+  manifest: PluginManifest;
+  runtime: PluginRuntime;
+};
+
+export type RevokedPluginVersions = ReadonlySet<string>;
+
+const [installedPlugins, setInstalledPlugins] = createSignal<ManagedPlugin[]>([]);
+export { installedPlugins };
+
+function versionKey(id: string, version: string): string {
+  return `${id}@${version}`;
+}
+
+function displayError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function digestHex(bytes: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", bytesBuffer(bytes));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function bytesBuffer(bytes: Uint8Array): ArrayBuffer {
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
+function parseSettingBlob(text: string): Record<string, string | number | boolean | null> {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const safe: Record<string, string | number | boolean | null> = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (
+        /^[a-zA-Z0-9._-]{1,80}$/.test(key) &&
+        (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean")
+      ) {
+        safe[key] = value;
+      }
+    }
+    return safe;
+  } catch {
+    return {};
+  }
+}
+
+export class PluginManager {
+  private readonly active = new Map<string, ActivePlugin>();
+  private platform: PluginPlatform = "desktop";
+  private revoked: RevokedPluginVersions = new Set();
+
+  async initialize(revoked: RevokedPluginVersions = new Set()) {
+    this.platform = await platformKind();
+    this.revoked = revoked;
+    const records = await backend().listInstalledPlugins();
+    const managed = records.map((record) => this.parseRecord(record));
+    setInstalledPlugins(managed);
+    for (const plugin of managed) {
+      if (plugin.enabled) await this.start(plugin.manifest.id, plugin.manifest.version, false);
+    }
+  }
+
+  async install(manifestValue: unknown, wasm: Uint8Array): Promise<ManagedPlugin> {
+    const manifest = parsePluginManifest(manifestValue);
+    if (!supportsPlatform(manifest, this.platform)) {
+      throw new Error(`${manifest.name} does not support ${this.platform}`);
+    }
+    if (this.revoked.has(versionKey(manifest.id, manifest.version))) {
+      throw new Error("this plugin version has been revoked");
+    }
+    // Compile and instantiate inside the worker before persisting. A start function
+    // is still bounded by the initialization timeout and cannot gain host imports.
+    const proof = await PluginRuntime.create(bytesBuffer(wasm));
+    proof.dispose();
+    const record = await backend().installPlugin(JSON.stringify(manifest), wasm);
+    const plugin = this.parseRecord(record);
+    setInstalledPlugins((current) => [
+      ...current.filter((item) => versionKey(item.manifest.id, item.manifest.version) !== versionKey(manifest.id, manifest.version)),
+      plugin,
+    ]);
+    return plugin;
+  }
+
+  async enable(id: string, version: string): Promise<void> {
+    await this.start(id, version, true);
+  }
+
+  async disable(id: string): Promise<void> {
+    this.active.get(id)?.runtime.dispose();
+    this.active.delete(id);
+    const current = installedPlugins().find((plugin) => plugin.manifest.id === id && plugin.selected);
+    if (current) await backend().setPluginEnabled(id, current.manifest.version, false);
+    this.patch(id, undefined, { enabled: false, running: false, error: undefined });
+  }
+
+  commands(): ManagedCommand[] {
+    const commands: ManagedCommand[] = [];
+    for (const { manifest } of this.active.values()) {
+      for (const contribution of manifest.contributions?.commands ?? []) {
+        if (supportsPlatform(manifest, this.platform, contribution.platforms)) {
+          commands.push({ pluginId: manifest.id, contribution });
+        }
+      }
+    }
+    return commands;
+  }
+
+  slashCommands(): ManagedSlashCommand[] {
+    const commands: ManagedSlashCommand[] = [];
+    for (const { manifest } of this.active.values()) {
+      for (const contribution of manifest.contributions?.slashCommands ?? []) {
+        if (supportsPlatform(manifest, this.platform, contribution.platforms)) {
+          commands.push({ pluginId: manifest.id, contribution });
+        }
+      }
+    }
+    return commands;
+  }
+
+  hasDeclarativeDecoration(kind: "thread-lines" | "badge"): boolean {
+    // Read the signal so block views update when a plugin is enabled or disabled.
+    installedPlugins();
+    for (const { manifest } of this.active.values()) {
+      if (
+        manifest.contributions?.blockDecorations?.some(
+          (contribution) => contribution.kind === kind && supportsPlatform(manifest, this.platform, contribution.platforms)
+        )
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  async invokeCommand(pluginId: string, contributionId: string, focusedBlock?: PluginBlockSnapshot) {
+    const plugin = this.active.get(pluginId);
+    if (!plugin) throw new Error("plugin is not running");
+    const contribution = plugin.manifest.contributions?.commands?.find((item) => item.id === contributionId);
+    if (!contribution || !supportsPlatform(plugin.manifest, this.platform, contribution.platforms)) {
+      throw new Error("plugin command is unavailable");
+    }
+    const event: PluginEvent = {
+      protocolVersion: PLUGIN_PROTOCOL_VERSION,
+      kind: "command",
+      contributionId,
+      ...(focusedBlock ? { focusedBlock } : {}),
+    };
+    await this.invokeAndApply(plugin, event);
+  }
+
+  async invokeSlashCommand(
+    pluginId: string,
+    contributionId: string,
+    focusedBlock: PluginBlockSnapshot
+  ): Promise<PluginEffect[]> {
+    const plugin = this.active.get(pluginId);
+    if (!plugin) throw new Error("plugin is not running");
+    const contribution = plugin.manifest.contributions?.slashCommands?.find((item) => item.id === contributionId);
+    if (!contribution || !supportsPlatform(plugin.manifest, this.platform, contribution.platforms)) {
+      throw new Error("plugin slash command is unavailable");
+    }
+    return this.invokeAndApply(plugin, {
+      protocolVersion: PLUGIN_PROTOCOL_VERSION,
+      kind: "slash-command",
+      contributionId,
+      focusedBlock,
+    });
+  }
+
+  async decorateBlocks(pluginId: string, contributionId: string, blocks: PluginBlockSnapshot[]): Promise<PluginEffect[]> {
+    const plugin = this.active.get(pluginId);
+    if (!plugin) return [];
+    const contribution = plugin.manifest.contributions?.blockDecorations?.find((item) => item.id === contributionId);
+    if (!contribution || !supportsPlatform(plugin.manifest, this.platform, contribution.platforms)) return [];
+    const event: PluginEvent = {
+      protocolVersion: PLUGIN_PROTOCOL_VERSION,
+      kind: "decorate-blocks",
+      contributionId,
+      blocks,
+    };
+    return this.invokeAndApply(plugin, event);
+  }
+
+  async applyRevocations(revoked: RevokedPluginVersions) {
+    this.revoked = revoked;
+    for (const [id, active] of this.active) {
+      if (revoked.has(versionKey(id, active.manifest.version))) {
+        await this.disable(id);
+        this.patch(id, active.manifest.version, { error: "This version was revoked by the registry." });
+      }
+    }
+  }
+
+  private parseRecord(record: InstalledPluginRecord): ManagedPlugin {
+    try {
+      const manifest = parsePluginManifest(JSON.parse(record.manifest_json));
+      const incompatible = !supportsPlatform(manifest, this.platform);
+      const revoked = this.revoked.has(versionKey(manifest.id, manifest.version));
+      return {
+        manifest,
+        sha256: record.sha256,
+        selected: record.selected,
+        enabled: record.enabled && !incompatible && !revoked,
+        running: false,
+        ...(incompatible ? { error: `Not available on ${this.platform}.` } : {}),
+        ...(revoked ? { error: "This version was revoked by the registry." } : {}),
+      };
+    } catch (error) {
+      return {
+        manifest: {
+          schemaVersion: 1,
+          id: `invalid.${record.sha256.slice(0, 12) || "plugin"}`,
+          name: "Invalid plugin",
+          version: "0.0.0",
+          apiVersion: "0.1",
+          description: "The installed manifest could not be validated.",
+          author: "Unknown",
+          license: "Unknown",
+          source: "about:blank",
+          entry: "plugin.wasm",
+          platforms: ["desktop"],
+          capabilities: [],
+        },
+        sha256: record.sha256,
+        selected: false,
+        enabled: false,
+        running: false,
+        error: displayError(error),
+      };
+    }
+  }
+
+  private async start(id: string, version: string, persist: boolean) {
+    const plugin = installedPlugins().find(
+      (item) => item.manifest.id === id && item.manifest.version === version
+    );
+    if (!plugin) throw new Error("plugin version is not installed");
+    if (!supportsPlatform(plugin.manifest, this.platform)) throw new Error(`plugin does not support ${this.platform}`);
+    if (this.revoked.has(versionKey(id, version))) throw new Error("this plugin version has been revoked");
+    try {
+      const bytes = await backend().readPluginEntry(id, version);
+      if (plugin.sha256 !== "mock" && (await digestHex(bytes)) !== plugin.sha256) {
+        throw new Error("installed plugin digest does not match its recorded bytes");
+      }
+      const runtime = await PluginRuntime.create(bytesBuffer(bytes));
+      const settings = parseSettingBlob(await backend().getAppString(`plugin-settings:${id}`, "{}"));
+      const active: ActivePlugin = { manifest: plugin.manifest, runtime };
+      await this.invokeAndApply(active, {
+        protocolVersion: PLUGIN_PROTOCOL_VERSION,
+        kind: "activate",
+        platform: this.platform,
+        capabilities: plugin.manifest.capabilities,
+        settings,
+      });
+      this.active.get(id)?.runtime.dispose();
+      this.active.set(id, active);
+      if (persist) await backend().setPluginEnabled(id, version, true);
+      setInstalledPlugins((current) =>
+        current.map((item) =>
+          item.manifest.id !== id
+            ? item
+            : {
+                ...item,
+                selected: item.manifest.version === version,
+                enabled: item.manifest.version === version,
+                running: item.manifest.version === version,
+                error: undefined,
+              }
+        )
+      );
+    } catch (error) {
+      if (persist || plugin.enabled) await backend().setPluginEnabled(id, version, false);
+      this.patch(id, version, { enabled: false, running: false, error: displayError(error) });
+      throw error;
+    }
+  }
+
+  private async invokeAndApply(plugin: ActivePlugin, event: PluginEvent): Promise<PluginEffect[]> {
+    let effects: PluginEffect[];
+    try {
+      effects = (await plugin.runtime.invoke(event)).effects;
+    } catch (error) {
+      await this.disable(plugin.manifest.id);
+      this.patch(plugin.manifest.id, plugin.manifest.version, { error: displayError(error) });
+      throw error;
+    }
+    const accepted: PluginEffect[] = [];
+    for (const effect of effects) {
+      if (await this.applyEffect(plugin.manifest, event, effect)) accepted.push(effect);
+    }
+    return accepted;
+  }
+
+  private async applyEffect(manifest: PluginManifest, event: PluginEvent, effect: PluginEffect): Promise<boolean> {
+    switch (effect.kind) {
+      case "notice":
+        pushToast(effect.message, effect.level === "error" ? "error" : "info");
+        return true;
+      case "replace-block-text": {
+        if (!manifest.capabilities.includes("graph.write.block")) return false;
+        if ((event.kind !== "command" && event.kind !== "slash-command") || event.focusedBlock?.id !== effect.blockId) {
+          return false;
+        }
+        const block = doc.byId[effect.blockId];
+        if (!block || block.raw !== effect.expectedRaw) return false;
+        setRaw(effect.blockId, effect.raw, { timetracking: false });
+        return true;
+      }
+      case "insert-at-caret":
+        // The editor owns caret-aware insertion. This effect is returned only to
+        // the slash-command bridge, which performs the actual edit synchronously.
+        return event.kind === "slash-command" && manifest.capabilities.includes("slash-commands.register");
+      case "block-decoration":
+        return (
+          event.kind === "decorate-blocks" &&
+          manifest.capabilities.includes("block-decorations.register") &&
+          event.blocks.some((block) => block.id === effect.blockId)
+        );
+      case "set-setting": {
+        if (!manifest.capabilities.includes("settings.write") || !/^[a-zA-Z0-9._-]{1,80}$/.test(effect.key)) return false;
+        const storageKey = `plugin-settings:${manifest.id}`;
+        const settings = parseSettingBlob(await backend().getAppString(storageKey, "{}"));
+        settings[effect.key] = effect.value;
+        await backend().setAppString(storageKey, JSON.stringify(settings));
+        return true;
+      }
+    }
+  }
+
+  private patch(id: string, version: string | undefined, values: Partial<ManagedPlugin>) {
+    setInstalledPlugins((current) =>
+      current.map((plugin) =>
+        plugin.manifest.id === id && (version === undefined || plugin.manifest.version === version)
+          ? { ...plugin, ...values }
+          : plugin
+      )
+    );
+  }
+}
+
+export const pluginManager = new PluginManager();

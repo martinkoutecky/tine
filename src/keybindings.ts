@@ -66,8 +66,9 @@ import {
   clearSelection,
   selectedIds,
   blockIsGridView,
+  doc,
 } from "./store";
-import { startEditing } from "./editorController";
+import { editingId, startEditing } from "./editorController";
 import { copyOutline } from "./clipboard";
 import { closeInPageFind, inPageFindOpen, openInPageFind } from "./inpageFind";
 import { cellSel, enterGridSelection, handleCellSelectionKey, handleSheetPasteEvent } from "./sheet/selection";
@@ -95,6 +96,20 @@ import {
   type PaneDirection,
 } from "./paneSelect";
 import { openGuide } from "./guide";
+import { pluginManager } from "./plugins/manager";
+
+function pluginFocusedBlock() {
+  const id = editingId();
+  const node = id ? doc.byId[id] : undefined;
+  if (!node) return undefined;
+  let depth = 0;
+  let parentId = node.parent;
+  while (parentId && doc.byId[parentId] && depth < 1_000) {
+    depth++;
+    parentId = doc.byId[parentId].parent;
+  }
+  return { id: node.id, raw: node.raw, parentId: node.parent, depth };
+}
 
 interface Chord {
   mod: boolean;
@@ -626,7 +641,7 @@ export function editorCommandFor(e: KeyboardEvent): string | null {
  *  every global command with a run handler, with its effective binding. The
  *  switcher itself is excluded (no point launching the launcher). */
 export function paletteCommands(): { id: string; label: string; binding: string; run: () => void }[] {
-  return COMMANDS.filter((c) => c.scope === "global" && c.run && c.id !== "go/search")
+  const builtIn = COMMANDS.filter((c) => c.scope === "global" && c.run && c.id !== "go/search")
     .map((c) => ({
       id: c.id,
       label: c.label,
@@ -634,6 +649,17 @@ export function paletteCommands(): { id: string; label: string; binding: string;
       run: c.run!,
     }))
     .filter((c) => c.binding !== "false");
+  const plugins = pluginManager.commands().map(({ pluginId, contribution }) => ({
+    id: `plugin:${pluginId}:${contribution.id}`,
+    label: contribution.title,
+    binding: "",
+    run: () => {
+      void pluginManager
+        .invokeCommand(pluginId, contribution.id, pluginFocusedBlock())
+        .catch((error) => pushToast(`Plugin command failed: ${String(error)}`, "error"));
+    },
+  }));
+  return [...builtIn, ...plugins];
 }
 
 export function runGlobalCommand(id: string): boolean {

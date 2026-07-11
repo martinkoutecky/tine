@@ -96,6 +96,7 @@ import { flushAll } from "../store";
 import { backend, isTauri, type BackupInfo } from "../backend";
 import type { AssetInfo, TrashStats, JournalFile, SyncConflict, SyncConflictDiff, DiffRow, MergeDecision } from "../types";
 import { formatJournal } from "../journal";
+import { installedPlugins, pluginManager } from "../plugins/manager";
 
 // Journal display-title formats offered in the date-format dropdown — OG's
 // `journal-title-formatters` set (frontend/date.cljs). Display-only; the on-disk
@@ -130,6 +131,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "files", label: "Files" },
   { id: "backups", label: "Backups & recovery" },
   { id: "graph", label: "Graph" },
+  { id: "plugins", label: "Plugins" },
   { id: "improve", label: "Help improve Tine" },
   { id: "shortcuts", label: "Keyboard shortcuts" },
   { id: "about", label: "About" },
@@ -239,6 +241,9 @@ export function Settings(): JSX.Element {
               <Show when={tab() === "graph"}>
                 <GraphTab publishMsg={publishMsg()} doPublish={doPublish} />
               </Show>
+              <Show when={tab() === "plugins"}>
+                <PluginsTab />
+              </Show>
               <Show when={tab() === "improve"}>
                 <ImproveTab />
               </Show>
@@ -289,6 +294,106 @@ function Toggle(props: { on: boolean; onClick: () => void }): JSX.Element {
     >
       <span class="settings-toggle-knob" />
     </button>
+  );
+}
+
+function PluginsTab(): JSX.Element {
+  let packageInput: HTMLInputElement | undefined;
+  const [busy, setBusy] = createSignal<string | null>(null);
+
+  const installFiles = async (files: FileList | null) => {
+    if (!files?.length) return;
+    const selected = Array.from(files);
+    const manifestFile = selected.find((file) => file.name === "manifest.json") ?? selected.find((file) => file.name.endsWith(".json"));
+    const wasmFile = selected.find((file) => file.name.endsWith(".wasm"));
+    if (!manifestFile || !wasmFile) {
+      pushToast("Choose both manifest.json and the plugin's .wasm entry.", "error");
+      return;
+    }
+    setBusy("install");
+    try {
+      const manifest: unknown = JSON.parse(await manifestFile.text());
+      const plugin = await pluginManager.install(manifest, new Uint8Array(await wasmFile.arrayBuffer()));
+      pushToast(`${plugin.manifest.name} ${plugin.manifest.version} installed disabled. Review it, then enable it here.`, "info");
+    } catch (error) {
+      pushToast(`Plugin installation failed: ${String(error)}`, "error");
+    } finally {
+      setBusy(null);
+      if (packageInput) packageInput.value = "";
+    }
+  };
+
+  const togglePlugin = async (id: string, version: string, enabled: boolean) => {
+    setBusy(`${id}@${version}`);
+    try {
+      if (enabled) await pluginManager.disable(id);
+      else await pluginManager.enable(id, version);
+    } catch (error) {
+      pushToast(`Plugin could not be ${enabled ? "disabled" : "enabled"}: ${String(error)}`, "error");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <>
+      <div class="settings-section">Experimental plugin platform</div>
+      <p class="settings-hint">
+        Tine plugins are capability-limited WebAssembly guests, not Logseq or Obsidian plugins. They cannot directly
+        access the DOM, Tauri, the network, files, processes, or your graph. A plugin version is installed disabled and
+        runs only after its declared capabilities and entry validate.
+      </p>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">Install a local package</div>
+          <div class="settings-hint">Select its <code>manifest.json</code> and <code>.wasm</code> file together.</div>
+        </div>
+        <div>
+          <input
+            ref={packageInput}
+            type="file"
+            multiple
+            accept="application/json,.json,application/wasm,.wasm"
+            style={{ display: "none" }}
+            onChange={(event) => void installFiles(event.currentTarget.files)}
+          />
+          <button class="settings-btn" disabled={busy() !== null} onClick={() => packageInput?.click()}>
+            {busy() === "install" ? "Validating…" : "Choose package…"}
+          </button>
+        </div>
+      </div>
+
+      <div class="settings-section">Installed</div>
+      <Show when={installedPlugins().length > 0} fallback={<p class="settings-hint">No plugins installed.</p>}>
+        <For each={installedPlugins()}>
+          {(plugin) => (
+            <div class="settings-field">
+              <div class="settings-field-row">
+                <span class="settings-label">
+                  {plugin.manifest.name} <span class="settings-hint">v{plugin.manifest.version}</span>
+                </span>
+                <Toggle
+                  on={plugin.enabled && plugin.running}
+                  onClick={() => void togglePlugin(plugin.manifest.id, plugin.manifest.version, plugin.enabled)}
+                />
+              </div>
+              <div class="settings-hint settings-field-hint">
+                {plugin.manifest.description}<br />
+                <code>{plugin.manifest.id}</code> · {plugin.manifest.license} · {plugin.manifest.platforms.join(", ")}
+                <Show when={plugin.manifest.aiDevelopment && plugin.manifest.aiDevelopment !== "none"}>
+                  {" · "}AI-{plugin.manifest.aiDevelopment}
+                </Show>
+                <br />Capabilities: {plugin.manifest.capabilities.length ? plugin.manifest.capabilities.join(", ") : "none"}
+                {" · "}<button class="settings-link" onClick={() => void backend().openExternal(plugin.manifest.source)}>Source</button>
+              </div>
+              <Show when={plugin.error}>
+                <div class="settings-hint" style={{ color: "var(--danger, #c44)" }}>{plugin.error}</div>
+              </Show>
+            </div>
+          )}
+        </For>
+      </Show>
+    </>
   );
 }
 

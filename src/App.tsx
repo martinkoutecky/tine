@@ -91,6 +91,7 @@ import { initLocalFileSettings } from "./localFileSettings";
 import { initAssetSettings } from "./assetSettings";
 import { initMediaEditorSettings } from "./mediaEditorSettings";
 import { initSpellcheckSettings } from "./spellcheckSettings";
+import { pluginManager } from "./plugins/manager";
 import { initLinkDefault } from "./editor/linkDefault";
 import { initDebug, dbg } from "./debug";
 import { WindowControls, ResizeGrips, installWindowChrome, maximized } from "./components/WindowChrome";
@@ -486,6 +487,10 @@ export function App(): JSX.Element {
   onMount(() => void initMediaEditorSettings());
   // Load spellcheck prefs (toggle + languages) and apply them to the webview.
   onMount(() => void initSpellcheckSettings());
+  // Plugin packages are app-local and disabled unless their manifest, digest,
+  // platform, ABI, and activation all validate. Startup failures disable only
+  // that plugin and never block the graph from opening.
+  onMount(() => void pluginManager.initialize().catch((error) => pushToast(`Plugins unavailable: ${String(error)}`, "error")));
 
   // Load the `[[`/`#` autocomplete default-action preference (link-first vs create).
   onMount(() => void initLinkDefault());
