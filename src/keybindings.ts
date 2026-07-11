@@ -97,6 +97,7 @@ import {
 } from "./paneSelect";
 import { openGuide } from "./guide";
 import { pluginManager } from "./plugins/manager";
+import type { PluginBlockSnapshot } from "./plugins/protocol";
 
 function pluginFocusedBlock() {
   const id = editingId();
@@ -258,10 +259,10 @@ function anyOverlayOpen(): boolean {
 
 // Default command table. Editor command ids mirror OG Logseq where practical.
 const COMMANDS: CommandDef[] = [
-  { id: "go/search", binding: "mod+k", label: "Search / quick switch", scope: "global", run: openSwitcher, global: true },
+  { id: "go/search", binding: "mod+k", label: "Search / quick switch", scope: "global", run: () => openSwitcher({ pluginBlock: pluginFocusedBlock() ?? null }), global: true },
   { id: "guide/open", binding: "", label: "Open Guide", scope: "global", run: () => void openGuide(), global: true },
   { id: "go/find-in-page", binding: "mod+f", label: "Find in page", scope: "global", run: openInPageFind, global: true },
-  { id: "command-palette/toggle", binding: "mod+shift+p", label: "Command palette", scope: "global", run: openCommandPalette, global: true },
+  { id: "command-palette/toggle", binding: "mod+shift+p", label: "Command palette", scope: "global", run: () => openCommandPalette(pluginFocusedBlock() ?? null), global: true },
   // Toggle the WebKit Web Inspector for theme/CSS debugging (GH #31). The usual
   // Ctrl+Shift+I / F12 / Ctrl+Shift+C are all swallowed by WebKitGTK itself (its
   // built-in inspector keys, handled in the web process below where the app can
@@ -640,7 +641,9 @@ export function editorCommandFor(e: KeyboardEvent): string | null {
 /** Runnable global commands for the command palette / Ctrl-K Commands group:
  *  every global command with a run handler, with its effective binding. The
  *  switcher itself is excluded (no point launching the launcher). */
-export function paletteCommands(): { id: string; label: string; binding: string; run: () => void }[] {
+export function paletteCommands(
+  focusedPluginBlock: PluginBlockSnapshot | null = pluginFocusedBlock() ?? null
+): { id: string; label: string; binding: string; run: () => void }[] {
   const builtIn = COMMANDS.filter((c) => c.scope === "global" && c.run && c.id !== "go/search")
     .map((c) => ({
       id: c.id,
@@ -655,7 +658,7 @@ export function paletteCommands(): { id: string; label: string; binding: string;
     binding: "",
     run: () => {
       void pluginManager
-        .invokeCommand(pluginId, contribution.id, pluginFocusedBlock())
+        .invokeCommand(pluginId, contribution.id, focusedPluginBlock ?? undefined)
         .catch((error) => pushToast(`Plugin command failed: ${String(error)}`, "error"));
     },
   }));

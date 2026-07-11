@@ -1,6 +1,7 @@
 // Small global UI state: theme, left sidebar, and the quick-switcher modal.
 import { createSignal, useContext } from "solid-js";
 import type { GraphMeta, JournalConflict, SyncConflict, PageKind } from "./types";
+import type { PluginBlockSnapshot } from "./plugins/protocol";
 import { backend, isTauri } from "./backend";
 // Zoom is route state; these are call-time only, so the ui↔router cycle is safe.
 import { route, focusBlock, scheduleSessionSave } from "./router";
@@ -1075,14 +1076,16 @@ export function resolveAlias(name: string): string {
 }
 
 export const [switcherOpen, setSwitcherOpen] = createSignal(false);
+export const [switcherPluginBlock, setSwitcherPluginBlock] = createSignal<PluginBlockSnapshot | null>(null);
 // "all" = full Ctrl-K (pages/create/commands/blocks); "commands" = command
 // palette (⌘⇧P), commands only.
 export type SwitcherMode = "all" | "commands";
 export const [switcherMode, setSwitcherMode] = createSignal<SwitcherMode>("all");
 export const [switcherEmbryo, setSwitcherEmbryo] =
   createSignal<{ paneId: string; prefill: string } | null>(null);
-export function openSwitcher(opts?: { mode?: "embryo"; paneId?: string; prefill?: string }) {
+export function openSwitcher(opts?: { mode?: "embryo"; paneId?: string; prefill?: string; pluginBlock?: PluginBlockSnapshot | null }) {
   setSwitcherMode("all");
+  setSwitcherPluginBlock(opts?.pluginBlock ?? null);
   setSwitcherEmbryo(opts?.mode === "embryo" && opts.paneId
     ? { paneId: opts.paneId, prefill: opts.prefill ?? "" }
     : null);
@@ -1094,14 +1097,16 @@ export function openSwitcher(opts?: { mode?: "embryo"; paneId?: string; prefill?
 export function openDevtools() {
   void backend().openDevtools();
 }
-export function openCommandPalette() {
+export function openCommandPalette(pluginBlock: PluginBlockSnapshot | null = null) {
   setSwitcherMode("commands");
   setSwitcherEmbryo(null);
+  setSwitcherPluginBlock(pluginBlock);
   setSwitcherOpen(true);
 }
 export function closeSwitcher() {
   setSwitcherOpen(false);
   setSwitcherEmbryo(null);
+  setSwitcherPluginBlock(null);
 }
 
 // PDF export: the page whose export-options dialog is open (null = closed). Set by

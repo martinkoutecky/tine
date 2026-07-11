@@ -43,7 +43,7 @@ use graph::{
 use platform::{clipboard_files, copy_image_to_clipboard, gpu_env, open_external};
 use plugins::{
     install_plugin, list_installed_plugins, read_plugin_entry, set_plugin_enabled,
-    verify_plugin_registry,
+    uninstall_plugin, verify_plugin_registry,
 };
 use settings::{
     forget_known_graph, get_app_bool, get_app_string, get_capture_enter_files,
@@ -527,6 +527,7 @@ pub fn run() {
             list_known_graphs,
             forget_known_graph,
             install_plugin,
+            uninstall_plugin,
             list_installed_plugins,
             read_plugin_entry,
             set_plugin_enabled,

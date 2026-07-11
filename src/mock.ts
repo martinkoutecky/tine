@@ -639,6 +639,18 @@ export function mockBackend(): Backend {
       mockPlugins.push(record);
       return { ...record };
     },
+    async uninstallPlugin(id: string, version: string) {
+      const index = mockPlugins.findIndex((record) => {
+        const manifest = JSON.parse(record.manifest_json) as { id: string; version: string };
+        return manifest.id === id && manifest.version === version;
+      });
+      if (index === -1) throw new Error("plugin version is not installed");
+      mockPlugins.splice(index, 1);
+      mockPluginEntries.delete(`${id}@${version}`);
+      if (!mockPlugins.some((record) => (JSON.parse(record.manifest_json) as { id: string }).id === id)) {
+        delete mockAppStrings[`plugin-settings:${id}`];
+      }
+    },
     async readPluginEntry(id: string, version: string) {
       const entry = mockPluginEntries.get(`${id}@${version}`);
       if (!entry) throw new Error("plugin version is not installed");

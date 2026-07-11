@@ -45,16 +45,21 @@ try {
     console.error(pageErrors.join("\n"));
     throw error;
   }
-  await page.getByText("Query filter shortcuts v0.1.0", { exact: true }).waitFor();
+  await page.getByText("Query filter shortcuts v0.1.1", { exact: true }).waitFor();
   await page.getByText(/Signed registry.*automated deterministic.*AI audits/).waitFor();
 
   const bullet = page.locator(".settings-field", { hasText: "Bullet threading" });
   const queryFilter = page.locator(".settings-field", { hasText: "Query filter shortcuts" });
   await bullet.getByText("Low-risk automated pass", { exact: true }).waitFor();
-  await queryFilter.getByText("Manually approved after review", { exact: true }).waitFor();
+  await queryFilter.getByText("Human-reviewed before publication", { exact: true }).waitFor();
+  await queryFilter.getByRole("button", { name: "Details & screenshots", exact: true }).waitFor();
   await queryFilter.getByRole("button", { name: "Safety report", exact: true }).click();
-  await queryFilter.getByText(/automated policy quarantined this version/i).waitFor({ timeout: 15_000 });
-  await queryFilter.getByText(/graph-write behavior reviewed after the automated audit found/i).waitFor();
+  await queryFilter.getByText(/why human review was required/i).waitFor({ timeout: 15_000 });
+  await queryFilter.getByText(/holds every graph-writing plugin for human review/i).waitFor();
+  await queryFilter.getByText(/earlier draft could act on the wrong focused block/i).waitFor();
+  await queryFilter.getByText(/state filter and legacy migration/i).waitFor();
+  await queryFilter.getByText("Low-risk finding", { exact: true }).waitFor();
+  await queryFilter.getByText(/severity describes possible impact, not reviewer confidence/i).waitFor();
   const evidenceIds = await queryFilter.locator(".plugin-safety-report code[title]").evaluateAll((elements) =>
     elements.map((element) => element.getAttribute("title"))
   );
@@ -92,6 +97,13 @@ try {
   await page.screenshot({ path: "screenshots/plugins-mobile.png" });
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   if (overflow > 1) throw new Error(`plugin settings overflow the mobile viewport by ${overflow}px`);
+  page.once("dialog", (dialog) => void dialog.accept());
+  await installed.getByRole("button", { name: "Uninstall…", exact: true }).click();
+  await page.getByText(/was uninstalled/i).waitFor();
+  await bullet.getByRole("button", { name: "Install", exact: true }).waitFor();
+  if (await page.locator(".settings-field", { hasText: "page.tine.bullet-threading" }).count()) {
+    throw new Error("uninstalled plugin still appears in the Installed section");
+  }
   if (pageErrors.length) throw new Error(`browser errors: ${pageErrors.join("; ")}`);
   await browser.close();
   console.log("plugin catalogue E2E passed");

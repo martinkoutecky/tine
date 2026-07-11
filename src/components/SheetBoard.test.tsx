@@ -1178,4 +1178,30 @@ describe("SheetBoard", () => {
 
     dispose();
   });
+
+  it("renders exactly one board when text and a query macro share the same line", async () => {
+    setDoc({
+      byId: {
+        query: node(
+          "query",
+          "Current work {{query (todo TODO)}}\ntine.view:: board\ntine.group-by:: state",
+          null
+        ),
+        todo: node("todo", "TODO From inline query", null),
+      },
+      pages: [page(["query", "todo"])],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    vi.spyOn(backend(), "runQuery").mockResolvedValue(queryGroups(["todo"]));
+
+    const { root, dispose } = mount(() => <Block id="query" />);
+    await tick();
+    await tick();
+
+    expect(root.querySelectorAll(".sheet-board")).toHaveLength(1);
+    expect(root.textContent).toContain("From inline query");
+
+    dispose();
+  });
 });

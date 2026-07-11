@@ -1,6 +1,6 @@
 import { For, Show, createSignal, createResource, createEffect, createMemo, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
-import { switcherOpen, closeSwitcher, switcherMode, switcherEmbryo, recentPages } from "../ui";
+import { switcherOpen, closeSwitcher, switcherMode, switcherEmbryo, switcherPluginBlock, recentPages } from "../ui";
 import { openPage, openPageAtBlock, openPageInNewTab, openFile, openInNewTab, route } from "../router";
 import { paletteCommands } from "../keybindings";
 import { closePane, focusPane, openRouteInOtherPane, paneRouter } from "../panes";
@@ -100,8 +100,8 @@ export function QuickSwitcher(): JSX.Element {
     // Rank the command palette with the same fuzzy score as the slash menu
     // (empty query → all, in defined order); a stable sort keeps ties ordered.
     const ranked = !ql
-      ? paletteCommands()
-      : paletteCommands()
+      ? paletteCommands(switcherPluginBlock())
+      : paletteCommands(switcherPluginBlock())
           .map((c) => ({ c, s: fuzzyScore(ql, c.label) }))
           .filter((x) => x.s > 0)
           .sort((a, b) => b.s - a.s)

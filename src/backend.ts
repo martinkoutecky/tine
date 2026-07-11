@@ -100,6 +100,8 @@ export interface Backend {
    * executes them; enabling is an explicit second step after host validation. */
   listInstalledPlugins(): Promise<InstalledPluginRecord[]>;
   installPlugin(manifestJson: string, wasm: Uint8Array): Promise<InstalledPluginRecord>;
+  /** Remove one immutable local plugin package. This never touches graph data. */
+  uninstallPlugin(id: string, version: string): Promise<void>;
   readPluginEntry(id: string, version: string): Promise<Uint8Array>;
   setPluginEnabled(id: string, version: string, enabled: boolean): Promise<void>;
   verifyPluginRegistry(indexJson: string, signatureB64: string): Promise<void>;
@@ -454,6 +456,9 @@ class TauriBackend implements Backend {
       manifestJson,
       wasmB64: bytesToBase64(wasm),
     });
+  }
+  uninstallPlugin(id: string, version: string) {
+    return this.call<void>("uninstall_plugin", { id, version });
   }
   async readPluginEntry(id: string, version: string) {
     const buffer = await this.call<ArrayBuffer>("read_plugin_entry", { id, version });

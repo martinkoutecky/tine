@@ -133,6 +133,19 @@ export class PluginManager {
     this.patch(id, undefined, { enabled: false, running: false, error: undefined });
   }
 
+  async uninstall(id: string, version: string): Promise<void> {
+    const active = this.active.get(id);
+    if (active?.manifest.version === version) {
+      active.runtime.dispose();
+      this.active.delete(id);
+      this.patch(id, version, { enabled: false, running: false, error: undefined });
+    }
+    await backend().uninstallPlugin(id, version);
+    setInstalledPlugins((current) =>
+      current.filter((item) => versionKey(item.manifest.id, item.manifest.version) !== versionKey(id, version))
+    );
+  }
+
   commands(): ManagedCommand[] {
     const commands: ManagedCommand[] = [];
     for (const { manifest } of this.active.values()) {

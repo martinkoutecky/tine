@@ -116,6 +116,7 @@ import {
   caretOffsetOnLastRow,
 } from "../editor/caretRows";
 import { splitProps, joinProps, isBuiltinHidden, isSheetCellHidden, hideAll, caretInFence } from "../editor/properties";
+import { queryMacroExtents } from "../editor/edn";
 import { normalizePlanning } from "../editor/planning";
 import { caretOnOpeningFence } from "../editor/fences";
 import { isAnnotationBlock, annotationInfo } from "../editor/annotation";
@@ -165,12 +166,11 @@ function detectMacro(raw: string): { kind: "query" | "embed"; inner: string } | 
   return { kind: m[1] as "query" | "embed", inner: `${m[1]}${m[2]}` };
 }
 
-// Any body LINE that is exactly a {{query …}} macro (same recognizer as
-// detectMacro, applied per line — the macro may share the block with a heading
-// or other text). Not fence-aware; a fenced {{query}} inside a block that ALSO
-// declares tine.view:: table/board is not a real case.
+// Any complete {{query …}} macro anywhere in the body. The shared scanner is
+// brace/string/page-ref aware and catches inline macros ("Tasks {{query …}}"),
+// not only macros occupying their own line.
 function bodyContainsQueryMacro(raw: string): boolean {
-  return raw.split("\n").some((l) => /^\{\{query\b[\s\S]*\}\}$/.test(l.trim()));
+  return queryMacroExtents(raw).length > 0;
 }
 
 // (Rendered-property hidden set lives in render/block.ts as RENDER_HIDDEN_PROPS /

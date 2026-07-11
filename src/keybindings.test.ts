@@ -1,10 +1,12 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { closeInPageFind, inPageFindOpen } from "./inpageFind";
-import { commandDefaults, eventToBindingString, installKeybindings } from "./keybindings";
-import { closeSwitcher, focusMode, openSwitcher, setFocusMode, setPdfTarget, switcherOpen } from "./ui";
+import { commandDefaults, eventToBindingString, installKeybindings, paletteCommands } from "./keybindings";
+import { closeSwitcher, focusMode, openSwitcher, setFocusMode, setPdfTarget, switcherOpen, switcherPluginBlock } from "./ui";
 import { focusedPaneId, focusPane, layoutPaneIds, layoutRoot, paneRouter, resetPaneLayoutToSingle, splitRootAtEdge } from "./panes";
 import { exitPaneSelect, paneSel } from "./paneSelect";
-import { clearSelection, selectBlock } from "./store";
+import { clearSelection, resetStore, selectBlock, setDoc } from "./store";
+import { endEdit, startEditing } from "./editorController";
+import { pluginManager } from "./plugins/manager";
 import type { PaneSnapshot } from "./router";
 
 function keyEvent(init: Partial<KeyboardEvent>): KeyboardEvent {
@@ -127,6 +129,9 @@ const journalsSnapshot = (): PaneSnapshot => ({
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
+  endEdit("blur");
+  resetStore();
   setPdfTarget(null);
   setFocusMode(false);
   exitPaneSelect();
@@ -135,6 +140,42 @@ afterEach(() => {
   resetPaneLayoutToSingle(journalsSnapshot());
   if (inPageFindOpen()) closeInPageFind({ restoreFocus: false });
   restoreFakeGlobals?.();
+});
+
+describe("plugin command context", () => {
+  it("carries the edited block through Ctrl-K input focus and palette close", async () => {
+    setDoc({
+      byId: {
+        query: { id: "query", raw: "{{query (todo TODO DONE)}}\ntine.view:: table", collapsed: false, parent: null, page: "Sheet", children: [] },
+      },
+      pages: [{ name: "Sheet", kind: "page", title: "Sheet", preBlock: null, roots: ["query"], format: "md", readOnly: false, guide: false }],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    startEditing("query", 0);
+    vi.spyOn(pluginManager, "commands").mockReturnValue([
+      {
+        pluginId: "page.tine.query-filter",
+        contribution: { id: "hide-completed", title: "Query view: hide completed rows", description: "Hide completed rows." },
+      },
+    ]);
+    const invoke = vi.spyOn(pluginManager, "invokeCommand").mockResolvedValue(undefined);
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "k", code: "KeyK", ctrlKey: true }).event);
+    const captured = switcherPluginBlock();
+    expect(captured).toMatchObject({ id: "query", raw: "{{query (todo TODO DONE)}}\ntine.view:: table" });
+
+    endEdit("blur");
+    const command = paletteCommands(captured).find((item) => item.id === "plugin:page.tine.query-filter:hide-completed");
+    closeSwitcher();
+    command?.run();
+    await Promise.resolve();
+
+    expect(invoke).toHaveBeenCalledWith("page.tine.query-filter", "hide-completed", captured);
+    dispose();
+  });
 });
 
 describe("keyboard binding strings", () => {

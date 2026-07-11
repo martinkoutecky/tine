@@ -293,13 +293,14 @@ function Field(props: { label: string; hint?: JSX.Element; children: JSX.Element
   );
 }
 
-function Toggle(props: { on: boolean; onClick: () => void }): JSX.Element {
+function Toggle(props: { on: boolean; onClick: () => void; disabled?: boolean }): JSX.Element {
   return (
     <button
       class="settings-toggle"
       classList={{ on: props.on }}
       role="switch"
       aria-checked={props.on}
+      disabled={props.disabled}
       onClick={props.onClick}
     >
       <span class="settings-toggle-knob" />
@@ -343,6 +344,29 @@ function PluginsTab(): JSX.Element {
     } finally {
       setBusy(null);
     }
+  };
+
+  const uninstallPlugin = async (plugin: ReturnType<typeof installedPlugins>[number]) => {
+    const { id, name, version } = plugin.manifest;
+    const confirmed = await backend().confirm(
+      `Uninstall ${name} ${version}?\n\nThis removes the plugin from this device. It does not change your graph or notes.`,
+      "Uninstall plugin?"
+    );
+    if (!confirmed) return;
+    setBusy(`${id}@${version}:uninstall`);
+    try {
+      await pluginManager.uninstall(id, version);
+      pushToast(`${name} ${version} was uninstalled.`, "info");
+    } catch (error) {
+      pushToast(`Plugin could not be uninstalled: ${String(error)}`, "error");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const findingSeverityLabel = (severity: PluginSafetyReport["findings"][number]["severity"]): string => {
+    if (severity === "info") return "Information";
+    return `${severity[0].toUpperCase()}${severity.slice(1)}-risk finding`;
   };
 
   const installCommunity = async (plugin: RegistryPlugin, version: RegistryVersion) => {
@@ -428,7 +452,7 @@ function PluginsTab(): JSX.Element {
             };
             const safetyLabel = () =>
               version().audit.manualApproval
-                ? "Manually approved after review"
+                ? "Human-reviewed before publication"
                 : version().audit.risk === "low"
                   ? "Low-risk automated pass"
                   : "Automated review passed";
@@ -448,7 +472,7 @@ function PluginsTab(): JSX.Element {
                   {plugin.description}<br />
                   {plugin.license} · {plugin.aiDevelopment === "none" ? "Human-written" : `AI-${plugin.aiDevelopment}`} · {version().platforms.join(", ")}
                   <br />Capabilities: {version().capabilities.length ? version().capabilities.join(", ") : "none"}
-                  {" · "}<button class="settings-link" onClick={() => void backend().openExternal(plugin.source)}>Source</button>
+                  {" · "}<button class="settings-link" onClick={() => void backend().openExternal(plugin.source)}>Details &amp; screenshots</button>
                 </div>
                 <div class="plugin-safety-row">
                   <span
@@ -479,17 +503,32 @@ function PluginsTab(): JSX.Element {
                           <Show when={safety.manualApproval} keyed>
                             {(approval) => (
                               <div class="plugin-safety-manual">
-                                The automated policy quarantined this version. {approval.by} approved it after review:
-                                {" “"}{approval.note}{"”"}
+                                <strong>Why human review was required</strong><br />
+                                <Show
+                                  when={version().capabilities.includes("graph.write.block")}
+                                  fallback={<>An automated check found behavior that Tine requires a person to inspect before publication.</>}
+                                >
+                                  This plugin can edit the focused block when you run its command. Tine holds every graph-writing
+                                  plugin for human review, even when the automated checks otherwise pass.
+                                </Show>
+                                <Show when={plugin.id === "page.tine.query-filter"}>
+                                  <br />The audit also caught that an earlier draft could act on the wrong focused block. The
+                                  published plugin was narrowed to query table/board blocks and reviewed again.
+                                </Show>
+                                <br /><span>Signed review record: {approval.note}</span>
                               </div>
                             )}
                           </Show>
                           <Show when={safety.findings.length > 0}>
                             <div class="plugin-safety-findings">
+                              <div class="settings-hint">
+                                Severity describes possible impact, not reviewer confidence. “Low-risk” means a contained problem
+                                unlikely to affect your notes; “Information” is an observation, not a known harm.
+                              </div>
                               <For each={safety.findings}>
                                 {(finding) => (
                                   <div class="plugin-safety-finding">
-                                    <span class={`plugin-finding-severity severity-${finding.severity}`}>{finding.severity}</span>
+                                    <span class={`plugin-finding-severity severity-${finding.severity}`}>{findingSeverityLabel(finding.severity)}</span>
                                     <div><strong>{finding.title}</strong><br /><span>{finding.impact}</span></div>
                                   </div>
                                 )}
@@ -524,10 +563,20 @@ function PluginsTab(): JSX.Element {
                 <span class="settings-label">
                   {plugin.manifest.name} <span class="settings-hint">v{plugin.manifest.version}</span>
                 </span>
-                <Toggle
-                  on={plugin.enabled && plugin.running}
-                  onClick={() => void togglePlugin(plugin.manifest.id, plugin.manifest.version, plugin.enabled)}
-                />
+                <div class="settings-field-control">
+                  <Toggle
+                    on={plugin.enabled && plugin.running}
+                    disabled={busy() !== null}
+                    onClick={() => void togglePlugin(plugin.manifest.id, plugin.manifest.version, plugin.enabled)}
+                  />
+                  <button
+                    class="settings-btn settings-btn-danger"
+                    disabled={busy() !== null}
+                    onClick={() => void uninstallPlugin(plugin)}
+                  >
+                    {busy() === `${plugin.manifest.id}@${plugin.manifest.version}:uninstall` ? "Uninstalling…" : "Uninstall…"}
+                  </button>
+                </div>
               </div>
               <div class="settings-hint settings-field-hint">
                 {plugin.manifest.description}<br />
@@ -536,7 +585,7 @@ function PluginsTab(): JSX.Element {
                   {" · "}AI-{plugin.manifest.aiDevelopment}
                 </Show>
                 <br />Capabilities: {plugin.manifest.capabilities.length ? plugin.manifest.capabilities.join(", ") : "none"}
-                {" · "}<button class="settings-link" onClick={() => void backend().openExternal(plugin.manifest.source)}>Source</button>
+                {" · "}<button class="settings-link" onClick={() => void backend().openExternal(plugin.manifest.source)}>Details &amp; screenshots</button>
               </div>
               <Show when={plugin.error}>
                 <div class="settings-hint" style={{ color: "var(--danger, #c44)" }}>{plugin.error}</div>

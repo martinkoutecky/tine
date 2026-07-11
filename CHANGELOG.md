@@ -23,9 +23,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Add a credential-separated local registry auditor: rootless hostile builds,
   no-tools Codex source review, quarantine/manual approval, signed catalogue
   publishing, and symlink/path/digest fail-closed checks.
+- Add per-version plugin uninstall controls that remove only app-local packages
+  and clear plugin settings after the last installed version.
+
+### Changed
+
+- Link catalogue entries to their plugin details and screenshots, and explain
+  human-review reasons and finding severity in end-user language.
 
 ### Fixed
 
+- Preserve the focused block while choosing a plugin action from Ctrl-K, so
+  graph-writing commands can safely apply their expected-text effect.
+- Render inline query tables and boards only once instead of adding an empty
+  children-backed duplicate below the real query result.
 - Upgrade the Vite/Vitest development toolchain to versions clear of the current
   npm advisories, including the Vitest UI-server and Vite dev-server issues; keep
   Solid's browser export conditions explicit in the test runner.

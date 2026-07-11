@@ -115,6 +115,68 @@ fn package_dir(root: &Path, id: &str, version: &str) -> Result<PathBuf, String> 
     Ok(root.join(id).join(version))
 }
 
+/// Validate one immutable package without following a symlink out of plugin
+/// storage. The boolean reports whether this is currently the id's last entry.
+fn validate_uninstall_target(
+    root: &Path,
+    id: &str,
+    version: &str,
+) -> Result<(PathBuf, PathBuf, bool), String> {
+    let target = package_dir(root, id, version)?;
+    let id_dir = root.join(id);
+    let id_meta = std::fs::symlink_metadata(&id_dir).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            "plugin version is not installed".to_string()
+        } else {
+            error.to_string()
+        }
+    })?;
+    if id_meta.file_type().is_symlink() || !id_meta.is_dir() {
+        return Err("installed plugin directory is unsafe".to_string());
+    }
+    let target_meta = std::fs::symlink_metadata(&target).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            "plugin version is not installed".to_string()
+        } else {
+            error.to_string()
+        }
+    })?;
+    if target_meta.file_type().is_symlink() || !target_meta.is_dir() {
+        return Err("installed plugin package is unsafe".to_string());
+    }
+    let manifest_json = std::fs::read_to_string(target.join("manifest.json"))
+        .map_err(|_| "installed plugin manifest is unreadable".to_string())?;
+    if manifest_identity(&manifest_json).ok().as_ref()
+        != Some(&(id.to_string(), version.to_string()))
+    {
+        return Err("installed plugin manifest identity does not match its directory".to_string());
+    }
+    let mut last_version = true;
+    for entry in std::fs::read_dir(&id_dir).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        if entry.path() != target {
+            last_version = false;
+            break;
+        }
+    }
+    Ok((id_dir, target, last_version))
+}
+
+/// Remove exactly one validated immutable package without ever following a
+/// symlink out of plugin storage. Returns true when no versions of this plugin
+/// remain and the now-empty id directory was removed too.
+fn uninstall_package(root: &Path, id: &str, version: &str) -> Result<bool, String> {
+    let (id_dir, target, _) = validate_uninstall_target(root, id, version)?;
+    std::fs::remove_dir_all(&target).map_err(|error| error.to_string())?;
+    let mut remaining = std::fs::read_dir(&id_dir).map_err(|error| error.to_string())?;
+    if remaining.next().is_none() {
+        std::fs::remove_dir(&id_dir).map_err(|error| error.to_string())?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
 fn sha256(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
@@ -206,6 +268,42 @@ pub(crate) fn install_plugin(
     })
 }
 
+/// Uninstall removes only the app-local immutable package. It clears a selected
+/// version before deleting bytes so a crash cannot leave startup pointing at a
+/// half-removed plugin. Per-plugin settings are retained while another version
+/// remains and removed with the last version. Graph files are never in scope.
+#[tauri::command]
+pub(crate) fn uninstall_plugin(
+    id: String,
+    version: String,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let root = plugins_dir(&app)?;
+    let (_, _, last_version) = validate_uninstall_target(&root, &id, &version)?;
+    crate::settings::update_settings(&app, |json| {
+        let selected_version = json
+            .get("plugin_states")
+            .and_then(|states| states.get(&id))
+            .and_then(|state| state.get("version"))
+            .and_then(|value| value.as_str());
+        if last_version || selected_version == Some(version.as_str()) {
+            if let Some(states) = json
+                .get_mut("plugin_states")
+                .and_then(serde_json::Value::as_object_mut)
+            {
+                states.remove(&id);
+            }
+        }
+        if last_version {
+            if let Some(root) = json.as_object_mut() {
+                root.remove(&format!("plugin-settings:{id}"));
+            }
+        }
+    })?;
+    uninstall_package(&root, &id, &version)?;
+    Ok(())
+}
+
 #[tauri::command]
 pub(crate) fn list_installed_plugins(app: tauri::AppHandle) -> Vec<InstalledPlugin> {
     let Ok(root) = plugins_dir(&app) else {
@@ -294,6 +392,18 @@ pub(crate) fn set_plugin_enabled(
 mod tests {
     use super::*;
 
+    fn test_manifest(id: &str, version: &str) -> String {
+        format!(r#"{{"id":"{id}","version":"{version}"}}"#)
+    }
+
+    fn write_test_package(root: &Path, id: &str, version: &str) -> PathBuf {
+        let package = root.join(id).join(version);
+        std::fs::create_dir_all(&package).unwrap();
+        std::fs::write(package.join("manifest.json"), test_manifest(id, version)).unwrap();
+        std::fs::write(package.join("plugin.wasm"), b"\0asm\x01\0\0\0").unwrap();
+        package
+    }
+
     #[test]
     fn plugin_identity_cannot_escape_its_storage_root() {
         assert!(safe_component("dev.tine.example", true));
@@ -325,5 +435,42 @@ mod tests {
         let signature = "88dLhfDBdYWf0v93Emf0/MqthFlXae9xJ6Ek3wIzgygJnE/BI2IA3DLV96/wQIDUsKENIR+M3SdfudgX/DgvBw==";
         verify_plugin_registry(index.to_string(), signature.to_string()).unwrap();
         assert!(verify_plugin_registry(format!("{index} "), signature.to_string()).is_err());
+    }
+
+    #[test]
+    fn uninstall_removes_only_the_requested_version() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("plugins");
+        let first = write_test_package(&root, "dev.tine.example", "0.1.0");
+        let second = write_test_package(&root, "dev.tine.example", "0.2.0");
+        let other = write_test_package(&root, "dev.tine.other", "1.0.0");
+
+        assert!(!uninstall_package(&root, "dev.tine.example", "0.1.0").unwrap());
+        assert!(!first.exists());
+        assert!(second.exists());
+        assert!(other.exists());
+        assert!(uninstall_package(&root, "dev.tine.example", "0.2.0").unwrap());
+        assert!(!root.join("dev.tine.example").exists());
+        assert!(other.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn uninstall_refuses_symlinked_plugin_directories() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("plugins");
+        let outside = temp.path().join("outside");
+        write_test_package(&outside, "dev.tine.example", "0.1.0");
+        std::fs::create_dir_all(&root).unwrap();
+        symlink(
+            outside.join("dev.tine.example"),
+            root.join("dev.tine.example"),
+        )
+        .unwrap();
+
+        assert!(uninstall_package(&root, "dev.tine.example", "0.1.0").is_err());
+        assert!(outside.join("dev.tine.example/0.1.0").exists());
     }
 }
