@@ -40,6 +40,7 @@ import {
   deleteBlock,
   moveBlock,
   moveBlockFeed,
+  moveItem,
   selectBlock,
   extendSelectionTo,
   clearSelection,
@@ -54,6 +55,7 @@ import {
   withUndoUnit,
   blockIsGridView,
   trackAssetWrite,
+  type OutlineScope,
 } from "../store";
 import {
   clearFocusSurface,
@@ -97,7 +99,7 @@ import { refreshAssetOnReturn } from "../assetRefresh";
 import { isMobilePlatform } from "../nativeChrome";
 import { calcSource, serializeCalcExitCommit, evalCalc } from "../editor/calc";
 import { QueryMacro, EmbedMacro } from "./Macro";
-import { workflow, zoomInto, zoomedBlock, openContextMenu, openDatePicker, openBlockInSidebar, graphMeta, dataRev, setQueryBuilderAutoOpen, openPageProps, pushToast, dismissToast, autoPairing, typographyMode, timetrackingEnabled, logbookWithSecondSupport } from "../ui";
+import { workflow, zoomInto, openContextMenu, openDatePicker, openBlockInSidebar, graphMeta, dataRev, setQueryBuilderAutoOpen, openPageProps, pushToast, dismissToast, autoPairing, typographyMode, timetrackingEnabled, logbookWithSecondSupport } from "../ui";
 import { seedAssetBlob } from "../assetCache";
 import { openPageInNewTab } from "../router";
 import { blockRefCount } from "../blockRefCounts";
@@ -109,6 +111,7 @@ import { applyTemplateVars } from "../editor/templateVars";
 import { caretAtFirstRow, caretAtLastRow } from "../editor/caretRows";
 import { splitProps, joinProps, isBuiltinHidden, isSheetCellHidden, hideAll, caretInFence } from "../editor/properties";
 import { normalizePlanning } from "../editor/planning";
+import { caretOnOpeningFence } from "../editor/fences";
 import { isAnnotationBlock, annotationInfo } from "../editor/annotation";
 import { AnnotationBody } from "./AnnotationBody";
 import { logbookInfo, type LogbookInfo } from "../logbook";
@@ -251,6 +254,7 @@ export const CaptureCtx = createContext<CaptureApi | null>(null);
 // item. Used to arbitrate edit-focus when one block uuid renders in several
 // surfaces at once (see startEditing's surface stamping).
 export const SurfaceContext = createContext<string>("main");
+export const OutlineScopeContext = createContext<OutlineScope | null>(null);
 
 export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded?: boolean }): JSX.Element {
   const node = () => doc.byId[props.id];
@@ -262,6 +266,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   // "ref:…" reference view (agenda / {{query}} / {{embed}} / linked+block refs —
   // all keyed by LiveRefGroup). Drives which instance shows the editor.
   const surfaceKey = useContext(SurfaceContext);
+  const outlineScope = useContext(OutlineScopeContext);
   const editing = () => {
     if (editingId() !== props.id) return false;
     const owner = editingOwner();
@@ -340,8 +345,9 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
         <div class="block-controls">
           <span
             class="collapse-toggle"
-            classList={{ "has-children": hasChildren() }}
-            onClick={() => toggleCollapse(props.id)}
+            classList={{ "has-children": hasChildren(), disabled: readOnly() }}
+            aria-disabled={readOnly() ? "true" : undefined}
+            onClick={() => { if (!readOnly()) toggleCollapse(props.id); }}
           >
             <Show when={hasChildren()}>
               <svg viewBox="0 0 24 24" class="triangle">
@@ -354,7 +360,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
             classList={{ "bullet-closed": collapsed() && hasChildren(), ordered: !!orderMarker() }}
             title="Click to zoom; shift-click → sidebar; middle-click → new tab; drag to move"
             onMouseDown={(e) => {
-              if (e.button === 0) beginDrag(props.id, e);
+              if (e.button === 0 && !readOnly()) beginDrag(props.id, e);
             }}
             onClick={(e) => {
               e.stopPropagation();
@@ -385,7 +391,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
             // (the row padding has no text to map). Read-only org pages don't edit.
             if (e.button !== 0 || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
             if (!editing() && !readOnly() && !forbidsEditEntry(e))
-              beginEditGesture(e, props.id, doc.byId[props.id].raw.length, instanceId);
+              beginEditGesture(e, props.id, doc.byId[props.id].raw.length, instanceId, outlineScope);
           }}
         >
           <Show
@@ -394,6 +400,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
               <Rendered
                 id={props.id}
                 owner={instanceId}
+                outlineScope={outlineScope}
                 trailing={
                   // OG's per-block reference-count badge: shown only when the block
                   // is referenced. Plain click toggles the referrers panel below;
@@ -489,6 +496,7 @@ interface EditGesture {
   startX: number;
   startY: number;
   escalated: boolean;
+  outlineScope: OutlineScope | null;
 }
 
 function blockIdAtPoint(x: number, y: number): string | null {
@@ -499,16 +507,22 @@ function blockIdAtPoint(x: number, y: number): string | null {
 
 /** Arm a click-or-drag gesture from a rendered-content mousedown. Document-level
  *  listeners resolve it, so post-blur layout shifts can't misroute the mouseup. */
-function beginEditGesture(e: MouseEvent, blockId: string, offset: number, owner: string | null): void {
+function beginEditGesture(
+  e: MouseEvent,
+  blockId: string,
+  offset: number,
+  owner: string | null,
+  outlineScope: OutlineScope | null,
+): void {
   clearSelection(); // a plain gesture replaces any active block selection (shift-click returns before this)
-  const g: EditGesture = { blockId, offset, owner, startX: e.clientX, startY: e.clientY, escalated: false };
+  const g: EditGesture = { blockId, offset, owner, startX: e.clientX, startY: e.clientY, escalated: false, outlineScope };
   const onMove = (ev: MouseEvent) => {
     const moved =
       Math.abs(ev.clientX - g.startX) > DRAG_THRESHOLD_PX || Math.abs(ev.clientY - g.startY) > DRAG_THRESHOLD_PX;
     if (!moved) return;
     const over = blockIdAtPoint(ev.clientX, ev.clientY);
     if (g.escalated) {
-      if (over) extendSelectionTo(over);
+      if (over) extendSelectionTo(over, g.outlineScope);
       return;
     }
     if (over && over !== g.blockId) {
@@ -516,8 +530,8 @@ function beginEditGesture(e: MouseEvent, blockId: string, offset: number, owner:
       // the gesture (never de-escalate — flipping modes mid-drag is jarring).
       g.escalated = true;
       window.getSelection()?.removeAllRanges();
-      selectBlock(g.blockId);
-      extendSelectionTo(over);
+      selectBlock(g.blockId, g.outlineScope);
+      extendSelectionTo(over, g.outlineScope);
     }
   };
   const onUp = (ev: MouseEvent) => {
@@ -533,7 +547,12 @@ function beginEditGesture(e: MouseEvent, blockId: string, offset: number, owner:
   document.addEventListener("mouseup", onUp, true);
 }
 
-function Rendered(props: { id: string; owner?: string; trailing?: JSX.Element }): JSX.Element {
+function Rendered(props: {
+  id: string;
+  owner?: string;
+  trailing?: JSX.Element;
+  outlineScope?: OutlineScope | null;
+}): JSX.Element {
   const node = () => doc.byId[props.id];
   const fmt = () => pageByName(node().page)?.format ?? "md";
   // Header facets (marker/priority/heading/scheduled/deadline/properties) off the
@@ -586,7 +605,13 @@ function Rendered(props: { id: string; owner?: string; trailing?: JSX.Element })
     if (readOnly()) return; // read-only org page — never enter the editor
     if (forbidsEditEntry(e)) return;
     e.stopPropagation(); // keep the row wrapper from arming a second gesture
-    beginEditGesture(e, props.id, clickOffset(e) ?? node().raw.length, props.owner ?? null);
+    beginEditGesture(
+      e,
+      props.id,
+      clickOffset(e) ?? node().raw.length,
+      props.owner ?? null,
+      props.outlineScope ?? null,
+    );
   };
 
   const displayProps = () => {
@@ -902,6 +927,7 @@ export function Editor(props: { id: string }): JSX.Element {
   // Which surface (main pane / a specific sidebar item) this editor lives in —
   // drives edit-focus arbitration when the same block renders in several surfaces.
   const surfaceKey = useContext(SurfaceContext);
+  const outlineScope = useContext(OutlineScopeContext);
   let ref!: HTMLTextAreaElement;
   // Caret/selection stashed when the *window* (not this block) loses focus, so
   // returning to Tine resumes editing exactly where you left off.
@@ -1744,7 +1770,10 @@ export function Editor(props: { id: string }): JSX.Element {
     commit(ref.value);
     setBlockMoving(true);
     startEditing(props.id, start);
-    void moveBlockFeed(props.id, dir).then(() => {
+    const move = outlineScope
+      ? (moveItem(props.id, dir), Promise.resolve())
+      : moveBlockFeed(props.id, dir).then(() => undefined);
+    void move.then(() => {
       requestAnimationFrame(() => {
         if (ref.isConnected) {
           ref.focus();
@@ -1776,7 +1805,7 @@ export function Editor(props: { id: string }): JSX.Element {
     if (!atEdge) return false;
     e.preventDefault();
     commit(raw);
-    selectBlock(props.id);
+    selectBlock(props.id, outlineScope);
     moveSelection(dir, true);
     return true;
   };
@@ -1845,12 +1874,14 @@ export function Editor(props: { id: string }): JSX.Element {
       // On an in-block list line, Tab nests the LIST ITEM (intra-block), not the block.
       const ll = listLineAt(ref.value, ref.selectionStart, pageFmt());
       if (ll) { nudgeListItem(ll, +2); return true; }
+      if (outlineScope?.roots.includes(props.id)) return true;
       commit(ref.value); indentBlock(props.id, ref.selectionStart); return true;
     },
     "editor/outdent": (e) => {
       e.preventDefault();
       const ll = listLineAt(ref.value, ref.selectionStart, pageFmt());
       if (ll && ll.indent.length > 0) { nudgeListItem(ll, -2); return true; }
+      if (outlineScope?.forceExpandedRoot === doc.byId[props.id]?.parent) return true;
       commit(ref.value); outdentBlock(props.id, ref.selectionStart); return true;
     },
   };
@@ -2196,7 +2227,7 @@ export function Editor(props: { id: string }): JSX.Element {
       // — GH #66). caretInFence treats a still-unterminated fence (being typed) as
       // inside too, and returns false when the caret sits on a ``` delimiter line,
       // so Enter on the closing fence still exits the block.
-      if (!isAnnot() && caretInFence(raw, start)) {
+      if (!isAnnot() && (caretInFence(raw, start) || caretOnOpeningFence(raw, start))) {
         softNewlineCmd();
         return;
       }
@@ -2223,7 +2254,8 @@ export function Editor(props: { id: string }): JSX.Element {
         const newId = insertOutlineAfter(props.id, [{ raw: "", children: [] }]);
         startEditing(newId, 0);
       } else {
-        splitBlock(props.id, start, zoomedBlock() === props.id && doc.byId[props.id].children.length === 0);
+        const zoomRoot = outlineScope?.forceExpandedRoot === props.id;
+        splitBlock(props.id, start, zoomRoot, zoomRoot);
       }
     } else if (e.key === "Backspace" && end === start) {
       // Auto-pair Backspace: caret between an empty pair (`(|)`) deletes both
@@ -2251,12 +2283,12 @@ export function Editor(props: { id: string }): JSX.Element {
         // Never merge a highlight or calc block away (their structure must stay).
         if (isAnnot() || isCalc()) return;
         commit(raw);
-        if (mergeWithPrev(props.id)) {
+        if (mergeWithPrev(props.id, outlineScope)) {
           e.preventDefault();
           return;
         }
         const n = doc.byId[props.id];
-        const next = nextVisible(props.id);
+        const next = nextVisible(props.id, outlineScope);
         if (n && splitProps(n.raw, hideFn(), pageFmt()).visible.trim() === "" && n.children.length === 0 && next && doc.byId[next]?.page === n.page) {
           e.preventDefault();
           deleteBlock(props.id);
@@ -2270,7 +2302,7 @@ export function Editor(props: { id: string }): JSX.Element {
       // to the parent from the second visual row.)
       const before = raw.slice(0, start);
       if (!before.includes("\n") && caretAtFirstRow(ref, start)) {
-        const prev = prevVisible(props.id);
+        const prev = prevVisible(props.id, outlineScope);
         if (prev) {
           e.preventDefault();
           // OG parity: keep the caret's column — land it that many chars into the
@@ -2285,7 +2317,7 @@ export function Editor(props: { id: string }): JSX.Element {
         // FIRST source line of the next block (clamped). Column is measured within
         // the CURRENT (last) source line, so multi-line planning blocks work too.
         const col = start - (raw.slice(0, start).lastIndexOf("\n") + 1);
-        const next = nextVisible(props.id);
+        const next = nextVisible(props.id, outlineScope);
         if (next) {
           e.preventDefault();
           startEditing(next, { col, edge: "first" });
@@ -2294,14 +2326,16 @@ export function Editor(props: { id: string }): JSX.Element {
           // Down-arrow keeps going past the loaded window (previously only a
           // mouse-wheel scroll grew the feed). Non-feed pages resolve to null → a
           // harmless no-op. Async: flush first, then step into the new day.
-          e.preventDefault();
-          commit(raw);
-          void nextVisibleOrExtend(props.id).then((n) => n && startEditing(n, { col, edge: "first" }));
+          if (!outlineScope) {
+            e.preventDefault();
+            commit(raw);
+            void nextVisibleOrExtend(props.id).then((n) => n && startEditing(n, { col, edge: "first" }));
+          }
         }
       }
     } else if (e.key === "Escape") {
       e.preventDefault();
-      selectBlock(props.id); // exit editing into block-selection mode
+      selectBlock(props.id, outlineScope); // exit editing into block-selection mode
     }
   };
 
@@ -2397,7 +2431,7 @@ export function Editor(props: { id: string }): JSX.Element {
       e.preventDefault();
       const start = ref.selectionStart;
       const end = ref.selectionEnd;
-      if (sheetCell || isCalc() || caretInFence(ref.value, start)) {
+      if (sheetCell || isCalc() || caretInFence(ref.value, start) || caretOnOpeningFence(ref.value, start)) {
         const newRaw = ref.value.slice(0, start) + text + ref.value.slice(end);
         commit(newRaw);
         const pos = start + text.length;
@@ -2412,7 +2446,7 @@ export function Editor(props: { id: string }): JSX.Element {
       if (!nodes.length) return;
       commit(ref.value);
       const wasEmpty =
-        doc.byId[props.id].raw.trim() === "" && doc.byId[props.id].children.length === 0;
+        ref.value.trim() === "" && doc.byId[props.id].children.length === 0;
       const lastId = insertOutlineAfter(props.id, nodes);
       if (wasEmpty) deleteBlock(props.id);
       startEditing(lastId, doc.byId[lastId].raw.length);
@@ -2431,7 +2465,8 @@ export function Editor(props: { id: string }): JSX.Element {
         isPasteableUrl(url) &&
         !isPasteableUrl(ref.value.slice(start, end)) &&
         !isCalc() &&
-        !caretInFence(ref.value, start)
+        !caretInFence(ref.value, start) &&
+        !caretOnOpeningFence(ref.value, start)
       ) {
         e.preventDefault();
         applyEdit(wrapLink(ref.value, start, end, url, pageFmt()));

@@ -10,6 +10,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Read-only Org pages now reject every frontend mutation path.** Collapse,
+  context-menu, selection, drag/move, sheet, property, durable-ID, dirty-state,
+  and persistence entry points enforce the round-trip safety boundary rather
+  than relying only on the hidden textarea.
+- **Zoom navigation and editing stay inside the rendered subtree.** Arrow and
+  shift-selection order includes children revealed by the zoom-only collapse
+  override, excludes invisible page siblings, and keeps Enter-created blocks and
+  their caret mounted without changing durable collapse metadata.
+- **Variable-length code fences no longer close on a shorter delimiter run.** A
+  shared backtick/tilde scanner now drives property hiding, planning
+  normalization, Enter, and multiline-paste decisions.
+- **Org editing mutations remain in Org syntax.** Collapse and ordered-block
+  splits use property drawers, Org subtree copy strips durable IDs while retaining
+  OG's Markdown clipboard outline, and multiline paste replaces visibly-empty
+  metadata-only blocks without leaving a ghost bullet.
+- **Query collapse state no longer leaks between identical queries on different
+  pages or graphs.** Overrides are keyed by graph and block identity, and an
+  explicit expanded choice now survives a source `:collapsed? true` default.
 - **Zooming into a collapsed block reveals its children without expanding the
   block on its parent page.** The zoom root temporarily ignores only its own
   stored collapse state; descendant blocks retain their individual folds. (GH #77)

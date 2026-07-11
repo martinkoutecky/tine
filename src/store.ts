@@ -353,6 +353,8 @@ export function forgetPage(name: string) {
  *  calling the backend directly — is what prevents a queued baseRev=null save from
  *  resurrecting a just-typed, never-saved page. Returns backend success. */
 export async function deletePage(name: string, kind: PageKind): Promise<boolean> {
+  const loaded = pageByName(name);
+  if (loaded?.readOnly || loaded?.guide) return false;
   // Capture the current (possibly unsaved) content first, so the recoverable trash
   // copy is the LATEST version — not the stale bytes on disk. A CONFLICTED page can
   // never flush (its save stays refused until the conflict is resolved); blocking
@@ -591,6 +593,7 @@ export function pageToDto(pageName: string): PageDto | null {
     // brand-new page → the backend resolves the file by name, as before.
     path: p.path,
     guide: p.guide,
+    read_only: p.readOnly,
   };
 }
 
@@ -702,19 +705,49 @@ function pageVisibleOrder(pageName: string): string[] {
   return order;
 }
 
+/** Model-only description of the outline currently rendered around a block.
+ * Zoom uses a single root whose durable collapse is overridden for this view. */
+export interface OutlineScope {
+  roots: string[];
+  forceExpandedRoot?: string;
+}
+
+function scopedVisibleOrder(scope: OutlineScope): string[] {
+  const order: string[] = [];
+  const walk = (ids: readonly string[]) => {
+    for (const id of ids) {
+      const node = doc.byId[id];
+      if (!node) continue;
+      order.push(id);
+      const expanded = !node.collapsed || id === scope.forceExpandedRoot;
+      if (expanded && node.children.length && !blockIsOpaqueSheetView(id)) walk(node.children);
+    }
+  };
+  walk(scope.roots);
+  return order;
+}
+
+let activeSelectionScope: OutlineScope | null = null;
+
 /** Visible order to resolve a block SELECTION against. The journals feed lives in
  *  visibleData(); a routed single page is loaded via ensurePageLoaded and is NOT in
  *  doc.feed, so its blocks aren't in visibleOrder() — fall back to that block's own
  *  page order, mirroring prevVisible/nextVisible. Without this, block-select (Esc,
  *  Arrow, Shift+Arrow) is dead on any routed page / reference / embed. */
-function selectionOrder(id: string | null): string[] {
+function selectionOrder(id: string | null, scope: OutlineScope | null = activeSelectionScope): string[] {
   if (!id) return [];
+  if (scope) return scopedVisibleOrder(scope);
   if (visibleData().index.has(id)) return visibleOrder();
   const page = doc.byId[id]?.page;
   return page ? pageVisibleOrder(page) : [];
 }
 
-export function prevVisible(id: string): string | null {
+export function prevVisible(id: string, scope: OutlineScope | null = null): string | null {
+  if (scope) {
+    const order = scopedVisibleOrder(scope);
+    const i = order.indexOf(id);
+    return i > 0 ? order[i - 1] : null;
+  }
   const { order, index } = visibleData();
   const i = index.get(id);
   if (i !== undefined) return i > 0 ? order[i - 1] : null;
@@ -725,7 +758,12 @@ export function prevVisible(id: string): string | null {
   return j > 0 ? ord[j - 1] : null;
 }
 
-export function nextVisible(id: string): string | null {
+export function nextVisible(id: string, scope: OutlineScope | null = null): string | null {
+  if (scope) {
+    const order = scopedVisibleOrder(scope);
+    const i = order.indexOf(id);
+    return i >= 0 && i < order.length - 1 ? order[i + 1] : null;
+  }
   const { order, index } = visibleData();
   const i = index.get(id);
   if (i !== undefined) return i < order.length - 1 ? order[i + 1] : null;
@@ -928,6 +966,7 @@ function applyEntry(e: UndoEntry): UndoEntry {
 }
 
 export function withUndoUnit<T>(tag: string, pages: string[], fn: () => T): T {
+  if (pages.some((page) => pageByName(page) && !pageWritable(page))) return undefined as T;
   if (undoSuppressionDepth > 0) return fn();
 
   const undoBefore = undoStack.slice();
@@ -972,6 +1011,7 @@ export function redo() {
 // ---------------------------------------------------------------------------
 
 export function setRaw(id: string, raw: string, opts?: { timetracking?: boolean }) {
+  if (!blockWritable(id)) return;
   const prev = doc.byId[id].raw;
   const next =
     opts?.timetracking === false
@@ -990,7 +1030,7 @@ export function setRaw(id: string, raw: string, opts?: { timetracking?: boolean 
 
 export function insertEmptyChildBlock(parentId: string, at: number): string | null {
   const parent = doc.byId[parentId];
-  if (!parent || at < 0 || at > parent.children.length) return null;
+  if (!parent || !blockWritable(parentId) || at < 0 || at > parent.children.length) return null;
   pushUndo(`insert-child:${parentId}`, [parent.page]);
   const id = freshId();
   const pageName = parent.page;
@@ -1013,7 +1053,7 @@ export function replaceChildOrders(nextByParent: Record<string, readonly string[
   const pages = new Set<string>();
   for (const parentId of parentIds) {
     const parent = doc.byId[parentId];
-    if (!parent) return false;
+    if (!parent || !blockWritable(parentId)) return false;
     pages.add(parent.page);
     for (const childId of nextByParent[parentId]) {
       const child = doc.byId[childId];
@@ -1039,7 +1079,7 @@ export function replaceChildOrders(nextByParent: Record<string, readonly string[
 export function insertOutlineChildren(parentId: string, nodes: OutlineNode[]): string | null {
   if (!nodes.length) return null;
   const parent = doc.byId[parentId];
-  if (!parent) return null;
+  if (!parent || !blockWritable(parentId)) return null;
   const pageName = parent.page;
   let lastId: string | null = null;
   pushUndo("paste-children", [pageName]);
@@ -1063,9 +1103,15 @@ export function insertOutlineChildren(parentId: string, nodes: OutlineNode[]): s
 /** Enter: split the block at `offset`. Built-in `id::`/`collapsed::` props are
  *  hidden from the editor (see editor/properties splitProps): the caret offset is
  *  in visible space, and hidden props stay with the ORIGINAL block across a split. */
-export function splitBlock(id: string, offset: number, forceChild: boolean = false) {
-  pushUndo("split", [doc.byId[id].page]);
+export function splitBlock(
+  id: string,
+  offset: number,
+  forceChild: boolean = false,
+  keepStartInScope: boolean = false,
+) {
   const node = doc.byId[id];
+  if (!node || !blockWritable(id)) return;
+  pushUndo("split", [node.page]);
   const fmt = formatForBlock(id);
   // The caret offset is in editor-visible space (hidden props aren't shown), so
   // split the visible text and keep the hidden props on the original block.
@@ -1076,8 +1122,10 @@ export function splitBlock(id: string, offset: number, forceChild: boolean = fal
   // Ordered-list items propagate: a block split off an ordered item is itself
   // ordered (OG inherits `:logseq.order-list-type`), toggleable per-block later.
   const ordered = isOrdered(id);
-  const orderedAfter = ordered ? joinProps(after, `${ORDER_KEY}:: number`) : after;
-  const orderedEmpty = ordered ? `${ORDER_KEY}:: number` : "";
+  const withOrdered = (raw: string) =>
+    joinProps(raw, fmt === "org" ? `:${ORDER_KEY}: number` : `${ORDER_KEY}:: number`, fmt);
+  const orderedAfter = ordered ? withOrdered(after) : after;
+  const orderedEmpty = ordered ? withOrdered("") : "";
 
   // Caret-at-start case (blank before, content after): create a NEW EMPTY block
   // *before* the current one. The current block keeps its uuid, its content, and
@@ -1091,12 +1139,21 @@ export function splitBlock(id: string, offset: number, forceChild: boolean = fal
     setDoc(
       produce((s) => {
         s.byId[emptyId] = {
-          id: emptyId, raw: orderedEmpty, collapsed: false, parent: node.parent, page: pageName, children: [],
+          id: emptyId,
+          raw: orderedEmpty,
+          collapsed: false,
+          parent: keepStartInScope ? id : node.parent,
+          page: pageName,
+          children: [],
         };
-        const sibs = node.parent === null
-          ? s.pages[s.pages.findIndex((p) => p.name === pageName)].roots
-          : s.byId[node.parent].children;
-        sibs.splice(sibs.indexOf(id), 0, emptyId);
+        if (keepStartInScope) {
+          s.byId[id].children.unshift(emptyId);
+        } else {
+          const sibs = node.parent === null
+            ? s.pages[s.pages.findIndex((p) => p.name === pageName)].roots
+            : s.byId[node.parent].children;
+          sibs.splice(sibs.indexOf(id), 0, emptyId);
+        }
       })
     );
     startEditing(emptyId, 0);
@@ -1132,6 +1189,7 @@ export function splitBlock(id: string, offset: number, forceChild: boolean = fal
 
 /** Tab: make the block the last child of its previous sibling. */
 export function indentBlock(id: string, caretOffset: number) {
+  if (!blockWritable(id)) return;
   const i = indexInSiblings(id);
   if (i <= 0) return;
   pushUndo("indent", [doc.byId[id].page]);
@@ -1149,7 +1207,7 @@ export function indentBlock(id: string, caretOffset: number) {
       // Expand the new parent — and clear any persisted collapsed:: in its raw,
       // else a reload would re-collapse it and hide the just-indented child.
       const np = s.byId[newParent];
-      np.raw = rawWithCollapsed(np.raw, false);
+      np.raw = rawWithCollapsed(np.raw, false, formatForBlock(newParent));
       np.collapsed = false;
     })
   );
@@ -1160,7 +1218,7 @@ export function indentBlock(id: string, caretOffset: number) {
 /** Shift+Tab: move the block out to be the next sibling of its parent. */
 export function outdentBlock(id: string, caretOffset: number) {
   const node = doc.byId[id];
-  if (node.parent === null) return;
+  if (!node || !blockWritable(id) || node.parent === null) return;
   pushUndo("outdent", [node.page]);
   const parentId = node.parent;
   const grandParent = doc.byId[parentId].parent;
@@ -1186,8 +1244,9 @@ export function outdentBlock(id: string, caretOffset: number) {
 }
 
 /** Backspace at offset 0: merge into the previous visible block (same page). */
-export function mergeWithPrev(id: string): boolean {
-  const prev = prevVisible(id);
+export function mergeWithPrev(id: string, scope: OutlineScope | null = null): boolean {
+  if (!blockWritable(id)) return false;
+  const prev = prevVisible(id, scope);
   if (prev === null) return false;
   const node = doc.byId[id];
   if (doc.byId[prev].page !== node.page) return false; // don't merge across pages
@@ -1238,7 +1297,7 @@ export function insertOutlineAfter(afterId: string, nodes: OutlineNode[]): strin
   // Read-only gate at the choke point — file drops (and any future caller)
   // must not mutate a page the round-trip self-check marked read-only
   // (Phase-6 review finding, validated).
-  if (blockPageReadOnly(afterId)) return afterId;
+  if (!blockWritable(afterId)) return afterId;
   pushUndo("paste", [doc.byId[afterId].page]);
   const parent = doc.byId[afterId].parent;
   const pageName = doc.byId[afterId].page;
@@ -1300,7 +1359,7 @@ async function captureOutlineInto(name: string, kind: PageKind, nodes: OutlineNo
     ensurePageLoaded(dto);
   }
   const page = pageByName(name);
-  if (!page) return false;
+  if (!page || !pageWritable(name)) return false;
   if (page.roots.length) {
     // Append after the last top-level block (end of the page).
     insertOutlineAfter(page.roots[page.roots.length - 1], nodes);
@@ -1349,12 +1408,26 @@ export function blockPageReadOnly(id: string): boolean {
   return n ? (pageByName(n.page)?.readOnly ?? false) : false;
 }
 
+/** Store mutation boundary. UI affordances also hide on read-only pages, but
+ * every write API must enforce this itself because menus/shortcuts/sheets can
+ * call the store without entering the textarea. Guide pages are virtual and
+ * equally non-writable. */
+export function pageWritable(name: string): boolean {
+  const page = pageByName(name);
+  return !!page && !page.readOnly && !page.guide;
+}
+
+export function blockWritable(id: string): boolean {
+  const node = doc.byId[id];
+  return !!node && pageWritable(node.page);
+}
+
 /** Set (or remove, when value is null) a `key:: value` block property. Property
  *  lines live immediately after the first line, before body text, matching OG's
  *  block-property placement and keeping every property writer on one path. */
 export function setBlockProperty(id: string, key: string, value: string | null) {
   const node = doc.byId[id];
-  if (!node) return;
+  if (!node || !blockWritable(id)) return;
   pushUndo(`prop:${id}:${key}`, [node.page]);
   if (formatForBlock(id) === "org") {
     // ORG blocks carry properties in a `:PROPERTIES:` drawer — writing a
@@ -1406,7 +1479,7 @@ export function readPageProperty(pageName: string, key: string): string | null {
  *  the page snapshot captures preBlock. */
 export function setPageProperty(pageName: string, key: string, value: string | null) {
   const idx = doc.pages.findIndex((x) => x.name === pageName);
-  if (idx < 0) return;
+  if (idx < 0 || !pageWritable(pageName)) return;
   pushUndo(`pageprop:${pageName}:${key}`, [pageName]);
   setDoc("pages", idx, "preBlock", upsertPropertyLine(doc.pages[idx].preBlock, key, value));
   markDirty(pageName);
@@ -1475,7 +1548,7 @@ export function toggleListItem(id: string, rawLine: string) {
  *  share the same label — see toggleAstCheckbox in render/body.tsx. */
 export function toggleListItemAtIndex(id: string, lineIndex: number) {
   const node = doc.byId[id];
-  if (!node) return;
+  if (!node || !blockWritable(id)) return;
   const lines = node.raw.split("\n");
   const ln = lines[lineIndex];
   if (ln === undefined || !/\[[ xX]\]/.test(ln)) return;
@@ -1490,7 +1563,7 @@ export function toggleListItemAtIndex(id: string, lineIndex: number) {
 /** Set the block's heading level via the markdown `#` prefix (null clears it). */
 export function setHeading(id: string, level: number | null) {
   const node = doc.byId[id];
-  if (!node) return;
+  if (!node || !blockWritable(id)) return;
   pushUndo(`heading:${id}`, [node.page]);
   const lines = node.raw.split("\n");
   let first = (lines[0] ?? "").replace(/^#{1,6} /, "");
@@ -1547,7 +1620,7 @@ export function setSchedule(
   time?: string | null
 ) {
   const node = doc.byId[id];
-  if (!node) return;
+  if (!node || !blockWritable(id)) return;
   pushUndo(`sched:${id}:${which}`, [node.page]);
   const tag = which === "scheduled" ? "SCHEDULED" : "DEADLINE";
   // Remove the old planning line ONLY from the canonical head region (the run of
@@ -1578,24 +1651,26 @@ export function setSchedule(
  *  property matches the collapsed state. OG stores collapse in the file as a
  *  block property, so mirroring it here makes a collapse survive a relaunch and
  *  show up collapsed in OG / the mobile app. Fence-aware via splitProps. */
-function rawWithCollapsed(raw: string, collapsed: boolean): string {
-  const { visible, hidden } = splitProps(raw, isBuiltinHidden);
+function rawWithCollapsed(raw: string, collapsed: boolean, format: Format): string {
+  if (format === "org") return orgRawWithProperty(raw, "collapsed", collapsed ? "true" : null);
+  const { visible, hidden } = splitProps(raw, isBuiltinHidden, format);
   const nextHidden = upsertPropertyLine(hidden, "collapsed", collapsed ? "true" : null) ?? "";
-  return joinProps(visible, nextHidden);
+  return joinProps(visible, nextHidden, format);
 }
 
 /** Set a block's collapsed state AND mirror it into its raw `collapsed::` so it
  *  persists — the on-disk markdown is the source of truth on the next load. */
 function writeCollapsed(id: string, collapsed: boolean) {
   const n = doc.byId[id];
-  if (!n) return;
-  const nextRaw = rawWithCollapsed(n.raw, collapsed);
+  if (!n || !blockWritable(id)) return;
+  const nextRaw = rawWithCollapsed(n.raw, collapsed, formatForBlock(id));
   setDoc("byId", id, "collapsed", collapsed);
   if (nextRaw !== n.raw) setDoc("byId", id, "raw", nextRaw);
 }
 
 /** Collapse or expand a block and its entire descendant subtree. */
 export function setCollapsedDeep(id: string, collapsed: boolean) {
+  if (!blockWritable(id)) return;
   pushUndo("collapse-all", [doc.byId[id].page]);
   const walk = (bid: string) => {
     const n = doc.byId[bid];
@@ -1692,7 +1767,7 @@ function orgRawWithProperty(raw: string, key: string, value: string | null): str
  *  resolving a conflict with "use disk version" would leave the ref dangling. */
 export async function ensureBlockId(id: string): Promise<string | null> {
   const node = doc.byId[id];
-  if (!node) return null;
+  if (!node || !blockWritable(id)) return null;
   const fmt = formatForBlock(id);
   // Any existing id is the block's durable id — match its value (not just a UUID
   // shape), case-INSENSITIVELY (Rust's property("id") is case-insensitive, so an
@@ -1727,7 +1802,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  *  not-yet-reloaded block is skipped rather than writing a non-UUID id::. */
 export function ensureStableBlockId(id: string): void {
   const node = doc.byId[id];
-  if (!node) return;
+  if (!node || !blockWritable(id)) return;
   const fmt = formatForBlock(id);
   if (existingBlockId(node.raw, fmt)) return;
   if (!UUID_RE.test(id)) return;
@@ -1786,17 +1861,23 @@ export function blockSubtreeMarkdown(
 ): string {
   const n = doc.byId[id];
   if (!n) return "";
-  const tabs = "\t".repeat(level);
+  const format = formatForBlock(id);
   const strip = stripId || stripCollapsed;
   const raw = strip
-    ? splitProps(n.raw, (k) => (stripId && k === "id") || (stripCollapsed && k === "collapsed")).visible
+    ? splitProps(
+        n.raw,
+        (k) => (stripId && k === "id") || (stripCollapsed && k === "collapsed"),
+        format,
+      ).visible
     : n.raw;
   const lines = raw.split("\n");
   const out: string[] = [];
+  // OG's clipboard path intentionally exports blocks as Markdown even when the
+  // source page is Org (`export-blocks-as-markdown`), but removes IDs using the
+  // SOURCE format. Keep that portable outline shape while stripping Org drawers.
+  const tabs = "\t".repeat(level);
   out.push(`${tabs}- ${lines[0] ?? ""}`.replace(/\s+$/, ""));
-  for (const line of lines.slice(1)) {
-    out.push(line === "" ? "" : `${tabs}  ${line}`);
-  }
+  for (const line of lines.slice(1)) out.push(line === "" ? "" : `${tabs}  ${line}`);
   for (const c of n.children) {
     if (onlySelected && !onlySelected.has(c)) continue;
     out.push(blockSubtreeMarkdown(c, level + 1, stripId, stripCollapsed, onlySelected));
@@ -1872,7 +1953,7 @@ function deleteBlockInternal(id: string) {
 }
 
 export function deleteBlock(id: string) {
-  if (!doc.byId[id]) return;
+  if (!blockWritable(id)) return;
   pushUndo("delete", [doc.byId[id].page]);
   deleteBlockInternal(id);
 }
@@ -1923,21 +2004,27 @@ const selectedSet = createRoot(() => createMemo(() => new Set(selectedIds())));
 export function isSelected(id: string): boolean {
   return selectedSet().has(id);
 }
-export function selectBlock(id: string) {
+export function selectBlock(id: string, scope: OutlineScope | null = null) {
   endEdit("select-block");
   notifyOutlineSelectionStarted(id);
+  activeSelectionScope = scope;
   setSelAnchor(id);
   setSelFocus(id);
 }
 export function clearSelection() {
   setSelAnchor(null);
   setSelFocus(null);
+  activeSelectionScope = null;
 }
 /** Extend the current block selection's focus to `id` (mouse-drag / shift-click).
  *  Starts a fresh selection anchored at `id` if none is active. */
-export function extendSelectionTo(id: string) {
+export function extendSelectionTo(id: string, scope: OutlineScope | null = activeSelectionScope) {
   notifyOutlineSelectionStarted(id);
-  if (selAnchor() === null) setSelAnchor(id);
+  if (selAnchor() === null) {
+    activeSelectionScope = scope;
+    setSelAnchor(id);
+  }
+  if (activeSelectionScope && !scopedVisibleOrder(activeSelectionScope).includes(id)) return;
   setSelFocus(id);
 }
 export function hasSelection(): boolean {
@@ -1985,12 +2072,13 @@ function topSelected(): string[] {
 
 export function indentSelection() {
   const ids = topSelected();
-  if (!ids.length) return;
+  if (!ids.length || ids.some((id) => !blockWritable(id))) return;
   const first = ids[0];
   const sibs = rootsOf(first);
   const fi = sibs.indexOf(first);
   if (fi <= 0) return;
   const newParent = sibs[fi - 1];
+  if (activeSelectionScope && !scopedVisibleOrder(activeSelectionScope).includes(newParent)) return;
   // Structural indent is single-page ONLY. The target (newParent) is on first's
   // page; moving a block from another feed day under it would be a cross-page
   // structural move (removal-before-add hazard) — and indenting under a different
@@ -2006,9 +2094,10 @@ export function indentSelection() {
 
 export function outdentSelection() {
   const ids = topSelected();
-  if (!ids.length) return;
+  if (!ids.length || ids.some((id) => !blockWritable(id))) return;
   const parentId = doc.byId[ids[0]].parent;
   if (parentId === null) return;
+  if (activeSelectionScope?.forceExpandedRoot === parentId) return;
   const grand = doc.byId[parentId].parent;
   // Single-page only (see indentSelection): outdent moves blocks to `grand`, on
   // ids[0]'s page — so restrict to the blocks already on that page.
@@ -2025,7 +2114,7 @@ export function outdentSelection() {
 
 export function deleteSelection() {
   const ids = topSelected();
-  if (!ids.length) return;
+  if (!ids.length || ids.some((id) => !blockWritable(id))) return;
   const pages = new Set<string>();
   for (const id of ids) {
     const n = doc.byId[id];
@@ -2077,7 +2166,7 @@ export function selectionMarkdown(): string {
 /** Move without pushing an undo entry (for batched selection ops). */
 function moveBlockInternal(id: string, newParent: string | null, index: number) {
   const node = doc.byId[id];
-  if (!node) return;
+  if (!node || !blockWritable(id) || (newParent !== null && !blockWritable(newParent))) return;
   let p = newParent;
   while (p !== null) {
     if (p === id) return;
@@ -2136,6 +2225,7 @@ export async function moveBlock(
   // page (the day/page the drop landed on); fall back to the source page only if
   // the caller didn't supply one (a same-page reorder).
   const newPage = newParent ? doc.byId[newParent].page : (targetPage ?? oldPage);
+  if (!pageWritable(oldPage) || !pageWritable(newPage)) return;
   // Cross-page drag: flush the source while it still holds the block, so a
   // pre-existing pending save can't write the removal before the destination
   // lands. Abort (no move) if the source can't be saved.
@@ -2195,7 +2285,7 @@ export function setBlockMoving(v: boolean): void {
 
 export function moveItem(id: string, dir: 1 | -1) {
   const node = doc.byId[id];
-  if (!node) return;
+  if (!node || !blockWritable(id)) return;
   const sibs = rootsOf(id);
   const i = sibs.indexOf(id);
   const ni = i + dir;
@@ -2332,14 +2422,14 @@ export async function extendFeedForScroll(): Promise<boolean> {
  *  boundary. Returns how it moved so the caller can restore the caret. */
 export async function moveBlockFeed(id: string, dir: 1 | -1): Promise<"within" | "crossed" | "none"> {
   const node = doc.byId[id];
-  if (!node) return "none";
+  if (!node || !blockWritable(id)) return "none";
   if (canMoveItem(id, dir)) {
     moveItem(id, dir);
     return "within";
   }
   if (node.parent !== null) return "none"; // nested block at a child-list edge: stop
   const target = await feedNeighbor(node.page, dir);
-  if (!target) return "none";
+  if (!target || !pageWritable(target)) return "none";
   if (!(await prepareCrossPageSources([node.page]))) return "none"; // source has unsaved edits → abort
   if (!doc.byId[id]) return "none"; // vanished during the flush
   pushUndo("move-cross", [node.page, target]);
@@ -2351,7 +2441,7 @@ export async function moveBlockFeed(id: string, dir: 1 | -1): Promise<"within" |
  *  selection; at a day boundary the whole group crosses into the adjacent day. */
 export async function moveSelectionItems(dir: 1 | -1) {
   const ids = topSelected(); // document order: ids[0] topmost, last bottommost
-  if (!ids.length) return;
+  if (!ids.length || ids.some((id) => !blockWritable(id))) return;
   const lead = dir === 1 ? ids[ids.length - 1] : ids[0];
   if (canMoveItem(lead, dir)) {
     // Batch the whole selection into ONE undo entry + ONE produce. Doing it
@@ -2387,7 +2477,7 @@ export async function moveSelectionItems(dir: 1 | -1) {
   if (!page) return;
   if (ids.some((id) => doc.byId[id].parent !== null || doc.byId[id].page !== page)) return;
   const target = await feedNeighbor(page, dir);
-  if (!target) return;
+  if (!target || !pageWritable(target)) return;
   if (!(await prepareCrossPageSources([page]))) return; // source has unsaved edits → abort
   pushUndo("move-sel-cross", [page, target]);
   crossMoveBlocks(ids, page, target, dir);
@@ -2430,7 +2520,7 @@ export function carryUnfinished(
   header: string | null
 ): number {
   const today = journalTitle(new Date());
-  if (!pageByName(today)) return 0;
+  if (!pageWritable(today) || fromPages.some((page) => pageByName(page) && !pageWritable(page))) return 0;
   type Item = { id: string; from: string; parent: string | null };
   const plan: Item[] = [];
   for (const fp of fromPages) {
@@ -2496,7 +2586,7 @@ export function carryUnfinished(
 
 export function toggleCollapse(id: string) {
   const n = doc.byId[id];
-  if (n.children.length === 0) return;
+  if (!n || !blockWritable(id) || n.children.length === 0) return;
   pushUndo("collapse", [n.page]);
   writeCollapsed(id, !n.collapsed);
   markDirty(n.page);
@@ -2506,7 +2596,7 @@ export function toggleCollapse(id: string) {
  *  already in the requested state). */
 export function setCollapsed(id: string, collapsed: boolean) {
   const n = doc.byId[id];
-  if (!n || n.children.length === 0 || n.collapsed === collapsed) return;
+  if (!n || !blockWritable(id) || n.children.length === 0 || n.collapsed === collapsed) return;
   pushUndo("collapse", [n.page]);
   writeCollapsed(id, collapsed);
   markDirty(n.page);

@@ -10,7 +10,7 @@ import {
 import { carryDay, carryPrevDay, carryDaysBack } from "../carry";
 import { backend } from "../backend";
 import { switchGraph, refreshAfterRename } from "../graph";
-import { Block } from "./Block";
+import { Block, OutlineScopeContext } from "./Block";
 import { LinkedReferences } from "./LinkedReferences";
 import { UnlinkedReferences } from "./UnlinkedReferences";
 import { QueryMacro } from "./Macro";
@@ -300,7 +300,9 @@ function ZoomedView(props: { id: string }): JSX.Element {
         {/* A zoom root is a viewing boundary: reveal its immediate subtree even
             when collapsed on the parent page, without mutating collapsed::.
             Descendants still honor their own individual collapse state. */}
-        <Block id={props.id} forceExpanded />
+        <OutlineScopeContext.Provider value={{ roots: [props.id], forceExpandedRoot: props.id }}>
+          <Block id={props.id} forceExpanded />
+        </OutlineScopeContext.Provider>
       </div>
     </div>
   );

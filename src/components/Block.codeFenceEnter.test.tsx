@@ -67,6 +67,41 @@ describe("Enter inside a code fence", () => {
     }
   });
 
+  it("stays inside a four-backtick fence after a shorter three-backtick run", () => {
+    loadSingle(page("Code", [blk("code-4", "````js\n```\nconst x = 1\n````") ]));
+    const id = pageByName("Code")!.roots[0];
+    startEditing(id, 0);
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Code")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
+    ));
+    try {
+      const ta = root.querySelector("textarea") as HTMLTextAreaElement;
+      const caret = ta.value.indexOf("const x = 1") + "const x = 1".length;
+      pressEnter(ta, caret);
+      expect(pageByName("Code")!.roots).toEqual([id]);
+      expect(doc.byId[id].raw).toContain("const x = 1\n\n````");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("continues a freshly typed opening fence in the same block", () => {
+    loadSingle(page("Code", [blk("opening", "```js") ]));
+    const id = pageByName("Code")!.roots[0];
+    startEditing(id, 0);
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Code")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
+    ));
+    try {
+      const ta = root.querySelector("textarea") as HTMLTextAreaElement;
+      pressEnter(ta, ta.value.length);
+      expect(pageByName("Code")!.roots).toEqual([id]);
+      expect(doc.byId[id].raw).toBe("```js\n");
+    } finally {
+      dispose();
+    }
+  });
+
   it("still splits into a new block when Enter is pressed OUTSIDE any fence", () => {
     // Necessity guard: the fence special-case must not swallow ordinary Enter.
     loadSingle(page("Plain", [blk("plain-1", "hello world")]));

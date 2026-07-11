@@ -67,3 +67,4 @@ see the project `CLAUDE.md`.
 | [0038](0038-multi-window-multi-graph.md) | Multi-window, multi-graph (#70/#56/#55): one process, per-window graph map; #55 ships first single-graph; desktop-only | Accepted |
 | [0039](0039-filesystem-scope-boundary.md) | Canonical graph root is a hard boundary for configured paths, windows, and backups | Accepted |
 | [0040](0040-file-path-is-storage-identity.md) | Physical file path, not logical page name, is storage identity | Accepted |
+| [0041](0041-rendered-outline-navigation-scope.md) | Outline navigation is scoped to the rendered model, not the whole page | Accepted |

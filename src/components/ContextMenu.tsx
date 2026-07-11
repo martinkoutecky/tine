@@ -40,6 +40,8 @@ import {
   deletePage,
   restoreTodayJournalInFeed,
   selectedIds,
+  blockPageReadOnly,
+  pageByName,
 } from "../store";
 import { canFlatten, flatten, hierarchify } from "../sheet/restructure";
 import { canConvertPipeTableToGrid, convertGridToPipeTable, convertPipeTableToGrid } from "../sheet/conversions";
@@ -250,26 +252,29 @@ function ShowChildrenAsSubmenu(props: { id: string; close: () => void }): JSX.El
 
 function BlockMenu(props: { id: string; close: () => void }): JSX.Element {
   const hasChildren = () => (doc.byId[props.id]?.children.length ?? 0) > 0;
+  const readOnly = () => blockPageReadOnly(props.id);
   return (
     <>
-      {/* Color row */}
-      <ColorPalette id={props.id} close={props.close} />
+      <Show when={!readOnly()}>
+        {/* Color row */}
+        <ColorPalette id={props.id} close={props.close} />
 
-      {/* Heading row */}
-      <div class="ctx-row ctx-headings">
-        <For each={[1, 2, 3, 4, 5, 6]}>
-          {(h) => (
-            <button class="ctx-h" title={`Heading ${h}`} onClick={() => { setHeading(props.id, h); props.close(); }}>
-              H{h}
-            </button>
-          )}
-        </For>
-        <button class="ctx-h" title="Remove heading" onClick={() => { setHeading(props.id, null); props.close(); }}>
-          ⌫
-        </button>
-      </div>
+        {/* Heading row */}
+        <div class="ctx-row ctx-headings">
+          <For each={[1, 2, 3, 4, 5, 6]}>
+            {(h) => (
+              <button class="ctx-h" title={`Heading ${h}`} onClick={() => { setHeading(props.id, h); props.close(); }}>
+                H{h}
+              </button>
+            )}
+          </For>
+          <button class="ctx-h" title="Remove heading" onClick={() => { setHeading(props.id, null); props.close(); }}>
+            ⌫
+          </button>
+        </div>
 
-      <div class="ctx-sep" />
+        <div class="ctx-sep" />
+      </Show>
 
       <For each={blockActions(props.id)}>
         {(it) => (
@@ -285,7 +290,7 @@ function BlockMenu(props: { id: string; close: () => void }): JSX.Element {
 
       {/* Turn a plain outline into a grid/table in place. Only meaningful when the
           block actually has children to lay out. */}
-      <Show when={hasChildren()}>
+      <Show when={hasChildren() && !readOnly()}>
         <div class="ctx-sep" />
         <ShowChildrenAsSubmenu id={props.id} close={props.close} />
       </Show>
@@ -670,6 +675,7 @@ function PageMenu(props: {
   close: () => void;
 }): JSX.Element {
   const fav = () => isFavorite(props.name);
+  const readOnly = () => pageByName(props.name)?.readOnly ?? false;
   const remove = async () => {
     // Snapshot props BEFORE any await/close: the menu's <Show> disposes this
     // component the instant props.close() runs, after which reading props.* warns
@@ -720,9 +726,9 @@ function PageMenu(props: {
           }),
     },
     { label: "Export to PDF…", run: () => openPdfExport(props.name) },
-    { label: "Page properties…", run: () => openPageProps(props.name, props.x, props.y) },
+    ...(!readOnly() ? [{ label: "Page properties…", run: () => openPageProps(props.name, props.x, props.y) }] : []),
     // Carry a past day's unfinished tasks to today (journal days only, not today).
-    ...(props.pageKind === "journal" && props.name !== journalTitle(new Date())
+    ...(!readOnly() && props.pageKind === "journal" && props.name !== journalTitle(new Date())
       ? [{ label: "Carry unfinished tasks → today", run: () => void carryDay(props.name) }]
       : []),
   ];
@@ -737,10 +743,10 @@ function PageMenu(props: {
       </For>
       {/* Rename is page-only. It expands into an inline input (like MakeTemplate)
           because window.prompt is a silent no-op in WebKitGTK. */}
-      <Show when={pageMenuAvailability(props.pageKind).rename}>
+      <Show when={!readOnly() && pageMenuAvailability(props.pageKind).rename}>
         <RenamePage name={props.name} pageKind={props.pageKind} close={props.close} />
       </Show>
-      <Show when={pageMenuAvailability(props.pageKind).delete}>
+      <Show when={!readOnly() && pageMenuAvailability(props.pageKind).delete}>
         <div class="ctx-item danger" onClick={() => { void remove(); props.close(); }}>
           {deletePageMenuLabel(props.pageKind)}
         </div>
@@ -830,6 +836,20 @@ function blockActions(id: string): { label: string; run: () => void; danger?: bo
   // new-journal default (or clear it if it already is) — right where templates live.
   const tmplName = blockProperty(id, "template");
   const isJournalTmpl = !!tmplName && graphMeta()?.default_journal_template === tmplName;
+  if (blockPageReadOnly(id)) {
+    return [
+      { label: "Open in sidebar", run: () => openBlockInSidebar(persistentBlockRef(id)) },
+      { label: "Zoom into block", run: () => zoomInto(id) },
+      { label: "Copy block", run: () => { void copyOutline(blockSubtreeMarkdown(id, 0, true, copyStripCollapsed())); pushToast("Copied block", "success"); } },
+      {
+        label: "Copy / export as…",
+        run: () => {
+          const sel = selectedIds();
+          openExportModal(sel.length > 1 && sel.includes(id) ? sel : [id]);
+        },
+      },
+    ];
+  }
   return [
     { label: "Open in sidebar", run: () => openBlockInSidebar(persistentBlockRef(id)) },
     { label: "Zoom into block", run: () => zoomInto(id) },

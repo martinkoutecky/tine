@@ -2896,6 +2896,14 @@ textarea {
   transition: opacity 0.1s;
 }
 
+.collapse-toggle.disabled {
+  cursor: not-allowed;
+}
+
+.ls-block:hover > .block-main > .block-controls > .collapse-toggle.disabled.has-children {
+  opacity: 0.3;
+}
+
 .ls-block:hover > .block-main > .block-controls > .collapse-toggle.has-children {
   opacity: 1;
 }
