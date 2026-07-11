@@ -37,6 +37,12 @@ merged to master as `ad9bf67`.)_
   what OG/mldoc does for the parity record before changing behavior — if OG has
   the same bug we deviate deliberately). Found while authoring the tine-test
   [[Sheets guide]] page.
+- **Experimental Tine-native plugin platform** (ADR 0041) — a capability-limited
+  WebAssembly guest runtime, host-owned contribution API, developer SDK and
+  conformance tools, public community catalogue, and an automated local-machine
+  audit/quarantine pipeline. Desktop installation ships first while the runtime
+  stays mobile-capable. This deliberately does not implement `@logseq/libs` or
+  Obsidian compatibility; their plugins are ported to the smaller Tine API.
 ---
 
 ## Next — the ordered queue (top = do first)
@@ -96,7 +102,7 @@ _(**Shipped & released**, removed from the queue: **#23 paste-URL-over-selection
 |---|---|
 | **Whiteboards** | A separate application domain; Tine is a fast local-first outliner. |
 | **Flashcards / SRS** | Needs a dedicated spaced-repetition review engine; out of scope for an outliner. |
-| **Full plugin system (`@logseq/libs`)** | Months of work (a datascript engine + Logseq's render model); Tine coexists with Logseq instead. |
+| **Literal Logseq/Obsidian plugin API compatibility** | Reproducing `@logseq/libs`, Datascript, and either app's render model would import their architecture and authority. Tine instead has its own constrained plugin API (ADR 0041); plugins can be ported with AI assistance. |
 | **Built-in git** | Delegate to your own sync tool (Syncthing, etc.). |
 | **Publish on Flathub (Linux)** | **WONTFIX (Jul 10 2026).** Flathub has a policy against AI-built ("vibecoded") apps, and Tine is AI-built, so it is ineligible — the submission PR was dropped. The autoupdate-native Linux channel it would have provided stays unmet; AppImage/raw binary remain the Linux fallback, and F-Droid (Android) is unaffected. A community "Flathub for AI-built apps" effort exists and may revive this later. |
 

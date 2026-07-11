@@ -8,6 +8,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Added
+
+- Begin an experimental Tine-native plugin platform: capability-limited WebAssembly
+  guests, host-owned contribution points, explicit desktop/mobile declarations, and
+  a public-registry safety model. This is not Logseq or Obsidian API compatibility.
+
 ### Fixed
 
 - **Default Windows draw.io installations now autodetect and launch correctly.**
