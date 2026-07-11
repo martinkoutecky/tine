@@ -8,6 +8,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- **Release CI catches platform-only compilation and stale Flatpak sources before
+  tagging.** Windows and Android compile guards now run on ordinary CI, the
+  Flatpak offline npm manifest is checked against `package-lock.json`, and a
+  release remains draft unless every required artifact job succeeds.
+
 ## [0.5.5] - 2026-07-11
 
 Correctness and interaction release for Sheets, caret navigation, edit-mode
