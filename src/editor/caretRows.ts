@@ -106,6 +106,33 @@ export function caretOffsetOnLastRow(ta: HTMLTextAreaElement, col: number): numb
   return lo + Math.min(Math.max(0, col), end - lo);
 }
 
+/** Column of `offset` within its CURRENT visual row. Returns null when layout
+ * is unavailable so callers can fall back to the current source-line column.
+ *
+ * Cross-block ArrowDown needs this distinction: on the bottom row of a long
+ * wrapped source line, the source-line column includes all preceding visual
+ * rows and therefore commonly clamps to the end of the next block. */
+export function caretColumnOnVisualRow(ta: HTMLTextAreaElement, offset: number): number | null {
+  const clamped = Math.min(Math.max(0, offset), ta.value.length);
+  const rows = measureRows(ta, [clamped]);
+  if (!rows) return null;
+  const targetRow = rows[0];
+
+  // Find the first caret offset on the target row. Row indices are monotone,
+  // so this remains logarithmic even for very large blocks.
+  let lo = 0;
+  let hi = clamped;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    const measured = measureRows(ta, [mid]);
+    if (!measured) return null;
+    if (measured[0] < targetRow) lo = mid + 1;
+    else hi = mid;
+  }
+
+  return clamped - lo;
+}
+
 /** True if the caret at `offset` is on the FIRST visual row of the textarea (so
  *  Up / shift-select-up should leave the block). Degrades to true if unmeasurable. */
 export function caretAtFirstRow(ta: HTMLTextAreaElement, offset: number): boolean {

@@ -16,6 +16,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Arrow Down leaves a wrapped block at the caret's visual column.** Crossing
+  into the next block no longer measures from the beginning of the wrapped
+  source line and clamps the caret to that block's end.
 - **Sheets remain identity-safe across split panes, sorting, pagination, and
   asynchronous query hydration.** Selection and mutation targets are scoped to
   their grid surface and source block, stale query results cannot overwrite a

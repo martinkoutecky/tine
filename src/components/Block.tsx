@@ -108,7 +108,12 @@ import { editorCommandFor } from "../keybindings";
 import { cycleMarkerSmart, toggleTaskDone } from "../editor/repeat";
 import { taskCheckboxState } from "../markers";
 import { applyTemplateVars } from "../editor/templateVars";
-import { caretAtFirstRow, caretAtLastRow, caretOffsetOnLastRow } from "../editor/caretRows";
+import {
+  caretAtFirstRow,
+  caretAtLastRow,
+  caretColumnOnVisualRow,
+  caretOffsetOnLastRow,
+} from "../editor/caretRows";
 import { splitProps, joinProps, isBuiltinHidden, isSheetCellHidden, hideAll, caretInFence } from "../editor/properties";
 import { normalizePlanning } from "../editor/planning";
 import { caretOnOpeningFence } from "../editor/fences";
@@ -2356,10 +2361,12 @@ export function Editor(props: { id: string }): JSX.Element {
     } else if (e.key === "ArrowDown" && !e.shiftKey) {
       const after = raw.slice(start);
       if (!after.includes("\n") && caretAtLastRow(ref, start)) {
-        // OG parity: keep the caret's column — land it that many chars into the
-        // FIRST source line of the next block (clamped). Column is measured within
-        // the CURRENT (last) source line, so multi-line planning blocks work too.
-        const col = start - (raw.slice(0, start).lastIndexOf("\n") + 1);
+        // OG parity: keep the caret's VISUAL column — land it that many chars
+        // into the first source line of the next block (clamped). A wrapped
+        // source line can contain several visual rows; using its source column
+        // here would jump to the end of the next block.
+        const sourceCol = start - (raw.slice(0, start).lastIndexOf("\n") + 1);
+        const col = caretColumnOnVisualRow(ref, start) ?? sourceCol;
         const next = nextVisible(props.id, outlineScope);
         if (next) {
           e.preventDefault();

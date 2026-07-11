@@ -71,4 +71,29 @@ describe("cross-block vertical caret navigation", () => {
       dispose();
     }
   });
+
+  it("ArrowDown preserves the visual-row column when leaving a wrapped block", () => {
+    mockFiveCharacterVisualRows();
+    loadSingle(page([
+      block("current", "abcdefgh"), // visual rows: abcde / fgh
+      block("next", "0123456789"),
+    ]));
+    startEditing("current", 7);
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Caret")?.roots ?? []}>{(id) => <Block id={id} />}</For>
+    ));
+
+    try {
+      const current = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      current.setSelectionRange(7, 7); // fg|h: column 2 on the bottom visual row
+      current.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+
+      const next = root.querySelector("textarea.block-editor") as HTMLTextAreaElement;
+      expect(next.value).toBe("0123456789");
+      expect(next.selectionStart).toBe(2);
+      expect(next.selectionEnd).toBe(2);
+    } finally {
+      dispose();
+    }
+  });
 });
