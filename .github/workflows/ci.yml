@@ -36,6 +36,15 @@ jobs:
       - name: Release pipeline contract fixtures
         run: node scripts/test-release-pipeline.mjs
 
+      - name: UI regression catalog and release evidence contracts
+        run: |
+          npm run check:ui-catalog
+          npm run check:release-readiness
+          npm run blog:check
+
+      - name: Canonical Guide/demo is generated and current
+        run: npm run docs:check
+
       # The pin guard otherwise only runs inside `npm run build`, which fast CI
       # skips — a Cargo lsdoc bump with stale vendored WASM must fail HERE, not
       # at release-build time.

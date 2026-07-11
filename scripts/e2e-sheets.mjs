@@ -16,6 +16,8 @@ const APP = process.env.TINE_APP || `${repo}/target/release/tine`;
 const TD =
   process.env.TAURI_DRIVER ||
   (process.env.CARGO_HOME ? `${process.env.CARGO_HOME}/bin/tauri-driver` : "tauri-driver");
+const DRIVER_PORT = Number(process.env.E2E_DRIVER_PORT || 4444);
+const NATIVE_PORT = Number(process.env.E2E_NATIVE_PORT || 4445);
 
 // Today's journal file name, matching Logseq's YYYY_MM_DD.
 const now = new Date();
@@ -72,8 +74,8 @@ const env = {
 const tdLog = fs.openSync("/tmp/sheets-e2e-td.log", "w");
 const td = spawn(
   TD,
-  ["--port", "4444", "--native-port", "4445", "--native-driver", "/usr/bin/WebKitWebDriver"],
-  { env, stdio: ["ignore", tdLog, tdLog] }
+  ["--port", String(DRIVER_PORT), "--native-port", String(NATIVE_PORT), "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"],
+  { env, stdio: ["ignore", tdLog, tdLog], detached: true }
 );
 await sleep(3000);
 
@@ -89,7 +91,7 @@ let browser;
 try {
   browser = await remote({
     hostname: "127.0.0.1",
-    port: 4444,
+    port: DRIVER_PORT,
     path: "/",
     capabilities: {
       browserName: "wry",
@@ -552,7 +554,7 @@ try {
   console.error("E2E error:", e && e.message);
 } finally {
   try { await browser?.deleteSession(); } catch {}
-  td.kill();
+  try { process.kill(-td.pid, "SIGKILL"); } catch {}
 }
 console.log(failures === 0 ? `\nALL PASS (${checks} checks)` : `\n${failures} FAILURES (${checks} checks)`);
 process.exit(failures === 0 ? 0 : 1);

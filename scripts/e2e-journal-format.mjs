@@ -11,6 +11,8 @@ const APP = process.env.TINE_APP || `${process.env.HOME}/research/tine`;
 const TD =
   process.env.TAURI_DRIVER ||
   (process.env.CARGO_HOME ? `${process.env.CARGO_HOME}/bin/tauri-driver` : "tauri-driver");
+const DRIVER_PORT = Number(process.env.E2E_DRIVER_PORT || 4444);
+const NATIVE_PORT = Number(process.env.E2E_NATIVE_PORT || 4445);
 
 fs.rmSync(G, { recursive: true, force: true });
 fs.mkdirSync(`${G}/pages`, { recursive: true });
@@ -40,9 +42,10 @@ const env = {
 };
 
 const tdLog = fs.openSync("/tmp/td.log", "w");
-const td = spawn(TD, ["--port", "4444", "--native-port", "4445", "--native-driver", "/usr/bin/WebKitWebDriver"], {
+const td = spawn(TD, ["--port", String(DRIVER_PORT), "--native-port", String(NATIVE_PORT), "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"], {
   env,
   stdio: ["ignore", tdLog, tdLog],
+  detached: true,
 });
 await sleep(3000);
 
@@ -50,7 +53,7 @@ let browser;
 try {
   browser = await remote({
     hostname: "127.0.0.1",
-    port: 4444,
+    port: DRIVER_PORT,
     path: "/",
     capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: APP } },
     logLevel: "error",
@@ -60,18 +63,24 @@ try {
   await browser.$(".ls-block, .page-title").waitForExist({ timeout: 20000 });
 } catch (e) {
   console.log("LAUNCH ERROR:", String(e).split("\n").slice(0, 3).join(" | "));
+  process.exitCode = 1;
 }
 try {
   await sleep(2500);
   const text = await browser.execute(() => document.body.innerText);
   const has = (s) => text.includes(s);
-  console.log("feed shows 2026-06-24 (custom title):", has("2026-06-24"));
-  console.log("feed shows 2026-06-23 (custom title):", has("2026-06-23"));
-  console.log("does NOT show raw filename 24-06-2026:", !has("24-06-2026"));
-  console.log("entry content present:", has("entry from the 24th"));
+  const checks = {
+    "feed shows 2026-06-24 (custom title)": has("2026-06-24"),
+    "feed shows 2026-06-23 (custom title)": has("2026-06-23"),
+    "does not show raw filename 24-06-2026": !has("24-06-2026"),
+    "entry content present": has("entry from the 24th"),
+  };
+  for (const [name, ok] of Object.entries(checks)) console.log(`${ok ? "PASS" : "FAIL"}: ${name}`);
+  if (Object.values(checks).some((ok) => !ok)) throw new Error("custom journal format invariants failed");
 } catch (e) {
   console.log("CHECK ERROR:", String(e).split("\n").slice(0, 3).join(" | "));
+  process.exitCode = 1;
 } finally {
   try { await browser?.deleteSession(); } catch {}
-  td.kill("SIGKILL");
+  try { process.kill(-td.pid, "SIGKILL"); } catch {}
 }

@@ -19,6 +19,8 @@ const APP = process.env.TINE_APP || LOCAL_APP;
 const CARGO_TAURI_DRIVER = process.env.CARGO_HOME ? path.join(process.env.CARGO_HOME, "bin", "tauri-driver") : null;
 const TD = process.env.TAURI_DRIVER ||
   (CARGO_TAURI_DRIVER && fs.existsSync(CARGO_TAURI_DRIVER) ? CARGO_TAURI_DRIVER : "tauri-driver");
+const DRIVER_PORT = Number(process.env.E2E_DRIVER_PORT || 4446);
+const NATIVE_PORT = Number(process.env.E2E_NATIVE_PORT || 4447);
 
 let xvfb;
 async function ensureDisplay() {
@@ -69,13 +71,13 @@ const env = {
   GDK_BACKEND: "x11",
 };
 const tdLog = fs.openSync("/tmp/td-clickrepro.log", "w");
-const td = spawn(TD, ["--port", "4446", "--native-port", "4447", "--native-driver", "/usr/bin/WebKitWebDriver"], { env, stdio: ["ignore", tdLog, tdLog] });
+const td = spawn(TD, ["--port", String(DRIVER_PORT), "--native-port", String(NATIVE_PORT), "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"], { env, stdio: ["ignore", tdLog, tdLog], detached: true });
 await sleep(3000);
 
 let browser;
 try {
   browser = await remote({
-    hostname: "127.0.0.1", port: 4446, path: "/",
+    hostname: "127.0.0.1", port: DRIVER_PORT, path: "/",
     capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: APP } },
     logLevel: "error", connectionRetryCount: 1, connectionRetryTimeout: 60000,
   });
@@ -172,45 +174,65 @@ try {
     console.log(`[${tag}]`, JSON.stringify(s));
     return s;
   };
+  const requirePoint = (point, label) => {
+    if (point.err) throw new Error(`${label}: ${point.err}`);
+    return point;
+  };
+  const expectEditor = (state, idx, sel, label) => {
+    if (!state.isEditor || state.idx !== idx || state.editingIdx !== idx || state.sel !== sel) {
+      throw new Error(`${label}: expected editor idx=${idx} sel=${sel}, got ${JSON.stringify(state)}`);
+    }
+  };
+  const raw0 = "**bold** rest of line\nsecond line here";
+  const raw1 = "**bold** start then a -> b and x -- y here\nmore -- dashed text line";
 
   console.log("\n=== BUG 1a: click inside bold (line 1) of multiline block 0 ===");
   let p = await charPoint(0, "bold", 2);
   console.log("point:", JSON.stringify(p));
-  if (!p.err) { await realClick(p.x, p.y); await probe("bold+2 → expect sel=4"); }
+  requirePoint(p, "bold point"); await realClick(p.x, p.y);
+  expectEditor(await probe("bold+2 → expect sel=4"), 0, raw0.indexOf("bold") + 2, "bold click");
   await browser.keys(["Escape"]); await sleep(400);
 
   console.log("\n=== BUG 1b: click inside 'second line here' of block 0 ===");
   p = await charPoint(0, "second", 3);
   console.log("point:", JSON.stringify(p));
-  if (!p.err) { await realClick(p.x, p.y); await probe("second+3 → expect sel=17"); }
+  requirePoint(p, "second-line point"); await realClick(p.x, p.y);
+  expectEditor(await probe("second+3 → expect raw sel=25"), 0, raw0.indexOf("second") + 3, "second-line click");
   await browser.keys(["Escape"]); await sleep(400);
 
   console.log("\n=== BUG 1c: control — click ' rest' on line 1 ===");
   p = await charPoint(0, "rest", 2);
   console.log("point:", JSON.stringify(p));
-  if (!p.err) { await realClick(p.x, p.y); await probe("rest+2 → expect sel=11"); }
+  requirePoint(p, "rest point"); await realClick(p.x, p.y);
+  expectEditor(await probe("rest+2 → expect sel=11"), 0, raw0.indexOf("rest") + 2, "rest click");
   await browser.keys(["Escape"]); await sleep(400);
 
   console.log("\n=== TYPO 1: click 'here' (after -> and --) in block 1 line 1 ===");
   p = await charPoint(1, "here", 2);
   console.log("point:", JSON.stringify(p));
-  if (!p.err) { await realClick(p.x, p.y); await probe("typo here+2"); }
+  requirePoint(p, "typography here point"); await realClick(p.x, p.y);
+  expectEditor(await probe("typo here+2"), 1, raw1.indexOf("here") + 2, "typography here click");
   await browser.keys(["Escape"]); await sleep(400);
 
   console.log("\n=== TYPO 2: click 'dashed' in block 1 line 2 (line contains --) ===");
   p = await charPoint(1, "dashed", 3);
   console.log("point:", JSON.stringify(p));
-  if (!p.err) { await realClick(p.x, p.y); await probe("typo dashed+3"); }
+  requirePoint(p, "typography dashed point"); await realClick(p.x, p.y);
+  expectEditor(await probe("typo dashed+3"), 1, raw1.indexOf("dashed") + 3, "typography dashed click");
   await browser.keys(["Escape"]); await sleep(400);
 
   console.log("\n=== BUG 2: focus TODO block (idx 1), then click 'plain target below' (idx 2) ===");
   p = await charPoint(2, "focus me", 2);
   console.log("point:", JSON.stringify(p));
-  if (!p.err) { await realClick(p.x, p.y); await probe("focused TODO — editor should show 2 lines"); }
+  requirePoint(p, "TODO point"); await realClick(p.x, p.y);
+  const todoState = await probe("focused TODO — editor should show 2 lines");
+  if (!todoState.isEditor || todoState.idx !== 2 || !todoState.val.includes("DEADLINE")) throw new Error("TODO click did not focus its multiline editor");
   // Now, WITHOUT escaping, click the block below at its CURRENT (shifted) position.
   p = await charPoint(3, "target", 2);
   console.log("point (while TODO editing):", JSON.stringify(p));
-  if (!p.err) { await realClick(p.x, p.y); await probe("clicked below → expect editor on idx 2"); }
+  requirePoint(p, "target-below point"); await realClick(p.x, p.y);
+  const belowState = await probe("clicked below → expect editor on idx 3");
+  if (!belowState.isEditor || belowState.idx !== 3 || !belowState.val.includes("plain target below")) throw new Error("blur-reflow click landed on the wrong block");
   await probe("final state");
   await browser.keys(["Escape"]); await sleep(400);
 
@@ -230,7 +252,10 @@ try {
   const d1a = await charPoint(0, "second", 0);
   const d1b = await charPoint(0, "here", 3);
   console.log("from", JSON.stringify(d1a), "to", JSON.stringify(d1b));
-  if (!d1a.err && !d1b.err) { await realDrag(d1a.x, d1a.y, d1b.x, d1b.y); await probe("in-block drag"); }
+  requirePoint(d1a, "drag-1 start"); requirePoint(d1b, "drag-1 end");
+  await realDrag(d1a.x, d1a.y, d1b.x, d1b.y);
+  const dragText = await probe("in-block drag");
+  if (dragText.isEditor || dragText.textSel.length < 3 || dragText.selBlocks !== 0) throw new Error("in-block drag did not remain a text selection");
   await browser.keys(["Escape"]); await sleep(300);
   await browser.execute(() => window.getSelection()?.removeAllRanges());
 
@@ -238,14 +263,19 @@ try {
   const d2a = await charPoint(0, "rest", 1);
   const d2b = await charPoint(3, "target", 2);
   console.log("from", JSON.stringify(d2a), "to", JSON.stringify(d2b));
-  if (!d2a.err && !d2b.err) { await realDrag(d2a.x, d2a.y, d2b.x, d2b.y); await probe("cross-block drag"); }
+  requirePoint(d2a, "drag-2 start"); requirePoint(d2b, "drag-2 end");
+  await realDrag(d2a.x, d2a.y, d2b.x, d2b.y);
+  const dragBlocks = await probe("cross-block drag");
+  if (dragBlocks.isEditor || dragBlocks.selBlocks < 2) throw new Error("cross-block drag did not escalate to block selection");
   await browser.keys(["Escape"]); await sleep(300);
 
   console.log("\n=== DRAG 3: click still works after drags (block 0 'bold'+2) ===");
   const d3 = await charPoint(0, "bold", 2);
-  if (!d3.err) { await realClick(d3.x, d3.y); await probe("post-drag click"); }
+  requirePoint(d3, "post-drag click point"); await realClick(d3.x, d3.y);
+  expectEditor(await probe("post-drag click"), 0, raw0.indexOf("bold") + 2, "post-drag click");
+  console.log("PASS: all click/caret and drag invariants held");
 } finally {
   try { if (browser) await browser.deleteSession(); } catch {}
-  td.kill();
+  try { process.kill(-td.pid, "SIGKILL"); } catch {}
   if (xvfb) xvfb.kill();
 }

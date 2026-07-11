@@ -7,7 +7,7 @@ import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 
-const PORT = 5197;
+const PORT = Number(process.env.E2E_PREVIEW_PORT || 5197);
 const server = spawn("npx", ["vite", "preview", "--port", String(PORT), "--strictPort"], { stdio: "ignore" });
 async function waitForServer(url, tries = 60) {
   for (let i = 0; i < tries; i++) {

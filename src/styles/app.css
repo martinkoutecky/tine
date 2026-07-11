@@ -4679,9 +4679,17 @@ body.file-drop-active::after {
   width: 14px;
 }
 .sheet-grid-add-row {
-  right: 0;
-  bottom: -14px;
-  left: 0;
+  /* Participate in the grid instead of extending 14px below its scroll box.
+     The old absolute bottom:-14px made WebKit report vertical overflow (and
+     clip the affordance) once an aggregate footer added the final explicit
+     row. An implicit full-width row keeps scrollHeight == clientHeight while
+     preserving the same hover-revealed add target. */
+  position: relative;
+  grid-column: 1 / -1;
+  right: auto;
+  bottom: auto;
+  left: auto;
+  width: 100%;
   height: 14px;
 }
 .sheet-grid-add-visible {

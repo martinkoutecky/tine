@@ -1,0 +1,84 @@
+name: ui-e2e
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ui-e2e-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  linux-release:
+    name: Linux x64 real-app release suite
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native UI test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev \
+            libayatana-appindicator3-dev build-essential libssl-dev \
+            webkit2gtk-driver xvfb xauth
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+      - run: npm ci
+      - run: npm run build
+      - name: Build production-protocol app
+        run: cargo build --release --features custom-protocol --manifest-path src-tauri/Cargo.toml
+      - name: Install Tauri WebDriver bridge
+        run: cargo install tauri-driver --locked
+      - name: Run complete Linux UI regression catalog
+        run: npm run e2e:linux:release
+      - name: Upload Linux E2E evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-e2e-linux-${{ github.run_attempt }}
+          path: test-results/e2e/linux-release
+          if-no-files-found: warn
+          retention-days: 14
+
+  windows-smoke:
+    name: Windows x64 real-app smoke (advisory)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+      - run: npm ci
+      - run: npm run build
+      - name: Build production-protocol app
+        run: cargo build --release --features custom-protocol --manifest-path src-tauri/Cargo.toml
+      - name: Install Tauri WebDriver bridge
+        run: cargo install tauri-driver --locked
+      - name: Run Windows WebView2 smoke
+        env:
+          TINE_APP: ${{ github.workspace }}\target\release\tine.exe
+        run: npm run e2e:windows:smoke
+      - name: Upload Windows E2E evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-e2e-windows-${{ github.run_attempt }}
+          path: test-results/e2e/windows-smoke
+          if-no-files-found: warn
+          retention-days: 14

@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "author": "al-Quaknaa",
+  "subreddit": "TineOutline",
+  "sources": [
+    {
+      "version": "0.1.0",
+      "url": "https://www.reddit.com/r/logseq/comments/1uetnyn/tine_dropin_faster_logseq_og_replacement/",
+      "blogFile": "v0.1.0.html"
+    },
+    {
+      "version": "0.2.0",
+      "url": "https://www.reddit.com/r/logseq/comments/1ug79my/tine_v020_dropin_faster_logseq_og_replacement/",
+      "blogFile": "v0.2.0.html"
+    },
+    {
+      "version": "0.3.0",
+      "url": "https://www.reddit.com/r/logseq/comments/1uk4v3w/tine_v030_dropin_faster_logseq_og_more_parity/",
+      "blogFile": "v0.3.0.html"
+    }
+  ]
+}

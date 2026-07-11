@@ -8,6 +8,8 @@ import fs from "node:fs";
 const APP = process.env.TINE_APP || "/tmp/tine-multiprocess";
 const TD = process.env.TAURI_DRIVER || "/aux/koutecky/logseq/.toolchain/cargo/bin/tauri-driver";
 const WD = process.env.WEBKIT_DRIVER || "/tmp/tine-webdriver/usr/bin/WebKitWebDriver";
+const DRIVER_PORT = Number(process.env.E2E_DRIVER_PORT || 4454);
+const NATIVE_PORT = Number(process.env.E2E_NATIVE_PORT || 4455);
 const ROOT = "/tmp/tine-multigraph-e2e";
 const A = `${ROOT}/alpha`;
 const B = `${ROOT}/beta`;
@@ -46,8 +48,8 @@ const env = {
 const tdLog = fs.openSync(`${ROOT}/tauri-driver.log`, "w");
 const td = spawn(
   TD,
-  ["--port", "4454", "--native-port", "4455", "--native-driver", WD],
-  { env, stdio: ["ignore", tdLog, tdLog] }
+  ["--port", String(DRIVER_PORT), "--native-port", String(NATIVE_PORT), "--native-driver", WD],
+  { env, stdio: ["ignore", tdLog, tdLog], detached: true }
 );
 await sleep(2500);
 
@@ -56,7 +58,7 @@ const forwarded = [];
 try {
   browser = await remote({
     hostname: "127.0.0.1",
-    port: 4454,
+    port: DRIVER_PORT,
     path: "/",
     capabilities: {
       browserName: "wry",
@@ -175,6 +177,6 @@ try {
 } finally {
   try { await browser?.deleteSession(); } catch {}
   for (const child of forwarded) child.kill("SIGKILL");
-  td.kill("SIGKILL");
+  try { process.kill(-td.pid, "SIGKILL"); } catch {}
   fs.closeSync(tdLog);
 }

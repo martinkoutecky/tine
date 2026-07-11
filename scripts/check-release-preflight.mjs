@@ -67,8 +67,13 @@ if (process.env.GITHUB_REF?.startsWith("refs/tags/")) {
 }
 
 if (process.env.REQUIRE_RELEASE_READINESS === "1") {
-  for (const script of ["check-ui-regression-catalog.mjs", "check-release-readiness.mjs"]) {
-    const result = spawnSync(process.execPath, [path.join(root, "scripts", script)], { encoding: "utf8" });
+  for (const [script, args = []] of [
+    ["check-ui-regression-catalog.mjs"],
+    ["check-release-readiness.mjs"],
+    ["check-reddit-blog.mjs"],
+    ["build-guide-demo.mjs", ["--check"]],
+  ]) {
+    const result = spawnSync(process.execPath, [path.join(root, "scripts", script), ...args], { encoding: "utf8" });
     if (result.status !== 0) problems.push(`${script} failed:\n${result.stderr || result.stdout}`);
   }
 }
