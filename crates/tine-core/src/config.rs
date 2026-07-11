@@ -223,11 +223,17 @@ impl Config {
 /// commit atomic.
 static CONFIG_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+fn config_path_for_write(graph: &Graph) -> io::Result<std::path::PathBuf> {
+    let path = graph.root.join("logseq").join("config.edn");
+    graph.ensure_write_target(&path)?;
+    Ok(path)
+}
+
 impl Graph {
     /// Persist the favorites list to `:favorites [...]`, replacing the existing
     /// vector or inserting one, preserving the rest of the file.
     pub fn set_favorites(&self, names: &[String]) -> io::Result<()> {
-        let path = self.root.join("logseq").join("config.edn");
+        let path = config_path_for_write(self)?;
         crate::model::atomic_update(&path, &CONFIG_LOCK, |content| {
             let mut content = content.to_string();
             let vec_str = format!(
@@ -266,7 +272,7 @@ impl Graph {
     pub fn set_preferred_workflow(&self, wf: &str) -> io::Result<()> {
         let kw = if wf == "todo" { ":todo" } else { ":now" };
         let key = ":preferred-workflow";
-        let path = self.root.join("logseq").join("config.edn");
+        let path = config_path_for_write(self)?;
         crate::model::atomic_update(&path, &CONFIG_LOCK, |content| {
             let mut content = content.to_string();
 
@@ -296,7 +302,7 @@ impl Graph {
     pub fn set_timetracking_enabled(&self, enabled: bool) -> io::Result<()> {
         let key = ":feature/enable-timetracking?";
         let val = if enabled { "true" } else { "false" };
-        let path = self.root.join("logseq").join("config.edn");
+        let path = config_path_for_write(self)?;
         crate::model::atomic_update(&path, &CONFIG_LOCK, |content| {
             let mut content = content.to_string();
 
@@ -321,7 +327,7 @@ impl Graph {
     pub fn set_guide_announced(&self, announced: bool) -> io::Result<()> {
         let key = ":tine/guide-announced?";
         let val = if announced { "true" } else { "false" };
-        let path = self.root.join("logseq").join("config.edn");
+        let path = config_path_for_write(self)?;
         crate::model::atomic_update(&path, &CONFIG_LOCK, |content| {
             let mut content = content.to_string();
 
@@ -352,7 +358,7 @@ impl Graph {
             crate::model::Format::Md => "\"Markdown\"",
         };
         let key = ":preferred-format";
-        let path = self.root.join("logseq").join("config.edn");
+        let path = config_path_for_write(self)?;
         crate::model::atomic_update(&path, &CONFIG_LOCK, |content| {
             let mut content = content.to_string();
 
@@ -386,7 +392,7 @@ impl Graph {
         let escaped = fmt.replace('\\', "\\\\").replace('"', "\\\"");
         let val = format!("\"{escaped}\"");
         let key = ":journal/page-title-format";
-        let path = self.root.join("logseq").join("config.edn");
+        let path = config_path_for_write(self)?;
         crate::model::atomic_update(&path, &CONFIG_LOCK, |content| {
             let mut content = content.to_string();
 
@@ -412,7 +418,7 @@ impl Graph {
     /// Other keys in `:default-templates`, the rest of the file, and comments are
     /// preserved.
     pub fn set_default_journal_template(&self, name: Option<&str>) -> io::Result<()> {
-        let path = self.root.join("logseq").join("config.edn");
+        let path = config_path_for_write(self)?;
         crate::model::atomic_update(&path, &CONFIG_LOCK, |content| {
             let mut content = content.to_string();
 
@@ -492,7 +498,7 @@ impl Graph {
     pub fn set_start_of_week(&self, n: u32) -> io::Result<()> {
         let n = n.min(6);
         let key = ":start-of-week";
-        let path = self.root.join("logseq").join("config.edn");
+        let path = config_path_for_write(self)?;
         crate::model::atomic_update(&path, &CONFIG_LOCK, |content| {
             let mut content = content.to_string();
 

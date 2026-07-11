@@ -516,7 +516,7 @@ fn validate_managed_dir(root: &Path, raw: &str, label: &str) -> io::Result<()> {
         ));
     }
     let candidate = root.join(rel);
-    if !path_stays_within_root(root, &candidate) {
+    if !path_stays_within_root(root, &candidate) || path_uses_managed_alias(root, &candidate) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             format!("{label} directory escapes graph root: {raw:?}"),
@@ -532,7 +532,7 @@ fn validate_managed_dir(root: &Path, raw: &str, label: &str) -> io::Result<()> {
 fn path_stays_within_root(root: &Path, target: &Path) -> bool {
     let canonical_root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let mut existing = target;
-    while !existing.exists() {
+    while fs::symlink_metadata(existing).is_err() {
         let Some(parent) = existing.parent() else {
             return false;
         };
@@ -541,6 +541,28 @@ fn path_stays_within_root(root: &Path, target: &Path) -> bool {
     fs::canonicalize(existing)
         .map(|p| p.starts_with(&canonical_root))
         .unwrap_or(false)
+}
+
+/// Managed graph directories must retain their own identity, not merely land
+/// somewhere under the graph after canonicalization. An in-graph symlink such as
+/// `publish -> assets` passes a plain containment check but redirects generated
+/// output onto user assets. Compare the deepest existing ancestor with its
+/// expected canonical lexical location to reject any such alias.
+fn path_uses_managed_alias(root: &Path, target: &Path) -> bool {
+    let canonical_root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let mut existing = target;
+    while fs::symlink_metadata(existing).is_err() {
+        let Some(parent) = existing.parent() else {
+            return true;
+        };
+        existing = parent;
+    }
+    let Ok(relative) = existing.strip_prefix(root) else {
+        return true;
+    };
+    fs::canonicalize(existing)
+        .map(|actual| actual != canonical_root.join(relative))
+        .unwrap_or(true)
 }
 
 #[cfg(test)]
@@ -618,7 +640,23 @@ impl Graph {
         let graph = Self::open(root);
         validate_managed_dir(&graph.root, &graph.config.journals_dir, "journals")?;
         validate_managed_dir(&graph.root, &graph.config.pages_dir, "pages")?;
+        validate_managed_dir(&graph.root, "assets", "assets")?;
+        validate_managed_dir(&graph.root, "logseq", "logseq")?;
+        validate_managed_dir(&graph.root, "publish", "publish")?;
         Ok(graph)
+    }
+
+    pub(crate) fn ensure_write_target(&self, target: &Path) -> io::Result<()> {
+        if path_stays_within_root(&self.root, target)
+            && !path_uses_managed_alias(&self.root, target)
+        {
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("write target escapes graph root: {}", target.display()),
+            ))
+        }
     }
 
     /// Open a graph directory, reading `logseq/config.edn` if present.
@@ -999,7 +1037,7 @@ impl Graph {
         for e in rd.flatten() {
             let p = e.path();
             if let Some(target) = self.journal_filename_migration_target(&p) {
-                if fs::rename(&p, &target).is_ok() {
+                if move_file_noreplace(&p, &target).is_ok() {
                     n += 1;
                 }
             }
@@ -1268,12 +1306,20 @@ impl Graph {
         // Stage-before-commit (L5): move the conflict copy out first, then write the
         // merged winner; roll the move back if the write fails.
         let trash = typed_trash_dir(&self.root, TrashEntryKind::Conflict);
+        self.ensure_write_target(&trash)?;
         fs::create_dir_all(&trash)?;
         let conf_name = conf.file_name().and_then(|s| s.to_str()).unwrap_or("file");
         let staged = trash.join(format!("{}__{conf_name}", trash_stamp()));
-        fs::rename(&conf, &staged)?;
-        if let Err(e) = self.write_page(&dto, &win, Some(&win_content), false, win_cacheable) {
-            let _ = fs::rename(&staged, &conf); // rollback: restore the conflict copy
+        move_file_noreplace(&conf, &staged)?;
+        if fs::read_to_string(&staged)? != conf_content {
+            let _ = move_file_noreplace(&staged, &conf);
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "conflict copy changed during merge",
+            ));
+        }
+        if let Err(e) = self.write_page(&dto, &win, Some(&win_content), true, win_cacheable) {
+            let _ = move_file_noreplace(&staged, &conf); // rollback: restore the conflict copy
             return Err(e);
         }
         Ok(())
@@ -1295,6 +1341,7 @@ impl Graph {
             ));
         }
         let trash = typed_trash_dir(&self.root, TrashEntryKind::Conflict);
+        self.ensure_write_target(&trash)?;
         let name = conf.file_name().and_then(|s| s.to_str()).unwrap_or("file");
         let dest = trash.join(format!("{}__{name}", trash_stamp()));
         move_to_trash(&conf, &dest, &trash)
@@ -1331,6 +1378,7 @@ impl Graph {
             ));
         }
         let trash = typed_trash_dir(&self.root, TrashEntryKind::Journal);
+        self.ensure_write_target(&trash)?;
         let dest = trash.join(format!("{}__{name}", trash_stamp()));
         move_to_trash(&src, &dest, &trash)?;
         Ok(())
@@ -1443,14 +1491,23 @@ impl Graph {
                 _ => TrashEntryKind::Page,
             },
         );
+        self.ensure_write_target(&trash)?;
         fs::create_dir_all(&trash)?;
         let src_name = src.file_name().and_then(|s| s.to_str()).unwrap_or("file");
         let staged = trash.join(format!("{}__{src_name}", trash_stamp()));
-        fs::rename(&src, &staged)?;
-        // recheck = false: we read dst_content under the lock and pass it as the
-        // baseline, so there's no external-writer window to guard here.
-        if let Err(e) = self.write_page(&dto, &dst, Some(&dst_content), false, dst_cacheable) {
-            let _ = fs::rename(&staged, &src); // rollback: restore the source file
+        move_file_noreplace(&src, &staged)?;
+        if fs::read_to_string(&staged)? != src_content {
+            let _ = move_file_noreplace(&staged, &src);
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "source changed during merge",
+            ));
+        }
+        // The page lock excludes other Tine writers, but not Logseq/Syncthing.
+        // Recheck the baseline at commit so an external edit arriving after our
+        // read is not silently overwritten.
+        if let Err(e) = self.write_page(&dto, &dst, Some(&dst_content), true, dst_cacheable) {
+            let _ = move_file_noreplace(&staged, &src); // rollback: restore the source file
             return Err(e);
         }
         Ok(())
@@ -1484,7 +1541,7 @@ impl Graph {
             ));
         }
         fs::create_dir_all(&dir)?;
-        fs::rename(&src, dir.join(format!("{enc}.{ext}")))?;
+        move_file_noreplace(&src, &dir.join(format!("{enc}.{ext}")))?;
         // The page SET changed — drop the list memo so the new page (and the stray's
         // disappearance from journals/) show up immediately; the parsed-doc cache
         // folds the new file in on its next load / the watcher's create event.
@@ -1559,7 +1616,23 @@ impl Graph {
             return Ok(false);
         }
         fs::create_dir_all(self.pages_path())?;
-        atomic_write(&path, content.as_bytes())?;
+        match atomic_write_new(&path, content.as_bytes()) {
+            Ok(()) => {}
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => return Ok(false),
+            Err(e) => return Err(e),
+        }
+        let alt = self.pages_path().join(format!(
+            "{}.org",
+            encode_page_name(name, self.config.file_name_format)
+        ));
+        if alt.exists() {
+            // An Org twin appeared during publication. Withdraw only the exact
+            // guide bytes we just created; never touch either external file.
+            if fs::read(&path).is_ok_and(|disk| disk == content.as_bytes()) {
+                let _ = fs::remove_file(&path);
+            }
+            return Ok(false);
+        }
         *self.page_list_cache.write().unwrap() = None;
         self.cache_gen
             .fetch_add(1, std::sync::atomic::Ordering::Release);
@@ -2522,6 +2595,10 @@ impl Graph {
         // `work` -> `work1` turns `work/log` into `work1/log`, not `work1/work1log`.
         let mut rename_pairs: Vec<(String, String)> = Vec::new();
         let mut moves: Vec<(PathBuf, PathBuf)> = Vec::new();
+        let mut move_destinations: std::collections::HashSet<PathBuf> =
+            std::collections::HashSet::new();
+        let mut move_identities: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
         let mut primary_is_file = false;
         for entry in &entries {
             if entry.kind != PageKind::Page {
@@ -2540,15 +2617,50 @@ impl Graph {
                 format!("{new}{suffix}")
             };
             // Keep the page's own format on rename (an .org page stays .org).
-            let new_path = self.pages_path().join(format!(
-                "{}.{}",
-                encode_page_name(&new_name, self.config.file_name_format),
-                Format::from_path(&entry.path).ext()
-            ));
+            let encoded_new = encode_page_name(&new_name, self.config.file_name_format);
+            let entry_format = Format::from_path(&entry.path);
+            let new_path = self
+                .pages_path()
+                .join(format!("{encoded_new}.{}", entry_format.ext()));
+            let other_ext = if entry_format == Format::Org { "md" } else { "org" };
+            let other_format_target = self.pages_path().join(format!("{encoded_new}.{other_ext}"));
+            if entries.iter().any(|other| {
+                other.kind == PageKind::Page
+                    && other.path != entry.path
+                    && crate::refs::same_page(&other.name, &new_name)
+            }) {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    "target page identity already exists elsewhere in the graph",
+                ));
+            }
             if new_path != entry.path && new_path.exists() {
                 return Err(io::Error::new(
                     io::ErrorKind::AlreadyExists,
                     "target page exists",
+                ));
+            }
+            if other_format_target != entry.path && other_format_target.exists() {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    "target page exists in the other format",
+                ));
+            }
+            // Recursive graph directories can contain two distinct files with
+            // the same basename/page identity. Both would map to the same flat
+            // rename destination; allowing the transaction to continue would let
+            // the later atomic rename overwrite the earlier page and remove both
+            // sources. Refuse the ambiguous rename before collecting any edits.
+            if !move_destinations.insert(new_path.clone()) {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    "multiple pages map to the same rename target",
+                ));
+            }
+            if !move_identities.insert(crate::refs::normalize(&new_name)) {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    "multiple pages map to the same logical rename target",
                 ));
             }
             if is_primary {
@@ -2656,33 +2768,55 @@ impl Graph {
                     "target page exists",
                 ));
             }
-            if content_rev(&fs::read_to_string(&e.src).unwrap_or_default()) != e.base_rev {
+            // A hard read failure is not the same thing as an empty file. Treating
+            // it as empty could let an actually-empty baseline pass verification,
+            // after which the transaction would overwrite a file we could no
+            // longer inspect.
+            if content_rev(&fs::read_to_string(&e.src)?) != e.base_rev {
                 return Err(io::Error::new(io::ErrorKind::AlreadyExists, "conflict"));
             }
         }
 
-        // Phase 3 — commit, tracking writes for rollback. For a move, write the new
-        // file BEFORE removing the old one, so a crash mid-rename duplicates a page
-        // rather than losing it.
-        // Track the currently-executing move as soon as its destination exists.
-        // `source_removed` distinguishes a failure while unlinking the source
-        // from a later failure, so rollback also repairs the edit that failed.
-        let mut written: Vec<(&Edit, bool)> = Vec::new();
+        // Phase 3 — commit, tracking writes for rollback. Move sources are
+        // atomically staged into recoverable trash rather than unlinked, so an
+        // external replacement at the syscall boundary is preserved as an inode.
+        let mut written: Vec<(&Edit, Option<PathBuf>)> = Vec::new();
         let result: io::Result<()> = (|| {
             for e in &edits {
+                // Phase 2 can be far in the past for a large graph. Recheck this
+                // exact file immediately before its write so an external editor or
+                // sync pull that landed while earlier edits committed is preserved.
+                if content_rev(&fs::read_to_string(&e.src)?) != e.base_rev {
+                    return Err(io::Error::new(io::ErrorKind::AlreadyExists, "conflict"));
+                }
                 self.note_self_write(&e.dst, content_rev(&e.new_content));
                 if e.is_move && e.dst != e.src {
                     if let Some(parent) = e.dst.parent() {
                         fs::create_dir_all(parent)?;
                     }
                 }
-                atomic_write(&e.dst, e.new_content.as_bytes())?;
-                written.push((e, false));
+                if e.is_move && e.dst != e.src {
+                    atomic_write_new(&e.dst, e.new_content.as_bytes())?;
+                } else {
+                    atomic_write(&e.dst, e.new_content.as_bytes())?;
+                }
+                written.push((e, None));
                 if e.is_move && e.dst != e.src {
                     rename_source_remove_failpoint()?;
-                    fs::remove_file(&e.src)?;
+                    let trash = typed_trash_dir(&self.root, TrashEntryKind::Page);
+                    self.ensure_write_target(&trash)?;
+                    fs::create_dir_all(&trash)?;
+                    let src_name = e.src.file_name().and_then(|s| s.to_str()).unwrap_or("page");
+                    let staged = trash.join(format!("{}__rename__{src_name}", trash_stamp()));
+                    move_file_noreplace(&e.src, &staged)?;
+                    written.last_mut().unwrap().1 = Some(staged.clone());
+                    // If a sync replacement won just before the atomic move, the
+                    // staged bytes no longer match our baseline. Abort and restore
+                    // that exact inode instead of completing from stale content.
+                    if content_rev(&fs::read_to_string(&staged)?) != e.base_rev {
+                        return Err(io::Error::new(io::ErrorKind::AlreadyExists, "conflict"));
+                    }
                 }
-                written.last_mut().unwrap().1 = true;
             }
             Ok(())
         })();
@@ -2690,17 +2824,33 @@ impl Graph {
             // Roll back in reverse, and drop the self-write markers for bytes that
             // won't survive the rollback so they can't later suppress a real
             // external change (M1).
-            for (e, source_removed) in written.iter().rev() {
+            for (e, staged_source) in written.iter().rev() {
                 if e.is_move && e.dst != e.src {
-                    let _ = fs::remove_file(&e.dst);
-                    self.recent_writes.lock().unwrap().remove(&e.dst);
-                    if *source_removed {
-                        self.note_self_write(&e.src, content_rev(&e.orig));
-                        let _ = atomic_write(&e.src, e.orig.as_bytes());
+                    let source_restored = match staged_source {
+                        Some(staged) => {
+                            move_file_noreplace(staged, &e.src).is_ok() || e.src.exists()
+                        }
+                        None => e.src.exists(),
+                    };
+                    if source_restored {
+                        let ours = content_rev(&e.new_content);
+                        if fs::read_to_string(&e.dst)
+                            .is_ok_and(|disk| content_rev(&disk) == ours)
+                        {
+                            let _ = fs::remove_file(&e.dst);
+                        }
                     }
+                    self.recent_writes.lock().unwrap().remove(&e.dst);
                 } else {
-                    self.note_self_write(&e.dst, content_rev(&e.orig));
-                    let _ = atomic_write(&e.dst, e.orig.as_bytes());
+                    let ours = content_rev(&e.new_content);
+                    if fs::read_to_string(&e.dst)
+                        .is_ok_and(|disk| content_rev(&disk) == ours)
+                    {
+                        self.note_self_write(&e.dst, content_rev(&e.orig));
+                        let _ = atomic_write(&e.dst, e.orig.as_bytes());
+                    } else {
+                        self.recent_writes.lock().unwrap().remove(&e.dst);
+                    }
                 }
             }
             self.invalidate_cache();
@@ -2721,7 +2871,18 @@ impl Graph {
         if self.has_twin(name, kind) {
             return Err(twin_error(name));
         }
-        if let Some(entry) = self.find_entry(name, kind) {
+        let matching: Vec<_> = self
+            .list_pages()
+            .into_iter()
+            .filter(|entry| entry.kind == kind && crate::refs::same_page(&entry.name, name))
+            .collect();
+        if matching.len() > 1 {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "multiple files share this page identity; delete by name is ambiguous",
+            ));
+        }
+        if let Some(entry) = matching.into_iter().next() {
             let trash = typed_trash_dir(
                 &self.root,
                 match entry.kind {
@@ -2729,6 +2890,7 @@ impl Graph {
                     PageKind::Page => TrashEntryKind::Page,
                 },
             );
+            self.ensure_write_target(&trash)?;
             let fname = entry
                 .path
                 .file_name()
@@ -2858,6 +3020,8 @@ impl Graph {
             return Err(io::Error::new(io::ErrorKind::NotFound, "no such asset"));
         }
         let trash = typed_trash_dir(&self.root, TrashEntryKind::Asset);
+        self.ensure_write_target(&src)?;
+        self.ensure_write_target(&trash)?;
         let dest = trash.join(format!("{}__{name}", trash_stamp()));
         move_to_trash(&src, &dest, &trash)?;
         Ok(())
@@ -2875,6 +3039,7 @@ impl Graph {
     /// entries stay recoverable in `logseq/.tine-trash`.
     pub fn empty_asset_trash(&self) -> io::Result<u64> {
         let trash = trash_root(&self.root);
+        self.ensure_write_target(&trash)?;
         let mut removed = 0;
         match fs::read_dir(&trash) {
             Ok(rd) => {
@@ -2947,21 +3112,23 @@ impl Graph {
     /// stored filename (de-duplicated if it already exists).
     pub fn save_asset(&self, name: &str, bytes: &[u8]) -> io::Result<String> {
         let assets = self.assets_path();
+        self.ensure_write_target(&assets)?;
         fs::create_dir_all(&assets)?;
-        // Reserve the (deduped) name with an empty placeholder so a concurrent
-        // writer can't claim it, then write the real bytes ATOMICALLY (temp +
-        // fsync + rename) over that placeholder. A crash mid-write can therefore
-        // never expose partial/corrupt bytes as the final asset — the path the
-        // frontend already linked holds either the empty reservation or the
-        // complete file, never a torn one (DS Codex#6).
-        let (final_name, file) = reserve_asset(&assets, name)?;
-        drop(file); // release the placeholder handle; atomic_write renames over it
-        let final_path = assets.join(&final_name);
-        if let Err(e) = atomic_write(&final_path, bytes) {
-            let _ = fs::remove_file(&final_path); // don't leave an empty orphan
-            return Err(e);
+        top_level_asset_name(name)?;
+        let (stem, ext) = split_asset_stem_ext(name);
+        for i in 0usize.. {
+            let final_name = if i == 0 {
+                name.to_string()
+            } else {
+                format!("{stem}_{i}{ext}")
+            };
+            match atomic_write_new(&assets.join(&final_name), bytes) {
+                Ok(()) => return Ok(final_name),
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(e) => return Err(e),
+            }
         }
-        Ok(final_name)
+        unreachable!()
     }
 
     /// Copy a file into `assets/`, returning the stored filename. De-duplicates
@@ -2978,19 +3145,23 @@ impl Graph {
                 .to_string(),
         };
         let assets = self.assets_path();
+        self.ensure_write_target(&assets)?;
         fs::create_dir_all(&assets)?;
-        // Reserve the name (empty placeholder so no concurrent writer can claim
-        // it), then copy the source over it ATOMICALLY (temp + fsync + rename) so
-        // an interrupted import never leaves a partial final-name file referencing
-        // half a PDF/image (DS Codex#6). The placeholder is cleaned up on failure.
-        let (final_name, file) = reserve_asset(&assets, &name)?;
-        drop(file);
-        let final_path = assets.join(&final_name);
-        if let Err(e) = atomic_copy(src, &final_path) {
-            let _ = fs::remove_file(&final_path); // don't leave an empty orphan
-            return Err(e);
+        top_level_asset_name(&name)?;
+        let (stem, ext) = split_asset_stem_ext(&name);
+        for i in 0usize.. {
+            let final_name = if i == 0 {
+                name.clone()
+            } else {
+                format!("{stem}_{i}{ext}")
+            };
+            match atomic_copy_new(src, &assets.join(&final_name)) {
+                Ok(()) => return Ok(final_name),
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(e) => return Err(e),
+            }
         }
-        Ok(final_name)
+        unreachable!()
     }
 
     /// Write a cropped area-highlight image to OG's file-graph layout:
@@ -3011,13 +3182,16 @@ impl Graph {
     ) -> io::Result<String> {
         let key = crate::pdf::asset_key(pdf_filename);
         let dir = self.assets_path().join(&key);
+        self.ensure_write_target(&dir)?;
         fs::create_dir_all(&dir)?;
         let name = format!("{page}_{id}_{stamp}.png");
         // The highlight `id` round-trips through the graph `.edn`, so a synced/hand-edited
         // file can control it — reject any path separator so it can't escape the assets
         // dir and write a `.png` anywhere (audit M3, path traversal).
         top_level_asset_name(&name)?;
-        atomic_write(&dir.join(&name), bytes)?;
+        let target = dir.join(&name);
+        self.ensure_write_target(&target)?;
+        atomic_write(&target, bytes)?;
         Ok(format!("{key}/{name}"))
     }
 
@@ -3089,49 +3263,95 @@ impl Graph {
         let page_path = self
             .pages_path()
             .join(format!("{}.md", crate::pdf::hls_page_name(&key)));
+        self.ensure_write_target(&page_path)?;
         let lock = self.page_lock(&page_path);
         let _guard = lock.lock().unwrap();
         fs::create_dir_all(self.assets_path())?;
         let edn_path = self.assets_path().join(format!("{key}.edn"));
+        self.ensure_write_target(&edn_path)?;
         // 3-way merge against the on-disk set: keep our current highlights, plus
         // any disk highlight that is an EXTERNAL addition (id not in our baseline
         // and not already present). A highlight we deliberately deleted (in the
         // baseline, absent from current) is NOT resurrected. Prefer the new-key
         // file; fall back to the legacy-key file (migrating it forward).
-        let have: std::collections::HashSet<&str> =
-            highlights.iter().map(|h| h.id.as_str()).collect();
         let base: std::collections::HashSet<&str> = base_ids.iter().map(|s| s.as_str()).collect();
-        let mut merged: Vec<crate::pdf::Highlight> = highlights.to_vec();
-        // `edn_baseline` = the new-key file's OWN prior bytes (None = it didn't exist),
-        // kept as the rollback point. `existing_edn` (baseline, else legacy) is both the
-        // 3-way merge source AND the foreign-data the writer must preserve.
-        let edn_baseline = fs::read_to_string(&edn_path).ok();
-        let existing_edn = edn_baseline
-            .clone()
-            .or_else(|| legacy_edn.as_ref().and_then(|p| fs::read_to_string(p).ok()));
-        if let Some(s) = &existing_edn {
-            for h in crate::pdf::parse_highlights(s) {
-                if !have.contains(h.id.as_str()) && !base.contains(h.id.as_str()) {
-                    merged.push(h);
+        // Read every artifact that will participate before committing either one.
+        // If the notes page (or its legacy source) is unreadable, abort while the
+        // sidecar is still untouched rather than leaving a half-updated pair.
+        let page_baseline = read_optional_text(&page_path)?;
+        let legacy_page_baseline = if page_baseline.is_none() {
+            match &legacy_page {
+                Some(path) => read_optional_text(path)?,
+                None => None,
+            }
+        } else {
+            None
+        };
+        let existing_raw = page_baseline.clone().or_else(|| legacy_page_baseline.clone());
+        // Merge and publish the sidecar with the same external-writer guard as
+        // config updates. If Logseq/Syncthing changes either the primary or the
+        // legacy fallback after our read, retry against those new bytes instead
+        // of replacing them with a stale full-file serialization.
+        let mut committed_merged = None;
+        let mut committed_legacy_edn_baseline = None;
+        for _attempt in 0..4 {
+            let primary_baseline = read_optional_text(&edn_path)?;
+            let legacy_baseline = if primary_baseline.is_none() {
+                match &legacy_edn {
+                    Some(path) => read_optional_text(path)?,
+                    None => None,
+                }
+            } else {
+                None
+            };
+            let existing_edn = primary_baseline.as_ref().or(legacy_baseline.as_ref());
+            if let Some(raw) = existing_edn {
+                validate_highlight_edn(raw)?;
+            }
+            let have: std::collections::HashSet<&str> =
+                highlights.iter().map(|h| h.id.as_str()).collect();
+            let mut merged = highlights.to_vec();
+            if let Some(raw) = existing_edn {
+                for h in crate::pdf::parse_highlights(raw) {
+                    if !have.contains(h.id.as_str()) && !base.contains(h.id.as_str()) {
+                        merged.push(h);
+                    }
                 }
             }
+            let next = crate::pdf::write_highlights(&merged, existing_edn.map_or("", String::as_str));
+            let primary_now = read_optional_text(&edn_path)?;
+            let legacy_now = if primary_now.is_none() && primary_baseline.is_none() {
+                match &legacy_edn {
+                    Some(path) => read_optional_text(path)?,
+                    None => None,
+                }
+            } else {
+                None
+            };
+            if primary_now != primary_baseline
+                || (primary_baseline.is_none() && legacy_now != legacy_baseline)
+            {
+                continue;
+            }
+            atomic_write(&edn_path, next.as_bytes())?;
+            committed_merged = Some(merged);
+            committed_legacy_edn_baseline = legacy_baseline;
+            break;
         }
-        let edn = crate::pdf::write_highlights(&merged, existing_edn.as_deref().unwrap_or(""));
-        atomic_write(&edn_path, edn.as_bytes())?;
+        let merged = committed_merged.ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "highlight sidecar changed repeatedly during update",
+            )
+        })?;
 
         // Upsert into the existing hls page, preserving note children by id.
         // (`page_path` + its lock were taken at the top of this fn.) Prefer the
         // new-key page; fall back to the legacy-key page so its user notes are
         // carried over during migration.
-        // Read the hls page's OWN bytes (its write baseline) separately from the
-        // legacy-key fallback (used only as a migration merge source). The A3-style
-        // recheck below compares the page against THIS baseline.
-        let page_baseline = fs::read_to_string(&page_path).ok();
-        let existing_raw = page_baseline.clone().or_else(|| {
-            legacy_page
-                .as_ref()
-                .and_then(|p| fs::read_to_string(p).ok())
-        });
+        // The hls page's OWN bytes are its write baseline; the legacy fallback is
+        // used only as a migration merge source. The A3-style recheck below
+        // compares the page against this baseline.
         let existing = existing_raw.as_deref().map(doc::parse);
         let page_doc = crate::pdf::merge_hls_page(existing.as_ref(), pdf_filename, label, &merged);
         // Preserve the notes page's CRLF (shared with write_page), then go through
@@ -3146,20 +3366,7 @@ impl Graph {
         let page_rev = match self.commit_write(&page_path, &page_md, page_baseline.as_deref(), true)
         {
             Ok(rev) => rev,
-            Err(e) => {
-                // The .edn sidecar was already written; the page commit failed (conflict
-                // / IO). Roll the sidecar back to its prior bytes so the two artifacts
-                // can't diverge (audit C#3) — a retry then re-merges cleanly.
-                match &edn_baseline {
-                    Some(orig) => {
-                        let _ = atomic_write(&edn_path, orig.as_bytes());
-                    }
-                    None => {
-                        let _ = fs::remove_file(&edn_path);
-                    }
-                }
-                return Err(e);
-            }
+            Err(e) => return Err(e),
         };
         // The hls page is a real page; reflect it in the search cache.
         let name = crate::pdf::hls_page_name(&key);
@@ -3174,18 +3381,42 @@ impl Graph {
         // Drop the self-write marker now the write is published + cached (see
         // write_page / drop_self_write_marker).
         self.drop_self_write_marker(&page_path, &page_rev);
-        // Migrate-on-write: the new-key artifacts now durably carry everything
-        // from the legacy-key files (highlights above, user notes via
-        // `merge_hls_page`), so remove the stale legacy files to avoid leaving a
-        // duplicate hls page. Best-effort — a failure just leaves a harmless
-        // orphan, never lost data.
-        if let Some(p) = &legacy_edn {
-            let _ = fs::remove_file(p);
+        // Migrate-on-write cleanup is compare-and-recover: only retire a legacy
+        // artifact if it still equals the exact bytes we merged. A concurrent
+        // legacy update stays at its original path. Unchanged files are moved to
+        // recoverable trash rather than hard-deleted.
+        let trash = typed_trash_dir(&self.root, TrashEntryKind::Conflict);
+        self.ensure_write_target(&trash)?;
+        fs::create_dir_all(&trash)?;
+        if let (Some(path), Some(baseline)) = (&legacy_edn, &committed_legacy_edn_baseline) {
+            if read_optional_text(path)?.as_ref() == Some(baseline) {
+                let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("legacy.edn");
+                let dest = trash.join(format!("{}__legacy__{name}", trash_stamp()));
+                if move_file_noreplace(path, &dest).is_ok()
+                    && read_optional_text(&dest)?.as_ref() != Some(baseline)
+                {
+                    let _ = move_file_noreplace(&dest, path);
+                    return Err(io::Error::new(
+                        io::ErrorKind::AlreadyExists,
+                        "legacy highlight sidecar changed during migration cleanup",
+                    ));
+                }
+            }
         }
-        if let Some(p) = &legacy_page {
-            if p.exists() {
-                let _ = fs::remove_file(p);
-                self.cache_remove(&crate::pdf::hls_page_name(&legacy_key), PageKind::Page);
+        if let (Some(path), Some(baseline)) = (&legacy_page, &legacy_page_baseline) {
+            if read_optional_text(path)?.as_ref() == Some(baseline) {
+                let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("legacy.md");
+                let dest = trash.join(format!("{}__legacy__{name}", trash_stamp()));
+                if move_file_noreplace(path, &dest).is_ok() {
+                    if read_optional_text(&dest)?.as_ref() != Some(baseline) {
+                        let _ = move_file_noreplace(&dest, path);
+                        return Err(io::Error::new(
+                            io::ErrorKind::AlreadyExists,
+                            "legacy highlight page changed during migration cleanup",
+                        ));
+                    }
+                    self.cache_remove(&crate::pdf::hls_page_name(&legacy_key), PageKind::Page);
+                }
             }
         }
         Ok(())
@@ -3277,7 +3508,10 @@ impl Graph {
             fs::create_dir_all(parent)?;
         }
         if recheck {
-            let now = fs::read_to_string(path).ok();
+            // Only NotFound means "no baseline file". Permission errors, invalid
+            // UTF-8, and transient I/O failures must abort; collapsing them to
+            // None would authorize an overwrite of unreadable on-disk data.
+            let now = read_optional_text(path)?;
             let still_matches = match (now.as_deref(), baseline) {
                 (Some(n), Some(e)) => n == e,
                 (None, None) => true,
@@ -3538,7 +3772,9 @@ impl Graph {
         let (path, cache) = self.save_target(page)?;
         let lock = self.page_lock(&path);
         let _guard = lock.lock().unwrap();
-        let existing = fs::read_to_string(&path).ok();
+        // "Keep mine" resolves a content conflict, but it must not turn an I/O or
+        // decoding failure into permission to overwrite unknown bytes.
+        let existing = read_optional_text(&path)?;
         // recheck = false: "keep mine" overwrites unconditionally. Same locked path
         // is threaded into write_page (M2) so a forced save can't land on a twin.
         self.write_page(page, &path, existing.as_deref(), false, cache)
@@ -3730,6 +3966,31 @@ fn preserve_crlf(content: String, existing: Option<&str>) -> String {
     }
 }
 
+/// Read an optional UTF-8 text file without conflating "missing" with "could not
+/// safely read". Mutation paths use this for their baselines: only NotFound may
+/// become `None`; every other error must stop the write.
+fn read_optional_text(path: &Path) -> io::Result<Option<String>> {
+    match fs::read_to_string(path) {
+        Ok(content) => Ok(Some(content)),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+fn validate_highlight_edn(raw: &str) -> io::Result<()> {
+    if raw.trim().is_empty() {
+        return Ok(());
+    }
+    if matches!(crate::edn::parse_strict(raw), Some(crate::edn::Edn::Map(_))) {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "highlight sidecar is malformed; refusing to replace it",
+        ))
+    }
+}
+
 /// Read + parse one page file into (entry, doc, content_rev), or `None` if the
 /// file is unreadable/gone. Free fn (no `&self`) so `load_all_pages` can run it
 /// across worker threads. The parse helpers it calls are all pure functions of the
@@ -3768,6 +4029,7 @@ fn split_asset_stem_ext(name: &str) -> (String, String) {
     }
 }
 
+#[cfg(test)]
 fn reserve_asset(assets: &Path, name: &str) -> io::Result<(String, fs::File)> {
     top_level_asset_name(name)?;
     let create_new = |n: &str| {
@@ -4445,12 +4707,111 @@ fn move_to_trash(src: &Path, dest: &Path, trash: &Path) -> io::Result<()> {
             format!("could not create trash directory {}: {e}", trash.display()),
         )
     })?;
-    fs::rename(src, dest).map_err(|e| {
+    move_file_noreplace(src, dest).map_err(|e| {
         io::Error::new(
             e.kind(),
             format!("could not move file to trash {}: {e}", trash.display()),
         )
     })
+}
+
+/// Atomically move one file without ever replacing an existing destination.
+/// Platform-native no-replace rename semantics ensure the source name and inode
+/// cannot be swapped between a check and an unlink.
+fn move_file_noreplace(src: &Path, dest: &Path) -> io::Result<()> {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let src = std::ffi::CString::new(src.as_os_str().as_bytes())?;
+        let dest = std::ffi::CString::new(dest.as_os_str().as_bytes())?;
+        // Atomic move + create-if-absent. Whichever inode currently owns `src`
+        // at the syscall boundary is moved intact; an external replacement can
+        // therefore never be unlinked behind our back.
+        let result = unsafe {
+            libc::renameat2(
+                libc::AT_FDCWD,
+                src.as_ptr(),
+                libc::AT_FDCWD,
+                dest.as_ptr(),
+                libc::RENAME_NOREPLACE,
+            )
+        };
+        return (result == 0)
+            .then_some(())
+            .ok_or_else(io::Error::last_os_error);
+    }
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let src = std::ffi::CString::new(src.as_os_str().as_bytes())?;
+        let dest = std::ffi::CString::new(dest.as_os_str().as_bytes())?;
+        let result = unsafe { libc::renamex_np(src.as_ptr(), dest.as_ptr(), libc::RENAME_EXCL) };
+        return (result == 0)
+            .then_some(())
+            .ok_or_else(io::Error::last_os_error);
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        let mut src: Vec<u16> = src.as_os_str().encode_wide().collect();
+        let mut dest: Vec<u16> = dest.as_os_str().encode_wide().collect();
+        src.push(0);
+        dest.push(0);
+        // MoveFileW fails when the destination already exists (unlike Rust's
+        // cross-platform `rename` contract, which permits replacement).
+        let result = unsafe {
+            windows_sys::Win32::Storage::FileSystem::MoveFileW(src.as_ptr(), dest.as_ptr())
+        };
+        return (result != 0)
+            .then_some(())
+            .ok_or_else(io::Error::last_os_error);
+    }
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "windows"
+    )))]
+    {
+        let _ = (src, dest);
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "atomic no-replace move is unavailable on this platform",
+        ))
+    }
+}
+
+/// Atomically publish a newly-created file without clobbering a destination that
+/// appeared after the caller's collision check. The payload is fsynced in a
+/// same-directory temp, then atomically renamed into the final name only if absent.
+fn atomic_write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or("page");
+    let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+    let tmp = dir.join(format!(
+        ".{fname}.{}.{}.new.tmp",
+        std::process::id(),
+        seq
+    ));
+    let res = (|| {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        drop(file);
+        move_file_noreplace(&tmp, path)?;
+        let _ = fs::File::open(dir).and_then(|d| d.sync_all());
+        Ok(())
+    })();
+    if res.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    res
 }
 
 /// Atomic write: write to a temp file in the same directory, then rename. The
@@ -4466,7 +4827,10 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
     let tmp = dir.join(format!(".{fname}.{}.{seq}.tmp", std::process::id()));
     let res = (|| {
-        let mut f = fs::File::create(&tmp)?;
+        let mut f = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)?;
         f.write_all(bytes)?;
         f.sync_all()?;
         drop(f);
@@ -4496,16 +4860,54 @@ pub fn atomic_copy(src: &Path, dst: &Path) -> io::Result<()> {
     let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
     let tmp = dir.join(format!(".{fname}.{}.{seq}.import.tmp", std::process::id()));
     let res = (|| {
-        fs::copy(src, &tmp)?;
-        let f = fs::File::open(&tmp)?;
-        f.sync_all()?;
-        drop(f);
+        let mut input = fs::File::open(src)?;
+        let mut output = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)?;
+        std::io::copy(&mut input, &mut output)?;
+        output.sync_all()?;
+        drop(output);
         fs::rename(&tmp, dst)
     })();
     if res.is_err() {
         let _ = fs::remove_file(&tmp);
     } else {
         let _ = fs::File::open(dir).and_then(|d| d.sync_all());
+    }
+    res
+}
+
+/// Copy into a newly-created destination without replacing a path that appeared
+/// concurrently. Used by restore after the previous live inode has been moved to
+/// recovery: a sync writer that recreates the live name wins and the restore
+/// aborts instead of clobbering it.
+pub fn atomic_copy_new(src: &Path, dst: &Path) -> io::Result<()> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+    let dir = dst.parent().unwrap_or_else(|| Path::new("."));
+    let fname = dst.file_name().and_then(|s| s.to_str()).unwrap_or("file");
+    let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+    let tmp = dir.join(format!(
+        ".{fname}.{}.{}.restore.tmp",
+        std::process::id(),
+        seq
+    ));
+    let res = (|| {
+        let mut input = fs::File::open(src)?;
+        let mut output = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)?;
+        std::io::copy(&mut input, &mut output)?;
+        output.sync_all()?;
+        drop(output);
+        move_file_noreplace(&tmp, dst)?;
+        let _ = fs::File::open(dir).and_then(|d| d.sync_all());
+        Ok(())
+    })();
+    if res.is_err() {
+        let _ = fs::remove_file(&tmp);
     }
     res
 }
@@ -5728,6 +6130,24 @@ mod tests {
     }
 
     #[test]
+    fn force_save_refuses_unreadable_existing_bytes() {
+        let dir = scratch("force-save-invalid-utf8");
+        let path = dir.join("pages").join("A.md");
+        fs::write(&path, "- original\n").unwrap();
+        let g = Graph::open(&dir);
+        let mut dto = g.load_named("A", PageKind::Page).unwrap().unwrap();
+        dto.blocks[0].raw = "replacement".into();
+        let unknown = b"\xff\xfeunknown on-disk bytes";
+        fs::write(&path, unknown).unwrap();
+
+        let err = g.force_save_page(&dto).unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(fs::read(&path).unwrap(), unknown);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn twin_md_org_refuses_writes() {
         // M1: a page that exists as BOTH Foo.md and Foo.org is ambiguous — save,
         // force-save, rename, and delete must all refuse (no clobber of either).
@@ -6112,6 +6532,88 @@ mod tests {
     }
 
     #[test]
+    fn write_highlights_refuses_unreadable_artifacts_without_partial_commit() {
+        let dir = scratch("highlights-invalid-utf8");
+        let g = Graph::open(&dir);
+        let key = crate::pdf::asset_key("paper.pdf");
+        let edn_path = dir.join("assets").join(format!("{key}.edn"));
+        fs::create_dir_all(dir.join("assets")).unwrap();
+        let unknown = b"\xff\xfeunknown sidecar bytes";
+        fs::write(&edn_path, unknown).unwrap();
+        let h = mkhl("11111111-1111-1111-1111-111111111111", 1, Some("text"));
+
+        let err = g
+            .write_highlights("paper.pdf", "Paper", &[h], &[])
+            .unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(fs::read(&edn_path).unwrap(), unknown);
+        assert!(!dir.join("pages").join(format!("hls__{key}.md")).exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_highlights_checks_notes_page_before_sidecar_commit() {
+        let dir = scratch("highlights-invalid-page");
+        let g = Graph::open(&dir);
+        let key = crate::pdf::asset_key("paper.pdf");
+        let page_path = dir.join("pages").join(format!("hls__{key}.md"));
+        let unknown = b"\xff\xfeunknown notes bytes";
+        fs::write(&page_path, unknown).unwrap();
+        let h = mkhl("11111111-1111-1111-1111-111111111111", 1, Some("text"));
+
+        let err = g
+            .write_highlights("paper.pdf", "Paper", &[h], &[])
+            .unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(fs::read(&page_path).unwrap(), unknown);
+        assert!(!dir.join("assets").join(format!("{key}.edn")).exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_highlights_preserves_malformed_utf8_sidecar() {
+        let dir = scratch("highlights-malformed-edn");
+        let g = Graph::open(&dir);
+        let key = crate::pdf::asset_key("paper.pdf");
+        let edn_path = dir.join("assets").join(format!("{key}.edn"));
+        fs::create_dir_all(dir.join("assets")).unwrap();
+        let malformed = "{:highlights [BROKEN :sentinel \"keep me\"";
+        fs::write(&edn_path, malformed).unwrap();
+        let h = mkhl("11111111-1111-1111-1111-111111111111", 1, Some("text"));
+
+        let err = g
+            .write_highlights("paper.pdf", "Paper", &[h], &[])
+            .unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(fs::read_to_string(&edn_path).unwrap(), malformed);
+        assert!(!dir.join("pages").join(format!("hls__{key}.md")).exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_highlights_rejects_valid_map_with_trailing_sync_data() {
+        let dir = scratch("highlights-trailing-edn");
+        let g = Graph::open(&dir);
+        let key = crate::pdf::asset_key("paper.pdf");
+        let edn_path = dir.join("assets").join(format!("{key}.edn"));
+        fs::create_dir_all(dir.join("assets")).unwrap();
+        let malformed = "{:highlights [] :extra {}} TRAILING-SYNC-DATA";
+        fs::write(&edn_path, malformed).unwrap();
+        let h = mkhl("11111111-1111-1111-1111-111111111111", 1, Some("text"));
+
+        let err = g
+            .write_highlights("paper.pdf", "Paper", &[h], &[])
+            .unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(fs::read_to_string(&edn_path).unwrap(), malformed);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn write_highlights_migrates_legacy_key_forward() {
         // Old Tine wrote highlight files under a lowercase+underscore key
         // (`my_paper`); the OG-compatible key for "My Paper.pdf" is "My Paper". A
@@ -6315,6 +6817,29 @@ mod tests {
             .join("7_abc-id_1659920114630.png");
         assert_eq!(fs::read(&p).unwrap(), vec![1, 2, 3, 4]);
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_pdf_area_image_rejects_nested_asset_symlink_escape() {
+        use std::os::unix::fs::symlink;
+        let dir = scratch("areaimg-nested-symlink");
+        let outside = std::env::temp_dir().join(format!(
+            "tine-areaimg-outside-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&outside);
+        fs::create_dir_all(&outside).unwrap();
+        fs::create_dir_all(dir.join("assets")).unwrap();
+        symlink(&outside, dir.join("assets").join("My Paper")).unwrap();
+        let g = Graph::open(&dir);
+
+        assert!(g
+            .write_pdf_area_image("My Paper.pdf", 7, "abc-id", 1659920114630, &[1, 2, 3])
+            .is_err());
+        assert!(!outside.join("7_abc-id_1659920114630.png").exists());
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&outside);
     }
 
     fn jdto(name: &str) -> PageDto {
@@ -6692,6 +7217,42 @@ mod tests {
         let _ = fs::remove_dir_all(&outside);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn checked_open_rejects_managed_output_symlink_escapes() {
+        use std::os::unix::fs::symlink;
+        for managed in ["assets", "logseq", "publish"] {
+            let dir = scratch(&format!("checked-open-{managed}-symlink"));
+            let outside = std::env::temp_dir().join(format!(
+                "tine-checked-open-{managed}-outside-{}",
+                std::process::id()
+            ));
+            let _ = fs::remove_dir_all(&outside);
+            fs::create_dir_all(&outside).unwrap();
+            let managed_path = dir.join(managed);
+            let _ = fs::remove_dir_all(&managed_path);
+            symlink(&outside, &managed_path).unwrap();
+
+            assert!(
+                Graph::open_checked(&dir).is_err(),
+                "accepted escaped {managed} directory"
+            );
+
+            let _ = fs::remove_dir_all(&dir);
+            let _ = fs::remove_dir_all(&outside);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn checked_open_rejects_managed_directories_aliased_inside_graph() {
+        use std::os::unix::fs::symlink;
+        let dir = scratch("checked-open-managed-alias");
+        symlink(dir.join("assets"), dir.join("publish")).unwrap();
+        assert!(Graph::open_checked(&dir).is_err());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn journal_filename_format_cannot_escape_graph_on_save() {
         let dir = scratch("journal-format-escape");
@@ -6916,6 +7477,82 @@ mod tests {
             !dir.join("pages").join("foo.md").exists(),
             "path-pinned saves must not create a flat pages/foo.md twin"
         );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rename_refuses_colliding_nested_page_identities_without_losing_either() {
+        let dir = scratch("nested-collision-rename");
+        fs::create_dir_all(dir.join("pages/client-a")).unwrap();
+        fs::create_dir_all(dir.join("pages/client-b")).unwrap();
+        let a = dir.join("pages/client-a/foo.md");
+        let b = dir.join("pages/client-b/foo.md");
+        fs::write(&a, "- body a\n").unwrap();
+        fs::write(&b, "- body b\n").unwrap();
+        let g = Graph::open(&dir);
+
+        let err = g.rename_page("foo", "bar").unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read_to_string(&a).unwrap(), "- body a\n");
+        assert_eq!(fs::read_to_string(&b).unwrap(), "- body b\n");
+        assert!(!dir.join("pages/bar.md").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn delete_refuses_ambiguous_nested_page_identity() {
+        let dir = scratch("nested-collision-delete");
+        fs::create_dir_all(dir.join("pages/client-a")).unwrap();
+        fs::create_dir_all(dir.join("pages/client-b")).unwrap();
+        let a = dir.join("pages/client-a/foo.md");
+        let b = dir.join("pages/client-b/foo.md");
+        fs::write(&a, "- body a\n").unwrap();
+        fs::write(&b, "- body b\n").unwrap();
+        let g = Graph::open(&dir);
+
+        let err = g.delete_page("foo", PageKind::Page).unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read_to_string(&a).unwrap(), "- body a\n");
+        assert_eq!(fs::read_to_string(&b).unwrap(), "- body b\n");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rename_refuses_target_that_exists_in_other_format() {
+        let dir = scratch("rename-cross-format-target");
+        let old = dir.join("pages/Old.org");
+        let target = dir.join("pages/New.md");
+        fs::write(&old, "* old body\n").unwrap();
+        fs::write(&target, "- existing target\n").unwrap();
+        let g = Graph::open(&dir);
+
+        let err = g.rename_page("Old", "New").unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read_to_string(&old).unwrap(), "* old body\n");
+        assert_eq!(fs::read_to_string(&target).unwrap(), "- existing target\n");
+        assert!(!dir.join("pages/New.org").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rename_refuses_logical_target_in_nested_directory() {
+        let dir = scratch("rename-nested-target");
+        fs::create_dir_all(dir.join("pages/client")).unwrap();
+        let old = dir.join("pages/Old.org");
+        let target = dir.join("pages/client/New.md");
+        fs::write(&old, "* old body\n").unwrap();
+        fs::write(&target, "- nested target\n").unwrap();
+        let g = Graph::open(&dir);
+
+        let err = g.rename_page("Old", "New").unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read_to_string(&old).unwrap(), "* old body\n");
+        assert_eq!(fs::read_to_string(&target).unwrap(), "- nested target\n");
+        assert!(!dir.join("pages/New.org").exists());
         let _ = fs::remove_dir_all(&dir);
     }
 

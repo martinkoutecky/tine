@@ -68,6 +68,21 @@ pub fn parse(input: &str) -> Option<Edn> {
     Some(v)
 }
 
+/// Parse exactly one EDN value, rejecting any non-whitespace/comment suffix.
+/// Mutation baselines use this stricter form so recoverable trailing bytes are
+/// never silently discarded by a parse-and-reserialize cycle.
+pub fn parse_strict(input: &str) -> Option<Edn> {
+    let mut p = Parser {
+        s: input.as_bytes(),
+        i: 0,
+        src: input,
+    };
+    p.skip_ws();
+    let value = p.value()?;
+    p.skip_ws();
+    (p.i == p.s.len()).then_some(value)
+}
+
 struct Parser<'a> {
     s: &'a [u8],
     i: usize,

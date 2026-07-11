@@ -1447,7 +1447,7 @@ export function Editor(props: { id: string }): JSX.Element {
     try {
       // Store with a timestamped name (keeps the original + a sortable insert time).
       const orig = path.split(/[\\/]/).pop() || undefined;
-      const saved = await backend().importAsset(path, assetFileName(orig));
+      const saved = await trackAssetWrite(backend().importAsset(path, assetFileName(orig)));
       const md = assetMarkdown(saved);
       const pos = ref.selectionStart;
       const nr = ref.value.slice(0, pos) + md + ref.value.slice(pos);
@@ -1478,7 +1478,9 @@ export function Editor(props: { id: string }): JSX.Element {
       // colliding `diagram.drawio.svg` would become `diagram.drawio_1.svg` — which
       // no longer ends in `.drawio.svg`, dropping the "Edit in draw.io" affordance
       // (GH #38). A unique stem never collides, so the double extension survives.
-      const saved = await backend().saveAsset(captureAssetFileName(ed.blank.ext), bytes);
+      const saved = await trackAssetWrite(
+        backend().saveAsset(captureAssetFileName(ed.blank.ext), bytes)
+      );
       const md = assetMarkdown(saved);
       const pos = ref.selectionStart;
       const nr = ref.value.slice(0, pos) + md + ref.value.slice(pos);

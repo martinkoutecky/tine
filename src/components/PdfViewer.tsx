@@ -3,7 +3,7 @@ import * as pdfjs from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { backend } from "../backend";
 import { closePdf, pushToast, isConflicted, activePane } from "../ui";
-import { flushPage, isDirty, reloadHlsIfLoaded } from "../store";
+import { flushPage, isDirty, reloadHlsIfLoaded, trackAssetWrite } from "../store";
 import { openPage } from "../router";
 import { hlsPageName } from "../pdf";
 import { decideWheelZoomGesture, type WheelZoomGestureState } from "../zoom";
@@ -141,7 +141,9 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
     }
     const ids = highlights().map((h) => h.id);
     try {
-      await backend().writeHighlights(props.filename, props.label, highlights(), baseIds);
+      await trackAssetWrite(
+        backend().writeHighlights(props.filename, props.label, highlights(), baseIds)
+      );
     } catch (e) {
       pushToast(`Couldn't save highlight — try again. (${String(e)})`, "error");
       return false;
@@ -870,7 +872,9 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
     const stamp = Date.now();
     // Save the cropped PNG FIRST so the file exists before the .edn references it.
     try {
-      await backend().savePdfAreaImage(props.filename, page, id, stamp, bytes);
+      await trackAssetWrite(
+        backend().savePdfAreaImage(props.filename, page, id, stamp, bytes)
+      );
     } catch (e) {
       pushToast(`Couldn't save the area image — try again. (${String(e)})`, "error");
       return;
