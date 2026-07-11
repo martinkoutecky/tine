@@ -14,7 +14,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   releases require Android signing, a successful real offline Flatpak build,
   lockstep version/changelog metadata, cross-platform-stable vendored oracle
   bytes, all 21 expected artifacts, and all 12 updater platform entries before
-  the draft can become public.
+  the draft can become public. All expensive platform builds now run in parallel
+  into immutable workflow artifacts; one short publisher assembles the updater
+  manifest and performs the only GitHub Release mutation.
 
 ## [0.5.6] - 2026-07-11
 

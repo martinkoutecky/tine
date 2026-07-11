@@ -6,10 +6,10 @@
 # …or run it manually from the Actions tab (workflow_dispatch) to smoke-test the
 # build matrix WITHOUT cutting a release.
 #
-# Publication is atomic at the workflow level: create-release makes a DRAFT,
-# every required desktop/Android job uploads into that draft, and a final gate
-# publishes only when all jobs succeeded. A platform compile/package failure must
-# never expose a partial release as current (v0.5.5 did exactly that).
+# Publication is atomic at the workflow level: every expensive build writes only
+# an immutable workflow artifact; one assembler creates latest.json; and one
+# short publisher owns the draft, uploads, remote verification, and publication.
+# A platform failure must never expose a partial release (v0.5.5 did exactly that).
 #
 # Signing: macOS/Windows installers are UNSIGNED until you add the secrets noted
 # below. Unsigned builds still run, but Gatekeeper (macOS) and SmartScreen
@@ -22,10 +22,14 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write # create the release + upload assets
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  # Cheap deterministic guards run before a tagged release can create its draft.
+  # Cheap deterministic guards run before any expensive release build.
   # The same workflow also calls the real offline Flatpak build below; together
   # these prevent dependency-pin drift from surfacing only after a tag is public.
   preflight:
@@ -37,6 +41,14 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
+      - name: Require updater signing key
+        env:
+          SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$SIGNING_KEY" ]; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY is required for release smoke and tagged releases."
+            exit 1
+          fi
       - name: Version, Android code, tag, and changelog agree
         run: node scripts/check-release-preflight.mjs
       - name: Flatpak offline npm sources are current
@@ -47,84 +59,26 @@ jobs:
         run: node scripts/check-wasm-pin.mjs
       - name: lsdoc oracle bytes and cross-platform EOL policy are current
         run: node scripts/check-lsdoc-oracle-sync.mjs
+      - name: Release pipeline contract fixtures
+        run: node scripts/test-release-pipeline.mjs
 
   # Reuse the actual privileged, network-disabled Flatpak bundle build. It runs
   # in parallel with the platform packages but is a hard publication dependency.
   flatpak:
+    needs: preflight
     uses: ./.github/workflows/flatpak.yml
 
-  # 1) Create the (draft) release once, up front, and hand its id to the matrix.
-  #    Only on a tag push — a manual dispatch skips this and just builds (below).
-  create-release:
-    needs: preflight
-    if: startsWith(github.ref, 'refs/tags/')
-    runs-on: ubuntu-22.04
-    outputs:
-      release_id: ${{ steps.create.outputs.result }}
-    steps:
-      # Checkout so the step can read CHANGELOG.md for the release notes.
-      - uses: actions/checkout@v4
-      - name: Create draft release
-        id: create
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const tag = context.ref.replace('refs/tags/', '');
-            const version = tag.replace(/^v/, '');
-            const fallback = 'Download an installer for your platform below. Windows and Linux ship both x64 and ARM64 builds (match your CPU). Windows users who prefer no installer can grab the portable `Tine_*-portable.zip` for their arch — unzip and run the exe (needs the WebView2 runtime, preinstalled on Windows 10/11). macOS/Windows builds are currently unsigned (right-click → Open on macOS; More info → Run anyway on Windows). On macOS, if Tine keeps asking to access your Documents folder on launch, see the [workaround](https://github.com/martinkoutecky/tine/blob/master/README.md#macos-repeated-documents-permission-prompt).';
-            // Pull THIS version's section out of CHANGELOG.md so the GitHub release
-            // notes match the changelog: everything between `## [x.y.z]` and the
-            // next version heading (or the trailing link-reference block).
-            let notes = '';
-            try {
-              const lines = fs.readFileSync('CHANGELOG.md', 'utf8').split('\n');
-              const start = lines.findIndex((l) => l.startsWith(`## [${version}]`));
-              if (start !== -1) {
-                let end = lines.length;
-                for (let i = start + 1; i < lines.length; i++) {
-                  if (lines[i].startsWith('## [') || /^\[[^\]]+\]:\s/.test(lines[i])) { end = i; break; }
-                }
-                notes = lines.slice(start + 1, end).join('\n').trim();
-              }
-            } catch (e) {}
-            const body = notes ? `${notes}\n\n---\n\n${fallback}` : fallback;
-            const { data } = await github.rest.repos.createRelease({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              tag_name: tag,
-              name: `Tine ${tag}`,
-              body,
-              draft: true,
-              prerelease: false,
-            });
-            return data.id;
-
-  # 2) Build each platform and upload its installer to the draft release. On a
-  #    manual dispatch create-release is skipped, releaseId is empty, and
-  #    tauri-action builds without uploading (a pure smoke test).
+  # Build each desktop platform concurrently. Jobs never mutate a GitHub Release;
+  # they upload immutable workflow artifacts for the assembler/publisher below.
   build:
-    needs: [preflight, create-release]
-    if: >-
-      always() &&
-      needs.preflight.result == 'success' &&
-      (needs.create-release.result == 'success' || needs.create-release.result == 'skipped')
+    needs: preflight
     strategy:
       fail-fast: false
-      # Serialize platform legs only for tagged releases. tauri-action's latest.json upload is a
-      # read-modify-write merge (read the release's current latest.json → add this
-      # platform → delete + re-upload). Run in parallel, the legs race: they lose
-      # each other's platform entries AND collide on the re-upload
-      # (ReleaseAsset "already_exists"), which fails a leg and skips publish-release
-      # (v0.4.5 got stuck as a draft this way). One-at-a-time makes each leg merge
-      # into the previous complete manifest. Cost: slower releases; fine for the
-      # cadence, and correctness of the updater manifest matters more. Manual
-      # dispatches do not upload release assets, so all five smoke-test legs can
-      # safely run in parallel.
-      max-parallel: ${{ startsWith(github.ref, 'refs/tags/') && 1 || 5 }}
+      max-parallel: 5
       matrix:
         include:
           - platform: ubuntu-22.04
+            lane: linux-x64
             args: "--features custom-protocol"
             rust-targets: ""
           # Linux ARM64: built NATIVELY on GitHub's aarch64 runner (free on public
@@ -134,13 +88,16 @@ jobs:
           # (will feel WebKitGTK's paint cost). Ships .deb + raw binary (AppImage
           # tooling on ARM is historically flaky, so it's fine if that bundle is skipped).
           - platform: ubuntu-22.04-arm
+            lane: linux-arm64
             args: "--features custom-protocol"
             rust-targets: ""
           - platform: macos-latest
+            lane: macos-universal
             # one universal binary that runs on both Apple Silicon and Intel
             args: "--target universal-apple-darwin --features custom-protocol"
             rust-targets: "aarch64-apple-darwin,x86_64-apple-darwin"
           - platform: windows-latest
+            lane: windows-x64
             args: "--features custom-protocol"
             rust-targets: ""
             win-arch: x64
@@ -152,6 +109,7 @@ jobs:
           # `win-exe-dir` below threads into the portable-zip step. WebView2 exists on
           # Windows ARM64, so the runtime is fine.
           - platform: windows-latest
+            lane: windows-arm64
             args: "--target aarch64-pc-windows-msvc --features custom-protocol"
             rust-targets: "aarch64-pc-windows-msvc"
             win-arch: arm64
@@ -185,9 +143,8 @@ jobs:
 
       - run: npm ci
 
-      - uses: tauri-apps/tauri-action@v0
+      - name: Build signed Tauri bundles
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Updater signing (minisign) — the app-update root of trust, SEPARATE from
           # OS code-signing. REQUIRED once `bundle.createUpdaterArtifacts` is true:
           # the bundler signs each updater artifact with this key, and the installed
@@ -205,15 +162,7 @@ jobs:
           # re-add the matching env lines:
           #   APPLE_CERTIFICATE (base64 .p12), APPLE_CERTIFICATE_PASSWORD,
           #   APPLE_SIGNING_IDENTITY, APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID.
-        with:
-          # Upload into the draft from create-release. Empty on manual dispatch →
-          # tauri-action just builds (no release touched).
-          releaseId: ${{ needs.create-release.outputs.release_id }}
-          args: ${{ matrix.args }}
-          # Tine ships the NSIS installer on Windows → point latest.json at it (not
-          # the MSI). tauri-action auto-generates + uploads latest.json + the .sig
-          # files (uploadUpdaterJson / uploadUpdaterSignatures default true).
-          updaterJsonPreferNsis: true
+        run: npm run tauri build -- ${{ matrix.args }}
 
       # Portable Windows build: the compiled Tauri exe is already self-contained
       # (frontend + lsdoc-wasm are embedded; WebView2Loader is statically linked),
@@ -221,16 +170,11 @@ jobs:
       # ship wraps this same binary; the portable zip skips the installer AND its
       # WebView2 bootstrapper — WebView2 is preinstalled on Windows 10/11, so this
       # runs for ~everyone, but a machine without the runtime won't launch it.
-      # Only produced on a real tag release (nothing to upload on a manual
-      # workflow_dispatch smoke test, where releaseId is empty).
-      - name: Package + upload portable Windows zip
-        if: matrix.platform == 'windows-latest' && startsWith(github.ref, 'refs/tags/')
+      - name: Package portable Windows zip
+        if: matrix.platform == 'windows-latest'
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $tag = "${{ github.ref_name }}"
-          $version = $tag -replace '^v', ''
+          $version = node -p "require('./src-tauri/tauri.conf.json').version"
           # A cross-target build (ARM64) outputs under target/<triple>/release/, a
           # native build (x64) under target/release/ — matrix.win-exe-dir carries the
           # right one. Tauri v2 may rename the main binary to productName ("Tine.exe");
@@ -242,9 +186,21 @@ jobs:
           if (-not $exe) { throw "portable: main Tine exe not found under $dir" }
           $zip = "Tine_${version}_${{ matrix.win-arch }}-portable.zip"
           Compress-Archive -Path $exe -DestinationPath $zip -Force
-          gh release upload $tag $zip --clobber --repo $env:GITHUB_REPOSITORY
 
-  # 2b) Android: build a SIGNED release APK and upload it to the draft release.
+      - name: Stage immutable release artifact
+        run: node scripts/stage-release-lane.mjs "${{ matrix.lane }}" release-candidate "${{ github.sha }}"
+
+      - name: Upload release lane
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.lane }}
+          path: release-candidate/${{ matrix.lane }}
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
+
+  # Android builds concurrently and contributes another immutable workflow
+  # artifact. Signed Android output is mandatory for every release smoke/tag.
   #     The private signing key lives ONLY in encrypted repo secrets — never in the
   #     repo or on a build host (see docs/ANDROID-RELEASE.md). Add these once, on the
   #     machine that holds the .jks (Settings → Secrets, or `gh secret set`):
@@ -252,14 +208,8 @@ jobs:
   #       ANDROID_KEYSTORE_PASSWORD  keystore password
   #       ANDROID_KEY_ALIAS          key alias (e.g. tine)
   #       ANDROID_KEY_PASSWORD       key password
-  #     A manual smoke may skip when the secret is absent. A tagged release MUST
-  #     fail and remain draft rather than silently publishing without Android.
   android:
-    needs: [preflight, create-release]
-    if: >-
-      always() &&
-      needs.preflight.result == 'success' &&
-      (needs.create-release.result == 'success' || needs.create-release.result == 'skipped')
+    needs: preflight
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -270,15 +220,11 @@ jobs:
         id: sign
         run: echo "enabled=${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}" >> "$GITHUB_OUTPUT"
 
-      - name: Require Android signing for tagged releases
-        if: startsWith(github.ref, 'refs/tags/') && steps.sign.outputs.enabled != 'true'
+      - name: Require Android signing
+        if: steps.sign.outputs.enabled != 'true'
         run: |
-          echo "::error::ANDROID_KEYSTORE_BASE64 is required for tagged releases; refusing to publish without Android."
+          echo "::error::ANDROID_KEYSTORE_BASE64 is required for release smoke and tagged releases."
           exit 1
-
-      - name: Note skip
-        if: ${{ !startsWith(github.ref, 'refs/tags/') && steps.sign.outputs.enabled != 'true' }}
-        run: echo "::notice::ANDROID_KEYSTORE_BASE64 not set — skipping signed Android build. Add the ANDROID_* secrets to enable it."
 
       - uses: actions/setup-java@v4
         if: steps.sign.outputs.enabled == 'true'
@@ -395,61 +341,75 @@ jobs:
           export RUSTFLAGS="--remap-path-prefix=$GITHUB_WORKSPACE=/build --remap-path-prefix=$HOME/.cargo=/cargo"
           npx tauri android build --target aarch64 --apk
 
-      # On a manual dispatch (no tag) there is no release to attach to, so expose
-      # the built APK as a workflow artifact instead — this is how the documented
-      # reproducibility smoke-test inspects the CI-built native lib (compare its
-      # libtine_lib.so against a local `ndk: 26.3.11579264` F-Droid-recipe build).
-      - name: Upload Android APK as artifact (dispatch smoke-test)
-        if: steps.sign.outputs.enabled == 'true' && !startsWith(github.ref, 'refs/tags/')
-        uses: actions/upload-artifact@v4
-        with:
-          name: android-apk-smoketest
-          path: src-tauri/gen/android/**/release/*-release.apk
-          if-no-files-found: error
-
-      - name: Upload Android APK to the release
-        if: steps.sign.outputs.enabled == 'true' && startsWith(github.ref, 'refs/tags/')
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Prepare canonical Android APK
+        if: steps.sign.outputs.enabled == 'true'
         run: |
-          tag="${{ github.ref_name }}"
-          version="${tag#v}"
+          version=$(node -p "require('./src-tauri/tauri.conf.json').version")
           # The signed artifact is app-universal-release.apk (the unsigned build
           # would end in -release-unsigned.apk, which this glob excludes).
           apk=$(find src-tauri/gen/android -path '*/release/*' -name '*-release.apk' | head -1)
           if [ -z "$apk" ]; then echo "no signed APK found"; exit 1; fi
           cp "$apk" "Tine_${version}_android-arm64.apk"
-          gh release upload "$tag" "Tine_${version}_android-arm64.apk" --clobber --repo "$GITHUB_REPOSITORY"
+
+      - name: Stage immutable Android artifact
+        if: steps.sign.outputs.enabled == 'true'
+        run: node scripts/stage-release-lane.mjs android release-candidate "${{ github.sha }}"
+
+      - name: Upload Android release lane
+        if: steps.sign.outputs.enabled == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-android
+          path: release-candidate/android
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
 
       - name: Remove signing material
         if: always()
         run: rm -f "$RUNNER_TEMP/tine-release.jks" src-tauri/gen/android/keystore.properties
 
-  publish-release:
-    needs: [preflight, flatpak, create-release, build, android]
-    if: >-
-      startsWith(github.ref, 'refs/tags/') &&
-      needs.create-release.result == 'success' &&
-      needs.preflight.result == 'success' &&
-      needs.flatpak.result == 'success' &&
-      needs.build.result == 'success' &&
-      needs.android.result == 'success'
+  # Merge immutable lane artifacts and generate latest.json exactly once. Manual
+  # dispatch stops after uploading this verified candidate and never touches a
+  # GitHub Release.
+  assemble:
+    needs: [preflight, flatpak, build, android]
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-      - name: Verify complete asset set and updater manifest
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release-input
+      - name: Assemble and verify complete candidate
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: node scripts/assemble-release-candidate.mjs release-input release-candidate-assembled
+      - name: Upload verified release candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-candidate
+          path: release-candidate-assembled
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
+
+  # The sole release writer. Expensive builds have already finished; this job
+  # creates/reuses a draft, uploads distinct assets, uploads latest.json last,
+  # re-downloads and verifies the draft, then publishes it.
+  publish-release:
+    needs: assemble
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-candidate
+          path: release-candidate
+      - name: Upload, verify, and publish complete release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node scripts/check-release-assets.mjs "${{ github.ref_name }}"
-
-      - name: Publish only the complete release
-        uses: actions/github-script@v7
-        with:
-          script: |
-            await github.rest.repos.updateRelease({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              release_id: ${{ needs.create-release.outputs.release_id }},
-              draft: false,
-              prerelease: false,
-            });
+        run: node scripts/publish-release-candidate.mjs "${{ github.ref_name }}" release-candidate
