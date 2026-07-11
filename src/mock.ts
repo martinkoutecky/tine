@@ -901,6 +901,12 @@ export function mockBackend(): Backend {
       if (name === "voice_memo.wav") return decodeB64(SILENT_WAV_B64);
       return new Uint8Array();
     },
+    async streamAsset(name: string): Promise<string> {
+      const bytes = await this.readAsset(name);
+      if (!bytes.length) return "";
+      const type = name.toLowerCase().endsWith(".wav") ? "audio/wav" : "application/octet-stream";
+      return URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type }));
+    },
     async readLocalImage(_path: string): Promise<Uint8Array> {
       // The mock has no filesystem; local-file images never resolve here.
       return new Uint8Array();
@@ -1013,6 +1019,8 @@ export function mockBackend(): Backend {
     async syncConflictDiff() {
       const v = (text: string) => ({ uuid: "", text, child_count: 0 });
       return {
+        base_rev: "mock-sync-diff-rev",
+        conflict_rev: "mock-sync-copy-rev",
         rows: [
           { id: "0", kind: "unchanged" as const, mine: v("Milestones for the launch"), theirs: v("Milestones for the launch"), children: [] },
           { id: "1", kind: "modified" as const, mine: v("TODO ship the beta by Friday"), theirs: v("TODO ship the beta by Thursday"), children: [] },

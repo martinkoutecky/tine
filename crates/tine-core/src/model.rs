@@ -412,6 +412,11 @@ pub struct Graph {
     /// Lock order is ALWAYS page_lock → cache → disk_revs; never the reverse.
     page_locks:
         std::sync::Mutex<std::collections::HashMap<PathBuf, std::sync::Arc<std::sync::Mutex<()>>>>,
+    /// Per-UI-lane cancellation epochs for whole-graph text searches. Starting a
+    /// newer search makes its superseded prefix stop promptly.
+    search_lanes: std::sync::Mutex<
+        std::collections::HashMap<String, std::sync::Arc<std::sync::atomic::AtomicU64>>,
+    >,
 }
 
 /// Cache key for `disk_revs` (and any other (kind,name)-keyed side table):
@@ -454,13 +459,70 @@ struct DerivedCache {
     today: i64,
     // `Arc<Vec<RefGroup>>` so serving a memoized result (every dataRev re-render)
     // is a refcount bump, not a deep clone of every matched block (see derived_memo).
-    results: std::collections::HashMap<String, Arc<Vec<RefGroup>>>,
+    results: std::collections::HashMap<String, (Arc<Vec<RefGroup>>, usize)>,
+    lru: std::collections::VecDeque<String>,
+    bytes: usize,
 }
 
 struct AdvancedCache {
     gen: u64,
     today: i64,
-    results: std::collections::HashMap<String, Arc<crate::query::AdvancedResult>>,
+    results: std::collections::HashMap<String, (Arc<crate::query::AdvancedResult>, usize)>,
+    lru: std::collections::VecDeque<String>,
+    bytes: usize,
+}
+
+// Query results contain owned DTO subtrees and can be close to graph-sized. A
+// graph-lifetime, key-unbounded memo turns ordinary navigation through many
+// pages' Linked References into unbounded retained memory. Oversized results are
+// returned to their caller but deliberately not retained here.
+const DERIVED_CACHE_MAX_ENTRIES: usize = 64;
+const DERIVED_CACHE_MAX_BYTES: usize = 64 * 1024 * 1024;
+const DERIVED_CACHE_MAX_ENTRY_BYTES: usize = 16 * 1024 * 1024;
+
+fn block_dto_bytes(block: &BlockDto) -> usize {
+    block.id.len()
+        + block.raw.len()
+        + block.breadcrumb.iter().map(String::len).sum::<usize>()
+        + block.tags.iter().map(String::len).sum::<usize>()
+        + block
+            .properties
+            .iter()
+            .map(|(key, value)| key.len() + value.len())
+            .sum::<usize>()
+        + block.children.iter().map(block_dto_bytes).sum::<usize>()
+        + 128
+}
+
+fn ref_groups_bytes(groups: &[RefGroup]) -> usize {
+    groups
+        .iter()
+        .map(|group| {
+            group.page.len()
+                + group.blocks.iter().map(block_dto_bytes).sum::<usize>()
+                + std::mem::size_of::<RefGroup>()
+        })
+        .sum()
+}
+
+fn touch_lru(lru: &mut std::collections::VecDeque<String>, key: &str) {
+    if let Some(pos) = lru.iter().position(|candidate| candidate == key) {
+        lru.remove(pos);
+    }
+    lru.push_back(key.to_owned());
+}
+
+fn prune_result_cache<T>(
+    results: &mut std::collections::HashMap<String, (Arc<T>, usize)>,
+    lru: &mut std::collections::VecDeque<String>,
+    bytes: &mut usize,
+) {
+    while results.len() > DERIVED_CACHE_MAX_ENTRIES || *bytes > DERIVED_CACHE_MAX_BYTES {
+        let Some(oldest) = lru.pop_front() else { break };
+        if let Some((_, removed_bytes)) = results.remove(&oldest) {
+            *bytes = bytes.saturating_sub(removed_bytes);
+        }
+    }
 }
 
 struct FindEntryIndex {
@@ -688,6 +750,7 @@ impl Graph {
             disk_revs: RwLock::new(std::collections::HashMap::new()),
             referenced_names_cache: RwLock::new(None),
             page_locks: std::sync::Mutex::new(std::collections::HashMap::new()),
+            search_lanes: std::sync::Mutex::new(std::collections::HashMap::new()),
         }
     }
 
@@ -799,7 +862,7 @@ impl Graph {
             return None;
         }
         let abs = base.join(tail);
-        if !path_stays_within_root(&self.root, &abs) {
+        if !path_stays_within_root(&self.root, &abs) || path_uses_managed_alias(&self.root, &abs) {
             return None;
         }
         match abs.extension().and_then(|e| e.to_str()) {
@@ -1216,7 +1279,10 @@ impl Graph {
         let mut theirs = parse_doc(&conf, &conf_c);
         assign_doc_uuids(&mut mine.roots);
         assign_doc_uuids(&mut theirs.roots);
-        Ok(Some(crate::sync_diff::diff_docs(&mine, &theirs)))
+        let mut diff = crate::sync_diff::diff_docs(&mine, &theirs);
+        diff.base_rev = content_rev(&win_c);
+        diff.conflict_rev = content_rev(&conf_c);
+        Ok(Some(diff))
     }
 
     /// Resolve a sync-conflict copy: build the merged winner from the user's
@@ -1246,7 +1312,8 @@ impl Graph {
         winner_rel: &str,
         conflict_rel: &str,
         decisions: &std::collections::HashMap<String, String>,
-        base_rev: Option<&str>,
+        base_rev: &str,
+        conflict_rev: &str,
         pre_choice: &str,
     ) -> io::Result<()> {
         let win = self.resolve_rel(winner_rel).ok_or_else(bad_path)?;
@@ -1264,13 +1331,17 @@ impl Graph {
         let win_content = fs::read_to_string(&win)?;
         let conf_content = fs::read_to_string(&conf)?;
         // base_rev guard — the winner must still be what the UI diffed against.
-        if let Some(br) = base_rev {
-            if content_rev(&win_content) != br {
-                return Err(io::Error::new(
-                    io::ErrorKind::AlreadyExists,
-                    "winner changed on disk",
-                ));
-            }
+        if content_rev(&win_content) != base_rev {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "winner changed on disk",
+            ));
+        }
+        if content_rev(&conf_content) != conflict_rev {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "conflict copy changed on disk",
+            ));
         }
         // Org round-trip firewall (same as merge_pages).
         if Format::from_path(&win) == Format::Org
@@ -2359,13 +2430,15 @@ impl Graph {
             return;
         }
         let pname = &entry.name;
-        dc.results.retain(|key, result| {
+        let mut removed_bytes = 0usize;
+        dc.results.retain(|key, (result, result_bytes)| {
             // Evict iff this page is already in the result OR now matches the key's
             // predicate; keep (still correct) otherwise.
             if result
                 .iter()
                 .any(|grp| crate::refs::same_page(&grp.page, pname))
             {
+                removed_bytes = removed_bytes.saturating_add(*result_bytes);
                 return false;
             }
             let affects = match key.split_once('\0') {
@@ -2374,8 +2447,13 @@ impl Graph {
                 Some(("q", s)) => crate::query::page_affects_query(s, entry, doc),
                 _ => true, // unknown key shape → evict to stay safe
             };
+            if affects {
+                removed_bytes = removed_bytes.saturating_add(*result_bytes);
+            }
             !affects
         });
+        dc.bytes = dc.bytes.saturating_sub(removed_bytes);
+        dc.lru.retain(|key| dc.results.contains_key(key));
         dc.gen = newgen; // survivors are valid for the post-bump generation
     }
 
@@ -2422,28 +2500,44 @@ impl Graph {
         let gen = self.cache_gen.load(Ordering::Acquire);
         let today = crate::date::JournalDate::today().ordinal_key();
         {
-            let g = self.derived_cache.read().unwrap();
-            if let Some(dc) = g.as_ref() {
+            let mut g = self.derived_cache.write().unwrap();
+            if let Some(dc) = g.as_mut() {
                 if dc.gen == gen && dc.today == today {
-                    if let Some(r) = dc.results.get(&key) {
-                        return Arc::clone(r);
+                    if let Some((r, _)) = dc.results.get(&key) {
+                        let result = Arc::clone(r);
+                        touch_lru(&mut dc.lru, &key);
+                        return result;
                     }
                 }
             }
         }
         let result = Arc::new(compute());
+        let result_bytes = ref_groups_bytes(result.as_slice());
+        if result_bytes > DERIVED_CACHE_MAX_ENTRY_BYTES {
+            return result;
+        }
         let mut g = self.derived_cache.write().unwrap();
         match g.as_mut() {
             Some(dc) if dc.gen == gen && dc.today == today => {
-                dc.results.insert(key, Arc::clone(&result));
+                if let Some((_, old_bytes)) = dc
+                    .results
+                    .insert(key.clone(), (Arc::clone(&result), result_bytes))
+                {
+                    dc.bytes = dc.bytes.saturating_sub(old_bytes);
+                }
+                dc.bytes = dc.bytes.saturating_add(result_bytes);
+                touch_lru(&mut dc.lru, &key);
+                prune_result_cache(&mut dc.results, &mut dc.lru, &mut dc.bytes);
             }
             _ => {
                 let mut results = std::collections::HashMap::new();
-                results.insert(key, Arc::clone(&result));
+                results.insert(key.clone(), (Arc::clone(&result), result_bytes));
                 *g = Some(DerivedCache {
                     gen,
                     today,
                     results,
+                    lru: std::collections::VecDeque::from([key]),
+                    bytes: result_bytes,
                 });
             }
         }
@@ -2459,28 +2553,46 @@ impl Graph {
         let gen = self.cache_gen.load(Ordering::Acquire);
         let today = crate::date::JournalDate::today().ordinal_key();
         {
-            let g = self.advanced_cache.read().unwrap();
-            if let Some(dc) = g.as_ref() {
+            let mut g = self.advanced_cache.write().unwrap();
+            if let Some(dc) = g.as_mut() {
                 if dc.gen == gen && dc.today == today {
-                    if let Some(r) = dc.results.get(&key) {
-                        return Arc::clone(r);
+                    if let Some((r, _)) = dc.results.get(&key) {
+                        let result = Arc::clone(r);
+                        touch_lru(&mut dc.lru, &key);
+                        return result;
                     }
                 }
             }
         }
         let result = Arc::new(compute());
+        let result_bytes = ref_groups_bytes(&result.groups)
+            + result.ran.iter().map(String::len).sum::<usize>()
+            + result.ignored.iter().map(String::len).sum::<usize>();
+        if result_bytes > DERIVED_CACHE_MAX_ENTRY_BYTES {
+            return result;
+        }
         let mut g = self.advanced_cache.write().unwrap();
         match g.as_mut() {
             Some(dc) if dc.gen == gen && dc.today == today => {
-                dc.results.insert(key, Arc::clone(&result));
+                if let Some((_, old_bytes)) = dc
+                    .results
+                    .insert(key.clone(), (Arc::clone(&result), result_bytes))
+                {
+                    dc.bytes = dc.bytes.saturating_sub(old_bytes);
+                }
+                dc.bytes = dc.bytes.saturating_add(result_bytes);
+                touch_lru(&mut dc.lru, &key);
+                prune_result_cache(&mut dc.results, &mut dc.lru, &mut dc.bytes);
             }
             _ => {
                 let mut results = std::collections::HashMap::new();
-                results.insert(key, Arc::clone(&result));
+                results.insert(key.clone(), (Arc::clone(&result), result_bytes));
                 *g = Some(AdvancedCache {
                     gen,
                     today,
                     results,
+                    lru: std::collections::VecDeque::from([key]),
+                    bytes: result_bytes,
                 });
             }
         }
@@ -2908,6 +3020,24 @@ impl Graph {
         crate::query::search(self, query, limit)
     }
 
+    /// Interactive search lane: a newer request in the same lane cooperatively
+    /// cancels the older whole-graph scan. Separate lanes keep the Ctrl-K
+    /// switcher and in-editor block picker from canceling one another.
+    pub fn search_latest(&self, lane: &str, query: &str, limit: usize) -> Vec<RefGroup> {
+        use std::sync::atomic::Ordering;
+        let epoch = {
+            let mut lanes = self.search_lanes.lock().unwrap();
+            lanes
+                .entry(lane.to_owned())
+                .or_insert_with(|| Arc::new(std::sync::atomic::AtomicU64::new(0)))
+                .clone()
+        };
+        let mine = epoch.fetch_add(1, Ordering::AcqRel) + 1;
+        crate::query::search_cancellable(self, query, limit, || {
+            epoch.load(Ordering::Acquire) != mine
+        })
+    }
+
     /// Fuzzy page-name matches for the quick switcher.
     pub fn quick_switch(&self, query: &str, limit: usize) -> Vec<PageEntry> {
         crate::query::quick_switch(self, query, limit)
@@ -3077,6 +3207,26 @@ impl Graph {
     pub fn read_asset(&self, name: &str) -> io::Result<Vec<u8>> {
         top_level_asset_name(name)?;
         fs::read(self.assets_path().join(name))
+    }
+
+    /// Canonical, regular-file path for the native asset protocol. This is used
+    /// for audio/video so WebView range requests read at most a small chunk
+    /// instead of copying a multi-gigabyte file through Rust Vec → IPC → Blob.
+    pub fn stream_asset_path(&self, name: &str) -> io::Result<PathBuf> {
+        top_level_asset_name(name)?;
+        let assets = fs::canonicalize(self.assets_path())?;
+        let candidate = self.assets_path().join(name);
+        if fs::symlink_metadata(&candidate)?.file_type().is_symlink() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "asset symlinks cannot be streamed",
+            ));
+        }
+        let path = fs::canonicalize(candidate)?;
+        if !path.starts_with(&assets) || !fs::metadata(&path)?.is_file() {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid asset"));
+        }
+        Ok(path)
     }
 
     /// Read an asset only if its current on-disk size is within `max_bytes`.
@@ -3531,6 +3681,17 @@ impl Graph {
     /// cache (i.e. a real external change) — Tine's own writes keep the cache in
     /// sync, so they return None. No-op if the cache hasn't been built yet.
     pub fn sync_file(&self, path: &Path) -> Option<PageEntry> {
+        // Watch events are untrusted path inputs. Never follow a page symlink
+        // (which could expose an arbitrary file outside the graph), and recheck
+        // canonical containment immediately before the read to close rename /
+        // symlink-swap races between directory scanning and reconciliation.
+        let md = fs::symlink_metadata(path).ok()?;
+        if md.file_type().is_symlink()
+            || !md.is_file()
+            || !path_stays_within_root(&self.root, path)
+        {
+            return None;
+        }
         let content = fs::read_to_string(path).ok()?;
         // The watcher consumes the self-write marker (one-shot) so the map stays
         // bounded to in-flight writes.
@@ -4140,19 +4301,18 @@ fn walk_page_files(dir: &Path, mut visit: impl FnMut(PathBuf)) {
     // OG's `path->file-name` (the file's own `path` stays its load/save identity).
     // One stack-based walk, O(files), no re-scan.
     //
-    // Perf: an entry with a page extension is taken as a file WITHOUT a
-    // `file_type()`/stat — exactly the old single-level fast path, so a flat graph
-    // pays nothing extra even on d_type-less filesystems (some NFS). We only stat
-    // NON-page entries, and only to decide whether to recurse into a sub-dir.
-    // `file_type()` doesn't follow symlinks, so a symlinked dir is naturally not
-    // recursed (no cycles / no escaping the graph). Hidden dirs (`.git` &c.) are
-    // skipped — never a page store.
+    // `file_type()` does not follow symlinks. Check it for page-looking entries
+    // too: otherwise `pages/secret.md -> /outside/secret.md` would be indexed and
+    // exposed. Hidden dirs (`.git` &c.) are skipped — never a page store.
     let mut stack = vec![dir.to_path_buf()];
     while let Some(d) = stack.pop() {
         let Ok(rd) = fs::read_dir(&d) else { continue };
         for entry in rd.flatten() {
             let path = entry.path();
-            if is_page_file(&path) {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if is_page_file(&path) && file_type.is_file() {
                 visit(path);
                 continue;
             }
@@ -4164,7 +4324,7 @@ fn walk_page_files(dir: &Path, mut visit: impl FnMut(PathBuf)) {
                 .and_then(|s| s.to_str())
                 .map(|s| s.starts_with('.'))
                 .unwrap_or(true);
-            if !hidden && entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
+            if !hidden && file_type.is_dir() {
                 stack.push(path);
             }
         }
@@ -7065,6 +7225,29 @@ mod tests {
             "graph mutation must invalidate the advanced-query memo"
         );
         assert!(third.groups.is_empty());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn derived_and_advanced_memos_are_lru_bounded() {
+        let dir = scratch("memo-lru-bound");
+        let g = Graph::open(&dir);
+        for i in 0..(DERIVED_CACHE_MAX_ENTRIES + 20) {
+            let _ = g.derived_memo(format!("test\0{i}"), Vec::new);
+            let _ = g.advanced_memo(format!("test\0{i}"), || crate::query::AdvancedResult {
+                groups: Vec::new(),
+                ran: Vec::new(),
+                ignored: Vec::new(),
+                supported: true,
+            });
+        }
+        let derived = g.derived_cache.read().unwrap();
+        let advanced = g.advanced_cache.read().unwrap();
+        assert_eq!(derived.as_ref().unwrap().results.len(), DERIVED_CACHE_MAX_ENTRIES);
+        assert_eq!(advanced.as_ref().unwrap().results.len(), DERIVED_CACHE_MAX_ENTRIES);
+        let oldest = format!("test\0{}", 0);
+        assert!(!derived.as_ref().unwrap().results.contains_key(&oldest));
+        assert!(!advanced.as_ref().unwrap().results.contains_key(&oldest));
         let _ = fs::remove_dir_all(&dir);
     }
 

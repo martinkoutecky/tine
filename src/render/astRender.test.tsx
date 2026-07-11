@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterEach } from "vitest";
+import { describe, it, expect, beforeAll, afterEach, vi } from "vitest";
 import { render } from "solid-js/web";
 import { renderInlines, InlineText, expandTemplate, expansionIsBlockLevel } from "./inline";
 import { renderBlocks } from "./body";
@@ -6,6 +6,8 @@ import { initParser, parseBlock } from "./parse";
 import { setGraphMeta } from "../ui";
 import type { JSX } from "solid-js";
 import type { Block, Inline } from "./ast";
+import { backend } from "../backend";
+import { clearAssetBlobCache } from "../assetCache";
 
 // A few render paths reach back into the wasm parser (e.g. a properties block
 // renders each value via InlineText → parseBlock). Node supports WebAssembly +
@@ -17,6 +19,8 @@ beforeAll(async () => {
 
 afterEach(() => {
   setGraphMeta(null);
+  clearAssetBlobCache();
+  vi.restoreAllMocks();
 });
 
 function html(node: () => JSX.Element): string {
@@ -87,6 +91,34 @@ describe("renderInlines", () => {
   it("image flag → inline-image-wrap (external)", () => {
     const h = inl([{ k: "link", url: { type: "complex", protocol: "https", link: "x.com/a.png" }, full: "![](…)", image: true, label: [{ k: "plain", text: "alt" }] }]);
     expect(h).toContain("inline-image");
+  });
+
+  it("releases a pending local-image lease when unmounted before the read finishes", async () => {
+    let resolveRead!: (bytes: Uint8Array) => void;
+    vi.spyOn(backend(), "readAsset").mockReturnValue(
+      new Promise<Uint8Array>((resolve) => { resolveRead = resolve; })
+    );
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", {
+      createObjectURL: vi.fn(() => "blob:slow-image"),
+      revokeObjectURL,
+    });
+    const host = document.createElement("div");
+    const dispose = render(
+      () => renderInlines([{
+        k: "link",
+        url: { type: "search", v: "../assets/slow.png" },
+        full: "![](../assets/slow.png)",
+        image: true,
+      }]),
+      host
+    );
+    dispose();
+    clearAssetBlobCache();
+    resolveRead(new Uint8Array([1, 2, 3]));
+    await vi.waitFor(() => {
+      expect(revokeObjectURL).toHaveBeenCalledWith("blob:slow-image");
+    });
   });
 
   it("image-syntax PDF renders as a PDF link, not an image", () => {

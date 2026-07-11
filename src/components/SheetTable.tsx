@@ -1,10 +1,8 @@
-import { For, Match, Show, Switch, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, useContext, type JSX } from "solid-js";
-import { backend } from "../backend";
+import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup, onMount, useContext, type JSX } from "solid-js";
 import {
   blockPageReadOnly,
   blockProperty,
   doc,
-  ensurePageLoaded,
   formatForBlock,
   formatForPage,
   insertEmptyChildBlock,
@@ -73,6 +71,7 @@ import type { RefGroup } from "../types";
 import { Editor, SurfaceContext } from "./Block";
 import { SheetAggregateCornerToggle, SheetAggregateFooterCell } from "./SheetAggregateFooter";
 import { SheetContainerOverlayContext } from "./SheetContainerOverlay";
+import { hydrateVisibleQueryPages, SHEET_RENDER_PAGE } from "../sheet/queryHydration";
 
 interface RowRecord extends FormulaEvalRow {}
 
@@ -173,26 +172,6 @@ export function SheetTable(props: {
   });
   const formulaFields = createMemo<FieldId[]>(() => [...formulas().keys()].map(formulaFieldId));
   const formulaFieldSet = createMemo(() => new Set<FieldId>(formulaFields()));
-
-  const queryPages = createMemo(() => {
-    const map = new Map<string, RefGroup>();
-    for (const group of props.groups ?? []) map.set(`${group.kind}\0${group.page}`, group);
-    return [...map.values()];
-  });
-  const [pagesReady] = createResource(
-    () => (props.rowSource === "query" ? queryPages().map((g) => `${g.kind}:${g.page}`).join("\0") : null),
-    async () => {
-      await Promise.all(
-        queryPages().map(async (g) => {
-          if (pageByName(g.page)) return;
-          const dto = await backend().getPage(g.page, g.kind);
-          if (dto) ensurePageLoaded(dto);
-        })
-      );
-      return true;
-    }
-  );
-  void pagesReady;
 
   const allRows = createMemo<RowRecord[]>(() => {
     if (props.rowSource === "children") {
@@ -342,6 +321,12 @@ export function SheetTable(props: {
     };
     return [...rs].sort((a, b) => compareSortKeys(value(a), value(b)) * s.dir);
   });
+  const [renderLimit, setRenderLimit] = createSignal(SHEET_RENDER_PAGE);
+  createEffect(() => {
+    props.groups;
+    setRenderLimit(SHEET_RENDER_PAGE);
+  });
+  const displayedRows = createMemo(() => sortedRows().slice(0, renderLimit()));
 
   const sortHeader = (col: number) => {
     setSort((cur) => {
@@ -693,17 +678,23 @@ export function SheetTable(props: {
             </Show>
           </div>
         </Show>
-        <For each={sortedRows()}>
+        <For each={displayedRows()}>
           {(row, rowIndex) => {
             // Per-row "near the viewport" gate (see renderedSheetRows above). Only
             // the title cell observes; the shared signal drives every cell in the
             // row so we spend ONE IntersectionObserver entry per row, not per cell.
             const [near, setNear] = createSignal(renderedSheetRows.has(row.id));
             const observeRow = (el: Element) => {
-              if (near()) return;
+              if (near()) {
+                if (props.rowSource === "query") void hydrateVisibleQueryPages([row], props.groups);
+                return;
+              }
               observeNear(el, () => {
                 renderedSheetRows.add(row.id);
                 setNear(true);
+                if (props.rowSource === "query") {
+                  void hydrateVisibleQueryPages([row], props.groups);
+                }
               });
               onCleanup(() => unobserveNear(el));
             };
@@ -747,6 +738,19 @@ export function SheetTable(props: {
             );
           }}
         </For>
+        <Show when={displayedRows().length < sortedRows().length}>
+          <button
+            class="sheet-add-row-ghost sheet-load-more"
+            style={{ "grid-column": "1 / -1" }}
+            onClick={(e) => {
+              e.stopPropagation();
+              setRenderLimit((limit) => limit + SHEET_RENDER_PAGE);
+            }}
+          >
+            Load {Math.min(SHEET_RENDER_PAGE, sortedRows().length - displayedRows().length)} more rows
+            ({displayedRows().length} of {sortedRows().length})
+          </button>
+        </Show>
         <Show when={showFooter()}>
           <div class="sheet-cell sheet-footer-cell sheet-footer-title sheet-sticky-left" />
           <For each={fields()}>

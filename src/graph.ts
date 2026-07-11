@@ -82,6 +82,12 @@ export async function loadGraphPath(
     clearRecent();
   }
   setGraphMeta(meta ?? null);
+  // Revoke every in-flight result from the previous binding NOW, before the
+  // awaited journal-template step. This is also required for same-root force
+  // refresh (restore): root equality cannot distinguish pre-restore DTOs from
+  // the freshly rebound graph. The second bump below refetches after a default
+  // template has been written, preserving #73's populated-first observation.
+  bumpGraphEpoch();
   setWorkflow(meta?.preferred_workflow === "todo" ? "todo" : "now");
   setJournalTitleFormat(meta?.journal_page_title_format); // match this graph's journal titles
   seedFavorites(meta?.favorites ?? []);

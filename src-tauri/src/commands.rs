@@ -2,7 +2,7 @@
 use crate::debug::diag;
 #[cfg(desktop)]
 use crate::platform::opener_command;
-use crate::state::{refresh_graph, with_graph, GraphContext};
+use crate::state::{refresh_graph, slot_for_context, with_graph, GraphContext};
 use std::sync::Arc;
 use tine_core::model::{PageDto, PageEntry, PageKind, RefGroup};
 
@@ -378,12 +378,19 @@ pub(crate) fn read_custom_css(state: GraphContext<'_>) -> Result<String, String>
 }
 
 #[tauri::command]
-pub(crate) fn search(
+pub(crate) async fn search(
     query: String,
     limit: usize,
+    lane: Option<String>,
     state: GraphContext<'_>,
 ) -> Result<Vec<RefGroup>, String> {
-    with_graph(&state, |g| Ok(g.search(&query, limit)))
+    let graph = Arc::clone(&slot_for_context(&state)?.graph);
+    tauri::async_runtime::spawn_blocking(move || match lane.as_deref() {
+        Some(lane) => graph.search_latest(lane, &query, limit),
+        None => graph.search(&query, limit),
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -441,6 +448,21 @@ pub(crate) fn read_asset(
             .map(tauri::ipc::Response::new)
             .map_err(|e| e.to_string())
     })
+}
+
+/// Validate one graph media file and return its top-level asset name for the
+/// range-aware `tine-media:` protocol. The protocol revalidates against the
+/// requesting window's current graph on every request.
+#[tauri::command]
+pub(crate) fn stream_asset_path(
+    name: String,
+    state: GraphContext<'_>,
+) -> Result<String, String> {
+    let slot = slot_for_context(&state)?;
+    slot.graph
+        .stream_asset_path(&name)
+        .map_err(|e| e.to_string())?;
+    Ok(format!("{}/{}", slot.binding_generation, name))
 }
 
 /// Quit the app cleanly. On Linux, first SIGKILL WebKitGTK's helper subprocesses so
@@ -1043,7 +1065,8 @@ pub(crate) fn resolve_sync_conflict(
     winner: String,
     conflict: String,
     decisions: std::collections::HashMap<String, String>,
-    base_rev: Option<String>,
+    base_rev: String,
+    conflict_rev: String,
     pre_choice: Option<String>,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
@@ -1052,7 +1075,8 @@ pub(crate) fn resolve_sync_conflict(
             &winner,
             &conflict,
             &decisions,
-            base_rev.as_deref(),
+            &base_rev,
+            &conflict_rev,
             pre_choice.as_deref().unwrap_or("union"),
         )
         .map_err(|e| {

@@ -18,10 +18,9 @@
 //!       the conflict → *removed*. Never silently dropped.
 //! Anchored/paired rows with both sides present recurse into their children.
 //!
-//! Complexity: per sibling list this is a DP LCS (O(k²) in that list's length)
-//! plus O(g²) gap pairing — quadratic in the SIBLINGS AT ONE LEVEL, not the whole
-//! tree. It runs on demand for a single conflict (never on a hot path), so the
-//! clarity of DP LCS is worth more here than shaving to Myers' O(kd).
+//! Complexity: LCS uses Hirschberg reconstruction (O(k²) time, O(k) memory).
+//! Similarity pairing is exact for ordinary gaps and falls back to a linear,
+//! no-data-loss alignment when a gap would require excessive pair comparisons.
 
 use crate::doc::DocBlock;
 use serde::{Deserialize, Serialize};
@@ -80,6 +79,12 @@ pub struct DiffRow {
 /// The full diff of a conflict copy against its winner.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncConflictDiff {
+    /// Revision of the exact winner bytes this alignment was computed from.
+    /// The merge command requires it, so row decisions can never be applied to
+    /// a later, differently aligned winner.
+    pub base_rev: String,
+    /// Revision of the exact conflict-copy bytes used for this alignment.
+    pub conflict_rev: String,
     pub rows: Vec<DiffRow>,
     /// Winner's page-property pre-block, if any.
     pub mine_pre: Option<String>,
@@ -104,6 +109,8 @@ pub fn diff_docs(mine: &crate::doc::Document, theirs: &crate::doc::Document) -> 
     let mine_pre = normalize_pre(mine.pre_block.as_deref());
     let theirs_pre = normalize_pre(theirs.pre_block.as_deref());
     SyncConflictDiff {
+        base_rev: String::new(),
+        conflict_rev: String::new(),
         pre_differs: mine_pre != theirs_pre,
         mine_pre,
         theirs_pre,
@@ -179,6 +186,8 @@ fn levenshtein(a: &str, b: &str) -> usize {
 }
 
 const SIMILARITY_THRESHOLD: f32 = 0.8;
+const MAX_GAP_SIMILARITY_COMPARISONS: usize = 250_000;
+const MAX_LCS_COMPARISONS: usize = 1_000_000;
 
 /// One aligned position in the two trees — the SINGLE source of alignment truth
 /// that both the diff rows ([`nodes_to_rows`]) and the merged output
@@ -267,6 +276,23 @@ fn gap_nodes<'a>(
     out: &mut Vec<Node<'a>>,
     counter: &mut usize,
 ) {
+    if (m_to - m_from).saturating_mul(t_to - t_from) > MAX_GAP_SIMILARITY_COMPARISONS {
+        // A conflict with thousands of unrelated flat siblings must not spend
+        // minutes doing pairwise Levenshtein. Emit both sides explicitly; the
+        // safe default still keeps mine and the recoverable conflict copy keeps
+        // theirs. Exact anchors were already removed by L1.
+        for block in &mine[m_from..m_to] {
+            let id = row_id(prefix, *counter);
+            *counter += 1;
+            out.push(Node::Mine { id, block });
+        }
+        for block in &theirs[t_from..t_to] {
+            let id = row_id(prefix, *counter);
+            *counter += 1;
+            out.push(Node::Theirs { id, block });
+        }
+        return;
+    }
     let mut used_theirs = vec![false; t_to.saturating_sub(t_from)];
     let their_keys: Vec<String> = (t_from..t_to).map(|j| first_line_key(&theirs[j])).collect();
     // Walk both gaps interleaved by winner position; a pure per-winner greedy
@@ -488,38 +514,160 @@ fn row_id(prefix: &str, n: usize) -> String {
     format!("{prefix}{n}")
 }
 
-/// Longest common subsequence of two sibling lists under [`anchor_eq`], returned
-/// as sorted `(mine_idx, theirs_idx)` pairs. Standard O(k²) DP + backtrack.
-fn lcs_pairs(mine: &[DocBlock], theirs: &[DocBlock]) -> Vec<(usize, usize)> {
-    let n = mine.len();
-    let m = theirs.len();
-    if n == 0 || m == 0 {
-        return Vec::new();
-    }
-    // dp[i][j] = LCS length of mine[i..] and theirs[j..].
-    let mut dp = vec![vec![0u32; m + 1]; n + 1];
-    for i in (0..n).rev() {
-        for j in (0..m).rev() {
-            dp[i][j] = if anchor_eq(&mine[i], &theirs[j]) {
-                dp[i + 1][j + 1] + 1
+/// LCS row lengths for Hirschberg reconstruction. Memory is O(right.len()).
+fn lcs_lengths(left: &[DocBlock], right: &[DocBlock]) -> Vec<u32> {
+    let mut prev = vec![0u32; right.len() + 1];
+    let mut cur = vec![0u32; right.len() + 1];
+    for a in left {
+        for (j, b) in right.iter().enumerate() {
+            cur[j + 1] = if anchor_eq(a, b) {
+                prev[j] + 1
             } else {
-                dp[i + 1][j].max(dp[i][j + 1])
+                prev[j + 1].max(cur[j])
             };
         }
+        std::mem::swap(&mut prev, &mut cur);
+        cur.fill(0);
     }
-    let mut out = Vec::new();
-    let (mut i, mut j) = (0usize, 0usize);
-    while i < n && j < m {
-        if anchor_eq(&mine[i], &theirs[j]) {
-            out.push((i, j));
-            i += 1;
-            j += 1;
-        } else if dp[i + 1][j] >= dp[i][j + 1] {
-            i += 1;
+    prev
+}
+
+fn lcs_lengths_reversed(left: &[DocBlock], right: &[DocBlock]) -> Vec<u32> {
+    let mut prev = vec![0u32; right.len() + 1];
+    let mut cur = vec![0u32; right.len() + 1];
+    for a in left.iter().rev() {
+        for (j, b) in right.iter().rev().enumerate() {
+            cur[j + 1] = if anchor_eq(a, b) {
+                prev[j] + 1
+            } else {
+                prev[j + 1].max(cur[j])
+            };
+        }
+        std::mem::swap(&mut prev, &mut cur);
+        cur.fill(0);
+    }
+    prev
+}
+
+fn hirschberg_pairs(
+    mine: &[DocBlock],
+    theirs: &[DocBlock],
+    mine_offset: usize,
+    theirs_offset: usize,
+    out: &mut Vec<(usize, usize)>,
+) {
+    if mine.is_empty() || theirs.is_empty() {
+        return;
+    }
+    if mine.len() == 1 {
+        if let Some(j) = theirs.iter().position(|b| anchor_eq(&mine[0], b)) {
+            out.push((mine_offset, theirs_offset + j));
+        }
+        return;
+    }
+    let mid = mine.len() / 2;
+    let forward = lcs_lengths(&mine[..mid], theirs);
+    let backward = lcs_lengths_reversed(&mine[mid..], theirs);
+    let split = (0..=theirs.len())
+        .max_by_key(|&j| forward[j] + backward[theirs.len() - j])
+        .unwrap_or(0);
+    hirschberg_pairs(
+        &mine[..mid],
+        &theirs[..split],
+        mine_offset,
+        theirs_offset,
+        out,
+    );
+    hirschberg_pairs(
+        &mine[mid..],
+        &theirs[split..],
+        mine_offset + mid,
+        theirs_offset + split,
+        out,
+    );
+}
+
+fn anchor_fingerprint(block: &DocBlock) -> u64 {
+    fn add(mut hash: u64, bytes: &[u8]) -> u64 {
+        for byte in bytes {
+            hash ^= *byte as u64;
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        hash
+    }
+    if let Some(id) = persisted_id(block) {
+        return add(0xcbf2_9ce4_8422_2325 ^ 1, id.as_bytes());
+    }
+    let mut hash = add(0xcbf2_9ce4_8422_2325 ^ 2, block.raw.as_bytes());
+    for child in &block.children {
+        hash = add(hash, &anchor_fingerprint(child).to_le_bytes());
+    }
+    hash
+}
+
+/// Fast large-list alignment: unique strong/content fingerprints become
+/// candidates, then a patience/LIS pass keeps their longest ordered subset.
+/// Hash collisions are verified with `anchor_eq`; duplicate keys are left to the
+/// safe gap fallback rather than causing quadratic work.
+fn patience_pairs(mine: &[DocBlock], theirs: &[DocBlock]) -> Vec<(usize, usize)> {
+    use std::collections::HashMap;
+    let mut theirs_keys: HashMap<u64, (usize, usize)> = HashMap::new();
+    for (j, block) in theirs.iter().enumerate() {
+        let entry = theirs_keys.entry(anchor_fingerprint(block)).or_insert((j, 0));
+        entry.1 += 1;
+    }
+    let mut mine_counts: HashMap<u64, usize> = HashMap::new();
+    for block in mine {
+        *mine_counts.entry(anchor_fingerprint(block)).or_default() += 1;
+    }
+    let candidates: Vec<(usize, usize)> = mine
+        .iter()
+        .enumerate()
+        .filter_map(|(i, block)| {
+            let key = anchor_fingerprint(block);
+            let &(j, theirs_count) = theirs_keys.get(&key)?;
+            (mine_counts.get(&key) == Some(&1)
+                && theirs_count == 1
+                && anchor_eq(block, &theirs[j]))
+            .then_some((i, j))
+        })
+        .collect();
+    let mut tails: Vec<usize> = Vec::new();
+    let mut previous = vec![usize::MAX; candidates.len()];
+    for (idx, &(_, j)) in candidates.iter().enumerate() {
+        let pos = tails.partition_point(|&tail| candidates[tail].1 < j);
+        if pos > 0 {
+            previous[idx] = tails[pos - 1];
+        }
+        if pos == tails.len() {
+            tails.push(idx);
         } else {
-            j += 1;
+            tails[pos] = idx;
         }
     }
+    let Some(&last) = tails.last() else { return Vec::new() };
+    let mut chain = Vec::with_capacity(tails.len());
+    let mut cursor = last;
+    loop {
+        chain.push(candidates[cursor]);
+        if previous[cursor] == usize::MAX {
+            break;
+        }
+        cursor = previous[cursor];
+    }
+    chain.reverse();
+    chain
+}
+
+/// Longest common subsequence of two sibling lists under [`anchor_eq`], returned
+/// as sorted `(mine_idx, theirs_idx)` pairs. Hirschberg keeps peak memory linear
+/// rather than allocating a `(n+1)*(m+1)` matrix (400 MiB at 10k×10k).
+fn lcs_pairs(mine: &[DocBlock], theirs: &[DocBlock]) -> Vec<(usize, usize)> {
+    if mine.len().saturating_mul(theirs.len()) > MAX_LCS_COMPARISONS {
+        return patience_pairs(mine, theirs);
+    }
+    let mut out = Vec::new();
+    hirschberg_pairs(mine, theirs, 0, 0, &mut out);
     out
 }
 
@@ -568,6 +716,21 @@ mod tests {
         let has_removed = k.iter().any(|(_, kind)| *kind == RowKind::Removed);
         assert!(has_added && has_removed, "kinds: {k:?}");
         assert!(!d.blocks_identical);
+    }
+
+    #[test]
+    fn large_unrelated_flat_conflict_uses_bounded_fallback_without_data_loss() {
+        let mine: Vec<DocBlock> = (0..1100)
+            .map(|i| DocBlock::new(format!("mine unique block {i}")))
+            .collect();
+        let theirs: Vec<DocBlock> = (0..1100)
+            .map(|i| DocBlock::new(format!("theirs unrelated block {i}")))
+            .collect();
+        let rows = diff_blocks(&mine, &theirs);
+        assert_eq!(rows.len(), 2200);
+        assert_eq!(rows.iter().filter(|row| row.kind == RowKind::Added).count(), 1100);
+        assert_eq!(rows.iter().filter(|row| row.kind == RowKind::Removed).count(), 1100);
+        assert_eq!(merge_blocks(&mine, &theirs, &std::collections::HashMap::new()), mine);
     }
 
     #[test]

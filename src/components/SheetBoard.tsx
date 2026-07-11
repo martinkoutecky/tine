@@ -1,7 +1,6 @@
-import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, untrack, type JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, untrack, type JSX } from "solid-js";
 import { observeNear, unobserveNear } from "../lazyObserve";
-import { backend } from "../backend";
-import { blockPageReadOnly, doc, ensurePageLoaded, formatForBlock, formatForPage, pageByName, readPageProperty } from "../store";
+import { blockPageReadOnly, doc, formatForBlock, formatForPage, pageByName, readPageProperty } from "../store";
 import { facetsFromDto, facetsOf, type Facets } from "../render/facets";
 import { pageProperties, visibleBody, isRenderHiddenProp } from "../render/block";
 import { InlineText } from "../render/inline";
@@ -43,6 +42,7 @@ import { blockBackgroundColor } from "../blockColors";
 import type { BlockDto, RefGroup } from "../types";
 import { Editor, SurfaceContext } from "./Block";
 import { isBareTagName } from "../tags";
+import { hydrateVisibleQueryPages, SHEET_RENDER_PAGE } from "../sheet/queryHydration";
 
 interface RowRecord {
   id: string;
@@ -102,26 +102,6 @@ export function SheetBoard(props: {
   });
   const formulas = createMemo(() => mergeFormulas(pageFormulas(), blockFormulas()));
 
-  const queryPages = createMemo(() => {
-    const map = new Map<string, RefGroup>();
-    for (const group of props.groups ?? []) map.set(`${group.kind}\0${group.page}`, group);
-    return [...map.values()];
-  });
-  const [pagesReady] = createResource(
-    () => (props.rowSource === "query" ? queryPages().map((g) => `${g.kind}:${g.page}`).join("\0") : null),
-    async () => {
-      await Promise.all(
-        queryPages().map(async (g) => {
-          if (pageByName(g.page)) return;
-          const dto = await backend().getPage(g.page, g.kind);
-          if (dto) ensurePageLoaded(dto);
-        })
-      );
-      return true;
-    }
-  );
-  void pagesReady;
-
   const allRows = createMemo<RowRecord[]>(() => {
     if (props.rowSource === "children") {
       return (doc.byId[props.ownerId]?.children ?? []).map((id) => ({
@@ -166,6 +146,17 @@ export function SheetBoard(props: {
       .map((tag): BoardColumn => ({ key: tag, label: tag, rows: [] }));
     return [...cols, ...empty];
   });
+  const [renderLimit, setRenderLimit] = createSignal(SHEET_RENDER_PAGE);
+  createEffect(() => {
+    props.groups;
+    setRenderLimit(SHEET_RENDER_PAGE);
+  });
+  const displayedRows = createMemo(() => rows().slice(0, renderLimit()));
+  const displayedIds = createMemo(() => new Set(displayedRows().map((row) => row.id)));
+  const displayedColumns = createMemo(() => {
+    const ids = displayedIds();
+    return columns().map((column) => ({ ...column, rows: column.rows.filter((row) => ids.has(row.id)) }));
+  });
   createEffect(() => {
     if (groupBy() !== "tags") return;
     pruneEmptyTagColumns(
@@ -177,7 +168,7 @@ export function SheetBoard(props: {
     graphEpoch();
     untrack(() => clearEmptyTagColumns(props.ownerId));
   });
-  const maxRows = createMemo(() => Math.max(1, ...columns().map((c) => c.rows.length)));
+  const maxRows = createMemo(() => Math.max(1, ...displayedColumns().map((c) => c.rows.length)));
   const formulaHintFields = createMemo(() => {
     const observed = observedFieldsForRows(rows(), props.rowSource === "query");
     const out: string[] = [];
@@ -317,7 +308,7 @@ export function SheetBoard(props: {
               </span>
             )}
           </Show>
-          <For each={columns()}>
+          <For each={displayedColumns()}>
             {(col, colIndex) => (
               <section
                 class="sheet-board-column"
@@ -340,6 +331,9 @@ export function SheetBoard(props: {
                         selected={selected(colIndex(), rowIndex())}
                         dragging={drag()?.id === row.id && drag()?.col === colIndex() && drag()?.row === rowIndex()}
                         canMove={!isFormulaField(groupBy())}
+                        hydrate={props.rowSource === "query"
+                          ? () => void hydrateVisibleQueryPages([row], props.groups)
+                          : undefined}
                         setDrag={setDrag}
                         dropCard={dropCard}
                       />
@@ -393,6 +387,18 @@ export function SheetBoard(props: {
             </section>
           </Show>
         </div>
+      </Show>
+      <Show when={displayedRows().length < rows().length}>
+        <button
+          class="sheet-add-row-ghost sheet-load-more"
+          onClick={(e) => {
+            e.stopPropagation();
+            setRenderLimit((limit) => limit + SHEET_RENDER_PAGE);
+          }}
+        >
+          Load {Math.min(SHEET_RENDER_PAGE, rows().length - displayedRows().length)} more cards
+          ({displayedRows().length} of {rows().length})
+        </button>
       </Show>
     </div>
   );
@@ -588,6 +594,7 @@ function BoardCard(props: {
   selected: boolean;
   dragging: boolean;
   canMove: boolean;
+  hydrate?: () => void;
   setDrag: (v: { id: string; col: number; row: number; overCol: number | null } | null) => void;
   dropCard: (row: RowRecord, colIndex: number, targetCol: number | null) => void;
 }): JSX.Element {
@@ -596,10 +603,14 @@ function BoardCard(props: {
   const fmt = () => (doc.byId[props.row.id] ? formatForBlock(props.row.id) : formatForPage(props.row.page));
   const [near, setNear] = createSignal(renderedBoardCards.has(props.row.id));
   const observeCard = (el: Element) => {
-    if (near()) return;
+    if (near()) {
+      props.hydrate?.();
+      return;
+    }
     observeNear(el, () => {
       renderedBoardCards.add(props.row.id);
       setNear(true);
+      props.hydrate?.();
     });
     onCleanup(() => unobserveNear(el));
   };

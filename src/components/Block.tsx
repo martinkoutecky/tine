@@ -1102,7 +1102,7 @@ export function Editor(props: { id: string }): JSX.Element {
       // `((` → full-text search for a block to reference, grouped by page. An
       // empty query (bare `((`) returns nothing — the popup stays hidden until
       // the user types. Selecting inserts `((uuid))` (see selectAc).
-      const groups = await backend().search(t.query, 8);
+      const groups = await backend().search(t.query, 8, "block-picker");
       const cur = ac();
       if (!cur || cur.start !== t.start) return; // trigger changed while awaiting
       const items: AcItem[] = [];
