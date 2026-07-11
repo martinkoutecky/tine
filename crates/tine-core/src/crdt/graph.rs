@@ -260,19 +260,28 @@ impl CrdtGraph {
     }
 
     /// Imports all newly delivered chunks and reports pages that need projection.
-    /// Replay into a fresh document keeps malformed or incomplete input from
-    /// partially changing the live state.
+    /// Importing into a fork keeps malformed or incomplete input from partially
+    /// changing live state without replaying all historical payloads each time.
     pub fn import_pending(&mut self) -> Result<ImportReport, CrdtError> {
-        let chunks = self.store.load_chunks()?;
-        let new_chunks: Vec<&Chunk> = chunks
-            .iter()
-            .filter(|chunk| !self.imported_chunks.contains(&chunk.id))
-            .collect();
+        let new_chunks = self.store.load_new_chunks(&self.imported_chunks)?;
         if new_chunks.is_empty() {
             return Ok(ImportReport::default());
         }
 
-        let candidate = replay_chunks(&chunks, self.store.session_id)?;
+        let candidate = self.doc.fork();
+        candidate
+            .set_peer_id(peer_id(self.store.session_id))
+            .map_err(loro_error)?;
+        let payloads: Vec<Vec<u8>> = new_chunks
+            .iter()
+            .map(|chunk| chunk.payload.clone())
+            .collect();
+        let status = candidate.import_batch(&payloads).map_err(loro_error)?;
+        if status.pending.is_some() {
+            return Err(CrdtError::InvalidChunk(
+                "new chunks have unresolved Loro dependencies".into(),
+            ));
+        }
         materialize_pages_from(&candidate)?;
 
         let mut affected: HashMap<PageId, BTreeSet<String>> = HashMap::new();
@@ -306,7 +315,8 @@ impl CrdtGraph {
             affected_pages,
         };
         self.doc = candidate;
-        self.imported_chunks = chunk_ids(&chunks);
+        self.imported_chunks
+            .extend(new_chunks.into_iter().map(|chunk| chunk.id));
         Ok(report)
     }
 

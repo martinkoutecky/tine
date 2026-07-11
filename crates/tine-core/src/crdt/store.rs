@@ -154,6 +154,42 @@ impl Store {
         Ok(chunks)
     }
 
+    /// Load and validate only content IDs this process has not imported. Known
+    /// immutable filenames are skipped without reopening their payloads; a full
+    /// replay on process start remains the integrity check for the whole store.
+    pub fn load_new_chunks(&self, imported: &HashSet<String>) -> Result<Vec<Chunk>, CrdtError> {
+        let mut paths = Vec::new();
+        collect_chunk_paths(&self.root, &mut paths)?;
+        paths.sort();
+        let mut chunks = BTreeMap::new();
+        for path in paths {
+            let file_id = path
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .ok_or_else(|| {
+                    CrdtError::InvalidChunk(format!(
+                        "non-UTF-8 chunk filename at {}",
+                        path.display()
+                    ))
+                })?;
+            if imported.contains(file_id) {
+                continue;
+            }
+            let chunk = read_chunk(&path)?;
+            if chunk.header.workspace_id != self.workspace_id {
+                return Err(CrdtError::WorkspaceMismatch {
+                    expected: self.workspace_id,
+                    found: chunk.header.workspace_id,
+                });
+            }
+            if chunk.header.kind == ChunkKind::Genesis {
+                return Err(CrdtError::MultipleGenesis(2));
+            }
+            chunks.entry(chunk.id.clone()).or_insert(chunk);
+        }
+        Ok(chunks.into_values().collect())
+    }
+
     pub fn publish(
         &self,
         kind: ChunkKind,
