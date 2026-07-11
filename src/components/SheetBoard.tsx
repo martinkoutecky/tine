@@ -55,6 +55,15 @@ interface BoardColumn {
   rows: RowRecord[];
 }
 
+interface BoardDragCoordinator {
+  start(pointerId: number, cancel: () => void): void;
+  owns(pointerId: number, cancel: () => void): boolean;
+  finish(pointerId: number, cancel: () => void): void;
+  targetAtPoint(x: number, y: number): { col: number; columnId: string } | null;
+}
+
+let activeBoardDrag: { board: symbol; pointerId: number; cancel: () => void } | null = null;
+
 function boardColumnId(key: string | null): string {
   return JSON.stringify(key);
 }
@@ -85,6 +94,31 @@ export function SheetBoard(props: {
     return options.includes(current) ? options : [...options, current];
   });
   const [drag, setDrag] = createSignal<{ id: string; col: number; row: number; overCol: number | null } | null>(null);
+  let boardElement: HTMLDivElement | undefined;
+  const boardInstance = Symbol("sheet-board");
+  const dragCoordinator: BoardDragCoordinator = {
+    start(pointerId, cancel) {
+      activeBoardDrag?.cancel();
+      activeBoardDrag = { board: boardInstance, pointerId, cancel };
+    },
+    owns(pointerId, cancel) {
+      return activeBoardDrag?.board === boardInstance && activeBoardDrag.pointerId === pointerId && activeBoardDrag.cancel === cancel;
+    },
+    finish(pointerId, cancel) {
+      if (this.owns(pointerId, cancel)) activeBoardDrag = null;
+    },
+    targetAtPoint(x, y) {
+      const column = (document.elementFromPoint(x, y) as HTMLElement | null)
+        ?.closest(".sheet-board-column") as HTMLElement | null;
+      if (!column || column.closest(".sheet-board") !== boardElement) return null;
+      const col = Number(column.dataset.boardCol);
+      const columnId = column.dataset.boardColumnId;
+      return Number.isFinite(col) && columnId !== undefined ? { col, columnId } : null;
+    },
+  };
+  onCleanup(() => {
+    if (activeBoardDrag?.board === boardInstance) activeBoardDrag.cancel();
+  });
   const [addingTag, setAddingTag] = createSignal(false);
   const [tagInputInvalid, setTagInputInvalid] = createSignal(false);
   const config = createMemo(() => {
@@ -415,6 +449,7 @@ export function SheetBoard(props: {
       </Show>
       <Show when={columns().length > 0} fallback={<div class="sheet-board sheet-empty">empty board</div>}>
         <div
+          ref={boardElement}
           class="sheet-board"
           classList={{ "sheet-filter-broken": !!filterError() }}
           data-sheet-grid-id={props.ownerId}
@@ -455,6 +490,7 @@ export function SheetBoard(props: {
                         dragging={drag()?.id === row.id && drag()?.col === colIndex() && drag()?.row === rowIndex()}
                         canMove={!isFormulaField(groupBy())}
                         dragVersion={dragVersion()}
+                        dragCoordinator={dragCoordinator}
                         hydrate={props.rowSource === "query"
                           ? () => void hydrateVisibleQueryPages([row], props.groups)
                           : undefined}
@@ -721,6 +757,7 @@ function BoardCard(props: {
   dragging: boolean;
   canMove: boolean;
   dragVersion: unknown;
+  dragCoordinator: BoardDragCoordinator;
   hydrate?: () => void;
   setDrag: (v: { id: string; col: number; row: number; overCol: number | null } | null) => void;
   dropCard: (row: RowRecord, rowKey: string, sourceColumnId: string, targetColumnId: string | null, groupBy: FieldId) => void;
@@ -774,10 +811,12 @@ function BoardCard(props: {
     }
     const startX = e.clientX;
     const startY = e.clientY;
+    const pointerId = e.pointerId;
     let moved = false;
     let overCol: number | null = null;
     let targetColumnId: string | null = null;
     let ghost: HTMLElement | null = null;
+    let finished = false;
     const rowKey = formulaRowKey(props.row);
     const sourceColumnId = props.columnId;
     const dragGroupBy = props.groupBy;
@@ -801,26 +840,29 @@ function BoardCard(props: {
     const cleanup = () => {
       ghost?.remove();
       ghost = null;
-      document.body.classList.remove("sheet-board-dragging");
+      if (!document.body.querySelector(".sheet-board-drag-ghost")) {
+        document.body.classList.remove("sheet-board-dragging");
+      }
       props.setDrag(null);
     };
     const removeListeners = () => {
       window.removeEventListener("pointermove", onMove, true);
       window.removeEventListener("pointerup", onUp, true);
-      window.removeEventListener("pointercancel", onCancel, true);
+      window.removeEventListener("pointercancel", onPointerCancel, true);
       window.removeEventListener("blur", onCancel, true);
       window.removeEventListener("keydown", onKeyDown, true);
+      card.removeEventListener("lostpointercapture", onLostPointerCapture, true);
     };
     const onMove = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId || !props.dragCoordinator.owns(pointerId, onCancel)) return;
       if (!moved && Math.hypot(ev.clientX - startX, ev.clientY - startY) < 4) return;
       if (!moved) {
         moved = true;
         createGhost(ev);
       } else updateGhost(ev);
-      const el = (document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null)?.closest(".sheet-board-column") as HTMLElement | null;
-      const idx = el ? Number(el.dataset.boardCol) : NaN;
-      const nextOverCol = Number.isFinite(idx) ? idx : null;
-      const nextTargetColumnId = nextOverCol === null ? null : el?.dataset.boardColumnId ?? null;
+      const target = props.dragCoordinator.targetAtPoint(ev.clientX, ev.clientY);
+      const nextOverCol = target?.col ?? null;
+      const nextTargetColumnId = target?.columnId ?? null;
       if (nextOverCol !== overCol || nextTargetColumnId !== targetColumnId) {
         overCol = nextOverCol;
         targetColumnId = nextTargetColumnId;
@@ -829,29 +871,59 @@ function BoardCard(props: {
       ev.preventDefault();
     };
     const onUp = (ev: PointerEvent) => {
-      removeListeners();
-      cancelActiveDrag = null;
+      if (ev.pointerId !== pointerId || !props.dragCoordinator.owns(pointerId, onCancel)) return;
+      const releaseTarget = moved ? props.dragCoordinator.targetAtPoint(ev.clientX, ev.clientY) : null;
       if (moved) {
-        props.dropCard(props.row, rowKey, sourceColumnId, targetColumnId, dragGroupBy);
-        cleanup();
+        finish();
+        if (releaseTarget) {
+          props.dropCard(props.row, rowKey, sourceColumnId, releaseTarget.columnId, dragGroupBy);
+        }
         ev.preventDefault();
+      } else {
+        finish();
       }
     };
-    const onCancel = () => {
+    const finish = () => {
+      if (finished) return;
+      finished = true;
       removeListeners();
+      // Escape/blur/supersession can finish before the browser's natural
+      // pointerup release. Drop capture after detaching lostpointercapture so a
+      // canceled pointer cannot keep retargeting later gestures to this card.
+      try {
+        if (typeof card.hasPointerCapture === "function" &&
+            typeof card.releasePointerCapture === "function" &&
+            card.hasPointerCapture(pointerId)) {
+          card.releasePointerCapture(pointerId);
+        }
+      } catch {
+        // Capture may already have been revoked by the platform or element removal.
+      }
       cancelActiveDrag = null;
+      props.dragCoordinator.finish(pointerId, onCancel);
       cleanup();
+    };
+    const onCancel = () => finish();
+    const onPointerCancel = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId || !props.dragCoordinator.owns(pointerId, onCancel)) return;
+      onCancel();
+    };
+    const onLostPointerCapture = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId || !props.dragCoordinator.owns(pointerId, onCancel)) return;
+      onCancel();
     };
     const onKeyDown = (ev: KeyboardEvent) => {
       if (ev.key !== "Escape") return;
       ev.preventDefault();
       onCancel();
     };
+    props.dragCoordinator.start(pointerId, onCancel);
     window.addEventListener("pointermove", onMove, true);
     window.addEventListener("pointerup", onUp, true);
-    window.addEventListener("pointercancel", onCancel, true);
+    window.addEventListener("pointercancel", onPointerCancel, true);
     window.addEventListener("blur", onCancel, true);
     window.addEventListener("keydown", onKeyDown, true);
+    card.addEventListener("lostpointercapture", onLostPointerCapture, true);
     cancelActiveDrag = onCancel;
   };
 

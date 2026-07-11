@@ -96,8 +96,10 @@ function keydown(key: string, init: Partial<KeyboardEvent> = {}): KeyboardEvent 
   });
 }
 
-function pointer(type: string, x: number, y: number): Event {
-  return new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y });
+function pointer(type: string, x: number, y: number, pointerId = 1): Event {
+  const event = new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y });
+  Object.defineProperty(event, "pointerId", { value: pointerId });
+  return event;
 }
 
 function contextMenu(target: EventTarget): MouseEvent {
@@ -629,6 +631,144 @@ describe("SheetBoard", () => {
     dispose();
   });
 
+  it("keeps only the latest pointer drag session active across Board instances", () => {
+    loadBoardDoc();
+    const { root, dispose } = mount(() => (
+      <>
+        <SheetBoard ownerId="board" rowSource="children" groupBy="state" />
+        <SheetBoard ownerId="board" rowSource="children" groupBy="state" />
+      </>
+    ));
+    const boards = root.querySelectorAll(".sheet-board");
+    const todo = boards[0].querySelector('[data-block-id="todo"]') as HTMLElement;
+    const doing = boards[1].querySelector('[data-block-id="doing"]') as HTMLElement;
+    const doingColumn = boards[0].querySelector('[data-board-col="1"]') as HTMLElement;
+    const doneColumn = boards[1].querySelector('[data-board-col="2"]') as HTMLElement;
+    const prevElementFromPoint = document.elementFromPoint;
+    document.elementFromPoint = (x) => x >= 200 ? doneColumn : doingColumn;
+
+    try {
+      todo.dispatchEvent(pointer("pointerdown", 0, 0, 11));
+      window.dispatchEvent(pointer("pointermove", 12, 0, 11));
+      expect(document.body.querySelectorAll(".sheet-board-drag-ghost")).toHaveLength(1);
+
+      doing.dispatchEvent(pointer("pointerdown", 100, 0, 22));
+      expect(document.body.querySelectorAll(".sheet-board-drag-ghost")).toHaveLength(0);
+
+      window.dispatchEvent(pointer("pointerup", 12, 0, 11));
+      expect(doc.byId.todo.raw.split("\n")[0]).toBe("TODO Write tests");
+      expect(doc.byId.doing.raw.split("\n")[0]).toBe("DOING Implement board");
+
+      window.dispatchEvent(pointer("pointermove", 212, 0, 22));
+      window.dispatchEvent(pointer("pointerup", 212, 0, 22));
+      expect(doc.byId.todo.raw.split("\n")[0]).toBe("TODO Write tests");
+      expect(doc.byId.doing.raw.split("\n")[0]).toBe("DONE Implement board");
+    } finally {
+      document.elementFromPoint = prevElementFromPoint;
+      dispose();
+    }
+  });
+
+  it("rejects a drop column belonging to a duplicate Board surface", () => {
+    loadBoardDoc();
+    const { root, dispose } = mount(() => (
+      <>
+        <SheetBoard ownerId="board" rowSource="children" groupBy="state" />
+        <SheetBoard ownerId="board" rowSource="children" groupBy="state" />
+      </>
+    ));
+    const boards = root.querySelectorAll(".sheet-board");
+    const sourceCard = boards[0].querySelector('[data-block-id="todo"]') as HTMLElement;
+    const foreignTarget = boards[1].querySelector('[data-board-col="1"]') as HTMLElement;
+    const prevElementFromPoint = document.elementFromPoint;
+    document.elementFromPoint = () => foreignTarget;
+
+    try {
+      sourceCard.dispatchEvent(pointer("pointerdown", 0, 0, 31));
+      window.dispatchEvent(pointer("pointermove", 12, 0, 31));
+      window.dispatchEvent(pointer("pointerup", 12, 0, 31));
+
+      expect(doc.byId.todo.raw.split("\n")[0]).toBe("TODO Write tests");
+      expect(foreignTarget.classList.contains("sheet-board-drop")).toBe(false);
+    } finally {
+      document.elementFromPoint = prevElementFromPoint;
+      dispose();
+    }
+  });
+
+  it("re-hit-tests the pointerup position instead of dropping on a stale move target", () => {
+    loadBoardDoc();
+    const { root, dispose } = mount(() => <Block id="board" />);
+    const card = root.querySelector('[data-block-id="todo"]') as HTMLElement;
+    const target = root.querySelector('[data-board-col="1"]') as HTMLElement;
+    const outside = document.createElement("div");
+    document.body.appendChild(outside);
+    const prevElementFromPoint = document.elementFromPoint;
+    document.elementFromPoint = (x) => x < 20 ? target : outside;
+
+    try {
+      card.dispatchEvent(pointer("pointerdown", 0, 0, 41));
+      window.dispatchEvent(pointer("pointermove", 12, 0, 41));
+      window.dispatchEvent(pointer("pointerup", 30, 0, 41));
+
+      expect(doc.byId.todo.raw.split("\n")[0]).toBe("TODO Write tests");
+      expect(document.body.querySelector(".sheet-board-drag-ghost")).toBeNull();
+    } finally {
+      document.elementFromPoint = prevElementFromPoint;
+      outside.remove();
+      dispose();
+    }
+  });
+
+  it("ignores move and release events from a pointer that does not own the drag", () => {
+    loadBoardDoc();
+    const { root, dispose } = mount(() => <Block id="board" />);
+    const card = root.querySelector('[data-block-id="todo"]') as HTMLElement;
+    const target = root.querySelector('[data-board-col="1"]') as HTMLElement;
+    const prevElementFromPoint = document.elementFromPoint;
+    document.elementFromPoint = () => target;
+
+    try {
+      card.dispatchEvent(pointer("pointerdown", 0, 0, 51));
+      window.dispatchEvent(pointer("pointermove", 12, 0, 51));
+      window.dispatchEvent(pointer("pointermove", 20, 0, 52));
+      window.dispatchEvent(pointer("pointerup", 20, 0, 52));
+
+      expect(doc.byId.todo.raw.split("\n")[0]).toBe("TODO Write tests");
+      expect(document.body.querySelector(".sheet-board-drag-ghost")).not.toBeNull();
+
+      window.dispatchEvent(pointer("pointerup", 12, 0, 51));
+      expect(doc.byId.todo.raw.split("\n")[0]).toBe("DOING Write tests");
+      expect(document.body.querySelector(".sheet-board-drag-ghost")).toBeNull();
+    } finally {
+      document.elementFromPoint = prevElementFromPoint;
+      dispose();
+    }
+  });
+
+  it("cancels without mutation when the initiating pointer loses capture", () => {
+    loadBoardDoc();
+    const { root, dispose } = mount(() => <Block id="board" />);
+    const card = root.querySelector('[data-block-id="todo"]') as HTMLElement;
+    const target = root.querySelector('[data-board-col="1"]') as HTMLElement;
+    const prevElementFromPoint = document.elementFromPoint;
+    document.elementFromPoint = () => target;
+
+    try {
+      card.dispatchEvent(pointer("pointerdown", 0, 0, 61));
+      window.dispatchEvent(pointer("pointermove", 12, 0, 61));
+      card.dispatchEvent(pointer("lostpointercapture", 12, 0, 61));
+
+      expect(document.body.querySelector(".sheet-board-drag-ghost")).toBeNull();
+      expect(document.body.classList.contains("sheet-board-dragging")).toBe(false);
+      window.dispatchEvent(pointer("pointerup", 12, 0, 61));
+      expect(doc.byId.todo.raw.split("\n")[0]).toBe("TODO Write tests");
+    } finally {
+      document.elementFromPoint = prevElementFromPoint;
+      dispose();
+    }
+  });
+
   it("shows a floating drag ghost with grabbing cursor state and removes it on Escape", () => {
     loadBoardDoc();
     const { root, dispose } = mount(() => <Block id="board" />);
@@ -636,6 +776,10 @@ describe("SheetBoard", () => {
     const target = root.querySelector('[data-board-col="1"]') as HTMLElement;
     const prevElementFromPoint = document.elementFromPoint;
     document.elementFromPoint = () => target;
+    const releasePointerCapture = vi.fn();
+    card.setPointerCapture = vi.fn();
+    card.hasPointerCapture = vi.fn(() => true);
+    card.releasePointerCapture = releasePointerCapture;
 
     card.dispatchEvent(pointer("pointerdown", 0, 0));
     window.dispatchEvent(pointer("pointermove", 12, 0));
@@ -650,6 +794,7 @@ describe("SheetBoard", () => {
     expect(document.body.querySelector(".sheet-board-drag-ghost")).toBeNull();
     expect(document.body.classList.contains("sheet-board-dragging")).toBe(false);
     expect(doc.byId.todo.raw.split("\n")[0]).toBe("TODO Write tests");
+    expect(releasePointerCapture).toHaveBeenCalledWith(1);
 
     document.elementFromPoint = prevElementFromPoint;
     dispose();

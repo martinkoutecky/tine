@@ -21,6 +21,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   their grid surface and source block, stale query results cannot overwrite a
   newer view, formula/aggregate dependencies invalidate correctly, and large
   Grid/Table/Board views keep bounded lookup and rendering work.
+- **Board card drags stay bound to one pointer and one rendered Board.** Starting
+  another drag cancels the previous document-wide session, unrelated pointer
+  events are ignored, and a column in a duplicate split-pane Board cannot be
+  accepted as the drop target.
 - **Raw block punctuation and numbers use normal text metrics in edit mode.**
   Inter or the configured monospace face now handles `#`, `*`, brackets, and
   digits before the bundled emoji fallback, while actual emoji remain protected
