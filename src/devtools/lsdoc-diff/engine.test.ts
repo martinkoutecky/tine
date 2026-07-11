@@ -2,7 +2,13 @@
 // contract for the anonymizer + chunker. If these pass, the in-app scrub behaves
 // exactly like Martin's verified CLI tool.
 import { describe, expect, it } from "vitest";
-import { anonymizeTier1, anonymizeTier2, anonymizeAndVerify } from "./anonymize";
+import {
+  anonymizeTier1,
+  anonymizeTier2,
+  anonymizeAndVerify,
+  anonymizeSourceRel,
+  protectedSpans,
+} from "./anonymize";
 import { chunkRanges, toBytes } from "./minimize";
 import { projectionKey } from "./projection";
 
@@ -21,13 +27,47 @@ describe("anonymize tiers", () => {
     expect(byteLen(chars[5])).toBe(4); // 😀 → 4-byte placeholder
   });
 
-  it("tier 2 Caesar-shifts letters and keeps digits", () => {
-    expect(anonymizeTier2("Azaz09")).toBe("Baba09");
+  it("tier 2 Caesar-shifts letters and digits", () => {
+    expect(anonymizeTier2("Azaz09")).toBe("Baba10");
+  });
+
+  it("keeps URL schemes parseable while scrubbing the host, path, query, and fragment", () => {
+    const original = "See https://private.example/Client/Plan?q=Secret#Board";
+    const scrubbed = anonymizeTier1(original, protectedSpans(original));
+    expect(scrubbed).toContain("https://");
+    expect(scrubbed).not.toContain("private");
+    expect(scrubbed).not.toContain("example");
+    expect(scrubbed).not.toContain("Client");
+    expect(scrubbed).not.toContain("Secret");
+    expect(scrubbed).toMatch(/https:\/\/a+\.a+\/A[a]+\/A[a]+\?a=A[a]+#A[a]+/);
+  });
+
+  it("does not retain numeric URL identifiers in the structure-preserving tier", () => {
+    const original = "https://123.example/account/456";
+    const scrubbed = anonymizeTier2(original, protectedSpans(original));
+    expect(scrubbed).toBe("https://234.fybnqmf/bddpvou/567");
+    expect(scrubbed).not.toContain("123");
+    expect(scrubbed).not.toContain("456");
+  });
+
+  it("keeps percent escapes syntactically valid without retaining encoded bytes", () => {
+    const original = "https://example.test/private%20name%2Fsecret";
+    const scrubbed = anonymizeTier2(original, protectedSpans(original));
+    expect(scrubbed).toContain("https://");
+    expect(scrubbed).toContain("%41");
+    expect(scrubbed).not.toContain("%20");
+    expect(scrubbed).not.toContain("%2F");
+    expect([...scrubbed.matchAll(/%([^\s]{2})/g)].every((m) => /^[0-9A-F]{2}$/.test(m[1]))).toBe(true);
+  });
+
+  it("replaces source page names with neutral stable labels", () => {
+    expect(anonymizeSourceRel("pages/Client Roadmap.md", 6)).toBe("graph-file-0007.md");
+    expect(anonymizeSourceRel("journals/2026_07_11.org", 1)).toBe("graph-file-0002.org");
   });
 });
 
 describe("anonymizeAndVerify tier escalation", () => {
-  // Verifier that only accepts tier-2 output of "Ab1" (= "Bc1"), forcing the
+  // Verifier that only accepts tier-2 output of "Ab1" (= "Bc2"), forcing the
   // fallback past tier 1 (= "Aa9").
   const verify = (accept: (c: string) => boolean) => async (candidate: string) => ({
     ok: true,
@@ -35,15 +75,26 @@ describe("anonymizeAndVerify tier escalation", () => {
   });
 
   it("selects tier 2 when tier 1 no longer reproduces", async () => {
-    const r = await anonymizeAndVerify("Ab1", verify((c) => c === "Bc1"));
+    const r = await anonymizeAndVerify("Ab1", verify((c) => c === "Bc2"));
     expect(r.ok).toBe(true);
     expect(r.tier).toBe("tier 2");
-    expect(r.input).toBe("Bc1");
+    expect(r.input).toBe("Bc2");
   });
 
   it("fails when no tier reproduces the divergence", async () => {
     const r = await anonymizeAndVerify("Ab1", verify(() => false));
     expect(r.ok).toBe(false);
+  });
+
+  it("can retain a URL-sensitive divergence without retaining the private URL", async () => {
+    const original = "- https://private.example/Client/Plan?q=Secret#Board";
+    const r = await anonymizeAndVerify(original, verify((candidate) =>
+      candidate.includes("https://") && !candidate.includes("private.example"),
+    ));
+    expect(r.ok).toBe(true);
+    expect(r.input).toContain("https://");
+    expect(r.input).not.toContain("private.example");
+    expect(r.input).not.toContain("Client");
   });
 });
 

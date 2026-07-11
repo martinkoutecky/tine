@@ -1,6 +1,7 @@
-// Faithful TS port of the anonymization core of `lsdoc/tools/graph-check.mjs`
-// (Martin's verified reference tool). Behavior MUST match byte-for-byte — this is
-// the privacy guarantee for sharing divergence snippets from a private graph.
+// TS port of the anonymization core of `lsdoc/tools/graph-check.mjs` (Martin's
+// verified reference tool), with stricter in-app privacy for source names, URL
+// content, numeric identifiers, and percent escapes. The privacy contract is
+// enforced by focused tests and verify-after-scrub before anything is shown.
 //
 // Ported verbatim (graph-check.mjs lines 881-940): the two scrub tiers, the
 // codepoint transformer, the protected-keyword spans, and the UTF-8-length
@@ -30,14 +31,16 @@ export function anonymizeTier1(input: string, protectedRanges: Range[] = []): st
   });
 }
 
-/** Tier 2: Caesar-shift letters by 1 (A→B, z→a), digits untouched. Retains more
+/** Tier 2: Caesar-shift letters and digits by 1 (A→B, z→a, 9→0). Retains more
  *  of the original structure than tier 1 — used when tier-1's total collapse
- *  destroyed the divergence (keyword/length-sensitive parses). */
+ *  destroyed the divergence (keyword/length-sensitive parses), without leaking
+ *  numeric identifiers in page names or URLs. */
 export function anonymizeTier2(input: string, protectedRanges: Range[] = []): string {
   return transformCodepoints(input, protectedRanges, (ch) => {
     const cp = ch.codePointAt(0)!;
     if (cp >= 0x41 && cp <= 0x5a) return String.fromCharCode(((cp - 0x41 + 1) % 26) + 0x41);
     if (cp >= 0x61 && cp <= 0x7a) return String.fromCharCode(((cp - 0x61 + 1) % 26) + 0x61);
+    if (cp >= 0x30 && cp <= 0x39) return String.fromCharCode(((cp - 0x30 + 1) % 10) + 0x30);
     return ch;
   });
 }
@@ -45,6 +48,18 @@ export function anonymizeTier2(input: string, protectedRanges: Range[] = []): st
 function transformCodepoints(input: string, protectedRanges: Range[], fn: (ch: string) => string): string {
   let out = "";
   for (let i = 0; i < input.length; ) {
+    // Preserve percent-encoding syntax without retaining the encoded byte. A
+    // character-by-character Caesar shift can turn `%2F` into invalid `%3G`,
+    // which makes URL parsing disappear during re-verification.
+    if (
+      input[i] === "%" &&
+      /^[0-9A-Fa-f]{2}$/.test(input.slice(i + 1, i + 3)) &&
+      !inProtectedRange(i, protectedRanges)
+    ) {
+      out += "%41";
+      i += 3;
+      continue;
+    }
     const cp = input.codePointAt(i)!;
     const ch = String.fromCodePoint(cp);
     const next = i + ch.length;
@@ -66,12 +81,18 @@ function replacementForUtf8Len(len: number): string {
 }
 
 /** Spans that must survive scrubbing because their literal text drives parser
- *  behavior: URLs, org block markers, `#+KEY:`, PROPERTIES drawers, task
- *  markers / SCHEDULED / DEADLINE, weekday + month names. */
+ *  behavior: URL schemes, org block markers, `#+KEY:`, PROPERTIES drawers,
+ *  task markers / SCHEDULED / DEADLINE, weekday + month names.
+ *
+ *  Only the `http://` / `https://` prefix is protected. Protecting the complete
+ *  URL used to leak private hosts and paths; scrubbing the prefix used to stop
+ *  both parsers from recognizing a URL and could erase a URL-sensitive
+ *  divergence. The remaining URL characters keep their punctuation and byte
+ *  shape through the normal anonymizer. */
 export function protectedSpans(input: string): Range[] {
   const ranges: Range[] = [];
   const patterns = [
-    /https?:\/\/[^\s<>"'`)\]]+/gi,
+    /https?:\/\//gi,
     /#\+(?:BEGIN|END)_[A-Z0-9_+-]+/gi,
     /#\+[A-Z0-9_+-]+:/gi,
     /:PROPERTIES:|:END:/gi,
@@ -84,6 +105,14 @@ export function protectedSpans(input: string): Range[] {
   }
   ranges.sort((a, b) => a.start - b.start || a.end - b.end);
   return ranges;
+}
+
+/** A finding's source path is itself private graph content (usually the page
+ *  name). Replace it with a stable per-run label while retaining only the file
+ *  format needed to interpret the snippet. */
+export function anonymizeSourceRel(rel: string, index: number): string {
+  const ext = rel.toLowerCase().endsWith(".org") ? ".org" : ".md";
+  return `graph-file-${String(index + 1).padStart(4, "0")}${ext}`;
 }
 
 export interface AnonResult<P = unknown> {

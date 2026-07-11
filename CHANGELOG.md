@@ -30,6 +30,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 - Link catalogue entries to their plugin details and screenshots, and explain
   human-review reasons and finding severity in end-user language.
+- **The shared parser is updated to lsdoc 0.5.2.** Both the native core and the
+  vendored browser WASM parser use the same released parser build.
 
 ### Fixed
 
@@ -40,6 +42,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Upgrade the Vite/Vitest development toolchain to versions clear of the current
   npm advisories, including the Vitest UI-server and Vite dev-server issues; keep
   Solid's browser export conditions explicit in the test runner.
+- **Help improve Tine uses the same OG-faithful reference oracle as lsdoc.**
+  Property, nested, file-label, Org, embed, and block-reference semantics no
+  longer drift between the two sides of the comparison, eliminating false
+  divergences such as Markdown links in property values. CI now binds the
+  vendored oracle to the pinned lsdoc release and its exact source hash.
+- **Help improve Tine reports no longer expose page names or private URLs.**
+  Source files use neutral labels, URL schemes remain parseable while hosts and
+  paths are scrubbed, URL-sensitive divergences survive anonymization more
+  reliably, and copied reports record the Tine version used for the comparison.
+- **Release CI catches platform-only compilation and stale Flatpak sources before
+  tagging.** Windows and Android compile guards now run on ordinary CI, the
+  Flatpak offline npm manifest is checked against `package-lock.json`, and a
+  release remains draft unless every required artifact job succeeds.
 
 ## [0.5.5] - 2026-07-11
 

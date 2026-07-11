@@ -6,12 +6,10 @@
 # …or run it manually from the Actions tab (workflow_dispatch) to smoke-test the
 # build matrix WITHOUT cutting a release.
 #
-# Auto-publish: create-release makes a DRAFT, then each build/android leg flips it
-# to PUBLISHED the moment its own assets are uploaded — so installers drop as they
-# are generated instead of all waiting for the slowest platform. With max-parallel:1
-# the first finished leg publishes and the rest just add their assets to the now-
-# public release. A run where every leg fails never reaches the publish step, so a
-# totally-failed build still stays an unpublished draft (left for inspection).
+# Publication is atomic at the workflow level: create-release makes a DRAFT,
+# every required desktop/Android job uploads into that draft, and a final gate
+# publishes only when all jobs succeeded. A platform compile/package failure must
+# never expose a partial release as current (v0.5.5 did exactly that).
 #
 # Signing: macOS/Windows installers are UNSIGNED until you add the secrets noted
 # below. Unsigned builds still run, but Gatekeeper (macOS) and SmartScreen
@@ -81,15 +79,17 @@ jobs:
     if: always() && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped')
     strategy:
       fail-fast: false
-      # Serialize the platform legs. tauri-action's latest.json upload is a
+      # Serialize platform legs only for tagged releases. tauri-action's latest.json upload is a
       # read-modify-write merge (read the release's current latest.json → add this
       # platform → delete + re-upload). Run in parallel, the legs race: they lose
       # each other's platform entries AND collide on the re-upload
       # (ReleaseAsset "already_exists"), which fails a leg and skips publish-release
       # (v0.4.5 got stuck as a draft this way). One-at-a-time makes each leg merge
       # into the previous complete manifest. Cost: slower releases; fine for the
-      # cadence, and correctness of the updater manifest matters more.
-      max-parallel: 1
+      # cadence, and correctness of the updater manifest matters more. Manual
+      # dispatches do not upload release assets, so all five smoke-test legs can
+      # safely run in parallel.
+      max-parallel: ${{ startsWith(github.ref, 'refs/tags/') && 1 || 5 }}
       matrix:
         include:
           - platform: ubuntu-22.04
@@ -211,26 +211,6 @@ jobs:
           $zip = "Tine_${version}_${{ matrix.win-arch }}-portable.zip"
           Compress-Archive -Path $exe -DestinationPath $zip -Force
           gh release upload $tag $zip --clobber --repo $env:GITHUB_REPOSITORY
-
-      # Publish the release as soon as THIS leg's assets are up, so each platform's
-      # installer appears the moment it finishes instead of everyone waiting for the
-      # slowest leg. Idempotent: with max-parallel:1 the first finished leg flips the
-      # draft to published, later legs re-assert it (a no-op) and just add their
-      # assets to the now-public release. Only on a real tag (a manual dispatch has
-      # no release to publish). A totally-failed release still never publishes (no
-      # leg reaches this step), so the draft-on-failure safety is preserved.
-      - name: Publish the release (drop assets as they build)
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: actions/github-script@v7
-        with:
-          script: |
-            await github.rest.repos.updateRelease({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              release_id: ${{ needs.create-release.outputs.release_id }},
-              draft: false,
-              prerelease: false,
-            });
 
   # 2b) Android: build a SIGNED release APK and upload it to the draft release.
   #     The private signing key lives ONLY in encrypted repo secrets — never in the
@@ -400,10 +380,20 @@ jobs:
           cp "$apk" "Tine_${version}_android-arm64.apk"
           gh release upload "$tag" "Tine_${version}_android-arm64.apk" --clobber --repo "$GITHUB_REPOSITORY"
 
-      # Same incremental-publish as the desktop legs: flip the draft public once the
-      # APK is up so it drops independently of the (slower) desktop builds.
-      - name: Publish the release (drop the APK as it builds)
-        if: steps.sign.outputs.enabled == 'true' && startsWith(github.ref, 'refs/tags/')
+      - name: Remove signing material
+        if: always()
+        run: rm -f "$RUNNER_TEMP/tine-release.jks" src-tauri/gen/android/keystore.properties
+
+  publish-release:
+    needs: [create-release, build, android]
+    if: >-
+      startsWith(github.ref, 'refs/tags/') &&
+      needs.create-release.result == 'success' &&
+      needs.build.result == 'success' &&
+      needs.android.result == 'success'
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Publish only the complete release
         uses: actions/github-script@v7
         with:
           script: |
@@ -414,13 +404,3 @@ jobs:
               draft: false,
               prerelease: false,
             });
-
-      - name: Remove signing material
-        if: always()
-        run: rm -f "$RUNNER_TEMP/tine-release.jks" src-tauri/gen/android/keystore.properties
-
-  # Note: there is no final "publish-release" gate any more. Each build/android leg
-  # publishes the release itself the moment its own assets are uploaded (see the
-  # "Publish the release …" steps above), so installers drop as they are generated
-  # rather than all waiting for the slowest platform. A run where every leg fails
-  # never reaches those steps, so the release correctly stays an unpublished draft.

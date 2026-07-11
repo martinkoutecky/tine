@@ -1,7 +1,6 @@
-# Fast checks on every push to master and every PR: typecheck + frontend tests +
-# the Rust core's tests. Deliberately does NOT build the Tauri shell (no webkit
-# deps needed) — `tine-core` is GUI-free, so this stays cheap and quick. The
-# full cross-platform build lives in release.yml.
+# Checks on every push to master and every PR: frontend/type/Rust tests plus
+# platform compile probes. The probes exist because Linux host tests cannot see
+# Windows-only code or Android-specific libc declarations.
 name: ci
 
 on:
@@ -28,11 +27,17 @@ jobs:
 
       - run: npm ci
 
+      - name: Flatpak offline npm sources are current
+        run: node scripts/check-flatpak-node-sources.mjs
+
       # The pin guard otherwise only runs inside `npm run build`, which fast CI
       # skips — a Cargo lsdoc bump with stale vendored WASM must fail HERE, not
       # at release-build time.
       - name: lsdoc WASM pin check
         run: node scripts/check-wasm-pin.mjs
+
+      - name: lsdoc mldoc-oracle drift check
+        run: node scripts/check-lsdoc-oracle-sync.mjs
 
       - name: Typecheck (tsc)
         run: npx tsc --noEmit
@@ -42,6 +47,39 @@ jobs:
 
       - name: Rust core tests
         run: cargo test -p tine-core
+
+  # Compile platform-gated source on every change. Linux host tests do not see
+  # either branch: Windows has its own cfg implementation, while Android's libc
+  # declarations differ from desktop Linux even for the same syscall.
+  windows-compile:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+      - run: npm ci
+      - run: npm run build
+      - name: Windows Tauri shell compiles
+        run: cargo check -p tine --features custom-protocol
+
+  android-core-compile:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          targets: aarch64-linux-android
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+      - name: Android core compiles against Android libc declarations
+        run: cargo check -p tine-core --target aarch64-linux-android
 
   # Perf regression bench (docs/BENCH.md Tier 3). Performance is the #2 project
   # priority; without this job a lazy-render/cache regression can land silently.

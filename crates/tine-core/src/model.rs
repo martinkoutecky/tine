@@ -4893,7 +4893,10 @@ fn move_file_noreplace(src: &Path, dest: &Path) -> io::Result<()> {
                 src.as_ptr(),
                 libc::AT_FDCWD,
                 dest.as_ptr(),
-                libc::RENAME_NOREPLACE,
+                // Android declares renameat2's flags as c_uint while its
+                // RENAME_NOREPLACE constant is c_int. Linux happens to expose
+                // matching types; normalize explicitly for both targets.
+                libc::RENAME_NOREPLACE as libc::c_uint,
             )
         };
         return (result == 0)

@@ -6,7 +6,7 @@
 // Backed by the wasm `parse_document_json` export (lsdoc-wasm, lsdoc ≥ v0.4.2), a
 // thin wrapper over `lsdoc::parse_format`. The wasm bytes are already loaded at app
 // boot by parse.ts's `initParser()`; we only gate on it being ready.
-import { parse_document_json } from "../../render/wasm/lsdoc_wasm.js";
+import { lsdoc_tag, parse_document_json } from "../../render/wasm/lsdoc_wasm.js";
 import { parserReady } from "../../render/parse";
 import type { Projection } from "./mldoc-client";
 
@@ -14,6 +14,11 @@ import type { Projection } from "./mldoc-client";
  *  panel's divergence scan + the lsdoc bench column. */
 export function lsdocDocumentAvailable(): boolean {
   return parserReady();
+}
+
+/** Exact released lsdoc tag embedded in the parser used for this comparison. */
+export function lsdocVersion(): string {
+  return parserReady() ? lsdoc_tag() : "unavailable";
 }
 
 /** Parse a whole file with lsdoc into the {blocks, refs} projection. Caller must

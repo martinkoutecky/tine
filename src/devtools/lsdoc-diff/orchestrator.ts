@@ -7,10 +7,10 @@
 import { backend } from "../../backend";
 import type { GraphSourceFile } from "../../backend";
 import { MldocClient, type Format, type Projection } from "./mldoc-client";
-import { lsdocDocumentAvailable, parseLsdocDocument } from "./lsdoc-document";
+import { lsdocDocumentAvailable, lsdocVersion, parseLsdocDocument } from "./lsdoc-document";
 import { projectionKey } from "./projection";
 import { minimize, toBytes } from "./minimize";
-import { anonymizeAndVerify } from "./anonymize";
+import { anonymizeAndVerify, anonymizeSourceRel } from "./anonymize";
 import { benchFromResults, summarizeBenchRuns, type BenchRun, type BenchSummary } from "./bench";
 
 export interface DiffOptions {
@@ -35,6 +35,8 @@ export type Finding =
   | { type: "unstable-divergence"; rel: string };
 
 export interface DiffReport {
+  tineVersion: string;
+  lsdocVersion: string;
   stats: { files: number; totalBytes: number };
   lsdocAvailable: boolean;
   bench?: { lsdoc: BenchSummary | null; mldoc: BenchSummary };
@@ -61,14 +63,16 @@ export async function runComparison(
   opts: DiffOptions,
   onProgress: (e: ProgressEvent) => void,
 ): Promise<DiffReport> {
+  const tineVersion = await currentTineVersion();
   // Screenshot/dev hook: a preloaded fixture lets the harness render the panel's
   // populated state without a live mldoc+lsdoc run. Never set in a real build.
   const fixture = (globalThis as unknown as { __tineDiffFixture?: DiffReport }).__tineDiffFixture;
-  if (fixture) return fixture;
+  if (fixture) return { ...fixture, tineVersion: fixture.tineVersion || tineVersion };
 
   const files = await backend().graphSourceFiles(opts.includeJournals);
   const stats = { files: files.length, totalBytes: files.reduce((n, f) => n + f.bytes, 0) };
   const lsdocAvailable = lsdocDocumentAvailable();
+  const parserVersion = lsdocVersion();
   const client = new MldocClient();
 
   // Fresh (authoritative) both-parser parse — feeds re-verify, minimize, anon.
@@ -101,7 +105,7 @@ export async function runComparison(
       findings = lsdocAvailable ? await runDiff(client, files, opts, parseBothFresh, onProgress) : [];
     }
 
-    return { stats, lsdocAvailable, bench, findings };
+    return { tineVersion, lsdocVersion: parserVersion, stats, lsdocAvailable, bench, findings };
   } finally {
     client.dispose();
   }
@@ -114,34 +118,35 @@ async function runDiff(
   parseBothFresh: (text: string, format: Format) => Promise<PairResult>,
   onProgress: (e: ProgressEvent) => void,
 ): Promise<Finding[]> {
+  const anonymousRels = files.map((f, i) => anonymizeSourceRel(f.rel, i));
   // Stage 1 — fast scan (warm worker) to find candidate mismatches.
-  const candidates: GraphSourceFile[] = [];
+  const candidates: { file: GraphSourceFile; rel: string }[] = [];
   const findings: Finding[] = [];
   for (let i = 0; i < files.length; i++) {
     const f = files[i];
-    onProgress({ phase: "scan", done: i, total: files.length, current: f.rel });
+    onProgress({ phase: "scan", done: i, total: files.length, current: anonymousRels[i] });
     let lsdocKey: string;
     try {
       lsdocKey = projectionKey(parseLsdocDocument(f.text, f.format === "org"));
     } catch (e) {
-      findings.push({ type: "mldoc-failure", rel: f.rel, status: "lsdoc-error", detail: String(e).split("\n")[0] });
+      findings.push({ type: "mldoc-failure", rel: anonymousRels[i], status: "lsdoc-error", detail: String(e).split("\n")[0] });
       continue;
     }
     const m = await client.parseWarm(f.text, f.format, opts.timeoutMs);
     if (!m.ok) {
-      findings.push({ type: "mldoc-failure", rel: f.rel, status: m.status, detail: m.detail });
+      findings.push({ type: "mldoc-failure", rel: anonymousRels[i], status: m.status, detail: m.detail });
       continue;
     }
-    if (lsdocKey !== projectionKey(m.projection)) candidates.push(f);
+    if (lsdocKey !== projectionKey(m.projection)) candidates.push({ file: f, rel: anonymousRels[i] });
   }
 
   // Stage 2 — re-verify each candidate in fresh realms, minimize, anonymize.
   for (let i = 0; i < candidates.length; i++) {
-    const f = candidates[i];
-    onProgress({ phase: "verify", done: i, total: candidates.length, current: f.rel });
+    const { file: f, rel } = candidates[i];
+    onProgress({ phase: "verify", done: i, total: candidates.length, current: rel });
     const original = await parseBothFresh(f.text, f.format);
     if (!original.ok || !original.diverges) {
-      findings.push({ type: "unstable-divergence", rel: f.rel });
+      findings.push({ type: "unstable-divergence", rel });
       continue;
     }
     const buf = toBytes(f.text);
@@ -149,7 +154,7 @@ async function runDiff(
     const anon = await anonymizeAndVerify<Projection>(min.input, (candidate) => parseBothFresh(candidate, f.format));
     findings.push({
       type: "divergence",
-      rel: f.rel,
+      rel,
       lineStart: min.lineStart,
       lineEnd: min.lineEnd,
       contextDependent: min.contextDependent,
@@ -167,6 +172,15 @@ async function runDiff(
   return findings;
 }
 
+async function currentTineVersion(): Promise<string> {
+  try {
+    const { getVersion } = await import("@tauri-apps/api/app");
+    return await getVersion();
+  } catch {
+    return "unknown";
+  }
+}
+
 async function runBench(
   client: MldocClient,
   files: GraphSourceFile[],
@@ -174,7 +188,7 @@ async function runBench(
   onProgress: (e: ProgressEvent) => void,
 ): Promise<DiffReport["bench"]> {
   const lsdocAvailable = lsdocDocumentAvailable();
-  const idFiles = files.map((f, i) => ({ id: `b${i}`, rel: f.rel }));
+  const idFiles = files.map((f, i) => ({ id: `b${i}`, rel: anonymizeSourceRel(f.rel, i) }));
 
   // mldoc: warm worker timing (reused; matches graph-check's benchMldoc).
   const mldocRuns: BenchRun[] = [];
@@ -182,7 +196,7 @@ async function runBench(
     const results = new Map<string, { ok: boolean; parseMicros?: number; status?: string; detail?: string; overTimeout?: boolean }>();
     for (let i = 0; i < files.length; i++) {
       const f = files[i];
-      onProgress({ phase: "bench", done: run * files.length + i, total: BENCH_RUNS * files.length, current: `mldoc ${f.rel}` });
+      onProgress({ phase: "bench", done: run * files.length + i, total: BENCH_RUNS * files.length, current: `mldoc ${idFiles[i].rel}` });
       const m = await client.parseWarm(f.text, f.format, opts.timeoutMs);
       results.set(idFiles[i].id, m.ok ? { ok: true, parseMicros: m.parseMicros } : { ok: false, status: m.status, detail: m.detail });
     }

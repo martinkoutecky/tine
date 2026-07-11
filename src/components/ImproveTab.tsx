@@ -74,6 +74,9 @@ export function ImproveTab(): JSX.Element {
     return [
       "## lsdoc divergences from my Tine graph",
       "",
+      `Tine version: ${report()?.tineVersion ?? "unknown"}`,
+      `lsdoc version: ${report()?.lsdocVersion ?? "unknown"}`,
+      "",
       "These snippets are anonymized (page content scrubbed) and each still reproduces the divergence between lsdoc and Logseq's mldoc.",
       "",
       ...ds.map(findingMarkdown),
@@ -89,9 +92,9 @@ export function ImproveTab(): JSX.Element {
         disagree — which is how you can help make Tine render your notes exactly like Logseq.
       </p>
       <p class="settings-hint">
-        <b>Privacy:</b> nothing is uploaded. Every divergence snippet shown below is <b>anonymized</b> (your words
-        replaced, structure kept) and <b>re-checked</b> to confirm it still reproduces the bug — so it's safe to
-        share. Read it before you post anything.
+        <b>Privacy:</b> nothing is uploaded. Every divergence snippet shown below is <b>anonymized</b> (page names
+        and words replaced; URL schemes kept but hosts and paths scrubbed) and <b>re-checked</b> to confirm it still
+        reproduces the bug — so it's safe to share. Read it before you post anything.
       </p>
 
       <div class="settings-field">
@@ -155,7 +158,7 @@ export function ImproveTab(): JSX.Element {
         {(r) => (
           <div class="improve-report">
             <div class="settings-hint">
-              Scanned {r().stats.files} file(s), {fmtBytes(r().stats.totalBytes)}.
+              Tine {r().tineVersion} · lsdoc {r().lsdocVersion} · Scanned {r().stats.files} file(s), {fmtBytes(r().stats.totalBytes)}.
             </div>
 
             <Show when={!r().lsdocAvailable}>
