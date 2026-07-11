@@ -13,6 +13,8 @@ ammonia = "4"
 lsdoc = { git = "https://github.com/martinkoutecky/lsdoc", tag = "v0.5.1" }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 regex = "1"
+loro = "=1.13.6"
+sha2 = "0.10"
 
 [dev-dependencies]
 pretty_assertions = "1"

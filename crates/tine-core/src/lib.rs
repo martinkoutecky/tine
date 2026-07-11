@@ -3,6 +3,7 @@
 //! testable without the Tauri shell.
 
 pub mod config;
+pub mod crdt;
 pub mod date;
 pub mod doc;
 pub mod edn;
