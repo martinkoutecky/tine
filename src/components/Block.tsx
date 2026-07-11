@@ -252,7 +252,7 @@ export const CaptureCtx = createContext<CaptureApi | null>(null);
 // surfaces at once (see startEditing's surface stamping).
 export const SurfaceContext = createContext<string>("main");
 
-export function Block(props: { id: string; hideRefCount?: boolean }): JSX.Element {
+export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded?: boolean }): JSX.Element {
   const node = () => doc.byId[props.id];
   // Unique per rendered instance, so when one block uuid appears in several
   // surfaces only the instance that was clicked mounts the editor (the rest stay
@@ -428,7 +428,7 @@ export function Block(props: { id: string; hideRefCount?: boolean }): JSX.Elemen
         </div>
       </Show>
 
-      <Show when={!collapsed() && (hasChildren() || sheet().view === "grid" || sheet().view === "table" || sheet().view === "board")}>
+      <Show when={(props.forceExpanded || !collapsed()) && (hasChildren() || sheet().view === "grid" || sheet().view === "table" || sheet().view === "board")}>
         <Switch>
           <Match when={sheet().view === "grid"}>
             <SheetContainer>

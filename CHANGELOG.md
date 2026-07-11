@@ -10,6 +10,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Zooming into a collapsed block reveals its children without expanding the
+  block on its parent page.** The zoom root temporarily ignores only its own
+  stored collapse state; descendant blocks retain their individual folds. (GH #77)
+- **Emoji in editable fields no longer trigger WebKitGTK's COLRv1 crash.** Native
+  inputs and textareas use a bundled monochrome Noto Emoji font, covering page
+  properties, page-title rename, block editing, and other raw-text controls while
+  display surfaces continue to use Twemoji SVGs. (GH #76)
 - **Default Windows draw.io installations now autodetect and launch correctly.**
   External-editor command templates accept double-quoted executable paths such as
   `"C:\Program Files\draw.io\draw.io.exe" {}`, and autodetection checks both

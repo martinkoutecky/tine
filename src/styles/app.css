@@ -19,6 +19,21 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+/* Native text controls cannot use the Twemoji <img> renderer. Force a bundled
+   monochrome emoji face ahead of their normal proportional/monospace fallback,
+   so WebKitGTK never reaches a system COLRv1 font's crashing Skia path (#76).
+   !important is deliberate: several specialized editors use `font: inherit` or
+   a monospace shorthand later in this file; safety must survive those rules. */
+input:not([type="checkbox"]):not([type="radio"]),
+textarea {
+  font-family: "Noto Emoji Variable", var(--tine-editable-fallback, var(--ls-font-family)) !important;
+}
+
+.formula-editor-textarea,
+.calc-wrap .block-editor {
+  --tine-editable-fallback: var(--ls-font-mono);
+}
+
 #root {
   height: 100vh;
 }

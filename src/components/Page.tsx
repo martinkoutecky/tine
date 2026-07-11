@@ -297,7 +297,10 @@ function ZoomedView(props: { id: string }): JSX.Element {
         </For>
       </div>
       <div class="page-blocks zoomed-block">
-        <Block id={props.id} />
+        {/* A zoom root is a viewing boundary: reveal its immediate subtree even
+            when collapsed on the parent page, without mutating collapsed::.
+            Descendants still honor their own individual collapse state. */}
+        <Block id={props.id} forceExpanded />
       </div>
     </div>
   );

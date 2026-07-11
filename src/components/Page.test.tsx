@@ -16,6 +16,8 @@ import { editingId, endEdit } from "../editorController";
 import { journalTitle } from "../journal";
 import type { RefGroup } from "../types";
 import { TagPageTable, TagTableToggle } from "./Page";
+import { PageView } from "./Page";
+import { focusBlock, resetTabsToJournals } from "../router";
 
 beforeAll(async () => {
   await initParser();
@@ -26,6 +28,7 @@ afterEach(() => {
   endEdit("blur");
   resetStore();
   document.body.innerHTML = "";
+  resetTabsToJournals();
 });
 
 function mount(node: () => JSX.Element): { root: HTMLDivElement; dispose: () => void } {
@@ -113,5 +116,45 @@ describe("tag-page table", () => {
     expect(editingId()).toBe(newId);
 
     dispose();
+  });
+});
+
+describe("zoomed block view", () => {
+  it("reveals a collapsed root's children without changing its stored collapse state", async () => {
+    const parent = "11111111-1111-4111-8111-111111111111";
+    const child = "22222222-2222-4222-8222-222222222222";
+    const dto = {
+      name: "Outline",
+      kind: "page" as const,
+      title: "Outline",
+      pre_block: null,
+      blocks: [{
+        id: parent,
+        raw: "Collapsed section\ncollapsed:: true\nid:: 11111111-1111-4111-8111-111111111111",
+        collapsed: true,
+        children: [{ id: child, raw: "Hidden child", collapsed: false, children: [] }],
+      }],
+    };
+    setDoc({
+      byId: {
+        [parent]: { ...node(parent, dto.blocks[0].raw, dto.name, null, [child]), collapsed: true },
+        [child]: node(child, "Hidden child", dto.name, parent),
+      },
+      pages: [page(dto.name, "page", [parent])],
+      feed: [dto.name],
+      loaded: true,
+    });
+    vi.spyOn(backend(), "getPage").mockResolvedValue(dto);
+    focusBlock(parent);
+
+    const { root, dispose } = mount(() => <PageView />);
+    try {
+      await tick();
+      await tick();
+      expect(root.querySelector(`[data-block-id="${child}"]`)).not.toBeNull();
+      expect(doc.byId[parent].collapsed).toBe(true);
+    } finally {
+      dispose();
+    }
   });
 });
