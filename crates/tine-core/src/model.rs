@@ -7,6 +7,10 @@
 //! persisted as `id::` once a block is referenced (a later milestone).
 
 use crate::config::{Config, FileNameFormat};
+use crate::crdt::{
+    BlockId as CrdtBlockId, BlockSnapshot as CrdtBlockSnapshot, CrdtGraph, CrdtStatus,
+    PageId as CrdtPageId, PageSnapshot as CrdtPageSnapshot,
+};
 use crate::date::{JournalDate, JournalFormat};
 use crate::doc::{self, DocBlock, Document};
 use serde::{Deserialize, Serialize};
@@ -330,6 +334,25 @@ pub struct SyncIdentityMigration {
     pub blocks_changed: usize,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct ManagedSyncEnableResult {
+    pub migration: SyncIdentityMigration,
+    pub status: CrdtStatus,
+}
+
+#[derive(Debug, Clone)]
+pub struct ManagedSyncProjectionChange {
+    pub entry: PageEntry,
+    pub removed: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ManagedSyncPull {
+    pub imported_chunks: usize,
+    pub changes: Vec<ManagedSyncProjectionChange>,
+    pub conflicts_changed: bool,
+}
+
 pub struct Graph {
     pub root: PathBuf,
     pub config: Config,
@@ -429,6 +452,11 @@ pub struct Graph {
     /// Lock order is ALWAYS page_lock → cache → disk_revs; never the reverse.
     page_locks:
         std::sync::Mutex<std::collections::HashMap<PathBuf, std::sync::Arc<std::sync::Mutex<()>>>>,
+    /// Present only for an opt-in `.tine-sync/v1` workspace. The mutex serializes
+    /// Loro transactions and immutable-chunk replay; callers must never hold it
+    /// while acquiring a page lock (save uses page-lock → sync-lock, while remote
+    /// replay releases sync-lock before projecting pages).
+    managed_sync: std::sync::Mutex<Option<CrdtGraph>>,
 }
 
 /// Cache key for `disk_revs` (and any other (kind,name)-keyed side table):
@@ -667,6 +695,7 @@ impl Graph {
             disk_revs: RwLock::new(std::collections::HashMap::new()),
             referenced_names_cache: RwLock::new(None),
             page_locks: std::sync::Mutex::new(std::collections::HashMap::new()),
+            managed_sync: std::sync::Mutex::new(None),
         }
     }
 
@@ -728,6 +757,441 @@ impl Graph {
 
     pub fn pages_path(&self) -> PathBuf {
         self.root.join(&self.config.pages_dir)
+    }
+
+    pub fn managed_sync_store_path(&self) -> PathBuf {
+        self.root.join(".tine-sync").join("v1")
+    }
+
+    pub fn managed_sync_configured(&self) -> bool {
+        self.managed_sync_store_path().is_dir()
+    }
+
+    /// Replay an existing managed-sync workspace for this process. A configured
+    /// but invalid workspace fails closed: callers must not let the graph accept
+    /// projection-only edits while its operation truth is unavailable.
+    pub fn start_managed_sync(&self, device_id: Uuid, session_id: Uuid) -> io::Result<bool> {
+        if !self.managed_sync_configured() {
+            return Ok(false);
+        }
+        let crdt = CrdtGraph::open(&self.root, device_id, session_id).map_err(crdt_io_error)?;
+        *self.managed_sync.lock().unwrap() = Some(crdt);
+        Ok(true)
+    }
+
+    /// One-time compatible-mode activation. Identity writes happen first through
+    /// the normal guarded save path; genesis is published only after every page
+    /// was re-read and its exact revision rechecked.
+    pub fn enable_managed_sync(
+        &self,
+        device_id: Uuid,
+        session_id: Uuid,
+    ) -> io::Result<ManagedSyncEnableResult> {
+        if self.managed_sync_configured() {
+            self.start_managed_sync(device_id, session_id)?;
+            let status = self
+                .managed_sync_status()
+                .ok_or_else(|| io::Error::other("managed sync did not start"))?;
+            return Ok(ManagedSyncEnableResult {
+                migration: SyncIdentityMigration {
+                    pages_changed: 0,
+                    blocks_changed: 0,
+                },
+                status,
+            });
+        }
+
+        let migration = self.migrate_sync_identities()?;
+        let mut pages = Vec::new();
+        let mut baselines = Vec::new();
+        for entry in self.list_pages() {
+            let page = self.load_page(&entry)?;
+            if page.read_only {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!("{} is read-only and cannot join managed sync", page.path),
+                ));
+            }
+            let rev = page
+                .rev
+                .clone()
+                .ok_or_else(|| io::Error::other("loaded page has no disk revision"))?;
+            pages.push(crdt_snapshot_for_page(&page, CrdtPageId::new())?);
+            baselines.push((entry.path, rev));
+        }
+        let mut projection_contents = Vec::new();
+        for (path, expected) in baselines {
+            let current = fs::read_to_string(&path)?;
+            if content_rev(&current) != expected {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    format!(
+                        "{} changed while managed sync was being enabled",
+                        path.display()
+                    ),
+                ));
+            }
+            projection_contents.push((self.rel_path(&path), current));
+        }
+
+        let crdt = CrdtGraph::initialize(&self.root, device_id, session_id, pages)
+            .map_err(crdt_io_error)?;
+        for (path, content) in projection_contents {
+            crdt.record_projection(&path, &content)
+                .map_err(crdt_io_error)?;
+        }
+        let status = crdt.status().map_err(crdt_io_error)?;
+        *self.managed_sync.lock().unwrap() = Some(crdt);
+        Ok(ManagedSyncEnableResult { migration, status })
+    }
+
+    pub fn managed_sync_status(&self) -> Option<CrdtStatus> {
+        self.managed_sync
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|sync| sync.status().ok())
+    }
+
+    /// Commit a verified backup's complete graph-text set as the new operation
+    /// truth before the caller copies any projection files. Every block must
+    /// already carry a persisted UUID; accepting an older pre-migration backup
+    /// would make a crash choose fresh identities nondeterministically.
+    pub fn commit_managed_restore(&self, files: &[(String, String)]) -> io::Result<bool> {
+        let mut guard = self.managed_sync.lock().unwrap();
+        let Some(sync) = guard.as_mut() else {
+            return Ok(false);
+        };
+        let current_by_path: std::collections::HashMap<String, CrdtPageId> = sync
+            .materialize_pages()
+            .map_err(crdt_io_error)?
+            .into_iter()
+            .map(|page| (page.path, page.id))
+            .collect();
+
+        let mut snapshots = Vec::with_capacity(files.len());
+        let mut graph_ids = std::collections::HashSet::new();
+        let mut seen_paths = std::collections::HashSet::new();
+        for (rel, content) in files {
+            if !seen_paths.insert(rel.clone()) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("backup contains duplicate graph path {rel}"),
+                ));
+            }
+            let path = self.resolve_rel(rel).ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("backup contains invalid graph path {rel}"),
+                )
+            })?;
+            let entry = self.entry_for_path(&path).ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("backup path is not a page or journal: {rel}"),
+                )
+            })?;
+            let doc = parse_doc(&path, content);
+            let mut page = page_dto(&entry, &doc);
+            page.path = rel.clone();
+            if page.read_only {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!("backup contains read-only Org content at {rel}"),
+                ));
+            }
+            if count_missing_sync_ids(&page.blocks, page.format) != 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "backup {rel} predates managed-sync identities and cannot be restored while managed sync is active"
+                    ),
+                ));
+            }
+            let page = page_with_persisted_sync_ids(&page)?;
+            validate_graph_sync_ids(&page.blocks, &mut graph_ids)?;
+            let page_id = current_by_path
+                .get(rel)
+                .copied()
+                .unwrap_or_else(CrdtPageId::new);
+            snapshots.push(crdt_snapshot_for_page(&page, page_id)?);
+        }
+        sync.replace_pages(snapshots)
+            .map(|report| report.changed)
+            .map_err(crdt_io_error)
+    }
+
+    /// Import newly delivered immutable chunks, project their affected pages,
+    /// and clean only conflict copies proven to be old generated projections.
+    pub fn pull_managed_sync(&self) -> io::Result<ManagedSyncPull> {
+        let report = {
+            let mut guard = self.managed_sync.lock().unwrap();
+            let Some(sync) = guard.as_mut() else {
+                return Ok(ManagedSyncPull::default());
+            };
+            sync.import_pending().map_err(crdt_io_error)?
+        };
+
+        let mut changes = Vec::new();
+        for affected in &report.affected_pages {
+            changes.extend(self.project_managed_page(affected.page_id, &affected.paths)?);
+        }
+        let conflicts_changed = self.cleanup_known_projection_conflicts()?;
+        Ok(ManagedSyncPull {
+            imported_chunks: report.imported_chunks,
+            changes,
+            conflicts_changed,
+        })
+    }
+
+    /// Reconcile every current CRDT page against its projection after opening a
+    /// workspace. This covers the case where provider chunks arrived while Tine
+    /// was closed, so `open()` already replayed them and `import_pending()` has no
+    /// newly-seen chunk to report.
+    pub fn project_all_managed_sync(&self) -> io::Result<ManagedSyncPull> {
+        let affected_pages = {
+            let guard = self.managed_sync.lock().unwrap();
+            let Some(sync) = guard.as_ref() else {
+                return Ok(ManagedSyncPull::default());
+            };
+            sync.affected_pages_history().map_err(crdt_io_error)?
+        };
+        let mut changes = Vec::new();
+        for affected in affected_pages {
+            changes.extend(self.project_managed_page(affected.page_id, &affected.paths)?);
+        }
+        let conflicts_changed = self.cleanup_known_projection_conflicts()?;
+        Ok(ManagedSyncPull {
+            imported_chunks: 0,
+            changes,
+            conflicts_changed,
+        })
+    }
+
+    fn project_managed_page(
+        &self,
+        page_id: CrdtPageId,
+        affected_paths: &[String],
+    ) -> io::Result<Vec<ManagedSyncProjectionChange>> {
+        let snapshot = {
+            let guard = self.managed_sync.lock().unwrap();
+            guard
+                .as_ref()
+                .ok_or_else(|| io::Error::other("managed sync is not active"))?
+                .materialize_page(page_id)
+                .map_err(crdt_io_error)?
+        };
+        let Some(snapshot) = snapshot else {
+            return self.project_managed_deletion(page_id, affected_paths);
+        };
+        let path = self.resolve_rel(&snapshot.path).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "invalid synced page path")
+        })?;
+        let lock = self.page_lock(&path);
+        let _guard = lock.lock().unwrap();
+        let before = fs::read_to_string(&path).ok();
+        if let Some(content) = before.as_deref() {
+            let authorized = {
+                let guard = self.managed_sync.lock().unwrap();
+                guard
+                    .as_ref()
+                    .ok_or_else(|| io::Error::other("managed sync is not active"))?
+                    .is_projection_authorized(&snapshot.path)
+                    .map_err(crdt_io_error)?
+            };
+            if !authorized
+                && self.reconcile_managed_external_locked(&path, content, Some(page_id))?
+            {
+                let mut changes = self
+                    .entry_for_path(&path)
+                    .map(|entry| {
+                        vec![ManagedSyncProjectionChange {
+                            entry,
+                            removed: false,
+                        }]
+                    })
+                    .unwrap_or_default();
+                drop(_guard);
+                changes
+                    .extend(self.cleanup_superseded_managed_paths(&snapshot.path, affected_paths)?);
+                return Ok(changes);
+            }
+        }
+
+        // Re-materialize after the external check: it may have committed a local
+        // operation on another path while this pull was in progress.
+        let snapshot = {
+            let guard = self.managed_sync.lock().unwrap();
+            guard
+                .as_ref()
+                .ok_or_else(|| io::Error::other("managed sync is not active"))?
+                .materialize_page(page_id)
+                .map_err(crdt_io_error)?
+                .ok_or_else(|| io::Error::other("synced page vanished during projection"))?
+        };
+        let page = page_dto_from_crdt(&snapshot)?;
+        let cache = self.path_is_cacheable(&path);
+        self.write_page(&page, &path, before.as_deref(), true, cache)?;
+        self.record_managed_projection(&path);
+        let after = fs::read_to_string(&path).ok();
+        let mut changes = Vec::new();
+        if before == after {
+            drop(_guard);
+            changes.extend(self.cleanup_superseded_managed_paths(&snapshot.path, affected_paths)?);
+            return Ok(changes);
+        }
+        if let Some(entry) = self.entry_for_path(&path) {
+            changes.push(ManagedSyncProjectionChange {
+                entry,
+                removed: false,
+            });
+        }
+        drop(_guard);
+        changes.extend(self.cleanup_superseded_managed_paths(&snapshot.path, affected_paths)?);
+        Ok(changes)
+    }
+
+    fn cleanup_superseded_managed_paths(
+        &self,
+        current_path: &str,
+        affected_paths: &[String],
+    ) -> io::Result<Vec<ManagedSyncProjectionChange>> {
+        let mut changes = Vec::new();
+        for rel in affected_paths {
+            if rel == current_path {
+                continue;
+            }
+            let Some(path) = self.resolve_rel(rel) else {
+                continue;
+            };
+            let lock = self.page_lock(&path);
+            let _guard = lock.lock().unwrap();
+            let Ok(content) = fs::read_to_string(&path) else {
+                continue;
+            };
+            let removable = {
+                let guard = self.managed_sync.lock().unwrap();
+                let sync = guard
+                    .as_ref()
+                    .ok_or_else(|| io::Error::other("managed sync is not active"))?;
+                sync.is_projection_authorized(rel).map_err(crdt_io_error)?
+                    || sync
+                        .is_known_projection(rel, &content)
+                        .map_err(crdt_io_error)?
+            };
+            if !removable {
+                continue; // unexplained bytes are evidence, never auto-removed
+            }
+            let Some(entry) = self.entry_for_path(&path) else {
+                continue;
+            };
+            let trash = typed_trash_dir(
+                &self.root,
+                match entry.kind {
+                    PageKind::Journal => TrashEntryKind::Journal,
+                    PageKind::Page => TrashEntryKind::Page,
+                },
+            );
+            let name = path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("page");
+            let dest = trash.join(format!("{}__{name}", trash_stamp()));
+            move_to_trash(&path, &dest, &trash)?;
+            self.cache_remove(&entry.name, entry.kind);
+            changes.push(ManagedSyncProjectionChange {
+                entry,
+                removed: true,
+            });
+        }
+        Ok(changes)
+    }
+
+    fn project_managed_deletion(
+        &self,
+        page_id: CrdtPageId,
+        affected_paths: &[String],
+    ) -> io::Result<Vec<ManagedSyncProjectionChange>> {
+        let mut changes = Vec::new();
+        for rel in affected_paths {
+            let Some(path) = self.resolve_rel(rel) else {
+                continue;
+            };
+            let lock = self.page_lock(&path);
+            let _guard = lock.lock().unwrap();
+            let Ok(content) = fs::read_to_string(&path) else {
+                continue;
+            };
+            let removable = {
+                let guard = self.managed_sync.lock().unwrap();
+                let sync = guard
+                    .as_ref()
+                    .ok_or_else(|| io::Error::other("managed sync is not active"))?;
+                sync.is_projection_authorized(rel).map_err(crdt_io_error)?
+                    || sync
+                        .is_known_projection(rel, &content)
+                        .map_err(crdt_io_error)?
+            };
+            if !removable {
+                if self.reconcile_managed_external_locked(&path, &content, Some(page_id))? {
+                    if let Some(entry) = self.entry_for_path(&path) {
+                        changes.push(ManagedSyncProjectionChange {
+                            entry,
+                            removed: false,
+                        });
+                    }
+                }
+                continue;
+            }
+            let Some(entry) = self.entry_for_path(&path) else {
+                continue;
+            };
+            let trash = typed_trash_dir(
+                &self.root,
+                match entry.kind {
+                    PageKind::Journal => TrashEntryKind::Journal,
+                    PageKind::Page => TrashEntryKind::Page,
+                },
+            );
+            let name = path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("page");
+            let dest = trash.join(format!("{}__{name}", trash_stamp()));
+            move_to_trash(&path, &dest, &trash)?;
+            self.cache_remove(&entry.name, entry.kind);
+            changes.push(ManagedSyncProjectionChange {
+                entry,
+                removed: true,
+            });
+        }
+        Ok(changes)
+    }
+
+    pub fn cleanup_known_projection_conflicts(&self) -> io::Result<bool> {
+        let mut changed = false;
+        for conflict in self.list_sync_conflicts() {
+            let Some(base_path) = conflict.base_path.as_deref() else {
+                continue;
+            };
+            let Some(conflict_path) = self.resolve_rel(&conflict.path) else {
+                continue;
+            };
+            let content = fs::read_to_string(&conflict_path)?;
+            let known = {
+                let guard = self.managed_sync.lock().unwrap();
+                let Some(sync) = guard.as_ref() else {
+                    return Ok(changed);
+                };
+                sync.is_known_projection(base_path, &content)
+                    .map_err(crdt_io_error)?
+            };
+            if known {
+                self.trash_sync_conflict(&conflict.path)?;
+                changed = true;
+            }
+        }
+        Ok(changed)
     }
 
     /// Graph-root-relative, forward-slashed path for an absolute file path inside
@@ -2678,6 +3142,40 @@ impl Graph {
             }
         }
 
+        // Phase 2.5 — operation truth first. The whole rename set (moved page
+        // paths plus every reference rewrite) is one Loro transaction/chunk.
+        // If a later projection write fails, the durable operation remains
+        // recoverable and the watcher can finish projecting it.
+        {
+            let mut sync_guard = self.managed_sync.lock().unwrap();
+            if let Some(sync) = sync_guard.as_mut() {
+                let mut snapshots = Vec::with_capacity(edits.len());
+                for e in &edits {
+                    let src_rel = self.rel_path(&e.src);
+                    let dst_rel = self.rel_path(&e.dst);
+                    let existing = sync
+                        .materialize_page(src_rel.as_str())
+                        .map_err(crdt_io_error)?;
+                    let existing = match existing {
+                        Some(page) => Some(page),
+                        None => sync
+                            .materialize_page(dst_rel.as_str())
+                            .map_err(crdt_io_error)?,
+                    };
+                    let page_id = existing.map(|page| page.id).unwrap_or_else(CrdtPageId::new);
+                    let entry = self.entry_for_path(&e.dst).ok_or_else(bad_path)?;
+                    let mut doc = parse_doc(&e.dst, &e.new_content);
+                    assign_doc_uuids(&mut doc.roots);
+                    let mut page = page_dto(&entry, &doc);
+                    page.path = dst_rel;
+                    page.format = Format::from_path(&e.dst);
+                    page = page_with_persisted_sync_ids(&page)?;
+                    snapshots.push(crdt_snapshot_for_page(&page, page_id)?);
+                }
+                sync.commit_pages(snapshots).map_err(crdt_io_error)?;
+            }
+        }
+
         // Phase 3 — commit, tracking writes for rollback. For a move, write the new
         // file BEFORE removing the old one, so a crash mid-rename duplicates a page
         // rather than losing it.
@@ -2724,6 +3222,9 @@ impl Graph {
             return Err(err);
         }
         self.invalidate_cache();
+        for edit in &edits {
+            self.record_managed_projection(&edit.dst);
+        }
         Ok(())
     }
 
@@ -2739,6 +3240,9 @@ impl Graph {
             return Err(twin_error(name));
         }
         if let Some(entry) = self.find_entry(name, kind) {
+            let lock = self.page_lock(&entry.path);
+            let _guard = lock.lock().unwrap();
+            self.commit_managed_delete(&entry.path)?;
             let trash = typed_trash_dir(
                 &self.root,
                 match entry.kind {
@@ -3314,10 +3818,92 @@ impl Graph {
     /// cache (i.e. a real external change) — Tine's own writes keep the cache in
     /// sync, so they return None. No-op if the cache hasn't been built yet.
     pub fn sync_file(&self, path: &Path) -> Option<PageEntry> {
-        let content = fs::read_to_string(path).ok()?;
+        let lock = self.page_lock(path);
+        let _guard = lock.lock().unwrap();
+        let mut content = fs::read_to_string(path).ok()?;
+        let imported_external = match self.reconcile_managed_external_locked(path, &content, None) {
+            Ok(changed) => changed,
+            Err(error) => {
+                #[cfg(debug_assertions)]
+                eprintln!(
+                    "managed-sync external import deferred for {}: {error}",
+                    path.display()
+                );
+                false
+            }
+        };
+        if imported_external {
+            content = fs::read_to_string(path).ok()?;
+        }
         // The watcher consumes the self-write marker (one-shot) so the map stays
         // bounded to in-flight writes.
-        self.sync_file_content(path, &content, true)
+        let reconciled = self.sync_file_content(path, &content, true);
+        if imported_external {
+            reconciled.or_else(|| self.entry_for_path(path))
+        } else {
+            reconciled
+        }
+    }
+
+    /// Import an unexplained page-file snapshot and immediately publish the
+    /// joined CRDT projection. Caller holds this path's page lock. Returns true
+    /// when the input was external (as opposed to a receipt-backed projection).
+    fn reconcile_managed_external_locked(
+        &self,
+        path: &Path,
+        content: &str,
+        page_id_hint: Option<CrdtPageId>,
+    ) -> io::Result<bool> {
+        if path_is_sync_conflict(path) {
+            return Ok(false);
+        }
+        let rel = self.rel_path(path);
+        let mut sync_guard = self.managed_sync.lock().unwrap();
+        let Some(sync) = sync_guard.as_mut() else {
+            return Ok(false);
+        };
+        if sync
+            .is_known_projection(&rel, content)
+            .map_err(crdt_io_error)?
+        {
+            return Ok(false);
+        }
+        let entry = self.entry_for_path(path).ok_or_else(bad_path)?;
+        let mut doc = parse_doc(path, content);
+        assign_doc_uuids(&mut doc.roots);
+        let mut page = page_dto(&entry, &doc);
+        page.path = rel.clone();
+        page.rev = Some(content_rev(content));
+        page.format = Format::from_path(path);
+        page.read_only = read_only_org(path, content);
+        if page.read_only {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "read-only Org projection cannot be imported into managed sync",
+            ));
+        }
+        page = page_with_persisted_sync_ids(&page)?;
+        let page_id = match page_id_hint {
+            Some(id) => id,
+            None => sync
+                .materialize_page(rel.as_str())
+                .map_err(crdt_io_error)?
+                .map(|snapshot| snapshot.id)
+                .unwrap_or_else(CrdtPageId::new),
+        };
+        sync.commit_page(crdt_snapshot_for_page(&page, page_id)?)
+            .map_err(crdt_io_error)?;
+        let joined = sync
+            .materialize_page(page_id)
+            .map_err(crdt_io_error)?
+            .ok_or_else(|| io::Error::other("imported page vanished from managed sync"))?;
+        let joined = page_dto_from_crdt(&joined)?;
+        drop(sync_guard);
+
+        let cache = self.path_is_cacheable(path);
+        self.write_page(&joined, path, Some(content), true, cache)?;
+        self.record_managed_projection(path);
+        Ok(true)
     }
 
     /// Reconcile the cache for `path` given its already-read `content` — so a
@@ -3461,7 +4047,10 @@ impl Graph {
     /// Count blocks that still need a durable on-disk identity before managed
     /// sync can be enabled. This is read-only and suitable for a confirmation UI.
     pub fn sync_identity_plan(&self) -> io::Result<SyncIdentityPlan> {
-        let mut plan = SyncIdentityPlan { pages: 0, blocks: 0 };
+        let mut plan = SyncIdentityPlan {
+            pages: 0,
+            blocks: 0,
+        };
         for entry in self.list_pages() {
             let page = self.load_page(&entry)?;
             let missing = count_missing_sync_ids(&page.blocks, page.format);
@@ -3480,19 +4069,21 @@ impl Graph {
     /// the next run skips every block already migrated.
     pub fn migrate_sync_identities(&self) -> io::Result<SyncIdentityMigration> {
         let mut prepared = Vec::new();
+        let mut graph_ids = std::collections::HashSet::new();
         for entry in self.list_pages() {
             let page = self.load_page(&entry)?;
             let missing = count_missing_sync_ids(&page.blocks, page.format);
-            if missing == 0 {
-                continue;
-            }
             if page.read_only {
                 return Err(io::Error::new(
                     io::ErrorKind::PermissionDenied,
-                    format!("{} is read-only and cannot receive sync identities", page.path),
+                    format!("{} is read-only and cannot join managed sync", page.path),
                 ));
             }
-            prepared.push((page_with_persisted_sync_ids(&page)?, missing));
+            let migrated = page_with_persisted_sync_ids(&page)?;
+            validate_graph_sync_ids(&migrated.blocks, &mut graph_ids)?;
+            if missing != 0 {
+                prepared.push((migrated, missing));
+            }
         }
 
         let mut result = SyncIdentityMigration {
@@ -3512,6 +4103,56 @@ impl Graph {
     /// created after the one-time graph migration.
     pub fn page_with_sync_ids(&self, page: &PageDto) -> io::Result<PageDto> {
         page_with_persisted_sync_ids(page)
+    }
+
+    /// If managed sync is active, stamp any newly-created block ids and commit
+    /// the intended page state to the immutable operation stream. The returned
+    /// DTO is the exact projection that must be written afterwards.
+    fn commit_managed_page(&self, page: &PageDto, path: &Path) -> io::Result<Option<PageDto>> {
+        let mut sync_guard = self.managed_sync.lock().unwrap();
+        let Some(sync) = sync_guard.as_mut() else {
+            return Ok(None);
+        };
+        let mut prepared = page_with_persisted_sync_ids(page)?;
+        prepared.path = self.rel_path(path);
+        let page_id = sync
+            .materialize_page(prepared.path.as_str())
+            .map_err(crdt_io_error)?
+            .map(|snapshot| snapshot.id)
+            .unwrap_or_else(CrdtPageId::new);
+        let snapshot = crdt_snapshot_for_page(&prepared, page_id)?;
+        sync.commit_page(snapshot).map_err(crdt_io_error)?;
+        Ok(Some(prepared))
+    }
+
+    fn record_managed_projection(&self, path: &Path) {
+        let Ok(content) = fs::read_to_string(path) else {
+            return;
+        };
+        let rel = self.rel_path(path);
+        let sync_guard = self.managed_sync.lock().unwrap();
+        let Some(sync) = sync_guard.as_ref() else {
+            return;
+        };
+        // A missing receipt is conservative (the file is treated as external),
+        // not data loss. Do not turn a successful page save into a false conflict
+        // if this secondary provenance write fails.
+        if let Err(error) = sync.record_projection(&rel, &content) {
+            #[cfg(debug_assertions)]
+            eprintln!("managed-sync projection receipt failed for {rel}: {error}");
+        }
+    }
+
+    fn commit_managed_delete(&self, path: &Path) -> io::Result<()> {
+        let rel = self.rel_path(path);
+        let mut guard = self.managed_sync.lock().unwrap();
+        let Some(sync) = guard.as_mut() else {
+            return Ok(());
+        };
+        match sync.delete_page(rel.as_str()) {
+            Ok(_) | Err(crate::crdt::CrdtError::PageNotFound) => Ok(()),
+            Err(error) => Err(crdt_io_error(error)),
+        }
     }
 
     /// Resolve the file a save writes to, and whether it participates in the
@@ -3598,7 +4239,18 @@ impl Graph {
         // M2: write to the SAME path we locked + read the baseline from — never
         // re-resolve `path_for` under the lock (an `exists()`-probe could otherwise
         // pick a different extension if a twin appears mid-save).
-        self.write_page(page, &path, existing.as_deref(), true, cache)
+        let prepared = self.commit_managed_page(page, &path)?;
+        let result = self.write_page(
+            prepared.as_ref().unwrap_or(page),
+            &path,
+            existing.as_deref(),
+            true,
+            cache,
+        );
+        if result.is_ok() && prepared.is_some() {
+            self.record_managed_projection(&path);
+        }
+        result
     }
 
     /// Save a page unconditionally (the user chose "keep mine" over a conflict).
@@ -3614,7 +4266,18 @@ impl Graph {
         let existing = fs::read_to_string(&path).ok();
         // recheck = false: "keep mine" overwrites unconditionally. Same locked path
         // is threaded into write_page (M2) so a forced save can't land on a twin.
-        self.write_page(page, &path, existing.as_deref(), false, cache)
+        let prepared = self.commit_managed_page(page, &path)?;
+        let result = self.write_page(
+            prepared.as_ref().unwrap_or(page),
+            &path,
+            existing.as_deref(),
+            false,
+            cache,
+        );
+        if result.is_ok() && prepared.is_some() {
+            self.record_managed_projection(&path);
+        }
+        result
     }
 
     /// Write a page to `path` (already resolved + locked by the caller), reproducing
@@ -4107,6 +4770,28 @@ fn count_missing_sync_ids(blocks: &[BlockDto], format: Format) -> usize {
         .sum()
 }
 
+fn validate_graph_sync_ids(
+    blocks: &[BlockDto],
+    seen: &mut std::collections::HashSet<String>,
+) -> io::Result<()> {
+    for block in blocks {
+        if Uuid::parse_str(&block.id).is_err() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("block id {} is not a UUID", block.id),
+            ));
+        }
+        if !seen.insert(block.id.clone()) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("duplicate persisted block id {} across graph", block.id),
+            ));
+        }
+        validate_graph_sync_ids(&block.children, seen)?;
+    }
+    Ok(())
+}
+
 fn org_raw_with_sync_id(raw: &str, id: &str) -> String {
     let newline = if raw.contains("\r\n") { "\r\n" } else { "\n" };
     let mut offset = 0usize;
@@ -4189,6 +4874,127 @@ fn page_with_persisted_sync_ids(page: &PageDto) -> io::Result<PageDto> {
         persist_block_sync_ids(block, page.format, &mut seen)?;
     }
     Ok(page)
+}
+
+fn crdt_io_error(error: crate::crdt::CrdtError) -> io::Error {
+    io::Error::new(io::ErrorKind::Other, error)
+}
+
+fn flatten_crdt_blocks(
+    blocks: &[BlockDto],
+    parent: Option<CrdtBlockId>,
+    output: &mut Vec<CrdtBlockSnapshot>,
+) -> io::Result<()> {
+    for (order, block) in blocks.iter().enumerate() {
+        let uuid = Uuid::parse_str(&block.id).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("block id {} is not a UUID", block.id),
+            )
+        })?;
+        let id = CrdtBlockId::from_uuid(uuid);
+        output.push(CrdtBlockSnapshot {
+            id,
+            parent,
+            order: u32::try_from(order)
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "too many siblings"))?,
+            raw: block.raw.clone(),
+        });
+        flatten_crdt_blocks(&block.children, Some(id), output)?;
+    }
+    Ok(())
+}
+
+fn crdt_snapshot_for_page(page: &PageDto, id: CrdtPageId) -> io::Result<CrdtPageSnapshot> {
+    if page.path.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "managed-sync page snapshot has no storage path",
+        ));
+    }
+    let mut blocks = Vec::new();
+    flatten_crdt_blocks(&page.blocks, None, &mut blocks)?;
+    Ok(CrdtPageSnapshot {
+        id,
+        path: page.path.clone(),
+        name: page.name.clone(),
+        kind: match page.kind {
+            PageKind::Page => "page",
+            PageKind::Journal => "journal",
+        }
+        .into(),
+        format: page.format.ext().into(),
+        pre_block: page.pre_block.clone(),
+        blocks,
+    })
+}
+
+fn dto_blocks_from_crdt(
+    parent: Option<CrdtBlockId>,
+    blocks: &std::collections::HashMap<CrdtBlockId, &CrdtBlockSnapshot>,
+    is_org: bool,
+) -> io::Result<Vec<BlockDto>> {
+    let mut children: Vec<&CrdtBlockSnapshot> = blocks
+        .values()
+        .copied()
+        .filter(|block| block.parent == parent)
+        .collect();
+    children.sort_by_key(|block| (block.order, block.id));
+    children
+        .into_iter()
+        .map(|block| {
+            let doc = DocBlock {
+                raw: block.raw.clone(),
+                children: Vec::new(),
+                uuid: block.id.to_string(),
+                is_org,
+                proj: std::sync::OnceLock::new(),
+            };
+            let mut dto = block_to_dto(&doc);
+            dto.children = dto_blocks_from_crdt(Some(block.id), blocks, is_org)?;
+            Ok(dto)
+        })
+        .collect()
+}
+
+fn page_dto_from_crdt(snapshot: &CrdtPageSnapshot) -> io::Result<PageDto> {
+    let kind = match snapshot.kind.as_str() {
+        "page" => PageKind::Page,
+        "journal" => PageKind::Journal,
+        other => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("unknown managed-sync page kind {other}"),
+            ))
+        }
+    };
+    let format = match snapshot.format.as_str() {
+        "md" => Format::Md,
+        "org" => Format::Org,
+        other => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("unknown managed-sync page format {other}"),
+            ))
+        }
+    };
+    let blocks: std::collections::HashMap<_, _> = snapshot
+        .blocks
+        .iter()
+        .map(|block| (block.id, block))
+        .collect();
+    Ok(PageDto {
+        name: snapshot.name.clone(),
+        kind,
+        title: snapshot.name.clone(),
+        pre_block: snapshot.pre_block.clone(),
+        blocks: dto_blocks_from_crdt(None, &blocks, format == Format::Org)?,
+        rev: None,
+        format,
+        read_only: false,
+        path: snapshot.path.clone(),
+        guide: false,
+    })
 }
 
 /// Build a page DTO from a cached document. `read_only` is left false here (the
@@ -4803,9 +5609,14 @@ mod tests {
     #[test]
     fn sync_identity_projection_persists_every_markdown_block() {
         let page = markdown_page_dto("Sync", "Sync", "- parent\n\t- child\n");
-        let ids = [page.blocks[0].id.clone(), page.blocks[0].children[0].id.clone()];
+        let ids = [
+            page.blocks[0].id.clone(),
+            page.blocks[0].children[0].id.clone(),
+        ];
         let migrated = page_with_persisted_sync_ids(&page).unwrap();
-        assert!(migrated.blocks[0].raw.ends_with(&format!("id:: {}", ids[0])));
+        assert!(migrated.blocks[0]
+            .raw
+            .ends_with(&format!("id:: {}", ids[0])));
         assert!(migrated.blocks[0].children[0]
             .raw
             .ends_with(&format!("id:: {}", ids[1])));
@@ -4830,7 +5641,10 @@ mod tests {
             migrated.blocks[0].raw,
             format!("Task\n:PROPERTIES:\n:foo: bar\n:ID: {id}\n:END:")
         );
-        assert_eq!(persisted_sync_id(&migrated.blocks[0].raw, Format::Org), Some(id));
+        assert_eq!(
+            persisted_sync_id(&migrated.blocks[0].raw, Format::Org),
+            Some(id)
+        );
     }
 
     #[test]
@@ -4838,7 +5652,37 @@ mod tests {
         let page = markdown_page_dto("Dup", "Dup", "- a\n  id:: same\n- b\n  id:: same\n");
         let err = page_with_persisted_sync_ids(&page).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
-        assert!(err.to_string().contains("duplicate persisted block id same"));
+        assert!(err
+            .to_string()
+            .contains("duplicate persisted block id same"));
+    }
+
+    #[test]
+    fn sync_identity_graph_validation_requires_unique_uuids() {
+        let mut a = markdown_page_dto(
+            "A",
+            "A",
+            "- a\n  id:: aaaaaaaa-0000-4000-8000-000000000001\n",
+        );
+        let mut b = markdown_page_dto(
+            "B",
+            "B",
+            "- b\n  id:: aaaaaaaa-0000-4000-8000-000000000001\n",
+        );
+        a = page_with_persisted_sync_ids(&a).unwrap();
+        b = page_with_persisted_sync_ids(&b).unwrap();
+        let mut seen = std::collections::HashSet::new();
+        validate_graph_sync_ids(&a.blocks, &mut seen).unwrap();
+        let duplicate = validate_graph_sync_ids(&b.blocks, &mut seen).unwrap_err();
+        assert!(duplicate
+            .to_string()
+            .contains("duplicate persisted block id"));
+
+        let invalid = markdown_page_dto("Bad", "Bad", "- bad\n  id:: legacy-id\n");
+        let invalid = page_with_persisted_sync_ids(&invalid).unwrap();
+        let err = validate_graph_sync_ids(&invalid.blocks, &mut std::collections::HashSet::new())
+            .unwrap_err();
+        assert!(err.to_string().contains("is not a UUID"));
     }
 
     #[test]
@@ -4984,41 +5828,66 @@ mod tests {
         // alias lived in the page pre-block (dedicated properties panel / Logseq
         // file convention); the bulleted form silently did nothing.
         let build = |books_body: &str| {
-            let dir = std::env::temp_dir()
-                .join(format!("tine-gh62-{}-{}", books_body.len(), std::process::id()));
+            let dir = std::env::temp_dir().join(format!(
+                "tine-gh62-{}-{}",
+                books_body.len(),
+                std::process::id()
+            ));
             let _ = fs::remove_dir_all(&dir);
             fs::create_dir_all(dir.join("journals")).unwrap();
             fs::create_dir_all(dir.join("pages")).unwrap();
             fs::write(dir.join("pages").join("books.md"), books_body).unwrap();
-            fs::write(dir.join("pages").join("note.md"), "- I read a #book today\n").unwrap();
+            fs::write(
+                dir.join("pages").join("note.md"),
+                "- I read a #book today\n",
+            )
+            .unwrap();
             let g = Graph::open(&dir);
             g.warm_cache();
             let aliases = g.page_aliases();
-            let n: usize = g.backlinks("books").iter().map(|grp| grp.blocks.len()).sum();
+            let n: usize = g
+                .backlinks("books")
+                .iter()
+                .map(|grp| grp.blocks.len())
+                .sum();
             let _ = fs::remove_dir_all(&dir);
             (aliases, n)
         };
 
         // Alias as the first bullet — now recognized.
         let (a, n) = build("- alias:: book\n- I like reading\n");
-        assert_eq!(a, vec![("book".to_string(), "books".to_string())], "first-bullet alias registered");
+        assert_eq!(
+            a,
+            vec![("book".to_string(), "books".to_string())],
+            "first-bullet alias registered"
+        );
         assert_eq!(n, 1, "#book backlink merges onto the books page");
 
         // Pre-block alias keeps working (Logseq file convention / properties panel).
         let (a, n) = build("alias:: book\n\n- I like reading\n");
-        assert_eq!(a, vec![("book".to_string(), "books".to_string())], "pre-block alias still registered");
+        assert_eq!(
+            a,
+            vec![("book".to_string(), "books".to_string())],
+            "pre-block alias still registered"
+        );
         assert_eq!(n, 1, "pre-block alias backlink still merges");
 
         // A NON-first bullet with `alias::` is a block property, NOT a page alias
         // (OG parity — only the first properties block counts).
         let (a, n) = build("- I like reading\n- alias:: book\n");
-        assert!(a.is_empty(), "alias in a non-first block is not a page alias: {a:?}");
+        assert!(
+            a.is_empty(),
+            "alias in a non-first block is not a page alias: {a:?}"
+        );
         assert_eq!(n, 0, "no backlink merge for a mid-page block alias");
 
         // A first block that mixes content with the property is a regular block,
         // not a page-properties block.
         let (a, _) = build("- reading list\nalias:: book\n");
-        assert!(a.is_empty(), "content+property first block is not page properties: {a:?}");
+        assert!(
+            a.is_empty(),
+            "content+property first block is not page properties: {a:?}"
+        );
     }
 
     #[test]

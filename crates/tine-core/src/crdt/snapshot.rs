@@ -212,15 +212,26 @@ impl From<&String> for PageSelector {
     }
 }
 
+/// One logical page touched by a chunk and the old/new projection paths that
+/// may need reconciliation for that page only.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AffectedPage {
+    pub page_id: PageId,
+    pub paths: Vec<String>,
+}
+
 /// Result of a durably published local mutation.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct CommitReport {
-    /// SHA-256 content ID of the immutable update chunk.
+    /// Whether the requested snapshot produced any CRDT operations.
+    pub changed: bool,
+    /// SHA-256 content ID of the immutable update chunk; empty when unchanged.
     pub chunk_id: String,
     /// Page IDs whose filesystem projections may need updating.
     pub affected_page_ids: Vec<PageId>,
     /// Old or new page paths whose projections may need updating.
     pub affected_paths: Vec<String>,
+    pub affected_pages: Vec<AffectedPage>,
 }
 
 /// Result of importing newly delivered immutable chunks.
@@ -232,6 +243,7 @@ pub struct ImportReport {
     pub affected_page_ids: Vec<PageId>,
     /// Page paths named by the imported chunk envelopes.
     pub affected_paths: Vec<String>,
+    pub affected_pages: Vec<AffectedPage>,
 }
 
 /// Current identity and durability status of an open CRDT workspace.

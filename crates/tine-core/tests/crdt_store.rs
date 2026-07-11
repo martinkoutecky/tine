@@ -55,6 +55,35 @@ fn chunk_paths(root: &Path) -> Vec<PathBuf> {
     output
 }
 
+fn copy_tree(source: &Path, target: &Path) {
+    fs::create_dir_all(target).unwrap();
+    for entry in fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        let destination = target.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_tree(&entry.path(), &destination);
+        } else {
+            fs::copy(entry.path(), destination).unwrap();
+        }
+    }
+}
+
+fn files_with_extension(root: &Path, extension: &str) -> Vec<PathBuf> {
+    fn visit(path: &Path, extension: &str, output: &mut Vec<PathBuf>) {
+        for entry in fs::read_dir(path).unwrap() {
+            let entry = entry.unwrap();
+            if entry.file_type().unwrap().is_dir() {
+                visit(&entry.path(), extension, output);
+            } else if entry.path().extension().and_then(|value| value.to_str()) == Some(extension) {
+                output.push(entry.path());
+            }
+        }
+    }
+    let mut output = Vec::new();
+    visit(root, extension, &mut output);
+    output
+}
+
 fn digest_hex(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
@@ -95,6 +124,80 @@ fn immutable_store_reopens_without_compacting_or_deleting() {
         Some("two")
     );
     assert_eq!(chunk_paths(&dir.path().join(".tine-sync/v1")).len(), 2);
+}
+
+#[test]
+fn unchanged_snapshot_does_not_publish_an_empty_update_chunk() {
+    let dir = TestDir::new("no-op");
+    let initial = page(PageId::new(), "same");
+    let mut graph = CrdtGraph::initialize(
+        dir.path(),
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        vec![initial.clone()],
+    )
+    .unwrap();
+    let before = chunk_paths(&dir.path().join(".tine-sync/v1")).len();
+    let report = graph.commit_page(initial).unwrap();
+    assert!(!report.changed);
+    assert!(report.chunk_id.is_empty());
+    assert_eq!(chunk_paths(&dir.path().join(".tine-sync/v1")).len(), before);
+}
+
+#[test]
+fn projection_receipt_requires_matching_content_path_and_frontier() {
+    let left = TestDir::new("receipt-left");
+    let right = TestDir::new("receipt-right");
+    let page_id = PageId::new();
+    let mut left_graph = CrdtGraph::initialize(
+        left.path(),
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        vec![page(page_id, "initial")],
+    )
+    .unwrap();
+    copy_tree(
+        &left.path().join(".tine-sync"),
+        &right.path().join(".tine-sync"),
+    );
+    let mut right_graph = CrdtGraph::open(right.path(), Uuid::new_v4(), Uuid::new_v4()).unwrap();
+
+    left_graph.commit_page(page(page_id, "changed")).unwrap();
+    left_graph
+        .record_projection("page.md", "- projected\n")
+        .unwrap();
+    assert!(left_graph
+        .is_known_projection("page.md", "- projected\n")
+        .unwrap());
+    assert!(!left_graph
+        .is_known_projection("other.md", "- projected\n")
+        .unwrap());
+    assert!(!left_graph
+        .is_known_projection("page.md", "- external\n")
+        .unwrap());
+
+    let receipt = files_with_extension(&left.path().join(".tine-sync/v1"), "receipt")
+        .pop()
+        .unwrap();
+    let relative = receipt.strip_prefix(left.path()).unwrap();
+    let delivered_receipt = right.path().join(relative);
+    fs::create_dir_all(delivered_receipt.parent().unwrap()).unwrap();
+    fs::copy(receipt, delivered_receipt).unwrap();
+    assert!(!right_graph
+        .is_known_projection("page.md", "- projected\n")
+        .unwrap());
+
+    let update = chunk_paths(&left.path().join(".tine-sync/v1"))
+        .into_iter()
+        .find(|path| path.to_string_lossy().contains("/sessions/"))
+        .unwrap();
+    let incoming = right.path().join(".tine-sync/v1/incoming");
+    fs::create_dir_all(&incoming).unwrap();
+    fs::copy(&update, incoming.join(update.file_name().unwrap())).unwrap();
+    right_graph.import_pending().unwrap();
+    assert!(right_graph
+        .is_known_projection("page.md", "- projected\n")
+        .unwrap());
 }
 
 #[test]

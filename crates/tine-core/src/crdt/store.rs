@@ -3,11 +3,12 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 
+use loro::VersionVector;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use super::{CrdtError, PageId};
+use super::{AffectedPage, CrdtError};
 
 pub(crate) const SCHEMA_VERSION: u32 = 1;
 const MAGIC: &[u8; 8] = b"TINESYNC";
@@ -21,15 +22,21 @@ pub(crate) enum ChunkKind {
     Update,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum EncryptionMode {
+    None,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct ChunkHeader {
     pub schema_version: u32,
     pub workspace_id: Uuid,
+    encryption: EncryptionMode,
     pub kind: ChunkKind,
     pub author_device_id: Uuid,
     pub author_session_id: Uuid,
-    pub affected_page_ids: Vec<PageId>,
-    pub affected_paths: Vec<String>,
+    pub affected_pages: Vec<AffectedPage>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -38,6 +45,25 @@ struct GenesisClaim {
     workspace_id: Uuid,
     device_id: Uuid,
     session_id: Uuid,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct ProjectionReceipt {
+    schema_version: u32,
+    workspace_id: Uuid,
+    encryption: EncryptionMode,
+    path: String,
+    content_sha256: String,
+    frontier: VersionVector,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct ProjectionIntent {
+    schema_version: u32,
+    workspace_id: Uuid,
+    encryption: EncryptionMode,
+    path: String,
+    frontier: VersionVector,
 }
 
 #[derive(Clone, Debug)]
@@ -131,18 +157,17 @@ impl Store {
     pub fn publish(
         &self,
         kind: ChunkKind,
-        affected_page_ids: Vec<PageId>,
-        affected_paths: Vec<String>,
+        affected_pages: Vec<AffectedPage>,
         payload: Vec<u8>,
     ) -> Result<String, CrdtError> {
         let header = ChunkHeader {
             schema_version: SCHEMA_VERSION,
             workspace_id: self.workspace_id,
+            encryption: EncryptionMode::None,
             kind,
             author_device_id: self.device_id,
             author_session_id: self.session_id,
-            affected_page_ids,
-            affected_paths,
+            affected_pages,
         };
         let bytes = encode_envelope(&header, &payload)?;
         let id = digest_hex(&bytes);
@@ -152,6 +177,181 @@ impl Store {
         };
         publish_immutable(&target_dir, &id, &bytes)?;
         Ok(id)
+    }
+
+    pub fn publish_projection_receipt(
+        &self,
+        path: &str,
+        content: &str,
+        frontier: VersionVector,
+    ) -> Result<String, CrdtError> {
+        let content_sha256 = digest_hex(content.as_bytes());
+        let receipt = ProjectionReceipt {
+            schema_version: SCHEMA_VERSION,
+            workspace_id: self.workspace_id,
+            encryption: EncryptionMode::None,
+            path: path.to_string(),
+            content_sha256: content_sha256.clone(),
+            frontier,
+        };
+        let bytes = serde_json::to_vec(&receipt)
+            .map_err(|error| CrdtError::Serialization(error.to_string()))?;
+        let id = digest_hex(&bytes);
+        let dir = self
+            .root
+            .join("projections")
+            .join(digest_hex(path.as_bytes()))
+            .join(content_sha256);
+        fs::create_dir_all(&dir)?;
+        publish_immutable_named(&dir, &format!("{id}.receipt"), &bytes)?;
+        Ok(id)
+    }
+
+    pub fn is_known_projection(
+        &self,
+        path: &str,
+        content: &str,
+        current: &VersionVector,
+    ) -> Result<bool, CrdtError> {
+        let content_sha256 = digest_hex(content.as_bytes());
+        let dir = self
+            .root
+            .join("projections")
+            .join(digest_hex(path.as_bytes()))
+            .join(&content_sha256);
+        let entries = match fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(error.into()),
+        };
+        for entry in entries {
+            let entry = entry?;
+            if !entry.file_type()?.is_file()
+                || entry.path().extension().and_then(|value| value.to_str()) != Some("receipt")
+            {
+                continue;
+            }
+            let bytes = fs::read(entry.path())?;
+            let filename = entry
+                .path()
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .ok_or_else(|| CrdtError::InvalidChunk("invalid projection receipt name".into()))?
+                .to_string();
+            if filename != digest_hex(&bytes) {
+                return Err(CrdtError::ChecksumMismatch);
+            }
+            let receipt: ProjectionReceipt = serde_json::from_slice(&bytes).map_err(|error| {
+                CrdtError::InvalidChunk(format!("invalid projection receipt: {error}"))
+            })?;
+            if receipt.schema_version != SCHEMA_VERSION {
+                return Err(CrdtError::SchemaMismatch {
+                    expected: SCHEMA_VERSION,
+                    found: receipt.schema_version,
+                });
+            }
+            if receipt.workspace_id != self.workspace_id {
+                return Err(CrdtError::WorkspaceMismatch {
+                    expected: self.workspace_id,
+                    found: receipt.workspace_id,
+                });
+            }
+            if receipt.path != path || receipt.content_sha256 != content_sha256 {
+                return Err(CrdtError::InvalidChunk(
+                    "projection receipt does not match its directory".into(),
+                ));
+            }
+            if current.includes_vv(&receipt.frontier) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Persist an explicit user-authorized projection overwrite at exactly this
+    /// operation frontier. Unlike a receipt, an intent does not claim that bytes
+    /// have already reached disk; it lets crash recovery finish a backup restore
+    /// even when unexplained projection bytes were present beforehand.
+    pub fn publish_projection_intent(
+        &self,
+        path: &str,
+        frontier: VersionVector,
+    ) -> Result<String, CrdtError> {
+        let intent = ProjectionIntent {
+            schema_version: SCHEMA_VERSION,
+            workspace_id: self.workspace_id,
+            encryption: EncryptionMode::None,
+            path: path.to_string(),
+            frontier,
+        };
+        let bytes = serde_json::to_vec(&intent)
+            .map_err(|error| CrdtError::Serialization(error.to_string()))?;
+        let id = digest_hex(&bytes);
+        let dir = self
+            .root
+            .join("projection-intents")
+            .join(digest_hex(path.as_bytes()));
+        fs::create_dir_all(&dir)?;
+        publish_immutable_named(&dir, &format!("{id}.intent"), &bytes)?;
+        Ok(id)
+    }
+
+    pub fn is_projection_authorized(
+        &self,
+        path: &str,
+        current: &VersionVector,
+    ) -> Result<bool, CrdtError> {
+        let dir = self
+            .root
+            .join("projection-intents")
+            .join(digest_hex(path.as_bytes()));
+        let entries = match fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(error.into()),
+        };
+        for entry in entries {
+            let entry = entry?;
+            if !entry.file_type()?.is_file()
+                || entry.path().extension().and_then(|value| value.to_str()) != Some("intent")
+            {
+                continue;
+            }
+            let bytes = fs::read(entry.path())?;
+            let filename = entry
+                .path()
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .ok_or_else(|| CrdtError::InvalidChunk("invalid projection intent name".into()))?
+                .to_string();
+            if filename != digest_hex(&bytes) {
+                return Err(CrdtError::ChecksumMismatch);
+            }
+            let intent: ProjectionIntent = serde_json::from_slice(&bytes).map_err(|error| {
+                CrdtError::InvalidChunk(format!("invalid projection intent: {error}"))
+            })?;
+            if intent.schema_version != SCHEMA_VERSION {
+                return Err(CrdtError::SchemaMismatch {
+                    expected: SCHEMA_VERSION,
+                    found: intent.schema_version,
+                });
+            }
+            if intent.workspace_id != self.workspace_id {
+                return Err(CrdtError::WorkspaceMismatch {
+                    expected: self.workspace_id,
+                    found: intent.workspace_id,
+                });
+            }
+            if intent.path != path {
+                return Err(CrdtError::InvalidChunk(
+                    "projection intent does not match its directory".into(),
+                ));
+            }
+            if &intent.frontier == current {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 }
 
@@ -253,6 +453,11 @@ fn validate_chunk_set(chunks: &[Chunk]) -> Result<Uuid, CrdtError> {
                 expected: workspace_id,
                 found: chunk.header.workspace_id,
             });
+        }
+        if chunk.header.encryption != EncryptionMode::None {
+            return Err(CrdtError::InvalidChunk(
+                "encrypted chunks are not supported by this build".into(),
+            ));
         }
     }
     Ok(workspace_id)
@@ -383,7 +588,11 @@ fn decode_envelope(bytes: &[u8]) -> Result<(ChunkHeader, Vec<u8>), CrdtError> {
 }
 
 fn publish_immutable(dir: &Path, id: &str, bytes: &[u8]) -> Result<(), CrdtError> {
-    let final_path = dir.join(format!("{id}.chunk"));
+    publish_immutable_named(dir, &format!("{id}.chunk"), bytes)
+}
+
+fn publish_immutable_named(dir: &Path, filename: &str, bytes: &[u8]) -> Result<(), CrdtError> {
+    let final_path = dir.join(filename);
     if final_path.exists() {
         return verify_existing(&final_path, bytes);
     }

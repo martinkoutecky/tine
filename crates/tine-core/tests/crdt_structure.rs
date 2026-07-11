@@ -204,3 +204,38 @@ fn preserves_absent_and_present_empty_pre_block() {
         Some(String::new())
     );
 }
+
+#[test]
+fn batch_commit_preserves_block_identity_through_a_two_page_swap() {
+    let dir = TestDir::new("block-swap");
+    let page_a = PageId::new();
+    let page_b = PageId::new();
+    let block_a = BlockId::new();
+    let block_b = BlockId::new();
+    let mut graph = CrdtGraph::initialize(
+        dir.path(),
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        vec![
+            page(page_a, "a.md", "", vec![block(block_a, None, 0, "from a")]),
+            page(page_b, "b.md", "", vec![block(block_b, None, 0, "from b")]),
+        ],
+    )
+    .unwrap();
+
+    graph
+        .commit_pages(vec![
+            page(page_a, "a.md", "", vec![block(block_b, None, 0, "from b")]),
+            page(page_b, "b.md", "", vec![block(block_a, None, 0, "from a")]),
+        ])
+        .unwrap();
+
+    assert_eq!(
+        graph.materialize_page(page_a).unwrap().unwrap().blocks[0].id,
+        block_b
+    );
+    assert_eq!(
+        graph.materialize_page(page_b).unwrap().unwrap().blocks[0].id,
+        block_a
+    );
+}

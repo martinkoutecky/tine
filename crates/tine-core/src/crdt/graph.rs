@@ -10,8 +10,8 @@ use uuid::Uuid;
 use super::snapshot::validate_pages;
 use super::store::{chunk_ids, Chunk, ChunkKind, Store};
 use super::{
-    BlockId, BlockSnapshot, CommitReport, CrdtError, CrdtStatus, ImportReport, PageId,
-    PageSelector, PageSnapshot,
+    AffectedPage, BlockId, BlockSnapshot, CommitReport, CrdtError, CrdtStatus, ImportReport,
+    PageId, PageSelector, PageSnapshot,
 };
 
 const GRAPH_TREE: &str = "graph";
@@ -52,20 +52,18 @@ impl CrdtGraph {
         validate_pages(&pages)?;
 
         let doc = new_doc(session_id)?;
-        for page in &pages {
-            apply_page(&doc, page)?;
-        }
+        apply_pages(&doc, &pages)?;
         let payload = doc.export(ExportMode::all_updates()).map_err(loro_error)?;
 
         let store = Store::initialize(sync_root.as_ref(), device_id, session_id)?;
-        let affected_page_ids = pages.iter().map(|page| page.id).collect();
-        let affected_paths = pages.iter().map(|page| page.path.clone()).collect();
-        let chunk_id = store.publish(
-            ChunkKind::Genesis,
-            affected_page_ids,
-            affected_paths,
-            payload,
-        )?;
+        let affected_pages = pages
+            .iter()
+            .map(|page| AffectedPage {
+                page_id: page.id,
+                paths: vec![page.path.clone()],
+            })
+            .collect();
+        let chunk_id = store.publish(ChunkKind::Genesis, affected_pages, payload)?;
 
         Ok(Self {
             doc,
@@ -99,24 +97,138 @@ impl CrdtGraph {
     /// page to claim an existing block before the source page projection is
     /// committed, while preserving the block's Loro tree identity and text.
     pub fn commit_page(&mut self, snapshot: PageSnapshot) -> Result<CommitReport, CrdtError> {
-        self.ensure_writable()?;
-        snapshot.validate()?;
-        validate_commit_against_doc(&self.doc, &snapshot)?;
+        self.commit_pages(vec![snapshot])
+    }
 
-        let old_path = find_page_node(&self.doc, PageSelector::Id(snapshot.id))?
-            .map(|node| required_string(&tree(&self.doc), node, PATH))
-            .transpose()?;
+    /// Reconciles several complete page snapshots as one Loro transaction and
+    /// one immutable update chunk. Used by transactional graph operations such as
+    /// namespace rename, where path changes and reference rewrites must not be
+    /// observed as separate sync commits.
+    pub fn commit_pages(
+        &mut self,
+        snapshots: Vec<PageSnapshot>,
+    ) -> Result<CommitReport, CrdtError> {
+        self.ensure_writable()?;
+        validate_pages(&snapshots)?;
+        for snapshot in &snapshots {
+            validate_commit_against_doc(&self.doc, snapshot)?;
+        }
+        let mut affected_pages = Vec::with_capacity(snapshots.len());
+        for snapshot in &snapshots {
+            let mut paths = BTreeSet::from([snapshot.path.clone()]);
+            if let Some(old_path) = find_page_node(&self.doc, PageSelector::Id(snapshot.id))?
+                .map(|node| required_string(&tree(&self.doc), node, PATH))
+                .transpose()?
+            {
+                paths.insert(old_path);
+            }
+            affected_pages.push(AffectedPage {
+                page_id: snapshot.id,
+                paths: paths.into_iter().collect(),
+            });
+        }
         let before = self.doc.oplog_vv();
-        if let Err(error) = apply_page(&self.doc, &snapshot) {
+        if let Err(error) = apply_pages(&self.doc, &snapshots) {
+            self.recover_after_failed_mutation(&error);
+            return Err(error);
+        }
+        let affected_page_ids: Vec<PageId> =
+            affected_pages.iter().map(|page| page.page_id).collect();
+        let affected_paths: Vec<String> = affected_pages
+            .iter()
+            .flat_map(|page| page.paths.iter().cloned())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        if self.doc.oplog_vv() == before {
+            return Ok(CommitReport {
+                changed: false,
+                chunk_id: String::new(),
+                affected_page_ids,
+                affected_paths,
+                affected_pages,
+            });
+        }
+        self.persist_update(before, affected_pages)
+    }
+
+    /// Replaces the complete graph state as one operation. This is used for a
+    /// verified backup restore: the operation becomes durable before projection
+    /// files are copied, so a crash can resume the projection instead of silently
+    /// reverting the restore on the next replay.
+    pub fn replace_pages(
+        &mut self,
+        snapshots: Vec<PageSnapshot>,
+    ) -> Result<CommitReport, CrdtError> {
+        self.ensure_writable()?;
+        validate_pages(&snapshots)?;
+        for snapshot in &snapshots {
+            validate_commit_against_doc(&self.doc, snapshot)?;
+        }
+
+        let current = materialize_pages_from(&self.doc)?;
+        let mut affected: HashMap<PageId, BTreeSet<String>> = HashMap::new();
+        for page in current.iter().chain(snapshots.iter()) {
+            affected
+                .entry(page.id)
+                .or_default()
+                .insert(page.path.clone());
+        }
+        let before = self.doc.oplog_vv();
+        if let Err(error) = apply_pages(&self.doc, &snapshots) {
             self.recover_after_failed_mutation(&error);
             return Err(error);
         }
 
-        let mut paths = BTreeSet::from([snapshot.path.clone()]);
-        if let Some(path) = old_path {
-            paths.insert(path);
+        let target_ids: HashSet<PageId> = snapshots.iter().map(|page| page.id).collect();
+        let tree = tree(&self.doc);
+        for page in current {
+            if target_ids.contains(&page.id) {
+                continue;
+            }
+            if let Some(node) = find_page_node(&self.doc, PageSelector::Id(page.id))? {
+                if let Err(error) = tree.delete(node).map_err(loro_error) {
+                    self.recover_after_failed_mutation(&error);
+                    return Err(error);
+                }
+            }
         }
-        self.persist_update(before, vec![snapshot.id], paths.into_iter().collect())
+        if let Err(error) = materialize_pages_from(&self.doc) {
+            self.recover_after_failed_mutation(&error);
+            return Err(error);
+        }
+
+        let mut affected_pages: Vec<AffectedPage> = affected
+            .into_iter()
+            .map(|(page_id, paths)| AffectedPage {
+                page_id,
+                paths: paths.into_iter().collect(),
+            })
+            .collect();
+        affected_pages.sort_by_key(|page| page.page_id);
+        if self.doc.oplog_vv() == before {
+            let affected_page_ids = affected_pages.iter().map(|page| page.page_id).collect();
+            let affected_paths = affected_pages
+                .iter()
+                .flat_map(|page| page.paths.iter().cloned())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect();
+            return Ok(CommitReport {
+                changed: false,
+                chunk_id: String::new(),
+                affected_page_ids,
+                affected_paths,
+                affected_pages,
+            });
+        }
+        let authorized_paths = affected_pages
+            .iter()
+            .flat_map(|page| page.paths.iter().cloned())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        self.persist_update_with_intents(before, affected_pages, authorized_paths)
     }
 
     /// Deletes a page and its currently attached block subtree by ID or path.
@@ -138,7 +250,13 @@ impl CrdtGraph {
             self.recover_after_failed_mutation(&error);
             return Err(error);
         }
-        self.persist_update(before, vec![id], vec![path])
+        self.persist_update(
+            before,
+            vec![AffectedPage {
+                page_id: id,
+                paths: vec![path],
+            }],
+        )
     }
 
     /// Imports all newly delivered chunks and reports pages that need projection.
@@ -157,16 +275,35 @@ impl CrdtGraph {
         let candidate = replay_chunks(&chunks, self.store.session_id)?;
         materialize_pages_from(&candidate)?;
 
-        let mut page_ids = BTreeSet::new();
-        let mut paths = BTreeSet::new();
+        let mut affected: HashMap<PageId, BTreeSet<String>> = HashMap::new();
         for chunk in &new_chunks {
-            page_ids.extend(chunk.header.affected_page_ids.iter().copied());
-            paths.extend(chunk.header.affected_paths.iter().cloned());
+            for page in &chunk.header.affected_pages {
+                affected
+                    .entry(page.page_id)
+                    .or_default()
+                    .extend(page.paths.iter().cloned());
+            }
         }
+        let mut affected_pages: Vec<AffectedPage> = affected
+            .into_iter()
+            .map(|(page_id, paths)| AffectedPage {
+                page_id,
+                paths: paths.into_iter().collect(),
+            })
+            .collect();
+        affected_pages.sort_by_key(|page| page.page_id);
+        let page_ids = affected_pages.iter().map(|page| page.page_id).collect();
+        let paths = affected_pages
+            .iter()
+            .flat_map(|page| page.paths.iter().cloned())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
         let report = ImportReport {
             imported_chunks: new_chunks.len(),
-            affected_page_ids: page_ids.into_iter().collect(),
-            affected_paths: paths.into_iter().collect(),
+            affected_page_ids: page_ids,
+            affected_paths: paths,
+            affected_pages,
         };
         self.doc = candidate;
         self.imported_chunks = chunk_ids(&chunks);
@@ -192,6 +329,27 @@ impl CrdtGraph {
         materialize_pages_from(&self.doc)
     }
 
+    /// Every page/path pair ever named by an immutable chunk. Current snapshots
+    /// alone cannot reveal a deleted page or the old half of a rename after a
+    /// restart, but projection recovery still needs those paths.
+    pub fn affected_pages_history(&self) -> Result<Vec<AffectedPage>, CrdtError> {
+        let mut affected: HashMap<PageId, BTreeSet<String>> = HashMap::new();
+        for chunk in self.store.load_chunks()? {
+            for page in chunk.header.affected_pages {
+                affected.entry(page.page_id).or_default().extend(page.paths);
+            }
+        }
+        let mut pages: Vec<AffectedPage> = affected
+            .into_iter()
+            .map(|(page_id, paths)| AffectedPage {
+                page_id,
+                paths: paths.into_iter().collect(),
+            })
+            .collect();
+        pages.sort_by_key(|page| page.page_id);
+        Ok(pages)
+    }
+
     /// Returns managed-sync identity and local import state.
     pub fn status(&self) -> Result<CrdtStatus, CrdtError> {
         Ok(CrdtStatus {
@@ -205,6 +363,26 @@ impl CrdtGraph {
         })
     }
 
+    /// Publish immutable provenance for an exact Markdown/Org projection at the
+    /// document's current operation frontier.
+    pub fn record_projection(&self, path: &str, content: &str) -> Result<String, CrdtError> {
+        self.store
+            .publish_projection_receipt(path, content, self.doc.oplog_vv())
+    }
+
+    /// Whether `content` at `path` was projected by a replica from a frontier
+    /// already included in this document. A receipt delivered ahead of its update
+    /// chunks therefore does not authorize an overwrite or automatic cleanup.
+    pub fn is_known_projection(&self, path: &str, content: &str) -> Result<bool, CrdtError> {
+        self.store
+            .is_known_projection(path, content, &self.doc.oplog_vv())
+    }
+
+    pub fn is_projection_authorized(&self, path: &str) -> Result<bool, CrdtError> {
+        self.store
+            .is_projection_authorized(path, &self.doc.oplog_vv())
+    }
+
     fn ensure_writable(&self) -> Result<(), CrdtError> {
         match &self.durability_blocked {
             Some(error) => Err(CrdtError::DurabilityBlocked(error.clone())),
@@ -215,8 +393,16 @@ impl CrdtGraph {
     fn persist_update(
         &mut self,
         before: VersionVector,
-        affected_page_ids: Vec<PageId>,
-        affected_paths: Vec<String>,
+        affected_pages: Vec<AffectedPage>,
+    ) -> Result<CommitReport, CrdtError> {
+        self.persist_update_with_intents(before, affected_pages, Vec::new())
+    }
+
+    fn persist_update_with_intents(
+        &mut self,
+        before: VersionVector,
+        affected_pages: Vec<AffectedPage>,
+        authorized_paths: Vec<String>,
     ) -> Result<CommitReport, CrdtError> {
         let payload = match self.doc.export(ExportMode::updates(&before)) {
             Ok(payload) => payload,
@@ -226,18 +412,35 @@ impl CrdtGraph {
                 return Err(error);
             }
         };
-        match self.store.publish(
-            ChunkKind::Update,
-            affected_page_ids.clone(),
-            affected_paths.clone(),
-            payload,
-        ) {
+        let frontier = self.doc.oplog_vv();
+        for path in authorized_paths {
+            if let Err(error) = self
+                .store
+                .publish_projection_intent(&path, frontier.clone())
+            {
+                self.recover_after_failed_mutation(&error);
+                return Err(error);
+            }
+        }
+        match self
+            .store
+            .publish(ChunkKind::Update, affected_pages.clone(), payload)
+        {
             Ok(chunk_id) => {
                 self.imported_chunks.insert(chunk_id.clone());
+                let affected_page_ids = affected_pages.iter().map(|page| page.page_id).collect();
+                let affected_paths = affected_pages
+                    .iter()
+                    .flat_map(|page| page.paths.iter().cloned())
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .collect();
                 Ok(CommitReport {
+                    changed: true,
                     chunk_id,
                     affected_page_ids,
                     affected_paths,
+                    affected_pages,
                 })
             }
             Err(error) => {
@@ -320,6 +523,42 @@ fn validate_commit_against_doc(doc: &LoroDoc, page: &PageSnapshot) -> Result<(),
     Ok(())
 }
 
+/// Apply a set of complete page snapshots without making block moves depend on
+/// snapshot order. Cleanup happens only after every destination has claimed its
+/// blocks, so swaps and cycles preserve the existing Loro nodes and identities.
+fn apply_pages(doc: &LoroDoc, pages: &[PageSnapshot]) -> Result<(), CrdtError> {
+    let tree = tree(doc);
+    let mut original_nodes = HashSet::new();
+    for page in pages {
+        if let Some(node) = find_page_node(doc, PageSelector::Id(page.id))? {
+            original_nodes.extend(descendants(&tree, node));
+        }
+    }
+    for page in pages {
+        apply_page(doc, page)?;
+    }
+
+    let desired_ids: HashSet<BlockId> = pages
+        .iter()
+        .flat_map(|page| page.blocks.iter().map(|block| block.id))
+        .collect();
+    let nodes_by_id = block_nodes_by_id(&tree)?;
+    let desired_nodes: HashSet<TreeID> = desired_ids
+        .iter()
+        .filter_map(|id| nodes_by_id.get(id).copied())
+        .collect();
+    let removed: HashSet<TreeID> = original_nodes
+        .into_iter()
+        .filter(|node| !desired_nodes.contains(node))
+        .collect();
+    for node in removed.iter().copied().filter(|node| {
+        !matches!(tree.parent(*node), Some(TreeParentId::Node(parent)) if removed.contains(&parent))
+    }) {
+        tree.delete(node).map_err(loro_error)?;
+    }
+    Ok(())
+}
+
 fn apply_page(doc: &LoroDoc, page: &PageSnapshot) -> Result<(), CrdtError> {
     let tree = tree(doc);
     let existing_page = find_page_node(doc, PageSelector::Id(page.id))?;
@@ -352,7 +591,6 @@ fn apply_page(doc: &LoroDoc, page: &PageSnapshot) -> Result<(), CrdtError> {
         replace_text(&pre_block, value)?;
     }
 
-    let original_subtree = descendants(&tree, page_node);
     let global_blocks = block_nodes_by_id(&tree)?;
     let mut nodes = HashMap::with_capacity(page.blocks.len());
     for block in &page.blocks {
@@ -407,16 +645,6 @@ fn apply_page(doc: &LoroDoc, page: &PageSnapshot) -> Result<(), CrdtError> {
         }
     }
 
-    let desired: HashSet<TreeID> = nodes.into_values().collect();
-    let removed: HashSet<TreeID> = original_subtree
-        .into_iter()
-        .filter(|node| !desired.contains(node))
-        .collect();
-    for node in removed.iter().copied().filter(|node| {
-        !matches!(tree.parent(*node), Some(TreeParentId::Node(parent)) if removed.contains(&parent))
-    }) {
-        tree.delete(node).map_err(loro_error)?;
-    }
     Ok(())
 }
 

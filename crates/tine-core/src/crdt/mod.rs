@@ -10,6 +10,6 @@ mod store;
 
 pub use graph::CrdtGraph;
 pub use snapshot::{
-    BlockId, BlockSnapshot, CommitReport, CrdtError, CrdtStatus, ImportReport, PageId,
-    PageSelector, PageSnapshot,
+    AffectedPage, BlockId, BlockSnapshot, CommitReport, CrdtError, CrdtStatus, ImportReport,
+    PageId, PageSelector, PageSnapshot,
 };
