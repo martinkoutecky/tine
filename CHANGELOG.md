@@ -8,6 +8,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.5.5] - 2026-07-11
+
+Correctness and interaction release for Sheets, caret navigation, edit-mode
+rendering, Windows graph and clipboard behavior, and read-only Org safety.
+
 ### Added
 
 - **Ctrl/Cmd+Shift+V pastes multiline plain text into the current block.** Normal
