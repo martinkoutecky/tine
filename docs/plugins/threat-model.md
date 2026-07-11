@@ -41,9 +41,11 @@ verifies the on-disk SHA-256, instantiates the bounded runtime, and activates it
 trap, timeout, invalid response, digest mismatch, incompatibility, or revocation
 disables the plugin without blocking graph startup.
 
-The registry signs/indexes digests rather than mutable download URLs. A catalogue
-entry never grants more authority than the installed manifest displays. Revocation
-is per immutable version, reasoned, timestamped, and signature-verified by Tine.
+The registry signs separate digests for the manifest and WASM bytes rather than
+trusting mutable download URLs. Tine verifies both before installation, so neither
+the executable nor its displayed authority/contribution metadata can drift under a
+valid index signature. Revocation is per immutable version, reasoned, timestamped,
+and signature-verified by Tine.
 
 ## Local audit boundary
 

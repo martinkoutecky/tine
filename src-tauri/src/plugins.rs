@@ -2,10 +2,16 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::Manager;
 
 const MAX_MANIFEST_BYTES: usize = 64 * 1024;
 const MAX_WASM_BYTES: usize = 8 * 1024 * 1024;
+static INSTALL_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+const REGISTRY_PUBLIC_KEY: [u8; 32] = [
+    0xb0, 0xa2, 0x3e, 0xe1, 0x01, 0xde, 0x83, 0xf4, 0x3d, 0xda, 0x58, 0xc9, 0xe5, 0xf9, 0x97, 0xe9,
+    0x00, 0xbe, 0xa6, 0x34, 0x16, 0xde, 0x9c, 0xaa, 0x38, 0x65, 0xaa, 0x73, 0x6d, 0x56, 0x3b, 0x00,
+];
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct InstalledPlugin {
@@ -34,13 +40,46 @@ fn safe_component(value: &str, dotted: bool) -> bool {
 }
 
 fn safe_version(value: &str) -> bool {
-    if value.is_empty() || value.len() > 64 || value.starts_with('.') || value.ends_with('.') {
+    if value.is_empty() || value.len() > 64 {
         return false;
     }
-    value
-        .bytes()
-        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'+'))
-        && value.split('.').take(3).count() == 3
+    let (core, prerelease) = value
+        .split_once('-')
+        .map_or((value, None), |(core, prerelease)| (core, Some(prerelease)));
+    let parts: Vec<&str> = core.split('.').collect();
+    if parts.len() != 3
+        || parts.iter().any(|part| {
+            part.is_empty()
+                || !part.bytes().all(|byte| byte.is_ascii_digit())
+                || (part.len() > 1 && part.starts_with('0'))
+        })
+    {
+        return false;
+    }
+    prerelease.is_none_or(|suffix| {
+        !suffix.is_empty()
+            && !suffix.starts_with('.')
+            && !suffix.ends_with('.')
+            && suffix
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-'))
+    })
+}
+
+fn unique_install_dir(root: &Path, id: &str, version: &str) -> Result<PathBuf, String> {
+    for _ in 0..128 {
+        let sequence = INSTALL_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let candidate = root.join(format!(
+            ".install-{id}-{version}-{}-{sequence}",
+            std::process::id()
+        ));
+        match std::fs::create_dir(&candidate) {
+            Ok(()) => return Ok(candidate),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    Err("could not allocate a private plugin install directory".to_string())
 }
 
 fn manifest_identity(manifest_json: &str) -> Result<(String, String), String> {
@@ -78,6 +117,26 @@ fn package_dir(root: &Path, id: &str, version: &str) -> Result<PathBuf, String> 
 
 fn sha256(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
+}
+
+#[tauri::command]
+pub(crate) fn verify_plugin_registry(
+    index_json: String,
+    signature_b64: String,
+) -> Result<(), String> {
+    use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+    if index_json.len() > 2 * 1024 * 1024 {
+        return Err("plugin registry index is too large".to_string());
+    }
+    let signature_bytes = base64::engine::general_purpose::STANDARD
+        .decode(signature_b64.trim())
+        .map_err(|_| "plugin registry signature is invalid base64")?;
+    let signature = Signature::from_slice(&signature_bytes)
+        .map_err(|_| "plugin registry signature has the wrong length")?;
+    let key = VerifyingKey::from_bytes(&REGISTRY_PUBLIC_KEY)
+        .map_err(|_| "embedded plugin registry key is invalid")?;
+    key.verify(index_json.as_bytes(), &signature)
+        .map_err(|_| "plugin registry signature did not verify".to_string())
 }
 
 fn plugin_states(app: &tauri::AppHandle) -> std::collections::HashMap<String, PluginState> {
@@ -123,16 +182,7 @@ pub(crate) fn install_plugin(
         }
     } else {
         std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
-        let temp = root.join(format!(
-            ".install-{}-{}-{}",
-            id,
-            version,
-            std::process::id()
-        ));
-        if temp.exists() {
-            std::fs::remove_dir_all(&temp).map_err(|e| e.to_string())?;
-        }
-        std::fs::create_dir_all(&temp).map_err(|e| e.to_string())?;
+        let temp = unique_install_dir(&root, &id, &version)?;
         let result = (|| -> Result<(), String> {
             std::fs::write(temp.join("manifest.json"), manifest_json.as_bytes())
                 .map_err(|e| e.to_string())?;
@@ -250,6 +300,8 @@ mod tests {
         assert!(!safe_component("../example", true));
         assert!(!safe_component("Example.Plugin", true));
         assert!(safe_version("0.1.0-beta.1"));
+        assert!(!safe_version("0.1.0.4"));
+        assert!(!safe_version("01.1.0"));
         assert!(!safe_version("../../outside"));
         assert!(package_dir(Path::new("/plugins"), "dev.tine.example", "0.1.0").is_ok());
     }
@@ -263,5 +315,15 @@ mod tests {
         );
         assert!(manifest_identity(r#"{"id":"../bad","version":"0.1.0"}"#).is_err());
         assert!(manifest_identity(&"x".repeat(MAX_MANIFEST_BYTES + 1)).is_err());
+    }
+
+    #[test]
+    fn registry_public_key_has_the_expected_identity() {
+        assert_eq!(REGISTRY_PUBLIC_KEY.len(), 32);
+        assert!(ed25519_dalek::VerifyingKey::from_bytes(&REGISTRY_PUBLIC_KEY).is_ok());
+        let index = "{\n  \"schemaVersion\": 1,\n  \"generatedAt\": \"2026-07-11T00:00:00Z\",\n  \"plugins\": [],\n  \"revocations\": []\n}\n";
+        let signature = "88dLhfDBdYWf0v93Emf0/MqthFlXae9xJ6Ek3wIzgygJnE/BI2IA3DLV96/wQIDUsKENIR+M3SdfudgX/DgvBw==";
+        verify_plugin_registry(index.to_string(), signature.to_string()).unwrap();
+        assert!(verify_plugin_registry(format!("{index} "), signature.to_string()).is_err());
     }
 }

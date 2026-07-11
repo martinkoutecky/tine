@@ -15,6 +15,7 @@
     "build:wasm": "node scripts/build-wasm.mjs",
     "e2e:caret": "CARET_LABEL=release-required CARET_MODE=agenda node scripts/e2e-caret.mjs",
     "e2e:multigraph": "node scripts/e2e-multigraph.mjs",
+    "e2e:plugins": "node scripts/e2e-plugins.mjs",
     "screenshot": "node scripts/screenshot.mjs",
     "bench": "node scripts/bench.mjs",
     "plugin:check": "node scripts/tine-plugin.mjs check"
@@ -41,9 +42,9 @@
     "jsdom": "^29.1.1",
     "playwright": "^1.49.1",
     "typescript": "^5.6.3",
-    "vite": "^5.4.11",
+    "vite": "^6.4.3",
     "vite-plugin-solid": "^2.11.0",
-    "vitest": "^2.1.9",
+    "vitest": "^3.2.6",
     "webdriverio": "^9.29.0"
   }
 }

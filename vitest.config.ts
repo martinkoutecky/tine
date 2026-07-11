@@ -12,8 +12,12 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["src/**/*.test.ts"],
+    server: { deps: { inline: [/^solid-js(?:\/|$)/] } },
   },
   resolve: {
     conditions: ["browser"],
+  },
+  ssr: {
+    resolve: { conditions: ["browser"], externalConditions: ["browser"] },
   },
 });

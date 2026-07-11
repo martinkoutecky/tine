@@ -2008,6 +2008,46 @@ body {
     font-size: 10px;
   }
 }
+@media (max-width: 480px) {
+  .modal-overlay {
+    padding-top: 2vh;
+  }
+  .settings-modal {
+    width: calc(100vw - 16px);
+    max-width: none;
+    height: 96vh;
+    max-height: none;
+    flex-direction: column;
+  }
+  .settings-nav {
+    width: auto;
+    flex: 0 0 auto;
+    flex-direction: row;
+    overflow-x: auto;
+    padding: 7px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border-color);
+    scrollbar-width: thin;
+  }
+  .settings-nav-title,
+  .settings-nav-foot {
+    display: none;
+  }
+  .settings-nav-item {
+    flex: 0 0 auto;
+    white-space: nowrap;
+    padding: 7px 9px;
+  }
+  .settings-pane-head {
+    padding: 13px 14px;
+  }
+  .settings-pane-body {
+    padding: 6px 14px 18px;
+  }
+  .settings-row {
+    gap: 12px;
+  }
+}
 .settings-shortcut-row {
   display: grid;
   grid-template-columns: 1fr auto 1fr;

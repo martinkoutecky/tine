@@ -15,8 +15,12 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     include: ["src/**/*.test.tsx"],
+    server: { deps: { inline: [/^solid-js(?:\/|$)/] } },
   },
   resolve: {
     conditions: ["browser"],
+  },
+  ssr: {
+    resolve: { conditions: ["browser"], externalConditions: ["browser"] },
   },
 });

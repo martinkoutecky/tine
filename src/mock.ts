@@ -653,6 +653,9 @@ export function mockBackend(): Backend {
         }
       }
     },
+    async verifyPluginRegistry() {
+      // Browser mock has no embedded native key. Registry tests mock this boundary.
+    },
     async quit(): Promise<void> {
       // No-op in the mock/screenshot harness — there's no process to exit.
     },

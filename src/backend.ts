@@ -102,6 +102,7 @@ export interface Backend {
   installPlugin(manifestJson: string, wasm: Uint8Array): Promise<InstalledPluginRecord>;
   readPluginEntry(id: string, version: string): Promise<Uint8Array>;
   setPluginEnabled(id: string, version: string, enabled: boolean): Promise<void>;
+  verifyPluginRegistry(indexJson: string, signatureB64: string): Promise<void>;
   defaultGraphParent(): Promise<string>;
   /** Quit the app. On Linux this first SIGKILLs WebKitGTK's helper subprocesses so
    *  they don't dump a SIGABRT core on exit (GH #28 — GL driver atexit double-free);
@@ -454,6 +455,9 @@ class TauriBackend implements Backend {
   }
   setPluginEnabled(id: string, version: string, enabled: boolean) {
     return this.call<void>("set_plugin_enabled", { id, version, enabled });
+  }
+  verifyPluginRegistry(indexJson: string, signatureB64: string) {
+    return this.call<void>("verify_plugin_registry", { indexJson, signatureB64 });
   }
   quit() {
     return this.call<void>("tine_quit");

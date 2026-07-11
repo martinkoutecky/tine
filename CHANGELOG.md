@@ -13,8 +13,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Begin an experimental Tine-native plugin platform: capability-limited WebAssembly
   guests, host-owned contribution points, explicit desktop/mobile declarations, and
   a public-registry safety model. This is not Logseq or Obsidian API compatibility.
+- Add disabled-by-default local and signed-community installation, explicit
+  capability review and enable/disable controls, registry revocations, immutable
+  manifest/WASM digests, and desktop/mobile plugin catalogue layouts.
+- Publish the first AI-primary examples (bullet threading and query-filter
+  shortcuts), a Rust guest SDK/template, deterministic package checker, and
+  developer/security documentation.
+- Add a credential-separated local registry auditor: rootless hostile builds,
+  no-tools Codex source review, quarantine/manual approval, signed catalogue
+  publishing, and symlink/path/digest fail-closed checks.
 
 ### Fixed
+
+- Upgrade the Vite/Vitest development toolchain to versions clear of the current
+  npm advisories, including the Vitest UI-server and Vite dev-server issues; keep
+  Solid's browser export conditions explicit in the test runner.
 
 - **Default Windows draw.io installations now autodetect and launch correctly.**
   External-editor command templates accept double-quoted executable paths such as

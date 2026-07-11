@@ -97,6 +97,14 @@ import { backend, isTauri, type BackupInfo } from "../backend";
 import type { AssetInfo, TrashStats, JournalFile, SyncConflict, SyncConflictDiff, DiffRow, MergeDecision } from "../types";
 import { formatJournal } from "../journal";
 import { installedPlugins, pluginManager } from "../plugins/manager";
+import {
+  communityPlugins,
+  installCommunityPlugin,
+  refreshCommunityRegistry,
+  registryState,
+  type RegistryPlugin,
+  type RegistryVersion,
+} from "../plugins/registry";
 
 // Journal display-title formats offered in the date-format dropdown — OG's
 // `journal-title-formatters` set (frontend/date.cljs). Display-only; the on-disk
@@ -335,6 +343,18 @@ function PluginsTab(): JSX.Element {
     }
   };
 
+  const installCommunity = async (plugin: RegistryPlugin, version: RegistryVersion) => {
+    setBusy(`${plugin.id}@${version.version}`);
+    try {
+      const installed = await installCommunityPlugin(plugin, version);
+      pushToast(`${installed.manifest.name} installed disabled. Enable it after reviewing its capabilities.`, "info");
+    } catch (error) {
+      pushToast(`Community plugin installation failed: ${String(error)}`, "error");
+    } finally {
+      setBusy(null);
+    }
+  };
+
   return (
     <>
       <div class="settings-section">Experimental plugin platform</div>
@@ -362,6 +382,54 @@ function PluginsTab(): JSX.Element {
           </button>
         </div>
       </div>
+
+      <div class="settings-section">Community catalogue</div>
+      <div class="settings-hint">
+        Signed registry · automated deterministic and no-tools AI audits · immutable version digests.
+        <Show when={registryState() === "offline"}> Showing the last verified offline copy.</Show>
+      </div>
+      <Show
+        when={communityPlugins().length > 0}
+        fallback={
+          <div class="settings-row">
+            <span class="settings-hint">
+              {registryState() === "loading" ? "Checking the signed catalogue…" : "No verified catalogue is available."}
+            </span>
+            <button class="settings-btn" disabled={registryState() === "loading"} onClick={() => void refreshCommunityRegistry()}>
+              Retry
+            </button>
+          </div>
+        }
+      >
+        <For each={communityPlugins()}>
+          {(plugin) => {
+            const version = () => plugin.versions[plugin.versions.length - 1];
+            const installed = () =>
+              installedPlugins().some((item) => item.manifest.id === plugin.id && item.manifest.version === version().version);
+            return (
+              <div class="settings-field">
+                <div class="settings-field-row">
+                  <span class="settings-label">{plugin.name} <span class="settings-hint">v{version().version}</span></span>
+                  <button
+                    class="settings-btn"
+                    disabled={installed() || busy() !== null || version().audit.status !== "passed"}
+                    onClick={() => void installCommunity(plugin, version())}
+                  >
+                    {installed() ? "Installed" : busy() === `${plugin.id}@${version().version}` ? "Verifying…" : "Install"}
+                  </button>
+                </div>
+                <div class="settings-hint settings-field-hint">
+                  {plugin.description}<br />
+                  {plugin.license} · {plugin.aiDevelopment === "none" ? "Human-written" : `AI-${plugin.aiDevelopment}`} · {version().platforms.join(", ")}
+                  <br />Capabilities: {version().capabilities.length ? version().capabilities.join(", ") : "none"}
+                  {" · "}<button class="settings-link" onClick={() => void backend().openExternal(version().audit.url)}>Audit</button>
+                  {" · "}<button class="settings-link" onClick={() => void backend().openExternal(plugin.source)}>Source</button>
+                </div>
+              </div>
+            );
+          }}
+        </For>
+      </Show>
 
       <div class="settings-section">Installed</div>
       <Show when={installedPlugins().length > 0} fallback={<p class="settings-hint">No plugins installed.</p>}>

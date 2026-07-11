@@ -134,6 +134,9 @@ macro_rules! tine_plugin {
 
         #[no_mangle]
         pub extern "C" fn tine_alloc(length: u32) -> u32 {
+            if length as usize > $crate::MAX_MESSAGE_BYTES {
+                return 0;
+            }
             let mut input = Vec::<u8>::with_capacity(length as usize);
             let pointer = input.as_mut_ptr() as usize as u32;
             std::mem::forget(input);
@@ -173,6 +176,12 @@ macro_rules! tine_plugin {
 mod tests {
     use super::*;
 
+    fn test_handler(_: &Event) -> Result<Vec<Effect>, String> {
+        Ok(Vec::new())
+    }
+
+    tine_plugin!(test_handler);
+
     #[test]
     fn response_uses_the_wire_field_names() {
         let bytes = encode_response(Ok(vec![Effect::InsertAtCaret {
@@ -181,5 +190,10 @@ mod tests {
         let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(value["protocolVersion"], 1);
         assert_eq!(value["effects"][0]["kind"], "insert-at-caret");
+    }
+
+    #[test]
+    fn allocator_refuses_oversized_host_messages() {
+        assert_eq!(tine_alloc((MAX_MESSAGE_BYTES + 1) as u32), 0);
     }
 }
