@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Tine release impact review",
+  "type": "object",
+  "required": ["schemaVersion", "version", "baseTag", "items"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+    "baseTag": { "type": "string", "pattern": "^v\\d+\\.\\d+\\.\\d+$" },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["section", "text", "userVisible", "regressions", "docs", "website", "blog"],
+        "properties": {
+          "section": { "enum": ["Added", "Changed", "Fixed"] },
+          "text": { "type": "string", "minLength": 3 },
+          "userVisible": { "type": "boolean" },
+          "regressions": { "type": "array", "items": { "type": "string", "pattern": "^UI-[A-Z0-9-]+$" } },
+          "docs": { "$ref": "#/$defs/disposition" },
+          "website": { "$ref": "#/$defs/disposition" },
+          "blog": { "$ref": "#/$defs/disposition" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "focusedAudit": {
+      "type": "object",
+      "required": ["required", "reason"],
+      "properties": { "required": { "type": "boolean" }, "reason": { "type": "string", "minLength": 10 } },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "disposition": {
+      "type": "object",
+      "required": ["status", "reason", "refs"],
+      "properties": {
+        "status": { "enum": ["update", "current", "not-applicable", "consult"] },
+        "reason": { "type": "string", "minLength": 3 },
+        "refs": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

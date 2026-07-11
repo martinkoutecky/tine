@@ -7,6 +7,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const readJson = (relative) => JSON.parse(fs.readFileSync(path.join(root, relative), "utf8"));
@@ -63,6 +64,13 @@ if (!new RegExp(`^## \\[${expected.replaceAll(".", "\\.")}\\] - \\d{4}-\\d{2}-\\
 if (process.env.GITHUB_REF?.startsWith("refs/tags/")) {
   const tag = process.env.GITHUB_REF.slice("refs/tags/".length);
   if (tag !== `v${expected}`) problems.push(`tag ${tag} does not match metadata version v${expected}`);
+}
+
+if (process.env.REQUIRE_RELEASE_READINESS === "1") {
+  for (const script of ["check-ui-regression-catalog.mjs", "check-release-readiness.mjs"]) {
+    const result = spawnSync(process.execPath, [path.join(root, "scripts", script)], { encoding: "utf8" });
+    if (result.status !== 0) problems.push(`${script} failed:\n${result.stderr || result.stdout}`);
+  }
 }
 
 if (problems.length) {

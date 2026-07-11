@@ -50,6 +50,8 @@ jobs:
             exit 1
           fi
       - name: Version, Android code, tag, and changelog agree
+        env:
+          REQUIRE_RELEASE_READINESS: "1"
         run: node scripts/check-release-preflight.mjs
       - name: Flatpak offline npm sources are current
         run: node scripts/check-flatpak-node-sources.mjs
