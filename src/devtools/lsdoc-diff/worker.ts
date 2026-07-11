@@ -93,7 +93,7 @@ self.onmessage = async (ev: MessageEvent<ParseRequest>) => {
     const ast = JSON.parse(mldoc.parseJson(msg.text, cfg(msg.format)));
     const projection = {
       blocks: normalizeAst(ast) as unknown[],
-      refs: extractRefs(ast),
+      refs: extractRefs(ast, msg.format),
     };
     const parseMicros = Math.round((performance.now() - start) * 1000);
     reply({ id: msg.id, ok: true, projection, parseMicros });

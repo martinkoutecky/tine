@@ -36,6 +36,9 @@ jobs:
       - name: lsdoc WASM pin check
         run: node scripts/check-wasm-pin.mjs
 
+      - name: lsdoc mldoc-oracle drift check
+        run: node scripts/check-lsdoc-oracle-sync.mjs
+
       - name: Typecheck (tsc)
         run: npx tsc --noEmit
 

@@ -15,6 +15,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Help improve Tine uses the same OG-faithful reference oracle as lsdoc.**
+  Property, nested, file-label, Org, embed, and block-reference semantics no
+  longer drift between the two sides of the comparison, eliminating false
+  divergences such as Markdown links in property values. CI now binds the
+  vendored oracle to the pinned lsdoc release and its exact source hash.
 - **Help improve Tine reports no longer expose page names or private URLs.**
   Source files use neutral labels, URL schemes remain parseable while hosts and
   paths are scrubbed, URL-sensitive divergences survive anonymization more

@@ -1,1 +1,1 @@
-export function extractRefs(ast: unknown): { page: string[]; block: string[] };
+export function extractRefs(ast: unknown, format?: "md" | "org"): { page: string[]; block: string[] };

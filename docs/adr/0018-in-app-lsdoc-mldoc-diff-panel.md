@@ -42,7 +42,10 @@ port of `graph-check.mjs` against the user's own graph, entirely locally:
 - **The comparison pipeline is transcribed, not reinvented** from graph-check (scrub
   tiers + verify-after-scrub, minimizer, projection key), reusing the harness's own
   `normalize`/`refs`/`compare` libs verbatim so an in-app diff and the CI gate agree
-  on what a divergence is.
+  on what a divergence is. The vendored refs module carries pinned lsdoc
+  tag/commit/hash provenance; ordinary CI rejects either a modified copy or an
+  lsdoc dependency bump that did not refresh the oracle. Focused tests run the
+  real vendored mldoc bundle over the shared property-reference semantics.
 - Divergence snippets are shown/copied **only after anonymization is re-verified to
   still reproduce the divergence** — the privacy guarantee for sharing from a private
   graph. Source paths are replaced with neutral labels. For URLs, anonymization
