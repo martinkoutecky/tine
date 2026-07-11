@@ -480,6 +480,13 @@ export function App(): JSX.Element {
       .then((u) => (unsub = u));
     onCleanup(() => unsub());
   });
+  onMount(() => {
+    let unsub = () => {};
+    void backend()
+      .onManagedSyncError((message) => pushToast(`Managed sync stopped: ${message}`, "error"))
+      .then((u) => (unsub = u));
+    onCleanup(() => unsub());
+  });
   // Load the asset-filename format template (Settings → Backups → Asset names).
   onMount(() => void initAssetSettings());
   // Load external media-editor command templates (Settings → Files; GH #38).

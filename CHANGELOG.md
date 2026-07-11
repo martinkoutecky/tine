@@ -8,6 +8,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Added
+
+- **Experimental managed sync can make an existing Syncthing/Dropbox graph
+  operation-backed without moving it.** Tine stores immutable per-session Loro
+  updates in `.tine-sync/`, keeps Markdown/Org as an editable projection for Logseq
+  and other tools, imports external file edits conservatively, and automatically
+  removes only conflict copies proven to be generated projections. Activation adds
+  durable Logseq-compatible block IDs after a complete local safety snapshot;
+  ordinary backup restore is operation-first and crash-resumable. This first version
+  manages page and journal text; assets, PDF sidecars, and configuration remain
+  ordinary provider-synchronized files. (Experimental, opt-in.)
+
 ### Fixed
 
 - **Default Windows draw.io installations now autodetect and launch correctly.**

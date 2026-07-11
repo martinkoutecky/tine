@@ -126,8 +126,27 @@ pub(crate) fn load_graph_for_label(
     let LoadedGraph {
         graph,
         meta,
-        launch_backup_done,
+        mut launch_backup_done,
     } = open_graph_for_load(&root, |graph| backup_graph_now(app, graph, ""))?;
+    if graph.managed_sync_configured() {
+        if !launch_backup_done {
+            let (_, complete) = backup_graph_now(app, &graph, "pre-sync-replay");
+            if !complete {
+                return Err(
+                    "managed sync needs a complete safety snapshot before replay; graph left unchanged"
+                        .into(),
+                );
+            }
+            launch_backup_done = true;
+        }
+        let device_id = crate::settings::managed_sync_device_id(app)?;
+        graph
+            .start_managed_sync(device_id, uuid::Uuid::new_v4())
+            .map_err(|error| format!("managed sync could not start: {error}"))?;
+        graph
+            .project_all_managed_sync()
+            .map_err(|error| format!("managed sync could not project: {error}"))?;
+    }
     let slot = Arc::new(GraphSlot::new(graph, root_key));
     let warm_generation = begin_warm_cache(&slot);
     state

@@ -293,3 +293,34 @@ fn watcher_turns_an_external_file_deletion_into_an_operation() {
     graph.project_all_managed_sync().unwrap();
     assert!(!path.exists());
 }
+
+#[test]
+fn watcher_preserves_block_identity_when_an_external_tool_renames_a_file() {
+    let dir = TestDir::new("external-rename");
+    let old_path = dir.path().join("pages/Page.md");
+    let new_path = dir.path().join("pages/Renamed.md");
+    fs::write(&old_path, "- rename in Logseq\n").unwrap();
+    let graph = Graph::open(dir.path());
+    graph
+        .enable_managed_sync(Uuid::new_v4(), Uuid::new_v4())
+        .unwrap();
+    let original_id = graph
+        .load_named("Page", PageKind::Page)
+        .unwrap()
+        .unwrap()
+        .blocks[0]
+        .id
+        .clone();
+
+    fs::rename(&old_path, &new_path).unwrap();
+    graph.sync_file_checked(&new_path).unwrap();
+    graph.sync_deleted_file(&old_path).unwrap();
+    graph.project_all_managed_sync().unwrap();
+
+    assert!(!old_path.exists());
+    let renamed = graph
+        .load_named("Renamed", PageKind::Page)
+        .unwrap()
+        .unwrap();
+    assert_eq!(renamed.blocks[0].id, original_id);
+}

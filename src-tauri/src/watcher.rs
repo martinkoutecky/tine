@@ -22,47 +22,18 @@ struct Pending {
 
 impl Pending {
     fn add_event(&mut self, event: notify::Event) {
-        if event.need_rescan() || !event_is_plain_page_file_op(&event) {
+        if event.need_rescan() {
+            self.need_full = true;
+            return;
+        }
+        // Page files take the narrow incremental path. Managed-sync chunks and
+        // receipts are also concrete paths, but use their own reconcile lane.
+        // Unknown/empty directory events fall back to a full scan.
+        if event.paths.is_empty() {
             self.need_full = true;
             return;
         }
         self.paths.extend(event.paths);
-    }
-}
-
-fn is_page_file_path(path: &Path) -> bool {
-    matches!(
-        path.extension().and_then(|x| x.to_str()),
-        Some("md") | Some("org")
-    )
-}
-
-fn path_is_existing_dir(path: &Path) -> bool {
-    std::fs::metadata(path).map(|m| m.is_dir()).unwrap_or(false)
-}
-
-fn all_concrete_page_file_paths(event: &notify::Event) -> bool {
-    !event.paths.is_empty()
-        && event
-            .paths
-            .iter()
-            .all(|p| is_page_file_path(p) && !path_is_existing_dir(p))
-}
-
-fn event_is_plain_page_file_op(event: &notify::Event) -> bool {
-    use notify::event::{CreateKind, EventKind, ModifyKind, RemoveKind, RenameMode};
-
-    if !all_concrete_page_file_paths(event) {
-        return false;
-    }
-    match event.kind {
-        EventKind::Create(CreateKind::File) => true,
-        EventKind::Modify(ModifyKind::Data(_)) | EventKind::Modify(ModifyKind::Metadata(_)) => true,
-        EventKind::Modify(ModifyKind::Name(
-            RenameMode::From | RenameMode::To | RenameMode::Both,
-        )) => true,
-        EventKind::Remove(RemoveKind::File) => true,
-        _ => false,
     }
 }
 
@@ -122,9 +93,11 @@ fn file_snapshot(path: &Path) -> Option<(SystemTime, u64)> {
 fn full_diff_reconcile(
     graph: &Graph,
     snap: &mut HashMap<PathBuf, (SystemTime, u64)>,
-    current: HashMap<PathBuf, (SystemTime, u64)>,
-) -> (Vec<GraphChange>, bool) {
+    mut current: HashMap<PathBuf, (SystemTime, u64)>,
+) -> (Vec<GraphChange>, bool, Vec<String>) {
     let mut changes: Vec<GraphChange> = Vec::new();
+    let mut errors = Vec::new();
+    let mut failed_paths = Vec::new();
     // A sync-tool conflict copy appearing/vanishing isn't a page change (it's
     // never cached), but the conflicts panel must refresh — track it and emit
     // `conflicts-changed` once.
@@ -133,12 +106,19 @@ fn full_diff_reconcile(
         if snap.get(p) != Some(m) {
             if tine_core::model::path_is_sync_conflict(p) {
                 conflicts_dirty = true;
-            } else if let Some(en) = graph.sync_file(p) {
-                changes.push(GraphChange {
-                    name: en.name,
-                    kind: en.kind,
-                    removed: false,
-                });
+            } else {
+                match graph.sync_file_checked(p) {
+                    Ok(Some(en)) => changes.push(GraphChange {
+                        name: en.name,
+                        kind: en.kind,
+                        removed: false,
+                    }),
+                    Ok(None) => {}
+                    Err(error) => {
+                        errors.push(format!("{}: {error}", p.display()));
+                        failed_paths.push(p.clone());
+                    }
+                }
             }
         }
     }
@@ -146,56 +126,93 @@ fn full_diff_reconcile(
         if !current.contains_key(p) {
             if tine_core::model::path_is_sync_conflict(p) {
                 conflicts_dirty = true;
-            } else if let Some(en) = graph.forget_file(p) {
-                changes.push(GraphChange {
-                    name: en.name,
-                    kind: en.kind,
-                    removed: true,
-                });
+            } else {
+                match graph.sync_deleted_file(p) {
+                    Ok(Some(en)) => changes.push(GraphChange {
+                        name: en.name,
+                        kind: en.kind,
+                        removed: true,
+                    }),
+                    Ok(None) => {}
+                    Err(error) => {
+                        errors.push(format!("{}: {error}", p.display()));
+                        failed_paths.push(p.clone());
+                    }
+                }
+            }
+        }
+    }
+    for path in failed_paths {
+        match snap.get(&path).copied() {
+            Some(previous) => {
+                current.insert(path, previous);
+            }
+            None => {
+                current.remove(&path);
             }
         }
     }
     *snap = current;
-    (changes, conflicts_dirty)
+    (changes, conflicts_dirty, errors)
 }
 
 fn incremental_reconcile(
     graph: &Graph,
     snap: &mut HashMap<PathBuf, (SystemTime, u64)>,
     paths: &HashSet<PathBuf>,
-) -> (Vec<GraphChange>, bool) {
+) -> (Vec<GraphChange>, bool, Vec<String>) {
     let mut changes: Vec<GraphChange> = Vec::new();
     let mut conflicts_dirty = false;
+    let mut errors = Vec::new();
 
-    for p in paths {
+    // Reconcile present destinations before absent sources. A provider-delivered
+    // external rename then lets the new path claim persisted block IDs before the
+    // old page is tombstoned, preserving identity across the two snapshot events.
+    let mut ordered: Vec<&PathBuf> = paths.iter().collect();
+    ordered.sort_by_key(|path| file_snapshot(path).is_none());
+    for p in ordered {
         if let Some(m) = file_snapshot(p) {
             if snap.get(p) != Some(&m) {
                 if tine_core::model::path_is_sync_conflict(p) {
                     conflicts_dirty = true;
-                } else if let Some(en) = graph.sync_file(p) {
-                    changes.push(GraphChange {
-                        name: en.name,
-                        kind: en.kind,
-                        removed: false,
-                    });
+                } else {
+                    match graph.sync_file_checked(p) {
+                        Ok(Some(en)) => changes.push(GraphChange {
+                            name: en.name,
+                            kind: en.kind,
+                            removed: false,
+                        }),
+                        Ok(None) => {}
+                        Err(error) => {
+                            errors.push(format!("{}: {error}", p.display()));
+                            continue;
+                        }
+                    }
                 }
                 snap.insert(p.clone(), m);
             }
         } else if snap.contains_key(p) {
             if tine_core::model::path_is_sync_conflict(p) {
                 conflicts_dirty = true;
-            } else if let Some(en) = graph.forget_file(p) {
-                changes.push(GraphChange {
-                    name: en.name,
-                    kind: en.kind,
-                    removed: true,
-                });
+            } else {
+                match graph.sync_deleted_file(p) {
+                    Ok(Some(en)) => changes.push(GraphChange {
+                        name: en.name,
+                        kind: en.kind,
+                        removed: true,
+                    }),
+                    Ok(None) => {}
+                    Err(error) => {
+                        errors.push(format!("{}: {error}", p.display()));
+                        continue;
+                    }
+                }
             }
             snap.remove(p);
         }
     }
 
-    (changes, conflicts_dirty)
+    (changes, conflicts_dirty, errors)
 }
 
 fn reconcile_pending(
@@ -204,14 +221,14 @@ fn reconcile_pending(
     snap: &mut HashMap<PathBuf, (SystemTime, u64)>,
     paths: &HashSet<PathBuf>,
     need_full: bool,
-) -> (Vec<GraphChange>, bool, bool) {
+) -> (Vec<GraphChange>, bool, bool, Vec<String>) {
     if need_full || paths.is_empty() {
         let current = collect_graph_page_files(dirs);
-        let (changes, conflicts_dirty) = full_diff_reconcile(graph, snap, current);
-        (changes, conflicts_dirty, true)
+        let (changes, conflicts_dirty, errors) = full_diff_reconcile(graph, snap, current);
+        (changes, conflicts_dirty, true, errors)
     } else {
-        let (changes, conflicts_dirty) = incremental_reconcile(graph, snap, paths);
-        (changes, conflicts_dirty, false)
+        let (changes, conflicts_dirty, errors) = incremental_reconcile(graph, snap, paths);
+        (changes, conflicts_dirty, false, errors)
     }
 }
 
@@ -250,8 +267,10 @@ pub(crate) fn start_watcher(app: tauri::AppHandle) {
         struct WatchedGraph {
             slot: Arc<GraphSlot>,
             dirs: [PathBuf; 2],
+            sync_dir: PathBuf,
             snap: HashMap<PathBuf, (SystemTime, u64)>,
             baseline: bool,
+            last_sync_error: Option<String>,
         }
 
         let mut graphs: HashMap<String, WatchedGraph> = HashMap::new();
@@ -264,16 +283,21 @@ pub(crate) fn start_watcher(app: tauri::AppHandle) {
             graphs.retain(|label, _| live.contains(label));
             for (label, slot) in entries {
                 let dirs = [slot.graph.journals_path(), slot.graph.pages_path()];
+                let sync_dir = slot.graph.managed_sync_store_path();
                 match graphs.get_mut(&label) {
-                    Some(current) if current.dirs == dirs => current.slot = slot,
+                    Some(current) if current.dirs == dirs && current.sync_dir == sync_dir => {
+                        current.slot = slot
+                    }
                     _ => {
                         graphs.insert(
                             label,
                             WatchedGraph {
                                 slot,
                                 dirs,
+                                sync_dir,
                                 snap: HashMap::new(),
                                 baseline: false,
+                                last_sync_error: None,
                             },
                         );
                     }
@@ -282,7 +306,13 @@ pub(crate) fn start_watcher(app: tauri::AppHandle) {
 
             let desired: HashSet<PathBuf> = graphs
                 .values()
-                .flat_map(|graph| graph.dirs.iter().cloned())
+                .flat_map(|graph| {
+                    graph
+                        .dirs
+                        .iter()
+                        .cloned()
+                        .chain(graph.sync_dir.is_dir().then(|| graph.sync_dir.clone()))
+                })
                 .collect();
 
             // Bring the OS watcher in line with the current mode + dirs.
@@ -341,8 +371,37 @@ pub(crate) fn start_watcher(app: tauri::AppHandle) {
                 }
                 let owned = pending_for_graph(&paths, &graph.dirs);
                 let need_full = event_need_full || !inotify;
+                let sync_dirty =
+                    need_full || paths.iter().any(|path| path.starts_with(&graph.sync_dir));
+                let mut sync_conflicts_dirty = false;
+                if sync_dirty && graph.sync_dir.is_dir() {
+                    match graph.slot.graph.pull_managed_sync() {
+                        Ok(pull) => {
+                            graph.last_sync_error = None;
+                            for change in pull.changes {
+                                let _ = app.emit_to(
+                                    label,
+                                    "graph-changed",
+                                    GraphChange {
+                                        name: change.entry.name,
+                                        kind: change.entry.kind,
+                                        removed: change.removed,
+                                    },
+                                );
+                            }
+                            sync_conflicts_dirty = pull.conflicts_changed;
+                        }
+                        Err(error) => {
+                            let message = error.to_string();
+                            if graph.last_sync_error.as_deref() != Some(&message) {
+                                let _ = app.emit_to(label, "managed-sync-error", &message);
+                                graph.last_sync_error = Some(message);
+                            }
+                        }
+                    }
+                }
                 if need_full || !owned.is_empty() {
-                    let (changes, conflicts_dirty, _) = reconcile_pending(
+                    let (changes, conflicts_dirty, _, errors) = reconcile_pending(
                         &graph.slot.graph,
                         &graph.dirs,
                         &mut graph.snap,
@@ -352,9 +411,18 @@ pub(crate) fn start_watcher(app: tauri::AppHandle) {
                     for change in changes {
                         let _ = app.emit_to(label, "graph-changed", change);
                     }
-                    if conflicts_dirty {
+                    if !errors.is_empty() {
+                        let message = errors.join("; ");
+                        if graph.last_sync_error.as_deref() != Some(&message) {
+                            let _ = app.emit_to(label, "managed-sync-error", &message);
+                            graph.last_sync_error = Some(message);
+                        }
+                    }
+                    if conflicts_dirty || sync_conflicts_dirty {
                         let _ = app.emit_to(label, "conflicts-changed", ());
                     }
+                } else if sync_conflicts_dirty {
+                    let _ = app.emit_to(label, "conflicts-changed", ());
                 }
             }
 
@@ -541,15 +609,17 @@ mod tests {
 
         let paths = mutate(&tg);
 
-        let (inc_changes, inc_conflicts_dirty) =
+        let (inc_changes, inc_conflicts_dirty, inc_errors) =
             incremental_reconcile(&inc_graph, &mut inc_snap, &paths);
         let fresh = collect_graph_page_files(&dirs);
-        let (full_changes, full_conflicts_dirty) =
+        let (full_changes, full_conflicts_dirty, full_errors) =
             full_diff_reconcile(&full_graph, &mut full_snap, fresh.clone());
 
         assert_eq!(inc_snap, fresh, "incremental snap must match full scan");
         assert_eq!(full_snap, fresh, "full snap must match fresh scan");
         assert_eq!(inc_conflicts_dirty, full_conflicts_dirty);
+        assert!(inc_errors.is_empty());
+        assert!(full_errors.is_empty());
         assert_eq!(
             sorted_changes(inc_changes),
             sorted_changes(full_changes),
@@ -741,13 +811,15 @@ mod tests {
             "- created through dir op\n",
         );
         let incomplete_paths = rel_paths(&tg, &["pages/Seed.md"]);
-        let (inc_changes, inc_conflicts_dirty, used_full) =
+        let (inc_changes, inc_conflicts_dirty, used_full, inc_errors) =
             reconcile_pending(&inc_graph, &dirs, &mut inc_snap, &incomplete_paths, true);
         let fresh = collect_graph_page_files(&dirs);
-        let (full_changes, full_conflicts_dirty) =
+        let (full_changes, full_conflicts_dirty, full_errors) =
             full_diff_reconcile(&full_graph, &mut full_snap, fresh.clone());
 
         assert!(used_full, "need_full must bypass incremental reconcile");
+        assert!(inc_errors.is_empty());
+        assert!(full_errors.is_empty());
         assert_eq!(inc_snap, fresh);
         assert_eq!(full_snap, fresh);
         assert_eq!(inc_conflicts_dirty, full_conflicts_dirty);

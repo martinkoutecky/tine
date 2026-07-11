@@ -19,6 +19,9 @@ import type {
   SyncConflictDiff,
   MergeDecision,
   PrintOpts,
+  ManagedSyncStatus,
+  SyncIdentityPlan,
+  ManagedSyncEnableResult,
 } from "./types";
 import { assetFileName } from "./media";
 import { mockBackend } from "./mock";
@@ -115,6 +118,9 @@ export interface Backend {
    *  rejects with "conflict" if the file changed on disk since then (unless
    *  `force`). Returns the new on-disk rev to use as the next baseline. */
   savePage(page: PageDto, baseRev: string | null, force?: boolean): Promise<string>;
+  managedSyncStatus(): Promise<ManagedSyncStatus | null>;
+  managedSyncIdentityPlan(): Promise<SyncIdentityPlan>;
+  enableManagedSync(): Promise<ManagedSyncEnableResult>;
   /** Bundled read-only Guide pages, compiled from the same templates as the demo graph. */
   guidePages(): Promise<GuidePage[]>;
   /** Copy the bundled Guide into the real graph under `tine-guide/`. */
@@ -293,6 +299,8 @@ export interface Backend {
   savePdfAreaImage(pdf: string, page: number, id: string, stamp: number, bytes: Uint8Array): Promise<string>;
   /** Subscribe to external file changes (file watcher). Returns an unsubscribe. */
   onGraphChanged(cb: (c: GraphChange) => void): Promise<() => void>;
+  /** Subscribe to deduplicated managed-sync reconciliation failures. */
+  onManagedSyncError(cb: (message: string) => void): Promise<() => void>;
   /** How many launch snapshots to keep. */
   getBackupKeep(): Promise<number>;
   setBackupKeep(keep: number): Promise<void>;
@@ -458,6 +466,15 @@ class TauriBackend implements Backend {
   }
   savePage(page: PageDto, baseRev: string | null, force = false) {
     return this.call<string>("save_page", { page, baseRev, force });
+  }
+  managedSyncStatus() {
+    return this.call<ManagedSyncStatus | null>("managed_sync_status");
+  }
+  managedSyncIdentityPlan() {
+    return this.call<SyncIdentityPlan>("managed_sync_identity_plan");
+  }
+  enableManagedSync() {
+    return this.call<ManagedSyncEnableResult>("enable_managed_sync");
   }
   guidePages() {
     return this.call<GuidePage[]>("guide_pages");
@@ -753,6 +770,10 @@ class TauriBackend implements Backend {
   async onGraphChanged(cb: (c: GraphChange) => void): Promise<() => void> {
     const { listen } = await import("@tauri-apps/api/event");
     return listen<GraphChange>("graph-changed", (e) => cb(e.payload));
+  }
+  async onManagedSyncError(cb: (message: string) => void): Promise<() => void> {
+    const { listen } = await import("@tauri-apps/api/event");
+    return listen<string>("managed-sync-error", (e) => cb(e.payload));
   }
   getBackupKeep() {
     return this.call<number>("get_backup_keep");

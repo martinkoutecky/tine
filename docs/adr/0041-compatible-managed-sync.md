@@ -32,9 +32,10 @@ The implementation obeys these invariants:
    device's immutable update stream before its Markdown projection is published.
    Projection failure can leave stale Markdown, never an unlogged edit.
 2. **One writer per stream.** Each installation has a device identity stored outside
-   the graph and writes only `.tine-sync/devices/<device>/updates/`. Updates are
-   immutable, checksummed, and atomically published; a provider never merges an
-   append-in-place log file.
+   the graph and each process writes a fresh
+   `.tine-sync/v1/devices/<device>/sessions/<session>/` stream. Content-addressed
+   chunks are immutable, checksummed, and atomically published; a provider never
+   merges an append-in-place log file.
 3. **CRDT state is sync truth.** Loro supplies the movable-tree/text CRDT, version
    vectors, and update encoding. Tine owns the Logseq-specific page/block model,
    persistence envelope, and projection/reconciliation adapters.
@@ -46,12 +47,15 @@ The implementation obeys these invariants:
    trash a provider conflict copy automatically only when a projection receipt proves
    its content was generated from a known CRDT frontier. Unexplained bytes are
    preserved for manual import/merge.
-6. **Projection is deterministic and versioned.** A workspace pins its projection
-   schema. Replicas with the same frontier and schema must emit byte-identical files;
-   an incompatible client may read state but must not publish a projection.
+6. **Projection policy is versioned.** The compatible v1 schema preserves the
+   existing graph's Markdown/Org conventions and records exact-byte receipts. A
+   future private-mode schema must additionally define canonical bytes because it
+   cannot rely on a shared existing projection. An incompatible client must not
+   publish a projection.
 7. **The existing write protocol remains singular.** Projection publication and
-   external-edit import use `Graph::save_page` / `commit_write` and the watcher reload
-   disposition from ADR 0012. The sync engine does not write page files directly.
+   external-edit import use `Graph::write_page` / `commit_write` and the watcher
+   reload disposition from ADR 0012. The sync engine does not own a second page-file
+   writer.
 8. **Identity migration is explicit and recoverable.** Enabling managed sync first
    assigns a durable Logseq-compatible id to every synchronized block through the
    normal save path. Preflight must succeed before activation; interruption is
@@ -62,6 +66,18 @@ is the first mailbox; direct P2P and durable provider APIs can consume the same
 envelopes later. Encryption is part of the envelope version from the start, but
 provider-blind encryption becomes mandatory before private/provider-backed managed
 sync is declared stable.
+
+The experimental compatible v1 implementation manages page and journal text only.
+Assets, PDF sidecars, and `config.edn` continue to be synchronized as ordinary files
+by the user's provider. Backup restore is operation-first: a verified post-migration
+snapshot becomes one graph replacement operation before files are copied, and an
+immutable projection intent lets startup finish that explicit overwrite after a
+crash. Pre-migration backups without durable block ids are refused while managed
+sync is active rather than assigned nondeterministic identities.
+
+This decision narrowly supersedes ADR 0020's manual-only policy: a conflict copy may
+be removed automatically only when an exact projection receipt proves it is generated
+output. ADR 0020 remains authoritative for every unexplained conflict copy.
 
 ## Consequences
 

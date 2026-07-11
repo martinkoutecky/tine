@@ -131,6 +131,29 @@ export interface SyncConflict {
   preview: string;
 }
 
+export interface ManagedSyncStatus {
+  workspace_id: string;
+  device_id: string;
+  session_id: string;
+  page_count: number;
+  imported_chunks: number;
+  store_root: string;
+  durability_blocked: boolean;
+}
+
+export interface SyncIdentityPlan {
+  pages: number;
+  blocks: number;
+}
+
+export interface ManagedSyncEnableResult {
+  migration: {
+    pages_changed: number;
+    blocks_changed: number;
+  };
+  status: ManagedSyncStatus;
+}
+
 /** How one aligned block differs between the winner and the conflict copy. */
 export type RowKind = "unchanged" | "modified" | "added" | "removed";
 

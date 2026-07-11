@@ -2,7 +2,7 @@ use crate::settings::{settings_path, update_settings};
 use crate::state::{slot_for_context, GraphContext};
 use sha2::{Digest, Sha256};
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::Manager;
 use tine_core::model::{atomic_copy, Graph};
 
@@ -449,6 +449,13 @@ pub(crate) fn restore_backup(
             "couldn't create a complete pre-restore safety snapshot — restore aborted".into(),
         );
     }
+    if slot.graph.managed_sync_status().is_some() {
+        let restore_files =
+            collect_restore_graph_text(&src, &manifest.journals_dir, &manifest.pages_dir)?;
+        slot.graph
+            .commit_managed_restore(&restore_files)
+            .map_err(|error| format!("managed-sync restore preflight failed: {error}"))?;
+    }
     // Restore each dir; a copy failure aborts WITHOUT having deleted anything
     // (copy-in happens before delete-extras), so a failure never loses data.
     restore_md_dir(&src.join("journals"), &restore_journals)
@@ -466,6 +473,64 @@ pub(crate) fn restore_backup(
     }
     crate::state::refresh_graph(&state)?;
     Ok(())
+}
+
+fn collect_restore_graph_text(
+    snapshot: &Path,
+    journals_dir: &str,
+    pages_dir: &str,
+) -> Result<Vec<(String, String)>, String> {
+    fn collect(
+        source: &Path,
+        graph_dir: &str,
+        relative: &Path,
+        output: &mut Vec<(String, String)>,
+    ) -> Result<(), String> {
+        let entries = std::fs::read_dir(source)
+            .map_err(|error| format!("cannot read verified backup directory: {error}"))?;
+        for entry in entries {
+            let entry = entry.map_err(|error| format!("cannot read verified backup: {error}"))?;
+            let path = entry.path();
+            let child = relative.join(entry.file_name());
+            if is_graph_text(&path) {
+                let tail = child
+                    .components()
+                    .map(|component| match component {
+                        std::path::Component::Normal(value) => value
+                            .to_str()
+                            .map(str::to_string)
+                            .ok_or_else(|| "backup contains a non-UTF-8 graph path".to_string()),
+                        _ => Err("backup contains an unsafe graph path".to_string()),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?
+                    .join("/");
+                let content = std::fs::read_to_string(&path)
+                    .map_err(|error| format!("cannot read verified backup page: {error}"))?;
+                output.push((format!("{graph_dir}/{tail}"), content));
+            } else if is_visible_real_dir(&entry)
+                .map_err(|error| format!("cannot inspect verified backup: {error}"))?
+            {
+                collect(&path, graph_dir, &child, output)?;
+            }
+        }
+        Ok(())
+    }
+
+    let mut files = Vec::new();
+    collect(
+        &snapshot.join("journals"),
+        journals_dir,
+        Path::new(""),
+        &mut files,
+    )?;
+    collect(
+        &snapshot.join("pages"),
+        pages_dir,
+        Path::new(""),
+        &mut files,
+    )?;
+    files.sort_by(|left, right| left.0.cmp(&right.0));
+    Ok(files)
 }
 
 /// Restore graph text files in `dest` from `src`. Each file is copied through
@@ -856,6 +921,31 @@ mod tests {
         assert!(!dst.join("image.png").exists());
         assert!(!dst.join("nested").join("image.png").exists());
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn restore_preflight_collects_nested_text_with_configured_graph_paths() {
+        let root = scratch("restore-preflight");
+        let snapshot = root.join("snapshot");
+        std::fs::create_dir_all(snapshot.join("journals")).unwrap();
+        std::fs::create_dir_all(snapshot.join("pages").join("nested")).unwrap();
+        std::fs::write(snapshot.join("journals").join("day.org"), "* day\n").unwrap();
+        std::fs::write(
+            snapshot.join("pages").join("nested").join("Page.md"),
+            "- page\n",
+        )
+        .unwrap();
+        std::fs::write(snapshot.join("pages").join("ignored.txt"), "ignored\n").unwrap();
+
+        let files = collect_restore_graph_text(&snapshot, "diary", "notes").unwrap();
+        assert_eq!(
+            files,
+            vec![
+                ("diary/day.org".into(), "* day\n".into()),
+                ("notes/nested/Page.md".into(), "- page\n".into()),
+            ]
+        );
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

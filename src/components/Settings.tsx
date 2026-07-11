@@ -94,7 +94,7 @@ import { ShortcutsSettingsPane } from "./HelpShortcuts";
 import { switchGraph, loadGraphPath } from "../graph";
 import { flushAll } from "../store";
 import { backend, isTauri, type BackupInfo } from "../backend";
-import type { AssetInfo, TrashStats, JournalFile, SyncConflict, SyncConflictDiff, DiffRow, MergeDecision } from "../types";
+import type { AssetInfo, TrashStats, JournalFile, SyncConflict, SyncConflictDiff, DiffRow, MergeDecision, ManagedSyncStatus } from "../types";
 import { formatJournal } from "../journal";
 
 // Journal display-title formats offered in the date-format dropdown — OG's
@@ -947,6 +947,95 @@ function GraphTab(props: { publishMsg: string; doPublish: () => void }): JSX.Ele
   );
 }
 
+function ManagedSyncPanel(): JSX.Element {
+  const [status, setStatus] = createSignal<ManagedSyncStatus | null>(null);
+  const [loading, setLoading] = createSignal(true);
+  const [enabling, setEnabling] = createSignal(false);
+
+  const refresh = async () => {
+    setLoading(true);
+    try {
+      setStatus(await backend().managedSyncStatus());
+    } catch (error) {
+      pushToast(`Couldn't read managed sync status: ${String(error)}`, "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+  onMount(() => void refresh());
+
+  const enable = async () => {
+    setEnabling(true);
+    setGraphTransitioning(true);
+    try {
+      if (!(await flushAll())) {
+        pushToast("Resolve pending save conflicts before enabling managed sync.", "error");
+        return;
+      }
+      const plan = await backend().managedSyncIdentityPlan();
+      const confirmed = await backend().confirm(
+        `Enable experimental managed sync for this graph?\n\n` +
+          `Tine will first make a local safety snapshot, then add durable IDs to ` +
+          `${plan.blocks} block${plan.blocks === 1 ? "" : "s"} across ` +
+          `${plan.pages} page${plan.pages === 1 ? "" : "s"}. ` +
+          `Your existing Syncthing or Dropbox folder remains usable by Logseq and other tools.`
+      );
+      if (!confirmed) return;
+      const result = await backend().enableManagedSync();
+      setStatus(result.status);
+      pushToast(
+        `Managed sync enabled for ${result.status.page_count} page${result.status.page_count === 1 ? "" : "s"}.`,
+        "success"
+      );
+    } catch (error) {
+      pushToast(`Managed sync was not enabled: ${String(error)}`, "error");
+    } finally {
+      setGraphTransitioning(false);
+      setEnabling(false);
+    }
+  };
+
+  return (
+    <>
+      <div class="settings-section">Managed sync</div>
+      <Show
+        when={!loading()}
+        fallback={<div class="settings-hint settings-block">Checking sync state…</div>}
+      >
+        <Show
+          when={status()}
+          fallback={
+            <div class="settings-row">
+              <span class="settings-label">Operation log</span>
+              <div>
+                <button class="settings-btn" disabled={enabling()} onClick={() => void enable()}>
+                  {enabling() ? "Enabling…" : "Enable managed sync…"}
+                </button>
+                <div class="settings-hint" style={{ "margin-top": "6px" }}>
+                  Experimental · keeps the Markdown graph shared beside <code>.tine-sync/</code>
+                </div>
+              </div>
+            </div>
+          }
+        >
+          {(active) => (
+            <div class="settings-row">
+              <span class="settings-label">Operation log</span>
+              <div>
+                <span class="settings-value">Active</span>
+                <div class="settings-hint" style={{ "margin-top": "4px" }}>
+                  {active().page_count} pages · {active().imported_chunks} immutable updates
+                </div>
+                <div class="settings-hint mono">{active().store_root}</div>
+              </div>
+            </div>
+          )}
+        </Show>
+      </Show>
+    </>
+  );
+}
+
 function BackupsTab(): JSX.Element {
   const [keep, setKeep] = createSignal(12);
   const [list, setList] = createSignal<BackupInfo[]>([]);
@@ -1015,6 +1104,8 @@ function BackupsTab(): JSX.Element {
 
   return (
     <>
+      <ManagedSyncPanel />
+
       <div class="settings-hint settings-block">
         Tine snapshots your graph’s markdown to a local folder each time it opens
         (outside the graph, so Syncthing never sees it). A safety net against a bad

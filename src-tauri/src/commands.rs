@@ -157,6 +157,45 @@ pub(crate) fn save_page(
 }
 
 #[tauri::command]
+pub(crate) fn managed_sync_status(
+    state: GraphContext<'_>,
+) -> Result<Option<tine_core::crdt::CrdtStatus>, String> {
+    with_graph(&state, |g| Ok(g.managed_sync_status()))
+}
+
+#[tauri::command]
+pub(crate) fn managed_sync_identity_plan(
+    state: GraphContext<'_>,
+) -> Result<tine_core::model::SyncIdentityPlan, String> {
+    with_graph(&state, |g| {
+        g.sync_identity_plan().map_err(|error| error.to_string())
+    })
+}
+
+#[tauri::command]
+pub(crate) fn enable_managed_sync(
+    app: tauri::AppHandle,
+    state: GraphContext<'_>,
+) -> Result<tine_core::model::ManagedSyncEnableResult, String> {
+    let device_id = crate::settings::managed_sync_device_id(&app)?;
+    let result = with_graph(&state, |g| {
+        if !g.managed_sync_configured() {
+            let (_, complete) = crate::backup::backup_graph_now(&app, g, "pre-sync-enable");
+            if !complete {
+                return Err(
+                    "couldn't create a complete pre-sync safety snapshot; activation aborted"
+                        .into(),
+                );
+            }
+        }
+        g.enable_managed_sync(device_id, uuid::Uuid::new_v4())
+            .map_err(|error| error.to_string())
+    })?;
+    crate::state::poke_watcher(&state.state);
+    Ok(result)
+}
+
+#[tauri::command]
 pub(crate) fn guide_pages() -> Vec<tine_core::onboarding::GuidePage> {
     tine_core::onboarding::bundled_guide_pages()
 }

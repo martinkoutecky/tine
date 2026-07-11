@@ -3,7 +3,7 @@
 // backend's shape so the UI behaves identically.
 
 import type { Backend, GpuEnv, DebugInfo } from "./backend";
-import type { BlockDto, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, RefGroup } from "./types";
+import type { BlockDto, GuideCopyResult, GuidePage, Highlight, ManagedSyncStatus, PageDto, PageEntry, RefGroup } from "./types";
 import { SAMPLE_PDF_B64 } from "./sample-pdf";
 import { hlsPageName } from "./pdf";
 import { MARKER_RE } from "./markers";
@@ -543,6 +543,7 @@ function cloneGuideBlockForCopy(block: BlockDto, copied: Map<string, string>): B
 
 export function mockBackend(): Backend {
   const all = [...PAGES, ...NAMED];
+  let managedSync: ManagedSyncStatus | null = null;
   const find = (name: string) =>
     all.find((p) => p.name.toLowerCase() === name.toLowerCase()) ?? null;
 
@@ -660,6 +661,27 @@ export function mockBackend(): Backend {
     },
     async savePage(_page: PageDto, _baseRev: string | null, _force?: boolean): Promise<string> {
       return "mock-rev"; // no-op in mock
+    },
+    async managedSyncStatus() {
+      return managedSync;
+    },
+    async managedSyncIdentityPlan() {
+      return { pages: all.length, blocks: 42 };
+    },
+    async enableManagedSync() {
+      managedSync = {
+        workspace_id: "00000000-0000-4000-8000-000000000001",
+        device_id: "00000000-0000-4000-8000-000000000002",
+        session_id: "00000000-0000-4000-8000-000000000003",
+        page_count: all.length,
+        imported_chunks: 1,
+        store_root: "/mock/.tine-sync/v1",
+        durability_blocked: false,
+      };
+      return {
+        migration: { pages_changed: all.length, blocks_changed: 42 },
+        status: managedSync,
+      };
     },
     async guidePages(): Promise<GuidePage[]> {
       return mockGuidePages().map((g) => ({ ...g, page: clonePage(g.page) }));
@@ -1081,6 +1103,9 @@ export function mockBackend(): Backend {
     },
     async onGraphChanged(): Promise<() => void> {
       return () => {}; // no external watcher in the browser mock
+    },
+    async onManagedSyncError(): Promise<() => void> {
+      return () => {};
     },
     async getBackupKeep(): Promise<number> {
       return 12;

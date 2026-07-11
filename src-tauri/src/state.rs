@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, RwLock};
 use tauri::ipc::{CommandArg, CommandItem, InvokeBody, InvokeError};
-use tauri::{Runtime, State, WebviewWindow};
+use tauri::{Manager, Runtime, State, WebviewWindow};
 use tine_core::model::Graph;
 
 pub(crate) type WindowKey = String;
@@ -165,6 +165,15 @@ pub(crate) fn refresh_graph(ctx: &GraphContext<'_>) -> Result<(), String> {
     let old = slot_for_window(&ctx.state, &label)?;
     let graph = Graph::open_checked(&old.root_key).map_err(|e| e.to_string())?;
     graph.migrate_journal_filenames();
+    let device_id = crate::settings::managed_sync_device_id(ctx.window.app_handle())?;
+    if graph
+        .start_managed_sync(device_id, uuid::Uuid::new_v4())
+        .map_err(|error| format!("managed sync could not restart: {error}"))?
+    {
+        graph
+            .project_all_managed_sync()
+            .map_err(|error| format!("managed sync could not project after reload: {error}"))?;
+    }
     let replacement = Arc::new(GraphSlot::new(graph, old.root_key.clone()));
     replacement.warm_done.store(
         old.warm_done.load(std::sync::atomic::Ordering::Acquire),

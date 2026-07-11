@@ -44,6 +44,27 @@ pub(crate) fn update_settings(
     .map_err(|e| e.to_string())
 }
 
+/// Stable installation identity for managed sync. It lives in device-local app
+/// settings, never in the provider-shared graph: two installations writing the
+/// same device stream would violate the one-writer invariant. Loro peer ids are
+/// session-scoped separately; this UUID names the installation directory only.
+pub(crate) fn managed_sync_device_id(app: &tauri::AppHandle) -> Result<uuid::Uuid, String> {
+    let chosen = std::sync::Mutex::new(None);
+    update_settings(app, |json| {
+        let id = json
+            .get("managed_sync_device_id")
+            .and_then(|value| value.as_str())
+            .and_then(|value| uuid::Uuid::parse_str(value).ok())
+            .unwrap_or_else(uuid::Uuid::new_v4);
+        json["managed_sync_device_id"] = serde_json::Value::String(id.to_string());
+        *chosen.lock().unwrap() = Some(id);
+    })?;
+    chosen
+        .into_inner()
+        .map_err(|_| "managed sync device-id lock poisoned".to_string())?
+        .ok_or_else(|| "managed sync device id was not written".to_string())
+}
+
 fn graph_display_name(path: &str) -> String {
     std::path::Path::new(path)
         .file_name()
