@@ -162,3 +162,18 @@ export function aggregate(fn: AggregateFn, values: readonly (FieldValue | string
   }
   return aggregateNumbers(fn, values);
 }
+
+export function collectAggregateColumns(
+  rows: Iterable<{ cellIds: readonly string[] }>,
+  columns: readonly number[],
+  valueOf: (id: string | null) => string,
+): ReadonlyMap<number, readonly string[]> {
+  const result = new Map<number, string[]>();
+  for (const column of columns) result.set(column, []);
+  for (const row of rows) {
+    for (const column of columns) {
+      result.get(column)!.push(valueOf(row.cellIds[column] ?? null));
+    }
+  }
+  return result;
+}

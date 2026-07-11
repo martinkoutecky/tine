@@ -13,9 +13,9 @@
 // out before and reattached after (joinProps), so they stay at the very end.
 import { parseBody } from "../render/facets";
 import type { Format } from "../render/ast";
+import { transitionFence, type FenceState } from "./fences";
 
 const PLANNING_LINE = /^\s*(SCHEDULED|DEADLINE):\s*<[^>]+>\s*$/;
-const FENCE = /^\s*(`{3,}|~{3,})/;
 
 export function normalizePlanning(visible: string, format: Format): string {
   // Cheap exits: nothing planning-shaped, or a single line (nowhere to move it).
@@ -35,14 +35,13 @@ export function normalizePlanning(visible: string, format: Format): string {
   if (!hasTs) return visible;
 
   // Pull out standalone planning lines (fence-aware), keep everything else in order.
-  let fence: string | null = null;
+  let fence: FenceState | null = null;
   const planning: string[] = [];
   const kept: string[] = [];
   for (const line of lines) {
-    const fm = FENCE.exec(line);
-    if (fm) {
-      const ch = fm[1][0];
-      fence = fence === null ? ch : ch === fence ? null : fence;
+    const transition = transitionFence(fence, line);
+    if (transition.opens || transition.closes) {
+      fence = transition.next;
       kept.push(line);
       continue;
     }

@@ -9,7 +9,7 @@ import { backend } from "./backend";
 import { assetFileName, assetMarkdown } from "./media";
 import { matrixGridNode, delimitedCellCount } from "./sheet/conversions";
 import { parseDelimitedText, type DelimitedKind } from "./sheet/tsv";
-import { doc, insertOutlineAfter, visibleOrder, withUndoUnit } from "./store";
+import { doc, insertOutlineAfter, trackAssetWrite, visibleOrder, withUndoUnit } from "./store";
 import { pushToast } from "./ui";
 import type { OutlineNode } from "./editor/outline";
 
@@ -80,7 +80,7 @@ export async function installFileDrop(): Promise<() => void> {
           continue;
         }
         const orig = basename(path) || undefined;
-        const saved = await backend().importAsset(path, assetFileName(orig));
+        const saved = await trackAssetWrite(backend().importAsset(path, assetFileName(orig)));
         nodes.push({ raw: assetMarkdown(saved), children: [] });
       }
       if (!nodes.length) return;

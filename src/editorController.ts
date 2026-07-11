@@ -5,9 +5,10 @@ import { notifyEditingStarted } from "./modeHooks";
 
 // Where to put the caret when a block starts editing. Either a concrete offset
 // (clicks, splits, most callers) OR a column descriptor for cross-block Up/Down
-// navigation: land `col` chars into the target's FIRST (Down) or LAST (Up) source
-// line, resolved against the TARGET's own editor value (so hidden props / calc /
-// annotation blocks land correctly). Matches OG's cross-boundary caret algorithm.
+// navigation: land `col` chars into the target's first source line (Down) or
+// last visual row (Up), resolved against the TARGET's own editor value/layout
+// so hidden props, calc/annotation blocks, and soft-wrapped lines land correctly.
+// Where layout is unavailable, Up falls back to the last source line.
 export type CaretPos = number | { col: number; edge: "first" | "last" };
 
 export type EndEditReason =

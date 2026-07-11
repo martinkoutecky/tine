@@ -38,6 +38,19 @@ describe("normalizePlanning (M1c: move SCHEDULED/DEADLINE to canonical position 
     expect(normalizePlanning(v, "md")).toBe(v);
   });
 
+  it("does not treat a shorter run as closing a longer fence", () => {
+    const v = [
+      "Task",
+      "SCHEDULED: <2026-07-11 Sat>",
+      "````text",
+      "```",
+      "DEADLINE: <2026-07-12 Sun>",
+      "````",
+      "body",
+    ].join("\n");
+    expect(normalizePlanning(v, "md")).toBe(v);
+  });
+
   it("does NOT move an inline-code DEADLINE (not a standalone Timestamp)", () => {
     const v = "see `DEADLINE: <2026-07-06 Mon>` here\nmore text";
     expect(normalizePlanning(v, "md")).toBe(v);

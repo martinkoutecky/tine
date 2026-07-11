@@ -1,4 +1,4 @@
-# 0041. Tine-native plugins run as capability-limited WebAssembly guests
+# 0042. Tine-native plugins run as capability-limited WebAssembly guests
 
 - **Status:** Accepted
 - **Date:** 2026-07-11

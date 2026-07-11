@@ -5,9 +5,9 @@ import { Block } from "./Block";
 import { ContextMenu } from "./ContextMenu";
 import { __sheetBoardTestHooks, SheetBoard } from "./SheetBoard";
 import { initParser } from "../render/parse";
-import { blockProperty, doc, hasSelection, resetStore, setDoc, undo, type FeedPage, type Node as StoreNode } from "../store";
+import { blockProperty, doc, hasSelection, resetStore, setDoc, setRaw, undo, type FeedPage, type Node as StoreNode } from "../store";
 import { closeContextMenu, openSheetContextMenu, setToasts, setWorkflow, toasts } from "../ui";
-import { cellSel, handleCellSelectionKey, resetCellSelectionForTests, setCellSel } from "../sheet/selection";
+import { cellForBlockId, cellOwner, cellSel, handleCellSelectionKey, resetCellSelectionForTests, setCellSel, startCellEditing } from "../sheet/selection";
 import { installBlockSelectionDrag } from "../blockDrag";
 import type { RefGroup } from "../types";
 import { backend } from "../backend";
@@ -18,6 +18,7 @@ beforeAll(async () => {
 
 afterEach(() => {
   __sheetBoardTestHooks.onGroupingRowWalk = undefined;
+  __sheetBoardTestHooks.onPointIndexRow = undefined;
   vi.restoreAllMocks();
   closeContextMenu();
   resetCellSelectionForTests();
@@ -95,8 +96,10 @@ function keydown(key: string, init: Partial<KeyboardEvent> = {}): KeyboardEvent 
   });
 }
 
-function pointer(type: string, x: number, y: number): Event {
-  return new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y });
+function pointer(type: string, x: number, y: number, pointerId = 1): Event {
+  const event = new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y });
+  Object.defineProperty(event, "pointerId", { value: pointerId });
+  return event;
 }
 
 function contextMenu(target: EventTarget): MouseEvent {
@@ -128,6 +131,85 @@ function boardColumnBlockIds(root: ParentNode, col: number): string[] {
 }
 
 describe("SheetBoard", () => {
+  it("keeps a same-UUID journal twin DTO-only when the page twin is preloaded", async () => {
+    const shared = "same-id";
+    setDoc({
+      byId: {
+        board: node("board", "Board\ntine.view:: board\ntine.group-by:: state", null),
+        [shared]: { ...node(shared, "TODO Loaded page row", null), page: "Twin" },
+      },
+      pages: [
+        page(["board"]),
+        { ...page([shared]), name: "Twin", title: "Twin", kind: "page" },
+      ],
+      feed: ["Sheet"], loaded: true,
+    });
+    const groups: RefGroup[] = [
+      { page: "Twin", kind: "page", blocks: [{ id: shared, raw: "TODO Page DTO", collapsed: false, children: [] }] },
+      { page: "Twin", kind: "journal", blocks: [{ id: shared, raw: "DOING Journal DTO", marker: "DOING", collapsed: false, children: [] }] },
+    ];
+    const { root, dispose } = mount(() => (
+      <SheetBoard ownerId="board" rowSource="query" groupBy="state" groups={groups} />
+    ));
+    expect(root.textContent).toContain("Loaded page row");
+    expect(root.textContent).toContain("Journal DTO");
+    const doingColumn = [...root.querySelectorAll<HTMLElement>(".sheet-board-column")].find(
+      (column) => column.querySelector(".sheet-board-header span")?.textContent === "DOING"
+    )!;
+    expect([...doingColumn.querySelectorAll<HTMLElement>(".sheet-board-card")].map((card) => card.textContent?.trim()))
+      .toEqual(["Journal DTO"]);
+    const journalCard = doingColumn.querySelector<HTMLElement>(`[data-block-id="${shared}"]`)!;
+
+    expect(startCellEditing({ gridId: "board", surfaceId: "main", row: 0, col: 1 })).toBe(false);
+
+    journalCard.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, button: 0 }));
+    await tick();
+    expect(root.querySelector("textarea.block-editor")).toBeNull();
+    journalCard.click();
+    expect(handleCellSelectionKey(keydown("ArrowRight", { ctrlKey: true }))).toBe(true);
+    expect(doc.byId[shared].raw).toBe("TODO Loaded page row");
+    dispose();
+  });
+
+  it("paginates same-UUID page and journal twins by composite row identity", () => {
+    const shared = "same-id";
+    const filler = Array.from({ length: 199 }, (_, i) => ({
+      id: `f${i}`,
+      raw: `TODO Filler ${i}`,
+      collapsed: false,
+      children: [],
+    }));
+    setDoc({
+      byId: {
+        board: node("board", "Board\ntine.view:: board\ntine.group-by:: state", null),
+        [shared]: { ...node(shared, "TODO Loaded page row", null), page: "Twin" },
+      },
+      pages: [page(["board"]), { ...page([shared]), name: "Twin", title: "Twin", kind: "page" }],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    const groups: RefGroup[] = [
+      {
+        page: "Twin",
+        kind: "page",
+        blocks: [{ id: shared, raw: "TODO Page DTO", collapsed: false, children: [] }, ...filler],
+      },
+      {
+        page: "Twin",
+        kind: "journal",
+        blocks: [{ id: shared, raw: "DOING Journal DTO", marker: "DOING", collapsed: false, children: [] }],
+      },
+    ];
+    const { root, dispose } = mount(() => (
+      <SheetBoard ownerId="board" rowSource="query" groupBy="state" groups={groups} />
+    ));
+
+    expect(root.textContent).not.toContain("Journal DTO");
+    (root.querySelector(".sheet-load-more") as HTMLButtonElement).click();
+    expect(root.textContent).toContain("Journal DTO");
+    dispose();
+  });
+
   it("changes group-by from the board context menu submenu and undo restores it", async () => {
     setDoc({
       byId: {
@@ -297,6 +379,171 @@ describe("SheetBoard", () => {
     dispose();
   });
 
+  it("clears a stable card selection when a query refresh removes that row", async () => {
+    loadBoardDoc();
+    const [groups, setGroups] = createSignal<RefGroup[]>(queryGroups(["todo", "doing"]));
+    const { dispose } = mount(() => (
+      <SheetBoard ownerId="board" rowSource="query" groupBy="state" groups={groups()} />
+    ));
+    setCellSel({ gridId: "board", surfaceId: "main", rowId: "page\0Sheet\0todo", row: 0, col: 0 });
+    const selected = cellSel();
+    expect(selected?.kind === "cell" ? selected.rowId : null).toBe("page\0Sheet\0todo");
+
+    setGroups(queryGroups(["doing"]));
+    await tick();
+
+    expect(cellSel()).toBeNull();
+    const before = doc.byId.doing.raw;
+    expect(handleCellSelectionKey(keydown("ArrowRight", { ctrlKey: true }))).toBe(false);
+    expect(doc.byId.doing.raw).toBe(before);
+    dispose();
+  });
+
+  it("rebases a selected card by row identity before the next keyboard move", async () => {
+    loadBoardDoc();
+    const { dispose } = mount(() => <Block id="board" />);
+    setCellSel({ gridId: "board", surfaceId: "main", rowId: "todo", row: 0, col: 0 });
+
+    setRaw("todo", "DOING Write tests\nowner:: Codex", { timetracking: false });
+    await tick();
+
+    const selected = cellSel();
+    expect(selected?.kind === "cell" ? { row: selected.row, col: selected.col, rowId: selected.rowId } : null)
+      .toEqual({ row: 0, col: 1, rowId: "todo" });
+    const otherBefore = doc.byId.doing.raw;
+    expect(handleCellSelectionKey(keydown("ArrowRight", { ctrlKey: true }))).toBe(true);
+    expect(doc.byId.todo.raw.split("\n")[0]).toBe("DONE Write tests");
+    expect(doc.byId.doing.raw).toBe(otherBefore);
+    dispose();
+  });
+
+  it("uses the cached membership index for repeated navigation in a large query board", () => {
+    setDoc({
+      byId: { board: node("board", "Board\ntine.view:: board\ntine.group-by:: state", null) },
+      pages: [page(["board"])], feed: ["Sheet"], loaded: true,
+    });
+    const blocks = Array.from({ length: 5_000 }, (_, i) => ({
+      id: `q${i}`,
+      raw: `TODO Row ${i}`,
+      collapsed: false,
+      children: [],
+    }));
+    let indexed = 0;
+    __sheetBoardTestHooks.onPointIndexRow = () => indexed++;
+    const { root, dispose } = mount(() => (
+      <SheetBoard ownerId="board" rowSource="query" groupBy="state" groups={[{ page: "Remote", kind: "page", blocks }]} />
+    ));
+    (root.querySelector('[data-block-id="q0"]') as HTMLElement).click();
+    expect(indexed).toBe(5_000);
+    for (let i = 0; i < 20; i++) handleCellSelectionKey(keydown("ArrowDown"));
+    expect(indexed).toBe(5_000);
+    dispose();
+  });
+
+  it("extends the query window before a refreshed off-window card can move", async () => {
+    const target = "live-target";
+    const filler = Array.from({ length: 270 }, (_, i) => ({
+      id: `f${i}`, raw: `TODO Filler ${i}`, marker: "TODO", collapsed: false, children: [],
+    }));
+    const live = { id: target, raw: "TODO Target", marker: "TODO", collapsed: false, children: [] };
+    const remote: FeedPage = {
+      name: "Remote", kind: "page", title: "Remote", preBlock: null, roots: [target],
+      format: "md", readOnly: false, guide: false,
+    };
+    setDoc({
+      byId: {
+        board: node("board", "Board\ntine.view:: board\ntine.group-by:: state", null),
+        [target]: { ...node(target, live.raw, null), page: remote.name },
+      },
+      pages: [page(["board"]), remote], feed: ["Sheet"], loaded: true,
+    });
+    const group = (blocks: typeof filler): RefGroup[] => [{ page: remote.name, kind: "page", blocks }];
+    const [groups, setGroups] = createSignal(group([live, ...filler]));
+    const { root, dispose } = mount(() => (
+      <SheetBoard ownerId="board" rowSource="query" groupBy="state" groups={groups()} />
+    ));
+    setCellSel({ gridId: "board", surfaceId: "main", rowId: `page\0Remote\0${target}`, columnId: JSON.stringify("TODO"), row: 0, col: 0 });
+
+    setGroups(group([...filler.slice(0, 260), live, ...filler.slice(260)]));
+
+    const selected = cellSel();
+    expect(selected?.kind === "cell" ? selected.row : -1).toBe(260);
+    expect(root.querySelector(`[data-block-id="${target}"]`)).not.toBeNull();
+    expect(handleCellSelectionKey(keydown("ArrowRight", { ctrlKey: true }))).toBe(true);
+    expect(doc.byId[target].raw.startsWith("DOING Target")).toBe(true);
+    expect(root.querySelector(`[data-board-col="1"] [data-block-id="${target}"]`)).not.toBeNull();
+    dispose();
+  });
+
+  it("clears a stale coordinate-only selection after query pagination resets instead of moving a hidden card", () => {
+    const target = "live-target";
+    const filler = Array.from({ length: 270 }, (_, i) => ({
+      id: `f${i}`, raw: `TODO Filler ${i}`, marker: "TODO", collapsed: false, children: [],
+    }));
+    const live = { id: target, raw: "TODO Hidden target", marker: "TODO", collapsed: false, children: [] };
+    const remote: FeedPage = {
+      name: "Remote", kind: "page", title: "Remote", preBlock: null, roots: [target],
+      format: "md", readOnly: false, guide: false,
+    };
+    setDoc({
+      byId: {
+        board: node("board", "Board\ntine.view:: board\ntine.group-by:: state", null),
+        [target]: { ...node(target, live.raw, null), page: remote.name },
+      },
+      pages: [page(["board"]), remote], feed: ["Sheet"], loaded: true,
+    });
+    const makeGroups = (): RefGroup[] => [{ page: remote.name, kind: "page", blocks: [...filler.slice(0, 260), live, ...filler.slice(260)] }];
+    const [groups, setGroups] = createSignal(makeGroups());
+    const { root, dispose } = mount(() => (
+      <SheetBoard ownerId="board" rowSource="query" groupBy="state" groups={groups()} />
+    ));
+    (root.querySelector(".sheet-load-more") as HTMLButtonElement).click();
+    expect(root.querySelector(`[data-block-id="${target}"]`)).not.toBeNull();
+    setCellSel({ gridId: "board", surfaceId: "main", row: 260, col: 0 });
+
+    setGroups(makeGroups());
+    expect(root.querySelector(`[data-block-id="${target}"]`)).toBeNull();
+    const before = doc.byId[target].raw;
+    expect(handleCellSelectionKey(keydown("ArrowRight", { ctrlKey: true }))).toBe(true);
+
+    expect(doc.byId[target].raw).toBe(before);
+    expect(cellSel()).toBeNull();
+    dispose();
+  });
+
+  it("uses the 100k membership index for repeated cellForBlock nested-ascent lookups without rescanning", () => {
+    const target = "live-target";
+    const blocks = Array.from({ length: 100_000 }, (_, i) => ({
+      id: i === 0 ? target : `q${i}`,
+      raw: `TODO Row ${i}`,
+      marker: "TODO",
+      collapsed: false,
+      children: [],
+    }));
+    const remote: FeedPage = {
+      name: "Remote", kind: "page", title: "Remote", preBlock: null, roots: [target],
+      format: "md", readOnly: false, guide: false,
+    };
+    setDoc({
+      byId: {
+        board: node("board", "Board\ntine.view:: board\ntine.group-by:: state", null),
+        [target]: { ...node(target, "TODO Row 0", null), page: remote.name },
+      },
+      pages: [page(["board"]), remote], feed: ["Sheet"], loaded: true,
+    });
+    let indexed = 0;
+    __sheetBoardTestHooks.onPointIndexRow = () => indexed++;
+    const { dispose } = mount(() => (
+      <SheetBoard ownerId="board" rowSource="query" groupBy="state" groups={[{ page: remote.name, kind: "page", blocks }]} />
+    ));
+    expect(indexed).toBe(100_000);
+    for (let i = 0; i < 50; i++) {
+      expect(cellForBlockId(target, "main")?.rowId).toBe(`page\0Remote\0${target}`);
+    }
+    expect(indexed).toBe(100_000);
+    dispose();
+  });
+
   it("groups by formula values and refuses Ctrl+Arrow moves on the derived axis", () => {
     setDoc({
       byId: {
@@ -384,6 +631,144 @@ describe("SheetBoard", () => {
     dispose();
   });
 
+  it("keeps only the latest pointer drag session active across Board instances", () => {
+    loadBoardDoc();
+    const { root, dispose } = mount(() => (
+      <>
+        <SheetBoard ownerId="board" rowSource="children" groupBy="state" />
+        <SheetBoard ownerId="board" rowSource="children" groupBy="state" />
+      </>
+    ));
+    const boards = root.querySelectorAll(".sheet-board");
+    const todo = boards[0].querySelector('[data-block-id="todo"]') as HTMLElement;
+    const doing = boards[1].querySelector('[data-block-id="doing"]') as HTMLElement;
+    const doingColumn = boards[0].querySelector('[data-board-col="1"]') as HTMLElement;
+    const doneColumn = boards[1].querySelector('[data-board-col="2"]') as HTMLElement;
+    const prevElementFromPoint = document.elementFromPoint;
+    document.elementFromPoint = (x) => x >= 200 ? doneColumn : doingColumn;
+
+    try {
+      todo.dispatchEvent(pointer("pointerdown", 0, 0, 11));
+      window.dispatchEvent(pointer("pointermove", 12, 0, 11));
+      expect(document.body.querySelectorAll(".sheet-board-drag-ghost")).toHaveLength(1);
+
+      doing.dispatchEvent(pointer("pointerdown", 100, 0, 22));
+      expect(document.body.querySelectorAll(".sheet-board-drag-ghost")).toHaveLength(0);
+
+      window.dispatchEvent(pointer("pointerup", 12, 0, 11));
+      expect(doc.byId.todo.raw.split("\n")[0]).toBe("TODO Write tests");
+      expect(doc.byId.doing.raw.split("\n")[0]).toBe("DOING Implement board");
+
+      window.dispatchEvent(pointer("pointermove", 212, 0, 22));
+      window.dispatchEvent(pointer("pointerup", 212, 0, 22));
+      expect(doc.byId.todo.raw.split("\n")[0]).toBe("TODO Write tests");
+      expect(doc.byId.doing.raw.split("\n")[0]).toBe("DONE Implement board");
+    } finally {
+      document.elementFromPoint = prevElementFromPoint;
+      dispose();
+    }
+  });
+
+  it("rejects a drop column belonging to a duplicate Board surface", () => {
+    loadBoardDoc();
+    const { root, dispose } = mount(() => (
+      <>
+        <SheetBoard ownerId="board" rowSource="children" groupBy="state" />
+        <SheetBoard ownerId="board" rowSource="children" groupBy="state" />
+      </>
+    ));
+    const boards = root.querySelectorAll(".sheet-board");
+    const sourceCard = boards[0].querySelector('[data-block-id="todo"]') as HTMLElement;
+    const foreignTarget = boards[1].querySelector('[data-board-col="1"]') as HTMLElement;
+    const prevElementFromPoint = document.elementFromPoint;
+    document.elementFromPoint = () => foreignTarget;
+
+    try {
+      sourceCard.dispatchEvent(pointer("pointerdown", 0, 0, 31));
+      window.dispatchEvent(pointer("pointermove", 12, 0, 31));
+      window.dispatchEvent(pointer("pointerup", 12, 0, 31));
+
+      expect(doc.byId.todo.raw.split("\n")[0]).toBe("TODO Write tests");
+      expect(foreignTarget.classList.contains("sheet-board-drop")).toBe(false);
+    } finally {
+      document.elementFromPoint = prevElementFromPoint;
+      dispose();
+    }
+  });
+
+  it("re-hit-tests the pointerup position instead of dropping on a stale move target", () => {
+    loadBoardDoc();
+    const { root, dispose } = mount(() => <Block id="board" />);
+    const card = root.querySelector('[data-block-id="todo"]') as HTMLElement;
+    const target = root.querySelector('[data-board-col="1"]') as HTMLElement;
+    const outside = document.createElement("div");
+    document.body.appendChild(outside);
+    const prevElementFromPoint = document.elementFromPoint;
+    document.elementFromPoint = (x) => x < 20 ? target : outside;
+
+    try {
+      card.dispatchEvent(pointer("pointerdown", 0, 0, 41));
+      window.dispatchEvent(pointer("pointermove", 12, 0, 41));
+      window.dispatchEvent(pointer("pointerup", 30, 0, 41));
+
+      expect(doc.byId.todo.raw.split("\n")[0]).toBe("TODO Write tests");
+      expect(document.body.querySelector(".sheet-board-drag-ghost")).toBeNull();
+    } finally {
+      document.elementFromPoint = prevElementFromPoint;
+      outside.remove();
+      dispose();
+    }
+  });
+
+  it("ignores move and release events from a pointer that does not own the drag", () => {
+    loadBoardDoc();
+    const { root, dispose } = mount(() => <Block id="board" />);
+    const card = root.querySelector('[data-block-id="todo"]') as HTMLElement;
+    const target = root.querySelector('[data-board-col="1"]') as HTMLElement;
+    const prevElementFromPoint = document.elementFromPoint;
+    document.elementFromPoint = () => target;
+
+    try {
+      card.dispatchEvent(pointer("pointerdown", 0, 0, 51));
+      window.dispatchEvent(pointer("pointermove", 12, 0, 51));
+      window.dispatchEvent(pointer("pointermove", 20, 0, 52));
+      window.dispatchEvent(pointer("pointerup", 20, 0, 52));
+
+      expect(doc.byId.todo.raw.split("\n")[0]).toBe("TODO Write tests");
+      expect(document.body.querySelector(".sheet-board-drag-ghost")).not.toBeNull();
+
+      window.dispatchEvent(pointer("pointerup", 12, 0, 51));
+      expect(doc.byId.todo.raw.split("\n")[0]).toBe("DOING Write tests");
+      expect(document.body.querySelector(".sheet-board-drag-ghost")).toBeNull();
+    } finally {
+      document.elementFromPoint = prevElementFromPoint;
+      dispose();
+    }
+  });
+
+  it("cancels without mutation when the initiating pointer loses capture", () => {
+    loadBoardDoc();
+    const { root, dispose } = mount(() => <Block id="board" />);
+    const card = root.querySelector('[data-block-id="todo"]') as HTMLElement;
+    const target = root.querySelector('[data-board-col="1"]') as HTMLElement;
+    const prevElementFromPoint = document.elementFromPoint;
+    document.elementFromPoint = () => target;
+
+    try {
+      card.dispatchEvent(pointer("pointerdown", 0, 0, 61));
+      window.dispatchEvent(pointer("pointermove", 12, 0, 61));
+      card.dispatchEvent(pointer("lostpointercapture", 12, 0, 61));
+
+      expect(document.body.querySelector(".sheet-board-drag-ghost")).toBeNull();
+      expect(document.body.classList.contains("sheet-board-dragging")).toBe(false);
+      window.dispatchEvent(pointer("pointerup", 12, 0, 61));
+      expect(doc.byId.todo.raw.split("\n")[0]).toBe("TODO Write tests");
+    } finally {
+      document.elementFromPoint = prevElementFromPoint;
+      dispose();
+    }
+  });
+
   it("shows a floating drag ghost with grabbing cursor state and removes it on Escape", () => {
     loadBoardDoc();
     const { root, dispose } = mount(() => <Block id="board" />);
@@ -391,6 +776,10 @@ describe("SheetBoard", () => {
     const target = root.querySelector('[data-board-col="1"]') as HTMLElement;
     const prevElementFromPoint = document.elementFromPoint;
     document.elementFromPoint = () => target;
+    const releasePointerCapture = vi.fn();
+    card.setPointerCapture = vi.fn();
+    card.hasPointerCapture = vi.fn(() => true);
+    card.releasePointerCapture = releasePointerCapture;
 
     card.dispatchEvent(pointer("pointerdown", 0, 0));
     window.dispatchEvent(pointer("pointermove", 12, 0));
@@ -405,6 +794,80 @@ describe("SheetBoard", () => {
     expect(document.body.querySelector(".sheet-board-drag-ghost")).toBeNull();
     expect(document.body.classList.contains("sheet-board-dragging")).toBe(false);
     expect(doc.byId.todo.raw.split("\n")[0]).toBe("TODO Write tests");
+    expect(releasePointerCapture).toHaveBeenCalledWith(1);
+
+    document.elementFromPoint = prevElementFromPoint;
+    dispose();
+  });
+
+  it("cancels and cleans a drag when a query refresh hides the card beyond pagination", () => {
+    const targetId = "live-target";
+    const filler = Array.from({ length: 270 }, (_, i) => ({
+      id: `f${i}`, raw: `TODO Filler ${i}`, marker: "TODO", collapsed: false, children: [],
+    }));
+    const targetDto = { id: targetId, raw: "TODO Target", marker: "TODO", collapsed: false, children: [] };
+    const remote: FeedPage = {
+      name: "Remote", kind: "page", title: "Remote", preBlock: null, roots: [targetId],
+      format: "md", readOnly: false, guide: false,
+    };
+    setDoc({
+      byId: {
+        board: node("board", "Board\ntine.view:: board\ntine.group-by:: state", null),
+        [targetId]: { ...node(targetId, targetDto.raw, null), page: remote.name },
+      },
+      pages: [page(["board"]), remote], feed: ["Sheet"], loaded: true,
+    });
+    const group = (blocks: typeof filler): RefGroup[] => [{ page: remote.name, kind: "page", blocks }];
+    const [groups, setGroups] = createSignal(group([targetDto, ...filler]));
+    const { root, dispose } = mount(() => (
+      <SheetBoard ownerId="board" rowSource="query" groupBy="state" groups={groups()} />
+    ));
+    const card = root.querySelector(`[data-block-id="${targetId}"]`) as HTMLElement;
+    const targetColumn = root.querySelector('[data-board-col="1"]') as HTMLElement;
+    const prevElementFromPoint = document.elementFromPoint;
+    document.elementFromPoint = () => targetColumn;
+
+    card.dispatchEvent(pointer("pointerdown", 0, 0));
+    window.dispatchEvent(pointer("pointermove", 12, 0));
+    expect(document.body.querySelector(".sheet-board-drag-ghost")).not.toBeNull();
+
+    setGroups(group([...filler.slice(0, 260), targetDto, ...filler.slice(260)]));
+    expect(root.querySelector(`[data-block-id="${targetId}"]`)).toBeNull();
+    expect(document.body.querySelector(".sheet-board-drag-ghost")).toBeNull();
+    expect(document.body.classList.contains("sheet-board-dragging")).toBe(false);
+    const before = doc.byId[targetId].raw;
+    window.dispatchEvent(pointer("pointermove", 20, 0));
+    window.dispatchEvent(pointer("pointerup", 20, 0));
+    expect(doc.byId[targetId].raw).toBe(before);
+    expect(document.body.querySelector(".sheet-board-drag-ghost")).toBeNull();
+
+    document.elementFromPoint = prevElementFromPoint;
+    dispose();
+  });
+
+  it("cancels and cleans a drag when group-by changes before pointerup", () => {
+    loadBoardDoc();
+    const [group, setGroup] = createSignal("state");
+    const { root, dispose } = mount(() => (
+      <SheetBoard ownerId="board" rowSource="children" groupBy={group()} />
+    ));
+    const card = root.querySelector('[data-block-id="todo"]') as HTMLElement;
+    const targetColumn = root.querySelector('[data-board-col="1"]') as HTMLElement;
+    const prevElementFromPoint = document.elementFromPoint;
+    document.elementFromPoint = () => targetColumn;
+
+    card.dispatchEvent(pointer("pointerdown", 0, 0));
+    window.dispatchEvent(pointer("pointermove", 12, 0));
+    expect(document.body.querySelector(".sheet-board-drag-ghost")).not.toBeNull();
+
+    setGroup("priority");
+    expect(document.body.querySelector(".sheet-board-drag-ghost")).toBeNull();
+    expect(document.body.classList.contains("sheet-board-dragging")).toBe(false);
+    const before = doc.byId.todo.raw;
+    window.dispatchEvent(pointer("pointermove", 20, 0));
+    window.dispatchEvent(pointer("pointerup", 20, 0));
+    expect(doc.byId.todo.raw).toBe(before);
+    expect(document.body.querySelector(".sheet-board-drag-ghost")).toBeNull();
 
     document.elementFromPoint = prevElementFromPoint;
     dispose();
@@ -497,6 +960,34 @@ describe("SheetBoard", () => {
     expect(cellSel()).toEqual({ kind: "cell", gridId: "board", row: 0, col: 1 });
 
     dispose();
+  });
+
+  it("keeps a multi-tag card bound to the selected tag column for keyboard moves", () => {
+    loadTagBoard({ todo: "Card #alpha #beta", other: "Other #gamma" });
+    const { root, dispose } = mount(() => <Block id="board" />);
+    const betaColumn = [...root.querySelectorAll<HTMLElement>(".sheet-board-column")].find(
+      (column) => column.querySelector(".sheet-board-header span")?.textContent === "beta"
+    )!;
+    const betaCard = betaColumn.querySelector<HTMLElement>('[data-block-id="todo"]')!;
+
+    betaCard.click();
+    const selected = cellSel();
+    expect(selected?.kind === "cell" ? { col: selected.col, rowId: selected.rowId, columnId: selected.columnId } : null)
+      .toEqual({ col: 1, rowId: "todo", columnId: JSON.stringify("beta") });
+
+    const otherBefore = doc.byId.other.raw;
+    expect(handleCellSelectionKey(keydown("ArrowRight", { ctrlKey: true }))).toBe(true);
+    expect(doc.byId.todo.raw).toContain("#alpha");
+    expect(doc.byId.todo.raw).not.toContain("#beta");
+    expect(doc.byId.todo.raw).toContain("#gamma");
+    expect(doc.byId.other.raw).toBe(otherBefore);
+    dispose();
+  });
+
+  it("keeps Board editor ownership stable across numeric column reorder but not membership change", () => {
+    const beta = { gridId: "board", surfaceId: "main", rowId: "todo", columnId: JSON.stringify("beta"), row: 0, col: 1 };
+    expect(cellOwner(beta)).toBe(cellOwner({ ...beta, col: 4 }));
+    expect(cellOwner(beta)).not.toBe(cellOwner({ ...beta, columnId: JSON.stringify("gamma"), col: 1 }));
   });
 
   it("dragging a tag card between columns removes the source tag and appends the target tag", () => {

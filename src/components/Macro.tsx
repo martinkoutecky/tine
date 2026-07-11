@@ -1,7 +1,7 @@
 import { For, Show, Switch, Match, createMemo, createResource, createSignal, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { openPage, openPageInNewTab } from "../router";
-import { openPageInSidebar, openPageContextMenu, dataRev, graphEpoch } from "../ui";
+import { openPageInSidebar, openPageContextMenu, dataRev, graphEpoch, graphMeta } from "../ui";
 import { blockProperty, doc, formatForPage, formatForBlock, resolveGuidePageDto, setBlockProperty, setRaw, withUndoUnit } from "../store";
 import { resolveBlockBatched } from "../resolveBatch";
 import { LiveRefGroup } from "./LiveRefGroup";
@@ -24,6 +24,7 @@ import { SheetTable } from "./SheetTable";
 import { SheetBoard } from "./SheetBoard";
 import { SheetContainer } from "./SheetContainer";
 import type { PageKind, RefGroup } from "../types";
+import { sharedQueryResult } from "../queryResultCache";
 
 const ADVANCED_RE = /\[\s*:find|:where|:find/;
 type QueryView = "list" | "table" | "board";
@@ -34,22 +35,23 @@ const QUERY_VIEW_LABEL: Record<QueryView, string> = {
   board: "Board",
 };
 
-// Collapsed state for query results, keyed by query string and persisted so a
-// query you fold (e.g. a TODO dashboard parked in the sidebar) stays folded.
+// Collapsed state for query results, keyed by graph + rendered query identity.
+// A raw query-string key made unrelated dashboards across pages/graphs collide.
 const QCOLLAPSE_KEY = "logseq-claude.queryCollapsed";
-function loadCollapsed(q: string): boolean {
+function loadCollapsed(key: string): boolean | null {
   try {
     const m = JSON.parse(localStorage.getItem(QCOLLAPSE_KEY) ?? "{}");
-    return !!m[q];
+    return typeof m[key] === "boolean" ? m[key] : null;
   } catch {
-    return false;
+    return null;
   }
 }
-function saveCollapsed(q: string, v: boolean) {
+function saveCollapsed(key: string, v: boolean) {
   try {
     const m = JSON.parse(localStorage.getItem(QCOLLAPSE_KEY) ?? "{}");
-    if (v) m[q] = true;
-    else delete m[q];
+    // Keep explicit false: it overrides a source `:collapsed? true` default on
+    // remount. Deleting false made an expanded query re-collapse immediately.
+    m[key] = v;
     localStorage.setItem(QCOLLAPSE_KEY, JSON.stringify(m));
   } catch {
     // ignore
@@ -219,11 +221,17 @@ export function QueryMacro(props: {
   const [advInfo, setAdvInfo] = createSignal<{ ran: string[]; ignored: string[]; supported: boolean } | null>(
     null
   );
-  const [collapsed, setCollapsed] = createSignal(loadCollapsed(arg()) || (parsed().collapsed ?? false));
+  const collapseKey = () => JSON.stringify([
+    graphMeta()?.root ?? "",
+    props.blockId ?? currentPage() ?? "global",
+    arg(),
+  ]);
+  const storedCollapse = loadCollapsed(collapseKey());
+  const [collapsed, setCollapsed] = createSignal(storedCollapse ?? parsed().collapsed ?? false);
   const toggleCollapsed = () => {
     const v = !collapsed();
     setCollapsed(v);
-    saveCollapsed(arg(), v);
+    saveCollapsed(collapseKey(), v);
   };
   // Re-run when the query text changes OR after any save lands (dataRev), so
   // results track edits live — e.g. a task flipped to DONE leaves a (task TODO)
@@ -232,17 +240,23 @@ export function QueryMacro(props: {
   // its count and doesn't re-run a whole-graph scan on every save while hidden;
   // expanding it (key flips to include dataRev) refreshes it.
   const [groups] = createResource(
-    () => (collapsed() ? `collapsed ${form()}` : `${form()} ${dataRev()}`),
-    async () => {
+    () => `${graphEpoch()}\0${collapsed() ? `collapsed ${form()}` : `${form()} ${dataRev()}`}`,
+    async (requestKey) => {
+      const scope = `${graphMeta()?.root ?? ""}\0${graphEpoch()}`;
       // Advanced (datalog) queries take a separate path that maps the supported
       // clause subset onto the engine and reports what ran vs was ignored.
       if (isAdvanced()) {
-        const r = await backend().runAdvancedQuery(form(), currentPage());
+        const page = currentPage();
+        const r = await sharedQueryResult(
+          scope,
+          `advanced\0${page ?? ""}\0${requestKey}`,
+          () => backend().runAdvancedQuery(form(), page),
+        );
         setAdvInfo({ ran: r.ran, ignored: r.ignored, supported: r.supported });
         return r.groups;
       }
       setAdvInfo(null);
-      return backend().runQuery(form());
+      return sharedQueryResult(scope, `simple\0${requestKey}`, () => backend().runQuery(form()));
     }
   );
   const total = () => groups()?.reduce((a, g) => a + g.blocks.length, 0) ?? 0;

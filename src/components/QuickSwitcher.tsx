@@ -87,7 +87,7 @@ export function QuickSwitcher(): JSX.Element {
   );
   const [hits] = createResource(
     () => (commandsOnly() ? null : { q: debouncedQuery(), limit: blockLimit() }),
-    (s) => (s && s.q.trim() ? backend().search(s.q, s.limit + 1) : Promise.resolve([]))
+    (s) => (s && s.q.trim() ? backend().search(s.q, s.limit + 1, "quick-switch") : Promise.resolve([]))
   );
 
   const currentPageName = () => {

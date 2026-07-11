@@ -220,6 +220,43 @@ describe("QueryMacro sheet integration", () => {
     dispose();
   });
 
+  it("keeps identical query collapse overrides isolated by block identity", async () => {
+    setDoc({
+      byId: {
+        q1: node("q1", "{{query (todo TODO)}}", null),
+        q2: node("q2", "{{query (todo TODO)}}", null),
+        todo: node("todo", "TODO From query", null),
+      },
+      pages: [page(["q1", "q2", "todo"])], feed: ["Sheet"], loaded: true,
+    });
+    vi.spyOn(backend(), "runQuery").mockResolvedValue(queryGroups(["todo"]));
+    const { root, dispose } = mount(() => <><Block id="q1" /><Block id="q2" /></>);
+    await settleQuery();
+    const toggles = root.querySelectorAll<HTMLElement>(".query-collapse");
+    toggles[0].click();
+    expect(toggles[0].classList.contains("collapsed")).toBe(true);
+    expect(toggles[1].classList.contains("collapsed")).toBe(false);
+    dispose();
+  });
+
+  it("persists an explicit expanded override over source collapsed true", async () => {
+    loadQueryDoc("{{query (todo TODO) {:collapsed? true}}}");
+    vi.spyOn(backend(), "runQuery").mockResolvedValue(queryGroups(["todo"]));
+    const first = mount(() => <Block id="query" />);
+    await settleQuery();
+    const toggle = first.root.querySelector(".query-collapse") as HTMLElement;
+    expect(toggle.classList.contains("collapsed")).toBe(true);
+    toggle.click();
+    expect(toggle.classList.contains("collapsed")).toBe(false);
+    first.dispose();
+    document.body.innerHTML = "";
+
+    const second = mount(() => <Block id="query" />);
+    await settleQuery();
+    expect((second.root.querySelector(".query-collapse") as HTMLElement).classList.contains("collapsed")).toBe(false);
+    second.dispose();
+  });
+
   it("keeps legacy :table-view? rendering read-only when no tine.view is set", async () => {
     loadQueryDoc("{{query (todo TODO) {:table-view? true}}}");
 

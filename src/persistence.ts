@@ -8,7 +8,7 @@
 // page snapshot (pageToDto) and the loaded flag (doc.loaded) — used at call time,
 // so the store↔persistence import cycle resolves cleanly.
 
-import { doc, pageToDto } from "./store";
+import { doc, pageByName, pageToDto } from "./store";
 import { backend } from "./backend";
 import { markConflict, isConflicted, conflicts, bumpDataRev, pushToast } from "./ui";
 
@@ -56,12 +56,16 @@ export function isDirty(name: string): boolean {
 }
 /** Mark a page dirty and schedule a debounced save. */
 export function markDirty(name: string) {
+  const page = pageByName(name);
+  if (page?.readOnly || page?.guide) return;
   dirty.add(name);
   scheduleSave();
 }
 /** Mark dirty WITHOUT scheduling — undo/redo restore batches several pages then
  *  schedules once. */
 export function addDirty(name: string) {
+  const page = pageByName(name);
+  if (page?.readOnly || page?.guide) return;
   dirty.add(name);
 }
 /** Pages with pending edits (so the working-set cap can pin them). */
@@ -190,6 +194,11 @@ async function doSave(name: string, force: boolean): Promise<boolean> {
     console.warn("Refusing to persist ephemeral bundled Guide page", name);
     dirty.delete(name);
     return true;
+  }
+  if (dto.read_only) {
+    console.error("Refusing to persist read-only page", name);
+    dirty.delete(name);
+    return false;
   }
   dirty.delete(name);
   try {

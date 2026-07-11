@@ -1,6 +1,8 @@
 // Pure helpers for reading/editing `key:: value` property lines — a block's
 // continuation lines or a page's pre-block. No store/DOM, so unit-testable.
 
+import { transitionFence, type FenceState } from "./fences";
+
 export const PROP_LINE = /^([A-Za-z0-9_./-]+):: ?(.*)$/;
 
 // Built-in properties hidden from the editor by default (like OG): `id::`,
@@ -17,24 +19,6 @@ export const isSheetCellHidden = (key: string): boolean =>
 /** Hide every property (annotation blocks edit only their text). */
 export const hideAll = (_key: string): boolean => true;
 
-const FENCE_RE = /^\s*(`{3,}|~{3,})/;
-
-function fenceMarker(line: string): string | null {
-  const m = FENCE_RE.exec(line);
-  return m ? m[1][0] : null;
-}
-
-function fenceTransition(
-  fence: string | null,
-  line: string
-): { opens: boolean; closes: boolean; next: string | null } {
-  const ch = fenceMarker(line);
-  if (ch === null) return { opens: false, closes: false, next: fence };
-  if (fence === null) return { opens: true, closes: false, next: ch };
-  if (ch === fence) return { opens: false, closes: true, next: null };
-  return { opens: false, closes: false, next: fence };
-}
-
 function propLineKey(line: string): string | null {
   const m = /^\s*([A-Za-z0-9_./-]+)::/.exec(line);
   return m ? m[1].toLowerCase() : null;
@@ -45,13 +29,13 @@ function propLineKey(line: string): string | null {
  *  inside, including an unterminated fence while the user is editing. */
 export function caretInFence(raw: string, offset: number): boolean {
   const target = Math.max(0, Math.min(offset, raw.length));
-  let fence: string | null = null;
+  let fence: FenceState | null = null;
   let pos = 0;
   while (pos <= raw.length) {
     const nl = raw.indexOf("\n", pos);
     const end = nl === -1 ? raw.length : nl;
     const line = raw.slice(pos, end);
-    const t = fenceTransition(fence, line);
+    const t = transitionFence(fence, line);
     if (target <= end) return fence !== null && !t.closes;
     fence = t.next;
     if (nl === -1) break;
@@ -87,11 +71,11 @@ function classifyLines(
   format: PropFormat
 ): LineClass[] {
   const cls: LineClass[] = new Array(lines.length).fill("v");
-  let fence: string | null = null;
+  let fence: FenceState | null = null;
   let i = 0;
   while (i < lines.length) {
     const l = lines[i];
-    const t = fenceTransition(fence, l);
+    const t = transitionFence(fence, l);
     if (t.opens || t.closes) {
       fence = t.next; // fence delimiter lines are always visible content
       i++;

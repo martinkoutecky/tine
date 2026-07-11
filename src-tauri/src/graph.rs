@@ -157,7 +157,7 @@ pub(crate) fn load_graph_for_label(
 }
 
 #[tauri::command]
-pub(crate) fn open_graph_window(
+pub(crate) async fn open_graph_window(
     path: String,
     app: tauri::AppHandle,
     state: State<'_, AppState>,

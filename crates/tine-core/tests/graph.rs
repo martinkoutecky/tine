@@ -1850,13 +1850,17 @@ fn resolve_sync_conflict_merges_and_trashes() {
         .find(|r| format!("{:?}", r.kind) == "Removed")
         .expect("removed row");
 
-    // Guard: a stale base_rev must refuse without writing.
+    assert_eq!(diff.base_rev, tine_core::model::content_rev(winner));
+    // Guard: decisions from the diff must not apply after the winner changes.
+    let changed_winner = winner.replace("beta line here", "beta line NEW!");
+    std::fs::write(pages.join("Foo.md"), &changed_winner).unwrap();
     let err = g
         .resolve_sync_conflict(
             win_rel,
             &conf_rel,
             &HashMap::new(),
-            Some("stale-rev"),
+            &diff.base_rev,
+            &diff.conflict_rev,
             "union",
         )
         .unwrap_err();
@@ -1867,9 +1871,35 @@ fn resolve_sync_conflict_merges_and_trashes() {
     );
     assert_eq!(
         std::fs::read_to_string(pages.join("Foo.md")).unwrap(),
-        winner,
+        changed_winner,
         "winner untouched on guard"
     );
+    std::fs::write(pages.join("Foo.md"), winner).unwrap();
+
+    // The conflict side is revision-bound too. Otherwise decisions aligned to
+    // an old copy could silently merge after a sync tool rewrites that copy.
+    let changed_conflict = conflict.replace("beta line there", "beta line LATER");
+    std::fs::write(pages.join(conflict_name), &changed_conflict).unwrap();
+    let err = g
+        .resolve_sync_conflict(
+            win_rel,
+            &conf_rel,
+            &HashMap::new(),
+            &diff.base_rev,
+            &diff.conflict_rev,
+            "union",
+        )
+        .unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+    assert_eq!(
+        std::fs::read_to_string(pages.join(conflict_name)).unwrap(),
+        changed_conflict
+    );
+    assert_eq!(
+        std::fs::read_to_string(pages.join("Foo.md")).unwrap(),
+        winner
+    );
+    std::fs::write(pages.join(conflict_name), conflict).unwrap();
 
     // Resolve: take theirs for the modified block, pull in the removed one.
     let decisions = HashMap::from([
@@ -1877,8 +1907,16 @@ fn resolve_sync_conflict_merges_and_trashes() {
         (removed.id.clone(), "theirs".to_string()),
     ]);
     let base = tine_core::model::content_rev(winner);
-    g.resolve_sync_conflict(win_rel, &conf_rel, &decisions, Some(&base), "union")
-        .unwrap();
+    let conflict_rev = tine_core::model::content_rev(conflict);
+    g.resolve_sync_conflict(
+        win_rel,
+        &conf_rel,
+        &decisions,
+        &base,
+        &conflict_rev,
+        "union",
+    )
+    .unwrap();
 
     let merged = std::fs::read_to_string(pages.join("Foo.md")).unwrap();
     assert!(merged.contains("beta line there"), "merged: {merged:?}");
@@ -1907,4 +1945,28 @@ fn resolve_sync_conflict_merges_and_trashes() {
     );
 
     std::fs::remove_dir_all(&root).ok();
+}
+
+#[cfg(unix)]
+#[test]
+fn page_symlinks_are_not_indexed_or_reconciled() {
+    use std::os::unix::fs::symlink;
+
+    let root = std::env::temp_dir().join(format!("tine-page-symlink-{}", std::process::id()));
+    let outside = std::env::temp_dir().join(format!("tine-outside-page-{}.md", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_file(&outside);
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    std::fs::create_dir_all(root.join("journals")).unwrap();
+    std::fs::write(&outside, "- outside secret\n").unwrap();
+    let link = root.join("pages/Secret.md");
+    symlink(&outside, &link).unwrap();
+
+    let g = Graph::open(&root);
+    assert!(g.list_pages().iter().all(|page| page.name != "Secret"));
+    assert!(g.resolve_rel("pages/Secret.md").is_none());
+    assert!(g.sync_file(&link).is_none());
+
+    std::fs::remove_dir_all(&root).ok();
+    std::fs::remove_file(&outside).ok();
 }

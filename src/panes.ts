@@ -13,6 +13,7 @@ import {
   type Route,
 } from "./router";
 import { registerPaneFocusSetter } from "./ui";
+import { setCellSel } from "./sheet/selection";
 import { clearSelection, doc, pageByName, registerPaneRouteProvider } from "./store";
 import { journalTitle } from "./journal";
 import { isMobilePlatform } from "./nativeChrome";
@@ -35,7 +36,10 @@ const [focusedPaneIdAccessor, writeFocusedPaneId] = createSignal("main");
 export const focusedPaneId = focusedPaneIdAccessor;
 
 export function setFocusedPaneId(paneId: string) {
-  if (focusedPaneId() !== paneId) clearSelection();
+  if (focusedPaneId() !== paneId) {
+    clearSelection();
+    setCellSel(null);
+  }
   writeFocusedPaneId(paneId);
 }
 

@@ -35,6 +35,27 @@ fn walk_path<'a>(
     }
 }
 
+/// Cancellable variant used by interactive search. Returning false from `f`
+/// stops the entire depth-first walk, including the current deep page.
+fn walk_path_while<'a>(
+    blocks: &'a [DocBlock],
+    path: &mut Vec<&'a DocBlock>,
+    f: &mut impl FnMut(&'a DocBlock, &[&'a DocBlock]) -> bool,
+) -> bool {
+    for b in blocks {
+        if !f(b, path) {
+            return false;
+        }
+        path.push(b);
+        let keep_going = walk_path_while(&b.children, path, f);
+        path.pop();
+        if !keep_going {
+            return false;
+        }
+    }
+    true
+}
+
 /// A short, single-line label for a block in a breadcrumb trail.
 fn crumb_line(b: &DocBlock) -> String {
     let line = b
@@ -871,6 +892,18 @@ fn sort_key(b: &BlockDto, page: &str, field: &str) -> String {
 /// search dialect (whitespace=AND, `OR`, `-exclude`, `"phrase"`, `/regex/`; see
 /// [`crate::search_query`]), grouped by page, capped at `limit` total blocks.
 pub fn search(graph: &Graph, query: &str, limit: usize) -> Vec<RefGroup> {
+    search_cancellable(graph, query, limit, || false)
+}
+
+/// Search with cooperative cancellation for interactive callers. The cheap
+/// callback is checked before each block projection, so a superseded rare-prefix
+/// scan does not finish walking a huge page in the background.
+pub fn search_cancellable(
+    graph: &Graph,
+    query: &str,
+    limit: usize,
+    cancelled: impl Fn() -> bool,
+) -> Vec<RefGroup> {
     use crate::search_query::Matcher;
     let matcher = Matcher::parse(query);
     // Empty / invalid-regex queries match nothing — skip the whole-graph walk.
@@ -884,14 +917,14 @@ pub fn search(graph: &Graph, query: &str, limit: usize) -> Vec<RefGroup> {
         let mut groups: Vec<RefGroup> = Vec::new();
         let mut remaining = limit;
         for (entry, doc) in pages {
-            if remaining == 0 {
+            if remaining == 0 || cancelled() {
                 break;
             }
             let mut matched: Vec<BlockDto> = Vec::new();
             let mut path: Vec<&DocBlock> = Vec::new();
-            walk_path(&doc.roots, &mut path, &mut |b, anc| {
-                if remaining == 0 {
-                    return;
+            walk_path_while(&doc.roots, &mut path, &mut |b, anc| {
+                if remaining == 0 || cancelled() {
+                    return false;
                 }
                 let proj = b.projection();
                 if matcher.matches(&proj.visible_lower, &proj.visible) {
@@ -900,7 +933,11 @@ pub fn search(graph: &Graph, query: &str, limit: usize) -> Vec<RefGroup> {
                     matched.push(dto);
                     remaining -= 1;
                 }
+                true
             });
+            if cancelled() {
+                return Vec::new();
+            }
             if !matched.is_empty() {
                 groups.push(RefGroup {
                     page: entry.name.clone(),
@@ -2518,6 +2555,31 @@ mod tests {
             vec!["newestref", "middleref", "oldestref", "plainref"],
             "{tags:?}"
         );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn interactive_search_stops_inside_a_page_when_superseded() {
+        use std::cell::Cell;
+        use std::fs;
+        let dir = std::env::temp_dir().join(format!("tine-search-cancel-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        let content = (0..1000)
+            .map(|i| format!("- ordinary block {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(dir.join("pages").join("Large.md"), content).unwrap();
+        let graph = Graph::open(&dir);
+        let checks = Cell::new(0usize);
+        let result = search_cancellable(&graph, "never-matches", 10, || {
+            checks.set(checks.get() + 1);
+            checks.get() > 12
+        });
+        assert!(result.is_empty());
+        assert!(checks.get() < 40, "cancellation checks: {}", checks.get());
         let _ = fs::remove_dir_all(&dir);
     }
 }

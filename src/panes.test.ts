@@ -14,6 +14,7 @@ import {
   type LayoutNode,
 } from "./panes";
 import { hasSelection, selectBlock } from "./store";
+import { cellSel, setCellSel } from "./sheet/selection";
 import type { PaneSnapshot } from "./router";
 
 const pageSnapshot = (name: string): PaneSnapshot => ({
@@ -32,6 +33,13 @@ beforeEach(() => {
 });
 
 describe("pane layout mutations", () => {
+  it("clears a sheet selection when focus moves to another pane", () => {
+    splitPane("main", "row");
+    focusPane("main");
+    setCellSel({ gridId: "sheet", row: 0, col: 0 });
+    focusPane(layoutPaneIds().find((id) => id !== "main")!);
+    expect(cellSel()).toBeNull();
+  });
   it("splits a leaf into a binary split", () => {
     const root: LayoutNode = { kind: "pane", paneId: "main" };
 

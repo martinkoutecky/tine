@@ -30,6 +30,74 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   npm advisories, including the Vitest UI-server and Vite dev-server issues; keep
   Solid's browser export conditions explicit in the test runner.
 
+## [0.5.5] - 2026-07-11
+
+Correctness and interaction release for Sheets, caret navigation, edit-mode
+rendering, Windows graph and clipboard behavior, and read-only Org safety.
+
+### Added
+
+- **Ctrl/Cmd+Shift+V pastes multiline plain text into the current block.** Normal
+  multiline paste keeps Logseq's outline-building behavior, while the modified
+  shortcut preserves embedded newlines at the caret. (GH #81)
+
+### Fixed
+
+- **Arrow Down leaves a wrapped block at the caret's visual column.** Crossing
+  into the next block no longer measures from the beginning of the wrapped
+  source line and clamps the caret to that block's end.
+- **Sheets remain identity-safe across split panes, sorting, pagination, and
+  asynchronous query hydration.** Selection and mutation targets are scoped to
+  their grid surface and source block, stale query results cannot overwrite a
+  newer view, formula/aggregate dependencies invalidate correctly, and large
+  Grid/Table/Board views keep bounded lookup and rendering work.
+- **Board card drags stay bound to one pointer and one rendered Board.** Starting
+  another drag cancels the previous document-wide session, unrelated pointer
+  events are ignored, and a column in a duplicate split-pane Board cannot be
+  accepted as the drop target.
+- **Raw block punctuation and numbers use normal text metrics in edit mode.**
+  Inter or the configured monospace face now handles `#`, `*`, brackets, and
+  digits before the bundled emoji fallback, while actual emoji remain protected
+  from WebKitGTK's unsafe system COLRv1 path.
+- **Arrow Up enters a wrapped previous block on its bottom visual row.** The
+  caret keeps its horizontal source column instead of jumping to the matching
+  position on that block's top row.
+- **Windows graph windows are created off synchronous Tauri event handlers.**
+  Shift-opening a second graph no longer takes the WebView2 deadlock path that
+  could leave the new window blank and the original window uneditable. (GH #70)
+- **Windows screenshot paste reaches the image-byte path again.** WebView2 image
+  clipboard payloads no longer fall into native file-list import and report a
+  spurious skipped item; byte-only images retain the 64 MiB safety bound and
+  mixed copied files still use path-based import. (GH #78)
+- **Page rename and alias navigation keep sidebar state live.** Successful
+  renames re-key and deduplicate Favorites and Recents, while alias favorites
+  resolve to their canonical page for ordinary, sidebar, new-tab, and context
+  actions. (GH #79, GH #80)
+- **Read-only Org pages now reject every frontend mutation path.** Collapse,
+  context-menu, selection, drag/move, sheet, property, durable-ID, dirty-state,
+  and persistence entry points enforce the round-trip safety boundary rather
+  than relying only on the hidden textarea.
+- **Zoom navigation and editing stay inside the rendered subtree.** Arrow and
+  shift-selection order includes children revealed by the zoom-only collapse
+  override, excludes invisible page siblings, and keeps Enter-created blocks and
+  their caret mounted without changing durable collapse metadata.
+- **Variable-length code fences no longer close on a shorter delimiter run.** A
+  shared backtick/tilde scanner now drives property hiding, planning
+  normalization, Enter, and multiline-paste decisions.
+- **Org editing mutations remain in Org syntax.** Collapse and ordered-block
+  splits use property drawers, Org subtree copy strips durable IDs while retaining
+  OG's Markdown clipboard outline, and multiline paste replaces visibly-empty
+  metadata-only blocks without leaving a ghost bullet.
+- **Query collapse state no longer leaks between identical queries on different
+  pages or graphs.** Overrides are keyed by graph and block identity, and an
+  explicit expanded choice now survives a source `:collapsed? true` default.
+- **Zooming into a collapsed block reveals its children without expanding the
+  block on its parent page.** The zoom root temporarily ignores only its own
+  stored collapse state; descendant blocks retain their individual folds. (GH #77)
+- **Emoji in editable fields no longer trigger WebKitGTK's COLRv1 crash.** Native
+  inputs and textareas use a bundled monochrome Noto Emoji font, covering page
+  properties, page-title rename, block editing, and other raw-text controls while
+  display surfaces continue to use Twemoji SVGs. (GH #76)
 - **Default Windows draw.io installations now autodetect and launch correctly.**
   External-editor command templates accept double-quoted executable paths such as
   `"C:\Program Files\draw.io\draw.io.exe" {}`, and autodetection checks both

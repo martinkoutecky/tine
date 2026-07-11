@@ -71,7 +71,7 @@ import {
 import { editingId, startEditing } from "./editorController";
 import { copyOutline } from "./clipboard";
 import { closeInPageFind, inPageFindOpen, openInPageFind } from "./inpageFind";
-import { cellSel, enterGridSelection, handleCellSelectionKey, handleSheetPasteEvent } from "./sheet/selection";
+import { cellSel, enterGridSelection, handleCellSelectionKey, handleSheetPasteEvent, outlinedGridSelectionId } from "./sheet/selection";
 import { decodeNavIntent } from "./navProtocol";
 import {
   closePane,
@@ -708,6 +708,22 @@ function isEditableTarget(t: EventTarget | null): boolean {
   return tag === "TEXTAREA" || tag === "INPUT" || el.isContentEditable;
 }
 
+function focusedGridSurface(gridId: string): string | null {
+  const paneId = focusedPaneId();
+  const expected = paneId === "main" ? "main" : `pane:${paneId}`;
+  if (typeof document === "undefined") return expected;
+  const esc = (value: string) =>
+    typeof CSS !== "undefined" && CSS.escape ? CSS.escape(value) : value.replace(/["\\]/g, "\\$&");
+  const pane = document.querySelector<HTMLElement>(`[data-pane-id="${esc(paneId)}"]`);
+  if (!pane) return expected;
+  const surfaces = new Set(
+    [...pane.querySelectorAll<HTMLElement>(`[data-sheet-grid-id="${esc(gridId)}"][data-sheet-surface-id]`)]
+      .map((grid) => grid.dataset.sheetSurfaceId)
+      .filter((surface): surface is string => !!surface)
+  );
+  return surfaces.size === 1 ? [...surfaces][0] : null;
+}
+
 // Keyboard handling while in block-selection mode (no editor focused).
 function handleSelectionKey(e: KeyboardEvent): boolean {
   if (e.key === "Escape") return clearSelection(), true;
@@ -717,7 +733,11 @@ function handleSelectionKey(e: KeyboardEvent): boolean {
   if (matchesCommand(e, "editor/move-block-up")) return moveSelectionItems(-1), true;
   if (e.key === "Enter" || e.key === "ArrowRight") {
     const ids = selectedIds();
-    if (ids.length === 1 && blockIsGridView(ids[0]) && enterGridSelection(ids[0])) return true;
+    const gridId = ids.length === 1 && blockIsGridView(ids[0]) ? ids[0] : ids.length === 0 ? outlinedGridSelectionId() : null;
+    if (gridId) {
+      const surface = focusedGridSurface(gridId);
+      if (surface !== null && enterGridSelection(gridId, surface)) return true;
+    }
   }
   if (e.key === "ArrowDown") return moveSelection(1, e.shiftKey), true;
   if (e.key === "ArrowUp") return moveSelection(-1, e.shiftKey), true;

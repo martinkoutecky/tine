@@ -10,8 +10,7 @@ import type { Inline } from "../render/ast";
 import { rebulletedSourceByteToRawByte, utf8ByteLength, utf8ByteToUtf16Offset } from "../render/spans";
 import { tagRef } from "../tags";
 import { parseIsoDateLike } from "./typed";
-import { evaluateFormulaForRow, formulaValueText } from "./formulaEval";
-import type { BlockDto } from "../types";
+import { evaluateFormulaForRow, formulaValueText, liveFormulaRowNode, type FormulaEvalRow } from "./formulaEval";
 
 export type FieldId =
   | "state"
@@ -50,7 +49,7 @@ function facetsForBlock(id: string): Facets | null {
   return n ? facetsOf(n.raw, formatForBlock(id)) : null;
 }
 
-type GroupKeyInput = string | { id: string; page?: string; dto?: BlockDto };
+type GroupKeyInput = string | FormulaEvalRow;
 interface GroupKeysOptions {
   formulas?: ReadonlyMap<string, string>;
   now?: Date;
@@ -58,7 +57,7 @@ interface GroupKeysOptions {
 
 function facetsForInput(input: GroupKeyInput): Facets | null {
   const id = typeof input === "string" ? input : input.id;
-  const n = doc.byId[id];
+  const n = typeof input === "string" ? doc.byId[id] : liveFormulaRowNode(input);
   if (n) return facetsOf(n.raw, formatForBlock(id));
   return typeof input === "string" || !input.dto ? null : facetsFromDto(input.dto);
 }
@@ -349,9 +348,9 @@ export function groupKeysForBlock(input: GroupKeyInput, field: FieldId, opts: Gr
     const formulas = opts.formulas;
     if (!formulas) return [null];
     const id = typeof input === "string" ? input : input.id;
-    const page = typeof input === "string" ? doc.byId[id]?.page ?? "" : input.page ?? doc.byId[id]?.page ?? "";
+    const page = typeof input === "string" ? doc.byId[id]?.page ?? "" : input.page;
     const value = evaluateFormulaForRow(
-      { id, page, dto: typeof input === "string" ? undefined : input.dto },
+      { id, page, kind: typeof input === "string" ? undefined : input.kind, dto: typeof input === "string" ? undefined : input.dto },
       field.slice("formula:".length),
       formulas,
       opts.now ?? new Date()
@@ -366,7 +365,7 @@ export function groupKeysForBlock(input: GroupKeyInput, field: FieldId, opts: Gr
   }
 
   const id = typeof input === "string" ? input : input.id;
-  if (doc.byId[id]) return [groupKeyForBlock(id, field)];
+  if (typeof input === "string" ? doc.byId[id] : liveFormulaRowNode(input)) return [groupKeyForBlock(id, field)];
 
   const f = facetsForInput(input);
   if (!f) return [null];

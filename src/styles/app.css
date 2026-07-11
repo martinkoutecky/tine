@@ -19,6 +19,26 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+/* Native text controls cannot use the Twemoji <img> renderer. Keep the bundled
+   monochrome emoji face ahead of system fallback so WebKitGTK never reaches a
+   COLRv1 font's crashing Skia path (#76), but put our bundled text face first.
+   Noto Emoji also contains the keycap bases #, * and 0-9; putting it first gives
+   ordinary source text emoji-width advances (for example `v 0 . 5 . 0`).
+   !important is deliberate: several specialized editors use `font: inherit` or
+   a monospace shorthand later in this file; safety must survive those rules. */
+input:not([type="checkbox"]):not([type="radio"]),
+textarea {
+  font-family: var(--tine-editable-font, "Inter", "Noto Emoji Variable", var(--ls-font-family)) !important;
+}
+
+.formula-editor-textarea,
+.calc-wrap .block-editor {
+  /* Keep Noto ahead of the generic family here too: a generic may resolve to
+     the crashing system color font before CSS considers a later family. */
+  --tine-editable-font: "MonoLisa", "Fira Code", "JetBrains Mono", Menlo, Monaco,
+    Consolas, "Courier New", "Noto Emoji Variable", monospace;
+}
+
 #root {
   height: 100vh;
 }
@@ -2991,6 +3011,14 @@ body {
   cursor: pointer;
   opacity: 0;
   transition: opacity 0.1s;
+}
+
+.collapse-toggle.disabled {
+  cursor: not-allowed;
+}
+
+.ls-block:hover > .block-main > .block-controls > .collapse-toggle.disabled.has-children {
+  opacity: 0.3;
 }
 
 .ls-block:hover > .block-main > .block-controls > .collapse-toggle.has-children {

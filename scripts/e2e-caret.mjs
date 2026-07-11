@@ -40,6 +40,14 @@ const TD =
     : fs.existsSync(LOCAL_TAURI_DRIVER)
       ? LOCAL_TAURI_DRIVER
       : "tauri-driver");
+const LOCAL_WEBKIT_DRIVER = "/tmp/tine-webdriver/usr/bin/WebKitWebDriver";
+const WEBKIT_DRIVER =
+  process.env.WEBKIT_DRIVER ||
+  (fs.existsSync("/usr/bin/WebKitWebDriver")
+    ? "/usr/bin/WebKitWebDriver"
+    : fs.existsSync(LOCAL_WEBKIT_DRIVER)
+      ? LOCAL_WEBKIT_DRIVER
+      : "WebKitWebDriver");
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -221,12 +229,17 @@ const env = {
   WEBKIT_DISABLE_COMPOSITING_MODE: "1",
   GDK_BACKEND: "x11",
 };
-console.log("DISPLAY=", process.env.DISPLAY, "MODE=", MODE, "APP=", APP);
+console.log(
+  "DISPLAY=", process.env.DISPLAY,
+  "MODE=", MODE,
+  "APP=", APP,
+  "WEBKIT_DRIVER=", WEBKIT_DRIVER
+);
 
 const tdLog = fs.openSync("/tmp/td-caret.log", "w");
 const td = spawn(
   TD,
-  ["--port", "4444", "--native-port", "4445", "--native-driver", "/usr/bin/WebKitWebDriver"],
+  ["--port", "4444", "--native-port", "4445", "--native-driver", WEBKIT_DRIVER],
   { env, stdio: ["ignore", tdLog, tdLog] }
 );
 await sleep(3000);

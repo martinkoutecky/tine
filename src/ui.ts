@@ -590,7 +590,10 @@ export interface FavItem {
 }
 export const [favorites, setFavorites] = createSignal<FavItem[]>([]);
 export function isFavorite(name: string): boolean {
-  return favorites().some((f) => f.name === name);
+  const target = resolveAlias(name);
+  return favorites().some((f) =>
+    f.kind === "page" ? resolveAlias(f.name) === target : f.name === name
+  );
 }
 function persistFavorites(next: FavItem[]) {
   // Persist to config.edn :favorites so favorites travel with the graph and stay
@@ -599,8 +602,11 @@ function persistFavorites(next: FavItem[]) {
 }
 export function toggleFavorite(name: string, kind: "page" | "journal" = "page") {
   const f = favorites();
-  const next = f.some((x) => x.name === name)
-    ? f.filter((x) => x.name !== name)
+  const target = kind === "page" ? resolveAlias(name) : name;
+  const matches = (item: FavItem) => item.kind === kind &&
+    (kind === "page" ? resolveAlias(item.name) === target : item.name === name);
+  const next = f.some(matches)
+    ? f.filter((x) => !matches(x))
     : [...f, { name, kind }];
   setFavorites(next);
   persistFavorites(next);
@@ -614,6 +620,42 @@ export function removeDeletedPageFromNavigation(name: string, kind: PageKind) {
 
   const nextRecents = recentPages().filter((r) => !(r.name === name && r.kind === kind));
   if (nextRecents.length !== recentPages().length) {
+    setRecentPages(nextRecents);
+    try {
+      if (nextRecents.length) localStorage.setItem(RECENT_KEY, JSON.stringify(nextRecents));
+      else localStorage.removeItem(RECENT_KEY);
+    } catch {
+      // ignore
+    }
+  }
+}
+
+/** Re-key sidebar navigation state after the backend has atomically renamed a
+ * page. Keep ordering stable, collapse an existing destination duplicate, and
+ * persist both stores before the subsequent openPage(next) promotes the one
+ * canonical recent entry to the front. */
+export function renamePageInNavigation(from: string, to: string) {
+  const dedupe = (items: FavItem[]): FavItem[] => {
+    const seen = new Set<string>();
+    const out: FavItem[] = [];
+    for (const item of items) {
+      const next = item.kind === "page" && item.name === from ? { ...item, name: to } : item;
+      const key = `${next.kind}\0${next.name}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(next);
+    }
+    return out;
+  };
+
+  const nextFavorites = dedupe(favorites());
+  if (nextFavorites.some((item, i) => item !== favorites()[i]) || nextFavorites.length !== favorites().length) {
+    setFavorites(nextFavorites);
+    persistFavorites(nextFavorites);
+  }
+
+  const nextRecents = dedupe(recentPages());
+  if (nextRecents.some((item, i) => item !== recentPages()[i]) || nextRecents.length !== recentPages().length) {
     setRecentPages(nextRecents);
     try {
       if (nextRecents.length) localStorage.setItem(RECENT_KEY, JSON.stringify(nextRecents));

@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256};
 use std::io::Read;
 use std::path::PathBuf;
 use tauri::Manager;
-use tine_core::model::{atomic_copy, Graph};
+use tine_core::model::{atomic_copy, atomic_copy_new, Graph};
 
 // Snapshot the graph's markdown into the OS app-data dir on open, keeping the
 // last few. Local-only (outside the graph, so Syncthing never sees it); a safety
@@ -110,7 +110,10 @@ fn write_manifest(dir: &std::path::Path, manifest: &SnapshotManifest) -> std::io
     let path = dir.join(SNAPSHOT_MANIFEST);
     let tmp = dir.join(".snapshot.json.tmp");
     let bytes = serde_json::to_vec_pretty(manifest).map_err(std::io::Error::other)?;
-    let mut file = std::fs::File::create(&tmp)?;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp)?;
     use std::io::Write;
     file.write_all(&bytes)?;
     file.sync_all()?;
@@ -434,6 +437,27 @@ pub(crate) fn restore_backup(
     };
     let restore_journals = safe_dir(&manifest.journals_dir)?;
     let restore_pages = safe_dir(&manifest.pages_dir)?;
+    let validate_live_layout = || -> Result<(), String> {
+        for (label, path) in [
+            ("journals", &restore_journals),
+            ("pages", &restore_pages),
+            ("assets", &assets),
+            ("config", &cfg_dest),
+        ] {
+            ensure_target_within_root(&current_root, path)
+                .map_err(|e| format!("unsafe live {label} path: {e}"))?;
+        }
+        Ok(())
+    };
+    validate_live_layout()?;
+    let recovery = base.join(format!(
+        "{}-pre-restore-extras-{}-{}",
+        backup_stamp(),
+        std::process::id(),
+        RESTORE_RECOVERY_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&recovery)
+        .map_err(|e| format!("couldn't create restore recovery area: {e}"))?;
     // Safety net: snapshot the current (pre-restore) state first, under a distinct
     // name so it can't collide with (or be pruned by) the launch snapshot the
     // post-restore reload will take. Abort if the snapshot fails while the live
@@ -449,40 +473,135 @@ pub(crate) fn restore_backup(
             "couldn't create a complete pre-restore safety snapshot — restore aborted".into(),
         );
     }
-    // Restore each dir; a copy failure aborts WITHOUT having deleted anything
-    // (copy-in happens before delete-extras), so a failure never loses data.
-    restore_md_dir(&src.join("journals"), &restore_journals)
+    // The safety snapshot can take time. Revalidate after it so a symlink swap
+    // cannot redirect the destructive copy/delete phase outside the graph.
+    validate_live_layout()?;
+    // Restore each dir; copies happen before extras are moved to the dedicated
+    // recovery area, so a failure leaves either the original or a recoverable copy.
+    restore_md_dir(
+        &src.join("journals"),
+        &restore_journals,
+        &recovery.join("journals"),
+        &current_root,
+    )
         .map_err(|e| format!("restore journals failed: {e}"))?;
-    restore_md_dir(&src.join("pages"), &restore_pages)
+    restore_md_dir(
+        &src.join("pages"),
+        &restore_pages,
+        &recovery.join("pages"),
+        &current_root,
+    )
         .map_err(|e| format!("restore pages failed: {e}"))?;
-    restore_asset_sidecars_dir(&src.join(dir_name(&assets)), &assets)
+    restore_asset_sidecars_dir(
+        &src.join(dir_name(&assets)),
+        &assets,
+        &recovery.join("assets"),
+        &current_root,
+    )
         .map_err(|e| format!("restore asset sidecars failed: {e}"))?;
     let src_cfg = src.join("logseq").join("config.edn");
     if src_cfg.exists() {
         if let Some(parent) = cfg_dest.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        atomic_copy(&src_cfg, &cfg_dest).map_err(|e| format!("restore config failed: {e}"))?;
+        if cfg_dest.exists() {
+            move_live_to_recovery(&cfg_dest, &recovery.join("logseq/config.edn"))
+                .map_err(|e| format!("recover current config failed: {e}"))?;
+        }
+        atomic_copy_new(&src_cfg, &cfg_dest)
+            .map_err(|e| format!("restore config failed: {e}"))?;
     }
     crate::state::refresh_graph(&state)?;
     Ok(())
 }
 
+fn ensure_target_within_root(root: &std::path::Path, target: &std::path::Path) -> std::io::Result<()> {
+    let canonical_root = std::fs::canonicalize(root)?;
+    let mut existing = target;
+    while std::fs::symlink_metadata(existing).is_err() {
+        existing = existing.parent().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "target has no existing ancestor")
+        })?;
+    }
+    let canonical_existing = std::fs::canonicalize(existing)?;
+    let expected = existing
+        .strip_prefix(root)
+        .map(|rel| canonical_root.join(rel))
+        .map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "target is outside graph root")
+        })?;
+    if canonical_existing == expected {
+        Ok(())
+    } else {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "target escapes graph root",
+        ))
+    }
+}
+
+/// Atomically detach the current live name into the restore recovery tree. A
+/// writer with an open handle continues writing the recovered inode; a writer
+/// that recreates the live name is left untouched. If app-data is on another
+/// filesystem, preserve a copy but abort the restore without removing the live
+/// file rather than risk a copy-then-delete race.
+fn move_live_to_recovery(
+    live: &std::path::Path,
+    recovery: &std::path::Path,
+) -> std::io::Result<()> {
+    if let Some(parent) = recovery.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    match std::fs::rename(live, recovery) {
+        Ok(()) => Ok(()),
+        Err(rename_err) => {
+            atomic_copy(live, recovery)?;
+            Err(std::io::Error::new(
+                rename_err.kind(),
+                format!(
+                    "live file copied to recovery but could not be atomically detached: {rename_err}"
+                ),
+            ))
+        }
+    }
+}
+
 /// Restore graph text files in `dest` from `src`. Each file is copied through
 /// the shared atomic helper, so a failure or power-loss mid-copy can never leave
 /// a live note truncated/half-written. Copies happen FIRST; only after they all
-/// succeed do we delete `dest` graph text files not in the backup. A copy error
-/// returns early leaving a superset of files (no data lost). Other files are left
-/// untouched.
-fn restore_md_dir(src: &std::path::Path, dest: &std::path::Path) -> std::io::Result<()> {
+/// succeed do we move `dest` graph text files not in the backup to a recovery
+/// area. A copy error returns early leaving a superset of files. Other files are
+/// left untouched.
+static RESTORE_RECOVERY_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn restore_md_dir(
+    src: &std::path::Path,
+    dest: &std::path::Path,
+    recovery: &std::path::Path,
+    graph_root: &std::path::Path,
+) -> std::io::Result<()> {
     if !src.is_dir() {
         return Ok(());
     }
+    ensure_target_within_root(graph_root, dest)?;
     std::fs::create_dir_all(dest)?;
     let mut restored: std::collections::HashSet<std::path::PathBuf> =
         std::collections::HashSet::new();
-    restore_md_copy(src, dest, std::path::Path::new(""), &mut restored)?;
-    delete_unrestored_md(dest, std::path::Path::new(""), &restored)?;
+    restore_md_copy(
+        src,
+        dest,
+        std::path::Path::new(""),
+        &mut restored,
+        recovery,
+        graph_root,
+    )?;
+    delete_unrestored_md(
+        dest,
+        std::path::Path::new(""),
+        &restored,
+        recovery,
+        graph_root,
+    )?;
     Ok(())
 }
 
@@ -491,6 +610,8 @@ fn restore_md_copy(
     dest: &std::path::Path,
     rel: &std::path::Path,
     restored: &mut std::collections::HashSet<std::path::PathBuf>,
+    recovery: &std::path::Path,
+    graph_root: &std::path::Path,
 ) -> std::io::Result<()> {
     for e in std::fs::read_dir(src)? {
         let e = e?;
@@ -498,14 +619,19 @@ fn restore_md_copy(
         let rel_child = rel.join(e.file_name());
         if is_graph_text(&p) {
             let target = dest.join(&rel_child);
+            ensure_target_within_root(graph_root, &target)?;
             if let Some(parent) = target.parent() {
                 std::fs::create_dir_all(parent)?;
             }
-            atomic_copy(&p, &target)?;
+            if target.exists() {
+                move_live_to_recovery(&target, &recovery.join(&rel_child))?;
+            }
+            atomic_copy_new(&p, &target)?;
             restored.insert(rel_child);
         } else if is_visible_real_dir(&e)? {
+            ensure_target_within_root(graph_root, &dest.join(&rel_child))?;
             std::fs::create_dir_all(dest.join(&rel_child))?;
-            restore_md_copy(&p, dest, &rel_child, restored)?;
+            restore_md_copy(&p, dest, &rel_child, restored, recovery, graph_root)?;
         }
     }
     Ok(())
@@ -515,6 +641,8 @@ fn delete_unrestored_md(
     dest: &std::path::Path,
     rel: &std::path::Path,
     restored: &std::collections::HashSet<std::path::PathBuf>,
+    recovery: &std::path::Path,
+    graph_root: &std::path::Path,
 ) -> std::io::Result<()> {
     let dir = dest.join(rel);
     if !dir.is_dir() {
@@ -526,10 +654,11 @@ fn delete_unrestored_md(
         let rel_child = rel.join(e.file_name());
         if is_graph_text(&p) {
             if !restored.contains(&rel_child) {
-                let _ = std::fs::remove_file(&p);
+                ensure_target_within_root(graph_root, &p)?;
+                move_live_to_recovery(&p, &recovery.join(&rel_child))?;
             }
         } else if is_visible_real_dir(&e)? {
-            delete_unrestored_md(dest, &rel_child, restored)?;
+            delete_unrestored_md(dest, &rel_child, restored, recovery, graph_root)?;
         }
     }
     Ok(())
@@ -538,15 +667,31 @@ fn delete_unrestored_md(
 fn restore_asset_sidecars_dir(
     src: &std::path::Path,
     dest: &std::path::Path,
+    recovery: &std::path::Path,
+    graph_root: &std::path::Path,
 ) -> std::io::Result<()> {
     if !src.is_dir() {
         return Ok(());
     }
+    ensure_target_within_root(graph_root, dest)?;
     std::fs::create_dir_all(dest)?;
     let mut restored: std::collections::HashSet<std::path::PathBuf> =
         std::collections::HashSet::new();
-    restore_asset_sidecars_copy(src, dest, std::path::Path::new(""), &mut restored)?;
-    delete_unrestored_asset_sidecars(dest, std::path::Path::new(""), &restored)?;
+    restore_asset_sidecars_copy(
+        src,
+        dest,
+        std::path::Path::new(""),
+        &mut restored,
+        recovery,
+        graph_root,
+    )?;
+    delete_unrestored_asset_sidecars(
+        dest,
+        std::path::Path::new(""),
+        &restored,
+        recovery,
+        graph_root,
+    )?;
     Ok(())
 }
 
@@ -555,6 +700,8 @@ fn restore_asset_sidecars_copy(
     dest: &std::path::Path,
     rel: &std::path::Path,
     restored: &mut std::collections::HashSet<std::path::PathBuf>,
+    recovery: &std::path::Path,
+    graph_root: &std::path::Path,
 ) -> std::io::Result<()> {
     for e in std::fs::read_dir(src)? {
         let e = e?;
@@ -562,14 +709,19 @@ fn restore_asset_sidecars_copy(
         let rel_child = rel.join(e.file_name());
         let p = e.path();
         if ft.is_dir() {
+            ensure_target_within_root(graph_root, &dest.join(&rel_child))?;
             std::fs::create_dir_all(dest.join(&rel_child))?;
-            restore_asset_sidecars_copy(&p, dest, &rel_child, restored)?;
+            restore_asset_sidecars_copy(&p, dest, &rel_child, restored, recovery, graph_root)?;
         } else if ft.is_file() && is_asset_sidecar(&p) {
             let target = dest.join(&rel_child);
+            ensure_target_within_root(graph_root, &target)?;
             if let Some(parent) = target.parent() {
                 std::fs::create_dir_all(parent)?;
             }
-            atomic_copy(&p, &target)?;
+            if target.exists() {
+                move_live_to_recovery(&target, &recovery.join(&rel_child))?;
+            }
+            atomic_copy_new(&p, &target)?;
             restored.insert(rel_child);
         }
     }
@@ -580,6 +732,8 @@ fn delete_unrestored_asset_sidecars(
     dest: &std::path::Path,
     rel: &std::path::Path,
     restored: &std::collections::HashSet<std::path::PathBuf>,
+    recovery: &std::path::Path,
+    graph_root: &std::path::Path,
 ) -> std::io::Result<()> {
     let dir = dest.join(rel);
     if !dir.is_dir() {
@@ -591,9 +745,10 @@ fn delete_unrestored_asset_sidecars(
         let rel_child = rel.join(e.file_name());
         let p = e.path();
         if ft.is_dir() {
-            delete_unrestored_asset_sidecars(dest, &rel_child, restored)?;
+            delete_unrestored_asset_sidecars(dest, &rel_child, restored, recovery, graph_root)?;
         } else if ft.is_file() && is_asset_sidecar(&p) && !restored.contains(&rel_child) {
-            let _ = std::fs::remove_file(&p);
+            ensure_target_within_root(graph_root, &p)?;
+            move_live_to_recovery(&p, &recovery.join(&rel_child))?;
         }
     }
     Ok(())
@@ -873,7 +1028,8 @@ mod tests {
         std::fs::write(dest.join("nested").join("stale.edn"), "stale\n").unwrap();
         std::fs::write(dest.join("nested").join("image.png"), b"keep").unwrap();
 
-        restore_asset_sidecars_dir(&src, &dest).unwrap();
+        let recovery = root.join("recovery-assets");
+        restore_asset_sidecars_dir(&src, &dest, &recovery, &root).unwrap();
         assert_eq!(
             std::fs::read_to_string(dest.join("doc.edn")).unwrap(),
             "new\n"
@@ -884,6 +1040,10 @@ mod tests {
         );
         assert!(!dest.join("stale.edn").exists());
         assert!(!dest.join("nested").join("stale.edn").exists());
+        assert_eq!(
+            std::fs::read_to_string(recovery.join("stale.edn")).unwrap(),
+            "stale\n"
+        );
         assert_eq!(std::fs::read(dest.join("image.png")).unwrap(), b"keep");
         assert_eq!(
             std::fs::read(dest.join("nested").join("image.png")).unwrap(),
@@ -932,12 +1092,17 @@ mod tests {
         std::fs::write(pages.join("client-a").join("Deep.md"), b"corrupt\n").unwrap();
         std::fs::write(pages.join("client-a").join("Stale.md"), b"stale\n").unwrap();
         std::fs::write(pages.join("client-a").join("notes.txt"), b"keep\n").unwrap();
-        restore_md_dir(&backup.join("pages"), &pages).unwrap();
+        let recovery = root.join("recovery-pages");
+        restore_md_dir(&backup.join("pages"), &pages, &recovery, &root).unwrap();
         assert_eq!(
             std::fs::read(pages.join("client-a").join("Deep.md")).unwrap(),
             b"deep\n"
         );
         assert!(!pages.join("client-a").join("Stale.md").exists());
+        assert_eq!(
+            std::fs::read_to_string(recovery.join("client-a").join("Stale.md")).unwrap(),
+            "stale\n"
+        );
         assert_eq!(
             std::fs::read(pages.join("client-a").join("notes.txt")).unwrap(),
             b"keep\n"

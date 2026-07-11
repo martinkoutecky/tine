@@ -2,7 +2,8 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
 import { readFileSync } from "node:fs";
-import { Block } from "./Block";
+import { Block, SurfaceContext } from "./Block";
+import { SheetGrid } from "./SheetGrid";
 import { ContextMenu } from "./ContextMenu";
 import { initParser } from "../render/parse";
 import {
@@ -18,9 +19,17 @@ import {
   type FeedPage,
   type Node as StoreNode,
 } from "../store";
-import { editingId } from "../editorController";
+import { editingId, endEdit } from "../editorController";
 import { installKeybindings } from "../keybindings";
-import { cellSel, colSeamSel, resetCellSelectionForTests, rowSeamSel, setCellSel } from "../sheet/selection";
+import { setFocusedPaneId } from "../panes";
+import {
+  cellSel,
+  colSeamSel,
+  handleCellSelectionKey,
+  resetCellSelectionForTests,
+  rowSeamSel,
+  setCellSel,
+} from "../sheet/selection";
 
 beforeAll(async () => {
   await initParser();
@@ -38,6 +47,7 @@ afterEach(() => {
   restoreClipboard?.();
   restoreClipboard = null;
   resetCellSelectionForTests();
+  setFocusedPaneId("main");
   resetStore();
   document.body.innerHTML = "";
 });
@@ -299,6 +309,169 @@ function clickMenuItem(label: string): void {
 }
 
 describe("SheetGrid interaction", () => {
+  it("bounds initial work for duplicate 100k-row Grids and reuses navigation metadata", () => {
+    const byId: Record<string, StoreNode> = {};
+    const rowIds: string[] = [];
+    let rowLengthReads = 0;
+    for (let row = 0; row < 100_001; row++) {
+      const rowId = `perf-row-${row}`;
+      const children = new Proxy([] as string[], {
+        get(target, property, receiver) {
+          if (property === "length") rowLengthReads++;
+          return Reflect.get(target, property, receiver);
+        },
+      });
+      rowIds.push(rowId);
+      byId[rowId] = node(rowId, "", "perf-grid", children);
+    }
+    byId["perf-grid"] = node("perf-grid", "Large grid\ntine.view:: grid", null, rowIds);
+    setDoc({ byId, pages: [page(["perf-grid"])], feed: ["Sheet"], loaded: true });
+
+    const readsBeforeMount = rowLengthReads;
+    const { root, dispose } = mount(() => <>
+      <SurfaceContext.Provider value="pane:left"><SheetGrid id="perf-grid" /></SurfaceContext.Provider>
+      <SurfaceContext.Provider value="pane:right"><SheetGrid id="perf-grid" /></SurfaceContext.Provider>
+    </>);
+    // 200 shared discovery reads + one 200-row active-window pass per surface.
+    // A per-pane dimension scan would push this to at least 800.
+    expect(rowLengthReads - readsBeforeMount).toBeLessThanOrEqual(650);
+    expect(root.querySelectorAll(":scope .sheet-grid > .sheet-cell")).toHaveLength(400);
+    const surfaceId = "pane:left";
+    setCellSel({ gridId: "perf-grid", surfaceId, row: 0, col: 0 });
+    const readsAfterMount = rowLengthReads;
+    for (let step = 0; step < 40; step++) {
+      handleCellSelectionKey(new KeyboardEvent("keydown", { key: "ArrowDown" }));
+    }
+    const finalSelection = cellSel();
+    expect(finalSelection?.kind).toBe("cell");
+    expect(finalSelection?.kind === "cell" ? finalSelection.row : -1).toBe(20);
+    expect(rowLengthReads).toBe(readsAfterMount);
+
+    dispose();
+  });
+
+  it("enters the focused duplicate grid from outline selection with instance-scoped history", async () => {
+    loadSheetDoc();
+    disposeKeys = installKeybindings();
+    const { root, dispose } = mount(() => <>
+      <div data-pane-id="main">
+        <SurfaceContext.Provider value="main"><SheetGrid id="grid" /></SurfaceContext.Provider>
+      </div>
+      <div data-pane-id="pane-2">
+        <SurfaceContext.Provider value="pane:pane-2"><SheetGrid id="grid" /></SurfaceContext.Provider>
+      </div>
+    </>);
+
+    const leftSecond = root.querySelector<HTMLElement>(
+      '.sheet-cell[data-sheet-surface-id="main"][data-row="0"][data-col="1"]'
+    )!;
+    leftSecond.dispatchEvent(pointer("pointerdown", 10, 10));
+    setFocusedPaneId("pane-2");
+    selectBlock("grid");
+
+    keydown(window, "Enter");
+    const selected = cellSel();
+    expect(selected).toEqual({ kind: "cell", gridId: "grid", row: 0, col: 0 });
+    expect(selected?.surfaceId).toBe("pane:pane-2");
+
+    keydown(window, "Enter");
+    await tick();
+    const editors = root.querySelectorAll("textarea.block-editor");
+    expect(editors).toHaveLength(1);
+    expect(editors[0].closest('[data-sheet-surface-id="pane:pane-2"]')).not.toBeNull();
+    endEdit("select-block");
+    dispose();
+  });
+
+  it("enters a uniquely rendered nested grid from outline selection", async () => {
+    loadSheetDocWithSubgrid();
+    disposeKeys = installKeybindings();
+    const { root, dispose } = mount(() => (
+      <div data-pane-id="main">
+        <SurfaceContext.Provider value="main"><SheetGrid id="grid" /></SurfaceContext.Provider>
+      </div>
+    ));
+    const nested = root.querySelector<HTMLElement>('[data-sheet-grid-id="c2"][data-sheet-surface-id]')!;
+    const surface = nested.dataset.sheetSurfaceId!;
+    expect(new Set(
+      [...root.querySelectorAll<HTMLElement>('[data-sheet-grid-id="c2"][data-sheet-surface-id]')]
+        .map((el) => el.dataset.sheetSurfaceId)
+    )).toEqual(new Set([surface]));
+    expect(blockIsGridView("c2")).toBe(true);
+    selectBlock("c2");
+    expect(hasSelection()).toBe(true);
+
+    keydown(window, "Enter");
+    const selected = cellSel();
+    expect(selected).toEqual({ kind: "cell", gridId: "c2", row: 0, col: 0 });
+    expect(selected?.surfaceId).toBe(surface);
+
+    keydown(window, "Enter");
+    await tick();
+    expect(editingId()).toBe("n11");
+    expect(root.querySelectorAll("textarea.block-editor")).toHaveLength(1);
+    endEdit("select-block");
+    dispose();
+  });
+
+  it("keeps keyboard seam navigation and overtype in the selected duplicate surface", async () => {
+    loadSheetDoc();
+    const { root, dispose } = mount(() => <>
+      <SurfaceContext.Provider value="pane:left"><SheetGrid id="grid" /></SurfaceContext.Provider>
+      <SurfaceContext.Provider value="pane:right"><SheetGrid id="grid" /></SurfaceContext.Provider>
+    </>);
+    const right = root.querySelector<HTMLElement>(
+      '.sheet-cell[data-sheet-grid-id="grid"][data-sheet-surface-id="pane:right"][data-row="0"][data-col="0"]'
+    )!;
+
+    right.dispatchEvent(pointer("pointerdown", 10, 10));
+    expect(cellSel()?.surfaceId).toBe("pane:right");
+
+    handleCellSelectionKey(new KeyboardEvent("keydown", { key: "ArrowRight" }));
+    expect(cellSel()?.kind).toBe("col-seam");
+    expect(cellSel()?.surfaceId).toBe("pane:right");
+
+    handleCellSelectionKey(new KeyboardEvent("keydown", { key: "ArrowRight" }));
+    expect(cellSel()?.kind).toBe("cell");
+    expect(cellSel()?.surfaceId).toBe("pane:right");
+
+    handleCellSelectionKey(new KeyboardEvent("keydown", { key: "Z" }));
+    await tick();
+    const editors = root.querySelectorAll("textarea.block-editor");
+    expect(editors).toHaveLength(1);
+    expect(editors[0].closest('[data-sheet-surface-id="pane:right"]')).not.toBeNull();
+    endEdit("select-block");
+    dispose();
+  });
+
+  it("keeps nested-grid Esc ascent and the next edit in the selected duplicate surface", async () => {
+    loadSheetDocWithSubgrid();
+    const { root, dispose } = mount(() => <>
+      <SurfaceContext.Provider value="pane:left"><SheetGrid id="grid" /></SurfaceContext.Provider>
+      <SurfaceContext.Provider value="pane:right"><SheetGrid id="grid" /></SurfaceContext.Provider>
+    </>);
+    const nestedRight = root.querySelector<HTMLElement>(
+      '.sheet-cell[data-sheet-grid-id="c2"][data-sheet-surface-id="pane:right"][data-row="0"][data-col="0"]'
+    )!;
+
+    expect(nestedRight).not.toBeNull();
+    setCellSel(rowSeamSel("c2", 0, 0, "sheet:pane:right:grid"));
+    expect(cellSel()?.surfaceId).toBe("sheet:pane:right:grid");
+
+    handleCellSelectionKey(new KeyboardEvent("keydown", { key: "Escape" }));
+    const outer = cellSel();
+    expect(outer).toEqual({ kind: "cell", gridId: "grid", row: 0, col: 1 });
+    expect(outer?.surfaceId).toBe("pane:right");
+
+    handleCellSelectionKey(new KeyboardEvent("keydown", { key: "Enter" }));
+    await tick();
+    const editors = root.querySelectorAll("textarea.block-editor");
+    expect(editors).toHaveLength(1);
+    expect(editors[0].closest('[data-sheet-surface-id="pane:right"]')).not.toBeNull();
+    endEdit("select-block");
+    dispose();
+  });
+
   it("empty grid placeholder creates the first row and cell and enters edit", async () => {
     loadEmptyGridDoc();
     const { root, dispose } = mount(() => <Block id="grid" />);

@@ -2,7 +2,7 @@
 // persisting the choice so it reopens next launch.
 
 import { backend } from "./backend";
-import { setGraphMeta, setWorkflow, bumpGraphEpoch, setRightSidebar, graphMeta, graphEpoch, setAliasMap, seedFavorites, pruneSidebarBlocks, pushToast, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning } from "./ui";
+import { setGraphMeta, setWorkflow, bumpGraphEpoch, setRightSidebar, graphMeta, graphEpoch, setAliasMap, seedFavorites, pruneSidebarBlocks, pushToast, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation } from "./ui";
 import { resetStore, flushAll } from "./store";
 import { clearAssetBlobCache } from "./assetCache";
 import { resetTabsToJournals, openPage, restoreSession, flushSession } from "./router";
@@ -82,6 +82,12 @@ export async function loadGraphPath(
     clearRecent();
   }
   setGraphMeta(meta ?? null);
+  // Revoke every in-flight result from the previous binding NOW, before the
+  // awaited journal-template step. This is also required for same-root force
+  // refresh (restore): root equality cannot distinguish pre-restore DTOs from
+  // the freshly rebound graph. The second bump below refetches after a default
+  // template has been written, preserving #73's populated-first observation.
+  bumpGraphEpoch();
   setWorkflow(meta?.preferred_workflow === "todo" ? "todo" : "now");
   setJournalTitleFormat(meta?.journal_page_title_format); // match this graph's journal titles
   seedFavorites(meta?.favorites ?? []);
@@ -154,7 +160,8 @@ async function loadAliases(): Promise<void> {
  *  References to refetch from the now-correct backend). Aliases may have moved with
  *  the renamed file, so refresh those too. Caller must have run flushAll() first
  *  (so resetStore discards nothing unsaved) and then navigate to the new name. */
-export function refreshAfterRename(): void {
+export function refreshAfterRename(from: string, to: string): void {
+  renamePageInNavigation(from, to);
   resetStore();
   bumpGraphEpoch();
   void refreshAliases();

@@ -9,8 +9,10 @@ import "@fontsource/inter/400.css";
 import "@fontsource/inter/500.css";
 import "@fontsource/inter/600.css";
 import "@fontsource/inter/700.css";
-// Emoji are rendered as Twemoji SVG <img>s (see render/emoji.tsx), NOT via a
-// color-emoji *font* — WebKitGTK paints a color webfont as a blank glyph.
+// Display emoji are Twemoji SVG <img>s (see render/emoji.tsx). Native editable
+// controls cannot contain images, so they use this monochrome font instead of a
+// system COLRv1 font, whose WebKitGTK/Skia path can abort the render process (#76).
+import "@fontsource-variable/noto-emoji/wght.css";
 import "katex/dist/katex.min.css";
 import "pdfjs-dist/web/pdf_viewer.css";
 import "./styles/theme.css";
