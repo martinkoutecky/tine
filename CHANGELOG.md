@@ -31,8 +31,8 @@ reproducible Help-panel reports, and complete cross-platform release guards.
   reliably, and copied reports record the Tine version used for the comparison.
 - **Release CI catches platform-only compilation and stale Flatpak sources before
   tagging.** Windows and Android compile guards now run on ordinary CI, the
-  Flatpak offline npm manifest is checked against `package-lock.json`, and a
-  release remains draft unless every required artifact job succeeds.
+  Flatpak offline npm and Cargo manifests are checked against their lockfiles,
+  and a release remains draft unless every required artifact job succeeds.
 
 ## [0.5.5] - 2026-07-11
 

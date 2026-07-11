@@ -30,6 +30,9 @@ jobs:
       - name: Flatpak offline npm sources are current
         run: node scripts/check-flatpak-node-sources.mjs
 
+      - name: Flatpak offline Cargo sources are current
+        run: node scripts/check-flatpak-cargo-sources.mjs
+
       # The pin guard otherwise only runs inside `npm run build`, which fast CI
       # skips — a Cargo lsdoc bump with stale vendored WASM must fail HERE, not
       # at release-build time.
