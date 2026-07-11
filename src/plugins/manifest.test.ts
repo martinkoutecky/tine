@@ -45,4 +45,14 @@ describe("parsePluginManifest", () => {
   it("rejects unknown capabilities", () => {
     expect(() => parsePluginManifest({ ...base, capabilities: ["network.anywhere"] })).toThrow(/unsupported/);
   });
+
+  it("rejects unknown fields instead of silently widening the format", () => {
+    expect(() => parsePluginManifest({ ...base, postinstall: "run-me" })).toThrow(/unknown field postinstall/);
+    expect(() =>
+      parsePluginManifest({
+        ...base,
+        contributions: { commands: [{ id: "hello", title: "Say hello", script: "alert(1)" }] },
+      })
+    ).toThrow(/unknown field script/);
+  });
 });

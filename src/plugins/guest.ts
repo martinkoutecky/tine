@@ -9,7 +9,7 @@ export interface PluginGuestLimits {
 }
 
 export const DEFAULT_GUEST_LIMITS: PluginGuestLimits = {
-  memoryInitialPages: 4,
+  memoryInitialPages: 32,
   memoryMaximumPages: 256,
 };
 

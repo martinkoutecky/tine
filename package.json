@@ -16,7 +16,8 @@
     "e2e:caret": "CARET_LABEL=release-required CARET_MODE=agenda node scripts/e2e-caret.mjs",
     "e2e:multigraph": "node scripts/e2e-multigraph.mjs",
     "screenshot": "node scripts/screenshot.mjs",
-    "bench": "node scripts/bench.mjs"
+    "bench": "node scripts/bench.mjs",
+    "plugin:check": "node scripts/tine-plugin.mjs check"
   },
   "dependencies": {
     "@fontsource/inter": "^5.2.8",

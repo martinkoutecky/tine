@@ -74,6 +74,12 @@ function record(value: unknown, where: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+function knownKeys(obj: Record<string, unknown>, where: string, allowed: readonly string[]) {
+  const known = new Set(allowed);
+  const unknown = Object.keys(obj).find((key) => !known.has(key));
+  if (unknown) throw new PluginManifestError(`${where} contains unknown field ${unknown}`);
+}
+
 function stringField(value: unknown, where: string, max: number): string {
   if (typeof value !== "string" || value.length === 0 || value.length > max) {
     throw new PluginManifestError(`${where} must be a non-empty string of at most ${max} characters`);
@@ -120,6 +126,7 @@ function parseCommands(value: unknown): PluginCommandContribution[] | undefined 
   if (!Array.isArray(value)) throw new PluginManifestError("contributions.commands must be an array");
   return value.map((item, index) => {
     const obj = record(item, `contributions.commands[${index}]`);
+    knownKeys(obj, `contributions.commands[${index}]`, ["id", "title", "description", "platforms"]);
     return {
       id: contributionId(obj.id, `contributions.commands[${index}].id`),
       title: stringField(obj.title, `contributions.commands[${index}].title`, 80),
@@ -138,6 +145,7 @@ function parseSlashCommands(value: unknown): PluginSlashCommandContribution[] | 
   if (!Array.isArray(value)) throw new PluginManifestError("contributions.slashCommands must be an array");
   return value.map((item, index) => {
     const obj = record(item, `contributions.slashCommands[${index}]`);
+    knownKeys(obj, `contributions.slashCommands[${index}]`, ["id", "title", "insertText", "platforms"]);
     return {
       id: contributionId(obj.id, `contributions.slashCommands[${index}].id`),
       title: stringField(obj.title, `contributions.slashCommands[${index}].title`, 80),
@@ -156,6 +164,7 @@ function parseDecorations(value: unknown): PluginBlockDecorationContribution[] |
   if (!Array.isArray(value)) throw new PluginManifestError("contributions.blockDecorations must be an array");
   return value.map((item, index) => {
     const obj = record(item, `contributions.blockDecorations[${index}]`);
+    knownKeys(obj, `contributions.blockDecorations[${index}]`, ["id", "kind", "platforms"]);
     if (obj.kind !== "thread-lines" && obj.kind !== "badge") {
       throw new PluginManifestError(`contributions.blockDecorations[${index}].kind is unsupported`);
     }
@@ -196,6 +205,10 @@ function assertContributionCapabilities(manifest: PluginManifest) {
 /** Strictly parse the untrusted manifest before reading or compiling its entry. */
 export function parsePluginManifest(value: unknown): PluginManifest {
   const obj = record(value, "manifest");
+  knownKeys(obj, "manifest", [
+    "schemaVersion", "id", "name", "version", "apiVersion", "description", "author", "license",
+    "source", "entry", "platforms", "capabilities", "contributions", "aiDevelopment",
+  ]);
   if (obj.schemaVersion !== 1) throw new PluginManifestError("schemaVersion must be 1");
   if (obj.apiVersion !== PLUGIN_API_VERSION) {
     throw new PluginManifestError(`apiVersion must be ${PLUGIN_API_VERSION}`);
@@ -209,6 +222,7 @@ export function parsePluginManifest(value: unknown): PluginManifest {
     throw new PluginManifestError("entry must be a relative .wasm path without traversal");
   }
   const contributionsObj = obj.contributions === undefined ? undefined : record(obj.contributions, "contributions");
+  if (contributionsObj) knownKeys(contributionsObj, "contributions", ["commands", "slashCommands", "blockDecorations"]);
   const aiDevelopment = obj.aiDevelopment;
   if (aiDevelopment !== undefined && aiDevelopment !== "none" && aiDevelopment !== "assisted" && aiDevelopment !== "primary") {
     throw new PluginManifestError("aiDevelopment is unsupported");

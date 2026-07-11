@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "page.tine.bullet-threading",
+  "name": "Bullet threading",
+  "version": "0.1.0",
+  "apiVersion": "0.1",
+  "description": "Draw subtle elbow connectors from parent bullets to their children.",
+  "author": "Martin Koutecký",
+  "license": "MIT",
+  "source": "https://github.com/martinkoutecky/tine-plugin-bullet-threading",
+  "entry": "target/wasm32-unknown-unknown/release/tine_plugin_bullet_threading.wasm",
+  "platforms": ["desktop", "android", "ios"],
+  "capabilities": ["block-decorations.register"],
+  "contributions": {
+    "blockDecorations": [
+      { "id": "thread-lines", "kind": "thread-lines" }
+    ]
+  },
+  "aiDevelopment": "primary"
+}

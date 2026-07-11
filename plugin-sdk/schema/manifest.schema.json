@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tine.page/schemas/plugin-manifest-v1.json",
+  "title": "Tine plugin manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "id", "name", "version", "apiVersion", "description", "author", "license", "source", "entry", "capabilities"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "id": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9.-]{1,62}[a-z0-9])$" },
+    "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "version": { "type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?$" },
+    "apiVersion": { "const": "0.1" },
+    "description": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "author": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "license": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "source": { "type": "string", "format": "uri", "pattern": "^https://" },
+    "entry": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*\\.wasm$" },
+    "platforms": {
+      "type": "array", "minItems": 1, "uniqueItems": true,
+      "items": { "enum": ["desktop", "android", "ios"] },
+      "default": ["desktop"]
+    },
+    "capabilities": {
+      "type": "array", "uniqueItems": true,
+      "items": { "enum": ["commands.register", "slash-commands.register", "block-decorations.register", "graph.read.visible", "graph.write.block", "settings.read", "settings.write"] }
+    },
+    "aiDevelopment": { "enum": ["none", "assisted", "primary"] },
+    "contributions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "commands": { "type": "array", "items": { "$ref": "#/$defs/command" } },
+        "slashCommands": { "type": "array", "items": { "$ref": "#/$defs/slashCommand" } },
+        "blockDecorations": { "type": "array", "items": { "$ref": "#/$defs/decoration" } }
+      }
+    }
+  },
+  "$defs": {
+    "platforms": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "enum": ["desktop", "android", "ios"] } },
+    "command": {
+      "type": "object", "additionalProperties": false, "required": ["id", "title"],
+      "properties": { "id": { "type": "string" }, "title": { "type": "string" }, "description": { "type": "string" }, "platforms": { "$ref": "#/$defs/platforms" } }
+    },
+    "slashCommand": {
+      "type": "object", "additionalProperties": false, "required": ["id", "title"],
+      "properties": { "id": { "type": "string" }, "title": { "type": "string" }, "insertText": { "type": "string" }, "platforms": { "$ref": "#/$defs/platforms" } }
+    },
+    "decoration": {
+      "type": "object", "additionalProperties": false, "required": ["id", "kind"],
+      "properties": { "id": { "type": "string" }, "kind": { "enum": ["thread-lines", "badge"] }, "platforms": { "$ref": "#/$defs/platforms" } }
+    }
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "dev.example.my-plugin",
+  "name": "My Tine plugin",
+  "version": "0.1.0",
+  "apiVersion": "0.1",
+  "description": "A small Tine-native plugin.",
+  "author": "Your name",
+  "license": "MIT",
+  "source": "https://github.com/your-name/my-tine-plugin",
+  "entry": "target/wasm32-unknown-unknown/release/my_tine_plugin.wasm",
+  "platforms": ["desktop", "android"],
+  "capabilities": ["commands.register"],
+  "contributions": {
+    "commands": [
+      { "id": "hello", "title": "Hello from my plugin" }
+    ]
+  },
+  "aiDevelopment": "primary"
+}
