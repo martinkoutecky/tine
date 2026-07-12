@@ -307,6 +307,69 @@ pub(crate) fn opener_command(prog: &str) -> std::process::Command {
     cmd
 }
 
+#[cfg(desktop)]
+pub(crate) fn open_page_source(path: &std::path::Path) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    let mut command = opener_command("xdg-open");
+    #[cfg(target_os = "macos")]
+    let mut command = opener_command("open");
+    #[cfg(target_os = "windows")]
+    let mut command = opener_command("explorer");
+    command
+        .arg(path)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(desktop)]
+pub(crate) fn reveal_page_source(path: &std::path::Path) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    return opener_command("open")
+        .arg("-R")
+        .arg(path)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| error.to_string());
+
+    #[cfg(target_os = "windows")]
+    return opener_command("explorer")
+        .arg("/select,")
+        .arg(path)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| error.to_string());
+
+    #[cfg(target_os = "linux")]
+    {
+        // Freedesktop's file-manager interface selects the exact file. If the
+        // desktop has no implementation, opening the containing folder is still
+        // a useful and portable fallback.
+        if let Ok(uri) = tauri::Url::from_file_path(path) {
+            let status = opener_command("dbus-send")
+                .args([
+                    "--session",
+                    "--print-reply",
+                    "--dest=org.freedesktop.FileManager1",
+                    "/org/freedesktop/FileManager1",
+                    "org.freedesktop.FileManager1.ShowItems",
+                    &format!("array:string:{uri}"),
+                    "string:",
+                ])
+                .status();
+            if status.is_ok_and(|status| status.success()) {
+                return Ok(());
+            }
+        }
+        let parent = path.parent().ok_or_else(|| "page source has no parent directory".to_string())?;
+        opener_command("xdg-open")
+            .arg(parent)
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+}
+
 #[cfg(target_os = "linux")]
 fn sanitized_opener_env(
     vars: impl IntoIterator<Item = (std::ffi::OsString, std::ffi::OsString)>,

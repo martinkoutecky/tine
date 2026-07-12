@@ -53,6 +53,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   openers now inherit only desktop-session state, exclude AppImage loader paths,
   and start in a new session so VLC cannot load Tine's bundled libraries or die
   with its parent process group. (GH #118)
+- **Page titles can reveal or open their exact source file on desktop.** The
+  right-click menu flushes edits first, refuses save conflicts, preserves nested
+  and path-pinned Markdown/Org identity, and never exposes the actions for the
+  bundled Guide. (GH #84)
 
 ### Changed
 

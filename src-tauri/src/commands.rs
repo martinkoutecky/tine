@@ -1,7 +1,7 @@
 #[cfg(desktop)]
 use crate::debug::diag;
 #[cfg(desktop)]
-use crate::platform::opener_command;
+use crate::platform::{open_page_source, opener_command, reveal_page_source};
 use crate::state::{refresh_graph, slot_for_context, with_graph, GraphContext};
 use std::sync::Arc;
 use tine_core::model::{PageDto, PageEntry, PageKind, RefGroup};
@@ -649,6 +649,37 @@ pub(crate) fn open_asset(name: String, state: GraphContext<'_>) -> Result<(), St
     {
         let _ = (&name, &target);
         Err("open asset externally is not supported on this platform".into())
+    }
+}
+
+/// Open or reveal the exact source file recorded on a loaded page. Rust resolves
+/// and canonicalizes the graph-relative identity; the WebView never supplies an
+/// arbitrary absolute path.
+#[tauri::command]
+pub(crate) fn open_page_file(
+    name: String,
+    kind: PageKind,
+    path: Option<String>,
+    reveal: bool,
+    state: GraphContext<'_>,
+) -> Result<(), String> {
+    let target = with_graph(&state, |graph| {
+        graph
+            .page_source_file(&name, kind, path.as_deref())
+            .map_err(|error| error.to_string())
+    })?;
+    #[cfg(desktop)]
+    {
+        if reveal {
+            reveal_page_source(&target)
+        } else {
+            open_page_source(&target)
+        }
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = (target, reveal);
+        Err("page file actions are available on desktop only".into())
     }
 }
 

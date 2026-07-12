@@ -922,7 +922,7 @@ export type SheetCellRemoveCtx = { rowId?: string; gridId?: string; col?: number
 
 export type CtxTarget =
   | { kind: "block"; blockId: string }
-  | { kind: "page"; name: string; pageKind: "journal" | "page" }
+  | { kind: "page"; name: string; pageKind: "journal" | "page"; fileActions?: boolean }
   | { kind: "blockref"; uuid: string; page: string; pageKind: "journal" | "page" }
   | { kind: "sheet-cell"; blockId: string; remove?: SheetCellRemoveCtx }
   | {
@@ -954,9 +954,10 @@ export function openPageContextMenu(
   x: number,
   y: number,
   name: string,
-  pageKind: "journal" | "page" = "page"
+  pageKind: "journal" | "page" = "page",
+  fileActions = false,
 ) {
-  setContextMenu({ x, y, kind: "page", name, pageKind });
+  setContextMenu({ x, y, kind: "page", name, pageKind, fileActions });
 }
 export function openBlockRefContextMenu(
   x: number,

@@ -969,6 +969,9 @@ export function mockBackend(): Backend {
     async openAsset(): Promise<void> {
       // no OS opener in the browser mock
     },
+    async openPageFile(): Promise<void> {
+      // no OS file manager in the browser mock
+    },
     async editAssetExternal(): Promise<void> {
       // no external editor in the browser mock
     },

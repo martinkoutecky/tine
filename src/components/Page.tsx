@@ -420,7 +420,7 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
             onContextMenu={(e) => {
               if (props.page.guide) return;
               e.preventDefault();
-              openPageContextMenu(e.clientX, e.clientY, props.page.name, props.page.kind);
+              openPageContextMenu(e.clientX, e.clientY, props.page.name, props.page.kind, true);
             }}
           >
             <Show when={props.page.kind === "journal"}>

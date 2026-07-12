@@ -871,6 +871,39 @@ impl Graph {
         }
     }
 
+    /// Resolve the exact on-disk source file for an explicit user file action.
+    /// A loaded page's recorded relative path always wins (including nested and
+    /// duplicate-name files); a newly saved page without a refreshed path may
+    /// fall back to normal name resolution. The final canonical-file check keeps
+    /// symlinks from escaping the managed pages/journals directories.
+    pub fn page_source_file(
+        &self,
+        name: &str,
+        kind: PageKind,
+        recorded_path: Option<&str>,
+    ) -> io::Result<PathBuf> {
+        let candidate = recorded_path
+            .filter(|path| !path.trim().is_empty())
+            .map(|path| {
+                self.resolve_rel(path)
+                    .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid page path"))
+            })
+            .unwrap_or_else(|| Ok(self.path_for(name, kind)))?;
+        let canonical = candidate.canonicalize()?;
+        if !canonical.is_file() {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "page source is not a file"));
+        }
+        let pages = self.pages_path().canonicalize()?;
+        let journals = self.journals_path().canonicalize()?;
+        if !canonical.starts_with(&pages) && !canonical.starts_with(&journals) {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "page source escapes graph directories",
+            ));
+        }
+        Ok(canonical)
+    }
+
     /// Whether a journal file is a "shadow": a non-date-stem file (e.g. a leftover
     /// title-named `Friday, 26-06-2026.org`) that coexists with a canonical
     /// date-stem file (`2026_06_26.{md,org}`) for the SAME day. The `(kind,name)`
@@ -7329,6 +7362,31 @@ mod tests {
         ] {
             assert_eq!(g.resolve_rel(bad), None, "should reject {bad:?}");
         }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn page_source_file_prefers_the_recorded_nested_identity() {
+        let dir = scratch("page-source-file");
+        fs::create_dir_all(dir.join("pages/client-a")).unwrap();
+        let canonical = dir.join("pages/Note.md");
+        let nested = dir.join("pages/client-a/Note.md");
+        fs::write(&canonical, "- canonical\n").unwrap();
+        fs::write(&nested, "- nested\n").unwrap();
+        let g = Graph::open(&dir);
+
+        assert_eq!(
+            g.page_source_file("Note", PageKind::Page, Some("pages/client-a/Note.md"))
+                .unwrap(),
+            nested.canonicalize().unwrap()
+        );
+        assert_eq!(
+            g.page_source_file("Note", PageKind::Page, None).unwrap(),
+            canonical.canonicalize().unwrap()
+        );
+        assert!(g
+            .page_source_file("Note", PageKind::Page, Some("assets/Note.md"))
+            .is_err());
         let _ = fs::remove_dir_all(&dir);
     }
 
