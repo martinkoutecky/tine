@@ -30,6 +30,23 @@ const plugin = {
   aiDevelopment: "primary",
   versions: [version],
 };
+const theme = {
+  id: "page.tine.theme.example",
+  name: "Example theme",
+  description: "An inert token theme",
+  source: "https://example.invalid/theme",
+  license: "MIT",
+  aiDevelopment: "primary",
+  versions: [{
+    version: "1.0.0",
+    apiVersion: "0.1",
+    modes: ["light", "dark"],
+    manifestSha256: "e".repeat(64),
+    manifestUrl: "https://example.invalid/theme.json",
+    audit: { ...version.audit, risk: "low", automatedDisposition: "publish", manualApproval: false },
+    publishedAt: "2026-07-12T00:00:00Z",
+  }],
+};
 
 describe("signed plugin registry parsing", () => {
   it("accepts a bounded HTTPS catalogue after the native signature boundary", () => {
@@ -37,13 +54,15 @@ describe("signed plugin registry parsing", () => {
       schemaVersion: 1,
       generatedAt: "2026-07-11T00:00:00Z",
       plugins: [plugin],
+      themes: [theme],
       revocations: [],
     });
     expect(parsed.plugins[0].versions[0].sha256).toBe("a".repeat(64));
+    expect(parsed.themes[0].versions[0].modes).toEqual(["light", "dark"]);
   });
 
   it("rejects duplicate identities, invalid digests, and non-HTTPS artifacts", () => {
-    const root = { schemaVersion: 1, generatedAt: "now", plugins: [plugin, plugin], revocations: [] };
+    const root = { schemaVersion: 1, generatedAt: "now", plugins: [plugin, plugin], themes: [], revocations: [] };
     expect(() => parseRegistryIndex(root)).toThrow(/duplicate/);
     expect(() =>
       parseRegistryIndex({ ...root, plugins: [{ ...plugin, versions: [{ ...version, sha256: "bad" }] }] })
@@ -58,6 +77,7 @@ describe("signed plugin registry parsing", () => {
       schemaVersion: 1,
       generatedAt: "2026-07-11T00:00:00Z",
       plugins: [plugin],
+      themes: [],
       revocations: [],
     });
     const registeredPlugin = parsed.plugins[0];

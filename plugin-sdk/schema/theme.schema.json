@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tine.page/schemas/theme-manifest-v1.json",
+  "title": "Tine token theme manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "id", "name", "version", "apiVersion", "description", "author", "license", "source", "modes", "screenshots"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "id": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9.-]{1,62}[a-z0-9])$" },
+    "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "version": { "type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?$" },
+    "apiVersion": { "const": "0.1" },
+    "description": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "author": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "license": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "source": { "type": "string", "format": "uri", "pattern": "^https://" },
+    "modes": {
+      "type": "object", "additionalProperties": false, "minProperties": 1,
+      "properties": { "light": { "$ref": "#/$defs/tokens" }, "dark": { "$ref": "#/$defs/tokens" } }
+    },
+    "screenshots": { "type": "array", "maxItems": 6, "items": { "type": "string", "format": "uri", "pattern": "^https://" } },
+    "portedFrom": { "$ref": "#/$defs/portedFrom" },
+    "aiDevelopment": { "enum": ["none", "assisted", "primary"] }
+  },
+  "$defs": {
+    "portedFrom": {
+      "type": "object", "additionalProperties": false,
+      "required": ["ecosystem", "name", "source", "revision", "license", "authors", "relationship"],
+      "properties": {
+        "ecosystem": { "enum": ["logseq", "obsidian", "other"] },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "source": { "type": "string", "format": "uri", "pattern": "^https://" },
+        "revision": { "type": "string", "minLength": 1, "maxLength": 160 },
+        "license": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "authors": { "type": "array", "minItems": 1, "maxItems": 32, "items": { "type": "string", "minLength": 1, "maxLength": 160 } },
+        "relationship": { "enum": ["behavioral-port", "source-derived"] }
+      }
+    },
+    "tokens": {
+      "type": "object", "additionalProperties": false, "minProperties": 1,
+      "propertyNames": {
+        "enum": [
+          "--ls-active-primary-color", "--ls-primary-background-color", "--ls-secondary-background-color",
+          "--ls-tertiary-background-color", "--ls-quaternary-background-color", "--ls-primary-text-color",
+          "--ls-secondary-text-color", "--ls-title-text-color", "--ls-link-text-color", "--ls-link-text-hover-color",
+          "--ls-tag-text-color", "--ls-border-color", "--ls-guideline-color", "--ls-block-highlight-color",
+          "--ls-block-bullet-color", "--ls-selection-background-color", "--ls-a-chosen-bg",
+          "--ls-page-inline-code-bg-color", "--ls-page-inline-code-color", "--ls-page-mark-bg-color", "--ls-page-mark-color"
+        ]
+      },
+      "additionalProperties": { "type": "string", "maxLength": 100 }
+    }
+  }
+}

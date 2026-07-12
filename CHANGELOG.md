@@ -28,6 +28,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Add plugin API 0.2 declarative settings: bounded host-rendered controls,
   device-local validated persistence, live settings-change events, reset behavior,
   nested plugin detail pages, and immutable behavioral-port provenance.
+- Add a separate theme API 0.1 with inert token-only packages, strict literal-color
+  validation, local and signed-catalogue installation, immutable provenance, and
+  Appearance-owned selection that remains subordinate to graph `custom.css`.
 
 ### Fixed
 

@@ -5,6 +5,7 @@ import { restoreSession } from "./router";
 import { initParser } from "./render/parse";
 import { applyTheme, applyAccent } from "./ui";
 import { initThemeGallery } from "./themeGallery";
+import { initThemePackages } from "./themes/manager";
 import "@fontsource/inter/400.css";
 import "@fontsource/inter/500.css";
 import "@fontsource/inter/600.css";
@@ -21,7 +22,7 @@ import "./styles/app.css";
 
 applyTheme();
 applyAccent();
-void initThemeGallery();
+void initThemePackages().then(initThemeGallery);
 
 // Restore the saved tab session before first paint, so tabs come back without a
 // flash. Capped so a slow/stuck backend read can never block startup — worst

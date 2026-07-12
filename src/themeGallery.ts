@@ -2,6 +2,7 @@ import { createSignal } from "solid-js";
 import { backend } from "./backend";
 import { CUSTOM_CSS_STYLE_ID, LS_SHIM_STYLE_ID, ensureLsShimStyle } from "./lsShim";
 import { galleryThemeById, galleryThemes } from "./styles/themes";
+import { installedThemeByKey } from "./themes/manager";
 
 export const THEME_GALLERY_STYLE_ID = "tine-theme";
 const KEY = "theme.gallery";
@@ -51,7 +52,7 @@ export function ensureThemeStyle(): HTMLStyleElement | null {
 }
 
 export function applyTheme(id: string): void {
-  const theme = id ? galleryThemeById(id) : undefined;
+  const theme = id ? galleryThemeById(id) ?? installedThemeByKey(id) : undefined;
   const nextId = theme?.id ?? "";
   setSelectedId(nextId);
   const el = ensureThemeStyle();

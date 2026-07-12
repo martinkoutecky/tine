@@ -6,6 +6,7 @@ import {
   ensureThemeStyle,
   selectedGalleryTheme,
 } from "./themeGallery";
+import { installThemePackage, uninstallThemePackage } from "./themes/manager";
 
 function managedStyleIds(): string[] {
   return Array.from(document.head.children)
@@ -48,5 +49,32 @@ describe("theme gallery style layer", () => {
 
     expect(selectedGalleryTheme()).toBe("");
     expect(theme?.textContent).toBe("");
+  });
+
+  it("applies an installed token theme without moving it after custom.css", async () => {
+    const installed = await installThemePackage({
+      schemaVersion: 1,
+      id: "page.tine.theme.test",
+      name: "Test tokens",
+      version: "1.0.0",
+      apiVersion: "0.1",
+      description: "A test theme.",
+      author: "Tine",
+      license: "MIT",
+      source: "https://example.invalid/theme",
+      modes: { dark: { "--ls-primary-background-color": "#010203" } },
+      screenshots: [],
+    });
+    const custom = document.createElement("style");
+    custom.id = CUSTOM_CSS_STYLE_ID;
+    document.head.appendChild(custom);
+
+    applyTheme(installed.key);
+
+    expect(selectedGalleryTheme()).toBe(installed.key);
+    expect(document.getElementById(THEME_GALLERY_STYLE_ID)?.textContent).toContain("#010203");
+    expect(managedStyleIds()).toEqual([LS_SHIM_STYLE_ID, THEME_GALLERY_STYLE_ID, CUSTOM_CSS_STYLE_ID]);
+    await uninstallThemePackage(installed.key);
+    applyTheme("");
   });
 });

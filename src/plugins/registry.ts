@@ -9,6 +9,8 @@ import {
   type PluginPlatform,
 } from "./manifest";
 import { pluginManager } from "./manager";
+import { THEME_API_VERSION, parseThemeManifest } from "../themes/manifest";
+import { installThemePackage } from "../themes/manager";
 
 export const COMMUNITY_REGISTRY_URL =
   "https://raw.githubusercontent.com/martinkoutecky/tine-plugin-registry/main/index.json";
@@ -70,16 +72,38 @@ export interface RegistryPlugin {
   versions: RegistryVersion[];
 }
 
+export interface RegistryThemeVersion {
+  version: string;
+  apiVersion: string;
+  modes: Array<"light" | "dark">;
+  manifestSha256: string;
+  manifestUrl: string;
+  audit: RegistryVersion["audit"];
+  publishedAt: string;
+}
+
+export interface RegistryTheme {
+  id: string;
+  name: string;
+  description: string;
+  source: string;
+  license: string;
+  aiDevelopment: "none" | "assisted" | "primary";
+  versions: RegistryThemeVersion[];
+}
+
 interface RegistryIndex {
   schemaVersion: 1;
   generatedAt: string;
   plugins: RegistryPlugin[];
+  themes: RegistryTheme[];
   revocations: Array<{ id: string; version: string; severity: string; reason: string; revokedAt: string }>;
 }
 
 const [communityPlugins, setCommunityPlugins] = createSignal<RegistryPlugin[]>([]);
+const [communityThemes, setCommunityThemes] = createSignal<RegistryTheme[]>([]);
 const [registryState, setRegistryState] = createSignal<"idle" | "loading" | "ready" | "offline" | "invalid">("idle");
-export { communityPlugins, registryState };
+export { communityPlugins, communityThemes, registryState };
 
 function object(value: unknown, where: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${where} is invalid`);
@@ -117,7 +141,7 @@ function digest(value: unknown, where: string): string {
 
 export function parseRegistryIndex(value: unknown): RegistryIndex {
   const root = object(value, "registry");
-  knownKeys(root, "registry", ["schemaVersion", "generatedAt", "plugins", "revocations"]);
+  knownKeys(root, "registry", ["schemaVersion", "generatedAt", "plugins", "themes", "revocations"]);
   if (root.schemaVersion !== 1 || !Array.isArray(root.plugins) || !Array.isArray(root.revocations)) {
     throw new Error("registry envelope is incompatible");
   }
@@ -212,6 +236,73 @@ export function parseRegistryIndex(value: unknown): RegistryIndex {
       versions,
     };
   });
+  const themesValue = root.themes ?? [];
+  if (!Array.isArray(themesValue)) throw new Error("registry themes are invalid");
+  const themes = themesValue.map((candidate, themeIndex): RegistryTheme => {
+    const item = object(candidate, `themes[${themeIndex}]`);
+    knownKeys(item, `themes[${themeIndex}]`, ["id", "name", "description", "source", "license", "aiDevelopment", "versions"]);
+    const id = text(item.id, `themes[${themeIndex}].id`, 64);
+    if (!/^[a-z0-9](?:[a-z0-9.-]{1,62}[a-z0-9])?$/.test(id) || !id.includes(".")) {
+      throw new Error(`themes[${themeIndex}].id is invalid`);
+    }
+    if (ids.has(id)) throw new Error(`duplicate registry extension ${id}`);
+    ids.add(id);
+    if (!Array.isArray(item.versions) || item.versions.length === 0) throw new Error(`${id} has no versions`);
+    const seenVersions = new Set<string>();
+    const versions = item.versions.map((candidateVersion, versionIndex): RegistryThemeVersion => {
+      const version = object(candidateVersion, `${id}.versions[${versionIndex}]`);
+      knownKeys(version, `${id}.versions[${versionIndex}]`, [
+        "version", "apiVersion", "modes", "manifestSha256", "manifestUrl", "audit", "publishedAt",
+      ]);
+      const parsedVersion = text(version.version, `${id}.version`, 64);
+      if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/.test(parsedVersion)) {
+        throw new Error(`${id} has an invalid version`);
+      }
+      if (seenVersions.has(parsedVersion)) throw new Error(`${id} has duplicate version ${parsedVersion}`);
+      seenVersions.add(parsedVersion);
+      if (version.apiVersion !== THEME_API_VERSION) throw new Error(`${id} has an incompatible theme API version`);
+      if (!Array.isArray(version.modes) || version.modes.length === 0 ||
+          version.modes.some((mode) => mode !== "light" && mode !== "dark") ||
+          new Set(version.modes).size !== version.modes.length) {
+        throw new Error(`${id} has invalid theme modes`);
+      }
+      const audit = object(version.audit, `${id}.audit`);
+      knownKeys(audit, `${id}.audit`, [
+        "status", "url", "sha256", "risk", "automatedDisposition", "manualApproval", "checkedAt",
+      ]);
+      if (audit.status !== "passed" || typeof audit.manualApproval !== "boolean") {
+        throw new Error(`${id} does not have a passing theme audit`);
+      }
+      return {
+        version: parsedVersion,
+        apiVersion: THEME_API_VERSION,
+        modes: version.modes as Array<"light" | "dark">,
+        manifestSha256: digest(version.manifestSha256, `${id}.manifestSha256`),
+        manifestUrl: https(version.manifestUrl, `${id}.manifestUrl`),
+        audit: {
+          status: "passed",
+          url: https(audit.url, `${id}.audit.url`),
+          sha256: digest(audit.sha256, `${id}.audit.sha256`),
+          risk: oneOf(audit.risk, `${id}.audit.risk`, ["low", "review", "elevated"]),
+          automatedDisposition: oneOf(audit.automatedDisposition, `${id}.audit.automatedDisposition`, ["publish", "quarantine", "reject"]),
+          manualApproval: audit.manualApproval,
+          checkedAt: text(audit.checkedAt, `${id}.audit.checkedAt`, 80),
+        },
+        publishedAt: text(version.publishedAt, `${id}.publishedAt`, 80),
+      };
+    });
+    const ai = item.aiDevelopment;
+    if (ai !== "none" && ai !== "assisted" && ai !== "primary") throw new Error(`${id} has invalid AI provenance`);
+    return {
+      id,
+      name: text(item.name, `${id}.name`, 80),
+      description: text(item.description, `${id}.description`, 500),
+      source: https(item.source, `${id}.source`),
+      license: text(item.license, `${id}.license`, 80),
+      aiDevelopment: ai,
+      versions,
+    };
+  });
   const revocations = root.revocations.map((candidate, index) => {
     const item = object(candidate, `revocations[${index}]`);
     knownKeys(item, `revocations[${index}]`, ["id", "version", "severity", "reason", "revokedAt"]);
@@ -223,7 +314,7 @@ export function parseRegistryIndex(value: unknown): RegistryIndex {
       revokedAt: text(item.revokedAt, `revocations[${index}].revokedAt`, 80),
     };
   });
-  return { schemaVersion: 1, generatedAt: text(root.generatedAt, "generatedAt", 80), plugins, revocations };
+  return { schemaVersion: 1, generatedAt: text(root.generatedAt, "generatedAt", 80), plugins, themes, revocations };
 }
 
 async function boundedBytes(url: string, max: number): Promise<Uint8Array> {
@@ -281,6 +372,7 @@ export async function refreshCommunityRegistry(): Promise<void> {
       backend().setAppString("plugin-registry-signature", signature.trim()),
     ]);
     setCommunityPlugins(index.plugins);
+    setCommunityThemes(index.themes);
     await pluginManager.applyRevocations(new Set(index.revocations.map((item) => `${item.id}@${item.version}`)));
     setRegistryState("ready");
   } catch {
@@ -292,10 +384,12 @@ export async function refreshCommunityRegistry(): Promise<void> {
       if (!cached || !signature) throw new Error("no verified registry cache");
       const index = await verifiedIndex(cached, signature);
       setCommunityPlugins(index.plugins);
+      setCommunityThemes(index.themes);
       await pluginManager.applyRevocations(new Set(index.revocations.map((item) => `${item.id}@${item.version}`)));
       setRegistryState("offline");
     } catch {
       setCommunityPlugins([]);
+      setCommunityThemes([]);
       setRegistryState("invalid");
     }
   }
@@ -428,4 +522,20 @@ export async function installCommunityPlugin(plugin: RegistryPlugin, version: Re
     throw new Error("plugin manifest does not match the signed registry metadata");
   }
   return pluginManager.install(manifest, wasm);
+}
+
+export async function installCommunityTheme(theme: RegistryTheme, version: RegistryThemeVersion) {
+  if (version.audit.status !== "passed") throw new Error("registry theme audit is not passing");
+  const manifestBytes = await boundedBytes(version.manifestUrl, 64 * 1024);
+  if ((await digestHex(manifestBytes)) !== version.manifestSha256) {
+    throw new Error("theme manifest digest does not match the signed registry");
+  }
+  const manifest = parseThemeManifest(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(manifestBytes)));
+  if (
+    manifest.id !== theme.id || manifest.version !== version.version || manifest.apiVersion !== version.apiVersion ||
+    JSON.stringify(Object.keys(manifest.modes)) !== JSON.stringify(version.modes)
+  ) {
+    throw new Error("theme manifest does not match the signed registry metadata");
+  }
+  return installThemePackage(manifest);
 }

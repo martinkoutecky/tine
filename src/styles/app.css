@@ -1838,6 +1838,34 @@ textarea {
   background: var(--code-bg);
   color: var(--text-primary);
 }
+.installed-theme-list {
+  margin-bottom: 12px;
+}
+.installed-theme-identity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.installed-theme-swatch {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  font-size: 17px;
+}
+@media (max-width: 640px) {
+  .installed-theme-row .settings-field-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .installed-theme-row .settings-field-control {
+    justify-content: flex-start;
+  }
+}
 .settings-shortcuts {
   margin-top: 8px;
   display: flex;
