@@ -1411,6 +1411,39 @@ textarea {
   padding: 16px 20px;
   border-bottom: 1px solid var(--border-color);
 }
+.settings-search-input {
+  margin-left: auto;
+  width: min(260px, 40vw);
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  padding: 6px 9px;
+  font-size: 13px;
+  font-weight: 400;
+}
+.settings-pane-head .icon-btn { margin-left: 10px; }
+.settings-search-results {
+  display: grid;
+  gap: 3px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+.settings-search-result {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  padding: 6px 8px;
+  text-align: left;
+  cursor: pointer;
+}
+.settings-search-result:hover,.settings-search-result:focus-visible { background: var(--bg-tertiary); }
+.settings-search-result small { color: var(--text-muted); }
+.settings-search-empty { padding: 8px; color: var(--text-muted); font-size: 13px; }
 .settings-pane-body {
   flex: 1;
   overflow-y: auto;
@@ -1509,6 +1542,21 @@ textarea {
   line-height: 1.5;
   max-width: 62ch;
 }
+.settings-advanced { margin-top: 10px; }
+.settings-advanced-toggle {
+  width: 100%;
+  border: 0;
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  padding: 7px 9px;
+  text-align: left;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.settings-advanced-toggle:hover,.settings-advanced-toggle:focus-visible { color: var(--text-primary); background: var(--bg-tertiary); }
+.settings-advanced-body { padding: 2px 0 0 12px; border-left: 1px solid var(--border-color); }
 /* Segmented two-option control (e.g. task workflow). */
 .settings-segment {
   display: inline-flex;

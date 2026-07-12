@@ -135,8 +135,69 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "about", label: "About" },
 ];
 
+type SettingSearchEntry = { tab: Tab; label: string; description: string; aliases?: string[]; level?: "advanced" };
+const SETTING_SEARCH: SettingSearchEntry[] = [
+  { tab: "appearance", label: "Theme", description: "light dark gallery colors" },
+  { tab: "appearance", label: "Accent color", description: "interface highlight color" },
+  { tab: "appearance", label: "Interface size", description: "zoom scale Ctrl scroll" },
+  { tab: "appearance", label: "Wide mode", description: "reading width" },
+  { tab: "appearance", label: "Document mode", description: "hide bullets prose" },
+  { tab: "appearance", label: "Typographic replacements", description: "arrows dashes glyphs" },
+  { tab: "appearance", label: "Auto-pair brackets & quotes", description: "closers selections backspace" },
+  { tab: "appearance", label: "Space after inserting a reference", description: "page block autocomplete spacing" },
+  { tab: "appearance", label: "Dim in focus mode", description: "inactive blocks" },
+  { tab: "appearance", label: "Load local-file images", description: "absolute paths permission security" },
+  { tab: "appearance", label: "Smooth scrolling (experimental)", description: "animated journal scrolling WebKit", aliases: ["scroll animation"], level: "advanced" },
+  { tab: "appearance", label: "System title bar & window controls", description: "native frame chrome" },
+  { tab: "editor", label: "File format", description: "new pages Markdown Org" },
+  { tab: "editor", label: "Link autocomplete default", description: "create page first match", level: "advanced" },
+  { tab: "editor", label: "Switch to an already-open tab when navigating", description: "reuse tabs", level: "advanced" },
+  { tab: "editor", label: "Spell checker", description: "dictionaries languages spelling" },
+  { tab: "editor", label: "Copy a parent block's sub-blocks", description: "clipboard subtree", level: "advanced" },
+  { tab: "editor", label: "Strip collapsed:: when copying", description: "clipboard properties", level: "advanced" },
+  { tab: "editor", label: "Click a block reference to zoom in", description: "reference navigation" },
+  { tab: "journals", label: "Journal date format", description: "display titles" },
+  { tab: "journals", label: "First day of week", description: "calendar Monday Sunday" },
+  { tab: "journals", label: "Carry-over", description: "buttons context header last days" },
+  { tab: "journals", label: "Task workflow", description: "TODO DOING NOW LATER" },
+  { tab: "journals", label: "Time tracking", description: "LOGBOOK clock" },
+  { tab: "journals", label: "New-journal template", description: "default journal template" },
+  { tab: "journals", label: "Quick-capture Enter key", description: "capture submit new block", level: "advanced" },
+  { tab: "journals", label: "Agenda window", description: "scheduled deadline days" },
+  { tab: "files", label: "New asset filename", description: "paste drag media names" },
+  { tab: "files", label: "Watch for external edits", description: "inotify polling network filesystem" },
+  { tab: "files", label: "Diagram editors", description: "drawio Excalidraw commands", level: "advanced" },
+  { tab: "backups", label: "Snapshots to keep", description: "recovery retention conflicts" },
+  { tab: "graph", label: "Graph", description: "folder export publish" },
+  { tab: "improve", label: "Help improve Tine", description: "diagnostics divergences anonymize" },
+  { tab: "shortcuts", label: "Keyboard shortcuts", description: "key bindings commands remap" },
+  { tab: "about", label: "About", description: "version licenses updates" },
+];
+
+function settingMatches(entry: SettingSearchEntry, query: string): boolean {
+  const terms = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
+  const haystack = [entry.label, entry.description, ...(entry.aliases ?? [])].join(" ").toLowerCase();
+  return terms.every((term) => haystack.includes(term));
+}
+
+function advancedMatch(tab: Tab, query: string): boolean {
+  return !!query.trim() && SETTING_SEARCH.some((entry) => entry.tab === tab && entry.level === "advanced" && settingMatches(entry, query));
+}
+
 export function Settings(): JSX.Element {
   const [tab, setTab] = createSignal<Tab>("appearance");
+  const [settingsQuery, setSettingsQuery] = createSignal("");
+  const matches = createMemo(() => {
+    const query = settingsQuery();
+    return query.trim() ? SETTING_SEARCH.filter((entry) => settingMatches(entry, query)) : [];
+  });
+  const openSearchResult = (entry: SettingSearchEntry) => {
+    setTab(entry.tab);
+    queueMicrotask(() => {
+      const fields = [...document.querySelectorAll<HTMLElement>("[data-setting-label]")];
+      fields.find((field) => field.dataset.settingLabel === entry.label)?.scrollIntoView({ block: "center" });
+    });
+  };
   const [publishMsg, setPublishMsg] = createSignal("");
   const doPublish = async () => {
     setPublishMsg("Exporting…");
@@ -216,22 +277,50 @@ export function Settings(): JSX.Element {
           <div class="settings-pane">
             <div class="settings-pane-head">
               <span>{TABS.find((t) => t.id === tab())?.label}</span>
+              <input
+                class="settings-search-input"
+                type="search"
+                placeholder="Search settings…"
+                aria-label="Search settings"
+                value={settingsQuery()}
+                onInput={(event) => setSettingsQuery(event.currentTarget.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape" && settingsQuery()) {
+                    event.preventDefault();
+                    setSettingsQuery("");
+                  }
+                }}
+              />
               <button class="icon-btn" onClick={closeSettings}>
                 ✕
               </button>
             </div>
             <div class="settings-pane-body">
+              <Show when={settingsQuery().trim()}>
+                <div class="settings-search-results" aria-live="polite">
+                  <Show when={matches().length} fallback={<div class="settings-search-empty">No matching settings</div>}>
+                    <For each={matches()}>
+                      {(entry) => (
+                        <button type="button" class="settings-search-result" onClick={() => openSearchResult(entry)}>
+                          <span>{entry.label}</span>
+                          <small>{TABS.find((candidate) => candidate.id === entry.tab)?.label}{entry.level === "advanced" ? " › Advanced" : ""}</small>
+                        </button>
+                      )}
+                    </For>
+                  </Show>
+                </div>
+              </Show>
               <Show when={tab() === "appearance"}>
-                <AppearanceTab />
+                <AppearanceTab search={settingsQuery()} />
               </Show>
               <Show when={tab() === "editor"}>
-                <EditorTab />
+                <EditorTab search={settingsQuery()} />
               </Show>
               <Show when={tab() === "journals"}>
-                <JournalsTab />
+                <JournalsTab search={settingsQuery()} />
               </Show>
               <Show when={tab() === "files"}>
-                <FilesTab />
+                <FilesTab search={settingsQuery()} />
               </Show>
               <Show when={tab() === "backups"}>
                 <BackupsTab />
@@ -266,7 +355,7 @@ export function Settings(): JSX.Element {
 // into the right column). Pass `hint` as JSX to allow inline <code>/markup.
 function Field(props: { label: string; hint?: JSX.Element; children: JSX.Element }): JSX.Element {
   return (
-    <div class="settings-field">
+    <div class="settings-field" data-setting-label={props.label}>
       <div class="settings-field-row">
         <span class="settings-label">{props.label}</span>
         <div class="settings-field-control">{props.children}</div>
@@ -307,7 +396,7 @@ function OgField(props: {
 }): JSX.Element {
   const diverges = () => props.on !== props.ogValue;
   return (
-    <div class="settings-field og-field" classList={{ "og-diverges": diverges() }}>
+    <div class="settings-field og-field" data-setting-label={props.label} classList={{ "og-diverges": diverges() }}>
       <div class="settings-field-row">
         <span class="settings-label">
           {props.label}
@@ -329,6 +418,47 @@ function OgField(props: {
         </Show>
       </div>
     </div>
+  );
+}
+
+function AdvancedSection(props: { tab: Tab; forceOpen: boolean; children: JSX.Element }): JSX.Element {
+  const key = `tine.settings.advanced.${props.tab}`;
+  let initial = false;
+  try { initial = localStorage.getItem(key) === "1"; } catch {}
+  const [open, setOpen] = createSignal(initial);
+  let button: HTMLButtonElement | undefined;
+  const expanded = () => props.forceOpen || open();
+  const persist = (value: boolean) => {
+    try { localStorage.setItem(key, value ? "1" : "0"); } catch {}
+  };
+  const toggle = () => {
+    const next = !open();
+    setOpen(next);
+    persist(next);
+  };
+  return (
+    <section class="settings-advanced">
+      <button
+        ref={button}
+        type="button"
+        class="settings-advanced-toggle"
+        aria-expanded={expanded()}
+        onClick={toggle}
+        onKeyDown={(event) => {
+          if (event.key === "Escape" && open() && !props.forceOpen) {
+            event.preventDefault();
+            setOpen(false);
+            persist(false);
+            queueMicrotask(() => button?.focus());
+          }
+        }}
+      >
+        <span aria-hidden="true">{expanded() ? "▾" : "▸"}</span> Advanced
+      </button>
+      <Show when={expanded()}>
+        <div class="settings-advanced-body">{props.children}</div>
+      </Show>
+    </section>
   );
 }
 
@@ -366,7 +496,7 @@ function ThemeGalleryCard(props: {
   );
 }
 
-function AppearanceTab(): JSX.Element {
+function AppearanceTab(props: { search: string }): JSX.Element {
   return (
     <>
       <div class="settings-row">
@@ -503,12 +633,14 @@ function AppearanceTab(): JSX.Element {
         <Toggle on={allowLocalFileImages()} onClick={() => setAllowLocalFileImages(!allowLocalFileImages())} />
       </Field>
 
-      <Field
-        label="Smooth scrolling (experimental)"
-        hint="Animate the journal feed's scrolling to smooth out WebKitGTK's stepped mouse-wheel jumps. Off by default; this is a feel experiment — turn it off if it gets in the way."
-      >
-        <Toggle on={smoothScrollEnabled()} onClick={() => setSmoothScroll(!smoothScrollEnabled())} />
-      </Field>
+      <AdvancedSection tab="appearance" forceOpen={advancedMatch("appearance", props.search)}>
+        <Field
+          label="Smooth scrolling (experimental)"
+          hint="Animate the journal feed's scrolling to smooth out WebKitGTK's stepped mouse-wheel jumps. Off by default; this is a feel experiment — turn it off if it gets in the way."
+        >
+          <Toggle on={smoothScrollEnabled()} onClick={() => setSmoothScroll(!smoothScrollEnabled())} />
+        </Field>
+      </AdvancedSection>
 
       {/* Window chrome. macOS always uses its native frame (rounded corners +
           traffic lights, via the build-time Overlay title bar), so the toggle is
@@ -607,7 +739,7 @@ function DateFormatSelect(): JSX.Element {
   );
 }
 
-function EditorTab(): JSX.Element {
+function EditorTab(props: { search: string }): JSX.Element {
   // Re-scan installed dictionaries each time Settings opens (the user may have
   // just installed one). The rows are the union of installed ∪ already-selected,
   // so a selected-but-uninstalled language still shows (flagged) instead of
@@ -652,20 +784,6 @@ function EditorTab(): JSX.Element {
             Org
           </button>
         </div>
-      </Field>
-
-      <Field
-        label="Link autocomplete default"
-        hint={`When you type [[name (or #name) that isn’t an exact existing page: ON → Enter LINKS to the first match (and “Create…” moves to the end of the list); OFF (default, like Logseq) → Enter CREATES a new page/tag unless an exact match exists. Either way the arrow keys reach the other options.`}
-      >
-        <Toggle on={linkFirstMatch()} onClick={() => setLinkFirstMatch(!linkFirstMatch())} />
-      </Field>
-
-      <Field
-        label="Switch to an already-open tab when navigating"
-        hint="Plain navigation to a page, journal, or exact zoomed/file-pinned view focuses the matching tab if one is already open. Middle-click and explicit Open in new tab still create another tab."
-      >
-        <Toggle on={navReuseTabs()} onClick={() => setNavReuseTabs(!navReuseTabs())} />
       </Field>
 
       <Field
@@ -723,7 +841,22 @@ function EditorTab(): JSX.Element {
         </Field>
       </Show>
 
-      <OgField
+      <AdvancedSection tab="editor" forceOpen={advancedMatch("editor", props.search)}>
+        <Field
+          label="Link autocomplete default"
+          hint={`When you type [[name (or #name) that isn’t an exact existing page: ON → Enter LINKS to the first match (and “Create…” moves to the end of the list); OFF (default, like Logseq) → Enter CREATES a new page/tag unless an exact match exists. Either way the arrow keys reach the other options.`}
+        >
+          <Toggle on={linkFirstMatch()} onClick={() => setLinkFirstMatch(!linkFirstMatch())} />
+        </Field>
+
+        <Field
+          label="Switch to an already-open tab when navigating"
+          hint="Plain navigation to a page, journal, or exact zoomed/file-pinned view focuses the matching tab if one is already open. Middle-click and explicit Open in new tab still create another tab."
+        >
+          <Toggle on={navReuseTabs()} onClick={() => setNavReuseTabs(!navReuseTabs())} />
+        </Field>
+
+        <OgField
         label="Copy a parent block's sub-blocks"
         hint="When you copy/cut a selected block that has children: ON copies the whole sub-tree; OFF copies only the block(s) you actually selected. Tine defaults to OFF because selecting just the parent and getting its entire tree is surprising."
         ogNote="always copies a selected block's whole sub-tree."
@@ -732,14 +865,15 @@ function EditorTab(): JSX.Element {
         onToggle={() => setCopyIncludeSubtree(!copyIncludeSubtree())}
       />
 
-      <OgField
+        <OgField
         label="Strip collapsed:: when copying"
         hint="A collapsed block carries a hidden collapsed:: true property (view state, not content). Tine defaults to ON (drops it from copied text for a cleaner paste); OFF keeps it. (id:: is always stripped from copies, like Logseq.)"
         ogNote="keeps collapsed:: in the copied text (only id:: is stripped)."
         ogValue={false}
         on={copyStripCollapsed()}
         onToggle={() => setCopyStripCollapsed(!copyStripCollapsed())}
-      />
+        />
+      </AdvancedSection>
 
       <OgField
         label="Click a block reference to zoom in"
@@ -753,7 +887,7 @@ function EditorTab(): JSX.Element {
   );
 }
 
-function JournalsTab(): JSX.Element {
+function JournalsTab(props: { search: string }): JSX.Element {
   // Quick-capture Enter behaviour (app-level setting, read by the capture window).
   const [captureEnterFiles, setCaptureEnterFiles] = createSignal(false);
   void backend()
@@ -876,12 +1010,14 @@ function JournalsTab(): JSX.Element {
 
       <JournalTemplateField />
 
-      <Field
-        label="Quick-capture Enter key"
-        hint={`In the quick-capture window: ON → Enter files the capture. OFF → Enter starts a new block; the “Quick-capture: file to today’s journal” shortcut files (default Ctrl+Shift+Enter, remappable under Keyboard shortcuts). Ctrl+Enter stays free for cycling the task marker.`}
-      >
-        <Toggle on={captureEnterFiles()} onClick={toggleCaptureEnter} />
-      </Field>
+      <AdvancedSection tab="journals" forceOpen={advancedMatch("journals", props.search)}>
+        <Field
+          label="Quick-capture Enter key"
+          hint={`In the quick-capture window: ON → Enter files the capture. OFF → Enter starts a new block; the “Quick-capture: file to today’s journal” shortcut files (default Ctrl+Shift+Enter, remappable under Keyboard shortcuts). Ctrl+Enter stays free for cycling the task marker.`}
+        >
+          <Toggle on={captureEnterFiles()} onClick={toggleCaptureEnter} />
+        </Field>
+      </AdvancedSection>
 
       <Field
         label="Agenda window"
@@ -1536,7 +1672,7 @@ function SyncConflictMergeModal(props: { conflict: SyncConflict; onClose: () => 
   );
 }
 
-function FilesTab(): JSX.Element {
+function FilesTab(props: { search: string }): JSX.Element {
   // Live preview of the asset-name template, on a fixed sample so every token is
   // visible (and the example doesn't jitter by the second). Shows both a named
   // drag/insert and a clipboard paste (which has no name → timestamp fallback).
@@ -1633,7 +1769,9 @@ function FilesTab(): JSX.Element {
         </div>
       </Field>
 
-      <MediaEditorsSection />
+      <AdvancedSection tab="files" forceOpen={advancedMatch("files", props.search)}>
+        <MediaEditorsSection />
+      </AdvancedSection>
 
       <AssetsTab />
     </>

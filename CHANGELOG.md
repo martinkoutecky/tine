@@ -69,6 +69,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   Search syntax button documents AND, OR, exclusion, phrases, and regex; Escape
   closes the help before closing search, and every displayed example is executed
   against both frontend and Rust matchers in tests. (GH #97)
+- **Settings now has progressive disclosure and cross-tab search.** Niche and
+  experimental controls live in persisted, accessible Advanced sections; search
+  covers labels, descriptions, and aliases, identifies the tab/section, and
+  temporarily reveals matching hidden controls without changing the saved
+  disclosure state. (GH #112)
 
 ### Changed
 
