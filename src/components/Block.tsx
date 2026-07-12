@@ -114,7 +114,7 @@ import {
   caretColumnOnVisualRow,
   caretOffsetOnLastRow,
 } from "../editor/caretRows";
-import { splitProps, joinProps, isBuiltinHidden, isSheetCellHidden, hideAll, caretInFence } from "../editor/properties";
+import { splitProps, joinProps, isBuiltinHidden, isSheetCellHidden, hideAll, caretInFence, multilineExitTrim } from "../editor/properties";
 import { normalizePlanning } from "../editor/planning";
 import { caretOnOpeningFence } from "../editor/fences";
 import { isAnnotationBlock, annotationInfo } from "../editor/annotation";
@@ -2280,6 +2280,24 @@ export function Editor(props: { id: string }): JSX.Element {
     }
 
     if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      const inFence = !isAnnot() && caretInFence(raw, start);
+      // Double-Enter escape: the first Enter creates a trailing blank line; the
+      // second removes that sentinel and creates a normal sibling. Keep the text
+      // trim and structural insertion in one undo unit so one Undo restores the
+      // exact pre-exit special block and removes the sibling.
+      if ((isCalc() || inFence) && start === end) {
+        const trimmed = multilineExitTrim(raw, start, isCalc() ? "calc" : "fence");
+        if (trimmed !== null) {
+          e.preventDefault();
+          let newId = props.id;
+          withUndoUnit(`multiline-exit:${props.id}`, [node().page], () => {
+            commit(trimmed);
+            newId = insertOutlineAfter(props.id, [{ raw: "", children: [] }]);
+          });
+          startEditing(newId, 0);
+          return;
+        }
+      }
       // In a calc block, Enter adds a new expression line (stays in the block) —
       // let the textarea insert the newline natively, like OG.
       if (isCalc()) return;
@@ -2289,7 +2307,7 @@ export function Editor(props: { id: string }): JSX.Element {
       // — GH #66). caretInFence treats a still-unterminated fence (being typed) as
       // inside too, and returns false when the caret sits on a ``` delimiter line,
       // so Enter on the closing fence still exits the block.
-      if (!isAnnot() && (caretInFence(raw, start) || caretOnOpeningFence(raw, start))) {
+      if (!isAnnot() && (inFence || caretOnOpeningFence(raw, start))) {
         softNewlineCmd();
         return;
       }

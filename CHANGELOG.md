@@ -10,6 +10,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Double Enter now exits a trailing fenced code or calculator block.** The
+  first Enter adds a blank code line; the second removes that sentinel and opens
+  a normal sibling block below. One Undo restores the entire pre-exit state. (GH
+  #93)
 - **Imported preamble text, first-block page properties, and split middle-click
   navigation now match the page that owns them.** Ordinary Markdown before the
   first bullet is visible without rewriting the file and becomes a block only

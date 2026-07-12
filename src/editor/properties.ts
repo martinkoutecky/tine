@@ -62,6 +62,38 @@ function propLineKey(line: string): string | null {
   return m ? m[1].toLowerCase() : null;
 }
 
+/** For a multi-line editor that normally keeps Enter inside it, return the text
+ * with its trailing sentinel blank line removed when the caret is on the
+ * double-Enter exit line. Blank lines in the middle remain ordinary content. */
+export function multilineExitTrim(
+  text: string,
+  caret: number,
+  kind: "calc" | "fence"
+): string | null {
+  const c = Math.max(0, Math.min(caret, text.length));
+  const lineStart = text.lastIndexOf("\n", c - 1) + 1;
+  let lineEnd = text.indexOf("\n", c);
+  if (lineEnd === -1) lineEnd = text.length;
+  if (text.slice(lineStart, lineEnd).trim() !== "" || lineStart === 0) return null;
+
+  if (kind === "calc") {
+    if (text.slice(lineEnd).trim() !== "") return null;
+    return text.slice(0, lineStart - 1);
+  }
+
+  const after = text.slice(lineEnd + 1);
+  const nextNewline = after.indexOf("\n");
+  const nextLine = nextNewline === -1 ? after : after.slice(0, nextNewline);
+  let fence: FenceState | null = null;
+  for (const line of text.slice(0, lineStart).split("\n")) {
+    fence = transitionFence(fence, line).next;
+  }
+  if (!fence || !transitionFence(fence, nextLine).closes) return null;
+  const afterClosing = nextNewline === -1 ? "" : after.slice(nextNewline + 1);
+  if (afterClosing.trim() !== "") return null;
+  return text.slice(0, lineStart - 1) + text.slice(lineEnd);
+}
+
 /** Whether a textarea caret offset is inside a fenced code region. The fence
  *  delimiter lines themselves are outside; the content lines between them are
  *  inside, including an unterminated fence while the user is editing. */
