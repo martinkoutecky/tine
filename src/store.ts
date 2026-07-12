@@ -27,7 +27,7 @@ import {
 } from "./ui";
 import { seedFacets, facetsFromDto, clearSeededFacets, facetsOf } from "./render/facets";
 import { journalTitle } from "./journal";
-import { upsertPropertyLine, readPropertyValue, splitProps, joinProps, isBuiltinHidden } from "./editor/properties";
+import { upsertPropertyLine, readPropertyValue, splitProps, joinProps, isBuiltinHidden, isPropertiesOnly, splitPagePreamble } from "./editor/properties";
 import { copyIncludeSubtree, copyStripCollapsed } from "./copySettings";
 import { trimBlockTrailingSpace } from "./editor/format";
 import { OPEN_MARKERS, MARKER_RE } from "./markers";
@@ -1477,18 +1477,53 @@ export function setBlockProperty(id: string, key: string, value: string | null) 
  *  `key:: value` lines), or null. */
 export function readPageProperty(pageName: string, key: string): string | null {
   const p = doc.pages.find((x) => x.name === pageName);
-  return p ? readPropertyValue(p.preBlock, key) : null;
+  if (!p) return null;
+  const fromPreBlock = readPropertyValue(p.preBlock, key);
+  if (fromPreBlock !== null) return fromPreBlock;
+  const first = p.format === "md" ? doc.byId[p.roots[0]] : null;
+  return first && isPropertiesOnly(first.raw) ? readPropertyValue(first.raw, key) : null;
 }
 
-/** Set or clear a page-level property in the page's pre-block. Persists through
- *  the normal dirty/save path (pageToDto includes pre_block); undo-safe because
- *  the page snapshot captures preBlock. */
+/** Set or clear a page-level property in the page's canonical property source:
+ *  pre-block normally, or OG's properties-only first bullet. Persists through
+ *  the normal dirty/save path and is undo-safe. */
 export function setPageProperty(pageName: string, key: string, value: string | null) {
   const idx = doc.pages.findIndex((x) => x.name === pageName);
   if (idx < 0 || !pageWritable(pageName)) return;
   pushUndo(`pageprop:${pageName}:${key}`, [pageName]);
+  const page = doc.pages[idx];
+  const first = page.format === "md" ? doc.byId[page.roots[0]] : null;
+  // A properties-only first bullet is OG's editable page-properties block. Keep
+  // its on-disk form instead of silently duplicating the property in preBlock.
+  if (!page.preBlock && first && isPropertiesOnly(first.raw)) {
+    setDoc("byId", first.id, "raw", upsertPropertyLine(first.raw, key, value) ?? "");
+    markDirty(pageName);
+    return;
+  }
   setDoc("pages", idx, "preBlock", upsertPropertyLine(doc.pages[idx].preBlock, key, value));
   markDirty(pageName);
+}
+
+/** Turn ordinary text before the first Markdown bullet into a real first block
+ * only when the user chooses to edit it (GH #85). Until then the preamble stays
+ * byte-preserved and an unrelated save cannot silently add an outline marker. */
+export function promotePagePreamble(pageName: string): string | null {
+  const page = pageByName(pageName);
+  if (!page || page.format !== "md" || !pageWritable(pageName)) return null;
+  const { properties, content } = splitPagePreamble(page.preBlock);
+  if (!content) return null;
+  pushUndo(`promote-preamble:${pageName}`, [pageName]);
+  const id = freshId();
+  setDoc(
+    produce((s) => {
+      const index = s.pages.findIndex((p) => p.name === pageName);
+      s.pages[index].preBlock = properties;
+      s.byId[id] = { id, raw: content, collapsed: false, parent: null, page: pageName, children: [] };
+      s.pages[index].roots.unshift(id);
+    })
+  );
+  markDirty(pageName);
+  return id;
 }
 
 /** Toggle a property: set it to `value`, or remove it if already that value. */
@@ -1971,9 +2006,15 @@ export function deleteBlock(id: string) {
  *  brand-new day — it shows a bullet to write in but only persists to disk once the
  *  user actually types (the edit path marks it dirty then). Returns the new id, or
  *  null if the page is missing, read-only, or already non-empty. */
-export function ensureEmptyBlock(pageName: string): string | null {
+export function ensureEmptyBlock(pageName: string, opts: { afterProperties?: boolean } = {}): string | null {
   const page = pageByName(pageName);
-  if (!page || page.readOnly || page.roots.length) return null;
+  if (!page || page.readOnly) return null;
+  const onlyPropertyRoot =
+    opts.afterProperties === true &&
+    page.format === "md" &&
+    page.roots.length === 1 &&
+    isPropertiesOnly(doc.byId[page.roots[0]]?.raw ?? "");
+  if (page.roots.length && !onlyPropertyRoot) return null;
   const id = freshId();
   setDoc(
     produce((s) => {

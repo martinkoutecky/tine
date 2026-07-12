@@ -282,7 +282,11 @@ function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolean; bloc
           if (e.button === 1) {
             e.preventDefault();
             e.stopPropagation();
-            openPageInNewTab(targetName(), kind());
+            // Middle-click belongs to the pane that rendered the link. Relying
+            // on the globally focused router races pointer-focus tracking and
+            // sent split-view tabs to the previously focused/top pane (GH #87).
+            if (pane) pane.router.openPageInNewTab(targetName(), kind());
+            else openPageInNewTab(targetName(), kind());
           }
         }}
         onContextMenu={(e) => {

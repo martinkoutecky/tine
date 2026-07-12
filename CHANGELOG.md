@@ -10,6 +10,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Imported preamble text, first-block page properties, and split middle-click
+  navigation now match the page that owns them.** Ordinary Markdown before the
+  first bullet is visible without rewriting the file and becomes a block only
+  when edited; a properties-only first block uses the same page-property UI and
+  gear editor as an unbulleted pre-block; and middle-clicked page links open in
+  their source pane rather than whichever pane was focused earlier. (GH #85,
+  GH #86, GH #87)
 - **Returning to a previously loaded large page no longer mounts it twice.** A
   pane now renders only the route whose asynchronous load actually completed;
   obsolete load failures cannot replace a newer page, and the performance gate

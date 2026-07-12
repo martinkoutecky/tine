@@ -248,3 +248,111 @@ describe("page route loading", () => {
     }
   });
 });
+
+describe("page properties", () => {
+  it("renders a properties-only first block as page properties (GH #86)", async () => {
+    const propsId = "11111111-1111-4111-8111-111111111111";
+    const bodyId = "22222222-2222-4222-8222-222222222222";
+    const dto = {
+      name: "Books",
+      kind: "page" as const,
+      title: "Books",
+      pre_block: null,
+      blocks: [
+        { id: propsId, raw: "alias:: book\ntags:: blah", collapsed: false, children: [] },
+        { id: bodyId, raw: "Reading list", collapsed: false, children: [] },
+      ],
+    };
+    setDoc({
+      byId: {
+        [propsId]: node(propsId, dto.blocks[0].raw, dto.name),
+        [bodyId]: node(bodyId, dto.blocks[1].raw, dto.name),
+      },
+      pages: [page(dto.name, "page", [propsId, bodyId])],
+      feed: [dto.name],
+      loaded: true,
+    });
+    vi.spyOn(backend(), "getPage").mockResolvedValue(dto);
+    mainPaneRouter.openPage(dto.name, "page", { inPlace: true });
+
+    const { root, dispose } = mount(() => <PageView />);
+    try {
+      await tick();
+      await tick();
+      expect(root.querySelector(".page-aliases")?.textContent).toContain("book");
+      expect(root.querySelector(".page-properties")?.textContent).toContain("blah");
+      expect(root.querySelector(`[data-block-id="${propsId}"]`)).toBeNull();
+      expect(root.querySelector(`[data-block-id="${bodyId}"]`)).not.toBeNull();
+    } finally {
+      dispose();
+    }
+  });
+
+  it("keeps an editable blank body after hiding an only properties block", async () => {
+    const propsId = "11111111-1111-4111-8111-111111111111";
+    const dto = {
+      name: "Only properties",
+      kind: "page" as const,
+      title: "Only properties",
+      pre_block: null,
+      blocks: [{ id: propsId, raw: "alias:: property-only", collapsed: false, children: [] }],
+    };
+    setDoc({
+      byId: { [propsId]: node(propsId, dto.blocks[0].raw, dto.name) },
+      pages: [page(dto.name, "page", [propsId])], feed: [dto.name], loaded: true,
+    });
+    vi.spyOn(backend(), "getPage").mockResolvedValue(dto);
+    mainPaneRouter.openPage(dto.name, "page", { inPlace: true });
+    const { root, dispose } = mount(() => <PageView />);
+    try {
+      await tick();
+      await tick();
+      const visibleRoots = pageByName(dto.name)!.roots.filter((id) => id !== propsId);
+      expect(visibleRoots).toHaveLength(1);
+      expect(doc.byId[visibleRoots[0]].raw).toBe("");
+      expect(root.querySelector(`[data-block-id="${visibleRoots[0]}"]`)).not.toBeNull();
+    } finally {
+      dispose();
+    }
+  });
+});
+
+describe("Markdown preamble content", () => {
+  it("renders text before the first bullet and promotes it only when edited (GH #85)", async () => {
+    const bodyId = "22222222-2222-4222-8222-222222222222";
+    const dto = {
+      name: "Imported",
+      kind: "page" as const,
+      title: "Imported",
+      pre_block: "Intro before the outline",
+      blocks: [{ id: bodyId, raw: "First marked block", collapsed: false, children: [] }],
+    };
+    setDoc({
+      byId: { [bodyId]: node(bodyId, dto.blocks[0].raw, dto.name) },
+      pages: [page(dto.name, "page", [bodyId], dto.pre_block)],
+      feed: [dto.name],
+      loaded: true,
+    });
+    vi.spyOn(backend(), "getPage").mockResolvedValue(dto);
+    mainPaneRouter.openPage(dto.name, "page", { inPlace: true });
+
+    const { root, dispose } = mount(() => <PageView />);
+    try {
+      await tick();
+      await tick();
+      const preamble = root.querySelector(".preamble-block .block-content-wrapper") as HTMLElement | null;
+      expect(preamble?.textContent).toContain("Intro before the outline");
+      expect(pageByName(dto.name)?.preBlock).toBe(dto.pre_block);
+
+      preamble!.click();
+      await tick();
+      const promoted = pageByName(dto.name)!.roots[0];
+      expect(doc.byId[promoted].raw).toBe("Intro before the outline");
+      expect(pageByName(dto.name)?.preBlock).toBeNull();
+      expect(editingId()).toBe(promoted);
+      expect(root.querySelector(`[data-block-id="${promoted}"] textarea`)).not.toBeNull();
+    } finally {
+      dispose();
+    }
+  });
+});

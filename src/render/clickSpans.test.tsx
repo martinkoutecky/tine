@@ -4,6 +4,8 @@ import { isBuiltinHidden } from "../editor/properties";
 import { AstBody } from "./body";
 import { initParser } from "./parse";
 import { editorOffsetFromRenderedRange } from "./spans";
+import { PaneContext } from "../panes";
+import { createPaneRouter } from "../router";
 
 beforeAll(async () => {
   await initParser();
@@ -133,6 +135,29 @@ describe("shift+click ref suppresses native selection (GH #42)", () => {
       expect(shiftMouseDefaultPrevented(tag!, false)).toBe(false);
     } finally {
       dispose();
+    }
+  });
+});
+
+describe("split-pane link navigation", () => {
+  it("opens a middle-clicked page ref in the source pane (GH #87)", () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const source = createPaneRouter("source-pane");
+    const dispose = render(() => (
+      <PaneContext.Provider value={{ paneId: "source-pane", router: source }}>
+        <div class="block-content"><AstBody raw="see [[Target]]" /></div>
+      </PaneContext.Provider>
+    ), host);
+    try {
+      const link = host.querySelector("a.page-ref");
+      expect(link).toBeTruthy();
+      link!.dispatchEvent(new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 }));
+      expect(source.tabs()).toHaveLength(2);
+      expect(source.tabs().some((tab) => tab.history.some((route) => route.kind === "page" && route.name === "Target"))).toBe(true);
+    } finally {
+      dispose();
+      host.remove();
     }
   });
 });

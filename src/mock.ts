@@ -377,6 +377,24 @@ function bigPageBlocks(n: number): BlockDto[] {
 if (typeof location !== "undefined" && /[?&]big\b/.test(location.search)) {
   NAMED.push({ name: "Big", kind: "page", title: "Big", pre_block: "title:: Big", blocks: bigPageBlocks(2000) });
 }
+if (typeof location !== "undefined" && /[?&]regressions\b/.test(location.search)) {
+  NAMED.push(
+    {
+      name: "Preamble regression",
+      kind: "page",
+      title: "Preamble regression",
+      pre_block: "Intro before the first outline marker",
+      blocks: [b("First marked block")],
+    },
+    {
+      name: "First-block properties regression",
+      kind: "page",
+      title: "First-block properties regression",
+      pre_block: null,
+      blocks: [b("alias:: fbpr\ntags:: testing, properties"), b("Visible body")],
+    },
+  );
+}
 
 const mockHighlights: Record<string, { label: string; highlights: Highlight[] }> = {};
 // In-memory UI session for the browser mock (no backend file).

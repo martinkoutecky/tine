@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, untrack, useContext, type JSX } from "solid-js";
-import { doc, mainPages, pageByName, loadFeed, appendFeed, emptyPage, ensurePageLoaded, setFeedExtender, flushAll, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, type FeedPage } from "../store";
+import { doc, mainPages, pageByName, loadFeed, appendFeed, emptyPage, ensurePageLoaded, setFeedExtender, flushAll, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, promotePagePreamble, type FeedPage } from "../store";
 import { sameRoute, type PaneRouter } from "../router";
 import { PaneContext, focusedRouter } from "../panes";
 import {
@@ -24,6 +24,7 @@ import { endEditForSurface, startEditing } from "../editorController";
 import type { PageDto, RefGroup } from "../types";
 import { tagRef } from "../tags";
 import { copyGuideIntoGraph, ensureGuidePagesLoaded, isGuidePageName } from "../guide";
+import { isPropertiesOnly, splitPagePreamble } from "../editor/properties";
 
 export const FEED_PAGE = 3;
 let journalOffset = 0;
@@ -325,13 +326,28 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
   const router = paneRouterFromContext();
   const [renaming, setRenaming] = createSignal(false);
   const [newName, setNewName] = createSignal("");
+  const firstPropertiesId = () => {
+    if (props.page.format !== "md") return null;
+    const id = props.page.roots[0];
+    return id && doc.byId[id] && isPropertiesOnly(doc.byId[id].raw) ? id : null;
+  };
+  const propertySource = () => {
+    const first = firstPropertiesId();
+    return [props.page.preBlock, first ? doc.byId[first].raw : null].filter(Boolean).join("\n") || null;
+  };
+  const rootsToRender = () => firstPropertiesId() ? props.page.roots.slice(1) : props.page.roots;
+  const preambleContent = () => props.page.format === "md" ? splitPagePreamble(props.page.preBlock).content : null;
+  const editPreamble = () => {
+    const id = promotePagePreamble(props.page.name);
+    if (id) startEditing(id, doc.byId[id].raw.length);
+  };
   // A page emptied of its last block (explicit Delete bypasses the Backspace
   // last-block guard) would render nothing to type into. Re-seed the phantom empty
   // bullet — same shape a brand-new day gets — so there's always a bullet present;
   // it only persists once the user types (ensureEmptyBlock leaves it non-dirty).
   createEffect(() => {
-    if (props.page.roots.length === 0 && !props.page.readOnly) {
-      ensureEmptyBlock(props.page.name);
+    if (rootsToRender().length === 0 && !props.page.readOnly) {
+      ensureEmptyBlock(props.page.name, { afterProperties: true });
     }
   });
   const startRename = () => {
@@ -416,7 +432,7 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
               </svg>
             </Show>
             <Show
-              when={pageProperties(props.page.preBlock, props.page.format)
+              when={pageProperties(propertySource(), props.page.format)
                 .find(([k]) => k.toLowerCase() === "icon")?.[1]
                 ?.trim()}
             >
@@ -472,18 +488,18 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
           </button>
         </Show>
       </div>
-      <Show when={aliasNames(props.page.preBlock, props.page.format).length}>
+      <Show when={aliasNames(propertySource(), props.page.format).length}>
         <div class="page-aliases" title="Also known as — other names that link here">
           <span class="page-aliases-label">aka</span>
-          <For each={aliasNames(props.page.preBlock, props.page.format)}>
+          <For each={aliasNames(propertySource(), props.page.format)}>
             {(a) => <span class="alias-chip">{a}</span>}
           </For>
         </div>
       </Show>
-      <Show when={pageProperties(props.page.preBlock, props.page.format).filter(([k]) => !PAGE_PROPS_HIDDEN.has(k.toLowerCase())).length}>
+      <Show when={pageProperties(propertySource(), props.page.format).filter(([k]) => !PAGE_PROPS_HIDDEN.has(k.toLowerCase())).length}>
         <div class="page-properties">
           {/* `alias`/`icon` are surfaced elsewhere (chips / title icon) — see PAGE_PROPS_HIDDEN. */}
-          <For each={pageProperties(props.page.preBlock, props.page.format).filter(([k]) => !PAGE_PROPS_HIDDEN.has(k.toLowerCase()))}>
+          <For each={pageProperties(propertySource(), props.page.format).filter(([k]) => !PAGE_PROPS_HIDDEN.has(k.toLowerCase()))}>
             {([key, value]) => (
               <div class="prop-row">
                 <span class="prop-key">{key}</span>
@@ -510,7 +526,24 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
         </div>
       </Show>
       <div class="page-blocks">
-        <For each={props.page.roots}>{(id) => <Block id={id} />}</For>
+        <Show when={preambleContent()}>
+          {(content) => (
+            <div class="ls-block preamble-block" data-page-preamble={props.page.name}>
+              <div class="block-main">
+                <div class="block-controls">
+                  <span class="collapse-toggle" />
+                  <span class="bullet-container" title="Click the text to turn it into an editable block">
+                    <span class="bullet" />
+                  </span>
+                </div>
+                <div class="block-content-wrapper" onClick={editPreamble}>
+                  <div class="block-content"><InlineText text={content()} format={props.page.format} /></div>
+                </div>
+              </div>
+            </div>
+          )}
+        </Show>
+        <For each={rootsToRender()}>{(id) => <Block id={id} />}</For>
       </div>
     </div>
   );

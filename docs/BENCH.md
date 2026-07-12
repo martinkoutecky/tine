@@ -51,7 +51,9 @@ recorded on a fast box still roughly holds on a slow one.
 The local baseline (`scripts/bench-baseline.json`) remains useful for quick
 developer checks. CI does not compare a candidate on one machine to that file's
 numbers from another machine: the calibration loop proved too different from
-browser layout/paint to normalize scrolling reliably.
+browser layout/paint to normalize scrolling reliably. Accordingly, `npm run
+bench` reports a different-machine baseline as advisory and does not fail; a
+baseline recorded on the same machine retains the local regression exit code.
 
 ## CI hard gate: same-machine A/B without baseline ratcheting
 
