@@ -109,7 +109,11 @@ try {
 
   // The last-focused route used by quick capture follows the active graph.
   await browser.$("body").click();
-  await sleep(300);
+  await browser.waitUntil(async () =>
+    (await browser.execute(async () => globalThis.__TAURI_INTERNALS__.invoke("capture_target"))) === "graph-1", {
+    timeout: WAIT_TIMEOUT,
+    timeoutMsg: "capture target did not follow beta focus",
+  });
   const betaTarget = await browser.execute(async () =>
     globalThis.__TAURI_INTERNALS__.invoke("capture_target")
   );
@@ -117,8 +121,12 @@ try {
   // Forwarding alpha focuses its already-open owner. This produces a real OS
   // focus event (switchToWindow alone only changes WebDriver's target).
   forwarded.push(spawn(APP, [A], { env: { ...env, TINE_GRAPH: "" }, stdio: "ignore" }));
-  await sleep(700);
   await browser.switchToWindow(alpha);
+  await browser.waitUntil(async () =>
+    (await browser.execute(async () => globalThis.__TAURI_INTERNALS__.invoke("capture_target"))) === "main", {
+    timeout: WAIT_TIMEOUT,
+    timeoutMsg: "capture target did not follow alpha focus",
+  });
   const alphaTarget = await browser.execute(async () =>
     globalThis.__TAURI_INTERNALS__.invoke("capture_target")
   );
