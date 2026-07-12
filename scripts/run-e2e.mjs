@@ -104,9 +104,11 @@ async function runScenario([id, script, extraEnv]) {
   // cannot forward the next scenario into the previous app. Processes spawned
   // inside one scenario still share the bus, preserving the multigraph and
   // Quick Capture handoff coverage.
-  const command = nativeLinux ? (process.env.DBUS_RUN_SESSION || "dbus-run-session") : process.execPath;
+  const command = nativeLinux ? "xvfb-run" : process.execPath;
   const args = nativeLinux
-    ? ["--", "xvfb-run", "-a", process.execPath, path.join(root, script)]
+    // Xvfb must wrap the private bus: D-Bus-activated GTK portal services need
+    // DISPLAY in the activation environment for auxiliary-window behavior.
+    ? ["-a", process.env.DBUS_RUN_SESSION || "dbus-run-session", "--", process.execPath, path.join(root, script)]
     : [path.join(root, script)];
   const child = spawn(command, args, { cwd: root, env, detached: process.platform !== "win32", stdio: ["ignore", stdout, stderr] });
   let timedOut = false;
