@@ -2180,17 +2180,23 @@ export function Editor(props: { id: string }): JSX.Element {
 
     if (handleSheetCellKey(e, start, end, raw)) return;
 
+    // Resolve configured editor commands before incidental literal-key behavior:
+    // an explicit user binding (including Alt+[) must win over selection wrapping.
+    const cmd = editorCommandFor(e);
+
     // Auto-pair wrap on a SELECTION (OG parity, always-on — independent of the
     // opt-in empty-caret auto-pairing). Typing any of `SELECTION_WRAP` around
     // selected text wraps it, keeping the selection: `*`/`~`/`=` etc. so a second
     // press gives `**bold**`/`~~strike~~`/`==highlight==`, and `[`/`(` so `[[sel]]`
     // makes a page ref and `((sel))` a block ref — the doubling bracket then opens
     // the matching search seeded with the selection, so Enter links it to an
-    // existing page/block or creates it. Modifier-free single chars only, so it
-    // never shadows Ctrl/Cmd editor commands or IME composition.
+    // existing page/block or creates it. Match OG by accepting an Alt-modified
+    // event when the layout still reports the literal delimiter as `event.key`;
+    // layout-produced characters remain native because they are not in the wrap
+    // map. Never shadow Ctrl/Cmd commands, explicit editor bindings, or IME input.
     if (
       start !== end &&
-      !e.ctrlKey && !e.metaKey && !e.altKey && !e.isComposing &&
+      !cmd && !e.ctrlKey && !e.metaKey && !e.isComposing &&
       e.key.length === 1 && Object.prototype.hasOwnProperty.call(SELECTION_WRAP, e.key)
     ) {
       const ed = wrapSelectionEdit(raw, start, end, e.key);
@@ -2239,7 +2245,6 @@ export function Editor(props: { id: string }): JSX.Element {
     // (runEditorCmd) instead of ~20 sequential matchesCommand checks. A handler
     // returns false to fall through — select-block does this off the block edge
     // so the textarea extends the selection by a wrapped line.
-    const cmd = editorCommandFor(e);
     if (sheetCell && cmd && SHEET_CELL_BLOCKED_EDITOR_COMMANDS.has(cmd)) {
       e.preventDefault();
       return;

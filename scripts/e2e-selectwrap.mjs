@@ -1,8 +1,9 @@
 // Verify #18 selection-wrap in the REAL frontend (Chromium + mock backend via
 // vite preview): entering the editor, selecting text, and typing a wrap key must
 // wrap the selection — `[[sel]]`/`((sel))` open the page/block search; emphasis
-// marks (`*`/`~`/`=`) wrap and double. Drives real keydown events, so it exercises
-// Block.tsx's keydown→wrapSelectionEdit→autocomplete path, not just the pure logic.
+// marks (`*`/`~`/`=`) wrap and double, including literal delimiter events with
+// Alt held (GH #83). Drives real keydown events, so it exercises Block.tsx's
+// keydown→wrapSelectionEdit→autocomplete path, not just the pure logic.
 import { chromium } from "playwright";
 import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -82,6 +83,14 @@ try {
   {
     const { value } = await gesture(page, "hi there", 0, 2, ["~"]);
     check("~ wraps selection", value, "~hi~ there");
+    await page.keyboard.press("Escape");
+  }
+  // 5) On layouts where Alt+[ still reports the literal `[`, match OG's
+  // incidental two-press wrapping behavior without mapping the physical key.
+  {
+    const { value, acOpen } = await gesture(page, "alt selected text", 4, 12, ["Alt+[", "Alt+["]);
+    check("Alt+[[ wraps a literal-key selection", value, "alt [[selected]] text");
+    check("Alt+[[ opens page search", acOpen, true);
     await page.keyboard.press("Escape");
   }
 

@@ -10,6 +10,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Alt-modified literal delimiters now retain Logseq selection-wrapping
+  behavior.** On layouts where `Alt + [` still produces a literal `[`, two
+  presses wrap selected text as `[[text]]` and open page completion. Layouts
+  where Alt/Option produces another character keep native text input, and an
+  explicitly configured editor shortcut takes precedence. (GH #83)
 - **The shared parser is updated to lsdoc 0.5.3.** Native and browser-WASM
   parsing now include the final issue #82 state-parity corrections, while the
   Help with Tine oracle remains pinned to the exact released sources. (GH #82,
