@@ -1,6 +1,6 @@
 {
   "name": "tine",
-  "version": "0.5.6",
+  "version": "0.5.7",
   "private": true,
   "license": "AGPL-3.0-only",
   "type": "module",
@@ -19,6 +19,8 @@
     "check:release-readiness": "node scripts/check-release-readiness.mjs",
     "docs:build": "node scripts/build-guide-demo.mjs",
     "docs:check": "node scripts/build-guide-demo.mjs --check",
+    "docs:check-geometry": "node scripts/check-publish-outline-geometry.mjs",
+    "ui:check-mobile-layout": "node scripts/check-mobile-layout.mjs",
     "blog:check": "node scripts/check-reddit-blog.mjs",
     "blog:sync": "node scripts/sync-reddit-blog.mjs",
     "e2e:caret": "CARET_LABEL=release-required CARET_MODE=agenda node scripts/e2e-caret.mjs",

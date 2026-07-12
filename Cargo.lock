@@ -4608,7 +4608,7 @@ dependencies = [
 
 [[package]]
 name = "tine"
-version = "0.5.6"
+version = "0.5.7"
 dependencies = [
  "base64 0.22.1",
  "clipboard-rs",
@@ -4635,7 +4635,7 @@ dependencies = [
 
 [[package]]
 name = "tine-core"
-version = "0.5.6"
+version = "0.5.7"
 dependencies = [
  "ammonia",
  "chrono",

@@ -102,6 +102,31 @@ export function AudioOverlay(): JSX.Element {
       return r ? await backend().streamAsset(r) : "";
     }
   );
+  const [blobFallback, setBlobFallback] = createSignal("");
+  const resolvedSrc = () => blobFallback() || src();
+  let tryingBlobFallback = false;
+  let ownedBlobUrl = "";
+  const retryAsBoundedBlob = () => {
+    const u = audioPlayer()?.url;
+    if (!u || isExternal(u) || tryingBlobFallback || blobFallback()) return;
+    const rel = relOf(u);
+    if (!rel) return;
+    tryingBlobFallback = true;
+    const ext = rel.split(".").pop()?.toLowerCase();
+    const mime = ext === "mp3" || ext === "mpeg" ? "audio/mpeg" :
+      ext === "m4a" || ext === "aac" ? "audio/mp4" :
+      ext === "wav" ? "audio/wav" :
+      ext === "ogg" || ext === "oga" ? "audio/ogg" :
+      ext === "opus" ? "audio/opus" :
+      ext === "flac" ? "audio/flac" : "application/octet-stream";
+    void backend().readAsset(rel, 256 * 1024 * 1024).then((bytes) => {
+      ownedBlobUrl = URL.createObjectURL(new Blob([Uint8Array.from(bytes).buffer], { type: mime }));
+      setBlobFallback(ownedBlobUrl);
+    }).catch(() => {});
+  };
+  onCleanup(() => {
+    if (ownedBlobUrl) URL.revokeObjectURL(ownedBlobUrl);
+  });
 
   let audioEl: HTMLAudioElement | undefined;
   let canvasEl: HTMLCanvasElement | undefined;
@@ -159,7 +184,7 @@ export function AudioOverlay(): JSX.Element {
 
   // Decode the audio for the waveform once the src resolves. Best-effort.
   createEffect(() => {
-    const s = src();
+    const s = resolvedSrc();
     setPeaks(null);
     if (!s) return;
     void (async () => {
@@ -253,8 +278,9 @@ export function AudioOverlay(): JSX.Element {
           <audio
             ref={audioEl}
             style={{ display: "none" }}
-            src={src() || undefined}
+            src={resolvedSrc() || undefined}
             autoplay
+            onError={retryAsBoundedBlob}
             onLoadedMetadata={(e) => setDur(e.currentTarget.duration || 0)}
             onDurationChange={(e) => setDur(e.currentTarget.duration || 0)}
             onPlay={() => {

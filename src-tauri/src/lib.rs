@@ -80,13 +80,96 @@ fn show_capture(app: &tauri::AppHandle) {
             let _ = w.center();
         }
         let _ = w.show();
-        let _ = w.set_focus();
-        // Tell the webview it was (re)shown so it re-fits its window to the
-        // current content. The frontend can't rely on the focus event alone:
-        // this window is created `focus: false` and frameless, so a WM may not
-        // deliver a focus-gained event on show — leaving the window stuck at a
-        // previously-grown size.
+        // Do not activate until the frontend acknowledges that its textarea and
+        // capture-shown listener exist. Activating a newly mapped window first
+        // lets a fast typist send keys into an unready WebView; Plasma can also
+        // reject that too-early focus request before the surface is paint-ready.
         let _ = app.emit("capture-shown", ());
+
+        // The frontend-ready acknowledgement is the preferred path, but it is
+        // deliberately not the only one: WebKitGTK may throttle a hidden
+        // auxiliary WebView enough to miss/delay its event listener. Start the
+        // same bounded activation sequence after the newly mapped window has
+        // had one paint turn. Visibility checks make this harmless if the user
+        // closes capture again in the meantime.
+        let focus_app = app.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(
+                CAPTURE_INITIAL_FOCUS_DELAY_MS,
+            ));
+            let main_thread_app = focus_app.clone();
+            let _ = focus_app.run_on_main_thread(move || {
+                if main_thread_app
+                    .get_webview_window("capture")
+                    .and_then(|window| window.is_visible().ok())
+                    .unwrap_or(false)
+                {
+                    activate_capture_window(&main_thread_app);
+                }
+            });
+        });
+    }
+}
+
+#[cfg(desktop)]
+const CAPTURE_INITIAL_FOCUS_DELAY_MS: u64 = 120;
+#[cfg(desktop)]
+const CAPTURE_FOCUS_RETRY_DELAYS_MS: [u64; 5] = [40, 120, 260, 520, 900];
+
+/// Activate Quick Capture only after its frontend has mounted the editor. The
+/// bounded retries are intentional: KWin/Plasma may reject a focus request made
+/// in the same turn as mapping a frameless window because it is not ready for
+/// painting yet. Every retry follows an explicit `tine --capture` user action.
+#[cfg(desktop)]
+fn activate_capture_window(app: &tauri::AppHandle) {
+    let Some(window) = app.get_webview_window("capture") else {
+        return;
+    };
+    let _ = window.unminimize();
+    let _ = window.set_focus();
+    let _ = app.emit_to("capture", "capture-focus-editor", ());
+
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let mut elapsed = 0;
+        for at in CAPTURE_FOCUS_RETRY_DELAYS_MS {
+            std::thread::sleep(std::time::Duration::from_millis(at - elapsed));
+            elapsed = at;
+            let focus_app = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                let Some(window) = focus_app.get_webview_window("capture") else {
+                    return;
+                };
+                if window.is_visible().unwrap_or(false) {
+                    let _ = window.set_focus();
+                    let _ = focus_app.emit_to("capture", "capture-focus-editor", ());
+                }
+            });
+        }
+    });
+}
+
+#[tauri::command]
+fn capture_frontend_ready(
+    window: tauri::WebviewWindow,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    #[cfg(desktop)]
+    {
+        if window.label() != "capture" {
+            return Err("capture activation is only available to the capture window".into());
+        }
+        if !window.is_visible().map_err(|error| error.to_string())? {
+            return Err("capture window is hidden".into());
+        }
+        activate_capture_window(&app);
+        Ok(())
+    }
+
+    #[cfg(not(desktop))]
+    {
+        let _ = (window, app);
+        Err("quick capture is only available on desktop".into())
     }
 }
 
@@ -146,6 +229,15 @@ mod multi_window_tests {
     fn capture_only_launch_has_no_graph_path() {
         let argv = vec!["tine".to_string(), "--capture".to_string()];
         assert!(forwarded_graph_path(&argv, "/tmp").is_none());
+    }
+
+    #[test]
+    fn capture_activation_retries_after_the_frontend_ready_handshake() {
+        assert_eq!(CAPTURE_INITIAL_FOCUS_DELAY_MS, 120);
+        assert_eq!(CAPTURE_FOCUS_RETRY_DELAYS_MS, [40, 120, 260, 520, 900]);
+        assert!(CAPTURE_FOCUS_RETRY_DELAYS_MS
+            .windows(2)
+            .all(|pair| pair[0] < pair[1]));
     }
 
     #[test]
@@ -431,6 +523,7 @@ pub fn run() {
             open_graph_window,
             startup_graph_path,
             capture_target,
+            capture_frontend_ready,
             create_graph,
             app_platform,
             default_graph_parent,

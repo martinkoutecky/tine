@@ -2194,6 +2194,9 @@ textarea {
   display: none;
 }
 @media (max-width: 640px) {
+  .main-content-inner {
+    padding: 8px 12px 40vh;
+  }
   .page-title-row {
     gap: 6px;
     min-width: 0;

@@ -38,6 +38,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   and let command plugins declare ordinary remappable default shortcuts without
   receiving keyboard, DOM, or global-input authority.
 
+## [0.5.7] - 2026-07-12
+
 ### Fixed
 
 - Preserve the focused block while choosing a plugin action from Ctrl-K, so
@@ -81,9 +83,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - **Clicks inside inline code now put the caret on the clicked character.**
   Literal delimiters are mapped separately from their content instead of
   snapping clicks to the start or end of the formatted span. (GH #114)
-- **Quick Capture focuses its first bullet even when its initial show event
-  races frontend startup.** Typing can begin immediately without an extra mouse
-  click. (GH #117)
+- **Quick Capture now requests native activation only after its editor is ready,
+  with bounded retries for newly mapped Linux windows.** A missed initial show
+  event is reconciled without creating a focus feedback loop. (GH #117)
 - **Table arrow-key navigation is now covered through the real global keyboard
   path.** The deployed app already had the Grid-equivalent behavior reported in
   GH #113; component and Linux real-app regressions now guard it.
@@ -92,9 +94,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   size-bounded Blob; oversized or unsupported files retain the external-player
   fallback. (GH #119)
 - **System media players are launched outside Tine's runtime session.** Linux
-  openers now inherit only desktop-session state, exclude AppImage loader paths,
-  and start in a new session so VLC cannot load Tine's bundled libraries or die
-  with its parent process group. (GH #118)
+  openers now inherit the KDE/Plasma session identity needed by `xdg-open`,
+  exclude AppImage loader paths, and start in a new session so VLC cannot load
+  Tine's bundled libraries or die with its parent process group. (GH #118)
+- **MP3 and other graph audio play inline again on Linux.** WebKitGTK protocol
+  failures retry through the same graph-scoped, size-bounded Blob path as MKV,
+  while expanded playback and external-player actions remain available. (GH
+  #121)
 - **Page titles can reveal or open their exact source file on desktop.** The
   right-click menu flushes edits first, refuses save conflicts, preserves nested
   and path-pinned Markdown/Org identity, and never exposes the actions for the
@@ -103,6 +109,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   navigation.** Home links target the Welcome page, the alphabetical list remains
   at All pages, and public reference targets expose keyboard-accessible counts
   with links to public same-page and cross-page referrers. (GH #115, GH #116)
+- **Published outline guides line up with their bullets.** Inline block embeds
+  now use a single root marker instead of stacking host, list, and embedded
+  connector lines. (GH #122)
+- **Mobile outlines use substantially more of the available screen width.** At
+  phone widths, page gutters shrink from 48px per side to 12px per side while
+  retaining the device safe-area insets.
 - **Writable pages have a quiet continuation target below their content.** It
   focuses an existing empty trailing leaf or creates exactly one root (one Undo);
   zoomed outlines append within the zoom root, while Guide and read-only pages

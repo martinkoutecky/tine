@@ -1,0 +1,223 @@
+{
+  "schemaVersion": 1,
+  "version": "0.5.7",
+  "baseTag": "v0.5.6",
+  "items": [
+    {
+      "section": "Fixed",
+      "text": "**Alt-modified literal delimiters now retain Logseq selection-wrapping behavior.** On layouts where `Alt + [` still produces a literal `[`, two presses wrap selected text as `[[text]]` and open page completion. Layouts where Alt/Option produces another character keep native text input, and an explicitly configured editor shortcut takes precedence. (GH #83)",
+      "userVisible": true,
+      "regressions": ["UI-SELECTION-WRAP-ALT-PARITY-001"],
+      "docs": {"status":"current","reason":"Shortcut behavior is covered by the existing editing and shortcut documentation.","refs":["docs/FEATURES.md"]},
+      "website": {"status":"not-applicable","reason":"A platform keyboard parity fix does not change the product site.","refs":[]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    },
+    {
+      "section": "Fixed",
+      "text": "**The shared parser is updated to lsdoc 0.5.3.** Native and browser-WASM parsing now include the final issue #82 state-parity corrections, while the Help with Tine oracle remains pinned to the exact released sources. (GH #82, GH #111)",
+      "userVisible": false,
+      "regressions": ["UI-LSDOC-ORACLE-BUNDLE-001"],
+      "docs": {"status":"current","reason":"Parser integration and Help diagnostics are already described in the feature inventory.","refs":["docs/FEATURES.md"]},
+      "website": {"status":"not-applicable","reason":"An internal parser patch does not change product presentation.","refs":[]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    },
+    {
+      "section": "Fixed",
+      "text": "**Help improve Tine now version-locks the complete lsdoc comparison oracle.** The mldoc parser, AST normalizer, comparator, and reference extractor are pinned and checked as one bundle, preventing stale helper files from being reported as real graph divergences. Context-dependent differences that reduce to mldoc's known failed-double-backtick state leak are rechecked in fresh parser realms and shown separately instead of counted as lsdoc bugs. (GH #82)",
+      "userVisible": true,
+      "regressions": ["UI-LSDOC-ORACLE-BUNDLE-001"],
+      "docs": {"status":"current","reason":"Help diagnostics and privacy behavior are recorded in the feature inventory.","refs":["docs/FEATURES.md"]},
+      "website": {"status":"not-applicable","reason":"Diagnostic correctness is not a headline website change.","refs":[]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    },
+    {
+      "section": "Fixed",
+      "text": "**Double Enter now exits a trailing fenced code or calculator block.** The first Enter adds a blank code line; the second removes that sentinel and opens a normal sibling block below. One Undo restores the entire pre-exit state. (GH #93)",
+      "userVisible": true,
+      "regressions": ["UI-MULTILINE-DOUBLE-ENTER-EXIT-001"],
+      "docs": {"status":"current","reason":"This restores expected editor behavior without adding a new discoverable command.","refs":["docs/FEATURES.md"]},
+      "website": {"status":"not-applicable","reason":"A bounded editing fix does not change website positioning.","refs":[]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    },
+    {
+      "section": "Fixed",
+      "text": "**Imported preamble text, first-block page properties, and split middle-click navigation now match the page that owns them.** Ordinary Markdown before the first bullet is visible without rewriting the file and becomes a block only when edited; a properties-only first block uses the same page-property UI and gear editor as an unbulleted pre-block; and middle-clicked page links open in their source pane rather than whichever pane was focused earlier. (GH #85, GH #86, GH #87)",
+      "userVisible": true,
+      "regressions": ["UI-PREAMBLE-BEFORE-FIRST-BLOCK-001","UI-FIRST-BLOCK-PAGE-PROPS-001","UI-SPLIT-MIDDLE-CLICK-PANE-001"],
+      "docs": {"status":"current","reason":"These restore existing page, property, and split navigation semantics.","refs":["docs/FEATURES.md"]},
+      "website": {"status":"not-applicable","reason":"Compatibility fixes do not require new website copy.","refs":[]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    },
+    {
+      "section": "Fixed",
+      "text": "**Returning to a previously loaded large page no longer mounts it twice.** A pane now renders only the route whose asynchronous load actually completed; obsolete load failures cannot replace a newer page, and the performance gate compares every candidate on one machine with both an immutable long-term anchor and the previous release.",
+      "userVisible": true,
+      "regressions": ["UI-PAGE-ROUTE-REMOUNT-001"],
+      "docs": {"status":"current","reason":"This is a performance and correctness repair to existing navigation.","refs":["docs/UI-REGRESSION-TESTING.md"]},
+      "website": {"status":"not-applicable","reason":"No public feature description changes.","refs":[]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    },
+    {
+      "section": "Fixed",
+      "text": "**Clicks inside inline code now put the caret on the clicked character.** Literal delimiters are mapped separately from their content instead of snapping clicks to the start or end of the formatted span. (GH #114)",
+      "userVisible": true,
+      "regressions": ["UI-INLINE-CODE-CLICK-CARET-001"],
+      "docs": {"status":"current","reason":"This restores ordinary caret placement and needs no new user instruction.","refs":["docs/FEATURES.md"]},
+      "website": {"status":"not-applicable","reason":"A caret regression fix does not alter website content.","refs":[]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    },
+    {
+      "section": "Fixed",
+      "text": "**Quick Capture now requests native activation only after its editor is ready, with bounded retries for newly mapped Linux windows.** A missed initial show event is reconciled without creating a focus feedback loop. (GH #117)",
+      "userVisible": true,
+      "regressions": ["UI-QUICK-CAPTURE-INITIAL-FOCUS-001"],
+      "docs": {"status":"current","reason":"Quick Capture usage already says typing can start from the global shortcut.","refs":["website/demo/features-quick-capture.html"]},
+      "website": {"status":"current","reason":"The generated Guide/demo already documents the intended immediate-capture flow.","refs":["website/demo/features-quick-capture.html"]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    },
+    {
+      "section": "Fixed",
+      "text": "**Table arrow-key navigation is now covered through the real global keyboard path.** The deployed app already had the Grid-equivalent behavior reported in GH #113; component and Linux real-app regressions now guard it.",
+      "userVisible": true,
+      "regressions": ["UI-SHEET-TABLE-ARROW-NAV-001"],
+      "docs": {"status":"current","reason":"The Sheets Guide already describes keyboard cell navigation.","refs":["website/demo/features-sheets.html"]},
+      "website": {"status":"current","reason":"The generated Sheets page remains accurate.","refs":["website/demo/features-sheets.html"]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    },
+    {
+      "section": "Fixed",
+      "text": "**MKV videos play inline again on Linux.** When WebKitGTK rejects Matroska from Tauri's range protocol, Tine retries supported files through a graph-scoped, size-bounded Blob; oversized or unsupported files retain the external-player fallback. (GH #119)",
+      "userVisible": true,
+      "regressions": ["UI-MKV-INLINE-PLAYBACK-001"],
+      "docs": {"status":"current","reason":"Existing asset documentation already covers inline media and external fallback.","refs":["docs/FEATURES.md"]},
+      "website": {"status":"not-applicable","reason":"Restoring an existing media type does not require website redesign.","refs":[]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    },
+    {
+      "section": "Fixed",
+      "text": "**System media players are launched outside Tine's runtime session.** Linux openers now inherit the KDE/Plasma session identity needed by `xdg-open`, exclude AppImage loader paths, and start in a new session so VLC cannot load Tine's bundled libraries or die with its parent process group. (GH #118)",
+      "userVisible": true,
+      "regressions": ["UI-ASSET-DEFAULT-PLAYER-001"],
+      "docs": {"status":"current","reason":"The existing external-player action remains unchanged for users.","refs":["docs/FEATURES.md"]},
+      "website": {"status":"not-applicable","reason":"A Linux launcher repair does not change public website content.","refs":[]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    },
+    {
+      "section": "Fixed",
+      "text": "**MP3 and other graph audio play inline again on Linux.** WebKitGTK protocol failures retry through the same graph-scoped, size-bounded Blob path as MKV, while expanded playback and external-player actions remain available. (GH #121)",
+      "userVisible": true,
+      "regressions": ["UI-AUDIO-INLINE-PLAYBACK-001"],
+      "docs": {"status":"current","reason":"Existing asset documentation already covers inline and expanded audio.","refs":["docs/FEATURES.md"]},
+      "website": {"status":"not-applicable","reason":"Restoring audio playback does not require new product-site copy.","refs":[]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    },
+    {
+      "section": "Fixed",
+      "text": "**Page titles can reveal or open their exact source file on desktop.** The right-click menu flushes edits first, refuses save conflicts, preserves nested and path-pinned Markdown/Org identity, and never exposes the actions for the bundled Guide. (GH #84)",
+      "userVisible": true,
+      "regressions": ["UI-PAGE-TITLE-FILE-ACTIONS-001"],
+      "docs": {"status":"current","reason":"Desktop source-file actions are recorded in the feature inventory and contextual UI.","refs":["docs/FEATURES.md"]},
+      "website": {"status":"not-applicable","reason":"A contextual file workflow does not require homepage copy.","refs":[]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    },
+    {
+      "section": "Fixed",
+      "text": "**Published Guides now open on Welcome to Tine and preserve block-reference navigation.** Home links target the Welcome page, the alphabetical list remains at All pages, and public reference targets expose keyboard-accessible counts with links to public same-page and cross-page referrers. (GH #115, GH #116)",
+      "userVisible": true,
+      "regressions": ["UI-PUBLISH-REFERRER-BADGES-001","UI-PUBLISH-WELCOME-HOME-001"],
+      "docs": {"status":"update","reason":"The canonical Guide/demo was regenerated with corrected home and reference navigation.","refs":["website/demo/index.html","website/demo/pages.html"]},
+      "website": {"status":"update","reason":"The online Guide is the website demo and now includes the corrected navigation and badges.","refs":["website/demo/index.html","website/demo/style.css"]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    },
+    {
+      "section": "Fixed",
+      "text": "**Published outline guides line up with their bullets.** Inline block embeds now use a single root marker instead of stacking host, list, and embedded connector lines. (GH #122)",
+      "userVisible": true,
+      "regressions": ["UI-PUBLISH-OUTLINE-GEOMETRY-001"],
+      "docs": {"status":"update","reason":"The generated Guide/demo records the corrected outline and embed structure.","refs":["website/demo/index.html","website/demo/style.css"]},
+      "website": {"status":"update","reason":"The online demo CSS now aligns outline guides and simplifies embedded roots.","refs":["website/demo/style.css"]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    },
+    {
+      "section": "Fixed",
+      "text": "**Mobile outlines use substantially more of the available screen width.** At phone widths, page gutters shrink from 48px per side to 12px per side while retaining the device safe-area insets.",
+      "userVisible": true,
+      "regressions": ["UI-MOBILE-CONTENT-WIDTH-001"],
+      "docs": {"status":"not-applicable","reason":"A responsive spacing correction needs no user documentation.","refs":[]},
+      "website": {"status":"not-applicable","reason":"This targets the Android application shell rather than the public site.","refs":[]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    },
+    {
+      "section": "Fixed",
+      "text": "**Writable pages have a quiet continuation target below their content.** It focuses an existing empty trailing leaf or creates exactly one root (one Undo); zoomed outlines append within the zoom root, while Guide and read-only pages remain immutable. (GH #96)",
+      "userVisible": true,
+      "regressions": ["UI-PAGE-TRAILING-BLOCK-TARGET-001"],
+      "docs": {"status":"current","reason":"This makes existing page editing more discoverable without adding a command.","refs":["docs/FEATURES.md"]},
+      "website": {"status":"not-applicable","reason":"A page editing affordance does not require site copy.","refs":[]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    },
+    {
+      "section": "Fixed",
+      "text": "**Ctrl+K now explains its search grammar in place.** A keyboard-accessible Search syntax button documents AND, OR, exclusion, phrases, and regex; Escape closes the help before closing search, and every displayed example is executed against both frontend and Rust matchers in tests. (GH #97)",
+      "userVisible": true,
+      "regressions": ["UI-QUICK-SWITCHER-SYNTAX-HELP-001"],
+      "docs": {"status":"current","reason":"The syntax help is generated in place from the executable search grammar.","refs":["docs/FEATURES.md"]},
+      "website": {"status":"not-applicable","reason":"In-product search help is sufficient for this patch feature.","refs":[]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    },
+    {
+      "section": "Fixed",
+      "text": "**Settings now has progressive disclosure and cross-tab search.** Niche and experimental controls live in persisted, accessible Advanced sections; search covers labels, descriptions, and aliases, identifies the tab/section, and temporarily reveals matching hidden controls without changing the saved disclosure state. (GH #112)",
+      "userVisible": true,
+      "regressions": ["UI-SETTINGS-DISCLOSURE-SEARCH-001"],
+      "docs": {"status":"current","reason":"The settings inventory records the complete control taxonomy and search aliases.","refs":["docs/SETTINGS-INVENTORY.md"]},
+      "website": {"status":"not-applicable","reason":"Settings organization does not change the public feature set.","refs":[]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    },
+    {
+      "section": "Fixed",
+      "text": "**Pasting selected structured content preserves its explicit outline.** Safe clipboard HTML is deterministically converted into nested lists, headings, paragraphs, quotes, fenced code, links, emphasis, and one-block GFM tables; malformed, semantic-free, or bounded-out payloads use the existing plain-text path. The import is one normal persistence transaction and one Undo, while Ctrl/Cmd+Shift+V remains literal plain-text paste. (GH #58)",
+      "userVisible": true,
+      "regressions": ["UI-STRUCTURED-HTML-PASTE-001"],
+      "docs": {"status":"current","reason":"Clipboard behavior is represented in the feature inventory and standard shortcut semantics.","refs":["docs/FEATURES.md"]},
+      "website": {"status":"not-applicable","reason":"A paste-quality improvement does not require website copy.","refs":[]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    },
+    {
+      "section": "Changed",
+      "text": "**The frontend build and test toolchain has been security-updated.** Vite 6 and Vitest 3 replace vulnerable development-only versions, with deterministic SolidJS test resolution and zero known npm audit findings.",
+      "userVisible": false,
+      "regressions": [],
+      "docs": {"status":"not-applicable","reason":"Development dependency maintenance is validated by CI rather than user documentation.","refs":[]},
+      "website": {"status":"not-applicable","reason":"Development tooling does not change product presentation.","refs":[]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    },
+    {
+      "section": "Changed",
+      "text": "**Block embeds now begin with one interactive root bullet instead of two.** The referenced root keeps its collapse, zoom, sidebar, navigation, and editing behavior, while a slightly heavier descendant guide marks the embedded outline without adding a surrounding box. (GH #88)",
+      "userVisible": true,
+      "regressions": ["UI-BLOCK-EMBED-ROOT-BULLET-001"],
+      "docs": {"status":"current","reason":"This simplifies existing block-embed presentation without changing syntax.","refs":["docs/FEATURES.md"]},
+      "website": {"status":"current","reason":"The regenerated Guide/demo visibly demonstrates the single-root embed presentation.","refs":["website/demo/index.html"]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    },
+    {
+      "section": "Changed",
+      "text": "**Bug reports now feed a durable regression and follow-up workflow.** The issue form asks for exact steps and an anonymized minimal graph, UI and non-UI bugs share one indexed catalog, and a reporter's comment on a closed issue reopens it automatically for triage.",
+      "userVisible": false,
+      "regressions": [],
+      "docs": {"status":"update","reason":"The tracked testing and release contracts document the new regression lifecycle.","refs":["docs/UI-REGRESSION-TESTING.md","docs/RELEASE-CHECKLIST.md"]},
+      "website": {"status":"not-applicable","reason":"Repository issue workflow is not product-site content.","refs":[]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    },
+    {
+      "section": "Changed",
+      "text": "**Release publication now fails closed on an incomplete platform set.** Tagged releases require Android signing, a successful real offline Flatpak build, lockstep version/changelog metadata, cross-platform-stable vendored oracle bytes, all 21 expected artifacts, and all 12 updater platform entries before the draft can become public. All expensive platform builds now run in parallel into immutable workflow artifacts; one short publisher assembles the updater manifest and performs the only GitHub Release mutation.",
+      "userVisible": false,
+      "regressions": [],
+      "docs": {"status":"update","reason":"The release checklist and architecture plan define the fail-closed parallel build and publisher flow.","refs":["docs/RELEASE-CHECKLIST.md","docs/plans/release-parallel-build-publish.md"]},
+      "website": {"status":"not-applicable","reason":"Release engineering does not change product website copy.","refs":[]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    }
+  ]
+}

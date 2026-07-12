@@ -851,15 +851,25 @@ function MediaEmbed(props: {
   });
   const onMediaError = () => {
     const r = rel();
-    // WebKitGTK's media pipeline rejects Tauri custom-scheme Matroska URLs even
-    // when the same supported MKV bytes play from a Blob. Retry that one known
-    // scheme/container mismatch with a graph-scoped, size-bounded read. Very
-    // large files still fall back to the system player instead of consuming
-    // unbounded WebView memory.
-    if (!external && r?.toLowerCase().endsWith(".mkv") && !tryingBlobFallback && !blobFallback()) {
+    // WebKitGTK's media pipeline can reject otherwise-supported audio and
+    // Matroska when it arrives through a custom protocol. Retry those known
+    // transport mismatches through a graph-scoped, size-bounded Blob. Audio
+    // used this path before range streaming was introduced; the bound keeps a
+    // very large recording from being copied wholesale into WebView memory.
+    const canRetry = props.kind === "audio" || r?.toLowerCase().endsWith(".mkv");
+    if (!external && r && canRetry && !tryingBlobFallback && !blobFallback()) {
       tryingBlobFallback = true;
-      void backend().readAsset(r, 512 * 1024 * 1024).then((bytes) => {
-        ownedBlobUrl = URL.createObjectURL(new Blob([Uint8Array.from(bytes).buffer], { type: "video/x-matroska" }));
+      const maxBytes = props.kind === "audio" ? 256 * 1024 * 1024 : 512 * 1024 * 1024;
+      const ext = r.split(".").pop()?.toLowerCase();
+      const mime = props.kind === "video" ? "video/x-matroska" :
+        ext === "mp3" || ext === "mpeg" ? "audio/mpeg" :
+        ext === "m4a" || ext === "aac" ? "audio/mp4" :
+        ext === "wav" ? "audio/wav" :
+        ext === "ogg" || ext === "oga" ? "audio/ogg" :
+        ext === "opus" ? "audio/opus" :
+        ext === "flac" ? "audio/flac" : "application/octet-stream";
+      void backend().readAsset(r, maxBytes).then((bytes) => {
+        ownedBlobUrl = URL.createObjectURL(new Blob([Uint8Array.from(bytes).buffer], { type: mime }));
         setBlobFallback(ownedBlobUrl);
       }).catch(() => setFailed(true));
       return;
