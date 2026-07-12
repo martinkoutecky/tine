@@ -57,6 +57,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   right-click menu flushes edits first, refuses save conflicts, preserves nested
   and path-pinned Markdown/Org identity, and never exposes the actions for the
   bundled Guide. (GH #84)
+- **Published Guides now open on Welcome to Tine and preserve block-reference
+  navigation.** Home links target the Welcome page, the alphabetical list remains
+  at All pages, and public reference targets expose keyboard-accessible counts
+  with links to public same-page and cross-page referrers. (GH #115, GH #116)
 
 ### Changed
 
