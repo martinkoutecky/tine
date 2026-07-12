@@ -13,6 +13,13 @@ events, and effects.
 > explicit platforms, public source/license, and AI-development provenance. Run
 > `npm run plugin:check -- <dir> --json` and include the report.
 
+Also ask the agent to create `port-gap.json` from
+[`port-gap.example.json`](port-gap.example.json) whenever any requested behavior is
+omitted because API 0.2 cannot express it. The checker validates this report. A gap
+report is not a request for general compatibility: it names the smallest semantic
+host operation, its capability boundary, its reuse beyond one plugin, security
+constraints, and the honest fallback.
+
 ## Common mappings
 
 | Legacy behavior | Tine-native shape |
@@ -31,6 +38,15 @@ not smuggle it through encoded notices, giant settings values, raw markup, or a
 different platform. A good missing operation may become a small reusable host API;
 an app-specific compatibility layer will not.
 
+Do not open a Tine API request that says only “support Logseq/Obsidian API X.” Attach
+the validated `port-gap.json`, link the pinned source revision, and explain which
+user-visible behavior remains impossible. If several ports independently report the
+same operation, that is evidence for a reusable host primitive. It is not a promise
+that Tine will add it.
+
 Porting changes maintenance ownership: the resulting plugin targets Tine's small API
 and need not track Logseq's Datascript schema, Obsidian's Electron/DOM assumptions, or
 either application's private internals. It may deliberately support fewer features.
+
+See the [popular-plugin compatibility snapshot](compatibility-matrix.md) for examples
+of faithful subsets, reusable gaps, core features, and inherently privileged work.

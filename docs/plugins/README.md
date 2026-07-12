@@ -30,6 +30,8 @@ storage format.
 The checker is designed for agents as well as humans. Its JSON has a stable
 `tine-plugin-check/v1` format, precise error codes, the entry SHA-256 digest, exact
 imports/exports, declared capabilities, and a coarse risk disposition.
+If `port-gap.json` is present, the same command validates its structured explanation
+of omitted behavior and includes `portGap.status` in the report.
 
 ## ABI
 

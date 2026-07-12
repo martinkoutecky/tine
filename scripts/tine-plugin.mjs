@@ -21,6 +21,10 @@ const LICENSES = new Set([
 ]);
 const MAX_MANIFEST = 64 * 1024;
 const MAX_WASM = 8 * 1024 * 1024;
+const PORT_GAP_OPERATIONS = /^[a-z][a-z0-9.-]{2,100}$/;
+const PORT_GAP_RECOMMENDATIONS = new Set([
+  "ship-reduced-port", "request-api-change", "core-feature", "privileged-integration", "do-not-port",
+]);
 
 function usage() {
   console.error("Usage: node scripts/tine-plugin.mjs check <plugin-dir> [--json]");
@@ -29,6 +33,80 @@ function usage() {
 
 function add(report, level, code, message) {
   report[level].push({ code, message });
+}
+
+function hasExactKeys(value, required) {
+  return value && typeof value === "object" && !Array.isArray(value) &&
+    Object.keys(value).length === required.length && required.every((key) => Object.hasOwn(value, key));
+}
+
+function boundedText(value, max) {
+  return typeof value === "string" && value.length > 0 && value.length <= max && !/[\u0000-\u001f]/.test(value);
+}
+
+function rejectUnknownFields(value, allowed, report, code, where) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return;
+  const unknown = Object.keys(value).find((key) => !allowed.includes(key));
+  if (unknown) add(report, "errors", code, `${where} contains unknown field ${unknown}`);
+}
+
+function checkPortGap(root, report) {
+  const gapPath = path.join(root, "port-gap.json");
+  if (!fs.existsSync(gapPath)) return;
+  report.portGap.status = "failed";
+  let gap;
+  try {
+    const bytes = fs.readFileSync(gapPath, "utf8");
+    if (Buffer.byteLength(bytes) > MAX_MANIFEST) throw new Error("report exceeds 64 KiB");
+    gap = JSON.parse(bytes);
+  } catch (error) {
+    add(report, "errors", "port-gap.json", `port-gap.json is invalid: ${error.message}`);
+    return;
+  }
+  const topKeys = ["format", "source", "requestedBehavior", "supportedSubset", "blockers", "recommendation"];
+  if (!hasExactKeys(gap, topKeys) || gap.format !== "tine-plugin-port-gap/v1") {
+    add(report, "errors", "port-gap.envelope", "port-gap.json has unknown or missing fields, or an incompatible format");
+    return;
+  }
+  const sourceKeys = ["ecosystem", "name", "repository", "revision"];
+  if (!hasExactKeys(gap.source, sourceKeys) || !["logseq", "obsidian", "other"].includes(gap.source.ecosystem) ||
+      !boundedText(gap.source.name, 120) || !boundedText(gap.source.revision, 160)) {
+    add(report, "errors", "port-gap.source", "port-gap source metadata is invalid");
+  }
+  try {
+    if (new URL(gap.source?.repository).protocol !== "https:") throw new Error();
+  } catch {
+    add(report, "errors", "port-gap.source", "port-gap source repository must use https");
+  }
+  if (!boundedText(gap.requestedBehavior, 1_000) || !Array.isArray(gap.supportedSubset) || gap.supportedSubset.length > 50 ||
+      gap.supportedSubset.some((item) => !boundedText(item, 500))) {
+    add(report, "errors", "port-gap.behavior", "requested behavior or supported subset is invalid");
+  }
+  const blockerKeys = [
+    "behavior", "missingHostOperation", "whyExistingApiIsInsufficient", "proposedCapability",
+    "securityConsiderations", "reuseCase", "fallback",
+  ];
+  if (!Array.isArray(gap.blockers) || gap.blockers.length < 1 || gap.blockers.length > 50) {
+    add(report, "errors", "port-gap.blockers", "port-gap must contain 1 to 50 blockers");
+  } else {
+    report.portGap.blockers = gap.blockers.length;
+    for (const [index, blocker] of gap.blockers.entries()) {
+      if (!hasExactKeys(blocker, blockerKeys) || !boundedText(blocker.behavior, 500) ||
+          !PORT_GAP_OPERATIONS.test(blocker.missingHostOperation ?? "") ||
+          !PORT_GAP_OPERATIONS.test(blocker.proposedCapability ?? "") ||
+          !boundedText(blocker.whyExistingApiIsInsufficient, 1_000) ||
+          !boundedText(blocker.securityConsiderations, 1_000) || !boundedText(blocker.reuseCase, 1_000) ||
+          !boundedText(blocker.fallback, 1_000)) {
+        add(report, "errors", "port-gap.blocker", `port-gap blocker ${index} is invalid`);
+      }
+    }
+  }
+  if (!PORT_GAP_RECOMMENDATIONS.has(gap.recommendation)) {
+    add(report, "errors", "port-gap.recommendation", "port-gap recommendation is invalid");
+  } else {
+    report.portGap.recommendation = gap.recommendation;
+  }
+  report.portGap.status = report.errors.some((item) => item.code.startsWith("port-gap.")) ? "failed" : "passed";
 }
 
 function checkSettings(settings, capabilities, report) {
@@ -47,6 +125,10 @@ function checkSettings(settings, capabilities, report) {
       add(report, "errors", "manifest.settings", `${where} must be an object`);
       continue;
     }
+    const common = ["key", "label", "description", "type", "default"];
+    const perType = setting.type === "enum" ? ["choices"] : setting.type === "number" ? ["min", "max", "step"] :
+      setting.type === "string" ? ["maxLength"] : [];
+    rejectUnknownFields(setting, [...common, ...perType], report, "manifest.settings-field", where);
     if (typeof setting.key !== "string" || !/^[a-z][a-z0-9._-]{0,79}$/.test(setting.key) || seen.has(setting.key)) {
       add(report, "errors", "manifest.settings-key", `${where}.key is invalid or duplicated`);
     }
@@ -89,10 +171,19 @@ function checkPortedFrom(portedFrom, report) {
     add(report, "errors", "manifest.provenance", "portedFrom is incomplete or invalid");
     return;
   }
+  rejectUnknownFields(
+    portedFrom, ["ecosystem", "name", "source", "revision", "license", "authors", "relationship"],
+    report, "manifest.provenance-field", "portedFrom",
+  );
   for (const field of ["name", "source", "revision", "license"]) {
     if (typeof portedFrom[field] !== "string" || !portedFrom[field]) {
       add(report, "errors", "manifest.provenance", `portedFrom.${field} is required`);
     }
+  }
+  try {
+    if (new URL(portedFrom.source).protocol !== "https:") throw new Error();
+  } catch {
+    add(report, "errors", "manifest.provenance", "portedFrom.source must use https");
   }
 }
 
@@ -101,6 +192,14 @@ function checkManifest(manifest, report) {
     add(report, "errors", "manifest.type", "manifest.json must contain an object");
     return;
   }
+  rejectUnknownFields(manifest, [
+    "schemaVersion", "id", "name", "version", "apiVersion", "description", "author", "license",
+    "source", "entry", "platforms", "capabilities", "contributions", "settings", "portedFrom", "aiDevelopment",
+  ], report, "manifest.field", "manifest");
+  rejectUnknownFields(
+    manifest.contributions, ["commands", "slashCommands", "blockDecorations"],
+    report, "manifest.contributions-field", "contributions",
+  );
   if (manifest.schemaVersion !== 1) add(report, "errors", "manifest.schema", "schemaVersion must be 1");
   if (manifest.apiVersion !== "0.2") add(report, "errors", "manifest.api", "apiVersion must be 0.2");
   if (typeof manifest.id !== "string" || !/^[a-z0-9](?:[a-z0-9.-]{1,62}[a-z0-9])$/.test(manifest.id) || !manifest.id.includes(".")) {
@@ -190,6 +289,7 @@ function checkPlugin(directory) {
     risk: "unknown",
     plugin: null,
     wasm: { bytes: 0, sha256: null, imports: [], exports: [] },
+    portGap: { status: "absent", blockers: 0, recommendation: null },
     errors: [],
     warnings: [],
   };
@@ -214,6 +314,7 @@ function checkPlugin(directory) {
   }
   report.plugin = { id: manifest.id ?? null, version: manifest.version ?? null, name: manifest.name ?? null };
   checkManifest(manifest, report);
+  checkPortGap(root, report);
   if (typeof manifest.entry === "string") {
     const unresolved = path.resolve(root, manifest.entry);
     const relative = path.relative(root, unresolved);

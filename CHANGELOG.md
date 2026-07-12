@@ -31,6 +31,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Add a separate theme API 0.1 with inert token-only packages, strict literal-color
   validation, local and signed-catalogue installation, immutable provenance, and
   Appearance-owned selection that remains subordinate to graph `custom.css`.
+- Add a machine-checkable port-gap report and a current popular-plugin compatibility
+  matrix so AI-assisted ports must distinguish faithful subsets, reusable host API
+  requests, core features, and inherently privileged integrations.
 
 ### Fixed
 

@@ -1,0 +1,23 @@
+{
+  "format": "tine-plugin-port-gap/v1",
+  "source": {
+    "ecosystem": "obsidian",
+    "name": "Example calendar",
+    "repository": "https://github.com/example/calendar",
+    "revision": "0123456789abcdef0123456789abcdef01234567"
+  },
+  "requestedBehavior": "Show a clickable calendar of journal pages in a sidebar panel.",
+  "supportedSubset": ["A command can open today's journal with the existing focused context."],
+  "blockers": [
+    {
+      "behavior": "Render and interact with a month grid of journal dates.",
+      "missingHostOperation": "views.register.calendar",
+      "whyExistingApiIsInsufficient": "API 0.2 has commands and fixed block decorations but no host-rendered panel contribution.",
+      "proposedCapability": "views.register.calendar",
+      "securityConsiderations": "The host should own rendering, bound the date range, and expose only journal existence and navigation rather than arbitrary graph access.",
+      "reuseCase": "Habit trackers, heatmaps, and agenda plugins need the same bounded calendar surface.",
+      "fallback": "Ship only an Open today's journal command and do not imitate the panel with notices or encoded markup."
+    }
+  ],
+  "recommendation": "request-api-change"
+}
