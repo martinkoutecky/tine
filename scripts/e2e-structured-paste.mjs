@@ -20,7 +20,7 @@ fs.rmSync(TMP, { recursive: true, force: true });
 for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(`${GRAPH}/${dir}`, { recursive: true });
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(`${TMP}/xdg/${dir}`, { recursive: true });
 fs.writeFileSync(`${GRAPH}/logseq/config.edn`, "{}\n");
-fs.writeFileSync(PAGE, "- \n");
+fs.writeFileSync(PAGE, "- paste here\n");
 const now = new Date();
 const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
 fs.writeFileSync(`${GRAPH}/journals/${journal}.md`, "- open [[Paste]]\n");
@@ -48,8 +48,10 @@ try {
     const link = await browser.$(selector);
     if (await link.isExisting()) { await link.click(); break; }
   }
-  await browser.$("h1.page-title").waitForExist({ timeout: 10_000 });
-  const target = await browser.$(".ls-block .block-content, .ls-block .bullet-container");
+  await browser.waitUntil(async () => (await browser.$("h1.page-title").getText()).trim() === "Paste", {
+    timeout: 10_000, timeoutMsg: "Paste page did not open",
+  });
+  const target = await browser.$(".ls-block .block-content");
   await target.click();
   await browser.$("textarea.block-editor").waitForExist({ timeout: 5000 });
   const result = await browser.execute(() => {
@@ -58,6 +60,8 @@ try {
     if (typeof DataTransfer !== "function" || typeof ClipboardEvent !== "function") {
       return { ok: false, error: "browser clipboard constructors unavailable" };
     }
+    editor.value = "";
+    editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContent", data: null }));
     const clipboard = new DataTransfer();
     clipboard.setData("text/plain", "Parent\nChild bold\nSibling");
     clipboard.setData("text/html", "<ul><li>Parent<ul><li>Child <strong>bold</strong></li></ul></li><li>Sibling</li></ul>");
