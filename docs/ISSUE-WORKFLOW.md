@@ -1,7 +1,8 @@
 # Issue workflow
 
 The regression catalogs and GitHub are one operating system, not separate lists.
-GitHub milestones and the repository Project are the public planning surface;
+GitHub milestones and the [Tine Project](https://github.com/users/martinkoutecky/projects/1)
+are the public planning surface;
 `docs/BACKLOG.md` explains durable product direction and must not duplicate a
 second manually maintained board.
 
@@ -54,8 +55,9 @@ an acceptable side effect of adding a feature.
 
 ## Planning and work sessions
 
-Release milestones answer “when”: v0.6.0 is Plugins and v0.7.0 is Sync. The
-GitHub Project answers status/priority and provides Now/Next/Later-style views.
+Release milestones answer “which release”: v0.6.0 is Plugins and v0.7.0 is
+Sync. The GitHub Project answers workflow `Status`, execution `Horizon`
+(Now/Next/Later), and `Priority`; labels capture triage and decision state.
 Decision sessions queue work without builds; after the maintainer says “go,” the
 queued work is implemented, tested, pushed, and deployed autonomously. Product,
 risk, or API-boundary decisions return to the decision queue rather than being

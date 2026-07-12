@@ -1,6 +1,7 @@
 # Tine — product backlog and decision archive
 
-The live, inspectable work board is the repository's GitHub Project; release
+The live, inspectable work board is the public
+[Tine GitHub Project](https://github.com/users/martinkoutecky/projects/1); release
 milestones answer when work is targeted. This document is not a second status
 board. It preserves durable product context, researched candidates, and explicit
 WONTFIX rationale that would be too large or too architectural for a Project
