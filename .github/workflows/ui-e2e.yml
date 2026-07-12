@@ -29,6 +29,8 @@ jobs:
         with:
           workspaces: ". -> target"
       - run: npm ci
+      - name: Install browser used by the selection-wrap scenario
+        run: npx playwright install --with-deps chromium
       - run: npm run build
       - name: Build production-protocol app
         run: cargo build --release --features custom-protocol --manifest-path src-tauri/Cargo.toml

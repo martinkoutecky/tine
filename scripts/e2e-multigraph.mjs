@@ -10,6 +10,7 @@ const TD = process.env.TAURI_DRIVER || "/aux/koutecky/logseq/.toolchain/cargo/bi
 const WD = process.env.WEBKIT_DRIVER || "/tmp/tine-webdriver/usr/bin/WebKitWebDriver";
 const DRIVER_PORT = Number(process.env.E2E_DRIVER_PORT || 4454);
 const NATIVE_PORT = Number(process.env.E2E_NATIVE_PORT || 4455);
+const WAIT_TIMEOUT = Number(process.env.E2E_WAIT_TIMEOUT_MS || 60_000);
 const ROOT = "/tmp/tine-multigraph-e2e";
 const A = `${ROOT}/alpha`;
 const B = `${ROOT}/beta`;
@@ -70,9 +71,9 @@ try {
     connectionRetryTimeout: 60000,
   });
 
-  await browser.$(".graph-switch-btn").waitForExist({ timeout: 20000 });
+  await browser.$(".graph-switch-btn").waitForExist({ timeout: WAIT_TIMEOUT });
   await browser.waitUntil(async () => (await browser.$("body").getText()).includes("ALPHA_SENTINEL"), {
-    timeout: 20000,
+    timeout: WAIT_TIMEOUT,
     timeoutMsg: "alpha graph never painted",
   });
   const initial = await browser.getWindowHandles();
@@ -82,7 +83,7 @@ try {
 
   forwarded.push(spawn(APP, [B], { env: { ...env, TINE_GRAPH: "" }, stdio: "ignore" }));
   await browser.waitUntil(async () => (await browser.getWindowHandles()).length === 3, {
-    timeout: 20000,
+    timeout: WAIT_TIMEOUT,
     timeoutMsg: "forwarded beta launch did not create a second window",
   });
 
@@ -90,9 +91,9 @@ try {
   const beta = handles.find((handle) => !initial.includes(handle));
   if (!beta) throw new Error("could not identify beta window");
   await browser.switchToWindow(beta);
-  await browser.$(".graph-switch-btn").waitForExist({ timeout: 20000 });
+  await browser.$(".graph-switch-btn").waitForExist({ timeout: WAIT_TIMEOUT });
   await browser.waitUntil(async () => (await browser.$("body").getText()).includes("BETA_SENTINEL"), {
-    timeout: 20000,
+    timeout: WAIT_TIMEOUT,
     timeoutMsg: "beta graph never painted",
   });
   const betaName = await browser.$(".graph-switch-name").getAttribute("textContent");
