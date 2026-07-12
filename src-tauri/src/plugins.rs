@@ -9,8 +9,8 @@ const MAX_MANIFEST_BYTES: usize = 64 * 1024;
 const MAX_WASM_BYTES: usize = 8 * 1024 * 1024;
 static INSTALL_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 const REGISTRY_PUBLIC_KEY: [u8; 32] = [
-    0xb0, 0xa2, 0x3e, 0xe1, 0x01, 0xde, 0x83, 0xf4, 0x3d, 0xda, 0x58, 0xc9, 0xe5, 0xf9, 0x97, 0xe9,
-    0x00, 0xbe, 0xa6, 0x34, 0x16, 0xde, 0x9c, 0xaa, 0x38, 0x65, 0xaa, 0x73, 0x6d, 0x56, 0x3b, 0x00,
+    0x6c, 0x25, 0xa1, 0xfd, 0x0c, 0x6d, 0xbc, 0x60, 0xca, 0xb7, 0xa4, 0x8c, 0x23, 0x6a, 0xa9, 0x18,
+    0x45, 0x66, 0xa6, 0x57, 0xff, 0x69, 0x72, 0x46, 0xd3, 0x0b, 0xaf, 0xc4, 0x7e, 0x17, 0x6c, 0x00,
 ];
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -431,8 +431,8 @@ mod tests {
     fn registry_public_key_has_the_expected_identity() {
         assert_eq!(REGISTRY_PUBLIC_KEY.len(), 32);
         assert!(ed25519_dalek::VerifyingKey::from_bytes(&REGISTRY_PUBLIC_KEY).is_ok());
-        let index = "{\n  \"schemaVersion\": 1,\n  \"generatedAt\": \"2026-07-11T00:00:00Z\",\n  \"plugins\": [],\n  \"revocations\": []\n}\n";
-        let signature = "88dLhfDBdYWf0v93Emf0/MqthFlXae9xJ6Ek3wIzgygJnE/BI2IA3DLV96/wQIDUsKENIR+M3SdfudgX/DgvBw==";
+        let index = "{\n  \"schemaVersion\": 1,\n  \"generatedAt\": \"2026-07-12T00:00:00Z\",\n  \"plugins\": [],\n  \"themes\": [],\n  \"revocations\": []\n}\n";
+        let signature = "2g6EPs5ssf7fkuBH5kYfDNaCEnoTX8PznGPsZ6yzz+xVMggocK5cyYHyE3tnnFGeyuMIBLx6ixPaHWN0FvNdAw==";
         verify_plugin_registry(index.to_string(), signature.to_string()).unwrap();
         assert!(verify_plugin_registry(format!("{index} "), signature.to_string()).is_err());
     }
