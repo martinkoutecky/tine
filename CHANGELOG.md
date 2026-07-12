@@ -45,11 +45,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   revoked theme falls back to Default while remaining uninstallable.
 - Update `plist` and `anyhow` so runtime Rust dependencies are clear of the current
   `quick-xml` denial-of-service and `anyhow` soundness advisories.
-
-## [0.5.7] - 2026-07-12
-
-### Fixed
-
 - Preserve the focused block while choosing a plugin action from Ctrl-K, so
   graph-writing commands can safely apply their expected-text effect.
 - Render inline query tables and boards only once instead of adding an empty
@@ -57,6 +52,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Upgrade the Vite/Vitest development toolchain to versions clear of the current
   npm advisories, including the Vitest UI-server and Vite dev-server issues; keep
   Solid's browser export conditions explicit in the test runner.
+
+### Changed
+
+- Link catalogue entries to their plugin details and screenshots, and explain
+  human-review reasons and finding severity in end-user language.
+
+## [0.5.7] - 2026-07-12
+
+### Fixed
 - **Alt-modified literal delimiters now retain Logseq selection-wrapping
   behavior.** On layouts where `Alt + [` still produces a literal `[`, two
   presses wrap selected text as `[[text]]` and open page completion. Layouts
@@ -144,9 +148,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   Ctrl/Cmd+Shift+V remains literal plain-text paste. (GH #58)
 
 ### Changed
-
-- Link catalogue entries to their plugin details and screenshots, and explain
-  human-review reasons and finding severity in end-user language.
 - **The frontend build and test toolchain has been security-updated.** Vite 6
   and Vitest 3 replace vulnerable development-only versions, with deterministic
   SolidJS test resolution and zero known npm audit findings.
