@@ -8,6 +8,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- **Returning to a previously loaded large page no longer mounts it twice.** A
+  pane now renders only the route whose asynchronous load actually completed;
+  obsolete load failures cannot replace a newer page, and the performance gate
+  compares every candidate on one machine with both an immutable long-term
+  anchor and the previous release.
+
 ### Changed
 
 - **Release publication now fails closed on an incomplete platform set.** Tagged

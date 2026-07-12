@@ -17,7 +17,7 @@ import { journalTitle } from "../journal";
 import type { RefGroup } from "../types";
 import { TagPageTable, TagTableToggle } from "./Page";
 import { PageView } from "./Page";
-import { focusBlock, resetTabsToJournals } from "../router";
+import { focusBlock, mainPaneRouter, resetTabsToJournals } from "../router";
 
 beforeAll(async () => {
   await initParser();
@@ -199,6 +199,50 @@ describe("zoomed block view", () => {
       expect(root.querySelector(`[data-block-id="${created}"] textarea`)).not.toBeNull();
       expect(doc.pages[0].roots).toEqual([parent, outside]);
       expect(doc.byId[parent].collapsed).toBe(true);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+describe("page route loading", () => {
+  it("ignores an obsolete load failure after a newer route has loaded", async () => {
+    const fastId = "11111111-1111-4111-8111-111111111111";
+    const fast = {
+      name: "Fast page",
+      kind: "page" as const,
+      title: "Fast page",
+      pre_block: null,
+      blocks: [{ id: fastId, raw: "new route content", collapsed: false, children: [] }],
+    };
+    vi.spyOn(backend(), "journalsDesc").mockResolvedValue([]);
+    let rejectSlow!: (reason: Error) => void;
+    let resolveFast!: (value: typeof fast) => void;
+    vi.spyOn(backend(), "getPage").mockImplementation((name) => {
+      if (name === "Slow page") {
+        return new Promise((_, reject) => { rejectSlow = reject; });
+      }
+      return new Promise((resolve) => { resolveFast = resolve as (value: typeof fast) => void; });
+    });
+
+    const { root, dispose } = mount(() => <PageView />);
+    try {
+      await tick();
+      await tick();
+      mainPaneRouter.openPage("Slow page", "page", { inPlace: true });
+      await tick();
+      mainPaneRouter.openPage(fast.name, "page", { inPlace: true });
+      await tick();
+      resolveFast(fast);
+      await tick();
+      await tick();
+      expect(root.textContent).toContain("new route content");
+
+      rejectSlow(new Error("obsolete slow-page failure"));
+      await tick();
+      await tick();
+      expect(root.textContent).toContain("new route content");
+      expect(root.textContent).not.toContain("obsolete slow-page failure");
     } finally {
       dispose();
     }

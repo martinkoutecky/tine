@@ -11,6 +11,7 @@ source scripts/env.sh
 npm run build            # the bench serves dist/ via `vite preview` (a PROD build)
 npm run bench            # measure + compare to scripts/bench-baseline.json
 npm run bench -- --update  # re-record the baseline (do this on a QUIET machine)
+npm run bench -- --update --output /tmp/tine-bench.json  # record without changing the local baseline
 ```
 
 Run the node script directly — **no `timeout` wrapper** (it would orphan the vite
@@ -47,8 +48,32 @@ recorded on a fast box still roughly holds on a slow one.
   **30%** worse is flagged `REGRESSED` and the run exits non-zero (so this can gate
   CI later). The 30% sits above `bigLoad`'s noise floor on purpose.
 
-The baseline (`scripts/bench-baseline.json`) records the machine it was taken on;
-`--update` on that same machine when quiet is the most meaningful comparison.
+The local baseline (`scripts/bench-baseline.json`) remains useful for quick
+developer checks. CI does not compare a candidate on one machine to that file's
+numbers from another machine: the calibration loop proved too different from
+browser layout/paint to normalize scrolling reliably.
+
+## CI hard gate: same-machine A/B without baseline ratcheting
+
+CI checks out and builds three exact trees on one runner: the candidate, the
+immutable long-term anchor, and the most recently published release. It measures
+all three sequentially and compares their **raw** values. A calibration-spread
+guard rejects a noisy/throttled run instead of calling it a code regression.
+
+`scripts/bench-policy.json` is the contract:
+
+- `v0.4.7` is the immutable pre-Sheets/pre-split-view anchor. It does not advance
+  merely because a slower release shipped, so repeated small regressions cannot
+  ratchet the allowed performance downward.
+- `previousRelease.ref` advances during release preparation to the latest already
+  published version. It catches a large one-release jump.
+- Budgets are metric-specific: large-page load is allowed 25% over the immutable
+  anchor and 15% over the previous release; scroll is allowed 30% and 20% because
+  its browser scheduling noise differs. Cold parse misses have an absolute cap of
+  15, independent of timing.
+
+The job is a hard gate. A feature expected to exceed a budget stops for a product
+decision and performance design; do not move either baseline to make it pass.
 
 ## Graph-scale bench (Rust core, on-disk graph)
 
@@ -77,9 +102,9 @@ dir on every lookup) grows with scale.
 There is also `sheets_phase0_bench` (query/edit-cycle costs at 10k–200k blocks) in
 the same examples dir.
 
-## Deferred (not built here)
+## Deferred
 
 - **Tab-switch** and **per-keystroke typing** metrics — dropped from this pass
   because both are dominated by harness/IPC noise (a flaky metric is worse than
   none). Revisit with an in-page driver if they earn their keep.
-- **Tier 3** — a CI gate wired to `npm run bench` and a live in-app perf overlay.
+- A live in-app perf overlay.

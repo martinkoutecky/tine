@@ -34,8 +34,13 @@ import { setTimeout as sleep } from "node:timers/promises";
 import os from "node:os";
 
 const UPDATE = process.argv.includes("--update");
+const argValue = (name) => {
+  const i = process.argv.indexOf(name);
+  return i >= 0 ? process.argv[i + 1] : null;
+};
 const PORT = 5260;
 const BASELINE = "scripts/bench-baseline.json";
+const OUTPUT = argValue("--output");
 const K = 8; // measured runs per metric (plus one discarded warmup); min-of-K
 const REGRESS_PCT = 30; // flag a normalized metric that grows more than this. Set
 // above the ~10–15% run-to-run noise floor of `bigLoad` (mounting 2000 Solid
@@ -169,8 +174,9 @@ function report(result) {
   if (UPDATE) {
     const out = { machine, calib: result.calib, metrics: {}, parseStats: result.parseStats, note: "normalized = rawMin/calib; regenerate with `npm run bench -- --update` on a QUIET machine" };
     for (const [k, v] of Object.entries(result.metrics)) out.metrics[k] = { normalized: v.normalized, rawMin: v.rawMin };
-    writeFileSync(BASELINE, JSON.stringify(out, null, 2) + "\n");
-    console.log(`\nbaseline written → ${BASELINE}`);
+    const destination = OUTPUT ?? BASELINE;
+    writeFileSync(destination, JSON.stringify(out, null, 2) + "\n");
+    console.log(`\nmeasurement written → ${destination}`);
     console.log(JSON.stringify(out, null, 2));
     server.kill("SIGKILL");
     process.exit(0);

@@ -96,28 +96,73 @@ jobs:
       - name: Android core compiles against Android libc declarations
         run: cargo check -p tine-core --target aarch64-linux-android
 
-  # Perf regression bench (docs/BENCH.md Tier 3). Performance is the #2 project
-  # priority; without this job a lazy-render/cache regression can land silently.
-  # `continue-on-error` for now: shared-runner noise vs the 30% gate is unproven —
-  # watch a few weeks of runs, then drop the flag to make it gating.
+  # Same-machine A/B perf gate. The immutable anchor prevents small release-over-
+  # release slowdowns from ratcheting the baseline; the previous release catches
+  # abrupt regressions. All three builds run on this one runner, so CPU model is
+  # not confused with code performance (docs/BENCH.md).
   bench:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+
+      - name: Read performance baseline refs
+        id: perf-policy
+        shell: bash
+        run: |
+          echo "immutable=$(node -p "require('./scripts/bench-policy.json').immutableBaseline.ref")" >> "$GITHUB_OUTPUT"
+          echo "previous=$(node -p "require('./scripts/bench-policy.json').previousRelease.ref")" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.perf-policy.outputs.immutable }}
+          path: .bench/immutable
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.perf-policy.outputs.previous }}
+          path: .bench/previous
 
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
 
-      - run: npm ci
+      - name: Install candidate and baseline dependencies
+        run: |
+          npm ci
+          npm ci --prefix .bench/immutable
+          npm ci --prefix .bench/previous
 
       - name: Install bench browser (Playwright Chromium)
         run: npx playwright install --with-deps chromium
 
-      - name: Build (prod — the bench serves dist/)
-        run: npm run build
+      - name: Build candidate and both baseline refs
+        run: |
+          npm run build
+          npm --prefix .bench/immutable run build
+          npm --prefix .bench/previous run build
 
-      - name: Perf bench (non-gating while runner noise is calibrated)
-        continue-on-error: true
-        run: npm run bench
+      - name: Measure immutable baseline, previous release, and candidate
+        run: |
+          mkdir -p test-results/perf
+          npm --prefix .bench/immutable run bench -- --update
+          npm --prefix .bench/previous run bench -- --update
+          npm run bench -- --update --output test-results/perf/candidate.json
+
+      - name: Enforce metric-specific A/B budgets
+        run: |
+          node scripts/check-bench-ab.mjs \
+            --policy scripts/bench-policy.json \
+            --candidate test-results/perf/candidate.json \
+            --immutable .bench/immutable/scripts/bench-baseline.json \
+            --previous .bench/previous/scripts/bench-baseline.json
+
+      - name: Upload performance measurements
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-ab-${{ github.run_attempt }}
+          path: |
+            test-results/perf/candidate.json
+            .bench/immutable/scripts/bench-baseline.json
+            .bench/previous/scripts/bench-baseline.json

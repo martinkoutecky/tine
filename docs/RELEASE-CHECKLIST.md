@@ -24,10 +24,15 @@ may tag, publish, comment, and close issues.
    `docs/UI-REGRESSION-TESTING.md` for the exact binary and evidence contract.
 6. Run the Windows x64 smoke suite when available. It is advisory until the
    release policy explicitly promotes it.
-7. Push the exact candidate and run ordinary CI plus the manual release
+7. Set `scripts/bench-policy.json`'s `previousRelease.ref` to the most recently
+   published release (never the unshipped candidate). Do not advance the
+   immutable baseline. Push the exact candidate and require the same-machine A/B
+   performance job to pass; an expected budget breach is a stop/consult decision,
+   not permission to weaken the budget.
+8. Run ordinary CI plus the manual release
    workflow. Tag only after the exact commit's platform builds, Linux E2E,
    Android, and real offline Flatpak job pass.
-8. After publication, inventory the real assets and prepare issue-specific
+9. After publication, inventory the real assets and prepare issue-specific
    reporter follow-ups. Comment/closure authority remains in the canonical
    agent agreement.
 

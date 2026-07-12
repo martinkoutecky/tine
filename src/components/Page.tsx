@@ -71,6 +71,12 @@ export function PageView(): JSX.Element {
   const pane = paneContextFromContext();
   const router = pane.router;
   const [ready, setReady] = createSignal(false);
+  // Keep the route whose asynchronous load actually completed separate from the
+  // router's desired route. A cached large page is already present in doc.pages;
+  // rendering directly from currentRoute() let it mount once immediately and
+  // again around the loader transition. Besides doubling warm-navigation work,
+  // an older rejected request could replace a newer page with its error state.
+  const [loadedRoute, setLoadedRoute] = createSignal<ReturnType<PaneRouter["route"]> | null>(null);
   const [loadError, setLoadError] = createSignal<string | null>(null);
 
   // Depend on the active route BY VALUE: opening a background tab (or pinning /
@@ -105,7 +111,8 @@ export function PageView(): JSX.Element {
         } else {
           if (isGuidePageName(r.name)) {
             await ensureGuidePagesLoaded(true);
-            if (epoch !== graphEpoch()) return;
+            if (epoch !== graphEpoch() || !sameRoute(currentRoute(), r)) return;
+            setLoadedRoute(r);
             setReady(true);
             router.restoreScrollFor(r);
             return;
@@ -122,12 +129,15 @@ export function PageView(): JSX.Element {
           // load errored with empty content.
           ensurePageLoaded(dto ? toLoadablePage(dto, r.name) : emptyPage(r.name, r.pageKind));
         }
+        if (!sameRoute(currentRoute(), r)) return;
+        setLoadedRoute(r);
         setReady(true);
         // Put the scroll back where it was when we last left this entry (back/
         // forward, or returning to this tab). A new page has no saved offset → top.
         router.restoreScrollFor(r);
       } catch (e) {
-        if (epoch !== graphEpoch()) return;
+        if (epoch !== graphEpoch() || !sameRoute(currentRoute(), r)) return;
+        setLoadedRoute(r);
         setLoadError(String(e));
         setReady(true);
       }
@@ -179,7 +189,7 @@ export function PageView(): JSX.Element {
   });
 
   const pagesToRender = () => {
-    const r = currentRoute();
+    const r = loadedRoute() ?? currentRoute();
     if (r.kind === "journals") return mainPages();
     const p = pageByName(r.name);
     return p ? [p] : [];
@@ -189,7 +199,10 @@ export function PageView(): JSX.Element {
     const z = r.kind === "page" ? r.block ?? null : zoomedBlock();
     return z && doc.byId[z] ? z : null;
   };
-  const contentReady = () => ready() && (currentRoute().kind !== "journals" || doc.loaded);
+  const contentReady = () => {
+    const r = loadedRoute();
+    return !!r && ready() && sameRoute(r, currentRoute()) && (r.kind !== "journals" || doc.loaded);
+  };
 
   return (
     <Show when={!loadError()} fallback={
