@@ -20,6 +20,7 @@ export interface PluginCommandContribution {
   id: string;
   title: string;
   description?: string;
+  defaultBinding?: string;
   platforms?: PluginPlatform[];
 }
 
@@ -140,13 +141,16 @@ function parseCommands(value: unknown): PluginCommandContribution[] | undefined 
   if (!Array.isArray(value)) throw new PluginManifestError("contributions.commands must be an array");
   return value.map((item, index) => {
     const obj = record(item, `contributions.commands[${index}]`);
-    knownKeys(obj, `contributions.commands[${index}]`, ["id", "title", "description", "platforms"]);
+    knownKeys(obj, `contributions.commands[${index}]`, ["id", "title", "description", "defaultBinding", "platforms"]);
     return {
       id: contributionId(obj.id, `contributions.commands[${index}].id`),
       title: stringField(obj.title, `contributions.commands[${index}].title`, 80),
       ...(obj.description === undefined
         ? {}
         : { description: stringField(obj.description, `contributions.commands[${index}].description`, 240) }),
+      ...(obj.defaultBinding === undefined
+        ? {}
+        : { defaultBinding: stringField(obj.defaultBinding, `contributions.commands[${index}].defaultBinding`, 80) }),
       ...(obj.platforms === undefined
         ? {}
         : { platforms: optionalPlatforms(obj.platforms, `contributions.commands[${index}].platforms`) }),

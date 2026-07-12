@@ -45,7 +45,7 @@
     "platforms": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "enum": ["desktop", "android", "ios"] } },
     "command": {
       "type": "object", "additionalProperties": false, "required": ["id", "title"],
-      "properties": { "id": { "type": "string" }, "title": { "type": "string" }, "description": { "type": "string" }, "platforms": { "$ref": "#/$defs/platforms" } }
+      "properties": { "id": { "type": "string" }, "title": { "type": "string" }, "description": { "type": "string" }, "defaultBinding": { "type": "string", "minLength": 1, "maxLength": 80 }, "platforms": { "$ref": "#/$defs/platforms" } }
     },
     "slashCommand": {
       "type": "object", "additionalProperties": false, "required": ["id", "title"],

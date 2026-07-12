@@ -176,6 +176,9 @@ export class PluginManager {
   }
 
   commands(): ManagedCommand[] {
+    // Track installation/enablement reactively for shortcut registration and
+    // command-palette consumers.
+    installedPlugins();
     const commands: ManagedCommand[] = [];
     for (const { manifest } of this.active.values()) {
       for (const contribution of manifest.contributions?.commands ?? []) {
@@ -212,6 +215,24 @@ export class PluginManager {
       }
     }
     return false;
+  }
+
+  declarativeDecorationSetting(
+    kind: "thread-lines" | "badge",
+    key: string
+  ): PluginSettingValue | undefined {
+    // Settings are held in the same signal as enablement so decoration hosts
+    // rerender immediately without consulting or trusting guest output.
+    const managed = installedPlugins();
+    for (const { manifest } of this.active.values()) {
+      if (!manifest.contributions?.blockDecorations?.some(
+        (contribution) => contribution.kind === kind && supportsPlatform(manifest, this.platform, contribution.platforms)
+      )) continue;
+      return managed.find((plugin) =>
+        plugin.manifest.id === manifest.id && plugin.manifest.version === manifest.version
+      )?.settings[key];
+    }
+    return undefined;
   }
 
   async invokeCommand(pluginId: string, contributionId: string, focusedBlock?: PluginBlockSnapshot) {

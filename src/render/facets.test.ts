@@ -52,4 +52,9 @@ describe("planning facets", () => {
     const raw = "Discuss SCHEDULED: <2026-07-13 Mon> inline\nnotes after it";
     expect(facetsOf(raw, "md").scheduled).toBeNull();
   });
+
+  it("uses Logseq's heading property for Org blocks", () => {
+    const raw = "Org heading\n:PROPERTIES:\n:heading: 3\n:END:";
+    expect(facetsOf(raw, "org").headingLevel).toBe(3);
+  });
 });

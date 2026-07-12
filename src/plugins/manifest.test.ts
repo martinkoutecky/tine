@@ -37,6 +37,14 @@ describe("parsePluginManifest", () => {
     expect(supportsPlatform(manifest, "android", command?.platforms)).toBe(true);
   });
 
+  it("accepts a remappable default binding for a command contribution", () => {
+    const manifest = parsePluginManifest({
+      ...base,
+      contributions: { commands: [{ id: "hello", title: "Say hello", defaultBinding: "mod+1" }] },
+    });
+    expect(manifest.contributions?.commands?.[0].defaultBinding).toBe("mod+1");
+  });
+
   it("rejects traversal and undeclared contribution authority", () => {
     expect(() => parsePluginManifest({ ...base, entry: "../plugin.wasm" })).toThrow(/relative/);
     expect(() => parsePluginManifest({ ...base, capabilities: [] })).toThrow(/commands.register/);

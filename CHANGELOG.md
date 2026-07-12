@@ -34,6 +34,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Add a machine-checkable port-gap report and a current popular-plugin compatibility
   matrix so AI-assisted ports must distinguish faithful subsets, reusable host API
   requests, core features, and inherently privileged integrations.
+- Let host-rendered decoration plugins respond live to their declarative settings,
+  and let command plugins declare ordinary remappable default shortcuts without
+  receiving keyboard, DOM, or global-input authority.
 
 ### Fixed
 

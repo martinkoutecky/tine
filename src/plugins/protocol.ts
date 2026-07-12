@@ -7,6 +7,7 @@ export interface PluginBlockSnapshot {
   raw: string;
   parentId: string | null;
   depth: number;
+  format?: "md" | "org";
 }
 
 export type PluginEvent =

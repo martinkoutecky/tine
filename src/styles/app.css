@@ -3393,6 +3393,16 @@ textarea {
   pointer-events: none;
 }
 
+/* Active mode follows the focused branch using only host-owned focus state. It
+   does not reveal block contents to the guest or let the guest select DOM. */
+.plugin-thread-lines-active > .block-children-container > .block-children > .ls-block:not(:focus-within) > .block-main::before {
+  display: none;
+}
+
+.plugin-thread-lines-standard > .block-children-container > .block-children > .ls-block > .block-main::before {
+  border-bottom-color: var(--guide-color);
+}
+
 /* editor */
 .editor-wrap {
   position: relative;

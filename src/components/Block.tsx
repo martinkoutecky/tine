@@ -343,6 +343,8 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
         collapsed: collapsed(),
         "block-embed-host": blockEmbedHost(),
         "plugin-thread-lines": pluginManager.hasDeclarativeDecoration("thread-lines"),
+        "plugin-thread-lines-active": pluginManager.declarativeDecorationSetting("thread-lines", "display") === "active",
+        "plugin-thread-lines-standard": pluginManager.declarativeDecorationSetting("thread-lines", "intensity") === "standard",
       }}
       data-block-id={props.id}
     >
@@ -1592,6 +1594,7 @@ export function Editor(props: { id: string }): JSX.Element {
           raw: node.raw,
           parentId: node.parent,
           depth,
+          format: pageByName(node.page)?.format === "org" ? "org" : "md",
         })
         .then((effects) => {
           if (ref.value !== before) {

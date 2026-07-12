@@ -38,6 +38,15 @@ pub struct BlockSnapshot {
     pub raw: String,
     pub parent_id: Option<String>,
     pub depth: u32,
+    #[serde(default)]
+    pub format: Option<BlockFormat>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum BlockFormat {
+    Md,
+    Org,
 }
 
 #[derive(Clone, Debug, Serialize)]

@@ -200,6 +200,15 @@ function checkManifest(manifest, report) {
     manifest.contributions, ["commands", "slashCommands", "blockDecorations"],
     report, "manifest.contributions-field", "contributions",
   );
+  for (const [index, command] of (manifest.contributions?.commands ?? []).entries()) {
+    rejectUnknownFields(
+      command, ["id", "title", "description", "defaultBinding", "platforms"],
+      report, "manifest.command-field", `contributions.commands[${index}]`,
+    );
+    if (command.defaultBinding !== undefined && !boundedText(command.defaultBinding, 80)) {
+      add(report, "errors", "manifest.command-binding", `contributions.commands[${index}].defaultBinding is invalid`);
+    }
+  }
   if (manifest.schemaVersion !== 1) add(report, "errors", "manifest.schema", "schemaVersion must be 1");
   if (manifest.apiVersion !== "0.2") add(report, "errors", "manifest.api", "apiVersion must be 0.2");
   if (typeof manifest.id !== "string" || !/^[a-z0-9](?:[a-z0-9.-]{1,62}[a-z0-9])$/.test(manifest.id) || !manifest.id.includes(".")) {

@@ -143,6 +143,35 @@ afterEach(() => {
 });
 
 describe("plugin command context", () => {
+  it("registers plugin default bindings in the same remappable dispatcher", async () => {
+    setDoc({
+      byId: {
+        block: { id: "block", raw: "Heading me", collapsed: false, parent: null, page: "Page", children: [] },
+      },
+      pages: [{ name: "Page", kind: "page", title: "Page", preBlock: null, roots: ["block"], format: "md", readOnly: false, guide: false }],
+      feed: ["Page"],
+      loaded: true,
+    });
+    startEditing("block", 0);
+    vi.spyOn(pluginManager, "commands").mockReturnValue([{
+      pluginId: "page.tine.heading-level-shortcuts",
+      contribution: { id: "heading-1", title: "Set heading level 1", defaultBinding: "mod+alt+1" },
+    }]);
+    const invoke = vi.spyOn(pluginManager, "invokeCommand").mockResolvedValue(undefined);
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+
+    const key = trackedKeyEvent({ key: "1", code: "Digit1", ctrlKey: true, altKey: true });
+    fake.dispatchCaptureKeydown(key.event);
+    await Promise.resolve();
+
+    expect(key.prevented()).toBe(true);
+    expect(invoke).toHaveBeenCalledWith(
+      "page.tine.heading-level-shortcuts", "heading-1", expect.objectContaining({ id: "block", raw: "Heading me" })
+    );
+    dispose();
+  });
+
   it("carries the edited block through Ctrl-K input focus and palette close", async () => {
     setDoc({
       byId: {

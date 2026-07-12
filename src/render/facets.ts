@@ -129,6 +129,11 @@ function deriveFacets(raw: string, format: Format): Facets {
   }
   const properties: [string, string][] = [];
   for (const b of blocks) if (b.kind === "properties") properties.push(...b.props);
+  if (headingLevel == null) {
+    const heading = properties.find(([key]) => key.toLowerCase() === "heading")?.[1]?.trim().toLowerCase();
+    if (heading === "true") headingLevel = 1;
+    else if (heading && /^[1-6]$/.test(heading)) headingLevel = Number(heading);
+  }
   const { scheduled, deadline } = planningDates(blocks, raw);
   return {
     marker,

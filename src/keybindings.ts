@@ -99,7 +99,7 @@ import { openGuide } from "./guide";
 import { pluginManager } from "./plugins/manager";
 import type { PluginBlockSnapshot } from "./plugins/protocol";
 
-function pluginFocusedBlock() {
+function pluginFocusedBlock(): PluginBlockSnapshot | undefined {
   const id = editingId();
   const node = id ? doc.byId[id] : undefined;
   if (!node) return undefined;
@@ -109,7 +109,8 @@ function pluginFocusedBlock() {
     depth++;
     parentId = doc.byId[parentId].parent;
   }
-  return { id: node.id, raw: node.raw, parentId: node.parent, depth };
+  const format = doc.pages.find((page) => page.name === node.page)?.format === "org" ? "org" : "md";
+  return { id: node.id, raw: node.raw, parentId: node.parent, depth, format };
 }
 
 interface Chord {
@@ -530,6 +531,21 @@ function shortcutScope(c: CommandDef): ShortcutScope {
   return "global";
 }
 
+function pluginCommandDefs(): CommandDef[] {
+  return pluginManager.commands().map(({ pluginId, contribution }) => ({
+    id: `plugin:${pluginId}:${contribution.id}`,
+    binding: contribution.defaultBinding ?? "",
+    label: `Plugin: ${contribution.title}`,
+    scope: "global",
+    global: true,
+    run: () => {
+      void pluginManager
+        .invokeCommand(pluginId, contribution.id, pluginFocusedBlock())
+        .catch((error) => pushToast(`Plugin command failed: ${String(error)}`, "error"));
+    },
+  }));
+}
+
 function normKey(k: string): string {
   switch (k) {
     case "arrowup": return "up";
@@ -655,7 +671,7 @@ export function paletteCommands(
   const plugins = pluginManager.commands().map(({ pluginId, contribution }) => ({
     id: `plugin:${pluginId}:${contribution.id}`,
     label: contribution.title,
-    binding: "",
+    binding: overridesApplied[`plugin:${pluginId}:${contribution.id}`] ?? contribution.defaultBinding ?? "",
     run: () => {
       void pluginManager
         .invokeCommand(pluginId, contribution.id, focusedPluginBlock ?? undefined)
@@ -674,7 +690,7 @@ export function runGlobalCommand(id: string): boolean {
 
 /** Merged shortcuts for the Settings reference. */
 export function currentShortcuts(): { id: string; label: string; binding: string; scope: ShortcutScope }[] {
-  return COMMANDS.map((c) => ({
+  return [...COMMANDS, ...pluginCommandDefs()].map((c) => ({
     id: c.id,
     label: c.label,
     binding: overridesApplied[c.id] ?? c.binding,
@@ -686,7 +702,7 @@ export function currentShortcuts(): { id: string; label: string; binding: string
  *  remap UI, which computes the effective binding reactively from these plus
  *  config.edn and the user's local overrides. */
 export function commandDefaults(): { id: string; label: string; binding: string; scope: ShortcutScope }[] {
-  return COMMANDS.map((c) => ({ id: c.id, label: c.label, binding: c.binding, scope: shortcutScope(c) }));
+  return [...COMMANDS, ...pluginCommandDefs()].map((c) => ({ id: c.id, label: c.label, binding: c.binding, scope: shortcutScope(c) }));
 }
 
 /** Turn a keyboard event into a binding string like "mod+shift+down". Returns
@@ -773,13 +789,14 @@ export interface Command {
 export function installKeybindings(overrides: Record<string, string> = {}): () => void {
   overridesApplied = overrides;
   bindings = {};
-  for (const c of COMMANDS) {
+  const allCommands = [...COMMANDS, ...pluginCommandDefs()];
+  for (const c of allCommands) {
     const b = overrides[c.id] ?? c.binding;
     if (b !== "false") bindings[c.id] = parseBinding(b);
   }
 
   // Global dispatch list (sequences + global chords).
-  const commands = COMMANDS.filter((c) => c.scope === "global" && c.run)
+  const commands = allCommands.filter((c) => c.scope === "global" && c.run)
     .map((c) => ({ ...c, chords: bindings[c.id] }))
     .filter((c) => c.chords);
 
