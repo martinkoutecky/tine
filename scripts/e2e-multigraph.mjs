@@ -11,7 +11,6 @@ const WD = process.env.WEBKIT_DRIVER || "/tmp/tine-webdriver/usr/bin/WebKitWebDr
 const DRIVER_PORT = Number(process.env.E2E_DRIVER_PORT || 4454);
 const NATIVE_PORT = Number(process.env.E2E_NATIVE_PORT || 4455);
 const WAIT_TIMEOUT = Number(process.env.E2E_WAIT_TIMEOUT_MS || 60_000);
-const ALLOW_SYNTHETIC_FOCUS = process.env.E2E_ALLOW_SYNTHETIC_FOCUS === "1";
 const ROOT = "/tmp/tine-multigraph-e2e";
 const A = `${ROOT}/alpha`;
 const B = `${ROOT}/beta`;
@@ -124,29 +123,16 @@ try {
     globalThis.__TAURI_INTERNALS__.invoke("capture_target")
   );
 
-  // Forwarding alpha focuses its already-open owner. This produces a real OS
-  // focus event locally. GitHub's headless Xvfb does not deliver window-manager
-  // activation, so that environment explicitly falls back to a real click in
-  // the already-open window while keeping local runs strict.
+  // Forwarding alpha is an explicit graph activation. Capture routing updates
+  // synchronously in the backend instead of depending on a later OS focus
+  // event, so observe that global state from the still-valid beta webview
+  // before switching WebDriver handles.
   forwarded.push(spawn(APP, [A], { env: { ...env, TINE_GRAPH: "" }, stdio: "ignore" }));
-  await browser.switchToWindow(alpha);
-  let forwardedFocusObserved = true;
-  try {
-    await browser.waitUntil(async () =>
-      (await browser.execute(async () => globalThis.__TAURI_INTERNALS__.invoke("capture_target"))) === "main", {
-      timeout: 5_000,
-      timeoutMsg: "external launch did not produce an observable OS focus event",
-    });
-  } catch (error) {
-    if (!ALLOW_SYNTHETIC_FOCUS) throw error;
-    forwardedFocusObserved = false;
-    await browser.$("body").click();
-    await browser.waitUntil(async () =>
-      (await browser.execute(async () => globalThis.__TAURI_INTERNALS__.invoke("capture_target"))) === "main", {
-      timeout: WAIT_TIMEOUT,
-      timeoutMsg: "capture target did not follow explicit alpha activation",
-    });
-  }
+  await browser.waitUntil(async () =>
+    (await browser.execute(async () => globalThis.__TAURI_INTERNALS__.invoke("capture_target"))) === "main", {
+    timeout: WAIT_TIMEOUT,
+    timeoutMsg: "capture target did not follow explicit alpha activation",
+  });
   const alphaTarget = await browser.execute(async () =>
     globalThis.__TAURI_INTERNALS__.invoke("capture_target")
   );
@@ -174,6 +160,7 @@ try {
   }
 
   // External changes in alpha are dispatched only to alpha.
+  await browser.switchToWindow(alpha);
   fs.writeFileSync(journalPath(A), "- ALPHA_SENTINEL\n- ALPHA_WATCHER_UPDATE\n");
   await browser.waitUntil(async () => (await browser.$("body").getText()).includes("ALPHA_WATCHER_UPDATE"), {
     timeout: 10000,
@@ -198,7 +185,7 @@ try {
     betaName,
     betaTarget,
     alphaTarget,
-    forwardedFocusObserved,
+    explicitActivationObserved: true,
     duplicateGraphWindowCount: afterDuplicate.length - 1,
     watcherIsolated: true,
     quickCaptureIsolated: true,

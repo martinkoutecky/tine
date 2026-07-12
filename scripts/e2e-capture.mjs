@@ -15,6 +15,7 @@ const XDOTOOL = process.env.E2E_XDOTOOL || "xdotool";
 const TMP = "/tmp/tine-capture-e2e";
 const GRAPH = `${TMP}/graph`;
 const PROOF = "capture-focus-proof";
+const ARTIFACT_DIR = process.env.E2E_ARTIFACT_DIR || TMP;
 
 fs.rmSync(TMP, { recursive: true, force: true });
 for (const dir of ["pages", "journals", "logseq", "assets"]) fs.mkdirSync(`${GRAPH}/${dir}`, { recursive: true });
@@ -32,16 +33,27 @@ const env = {
   XDG_DATA_HOME: `${TMP}/xdg/data`,
   XDG_CONFIG_HOME: `${TMP}/xdg/config`,
   XDG_CACHE_HOME: `${TMP}/xdg/cache`,
+  // GitHub runners may set host-specific XDG search paths. Openbox must still
+  // find its system config and theme after the test isolates the user's XDG
+  // homes, otherwise it starts without EWMH activation support.
+  XDG_CONFIG_DIRS: process.env.XDG_CONFIG_DIRS || "/etc/xdg",
+  XDG_DATA_DIRS: process.env.XDG_DATA_DIRS || "/usr/local/share:/usr/share",
   WEBKIT_DISABLE_DMABUF_RENDERER: "1",
   WEBKIT_DISABLE_COMPOSITING_MODE: "1",
   LIBGL_ALWAYS_SOFTWARE: "1",
   GDK_BACKEND: "x11",
 };
-const wmLog = fs.openSync(`${TMP}/window-manager.log`, "w");
+fs.mkdirSync(ARTIFACT_DIR, { recursive: true });
+const wmLogPath = `${ARTIFACT_DIR}/window-manager.log`;
+const wmLog = fs.openSync(wmLogPath, "w");
 const wm = process.env.E2E_WINDOW_MANAGER
-  ? spawn(process.env.E2E_WINDOW_MANAGER, [], { env, stdio: ["ignore", wmLog, wmLog], detached: true })
+  ? spawn(process.env.E2E_WINDOW_MANAGER, ["--sm-disable"], { env, stdio: ["ignore", wmLog, wmLog], detached: true })
   : null;
 if (wm) await sleep(600);
+if (wm?.exitCode != null) {
+  fs.closeSync(wmLog);
+  throw new Error(`window manager exited before the app launched: ${fs.readFileSync(wmLogPath, "utf8")}`);
+}
 const xdo = (...args) => execFileSync(XDOTOOL, args, {
   encoding: "utf8",
   env: process.env.E2E_XDOTOOL_LIB
@@ -62,7 +74,7 @@ const waitForActive = async (wanted, timeoutMs) => {
   throw new Error(`${wanted} never became the native active window; active=${JSON.stringify(active)}`);
 };
 
-const appLog = fs.openSync(`${TMP}/tine.log`, "w");
+const appLog = fs.openSync(`${ARTIFACT_DIR}/tine.log`, "w");
 const app = spawn(APP, [], { env, stdio: ["ignore", appLog, appLog], detached: true });
 try {
   await waitForActive("Tine", 20_000);
@@ -85,6 +97,9 @@ try {
   // path; WebKitGTK rejects untrusted synthetic text focus under Xvfb even when
   // its real native window has focus, unlike physical keyboard input.
   xdo("mousemove", "--window", activeId, "90", "66", "click", "1");
+  // Let WebKit finish the synthetic pointer-focus transition before injecting
+  // text; otherwise Xvfb can consume the first character as the editor mounts.
+  await sleep(150);
   xdo("type", "--clearmodifiers", PROOF);
   await sleep(150);
   xdo("key", "--clearmodifiers", "ctrl+shift+Return");
