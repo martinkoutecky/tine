@@ -17,9 +17,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   capability review and enable/disable controls, registry revocations, immutable
   manifest/WASM/report digests, expandable safety findings, automatic-versus-manual
   publication labels, and desktop/mobile plugin catalogue layouts.
-- Publish the first AI-primary examples (bullet threading and query-filter
-  shortcuts), a Rust guest SDK/template, deterministic package checker, and
-  developer/security documentation.
+- Publish the first AI-primary examples (bullet threading, query-filter shortcuts,
+  and a Logseq heading-shortcut behavioral port), a Rust guest SDK/template,
+  deterministic package checker, and developer/security documentation.
 - Add a credential-separated local registry auditor: rootless hostile builds,
   no-tools Codex source review, quarantine/manual approval, signed catalogue
   publishing, and symlink/path/digest fail-closed checks.

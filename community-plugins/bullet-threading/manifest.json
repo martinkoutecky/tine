@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "page.tine.bullet-threading",
   "name": "Bullet threading",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "apiVersion": "0.2",
   "description": "Draw subtle elbow connectors from parent bullets to their children.",
   "author": "Martin Koutecký",
@@ -46,7 +46,7 @@
     "source": "https://github.com/pengx17/logseq-plugin-bullet-threading",
     "revision": "391c1059e18b2bec01e84019447148318534bc2a",
     "license": "MIT",
-    "authors": ["Peng Xiong"],
+    "authors": ["Peng Xiao"],
     "relationship": "behavioral-port"
   },
   "aiDevelopment": "primary"

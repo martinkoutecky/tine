@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "page.tine.query-filter",
   "name": "Query filter shortcuts",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "apiVersion": "0.2",
   "description": "Add a hide-completed formula filter to the focused query table or board.",
   "author": "Martin Koutecký",
@@ -16,7 +16,7 @@
       {
         "id": "hide-completed",
         "title": "Query view: hide completed rows",
-        "description": "Append tine.filter:: status != \"done\" to the focused view."
+        "description": "Hide DONE, CANCELED, and CANCELLED rows in the focused query table or board."
       }
     ]
   },

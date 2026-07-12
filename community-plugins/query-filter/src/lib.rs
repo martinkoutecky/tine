@@ -1,9 +1,13 @@
 use tine_plugin_sdk::{Effect, Event};
 
-const FILTER: &str = "status != \"done\"";
+const FILTER: &str = "state != \"DONE\" && state != \"CANCELED\" && state != \"CANCELLED\"";
+const LEGACY_FILTER_LINE: &str = "tine.filter:: status != \"done\"";
 
 fn is_query_view(raw: &str) -> bool {
-    raw.contains("{{query")
+    raw.lines().any(|line| {
+        let line = line.trim();
+        line.starts_with("{{query") && line.ends_with("}}")
+    })
         && raw
             .lines()
             .any(|line| matches!(line.trim(), "tine.view:: table" | "tine.view:: board"))
@@ -15,6 +19,19 @@ fn add_filter(raw: &str) -> String {
         .any(|line| line.trim() == format!("tine.filter:: {FILTER}"))
     {
         return raw.to_string();
+    }
+    if raw.lines().any(|line| line.trim() == LEGACY_FILTER_LINE) {
+        return raw
+            .lines()
+            .map(|line| {
+                if line.trim() == LEGACY_FILTER_LINE {
+                    format!("tine.filter:: {FILTER}")
+                } else {
+                    line.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
     }
     if raw.is_empty() {
         format!("tine.filter:: {FILTER}")
@@ -58,11 +75,16 @@ mod tests {
     fn appends_once_without_rewriting_existing_content() {
         assert_eq!(
             add_filter("{{query (task TODO)}}\ntine.view:: table"),
-            "{{query (task TODO)}}\ntine.view:: table\ntine.filter:: status != \"done\""
+            "{{query (task TODO)}}\ntine.view:: table\ntine.filter:: state != \"DONE\" && state != \"CANCELED\" && state != \"CANCELLED\""
         );
         assert_eq!(add_filter(&add_filter("Query")), add_filter("Query"));
+        assert_eq!(
+            add_filter("{{query (task TODO)}}\ntine.view:: table\ntine.filter:: status != \"done\""),
+            "{{query (task TODO)}}\ntine.view:: table\ntine.filter:: state != \"DONE\" && state != \"CANCELED\" && state != \"CANCELLED\""
+        );
         assert!(is_query_view("{{query (task TODO)}}\ntine.view:: board"));
         assert!(!is_query_view("ordinary prose"));
         assert!(!is_query_view("{{query (task TODO)}}"));
+        assert!(!is_query_view("prose {{query (task TODO)}}\ntine.view:: table"));
     }
 }
