@@ -1,8 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render } from "solid-js/web";
 import type { JSX } from "solid-js";
 
-function mount(node: () => JSX.Element) {
+const platform = vi.hoisted(() => ({ mobile: true }));
+vi.mock("../nativeChrome", () => ({
+  get isMobilePlatform() {
+    return platform.mobile;
+  },
+}));
+
+type Render = typeof import("solid-js/web")["render"];
+
+function mount(render: Render, node: () => JSX.Element) {
   const div = document.createElement("div");
   document.body.appendChild(div);
   const dispose = render(node, div);
@@ -24,7 +32,6 @@ function mockVisualViewport() {
 
 describe("MobileKeyboardToolbar", () => {
   beforeEach(() => {
-    vi.resetModules();
     document.body.innerHTML = "";
     mockVisualViewport();
   });
@@ -35,7 +42,8 @@ describe("MobileKeyboardToolbar", () => {
   });
 
   it("renders the confirmed scroll strip and pinned hide button on Android", async () => {
-    vi.doMock("../nativeChrome", () => ({ isMobilePlatform: true }));
+    platform.mobile = true;
+    const { render } = await import("solid-js/web");
     const bridge = await import("../editorCommandBridge");
     const { MobileKeyboardToolbar } = await import("./MobileKeyboardToolbar");
     const calls: string[] = [];
@@ -49,7 +57,7 @@ describe("MobileKeyboardToolbar", () => {
         calls.push("blur");
       },
     });
-    const { div, dispose } = mount(() => <MobileKeyboardToolbar />);
+    const { div, dispose } = mount(render, MobileKeyboardToolbar);
 
     const toolbar = div.querySelector("[data-mobile-keyboard-toolbar]") as HTMLElement | null;
     expect(toolbar).not.toBeNull();
@@ -95,7 +103,8 @@ describe("MobileKeyboardToolbar", () => {
   });
 
   it("does not render on desktop even with a focused editor bridge", async () => {
-    vi.doMock("../nativeChrome", () => ({ isMobilePlatform: false }));
+    platform.mobile = false;
+    const { render } = await import("solid-js/web");
     const bridge = await import("../editorCommandBridge");
     const { MobileKeyboardToolbar } = await import("./MobileKeyboardToolbar");
     const unregister = bridge.registerFocusedEditorCommandBridge({
@@ -103,7 +112,7 @@ describe("MobileKeyboardToolbar", () => {
       dispatch: () => true,
       blur() {},
     });
-    const { div, dispose } = mount(() => <MobileKeyboardToolbar />);
+    const { div, dispose } = mount(render, MobileKeyboardToolbar);
 
     expect(div.querySelector("[data-mobile-keyboard-toolbar]")).toBeNull();
 

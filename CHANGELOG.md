@@ -83,6 +83,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- **The frontend build and test toolchain has been security-updated.** Vite 6
+  and Vitest 3 replace vulnerable development-only versions, with deterministic
+  SolidJS test resolution and zero known npm audit findings.
 - **Block embeds now begin with one interactive root bullet instead of two.**
   The referenced root keeps its collapse, zoom, sidebar, navigation, and editing
   behavior, while a slightly heavier descendant guide marks the embedded outline
