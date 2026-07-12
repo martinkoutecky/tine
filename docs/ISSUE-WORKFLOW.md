@@ -7,6 +7,11 @@ second manually maintained board.
 
 ## Bugs
 
+Verified high/critical audit findings and maintainer-internal bug reports are
+handled immediately. GitHub reports use the clear/unclear triage below. Once a
+behavior is accepted as a bug, all three sources share the same catalog,
+fail-before test, implementation, deployment, and release lifecycle.
+
 1. Triage a report as clear/reproducible, unclear, or not a bug. An accepted bug
    gets a regression entry **before** production code changes: UI/native behavior
    goes in `tests/ui-regressions/catalog.json`; other bugs go in
