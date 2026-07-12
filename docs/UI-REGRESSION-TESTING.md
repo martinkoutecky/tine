@@ -46,6 +46,9 @@ consecutive complete clean runs on the same production candidate. The manual
 `ui-e2e` workflow proves the hosted Linux environment; Windows remains advisory
 until its reliability is established. The release workflow's Linux x64 build
 lane is the hard gate once the hosted suite has three consecutive clean runs.
+GitHub's headless Xvfb does not propagate external window-manager focus events;
+the hosted multi-graph scenario therefore activates the already-open window by
+WebDriver click, while local runs retain the stricter external-focus assertion.
 
 Do not erase a failure with a retry. Keep the first evidence, diagnose the
 failure as product, harness, or infrastructure, and restart the clean-run count

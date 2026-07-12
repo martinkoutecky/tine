@@ -37,6 +37,8 @@ jobs:
       - name: Install Tauri WebDriver bridge
         run: cargo install tauri-driver --locked
       - name: Run complete Linux UI regression catalog
+        env:
+          E2E_ALLOW_SYNTHETIC_FOCUS: "1"
         run: npm run e2e:linux:release
       - name: Upload Linux E2E evidence
         if: always()
