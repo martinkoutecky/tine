@@ -98,8 +98,16 @@ async function runScenario([id, script, extraEnv]) {
     TAURI_DRIVER: process.env.TAURI_DRIVER || "tauri-driver",
     WEBKIT_DRIVER: process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver",
   };
-  const command = process.platform === "linux" && id !== "selection-wrap" ? "xvfb-run" : process.execPath;
-  const args = command === "xvfb-run" ? ["-a", process.execPath, path.join(root, script)] : [path.join(root, script)];
+  const nativeLinux = process.platform === "linux" && id !== "selection-wrap";
+  // Tauri's Linux single-instance plugin owns a well-known session-bus name.
+  // Give each native scenario a private bus so a slow WebKit/Tauri teardown
+  // cannot forward the next scenario into the previous app. Processes spawned
+  // inside one scenario still share the bus, preserving the multigraph and
+  // Quick Capture handoff coverage.
+  const command = nativeLinux ? (process.env.DBUS_RUN_SESSION || "dbus-run-session") : process.execPath;
+  const args = nativeLinux
+    ? ["--", "xvfb-run", "-a", process.execPath, path.join(root, script)]
+    : [path.join(root, script)];
   const child = spawn(command, args, { cwd: root, env, detached: process.platform !== "win32", stdio: ["ignore", stdout, stderr] });
   let timedOut = false;
   const timer = setTimeout(() => {
