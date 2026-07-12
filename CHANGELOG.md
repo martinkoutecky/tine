@@ -43,6 +43,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Apply signed registry revocations to inert theme packages as well as executable
   plugins: revoked themes can no longer be installed or selected, and an active
   revoked theme falls back to Default while remaining uninstallable.
+- Update `plist` and `anyhow` so runtime Rust dependencies are clear of the current
+  `quick-xml` denial-of-service and `anyhow` soundness advisories.
 
 ## [0.5.7] - 2026-07-12
 
