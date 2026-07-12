@@ -280,45 +280,190 @@ pub(crate) fn opener_command(prog: &str) -> std::process::Command {
     #[cfg(target_os = "linux")]
     {
         use std::os::unix::process::CommandExt;
-        // 1. Scrub the env Tine (or its AppImage wrapper) sets for ITS OWN
-        //    WebKitGTK rendering before launching a SEPARATE GUI app. Several of
-        //    these break a launched player's VIDEO output — VLC opens then exits
-        //    immediately. The WEBKIT_*/GDK_BACKEND/LD_PRELOAD set is what Tine
-        //    itself may set; the LD_LIBRARY_PATH/GST_*/GTK_*/GIO_* set is what an
-        //    AppImage bundle injects so a child loads bundled libs/plugins that
-        //    mismatch the host player. Removing an unset var is a no-op, so this
-        //    is safe on the raw binary too.
-        for k in [
-            "LD_PRELOAD",
-            "LD_LIBRARY_PATH",
-            "WEBKIT_DISABLE_DMABUF_RENDERER",
-            "WEBKIT_DISABLE_COMPOSITING_MODE",
-            "GDK_BACKEND",
-            "GST_PLUGIN_SYSTEM_PATH",
-            "GST_PLUGIN_SYSTEM_PATH_1_0",
-            "GST_PLUGIN_PATH",
-            "GST_PLUGIN_PATH_1_0",
-            "GIO_MODULE_DIR",
-            "GTK_PATH",
-            "GTK_EXE_PREFIX",
-            "GDK_PIXBUF_MODULE_FILE",
-            "GTK_IM_MODULE_FILE",
-            "FONTCONFIG_FILE",
-            "FONTCONFIG_PATH",
-        ] {
-            cmd.env_remove(k);
+        // Start from a small desktop-session allowlist. AppImage runtimes inject
+        // more variables than a blacklist can safely anticipate; one leaked
+        // GStreamer/GIO/GTK loader path is enough to make a host VLC process load
+        // incompatible bundled libraries and exit immediately.
+        cmd.env_clear().envs(sanitized_opener_env(
+            std::env::vars_os(),
+            std::env::var_os("APPDIR"),
+        ));
+        // Create a new session, not merely a new process group. This prevents an
+        // external player from inheriting Tine's controlling-terminal/session
+        // lifetime. `setsid` is async-signal-safe and this closure runs after
+        // fork and before exec.
+        unsafe {
+            cmd.pre_exec(|| {
+                if libc::setsid() == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
         }
-        // 2. Detach: own process group + no inherited stdio. A player whose
-        //    lifetime is tied to Tine's process group, or that probes a stdio it
-        //    inherited from a GUI parent, can "open then close immediately" even
-        //    on the raw binary where no bundle env vars are set. Giving it its
-        //    own session-ish group and /dev/null stdio is the robust fix.
-        cmd.process_group(0)
-            .stdin(std::process::Stdio::null())
+        cmd.stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null());
     }
     cmd
+}
+
+#[cfg(desktop)]
+pub(crate) fn open_page_source(path: &std::path::Path) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    let mut command = opener_command("xdg-open");
+    #[cfg(target_os = "macos")]
+    let mut command = opener_command("open");
+    #[cfg(target_os = "windows")]
+    let mut command = opener_command("explorer");
+    command
+        .arg(path)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(desktop)]
+pub(crate) fn reveal_page_source(path: &std::path::Path) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    return opener_command("open")
+        .arg("-R")
+        .arg(path)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| error.to_string());
+
+    #[cfg(target_os = "windows")]
+    return opener_command("explorer")
+        .arg("/select,")
+        .arg(path)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| error.to_string());
+
+    #[cfg(target_os = "linux")]
+    {
+        // Freedesktop's file-manager interface selects the exact file. If the
+        // desktop has no implementation, opening the containing folder is still
+        // a useful and portable fallback.
+        if let Ok(uri) = tauri::Url::from_file_path(path) {
+            let status = opener_command("dbus-send")
+                .args([
+                    "--session",
+                    "--print-reply",
+                    "--dest=org.freedesktop.FileManager1",
+                    "/org/freedesktop/FileManager1",
+                    "org.freedesktop.FileManager1.ShowItems",
+                    &format!("array:string:{uri}"),
+                    "string:",
+                ])
+                .status();
+            if status.is_ok_and(|status| status.success()) {
+                return Ok(());
+            }
+        }
+        let parent = path.parent().ok_or_else(|| "page source has no parent directory".to_string())?;
+        opener_command("xdg-open")
+            .arg(parent)
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn sanitized_opener_env(
+    vars: impl IntoIterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+    appdir: Option<std::ffi::OsString>,
+) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+    const KEEP: &[&str] = &[
+        "PATH",
+        "HOME",
+        "USER",
+        "LOGNAME",
+        "SHELL",
+        "LANG",
+        "DISPLAY",
+        "WAYLAND_DISPLAY",
+        "XDG_RUNTIME_DIR",
+        "XDG_CURRENT_DESKTOP",
+        "DESKTOP_SESSION",
+        "DBUS_SESSION_BUS_ADDRESS",
+        "XAUTHORITY",
+        "XDG_DATA_HOME",
+        "XDG_CONFIG_HOME",
+        "XDG_CACHE_HOME",
+        "XDG_DATA_DIRS",
+        "TMPDIR",
+        "TMP",
+        "TEMP",
+    ];
+    let appdir = appdir.map(std::path::PathBuf::from);
+    vars.into_iter()
+        .filter_map(|(key, value)| {
+            let key_text = key.to_string_lossy();
+            if !KEEP.contains(&key_text.as_ref()) && !key_text.starts_with("LC_") {
+                return None;
+            }
+            let value = if matches!(key_text.as_ref(), "PATH" | "XDG_DATA_DIRS") {
+                if let Some(appdir) = &appdir {
+                    let clean = std::env::split_paths(&value)
+                        .filter(|part| !part.starts_with(appdir))
+                        .collect::<Vec<_>>();
+                    std::env::join_paths(clean).ok()?
+                } else {
+                    value
+                }
+            } else {
+                value
+            };
+            Some((key, value))
+        })
+        .collect()
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod opener_tests {
+    use super::sanitized_opener_env;
+    use std::ffi::OsString;
+
+    #[test]
+    fn keeps_session_identity_but_drops_bundle_loader_state() {
+        let vars = vec![
+            ("PATH", "/tmp/.mount_tine/bin:/usr/bin"),
+            ("XDG_DATA_DIRS", "/tmp/.mount_tine/share:/usr/share"),
+            ("HOME", "/home/test"),
+            ("DISPLAY", ":0"),
+            ("LC_ALL", "C.UTF-8"),
+            ("LD_LIBRARY_PATH", "/tmp/.mount_tine/lib"),
+            ("GST_PLUGIN_PATH", "/tmp/.mount_tine/gstreamer"),
+            ("APPIMAGE", "/tmp/Tine.AppImage"),
+        ]
+        .into_iter()
+        .map(|(key, value)| (OsString::from(key), OsString::from(value)));
+
+        let clean = sanitized_opener_env(vars, Some(OsString::from("/tmp/.mount_tine")));
+        let clean = clean
+            .into_iter()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().into_owned(),
+                    value.to_string_lossy().into_owned(),
+                )
+            })
+            .collect::<std::collections::HashMap<_, _>>();
+
+        assert_eq!(clean.get("PATH").map(String::as_str), Some("/usr/bin"));
+        assert_eq!(
+            clean.get("XDG_DATA_DIRS").map(String::as_str),
+            Some("/usr/share")
+        );
+        assert_eq!(clean.get("HOME").map(String::as_str), Some("/home/test"));
+        assert_eq!(clean.get("DISPLAY").map(String::as_str), Some(":0"));
+        assert_eq!(clean.get("LC_ALL").map(String::as_str), Some("C.UTF-8"));
+        assert!(!clean.contains_key("LD_LIBRARY_PATH"));
+        assert!(!clean.contains_key("GST_PLUGIN_PATH"));
+        assert!(!clean.contains_key("APPIMAGE"));
+    }
 }
 
 /// SIGKILL WebKitGTK's helper subprocesses (`WebKitWebProcess` /

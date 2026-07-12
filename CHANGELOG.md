@@ -26,13 +26,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Add per-version plugin uninstall controls that remove only app-local packages
   and clear plugin settings after the last installed version.
 
-### Changed
-
-- Link catalogue entries to their plugin details and screenshots, and explain
-  human-review reasons and finding severity in end-user language.
-- **The shared parser is updated to lsdoc 0.5.2.** Both the native core and the
-  vendored browser WASM parser use the same released parser build.
-
 ### Fixed
 
 - Preserve the focused block while choosing a plugin action from Ctrl-K, so
@@ -42,6 +35,117 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Upgrade the Vite/Vitest development toolchain to versions clear of the current
   npm advisories, including the Vitest UI-server and Vite dev-server issues; keep
   Solid's browser export conditions explicit in the test runner.
+- **Alt-modified literal delimiters now retain Logseq selection-wrapping
+  behavior.** On layouts where `Alt + [` still produces a literal `[`, two
+  presses wrap selected text as `[[text]]` and open page completion. Layouts
+  where Alt/Option produces another character keep native text input, and an
+  explicitly configured editor shortcut takes precedence. (GH #83)
+- **The shared parser is updated to lsdoc 0.5.3.** Native and browser-WASM
+  parsing now include the final issue #82 state-parity corrections, while the
+  Help with Tine oracle remains pinned to the exact released sources. (GH #82,
+  GH #111)
+- **Help improve Tine now version-locks the complete lsdoc comparison oracle.**
+  The mldoc parser, AST normalizer, comparator, and reference extractor are
+  pinned and checked as one bundle, preventing stale helper files from being
+  reported as real graph divergences. Context-dependent differences that reduce
+  to mldoc's known failed-double-backtick state leak are rechecked in fresh
+  parser realms and shown separately instead of counted as lsdoc bugs. (GH #82)
+- **Double Enter now exits a trailing fenced code or calculator block.** The
+  first Enter adds a blank code line; the second removes that sentinel and opens
+  a normal sibling block below. One Undo restores the entire pre-exit state. (GH
+  #93)
+- **Imported preamble text, first-block page properties, and split middle-click
+  navigation now match the page that owns them.** Ordinary Markdown before the
+  first bullet is visible without rewriting the file and becomes a block only
+  when edited; a properties-only first block uses the same page-property UI and
+  gear editor as an unbulleted pre-block; and middle-clicked page links open in
+  their source pane rather than whichever pane was focused earlier. (GH #85,
+  GH #86, GH #87)
+- **Returning to a previously loaded large page no longer mounts it twice.** A
+  pane now renders only the route whose asynchronous load actually completed;
+  obsolete load failures cannot replace a newer page, and the performance gate
+  compares every candidate on one machine with both an immutable long-term
+  anchor and the previous release.
+- **Clicks inside inline code now put the caret on the clicked character.**
+  Literal delimiters are mapped separately from their content instead of
+  snapping clicks to the start or end of the formatted span. (GH #114)
+- **Quick Capture focuses its first bullet even when its initial show event
+  races frontend startup.** Typing can begin immediately without an extra mouse
+  click. (GH #117)
+- **Table arrow-key navigation is now covered through the real global keyboard
+  path.** The deployed app already had the Grid-equivalent behavior reported in
+  GH #113; component and Linux real-app regressions now guard it.
+- **MKV videos play inline again on Linux.** When WebKitGTK rejects Matroska from
+  Tauri's range protocol, Tine retries supported files through a graph-scoped,
+  size-bounded Blob; oversized or unsupported files retain the external-player
+  fallback. (GH #119)
+- **System media players are launched outside Tine's runtime session.** Linux
+  openers now inherit only desktop-session state, exclude AppImage loader paths,
+  and start in a new session so VLC cannot load Tine's bundled libraries or die
+  with its parent process group. (GH #118)
+- **Page titles can reveal or open their exact source file on desktop.** The
+  right-click menu flushes edits first, refuses save conflicts, preserves nested
+  and path-pinned Markdown/Org identity, and never exposes the actions for the
+  bundled Guide. (GH #84)
+- **Published Guides now open on Welcome to Tine and preserve block-reference
+  navigation.** Home links target the Welcome page, the alphabetical list remains
+  at All pages, and public reference targets expose keyboard-accessible counts
+  with links to public same-page and cross-page referrers. (GH #115, GH #116)
+- **Writable pages have a quiet continuation target below their content.** It
+  focuses an existing empty trailing leaf or creates exactly one root (one Undo);
+  zoomed outlines append within the zoom root, while Guide and read-only pages
+  remain immutable. (GH #96)
+- **Ctrl+K now explains its search grammar in place.** A keyboard-accessible
+  Search syntax button documents AND, OR, exclusion, phrases, and regex; Escape
+  closes the help before closing search, and every displayed example is executed
+  against both frontend and Rust matchers in tests. (GH #97)
+- **Settings now has progressive disclosure and cross-tab search.** Niche and
+  experimental controls live in persisted, accessible Advanced sections; search
+  covers labels, descriptions, and aliases, identifies the tab/section, and
+  temporarily reveals matching hidden controls without changing the saved
+  disclosure state. (GH #112)
+- **Pasting selected structured content preserves its explicit outline.** Safe
+  clipboard HTML is deterministically converted into nested lists, headings,
+  paragraphs, quotes, fenced code, links, emphasis, and one-block GFM tables;
+  malformed, semantic-free, or bounded-out payloads use the existing plain-text
+  path. The import is one normal persistence transaction and one Undo, while
+  Ctrl/Cmd+Shift+V remains literal plain-text paste. (GH #58)
+
+### Changed
+
+- Link catalogue entries to their plugin details and screenshots, and explain
+  human-review reasons and finding severity in end-user language.
+- **The frontend build and test toolchain has been security-updated.** Vite 6
+  and Vitest 3 replace vulnerable development-only versions, with deterministic
+  SolidJS test resolution and zero known npm audit findings.
+- **Block embeds now begin with one interactive root bullet instead of two.**
+  The referenced root keeps its collapse, zoom, sidebar, navigation, and editing
+  behavior, while a slightly heavier descendant guide marks the embedded outline
+  without adding a surrounding box. (GH #88)
+- **Bug reports now feed a durable regression and follow-up workflow.** The issue
+  form asks for exact steps and an anonymized minimal graph, UI and non-UI bugs
+  share one indexed catalog, and a reporter's comment on a closed issue reopens
+  it automatically for triage.
+- **Release publication now fails closed on an incomplete platform set.** Tagged
+  releases require Android signing, a successful real offline Flatpak build,
+  lockstep version/changelog metadata, cross-platform-stable vendored oracle
+  bytes, all 21 expected artifacts, and all 12 updater platform entries before
+  the draft can become public. All expensive platform builds now run in parallel
+  into immutable workflow artifacts; one short publisher assembles the updater
+  manifest and performs the only GitHub Release mutation.
+
+## [0.5.6] - 2026-07-11
+
+Parser-integration and release-recovery patch: lsdoc 0.5.2, private and
+reproducible Help-panel reports, and complete cross-platform release guards.
+
+### Changed
+
+- **The shared parser is updated to lsdoc 0.5.2.** Both the native core and the
+  vendored browser WASM parser use the same released parser build.
+
+### Fixed
+
 - **Help improve Tine uses the same OG-faithful reference oracle as lsdoc.**
   Property, nested, file-label, Org, embed, and block-reference semantics no
   longer drift between the two sides of the comparison, eliminating false
@@ -53,8 +157,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   reliably, and copied reports record the Tine version used for the comparison.
 - **Release CI catches platform-only compilation and stale Flatpak sources before
   tagging.** Windows and Android compile guards now run on ordinary CI, the
-  Flatpak offline npm manifest is checked against `package-lock.json`, and a
-  release remains draft unless every required artifact job succeeds.
+  Flatpak offline npm and Cargo manifests are checked against their lockfiles,
+  and a release remains draft unless every required artifact job succeeds.
 
 ## [0.5.5] - 2026-07-11
 
@@ -1484,7 +1588,13 @@ takes over your graph.
 - macOS and Windows installers are currently **unsigned** — on macOS right-click →
   Open; on Windows choose *More info → Run anyway*.
 
-[Unreleased]: https://github.com/martinkoutecky/tine/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/martinkoutecky/tine/compare/v0.5.6...HEAD
+[0.5.6]: https://github.com/martinkoutecky/tine/compare/v0.5.5...v0.5.6
+[0.5.5]: https://github.com/martinkoutecky/tine/compare/v0.5.4...v0.5.5
+[0.5.4]: https://github.com/martinkoutecky/tine/compare/v0.5.3...v0.5.4
+[0.5.3]: https://github.com/martinkoutecky/tine/compare/v0.5.2...v0.5.3
+[0.5.2]: https://github.com/martinkoutecky/tine/compare/v0.5.1...v0.5.2
+[0.5.1]: https://github.com/martinkoutecky/tine/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/martinkoutecky/tine/compare/v0.4.7...v0.5.0
 [0.4.7]: https://github.com/martinkoutecky/tine/compare/v0.4.6...v0.4.7
 [0.4.6]: https://github.com/martinkoutecky/tine/compare/v0.4.5...v0.4.6

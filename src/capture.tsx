@@ -26,6 +26,7 @@ import { installKeybindings, eventToBindingString } from "./keybindings";
 import { backend } from "./backend";
 import { initSpellcheckSettings } from "./spellcheckSettings";
 import { initRefCompletionSettings } from "./refCompletionSettings";
+import { resettleIfVisible } from "./captureVisibility";
 import {
   QUICK_CAPTURE_ACK_TIMEOUT_MS,
   createQuickCaptureRequestId,
@@ -422,6 +423,13 @@ function Capture() {
           void requestShortcuts();
           resettle();
         });
+        // Cold `tine --capture` can show + emit before this asynchronously
+        // imported listener exists. Reconcile the current window state once the
+        // listener is installed, so that missed first event cannot leave the
+        // visible capture editor unfocused (GH #117). A later show still follows
+        // the normal event path above.
+        const { getCurrentWindow } = await import("@tauri-apps/api/window");
+        await resettleIfVisible(getCurrentWindow(), resettle);
         onCleanup(() => {
           unTheme();
           unKeys();

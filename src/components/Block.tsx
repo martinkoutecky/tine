@@ -37,6 +37,7 @@ import {
   nextVisibleOrExtend,
   insertEmptyChildBlock,
   insertOutlineAfter,
+  replaceEmptyBlockWithOutline,
   insertOutlineChildren,
   deleteBlock,
   moveBlock,
@@ -69,6 +70,7 @@ import {
   takeCaretFor,
 } from "../editorController";
 import { parseOutline } from "../editor/outline";
+import { structuredHtmlOutline } from "../editor/htmlPaste";
 import {
   toggleWrap,
   insertLink,
@@ -115,7 +117,7 @@ import {
   caretColumnOnVisualRow,
   caretOffsetOnLastRow,
 } from "../editor/caretRows";
-import { splitProps, joinProps, isBuiltinHidden, isSheetCellHidden, hideAll, caretInFence } from "../editor/properties";
+import { splitProps, joinProps, isBuiltinHidden, isSheetCellHidden, hideAll, caretInFence, multilineExitTrim } from "../editor/properties";
 import { queryMacroExtents } from "../editor/edn";
 import { normalizePlanning } from "../editor/planning";
 import { caretOnOpeningFence } from "../editor/fences";
@@ -325,11 +327,23 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   // An org page Tine can't round-trip is shown but NOT editable (Tine must never
   // rewrite it). Clicking a block doesn't enter the editor on such a page.
   const readOnly = () => pageByName(node().page)?.readOnly ?? false;
+  // A whole-block `{{embed ((uuid))}}` is a transparent host for the referenced
+  // outline. Showing both this storage block's controls and the referenced root's
+  // controls produces two consecutive bullets. Keep the referenced root controls
+  // (they own collapse/zoom/sidebar behavior) and suppress only the macro host.
+  const blockEmbedHost = createMemo(() => {
+    const m = detectMacro(node().raw);
+    return m?.kind === "embed" && /^embed\s*\(\([^)]+\)\)\s*$/i.test(m.inner);
+  });
 
   return (
     <div
       class="ls-block"
-      classList={{ collapsed: collapsed(), "plugin-thread-lines": pluginManager.hasDeclarativeDecoration("thread-lines") }}
+      classList={{
+        collapsed: collapsed(),
+        "block-embed-host": blockEmbedHost(),
+        "plugin-thread-lines": pluginManager.hasDeclarativeDecoration("thread-lines"),
+      }}
       data-block-id={props.id}
     >
       <div
@@ -352,6 +366,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
           openContextMenu(e.clientX, e.clientY, props.id);
         }}
       >
+        <Show when={!blockEmbedHost()}>
         <div class="block-controls">
           <span
             class="collapse-toggle"
@@ -391,6 +406,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
             </Show>
           </span>
         </div>
+        </Show>
 
         <div
           class="block-content-wrapper"
@@ -2226,17 +2242,23 @@ export function Editor(props: { id: string }): JSX.Element {
 
     if (handleSheetCellKey(e, start, end, raw)) return;
 
+    // Resolve configured editor commands before incidental literal-key behavior:
+    // an explicit user binding (including Alt+[) must win over selection wrapping.
+    const cmd = editorCommandFor(e);
+
     // Auto-pair wrap on a SELECTION (OG parity, always-on — independent of the
     // opt-in empty-caret auto-pairing). Typing any of `SELECTION_WRAP` around
     // selected text wraps it, keeping the selection: `*`/`~`/`=` etc. so a second
     // press gives `**bold**`/`~~strike~~`/`==highlight==`, and `[`/`(` so `[[sel]]`
     // makes a page ref and `((sel))` a block ref — the doubling bracket then opens
     // the matching search seeded with the selection, so Enter links it to an
-    // existing page/block or creates it. Modifier-free single chars only, so it
-    // never shadows Ctrl/Cmd editor commands or IME composition.
+    // existing page/block or creates it. Match OG by accepting an Alt-modified
+    // event when the layout still reports the literal delimiter as `event.key`;
+    // layout-produced characters remain native because they are not in the wrap
+    // map. Never shadow Ctrl/Cmd commands, explicit editor bindings, or IME input.
     if (
       start !== end &&
-      !e.ctrlKey && !e.metaKey && !e.altKey && !e.isComposing &&
+      !cmd && !e.ctrlKey && !e.metaKey && !e.isComposing &&
       e.key.length === 1 && Object.prototype.hasOwnProperty.call(SELECTION_WRAP, e.key)
     ) {
       const ed = wrapSelectionEdit(raw, start, end, e.key);
@@ -2285,7 +2307,6 @@ export function Editor(props: { id: string }): JSX.Element {
     // (runEditorCmd) instead of ~20 sequential matchesCommand checks. A handler
     // returns false to fall through — select-block does this off the block edge
     // so the textarea extends the selection by a wrapped line.
-    const cmd = editorCommandFor(e);
     if (sheetCell && cmd && SHEET_CELL_BLOCKED_EDITOR_COMMANDS.has(cmd)) {
       e.preventDefault();
       return;
@@ -2328,6 +2349,24 @@ export function Editor(props: { id: string }): JSX.Element {
     }
 
     if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      const inFence = !isAnnot() && caretInFence(raw, start);
+      // Double-Enter escape: the first Enter creates a trailing blank line; the
+      // second removes that sentinel and creates a normal sibling. Keep the text
+      // trim and structural insertion in one undo unit so one Undo restores the
+      // exact pre-exit special block and removes the sibling.
+      if ((isCalc() || inFence) && start === end) {
+        const trimmed = multilineExitTrim(raw, start, isCalc() ? "calc" : "fence");
+        if (trimmed !== null) {
+          e.preventDefault();
+          let newId = props.id;
+          withUndoUnit(`multiline-exit:${props.id}`, [node().page], () => {
+            commit(trimmed);
+            newId = insertOutlineAfter(props.id, [{ raw: "", children: [] }]);
+          });
+          startEditing(newId, 0);
+          return;
+        }
+      }
       // In a calc block, Enter adds a new expression line (stays in the block) —
       // let the textarea insert the newline natively, like OG.
       if (isCalc()) return;
@@ -2337,7 +2376,7 @@ export function Editor(props: { id: string }): JSX.Element {
       // — GH #66). caretInFence treats a still-unterminated fence (being typed) as
       // inside too, and returns false when the caret sits on a ``` delimiter line,
       // so Enter on the closing fence still exits the block.
-      if (!isAnnot() && (caretInFence(raw, start) || caretOnOpeningFence(raw, start))) {
+      if (!isAnnot() && (inFence || caretOnOpeningFence(raw, start))) {
         softNewlineCmd();
         return;
       }
@@ -2513,6 +2552,7 @@ export function Editor(props: { id: string }): JSX.Element {
     const inlineMultiline = pasteMultilineInline;
     clearPasteMultilineInline();
     const text = e.clipboardData?.getData("text/plain") ?? "";
+    const html = e.clipboardData?.getData("text/html") ?? "";
     // File managers commonly include path text alongside the real file-list
     // clipboard flavor. Claim the paste synchronously so those paths never land
     // as text; actual paths are accepted only from the native clipboard API.
@@ -2556,12 +2596,30 @@ export function Editor(props: { id: string }): JSX.Element {
       insertOutlineChildren(props.id, [sheetGridNode]);
       return;
     }
+    // Preserve only structure explicitly represented by the clipboard HTML.
+    // Shift-paste above remains the literal/plain escape hatch, and editor
+    // surfaces whose contents are syntax-sensitive retain their native text
+    // insertion semantics.
+    const start = ref.selectionStart;
+    const syntaxSensitive = sheetCell || isCalc() || caretInFence(ref.value, start) || caretOnOpeningFence(ref.value, start);
+    const htmlNodes = syntaxSensitive ? null : structuredHtmlOutline(html, text);
+    if (htmlNodes) {
+      e.preventDefault();
+      const wasEmpty = ref.value.trim() === "" && doc.byId[props.id].children.length === 0;
+      const lastId = withUndoUnit("structured-paste", [doc.byId[props.id].page], () => {
+        commit(ref.value);
+        return wasEmpty
+          ? replaceEmptyBlockWithOutline(props.id, htmlNodes)
+          : insertOutlineAfter(props.id, htmlNodes);
+      });
+      startEditing(lastId, doc.byId[lastId].raw.length);
+      return;
+    }
     // Multiline text pastes as a block outline (Logseq behavior).
     if (text.includes("\n")) {
       e.preventDefault();
-      const start = ref.selectionStart;
       const end = ref.selectionEnd;
-      if (sheetCell || isCalc() || caretInFence(ref.value, start) || caretOnOpeningFence(ref.value, start)) {
+      if (syntaxSensitive) {
         const newRaw = ref.value.slice(0, start) + text + ref.value.slice(end);
         commit(newRaw);
         const pos = start + text.length;
@@ -2574,11 +2632,14 @@ export function Editor(props: { id: string }): JSX.Element {
       }
       const nodes = parseOutline(text);
       if (!nodes.length) return;
-      commit(ref.value);
       const wasEmpty =
         ref.value.trim() === "" && doc.byId[props.id].children.length === 0;
-      const lastId = insertOutlineAfter(props.id, nodes);
-      if (wasEmpty) deleteBlock(props.id);
+      const lastId = withUndoUnit("outline-paste", [doc.byId[props.id].page], () => {
+        commit(ref.value);
+        return wasEmpty
+          ? replaceEmptyBlockWithOutline(props.id, nodes)
+          : insertOutlineAfter(props.id, nodes);
+      });
       startEditing(lastId, doc.byId[lastId].raw.length);
       return;
     }

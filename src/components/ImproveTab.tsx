@@ -42,7 +42,8 @@ export function ImproveTab(): JSX.Element {
   };
 
   const divergences = () => (report()?.findings ?? []).filter((f): f is Extract<Finding, { type: "divergence" }> => f.type === "divergence");
-  const otherFindings = () => (report()?.findings ?? []).filter((f) => f.type !== "divergence");
+  const oracleArtifacts = () => (report()?.findings ?? []).filter((f): f is Extract<Finding, { type: "mldoc-oracle-artifact" }> => f.type === "mldoc-oracle-artifact");
+  const otherFindings = () => (report()?.findings ?? []).filter((f) => f.type !== "divergence" && f.type !== "mldoc-oracle-artifact");
 
   const flash = async (text: string, key: string) => {
     try {
@@ -197,7 +198,9 @@ export function ImproveTab(): JSX.Element {
                   </Show>
                 </div>
                 <Show when={divergences().length === 0}>
-                  <div class="improve-clean">No divergences — lsdoc matched Logseq's parser on every file.</div>
+                  <div class="improve-clean">
+                    No actionable divergences — lsdoc matched Logseq's parser on every file after verified mldoc oracle artifacts were quarantined.
+                  </div>
                 </Show>
                 <For each={divergences()}>
                   {(f) => (
@@ -220,6 +223,18 @@ export function ImproveTab(): JSX.Element {
                     </div>
                   )}
                 </For>
+                <Show when={oracleArtifacts().length > 0}>
+                  <details class="improve-other">
+                    <summary>{oracleArtifacts().length} suppressed mldoc oracle artifact(s)</summary>
+                    <For each={oracleArtifacts()}>
+                      {(f) => (
+                        <div class="settings-hint">
+                          <code>{f.rel}</code> · lines {f.lineStart}-{f.lineEnd} — {f.detail}
+                        </div>
+                      )}
+                    </For>
+                  </details>
+                </Show>
                 <Show when={otherFindings().length > 0}>
                   <details class="improve-other">
                     <summary>{otherFindings().length} non-divergence issue(s)</summary>

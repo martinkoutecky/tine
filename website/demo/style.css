@@ -61,6 +61,15 @@ a.block-ref,span.block-ref{background:var(--code);border-radius:4px;padding:0 .2
 a.block-ref{color:var(--link);text-decoration:none}
 a.block-ref:hover{text-decoration:underline}
 span.block-ref{color:var(--muted)}
+.block-referrers{display:inline-block;margin-left:.4rem;vertical-align:middle}
+.block-referrers summary.ref-count{display:inline-flex;align-items:center;justify-content:center;min-width:1.45em;height:1.35em;
+  padding:0 .35em;border:1px solid var(--line);border-radius:999px;color:var(--muted);font-size:.72em;cursor:pointer;list-style:none}
+.block-referrers summary.ref-count::-webkit-details-marker{display:none}
+.block-referrers[open]{display:block;margin:.3rem 0 .55rem .2rem}
+.block-referrers ul{margin:.3rem 0 0;padding-left:1.2rem;border-left:1px solid var(--line)}
+.block-referrers li{font-size:.86em;color:var(--muted)}
+.block-referrers a{color:var(--link);text-decoration:none}.block-referrers a:hover{text-decoration:underline}
+.referrer-page{font-weight:600}
 a.tag{font-size:.92em}
 a[href^="http"]{color:var(--link)}
 code,.inline-code{background:var(--code);border-radius:4px;padding:.05em .35em;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em}

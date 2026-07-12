@@ -117,6 +117,15 @@ pub(crate) fn load_graph_for_label(
             #[cfg(desktop)]
             let _ = existing.unminimize();
             let _ = existing.set_focus();
+            // `FocusedExisting` is an explicit activation request. Update
+            // capture routing now instead of depending solely on a subsequent
+            // OS focus event, which is not guaranteed on every WM/headless
+            // environment.
+            if state.note_focused(&owner) {
+                if let Ok(slot) = slot_for_window(state, &owner) {
+                    let _ = remember_graph(app, &slot.root_key.display().to_string());
+                }
+            }
         }
         return Ok(LoadGraphResult::FocusedExisting {
             window_label: owner,
@@ -135,7 +144,7 @@ pub(crate) fn load_graph_for_label(
         .write()
         .unwrap()
         .bind(window_label.to_string(), slot.clone())?;
-    *state.last_focused.lock().unwrap() = Some(window_label.to_string());
+    state.note_focused(window_label);
     poke_watcher(&state);
     if !launch_backup_done {
         backup_async(app.clone(), &slot.graph);

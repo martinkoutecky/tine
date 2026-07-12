@@ -114,6 +114,24 @@ pub(crate) struct AppState {
     pub(crate) next_window: AtomicU64,
 }
 
+impl AppState {
+    /// Record the graph window that commands such as quick capture should use.
+    ///
+    /// Explicit graph activation must update this state synchronously: some
+    /// headless window managers, and occasionally desktop focus hand-offs, do
+    /// not deliver a later `WindowEvent::Focused` even when `set_focus` was
+    /// requested successfully.
+    pub(crate) fn note_focused(&self, label: &str) -> bool {
+        let mut last = self.last_focused.lock().unwrap();
+        if last.as_deref() == Some(label) {
+            false
+        } else {
+            *last = Some(label.to_string());
+            true
+        }
+    }
+}
+
 pub(crate) struct GraphContext<'a, R: Runtime = tauri::Wry> {
     pub(crate) state: State<'a, AppState>,
     pub(crate) window: WebviewWindow<R>,
@@ -203,6 +221,22 @@ mod tests {
         std::fs::create_dir_all(root.join("pages")).unwrap();
         std::fs::create_dir_all(root.join("journals")).unwrap();
         Arc::new(GraphSlot::new(Graph::open(root), root.to_path_buf()))
+    }
+
+    #[test]
+    fn explicit_graph_activation_updates_capture_routing_idempotently() {
+        let state = AppState {
+            graphs: RwLock::new(GraphRegistry::default()),
+            graph_load: Mutex::new(()),
+            watch_ctl: Mutex::new(None),
+            last_focused: Mutex::new(Some("graph-1".into())),
+            #[cfg(desktop)]
+            next_window: AtomicU64::new(2),
+        };
+
+        assert!(state.note_focused("main"));
+        assert_eq!(state.last_focused.lock().unwrap().as_deref(), Some("main"));
+        assert!(!state.note_focused("main"));
     }
 
     #[test]

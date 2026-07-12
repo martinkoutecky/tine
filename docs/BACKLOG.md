@@ -1,24 +1,20 @@
-# Tine — Backlog & Roadmap
+# Tine — product backlog and decision archive
 
-The public front-door for not-yet-done Tine work: what's next, what's deferred, and what's
-explicitly out of scope. (Detailed internal engineering/data-safety debt is tracked separately
-and privately; **lsdoc**, the parser, has its own backlog in its own repo.)
+The live, inspectable work board is the public
+[Tine GitHub Project](https://github.com/users/martinkoutecky/projects/1); release
+milestones answer when work is targeted. This document is not a second status
+board. It preserves durable product context, researched candidates, and explicit
+WONTFIX rationale that would be too large or too architectural for a Project
+card. Current issue status and Now/Next/Later views must be read from GitHub.
 
-**Categories are deliberate and distinct** (Now / Next / Later — the standard lean-roadmap tiering):
-- **Now** — being built right now (cap ~1–2).
-- **Next** — an **ordered, capped** queue (~6). *This* is the answer to "what's next": an item is here
-  only because we'd genuinely pick it up when Now clears. Order is meaningful; promotion into Next is a
-  deliberate act, and adding a 7th means bumping one down to Later.
-- **Later** — real, not WONTFIX, but no slot yet. An **unordered pool**; only surfaces when we dig.
-  *Later is NOT WONTFIX.*
-- **WONTFIX** — decided we are not doing it, with a reason.
-
-Kept current in the same chunk of work: add items when they surface, remove them when done,
-move them between tiers in place. When Next drains, review Later and promote (in order) to refill it.
+Detailed engineering/data-safety debt remains private under `tine-agents/specs/`;
+**lsdoc**, the parser, has its own repository and issue tracker.
 
 ---
 
-## Now (being built)
+## Active product context (non-canonical snapshot)
+
+These notes explain active threads, but GitHub—not this ordering—is authoritative.
 
 _(**Shipped & merged to master**, removed from Now: **Sheets** — the grid/table/board
 layout engine (spec [docs/breadth-grid-spec.md](breadth-grid-spec.md)) — and **Split view**
@@ -45,9 +41,10 @@ merged to master as `ad9bf67`.)_
   Obsidian compatibility; their plugins are ported to the smaller Tine API.
 ---
 
-## Next — the ordered queue (top = do first)
+## Near-term candidate context
 
-Cap ~6, order is meaningful. When this drains, promote from Later.
+These are researched candidates retained for their details. Their order here is
+not priority; the GitHub Project and milestones are authoritative.
 
 _(**Shipped & released**, removed from the queue: **#23 paste-URL-over-selection** & **#24 copy-code/inline/links** (both in **v0.4.2**, Martin-tested, **issues CLOSED**), **Android camera/photo capture**, **Android voice-memo recording**, and the whole **Queries batch** — result aggregation/group-by (1a), the "⚙ advanced" switch (1b), and Datalog coverage expansion (1c) per [docs/plans/queries-batch.md](plans/queries-batch.md) — all in **v0.4.1**. **Excalidraw + drawio assets** — render-as-image + "Edit in your own editor" via a generic **external-media-editor registry** (GH #38) — shipped `76c42e5` (spec [docs/excalidraw-assets-spec.md](excalidraw-assets-spec.md)). **Flathub** moved to **WONTFIX** — Flathub bans AI-built apps.)_
 
@@ -58,7 +55,7 @@ _(**Shipped & released**, removed from the queue: **#23 paste-URL-over-selection
 
 ---
 
-## Later — real, not queued (unordered; NOT WONTFIX)
+## Later ideas and research (not WONTFIX)
 
 | Item | Notes |
 |---|---|
@@ -75,7 +72,7 @@ _(**Shipped & released**, removed from the queue: **#23 paste-URL-over-selection
 | **File the WebKit-exit double-free upstream at Mesa** (follow-up to #28 / ADR 0023) | Tine's fix (SIGKILL WebKit helper processes at quit) *prevents* the exit-time coredump, but the actual double-free lives in the GL userspace driver teardown (Mesa GBM/gallium/DRI; on hybrid boxes also the NVIDIA-EGL/libglvnd teardown ordering) — that's where it's truly fixed. Repro'd on Fedora 44 / Mesa 26.1.3 (GH #28). File at gitlab.freedesktop.org/mesa/mesa/-/issues with the exact `__run_exit_handlers` backtrace + `EGL_LOG_LEVEL=debug`; Mesa has fixed this class before (u_queue atexit, 13.0.6/17.0.1; eglTerminate/gbm double-free, LP#1414999). Cheap, correct, low-priority (our app-side fix already spares users the crash). |
 | **Hybrid-GPU runtime WebProcess crash** ([#29](https://github.com/martinkoutecky/tine/issues/29)) — *awaiting reporter confirmation* | Same reporter/machine/driver-module set as #28 (Dell XPS 15, Intel Iris Xe + NVIDIA RTX 4050, Fedora 44, XWayland) but a **runtime** `WebKitWebProcess` SIGABRT via `std::__glibcxx_assert_fail` (Fedora `_GLIBCXX_ASSERTIONS` tripping *inside* Mesa gallium / NVIDIA-EGL) during a GPU repaint — triggered by expanding the ~260-row "All pages" sidebar list. **Not** a Tine content bug: the render path is clean (`PageEntry.path` is always a `String`, `pageListLabel` is pure string ops; a JS error can't SIGABRT the web process). **Candidate fix (validated against sources, ready to ship gated):** pin the WebView to the integrated GPU without disabling acceleration — `__EGL_VENDOR_LIBRARY_FILENAMES=<mesa vendor json>` (libglvnd then loads only Mesa, so `libnvidia-egl-*` never enters the process; Intel iris HW stays on) + WebKit-native `WEBKIT_WEB_RENDER_DEVICE_FILE=<intel render node>` (≥ WebKitGTK 2.42; F44 ships 2.52.1). Set on the Rust main process before WebView spawn (WebKit honors inherited env — confirmed in source). **Gate strictly** on "NVIDIA EGL vendor json present AND a Mesa-capable i915/xe/amdgpu render node present" (else a pure-NVIDIA box drops to llvmpipe software). Drop `__GLX_VENDOR_LIBRARY_NAME`/`DRI_PRIME` (noise on the EGL path). No exact-signature upstream bug (closest: WebKit 262607, WONTFIX — app-side env pinning is the expected mitigation). **Blocked on:** reporter running the posted env-var test (does the crash stop + does `/proc/<pid>/maps` still show `iris`, no `libnvidia-egl-*`/`llvmpipe`); on confirmation, implement the conditional pin. Research: `subagent-tasks/notes/webkit-hybrid-gpu-runtime-crash.md`. |
 | **Query-engine indices + finer live-query refresh** (the sheets/supertags pre-req) | **Not needed today — verified Jul 4 2026**, recorded so the design is ready when it is. Current cadence: live `{{query}}` panels re-run at most ~1 Hz while typing (400 ms save debounce `persistence.ts:190` → `cache_gen` bump on save `model.rs:1488` → 700 ms `dataRev` debounce `persistence.ts:141` → panels keyed on `dataRev` re-fetch, `Macro.tsx:142`); each re-run is a native scan over `OnceLock`-cached block facets (`doc.rs:150`, O(1) field checks) ≈ ms per query at current graph size; and scoped eviction #52 (`model.rs:1504`) keeps unaffected memoized results — the keep/evict test is **two-sided** (evict if the page was in the result OR now matches the predicate, re-running the query's real `Pred::eval` against the post-edit doc, `query.rs:292`), fuzz-guarded by `tests/derived_cache_fuzz.rs`. **Becomes real when** query count × graph size × expressiveness grows: supertag/sheets dashboards with many live views, sort/group/join semantics, or much larger graphs. **Design shape:** (1) incremental facet indices (marker / priority / tag / page-ref → block ids) maintained in `cache_upsert` alongside the page cache, so query eval becomes index intersection instead of the `with_pages` full walk (`query.rs:221`); (2) per-query invalidation subscriptions replacing the global `dataRev`-keyed refetch, so an edit only re-renders the queries it actually evicted; (3) diff results before re-render — **DOM churn repainting big result lists ~1 Hz in WebKitGTK is the likely first *felt* cost, not the Rust scan**. **Alternative/complement (Martin's observation, Jul 4 2026): incremental result patching** — the eviction test already evaluates the edited page, so an evicted result could in principle be patched (`old − page's old group + page's new matches`, O(page) per edit) instead of fully recomputed (O(graph), `query.rs:221`). Deliberately NOT done today: global operators break local patching (`sample n` truncation `query.rs:270` — blocks cut by the limit are unknowable without a rescan; same for future sort/limit/group), and the current invariant "a cached result is always a full-recompute output" is what keeps the fuzz oracle trivial and keep/evict drift-free. If sheets adds sort/group/limit, prefer indices (fast recompute) over patching (correctness surface); patch only pure per-block-predicate queries if at all. Risks: index consistency with `cache_gen` + aliases + day-rollover (`today` in memo keys); extend the derived-cache differential fuzz oracle to cover the indices. **Watch signal:** Martin's sidebar TODO-query dashboard (workflow he dropped in OG, resumed Jul 2026) feeling sluggish while typing — first diagnose *which* lags: typing latency (save path; shouldn't happen) vs sidebar repaint stutter (DOM; cap result-list size, collapse coarse queries) vs stale results (harmless debounce). |
-| **Performance: remaining levers** | The July 2026 whole-codebase audit (perf × data-safety × architecture, two independent auditors per dimension) closed the found eager/superlinear paths (graph-open foreground scans, bulk icon lookup, batch block-ref resolution, advanced-query memoization). Remaining: block **DOM windowing** (now promoted to Next) and flipping the CI bench job from advisory to gating once shared-runner noise is calibrated. Context for both: the Jul 4 2026 lsdoc third-party bench + Tine parse-cadence map — parsing is only user-visible at graph-open (background-warmed; a pre-warm search triggers a synchronous whole-graph build, ~1–2 s per 10 MB), never on keystrokes; the parser-side lever lives in **lsdoc's own backlog** ("plain-text fast path", expected ≈2–3×). |
+| **Performance: remaining levers** | The July 2026 whole-codebase audit (perf × data-safety × architecture, two independent auditors per dimension) closed the found eager/superlinear paths (graph-open foreground scans, bulk icon lookup, batch block-ref resolution, advanced-query memoization). The frontend bench is now a hard same-machine A/B CI gate against both immutable v0.4.7 and the previous release, with metric-specific budgets. Remaining: block **DOM windowing** (now promoted to Next). Context: the Jul 4 2026 lsdoc third-party bench + Tine parse-cadence map — parsing is only user-visible at graph-open (background-warmed; a pre-warm search triggers a synchronous whole-graph build, ~1–2 s per 10 MB), never on keystrokes; the parser-side lever lives in **lsdoc's own backlog** ("plain-text fast path", expected ≈2–3×). |
 | **UI sluggish on a 4K display at fractional scaling** (Martin, Jul 4 2026) | Fast on a native 1920×1200 laptop panel; slow on a 4K screen at **KDE Plasma 1.5× fractional scaling**. **Env workarounds tried and FAILED (Jul 4):** `GDK_SCALE=2 GDK_DPI_SCALE=0.5` → UI too small (effective 1.0×) *and still slow*; `TINE_GPU=0` (software paint) → *also too slow*. That two-way negative is diagnostic: integer 2× backing is slow too (so it's not specifically the fractional-downscale path), and software is slow too (so it's not a GPU/DMABUF-downscale pathology) → the cost is **raw device-pixel paint/composite throughput in WebKitGTK**, proportional to pixel area (1.5× on 4K ≈ 3–4× the 1920×1200 pixel count). No env flag fixes this; it's a paint-budget problem to shrink in *our* code. **Still worth an A/B (confirms + possible daily workaround):** `GDK_SCALE=1 GDK_DPI_SCALE=1.5` — draw at 1× device pixels (cheap), bump only font size to 1.5× (readable), at the cost of small-ish icons/padding; if *this* is fast, it nails the diagnosis. **Real levers (in our control), highest-value first:** (1) a **high-DPI "reduce visual effects" mode** — kill backdrop-filter/blur (modals, overlays), heavy box-shadows, and drop the per-`.query-block` `translateZ(0)` compositing layers ([[tine-rendering-perf]] pt 4; each is a GPU texture that costs ~2.25× RAM/fill at 1.5×) — auto-enable above some device-scale or expose a toggle; (2) land block **DOM windowing** (now in Next) — fewer painted nodes is the biggest win at 4K; (3) investigate rendering the webview *content* at a capped internal scale (<window scale) and letting the compositor upscale — trades crispness for fill-rate. **Need Martin's box to profile** (uni server is headless, no GPU); the first question is *what* is slow — scroll, typing, or steady-state — since it points at (2)/(1)/(1) respectively. |
 | **Theming: remaining semantic-token sweep** | Built-in one-click themes shipped in `Unreleased` (Default, Nord, Solarized, Gruvbox) on top of the `--ls-*` shim, with the gallery selection persisted through backend app settings instead of localStorage. Remaining theming work is the lower-value sweep of hardcoded colors outside the current semantic-token set, plus moving the separate light/dark mode preference off localStorage. |
 | **Slash-menu autocomplete UX** ([#15](https://github.com/martinkoutecky/tine/issues/15)) | Two OG-parity/discoverability gaps in the `/` autocomplete: (1) a **visible scroll affordance** — WebKitGTK hides scrollbars, so overflow items below the 280px fold look absent (affects every menu: slash, block-ref, page); (2) an **OG-style `/template` picker/submenu** — reporter expects Logseq's dedicated template chooser. Backend discovery + listing are verified working; this is the UX layer. Blocked on a repro for the "sees only one template" part. |

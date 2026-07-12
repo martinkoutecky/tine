@@ -379,6 +379,42 @@ function bigPageBlocks(n: number): BlockDto[] {
 if (typeof location !== "undefined" && /[?&]big\b/.test(location.search)) {
   NAMED.push({ name: "Big", kind: "page", title: "Big", pre_block: "title:: Big", blocks: bigPageBlocks(2000) });
 }
+if (typeof location !== "undefined" && /[?&]regressions\b/.test(location.search)) {
+  NAMED.push(
+    {
+      name: "Preamble regression",
+      kind: "page",
+      title: "Preamble regression",
+      pre_block: "Intro before the first outline marker",
+      blocks: [b("First marked block")],
+    },
+    {
+      name: "First-block properties regression",
+      kind: "page",
+      title: "First-block properties regression",
+      pre_block: null,
+      blocks: [b("alias:: fbpr\ntags:: testing, properties"), b("Visible body")],
+    },
+    {
+      name: "Block embed source regression",
+      kind: "page",
+      title: "Block embed source regression",
+      pre_block: null,
+      blocks: [
+        b("Embedded root\nid:: ui-block-embed-root", [
+          b("Embedded child", [b("Embedded grandchild")]),
+        ]),
+      ],
+    },
+    {
+      name: "Block embed regression",
+      kind: "page",
+      title: "Block embed regression",
+      pre_block: null,
+      blocks: [b("{{embed ((ui-block-embed-root))}}")],
+    },
+  );
+}
 
 const mockHighlights: Record<string, { label: string; highlights: Highlight[] }> = {};
 // In-memory UI session for the browser mock (no backend file).
@@ -979,6 +1015,9 @@ export function mockBackend(): Backend {
     },
     async openAsset(): Promise<void> {
       // no OS opener in the browser mock
+    },
+    async openPageFile(): Promise<void> {
+      // no OS file manager in the browser mock
     },
     async editAssetExternal(): Promise<void> {
       // no external editor in the browser mock

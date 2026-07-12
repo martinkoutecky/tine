@@ -246,6 +246,14 @@ struct RefTarget {
 }
 type RefIndex = std::collections::HashMap<String, RefTarget>;
 
+struct Referrer {
+    slug: String,
+    page: String,
+    anchor: String,
+    text: String,
+}
+type ReverseRefIndex = std::collections::HashMap<String, Vec<Referrer>>;
+
 fn collect_block_refs(blocks: &[DocBlock], slug: &str, refs: &mut RefIndex) {
     for b in blocks {
         if let Some(id) = block_id(&b.raw) {
@@ -258,6 +266,43 @@ fn collect_block_refs(blocks: &[DocBlock], slug: &str, refs: &mut RefIndex) {
             );
         }
         collect_block_refs(&b.children, slug, refs);
+    }
+}
+
+fn collect_reverse_refs(
+    blocks: &[DocBlock],
+    slug: &str,
+    page: &str,
+    counter: &mut u32,
+    public_targets: &RefIndex,
+    reverse: &mut ReverseRefIndex,
+) {
+    for block in blocks {
+        let anchor = block_id(&block.raw).unwrap_or_else(|| {
+            let anchor = format!("b{}", *counter);
+            *counter += 1;
+            anchor
+        });
+        let mut seen = HashSet::new();
+        for target in &block.projection().block_refs {
+            if !public_targets.contains_key(target) || !seen.insert(target.as_str()) {
+                continue;
+            }
+            reverse.entry(target.clone()).or_default().push(Referrer {
+                slug: slug.to_string(),
+                page: page.to_string(),
+                anchor: anchor.clone(),
+                text: ref_target_text(&block.raw),
+            });
+        }
+        collect_reverse_refs(
+            &block.children,
+            slug,
+            page,
+            counter,
+            public_targets,
+            reverse,
+        );
     }
 }
 
@@ -636,6 +681,7 @@ fn ref_target_text(raw: &str) -> String {
 /// tests — when absent, macros drop instead of expanding).
 struct Ctx<'a> {
     refs: &'a RefIndex,
+    reverse_refs: Option<&'a ReverseRefIndex>,
     graph: Option<&'a Graph>,
     /// The per-export unique/nonempty page-name→slug map (whole-graph site
     /// export). `None` for the single-page print export and inline-decorator unit
@@ -1049,6 +1095,30 @@ fn render_block(
     out.push_str(&decorate(&lsdoc::render_html(&blocks, &md_opts()), ctx, 0));
     out.push_str("</div>");
     emit_trailer_facets(b.scheduled(), b.deadline(), &b.properties(), out);
+    if let (Some(id), Some(reverse)) = (block_id(&b.raw), ctx.reverse_refs) {
+        if let Some(referrers) = reverse.get(&id).filter(|items| !items.is_empty()) {
+            let count = referrers.len();
+            out.push_str(&format!(
+                "<details class=\"block-referrers\"><summary class=\"ref-count\" aria-label=\"{count} block reference{}\">{count}</summary><ul>",
+                if count == 1 { "" } else { "s" }
+            ));
+            for referrer in referrers {
+                let text = if referrer.text.is_empty() {
+                    "Referenced block"
+                } else {
+                    &referrer.text
+                };
+                out.push_str(&format!(
+                    "<li><a href=\"{}.html#{}\"><span class=\"referrer-page\">{}</span>: {}</a></li>",
+                    referrer.slug,
+                    referrer.anchor,
+                    esc(&referrer.page),
+                    esc(text)
+                ));
+            }
+            out.push_str("</ul></details>");
+        }
+    }
 
     // A collapsed block hides its children on screen; the print export expands them
     // by default (a PDF usually wants the whole page), but the dialog can keep them
@@ -1070,6 +1140,7 @@ fn page_html(
     kind: PageKind,
     ctx: &Ctx,
     blocks: &mut Vec<serde_json::Value>,
+    home_href: &str,
 ) -> String {
     let mut body = String::new();
     body.push_str("<ul class=\"outline\">");
@@ -1098,7 +1169,7 @@ stroke=\"currentColor\" stroke-width=\"1.7\"><rect x=\"4\" y=\"5\" width=\"16\" 
     } else {
         format!("<h1 class=\"page\">{}</h1>", esc(title))
     };
-    shell(title, &format!("{heading}{body}"))
+    shell(title, &format!("{heading}{body}"), home_href)
 }
 
 /// The shared two-column document shell used by every generated page: `<head>` +
@@ -1108,13 +1179,14 @@ stroke=\"currentColor\" stroke-width=\"1.7\"><rect x=\"4\" y=\"5\" width=\"16\" 
 /// (`window.__tinePages` / `__tineBlocks`) — read as `<script>` globals, never
 /// `fetch`ed — so navigation and search work offline / opened straight off disk
 /// (`file://`, where `fetch` of a sibling file is blocked but `<script src>` is not).
-fn shell(title: &str, main: &str) -> String {
+fn shell(title: &str, main: &str, home_href: &str) -> String {
     format!(
         "<!doctype html><html><head><meta charset=\"utf-8\">\
 <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{title}</title>\
 <link rel=\"stylesheet\" href=\"style.css\">{katex}{hljs}</head><body>\
 <aside class=\"sidebar\">\
-<a class=\"home\" href=\"index.html\">\u{2302} Home</a>\
+<a class=\"home\" href=\"{home_href}\">\u{2302} Home</a>\
+<a class=\"home pages-link\" href=\"pages.html\">All pages</a>\
 <input id=\"tine-search\" type=\"search\" placeholder=\"Search\u{2026}\" autocomplete=\"off\" spellcheck=\"false\">\
 <div id=\"tine-results\" hidden></div>\
 <nav id=\"tine-pages\"></nav>\
@@ -1125,6 +1197,7 @@ fn shell(title: &str, main: &str) -> String {
         katex = KATEX_HEAD,
         hljs = HLJS_HEAD,
         main = main,
+        home_href = esc_attr(home_href),
     )
 }
 
@@ -1260,6 +1333,7 @@ pub fn page_print_html(graph: &Graph, name: &str, opts: PrintOpts) -> io::Result
     collect_block_refs(&parsed.roots, &slug, &mut refs);
     let ctx = Ctx {
         refs: &refs,
+        reverse_refs: None,
         graph: Some(graph),
         slugs: None,
         inline_assets: true,
@@ -1393,6 +1467,15 @@ a.block-ref,span.block-ref{background:var(--code);border-radius:4px;padding:0 .2
 a.block-ref{color:var(--link);text-decoration:none}
 a.block-ref:hover{text-decoration:underline}
 span.block-ref{color:var(--muted)}
+.block-referrers{display:inline-block;margin-left:.4rem;vertical-align:middle}
+.block-referrers summary.ref-count{display:inline-flex;align-items:center;justify-content:center;min-width:1.45em;height:1.35em;
+  padding:0 .35em;border:1px solid var(--line);border-radius:999px;color:var(--muted);font-size:.72em;cursor:pointer;list-style:none}
+.block-referrers summary.ref-count::-webkit-details-marker{display:none}
+.block-referrers[open]{display:block;margin:.3rem 0 .55rem .2rem}
+.block-referrers ul{margin:.3rem 0 0;padding-left:1.2rem;border-left:1px solid var(--line)}
+.block-referrers li{font-size:.86em;color:var(--muted)}
+.block-referrers a{color:var(--link);text-decoration:none}.block-referrers a:hover{text-decoration:underline}
+.referrer-page{font-weight:600}
 a.tag{font-size:.92em}
 a[href^="http"]{color:var(--link)}
 code,.inline-code{background:var(--code);border-radius:4px;padding:.05em .35em;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em}
@@ -1644,6 +1727,11 @@ pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
             .cloned()
             .unwrap_or_else(|| slug(name))
     };
+    let welcome_slug = slugs.get("welcome to tine").cloned();
+    let home_file = welcome_slug
+        .as_ref()
+        .map(|slug| format!("{slug}.html"))
+        .unwrap_or_else(|| "index.html".to_string());
 
     // Build the block-ref index from the public pages, keyed to their final slugs
     // (a `((ref))` only resolves to a block that's actually exported).
@@ -1656,6 +1744,18 @@ pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
         .iter()
         .map(|(name, _, parsed)| (crate::refs::page_key(name), parsed))
         .collect();
+    let mut reverse_refs = ReverseRefIndex::new();
+    for (name, _, parsed) in &public {
+        let mut counter = 0;
+        collect_reverse_refs(
+            &parsed.roots,
+            &slug_of(name),
+            name,
+            &mut counter,
+            &refs,
+            &mut reverse_refs,
+        );
+    }
     let query_cache: QueryCache = RefCell::new(HashMap::new());
 
     // Pass 2: render each public page (collecting the per-block search index along
@@ -1664,12 +1764,14 @@ pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
     let mut index_list = String::new();
     let mut all_blocks: Vec<serde_json::Value> = Vec::new();
     let mut sidebar_pages: Vec<serde_json::Value> = Vec::new();
+    let mut welcome_html: Option<String> = None;
     let mut count = 0;
     // The render context: the block-ref index + the graph (so `{{query}}`/`{{embed}}`/
     // `{{namespace}}` macros can resolve against real data at publish time) + the
     // slug map (so cross-page links resolve to the actual written files).
     let ctx = Ctx {
         refs: &refs,
+        reverse_refs: Some(&reverse_refs),
         graph: Some(graph),
         slugs: Some(&slugs),
         inline_assets: false,
@@ -1679,10 +1781,11 @@ pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
     for (name, kind, parsed) in &public {
         let slug = slug_of(name);
         let file = format!("{slug}.html");
-        crate::model::atomic_write(
-            &out.join(&file),
-            page_html(name, &slug, parsed, *kind, &ctx, &mut all_blocks).as_bytes(),
-        )?;
+        let html = page_html(name, &slug, parsed, *kind, &ctx, &mut all_blocks, &home_file);
+        if name.eq_ignore_ascii_case("Welcome to Tine") {
+            welcome_html = Some(html.clone());
+        }
+        crate::model::atomic_write(&out.join(&file), html.as_bytes())?;
         let journal = *kind == PageKind::Journal;
         let tag = if journal {
             "<span class=\"k\">journal</span>"
@@ -1714,14 +1817,19 @@ pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
     );
     crate::model::atomic_write(&out.join("search-index.js"), data.as_bytes())?;
 
-    // Index page <main>: the alphabetical all-pages list — the no-JS fallback / home
-    // — wrapped in the same sidebar shell as every page.
+    // Keep the alphabetical page list separately discoverable. When the public
+    // set contains Welcome to Tine, index.html is that actual rendered page and
+    // every persistent Home link targets its slug. Without it, retain the old
+    // page-list index as a safe fallback.
     let main = format!(
         "<h1 class=\"page\">Pages</h1><ul class=\"outline index-list\">{}</ul>\
 <footer>Published with Tine</footer>",
         index_list
     );
-    crate::model::atomic_write(&out.join("index.html"), shell("Index", &main).as_bytes())?;
+    let pages_html = shell("Pages", &main, &home_file);
+    crate::model::atomic_write(&out.join("pages.html"), pages_html.as_bytes())?;
+    let entry_html = welcome_html.unwrap_or(pages_html);
+    crate::model::atomic_write(&out.join("index.html"), entry_html.as_bytes())?;
     Ok((out.display().to_string(), count))
 }
 
@@ -1745,6 +1853,7 @@ mod tests {
         // Graph-less context: the inline decorator under test; macros drop (no graph).
         let ctx = Ctx {
             refs,
+            reverse_refs: None,
             graph: None,
             slugs: None,
             inline_assets: false,
@@ -1984,6 +2093,49 @@ mod tests {
             "index uses the sidebar shell"
         );
 
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn publish_uses_welcome_home_and_public_reverse_block_refs() {
+        let dir = std::env::temp_dir().join(format!("tine-publish-welcome-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        let id = "11111111-1111-1111-1111-111111111111";
+        fs::write(
+            dir.join("pages/Welcome to Tine.md"),
+            format!("public:: true\n- Welcome target\n  id:: {id}\n- same page (({id}))\n"),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages/Other.md"),
+            format!("public:: true\n- cross page (({id})) and (({id}))\n- missing ((22222222-2222-2222-2222-222222222222))\n"),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages/Private.md"),
+            format!("- private ref (({id}))\n"),
+        )
+        .unwrap();
+
+        let graph = Graph::open(&dir);
+        let (outdir, count) = publish_graph(&graph).unwrap();
+        assert_eq!(count, 2);
+        let out = std::path::Path::new(&outdir);
+        let entry = fs::read_to_string(out.join("index.html")).unwrap();
+        let welcome = fs::read_to_string(out.join("welcome-to-tine.html")).unwrap();
+        let pages = fs::read_to_string(out.join("pages.html")).unwrap();
+
+        assert!(entry.contains("<h1 class=\"page\">Welcome to Tine</h1>"));
+        assert!(entry.contains("href=\"welcome-to-tine.html\">⌂ Home</a>"));
+        assert!(welcome.contains("aria-label=\"2 block references\">2</summary>"));
+        assert!(welcome.contains("href=\"welcome-to-tine.html#b0\""));
+        assert!(welcome.contains("href=\"other.html#b0\""));
+        assert!(!welcome.contains("Private"), "private referrer must not leak");
+        assert!(pages.contains("welcome-to-tine.html") && pages.contains("other.html"));
+        assert!(pages.contains("href=\"welcome-to-tine.html\">⌂ Home</a>"));
         let _ = fs::remove_dir_all(&dir);
     }
 

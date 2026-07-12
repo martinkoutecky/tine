@@ -1,0 +1,23 @@
+{
+  "lsdocTag": "v0.5.3",
+  "lsdocCommit": "96e909634ce247bd261851c04a837096b4ccef7f",
+  "mldocVersion": "1.5.9",
+  "files": {
+    "normalize.mjs": {
+      "source": "lsdoc/harness/lib/normalize.mjs",
+      "sha256": "a59754e35be2c82985aeb1a943a907457194483a9624c8bd23ec4c01add5d627"
+    },
+    "compare.mjs": {
+      "source": "lsdoc/harness/lib/compare.mjs",
+      "sha256": "55dbc7831ff6967399596dbf1e9c7631f5e50d8e7faf84ede7aa88deaca91068"
+    },
+    "refs.mjs": {
+      "source": "lsdoc/harness/lib/refs.mjs",
+      "sha256": "de20a7088a320685ac011a16e6dfe9a4c876cf912ee53f8c15b66fa241565435"
+    },
+    "mldoc.js": {
+      "source": "npm:mldoc@1.5.9/index.js",
+      "sha256": "e41cbf30d9acb775aaffe916fafe9e4ba69a6f1ef8a2fc30cb361332b1841757"
+    }
+  }
+}

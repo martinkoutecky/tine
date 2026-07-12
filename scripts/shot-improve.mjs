@@ -16,7 +16,7 @@ const wait = async (u, t = 40) => { for (let i = 0; i < t; i++) { try { const r 
 
 const FIXTURE = {
   tineVersion: "0.5.6-test",
-  lsdocVersion: "v0.5.2",
+  lsdocVersion: "v0.5.3",
   stats: { files: 128, totalBytes: 486213 },
   lsdocAvailable: true,
   bench: {

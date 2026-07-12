@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, untrack, useContext, type JSX } from "solid-js";
-import { doc, mainPages, pageByName, loadFeed, appendFeed, emptyPage, ensurePageLoaded, setFeedExtender, flushAll, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, type FeedPage } from "../store";
+import { doc, mainPages, pageByName, loadFeed, appendFeed, emptyPage, ensurePageLoaded, setFeedExtender, flushAll, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, insertOutlineAfter, promotePagePreamble, type FeedPage } from "../store";
 import { sameRoute, type PaneRouter } from "../router";
 import { PaneContext, focusedRouter } from "../panes";
 import {
@@ -24,6 +24,7 @@ import { endEditForSurface, startEditing } from "../editorController";
 import type { PageDto, RefGroup } from "../types";
 import { tagRef } from "../tags";
 import { copyGuideIntoGraph, ensureGuidePagesLoaded, isGuidePageName } from "../guide";
+import { isPropertiesOnly, splitPagePreamble } from "../editor/properties";
 
 export const FEED_PAGE = 3;
 let journalOffset = 0;
@@ -39,10 +40,6 @@ const TAG_TABLE_PROP = "tine.tag-table";
 function paneContextFromContext() {
   const ctx = useContext(PaneContext);
   return ctx ?? { paneId: "main", router: focusedRouter() };
-}
-
-function paneRouterFromContext(): PaneRouter {
-  return paneContextFromContext().router;
 }
 
 // OG always shows today's journal at the top of the feed, even with no file yet
@@ -71,6 +68,12 @@ export function PageView(): JSX.Element {
   const pane = paneContextFromContext();
   const router = pane.router;
   const [ready, setReady] = createSignal(false);
+  // Keep the route whose asynchronous load actually completed separate from the
+  // router's desired route. A cached large page is already present in doc.pages;
+  // rendering directly from currentRoute() let it mount once immediately and
+  // again around the loader transition. Besides doubling warm-navigation work,
+  // an older rejected request could replace a newer page with its error state.
+  const [loadedRoute, setLoadedRoute] = createSignal<ReturnType<PaneRouter["route"]> | null>(null);
   const [loadError, setLoadError] = createSignal<string | null>(null);
 
   // Depend on the active route BY VALUE: opening a background tab (or pinning /
@@ -105,7 +108,8 @@ export function PageView(): JSX.Element {
         } else {
           if (isGuidePageName(r.name)) {
             await ensureGuidePagesLoaded(true);
-            if (epoch !== graphEpoch()) return;
+            if (epoch !== graphEpoch() || !sameRoute(currentRoute(), r)) return;
+            setLoadedRoute(r);
             setReady(true);
             router.restoreScrollFor(r);
             return;
@@ -122,12 +126,15 @@ export function PageView(): JSX.Element {
           // load errored with empty content.
           ensurePageLoaded(dto ? toLoadablePage(dto, r.name) : emptyPage(r.name, r.pageKind));
         }
+        if (!sameRoute(currentRoute(), r)) return;
+        setLoadedRoute(r);
         setReady(true);
         // Put the scroll back where it was when we last left this entry (back/
         // forward, or returning to this tab). A new page has no saved offset → top.
         router.restoreScrollFor(r);
       } catch (e) {
-        if (epoch !== graphEpoch()) return;
+        if (epoch !== graphEpoch() || !sameRoute(currentRoute(), r)) return;
+        setLoadedRoute(r);
         setLoadError(String(e));
         setReady(true);
       }
@@ -179,7 +186,7 @@ export function PageView(): JSX.Element {
   });
 
   const pagesToRender = () => {
-    const r = currentRoute();
+    const r = loadedRoute() ?? currentRoute();
     if (r.kind === "journals") return mainPages();
     const p = pageByName(r.name);
     return p ? [p] : [];
@@ -189,7 +196,10 @@ export function PageView(): JSX.Element {
     const z = r.kind === "page" ? r.block ?? null : zoomedBlock();
     return z && doc.byId[z] ? z : null;
   };
-  const contentReady = () => ready() && (currentRoute().kind !== "journals" || doc.loaded);
+  const contentReady = () => {
+    const r = loadedRoute();
+    return !!r && ready() && sameRoute(r, currentRoute()) && (r.kind !== "journals" || doc.loaded);
+  };
 
   return (
     <Show when={!loadError()} fallback={
@@ -262,7 +272,8 @@ export function PageView(): JSX.Element {
 
 // A single zoomed-in block (its subtree) with an ancestor breadcrumb.
 function ZoomedView(props: { id: string }): JSX.Element {
-  const router = paneRouterFromContext();
+  const pane = paneContextFromContext();
+  const router = pane.router;
   const ancestors = (): string[] => {
     const out: string[] = [];
     let p = doc.byId[props.id]?.parent ?? null;
@@ -275,6 +286,15 @@ function ZoomedView(props: { id: string }): JSX.Element {
   const pageName = () => doc.byId[props.id]?.page ?? "";
   const pageKind = () => doc.pages.find((p) => p.name === pageName())?.kind ?? "page";
   const crumb = (id: string) => visibleBody(doc.byId[id].raw)[0] || "…";
+  const focusTrailing = () => {
+    const root = doc.byId[props.id];
+    if (!root || pageByName(root.page)?.readOnly || pageByName(root.page)?.guide) return;
+    const leaf = trailingLeaf(props.id);
+    const id = leaf && !doc.byId[leaf].raw.trim()
+      ? leaf
+      : insertEmptyChildBlock(props.id, root.children.length);
+    if (id) startEditing(id, 0, pane.paneId === "main" ? "main" : `pane:${pane.paneId}`);
+  };
 
   return (
     <div class="page zoomed-page">
@@ -304,21 +324,53 @@ function ZoomedView(props: { id: string }): JSX.Element {
           <Block id={props.id} forceExpanded />
         </OutlineScopeContext.Provider>
       </div>
+      <Show when={!pageByName(pageName())?.readOnly && !pageByName(pageName())?.guide}>
+        <TrailingBlockTarget onActivate={focusTrailing} />
+      </Show>
     </div>
   );
 }
 
 function PageSection(props: { page: FeedPage }): JSX.Element {
-  const router = paneRouterFromContext();
+  const pane = paneContextFromContext();
+  const router = pane.router;
   const [renaming, setRenaming] = createSignal(false);
   const [newName, setNewName] = createSignal("");
+  const firstPropertiesId = () => {
+    if (props.page.format !== "md") return null;
+    const id = props.page.roots[0];
+    return id && doc.byId[id] && isPropertiesOnly(doc.byId[id].raw) ? id : null;
+  };
+  const propertySource = () => {
+    const first = firstPropertiesId();
+    return [props.page.preBlock, first ? doc.byId[first].raw : null].filter(Boolean).join("\n") || null;
+  };
+  const rootsToRender = () => firstPropertiesId() ? props.page.roots.slice(1) : props.page.roots;
+  const preambleContent = () => props.page.format === "md" ? splitPagePreamble(props.page.preBlock).content : null;
+  const editPreamble = () => {
+    const id = promotePagePreamble(props.page.name);
+    if (id) startEditing(id, doc.byId[id].raw.length);
+  };
+  const focusTrailing = () => {
+    const roots = rootsToRender();
+    if (!roots.length) {
+      const id = ensureEmptyBlock(props.page.name, { afterProperties: true });
+      if (id) startEditing(id, 0, pane.paneId === "main" ? "main" : `pane:${pane.paneId}`);
+      return;
+    }
+    const leaf = trailingLeaf(roots[roots.length - 1]);
+    const id = leaf && !doc.byId[leaf].raw.trim()
+      ? leaf
+      : insertOutlineAfter(roots[roots.length - 1], [{ raw: "", children: [] }]);
+    startEditing(id, 0, pane.paneId === "main" ? "main" : `pane:${pane.paneId}`);
+  };
   // A page emptied of its last block (explicit Delete bypasses the Backspace
   // last-block guard) would render nothing to type into. Re-seed the phantom empty
   // bullet — same shape a brand-new day gets — so there's always a bullet present;
   // it only persists once the user types (ensureEmptyBlock leaves it non-dirty).
   createEffect(() => {
-    if (props.page.roots.length === 0 && !props.page.readOnly) {
-      ensureEmptyBlock(props.page.name);
+    if (rootsToRender().length === 0 && !props.page.readOnly) {
+      ensureEmptyBlock(props.page.name, { afterProperties: true });
     }
   });
   const startRename = () => {
@@ -391,7 +443,7 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
             onContextMenu={(e) => {
               if (props.page.guide) return;
               e.preventDefault();
-              openPageContextMenu(e.clientX, e.clientY, props.page.name, props.page.kind);
+              openPageContextMenu(e.clientX, e.clientY, props.page.name, props.page.kind, true);
             }}
           >
             <Show when={props.page.kind === "journal"}>
@@ -403,7 +455,7 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
               </svg>
             </Show>
             <Show
-              when={pageProperties(props.page.preBlock, props.page.format)
+              when={pageProperties(propertySource(), props.page.format)
                 .find(([k]) => k.toLowerCase() === "icon")?.[1]
                 ?.trim()}
             >
@@ -459,18 +511,18 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
           </button>
         </Show>
       </div>
-      <Show when={aliasNames(props.page.preBlock, props.page.format).length}>
+      <Show when={aliasNames(propertySource(), props.page.format).length}>
         <div class="page-aliases" title="Also known as — other names that link here">
           <span class="page-aliases-label">aka</span>
-          <For each={aliasNames(props.page.preBlock, props.page.format)}>
+          <For each={aliasNames(propertySource(), props.page.format)}>
             {(a) => <span class="alias-chip">{a}</span>}
           </For>
         </div>
       </Show>
-      <Show when={pageProperties(props.page.preBlock, props.page.format).filter(([k]) => !PAGE_PROPS_HIDDEN.has(k.toLowerCase())).length}>
+      <Show when={pageProperties(propertySource(), props.page.format).filter(([k]) => !PAGE_PROPS_HIDDEN.has(k.toLowerCase())).length}>
         <div class="page-properties">
           {/* `alias`/`icon` are surfaced elsewhere (chips / title icon) — see PAGE_PROPS_HIDDEN. */}
-          <For each={pageProperties(props.page.preBlock, props.page.format).filter(([k]) => !PAGE_PROPS_HIDDEN.has(k.toLowerCase()))}>
+          <For each={pageProperties(propertySource(), props.page.format).filter(([k]) => !PAGE_PROPS_HIDDEN.has(k.toLowerCase()))}>
             {([key, value]) => (
               <div class="prop-row">
                 <span class="prop-key">{key}</span>
@@ -497,9 +549,54 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
         </div>
       </Show>
       <div class="page-blocks">
-        <For each={props.page.roots}>{(id) => <Block id={id} />}</For>
+        <Show when={preambleContent()}>
+          {(content) => (
+            <div class="ls-block preamble-block" data-page-preamble={props.page.name}>
+              <div class="block-main">
+                <div class="block-controls">
+                  <span class="collapse-toggle" />
+                  <span class="bullet-container" title="Click the text to turn it into an editable block">
+                    <span class="bullet" />
+                  </span>
+                </div>
+                <div class="block-content-wrapper" onClick={editPreamble}>
+                  <div class="block-content"><InlineText text={content()} format={props.page.format} /></div>
+                </div>
+              </div>
+            </div>
+          )}
+        </Show>
+        <For each={rootsToRender()}>{(id) => <Block id={id} />}</For>
       </div>
+      <Show when={!props.page.readOnly && !props.page.guide}>
+        <TrailingBlockTarget onActivate={focusTrailing} />
+      </Show>
     </div>
+  );
+}
+
+function trailingLeaf(id: string): string | null {
+  let current = doc.byId[id];
+  if (!current) return null;
+  while (current.children.length) {
+    const next = doc.byId[current.children[current.children.length - 1]];
+    if (!next) break;
+    current = next;
+  }
+  return current.id;
+}
+
+function TrailingBlockTarget(props: { onActivate: () => void }): JSX.Element {
+  return (
+    <button
+      type="button"
+      class="page-trailing-block-target"
+      aria-label="Focus or create a trailing block"
+      title="Click to continue writing below this page"
+      onClick={props.onActivate}
+    >
+      <span aria-hidden="true">+ Add block</span>
+    </button>
   );
 }
 

@@ -4,7 +4,7 @@ import type { JSX } from "solid-js";
 import { ContextMenu, deletePageMenuLabel, pageMenuAvailability } from "./ContextMenu";
 import { initParser } from "../render/parse";
 import { blockProperty, resetStore, setDoc, type Node as StoreNode } from "../store";
-import { openContextMenu } from "../ui";
+import { closeContextMenu, openContextMenu, openPageContextMenu } from "../ui";
 
 describe("PageMenu page-kind availability", () => {
   it("keeps rename page-only but exposes delete for pages and journals", () => {
@@ -24,6 +24,7 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
   });
   afterEach(() => {
     resetStore();
+    closeContextMenu();
     document.body.innerHTML = "";
   });
 
@@ -60,6 +61,20 @@ describe("BlockMenu — convert an outline into a grid (Show children as →)", 
     ) as HTMLElement | undefined;
     grid!.click();
     expect(blockProperty("parent", "tine.view")).toBe("grid");
+    dispose();
+  });
+
+  it("offers exact-file actions only when invoked from a real page title", () => {
+    load();
+    const dispose = mount(() => <ContextMenu />);
+
+    openPageContextMenu(10, 10, "P", "page");
+    expect(menuLabels()).not.toContain("Show in folder");
+    closeContextMenu();
+
+    openPageContextMenu(10, 10, "P", "page", true);
+    expect(menuLabels()).toContain("Show in folder");
+    expect(menuLabels()).toContain("Open with default app");
     dispose();
   });
 

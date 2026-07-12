@@ -56,6 +56,8 @@ import {
   toggleListItemAtIndex,
   withUndoUnit,
   readSchedule,
+  readPageProperty,
+  setPageProperty,
 } from "./store";
 import { editingId, startEditing, takeCaretFor } from "./editorController";
 import { exportOutline, DEFAULT_EXPORT_OPTIONS } from "./editor/exportText";
@@ -99,6 +101,18 @@ function shape(ids: string[] = doc.pages[0].roots): any[] {
     return n.children.length ? [n.raw, shape(n.children)] : [n.raw];
   });
 }
+
+describe("properties-only first block", () => {
+  it("is the editable page-property source when no pre-block exists (GH #86)", () => {
+    const properties = blk("alias:: book\ntags:: blah");
+    load([properties, blk("Reading list")]);
+    expect(readPageProperty("Test", "alias")).toBe("book");
+
+    setPageProperty("Test", "tags", "blah, reference");
+    expect(doc.pages[0].preBlock).toBeNull();
+    expect(doc.byId[properties.id].raw).toContain("tags:: blah, reference");
+  });
+});
 
 beforeAll(() => initParser());
 

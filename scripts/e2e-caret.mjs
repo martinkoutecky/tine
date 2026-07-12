@@ -48,6 +48,8 @@ const WEBKIT_DRIVER =
     : fs.existsSync(LOCAL_WEBKIT_DRIVER)
       ? LOCAL_WEBKIT_DRIVER
       : "WebKitWebDriver");
+const DRIVER_PORT = Number(process.env.E2E_DRIVER_PORT || 4444);
+const NATIVE_PORT = Number(process.env.E2E_NATIVE_PORT || 4445);
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -239,8 +241,8 @@ console.log(
 const tdLog = fs.openSync("/tmp/td-caret.log", "w");
 const td = spawn(
   TD,
-  ["--port", "4444", "--native-port", "4445", "--native-driver", WEBKIT_DRIVER],
-  { env, stdio: ["ignore", tdLog, tdLog] }
+  ["--port", String(DRIVER_PORT), "--native-port", String(NATIVE_PORT), "--native-driver", WEBKIT_DRIVER],
+  { env, stdio: ["ignore", tdLog, tdLog], detached: true }
 );
 await sleep(3000);
 
@@ -275,6 +277,7 @@ const probe = async (tag) => {
       isEditor: isEd,
       sel: isEd ? ae.selectionStart : null,
       val: isEd ? ae.value.slice(0, 34) : null,
+      value: isEd ? ae.value : null,
       idx,
       editingId: editingId ? editingId.slice(0, 12) : null,
       editingIdx,
@@ -584,7 +587,7 @@ let browser;
 try {
   browser = await remote({
     hostname: "127.0.0.1",
-    port: 4444,
+    port: DRIVER_PORT,
     path: "/",
     capabilities: {
       browserName: "wry",
@@ -726,16 +729,24 @@ try {
   log("=".repeat(64));
 
   log("\n--- Column preservation (block-crossing landings) ---");
+  const landingErrors = [];
   for (const res of results) {
     const downCross = [];
     const upCross = [];
     let prev = -999;
     for (const r of res.trace) {
       if (!r.isEditor) { prev = -999; continue; }
-      if (r.tag.startsWith("↓") && r.idx !== prev && prev !== -999)
+      if (r.tag.startsWith("↓") && r.idx !== prev && prev !== -999) {
         downCross.push(`idx${r.idx}:sel=${r.sel}`);
-      if (r.tag.startsWith("↑") && r.idx !== prev && prev !== -999)
+        const line = r.value.slice(0, r.sel).split("\n").length - 1;
+        if (line !== 0) landingErrors.push(`${res.label} ${r.tag}: ArrowDown crossed into visual/source line ${line}, expected top line`);
+      }
+      if (r.tag.startsWith("↑") && r.idx !== prev && prev !== -999) {
         upCross.push(`idx${r.idx}:sel=${r.sel}`);
+        const line = r.value.slice(0, r.sel).split("\n").length - 1;
+        const last = r.value.split("\n").length - 1;
+        if (line !== last) landingErrors.push(`${res.label} ${r.tag}: ArrowUp crossed into line ${line}, expected bottom line ${last}`);
+      }
       prev = r.idx;
     }
     if (downCross.length || upCross.length) {
@@ -752,10 +763,16 @@ try {
     for (const l of allLosses)
       log(`  sweep="${l.sweep}" ${l.tag}: editingId=${l.editingId} editingIdx=${l.editingIdx} focusDeferred=${l.focusDeferred} ae=${l.aeTag}.${l.aeCls}`);
   }
+  if (allLosses.length || landingErrors.length) {
+    for (const error of landingErrors) log(`  LANDING ERROR: ${error}`);
+    throw new Error(`caret navigation invariants failed: ${allLosses.length} loss(es), ${landingErrors.length} wrong-row landing(s)`);
+  }
+  log("  PASS: no caret losses; Down crossings land on top rows and Up crossings on bottom rows.");
   } // end non-agenda scenario
 
-  // ---- Write findings (append) -----------------------------------------------
-  const notesDir = "/aux/koutecky/logseq/logseq-claude/subagent-tasks/notes";
+  // Legacy audit-note output is opt-in. Release E2E must be hermetic and writes
+  // only to its configured artifact directory.
+  const notesDir = process.env.E2E_ARTIFACT_DIR || "/tmp/tine-e2e-notes";
   fs.mkdirSync(notesDir, { recursive: true });
   const outPath = path.join(notesDir, "caret-updown-repro-findings.md");
   const label = process.env.CARET_LABEL || "";
@@ -774,19 +791,19 @@ try {
     "```",
     "",
   ].join("\n");
-  fs.appendFileSync(outPath, section);
-  console.log(`\nAppended results to ${outPath}`);
+  fs.writeFileSync(outPath, section);
+  console.log(`\nWrote results to ${outPath}`);
 } catch (e) {
   log(`\nE2E ERROR: ${String(e).split("\n").slice(0, 8).join(" | ")}`);
   process.exitCode = 1;
-  const notesDir = "/aux/koutecky/logseq/logseq-claude/subagent-tasks/notes";
+  const notesDir = process.env.E2E_ARTIFACT_DIR || "/tmp/tine-e2e-notes";
   fs.mkdirSync(notesDir, { recursive: true });
-  fs.appendFileSync(
+  fs.writeFileSync(
     path.join(notesDir, "caret-updown-repro-findings.md"),
     `\n\n# ${MODE} run ABORTED (${new Date().toISOString()})\n\n\`\`\`\n${lines.join("\n")}\n\`\`\`\n`
   );
 } finally {
   try { await browser?.deleteSession(); } catch {}
-  td.kill("SIGKILL");
+  try { process.kill(-td.pid, "SIGKILL"); } catch {}
   xvfb?.kill("SIGKILL");
 }

@@ -33,6 +33,16 @@ pub struct Term {
 /// A conjunction of terms (all must be satisfied). Groups are OR-ed together.
 pub type AndGroup = Vec<Term>;
 
+/// Mirrored behavioral examples displayed by Ctrl+K. Tests execute every row so
+/// visible help cannot describe syntax the Rust matcher does not implement.
+pub const SEARCH_SYNTAX_EXAMPLES: &[(&str, &str, &str)] = &[
+    ("foo bar", "bar then foo", "foo only"),
+    ("foo OR bar", "bar only", "neither"),
+    ("foo -draft", "foo ready", "foo draft"),
+    ("\"exact phrase\"", "an exact phrase here", "exact other phrase"),
+    ("/[A-Z]{3}/", "ABC", "abc"),
+];
+
 /// A parsed query, ready to test blocks/page-names against.
 pub enum Matcher {
     /// Whole query was `/pattern/` and compiled.
@@ -231,6 +241,14 @@ mod tests {
         assert_eq!(mt.simple_term(), Some("hello"));
         assert!(hit("hello", "well HELLO there"));
         assert!(!hit("hello", "goodbye"));
+    }
+
+    #[test]
+    fn visible_syntax_examples_match_the_documented_behavior() {
+        for (query, matching, missing) in SEARCH_SYNTAX_EXAMPLES {
+            assert!(hit(query, matching), "{query:?} should match {matching:?}");
+            assert!(!hit(query, missing), "{query:?} should reject {missing:?}");
+        }
     }
 
     #[test]

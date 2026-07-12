@@ -2,7 +2,7 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
 import { initParser } from "../render/parse";
-import { doc, loadSingle, pageByName, resetStore } from "../store";
+import { doc, loadSingle, pageByName, resetStore, undo } from "../store";
 import { startEditing } from "../editorController";
 import type { BlockDto, PageDto } from "../types";
 import { Block } from "./Block";
@@ -118,6 +118,69 @@ describe("Enter inside a code fence", () => {
       pressEnter(ta!, ta!.value.length);
       // Ordinary text splits into a second block.
       expect(pageByName("Plain")!.roots.length).toBe(2);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+// GH #93: the second Enter on a trailing blank line is an escape gesture. It
+// removes that sentinel blank line and creates a normal sibling in one undo unit.
+describe("Double Enter exits a trailing code or calculator block", () => {
+  it("exits a fenced block and undo restores the exact pre-exit state", () => {
+    const original = "```js\nconst x = 1\n\n```";
+    loadSingle(page("Code exit", [blk("code-exit", original)]));
+    const id = pageByName("Code exit")!.roots[0];
+    startEditing(id, 0);
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Code exit")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
+    ));
+    try {
+      const ta = root.querySelector("textarea") as HTMLTextAreaElement;
+      const blankLine = ta.value.indexOf("\n\n") + 1;
+      pressEnter(ta, blankLine);
+      expect(pageByName("Code exit")!.roots).toHaveLength(2);
+      expect(doc.byId[id].raw).toBe("```js\nconst x = 1\n```");
+      expect(doc.byId[pageByName("Code exit")!.roots[1]].raw).toBe("");
+
+      undo();
+      expect(pageByName("Code exit")!.roots).toEqual([id]);
+      expect(doc.byId[id].raw).toBe(original);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("exits a calculator block and preserves its canonical fence", () => {
+    loadSingle(page("Calc exit", [blk("calc-exit", "```calc\n1 + 1\n\n```")]));
+    const id = pageByName("Calc exit")!.roots[0];
+    startEditing(id, 0);
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Calc exit")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
+    ));
+    try {
+      const ta = root.querySelector("textarea") as HTMLTextAreaElement;
+      expect(ta.value).toBe("1 + 1\n");
+      pressEnter(ta, ta.value.length);
+      expect(pageByName("Calc exit")!.roots).toHaveLength(2);
+      expect(doc.byId[id].raw).toBe("```calc\n1 + 1\n```");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("does not reinterpret an ordinary trailing blank line as a special-block exit", () => {
+    loadSingle(page("Plain blank", [blk("plain-blank", "hello\n")]));
+    const id = pageByName("Plain blank")!.roots[0];
+    startEditing(id, 0);
+    const { root, dispose } = mount(() => (
+      <For each={pageByName("Plain blank")?.roots ?? []}>{(bid) => <Block id={bid} />}</For>
+    ));
+    try {
+      const ta = root.querySelector("textarea") as HTMLTextAreaElement;
+      pressEnter(ta, ta.value.length);
+      expect(pageByName("Plain blank")!.roots).toHaveLength(2);
+      expect(doc.byId[id].raw).toBe("hello\n");
     } finally {
       dispose();
     }

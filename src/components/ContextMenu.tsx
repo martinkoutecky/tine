@@ -8,6 +8,7 @@ import {
   isFavorite,
   toggleFavorite,
   pushToast,
+  isConflicted,
   graphMeta,
   setJournalTemplate,
   openPageProps,
@@ -37,6 +38,7 @@ import {
   setCollapsedDeep,
   dtoSubtreeMarkdown,
   flushAll,
+  flushPage,
   deletePage,
   restoreTodayJournalInFeed,
   selectedIds,
@@ -153,6 +155,7 @@ export function ContextMenu(): JSX.Element {
                 <PageMenu
                   name={(m() as { name: string }).name}
                   pageKind={(m() as { pageKind: "journal" | "page" }).pageKind}
+                  fileActions={(m() as { fileActions?: boolean }).fileActions ?? false}
                   x={m().x}
                   y={m().y}
                   close={close}
@@ -672,12 +675,39 @@ function MakeTemplate(props: { id: string; close: () => void }): JSX.Element {
 function PageMenu(props: {
   name: string;
   pageKind: PageKind;
+  fileActions: boolean;
   x: number;
   y: number;
   close: () => void;
 }): JSX.Element {
   const fav = () => isFavorite(props.name);
   const readOnly = () => pageByName(props.name)?.readOnly ?? false;
+  const runFileAction = async (reveal: boolean) => {
+    const name = props.name;
+    const kind = props.pageKind;
+    const page = pageByName(name);
+    if (!page || page.guide) return;
+    if (isConflicted(name)) {
+      pushToast(`Resolve the save conflict for “${name}” before opening its file.`, "error");
+      return;
+    }
+    if (!page.readOnly && !(await flushPage(name))) {
+      pushToast(`Couldn't save “${name}”; its on-disk file was not opened.`, "error");
+      return;
+    }
+    if (isConflicted(name)) {
+      pushToast(`Resolve the save conflict for “${name}” before opening its file.`, "error");
+      return;
+    }
+    try {
+      await backend().openPageFile(name, kind, page.path, reveal);
+    } catch (error) {
+      const message = page.path
+        ? `Couldn't ${reveal ? "show" : "open"} the page file. (${String(error)})`
+        : "This page has no on-disk file yet. Type something and let Tine save it first.";
+      pushToast(message, "error");
+    }
+  };
   const remove = async () => {
     // Snapshot props BEFORE any await/close: the menu's <Show> disposes this
     // component the instant props.close() runs, after which reading props.* warns
@@ -728,6 +758,12 @@ function PageMenu(props: {
           }),
     },
     { label: "Export to PDF…", run: () => openPdfExport(props.name) },
+    ...(props.fileActions && !pageByName(props.name)?.guide
+      ? [
+          { label: "Show in folder", run: () => void runFileAction(true) },
+          { label: "Open with default app", run: () => void runFileAction(false) },
+        ]
+      : []),
     ...(!readOnly() ? [{ label: "Page properties…", run: () => openPageProps(props.name, props.x, props.y) }] : []),
     // Carry a past day's unfinished tasks to today (journal days only, not today).
     ...(!readOnly() && props.pageKind === "journal" && props.name !== journalTitle(new Date())

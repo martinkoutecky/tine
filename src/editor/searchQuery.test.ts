@@ -1,11 +1,17 @@
 import { describe, it, expect } from "vitest";
-import { parseSearchQuery, matcherMatches, simpleTerm, matchHighlight } from "./searchQuery";
+import { SEARCH_SYNTAX, parseSearchQuery, matcherMatches, simpleTerm, matchHighlight } from "./searchQuery";
 
 // Mirrors crates/tine-core/src/search_query.rs tests — keep the two in sync.
 const hit = (q: string, text: string) =>
   matcherMatches(parseSearchQuery(q), text.toLowerCase(), text);
 
 describe("searchQuery parser (#44)", () => {
+  it("executes every example displayed by Ctrl K syntax help", () => {
+    for (const rule of SEARCH_SYNTAX) {
+      expect(hit(rule.example, rule.match), rule.example).toBe(true);
+      expect(hit(rule.example, rule.miss), rule.example).toBe(false);
+    }
+  });
   it("single bare term is simple", () => {
     expect(simpleTerm(parseSearchQuery("hello"))).toBe("hello");
     expect(hit("hello", "well HELLO there")).toBe(true);

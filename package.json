@@ -1,22 +1,32 @@
 {
   "name": "tine",
-  "version": "0.5.5",
+  "version": "0.5.6",
   "private": true,
   "license": "AGPL-3.0-only",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "node scripts/check-wasm-pin.mjs && node scripts/check-lsdoc-oracle-sync.mjs && vite build",
+    "build": "node scripts/check-wasm-pin.mjs && npm run check:lsdoc-oracle && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
     "app": "tauri dev",
     "test": "vitest run && vitest run --config vitest.render.config.ts",
     "test:render": "vitest run --config vitest.render.config.ts",
     "build:wasm": "node scripts/build-wasm.mjs",
-    "check:lsdoc-oracle": "node scripts/check-lsdoc-oracle-sync.mjs",
+    "check:lsdoc-oracle": "node scripts/check-lsdoc-oracle-sync.mjs && node scripts/check-lsdoc-oracle-behavior.mjs",
+    "check:ui-catalog": "node scripts/check-ui-regression-catalog.mjs",
+    "check:regressions": "node scripts/check-regression-catalog.mjs",
+    "check:release-readiness": "node scripts/check-release-readiness.mjs",
+    "docs:build": "node scripts/build-guide-demo.mjs",
+    "docs:check": "node scripts/build-guide-demo.mjs --check",
+    "blog:check": "node scripts/check-reddit-blog.mjs",
+    "blog:sync": "node scripts/sync-reddit-blog.mjs",
     "e2e:caret": "CARET_LABEL=release-required CARET_MODE=agenda node scripts/e2e-caret.mjs",
     "e2e:multigraph": "node scripts/e2e-multigraph.mjs",
     "e2e:plugins": "node scripts/e2e-plugins.mjs",
+    "e2e:linux:smoke": "node scripts/run-e2e.mjs linux-smoke",
+    "e2e:linux:release": "node scripts/run-e2e.mjs linux-release",
+    "e2e:windows:smoke": "node scripts/run-e2e.mjs windows-smoke",
     "screenshot": "node scripts/screenshot.mjs",
     "bench": "node scripts/bench.mjs",
     "plugin:check": "node scripts/tine-plugin.mjs check"
@@ -36,17 +46,20 @@
     "katex": "^0.16.47",
     "lenis": "^1.3.25",
     "pdfjs-dist": "^4.10.38",
-    "solid-js": "^1.9.3"
+    "solid-js": "^1.9.3",
+    "turndown": "^7.2.4",
+    "turndown-plugin-gfm": "^1.0.2"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.1.0",
     "@types/katex": "^0.16.8",
+    "@types/turndown": "^5.0.6",
     "jsdom": "^29.1.1",
     "playwright": "^1.49.1",
     "typescript": "^5.6.3",
     "vite": "^6.4.3",
     "vite-plugin-solid": "^2.11.0",
-    "vitest": "^3.2.6",
+    "vitest": "^3.2.7",
     "webdriverio": "^9.29.0"
   }
 }

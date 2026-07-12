@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "inventories": [
+    {
+      "id": "ui",
+      "path": "tests/ui-regressions/catalog.json",
+      "idPrefix": "UI-",
+      "scope": "User-visible behavior, rendering, navigation, caret, focus, and native UI integration."
+    },
+    {
+      "id": "non-ui",
+      "path": "tests/regressions/non-ui.json",
+      "idPrefix": "REG-",
+      "scope": "Core, persistence, parser integration, release, security, and other non-UI regressions."
+    }
+  ]
+}

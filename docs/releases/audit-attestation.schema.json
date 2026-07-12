@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Tine minor-release audit attestation",
+  "type": "object",
+  "required": ["schemaVersion", "version", "sourceFingerprint", "areas"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "version": { "type": "string", "pattern": "^0\\.\\d+\\.0$" },
+    "sourceFingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "areas": {
+      "type": "array",
+      "minItems": 3,
+      "items": {
+        "type": "object",
+        "required": ["id", "reportSha256", "critical", "high"],
+        "properties": {
+          "id": { "enum": ["data-safety-security-privacy", "behavior-compatibility", "performance-resources", "focused-change-cluster"] },
+          "reportSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "critical": { "const": 0 },
+          "high": { "const": 0 }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -19,6 +19,7 @@ import {
 } from "../sheet/selection";
 import { editingId, editingOwner } from "../editorController";
 import type { RefGroup } from "../types";
+import { installKeybindings } from "../keybindings";
 
 beforeAll(async () => {
   await initParser();
@@ -130,6 +131,29 @@ function loadTableDoc() {
 }
 
 describe("SheetTable", () => {
+  it("routes real window Arrow keys from a clicked Table cell (GH #113)", () => {
+    loadTableDoc();
+    const { root, dispose } = mount(() => <SheetTable ownerId="table" rowSource="children" />);
+    const disposeKeys = installKeybindings();
+    try {
+      cell(root, 0, 0).dispatchEvent(pointer("pointerdown", 5, 5));
+      expect(cellSel()).toMatchObject({ gridId: "table", row: 0, col: 0 });
+
+      const right = new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true });
+      window.dispatchEvent(right);
+      expect(right.defaultPrevented).toBe(true);
+      expect(cellSel()).toMatchObject({ gridId: "table", row: 0, col: 1 });
+
+      const down = new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true });
+      window.dispatchEvent(down);
+      expect(down.defaultPrevented).toBe(true);
+      expect(cellSel()).toMatchObject({ gridId: "table", row: 1, col: 1 });
+    } finally {
+      disposeKeys();
+      dispose();
+    }
+  });
+
   it("keeps a same-UUID journal twin DTO-only when the page twin is preloaded", async () => {
     const shared = "same-id";
     setDoc({

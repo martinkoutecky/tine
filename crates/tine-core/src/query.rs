@@ -111,9 +111,14 @@ fn collect(
         }
         // OG parity (components/block.cljs:3521 `sort-by :block/journal-day >`): order the
         // reference groups by the referring page's journal day DESCENDING — newest journal
-        // day first, non-journal pages (date_key None → i64::MIN) last. `sort_by` is stable,
-        // so ties keep cache order, matching OG's stable sort.
-        groups.sort_by(|a, b| b.0.unwrap_or(i64::MIN).cmp(&a.0.unwrap_or(i64::MIN)));
+        // day first, non-journal pages (date_key None → i64::MIN) last. The graph cache
+        // inherits filesystem enumeration order, so use the page name as a deterministic
+        // tie-breaker. Without it, static Guide/demo exports differed across machines.
+        groups.sort_by(|a, b| {
+            b.0.unwrap_or(i64::MIN)
+                .cmp(&a.0.unwrap_or(i64::MIN))
+                .then_with(|| a.1.page.cmp(&b.1.page))
+        });
         groups.into_iter().map(|(_, g)| g).collect()
     })
 }
@@ -329,6 +334,19 @@ fn run_pred(graph: &Graph, pred: &Pred, opts: &QueryOpts) -> Vec<RefGroup> {
             }
         }
         (groups, recency)
+    });
+
+    // `with_pages` inherits filesystem/cache enumeration order. Make the base
+    // order stable before sampling and before it becomes the tie-breaker for an
+    // explicit sort; otherwise identical graph exports can differ by machine.
+    groups.sort_by(|a, b| {
+        a.page.cmp(&b.page).then_with(|| {
+            let rank = |kind| match kind {
+                PageKind::Journal => 0,
+                PageKind::Page => 1,
+            };
+            rank(a.kind).cmp(&rank(b.kind))
+        })
     });
 
     // sort-by is GLOBAL (like Logseq): order every matched block across all pages on
@@ -2515,7 +2533,7 @@ mod tests {
         fs::create_dir_all(dir.join("journals")).unwrap();
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::create_dir_all(dir.join("logseq")).unwrap();
-        // Three journals referencing [[Common]], written OUT of date order; one plain page.
+        // Three journals referencing [[Common]], written OUT of date order; two plain pages.
         fs::write(
             dir.join("journals").join("1897_07_24.md"),
             "- oldestref [[Common]]\n",
@@ -2536,6 +2554,11 @@ mod tests {
             "- plainref [[Common]]\n",
         )
         .unwrap();
+        fs::write(
+            dir.join("pages").join("Alpha.md"),
+            "- alpharef [[Common]]\n",
+        )
+        .unwrap();
 
         let g = crate::model::Graph::open(&dir);
         let groups = g.backlinks("Common");
@@ -2544,7 +2567,7 @@ mod tests {
             .iter()
             .map(|gr| {
                 let raw = gr.blocks[0].raw.as_str();
-                ["newestref", "middleref", "oldestref", "plainref"]
+                ["newestref", "middleref", "oldestref", "alpharef", "plainref"]
                     .into_iter()
                     .find(|t| raw.contains(t))
                     .unwrap_or("?")
@@ -2552,7 +2575,7 @@ mod tests {
             .collect();
         assert_eq!(
             tags,
-            vec!["newestref", "middleref", "oldestref", "plainref"],
+            vec!["newestref", "middleref", "oldestref", "alpharef", "plainref"],
             "{tags:?}"
         );
         let _ = fs::remove_dir_all(&dir);

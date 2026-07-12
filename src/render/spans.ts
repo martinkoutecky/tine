@@ -99,6 +99,19 @@ export function coarseSpanAttrs(span: Span | undefined): SpanDomAttrs | undefine
   return span ? { "data-so": String(span[0]), "data-sce": String(span[1]) } : undefined;
 }
 
+/** Exact click mapping for inline code/verbatim nodes. lsdoc's span includes the
+ *  symmetric Markdown backtick run or Org `=`/`~` delimiters, while `text` is
+ *  the rendered literal body. When the remaining bytes split evenly between
+ *  the two delimiters, expose only the body span as byte-exact plain text. Fall
+ *  back to edge-only mapping for a parser shape that cannot prove symmetry. */
+export function literalSpanAttrs(text: string, span: Span | undefined): SpanDomAttrs | undefined {
+  if (!span) return undefined;
+  const extra = span[1] - span[0] - utf8ByteLength(text);
+  if (extra < 2 || extra % 2 !== 0) return coarseSpanAttrs(span);
+  const delimiter = extra / 2;
+  return plainSpanAttrs([span[0] + delimiter, span[1] - delimiter]);
+}
+
 /** Span attrs for a plain whose RENDERED text differs from the AST text by the
  *  typographic substitution (`->`→`→`, `--`→`–`, …). The emitted `data-sm` maps
  *  RENDERED text bytes → block-source bytes: the unchanged runs between glyph

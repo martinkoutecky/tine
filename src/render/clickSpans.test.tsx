@@ -4,6 +4,8 @@ import { isBuiltinHidden } from "../editor/properties";
 import { AstBody } from "./body";
 import { initParser } from "./parse";
 import { editorOffsetFromRenderedRange } from "./spans";
+import { PaneContext } from "../panes";
+import { createPaneRouter } from "../router";
 
 beforeAll(async () => {
   await initParser();
@@ -56,6 +58,26 @@ describe("click-to-caret span mapping", () => {
 
       expect(editorOffsetFromRenderedRange(root, textRange(root, " text", 2), raw, isBuiltinHidden))
         .toBe(raw.indexOf(" text") + 2);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("maps clicks inside inline code to the corresponding source character (GH #114)", () => {
+    const raw = "before `a literal block` after";
+    const { root, dispose } = mountedBody(raw);
+    try {
+      const codeStart = raw.indexOf("a literal block");
+      for (const offset of [0, 2, 8, "a literal block".length]) {
+        expect(
+          editorOffsetFromRenderedRange(
+            root,
+            textRange(root, "a literal block", offset),
+            raw,
+            isBuiltinHidden,
+          ),
+        ).toBe(codeStart + offset);
+      }
     } finally {
       dispose();
     }
@@ -133,6 +155,29 @@ describe("shift+click ref suppresses native selection (GH #42)", () => {
       expect(shiftMouseDefaultPrevented(tag!, false)).toBe(false);
     } finally {
       dispose();
+    }
+  });
+});
+
+describe("split-pane link navigation", () => {
+  it("opens a middle-clicked page ref in the source pane (GH #87)", () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const source = createPaneRouter("source-pane");
+    const dispose = render(() => (
+      <PaneContext.Provider value={{ paneId: "source-pane", router: source }}>
+        <div class="block-content"><AstBody raw="see [[Target]]" /></div>
+      </PaneContext.Provider>
+    ), host);
+    try {
+      const link = host.querySelector("a.page-ref");
+      expect(link).toBeTruthy();
+      link!.dispatchEvent(new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 }));
+      expect(source.tabs()).toHaveLength(2);
+      expect(source.tabs().some((tab) => tab.history.some((route) => route.kind === "page" && route.name === "Target"))).toBe(true);
+    } finally {
+      dispose();
+      host.remove();
     }
   });
 });

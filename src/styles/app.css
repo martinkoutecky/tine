@@ -1411,6 +1411,39 @@ textarea {
   padding: 16px 20px;
   border-bottom: 1px solid var(--border-color);
 }
+.settings-search-input {
+  margin-left: auto;
+  width: min(260px, 40vw);
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  padding: 6px 9px;
+  font-size: 13px;
+  font-weight: 400;
+}
+.settings-pane-head .icon-btn { margin-left: 10px; }
+.settings-search-results {
+  display: grid;
+  gap: 3px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+.settings-search-result {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  padding: 6px 8px;
+  text-align: left;
+  cursor: pointer;
+}
+.settings-search-result:hover,.settings-search-result:focus-visible { background: var(--bg-tertiary); }
+.settings-search-result small { color: var(--text-muted); }
+.settings-search-empty { padding: 8px; color: var(--text-muted); font-size: 13px; }
 .settings-pane-body {
   flex: 1;
   overflow-y: auto;
@@ -1581,6 +1614,21 @@ textarea {
   color: var(--danger, #b33);
   background: rgba(190, 45, 45, 0.14);
 }
+.settings-advanced { margin-top: 10px; }
+.settings-advanced-toggle {
+  width: 100%;
+  border: 0;
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  padding: 7px 9px;
+  text-align: left;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.settings-advanced-toggle:hover,.settings-advanced-toggle:focus-visible { color: var(--text-primary); background: var(--bg-tertiary); }
+.settings-advanced-body { padding: 2px 0 0 12px; border-left: 1px solid var(--border-color); }
 /* Segmented two-option control (e.g. task workflow). */
 .settings-segment {
   display: inline-flex;
@@ -2948,6 +2996,33 @@ textarea {
   margin-top: 6px;
   border-top: 1px solid var(--border-color);
   padding-top: 14px;
+}
+
+.page-trailing-block-target {
+  display: block;
+  width: 100%;
+  min-height: 30px;
+  margin: 2px 0 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: text;
+  text-align: left;
+  padding-left: 34px;
+}
+.page-trailing-block-target span {
+  opacity: 0;
+  font-size: 11px;
+  transition: opacity .12s ease;
+}
+.page-trailing-block-target:hover span,
+.page-trailing-block-target:focus-visible span {
+  opacity: .65;
+}
+.page-trailing-block-target:focus-visible {
+  outline: 1px solid var(--link-color);
+  outline-offset: -2px;
 }
 
 .feed-sentinel {
@@ -4805,9 +4880,17 @@ body.file-drop-active::after {
   width: 14px;
 }
 .sheet-grid-add-row {
-  right: 0;
-  bottom: -14px;
-  left: 0;
+  /* Participate in the grid instead of extending 14px below its scroll box.
+     The old absolute bottom:-14px made WebKit report vertical overflow (and
+     clip the affordance) once an aggregate footer added the final explicit
+     row. An implicit full-width row keeps scrollHeight == clientHeight while
+     preserving the same hover-revealed add target. */
+  position: relative;
+  grid-column: 1 / -1;
+  right: auto;
+  bottom: auto;
+  left: auto;
+  width: 100%;
   height: 14px;
 }
 .sheet-grid-add-visible {
@@ -6424,6 +6507,25 @@ img.emoji {
   margin: 2px 0;
 }
 
+/* A whole-block block embed is visually the referenced outline, not an empty
+   parent followed by another root. Block.tsx removes only the macro host's
+   controls; the referenced root keeps its real interactive bullet, collapse
+   toggle, zoom/sidebar actions, and editor surface. Removing the wrapper inset
+   puts that surviving bullet on the ordinary outline column. Its descendant
+   guide is slightly heavier to identify the embedded boundary without a box. */
+.block-embed-host > .block-main > .block-content-wrapper > .macro-host {
+  padding: 0;
+}
+.block-embed-host > .block-main > .block-content-wrapper > .macro-host > .embed-block {
+  border-left: 0;
+  padding-left: 0;
+  margin: 0;
+}
+.block-embed-host .embed-block > .live-ref-group > .ls-block > .block-children-container > .block-children {
+  border-left-width: 2px;
+  border-left-color: var(--border-color);
+}
+
 /* video / iframe embeds */
 .embed-iframe-wrap {
   position: relative;
@@ -6650,6 +6752,36 @@ img.emoji {
   background: var(--bg-secondary);
   border-radius: 3px;
   padding: 0 4px;
+}
+.switcher-syntax {
+  border-top: 1px solid var(--border-color);
+  padding: 8px 14px;
+  background: var(--bg-secondary);
+}
+.switcher-syntax-row {
+  display: grid;
+  grid-template-columns: minmax(110px, auto) 1fr;
+  gap: 12px;
+  padding: 3px 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.switcher-syntax-row code {
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+.switcher-syntax-toggle {
+  margin-left: auto;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--link-color);
+  font: inherit;
+  cursor: pointer;
+}
+.switcher-syntax-toggle:focus-visible {
+  outline: 1px solid var(--link-color);
+  outline-offset: 2px;
 }
 /* Brief highlight when jumping to a block from search. */
 .block-flash > .block-main {

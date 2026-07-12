@@ -24,7 +24,7 @@ use commands::{
     empty_asset_trash, get_backlinks, get_page, get_page_by_path, get_unlinked_refs,
     graph_source_files, guide_pages, import_asset, journal_content_days, journals_desc,
     list_journal_conflicts, list_orphan_assets, list_pages, list_sync_conflicts, list_templates,
-    merge_pages, open_asset, page_aliases, page_icons, page_print_html, publish_html, query_facets,
+    merge_pages, open_asset, open_page_file, page_aliases, page_icons, page_print_html, publish_html, query_facets,
     quick_switch, read_asset, read_custom_css, read_highlights, read_journal_file,
     read_local_image, read_text_file, rename_file_to_page, rename_page, resolve_block,
     resolve_blocks, resolve_sync_conflict, run_advanced_query, run_query, save_asset, save_page,
@@ -313,15 +313,7 @@ pub fn run() {
             let state = app.state::<AppState>();
             match event {
                 tauri::WindowEvent::Focused(true) => {
-                    let changed = {
-                        let mut last = state.last_focused.lock().unwrap();
-                        if last.as_deref() == Some(label) {
-                            false
-                        } else {
-                            *last = Some(label.to_string());
-                            true
-                        }
-                    };
+                    let changed = state.note_focused(label);
                     if changed {
                         if let Ok(slot) = state::slot_for_window(&state, label) {
                             let _ =
@@ -481,6 +473,7 @@ pub fn run() {
             copy_image_to_clipboard,
             clipboard_files,
             open_asset,
+            open_page_file,
             edit_asset_external,
             detect_media_editor,
             list_orphan_assets,

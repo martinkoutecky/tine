@@ -19,7 +19,7 @@ import { sanitizeRawHtml, rawHtmlLocalImages } from "./htmlSanitize";
 import { allowLocalFileImages } from "../localFileSettings";
 import { pageIcon } from "../pageIconBatch";
 import { typographic } from "./typography";
-import { coarseSpanAttrs, plainSpanAttrs, typographicPlainSpanAttrs, type SpanDomAttrs } from "./spans";
+import { coarseSpanAttrs, literalSpanAttrs, plainSpanAttrs, typographicPlainSpanAttrs, type SpanDomAttrs } from "./spans";
 import { typographyMode } from "../ui";
 import { visibleBody } from "./block";
 import { AstBody } from "./body";
@@ -94,7 +94,7 @@ function renderInline(s: Inline, blockId?: string, spanMode = true): JSX.Element
     case "verbatim":
       return (
         <span class="inline-copy-wrap">
-          <code class="inline-code" {...((spanMode ? coarseSpanAttrs(s.span) : undefined) ?? {})}>{s.text}</code>
+          <code class="inline-code" {...((spanMode ? literalSpanAttrs(s.text, s.span) : undefined) ?? {})}>{s.text}</code>
           <CopyButton text={s.text} title="Copy code" class="copy-inline" />
         </span>
       );
@@ -282,7 +282,11 @@ function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolean; bloc
           if (e.button === 1) {
             e.preventDefault();
             e.stopPropagation();
-            openPageInNewTab(targetName(), kind());
+            // Middle-click belongs to the pane that rendered the link. Relying
+            // on the globally focused router races pointer-focus tracking and
+            // sent split-view tabs to the previously focused/top pane (GH #87).
+            if (pane) pane.router.openPageInNewTab(targetName(), kind());
+            else openPageInNewTab(targetName(), kind());
           }
         }}
         onContextMenu={(e) => {
@@ -821,6 +825,7 @@ function MediaEmbed(props: {
   spanAttrs?: SpanDomAttrs;
 }): JSX.Element {
   const [failed, setFailed] = createSignal(false);
+  const [blobFallback, setBlobFallback] = createSignal("");
   // Audio has no fullscreen; the "Expand" button (below) opens a wide overlay
   // player with a waveform scrubber instead of stretching the inline control.
   const external = /^(https?:|data:|blob:)/.test(props.url);
@@ -830,7 +835,7 @@ function MediaEmbed(props: {
     () => (external ? null : rel()),
     async (r) => (r ? await backend().streamAsset(r) : "")
   );
-  const src = () => (external ? props.url : blob());
+  const src = () => blobFallback() || (external ? props.url : blob());
   const label = () =>
     decodeURIComponent((rel() || props.url).split("/").pop() || props.url);
   const open = (e: MouseEvent) => {
@@ -838,6 +843,28 @@ function MediaEmbed(props: {
     const r = rel();
     if (r && !external) void backend().openAsset(r);
     else void backend().openExternal(props.url);
+  };
+  let tryingBlobFallback = false;
+  let ownedBlobUrl = "";
+  onCleanup(() => {
+    if (ownedBlobUrl) URL.revokeObjectURL(ownedBlobUrl);
+  });
+  const onMediaError = () => {
+    const r = rel();
+    // WebKitGTK's media pipeline rejects Tauri custom-scheme Matroska URLs even
+    // when the same supported MKV bytes play from a Blob. Retry that one known
+    // scheme/container mismatch with a graph-scoped, size-bounded read. Very
+    // large files still fall back to the system player instead of consuming
+    // unbounded WebView memory.
+    if (!external && r?.toLowerCase().endsWith(".mkv") && !tryingBlobFallback && !blobFallback()) {
+      tryingBlobFallback = true;
+      void backend().readAsset(r, 512 * 1024 * 1024).then((bytes) => {
+        ownedBlobUrl = URL.createObjectURL(new Blob([Uint8Array.from(bytes).buffer], { type: "video/x-matroska" }));
+        setBlobFallback(ownedBlobUrl);
+      }).catch(() => setFailed(true));
+      return;
+    }
+    setFailed(true);
   };
 
   // Video drag-resize: identical mechanic to images (size the WRAPPER, persist a
@@ -902,7 +929,7 @@ function MediaEmbed(props: {
           controls={true}
           src={src()!}
           style={mediaStyle()}
-          onError={() => setFailed(true)}
+          onError={onMediaError}
           onClick={(e: MouseEvent) => e.stopPropagation()}
         />
         <button class="media-open-external" onClick={open} title="Open in the default player (if playback here is broken)">

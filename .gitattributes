@@ -1,0 +1,3 @@
+src/devtools/lsdoc-diff/vendor/*.mjs text eol=lf
+src/devtools/lsdoc-diff/vendor/mldoc.js text eol=lf
+src/devtools/lsdoc-diff/vendor/oracle.source.json text eol=lf

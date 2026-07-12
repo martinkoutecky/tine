@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "version": "0.5.6",
+  "baseTag": "v0.5.5",
+  "items": [
+    {
+      "section": "Changed",
+      "text": "**The shared parser is updated to lsdoc 0.5.2.** Both the native core and the vendored browser WASM parser use the same released parser build.",
+      "userVisible": false,
+      "regressions": [],
+      "docs": {"status":"current","reason":"Parser version and integration are recorded in release documentation and About/Help output.","refs":["CHANGELOG.md","docs/FEATURES.md"]},
+      "website": {"status":"not-applicable","reason":"An internal parser patch does not change the product presentation.","refs":[]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    },
+    {
+      "section": "Fixed",
+      "text": "**Help improve Tine uses the same OG-faithful reference oracle as lsdoc.** Property, nested, file-label, Org, embed, and block-reference semantics no longer drift between the two sides of the comparison, eliminating false divergences such as Markdown links in property values. CI now binds the vendored oracle to the pinned lsdoc release and its exact source hash.",
+      "userVisible": true,
+      "regressions": [],
+      "docs": {"status":"current","reason":"The Help report behavior is documented in the feature inventory.","refs":["docs/FEATURES.md"]},
+      "website": {"status":"not-applicable","reason":"Diagnostic-oracle parity does not change the public feature presentation.","refs":[]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    },
+    {
+      "section": "Fixed",
+      "text": "**Help improve Tine reports no longer expose page names or private URLs.** Source files use neutral labels, URL schemes remain parseable while hosts and paths are scrubbed, URL-sensitive divergences survive anonymization more reliably, and copied reports record the Tine version used for the comparison.",
+      "userVisible": true,
+      "regressions": [],
+      "docs": {"status":"current","reason":"Privacy and anonymization behavior is documented in the feature inventory.","refs":["docs/FEATURES.md"]},
+      "website": {"status":"not-applicable","reason":"This is diagnostic privacy hardening rather than a headline website feature.","refs":[]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    },
+    {
+      "section": "Fixed",
+      "text": "**Release CI catches platform-only compilation and stale Flatpak sources before tagging.** Windows and Android compile guards now run on ordinary CI, the Flatpak offline npm and Cargo manifests are checked against their lockfiles, and a release remains draft unless every required artifact job succeeds.",
+      "userVisible": false,
+      "regressions": [],
+      "docs": {"status":"current","reason":"The release architecture and platform gates have a dedicated plan and checklist.","refs":["docs/plans/release-parallel-build-publish.md","docs/RELEASE-CHECKLIST.md"]},
+      "website": {"status":"not-applicable","reason":"Release plumbing does not alter user-facing website content.","refs":[]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    }
+  ]
+}

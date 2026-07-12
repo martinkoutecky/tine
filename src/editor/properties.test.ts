@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   caretInFence,
+  multilineExitTrim,
   isSheetCellHidden,
   joinProps,
   readPropertyValue,
@@ -9,6 +10,24 @@ import {
   isBuiltinHidden,
   rawOffsetToVisibleOffset,
 } from "./properties";
+
+describe("multilineExitTrim — Enter on a trailing blank line exits a code/calc block", () => {
+  it("fenced: exits only on the blank last content line and keeps the closing fence", () => {
+    expect(multilineExitTrim("```js\ncode\n\n```", 11, "fence")).toBe("```js\ncode\n```");
+    expect(multilineExitTrim("```js\na\n\nb\n```", 8, "fence")).toBeNull();
+    expect(multilineExitTrim("```js\ncode\n```", 8, "fence")).toBeNull();
+  });
+
+  it("calc: exits only on a trailing blank line", () => {
+    expect(multilineExitTrim("1+1\n2+2\n", 8, "calc")).toBe("1+1\n2+2");
+    expect(multilineExitTrim("1+1\n\n2+2", 4, "calc")).toBeNull();
+  });
+
+  it("never exits from the first blank line", () => {
+    expect(multilineExitTrim("\ncode", 0, "calc")).toBeNull();
+    expect(multilineExitTrim("\n```", 0, "fence")).toBeNull();
+  });
+});
 
 describe("sheet-cell property splitting", () => {
   it("hides built-in and tine properties while preserving them byte-exactly on join", () => {

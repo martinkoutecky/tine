@@ -190,6 +190,7 @@ export interface Backend {
   /** Open a graph asset (by its `assets/`-relative name) in the OS default app —
    *  e.g. a video/audio file in the system player. */
   openAsset(name: string): Promise<void>;
+  openPageFile(name: string, kind: "page" | "journal", path: string | undefined, reveal: boolean): Promise<void>;
   /** Open a graph asset in a SPECIFIC external editor (drawio/Excalidraw/…) so a
    *  diagram can be edited in place. `command` is that editor's configured command
    *  template (empty = OS opener). See GH #38 / mediaEditors.ts. */
@@ -583,6 +584,9 @@ class TauriBackend implements Backend {
   }
   openAsset(name: string) {
     return this.call<void>("open_asset", { name });
+  }
+  openPageFile(name: string, kind: "page" | "journal", path: string | undefined, reveal: boolean) {
+    return this.call<void>("open_page_file", { name, kind, path: path || null, reveal });
   }
   editAssetExternal(name: string, command: string) {
     return this.call<void>("edit_asset_external", { name, command });

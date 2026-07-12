@@ -19,26 +19,6 @@ const CONFIG_EDN: &str = include_str!("templates/config.edn");
 /// The capture-window screenshot embedded by the quick-capture page.
 const QUICK_CAPTURE_PNG: &[u8] = include_bytes!("templates/assets/quick-capture.png");
 
-/// (page title, Markdown body) for each page the demo graph ships with. Titles
-/// with a `/` create namespaces (e.g. `Features/Quick capture`).
-const PAGES: &[(&str, &str)] = &[
-    ("Welcome to Tine", include_str!("templates/welcome.md")),
-    ("Tine Guide", include_str!("templates/guide.md")),
-    (
-        "Features/Quick capture",
-        include_str!("templates/quick-capture.md"),
-    ),
-    (
-        "Features/Tips & shortcuts",
-        include_str!("templates/tips.md"),
-    ),
-    ("Features/Sheets", include_str!("templates/sheets.md")),
-    ("Features/Formulas", include_str!("templates/formulas.md")),
-    ("Features/PDF annotation", include_str!("templates/pdf.md")),
-    ("Feature showcase", include_str!("templates/showcase.md")),
-    ("Project/Roadmap", include_str!("templates/roadmap.md")),
-];
-
 /// In-memory namespace for bundled, read-only guide pages. These pages are
 /// rendered live in the running app but are not graph files.
 pub const GUIDE_DISPLAY_PREFIX: &str = "Tine-guide/";
@@ -46,6 +26,9 @@ pub const GUIDE_DISPLAY_PREFIX: &str = "Tine-guide/";
 /// Real graph namespace used only by the explicit guide-copy action.
 pub const GUIDE_COPY_PREFIX: &str = "tine-guide/";
 
+/// One canonical manifest feeds all three Guide surfaces: the onboarding graph,
+/// the in-app read-only Guide, and the generated website demo. Keeping the list
+/// in one place prevents a page from silently disappearing from one surface.
 struct GuideTemplate {
     title: &'static str,
     markdown: &'static str,
@@ -288,9 +271,9 @@ pub fn create_demo_graph(root: &Path) -> io::Result<()> {
     atomic_write(&assets.join("quick-capture.png"), QUICK_CAPTURE_PNG)?;
 
     let graph = Graph::open(root);
-    for (title, body) in PAGES {
-        let path = graph.path_for(title, PageKind::Page);
-        atomic_write(&path, body.as_bytes())?;
+    for template in GUIDE_TEMPLATES {
+        let path = graph.path_for(template.title, PageKind::Page);
+        atomic_write(&path, template.markdown.as_bytes())?;
     }
     Ok(())
 }
@@ -334,10 +317,11 @@ mod tests {
         // Every page loads by its (namespace-decoded) title, and every page parses.
         let graph = Graph::open(&dir);
         let entries = graph.list_pages();
-        for (title, _) in PAGES {
+        for template in GUIDE_TEMPLATES {
+            let title = template.title;
             let entry = entries
                 .iter()
-                .find(|e| e.name == *title)
+                .find(|e| e.name == title)
                 .unwrap_or_else(|| panic!("page {title:?} not listed"));
             graph
                 .load_page(entry)
@@ -421,16 +405,18 @@ mod tests {
         // Every guide page that another guide page links to must itself be a
         // bundled guide page — otherwise the link dangles in the in-app guide AND
         // in the copied-into-graph copy (the bug that shipped when Welcome/Roadmap
-        // were in PAGES but not GUIDE_TEMPLATES). We flag ONLY targets that are
-        // real demo pages (in PAGES); links to stub pages like [[Martin]] are a
+        // were in the onboarding list but not GUIDE_TEMPLATES). We flag ONLY targets that are
+        // real demo pages (in the manifest); links to stub pages like [[Martin]] are a
         // deliberate Logseq affordance (click-to-create) and stay out of the guide.
         use std::collections::HashSet;
         let guide: HashSet<String> = GUIDE_TEMPLATES
             .iter()
             .map(|t| crate::refs::page_key(t.title))
             .collect();
-        let demo: HashSet<String> =
-            PAGES.iter().map(|(t, _)| crate::refs::page_key(t)).collect();
+        let demo: HashSet<String> = GUIDE_TEMPLATES
+            .iter()
+            .map(|t| crate::refs::page_key(t.title))
+            .collect();
         for t in GUIDE_TEMPLATES {
             for target in extract_page_links(t.markdown) {
                 let key = crate::refs::page_key(&target);
