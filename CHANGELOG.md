@@ -10,6 +10,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **The shared parser is updated to lsdoc 0.5.3.** Native and browser-WASM
+  parsing now include the final issue #82 state-parity corrections, while the
+  Help with Tine oracle remains pinned to the exact released sources. (GH #82,
+  GH #111)
 - **Help improve Tine now version-locks the complete lsdoc comparison oracle.**
   The mldoc parser, AST normalizer, comparator, and reference extractor are
   pinned and checked as one bundle, preventing stale helper files from being

@@ -2,8 +2,8 @@
     {
         "type": "git",
         "url": "https://github.com/martinkoutecky/lsdoc",
-        "commit": "ff73f29b062ddd5f6a8f0a232886a1514111d998",
-        "dest": "flatpak-cargo/git/lsdoc-ff73f29"
+        "commit": "96e909634ce247bd261851c04a837096b4ccef7f",
+        "dest": "flatpak-cargo/git/lsdoc-96e9096"
     },
     {
         "type": "archive",
@@ -2881,12 +2881,12 @@
     {
         "type": "shell",
         "commands": [
-            "cp -r --reflink=auto \"flatpak-cargo/git/lsdoc-ff73f29/.\" \"cargo/vendor/lsdoc\""
+            "cp -r --reflink=auto \"flatpak-cargo/git/lsdoc-96e9096/.\" \"cargo/vendor/lsdoc\""
         ]
     },
     {
         "type": "inline",
-        "contents": "[package]\nname = \"lsdoc\"\nversion = \"0.5.2\"\nedition = \"2021\"\nlicense = \"AGPL-3.0-only\"\ndescription = \"A from-scratch native-Rust parser for Logseq-flavored Markdown and Org, behavior-equivalent to Logseq's mldoc.\"\nrepository = \"https://github.com/martinkoutecky/lsdoc\"\n\n[dependencies]\nmemchr = \"2\"\nserde_json = \"1\"\n\n[dependencies.phf]\nversion = \"0.11\"\nfeatures = [\"macros\"]\n\n[dependencies.serde]\nversion = \"1\"\nfeatures = [\"derive\"]\n",
+        "contents": "[package]\nname = \"lsdoc\"\nversion = \"0.5.3\"\nedition = \"2021\"\nlicense = \"AGPL-3.0-only\"\ndescription = \"A from-scratch native-Rust parser for Logseq-flavored Markdown and Org, behavior-equivalent to Logseq's mldoc.\"\nrepository = \"https://github.com/martinkoutecky/lsdoc\"\n\n[dependencies]\nmemchr = \"2\"\nserde_json = \"1\"\n\n[dependencies.phf]\nversion = \"0.11\"\nfeatures = [\"macros\"]\n\n[dependencies.serde]\nversion = \"1\"\nfeatures = [\"derive\"]\n",
         "dest": "cargo/vendor/lsdoc",
         "dest-filename": "Cargo.toml"
     },
@@ -7760,7 +7760,7 @@
     },
     {
         "type": "inline",
-        "contents": "[source.vendored-sources]\ndirectory = \"cargo/vendor\"\n\n[source.crates-io]\nreplace-with = \"vendored-sources\"\n\n[source.\"https://github.com/martinkoutecky/lsdoc\"]\ngit = \"https://github.com/martinkoutecky/lsdoc\"\nreplace-with = \"vendored-sources\"\ntag = \"v0.5.2\"\n",
+        "contents": "[source.vendored-sources]\ndirectory = \"cargo/vendor\"\n\n[source.crates-io]\nreplace-with = \"vendored-sources\"\n\n[source.\"https://github.com/martinkoutecky/lsdoc\"]\ngit = \"https://github.com/martinkoutecky/lsdoc\"\nreplace-with = \"vendored-sources\"\ntag = \"v0.5.3\"\n",
         "dest": "cargo",
         "dest-filename": "config"
     }
