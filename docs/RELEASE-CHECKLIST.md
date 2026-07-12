@@ -33,8 +33,10 @@ may tag, publish, comment, and close issues.
 
 ## Additional `0.x.0` minor-release gates
 
-1. Synchronize Martin's new `r/TineOutline` posts into the human blog and
-   re-check every Reddit thread already cited by an existing entry.
+1. Run `npm run blog:sync -- --version=X.Y.0`, synchronize every reported new
+   `r/TineOutline` post into the human blog, and re-check every Reddit thread
+   already cited by an existing entry. Commit the clean
+   `docs/releases/vX.Y.0-reddit.json` evidence.
 2. Run three independent audit areas: data safety/security/privacy;
    behavioral correctness/Logseq compatibility; performance/resource
    lifecycle.

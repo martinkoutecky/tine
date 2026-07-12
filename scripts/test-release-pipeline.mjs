@@ -12,6 +12,17 @@ const version = "0.5.6";
 const commit = "a".repeat(40);
 const repository = "martinkoutecky/tine";
 const layout = releaseLayout(version);
+const releaseWorkflow = fs.readFileSync(path.join(process.cwd(), ".github/workflows/release.yml"), "utf8");
+
+// Architecture guard: the expensive release build must test that exact binary
+// before it can be staged for the atomic assembler/publisher. Keep Windows
+// advisory while Linux x64 is a hard gate.
+const linuxGate = releaseWorkflow.indexOf("Gate Linux x64 on the complete real-app regression catalog");
+const stageLane = releaseWorkflow.indexOf("Stage immutable release artifact");
+assert(linuxGate >= 0, "release workflow is missing the Linux real-app gate");
+assert(stageLane > linuxGate, "release lane is staged before the Linux real-app gate");
+assert.match(releaseWorkflow, /name: Run advisory Windows x64 real-app smoke[\s\S]*?continue-on-error: true/);
+assert.match(releaseWorkflow, /name: Upload release E2E evidence[\s\S]*?if: always\(\)/);
 
 function makeInput(base) {
   const input = path.join(base, "input");
@@ -106,4 +117,4 @@ try {
   fs.rmSync(temporary, { recursive: true, force: true });
 }
 
-console.log("Release pipeline fixture tests passed (valid + 5 fail-closed cases).");
+console.log("Release pipeline fixture tests passed (workflow gate + valid + 5 fail-closed cases).");
