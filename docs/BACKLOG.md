@@ -1,24 +1,19 @@
-# Tine — Backlog & Roadmap
+# Tine — product backlog and decision archive
 
-The public front-door for not-yet-done Tine work: what's next, what's deferred, and what's
-explicitly out of scope. (Detailed internal engineering/data-safety debt is tracked separately
-and privately; **lsdoc**, the parser, has its own backlog in its own repo.)
+The live, inspectable work board is the repository's GitHub Project; release
+milestones answer when work is targeted. This document is not a second status
+board. It preserves durable product context, researched candidates, and explicit
+WONTFIX rationale that would be too large or too architectural for a Project
+card. Current issue status and Now/Next/Later views must be read from GitHub.
 
-**Categories are deliberate and distinct** (Now / Next / Later — the standard lean-roadmap tiering):
-- **Now** — being built right now (cap ~1–2).
-- **Next** — an **ordered, capped** queue (~6). *This* is the answer to "what's next": an item is here
-  only because we'd genuinely pick it up when Now clears. Order is meaningful; promotion into Next is a
-  deliberate act, and adding a 7th means bumping one down to Later.
-- **Later** — real, not WONTFIX, but no slot yet. An **unordered pool**; only surfaces when we dig.
-  *Later is NOT WONTFIX.*
-- **WONTFIX** — decided we are not doing it, with a reason.
-
-Kept current in the same chunk of work: add items when they surface, remove them when done,
-move them between tiers in place. When Next drains, review Later and promote (in order) to refill it.
+Detailed engineering/data-safety debt remains private under `tine-agents/specs/`;
+**lsdoc**, the parser, has its own repository and issue tracker.
 
 ---
 
-## Now (being built)
+## Active product context (non-canonical snapshot)
+
+These notes explain active threads, but GitHub—not this ordering—is authoritative.
 
 _(**Shipped & merged to master**, removed from Now: **Sheets** — the grid/table/board
 layout engine (spec [docs/breadth-grid-spec.md](breadth-grid-spec.md)) — and **Split view**
@@ -39,9 +34,10 @@ merged to master as `ad9bf67`.)_
   [[Sheets guide]] page.
 ---
 
-## Next — the ordered queue (top = do first)
+## Near-term candidate context
 
-Cap ~6, order is meaningful. When this drains, promote from Later.
+These are researched candidates retained for their details. Their order here is
+not priority; the GitHub Project and milestones are authoritative.
 
 _(**Shipped & released**, removed from the queue: **#23 paste-URL-over-selection** & **#24 copy-code/inline/links** (both in **v0.4.2**, Martin-tested, **issues CLOSED**), **Android camera/photo capture**, **Android voice-memo recording**, and the whole **Queries batch** — result aggregation/group-by (1a), the "⚙ advanced" switch (1b), and Datalog coverage expansion (1c) per [docs/plans/queries-batch.md](plans/queries-batch.md) — all in **v0.4.1**. **Excalidraw + drawio assets** — render-as-image + "Edit in your own editor" via a generic **external-media-editor registry** (GH #38) — shipped `76c42e5` (spec [docs/excalidraw-assets-spec.md](excalidraw-assets-spec.md)). **Flathub** moved to **WONTFIX** — Flathub bans AI-built apps.)_
 
@@ -52,7 +48,7 @@ _(**Shipped & released**, removed from the queue: **#23 paste-URL-over-selection
 
 ---
 
-## Later — real, not queued (unordered; NOT WONTFIX)
+## Later ideas and research (not WONTFIX)
 
 | Item | Notes |
 |---|---|
