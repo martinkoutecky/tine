@@ -83,7 +83,15 @@ function isBacktickOwnershipShift(
   mldocPlain: unknown,
   mldocCode: unknown,
 ): boolean {
-  if (![lsdocPlain, lsdocCode, mldocPlain, mldocCode].every(isTextInline)) return false;
+  // TypeScript does not narrow four independent `unknown` bindings through an
+  // `array.every(typeGuard)` call. Keep the guards explicit so this stays safe
+  // under the stricter compiler used by CI as well as at runtime.
+  if (
+    !isTextInline(lsdocPlain)
+    || !isTextInline(lsdocCode)
+    || !isTextInline(mldocPlain)
+    || !isTextInline(mldocCode)
+  ) return false;
   return lsdocPlain.k === "plain"
     && lsdocCode.k === "code"
     && mldocPlain.k === "plain"

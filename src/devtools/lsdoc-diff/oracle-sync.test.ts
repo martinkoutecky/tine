@@ -7,6 +7,24 @@ interface MldocApi {
   parseJson(input: string, config: string): string;
 }
 
+interface NormalizedBlock {
+  kind: string;
+}
+
+function normalizedBlocks(input: string): NormalizedBlock[] {
+  const value = normalizeAst(ast(input, "md") as Parameters<typeof normalizeAst>[0]);
+  if (
+    !Array.isArray(value)
+    || !value.every((block): block is NormalizedBlock => (
+      block !== null
+      && typeof block === "object"
+      && "kind" in block
+      && typeof block.kind === "string"
+    ))
+  ) throw new Error("mldoc normalization did not return a block array");
+  return value;
+}
+
 // mldoc is a js_of_ocaml IIFE rather than an ESM module. Vite's test transform
 // can discard its global side effect, so execute the exact vendored bytes in the
 // Node test realm just as a browser script tag would.
@@ -51,16 +69,14 @@ describe("vendored mldoc reference oracle", () => {
   });
 
   it("normalizes issue #82 export and comment blocks with the pinned bundle", () => {
-    const parsed = ast(
+    const blocks = normalizedBlocks(
       "#+BEGIN_EXPORT html\n<b>x</b>\n#+END_EXPORT\n\n#+BEGIN_COMMENT\none\ntwo\n#+END_COMMENT",
-      "md",
     );
-    const blocks = normalizeAst(parsed as Parameters<typeof normalizeAst>[0]);
     expect(blocks.map((block) => block.kind)).toEqual(["export", "comment_block"]);
   });
 
   it("uses the mldoc 1.5.9 thematic-break behavior from issue #82", () => {
-    const blocks = normalizeAst(ast("* * *\n", "md") as Parameters<typeof normalizeAst>[0]);
+    const blocks = normalizedBlocks("* * *\n");
     expect(blocks.map((block) => block.kind)).toEqual(["list"]);
   });
 });

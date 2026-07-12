@@ -6,6 +6,10 @@ import { fileURLToPath } from "node:url";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const vendorDir = join(root, "src", "devtools", "lsdoc-diff", "vendor");
 const attributes = readFileSync(join(root, ".gitattributes"), "utf8");
+// Git checks `.gitattributes` out using the platform's native line endings
+// unless the file governs itself. Windows CI therefore sees CRLF here even
+// though the rules correctly require LF for the vendored oracle bytes.
+const attributeLines = attributes.split(/\r?\n/);
 const metadata = JSON.parse(readFileSync(join(vendorDir, "oracle.source.json"), "utf8"));
 const cargo = readFileSync(join(root, "crates", "tine-core", "Cargo.toml"), "utf8");
 const pin = cargo.match(/lsdoc\s*=\s*\{[^}]*\btag\s*=\s*"([^"]+)"/)?.[1];
@@ -17,7 +21,7 @@ for (const pattern of [
   "src/devtools/lsdoc-diff/vendor/mldoc.js text eol=lf",
   "src/devtools/lsdoc-diff/vendor/oracle.source.json text eol=lf",
 ]) {
-  if (!attributes.split("\n").includes(pattern)) {
+  if (!attributeLines.includes(pattern)) {
     problems.push(`.gitattributes is missing: ${pattern}`);
   }
 }
