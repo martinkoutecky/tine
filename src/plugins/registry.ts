@@ -177,7 +177,7 @@ export function parseRegistryIndex(value: unknown): RegistryIndex {
       }
       if (seenVersions.has(parsedVersion)) throw new Error(`${id} has duplicate version ${parsedVersion}`);
       seenVersions.add(parsedVersion);
-      if (version.apiVersion !== PLUGIN_API_VERSION) throw new Error(`${id} has an incompatible API version`);
+      const apiVersion = text(version.apiVersion, `${id}.apiVersion`, 32);
       const parsedPlatforms = version.platforms.map((platform) => {
         if (typeof platform !== "string" || !PLUGIN_PLATFORMS.includes(platform as PluginPlatform)) {
           throw new Error(`${id} has an invalid platform`);
@@ -188,10 +188,11 @@ export function parseRegistryIndex(value: unknown): RegistryIndex {
         throw new Error(`${id} has invalid platforms`);
       }
       const parsedCapabilities = version.capabilities.map((capability) => {
-        if (typeof capability !== "string" || !PLUGIN_CAPABILITIES.includes(capability as PluginCapability)) {
+        if (typeof capability !== "string" || capability.length === 0 || capability.length > 80 ||
+            (apiVersion === PLUGIN_API_VERSION && !PLUGIN_CAPABILITIES.includes(capability as PluginCapability))) {
           throw new Error(`${id} has an invalid capability`);
         }
-        return capability;
+        return capability as PluginCapability;
       });
       if (new Set(parsedCapabilities).size !== parsedCapabilities.length) throw new Error(`${id} has duplicate capabilities`);
       const audit = object(version.audit, `${id}.audit`);
@@ -202,7 +203,7 @@ export function parseRegistryIndex(value: unknown): RegistryIndex {
       if (typeof audit.manualApproval !== "boolean") throw new Error(`${id} has invalid manual-approval metadata`);
       return {
         version: parsedVersion,
-        apiVersion: PLUGIN_API_VERSION,
+        apiVersion,
         platforms: parsedPlatforms,
         capabilities: parsedCapabilities,
         sha256,
@@ -224,7 +225,7 @@ export function parseRegistryIndex(value: unknown): RegistryIndex {
         },
         publishedAt: text(version.publishedAt, `${id}.publishedAt`, 80),
       };
-    });
+    }).filter((version) => version.apiVersion === PLUGIN_API_VERSION);
     const ai = item.aiDevelopment;
     if (ai !== "none" && ai !== "assisted" && ai !== "primary") throw new Error(`${id} has invalid AI provenance`);
     return {
@@ -236,7 +237,7 @@ export function parseRegistryIndex(value: unknown): RegistryIndex {
       aiDevelopment: ai,
       versions,
     };
-  });
+  }).filter((plugin) => plugin.versions.length > 0);
   const themesValue = root.themes ?? [];
   if (!Array.isArray(themesValue)) throw new Error("registry themes are invalid");
   const themes = themesValue.map((candidate, themeIndex): RegistryTheme => {
@@ -261,7 +262,7 @@ export function parseRegistryIndex(value: unknown): RegistryIndex {
       }
       if (seenVersions.has(parsedVersion)) throw new Error(`${id} has duplicate version ${parsedVersion}`);
       seenVersions.add(parsedVersion);
-      if (version.apiVersion !== THEME_API_VERSION) throw new Error(`${id} has an incompatible theme API version`);
+      const apiVersion = text(version.apiVersion, `${id}.apiVersion`, 32);
       if (!Array.isArray(version.modes) || version.modes.length === 0 ||
           version.modes.some((mode) => mode !== "light" && mode !== "dark") ||
           new Set(version.modes).size !== version.modes.length) {
@@ -276,7 +277,7 @@ export function parseRegistryIndex(value: unknown): RegistryIndex {
       }
       return {
         version: parsedVersion,
-        apiVersion: THEME_API_VERSION,
+        apiVersion,
         modes: version.modes as Array<"light" | "dark">,
         manifestSha256: digest(version.manifestSha256, `${id}.manifestSha256`),
         manifestUrl: https(version.manifestUrl, `${id}.manifestUrl`),
@@ -291,7 +292,7 @@ export function parseRegistryIndex(value: unknown): RegistryIndex {
         },
         publishedAt: text(version.publishedAt, `${id}.publishedAt`, 80),
       };
-    });
+    }).filter((version) => version.apiVersion === THEME_API_VERSION);
     const ai = item.aiDevelopment;
     if (ai !== "none" && ai !== "assisted" && ai !== "primary") throw new Error(`${id} has invalid AI provenance`);
     return {
@@ -303,7 +304,7 @@ export function parseRegistryIndex(value: unknown): RegistryIndex {
       aiDevelopment: ai,
       versions,
     };
-  });
+  }).filter((theme) => theme.versions.length > 0);
   const revocations = root.revocations.map((candidate, index) => {
     const item = object(candidate, `revocations[${index}]`);
     knownKeys(item, `revocations[${index}]`, ["id", "version", "severity", "reason", "revokedAt"]);
@@ -426,7 +427,10 @@ export function parseSafetyReport(
   const root = object(value, "safety report");
   if (root.format !== "tine-plugin-audit-result/v1") throw new Error("safety report format is incompatible");
   const submission = object(root.submission, "safety report submission");
-  if (submission.pluginId !== plugin.id || submission.version !== version.version) {
+  const submissionId = submission.schemaVersion === 2 && submission.kind === "plugin"
+    ? submission.packageId
+    : submission.pluginId;
+  if (submissionId !== plugin.id || submission.version !== version.version) {
     throw new Error("safety report identity does not match the signed registry");
   }
   const sourceCommit = text(root.commitVerified, "commitVerified", 40);

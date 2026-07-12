@@ -6,8 +6,8 @@ import { setTimeout as sleep } from "node:timers/promises";
 
 const PORT = 5194;
 const server = spawn(
-  "npx",
-  ["vite", "preview", "--host", "127.0.0.1", "--port", String(PORT), "--strictPort"],
+  "./node_modules/.bin/vite",
+  ["preview", "--host", "127.0.0.1", "--port", String(PORT), "--strictPort"],
   { stdio: "inherit" }
 );
 
@@ -39,13 +39,14 @@ try {
   await page.getByTitle("Settings (t s)").click();
   await page.getByRole("button", { name: "Plugins", exact: true }).click();
   try {
-    await page.getByText("Bullet threading v0.1.0", { exact: true }).waitFor({ timeout: 15_000 });
+    await page.getByText("Bullet threading v0.2.0", { exact: true }).waitFor({ timeout: 15_000 });
   } catch (error) {
     console.error(await page.locator(".settings-pane-body").innerText());
     console.error(pageErrors.join("\n"));
     throw error;
   }
-  await page.getByText("Query filter shortcuts v0.1.1", { exact: true }).waitFor();
+  await page.getByText("Query filter shortcuts v0.2.0", { exact: true }).waitFor();
+  await page.getByText("Heading level shortcuts v0.1.0", { exact: true }).waitFor();
   await page.getByText(/Signed registry.*automated deterministic.*AI audits/).waitFor();
 
   const bullet = page.locator(".settings-field", { hasText: "Bullet threading" });
@@ -57,8 +58,8 @@ try {
   await queryFilter.getByText(/why human review was required/i).waitFor({ timeout: 15_000 });
   await queryFilter.getByText(/holds every graph-writing plugin for human review/i).waitFor();
   await queryFilter.getByText(/earlier draft could act on the wrong focused block/i).waitFor();
-  await queryFilter.getByText(/state filter and legacy migration/i).waitFor();
-  await queryFilter.getByText("Low-risk finding", { exact: true }).waitFor();
+  await queryFilter.getByText(/broad textual recognition of query-view blocks/i).waitFor();
+  await queryFilter.getByText("Low-risk finding", { exact: true }).first().waitFor();
   await queryFilter.getByText(/severity describes possible impact, not reviewer confidence/i).waitFor();
   const evidenceIds = await queryFilter.locator(".plugin-safety-report code[title]").evaluateAll((elements) =>
     elements.map((element) => element.getAttribute("title"))
@@ -74,13 +75,13 @@ try {
 
   await bullet.getByRole("button", { name: "Install", exact: true }).click();
   await page.getByText(/installed disabled/i).waitFor({ timeout: 15_000 });
-  await bullet.getByRole("button", { name: "Installed", exact: true }).waitFor();
-  const installed = page.locator(".settings-field", { hasText: "page.tine.bullet-threading" });
+  const installed = page.locator(".plugin-detail-page", { hasText: "page.tine.bullet-threading" });
+  await installed.waitFor();
   const toggle = installed.locator(".settings-toggle");
   await toggle.click();
   try {
     await page.waitForFunction(
-      () => [...document.querySelectorAll(".settings-field")]
+      () => [...document.querySelectorAll(".plugin-detail-page")]
         .find((element) => element.textContent?.includes("page.tine.bullet-threading"))
         ?.querySelector(".settings-toggle")
         ?.getAttribute("aria-checked") === "true",
@@ -97,9 +98,13 @@ try {
   await page.screenshot({ path: "screenshots/plugins-mobile.png" });
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   if (overflow > 1) throw new Error(`plugin settings overflow the mobile viewport by ${overflow}px`);
+  for (let attempt = 0; attempt < 10 && await page.locator(".toast-close").count(); attempt += 1) {
+    await page.locator(".toast-close").first().click();
+  }
   page.once("dialog", (dialog) => void dialog.accept());
   await installed.getByRole("button", { name: "Uninstall…", exact: true }).click();
   await page.getByText(/was uninstalled/i).waitFor();
+  await page.getByRole("tab", { name: "Browse", exact: true }).click();
   await bullet.getByRole("button", { name: "Install", exact: true }).waitFor();
   if (await page.locator(".settings-field", { hasText: "page.tine.bullet-threading" }).count()) {
     throw new Error("uninstalled plugin still appears in the Installed section");

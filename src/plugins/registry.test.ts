@@ -61,6 +61,24 @@ describe("signed plugin registry parsing", () => {
     expect(parsed.themes[0].versions[0].modes).toEqual(["light", "dark"]);
   });
 
+  it("validates but hides historical API versions without invalidating current versions", () => {
+    const historical = {
+      ...version,
+      version: "0.0.9",
+      apiVersion: "0.1",
+      capabilities: ["block-decorations.register"],
+    };
+    const parsed = parseRegistryIndex({
+      schemaVersion: 1,
+      generatedAt: "2026-07-12T00:00:00Z",
+      plugins: [{ ...plugin, versions: [historical, version] }],
+      themes: [],
+      revocations: [],
+    });
+
+    expect(parsed.plugins[0].versions.map((item) => item.version)).toEqual(["0.1.0"]);
+  });
+
   it("rejects duplicate identities, invalid digests, and non-HTTPS artifacts", () => {
     const root = { schemaVersion: 1, generatedAt: "now", plugins: [plugin, plugin], themes: [], revocations: [] };
     expect(() => parseRegistryIndex(root)).toThrow(/duplicate/);
@@ -98,6 +116,16 @@ describe("signed plugin registry parsing", () => {
       manualApproval: { by: "Sol", note: "Reviewed after a scope fix.", approvedAt: "2026-07-11T00:10:00Z" },
     };
     expect(parseSafetyReport(report, registeredPlugin, registeredVersion).manualApproval?.note).toMatch(/scope fix/);
+    expect(parseSafetyReport({
+      ...report,
+      submission: {
+        schemaVersion: 2,
+        kind: "plugin",
+        packageId: plugin.id,
+        version: version.version,
+        commit: "d".repeat(40),
+      },
+    }, registeredPlugin, registeredVersion).sourceCommit).toBe("d".repeat(40));
     expect(() =>
       parseSafetyReport({ ...report, checker: { ...report.checker, risk: "low" } }, registeredPlugin, registeredVersion)
     ).toThrow(/signed summary/);

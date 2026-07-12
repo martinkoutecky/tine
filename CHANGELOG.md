@@ -52,6 +52,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - Upgrade the Vite/Vitest development toolchain to versions clear of the current
   npm advisories, including the Vitest UI-server and Vite dev-server issues; keep
   Solid's browser export conditions explicit in the test runner.
+- Keep the signed community catalogue usable when its immutable history contains
+  older plugin/theme API versions: validate historical metadata, but expose only
+  versions compatible with the running Tine host.
+- Read both legacy and current generalized submission identities in digest-verified
+  safety reports, so plugin reports remain visible after the registry added themes.
 
 ### Changed
 
