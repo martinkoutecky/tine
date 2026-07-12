@@ -43,7 +43,10 @@ h1.page{font-size:1.9rem;font-weight:700;letter-spacing:-.02em;margin:.4rem 0 1.
 h1.page .cal{color:var(--muted);margin-right:.45rem;vertical-align:-3px;opacity:.7}
 ul.outline,ul.outline ul{list-style:none}
 ul.outline{padding-left:0;margin:0}
-ul.outline ul{padding-left:1.25rem;margin:.1rem 0;border-left:1px solid var(--line)}
+ul.outline ul{padding-left:1.25rem;margin:.1rem 0;border-left:0;position:relative}
+/* Put each connector through the child bullet's center. The old border sat on
+   the ul box edge, roughly 7px left of every bullet. */
+ul.outline ul::before{content:"";position:absolute;left:.45rem;top:0;bottom:0;border-left:1px solid var(--line)}
 li{margin:1px 0;position:relative}
 li::before{content:"";position:absolute;left:-0.95rem;top:.62em;width:5px;height:5px;border-radius:50%;
   background:var(--muted);opacity:.45}
@@ -114,6 +117,12 @@ strong{font-weight:650}
 .query-results{padding:.3rem .7rem}
 .query-empty{padding:.5rem .7rem;color:var(--muted);font-size:.9em}
 .embed{border-left:3px solid var(--line);padding:.1rem 0 .1rem .8rem;margin:.35rem 0}
+/* A block embed is already hosted by one outline li. Remove the embedded ul's
+   second bullet/connector and the generic embed border, leaving one root marker. */
+.block-embed.single-root{border-left:0;padding-left:0}
+.block-embed.single-root>ul.embed-outline{padding-left:0;margin:0}
+.block-embed.single-root>ul.embed-outline::before,
+.block-embed.single-root>ul.embed-outline>li::before{content:none}
 .embed-title{display:inline-block;font-size:.78rem;color:var(--muted);margin-bottom:.1rem}
 .embed-missing{color:var(--muted);font-style:italic;font-size:.9em}
 .video-embed{position:relative;width:100%;max-width:560px;aspect-ratio:16/9;margin:.4rem 0}

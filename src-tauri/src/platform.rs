@@ -385,8 +385,15 @@ fn sanitized_opener_env(
         "DISPLAY",
         "WAYLAND_DISPLAY",
         "XDG_RUNTIME_DIR",
+        "XDG_SESSION_TYPE",
         "XDG_CURRENT_DESKTOP",
         "DESKTOP_SESSION",
+        // xdg-open uses these to select kde-open{version}. Dropping them makes
+        // Plasma fall back to the obsolete kfmclient path (or do nothing), so
+        // opener isolation must retain desktop identity while still removing
+        // loader/plugin paths from the AppImage runtime.
+        "KDE_FULL_SESSION",
+        "KDE_SESSION_VERSION",
         "DBUS_SESSION_BUS_ADDRESS",
         "XAUTHORITY",
         "XDG_DATA_HOME",
@@ -433,6 +440,9 @@ mod opener_tests {
             ("XDG_DATA_DIRS", "/tmp/.mount_tine/share:/usr/share"),
             ("HOME", "/home/test"),
             ("DISPLAY", ":0"),
+            ("XDG_SESSION_TYPE", "wayland"),
+            ("KDE_FULL_SESSION", "true"),
+            ("KDE_SESSION_VERSION", "6"),
             ("LC_ALL", "C.UTF-8"),
             ("LD_LIBRARY_PATH", "/tmp/.mount_tine/lib"),
             ("GST_PLUGIN_PATH", "/tmp/.mount_tine/gstreamer"),
@@ -459,6 +469,9 @@ mod opener_tests {
         );
         assert_eq!(clean.get("HOME").map(String::as_str), Some("/home/test"));
         assert_eq!(clean.get("DISPLAY").map(String::as_str), Some(":0"));
+        assert_eq!(clean.get("XDG_SESSION_TYPE").map(String::as_str), Some("wayland"));
+        assert_eq!(clean.get("KDE_FULL_SESSION").map(String::as_str), Some("true"));
+        assert_eq!(clean.get("KDE_SESSION_VERSION").map(String::as_str), Some("6"));
         assert_eq!(clean.get("LC_ALL").map(String::as_str), Some("C.UTF-8"));
         assert!(!clean.contains_key("LD_LIBRARY_PATH"));
         assert!(!clean.contains_key("GST_PLUGIN_PATH"));

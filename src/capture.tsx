@@ -179,6 +179,45 @@ function Capture() {
     setTimeout(() => { refit(); scheduleFit(); }, 80);
     setTimeout(scheduleFit, 220);
   };
+  const activateNativeWindow = async () => {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("capture_frontend_ready");
+    } catch {
+      // not in Tauri, hidden again, or shutting down
+    }
+  };
+  let activationGeneration = 0;
+  const activateWhenEditorReady = () => {
+    const generation = ++activationGeneration;
+    const tryActivate = (attempt: number) => {
+      if (generation !== activationGeneration) return;
+      const editor = document.querySelector<HTMLTextAreaElement>(".capture-shell textarea");
+      if (editor) {
+        refit();
+        void activateNativeWindow();
+        return;
+      }
+      // The editor deliberately ends its editing session when the always-on-top
+      // capture window is hidden. Re-enter edit mode on show; otherwise the
+      // native window can be focused while the block is still rendered as
+      // read-only text, and typing has no destination until the user clicks it.
+      if (attempt === 0) {
+        const root = roots()[0];
+        const block = root ? doc.byId[root] : undefined;
+        if (root) startEditing(root, block?.raw.length ?? 0, null);
+      }
+      // The capture shell mounts before its Block editor on a cold WebView.
+      // Do not ask the WM for focus until real keyboard input has somewhere to
+      // land. A short bounded retry also covers the first parser initialization.
+      if (attempt < 300) setTimeout(() => tryActivate(attempt + 1), 16);
+    };
+    tryActivate(0);
+  };
+  const resettleAndActivate = () => {
+    resettle();
+    activateWhenEditorReady();
+  };
   let fitRaf: number | undefined;
   const scheduleFit = () => {
     if (fitRaf !== undefined) return;
@@ -421,19 +460,21 @@ function Capture() {
           loadPref();
           void requestTheme();
           void requestShortcuts();
-          resettle();
+          resettleAndActivate();
         });
+        const unFocusEditor = await listen("capture-focus-editor", refit);
         // Cold `tine --capture` can show + emit before this asynchronously
         // imported listener exists. Reconcile the current window state once the
         // listener is installed, so that missed first event cannot leave the
         // visible capture editor unfocused (GH #117). A later show still follows
         // the normal event path above.
         const { getCurrentWindow } = await import("@tauri-apps/api/window");
-        await resettleIfVisible(getCurrentWindow(), resettle);
+        await resettleIfVisible(getCurrentWindow(), resettleAndActivate);
         onCleanup(() => {
           unTheme();
           unKeys();
           unShown();
+          unFocusEditor();
         });
       } catch {
         // not in Tauri

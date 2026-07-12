@@ -17,13 +17,15 @@ const NATIVE_PORT = Number(process.env.E2E_NATIVE_PORT || 4471);
 const TMP = "/tmp/tine-media-e2e";
 const GRAPH = `${TMP}/graph`;
 const MKV = "GkXfo6NChoEBQveBAULygQRC84EIQoKIbWF0cm9za2FCh4EEQoWBAhhTgGcBAAAAAAACjRFNm3TAv4T4CIkiTbuLU6uEFUmpZlOsgaFNu4tTq4QWVK5rU6yB8U27jFOrhBJUw2dTrIIBPU27jFOrhBxTu2tTrIICcewBAAAAAAAAUwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFUmpZsu/hNaSwIIq17GDD0JATYCNTGF2ZjU5LjI3LjEwMFdBjUxhdmY1OS4yNy4xMDBzpJB2SdMq9kV9sBe0q/Q7f23RRImIQI9AAAAAAAAWVK5rx7+EAvZyEq4BAAAAAAAAONeBAXPFiJsCaRugDtDZnIEAIrWcg3VuZIiBAIaFVl9WUDiDgQEj44OEC+vCAOCJsIEguoEYmoECElTDZ0CDv4Q1GwJTc3OgY8CAZ8iaRaOHRU5DT0RFUkSHjUxhdmY1OS4yNy4xMDBzc9djwItjxYibAmkboA7Q2WfIoUWjh0VOQ09ERVJEh5RMYXZjNTkuMzcuMTAwIGxpYnZweGfIokWjiERVUkFUSU9ORIeUMDA6MDA6MDEuMDAwMDAwMDAwAAAfQ7Z1QKW/hJsYIPDngQCjvoEAAIAQAwCdASogABgAAEcIhYWIhYSIAgICdaoD+AP6AghZDL0A/v1u8//jmTcwxP+Obf/xYTwOKMj/8VEAo5WBAMgAsQEAARAQABgAGFgv9AAIcACjlYEBkACxAQABEBAAGAAYWC/0AAhwAKOVgQJYALEBAAEQEAAYABhYL/QACHAAo5WBAyAAsQEAARAQABgAGFgv9AAIcAAcU7trl7+EKRq2a7uPs4EAt4r3gQHxggHG8IEJ";
+const MP3 = "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VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVX/+xDE64DC0B1tx70iYE6DrPj3sAxVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVf/7EMTqgcLYHW3HvSJgRYOs+PewDFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV//sQxOsBwtAdb8W9gGBLA+z6mAAEVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVX/+xDE/4AHCHVz+YmAiLME6feSEAVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVQ==";
 
 fs.rmSync(TMP, { recursive: true, force: true });
 for (const dir of ["pages", "journals", "logseq", "assets"]) fs.mkdirSync(`${GRAPH}/${dir}`, { recursive: true });
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(`${TMP}/xdg/${dir}`, { recursive: true });
 fs.writeFileSync(`${GRAPH}/logseq/config.edn`, "{}\n");
 fs.writeFileSync(`${GRAPH}/assets/supported.mkv`, Buffer.from(MKV, "base64"));
-fs.writeFileSync(`${GRAPH}/pages/Media.md`, "- ![](../assets/supported.mkv)\n");
+fs.writeFileSync(`${GRAPH}/assets/supported.mp3`, Buffer.from(MP3, "base64"));
+fs.writeFileSync(`${GRAPH}/pages/Media.md`, "- ![](../assets/supported.mkv)\n- ![](../assets/supported.mp3)\n");
 const now = new Date();
 const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
 fs.writeFileSync(`${GRAPH}/journals/${journal}.md`, "- open [[Media]]\n");
@@ -75,6 +77,28 @@ try {
     throw new Error(`MKV playback did not advance: ${JSON.stringify(state)}`);
   }
   console.log(`PASS: supported MKV loaded and played through ${state.src}`);
+
+  const audio = await browser.$("audio.media-embed");
+  await audio.waitForExist({ timeout: 20_000 });
+  await browser.waitUntil(async () => (await browser.execute(() => {
+    const media = document.querySelector("audio.media-embed");
+    return media ? { readyState: media.readyState, error: media.error?.code ?? 0, src: media.currentSrc || media.src } : null;
+  }))?.readyState >= 1, { timeout: 20_000, timeoutMsg: "supported MP3 never loaded metadata" });
+  const audioState = await browser.execute(async () => {
+    const media = document.querySelector("audio.media-embed");
+    const before = media.currentTime;
+    await media.play();
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    media.pause();
+    return { before, after: media.currentTime, duration: media.duration, error: media.error?.code ?? 0, src: media.currentSrc || media.src };
+  });
+  if (audioState.error || !(audioState.src.includes("tine-media") || audioState.src.startsWith("blob:tauri")) || !(audioState.duration > 0) || !(audioState.after > audioState.before)) {
+    throw new Error(`MP3 playback did not advance: ${JSON.stringify(audioState)}`);
+  }
+  if (!(await browser.$(".media-audio-widen").isExisting()) || !(await browser.$("audio.media-embed + .media-open-external, .media-audio-wrap .media-open-external").isExisting())) {
+    throw new Error("audio playback actions are missing");
+  }
+  console.log(`PASS: supported MP3 loaded and played through ${audioState.src}`);
 } finally {
   try { await browser?.deleteSession(); } catch {}
   try { process.kill(-td.pid, "SIGKILL"); } catch {}
