@@ -1,4 +1,6 @@
-export const PLUGIN_API_VERSION = "0.1" as const;
+import { parsePluginSettingDefinitions, type PluginSettingDefinition } from "./settings";
+
+export const PLUGIN_API_VERSION = "0.2" as const;
 
 export const PLUGIN_PLATFORMS = ["desktop", "android", "ios"] as const;
 export type PluginPlatform = (typeof PLUGIN_PLATFORMS)[number];
@@ -34,6 +36,16 @@ export interface PluginBlockDecorationContribution {
   platforms?: PluginPlatform[];
 }
 
+export interface PluginPortProvenance {
+  ecosystem: "logseq" | "obsidian" | "other";
+  name: string;
+  source: string;
+  revision: string;
+  license: string;
+  authors: string[];
+  relationship: "behavioral-port" | "source-derived";
+}
+
 export interface PluginManifest {
   schemaVersion: 1;
   id: string;
@@ -47,6 +59,8 @@ export interface PluginManifest {
   entry: string;
   platforms: PluginPlatform[];
   capabilities: PluginCapability[];
+  settings?: PluginSettingDefinition[];
+  portedFrom?: PluginPortProvenance;
   contributions?: {
     commands?: PluginCommandContribution[];
     slashCommands?: PluginSlashCommandContribution[];
@@ -194,6 +208,7 @@ function assertContributionCapabilities(manifest: PluginManifest) {
     [!!manifest.contributions?.commands?.length, "commands.register"],
     [!!manifest.contributions?.slashCommands?.length, "slash-commands.register"],
     [!!manifest.contributions?.blockDecorations?.length, "block-decorations.register"],
+    [!!manifest.settings?.length, "settings.read"],
   ];
   for (const [used, capability] of required) {
     if (used && !manifest.capabilities.includes(capability)) {
@@ -202,12 +217,36 @@ function assertContributionCapabilities(manifest: PluginManifest) {
   }
 }
 
+function parsePortedFrom(value: unknown): PluginPortProvenance | undefined {
+  if (value === undefined) return undefined;
+  const obj = record(value, "portedFrom");
+  knownKeys(obj, "portedFrom", ["ecosystem", "name", "source", "revision", "license", "authors", "relationship"]);
+  if (obj.ecosystem !== "logseq" && obj.ecosystem !== "obsidian" && obj.ecosystem !== "other") {
+    throw new PluginManifestError("portedFrom.ecosystem is unsupported");
+  }
+  if (obj.relationship !== "behavioral-port" && obj.relationship !== "source-derived") {
+    throw new PluginManifestError("portedFrom.relationship is unsupported");
+  }
+  if (!Array.isArray(obj.authors) || obj.authors.length === 0 || obj.authors.length > 32) {
+    throw new PluginManifestError("portedFrom.authors must contain 1 to 32 entries");
+  }
+  return {
+    ecosystem: obj.ecosystem,
+    name: stringField(obj.name, "portedFrom.name", 120),
+    source: stringField(obj.source, "portedFrom.source", 500),
+    revision: stringField(obj.revision, "portedFrom.revision", 160),
+    license: stringField(obj.license, "portedFrom.license", 80),
+    authors: obj.authors.map((author, index) => stringField(author, `portedFrom.authors[${index}]`, 160)),
+    relationship: obj.relationship,
+  };
+}
+
 /** Strictly parse the untrusted manifest before reading or compiling its entry. */
 export function parsePluginManifest(value: unknown): PluginManifest {
   const obj = record(value, "manifest");
   knownKeys(obj, "manifest", [
     "schemaVersion", "id", "name", "version", "apiVersion", "description", "author", "license",
-    "source", "entry", "platforms", "capabilities", "contributions", "aiDevelopment",
+    "source", "entry", "platforms", "capabilities", "contributions", "settings", "portedFrom", "aiDevelopment",
   ]);
   if (obj.schemaVersion !== 1) throw new PluginManifestError("schemaVersion must be 1");
   if (obj.apiVersion !== PLUGIN_API_VERSION) {
@@ -240,6 +279,8 @@ export function parsePluginManifest(value: unknown): PluginManifest {
     entry,
     platforms: platforms(obj.platforms, "platforms", ["desktop"]),
     capabilities: stringArray(obj.capabilities, "capabilities", PLUGIN_CAPABILITIES),
+    ...(obj.settings === undefined ? {} : { settings: parsePluginSettingDefinitions(obj.settings) }),
+    ...(obj.portedFrom === undefined ? {} : { portedFrom: parsePortedFrom(obj.portedFrom) }),
     ...(contributionsObj
       ? {
           contributions: {

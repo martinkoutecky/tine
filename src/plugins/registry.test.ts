@@ -3,7 +3,7 @@ import { parseRegistryIndex, parseSafetyReport } from "./registry";
 
 const version = {
   version: "0.1.0",
-  apiVersion: "0.1",
+  apiVersion: "0.2",
   platforms: ["desktop"],
   capabilities: [],
   sha256: "a".repeat(64),

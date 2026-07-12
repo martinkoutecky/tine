@@ -3,18 +3,51 @@
   "id": "page.tine.bullet-threading",
   "name": "Bullet threading",
   "version": "0.1.0",
-  "apiVersion": "0.1",
+  "apiVersion": "0.2",
   "description": "Draw subtle elbow connectors from parent bullets to their children.",
   "author": "Martin Koutecký",
   "license": "MIT",
   "source": "https://github.com/martinkoutecky/tine-plugin-bullet-threading",
   "entry": "target/wasm32-unknown-unknown/release/tine_plugin_bullet_threading.wasm",
   "platforms": ["desktop", "android", "ios"],
-  "capabilities": ["block-decorations.register"],
+  "capabilities": ["block-decorations.register", "settings.read"],
   "contributions": {
     "blockDecorations": [
       { "id": "thread-lines", "kind": "thread-lines" }
     ]
+  },
+  "settings": [
+    {
+      "key": "display",
+      "type": "enum",
+      "label": "Thread display",
+      "description": "Draw every nested thread or only the ancestry of the focused block.",
+      "default": "all",
+      "choices": [
+        { "value": "all", "label": "All nested outlines" },
+        { "value": "active", "label": "Active ancestry only" }
+      ]
+    },
+    {
+      "key": "intensity",
+      "type": "enum",
+      "label": "Intensity",
+      "description": "Choose a restrained connector strength.",
+      "default": "subtle",
+      "choices": [
+        { "value": "subtle", "label": "Subtle" },
+        { "value": "standard", "label": "Standard" }
+      ]
+    }
+  ],
+  "portedFrom": {
+    "ecosystem": "logseq",
+    "name": "Logseq Plugin Bullet Threading",
+    "source": "https://github.com/pengx17/logseq-plugin-bullet-threading",
+    "revision": "391c1059e18b2bec01e84019447148318534bc2a",
+    "license": "MIT",
+    "authors": ["Peng Xiong"],
+    "relationship": "behavioral-port"
   },
   "aiDevelopment": "primary"
 }

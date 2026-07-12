@@ -13,7 +13,7 @@ revocation.
 - deterministic `tine-plugin-check/v1` report;
 - successful clean build in the registry's hostile-build container;
 - automated source review report with evidence and an uncertainty disposition;
-- no telemetry or analytics sent to Tine or Martin; API 0.1 has no network anyway.
+- no telemetry or analytics sent to Tine or Martin; API 0.2 has no network anyway.
 
 The category “community” is about distribution and core commitment, not who typed the
 code. Martin may publish a community plugin to answer a feature request quickly. That

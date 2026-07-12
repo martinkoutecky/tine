@@ -96,7 +96,7 @@ import { flushAll } from "../store";
 import { backend, isTauri, type BackupInfo } from "../backend";
 import type { AssetInfo, TrashStats, JournalFile, SyncConflict, SyncConflictDiff, DiffRow, MergeDecision } from "../types";
 import { formatJournal } from "../journal";
-import { installedPlugins, pluginManager } from "../plugins/manager";
+import { installedPlugins, pluginManager, type ManagedPlugin } from "../plugins/manager";
 import {
   communityPlugins,
   installCommunityPlugin,
@@ -397,9 +397,129 @@ function Toggle(props: { on: boolean; onClick: () => void; disabled?: boolean })
   );
 }
 
+function PluginSettingsForm(props: {
+  plugin: ManagedPlugin;
+  busy: () => string | null;
+  setBusy: (value: string | null) => void;
+}): JSX.Element {
+  const operationKey = () => `${props.plugin.manifest.id}@${props.plugin.manifest.version}:settings`;
+  const update = async (key: string, value: string | number | boolean) => {
+    props.setBusy(operationKey());
+    try {
+      await pluginManager.setSetting(props.plugin.manifest.id, props.plugin.manifest.version, key, value);
+    } catch (error) {
+      pushToast(`Plugin setting could not be saved: ${String(error)}`, "error");
+    } finally {
+      props.setBusy(null);
+    }
+  };
+  const reset = async (key?: string) => {
+    props.setBusy(operationKey());
+    try {
+      if (key) await pluginManager.resetSetting(props.plugin.manifest.id, props.plugin.manifest.version, key);
+      else await pluginManager.resetSettings(props.plugin.manifest.id, props.plugin.manifest.version);
+    } catch (error) {
+      pushToast(`Plugin settings could not be reset: ${String(error)}`, "error");
+    } finally {
+      props.setBusy(null);
+    }
+  };
+
+  return (
+    <Show
+      when={(props.plugin.manifest.settings?.length ?? 0) > 0}
+      fallback={<p class="settings-hint">This plugin has no configurable settings.</p>}
+    >
+      <div class="plugin-settings-list">
+        <For each={props.plugin.manifest.settings ?? []}>
+          {(definition) => {
+            const value = () => props.plugin.settings[definition.key] ?? definition.default;
+            const changed = () => value() !== definition.default;
+            return (
+              <div class="settings-field" data-setting-label={definition.label}>
+                <div class="settings-field-row">
+                  <div>
+                    <div class="settings-label">{definition.label}</div>
+                    <div class="settings-hint settings-field-hint">{definition.description}</div>
+                  </div>
+                  <div class="settings-field-control plugin-setting-control">
+                    <Show when={definition.type === "boolean"}>
+                      <Toggle
+                        on={value() === true}
+                        disabled={props.busy() !== null}
+                        onClick={() => void update(definition.key, value() !== true)}
+                      />
+                    </Show>
+                    <Show when={definition.type === "enum" && definition.type === "enum"}>
+                      <select
+                        class="settings-input"
+                        aria-label={definition.label}
+                        disabled={props.busy() !== null}
+                        value={String(value())}
+                        onChange={(event) => void update(definition.key, event.currentTarget.value)}
+                      >
+                        <For each={definition.type === "enum" ? definition.choices : []}>
+                          {(choice) => <option value={choice.value}>{choice.label}</option>}
+                        </For>
+                      </select>
+                    </Show>
+                    <Show when={definition.type === "number" && definition.type === "number"}>
+                      <input
+                        class="settings-input plugin-setting-number"
+                        type="number"
+                        aria-label={definition.label}
+                        disabled={props.busy() !== null}
+                        value={Number(value())}
+                        min={definition.type === "number" ? definition.min : undefined}
+                        max={definition.type === "number" ? definition.max : undefined}
+                        step={definition.type === "number" ? definition.step ?? "any" : undefined}
+                        onChange={(event) => {
+                          if (Number.isFinite(event.currentTarget.valueAsNumber)) {
+                            void update(definition.key, event.currentTarget.valueAsNumber);
+                          }
+                        }}
+                      />
+                    </Show>
+                    <Show when={definition.type === "string" && definition.type === "string"}>
+                      <input
+                        class="settings-input"
+                        type="text"
+                        aria-label={definition.label}
+                        disabled={props.busy() !== null}
+                        value={String(value())}
+                        maxLength={definition.type === "string" ? definition.maxLength : undefined}
+                        onChange={(event) => void update(definition.key, event.currentTarget.value)}
+                      />
+                    </Show>
+                    <Show when={changed()}>
+                      <button class="settings-link" disabled={props.busy() !== null} onClick={() => void reset(definition.key)}>
+                        Reset
+                      </button>
+                    </Show>
+                  </div>
+                </div>
+              </div>
+            );
+          }}
+        </For>
+      </div>
+      <button class="settings-btn" disabled={props.busy() !== null} onClick={() => void reset()}>
+        Reset all settings
+      </button>
+      <p class="settings-hint">Stored on this device only. Plugin settings are never written into your graph.</p>
+    </Show>
+  );
+}
+
 function PluginsTab(): JSX.Element {
   let packageInput: HTMLInputElement | undefined;
   const [busy, setBusy] = createSignal<string | null>(null);
+  const [view, setView] = createSignal<"browse" | "installed">("browse");
+  const [selectedPluginKey, setSelectedPluginKey] = createSignal<string | null>(null);
+  const selectedPlugin = () => {
+    const key = selectedPluginKey();
+    return key ? installedPlugins().find((plugin) => `${plugin.manifest.id}@${plugin.manifest.version}` === key) : undefined;
+  };
 
   const installFiles = async (files: FileList | null) => {
     if (!files?.length) return;
@@ -415,6 +535,8 @@ function PluginsTab(): JSX.Element {
       const manifest: unknown = JSON.parse(await manifestFile.text());
       const plugin = await pluginManager.install(manifest, new Uint8Array(await wasmFile.arrayBuffer()));
       pushToast(`${plugin.manifest.name} ${plugin.manifest.version} installed disabled. Review it, then enable it here.`, "info");
+      setView("installed");
+      setSelectedPluginKey(`${plugin.manifest.id}@${plugin.manifest.version}`);
     } catch (error) {
       pushToast(`Plugin installation failed: ${String(error)}`, "error");
     } finally {
@@ -446,6 +568,7 @@ function PluginsTab(): JSX.Element {
     try {
       await pluginManager.uninstall(id, version);
       pushToast(`${name} ${version} was uninstalled.`, "info");
+      if (selectedPluginKey() === `${id}@${version}`) setSelectedPluginKey(null);
     } catch (error) {
       pushToast(`Plugin could not be uninstalled: ${String(error)}`, "error");
     } finally {
@@ -463,6 +586,8 @@ function PluginsTab(): JSX.Element {
     try {
       const installed = await installCommunityPlugin(plugin, version);
       pushToast(`${installed.manifest.name} installed disabled. Enable it after reviewing its capabilities.`, "info");
+      setView("installed");
+      setSelectedPluginKey(`${installed.manifest.id}@${installed.manifest.version}`);
     } catch (error) {
       pushToast(`Community plugin installation failed: ${String(error)}`, "error");
     } finally {
@@ -472,6 +597,60 @@ function PluginsTab(): JSX.Element {
 
   return (
     <>
+      <Show when={selectedPlugin()} keyed>
+        {(plugin) => (
+          <div class="plugin-detail-page">
+            <button class="settings-link plugin-detail-back" onClick={() => setSelectedPluginKey(null)}>← Installed plugins</button>
+            <div class="plugin-detail-heading">
+              <div>
+                <h2>{plugin.manifest.name}</h2>
+                <div class="settings-hint"><code>{plugin.manifest.id}</code> · v{plugin.manifest.version}</div>
+              </div>
+              <Toggle
+                on={plugin.enabled && plugin.running}
+                disabled={busy() !== null}
+                onClick={() => void togglePlugin(plugin.manifest.id, plugin.manifest.version, plugin.enabled)}
+              />
+            </div>
+            <p>{plugin.manifest.description}</p>
+            <div class="settings-hint">
+              {plugin.manifest.author} · {plugin.manifest.license} · {plugin.manifest.platforms.join(", ")}
+              <br />Capabilities: {plugin.manifest.capabilities.length ? plugin.manifest.capabilities.join(", ") : "none"}
+            </div>
+            <Show when={plugin.manifest.portedFrom} keyed>
+              {(origin) => (
+                <div class="plugin-origin-card">
+                  <strong>{origin.relationship === "behavioral-port" ? "Behavioral port" : "Source-derived port"}</strong>
+                  <br /><span>From {origin.name} for {origin.ecosystem}; original authors: {origin.authors.join(", ")}.</span>
+                  <br /><button class="settings-link" onClick={() => void backend().openExternal(origin.source)}>Original source at {origin.revision.slice(0, 12)}</button>
+                </div>
+              )}
+            </Show>
+            <div class="settings-section">Settings</div>
+            <PluginSettingsForm plugin={plugin} busy={busy} setBusy={setBusy} />
+            <div class="settings-section">Package</div>
+            <div class="plugin-detail-actions">
+              <button class="settings-btn" onClick={() => void backend().openExternal(plugin.manifest.source)}>Details &amp; screenshots</button>
+              <button
+                class="settings-btn settings-btn-danger"
+                disabled={busy() !== null}
+                onClick={() => void uninstallPlugin(plugin)}
+              >
+                {busy() === `${plugin.manifest.id}@${plugin.manifest.version}:uninstall` ? "Uninstalling…" : "Uninstall…"}
+              </button>
+            </div>
+            <Show when={plugin.error}>
+              <div class="settings-hint" style={{ color: "var(--danger, #c44)" }}>{plugin.error}</div>
+            </Show>
+          </div>
+        )}
+      </Show>
+      <Show when={!selectedPlugin()}>
+        <div class="plugin-settings-nav" role="tablist" aria-label="Plugin settings sections">
+          <button role="tab" aria-selected={view() === "browse"} classList={{ active: view() === "browse" }} onClick={() => setView("browse")}>Browse</button>
+          <button role="tab" aria-selected={view() === "installed"} classList={{ active: view() === "installed" }} onClick={() => setView("installed")}>Installed ({installedPlugins().length})</button>
+        </div>
+      <Show when={view() === "browse"}>
       <div class="settings-section">Experimental plugin platform</div>
       <p class="settings-hint">
         Tine plugins are capability-limited WebAssembly guests, not Logseq or Obsidian plugins. They cannot directly
@@ -643,6 +822,10 @@ function PluginsTab(): JSX.Element {
         </For>
       </Show>
 
+      </Show>
+
+      <Show when={view() === "installed"}>
+
       <div class="settings-section">Installed</div>
       <Show when={installedPlugins().length > 0} fallback={<p class="settings-hint">No plugins installed.</p>}>
         <For each={installedPlugins()}>
@@ -653,6 +836,12 @@ function PluginsTab(): JSX.Element {
                   {plugin.manifest.name} <span class="settings-hint">v{plugin.manifest.version}</span>
                 </span>
                 <div class="settings-field-control">
+                  <button
+                    class="settings-btn"
+                    onClick={() => setSelectedPluginKey(`${plugin.manifest.id}@${plugin.manifest.version}`)}
+                  >
+                    {(plugin.manifest.settings?.length ?? 0) > 0 ? "Settings…" : "Details…"}
+                  </button>
                   <Toggle
                     on={plugin.enabled && plugin.running}
                     disabled={busy() !== null}
@@ -682,6 +871,8 @@ function PluginsTab(): JSX.Element {
             </div>
           )}
         </For>
+      </Show>
+      </Show>
       </Show>
     </>
   );

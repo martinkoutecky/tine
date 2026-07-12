@@ -1,6 +1,6 @@
 import type { PluginCapability, PluginPlatform } from "./manifest";
 
-export const PLUGIN_PROTOCOL_VERSION = 1 as const;
+export const PLUGIN_PROTOCOL_VERSION = 2 as const;
 
 export interface PluginBlockSnapshot {
   id: string;
@@ -16,6 +16,12 @@ export type PluginEvent =
       platform: PluginPlatform;
       capabilities: PluginCapability[];
       settings: Record<string, string | number | boolean | null>;
+    }
+  | {
+      protocolVersion: typeof PLUGIN_PROTOCOL_VERSION;
+      kind: "settings-changed";
+      settings: Record<string, string | number | boolean | null>;
+      changedKeys: string[];
     }
   | {
       protocolVersion: typeof PLUGIN_PROTOCOL_VERSION;

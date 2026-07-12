@@ -8,7 +8,7 @@ events, and effects.
 
 > Study this plugin and describe its user-visible behavior separately from its
 > Logseq/Obsidian implementation. Port only the parts expressible through Tine plugin
-> API 0.1. Do not emulate the legacy API, add ambient authority, write files, call the
+> API 0.2. Do not emulate the legacy API, add ambient authority, write files, call the
 > network, inject HTML/CSS, or bypass Tine effects. Declare the minimum capabilities,
 > explicit platforms, public source/license, and AI-development provenance. Run
 > `npm run plugin:check -- <dir> --json` and include the report.
@@ -24,7 +24,7 @@ events, and effects.
 | plugin settings | plugin-local scalar settings |
 | direct Datascript query | not available; request a narrow host query event if broadly useful |
 | `provideUI`, React component, DOM/CSS injection | not available; propose a constrained host-rendered contribution |
-| filesystem, shell, Git, network | privileged and unavailable in ordinary API 0.1 |
+| filesystem, shell, Git, network | privileged and unavailable in ordinary API 0.2 |
 
 If the behavior does not fit, stop and document the missing semantic operation. Do
 not smuggle it through encoded notices, giant settings values, raw markup, or a

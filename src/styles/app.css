@@ -1614,6 +1614,88 @@ textarea {
   color: var(--danger, #b33);
   background: rgba(190, 45, 45, 0.14);
 }
+.plugin-settings-nav {
+  display: inline-flex;
+  gap: 3px;
+  margin: 2px 0 12px;
+  padding: 3px;
+  border-radius: 8px;
+  background: var(--bg-secondary);
+}
+.plugin-settings-nav button {
+  border: 0;
+  border-radius: 6px;
+  padding: 6px 12px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.plugin-settings-nav button.active {
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+.plugin-detail-page {
+  max-width: 760px;
+}
+.plugin-detail-back {
+  margin-bottom: 12px;
+}
+.plugin-detail-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+.plugin-detail-heading h2 {
+  margin: 0 0 3px;
+  color: var(--text-primary);
+  font-size: 20px;
+}
+.plugin-origin-card {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.plugin-settings-list {
+  margin-bottom: 10px;
+}
+.plugin-setting-control {
+  min-width: 180px;
+}
+.plugin-setting-number {
+  width: 88px;
+}
+.plugin-detail-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+@media (max-width: 640px) {
+  .plugin-settings-nav {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    width: 100%;
+  }
+  .plugin-settings-nav button {
+    width: 100%;
+  }
+  .plugin-detail-heading,
+  .plugin-settings-list .settings-field-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .plugin-setting-control {
+    min-width: 0;
+    justify-content: flex-start;
+  }
+}
 .settings-advanced { margin-top: 10px; }
 .settings-advanced-toggle {
   width: 100%;

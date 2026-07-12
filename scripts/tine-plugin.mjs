@@ -31,13 +31,78 @@ function add(report, level, code, message) {
   report[level].push({ code, message });
 }
 
+function checkSettings(settings, capabilities, report) {
+  if (settings === undefined) return;
+  if (!Array.isArray(settings) || settings.length > 64) {
+    add(report, "errors", "manifest.settings", "settings must be an array of at most 64 definitions");
+    return;
+  }
+  if (!capabilities.includes("settings.read")) {
+    add(report, "errors", "manifest.settings-capability", "settings require settings.read");
+  }
+  const seen = new Set();
+  for (const [index, setting] of settings.entries()) {
+    const where = `settings[${index}]`;
+    if (!setting || typeof setting !== "object" || Array.isArray(setting)) {
+      add(report, "errors", "manifest.settings", `${where} must be an object`);
+      continue;
+    }
+    if (typeof setting.key !== "string" || !/^[a-z][a-z0-9._-]{0,79}$/.test(setting.key) || seen.has(setting.key)) {
+      add(report, "errors", "manifest.settings-key", `${where}.key is invalid or duplicated`);
+    }
+    seen.add(setting.key);
+    if (typeof setting.label !== "string" || !setting.label || setting.label.length > 80 ||
+        typeof setting.description !== "string" || !setting.description || setting.description.length > 300 || /[\u0000-\u001f]/.test(setting.description)) {
+      add(report, "errors", "manifest.settings-text", `${where} needs bounded plain-text label and description`);
+    }
+    if (setting.type === "boolean") {
+      if (typeof setting.default !== "boolean") add(report, "errors", "manifest.settings-default", `${where}.default must be boolean`);
+    } else if (setting.type === "enum") {
+      const choices = setting.choices;
+      if (!Array.isArray(choices) || choices.length < 2 || choices.length > 32 ||
+          !choices.some((choice) => choice?.value === setting.default)) {
+        add(report, "errors", "manifest.settings-choices", `${where} needs 2 to 32 choices including its default`);
+      }
+    } else if (setting.type === "number") {
+      if (![setting.default, setting.min, setting.max].every(Number.isFinite) || setting.min > setting.max ||
+          setting.default < setting.min || setting.default > setting.max ||
+          (setting.step !== undefined && (!Number.isFinite(setting.step) || setting.step <= 0))) {
+        add(report, "errors", "manifest.settings-bounds", `${where} has invalid numeric bounds`);
+      }
+    } else if (setting.type === "string") {
+      if (!Number.isInteger(setting.maxLength) || setting.maxLength < 1 || setting.maxLength > 4096 ||
+          typeof setting.default !== "string" || setting.default.length > setting.maxLength) {
+        add(report, "errors", "manifest.settings-length", `${where} has an invalid string bound`);
+      }
+    } else {
+      add(report, "errors", "manifest.settings-type", `${where}.type is unsupported`);
+    }
+  }
+}
+
+function checkPortedFrom(portedFrom, report) {
+  if (portedFrom === undefined) return;
+  if (!portedFrom || typeof portedFrom !== "object" || Array.isArray(portedFrom) ||
+      !["logseq", "obsidian", "other"].includes(portedFrom.ecosystem) ||
+      !["behavioral-port", "source-derived"].includes(portedFrom.relationship) ||
+      !Array.isArray(portedFrom.authors) || portedFrom.authors.length === 0) {
+    add(report, "errors", "manifest.provenance", "portedFrom is incomplete or invalid");
+    return;
+  }
+  for (const field of ["name", "source", "revision", "license"]) {
+    if (typeof portedFrom[field] !== "string" || !portedFrom[field]) {
+      add(report, "errors", "manifest.provenance", `portedFrom.${field} is required`);
+    }
+  }
+}
+
 function checkManifest(manifest, report) {
   if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
     add(report, "errors", "manifest.type", "manifest.json must contain an object");
     return;
   }
   if (manifest.schemaVersion !== 1) add(report, "errors", "manifest.schema", "schemaVersion must be 1");
-  if (manifest.apiVersion !== "0.1") add(report, "errors", "manifest.api", "apiVersion must be 0.1");
+  if (manifest.apiVersion !== "0.2") add(report, "errors", "manifest.api", "apiVersion must be 0.2");
   if (typeof manifest.id !== "string" || !/^[a-z0-9](?:[a-z0-9.-]{1,62}[a-z0-9])$/.test(manifest.id) || !manifest.id.includes(".")) {
     add(report, "errors", "manifest.id", "id must be a lowercase dotted identifier");
   }
@@ -65,6 +130,9 @@ function checkManifest(manifest, report) {
   if (!Array.isArray(manifest.capabilities) || manifest.capabilities.some((item) => !CAPABILITIES.has(item))) {
     add(report, "errors", "manifest.capabilities", "capabilities contains an unsupported authority");
   }
+  const capabilities = Array.isArray(manifest.capabilities) ? manifest.capabilities : [];
+  checkSettings(manifest.settings, capabilities, report);
+  checkPortedFrom(manifest.portedFrom, report);
   if (!manifest.aiDevelopment) {
     add(report, "warnings", "manifest.ai", "declare aiDevelopment as none, assisted, or primary");
   } else if (!["none", "assisted", "primary"].includes(manifest.aiDevelopment)) {

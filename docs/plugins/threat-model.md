@@ -72,4 +72,4 @@ minimum gate and uncertainty quarantines rather than publishes.
 
 Mitigations include conservative capabilities, per-plugin termination, aggregate
 limits, transparent reports, immutable provenance, signed revocation, and keeping
-privileged plugin tiers out of API 0.1.
+privileged plugin tiers out of API 0.2.

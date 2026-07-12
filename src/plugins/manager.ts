@@ -18,6 +18,14 @@ import {
   type PluginEvent,
 } from "./protocol";
 import { PluginRuntime } from "./runtime";
+import {
+  defaultPluginSettings,
+  parsePluginSettingsBlob,
+  settingAccepts,
+  validatePluginSettings,
+  type PluginSettingValue,
+  type PluginSettings,
+} from "./settings";
 
 export interface ManagedPlugin {
   manifest: PluginManifest;
@@ -25,6 +33,7 @@ export interface ManagedPlugin {
   selected: boolean;
   enabled: boolean;
   running: boolean;
+  settings: PluginSettings;
   error?: string;
 }
 
@@ -65,25 +74,6 @@ function bytesBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 
-function parseSettingBlob(text: string): Record<string, string | number | boolean | null> {
-  try {
-    const parsed: unknown = JSON.parse(text);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-    const safe: Record<string, string | number | boolean | null> = {};
-    for (const [key, value] of Object.entries(parsed)) {
-      if (
-        /^[a-zA-Z0-9._-]{1,80}$/.test(key) &&
-        (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean")
-      ) {
-        safe[key] = value;
-      }
-    }
-    return safe;
-  } catch {
-    return {};
-  }
-}
-
 export class PluginManager {
   private readonly active = new Map<string, ActivePlugin>();
   private platform: PluginPlatform = "desktop";
@@ -93,7 +83,11 @@ export class PluginManager {
     this.platform = await platformKind();
     this.revoked = revoked;
     const records = await backend().listInstalledPlugins();
-    const managed = records.map((record) => this.parseRecord(record));
+    const managed = await Promise.all(records.map(async (record) => {
+      const plugin = this.parseRecord(record);
+      if (!plugin.error) plugin.settings = await this.loadSettings(plugin.manifest);
+      return plugin;
+    }));
     setInstalledPlugins(managed);
     for (const plugin of managed) {
       if (plugin.enabled) await this.start(plugin.manifest.id, plugin.manifest.version, false);
@@ -114,6 +108,7 @@ export class PluginManager {
     proof.dispose();
     const record = await backend().installPlugin(JSON.stringify(manifest), wasm);
     const plugin = this.parseRecord(record);
+    plugin.settings = await this.loadSettings(manifest);
     setInstalledPlugins((current) => [
       ...current.filter((item) => versionKey(item.manifest.id, item.manifest.version) !== versionKey(manifest.id, manifest.version)),
       plugin,
@@ -141,9 +136,43 @@ export class PluginManager {
       this.patch(id, version, { enabled: false, running: false, error: undefined });
     }
     await backend().uninstallPlugin(id, version);
-    setInstalledPlugins((current) =>
-      current.filter((item) => versionKey(item.manifest.id, item.manifest.version) !== versionKey(id, version))
+    const remaining = installedPlugins().filter(
+      (item) => versionKey(item.manifest.id, item.manifest.version) !== versionKey(id, version)
     );
+    setInstalledPlugins(remaining);
+    if (!remaining.some((item) => item.manifest.id === id)) {
+      await backend().setAppString(this.settingsStorageKey(id), "{}");
+    }
+  }
+
+  async setSetting(id: string, version: string, key: string, value: PluginSettingValue): Promise<void> {
+    const plugin = installedPlugins().find(
+      (item) => item.manifest.id === id && item.manifest.version === version
+    );
+    if (!plugin) throw new Error("plugin version is not installed");
+    const definition = plugin.manifest.settings?.find((item) => item.key === key);
+    if (!definition || !settingAccepts(definition, value)) throw new Error("plugin setting value is invalid");
+    const settings = { ...plugin.settings, [key]: value };
+    await this.storeSettings(plugin.manifest, settings, [key], true);
+  }
+
+  async resetSetting(id: string, version: string, key: string): Promise<void> {
+    const plugin = installedPlugins().find(
+      (item) => item.manifest.id === id && item.manifest.version === version
+    );
+    if (!plugin) throw new Error("plugin version is not installed");
+    const definition = plugin.manifest.settings?.find((item) => item.key === key);
+    if (!definition) throw new Error("plugin setting does not exist");
+    await this.storeSettings(plugin.manifest, { ...plugin.settings, [key]: definition.default }, [key], true);
+  }
+
+  async resetSettings(id: string, version: string): Promise<void> {
+    const plugin = installedPlugins().find(
+      (item) => item.manifest.id === id && item.manifest.version === version
+    );
+    if (!plugin) throw new Error("plugin version is not installed");
+    const settings = defaultPluginSettings(plugin.manifest.settings);
+    await this.storeSettings(plugin.manifest, settings, (plugin.manifest.settings ?? []).map((item) => item.key), true);
   }
 
   commands(): ManagedCommand[] {
@@ -255,6 +284,7 @@ export class PluginManager {
         selected: record.selected,
         enabled: record.enabled && !incompatible && !revoked,
         running: false,
+        settings: defaultPluginSettings(manifest.settings),
         ...(incompatible ? { error: `Not available on ${this.platform}.` } : {}),
         ...(revoked ? { error: "This version was revoked by the registry." } : {}),
       };
@@ -265,7 +295,7 @@ export class PluginManager {
           id: `invalid.${record.sha256.slice(0, 12) || "plugin"}`,
           name: "Invalid plugin",
           version: "0.0.0",
-          apiVersion: "0.1",
+          apiVersion: "0.2",
           description: "The installed manifest could not be validated.",
           author: "Unknown",
           license: "Unknown",
@@ -278,6 +308,7 @@ export class PluginManager {
         selected: false,
         enabled: false,
         running: false,
+        settings: {},
         error: displayError(error),
       };
     }
@@ -296,14 +327,15 @@ export class PluginManager {
         throw new Error("installed plugin digest does not match its recorded bytes");
       }
       const runtime = await PluginRuntime.create(bytesBuffer(bytes));
-      const settings = parseSettingBlob(await backend().getAppString(`plugin-settings:${id}`, "{}"));
+      const settings = await this.loadSettings(plugin.manifest);
+      this.patchSettings(id, settings);
       const active: ActivePlugin = { manifest: plugin.manifest, runtime };
       await this.invokeAndApply(active, {
         protocolVersion: PLUGIN_PROTOCOL_VERSION,
         kind: "activate",
         platform: this.platform,
         capabilities: plugin.manifest.capabilities,
-        settings,
+        settings: plugin.manifest.capabilities.includes("settings.read") ? settings : {},
       });
       this.active.get(id)?.runtime.dispose();
       this.active.set(id, active);
@@ -370,11 +402,15 @@ export class PluginManager {
           event.blocks.some((block) => block.id === effect.blockId)
         );
       case "set-setting": {
-        if (!manifest.capabilities.includes("settings.write") || !/^[a-zA-Z0-9._-]{1,80}$/.test(effect.key)) return false;
-        const storageKey = `plugin-settings:${manifest.id}`;
-        const settings = parseSettingBlob(await backend().getAppString(storageKey, "{}"));
-        settings[effect.key] = effect.value;
-        await backend().setAppString(storageKey, JSON.stringify(settings));
+        if (!manifest.capabilities.includes("settings.write")) return false;
+        const definition = manifest.settings?.find((item) => item.key === effect.key);
+        if (!definition) return false;
+        const current = installedPlugins().find(
+          (item) => item.manifest.id === manifest.id && item.manifest.version === manifest.version
+        );
+        const value = effect.value === null ? definition.default : effect.value;
+        if (!settingAccepts(definition, value)) return false;
+        await this.storeSettings(manifest, { ...(current?.settings ?? defaultPluginSettings(manifest.settings)), [effect.key]: value }, [effect.key], false);
         return true;
       }
     }
@@ -388,6 +424,43 @@ export class PluginManager {
           : plugin
       )
     );
+  }
+
+  private settingsStorageKey(id: string): string {
+    return `plugin-settings:${id}`;
+  }
+
+  private async loadSettings(manifest: PluginManifest): Promise<PluginSettings> {
+    const text = await backend().getAppString(this.settingsStorageKey(manifest.id), "{}");
+    return parsePluginSettingsBlob(manifest.settings, text);
+  }
+
+  private patchSettings(id: string, settings: PluginSettings) {
+    setInstalledPlugins((current) => current.map((plugin) =>
+      plugin.manifest.id === id
+        ? { ...plugin, settings: validatePluginSettings(plugin.manifest.settings, settings) }
+        : plugin
+    ));
+  }
+
+  private async storeSettings(
+    manifest: PluginManifest,
+    candidate: PluginSettings,
+    changedKeys: string[],
+    notifyRunning: boolean
+  ) {
+    const settings = validatePluginSettings(manifest.settings, candidate);
+    await backend().setAppString(this.settingsStorageKey(manifest.id), JSON.stringify(settings));
+    this.patchSettings(manifest.id, settings);
+    const active = this.active.get(manifest.id);
+    if (notifyRunning && active?.manifest.version === manifest.version && manifest.capabilities.includes("settings.read")) {
+      await this.invokeAndApply(active, {
+        protocolVersion: PLUGIN_PROTOCOL_VERSION,
+        kind: "settings-changed",
+        settings,
+        changedKeys,
+      });
+    }
   }
 }
 

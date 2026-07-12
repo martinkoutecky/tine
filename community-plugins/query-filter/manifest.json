@@ -3,7 +3,7 @@
   "id": "page.tine.query-filter",
   "name": "Query filter shortcuts",
   "version": "0.1.0",
-  "apiVersion": "0.1",
+  "apiVersion": "0.2",
   "description": "Add a hide-completed formula filter to the focused query table or board.",
   "author": "Martin Koutecký",
   "license": "MIT",

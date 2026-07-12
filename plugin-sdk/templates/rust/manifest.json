@@ -3,7 +3,7 @@
   "id": "dev.example.my-plugin",
   "name": "My Tine plugin",
   "version": "0.1.0",
-  "apiVersion": "0.1",
+  "apiVersion": "0.2",
   "description": "A small Tine-native plugin.",
   "author": "Your name",
   "license": "MIT",

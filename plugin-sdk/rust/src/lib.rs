@@ -1,4 +1,4 @@
-//! Minimal guest bindings for Tine plugin API 0.1.
+//! Minimal guest bindings for Tine plugin API 0.2.
 //!
 //! A plugin receives JSON events and returns inert, host-validated effects. This
 //! crate intentionally exposes no host imports: compile with the template's
@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 pub const MAX_MESSAGE_BYTES: usize = 256 * 1024;
 
 #[doc(hidden)]
@@ -27,6 +27,8 @@ pub struct Event {
     pub blocks: Vec<BlockSnapshot>,
     #[serde(default)]
     pub settings: serde_json::Map<String, serde_json::Value>,
+    #[serde(default)]
+    pub changed_keys: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -121,7 +123,7 @@ pub fn encode_response(result: Result<Vec<Effect>, String>) -> Vec<u8> {
         protocol_version: PROTOCOL_VERSION,
         effects,
     })
-    .unwrap_or_else(|_| br#"{"protocolVersion":1,"effects":[]}"#.to_vec())
+    .unwrap_or_else(|_| br#"{"protocolVersion":2,"effects":[]}"#.to_vec())
 }
 
 /// Export the stable Tine ABI around `fn handle(&Event) -> Result<Vec<Effect>, String>`.
@@ -188,7 +190,7 @@ mod tests {
             text: "hello".to_string(),
         }]));
         let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(value["protocolVersion"], 1);
+        assert_eq!(value["protocolVersion"], 2);
         assert_eq!(value["effects"][0]["kind"], "insert-at-caret");
     }
 

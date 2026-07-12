@@ -25,6 +25,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   publishing, and symlink/path/digest fail-closed checks.
 - Add per-version plugin uninstall controls that remove only app-local packages
   and clear plugin settings after the last installed version.
+- Add plugin API 0.2 declarative settings: bounded host-rendered controls,
+  device-local validated persistence, live settings-change events, reset behavior,
+  nested plugin detail pages, and immutable behavioral-port provenance.
 
 ### Fixed
 

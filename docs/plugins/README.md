@@ -1,4 +1,4 @@
-# Tine plugins (experimental API 0.1)
+# Tine plugins (experimental API 0.2)
 
 Tine plugins are small WebAssembly guests. They receive versioned JSON events and
 return inert effects which Tine validates and applies. They do **not** run JavaScript
@@ -61,7 +61,7 @@ there is no hidden clock, random source, logging channel, WASI, or browser autho
 - `blockDecorations`: a small host-owned visual vocabulary (`thread-lines`,
   `badge`). A plugin cannot inject HTML or CSS.
 
-API 0.1 effects are notices, focused-block text replacement with an expected-text
+API 0.2 effects are notices, focused-block text replacement with an expected-text
 precondition, caret insertion, known block decorations, and plugin-local scalar
 settings. A write effect requires `graph.write.block`, may target only the block Tine
 included in the triggering event, records normal undo, and reaches disk only through
@@ -76,8 +76,8 @@ platform's installation UI later than its runtime support.
 
 ## Compatibility and versioning
 
-The manifest identifies plugin API `0.1`; protocol messages use
-`protocolVersion: 1`. Tine refuses mismatches. During 0.x, a breaking host change
+The manifest identifies plugin API `0.2`; protocol messages use
+`protocolVersion: 2`. Tine refuses mismatches. During 0.x, a breaking host change
 must bump the plugin API, show a clear incompatible state, and leave the old package
 disabled and intact. Published package versions are immutable and addressed by
 `id`, SemVer version, and SHA-256.

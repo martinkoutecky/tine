@@ -6,7 +6,7 @@ const base = {
   id: "dev.tine.example",
   name: "Example",
   version: "0.1.0",
-  apiVersion: "0.1",
+  apiVersion: "0.2",
   description: "A test plugin",
   author: "Tine",
   license: "MIT",
@@ -54,5 +54,31 @@ describe("parsePluginManifest", () => {
         contributions: { commands: [{ id: "hello", title: "Say hello", script: "alert(1)" }] },
       })
     ).toThrow(/unknown field script/);
+  });
+
+  it("parses declarative settings and requires settings.read", () => {
+    const settings = [{
+      key: "active-only", type: "boolean", label: "Active only",
+      description: "Show only the active ancestry.", default: false,
+    }];
+    expect(() => parsePluginManifest({ ...base, settings })).toThrow(/settings.read/);
+    const manifest = parsePluginManifest({ ...base, capabilities: ["commands.register", "settings.read"], settings });
+    expect(manifest.settings?.[0]).toMatchObject({ key: "active-only", default: false });
+  });
+
+  it("records immutable behavioral-port provenance", () => {
+    const manifest = parsePluginManifest({
+      ...base,
+      portedFrom: {
+        ecosystem: "logseq",
+        name: "Example original",
+        source: "https://github.com/example/original",
+        revision: "0123456789abcdef",
+        license: "MIT",
+        authors: ["Original Author"],
+        relationship: "behavioral-port",
+      },
+    });
+    expect(manifest.portedFrom?.authors).toEqual(["Original Author"]);
   });
 });
