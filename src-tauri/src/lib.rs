@@ -308,15 +308,7 @@ pub fn run() {
             let state = app.state::<AppState>();
             match event {
                 tauri::WindowEvent::Focused(true) => {
-                    let changed = {
-                        let mut last = state.last_focused.lock().unwrap();
-                        if last.as_deref() == Some(label) {
-                            false
-                        } else {
-                            *last = Some(label.to_string());
-                            true
-                        }
-                    };
+                    let changed = state.note_focused(label);
                     if changed {
                         if let Ok(slot) = state::slot_for_window(&state, label) {
                             let _ =

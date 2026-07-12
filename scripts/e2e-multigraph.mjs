@@ -47,7 +47,12 @@ const env = {
   GDK_BACKEND: "x11",
 };
 
-const tdLog = fs.openSync(`${ROOT}/tauri-driver.log`, "w");
+// Keep the native-driver trace with the suite evidence even when the scenario
+// fails before it can print a useful WebDriver error.
+const tdLogPath = process.env.E2E_ARTIFACT_DIR
+  ? `${process.env.E2E_ARTIFACT_DIR}/tauri-driver.log`
+  : `${ROOT}/tauri-driver.log`;
+const tdLog = fs.openSync(tdLogPath, "w");
 const td = spawn(
   TD,
   ["--port", String(DRIVER_PORT), "--native-port", String(NATIVE_PORT), "--native-driver", WD],
