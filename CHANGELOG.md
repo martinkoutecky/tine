@@ -10,6 +10,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Help improve Tine now version-locks the complete lsdoc comparison oracle.**
+  The mldoc parser, AST normalizer, comparator, and reference extractor are
+  pinned and checked as one bundle, preventing stale helper files from being
+  reported as real graph divergences. (GH #82)
 - **Double Enter now exits a trailing fenced code or calculator block.** The
   first Enter adds a blank code line; the second removes that sentinel and opens
   a normal sibling block below. One Undo restores the entire pre-exit state. (GH

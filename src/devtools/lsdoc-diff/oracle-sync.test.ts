@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { extractRefs } from "./vendor/refs.mjs";
+import { normalizeAst } from "./vendor/normalize.mjs";
 
 interface MldocApi {
   parseJson(input: string, config: string): string;
@@ -47,5 +48,19 @@ describe("vendored mldoc reference oracle", () => {
     const parsed = ast("[[foo][Example]]", "org");
     expect(extractRefs(parsed, "org").page).toEqual(["foo"]);
     expect(extractRefs(parsed, "md").page).toEqual([]);
+  });
+
+  it("normalizes issue #82 export and comment blocks with the pinned bundle", () => {
+    const parsed = ast(
+      "#+BEGIN_EXPORT html\n<b>x</b>\n#+END_EXPORT\n\n#+BEGIN_COMMENT\none\ntwo\n#+END_COMMENT",
+      "md",
+    );
+    const blocks = normalizeAst(parsed as Parameters<typeof normalizeAst>[0]);
+    expect(blocks.map((block) => block.kind)).toEqual(["export", "comment_block"]);
+  });
+
+  it("uses the mldoc 1.5.9 thematic-break behavior from issue #82", () => {
+    const blocks = normalizeAst(ast("* * *\n", "md") as Parameters<typeof normalizeAst>[0]);
+    expect(blocks.map((block) => block.kind)).toEqual(["list"]);
   });
 });
