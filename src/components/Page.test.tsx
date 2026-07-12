@@ -9,6 +9,7 @@ import {
   readPageProperty,
   resetStore,
   setDoc,
+  undo,
   type FeedPage,
   type Node as StoreNode,
 } from "../store";
@@ -202,6 +203,70 @@ describe("zoomed block view", () => {
     } finally {
       dispose();
     }
+  });
+});
+
+describe("trailing page block target", () => {
+  it("creates one root, then reuses its empty trailing leaf, with one-step Undo", async () => {
+    const dto = {
+      name: "Continue",
+      kind: "page" as const,
+      title: "Continue",
+      pre_block: null,
+      blocks: [{ id: "last", raw: "Last text", collapsed: false, children: [] }],
+    };
+    setDoc({
+      byId: { last: node("last", "Last text", "Continue") },
+      pages: [page("Continue", "page", ["last"])], feed: [], loaded: true,
+    });
+    vi.spyOn(backend(), "getPage").mockResolvedValue(dto);
+    mainPaneRouter.openPage("Continue", "page");
+    const { root, dispose } = mount(() => <PageView />);
+    try {
+      await tick(); await tick();
+      const target = root.querySelector(".page-trailing-block-target") as HTMLButtonElement;
+      target.click();
+      await tick();
+      expect(doc.pages[0].roots).toHaveLength(2);
+      const created = doc.pages[0].roots[1];
+      expect(editingId()).toBe(created);
+      endEdit("blur");
+      target.click();
+      await tick();
+      expect(doc.pages[0].roots).toEqual(["last", created]);
+      expect(editingId()).toBe(created);
+      undo();
+      expect(doc.pages[0].roots).toEqual(["last"]);
+    } finally { dispose(); }
+  });
+
+  it("adds a zoom-root child and hides the target on read-only pages", async () => {
+    const dto = {
+      name: "Zoom",
+      kind: "page" as const,
+      title: "Zoom",
+      pre_block: null,
+      blocks: [{ id: "zoom", raw: "Root", collapsed: false, children: [] }],
+    };
+    setDoc({
+      byId: { zoom: node("zoom", "Root", "Zoom") },
+      pages: [page("Zoom", "page", ["zoom"])], feed: [], loaded: true,
+    });
+    vi.spyOn(backend(), "getPage").mockResolvedValue(dto);
+    focusBlock("zoom");
+    const mounted = mount(() => <PageView />);
+    await tick(); await tick();
+    (mounted.root.querySelector(".page-trailing-block-target") as HTMLButtonElement).click();
+    await tick();
+    expect(doc.byId.zoom.children).toHaveLength(1);
+    expect(doc.byId[doc.byId.zoom.children[0]].parent).toBe("zoom");
+    mounted.dispose();
+
+    setDoc("pages", 0, "readOnly", true);
+    const readonly = mount(() => <PageView />);
+    await tick();
+    expect(readonly.root.querySelector(".page-trailing-block-target")).toBeNull();
+    readonly.dispose();
   });
 });
 

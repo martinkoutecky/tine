@@ -5,7 +5,7 @@ import { openPage, openPageAtBlock, openPageInNewTab, openFile, openInNewTab, ro
 import { paletteCommands } from "../keybindings";
 import { closePane, focusPane, openRouteInOtherPane, paneRouter } from "../panes";
 import { fuzzyScore } from "../editor/autocomplete";
-import { parseSearchQuery, matcherMatches, matchHighlight, type SearchMatcher } from "../editor/searchQuery";
+import { SEARCH_SYNTAX, parseSearchQuery, matcherMatches, matchHighlight, type SearchMatcher } from "../editor/searchQuery";
 import { visibleBody } from "../render/block";
 import { EmojiText } from "../render/emoji";
 import type { PageEntry, PageKind } from "../types";
@@ -39,6 +39,7 @@ const BLOCK_CAP = 50;
 export function QuickSwitcher(): JSX.Element {
   const [query, setQuery] = createSignal("");
   const [sel, setSel] = createSignal(0);
+  const [syntaxOpen, setSyntaxOpen] = createSignal(false);
   // How many page/block results to show right now; "Load more" grows these. They
   // reset to the base size whenever the query text changes (a fresh search).
   const [pageLimit, setPageLimit] = createSignal(PAGE_CAP);
@@ -196,6 +197,7 @@ export function QuickSwitcher(): JSX.Element {
     if (switcherOpen()) {
       setQuery(switcherEmbryo()?.prefill ?? "");
       setSel(0);
+      setSyntaxOpen(false);
       queueMicrotask(() => inputRef?.focus());
     }
   });
@@ -320,7 +322,12 @@ export function QuickSwitcher(): JSX.Element {
       }
     } else if (e.key === "Escape") {
       e.preventDefault();
-      cancelSwitcher();
+      if (syntaxOpen()) {
+        setSyntaxOpen(false);
+        queueMicrotask(() => inputRef?.focus());
+      } else {
+        cancelSwitcher();
+      }
     }
   };
 
@@ -421,10 +428,33 @@ export function QuickSwitcher(): JSX.Element {
               <div class="switcher-empty">No matched results</div>
             </Show>
           </div>
+          <Show when={syntaxOpen() && !commandsOnly()}>
+            <div id="switcher-search-syntax" class="switcher-syntax" role="region" aria-label="Search syntax">
+              <For each={SEARCH_SYNTAX}>
+                {(rule) => (
+                  <div class="switcher-syntax-row">
+                    <code>{rule.example}</code>
+                    <span>{rule.description}</span>
+                  </div>
+                )}
+              </For>
+            </div>
+          </Show>
           <div class="switcher-footer">
             <span><kbd>↑↓</kbd> navigate</span>
             <span><kbd>↵</kbd> open</span>
             <span><kbd>⌘⇧P</kbd> commands</span>
+            <Show when={!commandsOnly()}>
+              <button
+                type="button"
+                class="switcher-syntax-toggle"
+                aria-expanded={syntaxOpen()}
+                aria-controls="switcher-search-syntax"
+                onClick={() => setSyntaxOpen((open) => !open)}
+              >
+                Search syntax
+              </button>
+            </Show>
           </div>
         </div>
       </div>

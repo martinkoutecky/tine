@@ -61,6 +61,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   navigation.** Home links target the Welcome page, the alphabetical list remains
   at All pages, and public reference targets expose keyboard-accessible counts
   with links to public same-page and cross-page referrers. (GH #115, GH #116)
+- **Writable pages have a quiet continuation target below their content.** It
+  focuses an existing empty trailing leaf or creates exactly one root (one Undo);
+  zoomed outlines append within the zoom root, while Guide and read-only pages
+  remain immutable. (GH #96)
+- **Ctrl+K now explains its search grammar in place.** A keyboard-accessible
+  Search syntax button documents AND, OR, exclusion, phrases, and regex; Escape
+  closes the help before closing search, and every displayed example is executed
+  against both frontend and Rust matchers in tests. (GH #97)
 
 ### Changed
 

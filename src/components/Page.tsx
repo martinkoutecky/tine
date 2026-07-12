@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, untrack, useContext, type JSX } from "solid-js";
-import { doc, mainPages, pageByName, loadFeed, appendFeed, emptyPage, ensurePageLoaded, setFeedExtender, flushAll, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, promotePagePreamble, type FeedPage } from "../store";
+import { doc, mainPages, pageByName, loadFeed, appendFeed, emptyPage, ensurePageLoaded, setFeedExtender, flushAll, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, insertOutlineAfter, promotePagePreamble, type FeedPage } from "../store";
 import { sameRoute, type PaneRouter } from "../router";
 import { PaneContext, focusedRouter } from "../panes";
 import {
@@ -40,10 +40,6 @@ const TAG_TABLE_PROP = "tine.tag-table";
 function paneContextFromContext() {
   const ctx = useContext(PaneContext);
   return ctx ?? { paneId: "main", router: focusedRouter() };
-}
-
-function paneRouterFromContext(): PaneRouter {
-  return paneContextFromContext().router;
 }
 
 // OG always shows today's journal at the top of the feed, even with no file yet
@@ -276,7 +272,8 @@ export function PageView(): JSX.Element {
 
 // A single zoomed-in block (its subtree) with an ancestor breadcrumb.
 function ZoomedView(props: { id: string }): JSX.Element {
-  const router = paneRouterFromContext();
+  const pane = paneContextFromContext();
+  const router = pane.router;
   const ancestors = (): string[] => {
     const out: string[] = [];
     let p = doc.byId[props.id]?.parent ?? null;
@@ -289,6 +286,15 @@ function ZoomedView(props: { id: string }): JSX.Element {
   const pageName = () => doc.byId[props.id]?.page ?? "";
   const pageKind = () => doc.pages.find((p) => p.name === pageName())?.kind ?? "page";
   const crumb = (id: string) => visibleBody(doc.byId[id].raw)[0] || "…";
+  const focusTrailing = () => {
+    const root = doc.byId[props.id];
+    if (!root || pageByName(root.page)?.readOnly || pageByName(root.page)?.guide) return;
+    const leaf = trailingLeaf(props.id);
+    const id = leaf && !doc.byId[leaf].raw.trim()
+      ? leaf
+      : insertEmptyChildBlock(props.id, root.children.length);
+    if (id) startEditing(id, 0, pane.paneId === "main" ? "main" : `pane:${pane.paneId}`);
+  };
 
   return (
     <div class="page zoomed-page">
@@ -318,12 +324,16 @@ function ZoomedView(props: { id: string }): JSX.Element {
           <Block id={props.id} forceExpanded />
         </OutlineScopeContext.Provider>
       </div>
+      <Show when={!pageByName(pageName())?.readOnly && !pageByName(pageName())?.guide}>
+        <TrailingBlockTarget onActivate={focusTrailing} />
+      </Show>
     </div>
   );
 }
 
 function PageSection(props: { page: FeedPage }): JSX.Element {
-  const router = paneRouterFromContext();
+  const pane = paneContextFromContext();
+  const router = pane.router;
   const [renaming, setRenaming] = createSignal(false);
   const [newName, setNewName] = createSignal("");
   const firstPropertiesId = () => {
@@ -340,6 +350,19 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
   const editPreamble = () => {
     const id = promotePagePreamble(props.page.name);
     if (id) startEditing(id, doc.byId[id].raw.length);
+  };
+  const focusTrailing = () => {
+    const roots = rootsToRender();
+    if (!roots.length) {
+      const id = ensureEmptyBlock(props.page.name, { afterProperties: true });
+      if (id) startEditing(id, 0, pane.paneId === "main" ? "main" : `pane:${pane.paneId}`);
+      return;
+    }
+    const leaf = trailingLeaf(roots[roots.length - 1]);
+    const id = leaf && !doc.byId[leaf].raw.trim()
+      ? leaf
+      : insertOutlineAfter(roots[roots.length - 1], [{ raw: "", children: [] }]);
+    startEditing(id, 0, pane.paneId === "main" ? "main" : `pane:${pane.paneId}`);
   };
   // A page emptied of its last block (explicit Delete bypasses the Backspace
   // last-block guard) would render nothing to type into. Re-seed the phantom empty
@@ -545,7 +568,35 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
         </Show>
         <For each={rootsToRender()}>{(id) => <Block id={id} />}</For>
       </div>
+      <Show when={!props.page.readOnly && !props.page.guide}>
+        <TrailingBlockTarget onActivate={focusTrailing} />
+      </Show>
     </div>
+  );
+}
+
+function trailingLeaf(id: string): string | null {
+  let current = doc.byId[id];
+  if (!current) return null;
+  while (current.children.length) {
+    const next = doc.byId[current.children[current.children.length - 1]];
+    if (!next) break;
+    current = next;
+  }
+  return current.id;
+}
+
+function TrailingBlockTarget(props: { onActivate: () => void }): JSX.Element {
+  return (
+    <button
+      type="button"
+      class="page-trailing-block-target"
+      aria-label="Focus or create a trailing block"
+      title="Click to continue writing below this page"
+      onClick={props.onActivate}
+    >
+      <span aria-hidden="true">+ Add block</span>
+    </button>
   );
 }
 

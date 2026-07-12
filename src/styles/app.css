@@ -2838,6 +2838,33 @@ textarea {
   padding-top: 14px;
 }
 
+.page-trailing-block-target {
+  display: block;
+  width: 100%;
+  min-height: 30px;
+  margin: 2px 0 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: text;
+  text-align: left;
+  padding-left: 34px;
+}
+.page-trailing-block-target span {
+  opacity: 0;
+  font-size: 11px;
+  transition: opacity .12s ease;
+}
+.page-trailing-block-target:hover span,
+.page-trailing-block-target:focus-visible span {
+  opacity: .65;
+}
+.page-trailing-block-target:focus-visible {
+  outline: 1px solid var(--link-color);
+  outline-offset: -2px;
+}
+
 .feed-sentinel {
   height: 1px;
 }
@@ -6551,6 +6578,36 @@ img.emoji {
   background: var(--bg-secondary);
   border-radius: 3px;
   padding: 0 4px;
+}
+.switcher-syntax {
+  border-top: 1px solid var(--border-color);
+  padding: 8px 14px;
+  background: var(--bg-secondary);
+}
+.switcher-syntax-row {
+  display: grid;
+  grid-template-columns: minmax(110px, auto) 1fr;
+  gap: 12px;
+  padding: 3px 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.switcher-syntax-row code {
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+.switcher-syntax-toggle {
+  margin-left: auto;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--link-color);
+  font: inherit;
+  cursor: pointer;
+}
+.switcher-syntax-toggle:focus-visible {
+  outline: 1px solid var(--link-color);
+  outline-offset: 2px;
 }
 /* Brief highlight when jumping to a block from search. */
 .block-flash > .block-main {

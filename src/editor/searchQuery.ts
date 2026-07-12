@@ -21,6 +21,14 @@ export type SearchMatcher =
   // OR of AND-groups; every retained group has ≥1 positive term.
   | { kind: "boolean"; groups: Term[][] };
 
+export const SEARCH_SYNTAX = [
+  { example: "foo bar", description: "contains both terms", match: "bar then foo", miss: "foo only" },
+  { example: "foo OR bar", description: "contains either term", match: "bar only", miss: "neither" },
+  { example: "foo -draft", description: "contains foo, excludes draft", match: "foo ready", miss: "foo draft" },
+  { example: '"exact phrase"', description: "matches adjacent words", match: "an exact phrase here", miss: "exact other phrase" },
+  { example: "/[A-Z]{3}/", description: "case-sensitive regular expression", match: "ABC", miss: "abc" },
+] as const;
+
 export function parseSearchQuery(query: string): SearchMatcher {
   const q = query.trim();
   if (!q) return { kind: "empty" };
