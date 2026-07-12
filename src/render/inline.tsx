@@ -825,6 +825,7 @@ function MediaEmbed(props: {
   spanAttrs?: SpanDomAttrs;
 }): JSX.Element {
   const [failed, setFailed] = createSignal(false);
+  const [blobFallback, setBlobFallback] = createSignal("");
   // Audio has no fullscreen; the "Expand" button (below) opens a wide overlay
   // player with a waveform scrubber instead of stretching the inline control.
   const external = /^(https?:|data:|blob:)/.test(props.url);
@@ -834,7 +835,7 @@ function MediaEmbed(props: {
     () => (external ? null : rel()),
     async (r) => (r ? await backend().streamAsset(r) : "")
   );
-  const src = () => (external ? props.url : blob());
+  const src = () => blobFallback() || (external ? props.url : blob());
   const label = () =>
     decodeURIComponent((rel() || props.url).split("/").pop() || props.url);
   const open = (e: MouseEvent) => {
@@ -842,6 +843,28 @@ function MediaEmbed(props: {
     const r = rel();
     if (r && !external) void backend().openAsset(r);
     else void backend().openExternal(props.url);
+  };
+  let tryingBlobFallback = false;
+  let ownedBlobUrl = "";
+  onCleanup(() => {
+    if (ownedBlobUrl) URL.revokeObjectURL(ownedBlobUrl);
+  });
+  const onMediaError = () => {
+    const r = rel();
+    // WebKitGTK's media pipeline rejects Tauri custom-scheme Matroska URLs even
+    // when the same supported MKV bytes play from a Blob. Retry that one known
+    // scheme/container mismatch with a graph-scoped, size-bounded read. Very
+    // large files still fall back to the system player instead of consuming
+    // unbounded WebView memory.
+    if (!external && r?.toLowerCase().endsWith(".mkv") && !tryingBlobFallback && !blobFallback()) {
+      tryingBlobFallback = true;
+      void backend().readAsset(r, 512 * 1024 * 1024).then((bytes) => {
+        ownedBlobUrl = URL.createObjectURL(new Blob([Uint8Array.from(bytes).buffer], { type: "video/x-matroska" }));
+        setBlobFallback(ownedBlobUrl);
+      }).catch(() => setFailed(true));
+      return;
+    }
+    setFailed(true);
   };
 
   // Video drag-resize: identical mechanic to images (size the WRAPPER, persist a
@@ -906,7 +929,7 @@ function MediaEmbed(props: {
           controls={true}
           src={src()!}
           style={mediaStyle()}
-          onError={() => setFailed(true)}
+          onError={onMediaError}
           onClick={(e: MouseEvent) => e.stopPropagation()}
         />
         <button class="media-open-external" onClick={open} title="Open in the default player (if playback here is broken)">

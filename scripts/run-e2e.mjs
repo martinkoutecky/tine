@@ -32,6 +32,7 @@ const suites = {
     ["multigraph", "scripts/e2e-multigraph.mjs", {}],
     ["sheets", "scripts/e2e-sheets.mjs", {}],
     ["selection-wrap", "scripts/e2e-selectwrap.mjs", {}],
+    ["media", "scripts/e2e-media.mjs", {}],
   ],
   "windows-smoke": [
     ["windows-core", "scripts/e2e-windows-smoke.mjs", {}],

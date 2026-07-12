@@ -45,6 +45,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - **Table arrow-key navigation is now covered through the real global keyboard
   path.** The deployed app already had the Grid-equivalent behavior reported in
   GH #113; component and Linux real-app regressions now guard it.
+- **MKV videos play inline again on Linux.** When WebKitGTK rejects Matroska from
+  Tauri's range protocol, Tine retries supported files through a graph-scoped,
+  size-bounded Blob; oversized or unsupported files retain the external-player
+  fallback. (GH #119)
+- **System media players are launched outside Tine's runtime session.** Linux
+  openers now inherit only desktop-session state, exclude AppImage loader paths,
+  and start in a new session so VLC cannot load Tine's bundled libraries or die
+  with its parent process group. (GH #118)
 
 ### Changed
 
