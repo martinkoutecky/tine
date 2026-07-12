@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isMldocBacktickStateArtifact,
+  mldocBacktickArtifactSourceSpan,
   shouldQuarantineMldocBacktickStateArtifact,
 } from "./oracle-artifacts";
 
@@ -11,6 +12,7 @@ describe("mldoc oracle artifact classification", () => {
     const lsdoc = {
       blocks: [{
         kind: "paragraph",
+        span: [0, 20],
         inline: [
           { k: "plain", text: "ä ", span: [0, 3] },
           { k: "code", text: "`aaaa\nä {", span: [3, 20] },
@@ -31,6 +33,7 @@ describe("mldoc oracle artifact classification", () => {
       refs,
     };
     expect(isMldocBacktickStateArtifact(lsdoc, mldoc)).toBe(true);
+    expect(mldocBacktickArtifactSourceSpan(lsdoc, mldoc)).toEqual([0, 20]);
     expect(shouldQuarantineMldocBacktickStateArtifact(false, lsdoc, mldoc)).toBe(false);
     expect(shouldQuarantineMldocBacktickStateArtifact(true, lsdoc, mldoc)).toBe(true);
   });
@@ -42,5 +45,6 @@ describe("mldoc oracle artifact classification", () => {
     expect(isMldocBacktickStateArtifact(base, differentCode)).toBe(false);
     expect(isMldocBacktickStateArtifact(base, differentKind)).toBe(false);
     expect(isMldocBacktickStateArtifact(base, base)).toBe(false);
+    expect(mldocBacktickArtifactSourceSpan(base, differentCode)).toBeNull();
   });
 });

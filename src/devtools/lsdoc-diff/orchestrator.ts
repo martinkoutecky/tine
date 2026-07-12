@@ -9,10 +9,13 @@ import type { GraphSourceFile } from "../../backend";
 import { MldocClient, type Format, type Projection } from "./mldoc-client";
 import { lsdocDocumentAvailable, lsdocVersion, parseLsdocDocument } from "./lsdoc-document";
 import { projectionKey } from "./projection";
-import { minimize, toBytes } from "./minimize";
+import { lineNumberForOffset, minimize, toBytes } from "./minimize";
 import { anonymizeAndVerify, anonymizeSourceRel } from "./anonymize";
 import { benchFromResults, summarizeBenchRuns, type BenchRun, type BenchSummary } from "./bench";
-import { shouldQuarantineMldocBacktickStateArtifact } from "./oracle-artifacts";
+import {
+  mldocBacktickArtifactSourceSpan,
+  shouldQuarantineMldocBacktickStateArtifact,
+} from "./oracle-artifacts";
 
 export interface DiffOptions {
   mode: "diff" | "bench" | "both";
@@ -164,23 +167,31 @@ async function runDiff(
     // a brand-new mldoc realm. Suppress only the exact issue #82 one-backtick
     // Plain/Code ownership shift. Other context-sensitive differences remain
     // actionable divergences.
+    const artifactSpan = original.lsdocProjection && original.mldocProjection
+      ? mldocBacktickArtifactSourceSpan(original.lsdocProjection, original.mldocProjection)
+      : null;
     if (
       original.lsdocProjection
       && original.mldocProjection
+      && artifactSpan
       && shouldQuarantineMldocBacktickStateArtifact(
         min.contextDependent,
         original.lsdocProjection,
         original.mldocProjection,
       )
     ) {
-      findings.push({
-        type: "mldoc-oracle-artifact",
-        rel,
-        lineStart: min.lineStart,
-        lineEnd: min.lineEnd,
-        detail: "suppressed: mldoc leaked failed double-backtick parser state; fresh-range parses agree",
-      });
-      continue;
+      const isolatedText = new TextDecoder().decode(buf.subarray(artifactSpan[0], artifactSpan[1]));
+      const isolated = await parseBothFresh(isolatedText, f.format);
+      if (isolated.ok && !isolated.diverges) {
+        findings.push({
+          type: "mldoc-oracle-artifact",
+          rel,
+          lineStart: lineNumberForOffset(buf, artifactSpan[0]),
+          lineEnd: lineNumberForOffset(buf, Math.max(artifactSpan[0], artifactSpan[1] - 1)),
+          detail: "suppressed: mldoc leaked failed double-backtick parser state; a fresh isolated-block parse agrees",
+        });
+        continue;
+      }
     }
     const anon = await anonymizeAndVerify<Projection>(min.input, (candidate) => parseBothFresh(candidate, f.format));
     findings.push({
