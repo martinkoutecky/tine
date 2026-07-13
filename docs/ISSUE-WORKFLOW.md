@@ -25,7 +25,9 @@ fail-before test, implementation, deployment, and release lifecycle.
    focus, filesystem, and WebKit behavior require browser/native evidence.
 4. Once the verified fix is pushed to `master`, comment that it is fixed on
    master and expected in the next release (normally 1–2 days), and leave the
-   issue open with `fixed-on-master`.
+   issue open with `fixed-on-master`. Keep its Tine Project status **In
+   Progress**: this Project's Done transition automatically closes the linked
+   issue, so Done is reserved for the release-time close.
 5. After the relevant platform artifact is published, comment “closing, should
    be fixed in vX; please report back here if not,” link the release, and close a
    wholly addressed issue. A new non-maintainer comment automatically reopens a
