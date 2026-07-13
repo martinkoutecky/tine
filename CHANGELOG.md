@@ -8,6 +8,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Fixed
+
+- **Help with Tine no longer exports a scrubbed reproduction that has lost the
+  original actionable parser delta and retained only mldoc's known backtick
+  state artifact.** The anonymizer now tries its remaining privacy tiers and
+  omits the case if none preserves a non-artifact divergence. (GH #82)
+
 ## [0.5.7] - 2026-07-12
 
 ### Fixed

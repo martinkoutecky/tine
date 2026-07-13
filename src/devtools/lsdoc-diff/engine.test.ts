@@ -10,6 +10,7 @@ import {
   protectedSpans,
 } from "./anonymize";
 import { chunkRanges, toBytes } from "./minimize";
+import { isMldocBacktickStateArtifact } from "./oracle-artifacts";
 import { projectionKey } from "./projection";
 
 const enc = new TextEncoder();
@@ -84,6 +85,29 @@ describe("anonymizeAndVerify tier escalation", () => {
   it("fails when no tier reproduces the divergence", async () => {
     const r = await anonymizeAndVerify("Ab1", verify(() => false));
     expect(r.ok).toBe(false);
+  });
+
+  it("keeps trying when a scrubbed candidate reproduces only a rejected oracle artifact", async () => {
+    const refs = { page: [] as string[], block: [] as string[] };
+    const artifact = {
+      lsdoc: { blocks: [{ kind: "paragraph", inline: [{ k: "plain", text: "ä " }, { k: "code", text: "`aaaa" }] }], refs },
+      mldoc: { blocks: [{ kind: "paragraph", inline: [{ k: "plain", text: "ä `" }, { k: "code", text: "aaaa" }] }], refs },
+    };
+    const actionable = {
+      lsdoc: { blocks: [{ kind: "paragraph", inline: [{ k: "plain", text: "lsdoc" }] }], refs },
+      mldoc: { blocks: [{ kind: "paragraph", inline: [{ k: "plain", text: "mldoc" }] }], refs },
+    };
+    const r = await anonymizeAndVerify(
+      "Ab1",
+      async (candidate) => {
+        const pair = candidate === "Aa9" ? artifact : actionable;
+        return { ok: true, diverges: true, lsdocProjection: pair.lsdoc, mldocProjection: pair.mldoc };
+      },
+      (parsed) => !isMldocBacktickStateArtifact(parsed.lsdocProjection!, parsed.mldocProjection!),
+    );
+    expect(r.ok).toBe(true);
+    expect(r.tier).toBe("tier 2");
+    expect(r.input).toBe("Bc2");
   });
 
   it("can retain a URL-sensitive divergence without retaining the private URL", async () => {

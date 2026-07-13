@@ -124,6 +124,13 @@ export interface AnonResult<P = unknown> {
   mldocProjection?: P;
 }
 
+interface VerifiedCandidate<P> {
+  ok: boolean;
+  diverges: boolean;
+  lsdocProjection?: P;
+  mldocProjection?: P;
+}
+
 /** Try each scrub tier in escalating order and ACCEPT the first whose scrubbed
  *  output STILL reproduces the divergence when re-parsed by both parsers. This is
  *  the guarantee: a shared snippet contains no original prose AND provably
@@ -131,7 +138,8 @@ export interface AnonResult<P = unknown> {
  *  Ported from graph-check.mjs:857-879. */
 export async function anonymizeAndVerify<P>(
   input: string,
-  verify: (candidate: string) => Promise<{ ok: boolean; diverges: boolean; lsdocProjection?: P; mldocProjection?: P }>,
+  verify: (candidate: string) => Promise<VerifiedCandidate<P>>,
+  accept: (parsed: VerifiedCandidate<P>) => boolean = () => true,
 ): Promise<AnonResult<P>> {
   const attempts: [string, () => string][] = [
     ["tier 1", () => anonymizeTier1(input, [])],
@@ -142,7 +150,11 @@ export async function anonymizeAndVerify<P>(
   for (const [tier, make] of attempts) {
     const candidate = make();
     const parsed = await verify(candidate);
-    if (parsed.ok && parsed.diverges) {
+    // Reproducing any parser difference is not enough: a scrub can erase the
+    // original actionable delta while leaving only a known oracle artifact.
+    // Callers may reject that candidate and let the remaining tiers try to
+    // preserve a faithful, shareable reproduction.
+    if (parsed.ok && parsed.diverges && accept(parsed)) {
       return {
         ok: true,
         tier,

@@ -13,6 +13,7 @@ import { lineNumberForOffset, minimize, toBytes } from "./minimize";
 import { anonymizeAndVerify, anonymizeSourceRel } from "./anonymize";
 import { benchFromResults, summarizeBenchRuns, type BenchRun, type BenchSummary } from "./bench";
 import {
+  isMldocBacktickStateArtifact,
   mldocBacktickArtifactSourceSpan,
   shouldQuarantineMldocBacktickStateArtifact,
 } from "./oracle-artifacts";
@@ -193,7 +194,15 @@ async function runDiff(
         continue;
       }
     }
-    const anon = await anonymizeAndVerify<Projection>(min.input, (candidate) => parseBothFresh(candidate, f.format));
+    const anon = await anonymizeAndVerify<Projection>(
+      min.input,
+      (candidate) => parseBothFresh(candidate, f.format),
+      (parsed) => !(
+        parsed.lsdocProjection
+        && parsed.mldocProjection
+        && isMldocBacktickStateArtifact(parsed.lsdocProjection, parsed.mldocProjection)
+      ),
+    );
     findings.push({
       type: "divergence",
       rel,
