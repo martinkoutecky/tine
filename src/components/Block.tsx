@@ -1033,12 +1033,12 @@ export function Editor(props: { id: string }): JSX.Element {
   // and the fence is re-added on commit. Calc mode is captured at editor mount,
   // not re-derived from the latest committed raw, so an exit commit can still
   // preserve the fence even if the committed raw is temporarily malformed.
-  const editingCalc = calcSource(editorValue()) !== null;
+  const [editingCalc, setEditingCalc] = createSignal(calcSource(editorValue()) !== null);
   const calcLive = createMemo(() => {
-    if (!editingCalc) return null;
+    if (!editingCalc()) return null;
     return calcSource(editorValue()) ?? editorValue();
   });
-  const isCalc = () => editingCalc;
+  const isCalc = editingCalc;
   const calcRows = createMemo(() => (isCalc() ? evalCalc(calcLive() ?? "") : []));
   const commit = (text: string, opts?: { timetracking?: boolean; calc?: boolean }) => {
     const commitAsCalc = opts?.calc ?? isCalc();
@@ -1268,11 +1268,22 @@ export function Editor(props: { id: string }): JSX.Element {
       caret === undefined
         ? withRefCompletionSpace(r.raw, r.caret, text, spaceAfterRefCompletion())
         : r;
+    // The Calculator slash command can turn an already-mounted plain editor into
+    // a whole ```calc fence. Keep calc mode sticky once entered (an in-progress
+    // malformed fence must still commit as calc), but allow this explicit
+    // completion transition without requiring blur + re-entry (GH #57).
+    const enteredCalc = !editingCalc() ? calcSource(spaced.raw) : null;
     commit(spaced.raw);
+    if (enteredCalc !== null) setEditingCalc(true);
     closeAc();
     queueMicrotask(() => {
-      ref.value = spaced.raw;
-      ref.setSelectionRange(spaced.caret, spaced.caret);
+      const shown = enteredCalc ?? spaced.raw;
+      const openingEnd = enteredCalc !== null ? spaced.raw.indexOf("\n") + 1 : 0;
+      const shownCaret = enteredCalc !== null
+        ? Math.max(0, Math.min(shown.length, spaced.caret - openingEnd))
+        : spaced.caret;
+      ref.value = shown;
+      ref.setSelectionRange(shownCaret, shownCaret);
       ref.focus();
       autosize();
     });

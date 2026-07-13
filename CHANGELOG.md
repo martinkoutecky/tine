@@ -58,6 +58,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **The `/Calculator` slash command now activates the live calculator on first
+  insertion.** The new block immediately shows its fence-stripped editor,
+  line-number gutter, and live results instead of requiring a blur and second
+  click. (GH #57)
 - **Typing a page alias into the first bullet no longer interrupts the editor at
   `alias::`.** The property block stays mounted until editing ends, then adopts
   the compact page-property presentation; the completed alias persists and
