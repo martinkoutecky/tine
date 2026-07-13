@@ -10,6 +10,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Clicking an outline guide now expands or collapses the complete descendant
+  subtree.** If any collapsible descendant is folded, the guide expands them
+  all; otherwise it folds them all while leaving the guide's parent open. The
+  forgiving hit target is keyboard-accessible, normal pages persist the change
+  as one Undo step, and embeds/references keep it local to that surface. (GH
+  #128)
 - **Overflowing tab strips now keep titles readable and provide a complete tab
   overview.** A pane-local button appears only when its tabs no longer fit,
   lists every full title with active, pinned, and close controls, and supports

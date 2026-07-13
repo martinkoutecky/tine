@@ -6,6 +6,7 @@ import { initParser } from "../render/parse";
 import { doc, loadSingle, resetStore, undo } from "../store";
 import type { BlockDto, PageDto, RefGroup } from "../types";
 import { Block } from "./Block";
+import { LiveRefGroup } from "./LiveRefGroup";
 
 beforeAll(async () => {
   await initParser();
@@ -115,6 +116,64 @@ describe("block embed hierarchy", () => {
       expect(expand!.isConnected).toBe(true);
       expand!.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0 }));
       await vi.waitFor(() => expect(root.querySelector(".embed-block")?.textContent).toContain("Embedded child"));
+    } finally {
+      dispose();
+    }
+  });
+
+  it("keeps recursive guide collapse local to the embed surface", async () => {
+    const targetId = "embed-guide-collapse";
+    const { root, dispose } = renderFixture(targetId);
+    const childId = `${targetId}-child`;
+
+    try {
+      const guide = await vi.waitFor(() => {
+        const element = root.querySelector<HTMLButtonElement>(
+          `.embed-block [data-block-id="${targetId}"] > .block-children-container > button.block-children-left-border`,
+        );
+        expect(element).not.toBeNull();
+        return element!;
+      });
+      guide.click();
+
+      await vi.waitFor(() =>
+        expect(root.querySelector(".embed-block")?.textContent).not.toContain("Embedded grandchild")
+      );
+      expect(doc.byId[childId].collapsed).toBe(false);
+      expect(doc.byId[childId].raw).not.toContain("collapsed:: true");
+
+      guide.click();
+      await vi.waitFor(() =>
+        expect(root.querySelector(".embed-block")?.textContent).toContain("Embedded grandchild")
+      );
+      expect(doc.byId[childId].collapsed).toBe(false);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("keeps recursive guide collapse local to a reference surface", async () => {
+    const targetId = "reference-guide-collapse";
+    const { page, group } = fixture(targetId);
+    loadSingle(page);
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const dispose = render(
+      () => <LiveRefGroup page={page.name} kind={page.kind} blocks={group.blocks} surface="ref" />,
+      root,
+    );
+    try {
+      const guide = await vi.waitFor(() => {
+        const element = root.querySelector<HTMLButtonElement>(
+          `[data-block-id="${targetId}"] > .block-children-container > button.block-children-left-border`,
+        );
+        expect(element).not.toBeNull();
+        return element!;
+      });
+      guide.click();
+      await vi.waitFor(() => expect(root.textContent).not.toContain("Embedded grandchild"));
+      expect(doc.byId[`${targetId}-child`].collapsed).toBe(false);
+      expect(doc.byId[`${targetId}-child`].raw).not.toContain("collapsed:: true");
     } finally {
       dispose();
     }

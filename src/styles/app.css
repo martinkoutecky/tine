@@ -733,8 +733,11 @@ textarea {
 .document-mode .collapse-toggle {
   visibility: hidden;
 }
-.document-mode .block-children-left-border {
+.document-mode .block-children {
   border-left-color: transparent;
+}
+.document-mode .block-children-left-border {
+  visibility: hidden;
 }
 
 /* Focus mode: hide both sidebars and the topbar for a distraction-free surface
@@ -3240,9 +3243,22 @@ textarea {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: -2px;
-  width: 4px;
+  left: -9px;
+  z-index: 1;
+  width: 14px;
+  min-width: 14px;
+  height: auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
   cursor: pointer;
+}
+
+.block-children-left-border:disabled {
+  cursor: default;
 }
 
 /* The guide line is this border-left. It must sit under the *parent* bullet's
@@ -3255,8 +3271,16 @@ textarea {
   padding-left: 3px;
 }
 
-.block-children-container:hover > .block-children {
+.block-children-left-border:not(:disabled):hover + .block-children,
+.block-children-left-border:not(:disabled):focus-visible + .block-children {
   border-left-color: var(--guide-hover);
+}
+
+.block-children-left-border:focus-visible {
+  outline: none;
+  background: color-mix(in srgb, var(--ls-link-text-color) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ls-link-text-color) 45%, transparent);
+  border-radius: 3px;
 }
 
 /* editor */

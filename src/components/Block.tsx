@@ -56,6 +56,8 @@ import {
   withUndoUnit,
   blockIsGridView,
   trackAssetWrite,
+  collapsibleDescendantIds,
+  setCollapsedDescendants,
   type OutlineScope,
 } from "../store";
 import {
@@ -266,6 +268,7 @@ export const OutlineScopeContext = createContext<OutlineScope | null>(null);
 export interface CollapseSurfaceApi {
   collapsed: (id: string, stored: boolean) => boolean;
   toggle: (id: string, current: boolean) => void;
+  setMany: (ids: readonly string[], collapsed: boolean) => void;
 }
 // A transclusion can fold a source block locally, matching Logseq, without
 // writing collapsed:: into the source outline.
@@ -301,6 +304,24 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
   };
   const hasChildren = () => node().children.length > 0;
   const collapsed = () => collapseSurface?.collapsed(props.id, node().collapsed) ?? node().collapsed;
+  const collapsibleDescendants = createMemo(() => collapsibleDescendantIds(props.id));
+  const hasCollapsedDescendant = createMemo(() =>
+    collapsibleDescendants().some((id) => {
+      const descendant = doc.byId[id];
+      return descendant
+        ? collapseSurface?.collapsed(id, descendant.collapsed) ?? descendant.collapsed
+        : false;
+    })
+  );
+  const toggleCollapsedDescendants = () => {
+    const ids = collapsibleDescendants();
+    if (!ids.length || (readOnly() && !collapseSurface)) return;
+    // OG semantics: any folded descendant means “expand all”; only a completely
+    // open subtree means “collapse all”. The guide parent itself stays open.
+    const next = !hasCollapsedDescendant();
+    if (collapseSurface) collapseSurface.setMany(ids, next);
+    else setCollapsedDescendants(props.id, next);
+  };
   const fmt = () => pageByName(node().page)?.format ?? "md";
   const blockFacets = createMemo(() => {
     const n = node();
@@ -490,7 +511,18 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
           </Match>
           <Match when={true}>
             <div class="block-children-container">
-              <div class="block-children-left-border" />
+              <button
+                type="button"
+                class="block-children-left-border"
+                aria-label={hasCollapsedDescendant() ? "Expand all descendants" : "Collapse all descendants"}
+                aria-expanded={!hasCollapsedDescendant()}
+                disabled={collapsibleDescendants().length === 0 || (readOnly() && !collapseSurface)}
+                title={hasCollapsedDescendant() ? "Expand all descendants" : "Collapse all descendants"}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  toggleCollapsedDescendants();
+                }}
+              />
               <div class="block-children">
                 <For each={node().children}>{(cid) => <Block id={cid} />}</For>
               </div>

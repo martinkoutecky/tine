@@ -1757,6 +1757,55 @@ export function setCollapsedDeep(id: string, collapsed: boolean) {
   markDirty(doc.byId[id].page);
 }
 
+/** Every descendant that can itself be folded, including descendants hidden by
+ * a collapsed ancestor. Iterative model traversal avoids both DOM dependence and
+ * call-stack growth on a deeply nested outline. The guide's own block is excluded. */
+export function collapsibleDescendantIds(id: string): string[] {
+  const root = doc.byId[id];
+  if (!root) return [];
+  const result: string[] = [];
+  const stack = [...root.children].reverse();
+  while (stack.length) {
+    const childId = stack.pop()!;
+    const child = doc.byId[childId];
+    if (!child) continue;
+    if (child.children.length) result.push(childId);
+    for (let i = child.children.length - 1; i >= 0; i--) stack.push(child.children[i]);
+  }
+  return result;
+}
+
+/** Persist one collapse value across every collapsible descendant, but never the
+ * guide parent itself. One snapshot + one store transaction makes the operation
+ * one Undo step and avoids a reactive update per node on large subtrees. */
+export function setCollapsedDescendants(id: string, collapsed: boolean) {
+  const root = doc.byId[id];
+  if (!root || !blockWritable(id)) return;
+  const changes = collapsibleDescendantIds(id)
+    .map((childId) => {
+      const child = doc.byId[childId];
+      if (!child || child.collapsed === collapsed) return null;
+      return {
+        id: childId,
+        raw: rawWithCollapsed(child.raw, collapsed, formatForBlock(childId)),
+      };
+    })
+    .filter((change): change is { id: string; raw: string } => change !== null);
+  if (!changes.length) return;
+  pushUndo("collapse-descendants", [root.page]);
+  setDoc(
+    produce((state) => {
+      for (const change of changes) {
+        const child = state.byId[change.id];
+        if (!child) continue;
+        child.collapsed = collapsed;
+        child.raw = change.raw;
+      }
+    })
+  );
+  markDirty(root.page);
+}
+
 /** The block's existing durable `id` — a markdown `id:: <uuid>` trailer or an
  *  org `:PROPERTIES:` drawer `:id: <uuid>` line — case-insensitively, or null.
  *  Format-aware because in ORG `id:: x` is plain body text, NOT a property (lsdoc

@@ -27,6 +27,8 @@ import {
   deleteBlock,
   ensureEmptyBlock,
   toggleCollapse,
+  collapsibleDescendantIds,
+  setCollapsedDescendants,
   visibleOrder,
   setRaw,
   undo,
@@ -893,6 +895,57 @@ describe("collapse / visible order", () => {
     expect(doc.byId[p].raw).toContain("collapsed:: true");
     toggleCollapse(p);
     expect(doc.byId[p].raw).not.toContain("collapsed::");
+  });
+
+  it("changes collapsible descendants but not the guide parent in one undo unit", () => {
+    const dto = load([
+      blk("root", [
+        blk("child", [blk("grandchild", [blk("great")])]),
+        blk("leaf"),
+      ]),
+    ]);
+    const root = dto.blocks[0].id;
+    const child = dto.blocks[0].children[0].id;
+    const grandchild = dto.blocks[0].children[0].children[0].id;
+    const leaf = dto.blocks[0].children[1].id;
+
+    expect(collapsibleDescendantIds(root)).toEqual([child, grandchild]);
+    setCollapsedDescendants(root, true);
+    expect(doc.byId[root].collapsed).toBe(false);
+    expect(doc.byId[child].collapsed).toBe(true);
+    expect(doc.byId[grandchild].collapsed).toBe(true);
+    expect(doc.byId[leaf].collapsed).toBe(false);
+
+    undo();
+    expect(doc.byId[child].collapsed).toBe(false);
+    expect(doc.byId[grandchild].collapsed).toBe(false);
+  });
+
+  it("walks a large subtree once without relying on mounted DOM descendants", () => {
+    const byId: Record<string, (typeof doc.byId)[string]> = {
+      root: { id: "root", raw: "root", collapsed: false, parent: null, page: "Large", children: [] },
+    };
+    for (let i = 0; i < 2_000; i++) {
+      const branch = `branch-${i}`;
+      const leaf = `leaf-${i}`;
+      byId.root.children.push(branch);
+      byId[branch] = { id: branch, raw: branch, collapsed: false, parent: "root", page: "Large", children: [leaf] };
+      byId[leaf] = { id: leaf, raw: leaf, collapsed: false, parent: branch, page: "Large", children: [] };
+    }
+    setDoc({
+      byId,
+      pages: [{
+        name: "Large", kind: "page", title: "Large", preBlock: null, roots: ["root"],
+        format: "md", readOnly: false, guide: false,
+      }],
+      feed: [],
+      loaded: true,
+    });
+
+    expect(collapsibleDescendantIds("root")).toHaveLength(2_000);
+    setCollapsedDescendants("root", true);
+    expect(doc.byId["branch-1999"].collapsed).toBe(true);
+    expect(doc.byId.root.collapsed).toBe(false);
   });
 
   it("treats grid blocks as opaque in visible order", () => {

@@ -73,12 +73,15 @@ export function LiveRefGroup(props: {
   // as the right sidebar (see startEditing / focusSurfaceFor). One key per group.
   const surface = `${props.surface === "embed" ? "embed" : "ref"}:` + createUniqueId();
   const [localCollapsed, setLocalCollapsed] = createSignal<Record<string, boolean>>({});
-  const collapseSurface: CollapseSurfaceApi | null = props.surface === "embed"
-    ? {
-        collapsed: (id, stored) => localCollapsed()[id] ?? stored,
-        toggle: (id, current) => setLocalCollapsed((state) => ({ ...state, [id]: !current })),
-      }
-    : null;
+  const collapseSurface: CollapseSurfaceApi = {
+    collapsed: (id, stored) => localCollapsed()[id] ?? stored,
+    toggle: (id, current) => setLocalCollapsed((state) => ({ ...state, [id]: !current })),
+    setMany: (ids, collapsed) => setLocalCollapsed((state) => {
+      const next = { ...state };
+      for (const id of ids) next[id] = collapsed;
+      return next;
+    }),
+  };
   return (
     <div
       ref={el}
