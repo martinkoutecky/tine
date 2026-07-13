@@ -104,6 +104,70 @@ textarea {
   overflow-y: auto;
 }
 
+/* One restrained scrollbar vocabulary for the three primary outline surfaces.
+   Standard properties cover Firefox/current engines. The WebKit fallback avoids
+   setting ::-webkit-scrollbar width/height: doing that turns overlay scrollbars
+   into layout-consuming classic bars on some GTK/macOS configurations. */
+@media (pointer: fine) {
+  .left-sidebar-scroll,
+  .main-content,
+  .right-sidebar {
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+    scrollbar-width: thin;
+  }
+
+  .left-sidebar-scroll::-webkit-scrollbar-track,
+  .main-content::-webkit-scrollbar-track,
+  .right-sidebar::-webkit-scrollbar-track,
+  .left-sidebar-scroll::-webkit-scrollbar-corner,
+  .main-content::-webkit-scrollbar-corner,
+  .right-sidebar::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
+  .left-sidebar-scroll::-webkit-scrollbar-thumb,
+  .main-content::-webkit-scrollbar-thumb,
+  .right-sidebar::-webkit-scrollbar-thumb {
+    min-height: 32px;
+    border: 3px solid transparent;
+    border-radius: 999px;
+    background-color: var(--scrollbar-thumb);
+    background-clip: padding-box;
+  }
+
+  .left-sidebar-scroll::-webkit-scrollbar-thumb:hover,
+  .main-content::-webkit-scrollbar-thumb:hover,
+  .right-sidebar::-webkit-scrollbar-thumb:hover {
+    background-color: var(--scrollbar-thumb-hover);
+  }
+
+  .left-sidebar-scroll::-webkit-scrollbar-button,
+  .main-content::-webkit-scrollbar-button,
+  .right-sidebar::-webkit-scrollbar-button {
+    display: none;
+  }
+}
+
+/* Accessibility and touch take precedence over visual consistency. Native
+   scrollbars retain forced-color contrast and coarse-pointer drag targets. */
+@media (forced-colors: active) {
+  .left-sidebar-scroll,
+  .main-content,
+  .right-sidebar {
+    scrollbar-color: auto;
+    scrollbar-width: auto;
+  }
+}
+
+@media (pointer: coarse) {
+  .left-sidebar-scroll,
+  .main-content,
+  .right-sidebar {
+    scrollbar-color: auto;
+    scrollbar-width: auto;
+  }
+}
+
 .sidebar-resizer {
   position: absolute;
   top: 0;

@@ -10,6 +10,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Primary panes now share quiet, theme-aware scrollbar styling.** The left
+  sidebar, page/split scrollers, and right sidebar use the same semantic thumb
+  colors without forcing overlay scrollbars into layout-consuming geometry;
+  forced-colors and coarse-pointer environments retain native controls. (GH
+  #103)
 - **Clicking an outline guide now expands or collapses the complete descendant
   subtree.** If any collapsible descendant is folded, the guide expands them
   all; otherwise it folds them all while leaving the guide's parent open. The
