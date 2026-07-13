@@ -7,7 +7,7 @@ import { initParser } from "../render/parse";
 import { backend } from "../backend";
 import { blockProperty, doc, resetStore, setDoc, undo, type FeedPage, type Node as StoreNode } from "../store";
 import { clearSimpleForm, getSimpleForm, stashSimpleForm } from "../editor/queryBuilder";
-import type { RefGroup } from "../types";
+import type { QueryExecution, RefGroup } from "../types";
 
 beforeAll(async () => {
   await initParser();
@@ -71,7 +71,7 @@ async function settleQuery(): Promise<void> {
   await tick();
 }
 
-function clickView(root: HTMLElement, label: "List" | "Table" | "Board"): void {
+function clickView(root: HTMLElement, label: "Search" | "List" | "Table" | "Board"): void {
   const button = [...root.querySelectorAll(".query-view-switcher button")].find(
     (el) => el.textContent?.trim() === label
   ) as HTMLButtonElement | undefined;
@@ -116,6 +116,40 @@ function loadAdvancedQueryDoc(queryRaw: string) {
 }
 
 describe("QueryMacro sheet integration", () => {
+  it("reopens a materialized friendly search without exposing it as raw DSL", async () => {
+    loadQueryDoc('{{query (search "alpha beta")}}\ntine.view:: search');
+    const execution: QueryExecution = {
+      hits: [{
+        entity: "block",
+        page: "Sheet",
+        kind: "page",
+        block: { id: "todo", raw: "TODO From query", collapsed: false, children: [], breadcrumb: [] },
+        display_text: "alpha and beta",
+        evidence: [{
+          clause_id: 1,
+          field: "visible_content",
+          mode: "contains",
+          spans: [{ start: 0, end: 5 }, { start: 10, end: 14 }],
+        }],
+      }],
+      diagnostics: [],
+      explanation: { branches: [] },
+      cancelled: false,
+    };
+    const graphSearch = vi.spyOn(backend(), "runGraphSearch").mockResolvedValue(execution);
+
+    const { root, dispose } = mount(() => <Block id="query" />);
+    await settleQuery();
+
+    expect(activeView(root)).toBe("Search");
+    expect(root.querySelector(".qb-chip")?.textContent).toBe("search: alpha beta");
+    expect(root.querySelector(".qb-chip-raw")).toBeNull();
+    expect([...root.querySelectorAll("mark")].map((mark) => mark.textContent)).toEqual(["alpha", "beta"]);
+    expect(graphSearch).toHaveBeenCalledWith("alpha beta", 500, 5_000, "inline-query:query", false);
+
+    dispose();
+  });
+
   it("renders the query header and builder above a sheet-faced query exactly once", async () => {
     loadQueryDoc("{{query (todo TODO)}}\ntine.view:: table");
 

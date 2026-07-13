@@ -39,11 +39,16 @@ pub const SEARCH_SYNTAX_EXAMPLES: &[(&str, &str, &str)] = &[
     ("foo bar", "bar then foo", "foo only"),
     ("foo OR bar", "bar only", "neither"),
     ("foo -draft", "foo ready", "foo draft"),
-    ("\"exact phrase\"", "an exact phrase here", "exact other phrase"),
+    (
+        "\"exact phrase\"",
+        "an exact phrase here",
+        "exact other phrase",
+    ),
     ("/[A-Z]{3}/", "ABC", "abc"),
 ];
 
 /// A parsed query, ready to test blocks/page-names against.
+#[derive(Debug, Clone)]
 pub enum Matcher {
     /// Whole query was `/pattern/` and compiled.
     Regex(regex::Regex),

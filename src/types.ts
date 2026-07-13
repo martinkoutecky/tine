@@ -175,6 +175,56 @@ export interface RefGroup {
   blocks: BlockDto[];
 }
 
+export interface MatchSpan {
+  /** UTF-16 code-unit offsets into QueryHit.display_text; end is exclusive. */
+  start: number;
+  end: number;
+}
+
+export interface MatchEvidence {
+  clause_id: number;
+  field: "page_name" | "visible_content";
+  mode: "contains" | "phrase" | "regex" | "fuzzy";
+  spans: MatchSpan[];
+  score?: number;
+}
+
+export interface QueryDiagnostic {
+  code: string;
+  message: string;
+  span?: MatchSpan;
+}
+
+export interface QueryExplainNode {
+  clause_id?: number;
+  description: string;
+  children: QueryExplainNode[];
+}
+
+export type QueryHit =
+  | {
+      entity: "page";
+      page: PageEntry;
+      display_text: string;
+      evidence: MatchEvidence[];
+      score: number;
+    }
+  | {
+      entity: "block";
+      page: string;
+      kind: PageKind;
+      block: BlockDto;
+      display_text: string;
+      evidence: MatchEvidence[];
+    };
+
+export interface QueryExecution {
+  hits: QueryHit[];
+  diagnostics: QueryDiagnostic[];
+  explanation: { branches: QueryExplainNode[] };
+  cancelled: boolean;
+}
+
 /** Result of an advanced (datalog) query: matched groups + which clause heads
  *  ran vs were ignored (`supported` is false only when nothing in the subset matched). */
 export interface AdvancedQueryResult {

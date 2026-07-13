@@ -73,6 +73,36 @@ describe("persisted split session", () => {
     expect(parsed.snapshots.get("main")?.scrolls).toEqual([99]);
   });
 
+  it("round-trips a bounded virtual query workspace without persisting results", () => {
+    const raw = JSON.stringify({
+      tabs: [{
+        history: [{
+          kind: "query",
+          id: "query-1",
+          sourceKind: "search",
+          source: "alpha -draft",
+          presentation: "search",
+        }],
+        pos: 0,
+        pinned: true,
+      }],
+      activeIndex: 0,
+    });
+
+    const parsed = parsePersistedSession(raw)!;
+    expect(parsed.snapshots.get("main")?.tabs[0]).toMatchObject({
+      pinned: true,
+      history: [{
+        kind: "query",
+        id: "query-1",
+        sourceKind: "search",
+        source: "alpha -draft",
+        presentation: "search",
+      }],
+    });
+    expect(JSON.stringify(parsed)).not.toContain("results");
+  });
+
   it("round-trips graph-scoped Favorites and Recent disclosure state and defaults legacy sessions open", () => {
     setFavoritesSectionExpanded(false);
     setRecentSectionExpanded(true);

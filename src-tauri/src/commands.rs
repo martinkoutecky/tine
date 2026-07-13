@@ -256,6 +256,24 @@ pub(crate) fn run_query(
 }
 
 #[tauri::command]
+pub(crate) async fn run_graph_search(
+    source: String,
+    page_limit: usize,
+    block_limit: usize,
+    lane: Option<String>,
+    explain: bool,
+    state: GraphContext<'_>,
+) -> Result<tine_core::query_plan::QueryExecution, String> {
+    let graph = Arc::clone(&slot_for_context(&state)?.graph);
+    tauri::async_runtime::spawn_blocking(move || match lane.as_deref() {
+        Some(lane) => graph.run_graph_search_latest(lane, &source, page_limit, block_limit, explain),
+        None => graph.run_graph_search(&source, page_limit, block_limit, explain),
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub(crate) fn run_advanced_query(
     query: String,
     current_page: Option<String>,

@@ -9,6 +9,7 @@ use crate::model::{
     block_to_dto, BlockDto, Format, Graph, PageEntry, PageKind, RefGroup, TemplateDto,
 };
 use crate::refs;
+use crate::search_query::Matcher;
 
 /// Parse a journal-page title (e.g. "Jan 1st, 2022") to a `yyyymmdd` ordinal.
 fn journal_ordinal(title: &str) -> Option<i64> {
@@ -39,25 +40,6 @@ fn walk_path<'a>(
 
 /// Cancellable variant used by interactive search. Returning false from `f`
 /// stops the entire depth-first walk, including the current deep page.
-fn walk_path_while<'a>(
-    blocks: &'a [DocBlock],
-    path: &mut Vec<&'a DocBlock>,
-    f: &mut impl FnMut(&'a DocBlock, &[&'a DocBlock]) -> bool,
-) -> bool {
-    for b in blocks {
-        if !f(b, path) {
-            return false;
-        }
-        path.push(b);
-        let keep_going = walk_path_while(&b.children, path, f);
-        path.pop();
-        if !keep_going {
-            return false;
-        }
-    }
-    true
-}
-
 /// A short, single-line label for a block in a breadcrumb trail.
 fn crumb_line(b: &DocBlock) -> String {
     let line = b
@@ -1009,50 +991,13 @@ pub fn search_cancellable(
     limit: usize,
     cancelled: impl Fn() -> bool,
 ) -> Vec<RefGroup> {
-    use crate::search_query::Matcher;
-    let matcher = Matcher::parse(query);
-    // Empty / invalid-regex queries match nothing — skip the whole-graph walk.
-    if limit == 0 || matches!(matcher, Matcher::Empty | Matcher::InvalidRegex(_)) {
-        return Vec::new();
+    let plan = crate::query_plan::QueryPlan::block_search(query, limit);
+    let execution = plan.execute(graph, cancelled);
+    if execution.cancelled {
+        Vec::new()
+    } else {
+        crate::query_plan::block_hits_to_groups(execution.hits)
     }
-    // Stop scanning once we've collected `limit` matches, rather than walking the
-    // whole graph and truncating afterwards — Ctrl-K only shows the first page of
-    // results, so on a large graph this avoids most of the work.
-    graph.with_pages(|pages| {
-        let mut groups: Vec<RefGroup> = Vec::new();
-        let mut remaining = limit;
-        for (entry, doc) in pages {
-            if remaining == 0 || cancelled() {
-                break;
-            }
-            let mut matched: Vec<BlockDto> = Vec::new();
-            let mut path: Vec<&DocBlock> = Vec::new();
-            walk_path_while(&doc.roots, &mut path, &mut |b, anc| {
-                if remaining == 0 || cancelled() {
-                    return false;
-                }
-                let proj = b.projection();
-                if matcher.matches(&proj.visible_lower, &proj.visible) {
-                    let mut dto = block_to_dto(b);
-                    dto.breadcrumb = anc.iter().map(|a| crumb_line(a)).collect();
-                    matched.push(dto);
-                    remaining -= 1;
-                }
-                true
-            });
-            if cancelled() {
-                return Vec::new();
-            }
-            if !matched.is_empty() {
-                groups.push(RefGroup {
-                    page: entry.name.clone(),
-                    kind: entry.kind,
-                    blocks: matched,
-                });
-            }
-        }
-        groups
-    })
 }
 
 /// Find every `template:: <name>` block and the blocks an insertion produces.
@@ -1153,37 +1098,37 @@ pub fn property_facets(graph: &Graph) -> Vec<(String, Vec<String>)> {
     })
 }
 
-enum QuickSwitchCand {
-    File(usize),
-    Ref(PageEntry), // referenced-only page (no file entry to index into)
-}
-
+#[cfg(test)]
 struct ScoredQuickSwitchCand {
     score: i32,
     index: usize,
-    cand: QuickSwitchCand,
 }
 
+#[cfg(test)]
 impl ScoredQuickSwitchCand {
     fn is_better_than(&self, other: &Self) -> bool {
         self.score > other.score || (self.score == other.score && self.index < other.index)
     }
 }
 
+#[cfg(test)]
 impl PartialEq for ScoredQuickSwitchCand {
     fn eq(&self, other: &Self) -> bool {
         self.score == other.score && self.index == other.index
     }
 }
 
+#[cfg(test)]
 impl Eq for ScoredQuickSwitchCand {}
 
+#[cfg(test)]
 impl PartialOrd for ScoredQuickSwitchCand {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
+#[cfg(test)]
 impl Ord for ScoredQuickSwitchCand {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         // BinaryHeap is max-first; define "greater" as worse so the root is the
@@ -1195,6 +1140,7 @@ impl Ord for ScoredQuickSwitchCand {
     }
 }
 
+#[cfg(test)]
 fn push_quick_switch_top(
     heap: &mut std::collections::BinaryHeap<ScoredQuickSwitchCand>,
     limit: usize,
@@ -1213,6 +1159,7 @@ fn push_quick_switch_top(
     }
 }
 
+#[cfg(test)]
 fn finish_quick_switch_top(
     heap: std::collections::BinaryHeap<ScoredQuickSwitchCand>,
 ) -> Vec<ScoredQuickSwitchCand> {
@@ -1224,95 +1171,12 @@ fn finish_quick_switch_top(
 /// Fuzzy page-name matcher for the quick switcher. Ranks prefix > substring >
 /// subsequence, then by name length.
 pub fn quick_switch(graph: &Graph, query: &str, limit: usize) -> Vec<PageEntry> {
-    use crate::search_query::Matcher;
-    let matcher = Matcher::parse(query);
-    // A bare single term keeps today's fuzzy ranking (`score_name`); any operator
-    // / second term / regex switches to the boolean+regex grammar via `matcher`.
-    // We pass the simple term as `q` so the fuzzy path is byte-for-byte unchanged.
-    let simple = matcher.simple_term();
-    // An invalid regex matches nothing; `limit == 0` asks for nothing. (An Empty
-    // matcher — blank query — still lists every page via `score_name("")==0`, the
-    // just-opened state, so it is NOT short-circuited here.)
-    if limit == 0 || matches!(matcher, Matcher::InvalidRegex(_)) {
-        return Vec::new();
-    }
-    let q = simple.unwrap_or("").to_string();
-    // Score a page name: the simple/empty path keeps the fuzzy `score_name`
-    // (prefix > substring > subsequence); a boolean/regex query scores via the
-    // shared matcher (regex needs the original-case name).
-    let use_matcher = simple.is_none() && !matches!(matcher, Matcher::Empty);
-    let score = |lower: &str, orig: &str| -> Option<i32> {
-        if use_matcher {
-            matcher.score_name(lower, orig)
-        } else {
-            score_name(lower, &q)
-        }
-    };
-    // `list_pages` / `referenced_page_names` are `cache_gen`-memoized and return a
-    // clone-on-read snapshot ON PURPOSE (so a keystroke never holds the cache lock
-    // across this scoring work) — those single snapshot clones stay. What we DO
-    // drop: scoring file pages by INDEX so a match isn't cloned mid-score. An
-    // empty/short query (the switcher's just-opened state) matches every page, so
-    // the old `e.clone()` per match was a second whole-list copy each keystroke;
-    // now only the `limit` winners are materialized. (perf F4)
-    let file_pages = graph.list_pages();
-    let mut top = std::collections::BinaryHeap::new();
-    for (i, e) in file_pages.iter().enumerate() {
-        // P7: lowercase-cache candidate. `list_pages()` exposes public
-        // `PageEntry`s, so caching the lowercase name cleanly needs an internal
-        // snapshot shape rather than widening the public type.
-        if let Some(s) = score(&e.name.to_lowercase(), &e.name) {
-            push_quick_switch_top(
-                &mut top,
-                limit,
-                ScoredQuickSwitchCand {
-                    score: s - e.name.len() as i32,
-                    index: i,
-                    cand: QuickSwitchCand::File(i),
-                },
-            );
-        }
-    }
-    // Pages referenced by `#tag` / `[[link]]` but with no file of their own still
-    // "exist" (OG semantics): include them (deduped against file pages, which are
-    // authoritative) so a tag already used elsewhere shows as the page rather than
-    // a misleading "Create …" in autocomplete.
-    let have: std::collections::HashSet<String> =
-        file_pages.iter().map(|e| refs::page_key(&e.name)).collect();
-    for (offset, name) in graph.referenced_page_names().into_iter().enumerate() {
-        let index = file_pages.len() + offset;
-        let lower = refs::page_key(&name);
-        if have.contains(&lower) {
-            continue;
-        }
-        if let Some(s) = score(&name.to_lowercase(), &name) {
-            let len = name.len() as i32;
-            push_quick_switch_top(
-                &mut top,
-                limit,
-                ScoredQuickSwitchCand {
-                    score: s - len,
-                    index,
-                    cand: QuickSwitchCand::Ref(PageEntry {
-                        name,
-                        kind: PageKind::Page,
-                        date_key: None,
-                        rel_path: String::new(),
-                        path: std::path::PathBuf::new(),
-                    }),
-                },
-            );
-        }
-    }
-    finish_quick_switch_top(top)
-        .into_iter()
-        .map(|scored| match scored.cand {
-            QuickSwitchCand::File(i) => file_pages[i].clone(),
-            QuickSwitchCand::Ref(e) => e,
-        })
-        .collect()
+    let plan = crate::query_plan::QueryPlan::legacy_page_search(query, limit);
+    let execution = plan.execute(graph, || false);
+    crate::query_plan::page_hits_to_entries(execution.hits)
 }
 
+#[cfg(test)]
 fn score_name(name: &str, q: &str) -> Option<i32> {
     if q.is_empty() {
         return Some(0);
@@ -1328,6 +1192,7 @@ fn score_name(name: &str, q: &str) -> Option<i32> {
     }
 }
 
+#[cfg(test)]
 fn is_subsequence(needle: &str, hay: &str) -> bool {
     let mut it = hay.chars();
     needle.chars().all(|c| it.any(|h| h == c))
@@ -1503,6 +1368,13 @@ enum Pred {
     PageTags(Vec<String>),
     /// Full-text match on the block's visible content.
     Content(String),
+    /// The friendly Ctrl-K search language, explicitly embedded in the durable
+    /// query DSL. The decoded source is retained exactly and compiled once when
+    /// the surrounding query is parsed.
+    Search(FriendlySearch),
+    /// A case-sensitive Rust regex over the block's projected visible content.
+    /// Invalid patterns are retained but deliberately match nothing.
+    ContentRegex(ContentRegex),
     And(Vec<Pred>),
     Or(Vec<Pred>),
     Not(Box<Pred>),
@@ -1515,6 +1387,78 @@ enum Pred {
     Aggregate(AggKind),
     /// Result-level grouping (`(group-by page|<prop>)`), also frontend-computed.
     GroupBy(String),
+}
+
+/// Compiled `(search "...")` predicate. Equality intentionally compares the
+/// lossless decoded source rather than the matcher's internal representation;
+/// this keeps parser tests useful without making the shared matcher API expose
+/// implementation details.
+#[derive(Clone)]
+struct FriendlySearch {
+    source: String,
+    matcher: Matcher,
+}
+
+impl FriendlySearch {
+    fn new(source: String) -> Self {
+        let matcher = Matcher::parse(&source);
+        Self { source, matcher }
+    }
+
+    fn matches(&self, block: &DocBlock) -> bool {
+        let projection = block.projection();
+        self.matcher
+            .matches(&projection.visible_lower, &projection.visible)
+    }
+}
+
+impl std::fmt::Debug for FriendlySearch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("FriendlySearch").field(&self.source).finish()
+    }
+}
+
+impl PartialEq for FriendlySearch {
+    fn eq(&self, other: &Self) -> bool {
+        self.source == other.source
+    }
+}
+
+/// Compiled `(content-regex "...")` predicate. Keeping an invalid pattern as
+/// `None` makes its behavior deterministic (no panic, no accidental match-all)
+/// while retaining the original source for diagnostics and round-tripping.
+#[derive(Clone)]
+struct ContentRegex {
+    source: String,
+    compiled: Option<regex::Regex>,
+}
+
+impl ContentRegex {
+    fn new(source: String) -> Self {
+        let compiled = regex::Regex::new(&source).ok();
+        Self { source, compiled }
+    }
+
+    fn matches(&self, block: &DocBlock) -> bool {
+        self.compiled
+            .as_ref()
+            .is_some_and(|regex| regex.is_match(&block.projection().visible))
+    }
+}
+
+impl std::fmt::Debug for ContentRegex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ContentRegex")
+            .field("source", &self.source)
+            .field("valid", &self.compiled.is_some())
+            .finish()
+    }
+}
+
+impl PartialEq for ContentRegex {
+    fn eq(&self, other: &Self) -> bool {
+        self.source == other.source
+    }
 }
 
 /// A result aggregation directive. `Sum`/`Avg` carry the property whose numeric
@@ -1675,6 +1619,8 @@ impl Pred {
             // `s` is already lowercased at parse time; `visible_lower` is the
             // block's lowercased visible text — a direct substring test.
             Pred::Content(s) => block.projection().visible_lower.contains(s.as_str()),
+            Pred::Search(search) => search.matches(block),
+            Pred::ContentRegex(regex) => regex.matches(block),
             Pred::And(ps) => ps.iter().all(|p| p.eval(block, ctx)),
             Pred::Or(ps) => ps.iter().any(|p| p.eval(block, ctx)),
             Pred::Not(p) => !p.eval(block, ctx),
@@ -1909,6 +1855,8 @@ fn parse_expr(toks: &[Tok], pos: &mut usize, today: JournalDate) -> Option<Pred>
                     Pred::PageProperty(key, val)
                 }
                 "page-tags" | "tags" => Pred::PageTags(parse_words(toks, pos)),
+                "search" => Pred::Search(FriendlySearch::new(parse_name(toks, pos)?)),
+                "content-regex" => Pred::ContentRegex(ContentRegex::new(parse_name(toks, pos)?)),
                 "scheduled" => Pred::Scheduled,
                 "deadline" => Pred::Deadline,
                 "journal" => Pred::Journal,
@@ -2219,6 +2167,47 @@ mod tests {
         let none = ctx_named();
         let b = DocBlock::new("note: foo \"bar\" baz");
         assert!(pred("\"foo \\\"bar\\\"\"").eval(&b, &none));
+    }
+
+    #[test]
+    fn search_predicate_preserves_escaped_friendly_source_and_evaluates_it() {
+        let parsed = pred(r#"(search "foo \"exact phrase\" -draft OR C:\\tmp")"#);
+        assert_eq!(
+            parsed,
+            Pred::Search(FriendlySearch::new(
+                r#"foo "exact phrase" -draft OR C:\tmp"#.into()
+            ))
+        );
+
+        let none = ctx_named();
+        assert!(parsed.eval(&DocBlock::new("foo and an exact phrase, ready"), &none));
+        assert!(!parsed.eval(&DocBlock::new("foo and an exact phrase, but draft"), &none));
+        // The decoded backslash is passed losslessly to the friendly parser;
+        // the second OR branch can therefore match a Windows-style path.
+        assert!(parsed.eval(&DocBlock::new(r"open C:\tmp\notes"), &none));
+
+        // The predicate remains an ordinary composable query-DSL clause.
+        let task_search = pred(r#"(and (task TODO) (search "foo -draft"))"#);
+        assert!(task_search.eval(&DocBlock::new("TODO foo ready"), &none));
+        assert!(!task_search.eval(&DocBlock::new("DONE foo ready"), &none));
+    }
+
+    #[test]
+    fn content_regex_preserves_escapes_and_invalid_patterns_match_nothing() {
+        let parsed = pred(r#"(content-regex "ID:\\s+[A-Z]{3}\\d+\\s+\"quoted\"")"#);
+        assert_eq!(
+            parsed,
+            Pred::ContentRegex(ContentRegex::new(r#"ID:\s+[A-Z]{3}\d+\s+"quoted""#.into()))
+        );
+
+        let none = ctx_named();
+        assert!(parsed.eval(&DocBlock::new(r#"prefix ID: ABC42 "quoted" suffix"#), &none));
+        // Rust regex matching is intentionally case-sensitive.
+        assert!(!parsed.eval(&DocBlock::new(r#"prefix ID: abc42 "quoted" suffix"#), &none));
+
+        let invalid = pred(r#"(content-regex "[unclosed")"#);
+        assert!(matches!(invalid, Pred::ContentRegex(_)));
+        assert!(!invalid.eval(&DocBlock::new("[unclosed"), &none));
     }
 
     #[test]
@@ -2563,7 +2552,17 @@ mod tests {
         let graph = Graph::open(&dir);
         graph.warm_cache();
 
-        for query in ["", "aa", "000"] {
+        for query in [
+            "",
+            "aa",
+            "000",
+            "\"aa\"",
+            "/^aa/",
+            "aa -zzz",
+            "aa OR zzsource",
+            "-draft",
+            "/(unclosed/",
+        ] {
             for limit in [1, 7, 12, 64, 199, 240, 300] {
                 let got = quick_switch_fingerprint(quick_switch(&graph, query, limit));
                 let expected = quick_switch_fingerprint(quick_switch_reference_full_sort(
@@ -2585,15 +2584,7 @@ mod tests {
         for index in 0..total {
             let score = (index % 6) as i32;
             reference.push((score, index));
-            push_quick_switch_top(
-                &mut heap,
-                limit,
-                ScoredQuickSwitchCand {
-                    score,
-                    index,
-                    cand: QuickSwitchCand::File(index),
-                },
-            );
+            push_quick_switch_top(&mut heap, limit, ScoredQuickSwitchCand { score, index });
         }
 
         let top = finish_quick_switch_top(heap);
@@ -2654,15 +2645,27 @@ mod tests {
             .iter()
             .map(|gr| {
                 let raw = gr.blocks[0].raw.as_str();
-                ["newestref", "middleref", "oldestref", "alpharef", "plainref"]
-                    .into_iter()
-                    .find(|t| raw.contains(t))
-                    .unwrap_or("?")
+                [
+                    "newestref",
+                    "middleref",
+                    "oldestref",
+                    "alpharef",
+                    "plainref",
+                ]
+                .into_iter()
+                .find(|t| raw.contains(t))
+                .unwrap_or("?")
             })
             .collect();
         assert_eq!(
             tags,
-            vec!["newestref", "middleref", "oldestref", "alpharef", "plainref"],
+            vec![
+                "newestref",
+                "middleref",
+                "oldestref",
+                "alpharef",
+                "plainref"
+            ],
             "{tags:?}"
         );
         let _ = fs::remove_dir_all(&dir);

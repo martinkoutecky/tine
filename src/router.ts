@@ -18,6 +18,7 @@ import { isMobilePlatform } from "./nativeChrome";
 
 export type Route =
   | { kind: "journals" }
+  | QueryRoute
   | {
       kind: "page";
       name: string;
@@ -28,6 +29,18 @@ export type Route =
        *  (#21). Absent for normal pages, which resolve by name. */
       path?: string;
     };
+
+export type QueryPresentation = "search" | "list" | "table" | "board";
+
+export interface QueryRoute {
+  kind: "query";
+  /** Stable workspace identity. Editing the expression replaces this history
+   *  entry instead of appending one entry per keystroke. */
+  id: string;
+  sourceKind: "search" | "dsl";
+  source: string;
+  presentation: QueryPresentation;
+}
 
 export interface Tab {
   id: string;
@@ -71,6 +84,9 @@ export interface PaneRouter {
     opts?: { inPlace?: boolean }
   ): void;
   openJournals(opts?: { inPlace?: boolean }): void;
+  openQueryInNewTab(source: string, presentation?: QueryPresentation, foreground?: boolean): QueryRoute;
+  updateActiveQuery(patch: Partial<Pick<QueryRoute, "source" | "sourceKind" | "presentation">>): void;
+  replaceActiveRoute(route: Route): void;
   resetTabsToJournals(): void;
   openFile(
     path: string,
@@ -113,6 +129,10 @@ export function tabRoute(t: Tab): Route {
 
 export function routeTitle(r: Route): string {
   if (r.kind === "journals") return "Journals";
+  if (r.kind === "query") {
+    const source = r.source.trim().replace(/\s+/g, " ");
+    return source ? `Search: ${source.slice(0, 36)}${source.length > 36 ? "…" : ""}` : "Search";
+  }
   if (r.name.startsWith("hls__")) return r.name.slice(5);
   if (r.name === `${GUIDE_DISPLAY_PREFIX}Tine Guide`) return "Guide";
   if (isGuideRouteName(r.name)) return r.name.slice(GUIDE_DISPLAY_PREFIX.length);
@@ -122,6 +142,7 @@ export function routeTitle(r: Route): string {
 export function sameRoute(a: Route, b: Route): boolean {
   if (a.kind !== b.kind) return false;
   if (a.kind === "journals") return true;
+  if (a.kind === "query") return a.id === (b as QueryRoute).id;
   const bb = b as typeof a;
   return (
     a.name === bb.name && a.pageKind === bb.pageKind && a.block === bb.block && a.path === bb.path
@@ -131,6 +152,22 @@ export function sameRoute(a: Route, b: Route): boolean {
 const CLOSED_CAP = 10;
 const MOBILE_HISTORY_STATE = { tineRouter: true };
 const GUIDE_DISPLAY_PREFIX = "Tine-guide/";
+let queryRouteCounter = 0;
+
+export function makeQueryRoute(
+  source: string,
+  presentation: QueryPresentation = "search",
+  sourceKind: QueryRoute["sourceKind"] = "search"
+): QueryRoute {
+  queryRouteCounter += 1;
+  return {
+    kind: "query",
+    id: `query-${Date.now().toString(36)}-${queryRouteCounter.toString(36)}`,
+    sourceKind,
+    source,
+    presentation,
+  };
+}
 
 function isGuideRouteName(name: string): boolean {
   return name.startsWith(GUIDE_DISPLAY_PREFIX);
@@ -387,6 +424,42 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
 
   function openJournals(opts: { inPlace?: boolean } = {}) {
     navigate({ kind: "journals" }, { sticky: !opts.inPlace });
+  }
+
+  function replaceActiveRoute(nextRoute: Route) {
+    rememberScroll();
+    setTabs(tabs().map((tab) => {
+      if (tab.id !== activeId()) return tab;
+      const history = [...tab.history];
+      history[tab.pos] = nextRoute;
+      return { ...tab, history };
+    }));
+    persist();
+  }
+
+  function openQueryInNewTab(
+    source: string,
+    presentation: QueryPresentation = "search",
+    foreground = true
+  ): QueryRoute {
+    const queryRoute = makeQueryRoute(source, presentation);
+    openInNewTab(queryRoute, foreground);
+    return queryRoute;
+  }
+
+  function updateActiveQuery(
+    patch: Partial<Pick<QueryRoute, "source" | "sourceKind" | "presentation">>
+  ) {
+    const current = route();
+    if (current.kind !== "query") return;
+    const next = { ...current, ...patch };
+    setTabs(tabs().map((tab) => {
+      if (tab.id !== activeId()) return tab;
+      const history = [...tab.history];
+      history[tab.pos] = next;
+      return { ...tab, history };
+    }));
+    persist();
   }
 
   /** Collapse the whole tab session down to a single fresh Journals tab and focus
@@ -733,6 +806,9 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     restoreScrollFor,
     openPage,
     openJournals,
+    openQueryInNewTab,
+    updateActiveQuery,
+    replaceActiveRoute,
     resetTabsToJournals,
     openFile,
     focusBlock,
@@ -811,6 +887,24 @@ export function openPage(
 
 export function openJournals(opts: { inPlace?: boolean } = {}) {
   focusedRouterInstance().openJournals(opts);
+}
+
+export function openQueryInNewTab(
+  source: string,
+  presentation: QueryPresentation = "search",
+  foreground = true
+): QueryRoute {
+  return focusedRouterInstance().openQueryInNewTab(source, presentation, foreground);
+}
+
+export function updateActiveQuery(
+  patch: Partial<Pick<QueryRoute, "source" | "sourceKind" | "presentation">>
+) {
+  focusedRouterInstance().updateActiveQuery(patch);
+}
+
+export function replaceActiveRoute(nextRoute: Route) {
+  focusedRouterInstance().replaceActiveRoute(nextRoute);
 }
 
 export function resetTabsToJournals() {

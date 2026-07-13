@@ -57,6 +57,13 @@ function validRoute(r: unknown): r is Route {
   if (!r || typeof r !== "object") return false;
   const o = r as Record<string, unknown>;
   if (o.kind === "journals") return true;
+  if (o.kind === "query") {
+    return typeof o.id === "string" && o.id.length > 0 && o.id.length <= 128
+      && (o.sourceKind === "search" || o.sourceKind === "dsl")
+      && typeof o.source === "string" && o.source.length <= 65_536
+      && (o.presentation === "search" || o.presentation === "list"
+        || o.presentation === "table" || o.presentation === "board");
+  }
   return o.kind === "page" && typeof o.name === "string" && (o.pageKind === "journal" || o.pageKind === "page");
 }
 

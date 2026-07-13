@@ -1,6 +1,7 @@
 import { Show, Suspense, createEffect, lazy, on, onCleanup, onMount, type JSX } from "solid-js";
 import { Sidebar } from "./components/Sidebar";
 import { PageView, reloadJournalsFeedFromStart, toLoadablePage } from "./components/Page";
+import { QueryWorkspace } from "./components/QueryWorkspace";
 import { QuickSwitcher } from "./components/QuickSwitcher";
 // pdf.js (~hundreds of KB) is heavy and most sessions never open a PDF — load
 // the viewer only when one is opened.
@@ -29,7 +30,7 @@ import { installBlockSelectionDrag } from "./blockDrag";
 import { loadGraphPath, persistedGraphPath, refreshAliases } from "./graph";
 import { checkForUpdate } from "./update";
 import { Welcome } from "./components/Welcome";
-import { goBack, goForward, canGoBack, canGoForward, flushSession, openJournals } from "./router";
+import { goBack, goForward, canGoBack, canGoForward, flushSession, openJournals, type PaneRouter, type QueryRoute } from "./router";
 import {
   theme,
   toggleTheme,
@@ -240,6 +241,17 @@ function PaneTabSplitPreview(props: { paneId: string }): JSX.Element {
   );
 }
 
+function PaneContent(props: { router: PaneRouter }): JSX.Element {
+  return (
+    <Show
+      when={props.router.route().kind === "query"}
+      fallback={<PageView />}
+    >
+      <QueryWorkspace route={props.router.route() as QueryRoute} router={props.router} />
+    </Show>
+  );
+}
+
 function PaneLeaf(props: { paneId: string }): JSX.Element {
   const router = paneRouter(props.paneId);
   const multi = () => layoutHasMultiplePanes();
@@ -274,7 +286,7 @@ function PaneLeaf(props: { paneId: string }): JSX.Element {
                 ref={(el) => router.setScrollerElement(el)}
               >
                 <div class="main-content-inner">
-                  <PageView />
+                  <PaneContent router={router} />
                 </div>
               </main>
             </div>
@@ -300,7 +312,7 @@ function PaneLeaf(props: { paneId: string }): JSX.Element {
             />
             <main class="main-content pane-main-content" ref={(el) => router.setScrollerElement(el)}>
               <div class="main-content-inner">
-                <PageView />
+                <PaneContent router={router} />
               </div>
             </main>
           </div>

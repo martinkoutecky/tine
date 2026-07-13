@@ -134,6 +134,16 @@ describe("parse + serialize round-trip", () => {
     });
   });
 
+  it("round-trips a lossless friendly-search frontend", () => {
+    const dsl = '(search "alpha or \\"beta gamma\\" not draft")';
+    expect(roundtrip(dsl)).toBe(dsl);
+    expect(parseQuery(dsl)).toEqual({
+      kind: "op",
+      op: "and",
+      children: [{ kind: "search", source: 'alpha or "beta gamma" not draft' }],
+    });
+  });
+
   it("empty query is empty string", () => {
     expect(roundtrip("")).toBe("");
     expect(toDsl(parseQuery(""))).toBe("");
@@ -274,6 +284,13 @@ describe("aggregate + group-by directives", () => {
 // and silently REPLACED the user's simple query.
 describe("clauseToAdvanced", () => {
   const conv = (dsl: string) => clauseToAdvanced(parseQuery(dsl));
+
+  it("refuses to guess an advanced equivalent for friendly search", () => {
+    expect(conv('(search "alpha beta")')).toEqual({
+      ok: false,
+      unsupported: ['friendly search "alpha beta"'],
+    });
+  });
 
   it("converts a task query 1:1 and stays on one line", () => {
     const r = conv("(task TODO DOING)");

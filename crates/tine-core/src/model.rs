@@ -808,7 +808,10 @@ impl Graph {
         } else {
             Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                format!("write target escapes approved assets root: {}", target.display()),
+                format!(
+                    "write target escapes approved assets root: {}",
+                    target.display()
+                ),
             ))
         }
     }
@@ -984,7 +987,10 @@ impl Graph {
             .unwrap_or_else(|| Ok(self.path_for(name, kind)))?;
         let canonical = candidate.canonicalize()?;
         if !canonical.is_file() {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "page source is not a file"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "page source is not a file",
+            ));
         }
         let pages = self.pages_path().canonicalize()?;
         let journals = self.journals_path().canonicalize()?;
@@ -2860,7 +2866,11 @@ impl Graph {
             let new_path = self
                 .pages_path()
                 .join(format!("{encoded_new}.{}", entry_format.ext()));
-            let other_ext = if entry_format == Format::Org { "md" } else { "org" };
+            let other_ext = if entry_format == Format::Org {
+                "md"
+            } else {
+                "org"
+            };
             let other_format_target = self.pages_path().join(format!("{encoded_new}.{other_ext}"));
             if entries.iter().any(|other| {
                 other.kind == PageKind::Page
@@ -3072,18 +3082,14 @@ impl Graph {
                     };
                     if source_restored {
                         let ours = content_rev(&e.new_content);
-                        if fs::read_to_string(&e.dst)
-                            .is_ok_and(|disk| content_rev(&disk) == ours)
-                        {
+                        if fs::read_to_string(&e.dst).is_ok_and(|disk| content_rev(&disk) == ours) {
                             let _ = fs::remove_file(&e.dst);
                         }
                     }
                     self.recent_writes.lock().unwrap().remove(&e.dst);
                 } else {
                     let ours = content_rev(&e.new_content);
-                    if fs::read_to_string(&e.dst)
-                        .is_ok_and(|disk| content_rev(&disk) == ours)
-                    {
+                    if fs::read_to_string(&e.dst).is_ok_and(|disk| content_rev(&disk) == ours) {
                         self.note_self_write(&e.dst, content_rev(&e.orig));
                         let _ = atomic_write(&e.dst, e.orig.as_bytes());
                     } else {
@@ -3146,6 +3152,20 @@ impl Graph {
         crate::query::search(self, query, limit)
     }
 
+    /// Execute the typed, combined graph-search plan (page names + block text).
+    /// Commands and page creation remain frontend providers and are deliberately
+    /// outside this graph query result.
+    pub fn run_graph_search(
+        &self,
+        source: &str,
+        page_limit: usize,
+        block_limit: usize,
+        explain: bool,
+    ) -> crate::query_plan::QueryExecution {
+        crate::query_plan::QueryPlan::friendly(source, page_limit, block_limit)
+            .execute_with_explain(self, || false, explain)
+    }
+
     /// Interactive search lane: a newer request in the same lane cooperatively
     /// cancels the older whole-graph scan. Separate lanes keep the Ctrl-K
     /// switcher and in-editor block picker from canceling one another.
@@ -3162,6 +3182,30 @@ impl Graph {
         crate::query::search_cancellable(self, query, limit, || {
             epoch.load(Ordering::Acquire) != mine
         })
+    }
+
+    /// Latest-wins combined graph search.  It shares the same lane epochs as the
+    /// legacy block-search adapter, so migrating a consumer cannot leave an older
+    /// request from either API running in that logical lane.
+    pub fn run_graph_search_latest(
+        &self,
+        lane: &str,
+        source: &str,
+        page_limit: usize,
+        block_limit: usize,
+        explain: bool,
+    ) -> crate::query_plan::QueryExecution {
+        use std::sync::atomic::Ordering;
+        let epoch = {
+            let mut lanes = self.search_lanes.lock().unwrap();
+            lanes
+                .entry(lane.to_owned())
+                .or_insert_with(|| Arc::new(std::sync::atomic::AtomicU64::new(0)))
+                .clone()
+        };
+        let mine = epoch.fetch_add(1, Ordering::AcqRel) + 1;
+        crate::query_plan::QueryPlan::friendly(source, page_limit, block_limit)
+            .execute_with_explain(self, || epoch.load(Ordering::Acquire) != mine, explain)
     }
 
     /// Fuzzy page-name matches for the quick switcher.
@@ -3574,7 +3618,9 @@ impl Graph {
         } else {
             None
         };
-        let existing_raw = page_baseline.clone().or_else(|| legacy_page_baseline.clone());
+        let existing_raw = page_baseline
+            .clone()
+            .or_else(|| legacy_page_baseline.clone());
         // Merge and publish the sidecar with the same external-writer guard as
         // config updates. If Logseq/Syncthing changes either the primary or the
         // legacy fallback after our read, retry against those new bytes instead
@@ -3605,7 +3651,8 @@ impl Graph {
                     }
                 }
             }
-            let next = crate::pdf::write_highlights(&merged, existing_edn.map_or("", String::as_str));
+            let next =
+                crate::pdf::write_highlights(&merged, existing_edn.map_or("", String::as_str));
             let primary_now = read_optional_text(&edn_path)?;
             let legacy_now = if primary_now.is_none() && primary_baseline.is_none() {
                 match &legacy_edn {
@@ -3677,7 +3724,10 @@ impl Graph {
         fs::create_dir_all(&trash)?;
         if let (Some(path), Some(baseline)) = (&legacy_edn, &committed_legacy_edn_baseline) {
             if read_optional_text(path)?.as_ref() == Some(baseline) {
-                let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("legacy.edn");
+                let name = path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("legacy.edn");
                 let dest = trash.join(format!("{}__legacy__{name}", trash_stamp()));
                 if move_file_noreplace(path, &dest).is_ok()
                     && read_optional_text(&dest)?.as_ref() != Some(baseline)
@@ -3692,7 +3742,10 @@ impl Graph {
         }
         if let (Some(path), Some(baseline)) = (&legacy_page, &legacy_page_baseline) {
             if read_optional_text(path)?.as_ref() == Some(baseline) {
-                let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("legacy.md");
+                let name = path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("legacy.md");
                 let dest = trash.join(format!("{}__legacy__{name}", trash_stamp()));
                 if move_file_noreplace(path, &dest).is_ok() {
                     if read_optional_text(&dest)?.as_ref() != Some(baseline) {
@@ -3823,9 +3876,7 @@ impl Graph {
         // canonical containment immediately before the read to close rename /
         // symlink-swap races between directory scanning and reconciliation.
         let md = fs::symlink_metadata(path).ok()?;
-        if md.file_type().is_symlink()
-            || !md.is_file()
-            || !path_stays_within_root(&self.root, path)
+        if md.file_type().is_symlink() || !md.is_file() || !path_stays_within_root(&self.root, path)
         {
             return None;
         }
@@ -5092,11 +5143,7 @@ fn atomic_write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     let fname = path.file_name().and_then(|s| s.to_str()).unwrap_or("page");
     let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
-    let tmp = dir.join(format!(
-        ".{fname}.{}.{}.new.tmp",
-        std::process::id(),
-        seq
-    ));
+    let tmp = dir.join(format!(".{fname}.{}.{}.new.tmp", std::process::id(), seq));
     let res = (|| {
         let mut file = fs::OpenOptions::new()
             .write(true)
@@ -5473,41 +5520,66 @@ mod tests {
         // alias lived in the page pre-block (dedicated properties panel / Logseq
         // file convention); the bulleted form silently did nothing.
         let build = |books_body: &str| {
-            let dir = std::env::temp_dir()
-                .join(format!("tine-gh62-{}-{}", books_body.len(), std::process::id()));
+            let dir = std::env::temp_dir().join(format!(
+                "tine-gh62-{}-{}",
+                books_body.len(),
+                std::process::id()
+            ));
             let _ = fs::remove_dir_all(&dir);
             fs::create_dir_all(dir.join("journals")).unwrap();
             fs::create_dir_all(dir.join("pages")).unwrap();
             fs::write(dir.join("pages").join("books.md"), books_body).unwrap();
-            fs::write(dir.join("pages").join("note.md"), "- I read a #book today\n").unwrap();
+            fs::write(
+                dir.join("pages").join("note.md"),
+                "- I read a #book today\n",
+            )
+            .unwrap();
             let g = Graph::open(&dir);
             g.warm_cache();
             let aliases = g.page_aliases();
-            let n: usize = g.backlinks("books").iter().map(|grp| grp.blocks.len()).sum();
+            let n: usize = g
+                .backlinks("books")
+                .iter()
+                .map(|grp| grp.blocks.len())
+                .sum();
             let _ = fs::remove_dir_all(&dir);
             (aliases, n)
         };
 
         // Alias as the first bullet — now recognized.
         let (a, n) = build("- alias:: book\n- I like reading\n");
-        assert_eq!(a, vec![("book".to_string(), "books".to_string())], "first-bullet alias registered");
+        assert_eq!(
+            a,
+            vec![("book".to_string(), "books".to_string())],
+            "first-bullet alias registered"
+        );
         assert_eq!(n, 1, "#book backlink merges onto the books page");
 
         // Pre-block alias keeps working (Logseq file convention / properties panel).
         let (a, n) = build("alias:: book\n\n- I like reading\n");
-        assert_eq!(a, vec![("book".to_string(), "books".to_string())], "pre-block alias still registered");
+        assert_eq!(
+            a,
+            vec![("book".to_string(), "books".to_string())],
+            "pre-block alias still registered"
+        );
         assert_eq!(n, 1, "pre-block alias backlink still merges");
 
         // A NON-first bullet with `alias::` is a block property, NOT a page alias
         // (OG parity — only the first properties block counts).
         let (a, n) = build("- I like reading\n- alias:: book\n");
-        assert!(a.is_empty(), "alias in a non-first block is not a page alias: {a:?}");
+        assert!(
+            a.is_empty(),
+            "alias in a non-first block is not a page alias: {a:?}"
+        );
         assert_eq!(n, 0, "no backlink merge for a mid-page block alias");
 
         // A first block that mixes content with the property is a regular block,
         // not a page-properties block.
         let (a, _) = build("- reading list\nalias:: book\n");
-        assert!(a.is_empty(), "content+property first block is not page properties: {a:?}");
+        assert!(
+            a.is_empty(),
+            "content+property first block is not page properties: {a:?}"
+        );
     }
 
     #[test]
@@ -7125,10 +7197,8 @@ mod tests {
     fn write_pdf_area_image_rejects_nested_asset_symlink_escape() {
         use std::os::unix::fs::symlink;
         let dir = scratch("areaimg-nested-symlink");
-        let outside = std::env::temp_dir().join(format!(
-            "tine-areaimg-outside-{}",
-            std::process::id()
-        ));
+        let outside =
+            std::env::temp_dir().join(format!("tine-areaimg-outside-{}", std::process::id()));
         let _ = fs::remove_dir_all(&outside);
         fs::create_dir_all(&outside).unwrap();
         fs::create_dir_all(dir.join("assets")).unwrap();
@@ -7384,8 +7454,14 @@ mod tests {
         }
         let derived = g.derived_cache.read().unwrap();
         let advanced = g.advanced_cache.read().unwrap();
-        assert_eq!(derived.as_ref().unwrap().results.len(), DERIVED_CACHE_MAX_ENTRIES);
-        assert_eq!(advanced.as_ref().unwrap().results.len(), DERIVED_CACHE_MAX_ENTRIES);
+        assert_eq!(
+            derived.as_ref().unwrap().results.len(),
+            DERIVED_CACHE_MAX_ENTRIES
+        );
+        assert_eq!(
+            advanced.as_ref().unwrap().results.len(),
+            DERIVED_CACHE_MAX_ENTRIES
+        );
         let oldest = format!("test\0{}", 0);
         assert!(!derived.as_ref().unwrap().results.contains_key(&oldest));
         assert!(!advanced.as_ref().unwrap().results.contains_key(&oldest));

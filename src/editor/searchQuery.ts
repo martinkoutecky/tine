@@ -91,6 +91,89 @@ export function matchHighlight(m: SearchMatcher, text: string): { start: number;
   return null;
 }
 
+/** All positive match ranges for dev/mock presentation only. Production search
+ * receives authoritative UTF-16 evidence from Rust's QueryPlan evaluator. */
+export function matchHighlights(m: SearchMatcher, text: string, limit = 24): { start: number; end: number }[] {
+  if (m.kind === "regex") {
+    const flags = m.re.flags.includes("g") ? m.re.flags : `${m.re.flags}g`;
+    const re = new RegExp(m.re.source, flags);
+    const out: { start: number; end: number }[] = [];
+    for (const hit of text.matchAll(re)) {
+      const start = hit.index ?? 0;
+      const end = start + hit[0].length;
+      if (end > start) out.push({ start, end });
+      if (out.length >= limit) break;
+    }
+    return out;
+  }
+  if (m.kind !== "boolean") return [];
+  const lower = text.toLowerCase();
+  const group = m.groups.find((candidate) => groupMatches(candidate, lower));
+  if (!group) return [];
+  const out: { start: number; end: number }[] = [];
+  for (const term of group) {
+    if (term.negated || !term.text) continue;
+    let from = 0;
+    while (out.length < limit) {
+      const start = lower.indexOf(term.text, from);
+      if (start < 0) break;
+      out.push({ start, end: start + term.text.length });
+      from = start + Math.max(1, term.text.length);
+    }
+  }
+  return out.sort((a, b) => a.start - b.start || a.end - b.end);
+}
+
+function quoteDsl(value: string): string {
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+/** Lossless compiler for the friendly block-search grammar into the ordinary
+ * simple query DSL. Page fuzzy matching is intentionally not implied here: it
+ * is an explicit page branch in QueryPlan, while this compiler is used when a
+ * user deliberately switches a workspace to the block-query builder. */
+export function friendlySearchToDsl(query: string): { dsl: string; error: string | null } {
+  const matcher = parseSearchQuery(query);
+  if (matcher.kind === "invalid") return { dsl: "", error: matcher.error };
+  if (matcher.kind === "empty") return { dsl: "", error: "Add at least one positive search term." };
+  if (matcher.kind === "regex") {
+    return { dsl: `(content-regex ${quoteDsl(matcher.re.source)})`, error: null };
+  }
+  const termDsl = (term: Term) => {
+    const content = quoteDsl(term.text);
+    return term.negated ? `(not ${content})` : content;
+  };
+  const groups = matcher.groups.map((group) => {
+    const terms = group.map(termDsl);
+    return terms.length === 1 ? terms[0] : `(and ${terms.join(" ")})`;
+  });
+  return { dsl: groups.length === 1 ? groups[0] : `(or ${groups.join(" ")})`, error: null };
+}
+
+/** Canonical lossless on-disk representation for a friendly search workspace.
+ * The `(search …)` predicate is a Tine query extension compiled by the same
+ * Rust QueryPlan as Ctrl+K; it keeps the friendly source reconstructible. */
+export function friendlySearchToSavedDsl(query: string): string {
+  return `(search ${quoteDsl(query.trim())})`;
+}
+
+/** Recover friendly source from the canonical `(search "…")` query extension.
+ * Returns null for any other DSL so frontends never pretend a lossy conversion
+ * is reversible. */
+export function savedDslToFriendlySearch(dsl: string): string | null {
+  const match = /^\(\s*search\s+"((?:[^"\\]|\\.)*)"\s*\)$/s.exec(dsl.trim());
+  if (!match) return null;
+  let out = "";
+  for (let i = 0; i < match[1].length; i += 1) {
+    const char = match[1][i];
+    if (char === "\\" && i + 1 < match[1].length && (match[1][i + 1] === "\\" || match[1][i + 1] === '"')) {
+      out += match[1][i + 1];
+      i += 1;
+    } else out += char;
+  }
+  return out;
+}
+
 function groupMatches(group: Term[], lower: string): boolean {
   return group.every((t) => {
     const present = t.text !== "" && lower.includes(t.text);

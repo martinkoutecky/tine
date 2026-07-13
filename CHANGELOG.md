@@ -10,6 +10,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Search and queries now share a persistent result workspace.** Ctrl+K can
+  open its complete page-and-block result set in a graph-scoped tab, switch
+  between search, list, table, and board presentations, survive an app restart,
+  and become one ordinary query page when named—without writing temporary graph
+  files. (GH #99)
+- **Query creation has a friendly primary surface and an optional deeper one.**
+  Plain search syntax remains editable as plain text; a Gmail-style filter
+  dialog can build richer searches or hand off losslessly to the visual query
+  builder and raw DSL, while on-demand explanations and diagnostics show what
+  the engine interpreted. (GH #69)
+- **Search results now show bounded, useful evidence.** Block results separate
+  page/breadcrumb context from a two-line excerpt and highlight every positive
+  term that actually caused the Rust engine to match; negated terms are never
+  presented as evidence, and the combobox exposes its active result to
+  assistive technology. (GH #98)
 - **Primary panes now share quiet, theme-aware scrollbar styling.** The left
   sidebar, page/split scrollers, and right sidebar use the same semantic thumb
   colors without forcing overlay scrollbars into layout-consuming geometry;

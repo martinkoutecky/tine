@@ -169,6 +169,7 @@ function pagesForInPageFind(): FeedPage[] {
   const router = paneRouter(currentFindPaneId());
   const r = router.route();
   if (r.kind === "journals") return mainPages();
+  if (r.kind === "query") return [];
   const page = pageByName(r.name);
   return page ? [page] : [];
 }

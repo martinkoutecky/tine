@@ -644,6 +644,9 @@ function ValuePicker(props: { kind: ClauseKind; onCommit: (c: Clause) => void })
       <Show when={props.kind === "content"}>
         <TextInput placeholder="Text to search for" onCommit={(text) => props.onCommit({ kind: "content", text })} />
       </Show>
+      <Show when={props.kind === "search"}>
+        <TextInput placeholder="Search words and operators" onCommit={(source) => props.onCommit({ kind: "search", source })} />
+      </Show>
       <Show when={props.kind === "pageTags"}>
         <TextInput placeholder="Tag (one)" onCommit={(t) => props.onCommit({ kind: "pageTags", tags: [t] })} />
       </Show>

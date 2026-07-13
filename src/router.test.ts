@@ -18,6 +18,9 @@ import {
   reopenClosedTab,
   activateNextTab,
   activatePrevTab,
+  openQueryInNewTab,
+  updateActiveQuery,
+  replaceActiveRoute,
 } from "./router";
 import { setNavReuseTabs } from "./navSettings";
 import { setDoc } from "./store";
@@ -40,6 +43,28 @@ beforeEach(() => {
 const pinActive = () => togglePin(activeId());
 
 describe("reuse already-open tabs on user navigation", () => {
+  it("edits a virtual query in one stable history entry and can materialize it in place", () => {
+    openQueryInNewTab("alpha", "search", true);
+    const queryTab = activeTab();
+    const original = route();
+    expect(original).toMatchObject({ kind: "query", source: "alpha", presentation: "search" });
+
+    updateActiveQuery({ source: "alpha -draft" });
+    updateActiveQuery({ presentation: "table" });
+
+    expect(activeTab().history).toHaveLength(1);
+    expect(route()).toMatchObject({
+      kind: "query",
+      id: original.kind === "query" ? original.id : "",
+      source: "alpha -draft",
+      presentation: "table",
+    });
+
+    replaceActiveRoute({ kind: "page", name: "Saved search", pageKind: "page" });
+    expect(activeId()).toBe(queryTab.id);
+    expect(activeTab().history).toEqual([{ kind: "page", name: "Saved search", pageKind: "page" }]);
+  });
+
   it("sticky navigation to a route already open in another pinned tab focuses it without changing the active tab's content", () => {
     pinActive();
     const journalsId = activeId();

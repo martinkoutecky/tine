@@ -98,7 +98,13 @@ export function PageView(): JSX.Element {
     );
     void (async () => {
       try {
-        if (r.kind === "journals") {
+        if (r.kind === "query") {
+          // Query workspaces are rendered by PaneLeaf, not PageView. Keep this
+          // guard so the page loader never interprets a virtual route as a file.
+          setLoadedRoute(r);
+          setReady(true);
+          return;
+        } else if (r.kind === "journals") {
           const js = await backend().journalsDesc(FEED_PAGE, 0);
           if (epoch !== graphEpoch()) return; // graph switched mid-load — drop it
           journalOffset = js.length;
@@ -188,6 +194,7 @@ export function PageView(): JSX.Element {
   const pagesToRender = () => {
     const r = loadedRoute() ?? currentRoute();
     if (r.kind === "journals") return mainPages();
+    if (r.kind === "query") return [];
     const p = pageByName(r.name);
     return p ? [p] : [];
   };

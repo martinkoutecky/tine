@@ -19,6 +19,7 @@ import type {
   SyncConflictDiff,
   MergeDecision,
   PrintOpts,
+  QueryExecution,
 } from "./types";
 import { assetFileName } from "./media";
 import { mockBackend } from "./mock";
@@ -239,6 +240,14 @@ export interface Backend {
    *  appeared or vanished). Returns an unlisten fn. */
   onConflictsChanged(cb: () => void): Promise<() => void>;
   search(query: string, limit: number, lane?: string): Promise<RefGroup[]>;
+  /** One Rust-authoritative graph selection plan for page and block hits. */
+  runGraphSearch(
+    source: string,
+    pageLimit: number,
+    blockLimit: number,
+    lane?: string,
+    explain?: boolean
+  ): Promise<QueryExecution>;
   quickSwitch(query: string, limit: number): Promise<PageEntry[]>;
   listTemplates(): Promise<TemplateDto[]>;
   resolveBlock(uuid: string): Promise<RefGroup | null>;
@@ -578,6 +587,9 @@ class TauriBackend implements Backend {
   }
   search(query: string, limit: number, lane?: string) {
     return this.call<RefGroup[]>("search", { query, limit, lane });
+  }
+  runGraphSearch(source: string, pageLimit: number, blockLimit: number, lane = "graph-search", explain = false) {
+    return this.call<QueryExecution>("run_graph_search", { source, pageLimit, blockLimit, lane, explain });
   }
   quickSwitch(query: string, limit: number) {
     return this.call<PageEntry[]>("quick_switch", { query, limit });

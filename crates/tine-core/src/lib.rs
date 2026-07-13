@@ -14,6 +14,7 @@ pub mod org;
 pub mod pdf;
 pub mod publish;
 pub mod query;
+pub mod query_plan;
 pub mod refs;
 pub mod render;
 pub mod search_query;

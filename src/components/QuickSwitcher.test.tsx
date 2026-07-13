@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { render } from "solid-js/web";
 import { QuickSwitcher } from "./QuickSwitcher";
 import { closeSwitcher, openSwitcher } from "../ui";
+import { activeId, closeTab, route } from "../router";
 
 afterEach(() => {
   closeSwitcher();
@@ -32,6 +33,35 @@ describe("QuickSwitcher search syntax help", () => {
 
     input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
     expect(root.querySelector(".switcher")).toBeNull();
+    dispose();
+  });
+
+  it("separates block context from a bounded evidence excerpt and exposes combobox semantics", async () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => <QuickSwitcher />, root);
+    openSwitcher();
+    await Promise.resolve();
+
+    const input = root.querySelector(".switcher-input") as HTMLInputElement;
+    input.value = "Tine";
+    input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    await Promise.resolve();
+
+    expect(input.getAttribute("role")).toBe("combobox");
+    expect(input.getAttribute("aria-controls")).toBe("switcher-results");
+    const block = root.querySelector('.switcher-row[role="option"] .search-result-excerpt');
+    expect(block).not.toBeNull();
+    expect(block?.parentElement?.querySelector(".search-result-context")).not.toBeNull();
+    expect(block?.textContent?.length).toBeLessThanOrEqual(220);
+
+    const openTab = root.querySelector("[data-open-search-tab]") as HTMLButtonElement;
+    expect(openTab.disabled).toBe(false);
+    openTab.click();
+    expect(route()).toMatchObject({ kind: "query", source: "Tine", presentation: "search" });
+    await closeTab(activeId());
+
     dispose();
   });
 });

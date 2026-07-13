@@ -26,6 +26,10 @@ export type Clause =
   | { kind: "pageProperty"; key: string; value: string | null }
   | { kind: "pageTags"; tags: string[] }
   | { kind: "content"; text: string }
+  // Lossless friendly-search frontend. The Rust query engine interprets this
+  // with the same grammar as Ctrl+K; keeping the original source means the
+  // friendly UI can reopen without exposing or reconstructing raw DSL.
+  | { kind: "search"; source: string }
   | { kind: "sortBy"; field: string; dir: "asc" | "desc" } // result ordering (query-global)
   // Result-level aggregation/grouping, computed in the frontend from the returned
   // block list (see Macro.tsx). Ride in the DSL so the builder round-trips and the
@@ -251,6 +255,11 @@ function parseExpr(toks: Tok[], cur: Cur, src: string): Clause | null {
         clause = { kind: "sortBy", field, dir: dir?.toLowerCase() === "desc" ? "desc" : "asc" };
         break;
       }
+      case "search": {
+        const source = parseName(toks, cur);
+        clause = source != null ? { kind: "search", source } : null;
+        break;
+      }
       case "aggregate": {
         const k = parseName(toks, cur)?.toLowerCase();
         if (k === "sum") clause = { kind: "aggregate", agg: "sum", field: parseName(toks, cur) };
@@ -421,6 +430,8 @@ function clauseDsl(c: Clause): string {
       return `(page-tags ${c.tags.join(" ")})`;
     case "content":
       return quoteStr(c.text);
+    case "search":
+      return `(search ${quoteStr(c.source)})`;
     case "sortBy":
       return `(sort-by ${word(c.field)} ${c.dir})`;
     case "aggregate":
@@ -542,6 +553,9 @@ export function clauseToAdvanced(root: Clause): AdvancedConversion {
         return null;
       case "content":
         unsupported.push(`full-text ${quoteStr(c.text)}`);
+        return null;
+      case "search":
+        unsupported.push(`friendly search ${quoteStr(c.source)}`);
         return null;
       case "raw":
         unsupported.push(c.text);
@@ -892,6 +906,8 @@ export function clauseLabel(c: Clause): string {
       return `page tags: ${c.tags.join(" | ")}`;
     case "content":
       return `text: "${c.text}"`;
+    case "search":
+      return `search: ${c.source}`;
     case "sortBy":
       return `sort: ${sortLabel(c.field, c.dir)}`;
     case "aggregate":
