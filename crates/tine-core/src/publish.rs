@@ -2154,7 +2154,7 @@ mod tests {
     fn publish_gives_distinct_nonempty_files_on_slug_collision() {
         // DS#4: two titles that collapse to the same ASCII slug ("foo"), plus a
         // title with NO ASCII-alnum chars (empty slug pre-fix). Pre-fix, `Foo!`
-        // and `Foo?` both write `foo.html` (the second silently overwrites the
+        // and `Foo#` both write `foo.html` (the second silently overwrites the
         // first) and `日本語` writes a degenerate `.html`. Post-fix every page must
         // get a distinct, nonempty file, and every cross-page link must point at
         // the file its target was actually written to.
@@ -2172,11 +2172,11 @@ mod tests {
         // Each page links to the next so we can check the link map matches files.
         fs::write(
             dir.join("pages").join("Foo!.md"),
-            "- alpha body linking [[Foo?]]\n",
+            "- alpha body linking [[Foo#]]\n",
         )
         .unwrap();
         fs::write(
-            dir.join("pages").join("Foo?.md"),
+            dir.join("pages").join("Foo#.md"),
             "- bravo body linking [[日本語]]\n",
         )
         .unwrap();
@@ -2219,17 +2219,17 @@ mod tests {
                 .to_string()
         };
         let foo_bang = name_slug("Foo!");
-        let foo_q = name_slug("Foo?");
+        let foo_hash = name_slug("Foo#");
         let cjk = name_slug("日本語");
         let bang_html = fs::read_to_string(out.join(format!("{foo_bang}.html"))).unwrap();
         assert!(
-            bang_html.contains(&format!("href=\"{foo_q}.html\"")),
-            "Foo! links to Foo?'s real file ({foo_q}.html): {bang_html}"
+            bang_html.contains(&format!("href=\"{foo_hash}.html\"")),
+            "Foo! links to Foo#'s real file ({foo_hash}.html): {bang_html}"
         );
-        let q_html = fs::read_to_string(out.join(format!("{foo_q}.html"))).unwrap();
+        let hash_html = fs::read_to_string(out.join(format!("{foo_hash}.html"))).unwrap();
         assert!(
-            q_html.contains(&format!("href=\"{cjk}.html\"")),
-            "Foo? links to 日本語's real file ({cjk}.html): {q_html}"
+            hash_html.contains(&format!("href=\"{cjk}.html\"")),
+            "Foo# links to 日本語's real file ({cjk}.html): {hash_html}"
         );
 
         let _ = fs::remove_dir_all(&dir);
