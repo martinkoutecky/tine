@@ -9,7 +9,7 @@
   "license": "MIT",
   "source": "https://github.com/your-name/my-tine-plugin",
   "entry": "target/wasm32-unknown-unknown/release/my_tine_plugin.wasm",
-  "platforms": ["desktop", "android"],
+  "platforms": ["desktop"],
   "capabilities": ["commands.register"],
   "contributions": {
     "commands": [

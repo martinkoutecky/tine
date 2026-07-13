@@ -20,6 +20,8 @@ jobs:
           cache: npm
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
 
       - uses: swatinem/rust-cache@v2
         with:
@@ -63,6 +65,12 @@ jobs:
       - name: Rust core tests
         run: cargo test -p tine-core
 
+      - name: Standalone plugin template builds and conforms
+        run: npm run plugin:template-check
+
+      - name: Launch plugins build and conform
+        run: ./scripts/build-community-plugins.sh
+
   # Compile platform-gated source on every change. Linux host tests do not see
   # either branch: Windows has its own cfg implementation, while Android's libc
   # declarations differ from desktop Linux even for the same syscall.
@@ -97,6 +105,58 @@ jobs:
           workspaces: ". -> target"
       - name: Android core compiles against Android libc declarations
         run: cargo check -p tine-core --target aarch64-linux-android
+
+  plugin-launch-e2e:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+      - run: npm ci
+      - name: Install launch-test browser
+        run: npx playwright install --with-deps chromium
+      - name: Build Tine and all launch plugins
+        run: |
+          npm run build
+          ./scripts/build-community-plugins.sh
+      - name: Exercise every launch plugin and capture evidence
+        env:
+          TINE_BULLET_PLUGIN_ROOT: ${{ github.workspace }}/community-plugins/bullet-threading
+          TINE_QUERY_PLUGIN_ROOT: ${{ github.workspace }}/community-plugins/query-filter
+          TINE_HEADING_PLUGIN_ROOT: ${{ github.workspace }}/community-plugins/heading-level-shortcuts
+          TINE_PLUGIN_SCREENSHOT_ROOT: ${{ github.workspace }}/test-results/plugin-docs
+        run: npm run plugin:launch-e2e
+      - name: Exercise every launch plugin through the Android host contract
+        env:
+          TINE_BULLET_PLUGIN_ROOT: ${{ github.workspace }}/community-plugins/bullet-threading
+          TINE_QUERY_PLUGIN_ROOT: ${{ github.workspace }}/community-plugins/query-filter
+          TINE_HEADING_PLUGIN_ROOT: ${{ github.workspace }}/community-plugins/heading-level-shortcuts
+          TINE_PLUGIN_SCREENSHOT_ROOT: ${{ github.workspace }}/test-results/plugin-docs-android
+        run: npm run plugin:launch-e2e:android
+      - name: Upload launch-plugin evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-launch-e2e-${{ github.run_attempt }}
+          path: test-results/plugin-docs
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Upload Android-host launch-plugin evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-launch-android-e2e-${{ github.run_attempt }}
+          path: test-results/plugin-docs-android
+          if-no-files-found: warn
+          retention-days: 14
 
   # Same-machine A/B perf gate. The immutable anchor prevents small release-over-
   # release slowdowns from ratcheting the baseline; the previous release catches

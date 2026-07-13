@@ -10,4 +10,4 @@ license = "MIT"
 crate-type = ["cdylib"]
 
 [dependencies]
-tine-plugin-sdk = { path = "../../rust" }
+tine-plugin-sdk = { git = "https://github.com/martinkoutecky/tine", rev = "daabe817fd5b2e53ad0384a207714cfbc752d733" }

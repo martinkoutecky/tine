@@ -13,17 +13,19 @@ storage format.
 ## Build the first plugin
 
 1. Copy `plugin-sdk/templates/rust/` to a new public repository.
-2. Give it a lowercase dotted id and edit `manifest.json`.
-3. Point its `tine-plugin-sdk` dependency at `plugin-sdk/rust` while developing.
-4. Run `cargo build --release`. The template's `.cargo/config.toml` imports a
+2. Give it a lowercase dotted id, edit `manifest.json`, and replace the sample
+   repository and author metadata.
+3. Run `cargo build --release`. The template pins a reviewed Tine SDK revision;
+   update that revision deliberately when adopting a newer API. Its
+   `.cargo/config.toml` imports a
    host-bounded memory and caps it at 16 MiB.
-5. From a Tine checkout, run:
+4. From a Tine checkout, run:
 
    ```sh
    npm run plugin:check -- /path/to/plugin --json
    ```
 
-6. In Tine, open Settings → Plugins → Choose package and select `manifest.json`
+5. In Tine, open Settings → Plugins → Choose package and select `manifest.json`
    and the built `.wasm` together. Installation is disabled by default; enable it
    explicitly after reviewing its identity and capabilities.
 
@@ -72,9 +74,15 @@ Tine's existing conflict-checked persistence engine.
 ## Platforms
 
 `platforms` may contain `desktop`, `android`, and `ios`. Omitting it means desktop
-only. Each contribution may narrow the manifest-level list. The API contains no
-desktop process primitive, so the same guest can run on Android; Tine may ship a
-platform's installation UI later than its runtime support.
+only, and the starter template declares only desktop. Add Android or iOS only after
+testing the package on that platform. Each contribution may narrow the
+manifest-level list. The API contains no desktop process primitive, so a conforming
+guest can run unchanged on mobile, but a platform declaration is a compatibility
+claim rather than an aspiration.
+
+Tine 0.6 exposes the complete plugin/theme lifecycle on Android. `ios` is reserved
+for portable packages but Tine 0.6 does not ship an iOS host. See the
+[Android phone smoke test](android-smoke.md) for the hardware release gate.
 
 ## Compatibility and versioning
 
@@ -84,5 +92,17 @@ must bump the plugin API, show a clear incompatible state, and leave the old pac
 disabled and intact. Published package versions are immutable and addressed by
 `id`, SemVer version, and SHA-256.
 
-See [the threat model](threat-model.md), [registry policy](registry-policy.md), and
-[porting guide](porting-logseq-obsidian.md).
+## Publish a community plugin
+
+Keep the plugin source public, choose an OSI-approved license, commit the built Wasm
+artifact, and add screenshots showing the behavior in Tine. Then open a submission
+against the
+[Tine plugin registry](https://github.com/martinkoutecky/tine-plugin-registry)
+using its schema-v2 submission template. Registry automation verifies the manifest,
+Wasm imports, digest, source revision, license, provenance, screenshots, and declared
+capabilities. Passing low-risk packages may publish automatically; uncertain or
+elevated results are quarantined for review. A published version is immutable, so
+fixes require a new SemVer version.
+
+See [the threat model](threat-model.md), [registry policy](registry-policy.md),
+[porting guide](porting-logseq-obsidian.md), and [Android smoke test](android-smoke.md).

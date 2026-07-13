@@ -225,6 +225,10 @@ jobs:
           E2E_ALLOW_SYNTHETIC_FOCUS: "1"
         run: npm run e2e:linux:release
 
+      - name: Gate Linux x64 on the signed plugin catalogue lifecycle
+        if: matrix.lane == 'linux-x64'
+        run: npm run e2e:plugins
+
       - name: Run advisory Windows x64 real-app smoke
         if: matrix.lane == 'windows-x64'
         continue-on-error: true

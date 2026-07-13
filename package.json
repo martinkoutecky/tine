@@ -34,7 +34,11 @@
     "screenshot": "node scripts/screenshot.mjs",
     "bench": "node scripts/bench.mjs",
     "plugin:check": "node scripts/tine-plugin.mjs check",
-    "theme:check": "node scripts/tine-theme.mjs check"
+    "plugin:template-check": "node scripts/test-plugin-template.mjs",
+    "plugin:launch-e2e": "node scripts/shot-plugin-docs.mjs",
+    "plugin:launch-e2e:android": "TINE_PLUGIN_PLATFORM=android node scripts/shot-plugin-docs.mjs",
+    "theme:check": "node scripts/tine-theme.mjs check",
+    "theme:docs-screenshots": "node scripts/shot-theme-docs.mjs"
   },
   "dependencies": {
     "@fontsource-variable/noto-emoji": "^5.2.12",

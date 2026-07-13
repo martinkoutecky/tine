@@ -96,6 +96,7 @@ dependencies = [
 [[package]]
 name = "tine-plugin-sdk"
 version = "0.1.0"
+source = "git+https://github.com/martinkoutecky/tine?rev=daabe817fd5b2e53ad0384a207714cfbc752d733#daabe817fd5b2e53ad0384a207714cfbc752d733"
 dependencies = [
  "serde",
  "serde_json",
@@ -109,6 +110,6 @@ checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
 
 [[package]]
 name = "zmij"
-version = "1.0.21"
+version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
+checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"

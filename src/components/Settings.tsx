@@ -88,6 +88,7 @@ import { mediaEditorCommand, setMediaEditorCommand } from "../mediaEditorSetting
 import { formatAssetName } from "../media";
 import { galleryThemes, selectedGalleryTheme, applyTheme as applyGalleryTheme } from "../themeGallery";
 import type { GalleryTheme } from "../styles/themes";
+import { platformKind } from "../platform";
 import {
   installThemePackage,
   installedThemes,
@@ -524,6 +525,7 @@ function PluginsTab(): JSX.Element {
   const [busy, setBusy] = createSignal<string | null>(null);
   const [view, setView] = createSignal<"browse" | "installed">("browse");
   const [selectedPluginKey, setSelectedPluginKey] = createSignal<string | null>(null);
+  const [currentPlatform] = createResource(platformKind);
   const selectedPlugin = () => {
     const key = selectedPluginKey();
     return key ? installedPlugins().find((plugin) => `${plugin.manifest.id}@${plugin.manifest.version}` === key) : undefined;
@@ -708,6 +710,10 @@ function PluginsTab(): JSX.Element {
             const version = () => plugin.versions[plugin.versions.length - 1];
             const installed = () =>
               installedPlugins().some((item) => item.manifest.id === plugin.id && item.manifest.version === version().version);
+            const available = () => {
+              const platform = currentPlatform();
+              return platform ? version().platforms.includes(platform) : false;
+            };
             const [reportOpen, setReportOpen] = createSignal(false);
             const [reportState, setReportState] = createSignal<"idle" | "loading" | "ready" | "error">("idle");
             const [report, setReport] = createSignal<PluginSafetyReport | null>(null);
@@ -738,10 +744,18 @@ function PluginsTab(): JSX.Element {
                   <span class="settings-label">{plugin.name} <span class="settings-hint">v{version().version}</span></span>
                   <button
                     class="settings-btn"
-                    disabled={installed() || busy() !== null || version().audit.status !== "passed"}
+                    disabled={installed() || busy() !== null || version().audit.status !== "passed" || !available()}
                     onClick={() => void installCommunity(plugin, version())}
                   >
-                    {installed() ? "Installed" : busy() === `${plugin.id}@${version().version}` ? "Verifying…" : "Install"}
+                    {installed()
+                      ? "Installed"
+                      : !currentPlatform()
+                        ? "Checking…"
+                        : !available()
+                          ? `Unavailable on ${currentPlatform()}`
+                          : busy() === `${plugin.id}@${version().version}`
+                            ? "Verifying…"
+                            : "Install"}
                   </button>
                 </div>
                 <div class="settings-hint settings-field-hint">

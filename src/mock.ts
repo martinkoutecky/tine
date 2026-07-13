@@ -663,6 +663,8 @@ export function mockBackend(): Backend {
     },
     async forgetKnownGraph() {},
     async appPlatform(): Promise<"android" | "ios" | "desktop"> {
+      const requested = new URLSearchParams(globalThis.location?.search ?? "").get("platform");
+      if (requested === "android" || requested === "ios") return requested;
       return "desktop";
     },
     async listInstalledPlugins() {
