@@ -11,7 +11,7 @@
       },
       "platforms": ["all"],
       "layer": "core-native",
-      "status": "covered",
+      "status": "closed",
       "coverage": {
         "tests": [
           "crates/tine-core/src/model.rs",
@@ -33,7 +33,7 @@
       },
       "platforms": ["android", "linux"],
       "layer": "core-native",
-      "status": "covered",
+      "status": "closed",
       "coverage": {
         "tests": [
           "src-tauri/src/backup.rs"
