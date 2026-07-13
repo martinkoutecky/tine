@@ -31,7 +31,8 @@
     "e2e:linux:release": "node scripts/run-e2e.mjs linux-release",
     "e2e:windows:smoke": "node scripts/run-e2e.mjs windows-smoke",
     "screenshot": "node scripts/screenshot.mjs",
-    "bench": "node scripts/bench.mjs"
+    "bench": "node scripts/bench.mjs",
+    "bench:startup": "xvfb-run -a node scripts/bench-startup.mjs"
   },
   "dependencies": {
     "@fontsource-variable/noto-emoji": "^5.2.12",

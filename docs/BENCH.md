@@ -77,6 +77,32 @@ guard rejects a noisy/throttled run instead of calling it a code regression.
 The job is a hard gate. A feature expected to exceed a budget stops for a product
 decision and performance design; do not move either baseline to make it pass.
 
+## Native startup and early-frame paint
+
+The Chromium benchmark does not include Tauri process creation, WebKit startup,
+session restoration, or the first native frame. Before a release, build the
+production-protocol binary and run:
+
+```bash
+source scripts/env.sh
+npm run bench:startup
+```
+
+This downloads and caches the published Linux v0.4.7 binary under ignored
+`test-results/` (never under the home directory), then launches v0.4.7 and the
+candidate in alternating order. Every sample gets fresh XDG state and a private
+D-Bus session so Tine's single-instance forwarding cannot contaminate the
+measurement. The graph is deterministic: 80 pages derived from the public
+kitchen-sink fixture plus a 120-block journal.
+
+The report records native session creation and first visible journal content,
+using eight measured samples per binary. Any median or p95 more than 30% slower
+than the immutable v0.4.7 anchor fails. Separate, unmeasured visual trials retain
+frames at session attach, first content, +100 ms, +300 ms, and +1 s; inspect them
+for new blank/intermediate/corrupt paints even when the final timing is within
+budget. Override binaries or output with `TINE_STARTUP_BASELINE`,
+`TINE_STARTUP_CANDIDATE`, and `TINE_STARTUP_ARTIFACT_DIR`.
+
 ## Graph-scale bench (Rust core, on-disk graph)
 
 `npm run bench` drives the **mock** backend, so it can only see frontend

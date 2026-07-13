@@ -29,7 +29,10 @@ may tag, publish, comment, and close issues.
    published release (never the unshipped candidate). Do not advance the
    immutable baseline. Push the exact candidate and require the same-machine A/B
    performance job to pass; an expected budget breach is a stop/consult decision,
-   not permission to weaken the budget.
+   not permission to weaken the budget. Also run `npm run bench:startup` against
+   the immutable v0.4.7 native binary, retain its timing JSON and early-frame
+   sequence, and inspect those frames for new blank, intermediate, or corrupt
+   paints before shipping.
 8. Run ordinary CI plus the manual release
    workflow. Tag only after the exact commit's platform builds, Linux E2E,
    Android, and real offline Flatpak job pass.
