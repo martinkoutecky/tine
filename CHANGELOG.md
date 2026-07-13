@@ -40,6 +40,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- Keep legacy or otherwise incompatible installed plugins uninstallable by
+  retaining their validated package identity even when the UI must show a
+  synthetic invalid-manifest card.
+- Accept signed theme packages whose validated light/dark mode set matches the
+  registry in a different key order.
 - Apply signed registry revocations to inert theme packages as well as executable
   plugins: revoked themes can no longer be installed or selected, and an active
   revoked theme falls back to Default while remaining uninstallable.

@@ -78,6 +78,8 @@ export interface KnownGraph {
 }
 
 export interface InstalledPluginRecord {
+  id: string;
+  version: string;
   manifest_json: string;
   sha256: string;
   selected: boolean;

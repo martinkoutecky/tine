@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { parseRegistryIndex, parseSafetyReport } from "./registry";
+import { describe, expect, it, vi } from "vitest";
+import { installCommunityTheme, parseRegistryIndex, parseSafetyReport } from "./registry";
+import { uninstallThemePackage } from "../themes/manager";
 
 const version = {
   version: "0.1.0",
@@ -129,5 +130,48 @@ describe("signed plugin registry parsing", () => {
     expect(() =>
       parseSafetyReport({ ...report, checker: { ...report.checker, risk: "low" } }, registeredPlugin, registeredVersion)
     ).toThrow(/signed summary/);
+  });
+
+  it("installs a digest-bound theme when registry and manifest mode order differs", async () => {
+    const manifest = {
+      schemaVersion: 1,
+      id: theme.id,
+      name: theme.name,
+      version: "1.0.0",
+      apiVersion: "0.1",
+      description: theme.description,
+      author: "Tine",
+      license: theme.license,
+      source: theme.source,
+      modes: {
+        dark: { "--ls-primary-background-color": "#010203" },
+        light: { "--ls-primary-background-color": "#fefefe" },
+      },
+      screenshots: [],
+    };
+    const bytes = new TextEncoder().encode(JSON.stringify(manifest));
+    const manifestSha256 = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))]
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("");
+    const registeredTheme = parseRegistryIndex({
+      schemaVersion: 1,
+      generatedAt: "2026-07-13T00:00:00Z",
+      plugins: [],
+      themes: [{
+        ...theme,
+        versions: [{ ...theme.versions[0], modes: ["dark", "light"], manifestSha256 }],
+      }],
+      revocations: [],
+    }).themes[0];
+    const registryVersion = registeredTheme.versions[0];
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(bytes)));
+
+    try {
+      const installed = await installCommunityTheme(registeredTheme, registryVersion);
+      expect(installed.key).toBe(`${theme.id}@1.0.0`);
+      await uninstallThemePackage(installed.key);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

@@ -15,6 +15,8 @@ const REGISTRY_PUBLIC_KEY: [u8; 32] = [
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct InstalledPlugin {
+    id: String,
+    version: String,
     manifest_json: String,
     sha256: String,
     selected: bool,
@@ -261,6 +263,8 @@ pub(crate) fn install_plugin(
         result?;
     }
     Ok(InstalledPlugin {
+        id,
+        version,
         manifest_json,
         sha256: digest,
         selected: false,
@@ -347,6 +351,8 @@ pub(crate) fn list_installed_plugins(app: tauri::AppHandle) -> Vec<InstalledPlug
             let state = states.get(&id);
             let selected = state.is_some_and(|item| item.version == version);
             installed.push(InstalledPlugin {
+                id: id.clone(),
+                version: version.clone(),
                 manifest_json,
                 sha256: sha256(&wasm),
                 selected,

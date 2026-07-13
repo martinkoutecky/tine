@@ -545,9 +545,11 @@ export async function installCommunityTheme(theme: RegistryTheme, version: Regis
     throw new Error("theme manifest digest does not match the signed registry");
   }
   const manifest = parseThemeManifest(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(manifestBytes)));
+  const manifestModes = Object.keys(manifest.modes).sort();
+  const registryModes = [...version.modes].sort();
   if (
     manifest.id !== theme.id || manifest.version !== version.version || manifest.apiVersion !== version.apiVersion ||
-    JSON.stringify(Object.keys(manifest.modes)) !== JSON.stringify(version.modes)
+    JSON.stringify(manifestModes) !== JSON.stringify(registryModes)
   ) {
     throw new Error("theme manifest does not match the signed registry metadata");
   }

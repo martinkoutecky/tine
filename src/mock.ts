@@ -667,6 +667,8 @@ export function mockBackend(): Backend {
       const key = `${manifest.id}@${manifest.version}`;
       mockPluginEntries.set(key, wasm.slice());
       const record: InstalledPluginRecord = {
+        id: manifest.id,
+        version: manifest.version,
         manifest_json: manifestJson,
         sha256: "mock",
         selected: false,

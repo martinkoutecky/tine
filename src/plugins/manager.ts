@@ -29,6 +29,8 @@ import {
 
 export interface ManagedPlugin {
   manifest: PluginManifest;
+  storageId: string;
+  storageVersion: string;
   sha256: string;
   selected: boolean;
   enabled: boolean;
@@ -129,19 +131,23 @@ export class PluginManager {
   }
 
   async uninstall(id: string, version: string): Promise<void> {
+    const target = installedPlugins().find(
+      (plugin) => plugin.manifest.id === id && plugin.manifest.version === version
+    );
+    if (!target) throw new Error("plugin version is not installed");
     const active = this.active.get(id);
     if (active?.manifest.version === version) {
       active.runtime.dispose();
       this.active.delete(id);
       this.patch(id, version, { enabled: false, running: false, error: undefined });
     }
-    await backend().uninstallPlugin(id, version);
+    await backend().uninstallPlugin(target.storageId, target.storageVersion);
     const remaining = installedPlugins().filter(
-      (item) => versionKey(item.manifest.id, item.manifest.version) !== versionKey(id, version)
+      (item) => versionKey(item.storageId, item.storageVersion) !== versionKey(target.storageId, target.storageVersion)
     );
     setInstalledPlugins(remaining);
-    if (!remaining.some((item) => item.manifest.id === id)) {
-      await backend().setAppString(this.settingsStorageKey(id), "{}");
+    if (!remaining.some((item) => item.storageId === target.storageId)) {
+      await backend().setAppString(this.settingsStorageKey(target.storageId), "{}");
     }
   }
 
@@ -301,6 +307,8 @@ export class PluginManager {
       const revoked = this.revoked.has(versionKey(manifest.id, manifest.version));
       return {
         manifest,
+        storageId: record.id,
+        storageVersion: record.version,
         sha256: record.sha256,
         selected: record.selected,
         enabled: record.enabled && !incompatible && !revoked,
@@ -325,6 +333,8 @@ export class PluginManager {
           platforms: ["desktop"],
           capabilities: [],
         },
+        storageId: record.id,
+        storageVersion: record.version,
         sha256: record.sha256,
         selected: false,
         enabled: false,

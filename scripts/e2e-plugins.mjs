@@ -109,6 +109,22 @@ try {
   if (await page.locator(".settings-field", { hasText: "page.tine.bullet-threading" }).count()) {
     throw new Error("uninstalled plugin still appears in the Installed section");
   }
+
+  // The registry canonicalizes theme modes independently of manifest key order.
+  // Exercise the real signed Dev Theme Colors package that previously returned
+  // to Install and then failed its metadata comparison.
+  await page.setViewportSize({ width: 1280, height: 860 });
+  await page.getByRole("button", { name: "Appearance", exact: true }).click();
+  const devTheme = page.locator(".settings-field", { hasText: "Dev Theme Colors" }).first();
+  await devTheme.getByRole("button", { name: "Install", exact: true }).waitFor({ timeout: 15_000 });
+  await devTheme.getByRole("button", { name: "Install", exact: true }).click();
+  await page.getByText(/Dev Theme Colors .* installed\./).waitFor({ timeout: 15_000 });
+  const installedTheme = page.locator(".installed-theme-row", { hasText: "Dev Theme Colors" });
+  await installedTheme.getByRole("button", { name: "Use theme", exact: true }).waitFor();
+  page.once("dialog", (dialog) => void dialog.accept());
+  await installedTheme.getByRole("button", { name: "Uninstall…", exact: true }).click();
+  await page.getByText(/Dev Theme Colors was uninstalled\./).waitFor();
+  await devTheme.getByRole("button", { name: "Install", exact: true }).waitFor();
   if (pageErrors.length) throw new Error(`browser errors: ${pageErrors.join("; ")}`);
   await browser.close();
   console.log("plugin catalogue E2E passed");
