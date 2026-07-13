@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { PaneTree } from "../App";
 import { layoutPaneIds, layoutRoot, paneRouter, resetPaneLayoutToSingle, restorePaneLayout } from "../panes";
@@ -203,5 +203,102 @@ describe("TabBar pointer tab drag", () => {
     expect(namesForPane("main")).toEqual(["A", "B", "C"]);
     document.elementFromPoint = prevElementFromPoint;
     dispose();
+  });
+});
+
+describe("TabBar overflow overview", () => {
+  it("keeps readable tabs scrollable and exposes every tab through an accessible overview", async () => {
+    const callbacks: ResizeObserverCallback[] = [];
+    const OriginalResizeObserver = globalThis.ResizeObserver;
+    globalThis.ResizeObserver = class {
+      constructor(callback: ResizeObserverCallback) { callbacks.push(callback); }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    };
+    resetPaneLayoutToSingle(pageSnapshot([
+      "First readable page title",
+      "Second readable page title",
+      "Third readable page title",
+      "Fourth readable page title",
+      "Fifth readable page title",
+      "Sixth readable page title",
+    ]));
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const dispose = render(() => <TabBar router={paneRouter("main")} />, root);
+    try {
+      const strip = root.querySelector<HTMLElement>(".tab-strip-scroll");
+      expect(strip).not.toBeNull();
+      Object.defineProperties(strip!, {
+        clientWidth: { configurable: true, value: 240 },
+        scrollWidth: { configurable: true, value: 900 },
+      });
+      root.querySelectorAll<HTMLElement>(".tab").forEach((element, index) => {
+        Object.defineProperties(element, {
+          offsetLeft: { configurable: true, value: index * 150 },
+          offsetWidth: { configurable: true, value: 145 },
+        });
+      });
+      callbacks.forEach((callback) => callback([], {} as ResizeObserver));
+      await Promise.resolve();
+
+      const trigger = root.querySelector<HTMLButtonElement>("[data-tab-overview-trigger]");
+      expect(trigger).not.toBeNull();
+      expect(trigger!.getAttribute("aria-expanded")).toBe("false");
+      trigger!.click();
+      const rows = document.querySelectorAll<HTMLElement>("[data-tab-overview-row]");
+      expect(rows).toHaveLength(6);
+      expect(rows[5].textContent).toContain("Sixth readable page title");
+      expect(rows[0].getAttribute("aria-selected")).toBe("true");
+
+      rows[5].click();
+      expect(tabRoute(paneRouter("main").activeTab())).toMatchObject({ name: "Sixth readable page title" });
+      expect(document.querySelector("[role=listbox]")).toBeNull();
+      await Promise.resolve();
+      expect(strip!.scrollLeft).toBeGreaterThan(0);
+
+      trigger!.click();
+      const list = document.querySelector<HTMLElement>("[role=listbox]")!;
+      list.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true, cancelable: true }));
+      expect(document.activeElement).toBe(document.querySelectorAll("[data-tab-overview-row]")[5]);
+      list.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true, cancelable: true }));
+      await vi.waitFor(() => expect(paneRouter("main").tabs()).toHaveLength(5));
+    } finally {
+      dispose();
+      globalThis.ResizeObserver = OriginalResizeObserver;
+    }
+  });
+
+  it("shows overflow controls only in the pane whose strip actually overflows", async () => {
+    const callbacks: ResizeObserverCallback[] = [];
+    const OriginalResizeObserver = globalThis.ResizeObserver;
+    globalThis.ResizeObserver = class {
+      constructor(callback: ResizeObserverCallback) { callbacks.push(callback); }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    };
+    const { root, dispose } = renderSplit(["A", "B", "C", "D", "E"], ["X", "Y"]);
+    try {
+      const strips = root.querySelectorAll<HTMLElement>(".tab-strip-scroll");
+      expect(strips).toHaveLength(2);
+      Object.defineProperties(strips[0], {
+        clientWidth: { configurable: true, value: 220 },
+        scrollWidth: { configurable: true, value: 700 },
+      });
+      Object.defineProperties(strips[1], {
+        clientWidth: { configurable: true, value: 320 },
+        scrollWidth: { configurable: true, value: 250 },
+      });
+      callbacks.forEach((callback) => callback([], {} as ResizeObserver));
+      await Promise.resolve();
+
+      expect(root.querySelectorAll('[data-pane-id="main"] [data-tab-overview-trigger]')).toHaveLength(1);
+      expect(root.querySelectorAll('[data-pane-id="pane-2"] [data-tab-overview-trigger]')).toHaveLength(0);
+    } finally {
+      dispose();
+      globalThis.ResizeObserver = OriginalResizeObserver;
+    }
   });
 });

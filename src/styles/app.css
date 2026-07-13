@@ -197,15 +197,25 @@ textarea {
 /* Tabs live inline in the topbar (between nav arrows and the action icons) to
    avoid wasting a whole row. They take the middle, scrolling if there are many. */
 .tab-bar {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow: visible;
+}
+.tab-strip-scroll {
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
   align-items: center;
   gap: 4px;
   overflow-x: auto;
+  overflow-y: hidden;
   scrollbar-width: none;
 }
-.tab-bar::-webkit-scrollbar {
+.tab-strip-scroll::-webkit-scrollbar {
   display: none;
 }
 
@@ -223,10 +233,12 @@ textarea {
 .tab {
   position: relative;
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 6px;
   height: 26px;
   padding: 0 10px;
+  min-width: 112px;
   max-width: 200px;
   font-size: 13px;
   color: var(--text-secondary);
@@ -296,6 +308,88 @@ textarea {
 .tab-close:hover {
   opacity: 1;
   background: var(--bg-quaternary);
+}
+
+.tab-overview-trigger {
+  flex: 0 0 26px;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+.tab-overview-trigger:hover,
+.tab-overview-trigger:focus-visible,
+.tab-overview-trigger[aria-expanded="true"] {
+  background: var(--bg-tertiary);
+  color: var(--text-title);
+}
+.tab-overview {
+  position: fixed;
+  z-index: 80;
+  max-height: min(420px, calc(100vh - 80px));
+  padding: 5px;
+  overflow-y: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  background: var(--bg-primary);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
+}
+.tab-overview-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 4px 5px;
+  border-radius: 5px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.tab-overview-row:hover,
+.tab-overview-row:focus-visible {
+  background: var(--bg-secondary);
+  outline: none;
+}
+.tab-overview-row.active {
+  background: var(--bg-tertiary);
+  color: var(--text-title);
+}
+.tab-overview-active {
+  flex: 0 0 13px;
+  color: var(--accent, var(--link-color));
+  font-weight: 700;
+  text-align: center;
+}
+.tab-overview-pin {
+  flex: 0 0 auto;
+  display: inline-flex;
+  font-size: 12px;
+}
+.tab-overview-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.tab-overview-close {
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.tab-overview-close:hover,
+.tab-overview-close:focus-visible {
+  background: var(--bg-quaternary);
+  color: var(--text-primary);
 }
 
 /* --- Frameless-window chrome (decorations off; toolbar = title bar) --------- */

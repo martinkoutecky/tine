@@ -10,6 +10,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Overflowing tab strips now keep titles readable and provide a complete tab
+  overview.** A pane-local button appears only when its tabs no longer fit,
+  lists every full title with active, pinned, and close controls, and supports
+  keyboard navigation. Activating a tab reveals it in the horizontal strip;
+  ordinary tab closing, pinning, and drag-and-drop behavior remains intact. (GH
+  #105)
 - **Right-sidebar items can now be collapsed independently.** Each page or block
   has an accessible disclosure that parks its body without mounting its outline
   or references; a compact menu provides Collapse all, Expand all, and Close
