@@ -791,7 +791,7 @@ export function EmbedMacro(props: { body: string }): JSX.Element {
   return (
     <div class="embed-block">
       <Show when={data()} fallback={<div class="embed-missing">{`{{${props.body}}}`}</div>}>
-        <LiveRefGroup page={data()!.page} kind={data()!.kind} blocks={data()!.blocks} embedId={data()!.embedId} />
+        <LiveRefGroup page={data()!.page} kind={data()!.kind} blocks={data()!.blocks} embedId={data()!.embedId} surface="embed" />
       </Show>
     </div>
   );

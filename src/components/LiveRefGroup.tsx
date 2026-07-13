@@ -1,7 +1,7 @@
 import { For, Show, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { doc, ensurePageLoaded, pageByName } from "../store";
-import { Block, SurfaceContext } from "./Block";
+import { Block, CollapseSurfaceContext, SurfaceContext, type CollapseSurfaceApi } from "./Block";
 import { RefBlocks } from "./RefBlocks";
 import { observeNear, unobserveNear } from "../lazyObserve";
 import type { BlockDto, PageKind } from "../types";
@@ -20,7 +20,14 @@ import { graphEpoch, graphMeta } from "../ui";
 // Each block is the same component the main view uses, so editing a result edits
 // the real block and saves to its page. Keyed by uuid so a reactive refresh
 // reuses existing rows and never yanks the caret out of a block being edited.
-export function LiveRefGroup(props: { page: string; kind: PageKind; blocks: BlockDto[]; embedId?: string; showBreadcrumb?: boolean }): JSX.Element {
+export function LiveRefGroup(props: {
+  page: string;
+  kind: PageKind;
+  blocks: BlockDto[];
+  embedId?: string;
+  showBreadcrumb?: boolean;
+  surface?: "ref" | "embed";
+}): JSX.Element {
   const [near, setNear] = createSignal(false);
   let el: HTMLDivElement | undefined;
   onMount(() => {
@@ -64,7 +71,14 @@ export function LiveRefGroup(props: { page: string; kind: PageKind; blocks: Bloc
   // otherwise both instances (same "main" surface) call focus() and the off-screen
   // copy wins, stealing the caret and scrolling the viewport to it. Same mechanism
   // as the right sidebar (see startEditing / focusSurfaceFor). One key per group.
-  const surface = "ref:" + createUniqueId();
+  const surface = `${props.surface === "embed" ? "embed" : "ref"}:` + createUniqueId();
+  const [localCollapsed, setLocalCollapsed] = createSignal<Record<string, boolean>>({});
+  const collapseSurface: CollapseSurfaceApi | null = props.surface === "embed"
+    ? {
+        collapsed: (id, stored) => localCollapsed()[id] ?? stored,
+        toggle: (id, current) => setLocalCollapsed((state) => ({ ...state, [id]: !current })),
+      }
+    : null;
   return (
     <div
       ref={el}
@@ -73,6 +87,7 @@ export function LiveRefGroup(props: { page: string; kind: PageKind; blocks: Bloc
       style={!near() ? { "min-height": `${Math.max(1, props.blocks.length) * 1.9}em` } : undefined}
     >
       <Show when={near()}>
+        <CollapseSurfaceContext.Provider value={collapseSurface}>
         <SurfaceContext.Provider value={surface}>
         <For each={props.blocks.map((b) => b.id)}>
           {(id) => {
@@ -108,6 +123,7 @@ export function LiveRefGroup(props: { page: string; kind: PageKind; blocks: Bloc
           }}
         </For>
         </SurfaceContext.Provider>
+        </CollapseSurfaceContext.Provider>
       </Show>
     </div>
   );

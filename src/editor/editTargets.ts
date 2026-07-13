@@ -13,6 +13,10 @@ export const FORBID_EDIT_SELECTOR = [
   "details",
   "summary",
   ".block-ref",
+  // A live block nested inside a macro host (notably {{embed}}) owns its control
+  // column. Letting the outer host arm an edit gesture on this mousedown removes
+  // the control before the browser can deliver its click.
+  ".block-controls",
   ".block-marker",
   ".clock-badge",
   ".date-chip",

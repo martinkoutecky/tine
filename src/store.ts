@@ -1114,6 +1114,7 @@ export function splitBlock(
   offset: number,
   forceChild: boolean = false,
   keepStartInScope: boolean = false,
+  editingSurface: string | null = null,
 ) {
   const node = doc.byId[id];
   if (!node || !blockWritable(id)) return;
@@ -1162,7 +1163,7 @@ export function splitBlock(
         }
       })
     );
-    startEditing(emptyId, 0);
+    startEditing(emptyId, 0, null, editingSurface);
     markDirty(pageName);
     return;
   }
@@ -1189,7 +1190,7 @@ export function splitBlock(
       }
     })
   );
-  startEditing(newId, 0);
+  startEditing(newId, 0, null, editingSurface);
   markDirty(pageName);
 }
 

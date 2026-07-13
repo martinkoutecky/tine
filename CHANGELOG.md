@@ -10,6 +10,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Block embeds now behave as live editing surfaces.** Real disclosure clicks
+  fold same-page and cross-page embedded branches locally without editing the
+  macro host or changing the source block's collapse state, and Enter keeps the
+  new block and caret inside the visible embed while persisting one source edit.
+  (GH #124)
 - **Help with Tine no longer exports a scrubbed reproduction that has lost the
   original actionable parser delta and retained only mldoc's known backtick
   state artifact.** The anonymizer now tries its remaining privacy tiers and

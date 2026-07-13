@@ -29,6 +29,11 @@ const [editingId, setEditingId] = createSignal<string | null>(null);
 // this they'd all mount a textarea for the same node and fight over its value.
 // null = unscoped (e.g. keyboard nav) - any instance of editingId may edit.
 const [editingOwner, setEditingOwner] = createSignal<string | null>(null);
+// Optional surface scope for a structural edit whose destination Block instance
+// does not exist yet (for example Enter inside an embed creates a new block).
+// `editingOwner` cannot name that future instance, so the caller can instead
+// bind the editor to the current stable SurfaceContext key.
+const [editingSurface, setEditingSurface] = createSignal<string | null>(null);
 const [caretTarget, setCaretTarget] = createSignal<{ id: string; offset: CaretPos } | null>(null);
 
 // Surface-aware edit focus. A block uuid can render in SEVERAL surfaces at once
@@ -43,7 +48,7 @@ const [caretTarget, setCaretTarget] = createSignal<{ id: string; offset: CaretPo
 const [activeSurface, setActiveSurface] = createSignal<string | null>(null);
 const pendingFocusSurface = new Map<string, string>();
 
-export { activeSurface, editingId, editingOwner };
+export { activeSurface, editingId, editingOwner, editingSurface };
 
 export function takeCaretFor(id: string): CaretPos | null {
   const t = caretTarget();
@@ -68,7 +73,12 @@ export function noteSurfaceFocused(surfaceKey: string) {
   setActiveSurface(surfaceKey);
 }
 
-export function startEditing(id: string, offset: CaretPos = 0, owner: string | null = null) {
+export function startEditing(
+  id: string,
+  offset: CaretPos = 0,
+  owner: string | null = null,
+  surface: string | null = null,
+) {
   notifyEditingStarted(id, owner);
   // Latch the block so that when editing ends its body renders eagerly (no
   // deferred raw-text placeholder frame on blur). A just-created block goes
@@ -101,6 +111,7 @@ export function startEditing(id: string, offset: CaretPos = 0, owner: string | n
     }
     setEditingId(id);
     setEditingOwner(owner);
+    setEditingSurface(owner === null ? surface : null);
   });
 }
 
@@ -108,6 +119,7 @@ export function endEdit(_reason: EndEditReason) {
   batch(() => {
     setEditingId(null);
     setEditingOwner(null);
+    setEditingSurface(null);
   });
 }
 

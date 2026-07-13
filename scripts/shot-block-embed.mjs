@@ -60,9 +60,9 @@ try {
     throw new Error(`embedded live outline has no collapse control: ${await host.locator(".embed-block").innerHTML()}`);
   }
   const child = host.getByText("Embedded child", { exact: true });
-  await rootToggle.dispatchEvent("click");
+  await rootToggle.click();
   await child.waitFor({ state: "detached", timeout: 3000 });
-  await rootToggle.dispatchEvent("click");
+  await rootToggle.click();
   await host.getByText("Embedded grandchild", { exact: true }).waitFor({ timeout: 3000 });
   if (errors.length) throw new Error(`browser errors:\n${errors.join("\n")}`);
 
