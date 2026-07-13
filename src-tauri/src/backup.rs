@@ -441,12 +441,16 @@ pub(crate) fn restore_backup(
         for (label, path) in [
             ("journals", &restore_journals),
             ("pages", &restore_pages),
-            ("assets", &assets),
             ("config", &cfg_dest),
         ] {
             ensure_target_within_root(&current_root, path)
                 .map_err(|e| format!("unsafe live {label} path: {e}"))?;
         }
+        // Assets have a separate, explicitly-approved capability and therefore
+        // validate against their own canonical root. For ordinary graphs this is
+        // still `<graph>/assets`; for GH #127 it is the approved external target.
+        ensure_target_within_root(&assets, &assets)
+            .map_err(|e| format!("unsafe live assets path: {e}"))?;
         Ok(())
     };
     validate_live_layout()?;
@@ -496,7 +500,7 @@ pub(crate) fn restore_backup(
         &src.join(dir_name(&assets)),
         &assets,
         &recovery.join("assets"),
-        &current_root,
+        &assets,
     )
         .map_err(|e| format!("restore asset sidecars failed: {e}"))?;
     let src_cfg = src.join("logseq").join("config.edn");

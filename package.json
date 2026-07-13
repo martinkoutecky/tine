@@ -25,6 +25,7 @@
     "blog:sync": "node scripts/sync-reddit-blog.mjs",
     "e2e:caret": "CARET_LABEL=release-required CARET_MODE=agenda node scripts/e2e-caret.mjs",
     "e2e:multigraph": "node scripts/e2e-multigraph.mjs",
+    "e2e:external-assets": "node scripts/e2e-external-assets.mjs",
     "e2e:linux:smoke": "node scripts/run-e2e.mjs linux-smoke",
     "e2e:linux:release": "node scripts/run-e2e.mjs linux-release",
     "e2e:windows:smoke": "node scripts/run-e2e.mjs windows-smoke",

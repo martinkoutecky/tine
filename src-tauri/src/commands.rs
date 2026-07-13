@@ -614,18 +614,7 @@ pub(crate) fn read_text_file(path: String) -> Result<String, String> {
 /// (canonicalized) so a crafted name can't open a file outside the graph.
 #[tauri::command]
 pub(crate) fn open_asset(name: String, state: GraphContext<'_>) -> Result<(), String> {
-    let target = with_graph(&state, |g| {
-        let assets = g.assets_path();
-        let canon_assets = assets.canonicalize().map_err(|e| e.to_string())?;
-        let canon = assets
-            .join(&name)
-            .canonicalize()
-            .map_err(|e| e.to_string())?;
-        if !canon.starts_with(&canon_assets) {
-            return Err("asset path escapes assets dir".to_string());
-        }
-        Ok(canon)
-    })?;
+    let target = with_graph(&state, |g| g.asset_file_for_read(&name).map_err(|e| e.to_string()))?;
     #[cfg(desktop)]
     {
         #[cfg(target_os = "linux")]
@@ -701,18 +690,7 @@ pub(crate) fn edit_asset_external(
     command: String,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
-    let target = with_graph(&state, |g| {
-        let assets = g.assets_path();
-        let canon_assets = assets.canonicalize().map_err(|e| e.to_string())?;
-        let canon = assets
-            .join(&name)
-            .canonicalize()
-            .map_err(|e| e.to_string())?;
-        if !canon.starts_with(&canon_assets) {
-            return Err("asset path escapes assets dir".to_string());
-        }
-        Ok(canon)
-    })?;
+    let target = with_graph(&state, |g| g.asset_file_for_read(&name).map_err(|e| e.to_string()))?;
     #[cfg(desktop)]
     {
         let target_str = target.to_string_lossy().to_string();

@@ -81,7 +81,15 @@ export type LoadGraphResult =
   | { kind: "loaded" | "already_current"; meta: GraphMeta; binding_generation: number }
   | { kind: "focused_existing"; window_label: string };
 
+export interface GraphAccessInspection {
+  graph_root: string;
+  external_assets_path: string | null;
+  approved: boolean;
+}
+
 export interface Backend {
+  inspectGraphAccess(path: string): Promise<GraphAccessInspection>;
+  approveExternalAssets(graphRoot: string, assetsPath: string): Promise<void>;
   loadGraph(path: string): Promise<LoadGraphResult>;
   openGraphWindow(path: string): Promise<LoadGraphResult>;
   startupGraphPath(): Promise<string | null>;
@@ -414,6 +422,12 @@ class TauriBackend implements Backend {
     const result = await this.call<LoadGraphResult>("load_graph", { path });
     if (result.kind !== "focused_existing") this.bindingGeneration = result.binding_generation;
     return result;
+  }
+  inspectGraphAccess(path: string) {
+    return this.call<GraphAccessInspection>("inspect_graph_access", { path });
+  }
+  approveExternalAssets(graphRoot: string, assetsPath: string) {
+    return this.call<void>("approve_external_assets", { graphRoot, assetsPath });
   }
   openGraphWindow(path: string) {
     return this.call<LoadGraphResult>("open_graph_window", { path });

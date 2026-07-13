@@ -1,5 +1,7 @@
 use crate::backup::{backup_async, backup_graph_now};
-use crate::settings::remember_graph;
+use crate::settings::{
+    approved_external_assets, remember_external_assets_approval, remember_graph,
+};
 use crate::state::{canonical_graph_root, poke_watcher, slot_for_window, AppState, GraphSlot};
 use std::path::Path;
 use std::sync::atomic::Ordering;
@@ -61,9 +63,11 @@ struct LoadedGraph {
 
 fn open_graph_for_load(
     root: &str,
+    approved_assets: Option<&Path>,
     take_launch_backup: impl FnOnce(&Graph) -> (usize, bool),
 ) -> Result<LoadedGraph, String> {
-    let graph = Graph::open_checked(root).map_err(|e| format!("unsafe graph layout: {e}"))?;
+    let graph = Graph::open_checked_with_assets(root, approved_assets)
+        .map_err(|e| format!("unsafe graph layout: {e}"))?;
     let meta = graph.meta();
     let needs_migration = graph.has_journal_filename_migrations();
     let (backup_n, backup_complete) = if needs_migration {
@@ -82,6 +86,60 @@ fn open_graph_for_load(
         meta,
         launch_backup_done,
     })
+}
+
+#[derive(serde::Serialize)]
+pub(crate) struct GraphAccessInspection {
+    graph_root: String,
+    external_assets_path: Option<String>,
+    approved: bool,
+}
+
+/// Inspect graph access before binding it to a window. This is intentionally a
+/// separate, read-only command so the frontend can show the resolved external
+/// target and obtain informed consent before any graph/asset operation begins.
+#[tauri::command]
+pub(crate) fn inspect_graph_access(
+    path: String,
+    app: tauri::AppHandle,
+) -> Result<GraphAccessInspection, String> {
+    let root = resolve_root(&path)
+        .ok_or_else(|| "no graph path provided (set TINE_GRAPH or pass a path)".to_string())?;
+    let root = canonical_graph_root(&root)?;
+    let external = Graph::external_assets_target(&root).map_err(|error| error.to_string())?;
+    let approved_target = approved_external_assets(&app, &root)
+        .and_then(|path| std::fs::canonicalize(path).ok());
+    let approved = external
+        .as_ref()
+        .is_none_or(|target| approved_target.as_ref() == Some(target));
+    Ok(GraphAccessInspection {
+        graph_root: root.display().to_string(),
+        external_assets_path: external.map(|path| path.display().to_string()),
+        approved,
+    })
+}
+
+/// Persist consent only if the submitted target still exactly matches the
+/// graph's live canonical assets target (TOCTOU/retarget guard).
+#[tauri::command]
+pub(crate) fn approve_external_assets(
+    graph_root: String,
+    assets_path: String,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let root = canonical_graph_root(&graph_root)?;
+    let live = Graph::external_assets_target(&root)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "graph no longer uses an external assets directory".to_string())?;
+    let submitted = std::fs::canonicalize(&assets_path)
+        .map_err(|error| format!("couldn't resolve external assets path: {error}"))?;
+    if submitted != live {
+        return Err(format!(
+            "external assets directory changed before approval (now {})",
+            live.display()
+        ));
+    }
+    remember_external_assets_approval(&app, &root, &live)
 }
 
 #[tauri::command]
@@ -132,11 +190,14 @@ pub(crate) fn load_graph_for_label(
         });
     }
     let root = root_key.display().to_string();
+    let approved_assets = approved_external_assets(app, &root_key);
     let LoadedGraph {
         graph,
         meta,
         launch_backup_done,
-    } = open_graph_for_load(&root, |graph| backup_graph_now(app, graph, ""))?;
+    } = open_graph_for_load(&root, approved_assets.as_deref(), |graph| {
+        backup_graph_now(app, graph, "")
+    })?;
     let slot = Arc::new(GraphSlot::new(graph, root_key));
     let warm_generation = begin_warm_cache(&slot);
     state
@@ -404,7 +465,7 @@ mod tests {
         .unwrap();
         let backup = dir.join("backup");
 
-        let loaded = open_graph_for_load(dir.to_str().unwrap(), |g| {
+        let loaded = open_graph_for_load(dir.to_str().unwrap(), None, |g| {
             copy_graph_text_dir(&g.journals_path(), &backup.join("journals"))
         })
         .unwrap();

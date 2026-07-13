@@ -1,4 +1,27 @@
 {
   "schemaVersion": 1,
-  "entries": []
+  "entries": [
+    {
+      "id": "REG-EXTERNAL-ASSETS-TRUST-001",
+      "title": "A graph can use an explicitly approved external assets link without widening filesystem access",
+      "family": "filesystem-safety",
+      "sources": {
+        "issues": [127],
+        "commits": []
+      },
+      "platforms": ["all"],
+      "layer": "core-native",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "crates/tine-core/src/model.rs",
+          "src-tauri/src/settings.rs",
+          "src/graph.test.tsx",
+          "scripts/e2e-external-assets.mjs"
+        ],
+        "scenario": "filesystem.external-assets-trust",
+        "failBefore": "proven"
+      }
+    }
+  ]
 }

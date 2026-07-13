@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, RwLock};
 use tauri::ipc::{CommandArg, CommandItem, InvokeBody, InvokeError};
-use tauri::{Runtime, State, WebviewWindow};
+use tauri::{Manager, Runtime, State, WebviewWindow};
 use tine_core::model::Graph;
 
 pub(crate) type WindowKey = String;
@@ -199,7 +199,9 @@ pub(crate) fn with_graph<T>(
 pub(crate) fn refresh_graph(ctx: &GraphContext<'_>) -> Result<(), String> {
     let label = ctx.window.label().to_string();
     let old = slot_for_window(&ctx.state, &label)?;
-    let graph = Graph::open_checked(&old.root_key).map_err(|e| e.to_string())?;
+    let approved = crate::settings::approved_external_assets(ctx.window.app_handle(), &old.root_key);
+    let graph = Graph::open_checked_with_assets(&old.root_key, approved.as_deref())
+        .map_err(|e| e.to_string())?;
     graph.migrate_journal_filenames();
     let replacement = Arc::new(GraphSlot::refreshed(graph, &old));
     ctx.state.graphs.write().unwrap().bind(label, replacement)?;

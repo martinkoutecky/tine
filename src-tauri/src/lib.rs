@@ -36,8 +36,8 @@ use debug::{
     debug_enabled, debug_header, debug_info, debug_init, debug_log, diag, install_panic_logger,
 };
 use graph::{
-    app_platform, capture_target, create_graph, default_graph_parent, load_graph,
-    open_graph_window, resolve_root, startup_graph_path, warm_done,
+    app_platform, approve_external_assets, capture_target, create_graph, default_graph_parent,
+    inspect_graph_access, load_graph, open_graph_window, resolve_root, startup_graph_path, warm_done,
 };
 use platform::{clipboard_files, copy_image_to_clipboard, gpu_env, open_external};
 use settings::{
@@ -515,6 +515,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             load_graph,
+            inspect_graph_access,
+            approve_external_assets,
             open_graph_window,
             startup_graph_path,
             capture_target,

@@ -80,6 +80,8 @@ jobs:
           workspaces: ". -> target"
       - run: npm ci
       - run: npm run build
+      - name: Windows core tests (including junction filesystem behavior)
+        run: cargo test -p tine-core
       - name: Windows Tauri shell compiles
         run: cargo check -p tine --features custom-protocol
 

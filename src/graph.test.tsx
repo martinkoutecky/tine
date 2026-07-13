@@ -22,11 +22,18 @@ const META: GraphMeta = {
   guide_announced: true,
 };
 
-async function loadHarness(existing: PageDto | null) {
+async function loadHarness(
+  existing: PageDto | null,
+  access = { graph_root: META.root, external_assets_path: null as string | null, approved: true },
+  confirm = true
+) {
   vi.resetModules();
   const events: string[] = [];
   let meta: GraphMeta | null = null;
   const api = {
+    inspectGraphAccess: vi.fn(async () => access),
+    approveExternalAssets: vi.fn(async () => {}),
+    confirm: vi.fn(async () => confirm),
     loadGraph: vi.fn(async () => ({ kind: "loaded" as const, meta: META, binding_generation: 1 })),
     getPage: vi.fn(async () => existing),
     listTemplates: vi.fn(async () => [
@@ -120,5 +127,40 @@ describe("default journal template graph bind", () => {
     await loadGraphPath(META.root);
 
     expect(api.savePage).toHaveBeenCalledWith(expect.any(Object), "empty-journal-rev", false);
+  });
+});
+
+describe("external assets trust", () => {
+  const external = {
+    graph_root: META.root,
+    external_assets_path: "/mnt/media/tine-assets",
+    approved: false,
+  };
+
+  it("approves the exact resolved target before loading the graph", async () => {
+    const { loadGraphPath, api } = await loadHarness(null, external, true);
+
+    await loadGraphPath(META.root);
+
+    expect(api.confirm).toHaveBeenCalledWith(
+      expect.stringContaining("/mnt/media/tine-assets"),
+      "Allow external assets directory?"
+    );
+    expect(api.approveExternalAssets).toHaveBeenCalledWith(
+      META.root,
+      "/mnt/media/tine-assets"
+    );
+    expect(api.approveExternalAssets.mock.invocationCallOrder[0]).toBeLessThan(
+      api.loadGraph.mock.invocationCallOrder[0]
+    );
+  });
+
+  it("does not bind a graph when external assets access is declined", async () => {
+    const { loadGraphPath, api } = await loadHarness(null, external, false);
+
+    await expect(loadGraphPath(META.root)).resolves.toEqual({ kind: "aborted" });
+
+    expect(api.approveExternalAssets).not.toHaveBeenCalled();
+    expect(api.loadGraph).not.toHaveBeenCalled();
   });
 });

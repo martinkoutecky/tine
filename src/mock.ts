@@ -644,6 +644,10 @@ export function mockBackend(): Backend {
     async listKnownGraphs() {
       return [{ path: "/mock/graph", name: "graph" }];
     },
+    async inspectGraphAccess(path: string) {
+      return { graph_root: path || "/mock/graph", external_assets_path: null, approved: true };
+    },
+    async approveExternalAssets() {},
     async openGraphWindow() {
       return { kind: "focused_existing" as const, window_label: "main" };
     },

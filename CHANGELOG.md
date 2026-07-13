@@ -32,6 +32,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Graphs with an external `assets` symlink or Windows junction can be opened
+  safely.** Tine shows the resolved directory for explicit, device-local
+  approval, then confines every asset read and write to that exact canonical
+  target. Declining leaves the graph closed with a useful explanation, while a
+  stale or retargeted link fails closed without widening access to pages,
+  journals, configuration, or other managed files. (GH #127)
 - **Linked and unlinked references now use the complete page identity.** Plain
   text mentions of a page alias appear under the canonical page's unlinked
   references, while explicit links in page-level properties appear as exact,

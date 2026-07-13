@@ -80,6 +80,52 @@ fn forget_graph_json(json: &mut serde_json::Value, path: &str) {
     json["known_graphs"] = serde_json::to_value(graphs).unwrap_or_default();
 }
 
+fn external_assets_approvals(json: &serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
+    json.get("external_assets_approvals")
+        .and_then(serde_json::Value::as_object)
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// The trust grant is deliberately device-local and keyed by BOTH canonical
+/// graph root and canonical external target. It never enters graph content, and
+/// a retargeted symlink/junction therefore cannot inherit the old grant.
+pub(crate) fn approved_external_assets(
+    app: &tauri::AppHandle,
+    graph_root: &std::path::Path,
+) -> Option<PathBuf> {
+    let key = graph_root.display().to_string();
+    settings_path(app)
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|json| {
+            external_assets_approvals(&json)
+                .get(&key)
+                .and_then(serde_json::Value::as_str)
+                .map(PathBuf::from)
+        })
+}
+
+pub(crate) fn remember_external_assets_approval(
+    app: &tauri::AppHandle,
+    graph_root: &std::path::Path,
+    assets_root: &std::path::Path,
+) -> Result<(), String> {
+    let graph = graph_root.display().to_string();
+    let assets = assets_root.display().to_string();
+    update_settings(app, |json| remember_external_assets_approval_json(json, &graph, &assets))
+}
+
+fn remember_external_assets_approval_json(
+    json: &mut serde_json::Value,
+    graph: &str,
+    assets: &str,
+) {
+    let mut approvals = external_assets_approvals(json);
+    approvals.insert(graph.to_string(), serde_json::Value::String(assets.to_string()));
+    json["external_assets_approvals"] = serde_json::Value::Object(approvals);
+}
+
 pub(crate) fn remember_graph(app: &tauri::AppHandle, path: &str) -> Result<(), String> {
     update_settings(app, |json| remember_graph_json(json, path))
 }
@@ -339,5 +385,18 @@ mod tests {
             session_id(std::path::Path::new("/one/graph")),
             session_id(std::path::Path::new("/two/graph"))
         );
+    }
+
+    #[test]
+    fn external_asset_approvals_are_device_local_and_target_specific() {
+        let mut json = serde_json::json!({ "unrelated": true });
+        remember_external_assets_approval_json(&mut json, "/graphs/a", "/media/one");
+        remember_external_assets_approval_json(&mut json, "/graphs/b", "/media/two");
+        remember_external_assets_approval_json(&mut json, "/graphs/a", "/media/retargeted");
+
+        let approvals = external_assets_approvals(&json);
+        assert_eq!(approvals["/graphs/a"], "/media/retargeted");
+        assert_eq!(approvals["/graphs/b"], "/media/two");
+        assert_eq!(json["unrelated"], true);
     }
 }

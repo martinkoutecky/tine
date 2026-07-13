@@ -319,6 +319,11 @@ pub struct PageDto {
 
 pub struct Graph {
     pub root: PathBuf,
+    /// The canonical filesystem capability used for every asset operation. For
+    /// ordinary graphs this is `<root>/assets`; when the runtime has explicitly
+    /// approved an external assets symlink/junction it is that exact resolved
+    /// directory. No other managed graph path may use this capability.
+    assets_root: PathBuf,
     pub config: Config,
     /// Journal date formats (filename + title) resolved from `config.edn`, used to
     /// recognize journal files in the user's format and render new ones. Built once
@@ -703,12 +708,76 @@ impl Graph {
     /// available for the many in-crate disposable fixtures, but runtime graph
     /// binding must use this checked entry point.
     pub fn open_checked(root: impl AsRef<Path>) -> io::Result<Graph> {
-        let graph = Self::open(root);
+        Self::open_checked_with_assets(root, None)
+    }
+
+    /// Resolve an `assets` link/junction that lands outside the graph. The
+    /// returned path is canonical and therefore suitable for showing to the user
+    /// and binding a device-local approval. An in-graph directory (or a missing
+    /// directory that Tine may create normally) returns `None`.
+    pub fn external_assets_target(root: impl AsRef<Path>) -> io::Result<Option<PathBuf>> {
+        let root = fs::canonicalize(root.as_ref())?;
+        let assets = root.join("assets");
+        match fs::symlink_metadata(&assets) {
+            Ok(_) => {
+                let resolved = fs::canonicalize(&assets)?;
+                if !resolved.is_dir() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!("assets path is not a directory: {}", assets.display()),
+                    ));
+                }
+                Ok((!resolved.starts_with(&root)).then_some(resolved))
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Checked runtime open with one narrowly-scoped exception to the graph-root
+    /// boundary: an external `assets` link/junction is accepted only when its
+    /// current canonical target exactly matches the caller's approved target.
+    /// This makes a retargeted link fail closed instead of inheriting old trust.
+    pub fn open_checked_with_assets(
+        root: impl AsRef<Path>,
+        approved_assets: Option<&Path>,
+    ) -> io::Result<Graph> {
+        let mut graph = Self::open(root);
         validate_managed_dir(&graph.root, &graph.config.journals_dir, "journals")?;
         validate_managed_dir(&graph.root, &graph.config.pages_dir, "pages")?;
-        validate_managed_dir(&graph.root, "assets", "assets")?;
         validate_managed_dir(&graph.root, "logseq", "logseq")?;
         validate_managed_dir(&graph.root, "publish", "publish")?;
+        if let Some(resolved) = Self::external_assets_target(&graph.root)? {
+            let approved = approved_assets.ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!(
+                        "external assets directory requires approval: {}",
+                        resolved.display()
+                    ),
+                )
+            })?;
+            let approved = fs::canonicalize(approved).map_err(|error| {
+                io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!("approved assets directory is unavailable: {error}"),
+                )
+            })?;
+            if approved != resolved {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!(
+                        "external assets directory changed; approved {} but graph now resolves to {}",
+                        approved.display(),
+                        resolved.display()
+                    ),
+                ));
+            }
+            graph.assets_root = resolved;
+        } else {
+            validate_managed_dir(&graph.root, "assets", "assets")?;
+            graph.assets_root = graph.root.join("assets");
+        }
         Ok(graph)
     }
 
@@ -725,6 +794,25 @@ impl Graph {
         }
     }
 
+    /// Asset writes have their own capability boundary. Keeping this separate
+    /// from `ensure_write_target` means approving external assets cannot widen a
+    /// page/config/publish write into the same directory.
+    fn ensure_asset_write_target(&self, target: &Path) -> io::Result<()> {
+        if self.assets_root == self.root.join("assets") {
+            return self.ensure_write_target(target);
+        }
+        if path_stays_within_root(&self.assets_root, target)
+            && !path_uses_managed_alias(&self.assets_root, target)
+        {
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("write target escapes approved assets root: {}", target.display()),
+            ))
+        }
+    }
+
     /// Open a graph directory, reading `logseq/config.edn` if present.
     pub fn open(root: impl AsRef<Path>) -> Graph {
         let root = root.as_ref().to_path_buf();
@@ -736,6 +824,7 @@ impl Graph {
             config.journal_page_title_format.as_deref(),
         );
         Graph {
+            assets_root: root.join("assets"),
             root,
             config,
             journal_format,
@@ -3114,7 +3203,7 @@ impl Graph {
     // ---- Assets & PDF highlights ----
 
     pub fn assets_path(&self) -> PathBuf {
-        self.root.join("assets")
+        self.assets_root.clone()
     }
 
     /// Top-level `assets/` files that NO block references — orphans the user may
@@ -3187,7 +3276,7 @@ impl Graph {
             return Err(io::Error::new(io::ErrorKind::NotFound, "no such asset"));
         }
         let trash = typed_trash_dir(&self.root, TrashEntryKind::Asset);
-        self.ensure_write_target(&src)?;
+        self.ensure_asset_write_target(&src)?;
         self.ensure_write_target(&trash)?;
         let dest = trash.join(format!("{}__{name}", trash_stamp()));
         move_to_trash(&src, &dest, &trash)?;
@@ -3242,8 +3331,20 @@ impl Graph {
 
     /// Read raw bytes of an asset (e.g. a PDF) for the viewer.
     pub fn read_asset(&self, name: &str) -> io::Result<Vec<u8>> {
+        fs::read(self.asset_file_for_read(name)?)
+    }
+
+    /// Resolve an existing top-level regular asset through the canonical asset
+    /// capability. A symlink may point elsewhere inside that approved root, but
+    /// can never turn a read/open into access outside it.
+    pub fn asset_file_for_read(&self, name: &str) -> io::Result<PathBuf> {
         top_level_asset_name(name)?;
-        fs::read(self.assets_path().join(name))
+        let assets = fs::canonicalize(self.assets_path())?;
+        let path = fs::canonicalize(self.assets_path().join(name))?;
+        if !path.starts_with(&assets) || !fs::metadata(&path)?.is_file() {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid asset"));
+        }
+        Ok(path)
     }
 
     /// Canonical, regular-file path for the native asset protocol. This is used
@@ -3251,7 +3352,6 @@ impl Graph {
     /// instead of copying a multi-gigabyte file through Rust Vec → IPC → Blob.
     pub fn stream_asset_path(&self, name: &str) -> io::Result<PathBuf> {
         top_level_asset_name(name)?;
-        let assets = fs::canonicalize(self.assets_path())?;
         let candidate = self.assets_path().join(name);
         if fs::symlink_metadata(&candidate)?.file_type().is_symlink() {
             return Err(io::Error::new(
@@ -3259,11 +3359,7 @@ impl Graph {
                 "asset symlinks cannot be streamed",
             ));
         }
-        let path = fs::canonicalize(candidate)?;
-        if !path.starts_with(&assets) || !fs::metadata(&path)?.is_file() {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid asset"));
-        }
-        Ok(path)
+        self.asset_file_for_read(name)
     }
 
     /// Read an asset only if its current on-disk size is within `max_bytes`.
@@ -3271,7 +3367,7 @@ impl Graph {
     /// the file between those operations.
     pub fn read_asset_limited(&self, name: &str, max_bytes: u64) -> io::Result<Vec<u8>> {
         top_level_asset_name(name)?;
-        let path = self.assets_path().join(name);
+        let path = self.asset_file_for_read(name)?;
         let metadata = fs::metadata(&path)?;
         if !metadata.is_file() {
             return Err(io::Error::new(
@@ -3299,7 +3395,7 @@ impl Graph {
     /// stored filename (de-duplicated if it already exists).
     pub fn save_asset(&self, name: &str, bytes: &[u8]) -> io::Result<String> {
         let assets = self.assets_path();
-        self.ensure_write_target(&assets)?;
+        self.ensure_asset_write_target(&assets)?;
         fs::create_dir_all(&assets)?;
         top_level_asset_name(name)?;
         let (stem, ext) = split_asset_stem_ext(name);
@@ -3332,7 +3428,7 @@ impl Graph {
                 .to_string(),
         };
         let assets = self.assets_path();
-        self.ensure_write_target(&assets)?;
+        self.ensure_asset_write_target(&assets)?;
         fs::create_dir_all(&assets)?;
         top_level_asset_name(&name)?;
         let (stem, ext) = split_asset_stem_ext(&name);
@@ -3369,7 +3465,7 @@ impl Graph {
     ) -> io::Result<String> {
         let key = crate::pdf::asset_key(pdf_filename);
         let dir = self.assets_path().join(&key);
-        self.ensure_write_target(&dir)?;
+        self.ensure_asset_write_target(&dir)?;
         fs::create_dir_all(&dir)?;
         let name = format!("{page}_{id}_{stamp}.png");
         // The highlight `id` round-trips through the graph `.edn`, so a synced/hand-edited
@@ -3377,7 +3473,7 @@ impl Graph {
         // dir and write a `.png` anywhere (audit M3, path traversal).
         top_level_asset_name(&name)?;
         let target = dir.join(&name);
-        self.ensure_write_target(&target)?;
+        self.ensure_asset_write_target(&target)?;
         atomic_write(&target, bytes)?;
         Ok(format!("{key}/{name}"))
     }
@@ -3390,13 +3486,17 @@ impl Graph {
     /// by pre-launch Tine builds from disappearing after the key change.
     pub fn read_highlights(&self, pdf_filename: &str) -> Vec<crate::pdf::Highlight> {
         let key = crate::pdf::asset_key(pdf_filename);
-        let s = fs::read_to_string(self.assets_path().join(format!("{key}.edn")))
+        let s = self
+            .asset_file_for_read(&format!("{key}.edn"))
+            .and_then(fs::read_to_string)
             .ok()
             .or_else(|| {
                 let legacy = crate::pdf::legacy_asset_key(pdf_filename);
                 (legacy != key)
                     .then(|| {
-                        fs::read_to_string(self.assets_path().join(format!("{legacy}.edn"))).ok()
+                        self.asset_file_for_read(&format!("{legacy}.edn"))
+                            .and_then(fs::read_to_string)
+                            .ok()
                     })
                     .flatten()
             });
@@ -3455,7 +3555,7 @@ impl Graph {
         let _guard = lock.lock().unwrap();
         fs::create_dir_all(self.assets_path())?;
         let edn_path = self.assets_path().join(format!("{key}.edn"));
-        self.ensure_write_target(&edn_path)?;
+        self.ensure_asset_write_target(&edn_path)?;
         // 3-way merge against the on-disk set: keep our current highlights, plus
         // any disk highlight that is an EXTERNAL addition (id not in our baseline
         // and not already present). A highlight we deliberately deleted (in the
@@ -7490,6 +7590,99 @@ mod tests {
             let _ = fs::remove_dir_all(&dir);
             let _ = fs::remove_dir_all(&outside);
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn checked_open_accepts_only_the_approved_external_assets_target() {
+        use std::os::unix::fs::symlink;
+        let dir = scratch("checked-open-approved-assets");
+        let outside = std::env::temp_dir().join(format!(
+            "tine-checked-open-approved-assets-outside-{}",
+            std::process::id()
+        ));
+        let other = std::env::temp_dir().join(format!(
+            "tine-checked-open-approved-assets-other-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&outside);
+        let _ = fs::remove_dir_all(&other);
+        fs::create_dir_all(&outside).unwrap();
+        fs::create_dir_all(&other).unwrap();
+        let _ = fs::remove_dir_all(dir.join("assets"));
+        symlink(&outside, dir.join("assets")).unwrap();
+
+        assert!(Graph::open_checked(&dir).is_err());
+        assert!(Graph::open_checked_with_assets(&dir, Some(&other)).is_err());
+        let graph = Graph::open_checked_with_assets(&dir, Some(&outside)).unwrap();
+        assert_eq!(graph.assets_path(), outside.canonicalize().unwrap());
+        assert_eq!(
+            graph.save_asset("approved.txt", b"safe").unwrap(),
+            "approved.txt"
+        );
+        assert_eq!(fs::read(outside.join("approved.txt")).unwrap(), b"safe");
+
+        // Retargeting the graph link cannot redirect an already-open graph: the
+        // Graph holds the originally approved canonical capability. A fresh open
+        // also fails because the stored approval no longer matches.
+        fs::remove_file(dir.join("assets")).unwrap();
+        symlink(&other, dir.join("assets")).unwrap();
+        assert_eq!(
+            graph
+                .save_asset("after-retarget.txt", b"still safe")
+                .unwrap(),
+            "after-retarget.txt"
+        );
+        assert!(outside.join("after-retarget.txt").exists());
+        assert!(!other.join("after-retarget.txt").exists());
+        assert!(Graph::open_checked_with_assets(&dir, Some(&outside)).is_err());
+
+        // A nested link inside the approved root remains confined: neither read
+        // nor write may follow it into another directory.
+        symlink(other.join("secret.txt"), outside.join("escape.txt")).unwrap();
+        fs::write(other.join("secret.txt"), b"private").unwrap();
+        assert!(graph.read_asset("escape.txt").is_err());
+        let area_key = crate::pdf::asset_key("Escaping area.pdf");
+        symlink(&other, outside.join(&area_key)).unwrap();
+        assert!(graph
+            .write_pdf_area_image("Escaping area.pdf", 1, "id", 1, b"png")
+            .is_err());
+
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&outside);
+        let _ = fs::remove_dir_all(&other);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn checked_open_accepts_an_approved_windows_assets_junction() {
+        let dir = scratch("checked-open-approved-assets-junction");
+        let outside = std::env::temp_dir().join(format!(
+            "tine-approved-assets-junction-outside-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&outside);
+        fs::create_dir_all(&outside).unwrap();
+        let _ = fs::remove_dir_all(dir.join("assets"));
+        let status = std::process::Command::new("cmd")
+            .args([
+                "/C",
+                "mklink",
+                "/J",
+                &dir.join("assets").display().to_string(),
+                &outside.display().to_string(),
+            ])
+            .status()
+            .unwrap();
+        assert!(status.success(), "mklink /J must create the test junction");
+
+        assert!(Graph::open_checked(&dir).is_err());
+        let graph = Graph::open_checked_with_assets(&dir, Some(&outside)).unwrap();
+        assert_eq!(graph.assets_path(), outside.canonicalize().unwrap());
+
+        let _ = fs::remove_dir(dir.join("assets"));
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&outside);
     }
 
     #[cfg(unix)]

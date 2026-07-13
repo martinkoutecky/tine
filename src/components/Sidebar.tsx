@@ -1,7 +1,7 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, type JSX } from "solid-js";
 import { openJournals, openPage, openPageInNewTab, openFile, openInNewTab, route } from "../router";
 import { openSwitcher, favorites, recentPages, openPageContextMenu, graphMeta, openPageInSidebar, pushToast, resolveAlias, favoritesSectionExpanded, recentSectionExpanded, toggleFavoritesSection, toggleRecentSection } from "../ui";
-import { switchGraph, createNewGraph, loadGraphPath } from "../graph";
+import { switchGraph, createNewGraph, loadGraphPath, authorizeGraphAccess } from "../graph";
 import { backend } from "../backend";
 import { allPages as allGraphPages, pageListLabel } from "../pages";
 import { EmojiText } from "../render/emoji";
@@ -299,7 +299,10 @@ export function openKnownGraph(
   newWindow: boolean,
   deps: KnownGraphOpenDeps = {
     switchInPlace: loadGraphPath,
-    openNewWindow: (target) => backend().openGraphWindow(target),
+    openNewWindow: async (target) => {
+      if (!(await authorizeGraphAccess(target))) return { kind: "aborted" };
+      return backend().openGraphWindow(target);
+    },
   }
 ): Promise<unknown> {
   return newWindow ? deps.openNewWindow(path) : deps.switchInPlace(path);
