@@ -97,7 +97,10 @@ raw speed. (Comparisons are against current Logseq desktop core, no plugins.)
 - **⚡ Native speed.** Pure-Rust core + SolidJS fine-grained reactivity + a tiny Tauri/WebKitGTK
   runtime instead of Electron — typing stays in the frontend tree, reads hit an in-memory index.
 - **🗂️ Built-in tabs.** Middle-click anything to open it in a background tab; pin, drag-reorder,
-  `Mod+W` to close. (Logseq core has none.)
+  `Mod+W` to close, and use the overflow overview when titles no longer fit. (Logseq core has none.)
+- **🔎 Search that grows into a query.** Open all Ctrl+K results in a persistent tab, switch the
+  same result set between search/list/table/board, refine it with friendly filters or the visual
+  builder, and name it only when it deserves to become an ordinary query page.
 - **🪟 Split view.** Panes have their own tabs/history, keyboard pane/seam navigation, `Ctrl+click`
   open-to-side, and tab drag to pane or seam.
 - **⏯️ Browser-style back/forward** — `Alt+Left` / `Alt+Right`, per-tab history, works mid-edit.
@@ -141,10 +144,10 @@ and the **[demo](https://tine.page/demo/)** shows the rendered-content side of i
 |------|-----------|
 | **Outliner** | Click-to-edit with exact caret landing, Logseq keyboard semantics, zoom, drag-reorder, multi-block select; in-block lists & checklists; callouts; a live `/calc` block. |
 | **Media** | Paste/import images, video & audio; configurable asset names; drag-resize images *and* video; an audio waveform overlay player; image lightbox; orphaned-media cleanup. |
-| **Links, refs & queries** | `[[page]]` · `#tag` · `((block ref))` · `{{embed}}` with autocomplete; live linked/unlinked references; per-block ref counts; the macro set; a `{{query}}` engine with a visual builder; a scoped Datalog path. |
+| **Links, refs & queries** | `[[page]]` · `#tag` · `((block ref))` · `{{embed}}` with autocomplete; live linked/unlinked references; per-block ref counts; one query engine behind friendly filters, a visual builder, raw DSL and search/list/table/board views; a scoped Datalog path. |
 | **Tasks, journals & dates** | Task workflows + priorities, scheduled/deadline with a date picker, recurring tasks, carry-forward, a multi-day journal feed, agenda, and a calendar. |
 | **PDF** | Zoomable virtualized viewer, in-PDF find, text + area (image) highlights stored Logseq-compatibly, each a bullet you can annotate. |
-| **Search & nav** | `Ctrl+K` switcher (titles + full text), command palette, in-app Guide, namespace tree, tabs, split view, back/forward, focus mode, global quick-capture, page icons. |
+| **Search & nav** | `Ctrl+K` switcher (titles + full text) with persistent result tabs, bounded match evidence and query-page promotion; command palette, in-app Guide, namespace tree, tabs, split view, back/forward, focus mode, global quick-capture, page icons. |
 | **Your files** | Safe to run alongside Logseq mobile over Syncthing — conflict detection, format-preserving atomic saves, transactional rename, org-mode (byte-faithful or read-only), snapshots + trash. |
 | **Customize & export** | Remappable shortcuts with `?` help, built-in theme gallery + custom CSS, multi-language spell check, static HTML export with offline search, copy/export as Markdown, **export a page to PDF**. |
 

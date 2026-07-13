@@ -4,6 +4,8 @@ icon:: ⌨️
 	- A quick tour of the things that aren't obvious on day one. (Shortcuts are remappable in Settings.)
 - ## Find anything — Ctrl+K
 	- **Ctrl+K** opens the quick switcher: jump to a page, search the text of any block, or run a command — all from one box. **Ctrl+Shift+P** opens the command palette (commands only).
+	- Use **Search syntax** for phrases, alternatives, exclusions, and regular expressions. Choose **Open all results** to keep the complete search in a graph-specific tab instead of choosing only one hit.
+	- That result tab can switch between **Search**, **List**, **Table**, and **Board** without changing what matched. Rename it when the search is worth keeping: Tine turns it into an ordinary query page in your graph. The compact filter button handles friendly fields and date ranges; **Query builder** opens the deeper visual editor when needed.
 - ## Create one yourself
 	- 1. Press **Ctrl+K**.
 	- 2. Type part of a page name, a block phrase, or a command such as `Open Guide`.
@@ -13,8 +15,11 @@ icon:: ⌨️
 	- Type **/** at the start of a bullet for a menu: tasks, headings, a code block, a `/calc` live calculator, dates (Scheduled / Deadline), callouts, queries, a math block, asset upload, and more.
 - ## Tabs
 	- **Middle-click** any bullet, page, or search result to open it in a background tab. **Double-click** a tab to pin it, **drag** to reorder, **Ctrl+W** to close. Your tabs come back next launch.
+	- When a pane has more tabs than fit, use its tab-overview button to see every full title, activate or pin a tab, or close one without guessing from truncated labels.
 - ## The sidebars
-	- **t l** toggles the left sidebar — journals, favorites, recents, all pages, and a namespace tree. **t r** toggles the right sidebar; **Shift-click** any bullet's dot to open it there and keep it beside your work.
+	- **t l** toggles the left sidebar — journals, favorites, recents, all pages, and a namespace tree. Favorites and Recent can be folded independently.
+	- **t r** toggles the right sidebar; **Shift-click** any bullet's dot to open it there and keep it beside your work. Each right-sidebar item can be folded independently, and its menu can collapse, expand, or close them all.
+	- Click the vertical outline guide below a bullet to expand its complete descendant subtree when anything inside is folded, or collapse all of those descendants when everything is open. The bullet itself keeps its ordinary one-level action.
 - ## Focus mode & dimming — t f / t b
 	- **t f** (focus mode) hides the sidebars and toolbar so the screen is just your text; layered **Esc** steps back out.
 	- **t b** (dim inactive blocks) fades everything except the bullet you're editing — a typewriter-style spotlight. Use it on its own, or let focus mode turn it on for you.

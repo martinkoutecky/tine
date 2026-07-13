@@ -17,7 +17,6 @@ if (uiCheck.status !== 0) process.exit(uiCheck.status ?? 1);
 const index = JSON.parse(fs.readFileSync(path.join(root, "tests/regressions/catalog.json"), "utf8"));
 const problems = [];
 const inventoryIds = new Set();
-const issueOwners = new Map();
 const allowedStatuses = new Set(["reported", "reproduced", "fixing", "covered", "released", "closed", "exempt"]);
 
 if (index.schemaVersion !== 1 || !Array.isArray(index.inventories) || index.inventories.length < 2) {
@@ -39,10 +38,11 @@ if (index.schemaVersion !== 1 || !Array.isArray(index.inventories) || index.inve
     for (const entry of data.entries) {
       if (!entry.id?.startsWith(inventory.idPrefix)) problems.push(`${inventory.id}: invalid entry id ${entry.id}`);
       if (!allowedStatuses.has(entry.status)) problems.push(`${entry.id}: invalid status ${entry.status}`);
+      // A single issue can contain a later, separately testable regression after
+      // an earlier fix shipped. Catalog IDs own behaviors; issue numbers only
+      // preserve public provenance and therefore need not be unique.
       for (const issue of entry.sources?.issues ?? []) {
-        const owner = issueOwners.get(issue);
-        if (owner && owner !== entry.id) problems.push(`GH #${issue} belongs to both ${owner} and ${entry.id}`);
-        issueOwners.set(issue, entry.id);
+        if (!Number.isInteger(issue) || issue < 1) problems.push(`${entry.id}: invalid issue ${issue}`);
       }
       for (const test of entry.coverage?.tests ?? []) {
         const file = test.split("#", 1)[0];

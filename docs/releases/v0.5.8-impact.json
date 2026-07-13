@@ -1,0 +1,160 @@
+{
+  "schemaVersion": 1,
+  "version": "0.5.8",
+  "baseTag": "v0.5.7",
+  "items": [
+    {
+      "section": "Added",
+      "text": "**Search and queries now share a persistent result workspace.** Ctrl+K can open its complete page-and-block result set in a graph-scoped tab, switch between search, list, table, and board presentations, survive an app restart, and become one ordinary query page when named—without writing temporary graph files. (GH #99)",
+      "userVisible": true,
+      "regressions": ["UI-QUERY-WORKSPACE-001"],
+      "docs": {"status":"update","reason":"The Guide and feature inventory now document opening all Ctrl+K results, switching presentations, persistence, and naming a workspace into a query page.","refs":["crates/tine-core/src/templates/tips.md","docs/FEATURES.md","README.md"]},
+      "website": {"status":"update","reason":"The homepage and regenerated Guide/demo now present the persistent search-to-query workflow.","refs":["website/index.html","website/demo/features-tips-shortcuts.html"]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    },
+    {
+      "section": "Added",
+      "text": "**Query creation has a friendly primary surface and an optional deeper one.** Plain search syntax remains editable as plain text; a Gmail-style filter dialog can build richer searches or hand off losslessly to the visual query builder and raw DSL, while on-demand explanations and diagnostics show what the engine interpreted. (GH #69)",
+      "userVisible": true,
+      "regressions": ["UI-QUERY-EXPLANATION-001"],
+      "docs": {"status":"update","reason":"The Guide and feature inventory now distinguish friendly filters, the visual builder, raw DSL, explanations, and diagnostics as frontends to one query plan.","refs":["crates/tine-core/src/templates/tips.md","docs/FEATURES.md","README.md"]},
+      "website": {"status":"update","reason":"The homepage and regenerated Guide/demo describe the friendly-to-advanced query path.","refs":["website/index.html","website/demo/features-tips-shortcuts.html"]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    },
+    {
+      "section": "Added",
+      "text": "**Search results now show bounded, useful evidence.** Block results separate page/breadcrumb context from a two-line excerpt and highlight every positive term that actually caused the Rust engine to match; negated terms are never presented as evidence, and the combobox exposes its active result to assistive technology. (GH #98)",
+      "userVisible": true,
+      "regressions": ["UI-SEARCH-RESULT-EVIDENCE-001"],
+      "docs": {"status":"update","reason":"The feature inventory now documents bounded excerpts, separated context, positive-term evidence, and accessible result semantics.","refs":["docs/FEATURES.md","README.md"]},
+      "website": {"status":"current","reason":"The homepage describes the search workspace; detailed row presentation belongs in the feature inventory and in-product UI.","refs":["website/index.html"]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    },
+    {
+      "section": "Added",
+      "text": "**Primary panes now share quiet, theme-aware scrollbar styling.** The left sidebar, page/split scrollers, and right sidebar use the same semantic thumb colors without forcing overlay scrollbars into layout-consuming geometry; forced-colors and coarse-pointer environments retain native controls. (GH #103)",
+      "userVisible": true,
+      "regressions": ["UI-SCROLLBAR-CROSS-PANE-001"],
+      "docs": {"status":"current","reason":"This is presentation polish with no new command or workflow to teach; the accessibility fallbacks are guarded by the regression catalog.","refs":["docs/FEATURES.md"]},
+      "website": {"status":"not-applicable","reason":"Scrollbar styling does not alter product positioning or website instructions.","refs":[]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    },
+    {
+      "section": "Added",
+      "text": "**Clicking an outline guide now expands or collapses the complete descendant subtree.** If any collapsible descendant is folded, the guide expands them all; otherwise it folds them all while leaving the guide's parent open. The forgiving hit target is keyboard-accessible, normal pages persist the change as one Undo step, and embeds/references keep it local to that surface. (GH #128)",
+      "userVisible": true,
+      "regressions": ["UI-OUTLINE-GUIDE-DEEP-COLLAPSE-001"],
+      "docs": {"status":"update","reason":"The Guide and feature inventory now teach the guide-versus-bullet distinction and recursive disclosure behavior.","refs":["crates/tine-core/src/templates/tips.md","docs/FEATURES.md"]},
+      "website": {"status":"update","reason":"Regenerating the Guide/demo publishes the new outline-guide instruction.","refs":["website/demo/features-tips-shortcuts.html"]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    },
+    {
+      "section": "Added",
+      "text": "**Overflowing tab strips now keep titles readable and provide a complete tab overview.** A pane-local button appears only when its tabs no longer fit, lists every full title with active, pinned, and close controls, and supports keyboard navigation. Activating a tab reveals it in the horizontal strip; ordinary tab closing, pinning, and drag-and-drop behavior remains intact. (GH #105)",
+      "userVisible": true,
+      "regressions": ["UI-TAB-OVERFLOW-OVERVIEW-001"],
+      "docs": {"status":"update","reason":"The Guide, feature inventory, and README now document the pane-local overflow overview alongside ordinary tab actions.","refs":["crates/tine-core/src/templates/tips.md","docs/FEATURES.md","README.md"]},
+      "website": {"status":"update","reason":"The homepage tab card and regenerated Guide/demo now include the overflow overview.","refs":["website/index.html","website/demo/features-tips-shortcuts.html"]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    },
+    {
+      "section": "Added",
+      "text": "**Right-sidebar items can now be collapsed independently.** Each page or block has an accessible disclosure that parks its body without mounting its outline or references; a compact menu provides Collapse all, Expand all, and Close all. State is local to this installation and graph, survives restarts and renames, and active edits commit before a body is removed. (GH #106)",
+      "userVisible": true,
+      "regressions": ["UI-RIGHT-SIDEBAR-ITEM-DISCLOSURE-001"],
+      "docs": {"status":"update","reason":"The Guide and feature inventory now describe item disclosure, bulk controls, persistence, and safe edit commitment.","refs":["crates/tine-core/src/templates/tips.md","docs/FEATURES.md"]},
+      "website": {"status":"update","reason":"Regenerating the Guide/demo publishes the updated sidebar workflow.","refs":["website/demo/features-tips-shortcuts.html"]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    },
+    {
+      "section": "Added",
+      "text": "**Block embeds have a restrained, theme-aware identity cue.** The embedded root bullet and its heavier descendant guide share a muted accent derived from the active theme; ordinary bullets, guides, text, and backgrounds remain unchanged, and custom CSS can override the semantic token. (GH #125)",
+      "userVisible": true,
+      "regressions": ["UI-BLOCK-EMBED-ACCENT-001"],
+      "docs": {"status":"update","reason":"The feature inventory now records the live embed behavior and restrained semantic accent without presenting it as a separate feature surface.","refs":["docs/FEATURES.md"]},
+      "website": {"status":"not-applicable","reason":"A theme-aware identity cue does not require homepage or Guide instructions.","refs":[]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    },
+    {
+      "section": "Added",
+      "text": "**Favorites and Recent can now be collapsed independently in the left sidebar.** Both sections default open, retain their item counts while folded, work as keyboard-accessible disclosures, and remember their state separately for each graph across restarts. (GH #101)",
+      "userVisible": true,
+      "regressions": ["UI-SIDEBAR-SECTION-DISCLOSURE-001"],
+      "docs": {"status":"update","reason":"The Guide and feature inventory now document the independent, per-graph Favorites and Recent disclosures.","refs":["crates/tine-core/src/templates/tips.md","docs/FEATURES.md"]},
+      "website": {"status":"update","reason":"Regenerating the Guide/demo publishes the updated left-sidebar workflow.","refs":["website/demo/features-tips-shortcuts.html"]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    },
+    {
+      "section": "Fixed",
+      "text": "**The `/Calculator` slash command now activates the live calculator on first insertion.** The new block immediately shows its fence-stripped editor, line-number gutter, and live results instead of requiring a blur and second click. (GH #57)",
+      "userVisible": true,
+      "regressions": ["UI-CALC-SLASH-ACTIVATION-001"],
+      "docs": {"status":"current","reason":"The Guide already teaches `/calc`; this fix restores the promised immediate live-block behavior.","refs":["crates/tine-core/src/templates/tips.md","docs/FEATURES.md"]},
+      "website": {"status":"current","reason":"The homepage already presents live `/calc` blocks and requires no workflow change.","refs":["website/index.html"]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    },
+    {
+      "section": "Fixed",
+      "text": "**Typing a page alias into the first bullet no longer interrupts the editor at `alias::`.** The property block stays mounted until editing ends, then adopts the compact page-property presentation; the completed alias persists and resolves links and backlinks normally. (GH #62)",
+      "userVisible": true,
+      "regressions": ["UI-ALIAS-FIRST-BULLET-001"],
+      "docs": {"status":"current","reason":"This restores existing first-block page-property and alias behavior without adding a new workflow.","refs":["docs/FEATURES.md"]},
+      "website": {"status":"not-applicable","reason":"An alias editing repair does not change website content.","refs":[]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    },
+    {
+      "section": "Fixed",
+      "text": "**Android backup restore no longer fails when app data and the selected graph live on different filesystems.** Pre-restore recovery files now stay beside the live graph or external assets they protect, preserving the atomic safety move without hitting a cross-device error. (GH #130)",
+      "userVisible": true,
+      "regressions": ["REG-ANDROID-BACKUP-RESTORE-EXDEV-001"],
+      "docs": {"status":"current","reason":"The backup UI and recovery contract are unchanged; this repairs the atomic implementation across filesystem boundaries.","refs":["docs/FEATURES.md"]},
+      "website": {"status":"not-applicable","reason":"A platform backup-recovery fix does not alter product-site instructions.","refs":[]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    },
+    {
+      "section": "Fixed",
+      "text": "**Switching an ordinary query to Search view no longer hides its results.** Search, List, Table, and Board now preserve the query engine's membership; DSL results use the same bounded search rows without inventing text-match highlights that the query did not produce.",
+      "userVisible": true,
+      "regressions": ["UI-QUERY-PRESENTATION-MEMBERSHIP-001"],
+      "docs": {"status":"update","reason":"The Guide and feature inventory now explicitly define Search, List, Table, and Board as presentations of one membership set.","refs":["crates/tine-core/src/templates/tips.md","docs/FEATURES.md","README.md"]},
+      "website": {"status":"update","reason":"The homepage and regenerated Guide/demo describe presentation switching without changing membership.","refs":["website/index.html","website/demo/features-tips-shortcuts.html"]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    },
+    {
+      "section": "Fixed",
+      "text": "**Graphs with an external `assets` symlink or Windows junction can be opened safely.** Tine shows the resolved directory for explicit, device-local approval, then confines every asset read and write to that exact canonical target. Declining leaves the graph closed with a useful explanation, while a stale or retargeted link fails closed without widening access to pages, journals, configuration, or other managed files. (GH #127)",
+      "userVisible": true,
+      "regressions": ["REG-EXTERNAL-ASSETS-TRUST-001"],
+      "docs": {"status":"update","reason":"The feature inventory now documents the explicit external-assets approval and exact canonical-scope safety boundary.","refs":["docs/FEATURES.md","docs/adr/0039-filesystem-scope-boundary.md"]},
+      "website": {"status":"not-applicable","reason":"A compatibility exception with a native approval dialog does not require homepage copy.","refs":[]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    },
+    {
+      "section": "Fixed",
+      "text": "**Linked and unlinked references now use the complete page identity.** Plain text mentions of a page alias appear under the canonical page's unlinked references, while explicit links in page-level properties appear as exact, read-only backlink rows. Scoped cache invalidation follows the same rules, so edited references update immediately. (GH #126)",
+      "userVisible": true,
+      "regressions": ["UI-REFERENCE-ALIAS-PAGE-PROPS-001"],
+      "docs": {"status":"current","reason":"This restores Logseq-compatible reference semantics already described by the linked/unlinked reference feature inventory.","refs":["docs/FEATURES.md"]},
+      "website": {"status":"not-applicable","reason":"A reference-index correctness fix does not alter website instructions.","refs":[]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    },
+    {
+      "section": "Fixed",
+      "text": "**Block embeds now behave as live editing surfaces.** Real disclosure clicks fold same-page and cross-page embedded branches locally without editing the macro host or changing the source block's collapse state, and Enter keeps the new block and caret inside the visible embed while persisting one source edit. (GH #124)",
+      "userVisible": true,
+      "regressions": ["UI-BLOCK-EMBED-INTERACTIONS-001"],
+      "docs": {"status":"update","reason":"The feature inventory now records local disclosure ownership and caret-preserving live editing in block embeds.","refs":["docs/FEATURES.md"]},
+      "website": {"status":"not-applicable","reason":"Restoring live embed interaction does not require homepage or Guide instructions.","refs":[]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    },
+    {
+      "section": "Fixed",
+      "text": "**Help with Tine no longer exports a scrubbed reproduction that has lost the original actionable parser delta and retained only mldoc's known backtick state artifact.** The anonymizer now tries its remaining privacy tiers and omits the case if none preserves a non-artifact divergence. (GH #82)",
+      "userVisible": true,
+      "regressions": ["UI-LSDOC-ORACLE-BUNDLE-001"],
+      "docs": {"status":"current","reason":"The existing Help diagnostics documentation already promises privacy-preserving actionable reports; this repair makes the implementation honor it.","refs":["docs/FEATURES.md"]},
+      "website": {"status":"not-applicable","reason":"An anonymization correctness repair does not change public website copy.","refs":[]},
+      "blog": {"status":"not-applicable","reason":"Patch releases do not trigger the human-blog sync.","refs":[]}
+    }
+  ]
+}

@@ -79,6 +79,11 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   `%`-token template — `%assetname %ext %yyyymmdd %hhmmss` (and granular `%yyyy %MM
   %dd %HH %mm %ss`) — defaulting to the plain original name, with a one-click
   *Date + name* preset.
+- **Explicit external-assets approval** — a graph whose `assets` directory is a
+  symlink or Windows junction can use its resolved device-local target after one
+  clear approval. Tine stores that exact canonical directory, confines asset reads
+  and writes to it, and fails closed if the link is later retargeted; pages,
+  journals, and configuration never inherit that exception.
 - **Drag the corner grip to resize an image *or a video*** — stored as a width % in
   Logseq's `{:width …}` brace, so it round-trips.
 - ⊕ **Audio ⤢ Expand** opens a wide overlay player — a **waveform scrubber** with
@@ -129,6 +134,9 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   reference** to the current block.
 - Inline block refs render as **link-styled text** (full-strength color + accent
   underline, like OG — not a grey chip).
+- Block embeds remain live editing surfaces: their disclosure state is local to the
+  visible embed, Enter keeps the caret there, and the root bullet plus heavier guide
+  use one restrained theme-aware accent without boxing or recoloring the content.
 - Copying a block **strips `id::`** from the clipboard text (like OG) so it never
   leaks into a paste — though the `id::` stays in the file so sidebar/tab/zoom spots
   persist a restart. Copy behavior is configurable (Settings → Journals & tasks),
@@ -147,14 +155,23 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   `(task …)`, `(priority …)`, `(property …)`, `(page-property …)`, `(page-tags …)`,
   `(scheduled)`, `(deadline)`, `(journal)`, `(namespace …)`, `(between START END)`
   with a field selector, `(sort-by …)`. Results render as a list or a sortable
-  **table**; ⊕ an interactive **visual query builder** (chip/clause bar) builds them
-  without writing the DSL. The builder's **Sort** control offers one-click presets
+  **table** or board. Search, list, table, and board are presentations of one result
+  membership rather than separate query implementations. ⊕ A friendly search-text
+  surface, a Gmail-style filter dialog, the interactive **visual query builder**
+  (chip/clause bar), and the raw DSL all compile to the same query plan. Explanations
+  show what Tine understood and diagnostics identify unsupported or invalid parts.
+  The builder's **Sort** control offers one-click presets
   — *Newest / Oldest first*, *Priority*, *Page*, *Deadline*, *Scheduled* — plus a
   free-text field for any other property. *Newest first* orders results on one
   recency timeline: journal pages by the day they represent (stable, not their file
   mtime), other pages by file modified-time, so journal and page todos interleave
   chronologically. (`sort-by modified/priority/page/deadline/scheduled` extend
   Logseq's property-only `sort-by`.)
+- ⊕ **Persistent search/query workspaces** — Ctrl+K can open its complete page and
+  block result set in a graph-scoped virtual tab. The workspace survives restart,
+  switches between Search/List/Table/Board without changing membership, and remains
+  outside the graph until named. Giving it a title materializes one ordinary query
+  page, so exploratory search and durable dashboards share a single path.
 - **Summarize results** (beyond Logseq) — the builder's **∑ summarize** control
   computes, with no code, a **count** / **sum** / **average** of a property over the
   matched blocks, and/or a **group-by** (page or property) that breaks the results
@@ -319,6 +336,10 @@ within a column; merged cells are still v2+.
   to move it at that position, onto a pane body to append and activate it there,
   or onto a seam/pane edge to split that half and move the tab into the new pane.
   `Esc` cancels an in-progress tab drag.
+- **Tab overflow overview:** when a pane's tab strip no longer fits, its overview
+  button lists every full title with active, pinned, and close controls. Activating
+  a hidden tab reveals it in the strip; ordinary pin, close, and drag behavior stays
+  unchanged.
 
 ## Tasks, journals & dates
 
@@ -369,8 +390,10 @@ within a column; merged cells are still v2+.
 ## Search & navigation
 
 - `Ctrl+K` quick switcher: page titles + full-text content hits (visible text only —
-  no false hits on hidden properties/uuids), with block breadcrumbs and middle-click
-  → background tab.
+  no false hits on hidden properties/uuids), with separated page/breadcrumb context,
+  bounded two-line evidence excerpts, all positive matching terms highlighted, and
+  middle-click → background tab. **Search syntax** documents phrases, alternatives,
+  exclusions, and regex; **Open all results** creates the persistent workspace above.
 - `Mod+F` in-page find on normal pages: a slim find bar with next/previous,
   `n / total` counts, and highlights for the current page. The match list is built
   from the block model, so collapsed or lazy-rendered branches are found and opened
@@ -380,6 +403,14 @@ within a column; merged cells are still v2+.
   "Namespace" header + nested descendant tree), an automatic **"Hierarchy"** section
   (breadcrumb paths of descendant pages) on any namespaced page, and read-only
   **"aka" alias chips** on pages reachable by another name.
+- **Collapsible navigation sections** — Favorites and Recent fold independently and
+  remember their state per graph. Right-sidebar pages/blocks also fold independently;
+  a compact menu collapses, expands, or closes all items, committing active edits
+  before an item is unmounted.
+- **Recursive outline-guide disclosure** — clicking the vertical guide below a
+  bullet expands every collapsible descendant if any are folded, otherwise collapses
+  the complete descendant subtree. The guide is keyboard-accessible; the bullet keeps
+  its normal single-block action.
 - **In-app Guide** — Help → Guide (or the *Open Guide* command) loads bundled,
   read-only how-to pages under the virtual `Tine-guide/` namespace. Guide links stay
   inside that virtual namespace, guide pages are hidden from search/page lists/backlinks,
