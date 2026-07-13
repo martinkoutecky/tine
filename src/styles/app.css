@@ -6138,6 +6138,28 @@ img.emoji {
   color: var(--text-primary);
 }
 
+.query-search-results {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.query-search-hit,
+.query-search-page {
+  width: 100%;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.query-search-hit:hover,
+.query-search-hit:focus-visible,
+.query-search-page:hover,
+.query-search-page:focus-visible {
+  background: var(--bg-tertiary);
+}
+
 .query-title-editable {
   cursor: text;
   border-radius: 4px;

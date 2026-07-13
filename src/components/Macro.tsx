@@ -27,7 +27,7 @@ import { SheetContainer } from "./SheetContainer";
 import type { PageKind, RefGroup } from "../types";
 import { sharedQueryResult } from "../queryResultCache";
 import { savedDslToFriendlySearch } from "../editor/searchQuery";
-import type { QueryExecution } from "../types";
+import type { QueryExecution, QueryHit } from "../types";
 
 const ADVANCED_RE = /\[\s*:find|:where|:find/;
 type QueryView = "search" | "list" | "table" | "board";
@@ -291,8 +291,23 @@ export function QueryMacro(props: {
       return sharedQueryResult(scope, `simple\0${requestKey}`, () => backend().runQuery(form()));
     }
   );
-  const total = () => currentView() === "search" && searchExecution()
-    ? searchExecution()!.hits.length
+  // Presentation never changes membership. Canonical `(search "…")` queries
+  // already carry page/block hits and match evidence from QueryPlan. Ordinary
+  // DSL queries return RefGroups, so adapt those same blocks into evidence-free
+  // search rows instead of making the Search presentation appear empty.
+  const searchPresentationHits = createMemo<QueryHit[]>(() => {
+    if (friendlySearch() !== null) return searchExecution()?.hits ?? [];
+    return (groups() ?? []).flatMap((group) => group.blocks.map((block) => ({
+      entity: "block" as const,
+      page: group.page,
+      kind: group.kind,
+      block,
+      display_text: visibleBody(block.raw).join(" "),
+      evidence: [],
+    })));
+  });
+  const total = () => currentView() === "search"
+    ? searchPresentationHits().length
     : groups()?.reduce((a, g) => a + g.blocks.length, 0) ?? 0;
   // A `(sort-by …)` query is sorted GLOBALLY by the engine and returned as one
   // block per group in that order — so the list view must render flat (a single
@@ -499,13 +514,13 @@ export function QueryMacro(props: {
                 when={sheetFace()}
                 fallback={
                   <>
-                    <Show when={currentView() === "search" && friendlySearch() !== null}>
+                    <Show when={currentView() === "search"}>
                       <div class="query-search-results" role="list" aria-label="Search results" onClick={stop}>
                         <Show
-                          when={(searchExecution()?.hits.length ?? 0) > 0}
+                          when={searchPresentationHits().length > 0}
                           fallback={<div class="query-empty">No results</div>}
                         >
-                          <For each={searchExecution()?.hits ?? []}>
+                          <For each={searchPresentationHits()}>
                             {(hit) => (
                               <Show
                                 when={hit.entity === "block" ? hit : null}

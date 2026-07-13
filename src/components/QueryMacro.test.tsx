@@ -150,6 +150,36 @@ describe("QueryMacro sheet integration", () => {
     dispose();
   });
 
+  it("keeps ordinary DSL query membership when switching to the Search presentation", async () => {
+    const ids = Array.from({ length: 9 }, (_, index) => `todo-${index + 1}`);
+    setDoc({
+      byId: {
+        query: node(
+          "query",
+          "{{query (and (task TODO) (priority A) (not (page Templates)) (sort-by modified desc))}}\ntine.view:: search",
+          null
+        ),
+        ...Object.fromEntries(ids.map((id, index) => [id, node(id, `TODO [#A] Result ${index + 1}`, null)])),
+      },
+      pages: [page(["query", ...ids])],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    vi.spyOn(backend(), "runQuery").mockResolvedValue(queryGroups(ids));
+    const graphSearch = vi.spyOn(backend(), "runGraphSearch");
+
+    const { root, dispose } = mount(() => <Block id="query" />);
+    await settleQuery();
+
+    expect(activeView(root)).toBe("Search");
+    expect(root.querySelector(".query-count")?.textContent).toBe("9");
+    expect(root.querySelectorAll(".query-search-results .query-search-hit")).toHaveLength(9);
+    expect(root.querySelector(".query-search-hit")?.textContent).toContain("Result 1");
+    expect(graphSearch).not.toHaveBeenCalled();
+
+    dispose();
+  });
+
   it("renders the query header and builder above a sheet-faced query exactly once", async () => {
     loadQueryDoc("{{query (todo TODO)}}\ntine.view:: table");
 

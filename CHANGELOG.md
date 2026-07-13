@@ -58,6 +58,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Switching an ordinary query to Search view no longer hides its results.**
+  Search, List, Table, and Board now preserve the query engine's membership;
+  DSL results use the same bounded search rows without inventing text-match
+  highlights that the query did not produce.
 - **Graphs with an external `assets` symlink or Windows junction can be opened
   safely.** Tine shows the resolved directory for explicit, device-local
   approval, then confines every asset read and write to that exact canonical

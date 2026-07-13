@@ -29,9 +29,15 @@ fs.writeFileSync(`${GRAPH}/pages/Research.md`, [
   "- alpha repeats alpha and beta remains visible",
   "",
 ].join("\n"));
+fs.writeFileSync(`${GRAPH}/pages/Query parity.md`, [
+  "- {{query (and (task TODO) (priority A) (not (page Templates)) (sort-by modified desc))}}",
+  ...Array.from({ length: 9 }, (_, index) => `- TODO [#A] Included result ${index + 1}`),
+  "",
+].join("\n"));
+fs.writeFileSync(`${GRAPH}/pages/Templates.md`, "- TODO [#A] Excluded template result\n");
 const now = new Date();
 const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
-fs.writeFileSync(`${GRAPH}/journals/${journal}.md`, "- Open [[Research]]\n");
+fs.writeFileSync(`${GRAPH}/journals/${journal}.md`, "- Open [[Research]] and [[Query parity]]\n");
 
 const env = {
   ...process.env,
@@ -77,18 +83,60 @@ async function presentationButton(browser, label) {
   throw new Error(`missing ${label} presentation button`);
 }
 
+async function inlineQueryViewButton(browser, label) {
+  for (const button of await browser.$$(".query-view-switcher button")) {
+    if ((await button.getText()).trim() === label) return button;
+  }
+  throw new Error(`missing inline-query ${label} view button`);
+}
+
 await withApp(0, async (browser) => {
+  const routed = await browser.execute(() => {
+    const refs = [...document.querySelectorAll(".page-ref")];
+    const ref = refs.find((element) => element.textContent?.includes("Query parity"));
+    if (!ref) return { ok: false, refs: refs.map((element) => element.textContent?.trim()) };
+    for (const type of ["mousedown", "mouseup", "click"]) {
+      ref.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button: 0 }));
+    }
+    return { ok: true, refs: [] };
+  });
+  if (!routed.ok) throw new Error(`query fixture page-ref is missing: ${JSON.stringify(routed.refs)}`);
+  await browser.waitUntil(async () => (await browser.$("h1.page-title").getText()).trim() === "Query parity", {
+    timeout: 10_000, timeoutMsg: "could not route to the DSL query fixture",
+  });
+  await browser.waitUntil(async () => (await browser.$(".query-count").getText()).trim() === "9", {
+    timeout: 10_000, timeoutMsg: "ordinary query did not produce its nine expected blocks",
+  });
+  const inlineSearchButton = await inlineQueryViewButton(browser, "Search");
+  await inlineSearchButton.click();
+  await browser.waitUntil(async () => (await browser.$$(".query-search-results .query-search-hit")).length === 9, {
+    timeout: 10_000, timeoutMsg: "Search presentation dropped ordinary DSL query results",
+  });
+  const inlineProof = await browser.execute(() => ({
+    count: document.querySelector(".query-count")?.textContent?.trim(),
+    rows: [...document.querySelectorAll(".query-search-results .query-search-hit")].map((row) => ({
+      page: row.querySelector(".search-result-context")?.textContent,
+      text: row.querySelector(".search-result-excerpt")?.textContent,
+      marks: row.querySelectorAll("mark").length,
+    })),
+  }));
+  if (inlineProof.count !== "9" || inlineProof.rows.length !== 9
+    || inlineProof.rows.some((row) => row.page !== "Query parity" || !row.text?.includes("Included result") || row.marks !== 0)) {
+    throw new Error(`DSL Search presentation changed membership or invented evidence: ${JSON.stringify(inlineProof)}`);
+  }
+  await browser.saveScreenshot(path.join(ARTIFACTS, "inline-query-search.png"));
+
   await browser.keys(["Control", "k"]);
   const input = await browser.$(".switcher-input");
   await input.waitForExist({ timeout: 5_000 });
   await input.setValue("alpha beta -draft");
-  await browser.waitUntil(async () => (await browser.$$(".switcher-row.block-result")).length === 2, {
+  await browser.waitUntil(async () => (await browser.$$(".switcher-results .switcher-row.block-result")).length === 2, {
     timeout: 10_000, timeoutMsg: "friendly search did not return exactly the two included blocks",
   });
 
   const proof = await browser.execute(() => {
     const input = document.querySelector(".switcher-input");
-    const rows = [...document.querySelectorAll(".switcher-row.block-result")];
+    const rows = [...document.querySelectorAll(".switcher-results .switcher-row.block-result")];
     return {
       role: input?.getAttribute("role"),
       active: input?.getAttribute("aria-activedescendant"),
@@ -141,7 +189,8 @@ await withApp(1, async (browser) => {
     throw new Error("restart lost the query presentation");
   }
   const graphFilesBefore = fs.readdirSync(`${GRAPH}/pages`).sort();
-  if (graphFilesBefore.length !== 1 || graphFilesBefore[0] !== "Research.md") {
+  const expectedBefore = ["Query parity.md", "Research.md", "Templates.md"];
+  if (JSON.stringify(graphFilesBefore) !== JSON.stringify(expectedBefore)) {
     throw new Error(`virtual query wrote a temporary page: ${graphFilesBefore.join(", ")}`);
   }
 
