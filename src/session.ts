@@ -9,10 +9,13 @@ import {
 } from "./router";
 import {
   applySidebarSession,
+  favoritesSectionExpanded,
+  recentSectionExpanded,
   rightSidebar,
   rightSidebarOpen,
   sidebarOpen,
   type SidebarItem,
+  type SidebarSessionState,
 } from "./ui";
 import {
   feedPaneId,
@@ -42,6 +45,8 @@ export interface PersistedSession extends PaneSnapshot {
   leftSidebar?: boolean;
   rightSidebar?: boolean;
   rightSidebarItems?: SidebarItem[];
+  favoritesSectionExpanded?: boolean;
+  recentSectionExpanded?: boolean;
   layout?: PersistedLayoutNode;
   focusedPaneId?: string;
 }
@@ -172,6 +177,8 @@ export function buildPersistedSession(): PersistedSession {
     leftSidebar: sidebarOpen(),
     rightSidebar: rightSidebarOpen(),
     rightSidebarItems: rightSidebar(),
+    favoritesSectionExpanded: favoritesSectionExpanded(),
+    recentSectionExpanded: recentSectionExpanded(),
     layout: serializeLayout(layoutRoot()),
     focusedPaneId: focusedPaneId(),
   };
@@ -181,11 +188,17 @@ export function parsePersistedSession(raw: string): {
   layout: LayoutNode;
   snapshots: Map<string, PaneSnapshot>;
   focusedPaneId: string;
-  sidebar: { left?: boolean; right?: boolean; items?: SidebarItem[] };
+  sidebar: SidebarSessionState;
 } | null {
   try {
     const s = JSON.parse(raw) as PersistedSession;
-    const sidebar = { left: s.leftSidebar, right: s.rightSidebar, items: s.rightSidebarItems };
+    const sidebar = {
+      left: s.leftSidebar,
+      right: s.rightSidebar,
+      items: s.rightSidebarItems,
+      favoritesExpanded: s.favoritesSectionExpanded,
+      recentExpanded: s.recentSectionExpanded,
+    };
     if (s.layout && !isMobilePlatform) {
       const snapshots = new Map<string, PaneSnapshot>();
       const layout = parseLayoutNode(s.layout, snapshots, { value: false });

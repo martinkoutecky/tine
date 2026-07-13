@@ -60,6 +60,7 @@ async function loadHarness(existing: PageDto | null) {
     refreshJournalConflicts: vi.fn(async () => {}),
     refreshSyncConflicts: vi.fn(async () => {}),
     clearRecent: vi.fn(),
+    resetLeftSidebarSections: vi.fn(),
     graphTransitioning: () => false,
     setGraphTransitioning: vi.fn(),
   }));

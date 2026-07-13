@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, type JSX } from "solid-js";
 import { openJournals, openPage, openPageInNewTab, openFile, openInNewTab, route } from "../router";
-import { openSwitcher, favorites, recentPages, openPageContextMenu, graphMeta, openPageInSidebar, pushToast, resolveAlias } from "../ui";
+import { openSwitcher, favorites, recentPages, openPageContextMenu, graphMeta, openPageInSidebar, pushToast, resolveAlias, favoritesSectionExpanded, recentSectionExpanded, toggleFavoritesSection, toggleRecentSection } from "../ui";
 import { switchGraph, createNewGraph, loadGraphPath } from "../graph";
 import { backend } from "../backend";
 import { allPages as allGraphPages, pageListLabel } from "../pages";
@@ -123,66 +123,96 @@ export function Sidebar(): JSX.Element {
 
         <Show when={favorites().length > 0}>
           <div class="nav-section">
-            <div class="nav-section-header">FAVORITES</div>
-            <For each={favorites()}>
-              {(fav) => {
-                const target = () => sidebarPageTarget(fav.name, fav.kind);
-                return (
-                <div
-                  class="nav-page"
-                  classList={{ active: isActive(target().name) }}
-                  onMouseDown={shiftGuard}
-                  onClick={(e) => openSidebarPageTarget(fav.name, fav.kind, e.shiftKey ? "sidebar" : "normal")}
-                  onAuxClick={(e) => {
-                    if (e.button === 1) {
-                      e.preventDefault();
-                      openSidebarPageTarget(fav.name, fav.kind, "new-tab");
-                    }
+            <button
+              type="button"
+              class="nav-section-header nav-section-toggle"
+              data-sidebar-section="favorites"
+              aria-expanded={favoritesSectionExpanded()}
+              aria-controls="sidebar-favorites-list"
+              onClick={toggleFavoritesSection}
+            >
+              <span class="nav-toggle-caret" classList={{ open: favoritesSectionExpanded() }}>▸</span>
+              FAVORITES
+              <span class="nav-section-count">{favorites().length}</span>
+            </button>
+            <Show when={favoritesSectionExpanded()}>
+              <div id="sidebar-favorites-list">
+                <For each={favorites()}>
+                  {(fav) => {
+                    const target = () => sidebarPageTarget(fav.name, fav.kind);
+                    return (
+                      <div
+                        class="nav-page"
+                        classList={{ active: isActive(target().name) }}
+                        onMouseDown={shiftGuard}
+                        onClick={(e) => openSidebarPageTarget(fav.name, fav.kind, e.shiftKey ? "sidebar" : "normal")}
+                        onAuxClick={(e) => {
+                          if (e.button === 1) {
+                            e.preventDefault();
+                            openSidebarPageTarget(fav.name, fav.kind, "new-tab");
+                          }
+                        }}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          openSidebarPageTarget(fav.name, fav.kind, "context", { x: e.clientX, y: e.clientY });
+                        }}
+                      >
+                        {/* ⭐ + name via EmojiText: WebKitGTK's Skia COLRv1 path
+                            crashes painting a raw color-emoji glyph on hardened
+                            libstdc++ (#29); Twemoji <img> never touches the font. */}
+                        <EmojiText text={`⭐ ${fav.name}`} />
+                      </div>
+                    );
                   }}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    openSidebarPageTarget(fav.name, fav.kind, "context", { x: e.clientX, y: e.clientY });
-                  }}
-                >
-                  {/* ⭐ + name via EmojiText: WebKitGTK's Skia COLRv1 path
-                      crashes painting a raw color-emoji glyph on hardened
-                      libstdc++ (#29); Twemoji <img> never touches the font. */}
-                  <EmojiText text={`⭐ ${fav.name}`} />
-                </div>
-                );
-              }}
-            </For>
+                </For>
+              </div>
+            </Show>
           </div>
         </Show>
 
         <Show when={recentPages().length > 0}>
           <div class="nav-section">
-            <div class="nav-section-header">RECENT</div>
-            <For each={recentPages()}>
-              {(r) => {
-                const target = () => sidebarPageTarget(r.name, r.kind);
-                return (
-                <div
-                  class="nav-page"
-                  classList={{ active: isActive(target().name) }}
-                  onMouseDown={shiftGuard}
-                  onClick={(e) => openSidebarPageTarget(r.name, r.kind, e.shiftKey ? "sidebar" : "normal")}
-                  onAuxClick={(e) => {
-                    if (e.button === 1) {
-                      e.preventDefault();
-                      openSidebarPageTarget(r.name, r.kind, "new-tab");
-                    }
+            <button
+              type="button"
+              class="nav-section-header nav-section-toggle"
+              data-sidebar-section="recent"
+              aria-expanded={recentSectionExpanded()}
+              aria-controls="sidebar-recent-list"
+              onClick={toggleRecentSection}
+            >
+              <span class="nav-toggle-caret" classList={{ open: recentSectionExpanded() }}>▸</span>
+              RECENT
+              <span class="nav-section-count">{recentPages().length}</span>
+            </button>
+            <Show when={recentSectionExpanded()}>
+              <div id="sidebar-recent-list">
+                <For each={recentPages()}>
+                  {(r) => {
+                    const target = () => sidebarPageTarget(r.name, r.kind);
+                    return (
+                      <div
+                        class="nav-page"
+                        classList={{ active: isActive(target().name) }}
+                        onMouseDown={shiftGuard}
+                        onClick={(e) => openSidebarPageTarget(r.name, r.kind, e.shiftKey ? "sidebar" : "normal")}
+                        onAuxClick={(e) => {
+                          if (e.button === 1) {
+                            e.preventDefault();
+                            openSidebarPageTarget(r.name, r.kind, "new-tab");
+                          }
+                        }}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          openSidebarPageTarget(r.name, r.kind, "context", { x: e.clientX, y: e.clientY });
+                        }}
+                      >
+                        <EmojiText text={r.name.startsWith("hls__") ? r.name.slice(5) : r.name} />
+                      </div>
+                    );
                   }}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    openSidebarPageTarget(r.name, r.kind, "context", { x: e.clientX, y: e.clientY });
-                  }}
-                >
-                  <EmojiText text={r.name.startsWith("hls__") ? r.name.slice(5) : r.name} />
-                </div>
-                );
-              }}
-            </For>
+                </For>
+              </div>
+            </Show>
           </div>
         </Show>
 

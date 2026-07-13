@@ -8,6 +8,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Added
+
+- **Favorites and Recent can now be collapsed independently in the left
+  sidebar.** Both sections default open, retain their item counts while folded,
+  work as keyboard-accessible disclosures, and remember their state separately
+  for each graph across restarts. (GH #101)
+
 ### Fixed
 
 - **Block embeds now behave as live editing surfaces.** Real disclosure clicks

@@ -37,6 +37,7 @@ const suites = {
     ["capture", "scripts/e2e-capture.mjs", { E2E_WINDOW_MANAGER: "openbox" }],
     ["page-file-actions", "scripts/e2e-page-file-actions.mjs", {}],
     ["block-embed", "scripts/e2e-block-embed.mjs", {}],
+    ["sidebar-sections", "scripts/e2e-sidebar-sections.mjs", {}],
   ],
   "windows-smoke": [
     ["windows-core", "scripts/e2e-windows-smoke.mjs", {}],

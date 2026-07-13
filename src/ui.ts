@@ -505,6 +505,27 @@ export function toggleTheme() {
 // Left sidebar open/collapsed — persisted (default open; store only when collapsed).
 const SIDEBAR_OPEN_KEY = "logseq-claude.sidebarOpen";
 export const [sidebarOpen, setSidebarOpen] = createSignal(loadStr(SIDEBAR_OPEN_KEY) !== "0");
+export const [favoritesSectionExpanded, setFavoritesSectionExpanded] = createSignal(true);
+export const [recentSectionExpanded, setRecentSectionExpanded] = createSignal(true);
+
+export function toggleFavoritesSection() {
+  setFavoritesSectionExpanded((open) => !open);
+  scheduleSessionSave();
+}
+
+export function toggleRecentSection() {
+  setRecentSectionExpanded((open) => !open);
+  scheduleSessionSave();
+}
+
+/** Reset graph-scoped disclosure preferences before another graph's persisted
+ * session is restored. A legacy/missing session therefore defaults expanded
+ * instead of inheriting the graph that was open previously. */
+export function resetLeftSidebarSections() {
+  setFavoritesSectionExpanded(true);
+  setRecentSectionExpanded(true);
+}
+
 export function toggleSidebar() {
   const v = !sidebarOpen();
   setSidebarOpen(v);
@@ -515,10 +536,20 @@ export function toggleSidebar() {
 /** Apply sidebar open/closed + right-sidebar items restored from the persisted
  *  session (router.restoreSession). Sets the signals directly — no save trigger,
  *  so restoring can't loop back into another save. */
-export function applySidebarSession(s: { left?: boolean; right?: boolean; items?: SidebarItem[] }) {
+export interface SidebarSessionState {
+  left?: boolean;
+  right?: boolean;
+  items?: SidebarItem[];
+  favoritesExpanded?: boolean;
+  recentExpanded?: boolean;
+}
+
+export function applySidebarSession(s: SidebarSessionState) {
   if (typeof s.left === "boolean") setSidebarOpen(s.left);
   if (Array.isArray(s.items)) setRightSidebarRaw(s.items.filter(validSidebarItem));
   if (typeof s.right === "boolean") setRightSidebarOpenSig(s.right);
+  setFavoritesSectionExpanded(s.favoritesExpanded ?? true);
+  setRecentSectionExpanded(s.recentExpanded ?? true);
 }
 
 const SIDEBAR_W_KEY = "logseq-claude.sidebarWidth";

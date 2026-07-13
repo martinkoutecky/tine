@@ -2,6 +2,13 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { buildPersistedSession, parsePersistedSession, type PersistedSession } from "./session";
 import { resetPaneLayoutToSingle, restorePaneLayout, type LayoutNode } from "./panes";
 import type { PaneSnapshot } from "./router";
+import {
+  applySidebarSession,
+  favoritesSectionExpanded,
+  recentSectionExpanded,
+  setFavoritesSectionExpanded,
+  setRecentSectionExpanded,
+} from "./ui";
 
 const journals = (): PaneSnapshot => ({
   tabs: [{ history: [{ kind: "journals" }], pos: 0, pinned: false }],
@@ -17,6 +24,7 @@ const page = (name: string): PaneSnapshot => ({
 
 beforeEach(() => {
   resetPaneLayoutToSingle(journals());
+  applySidebarSession({});
 });
 
 describe("persisted split session", () => {
@@ -61,6 +69,25 @@ describe("persisted split session", () => {
       pinned: true,
     });
     expect(parsed.snapshots.get("main")?.scrolls).toEqual([99]);
+  });
+
+  it("round-trips graph-scoped Favorites and Recent disclosure state and defaults legacy sessions open", () => {
+    setFavoritesSectionExpanded(false);
+    setRecentSectionExpanded(true);
+    const persisted = buildPersistedSession();
+    expect(persisted.favoritesSectionExpanded).toBe(false);
+    expect(persisted.recentSectionExpanded).toBe(true);
+
+    const parsed = parsePersistedSession(JSON.stringify(persisted))!;
+    setFavoritesSectionExpanded(true);
+    setRecentSectionExpanded(false);
+    applySidebarSession(parsed.sidebar);
+    expect(favoritesSectionExpanded()).toBe(false);
+    expect(recentSectionExpanded()).toBe(true);
+
+    applySidebarSession({});
+    expect(favoritesSectionExpanded()).toBe(true);
+    expect(recentSectionExpanded()).toBe(true);
   });
 
   it("rewrites duplicate restored journals panes to a previous page route", () => {
