@@ -315,6 +315,47 @@ describe("page route loading", () => {
 });
 
 describe("page properties", () => {
+  it("keeps a first-bullet alias editor mounted while the property is being typed (GH #62)", async () => {
+    const propsId = "11111111-1111-4111-8111-111111111111";
+    const dto = {
+      name: "Books",
+      kind: "page" as const,
+      title: "Books",
+      pre_block: null,
+      blocks: [{ id: propsId, raw: "", collapsed: false, children: [] }],
+    };
+    setDoc({
+      byId: { [propsId]: node(propsId, "", dto.name) },
+      pages: [page(dto.name, "page", [propsId])],
+      feed: [dto.name],
+      loaded: true,
+    });
+    vi.spyOn(backend(), "getPage").mockResolvedValue(dto);
+    mainPaneRouter.openPage(dto.name, "page", { inPlace: true });
+
+    const { root, dispose } = mount(() => <PageView />);
+    try {
+      await tick();
+      startEditing(propsId, 0);
+      await tick();
+      setDoc("byId", propsId, "raw", "alias::");
+      await tick();
+      expect(editingId()).toBe(propsId);
+      expect(root.querySelector(`[data-block-id="${propsId}"] textarea`)).not.toBeNull();
+
+      setDoc("byId", propsId, "raw", "alias:: book");
+      await tick();
+      expect(root.querySelector(`[data-block-id="${propsId}"] textarea`)).not.toBeNull();
+
+      endEdit("blur");
+      await tick();
+      expect(root.querySelector(`[data-block-id="${propsId}"]`)).toBeNull();
+      expect(root.querySelector(".page-aliases")?.textContent).toContain("book");
+    } finally {
+      dispose();
+    }
+  });
+
   it("renders a properties-only first block as page properties (GH #86)", async () => {
     const propsId = "11111111-1111-4111-8111-111111111111";
     const bodyId = "22222222-2222-4222-8222-222222222222";

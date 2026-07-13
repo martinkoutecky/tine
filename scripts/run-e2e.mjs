@@ -43,6 +43,7 @@ const suites = {
     ["click-caret", "scripts/e2e-clickcaret-repro.mjs", {}],
     ["block-select", "scripts/e2e-blockselect.mjs", {}],
     ["rename", "scripts/e2e-rename.mjs", {}],
+    ["alias", "scripts/e2e-alias.mjs", {}],
     ["journal-format", "scripts/e2e-journal-format.mjs", {}],
     ["multigraph", "scripts/e2e-multigraph.mjs", {}],
     ["sheets", "scripts/e2e-sheets.mjs", {}],

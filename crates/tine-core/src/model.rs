@@ -5583,6 +5583,47 @@ mod tests {
     }
 
     #[test]
+    fn gh62_alias_typed_into_first_block_survives_save_and_reload() {
+        let dir = scratch("gh62-save-reload");
+        fs::write(
+            dir.join("pages").join("books.md"),
+            "- placeholder\n- I like reading\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages").join("note.md"),
+            "- I read a #book today\n",
+        )
+        .unwrap();
+        let g = Graph::open(&dir);
+        g.warm_cache();
+        let mut books = g
+            .load_named("books", PageKind::Page)
+            .unwrap()
+            .unwrap();
+        books.blocks[0].raw = "alias:: book".into();
+        g.save_page(&books, books.rev.as_deref()).unwrap();
+
+        let disk = fs::read_to_string(dir.join("pages").join("books.md")).unwrap();
+        assert_eq!(disk, "- alias:: book\n- I like reading\n");
+        assert_eq!(
+            g.load_named("book", PageKind::Page)
+                .unwrap()
+                .unwrap()
+                .name,
+            "books"
+        );
+        assert_eq!(
+            g.backlinks("books")
+                .iter()
+                .map(|group| group.blocks.len())
+                .sum::<usize>(),
+            1
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn quick_switch_includes_referenced_pages() {
         // A page referenced by `#tag` / `[[link]]` but with no file of its own
         // still "exists" (OG semantics) and must show up in quick-switch — that's

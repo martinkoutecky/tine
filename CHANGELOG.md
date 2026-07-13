@@ -58,6 +58,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Typing a page alias into the first bullet no longer interrupts the editor at
+  `alias::`.** The property block stays mounted until editing ends, then adopts
+  the compact page-property presentation; the completed alias persists and
+  resolves links and backlinks normally. (GH #62)
+- **Android backup restore no longer fails when app data and the selected graph
+  live on different filesystems.** Pre-restore recovery files now stay beside
+  the live graph or external assets they protect, preserving the atomic safety
+  move without hitting a cross-device error. (GH #130)
 - **Switching an ordinary query to Search view no longer hides its results.**
   Search, List, Table, and Board now preserve the query engine's membership;
   DSL results use the same bounded search rows without inventing text-match

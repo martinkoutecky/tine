@@ -11,6 +11,7 @@ use tine_core::model::{atomic_copy, atomic_copy_new, Graph};
 // net against a bad write or accidental edit. Best-effort and fully detached so
 // it never blocks startup or holds the graph lock during file copies.
 const BACKUP_KEEP_DEFAULT: usize = 12;
+const ASSET_RESTORE_RECOVERY_DIR: &str = ".tine-restore-recovery";
 
 pub(crate) fn backup_async(app: tauri::AppHandle, graph: &Graph) {
     let source = BackupSource::from_graph(graph);
@@ -454,14 +455,18 @@ pub(crate) fn restore_backup(
         Ok(())
     };
     validate_live_layout()?;
-    let recovery = base.join(format!(
+    let recovery_id = format!(
         "{}-pre-restore-extras-{}-{}",
         backup_stamp(),
         std::process::id(),
         RESTORE_RECOVERY_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    ));
-    std::fs::create_dir_all(&recovery)
+    );
+    let (graph_recovery, asset_recovery) =
+        restore_recovery_roots(&current_root, &assets, &recovery_id);
+    std::fs::create_dir_all(&graph_recovery)
         .map_err(|e| format!("couldn't create restore recovery area: {e}"))?;
+    std::fs::create_dir_all(&asset_recovery)
+        .map_err(|e| format!("couldn't create asset restore recovery area: {e}"))?;
     // Safety net: snapshot the current (pre-restore) state first, under a distinct
     // name so it can't collide with (or be pruned by) the launch snapshot the
     // post-restore reload will take. Abort if the snapshot fails while the live
@@ -485,21 +490,21 @@ pub(crate) fn restore_backup(
     restore_md_dir(
         &src.join("journals"),
         &restore_journals,
-        &recovery.join("journals"),
+        &graph_recovery.join("journals"),
         &current_root,
     )
         .map_err(|e| format!("restore journals failed: {e}"))?;
     restore_md_dir(
         &src.join("pages"),
         &restore_pages,
-        &recovery.join("pages"),
+        &graph_recovery.join("pages"),
         &current_root,
     )
         .map_err(|e| format!("restore pages failed: {e}"))?;
     restore_asset_sidecars_dir(
         &src.join(dir_name(&assets)),
         &assets,
-        &recovery.join("assets"),
+        &asset_recovery,
         &assets,
     )
         .map_err(|e| format!("restore asset sidecars failed: {e}"))?;
@@ -509,7 +514,7 @@ pub(crate) fn restore_backup(
             let _ = std::fs::create_dir_all(parent);
         }
         if cfg_dest.exists() {
-            move_live_to_recovery(&cfg_dest, &recovery.join("logseq/config.edn"))
+            move_live_to_recovery(&cfg_dest, &graph_recovery.join("logseq/config.edn"))
                 .map_err(|e| format!("recover current config failed: {e}"))?;
         }
         atomic_copy_new(&src_cfg, &cfg_dest)
@@ -517,6 +522,28 @@ pub(crate) fn restore_backup(
     }
     crate::state::refresh_graph(&state)?;
     Ok(())
+}
+
+fn restore_recovery_roots(
+    graph_root: &std::path::Path,
+    assets_root: &std::path::Path,
+    recovery_id: &str,
+) -> (PathBuf, PathBuf) {
+    // `rename` is the data-safety primitive below: an external writer holding an
+    // open handle follows the detached inode instead of recreating/truncating the
+    // just-restored live name. Android commonly places app-data and a selected
+    // graph on different filesystems, so an app-data recovery tree makes every
+    // rename fail with EXDEV. Keep each recovery tree inside the capability it
+    // protects, which guarantees same-filesystem detachment without widening
+    // filesystem access. Asset recovery is hidden from snapshot/restore scans.
+    let graph = graph_root
+        .join("logseq")
+        .join(".tine-trash")
+        .join(recovery_id);
+    let assets = assets_root
+        .join(ASSET_RESTORE_RECOVERY_DIR)
+        .join(recovery_id);
+    (graph, assets)
 }
 
 fn ensure_target_within_root(root: &std::path::Path, target: &std::path::Path) -> std::io::Result<()> {
@@ -546,9 +573,10 @@ fn ensure_target_within_root(root: &std::path::Path, target: &std::path::Path) -
 
 /// Atomically detach the current live name into the restore recovery tree. A
 /// writer with an open handle continues writing the recovered inode; a writer
-/// that recreates the live name is left untouched. If app-data is on another
-/// filesystem, preserve a copy but abort the restore without removing the live
-/// file rather than risk a copy-then-delete race.
+/// that recreates the live name is left untouched. The recovery roots are kept
+/// on the live graph/assets filesystems; if an unexpected nested mount still
+/// makes `rename` cross-device, preserve a copy but abort the restore without
+/// removing the live file rather than risk a copy-then-delete race.
 fn move_live_to_recovery(
     live: &std::path::Path,
     recovery: &std::path::Path,
@@ -712,7 +740,7 @@ fn restore_asset_sidecars_copy(
         let ft = e.file_type()?;
         let rel_child = rel.join(e.file_name());
         let p = e.path();
-        if ft.is_dir() {
+        if ft.is_dir() && !is_asset_restore_recovery_entry(&e) {
             ensure_target_within_root(graph_root, &dest.join(&rel_child))?;
             std::fs::create_dir_all(dest.join(&rel_child))?;
             restore_asset_sidecars_copy(&p, dest, &rel_child, restored, recovery, graph_root)?;
@@ -748,7 +776,7 @@ fn delete_unrestored_asset_sidecars(
         let ft = e.file_type()?;
         let rel_child = rel.join(e.file_name());
         let p = e.path();
-        if ft.is_dir() {
+        if ft.is_dir() && !is_asset_restore_recovery_entry(&e) {
             delete_unrestored_asset_sidecars(dest, &rel_child, restored, recovery, graph_root)?;
         } else if ft.is_file() && is_asset_sidecar(&p) && !restored.contains(&rel_child) {
             ensure_target_within_root(graph_root, &p)?;
@@ -770,6 +798,10 @@ fn is_graph_text(p: &std::path::Path) -> bool {
 
 fn is_asset_sidecar(p: &std::path::Path) -> bool {
     matches!(p.extension().and_then(|x| x.to_str()), Some("edn"))
+}
+
+fn is_asset_restore_recovery_entry(e: &std::fs::DirEntry) -> bool {
+    e.file_name() == std::ffi::OsStr::new(ASSET_RESTORE_RECOVERY_DIR)
 }
 
 fn is_visible_real_dir(e: &std::fs::DirEntry) -> std::io::Result<bool> {
@@ -874,7 +906,7 @@ fn copy_asset_sidecars_dir(src: &std::path::Path, dest: &std::path::Path) -> (us
             continue;
         };
         let target = dest.join(entry.file_name());
-        if ft.is_dir() {
+        if ft.is_dir() && !is_asset_restore_recovery_entry(&entry) {
             let (c, f) = copy_asset_sidecars_dir(&p, &target);
             copied += c;
             failed += f;
@@ -966,6 +998,19 @@ mod tests {
     }
 
     #[test]
+    fn restore_recovery_roots_live_on_the_filesystems_they_detach_from() {
+        let root = scratch("restore-recovery-roots");
+        let graph = root.join("mounted-graph");
+        let assets = root.join("mounted-assets");
+        let (graph_recovery, asset_recovery) =
+            restore_recovery_roots(&graph, &assets, "restore-1");
+
+        assert!(graph_recovery.starts_with(graph.join("logseq/.tine-trash")));
+        assert!(asset_recovery.starts_with(assets.join(".tine-restore-recovery")));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn only_complete_v2_manifests_are_readable() {
         let root = scratch("backup-manifest");
         let manifest = SnapshotManifest {
@@ -1002,6 +1047,12 @@ mod tests {
         std::fs::write(src.join("nested").join("hl.edn"), "{:b 2}\n").unwrap();
         std::fs::write(src.join("image.png"), b"png").unwrap();
         std::fs::write(src.join("nested").join("image.png"), b"png").unwrap();
+        std::fs::create_dir_all(src.join(ASSET_RESTORE_RECOVERY_DIR)).unwrap();
+        std::fs::write(
+            src.join(ASSET_RESTORE_RECOVERY_DIR).join("old.edn"),
+            "{:old true}\n",
+        )
+        .unwrap();
 
         assert_eq!(copy_asset_sidecars_dir(&src, &dst), (2, 0));
         assert_eq!(
@@ -1014,6 +1065,7 @@ mod tests {
         );
         assert!(!dst.join("image.png").exists());
         assert!(!dst.join("nested").join("image.png").exists());
+        assert!(!dst.join(ASSET_RESTORE_RECOVERY_DIR).exists());
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1032,7 +1084,9 @@ mod tests {
         std::fs::write(dest.join("nested").join("stale.edn"), "stale\n").unwrap();
         std::fs::write(dest.join("nested").join("image.png"), b"keep").unwrap();
 
-        let recovery = root.join("recovery-assets");
+        let recovery = dest
+            .join(ASSET_RESTORE_RECOVERY_DIR)
+            .join("restore-sidecars");
         restore_asset_sidecars_dir(&src, &dest, &recovery, &root).unwrap();
         assert_eq!(
             std::fs::read_to_string(dest.join("doc.edn")).unwrap(),
@@ -1096,7 +1150,11 @@ mod tests {
         std::fs::write(pages.join("client-a").join("Deep.md"), b"corrupt\n").unwrap();
         std::fs::write(pages.join("client-a").join("Stale.md"), b"stale\n").unwrap();
         std::fs::write(pages.join("client-a").join("notes.txt"), b"keep\n").unwrap();
-        let recovery = root.join("recovery-pages");
+        let recovery = root
+            .join("graph")
+            .join("logseq")
+            .join(".tine-trash")
+            .join("restore-pages");
         restore_md_dir(&backup.join("pages"), &pages, &recovery, &root).unwrap();
         assert_eq!(
             std::fs::read(pages.join("client-a").join("Deep.md")).unwrap(),

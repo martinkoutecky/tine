@@ -22,6 +22,25 @@
         "scenario": "filesystem.external-assets-trust",
         "failBefore": "proven"
       }
+    },
+    {
+      "id": "REG-ANDROID-BACKUP-RESTORE-EXDEV-001",
+      "title": "Backup restore keeps atomic recovery moves on the live graph filesystem",
+      "family": "backup-recovery",
+      "sources": {
+        "issues": [130],
+        "commits": []
+      },
+      "platforms": ["android", "linux"],
+      "layer": "core-native",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "src-tauri/src/backup.rs"
+        ],
+        "scenario": "backup.restore-cross-filesystem-recovery",
+        "failBefore": "proven"
+      }
     }
   ]
 }

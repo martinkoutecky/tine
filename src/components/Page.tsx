@@ -20,7 +20,7 @@ import { pageProperties, aliasNames, visibleBody } from "../render/block";
 import { InlineText } from "../render/inline";
 import { EmojiText } from "../render/emoji";
 import { journalTitle } from "../journal";
-import { endEditForSurface, startEditing } from "../editorController";
+import { editingId, endEditForSurface, startEditing } from "../editorController";
 import type { PageDto, RefGroup } from "../types";
 import { tagRef } from "../tags";
 import { copyGuideIntoGraph, ensureGuidePagesLoaded, isGuidePageName } from "../guide";
@@ -346,7 +346,11 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
   const firstPropertiesId = () => {
     if (props.page.format !== "md") return null;
     const id = props.page.roots[0];
-    return id && doc.byId[id] && isPropertiesOnly(doc.byId[id].raw) ? id : null;
+    // Keep the first block mounted until editing ends. `alias::` already parses
+    // as a properties-only block before its value is typed; hiding it at the
+    // second colon unmounted the textarea and discarded the rest of the user's
+    // keystrokes (GH #62's regression after the GH #86 presentation change).
+    return id && editingId() !== id && doc.byId[id] && isPropertiesOnly(doc.byId[id].raw) ? id : null;
   };
   const propertySource = () => {
     const first = firstPropertiesId();
