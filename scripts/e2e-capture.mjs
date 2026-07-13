@@ -60,8 +60,15 @@ const xdo = (...args) => execFileSync(XDOTOOL, args, {
     ? { ...env, LD_LIBRARY_PATH: process.env.E2E_XDOTOOL_LIB }
     : env,
 }).trim();
+let lastActiveError = "";
 const activeWindowName = () => {
-  try { return xdo("getactivewindow", "getwindowname"); } catch { return ""; }
+  try {
+    lastActiveError = "";
+    return xdo("getactivewindow", "getwindowname");
+  } catch (error) {
+    lastActiveError = error?.stderr?.toString().trim() || error?.message || String(error);
+    return "";
+  }
 };
 const waitForActive = async (wanted, timeoutMs) => {
   const deadline = Date.now() + timeoutMs;
@@ -71,7 +78,7 @@ const waitForActive = async (wanted, timeoutMs) => {
     if (active === wanted || active.startsWith(`${wanted} —`)) return active;
     await sleep(50);
   }
-  throw new Error(`${wanted} never became the native active window; active=${JSON.stringify(active)}`);
+  throw new Error(`${wanted} never became the native active window; active=${JSON.stringify(active)}; xdotool=${JSON.stringify(lastActiveError)}`);
 };
 
 const appLog = fs.openSync(`${ARTIFACT_DIR}/tine.log`, "w");
