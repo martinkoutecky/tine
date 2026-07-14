@@ -75,7 +75,10 @@ const geometry = (id) => Object.fromEntries(
 const frameExtents = (id) => {
   const raw = execFileSync("xprop", ["-id", id, "_NET_FRAME_EXTENTS"], { encoding: "utf8", env });
   const values = raw.match(/=\s*(\d+),\s*(\d+),\s*(\d+),\s*(\d+)/)?.slice(1).map(Number);
-  if (!values) throw new Error(`window manager did not expose frame extents: ${raw.trim()}`);
+  // An undecorated window commonly has no property at all; that is equivalent
+  // to zero extents and is the expected pre-toggle state.
+  if (!values && /not found/i.test(raw)) return { left: 0, right: 0, top: 0, bottom: 0 };
+  if (!values) throw new Error(`window manager exposed malformed frame extents: ${raw.trim()}`);
   const [left, right, top, bottom] = values;
   return { left, right, top, bottom };
 };
