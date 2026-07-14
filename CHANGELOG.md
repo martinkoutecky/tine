@@ -66,6 +66,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Block reference-count badges now refresh after a reference is saved.**
+  Creating or removing a `((block reference))` updates the source block's badge
+  without requiring the graph to be reopened. (GH #154)
 - **Tine's icon is now used consistently by Linux/Wayland window chrome.**
   Every main, graph, and Quick Capture window advertises Tine's stable desktop
   identity, and standalone binaries provide the matching desktop entry and icon
