@@ -14,6 +14,41 @@ interface Window {
   end: number;
 }
 
+function graphemeBoundaries(text: string): number[] {
+  const Segmenter = (Intl as unknown as {
+    Segmenter?: new (locale?: string, options?: { granularity: "grapheme" }) => {
+      segment(value: string): Iterable<{ index: number }>;
+    };
+  }).Segmenter;
+  if (Segmenter) {
+    const boundaries = [...new Segmenter(undefined, { granularity: "grapheme" }).segment(text)]
+      .map((part) => part.index);
+    boundaries.push(text.length);
+    return boundaries;
+  }
+  const boundaries = [0];
+  let offset = 0;
+  for (const scalar of text) {
+    offset += scalar.length;
+    boundaries.push(offset);
+  }
+  return boundaries;
+}
+
+function snapWindow(text: string, window: Window): Window {
+  const boundaries = graphemeBoundaries(text);
+  let start = 0;
+  let end = text.length;
+  for (const boundary of boundaries) {
+    if (boundary <= window.start) start = boundary;
+    if (boundary >= window.end) {
+      end = boundary;
+      break;
+    }
+  }
+  return { start, end };
+}
+
 const MAX_SPANS = 24;
 const MAX_WINDOWS = 3;
 const MAX_WINDOW_CHARS = 92;
@@ -61,7 +96,7 @@ function excerptWindows(text: string, spans: SearchMatchSpan[]): Window[] {
   return windows.map((window) => {
     const end = Math.min(window.end, window.start + remaining);
     remaining = Math.max(0, remaining - (end - window.start));
-    return { start: window.start, end };
+    return snapWindow(text, { start: window.start, end });
   }).filter((window) => window.end > window.start);
 }
 

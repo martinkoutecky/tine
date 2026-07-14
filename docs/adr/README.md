@@ -69,3 +69,5 @@ see the project `CLAUDE.md`.
 | [0040](0040-file-path-is-storage-identity.md) | Physical file path, not logical page name, is storage identity | Accepted |
 | [0041](0041-rendered-outline-navigation-scope.md) | Outline navigation is scoped to the rendered model, not the whole page | Accepted |
 | [0042](0042-one-query-plan-many-frontends.md) | One typed query plan serves friendly search, visual builders, DSL, and virtual query workspaces | Accepted |
+| [0043](0043-canonical-reference-evidence.md) | Canonical reference occurrences and evidence | Accepted |
+| [0044](0044-objective-launcher-ranking.md) | Objective search classes and bounded launcher frecency | Accepted |

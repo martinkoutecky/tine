@@ -6065,6 +6065,120 @@ img.emoji {
   padding: 8px 12px;
 }
 
+.reference-group-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.reference-group-disclosure,
+.reference-page,
+.reference-bulk-controls button,
+.reference-occurrence-jump,
+.reference-show-full {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.reference-group-disclosure {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.reference-group-disclosure:hover,
+.reference-group-disclosure:focus-visible {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+
+.reference-bulk-controls {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin: -2px 0 8px;
+}
+
+.reference-bulk-controls button,
+.reference-show-full {
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 5px;
+  border-radius: 4px;
+}
+
+.reference-bulk-controls button:hover,
+.reference-show-full:hover {
+  color: var(--link-color);
+  background: var(--bg-tertiary);
+}
+
+.reference-excerpt-row {
+  display: flex;
+  gap: 8px;
+  padding: 5px 0;
+}
+
+.reference-excerpt-bullet {
+  color: var(--bullet-color, var(--text-muted));
+  line-height: 1.55;
+}
+
+.reference-excerpt-content {
+  min-width: 0;
+  flex: 1;
+}
+
+.reference-excerpt-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.reference-excerpt-text mark {
+  color: inherit;
+  background: color-mix(in srgb, var(--accent-color) 22%, transparent);
+  border-radius: 2px;
+}
+
+.reference-excerpt-actions,
+.reference-occurrence-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.reference-excerpt-actions {
+  margin-top: 3px;
+}
+
+.reference-mention-count {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.reference-occurrence-jump {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 4px;
+  color: var(--link-color);
+  background: var(--bg-tertiary);
+  border-radius: 10px;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.reference-live-evidence {
+  display: flex;
+  justify-content: flex-end;
+  margin: 0 4px -2px 28px;
+}
+
 .reference-page,
 .query-page {
   font-weight: 600;
@@ -6072,6 +6186,7 @@ img.emoji {
   cursor: pointer;
   margin-bottom: 4px;
   font-size: 14px;
+  padding: 0;
 }
 
 .reference-page:hover,

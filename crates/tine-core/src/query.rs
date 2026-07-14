@@ -6,7 +6,8 @@
 use crate::date::JournalDate;
 use crate::doc::{DocBlock, Document};
 use crate::model::{
-    block_to_dto, BlockDto, Format, Graph, PageEntry, PageKind, RefGroup, TemplateDto,
+    block_to_dto, BlockDto, Format, Graph, PageEntry, PageKind, RefGroup, ReferenceBlockEvidence,
+    ReferenceDiagnosticTrace, ReferenceDiagnostics, ReferenceKind, TemplateDto,
 };
 use crate::refs;
 use crate::search_query::Matcher;
@@ -95,6 +96,7 @@ fn collect(
                         page: entry.name.clone(),
                         kind: entry.kind,
                         blocks: matched,
+                        evidence: Vec::new(),
                     },
                 ));
             }
@@ -229,49 +231,112 @@ fn property_projection(raw: &str, is_org: bool) -> DocBlock {
     }
 }
 
-fn page_properties_reference_names(
-    pre: &str,
-    is_org: bool,
-    names_norm: &[String],
-) -> Option<String> {
+fn page_property_block(entry: &PageEntry, pre: &str) -> Option<DocBlock> {
+    let is_org = Format::from_path(&entry.path) == Format::Org;
     let raw = page_property_raw(pre, is_org);
     if raw.is_empty() {
         return None;
     }
-    let block = property_projection(&raw, is_org);
-    let refs = &block.projection().refs_norm;
-    names_norm
-        .iter()
-        .any(|name| refs.iter().any(|reference| reference == name))
-        .then_some(raw)
-}
-
-fn page_property_backlink(entry: &PageEntry, pre: &str, names_norm: &[String]) -> Option<BlockDto> {
-    let is_org = Format::from_path(&entry.path) == Format::Org;
-    let raw = page_properties_reference_names(pre, is_org, names_norm)?;
     let mut block = property_projection(&raw, is_org);
     block.uuid = format!(
         "page-property:{:?}:{}",
         entry.kind,
         refs::page_key(&entry.name)
     );
-    let mut dto = block_to_dto(&block);
-    dto.page_property = true;
-    Some(dto)
+    Some(block)
+}
+
+fn block_reference_evidence(
+    block: &DocBlock,
+    canonical: &str,
+    names_norm: &[String],
+    kind: ReferenceKind,
+) -> Option<ReferenceBlockEvidence> {
+    let occurrences = crate::reference_evidence::occurrences(
+        &block.raw,
+        &block.projection().reference_source,
+        canonical,
+        names_norm,
+    )
+    .into_iter()
+    .filter(|occurrence| occurrence.kind == kind)
+    .collect::<Vec<_>>();
+    (!occurrences.is_empty()).then(|| ReferenceBlockEvidence {
+        block_id: block.uuid.clone(),
+        occurrences,
+    })
+}
+
+fn collect_reference_occurrences(
+    graph: &Graph,
+    canonical: &str,
+    names_norm: &[String],
+    kind: ReferenceKind,
+) -> Vec<RefGroup> {
+    let exclude = refs::normalize(canonical);
+    graph.with_pages(|pages| {
+        let mut groups: Vec<(Option<i64>, RefGroup)> = Vec::new();
+        for (entry, doc) in pages {
+            if refs::normalize(&entry.name) == exclude {
+                continue;
+            }
+            let mut blocks = Vec::new();
+            let mut evidence = Vec::new();
+            if kind == ReferenceKind::Explicit {
+                if let Some(mut block) = doc
+                    .pre_block
+                    .as_deref()
+                    .and_then(|pre| page_property_block(entry, pre))
+                {
+                    if let Some(hit) = block_reference_evidence(&block, canonical, names_norm, kind)
+                    {
+                        let mut dto = block_to_dto(&block);
+                        dto.page_property = true;
+                        blocks.push(dto);
+                        evidence.push(hit);
+                    }
+                    // Make it impossible to accidentally retain this synthetic
+                    // block past the result construction boundary.
+                    block.children.clear();
+                }
+            }
+            let mut path = Vec::new();
+            walk_path(&doc.roots, &mut path, &mut |block, ancestors| {
+                if let Some(hit) = block_reference_evidence(block, canonical, names_norm, kind) {
+                    let mut dto = block_to_dto(block);
+                    dto.breadcrumb = ancestors
+                        .iter()
+                        .map(|ancestor| crumb_line(ancestor))
+                        .collect();
+                    blocks.push(dto);
+                    evidence.push(hit);
+                }
+            });
+            if !blocks.is_empty() {
+                groups.push((
+                    entry.date_key,
+                    RefGroup {
+                        page: entry.name.clone(),
+                        kind: entry.kind,
+                        blocks,
+                        evidence,
+                    },
+                ));
+            }
+        }
+        groups.sort_by(|a, b| {
+            b.0.unwrap_or(i64::MIN)
+                .cmp(&a.0.unwrap_or(i64::MIN))
+                .then_with(|| a.1.page.cmp(&b.1.page))
+        });
+        groups.into_iter().map(|(_, group)| group).collect()
+    })
 }
 
 pub fn backlinks(graph: &Graph, target: &str) -> Vec<RefGroup> {
     let aliases = graph.page_aliases();
     let (canonical, names_norm) = equivalent_page_names(&aliases, target);
-    collect(
-        graph,
-        |b| {
-            let refs = &b.projection().refs_norm;
-            names_norm.iter().any(|n| refs.iter().any(|r| r == n))
-        },
-        |entry, pre| page_property_backlink(entry, pre, &names_norm),
-        Some(&canonical),
-    )
+    collect_reference_occurrences(graph, &canonical, &names_norm, ReferenceKind::Explicit)
 }
 
 /// Block-level referrers: every block across the graph that references the block
@@ -292,42 +357,81 @@ pub fn block_referrers(graph: &Graph, uuid: &str) -> Vec<RefGroup> {
     )
 }
 
-fn contains_word(hay: &str, needle: &str) -> bool {
-    if needle.is_empty() {
-        return false;
-    }
-    let bytes = hay.as_bytes();
-    let mut start = 0;
-    while let Some(pos) = hay[start..].find(needle) {
-        let i = start + pos;
-        let before_ok = i == 0 || !bytes[i - 1].is_ascii_alphanumeric();
-        let after = i + needle.len();
-        let after_ok = after >= hay.len() || !bytes[after].is_ascii_alphanumeric();
-        if before_ok && after_ok {
-            return true;
-        }
-        start = i + needle.len();
-    }
-    false
-}
-
-/// Unlinked references: blocks that mention `target` as plain text (whole word)
-/// but do NOT link it via `[[..]]`/`#tag`.
+/// Unlinked references: parser-visible plain occurrences outside explicit
+/// reference syntax. A block containing both kinds appears once in each surface,
+/// with the corresponding occurrence evidence.
 pub fn unlinked_refs(graph: &Graph, target: &str) -> Vec<RefGroup> {
     let aliases = graph.page_aliases();
     let (canonical, names_norm) = equivalent_page_names(&aliases, target);
-    collect(
-        graph,
-        |b| {
-            let lower = b.raw.to_lowercase();
-            names_norm.iter().any(|name| contains_word(&lower, name))
-                && !names_norm
+    collect_reference_occurrences(graph, &canonical, &names_norm, ReferenceKind::Plain)
+}
+
+/// Target-scoped trace for bug reports. Membership comes from the exact same
+/// occurrence engine as the panels; the deliberately uncached parser path makes
+/// projection-cache drift visible. No launcher history is read or returned.
+pub fn reference_diagnostics(graph: &Graph, target: &str) -> ReferenceDiagnostics {
+    let aliases = graph.page_aliases();
+    let (canonical, names_norm) = equivalent_page_names(&aliases, target);
+    let excluded_page = refs::normalize(&canonical);
+    let mut traces = graph.with_pages(|pages| {
+        let mut traces = Vec::new();
+        for (entry, document) in pages {
+            let self_page = refs::normalize(&entry.name) == excluded_page;
+            let mut inspect = |block: &DocBlock| {
+                let occurrences = crate::reference_evidence::slow_occurrences(
+                    &block.raw,
+                    block.is_org,
+                    &canonical,
+                    &names_norm,
+                );
+                let raw_lower = block.raw.to_lowercase();
+                let textual_candidate = names_norm.iter().any(|name| raw_lower.contains(name));
+                if occurrences.is_empty() && !textual_candidate {
+                    return;
+                }
+                let explicit = occurrences
                     .iter()
-                    .any(|name| b.projection().refs_contains_norm(name))
-        },
-        |_, _| None,
-        Some(&canonical),
-    )
+                    .any(|occurrence| occurrence.kind == ReferenceKind::Explicit);
+                let plain = occurrences
+                    .iter()
+                    .any(|occurrence| occurrence.kind == ReferenceKind::Plain);
+                traces.push(ReferenceDiagnosticTrace {
+                    page: entry.name.clone(),
+                    kind: entry.kind,
+                    block_id: block.uuid.clone(),
+                    occurrences,
+                    included_linked: !self_page && explicit,
+                    included_unlinked: !self_page && plain,
+                    exclusion_reason: if self_page {
+                        Some("self_page_excluded".to_string())
+                    } else if !explicit && !plain {
+                        Some("parser_excluded_context_or_boundary".to_string())
+                    } else {
+                        None
+                    },
+                });
+            };
+            if let Some(block) = document
+                .pre_block
+                .as_deref()
+                .and_then(|pre| page_property_block(entry, pre))
+            {
+                inspect(&block);
+            }
+            walk(&document.roots, &mut inspect);
+        }
+        traces
+    });
+    traces.sort_by(|a, b| {
+        a.page
+            .cmp(&b.page)
+            .then_with(|| a.block_id.cmp(&b.block_id))
+    });
+    ReferenceDiagnostics {
+        engine_version: crate::reference_evidence::ENGINE_VERSION.to_string(),
+        target: canonical,
+        traces,
+    }
 }
 
 /// Page-level properties and `tags::` values parsed from a page's pre-block.
@@ -395,6 +499,7 @@ fn run_pred(graph: &Graph, pred: &Pred, opts: &QueryOpts) -> Vec<RefGroup> {
                     page: entry.name.clone(),
                     kind: entry.kind,
                     blocks,
+                    evidence: Vec::new(),
                 });
             }
         }
@@ -430,7 +535,12 @@ fn run_pred(graph: &Graph, pred: &Pred, opts: &QueryOpts) -> Vec<RefGroup> {
         // upside-down under its heading.
         let mut flat: Vec<(SortDecor, usize, RefGroup)> = Vec::new();
         for g in groups {
-            let RefGroup { page, kind, blocks } = g;
+            let RefGroup {
+                page,
+                kind,
+                blocks,
+                evidence: _,
+            } = g;
             for b in blocks {
                 let key = if is_recency_field(field) {
                     // Recency is numeric (Unix seconds on one axis): journal pages by
@@ -447,6 +557,7 @@ fn run_pred(graph: &Graph, pred: &Pred, opts: &QueryOpts) -> Vec<RefGroup> {
                         page: page.clone(),
                         kind,
                         blocks: vec![b],
+                        evidence: Vec::new(),
                     },
                 ));
             }
@@ -523,23 +634,20 @@ pub(crate) fn page_affects_backlinks(
     entry: &PageEntry,
     doc: &Document,
 ) -> bool {
-    let (_, names_norm) = equivalent_page_names(aliases, target);
+    let (canonical, names_norm) = equivalent_page_names(aliases, target);
     if doc.pre_block.as_deref().is_some_and(|pre| {
-        page_properties_reference_names(
-            pre,
-            Format::from_path(&entry.path) == Format::Org,
-            &names_norm,
-        )
-        .is_some()
+        page_property_block(entry, pre).is_some_and(|block| {
+            block_reference_evidence(&block, &canonical, &names_norm, ReferenceKind::Explicit)
+                .is_some()
+        })
     }) {
         return true;
     }
     let mut hit = false;
     walk(&doc.roots, &mut |b| {
         if !hit
-            && names_norm
-                .iter()
-                .any(|name| b.projection().refs_contains_norm(name))
+            && block_reference_evidence(b, &canonical, &names_norm, ReferenceKind::Explicit)
+                .is_some()
         {
             hit = true;
         }
@@ -554,15 +662,11 @@ pub(crate) fn page_affects_unlinked(
     target: &str,
     doc: &Document,
 ) -> bool {
-    let (_, names_norm) = equivalent_page_names(aliases, target);
+    let (canonical, names_norm) = equivalent_page_names(aliases, target);
     let mut hit = false;
     walk(&doc.roots, &mut |b| {
-        let lower = b.raw.to_lowercase();
         if !hit
-            && names_norm.iter().any(|name| contains_word(&lower, name))
-            && !names_norm
-                .iter()
-                .any(|name| b.projection().refs_contains_norm(name))
+            && block_reference_evidence(b, &canonical, &names_norm, ReferenceKind::Plain).is_some()
         {
             hit = true;
         }
@@ -1222,6 +1326,7 @@ pub fn resolve_block(graph: &Graph, uuid: &str) -> Option<RefGroup> {
                 page: entry.name.clone(),
                 kind: entry.kind,
                 blocks: vec![block_to_dto(b)],
+                evidence: Vec::new(),
             })
         };
         if let Some(h) = &hint {
@@ -1334,6 +1439,7 @@ fn resolve_ids_in_page<'a>(
                     page: entry.name.clone(),
                     kind: entry.kind,
                     blocks: vec![block_to_dto(b)],
+                    evidence: Vec::new(),
                 },
             );
         }
@@ -2473,63 +2579,10 @@ mod tests {
         query: &str,
         limit: usize,
     ) -> Vec<PageEntry> {
-        use crate::search_query::Matcher;
-        let matcher = Matcher::parse(query);
-        let simple = matcher.simple_term();
-        if limit == 0 || matches!(matcher, Matcher::InvalidRegex(_)) {
-            return Vec::new();
-        }
-        let q = simple.unwrap_or("").to_string();
-        let use_matcher = simple.is_none() && !matches!(matcher, Matcher::Empty);
-        let score = |lower: &str, orig: &str| -> Option<i32> {
-            if use_matcher {
-                matcher.score_name(lower, orig)
-            } else {
-                score_name(lower, &q)
-            }
-        };
-        let file_pages = graph.list_pages();
-        enum Cand {
-            File(usize),
-            Ref(PageEntry),
-        }
-        let mut scored: Vec<(i32, Cand)> = file_pages
-            .iter()
-            .enumerate()
-            .filter_map(|(i, e)| {
-                score(&e.name.to_lowercase(), &e.name)
-                    .map(|s| (s - e.name.len() as i32, Cand::File(i)))
-            })
-            .collect();
-        let have: std::collections::HashSet<String> =
-            file_pages.iter().map(|e| refs::page_key(&e.name)).collect();
-        for name in graph.referenced_page_names() {
-            let lower = refs::page_key(&name);
-            if have.contains(&lower) {
-                continue;
-            }
-            if let Some(s) = score(&name.to_lowercase(), &name) {
-                let len = name.len() as i32;
-                scored.push((
-                    s - len,
-                    Cand::Ref(PageEntry {
-                        name,
-                        kind: PageKind::Page,
-                        date_key: None,
-                        rel_path: String::new(),
-                        path: std::path::PathBuf::new(),
-                    }),
-                ));
-            }
-        }
-        scored.sort_by(|a, b| b.0.cmp(&a.0));
-        scored
+        let plan = crate::query_plan::QueryPlan::legacy_page_search(query, usize::MAX);
+        crate::query_plan::page_hits_to_entries(plan.execute(graph, || false).hits)
             .into_iter()
             .take(limit)
-            .map(|(_, c)| match c {
-                Cand::File(i) => file_pages[i].clone(),
-                Cand::Ref(e) => e,
-            })
             .collect()
     }
 
@@ -2674,6 +2727,82 @@ mod tests {
             ],
             "{tags:?}"
         );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn canonical_reference_evidence_keeps_mixed_alias_occurrences_and_properties() {
+        use std::fs;
+        let dir =
+            std::env::temp_dir().join(format!("tine-reference-evidence-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::write(
+            dir.join("pages").join("Target.md"),
+            "alias:: Alias\n\n- canonical page\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages").join("Source.md"),
+            "- [[Alias]] then Alias and Target and `Target`\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages").join("Props.md"),
+            "related:: [[Alias]]\n\n- ordinary\n",
+        )
+        .unwrap();
+
+        let graph = Graph::open(&dir);
+        graph.warm_cache();
+        let linked = backlinks(&graph, "Target");
+        let source = linked.iter().find(|group| group.page == "Source").unwrap();
+        assert_eq!(source.blocks.len(), 1);
+        assert_eq!(source.evidence.len(), 1);
+        assert_eq!(source.evidence[0].occurrences.len(), 1);
+        assert_eq!(
+            source.evidence[0].occurrences[0].kind,
+            ReferenceKind::Explicit
+        );
+        let props = linked.iter().find(|group| group.page == "Props").unwrap();
+        assert!(props.blocks[0].page_property);
+        assert_eq!(
+            props.evidence[0].occurrences[0].kind,
+            ReferenceKind::Explicit
+        );
+
+        let unlinked = unlinked_refs(&graph, "Target");
+        let source = unlinked
+            .iter()
+            .find(|group| group.page == "Source")
+            .unwrap();
+        assert_eq!(
+            source.blocks.len(),
+            1,
+            "one block row, not one row per mention"
+        );
+        assert_eq!(
+            source.evidence[0].occurrences.len(),
+            2,
+            "alias + title; code excluded"
+        );
+        assert!(source.evidence[0]
+            .occurrences
+            .iter()
+            .all(|occurrence| occurrence.kind == ReferenceKind::Plain));
+        let diagnostics = reference_diagnostics(&graph, "Target");
+        assert_eq!(diagnostics.engine_version, "reference-evidence/v1");
+        let source_trace = diagnostics
+            .traces
+            .iter()
+            .find(|trace| trace.page == "Source")
+            .unwrap();
+        assert!(source_trace.included_linked && source_trace.included_unlinked);
+        assert_eq!(source_trace.occurrences.len(), 3);
+        assert!(!serde_json::to_string(&diagnostics)
+            .unwrap()
+            .contains("launcher-ranking"));
         let _ = fs::remove_dir_all(&dir);
     }
 

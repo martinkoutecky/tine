@@ -1,6 +1,6 @@
 import { For, Show, createSignal, createResource, createEffect, createMemo, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
-import { switcherOpen, closeSwitcher, switcherMode, switcherEmbryo, recentPages } from "../ui";
+import { switcherOpen, closeSwitcher, switcherMode, switcherEmbryo, recentPages, graphMeta } from "../ui";
 import { openPage, openPageAtBlock, openPageInNewTab, openFile, openInNewTab, openQueryInNewTab, route } from "../router";
 import { paletteCommands } from "../keybindings";
 import { closePane, focusPane, openRouteInOtherPane, paneRouter } from "../panes";
@@ -8,14 +8,15 @@ import { fuzzyScore } from "../editor/autocomplete";
 import { SEARCH_SYNTAX } from "../editor/searchQuery";
 import { EmojiText } from "../render/emoji";
 import { SearchResultRow } from "./SearchResultRow";
-import type { MatchSpan, PageKind } from "../types";
+import type { MatchSpan, ObjectiveMatchClass, PageKind } from "../types";
+import { rankLauncherItems, recordLauncherActivation } from "../launcherRanking";
 
 // One selectable result row.
 type Item =
-  | { t: "page"; name: string; pageKind: PageKind; path?: string; spans?: MatchSpan[] }
+  | { t: "page"; name: string; pageKind: PageKind; path?: string; spans?: MatchSpan[]; adaptiveClass: ObjectiveMatchClass; adaptiveIdentity: string }
   | { t: "create"; name: string }
   | { t: "command"; label: string; binding: string; run: () => void }
-  | { t: "block"; page: string; pageKind: PageKind; blockId: string; text: string; crumb: string[]; spans: MatchSpan[] };
+  | { t: "block"; page: string; pageKind: PageKind; blockId: string; text: string; crumb: string[]; spans: MatchSpan[]; adaptiveClass: ObjectiveMatchClass; adaptiveIdentity: string };
 
 interface Section {
   header: string;
@@ -117,7 +118,13 @@ export function QuickSwitcher(): JSX.Element {
 
     // Empty query → recents.
     if (!q) {
-      const recents: Item[] = recentPages().map((r) => ({ t: "page", name: r.name, pageKind: r.kind }));
+      const recents: Item[] = recentPages().map((r) => ({
+        t: "page",
+        name: r.name,
+        pageKind: r.kind,
+        adaptiveClass: "exact",
+        adaptiveIdentity: `page:${r.kind}:${r.name.toLocaleLowerCase()}`,
+      }));
       if (recents.length) out.push({ header: "Recent", items: recents });
       return out;
     }
@@ -133,9 +140,16 @@ export function QuickSwitcher(): JSX.Element {
         pageKind: hit.page.kind,
         path: hit.page.path,
         spans: hit.evidence.flatMap((evidence) => evidence.spans),
+        adaptiveClass: hit.match_class ?? "substring",
+        adaptiveIdentity: `page:${hit.page.kind}:${hit.page.path || hit.page.name.toLocaleLowerCase()}`,
       }));
-    const morePages = allPages.length > pageLimit();
-    const pageItems = morePages ? allPages.slice(0, pageLimit()) : allPages;
+    const rankedPages = rankLauncherItems(
+      graphMeta()?.root ?? "",
+      q,
+      allPages as Extract<Item, { t: "page" }>[],
+    );
+    const morePages = rankedPages.length > pageLimit();
+    const pageItems = morePages ? rankedPages.slice(0, pageLimit()) : rankedPages;
     if (pageItems.length)
       out.push({
         header: "Pages",
@@ -167,13 +181,28 @@ export function QuickSwitcher(): JSX.Element {
           text: hit.display_text,
           crumb: hit.block.breadcrumb ?? [],
           spans: hit.evidence.flatMap((evidence) => evidence.spans),
+          adaptiveClass: hit.match_class ?? "body_evidence",
+          adaptiveIdentity: `block:${hit.kind}:${hit.page.toLocaleLowerCase()}:${hit.block.id}`,
         },
         onCur: !!(cur && hit.page === cur),
       });
     }
     // We asked for blockLimit + 1; getting past the limit means more remain.
-    const moreBlocks = all.length > blockLimit();
-    const shown = moreBlocks ? all.slice(0, blockLimit()) : all;
+    const rankedBlocks = rankLauncherItems(
+      graphMeta()?.root ?? "",
+      q,
+      all.map((entry) => entry.item).filter((item): item is Extract<Item, { t: "block" }> => item.t === "block"),
+    );
+    const onCurrent = new Map(all.map((entry) => [
+      entry.item.t === "block" ? entry.item.adaptiveIdentity : "",
+      entry.onCur,
+    ]));
+    const ranked = rankedBlocks.map((item) => ({
+      item,
+      onCur: onCurrent.get(item.adaptiveIdentity) ?? false,
+    }));
+    const moreBlocks = ranked.length > blockLimit();
+    const shown = moreBlocks ? ranked.slice(0, blockLimit()) : ranked;
     // Surface current-page hits first (own section), the rest under "Blocks".
     const curItems = shown.filter((x) => x.onCur).map((x) => x.item);
     const otherItems = shown.filter((x) => !x.onCur).map((x) => x.item);
@@ -217,6 +246,7 @@ export function QuickSwitcher(): JSX.Element {
       void chooseEmbryo(it, embryo.paneId);
       return;
     }
+    recordChoice(it);
     switch (it.t) {
       case "page":
         it.path ? openFile(it.path, it.name, it.pageKind) : openPage(it.name, it.pageKind);
@@ -235,7 +265,13 @@ export function QuickSwitcher(): JSX.Element {
     closeSwitcher();
   };
 
+  const recordChoice = (it: Item) => {
+    if (it.t !== "page" && it.t !== "block") return;
+    recordLauncherActivation(graphMeta()?.root ?? "", query(), it.adaptiveIdentity);
+  };
+
   const chooseEmbryo = async (it: Item, paneId: string) => {
+    recordChoice(it);
     const router = paneRouter(paneId);
     switch (it.t) {
       case "page":
@@ -257,6 +293,7 @@ export function QuickSwitcher(): JSX.Element {
   };
 
   const chooseOther = async (it: Item) => {
+    recordChoice(it);
     switch (it.t) {
       case "page":
         openRouteInOtherPane({ kind: "page", name: it.name, pageKind: it.pageKind, path: it.path });
@@ -280,6 +317,7 @@ export function QuickSwitcher(): JSX.Element {
   // itself (self-contained and durable — the tab shows exactly what you found);
   // create/command have no background-tab meaning, so they're ignored.
   const openInBackground = (it: Item) => {
+    recordChoice(it);
     if (it.t === "page")
       it.path
         ? openInNewTab({ kind: "page", name: it.name, pageKind: it.pageKind, path: it.path })

@@ -64,6 +64,7 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
     (n) => backend().getBacklinks(n)
   );
   const [collapsed, setCollapsed] = createSignal(false);
+  const [collapsedGroups, setCollapsedGroups] = createSignal<Set<string>>(new Set());
   // page name -> "in" (must also reference) | "out" (must not reference).
   const [filters, setFilters] = createSignal<FilterMap>(loadFilters(props.name));
   // Reload the saved filter when the page changes.
@@ -98,8 +99,26 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
           return ins.every((i) => facets.has(i)) && outs.every((o) => !facets.has(o));
         }),
       }))
+      .map((g) => {
+        const ids = new Set(g.blocks.map((block) => block.id));
+        return { ...g, evidence: g.evidence?.filter((item) => ids.has(item.block_id)) };
+      })
       .filter((g) => g.blocks.length > 0);
   });
+
+  const groupKey = (group: RefGroup) => `${group.kind}:${group.page}`;
+  const groupCollapsed = (group: RefGroup) => collapsedGroups().has(groupKey(group));
+  const setGroupCollapsed = (group: RefGroup, value: boolean) => {
+    setCollapsedGroups((current) => {
+      const next = new Set(current);
+      if (value) next.add(groupKey(group));
+      else next.delete(groupKey(group));
+      return next;
+    });
+  };
+  const setAllGroups = (value: boolean) => {
+    setCollapsedGroups(value ? new Set<string>(shown().map(groupKey)) : new Set<string>());
+  };
 
   const cycle = (name: string) => {
     const f = { ...filters() };
@@ -138,34 +157,54 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
               </For>
             </div>
           </Show>
+          <Show when={shown().length > 1}>
+            <div class="reference-bulk-controls" aria-label="Linked reference page groups">
+              <button type="button" onClick={() => setAllGroups(true)}>Collapse all</button>
+              <button type="button" onClick={() => setAllGroups(false)}>Expand all</button>
+            </div>
+          </Show>
           <For each={shown()}>
             {(g) => (
               <div class="reference-group">
-                <div
-                  class="reference-page"
-                  onClick={(e) => {
-                    if (e.shiftKey) openPageInSidebar(g.page, g.kind);
-                    else openPage(g.page, g.kind);
-                  }}
-                  onAuxClick={(e) => {
-                    if (e.button === 1) {
+                <div class="reference-group-header">
+                  <button
+                    type="button"
+                    class="reference-group-disclosure"
+                    aria-expanded={!groupCollapsed(g)}
+                    aria-label={`${groupCollapsed(g) ? "Expand" : "Collapse"} references from ${g.page}`}
+                    onClick={() => setGroupCollapsed(g, !groupCollapsed(g))}
+                  >
+                    {groupCollapsed(g) ? "▸" : "▾"}
+                  </button>
+                  <button
+                    type="button"
+                    class="reference-page"
+                    onClick={(e) => {
+                      if (e.shiftKey) openPageInSidebar(g.page, g.kind);
+                      else openPage(g.page, g.kind);
+                    }}
+                    onAuxClick={(e) => {
+                      if (e.button === 1) {
+                        e.preventDefault();
+                        openPageInNewTab(g.page, g.kind);
+                      }
+                    }}
+                    onContextMenu={(e) => {
                       e.preventDefault();
-                      openPageInNewTab(g.page, g.kind);
-                    }
-                  }}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    openPageContextMenu(e.clientX, e.clientY, g.page, g.kind);
-                  }}
-                >
-                  {g.page}
+                      openPageContextMenu(e.clientX, e.clientY, g.page, g.kind);
+                    }}
+                  >
+                    {g.page}
+                  </button>
                 </div>
-                <div
-                  class="reference-blocks"
-                  data-inpage-find-surface={`linked:${props.name}:${g.kind}:${g.page}`}
-                >
-                  <LiveRefGroup page={g.page} kind={g.kind} blocks={g.blocks} />
-                </div>
+                <Show when={!groupCollapsed(g)}>
+                  <div
+                    class="reference-blocks"
+                    data-inpage-find-surface={`linked:${props.name}:${g.kind}:${g.page}`}
+                  >
+                    <LiveRefGroup page={g.page} kind={g.kind} blocks={g.blocks} evidence={g.evidence} />
+                  </div>
+                </Show>
               </div>
             )}
           </For>

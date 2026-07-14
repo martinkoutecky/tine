@@ -1,11 +1,14 @@
 import { For, Show, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { backend } from "../backend";
-import { doc, ensurePageLoaded, pageByName } from "../store";
+import { doc, ensurePageLoaded, formatForPage, pageByName } from "../store";
 import { Block, CollapseSurfaceContext, SurfaceContext, type CollapseSurfaceApi } from "./Block";
 import { RefBlocks } from "./RefBlocks";
 import { observeNear, unobserveNear } from "../lazyObserve";
-import type { BlockDto, PageKind } from "../types";
+import type { BlockDto, PageKind, ReferenceBlockEvidence } from "../types";
 import { graphEpoch, graphMeta } from "../ui";
+import { OccurrenceControls } from "./ReferenceEvidence";
+import { startEditing } from "../editorController";
+import { isBuiltinHidden, rawOffsetToVisibleOffset } from "../editor/properties";
 
 // The "near the viewport" lazy-mount observer is shared app-wide (block bodies
 // use it too) — see src/lazyObserve.ts.
@@ -27,6 +30,7 @@ export function LiveRefGroup(props: {
   embedId?: string;
   showBreadcrumb?: boolean;
   surface?: "ref" | "embed";
+  evidence?: ReferenceBlockEvidence[];
 }): JSX.Element {
   const [near, setNear] = createSignal(false);
   let el: HTMLDivElement | undefined;
@@ -63,6 +67,7 @@ export function LiveRefGroup(props: {
   // O(1) id → dto. The prior `props.blocks.find` inside the per-row <For> was
   // O(N) per row → O(N²) per group (250k iterations on a 500-block hub group).
   const byId = createMemo(() => new Map(props.blocks.map((b) => [b.id, b] as const)));
+  const evidenceById = createMemo(() => new Map((props.evidence ?? []).map((item) => [item.block_id, item])));
   const dtoById = (id: string) => byId().get(id);
   // A ref/query/embed group can render a block that ALSO lives in the main outline
   // of the same page (e.g. the journal agenda re-lists today's scheduled/deadline
@@ -119,6 +124,26 @@ export function LiveRefGroup(props: {
                     </Show>
                   }
                 >
+                  <Show when={evidenceById().get(id)}>
+                    {(item) => (
+                      <div class="reference-live-evidence">
+                        <OccurrenceControls
+                          evidence={item()}
+                          onOccurrence={(offset) => startEditing(
+                            id,
+                            rawOffsetToVisibleOffset(
+                              doc.byId[id]?.raw ?? "",
+                              offset,
+                              isBuiltinHidden,
+                              formatForPage(props.page),
+                            ),
+                            null,
+                            surface,
+                          )}
+                        />
+                      </div>
+                    )}
+                  </Show>
                   <Block id={id} hideRefCount={!!props.embedId && id === props.embedId} />
                 </Show>
               </>

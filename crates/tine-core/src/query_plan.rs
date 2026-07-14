@@ -44,6 +44,30 @@ pub enum TextMatchMode {
     Fuzzy,
 }
 
+/// Explainable objective relevance. Variant order is deliberately not used for
+/// ranking; `rank()` below is the single ordering contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ObjectiveMatchClass {
+    Exact,
+    Prefix,
+    Substring,
+    Fuzzy,
+    BodyEvidence,
+}
+
+impl ObjectiveMatchClass {
+    fn rank(self) -> i32 {
+        match self {
+            Self::Exact => 5,
+            Self::Prefix => 4,
+            Self::Substring => 3,
+            Self::Fuzzy => 2,
+            Self::BodyEvidence => 1,
+        }
+    }
+}
+
 /// Browser-facing offsets are UTF-16 code-unit offsets (the unit used by JS
 /// string slicing and DOM selection), not Rust/regex byte offsets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -128,6 +152,9 @@ pub enum QueryHit {
         display_text: String,
         evidence: Vec<MatchEvidence>,
         score: i32,
+        match_class: ObjectiveMatchClass,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        matched_alias: Option<String>,
     },
     Block {
         page: String,
@@ -136,6 +163,7 @@ pub enum QueryHit {
         /// Exact lsdoc-projected visible text indexed by `evidence.spans`.
         display_text: String,
         evidence: Vec<MatchEvidence>,
+        match_class: ObjectiveMatchClass,
     },
 }
 
@@ -712,19 +740,27 @@ enum PageCandidate {
 #[derive(Debug)]
 struct ScoredPage {
     score: i32,
+    match_class: ObjectiveMatchClass,
+    matched_text: String,
+    matched_alias: Option<String>,
     index: usize,
     candidate: PageCandidate,
 }
 
 impl ScoredPage {
     fn is_better_than(&self, other: &Self) -> bool {
-        self.score > other.score || (self.score == other.score && self.index < other.index)
+        self.match_class.rank() > other.match_class.rank()
+            || (self.match_class == other.match_class
+                && (self.score > other.score
+                    || (self.score == other.score && self.index < other.index)))
     }
 }
 
 impl PartialEq for ScoredPage {
     fn eq(&self, other: &Self) -> bool {
-        self.score == other.score && self.index == other.index
+        self.match_class == other.match_class
+            && self.score == other.score
+            && self.index == other.index
     }
 }
 impl Eq for ScoredPage {}
@@ -737,8 +773,10 @@ impl Ord for ScoredPage {
     fn cmp(&self, other: &Self) -> Ordering {
         // Max-heap root is the WORST retained candidate, ready for eviction.
         other
-            .score
-            .cmp(&self.score)
+            .match_class
+            .rank()
+            .cmp(&self.match_class.rank())
+            .then_with(|| other.score.cmp(&self.score))
             .then_with(|| self.index.cmp(&other.index))
     }
 }
@@ -754,26 +792,33 @@ fn push_page(heap: &mut BinaryHeap<ScoredPage>, limit: usize, candidate: ScoredP
     }
 }
 
-fn fuzzy_name_score(lower_name: &str, lower_query: &str) -> Option<i32> {
+fn fuzzy_name_score(lower_name: &str, lower_query: &str) -> Option<(i32, ObjectiveMatchClass)> {
     if lower_query.is_empty() {
-        Some(0)
+        Some((0, ObjectiveMatchClass::Fuzzy))
+    } else if lower_name == lower_query {
+        Some((1500, ObjectiveMatchClass::Exact))
     } else if lower_name.starts_with(lower_query) {
-        Some(1000)
+        Some((1000, ObjectiveMatchClass::Prefix))
     } else if lower_name.contains(lower_query) {
-        Some(500)
+        Some((500, ObjectiveMatchClass::Substring))
     } else {
         let mut chars = lower_name.chars();
         lower_query
             .chars()
             .all(|needle| chars.any(|candidate| candidate == needle))
-            .then_some(100)
+            .then_some((100, ObjectiveMatchClass::Fuzzy))
     }
 }
 
 /// Match + page relevance in one cached-lowercase pass. AND takes the best
 /// positive clause; OR uses the first matching branch, mirroring
 /// `Matcher::score_name`.
-fn page_base_score(plan: &QueryPlan, expr: &QueryExpr, original: &str, lower: &str) -> Option<i32> {
+fn page_base_score(
+    plan: &QueryPlan,
+    expr: &QueryExpr,
+    original: &str,
+    lower: &str,
+) -> Option<(i32, ObjectiveMatchClass)> {
     match expr {
         QueryExpr::Never => None,
         QueryExpr::Text(pred) if pred.field != TextField::PageName => None,
@@ -783,29 +828,63 @@ fn page_base_score(plan: &QueryPlan, expr: &QueryExpr, original: &str, lower: &s
                 .regexes
                 .get(&pred.clause_id)
                 .is_some_and(|regex| regex.is_match(original))
-                .then_some(500),
-            TextMatchMode::Contains | TextMatchMode::Phrase => lower
-                .contains(&pred.value)
-                .then_some(if lower.starts_with(&pred.value) {
-                    1000
+                .then_some((500, ObjectiveMatchClass::Substring)),
+            TextMatchMode::Contains | TextMatchMode::Phrase => {
+                if lower == pred.value {
+                    Some((1500, ObjectiveMatchClass::Exact))
+                } else if lower.starts_with(&pred.value) {
+                    Some((1000, ObjectiveMatchClass::Prefix))
+                } else if lower.contains(&pred.value) {
+                    Some((500, ObjectiveMatchClass::Substring))
                 } else {
-                    500
-                }),
+                    None
+                }
+            }
         },
         QueryExpr::And(children) => {
             let mut score = 0;
+            let mut class = ObjectiveMatchClass::Exact;
             for child in children {
-                score = score.max(page_base_score(plan, child, original, lower)?);
+                let (child_score, child_class) = page_base_score(plan, child, original, lower)?;
+                score = score.max(child_score);
+                if child_class.rank() < class.rank() {
+                    class = child_class;
+                }
             }
-            Some(score)
+            Some((score, class))
         }
         QueryExpr::Or(children) => children
             .iter()
             .find_map(|child| page_base_score(plan, child, original, lower)),
         QueryExpr::Not(child) => {
-            (!eval_expr_fast(plan, child, TextField::PageName, original, lower)).then_some(0)
+            (!eval_expr_fast(plan, child, TextField::PageName, original, lower))
+                // A successful exclusion contributes no positive relevance and
+                // therefore must not weaken the class supplied by an AND sibling.
+                .then_some((0, ObjectiveMatchClass::Exact))
         }
     }
+}
+
+fn best_page_match(
+    plan: &QueryPlan,
+    expr: &QueryExpr,
+    page_name: &str,
+    aliases: &[String],
+) -> Option<(i32, ObjectiveMatchClass, String, Option<String>)> {
+    let mut best = page_base_score(plan, expr, page_name, &page_name.to_lowercase())
+        .map(|(score, class)| (score, class, page_name.to_string(), None));
+    for alias in aliases {
+        let Some((score, class)) = page_base_score(plan, expr, alias, &alias.to_lowercase()) else {
+            continue;
+        };
+        let replace = best.as_ref().is_none_or(|(best_score, best_class, _, _)| {
+            class.rank() > best_class.rank() || (class == *best_class && score > *best_score)
+        });
+        if replace {
+            best = Some((score, class, alias.clone(), Some(alias.clone())));
+        }
+    }
+    best
 }
 
 fn execute_pages(
@@ -818,18 +897,33 @@ fn execute_pages(
         return Some(Vec::new());
     }
     let file_pages = graph.list_pages();
+    let mut aliases_by_page: HashMap<String, Vec<String>> = HashMap::new();
+    for (alias, canonical) in graph.page_aliases() {
+        aliases_by_page
+            .entry(refs::page_key(&canonical))
+            .or_default()
+            .push(alias);
+    }
     let mut heap = BinaryHeap::new();
     for (index, page) in file_pages.iter().enumerate() {
         if cancelled() {
             return None;
         }
-        let lower = page.name.to_lowercase();
-        if let Some(base_score) = page_base_score(plan, &branch.predicate, &page.name, &lower) {
+        let aliases = aliases_by_page
+            .get(&refs::page_key(&page.name))
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        if let Some((base_score, match_class, matched_text, matched_alias)) =
+            best_page_match(plan, &branch.predicate, &page.name, aliases)
+        {
             push_page(
                 &mut heap,
                 branch.limit,
                 ScoredPage {
                     score: base_score - page.name.len() as i32,
+                    match_class,
+                    matched_text,
+                    matched_alias,
                     index,
                     candidate: PageCandidate::File(index),
                 },
@@ -848,14 +942,22 @@ fn execute_pages(
         if have.contains(&key) {
             continue;
         }
-        let lower = name.to_lowercase();
-        if let Some(base_score) = page_base_score(plan, &branch.predicate, &name, &lower) {
+        let aliases = aliases_by_page
+            .get(&refs::page_key(&name))
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        if let Some((base_score, match_class, matched_text, matched_alias)) =
+            best_page_match(plan, &branch.predicate, &name, aliases)
+        {
             let score = base_score - name.len() as i32;
             push_page(
                 &mut heap,
                 branch.limit,
                 ScoredPage {
                     score,
+                    match_class,
+                    matched_text,
+                    matched_alias,
                     index: file_pages.len() + offset,
                     candidate: PageCandidate::Referenced(PageEntry {
                         name,
@@ -869,7 +971,13 @@ fn execute_pages(
         }
     }
     let mut winners = heap.into_vec();
-    winners.sort_by(|a, b| b.score.cmp(&a.score).then_with(|| a.index.cmp(&b.index)));
+    winners.sort_by(|a, b| {
+        b.match_class
+            .rank()
+            .cmp(&a.match_class.rank())
+            .then_with(|| b.score.cmp(&a.score))
+            .then_with(|| a.index.cmp(&b.index))
+    });
     Some(
         winners
             .into_iter()
@@ -878,14 +986,21 @@ fn execute_pages(
                     PageCandidate::File(index) => file_pages[index].clone(),
                     PageCandidate::Referenced(page) => page,
                 };
-                let evidence = eval_expr(plan, &branch.predicate, TextField::PageName, &page.name)
-                    .map(|matched| matched.evidence)
-                    .unwrap_or_default();
+                let evidence = eval_expr(
+                    plan,
+                    &branch.predicate,
+                    TextField::PageName,
+                    &winner.matched_text,
+                )
+                .map(|matched| matched.evidence)
+                .unwrap_or_default();
                 QueryHit::Page {
-                    display_text: page.name.clone(),
+                    display_text: winner.matched_text,
                     page,
                     evidence,
                     score: winner.score,
+                    match_class: winner.match_class,
+                    matched_alias: winner.matched_alias,
                 }
             })
             .collect(),
@@ -970,6 +1085,7 @@ fn execute_blocks(
                         block: dto,
                         display_text: visible.clone(),
                         evidence: matched.evidence,
+                        match_class: ObjectiveMatchClass::BodyEvidence,
                     });
                     remaining -= 1;
                 }
@@ -1005,6 +1121,7 @@ pub(crate) fn block_hits_to_groups(hits: Vec<QueryHit>) -> Vec<crate::model::Ref
             page,
             kind,
             blocks: vec![block],
+            evidence: Vec::new(),
         });
     }
     groups
@@ -1051,7 +1168,11 @@ mod tests {
             "- Parent\n\t- 🧠 foo ready\n- foo draft\n- ready only\n- regex ABC\n",
         )
         .unwrap();
-        fs::write(dir.join("pages").join("Opdf Notes.md"), "- unrelated\n").unwrap();
+        fs::write(
+            dir.join("pages").join("Opdf Notes.md"),
+            "alias:: Research Hub\n\n- unrelated\n",
+        )
+        .unwrap();
         fs::write(dir.join("pages").join("Xopdf.md"), "- unrelated\n").unwrap();
         fs::write(
             dir.join("pages").join("References.md"),
@@ -1283,6 +1404,36 @@ mod tests {
     }
 
     #[test]
+    fn page_hits_expose_objective_classes_and_alias_evidence() {
+        let (dir, graph) = fixture();
+        let exact = QueryPlan::page_name_fuzzy("Opdf Notes", 10).execute(&graph, || false);
+        assert!(matches!(
+            exact.hits.first(),
+            Some(QueryHit::Page {
+                match_class: ObjectiveMatchClass::Exact,
+                matched_alias: None,
+                ..
+            })
+        ));
+
+        let alias = QueryPlan::page_name_fuzzy("Research Hub", 10).execute(&graph, || false);
+        let hit = alias
+            .hits
+            .iter()
+            .find(|hit| matches!(hit, QueryHit::Page { page, .. } if page.name == "Opdf Notes"));
+        assert!(matches!(
+            hit,
+            Some(QueryHit::Page {
+                display_text,
+                match_class: ObjectiveMatchClass::Exact,
+                matched_alias: Some(matched_alias),
+                ..
+            }) if display_text == "research hub" && matched_alias == "research hub"
+        ));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn regex_evidence_is_authoritative_and_bounded_to_projected_text() {
         let (dir, graph) = fixture();
         let execution = graph.run_graph_search("/[A-Z]{3}/", 10, 10, true);
@@ -1347,6 +1498,8 @@ mod tests {
                 score: None,
             }],
             score: 1_000,
+            match_class: ObjectiveMatchClass::Prefix,
+            matched_alias: None,
         };
 
         assert_eq!(
@@ -1366,7 +1519,8 @@ mod tests {
                     "mode": "fuzzy",
                     "spans": [{"start": 3, "end": 6}]
                 }],
-                "score": 1_000
+                "score": 1_000,
+                "match_class": "prefix"
             })
         );
     }

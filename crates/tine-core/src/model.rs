@@ -199,6 +199,58 @@ pub struct RefGroup {
     pub page: String,
     pub kind: PageKind,
     pub blocks: Vec<BlockDto>,
+    /// Result-only source evidence keyed by block id. Empty for ordinary query
+    /// groups and older callers; never crosses the block write boundary.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence: Vec<ReferenceBlockEvidence>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReferenceKind {
+    Explicit,
+    Plain,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReferenceSpan {
+    /// UTF-16 code-unit offsets into the matching `BlockDto.raw`.
+    pub start: usize,
+    pub end: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReferenceOccurrence {
+    pub matched_name: String,
+    pub canonical: String,
+    pub kind: ReferenceKind,
+    pub span: ReferenceSpan,
+    pub rule: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReferenceBlockEvidence {
+    pub block_id: String,
+    pub occurrences: Vec<ReferenceOccurrence>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReferenceDiagnosticTrace {
+    pub page: String,
+    pub kind: PageKind,
+    pub block_id: String,
+    pub occurrences: Vec<ReferenceOccurrence>,
+    pub included_linked: bool,
+    pub included_unlinked: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exclusion_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReferenceDiagnostics {
+    pub engine_version: String,
+    pub target: String,
+    pub traces: Vec<ReferenceDiagnosticTrace>,
 }
 
 /// A named template (a block with `template:: <name>`) and the blocks to insert.
@@ -509,6 +561,23 @@ fn ref_groups_bytes(groups: &[RefGroup]) -> usize {
         .map(|group| {
             group.page.len()
                 + group.blocks.iter().map(block_dto_bytes).sum::<usize>()
+                + group
+                    .evidence
+                    .iter()
+                    .map(|evidence| {
+                        evidence.block_id.len()
+                            + evidence
+                                .occurrences
+                                .iter()
+                                .map(|occurrence| {
+                                    occurrence.matched_name.len()
+                                        + occurrence.canonical.len()
+                                        + occurrence.rule.len()
+                                        + std::mem::size_of::<ReferenceOccurrence>()
+                                })
+                                .sum::<usize>()
+                    })
+                    .sum::<usize>()
                 + std::mem::size_of::<RefGroup>()
         })
         .sum()
@@ -2795,6 +2864,12 @@ impl Graph {
         self.derived_memo(format!("u\0{}", crate::refs::normalize(target)), || {
             crate::query::unlinked_refs(self, target)
         })
+    }
+
+    /// Explicit, uncached target-scoped trace of the exact reference engine.
+    /// Intended for local diagnostics; callers must anonymize before export.
+    pub fn reference_diagnostics(&self, target: &str) -> ReferenceDiagnostics {
+        crate::query::reference_diagnostics(self, target)
     }
 
     /// Export the whole graph to static HTML under `<root>/publish/`.
@@ -5623,20 +5698,14 @@ mod tests {
         .unwrap();
         let g = Graph::open(&dir);
         g.warm_cache();
-        let mut books = g
-            .load_named("books", PageKind::Page)
-            .unwrap()
-            .unwrap();
+        let mut books = g.load_named("books", PageKind::Page).unwrap().unwrap();
         books.blocks[0].raw = "alias:: book".into();
         g.save_page(&books, books.rev.as_deref()).unwrap();
 
         let disk = fs::read_to_string(dir.join("pages").join("books.md")).unwrap();
         assert_eq!(disk, "- alias:: book\n- I like reading\n");
         assert_eq!(
-            g.load_named("book", PageKind::Page)
-                .unwrap()
-                .unwrap()
-                .name,
+            g.load_named("book", PageKind::Page).unwrap().unwrap().name,
             "books"
         );
         assert_eq!(

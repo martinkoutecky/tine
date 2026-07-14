@@ -10,6 +10,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Linked and unlinked references now share exact source evidence.** Each
+  matching block carries parser-owned explicit or plain occurrences, so a block
+  with both kinds appears correctly in both panels, code and syntax boundaries
+  stay consistent, and target-scoped diagnostics explain the same engine rather
+  than running a second matcher. (GH #137)
+- **Large reference panels now show bounded, highlighted excerpts.** Several
+  mentions remain one block row with a count and exact jump actions; each source
+  page can be collapsed independently, with bulk controls when several groups
+  are present. Excerpt windows preserve Unicode graphemes and full blocks remain
+  available on demand. (GH #144, GH #145)
+- **Ctrl+K can learn repeated deliberate choices without changing search
+  truth.** Page results expose exact, prefix, substring, and fuzzy objective
+  classes (including aliases); device-local, graph-scoped frecency may reorder
+  only ties inside one class after repeated activation. The bounded history can
+  be disabled or reset, and saved searches and queries remain deterministic.
+  (GH #143)
+
 - **Opening fenced code blocks now offer language completion.** Typing at least
   one language character after backtick or tilde fences searches only the
   languages bundled for highlighting, accepts common aliases while writing the

@@ -30,4 +30,15 @@ describe("SearchResultRow (GH #98)", () => {
     expect(root.querySelector(".search-result-excerpt")?.textContent).not.toContain("Research");
     dispose();
   });
+
+  it("never cuts a combined grapheme at an excerpt boundary", () => {
+    const grapheme = "e\u0301";
+    const text = `${grapheme.repeat(80)} Target ${grapheme.repeat(80)}`;
+    const start = text.indexOf("Target");
+    const excerpt = buildSearchExcerpt(text, [{ start, end: start + 6 }])
+      .map((segment) => segment.text)
+      .join("");
+    expect(excerpt).not.toMatch(/(?:^|[^e])\u0301/);
+    expect(excerpt).toContain("Target");
+  });
 });

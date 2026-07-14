@@ -24,6 +24,7 @@ controls. Search indexes both levels.
 | Editor | Click a block reference to zoom in | Basic | Common navigation convention and explicit OG divergence. |
 | Editor | Link autocomplete default | Advanced | Niche completion ordering/compatibility preference. |
 | Editor | Reuse already-open tabs | Advanced | Niche navigation policy. |
+| Editor | Learn Ctrl+K choices and reset ranking | Advanced | Optional device-local, graph-scoped tie-breaking; saved search/query order remains deterministic. |
 | Editor | Copy parent sub-blocks | Advanced | Clipboard compatibility policy. |
 | Editor | Strip collapsed:: when copying | Advanced | Clipboard metadata compatibility policy. |
 | Journals | Journal date format | Basic | Primary journal identity/display choice. |

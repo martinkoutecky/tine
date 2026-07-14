@@ -15,6 +15,7 @@ pub mod pdf;
 pub mod publish;
 pub mod query;
 pub mod query_plan;
+mod reference_evidence;
 pub mod refs;
 pub mod render;
 pub mod search_query;

@@ -107,6 +107,10 @@ pub struct BlockProjection {
     /// Inline `#tag` / org headline tags, first-seen and de-duplicated. Page refs
     /// stay separate in `refs_page`; this is only the tag field.
     pub tags: Vec<String>,
+    /// Parser-owned source spans used by both linked and unlinked reference
+    /// surfaces. Kept on the memoized projection so reference queries do not
+    /// parse every block again.
+    pub(crate) reference_source: crate::reference_evidence::ReferenceSourceProjection,
 }
 
 impl BlockProjection {
@@ -185,6 +189,8 @@ impl DocBlock {
                 .iter()
                 .map(|r| crate::refs::normalize(r))
                 .collect();
+            let reference_source =
+                crate::reference_evidence::project(&self.raw, self.is_org, &proj.blocks);
             BlockProjection {
                 visible,
                 visible_lower,
@@ -198,6 +204,7 @@ impl DocBlock {
                 scheduled,
                 deadline,
                 tags,
+                reference_source,
             }
         })
     }
@@ -343,7 +350,9 @@ fn tags_from_blocks(blocks: &[lsdoc::ast::Block]) -> Vec<String> {
                 }
                 collect_tags_from_inline(inline, &mut out, &mut seen);
             }
-            Block::Paragraph { inline, .. } => collect_tags_from_inline(inline, &mut out, &mut seen),
+            Block::Paragraph { inline, .. } => {
+                collect_tags_from_inline(inline, &mut out, &mut seen)
+            }
             _ => {}
         }
     }
