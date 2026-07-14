@@ -42,6 +42,7 @@ const suites = {
     ["caret-page", "scripts/e2e-caret.mjs", { CARET_MODE: "page", CARET_LABEL: "runner" }],
     ["click-caret", "scripts/e2e-clickcaret-repro.mjs", {}],
     ["block-select", "scripts/e2e-blockselect.mjs", {}],
+    ["block-ref-count", "scripts/e2e-block-ref-count.mjs", {}],
     ["rename", "scripts/e2e-rename.mjs", {}],
     ["alias", "scripts/e2e-alias.mjs", {}],
     ["journal-format", "scripts/e2e-journal-format.mjs", {}],
