@@ -264,6 +264,8 @@ pub(crate) async fn open_graph_window(
             let built = builder.build();
             match built {
                 Ok(window) => {
+                    #[cfg(target_os = "linux")]
+                    crate::linux_window_identity::apply_to_window(&window);
                     let _ = window.set_focus();
                 }
                 Err(error) => {

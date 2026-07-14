@@ -66,6 +66,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Tine's icon is now used consistently by Linux/Wayland window chrome.**
+  Every main, graph, and Quick Capture window advertises Tine's stable desktop
+  identity, and standalone binaries provide the matching desktop entry and icon
+  without interfering with single-instance shortcut forwarding.
 - **Linux system titlebar controls work when native window decorations are
   enabled.** GTK now propagates pointer events to the window-manager frame, so
   its minimize, maximize, and close buttons are interactive; close still runs

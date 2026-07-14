@@ -9,6 +9,8 @@ mod backup;
 mod commands;
 mod debug;
 mod graph;
+#[cfg(target_os = "linux")]
+mod linux_window_identity;
 mod migrate_identifier;
 mod media_protocol;
 mod platform;
@@ -355,6 +357,13 @@ pub fn run() {
     // page.tine.app and run_early() is a no-op there.
     migrate_identifier::run_early();
 
+    // Wayland resolves the shell/titlebar icon by matching a window app ID to a
+    // desktop-entry basename. Packages ship that identity themselves; the raw
+    // binary Martin runs is self-contained, so publish its marker-owned entry
+    // before Tauri maps the first window.
+    #[cfg(target_os = "linux")]
+    linux_window_identity::install_desktop_identity();
+
     // Tao cannot reliably change Linux decorations after a GTK window exists.
     // Read the device preference before Tauri constructs the configured windows,
     // and expose the frozen value to each webview so custom controls never flash.
@@ -484,6 +493,15 @@ pub fn run() {
         })
         .setup(|app| {
             diag("setup() begin");
+            #[cfg(target_os = "linux")]
+            {
+                if let Some(window) = app.get_webview_window("main") {
+                    linux_window_identity::apply_to_window(&window);
+                }
+                if let Some(window) = app.get_webview_window("capture") {
+                    linux_window_identity::apply_to_window(&window);
+                }
+            }
             #[cfg(desktop)]
             schedule_main_window_reveal_fallback(app.handle());
             // Eagerly open the graph if one was configured at startup.

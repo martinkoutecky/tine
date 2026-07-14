@@ -137,6 +137,19 @@ try {
     },
   });
   await browser.$(".ls-block, .page-title").waitForExist({ timeout: 20_000 });
+  const desktopEntry = `${TMP}/xdg/data/applications/page.tine.Tine.desktop`;
+  await waitFor(() => fs.existsSync(desktopEntry), 5_000,
+    "standalone Linux binary did not install its Wayland desktop identity");
+  const desktopText = fs.readFileSync(desktopEntry, "utf8");
+  if (!desktopText.includes("Icon=page.tine.Tine") || !desktopText.includes("X-Tine-Managed=true")) {
+    throw new Error(`standalone desktop identity is malformed: ${desktopText}`);
+  }
+  for (const size of ["32x32", "64x64", "128x128", "256x256", "512x512"]) {
+    const icon = `${TMP}/xdg/data/icons/hicolor/${size}/apps/page.tine.Tine.png`;
+    if (!fs.existsSync(icon) || fs.statSync(icon).size === 0) {
+      throw new Error(`standalone Linux identity is missing its ${size} Tine icon`);
+    }
+  }
   const decoratedId = await waitFor(() => windowIds()[0], 10_000, "Tine window did not appear");
   if (!decoratedId) throw new Error("Tine window disappeared before the native close test");
   const decorated = { id: decoratedId, extents: frameExtents(decoratedId) };

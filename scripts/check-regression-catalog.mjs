@@ -22,6 +22,14 @@ process.stdout.write(taoTitlebarCheck.stdout);
 process.stderr.write(taoTitlebarCheck.stderr);
 if (taoTitlebarCheck.status !== 0) process.exit(taoTitlebarCheck.status ?? 1);
 
+const linuxIdentityCheck = spawnSync(process.execPath, [path.join(root, "scripts/check-linux-window-identity.mjs")], {
+  cwd: root,
+  encoding: "utf8",
+});
+process.stdout.write(linuxIdentityCheck.stdout);
+process.stderr.write(linuxIdentityCheck.stderr);
+if (linuxIdentityCheck.status !== 0) process.exit(linuxIdentityCheck.status ?? 1);
+
 const index = JSON.parse(fs.readFileSync(path.join(root, "tests/regressions/catalog.json"), "utf8"));
 const problems = [];
 const inventoryIds = new Set();
