@@ -98,6 +98,9 @@ export interface Backend {
   listKnownGraphs(): Promise<KnownGraph[]>;
   forgetKnownGraph(path: string): Promise<void>;
   appPlatform(): Promise<"android" | "ios" | "desktop">;
+  /** Keep Android's edge-to-edge status/navigation icon appearance readable
+   *  against Tine's explicit in-app theme. Other platforms are a no-op. */
+  setSystemBarAppearance(dark: boolean): Promise<void>;
   defaultGraphParent(): Promise<string>;
   /** Quit the app. On Linux this first SIGKILLs WebKitGTK's helper subprocesses so
    *  they don't dump a SIGABRT core on exit (GH #28 — GL driver atexit double-free);
@@ -455,6 +458,9 @@ class TauriBackend implements Backend {
   }
   appPlatform() {
     return this.call<"android" | "ios" | "desktop">("app_platform");
+  }
+  setSystemBarAppearance(dark: boolean) {
+    return this.call<void>("set_system_bar_appearance", { dark });
   }
   quit() {
     return this.call<void>("tine_quit");

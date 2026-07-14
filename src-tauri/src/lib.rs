@@ -4,6 +4,7 @@
 
 mod android_folder_picker;
 mod android_media;
+mod android_system_bars;
 mod backup;
 mod commands;
 mod debug;
@@ -406,6 +407,8 @@ pub fn run() {
     let builder = builder.plugin(android_folder_picker::init());
     #[cfg(target_os = "android")]
     let builder = builder.plugin(android_media::init());
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(android_system_bars::init());
     // Mobile has no xdg-open/open/explorer, so `open_external` routes URL opens
     // through this plugin's platform Intent instead (GH #49). Desktop keeps its
     // env-scrubbed spawn; the plugin is compiled/registered on mobile only.
@@ -556,6 +559,7 @@ pub fn run() {
             android_media::start_recording,
             android_media::stop_recording,
             android_media::cancel_recording,
+            android_system_bars::set_system_bar_appearance,
             list_pages,
             journals_desc,
             get_page,

@@ -23,6 +23,7 @@ export const [theme, setTheme] = createSignal<"light" | "dark">(loadTheme());
 /** Apply the stored theme to the document (call once at startup). */
 export function applyTheme() {
   document.documentElement.setAttribute("data-theme", theme());
+  void backend().setSystemBarAppearance(theme() === "dark").catch(() => {});
 }
 
 // Task workflow from config.edn (:preferred-workflow): drives mod+enter cycling.
@@ -495,6 +496,7 @@ export function toggleTheme() {
   const next = theme() === "light" ? "dark" : "light";
   setTheme(next);
   document.documentElement.setAttribute("data-theme", next);
+  void backend().setSystemBarAppearance(next === "dark").catch(() => {});
   try {
     localStorage.setItem(THEME_KEY, next);
   } catch {

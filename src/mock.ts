@@ -663,6 +663,7 @@ export function mockBackend(): Backend {
     async appPlatform(): Promise<"android" | "ios" | "desktop"> {
       return "desktop";
     },
+    async setSystemBarAppearance(): Promise<void> {},
     async quit(): Promise<void> {
       // No-op in the mock/screenshot harness — there's no process to exit.
     },

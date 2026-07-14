@@ -25,6 +25,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   layouts use a tighter nesting step, keep guide lines under their parent
   bullets, and expose folding as a visible trailing touch action; desktop
   geometry is unchanged. (GH #150)
+- **Android status and navigation icons now follow Tine's selected theme.** The
+  native edge-to-edge bars restore the persisted appearance during launch and
+  resume, then stay synchronized across repeated light/dark switches. (GH #149)
 - **Persistent Search results now fit their pane and retain their evidence.**
   Search, List, Table, and Board keep the matched terms highlighted; result
   rows wrap instead of widening a narrow pane; and Ctrl+F searches the visible
