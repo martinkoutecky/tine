@@ -6,6 +6,12 @@
         "dest": "flatpak-cargo/git/lsdoc-96e9096"
     },
     {
+        "type": "git",
+        "url": "https://github.com/tauri-apps/tao",
+        "commit": "07f3742b1833b64be27b1ef991e38d557d4276c9",
+        "dest": "flatpak-cargo/git/tao-07f3742"
+    },
+    {
         "type": "archive",
         "archive-type": "tar-gzip",
         "url": "https://static.crates.io/crates/adler2/adler2-2.0.1.crate",
@@ -4977,16 +4983,21 @@
         "dest-filename": ".cargo-checksum.json"
     },
     {
-        "type": "archive",
-        "archive-type": "tar-gzip",
-        "url": "https://static.crates.io/crates/tao/tao-0.35.3.crate",
-        "sha256": "d1c93047acf68669466a34690ac58cca7010bd1b201e1ec86f1fd0a75d3dd4a9",
-        "dest": "cargo/vendor/tao-0.35.3"
+        "type": "shell",
+        "commands": [
+            "cp -r --reflink=auto \"flatpak-cargo/git/tao-07f3742/.\" \"cargo/vendor/tao\""
+        ]
     },
     {
         "type": "inline",
-        "contents": "{\"package\": \"d1c93047acf68669466a34690ac58cca7010bd1b201e1ec86f1fd0a75d3dd4a9\", \"files\": {}}",
-        "dest": "cargo/vendor/tao-0.35.3",
+        "contents": "[package]\nname = \"tao\"\nversion = \"0.35.3\"\ndescription = \"Cross-platform window manager library.\"\nauthors = [\"Tauri Programme within The Commons Conservancy\", \"The winit contributors\"]\nedition = \"2021\"\nrust-version = \"1.74\"\nkeywords = [\"windowing\"]\nlicense = \"Apache-2.0\"\nreadme = \"README.md\"\nrepository = \"https://github.com/tauri-apps/tao\"\ndocumentation = \"https://docs.rs/tao\"\ncategories = [\"gui\"]\ninclude = [\"/README.md\", \"src/**/*.rs\", \"examples/**/*.rs\", \"LICENSE*\"]\n\n[package.metadata.docs.rs]\nfeatures = [\"rwh_04\", \"rwh_05\", \"rwh_06\", \"serde\", \"x11\", \"dbus\"]\ndefault-target = \"x86_64-unknown-linux-gnu\"\ntargets = [\"i686-pc-windows-msvc\", \"x86_64-pc-windows-msvc\", \"i686-unknown-linux-gnu\", \"x86_64-unknown-linux-gnu\", \"x86_64-apple-darwin\"]\n\n[features]\ndefault = [\"rwh_06\", \"x11\", \"dbus\"]\nserde = [\"dep:serde\", \"dpi/serde\"]\nrwh_04 = [\"dep:rwh_04\"]\nrwh_05 = [\"dep:rwh_05\"]\nrwh_06 = [\"dep:rwh_06\"]\nx11 = [\"dep:gdkx11-sys\", \"dep:x11-dl\"]\ndbus = [\"dep:dbus\"]\n\n[workspace]\nmembers = [\"tao-macros\"]\n\n[dependencies]\nlibc = \"0.2\"\nlog = \"0.4\"\nonce_cell = \"1\"\nbitflags = \"2\"\ncrossbeam-channel = \"0.5\"\nurl = \"2\"\ndpi = \"0.1\"\n\n[dependencies.serde]\nversion = \"1\"\noptional = true\nfeatures = [\"serde_derive\"]\n\n[dependencies.rwh_04]\npackage = \"raw-window-handle\"\nversion = \"0.4\"\noptional = true\n\n[dependencies.rwh_05]\npackage = \"raw-window-handle\"\nversion = \"0.5\"\nfeatures = [\"std\"]\noptional = true\n\n[dependencies.rwh_06]\npackage = \"raw-window-handle\"\nversion = \"0.6\"\nfeatures = [\"std\"]\noptional = true\n\n[dev-dependencies]\nimage = \"0.25\"\nenv_logger = \"0.11\"\n\n[target.\"cfg(target_os = \\\"windows\\\")\".dev-dependencies]\nsoftbuffer = \"0.4\"\n\n[target.\"cfg(target_os = \\\"windows\\\")\".dependencies]\nparking_lot = \"0.12\"\nunicode-segmentation = \"1.11\"\nwindows-version = \"0.1\"\nwindows-core = \"0.61\"\n\n[target.\"cfg(target_os = \\\"windows\\\")\".dependencies.windows]\nversion = \"0.61\"\nfeatures = [\"Win32_Devices_HumanInterfaceDevice\", \"Win32_Foundation\", \"Win32_Globalization\", \"Win32_Graphics_Dwm\", \"Win32_Graphics_Gdi\", \"Win32_System_Com\", \"Win32_System_Com_StructuredStorage\", \"Win32_System_DataExchange\", \"Win32_System_Diagnostics_Debug\", \"Win32_System_LibraryLoader\", \"Win32_System_Memory\", \"Win32_System_Ole\", \"Win32_System_Registry\", \"Win32_System_SystemServices\", \"Win32_System_Threading\", \"Win32_System_WindowsProgramming\", \"Win32_System_SystemInformation\", \"Win32_UI_Accessibility\", \"Win32_UI_Controls\", \"Win32_UI_HiDpi\", \"Win32_UI_Input_Ime\", \"Win32_UI_Input_KeyboardAndMouse\", \"Win32_UI_Input_Pointer\", \"Win32_UI_Input_Touch\", \"Win32_UI_Shell\", \"Win32_UI_TextServices\", \"Win32_UI_WindowsAndMessaging\"]\n\n[target.\"cfg(target_os = \\\"android\\\")\".dependencies]\njni = \"0.21\"\nndk = \"0.9\"\nndk-sys = \"0.6\"\npercent-encoding = \"2.3\"\n\n[target.\"cfg(target_os = \\\"android\\\")\".dependencies.tao-macros]\nversion = \"0.1.0\"\npath = \"./tao-macros\"\n\n[target.\"cfg(any(target_os = \\\"ios\\\", target_os = \\\"macos\\\"))\".dependencies]\nobjc2 = \"0.6\"\nblock2 = \"0.6\"\n\n[target.\"cfg(target_os = \\\"macos\\\")\".dependencies]\ncore-foundation = \"0.10\"\ncore-graphics = \"0.25\"\ndispatch2 = \"0.3\"\n\n[target.\"cfg(target_os = \\\"macos\\\")\".dependencies.objc2-foundation]\nversion = \"0.3\"\ndefault-features = false\nfeatures = [\"std\", \"NSArray\", \"NSAttributedString\", \"NSAutoreleasePool\", \"NSDate\", \"NSDictionary\", \"NSEnumerator\", \"NSGeometry\", \"NSObjCRuntime\", \"NSRange\", \"NSString\", \"NSThread\", \"NSURL\"]\n\n[target.\"cfg(target_os = \\\"macos\\\")\".dependencies.objc2-app-kit]\nversion = \"0.3\"\ndefault-features = false\nfeatures = [\"std\", \"objc2-core-foundation\", \"NSApplication\", \"NSButton\", \"NSColor\", \"NSControl\", \"NSEvent\", \"NSGraphics\", \"NSImage\", \"NSOpenGLView\", \"NSPasteboard\", \"NSResponder\", \"NSRunningApplication\", \"NSScreen\", \"NSView\", \"NSWindow\", \"NSUserActivity\"]\n\n[target.\"cfg(target_os = \\\"ios\\\")\".dependencies.objc2-ui-kit]\nversion = \"0.3\"\nfeatures = [\"UIResponder\", \"UIScene\", \"UISceneOptions\", \"UIOpenURLContext\"]\n\n[target.\"cfg(target_os = \\\"ios\\\")\".dependencies.objc2-foundation]\nversion = \"0.3\"\ndefault-features = false\nfeatures = [\"NSProcessInfo\"]\n\n[target.\"cfg(any(target_os = \\\"linux\\\", target_os = \\\"dragonfly\\\", target_os = \\\"freebsd\\\", target_os = \\\"openbsd\\\", target_os = \\\"netbsd\\\"))\".dependencies]\ngtk = \"0.18\"\ngdkwayland-sys = \"0.18.0\"\nparking_lot = \"0.12\"\ndlopen2 = \"0.8.0\"\n\n[target.\"cfg(any(target_os = \\\"linux\\\", target_os = \\\"dragonfly\\\", target_os = \\\"freebsd\\\", target_os = \\\"openbsd\\\", target_os = \\\"netbsd\\\"))\".dependencies.gdkx11-sys]\nversion = \"0.18\"\noptional = true\n\n[target.\"cfg(any(target_os = \\\"linux\\\", target_os = \\\"dragonfly\\\", target_os = \\\"freebsd\\\", target_os = \\\"openbsd\\\", target_os = \\\"netbsd\\\"))\".dependencies.x11-dl]\nversion = \"2.21\"\noptional = true\n\n[target.\"cfg(any(target_os = \\\"linux\\\", target_os = \\\"dragonfly\\\", target_os = \\\"freebsd\\\", target_os = \\\"openbsd\\\", target_os = \\\"netbsd\\\"))\".dependencies.dbus]\nversion = \"0.9\"\noptional = true\n",
+        "dest": "cargo/vendor/tao",
+        "dest-filename": "Cargo.toml"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": null, \"files\": {}}",
+        "dest": "cargo/vendor/tao",
         "dest-filename": ".cargo-checksum.json"
     },
     {
@@ -5000,6 +5011,24 @@
         "type": "inline",
         "contents": "{\"package\": \"f4e16beb8b2ac17db28eab8bca40e62dbfbb34c0fcdc6d9826b11b7b5d047dfd\", \"files\": {}}",
         "dest": "cargo/vendor/tao-macros-0.1.3",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "shell",
+        "commands": [
+            "cp -r --reflink=auto \"flatpak-cargo/git/tao-07f3742/tao-macros\" \"cargo/vendor/tao-macros\""
+        ]
+    },
+    {
+        "type": "inline",
+        "contents": "[package]\nname = \"tao-macros\"\ndescription = \"Proc macros for tao\"\nversion = \"0.1.3\"\nedition = \"2021\"\nauthors = [\"Tauri Programme within The Commons Conservancy\"]\nrust-version = \"1.74\"\nlicense = \"MIT OR Apache-2.0\"\nreadme = \"../README.md\"\nrepository = \"https://github.com/tauri-apps/tao\"\ndocumentation = \"https://docs.rs/tao-macros\"\n\n[lib]\nproc-macro = true\n\n[features]\ndefault = []\n\n[dependencies]\nproc-macro2 = \"1\"\nquote = \"1\"\n\n[dependencies.syn]\nversion = \"2\"\nfeatures = [\"full\"]\n",
+        "dest": "cargo/vendor/tao-macros",
+        "dest-filename": "Cargo.toml"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": null, \"files\": {}}",
+        "dest": "cargo/vendor/tao-macros",
         "dest-filename": ".cargo-checksum.json"
     },
     {
@@ -7760,7 +7789,7 @@
     },
     {
         "type": "inline",
-        "contents": "[source.vendored-sources]\ndirectory = \"cargo/vendor\"\n\n[source.crates-io]\nreplace-with = \"vendored-sources\"\n\n[source.\"https://github.com/martinkoutecky/lsdoc\"]\ngit = \"https://github.com/martinkoutecky/lsdoc\"\nreplace-with = \"vendored-sources\"\ntag = \"v0.5.3\"\n",
+        "contents": "[source.vendored-sources]\ndirectory = \"cargo/vendor\"\n\n[source.crates-io]\nreplace-with = \"vendored-sources\"\n\n[source.\"https://github.com/martinkoutecky/lsdoc\"]\ngit = \"https://github.com/martinkoutecky/lsdoc\"\nreplace-with = \"vendored-sources\"\ntag = \"v0.5.3\"\n\n[source.\"https://github.com/tauri-apps/tao\"]\ngit = \"https://github.com/tauri-apps/tao\"\nreplace-with = \"vendored-sources\"\nrev = \"07f3742b1833b64be27b1ef991e38d557d4276c9\"\n",
         "dest": "cargo",
         "dest-filename": "config"
     }

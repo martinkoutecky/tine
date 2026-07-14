@@ -74,7 +74,8 @@ for (const pkg of packages) {
 
     const cargoToml = inlineCargoTomls.find(
       (source) =>
-        source.contents?.includes(`[package]\nname = "${pkg.name}"\nversion = "${pkg.version}"`)
+        field(source.contents ?? "", "name") === pkg.name &&
+        field(source.contents ?? "", "version") === pkg.version
     );
     if (!cargoToml) {
       problems.push(`${pkg.name} ${pkg.version}: generated vendor Cargo.toml is missing or stale`);

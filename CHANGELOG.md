@@ -66,6 +66,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Linux system titlebar controls work when native window decorations are
+  enabled.** GTK now propagates pointer events to the window-manager frame, so
+  its minimize, maximize, and close buttons are interactive; close still runs
+  through Tine's guarded save-and-session flush path.
 - **Quick Capture accepts typing on its first show and has a visible frame.**
   Its scratch bullet now has a real block identity, allowing the existing
   activation path to enter edit mode immediately instead of waiting for a first
