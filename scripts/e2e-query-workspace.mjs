@@ -170,10 +170,12 @@ await withApp(0, async (browser) => {
   const unlinkedBlocks = await browser.$(".unlinked-references .reference-blocks");
   await unlinkedBlocks.waitForExist({ timeout: 10_000 });
   await unlinkedBlocks.scrollIntoView();
-  await browser.waitUntil(async () => (await unlinkedBlocks.getText()).includes("Unlinked visible phrase"), {
+  await browser.waitUntil(() => browser.execute(() =>
+    [...document.querySelectorAll(".unlinked-references .reference-blocks")]
+      .some((group) => group.textContent?.includes("names Query parity near the start"))), {
     timeout: 10_000, timeoutMsg: "unlinked-reference content did not finish rendering",
   });
-  await assertInPageFind(browser, "Unlinked visible phrase", ".unlinked-references .reference-blocks.inpage-find-active-block");
+  await assertInPageFind(browser, "names Query parity near the start", ".unlinked-references .reference-blocks.inpage-find-active-block");
   const inlineSearchButton = await inlineQueryViewButton(browser, "Search");
   await inlineSearchButton.click();
   await browser.waitUntil(async () => (await browser.$$(".query-search-results .query-search-hit")).length === 9, {
@@ -355,6 +357,17 @@ await withApp(2, async (browser) => {
   });
 
   await browser.$(".linked-references .reference-bulk-controls").waitForExist({ timeout: 10_000 });
+  await browser.execute(() => {
+    const source = [...document.querySelectorAll(".linked-references .reference-group")]
+      .find((group) => group.querySelector(".reference-page")?.textContent?.trim() === "Linked source");
+    source?.scrollIntoView({ block: "center" });
+  });
+  await browser.waitUntil(() => browser.execute(() =>
+    [...document.querySelectorAll(".linked-references .reference-group")]
+      .some((group) => group.querySelector(".reference-page")?.textContent?.trim() === "Linked source"
+        && group.querySelector(".reference-mention-count")?.textContent?.trim() === "2 mentions")), {
+    timeout: 10_000, timeoutMsg: "linked reference evidence did not lazy-mount",
+  });
   const linkedProof = await browser.execute(() => {
     const groups = [...document.querySelectorAll(".linked-references .reference-group")];
     const source = groups.find((group) => group.querySelector(".reference-page")?.textContent?.trim() === "Linked source");
