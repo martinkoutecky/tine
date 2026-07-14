@@ -83,13 +83,24 @@ const waitFor = async (predicate, timeoutMs, message) => {
   }
   throw new Error(message);
 };
-const geometry = (id) => Object.fromEntries(
-  xdo("getwindowgeometry", "--shell", id)
-    .split("\n")
-    .filter((line) => line.includes("="))
-    .map((line) => line.split("=", 2))
-    .map(([key, value]) => [key, Number(value)]),
-);
+const geometry = (id) => {
+  // xdotool's --shell Y coordinate double-counts Openbox's reparented titlebar
+  // in this environment. xwininfo reports the actual client origin, which is
+  // the coordinate _NET_FRAME_EXTENTS is defined around.
+  const raw = execFileSync("xwininfo", ["-id", id], { encoding: "utf8", env });
+  const read = (label) => {
+    const value = raw.match(new RegExp(`^\\s*${label}:\\s*(-?\\d+)`, "m"))?.[1];
+    if (value === undefined) throw new Error(`xwininfo omitted ${label}: ${raw.trim()}`);
+    return Number(value);
+  };
+  return {
+    WINDOW: Number(id),
+    X: read("Absolute upper-left X"),
+    Y: read("Absolute upper-left Y"),
+    WIDTH: read("Width"),
+    HEIGHT: read("Height"),
+  };
+};
 const frameExtents = (id) => {
   const raw = execFileSync("xprop", ["-id", id, "_NET_FRAME_EXTENTS", "_GTK_FRAME_EXTENTS"], { encoding: "utf8", env });
   const values = raw.match(/=\s*(\d+),\s*(\d+),\s*(\d+),\s*(\d+)/)?.slice(1).map(Number);
