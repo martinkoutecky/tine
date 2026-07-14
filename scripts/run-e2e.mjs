@@ -53,6 +53,7 @@ const suites = {
     ["pdf-logseq", "scripts/e2e-pdf-logseq.mjs", {}],
     ["external-assets", "scripts/e2e-external-assets.mjs", {}],
     ["capture", "scripts/e2e-capture.mjs", { E2E_WINDOW_MANAGER: "openbox" }],
+    ["native-titlebar", "scripts/e2e-native-titlebar.mjs", { E2E_WINDOW_MANAGER: "openbox" }],
     ["page-file-actions", "scripts/e2e-page-file-actions.mjs", {}],
     ["block-embed", "scripts/e2e-block-embed.mjs", {}],
     ["sidebar-sections", "scripts/e2e-sidebar-sections.mjs", {}],
