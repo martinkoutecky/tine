@@ -869,6 +869,18 @@ export function App(): JSX.Element {
             </button>
             <button
               class="icon-btn"
+              title="Search (Ctrl+K)"
+              aria-label="Search"
+              data-search-trigger
+              onClick={() => openSwitcher()}
+            >
+              <svg viewBox="0 0 24 24" class="nav-icon">
+                <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="1.7" />
+                <line x1="16.5" y1="16.5" x2="21" y2="21" stroke="currentColor" stroke-width="1.7" />
+              </svg>
+            </button>
+            <button
+              class="icon-btn"
               title="Go back"
               disabled={!canGoBack()}
               onClick={goBack}
@@ -906,12 +918,6 @@ export function App(): JSX.Element {
                 <line x1="8" y1="9" x2="14" y2="9" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
                 <line x1="8" y1="12.5" x2="14" y2="12.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
                 <path d="M17 5h3v14a2 2 0 0 1-2 2 1 1 0 0 1-1-1V5z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
-              </svg>
-            </button>
-            <button class="icon-btn" title="Search (Ctrl+K)" onClick={() => openSwitcher()}>
-              <svg viewBox="0 0 24 24" class="nav-icon">
-                <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="1.7" />
-                <line x1="16.5" y1="16.5" x2="21" y2="21" stroke="currentColor" stroke-width="1.7" />
               </svg>
             </button>
             <button class="icon-btn" title="Toggle theme (t t)" onClick={toggleTheme}>

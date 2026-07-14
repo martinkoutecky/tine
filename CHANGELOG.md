@@ -22,6 +22,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   comma-separated values), while custom and wholly quoted properties stay
   literal unless they contain an explicit page reference. (GH #139)
 
+### Changed
+
+- **Search now has one visible home beside the primary navigation controls.**
+  The duplicate read-only sidebar field is gone; the labelled toolbar button,
+  Ctrl+K shortcut, complete switcher, and “Open search tab” flow are unchanged.
+  (GH #100)
+
 ### Fixed
 
 - **Help with Tine now canonicalizes optional parser fields before classifying

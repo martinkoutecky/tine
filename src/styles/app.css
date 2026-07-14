@@ -1019,21 +1019,6 @@ textarea {
   color: var(--text-primary);
 }
 
-.nav-search {
-  padding: 0 6px 10px;
-}
-
-.search-input {
-  width: 100%;
-  padding: 6px 10px;
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  font-size: 13px;
-  outline: none;
-}
-
 .nav-contents {
   flex: 1;
 }

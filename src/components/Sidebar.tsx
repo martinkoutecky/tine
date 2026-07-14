@@ -95,16 +95,6 @@ export function Sidebar(): JSX.Element {
         <GraphSwitcher />
       </div>
 
-      <div class="nav-search">
-        <input
-          class="search-input"
-          type="text"
-          placeholder="Search"
-          readonly
-          onClick={() => openSwitcher()}
-        />
-      </div>
-
       <div class="nav-contents">
         <div
           class="nav-item"
