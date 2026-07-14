@@ -66,6 +66,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Quick Capture accepts typing on its first show and has a visible frame.**
+  Its scratch bullet now has a real block identity, allowing the existing
+  activation path to enter edit mode immediately instead of waiting for a first
+  click. Plasma users can invoke the shortcut and type directly into the bullet,
+  and the frameless window now draws a subtle theme-aware border.
 - **Page property settings preserve the surrounding Markdown layout.** Editing
   one field now updates it in place without moving it below other properties or
   deleting blank separators, so unrelated page-header metadata remains intact.

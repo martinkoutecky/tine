@@ -35,6 +35,7 @@ import {
   type QuickCaptureAck,
   type QuickCaptureRequest,
 } from "./quickCaptureAck";
+import { CAPTURE_SCRATCH_NAME, createCaptureScratchPage } from "./captureSeed";
 // theme.css MUST come first: it defines every CSS variable (--bg-primary,
 // --bullet-color, --ls-block-bullet-size, --selection-bg) AND the
 // html[data-theme="dark"] overrides. Without it the capture webview had no
@@ -45,7 +46,7 @@ import "./lsShimInstall";
 import "./styles/app.css";
 import "./styles/capture.css";
 
-const SCRATCH = "·capture·";
+const SCRATCH = CAPTURE_SCRATCH_NAME;
 
 // Pretty-print a binding string ("mod+shift+enter") for a hint ("Ctrl-Shift-Enter").
 // "mod" is Ctrl on Linux/Windows (Cmd on macOS — but this app targets Linux).
@@ -79,14 +80,7 @@ function Capture() {
   const roots = () => pageByName(SCRATCH)?.roots ?? [];
 
   const seed = () => {
-    ensurePageLoaded({
-      name: SCRATCH,
-      kind: "page",
-      title: SCRATCH,
-      pre_block: null,
-      blocks: [{ id: "", raw: "", collapsed: false, children: [] }],
-      rev: null,
-    });
+    ensurePageLoaded(createCaptureScratchPage());
     const root = pageByName(SCRATCH)?.roots[0];
     if (root) startEditing(root, 0, null);
     setReady(true);
