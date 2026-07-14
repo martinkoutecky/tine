@@ -17,6 +17,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Help with Tine now canonicalizes optional parser fields before classifying
+  known oracle artifacts.** A harmless `undefined`-versus-omitted field can no
+  longer make a backtick-state-only mismatch look like a new divergence.
+  (GH #82)
 - **Persistent Search results now fit their pane and retain their evidence.**
   Search, List, Table, and Board keep the matched terms highlighted; result
   rows wrap instead of widening a narrow pane; and Ctrl+F searches the visible
