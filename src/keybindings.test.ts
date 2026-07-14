@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { closeInPageFind, inPageFindOpen } from "./inpageFind";
 import { commandDefaults, eventToBindingString, installKeybindings } from "./keybindings";
-import { closeSwitcher, focusMode, openSwitcher, setFocusMode, setPdfTarget, switcherOpen } from "./ui";
+import { closeSwitcher, focusMode, openSwitcher, setFocusMode, setPdfTarget, setWorkflow, switcherOpen } from "./ui";
 import { focusedPaneId, focusPane, layoutPaneIds, layoutRoot, paneRouter, resetPaneLayoutToSingle, splitRootAtEdge } from "./panes";
 import { exitPaneSelect, paneSel } from "./paneSelect";
-import { clearSelection, selectBlock } from "./store";
+import { clearSelection, doc, loadSingle, moveSelection, resetStore, selectBlock } from "./store";
 import type { PaneSnapshot } from "./router";
 
 function keyEvent(init: Partial<KeyboardEvent>): KeyboardEvent {
@@ -128,6 +128,7 @@ const journalsSnapshot = (): PaneSnapshot => ({
 
 afterEach(() => {
   setPdfTarget(null);
+  setWorkflow("now");
   setFocusMode(false);
   exitPaneSelect();
   clearSelection();
@@ -202,6 +203,35 @@ describe("find-in-page routing", () => {
     expect(e.prevented()).toBe(false);
     expect(e.stopped()).toBe(false);
 
+    dispose();
+  });
+});
+
+describe("block-selection commands", () => {
+  it("routes a remapped cycle-todo command before generic Enter (GH #136)", () => {
+    resetStore();
+    setWorkflow("todo");
+    loadSingle({
+      name: "Tasks",
+      kind: "page",
+      title: "Tasks",
+      pre_block: null,
+      blocks: [
+        { id: "task-a", raw: "one", collapsed: false, children: [] },
+        { id: "task-b", raw: "TODO two", collapsed: false, children: [] },
+      ],
+    });
+    selectBlock("task-a");
+    moveSelection(1, true);
+    const fake = installFakeWindow();
+    const dispose = installKeybindings({ "editor/cycle-todo": "alt+enter" });
+    const pressed = trackedKeyEvent({ key: "Enter", code: "Enter", altKey: true });
+
+    fake.dispatchCaptureKeydown(pressed.event);
+
+    expect(doc.byId["task-a"].raw).toBe("TODO one");
+    expect(doc.byId["task-b"].raw).toBe("DOING two");
+    expect(pressed.prevented()).toBe(true);
     dispose();
   });
 });

@@ -10,6 +10,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Ctrl/Cmd+Enter now cycles every selected block's task state in one step.**
+  Mixed selections advance independently through the configured workflow,
+  repeaters keep their existing rollover behavior, blank blocks stay blank, and
+  the complete change is one atomic Undo while the selection remains active.
+  The command remains remappable. (GH #136)
 - **Tabs can now be reordered directly in the overflow menu.** A visible drag
   handle and Alt+Up/Down keyboard actions update the pane's canonical tab order
   while preserving active, pinned, split-pane, close, and persistence behavior.

@@ -20,6 +20,7 @@ import {
   conflicts,
   pushToast,
   graphMeta,
+  workflow,
   timetrackingEnabled,
   logbookWithSecondSupport,
   removeDeletedPageFromNavigation,
@@ -37,6 +38,7 @@ import { notifyModeReset, notifyOutlineSelectionStarted } from "./modeHooks";
 import { sheetConfigFromRaw } from "./sheet/config";
 import { clearMatrixDimensionCache, invalidateAllMatrixDimensions } from "./sheet/matrix";
 import { applyMarkerTransition } from "./logbook";
+import { cycleMarkerSmart } from "./editor/repeat";
 import {
   markDirty,
   isDirty,
@@ -2187,6 +2189,32 @@ export function moveSelection(dir: 1 | -1, extend: boolean) {
   setSelFocus(next);
   if (!extend) setSelAnchor(next);
   scrollBlockRowIntoView(next);
+}
+
+/** Cycle every non-empty block in the active selection as one document
+ * transaction. Each block advances from its own current marker, so a mixed
+ * selection stays mixed (plain -> open, open -> active, active -> done). The
+ * operation is all-or-nothing across read-only pages and preserves the visual
+ * selection for repeated cycling. */
+export function cycleSelectionTasks(): boolean {
+  const ids = selectedIds().filter((id) => !!doc.byId[id]?.raw.trim());
+  if (!ids.length || ids.some((id) => !blockWritable(id))) return false;
+
+  const pages = [...new Set(ids.map((id) => doc.byId[id].page))];
+  pushUndo("cycle-task-sel", pages);
+  setDoc(
+    produce((state) => {
+      for (const id of ids) {
+        const node = state.byId[id];
+        if (!node) continue;
+        // Match the existing editor command exactly: marker cycling handles
+        // repeaters, while checkbox/marker-chip transitions own time tracking.
+        node.raw = cycleMarkerSmart(node.raw, workflow()).raw;
+      }
+    })
+  );
+  for (const page of pages) markDirty(page);
+  return true;
 }
 
 /** Keep the active end of a keyboard selection on screen: as the user holds

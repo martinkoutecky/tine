@@ -34,7 +34,9 @@ import {
   undo,
   redo,
   selectBlock,
+  selectedIds,
   moveSelection,
+  cycleSelectionTasks,
   moveSelectionItems,
   moveBlockFeed,
   moveBlock,
@@ -79,6 +81,7 @@ import {
   seedFavorites,
   renamePageInNavigation,
   dataRev,
+  setWorkflow,
 } from "./ui";
 import { journalTitle } from "./journal";
 import type { BlockDto, PageDto } from "./types";
@@ -123,6 +126,7 @@ beforeAll(() => initParser());
 beforeEach(() => {
   counter = 0;
   resetStore();
+  setWorkflow("now");
   resetPaneLayoutToSingle({
     tabs: [{ history: [{ kind: "journals" }], pos: 0, pinned: false }],
     activeIndex: 0,
@@ -310,6 +314,60 @@ describe("move selection (mod+up/down in block-select)", () => {
     moveSelection(1, true); // extend to C → selection [B, C]
     moveSelectionItems(-1);
     expect(shape()).toEqual([["B"], ["C"], ["A"]]);
+  });
+});
+
+describe("cycle tasks across a block selection (GH #136)", () => {
+  it("cycles every non-empty block independently and undoes as one unit", () => {
+    setWorkflow("todo");
+    const dto = load([blk("write docs"), blk("TODO test it"), blk("DOING ship it"), blk("   ")]);
+    selectBlock(dto.blocks[0].id);
+    moveSelection(1, true);
+    moveSelection(1, true);
+    moveSelection(1, true);
+
+    cycleSelectionTasks();
+    expect(shape()).toEqual([
+      ["TODO write docs"],
+      ["DOING test it"],
+      ["DONE ship it"],
+      ["   "],
+    ]);
+    expect(selectedIds()).toEqual(dto.blocks.map((block) => block.id));
+
+    undo();
+    expect(shape()).toEqual([["write docs"], ["TODO test it"], ["DOING ship it"], ["   "]]);
+    expect(selectedIds()).toEqual(dto.blocks.map((block) => block.id));
+    redo();
+    expect(shape()).toEqual([
+      ["TODO write docs"],
+      ["DOING test it"],
+      ["DONE ship it"],
+      ["   "],
+    ]);
+  });
+
+  it("is atomic when any selected non-empty block is read-only", () => {
+    setWorkflow("todo");
+    const writable = load([blk("first")]);
+    const readOnly = blk("second");
+    loadGuidePages([{
+      name: "Tine-guide/read-only",
+      kind: "page",
+      title: "read-only",
+      pre_block: null,
+      blocks: [readOnly],
+      read_only: true,
+      guide: true,
+    }]);
+    selectBlock(writable.blocks[0].id);
+    // Build a cross-page selection directly through the visible feed scope.
+    setDoc("feed", ["Test", "Tine-guide/read-only"]);
+    moveSelection(1, true);
+
+    cycleSelectionTasks();
+    expect(doc.byId[writable.blocks[0].id].raw).toBe("first");
+    expect(doc.byId[readOnly.id].raw).toBe("second");
   });
 });
 

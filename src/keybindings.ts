@@ -58,6 +58,7 @@ import {
   redo,
   hasSelection,
   moveSelection,
+  cycleSelectionTasks,
   moveSelectionItems,
   indentSelection,
   outdentSelection,
@@ -701,6 +702,10 @@ function focusedGridSurface(gridId: string): string | null {
 // Keyboard handling while in block-selection mode (no editor focused).
 function handleSelectionKey(e: KeyboardEvent): boolean {
   if (e.key === "Escape") return clearSelection(), true;
+  // Resolve the configured command before generic Enter handling. This keeps
+  // Ctrl/Cmd+Enter (and user remaps) in block-selection mode instead of opening
+  // the last selected block's editor.
+  if (matchesCommand(e, "editor/cycle-todo")) return cycleSelectionTasks(), true;
   if (matchesCommand(e, "editor/outdent")) return outdentSelection(), true;
   if (matchesCommand(e, "editor/indent")) return indentSelection(), true;
   if (matchesCommand(e, "editor/move-block-down")) return moveSelectionItems(1), true;
