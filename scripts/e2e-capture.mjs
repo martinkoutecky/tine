@@ -60,50 +60,67 @@ const xdo = (...args) => execFileSync(XDOTOOL, args, {
     ? { ...env, LD_LIBRARY_PATH: process.env.E2E_XDOTOOL_LIB }
     : env,
 }).trim();
-let lastActiveError = "";
-const activeWindowName = () => {
+const allowFocusWhenEwmhIsUnavailable = process.env.E2E_ALLOW_SYNTHETIC_FOCUS === "1";
+const describeWindow = (selector) => {
   try {
-    lastActiveError = "";
-    return xdo("getactivewindow", "getwindowname");
+    const id = xdo(selector);
+    return { id, name: xdo("getwindowname", id), error: "" };
   } catch (error) {
-    lastActiveError = error?.stderr?.toString().trim() || error?.message || String(error);
-    return "";
+    return {
+      id: "",
+      name: "",
+      error: error?.stderr?.toString().trim() || error?.message || String(error),
+    };
   }
 };
-const waitForActive = async (wanted, timeoutMs) => {
+const matchesWindowName = (actual, wanted) => actual === wanted || actual.startsWith(`${wanted} —`);
+const windowState = () => ({
+  active: describeWindow("getactivewindow"),
+  focus: describeWindow("getwindowfocus"),
+});
+const waitForWindow = async (wanted, timeoutMs) => {
   const deadline = Date.now() + timeoutMs;
-  let active = "";
+  let state = windowState();
   while (Date.now() < deadline) {
-    active = activeWindowName();
-    if (active === wanted || active.startsWith(`${wanted} —`)) return active;
+    state = windowState();
+    if (matchesWindowName(state.active.name, wanted)) return state;
+    // Openbox under GitHub's nested Xvfb occasionally leaves
+    // _NET_ACTIVE_WINDOW pointing at a just-destroyed frame even though the
+    // real X input focus has already moved to Quick Capture. The hosted gate
+    // explicitly allows that EWMH-only defect, but still requires the target
+    // window to own actual keyboard focus before injecting any input.
+    if (allowFocusWhenEwmhIsUnavailable && state.active.error && matchesWindowName(state.focus.name, wanted)) {
+      return state;
+    }
     await sleep(50);
   }
-  throw new Error(`${wanted} never became the native active window; active=${JSON.stringify(active)}; xdotool=${JSON.stringify(lastActiveError)}`);
+  throw new Error(`${wanted} never received native focus; state=${JSON.stringify(state)}`);
 };
 
 const appLog = fs.openSync(`${ARTIFACT_DIR}/tine.log`, "w");
 const app = spawn(APP, [], { env, stdio: ["ignore", appLog, appLog], detached: true });
 try {
-  await waitForActive("Tine", 20_000);
+  await waitForWindow("Tine", 20_000);
 
   const second = spawn(APP, ["--capture"], { env, stdio: ["ignore", appLog, appLog], detached: true });
   second.unref();
-  await waitForActive("Quick Capture", 10_000);
+  await waitForWindow("Quick Capture", 10_000);
 
   // Model the short interval between seeing the newly painted window and a
   // human's first keystroke, while still proving that focus remains native.
   await sleep(300);
-  await waitForActive("Quick Capture", 100);
-  const activeId = xdo("getactivewindow");
-  const focusId = xdo("getwindowfocus");
-  if (activeId !== focusId) {
-    throw new Error(`Quick Capture was EWMH-active but lacked X input focus; active=${activeId}, focus=${focusId}`);
+  const quickCapture = await waitForWindow("Quick Capture", 100);
+  if (!matchesWindowName(quickCapture.focus.name, "Quick Capture")) {
+    throw new Error(`Quick Capture lacked X input focus; state=${JSON.stringify(quickCapture)}`);
+  }
+  if (quickCapture.active.name && quickCapture.active.id !== quickCapture.focus.id) {
+    throw new Error(`Quick Capture was EWMH-active but lacked X input focus; state=${JSON.stringify(quickCapture)}`);
   }
   // Native activation and X input focus have now been proven without a click.
   // Click only after that assertion to exercise the rest of the capture/save
   // path; WebKitGTK rejects untrusted synthetic text focus under Xvfb even when
   // its real native window has focus, unlike physical keyboard input.
-  xdo("mousemove", "--window", activeId, "90", "66", "click", "1");
+  xdo("mousemove", "--window", quickCapture.focus.id, "90", "66", "click", "1");
   // Let WebKit finish the synthetic pointer-focus transition before injecting
   // text; otherwise Xvfb can consume the first character as the editor mounts.
   await sleep(150);
@@ -116,7 +133,7 @@ try {
   if (!fs.readFileSync(journalPath, "utf8").includes(PROOF)) {
     throw new Error(`native typing did not reach the graph; journal=${JSON.stringify(fs.readFileSync(journalPath, "utf8"))}`);
   }
-  console.log("PASS: Quick Capture became native-active/X-focused without a click and saved injected input");
+  console.log("PASS: Quick Capture received native X input focus without a click and saved injected input");
 } finally {
   try { process.kill(-app.pid, "SIGKILL"); } catch {}
   try { if (wm) process.kill(-wm.pid, "SIGKILL"); } catch {}
