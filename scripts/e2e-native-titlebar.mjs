@@ -160,6 +160,19 @@ try {
       activeTag: document.activeElement?.tagName ?? "",
       activeClass: document.activeElement?.getAttribute("class") ?? "",
     }));
+    // Diagnostic control: WM_DELETE_WINDOW bypasses the decoration's pointer
+    // widget but enters the same application close-request path. If this works,
+    // the defect is the runtime-created frame rather than Tine's safe-close
+    // handler. The test still fails because the actual close button did not.
+    xdo("windowclose", decorated.id);
+    await sleep(800);
+    const semanticState = windowIds().length === 0
+      ? { closed: true }
+      : await browser.execute(() => ({
+          closed: false,
+          transitionShield: Boolean(document.querySelector(".graph-transition-shield")),
+        }));
+    throw new Error(`native close button was inert; clickState=${JSON.stringify(clickState)} semanticClose=${JSON.stringify(semanticState)} geometry=${JSON.stringify(g)} extents=${JSON.stringify(decorated.extents)} click=${closeX},${closeY}`);
   }
   await waitFor(() => windowIds().length === 0, 12_000,
     `native close control did not close Tine; geometry=${JSON.stringify(g)} extents=${JSON.stringify(decorated.extents)} click=${closeX},${closeY} state=${JSON.stringify(clickState)}`);
