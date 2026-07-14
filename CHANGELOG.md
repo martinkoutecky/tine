@@ -66,6 +66,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Page property settings preserve the surrounding Markdown layout.** Editing
+  one field now updates it in place without moving it below other properties or
+  deleting blank separators, so unrelated page-header metadata remains intact.
+  (GH #163)
 - **Logseq PDF highlights open safely and round-trip between both apps.** The
   bounded EDN reader now consumes Logseq's UUID tags and list-shaped rectangles
   without runaway allocation, preserves creation-zoom coordinates for correct

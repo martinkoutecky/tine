@@ -318,23 +318,35 @@ export function readPropertyValue(block: string | null, key: string): string | n
 }
 
 /** Add / replace / remove a `key:: value` line. A null or empty value removes
- *  the key. Other property lines are preserved (blank lines dropped); returns
- *  null when nothing is left (so an emptied pre-block isn't written as "").  */
+ *  the key. Replace the first matching line in place and preserve every
+ *  unrelated line and blank separator byte-for-byte; page-property grouping
+ *  and order are user data, not disposable formatting. Duplicate matching
+ *  keys retain the prior single-value behavior and collapse to the first slot.
+ *  Returns null when no nonblank content remains. */
 export function upsertPropertyLine(
   block: string | null,
   key: string,
   value: string | null
 ): string | null {
-  const kept = (block ?? "")
-    .split("\n")
-    .filter((l) => {
-      const m = PROP_LINE.exec(l);
-      return !(m && m[1].toLowerCase() === key.toLowerCase());
-    })
-    .filter((l) => l.trim() !== "");
   const v = value == null ? null : value.trim();
-  if (v) kept.push(`${key}:: ${v}`);
-  return kept.length ? kept.join("\n") : null;
+  const lines = block == null || block === "" ? [] : block.split("\n");
+  const out: string[] = [];
+  let matched = false;
+  for (const line of lines) {
+    const m = PROP_LINE.exec(line);
+    if (m && m[1].toLowerCase() === key.toLowerCase()) {
+      if (!matched && v) out.push(`${m[1]}:: ${v}`);
+      matched = true;
+      continue;
+    }
+    out.push(line);
+  }
+  if (!matched && v) {
+    let insertAt = out.length;
+    while (insertAt > 0 && out[insertAt - 1].trim() === "") insertAt--;
+    out.splice(insertAt, 0, `${key}:: ${v}`);
+  }
+  return out.some((line) => line.trim() !== "") ? out.join("\n") : null;
 }
 
 /** The page-level properties we surface in the page-properties panel, with a
