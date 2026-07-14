@@ -270,7 +270,7 @@ describe("block embed hierarchy", () => {
     }
   });
 
-  it("keeps the empty editor and caret in the visible embed after deleting all text", async () => {
+  it("keeps deletion and the empty-block Backspace destination in the visible embed", async () => {
     const targetId = "embed-delete-surface";
     const childId = `${targetId}-child`;
     const { root, dispose } = renderFixture(targetId);
@@ -304,6 +304,18 @@ describe("block embed hierarchy", () => {
         expect(editingId()).toBe(childId);
         expect(document.activeElement).toBe(editor);
         expect(editor.closest(".embed-block")).not.toBeNull();
+      });
+
+      editor.setSelectionRange(0, 0);
+      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", bubbles: true }));
+      await vi.waitFor(() => {
+        const parentEditor = root.querySelector<HTMLTextAreaElement>(
+          `.embed-block [data-block-id="${targetId}"] textarea.block-editor`,
+        );
+        expect(parentEditor).not.toBeNull();
+        expect(document.activeElement).toBe(parentEditor);
+        expect(editingId()).toBe(targetId);
+        expect(doc.byId[childId]).toBeUndefined();
       });
     } finally {
       dispose();
