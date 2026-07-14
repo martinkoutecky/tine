@@ -219,4 +219,94 @@ describe("block embed hierarchy", () => {
       dispose();
     }
   });
+
+  it("keeps ArrowUp and ArrowDown navigation in the visible embed surface", async () => {
+    const targetId = "embed-arrow-surface";
+    const childId = `${targetId}-child`;
+    const { root, dispose } = renderFixture(targetId);
+
+    try {
+      const embeddedChild = await vi.waitFor(() => {
+        const element = root.querySelector<HTMLElement>(
+          `.embed-block [data-block-id="${childId}"] > .block-main .block-content`,
+        );
+        expect(element).not.toBeNull();
+        return element!;
+      });
+      mouseDownAndUp(embeddedChild);
+
+      const childEditor = await vi.waitFor(() => {
+        const editor = root.querySelector<HTMLTextAreaElement>(
+          `.embed-block [data-block-id="${childId}"] textarea.block-editor`,
+        );
+        expect(editor).not.toBeNull();
+        return editor!;
+      });
+      childEditor.setSelectionRange(0, 0);
+      childEditor.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }));
+
+      const parentEditor = await vi.waitFor(() => {
+        const editor = root.querySelector<HTMLTextAreaElement>(
+          `.embed-block [data-block-id="${targetId}"] textarea.block-editor`,
+        );
+        expect(editor).not.toBeNull();
+        expect(document.activeElement).toBe(editor);
+        return editor!;
+      });
+      expect(editingId()).toBe(targetId);
+
+      parentEditor.setSelectionRange(parentEditor.value.length, parentEditor.value.length);
+      parentEditor.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+      await vi.waitFor(() => {
+        const editor = root.querySelector<HTMLTextAreaElement>(
+          `.embed-block [data-block-id="${childId}"] textarea.block-editor`,
+        );
+        expect(editor).not.toBeNull();
+        expect(document.activeElement).toBe(editor);
+      });
+      expect(editingId()).toBe(childId);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("keeps the empty editor and caret in the visible embed after deleting all text", async () => {
+    const targetId = "embed-delete-surface";
+    const childId = `${targetId}-child`;
+    const { root, dispose } = renderFixture(targetId);
+
+    try {
+      const embeddedChild = await vi.waitFor(() => {
+        const element = root.querySelector<HTMLElement>(
+          `.embed-block [data-block-id="${childId}"] > .block-main .block-content`,
+        );
+        expect(element).not.toBeNull();
+        return element!;
+      });
+      mouseDownAndUp(embeddedChild);
+
+      const editor = await vi.waitFor(() => {
+        const element = root.querySelector<HTMLTextAreaElement>(
+          `.embed-block [data-block-id="${childId}"] textarea.block-editor`,
+        );
+        expect(element).not.toBeNull();
+        return element!;
+      });
+      editor.setSelectionRange(0, editor.value.length);
+      editor.value = "";
+      editor.dispatchEvent(new InputEvent("input", {
+        bubbles: true,
+        inputType: "deleteContentForward",
+      }));
+
+      await vi.waitFor(() => {
+        expect(doc.byId[childId].raw).toBe("");
+        expect(editingId()).toBe(childId);
+        expect(document.activeElement).toBe(editor);
+        expect(editor.closest(".embed-block")).not.toBeNull();
+      });
+    } finally {
+      dispose();
+    }
+  });
 });
