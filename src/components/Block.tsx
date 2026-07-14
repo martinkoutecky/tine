@@ -57,6 +57,7 @@ import {
   withUndoUnit,
   blockIsGridView,
   trackAssetWrite,
+  formatForBlock,
   collapsibleDescendantIds,
   setCollapsedDescendants,
   type OutlineScope,
@@ -1346,7 +1347,12 @@ export function Editor(props: { id: string }): JSX.Element {
       return;
     }
     if (stored !== candidate) seedAssetBlob(stored, bytes);
-    const md = assetMarkdown(stored);
+    const page = pageByName(doc.byId[props.id]?.page ?? "");
+    const md = assetMarkdown(stored, {
+      label: origName,
+      pagePath: page?.path,
+      format: formatForBlock(props.id),
+    });
     // The user may have kept typing while a large capture was being fsynced; use
     // the current selection instead of replaying a stale pre-write offset.
     const start = ref.selectionStart;
@@ -1361,9 +1367,14 @@ export function Editor(props: { id: string }): JSX.Element {
     });
   };
 
-  const insertStoredAssets = (names: string[]) => {
-    if (!names.length) return;
-    const markdown = names.map(assetMarkdown).join("\n");
+  const insertStoredAssets = (assets: { stored: string; label?: string }[]) => {
+    if (!assets.length) return;
+    const page = pageByName(doc.byId[props.id]?.page ?? "");
+    const markdown = assets.map(({ stored, label }) => assetMarkdown(stored, {
+      label,
+      pagePath: page?.path,
+      format: formatForBlock(props.id),
+    })).join("\n");
     const start = ref.selectionStart;
     const end = ref.selectionEnd;
     const newRaw = ref.value.slice(0, start) + markdown + ref.value.slice(end);
@@ -1399,7 +1410,7 @@ export function Editor(props: { id: string }): JSX.Element {
     const toastId = pushToast("Pasting files…", "info");
     let skipped = 0;
     let nativeUnavailable = false;
-    const stored: string[] = [];
+    const stored: { stored: string; label?: string }[] = [];
     try {
       const native = await backend().clipboardFiles().catch(() => {
         nativeUnavailable = true;
@@ -1409,7 +1420,10 @@ export function Editor(props: { id: string }): JSX.Element {
         skipped += native.skipped;
         for (const file of native.files) {
           try {
-            stored.push(await trackAssetWrite(backend().importAsset(file.path, assetFileName(file.name))));
+            stored.push({
+              stored: await trackAssetWrite(backend().importAsset(file.path, assetFileName(file.name))),
+              label: file.name,
+            });
           } catch {
             skipped += 1;
           }
@@ -1452,7 +1466,7 @@ export function Editor(props: { id: string }): JSX.Element {
             }
             const candidate = assetFileName(file.name || undefined);
             const saved = await trackAssetWrite(backend().saveAsset(candidate, bytes));
-            stored.push(saved);
+            stored.push({ stored: saved, label: file.name || undefined });
             try {
               seedAssetBlob(saved, bytes);
             } catch {
@@ -1584,7 +1598,12 @@ export function Editor(props: { id: string }): JSX.Element {
       // Store with a timestamped name (keeps the original + a sortable insert time).
       const orig = path.split(/[\\/]/).pop() || undefined;
       const saved = await trackAssetWrite(backend().importAsset(path, assetFileName(orig)));
-      const md = assetMarkdown(saved);
+      const page = pageByName(doc.byId[props.id]?.page ?? "");
+      const md = assetMarkdown(saved, {
+        label: orig,
+        pagePath: page?.path,
+        format: formatForBlock(props.id),
+      });
       const pos = ref.selectionStart;
       const nr = ref.value.slice(0, pos) + md + ref.value.slice(pos);
       commit(nr); // reattach hidden id::/collapsed:: (nr is visible-only text)
@@ -1617,7 +1636,11 @@ export function Editor(props: { id: string }): JSX.Element {
       const saved = await trackAssetWrite(
         backend().saveAsset(captureAssetFileName(ed.blank.ext), bytes)
       );
-      const md = assetMarkdown(saved);
+      const page = pageByName(doc.byId[props.id]?.page ?? "");
+      const md = assetMarkdown(saved, {
+        pagePath: page?.path,
+        format: formatForBlock(props.id),
+      });
       const pos = ref.selectionStart;
       const nr = ref.value.slice(0, pos) + md + ref.value.slice(pos);
       commit(nr); // reattach hidden id::/collapsed:: (nr is visible-only text)

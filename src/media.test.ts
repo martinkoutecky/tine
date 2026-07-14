@@ -36,6 +36,22 @@ describe("media helpers", () => {
     expect(assetMarkdown("paper.pdf")).toBe("![paper.pdf](../assets/paper.pdf)");
   });
 
+  it("assetMarkdown: keeps the original PDF label when a template renames the stored file", () => {
+    expect(assetMarkdown("20300102-paper.pdf", {
+      label: "Research paper.pdf",
+      pagePath: "pages/Reading.md",
+      format: "md",
+    })).toBe("![Research paper.pdf](../assets/20300102-paper.pdf)");
+  });
+
+  it("assetMarkdown: resolves nested page paths and emits OG-compatible Org links", () => {
+    expect(assetMarkdown("20300102-paper.pdf", {
+      label: "Research paper.pdf",
+      pagePath: "pages/projects/Reading.org",
+      format: "org",
+    })).toBe("[[../../assets/20300102-paper.pdf][Research paper.pdf]]");
+  });
+
   it("assetFileName: default = plain (sanitized) original name; paste → stamp.png", () => {
     // Default template is %assetname.%ext (the bare original name), ext case kept.
     expect(assetFileName("My Holiday Clip.MP4")).toBe("My_Holiday_Clip.MP4");

@@ -4,6 +4,7 @@
 // image vs video vs audio.
 
 import { assetNameFormat } from "./assetSettings";
+import type { Format } from "./types";
 
 // Image extensions Tine renders as <img> (unchanged from the prior inline check).
 export const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"];
@@ -31,12 +32,50 @@ export function mediaKind(nameOrUrl: string): MediaKind | null {
   return null;
 }
 
-/** Markdown for an inserted asset. Logseq uses image/embed syntax for PDFs as
- *  well as inline media; keeping the filename as a PDF label makes a graph made
- *  in Tine open the same PDF surface in either application. */
-export function assetMarkdown(name: string): string {
-  if (extOf(name) === "pdf") return `![${name}](../assets/${name})`;
-  return mediaKind(name) ? `![](../assets/${name})` : `[${name}](../assets/${name})`;
+export interface AssetMarkdownOptions {
+  /** Original source filename. The stored name may differ because of Tine's
+   * configurable filename template or collision de-duplication. */
+  label?: string;
+  /** Graph-root-relative path of the page receiving the link. */
+  pagePath?: string;
+  format?: Format;
+}
+
+/** Asset target relative to the file that owns the edited block, matching
+ * Logseq's file-graph insertion behavior. New/unresolved pages retain the
+ * conventional pages/ fallback (`../assets/`). */
+export function assetRelativeTarget(name: string, pagePath?: string): string {
+  if (!pagePath) return `../assets/${name}`;
+  const parts = pagePath
+    .replace(/\\/g, "/")
+    .replace(/^\/+/, "")
+    .split("/")
+    .filter((part) => part && part !== "." && part !== "..");
+  const depth = Math.max(0, parts.length - 1);
+  return `${depth ? "../".repeat(depth) : ""}assets/${name}`;
+}
+
+function markdownLabel(label: string): string {
+  return label.replace(/\\/g, "\\\\").replace(/\[/g, "\\[").replace(/\]/g, "\\]").replace(/[\r\n]+/g, " ");
+}
+
+function orgLabel(label: string): string {
+  return label.replace(/\\/g, "\\\\").replace(/\]/g, "\\]").replace(/[\r\n]+/g, " ");
+}
+
+/** Markup for an inserted graph asset. PDF labels use the original source name
+ * while their target uses Tine's configurable stored filename. */
+export function assetMarkdown(name: string, options: AssetMarkdownOptions = {}): string {
+  const target = assetRelativeTarget(name, options.pagePath);
+  const label = options.label ?? name;
+  const kind = mediaKind(name);
+  if (options.format === "org") {
+    if (kind === "image") return `[[${target}]]`;
+    return `[[${target}][${orgLabel(label)}]]`;
+  }
+  if (extOf(name) === "pdf") return `![${markdownLabel(label)}](${target})`;
+  if (kind) return `![](${target})`;
+  return `[${markdownLabel(label)}](${target})`;
 }
 
 /** Sanitize a filename stem for both the filesystem and the Markdown link that
