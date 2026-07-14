@@ -12,6 +12,7 @@ import {
   orderAcItems,
   COMMANDS,
   commandScore,
+  codeLanguageItems,
   fuzzyScore,
   type Trigger,
 } from "../editor/autocomplete";
@@ -1154,6 +1155,17 @@ export function Editor(props: { id: string }): JSX.Element {
     }
     setAc(t);
     setAcIndex(0);
+    if (t.kind === "code-language") {
+      setAcItems(codeLanguageItems(t.query).map((language) => ({
+        label: language.label,
+        sub: [language.id, ...language.aliases].join(" · "),
+        insert: language.id,
+        // If a completed fence scaffold already follows, land on its code line;
+        // a hand-typed one-line fence stays at the end and Enter behaves normally.
+        caret: language.id.length + (ref.value[t.end] === "\n" ? 1 : 0),
+      })));
+      return;
+    }
     if (t.kind === "command") {
       const q = t.query;
       const tmpls = await getTemplates();
@@ -1673,6 +1685,34 @@ export function Editor(props: { id: string }): JSX.Element {
         closeAc();
         setQueryBuilderAutoOpen(props.id);
         endEdit("query-builder");
+        return;
+      }
+      case "code-block": {
+        // Keep the familiar complete fence scaffold, but open the language
+        // picker immediately even though an empty hand-typed fence stays quiet.
+        const scaffold = "```\n\n```";
+        const result = applyCompletion(ref.value, t.start, t.end, scaffold, 3);
+        const languageTrigger: Trigger = {
+          kind: "code-language",
+          query: "",
+          start: t.start + 3,
+          end: t.start + 3,
+        };
+        commit(result.raw);
+        setAc(languageTrigger);
+        setAcIndex(0);
+        setAcItems(codeLanguageItems("").map((language) => ({
+          label: language.label,
+          sub: [language.id, ...language.aliases].join(" · "),
+          insert: language.id,
+          caret: language.id.length + 1,
+        })));
+        queueMicrotask(() => {
+          ref.value = result.raw;
+          ref.setSelectionRange(result.caret, result.caret);
+          ref.focus();
+          autosize();
+        });
         return;
       }
       case "page-props": {

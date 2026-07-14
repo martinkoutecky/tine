@@ -10,6 +10,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Opening fenced code blocks now offer language completion.** Typing at least
+  one language character after backtick or tilde fences searches only the
+  languages bundled for highlighting, accepts common aliases while writing the
+  canonical identifier, and never activates on closing fences. `/Code block`
+  opens the same bounded picker immediately; bare and unsupported fences keep
+  their previous Enter behavior. (GH #94)
 - **Ctrl/Cmd+Enter now cycles every selected block's task state in one step.**
   Mixed selections advance independently through the configured workflow,
   repeaters keep their existing rollover behavior, blank blocks stay blank, and

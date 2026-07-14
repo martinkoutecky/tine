@@ -4,7 +4,56 @@
 import { TEMPLATE_VARS } from "./templateVars";
 import { tagRef } from "../tags";
 
-export type TriggerKind = "page" | "tag" | "command" | "block";
+export type TriggerKind = "page" | "tag" | "command" | "block" | "code-language";
+
+export interface CodeLanguageItem {
+  /** Canonical highlight.js/common identifier written to the fence. */
+  id: string;
+  label: string;
+  aliases: readonly string[];
+}
+
+// Runtime rendering lazy-loads highlight.js/lib/common. Keep this small static
+// mirror so opening the editor does not eagerly pull the highlighter into the
+// main bundle; a drift test compares it with the pinned dependency's registry.
+export const COMMON_CODE_LANGUAGES: readonly CodeLanguageItem[] = [
+  { id: "javascript", label: "JavaScript", aliases: ["js", "jsx", "mjs", "cjs"] },
+  { id: "typescript", label: "TypeScript", aliases: ["ts", "tsx", "mts", "cts"] },
+  { id: "python", label: "Python", aliases: ["py", "gyp", "ipython"] },
+  { id: "bash", label: "Bash", aliases: ["sh", "zsh"] },
+  { id: "json", label: "JSON", aliases: ["jsonc"] },
+  { id: "markdown", label: "Markdown", aliases: ["md", "mkdown", "mkd"] },
+  { id: "xml", label: "HTML, XML", aliases: ["html", "xhtml", "rss", "atom", "xjb", "xsd", "xsl", "plist", "wsf", "svg"] },
+  { id: "css", label: "CSS", aliases: [] },
+  { id: "sql", label: "SQL", aliases: [] },
+  { id: "java", label: "Java", aliases: ["jsp"] },
+  { id: "c", label: "C", aliases: ["h"] },
+  { id: "cpp", label: "C++", aliases: ["cc", "c++", "h++", "hpp", "hh", "hxx", "cxx"] },
+  { id: "csharp", label: "C#", aliases: ["cs", "c#"] },
+  { id: "go", label: "Go", aliases: ["golang"] },
+  { id: "rust", label: "Rust", aliases: ["rs"] },
+  { id: "kotlin", label: "Kotlin", aliases: ["kt", "kts"] },
+  { id: "swift", label: "Swift", aliases: [] },
+  { id: "php", label: "php", aliases: [] },
+  { id: "ruby", label: "Ruby", aliases: ["rb", "gemspec", "podspec", "thor", "irb"] },
+  { id: "yaml", label: "YAML", aliases: ["yml"] },
+  { id: "plaintext", label: "Plain text", aliases: ["text", "txt"] },
+  { id: "diff", label: "Diff", aliases: ["patch"] },
+  { id: "graphql", label: "GraphQL", aliases: ["gql"] },
+  { id: "ini", label: "TOML, also INI", aliases: ["toml"] },
+  { id: "less", label: "Less", aliases: [] },
+  { id: "lua", label: "Lua", aliases: ["pluto"] },
+  { id: "makefile", label: "Makefile", aliases: ["mk", "mak", "make"] },
+  { id: "perl", label: "Perl", aliases: ["pl", "pm"] },
+  { id: "objectivec", label: "Objective-C", aliases: ["mm", "objc", "obj-c", "obj-c++", "objective-c++"] },
+  { id: "php-template", label: "PHP template", aliases: [] },
+  { id: "python-repl", label: "python-repl", aliases: ["pycon"] },
+  { id: "r", label: "R", aliases: [] },
+  { id: "scss", label: "SCSS", aliases: [] },
+  { id: "shell", label: "Shell Session", aliases: ["console", "shellsession"] },
+  { id: "vbnet", label: "Visual Basic .NET", aliases: ["vb"] },
+  { id: "wasm", label: "WebAssembly", aliases: [] },
+];
 
 export interface Trigger {
   kind: TriggerKind;
@@ -16,6 +65,25 @@ export interface Trigger {
   end: number;
 }
 
+/** True when the current line starts inside a preceding Markdown fence. A
+ * fence-looking line inside code is content/closing syntax, never an opening
+ * language declaration. */
+function insideFenceBefore(raw: string, lineStart: number): boolean {
+  let open: { char: "`" | "~"; len: number } | null = null;
+  for (const line of raw.slice(0, lineStart).split("\n")) {
+    const match = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (!match) continue;
+    const fence = match[1];
+    const char = fence[0] as "`" | "~";
+    if (!open) {
+      open = { char, len: fence.length };
+    } else if (char === open.char && fence.length >= open.len && match[2].trim() === "") {
+      open = null;
+    }
+  }
+  return open !== null;
+}
+
 /** Detect an active completion trigger immediately before `caret`. */
 export function detectTrigger(raw: string, caret: number): Trigger | null {
   // No trigger spans a newline: the `[[` inner forbids it, and `#tag`/`/command`
@@ -25,6 +93,15 @@ export function detectTrigger(raw: string, caret: number): Trigger | null {
   // are offset back into `raw` by `lineStart`, so callers see absolute positions.
   const lineStart = raw.lastIndexOf("\n", caret - 1) + 1;
   const before = raw.slice(lineStart, caret);
+
+  // Opening Markdown fence language. Do not pop a menu for a bare fence typed
+  // by hand (Enter keeps its established behavior); one language character is
+  // enough. The /Code block command explicitly opens the empty picker instead.
+  const fence = /^( {0,3})(`{3,}|~{3,})([\w+#.-]+)$/.exec(before);
+  if (fence && !insideFenceBefore(raw, lineStart)) {
+    const start = lineStart + fence[1].length + fence[2].length;
+    return { kind: "code-language", query: fence[3], start, end: caret };
+  }
 
   // [[page and ((block — an opener with no closer since (the line has no
   // newline). Whichever opener sits closer to the caret wins (you can type a
@@ -168,6 +245,7 @@ export type CommandAction =
   | "today"
   | "query-builder"
   | "page-props"
+  | "code-block"
   | "sheet-grid"
   | "sheet-table"
   | "sheet-board"
@@ -219,7 +297,7 @@ export const COMMANDS: Command[] = [
   { label: "Upload an asset", action: "upload-asset" },
   { label: "Voice recording", action: "record" },
   { label: "Draw.io diagram", action: "drawio" },
-  { label: "Code block", insert: "```\n\n```", caret: 4 },
+  { label: "Code block", action: "code-block" },
   { label: "Calculator", insert: "```calc\n\n```", caret: 8 },
   { label: "Quote", insert: "> " },
   // Org-mode admonitions (Logseq's colored callouts). Caret lands on the empty
@@ -292,6 +370,26 @@ export function fuzzyScore(query: string, str: string): number {
       si += 1;
     }
   }
+}
+
+/** Languages actually bundled by highlight.js/common, ranked by canonical id,
+ * readable name, and aliases. Accepting an alias always writes the canonical id
+ * so rendering and future edits have one stable representation. */
+export function codeLanguageItems(query: string): CodeLanguageItem[] {
+  if (!query) return COMMON_CODE_LANGUAGES.slice();
+  return COMMON_CODE_LANGUAGES
+    .map((item, index) => ({
+      item,
+      index,
+      score: Math.max(
+        fuzzyScore(query, item.id),
+        fuzzyScore(query, item.label),
+        ...item.aliases.map((alias) => fuzzyScore(query, alias)),
+      ),
+    }))
+    .filter(({ score }) => score > 0)
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .map(({ item }) => item);
 }
 
 /** Fuzzy score for a command against `query`: the best of its label and its
