@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+## [0.5.9] - 2026-07-14
+
 ### Added
 
 - **Linked and unlinked references now share exact source evidence.** Each
@@ -69,10 +71,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - **Block reference-count badges now refresh after a reference is saved.**
   Creating or removing a `((block reference))` updates the source block's badge
   without requiring the graph to be reopened. (GH #154)
-- **Tine's icon is now used consistently by Linux/Wayland window chrome.**
-  Every main, graph, and Quick Capture window advertises Tine's stable desktop
-  identity, and standalone binaries provide the matching desktop entry and icon
-  without interfering with single-instance shortcut forwarding.
+- **Linux windows now advertise Tine's stable desktop identity.** Main, graph,
+  and Quick Capture windows use the packaged application ID, and standalone
+  binaries provide the matching desktop entry and icon without interfering with
+  single-instance shortcut forwarding. A remaining Plasma task-switcher lookup
+  problem is tracked separately rather than being treated as covered here.
 - **Linux system titlebar controls work when native window decorations are
   enabled.** GTK now propagates pointer events to the window-manager frame, so
   its minimize, maximize, and close buttons are interactive; close still runs

@@ -23,6 +23,13 @@ node scripts/check-flatpak-node-sources.mjs
 
 After changing Rust dependencies, regenerate `cargo-sources.json` with
 `flatpak-builder-tools/cargo/flatpak-cargo-generator.py` from `Cargo.lock`.
+Then separate git packages from registry crates so equal name/version pairs do
+not collide inside Cargo's offline directory source:
+
+```bash
+node scripts/normalize-flatpak-cargo-sources.mjs
+```
+
 Verify the generated registry archives and git pins with:
 
 ```bash

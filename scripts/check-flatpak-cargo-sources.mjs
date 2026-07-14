@@ -44,6 +44,24 @@ const problems = [];
 let registryCount = 0;
 let gitCount = 0;
 
+const cargoConfig = sources.find(
+  (source) => source?.type === "inline" && source.dest === "cargo" && source["dest-filename"] === "config"
+);
+if (
+  !cargoConfig?.contents?.includes('[source.vendored-registry]\ndirectory = "cargo/vendor"') ||
+  !cargoConfig?.contents?.includes('[source.vendored-git]\ndirectory = "cargo/git-vendor"') ||
+  !cargoConfig?.contents?.includes('[source.crates-io]\nreplace-with = "vendored-registry"')
+) {
+  problems.push("registry and git packages must use separate Cargo directory sources");
+}
+for (const source of sources) {
+  for (const command of source.commands ?? []) {
+    if (command.includes("flatpak-cargo/git/") && command.includes('"cargo/vendor/')) {
+      problems.push(`git package still shares the registry vendor: ${command}`);
+    }
+  }
+}
+
 for (const pkg of packages) {
   if (pkg.source.startsWith("registry+https://github.com/rust-lang/crates.io-index")) {
     registryCount += 1;
