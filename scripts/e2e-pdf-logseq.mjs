@@ -191,6 +191,11 @@ try {
 
   // Recoloring is a real mutation. It must preserve the foreign root metadata
   // while writing the UUID/list/corner shape that Logseq itself consumes.
+  // Center the highlight explicitly before asking WebDriver to click it. Its
+  // implicit scroll can otherwise place a zoomed highlight underneath the
+  // fixed PDF toolbar and report an intercepted click even though the element
+  // itself is a valid pointer target in the app.
+  await browser.execute(() => document.querySelector(".pdf-hl")?.scrollIntoView({ block: "center", inline: "center" }));
   await browser.$(".pdf-hl").click();
   await browser.$(".pdf-color-menu").waitForExist({ timeout: 5000 });
   await browser.execute(() => {
