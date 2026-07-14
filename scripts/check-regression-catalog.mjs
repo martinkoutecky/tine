@@ -14,6 +14,14 @@ process.stdout.write(uiCheck.stdout);
 process.stderr.write(uiCheck.stderr);
 if (uiCheck.status !== 0) process.exit(uiCheck.status ?? 1);
 
+const taoTitlebarCheck = spawnSync(process.execPath, [path.join(root, "scripts/check-tao-native-titlebar.mjs")], {
+  cwd: root,
+  encoding: "utf8",
+});
+process.stdout.write(taoTitlebarCheck.stdout);
+process.stderr.write(taoTitlebarCheck.stderr);
+if (taoTitlebarCheck.status !== 0) process.exit(taoTitlebarCheck.status ?? 1);
+
 const index = JSON.parse(fs.readFileSync(path.join(root, "tests/regressions/catalog.json"), "utf8"));
 const problems = [];
 const inventoryIds = new Set();
