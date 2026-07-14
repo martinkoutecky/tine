@@ -52,6 +52,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Changed
 
+- **PDF uploads and annotations now follow Logseq OG's file-graph contract.**
+  Upload links retain the original source name while Tine's configurable
+  filename template controls the stored asset, resolve from the actual page
+  path, and use the correct Markdown or Org syntax. The viewer restores and
+  persists page/scale state, creates `hls__` pages in the graph's preferred
+  format, copies a new highlight's block reference, and writes OG-shaped area
+  metadata while retaining Tine's guarded merge and foreign-data protections.
 - **Search now has one visible home beside the primary navigation controls.**
   The duplicate read-only sidebar field is gone; the labelled toolbar button,
   Ctrl+K shortcut, complete switcher, and “Open search tab” flow are unchanged.

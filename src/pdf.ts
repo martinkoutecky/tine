@@ -1,6 +1,6 @@
 // Shared PDF helpers (mirror the Rust asset_key / hls naming and colors).
 
-import type { Rect } from "./types";
+import type { Highlight, Rect } from "./types";
 
 export interface PdfPageDimensions {
   w: number;
@@ -34,6 +34,12 @@ export function rectInPageSpace(rect: Rect, page: PdfPageDimensions): Rect {
 export function rectWithSourceSpace(rect: Rect, page: PdfPageDimensions): Rect {
   if (hasSourceSpace(rect)) return rect;
   return { ...rect, source_width: page.w, source_height: page.h };
+}
+
+/** OG stores an area highlight entirely in `bounding`; `rects` is reserved for
+ * the line fragments of a text selection and is empty for a captured region. */
+export function areaHighlightPosition(page: number, bounding: Rect): Highlight["position"] {
+  return { page, bounding, rects: [] };
 }
 
 // MUST stay byte-for-byte in sync with the Rust `asset_key` (crates/tine-core/

@@ -5,7 +5,7 @@ import { backend } from "../backend";
 import { closePdf, pushToast, isConflicted, activePane } from "../ui";
 import { flushPage, isDirty, reloadHlsIfLoaded, trackAssetWrite } from "../store";
 import { openPage } from "../router";
-import { hlsPageName, rectInPageSpace, rectWithSourceSpace, type PdfPageDimensions } from "../pdf";
+import { areaHighlightPosition, hlsPageName, rectInPageSpace, rectWithSourceSpace, type PdfPageDimensions } from "../pdf";
 import { decideWheelZoomGesture, type WheelZoomGestureState } from "../zoom";
 import type { Highlight, Rect } from "../types";
 
@@ -63,6 +63,10 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
   const [pageField, setPageField] = createSignal("1");
   let pageInputFocused = false;
   let scrollRaf: number | undefined;
+  let viewStateTimer: number | undefined;
+  let viewStateReady = false;
+  let viewStateBaseline: { page: number; scale: number } | null = null;
+  let pendingViewState: { page: number; scale: number } | null = null;
   // Find-in-PDF: matches are (page, char span) over each page's joined text;
   // findCur is the 1-based index of the active match (0 = none).
   const [findOpen, setFindOpen] = createSignal(false);
@@ -195,6 +199,11 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
     await reloadHlsIfLoaded(hlsName);
     return true;
   };
+
+  const copyCreatedHighlightRef = async (id: string) => {
+    await backend().writeText(`((${id}))`);
+    pushToast("Copied highlight ref", "success");
+  };
   // Remove a highlight (and its annotation block on the hls page).
   const deleteHighlight = async (id: string) => {
     const prev = highlights();
@@ -211,6 +220,30 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
   const clampScale = (s: number) => Math.min(4, Math.max(0.2, s));
   const fitWidthScale = () => (dims[1] ? clampScale((scrollRef.clientWidth - 32) / dims[1].w) : 1);
   const fitHeightScale = () => (dims[1] ? clampScale((scrollRef.clientHeight - 24) / dims[1].h) : 1);
+
+  const flushViewState = async () => {
+    if (viewStateTimer !== undefined) {
+      clearTimeout(viewStateTimer);
+      viewStateTimer = undefined;
+    }
+    const next = pendingViewState;
+    pendingViewState = null;
+    if (!next || (viewStateBaseline?.page === next.page && viewStateBaseline?.scale === next.scale)) return;
+    try {
+      await trackAssetWrite(backend().writePdfViewState(props.filename, next.page, next.scale));
+      viewStateBaseline = next;
+    } catch (error) {
+      pushToast(`Couldn't save PDF view position. (${String(error)})`, "error");
+    }
+  };
+
+  const scheduleViewState = (page: number, nextScale: number) => {
+    if (!viewStateReady || !Number.isFinite(nextScale) || nextScale <= 0) return;
+    if (viewStateBaseline?.page === page && viewStateBaseline?.scale === nextScale) return;
+    pendingViewState = { page, scale: nextScale };
+    if (viewStateTimer !== undefined) clearTimeout(viewStateTimer);
+    viewStateTimer = window.setTimeout(() => void flushViewState(), 4000);
+  };
 
   function failPdf(message: string) {
     if (loadError()) return;
@@ -577,10 +610,16 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
 
   onMount(async () => {
     setLoadError(null);
+    let restoredPage: number | null = null;
+    let restoredScale: number | null = null;
     try {
-      setHighlights(await backend().readHighlights(props.filename));
-    } catch {
+      const state = await backend().openPdf(props.filename, props.label);
+      setHighlights(state.highlights);
+      restoredPage = state.page;
+      restoredScale = state.scale;
+    } catch (error) {
       setHighlights([]);
+      pushToast(`Couldn't load PDF annotations. (${String(error)})`, "error");
     }
     baseIds = highlights().map((h) => h.id); // load baseline for the 3-way merge
     let bytes: Uint8Array;
@@ -632,15 +671,18 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
     dimsKnown.clear();
     dimsKnown.add(1);
     for (let n = 2; n <= doc.numPages; n++) dims[n] = { w: vp1.width, h: vp1.height };
-    setScale(fitWidthScale());
+    setScale(restoredScale != null ? clampScale(restoredScale) : fitWidthScale());
     setNumPages(doc.numPages);
     buildLayout();
-    const startPage = props.page && pageEls[props.page] ? props.page : 1;
+    const requestedPage = props.page ?? restoredPage ?? 1;
+    const startPage = pageEls[requestedPage] ? requestedPage : 1;
     setCurPage(startPage);
     setPageField(String(startPage));
-    if (props.page && pageEls[props.page]) {
-      pageEls[props.page].scrollIntoView({ block: "start" });
+    if (startPage > 1) {
+      pageEls[startPage].scrollIntoView({ block: "start" });
     }
+    viewStateBaseline = { page: startPage, scale: scale() };
+    viewStateReady = true;
   });
 
   onCleanup(() => {
@@ -648,6 +690,7 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
     clearTimeout(zoomTimer);
     clearTimeout(textTimer);
     clearTimeout(findDebounce);
+    if (viewStateTimer !== undefined || pendingViewState) void flushViewState();
     if (scrollRaf !== undefined) cancelAnimationFrame(scrollRaf);
     for (const k of Object.keys(tasks)) tasks[Number(k)]?.cancel();
     const doc = pdfDoc;
@@ -659,6 +702,11 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
 
   // Zoom changes: relayout + lazy re-raster of visible pages only.
   createEffect(on(scale, onZoom, { defer: true }));
+  createEffect(on(
+    () => [curPage(), scale()] as const,
+    ([page, nextScale]) => scheduleViewState(page, nextScale),
+    { defer: true }
+  ));
   // Repaint highlight overlays whenever the set changes (rendered pages only).
   createEffect(on(highlights, () => {
     for (const n of Object.keys(renderedScale)) repaintPage(Number(n));
@@ -830,6 +878,7 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
     setMenu(null);
     pending = null;
     if (!(await persist())) setHighlights(prev); // revert the optimistic add on failure
+    else await copyCreatedHighlightRef(h.id);
   };
 
   // --- area (image) highlights ---------------------------------------------
@@ -936,7 +985,7 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
     const h: Highlight = {
       id,
       page,
-      position: { page, bounding: rect, rects: [rect] },
+      position: areaHighlightPosition(page, rect),
       color: "yellow",
       text: null,
       image: stamp,
@@ -944,6 +993,7 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
     const prev = highlights();
     setHighlights([...prev, h]);
     if (!(await persist())) setHighlights(prev); // revert the optimistic add on failure
+    else await copyCreatedHighlightRef(h.id);
   };
 
   // --- page navigation -----------------------------------------------------

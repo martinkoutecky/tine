@@ -3,7 +3,7 @@
 // backend's shape so the UI behaves identically.
 
 import type { Backend, GpuEnv, DebugInfo } from "./backend";
-import type { BlockDto, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, QueryExecution, RefGroup } from "./types";
+import type { BlockDto, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PdfState, QueryExecution, RefGroup } from "./types";
 import { SAMPLE_PDF_B64 } from "./sample-pdf";
 import { hlsPageName } from "./pdf";
 import { MARKER_RE } from "./markers";
@@ -416,7 +416,7 @@ if (typeof location !== "undefined" && /[?&]regressions\b/.test(location.search)
   );
 }
 
-const mockHighlights: Record<string, { label: string; highlights: Highlight[] }> = {};
+const mockHighlights: Record<string, { label: string; highlights: Highlight[]; page?: number; scale?: number }> = {};
 // In-memory UI session for the browser mock (no backend file).
 let mockSession: string | null = null;
 let mockLinkFirstMatch = false;
@@ -1275,8 +1275,21 @@ export function mockBackend(): Backend {
     async readHighlights(pdf: string): Promise<Highlight[]> {
       return mockHighlights[pdf]?.highlights ?? [];
     },
+    async openPdf(pdf: string, label: string): Promise<PdfState> {
+      const current = mockHighlights[pdf] ?? { label, highlights: [] };
+      mockHighlights[pdf] = current;
+      return {
+        highlights: current.highlights,
+        page: current.page ?? null,
+        scale: current.scale ?? null,
+      };
+    },
     async writeHighlights(pdf: string, label: string, highlights: Highlight[], _baseIds: string[]): Promise<void> {
-      mockHighlights[pdf] = { label, highlights };
+      mockHighlights[pdf] = { ...mockHighlights[pdf], label, highlights };
+    },
+    async writePdfViewState(pdf: string, page: number, scale: number): Promise<void> {
+      const current = mockHighlights[pdf] ?? { label: pdf, highlights: [] };
+      mockHighlights[pdf] = { ...current, page, scale };
     },
     async savePdfAreaImage(
       pdf: string,

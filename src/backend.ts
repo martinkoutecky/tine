@@ -19,6 +19,7 @@ import type {
   SyncConflictDiff,
   MergeDecision,
   PrintOpts,
+  PdfState,
   QueryExecution,
 } from "./types";
 import { assetFileName } from "./media";
@@ -311,7 +312,11 @@ export interface Backend {
    *  actually populate the clipboard, so paste yielded nothing). */
   copyImageToClipboard(bytes: Uint8Array): Promise<void>;
   readHighlights(pdf: string): Promise<Highlight[]>;
+  /** Ensure OG's PDF sidecar/annotation page exist and return highlights plus
+   * the persisted last-view page and scale. */
+  openPdf(pdf: string, label: string): Promise<PdfState>;
   writeHighlights(pdf: string, label: string, highlights: Highlight[], baseIds: string[]): Promise<void>;
+  writePdfViewState(pdf: string, page: number, scale: number): Promise<void>;
   /** Save a cropped area-highlight PNG to OG's layout `assets/<key>/<page>_<id>_<stamp>.png`
    *  (non-dedup — the filename links the `.edn` `:image <stamp>` to the file).
    *  Returns the assets-relative path. */
@@ -786,8 +791,14 @@ class TauriBackend implements Backend {
   readHighlights(pdf: string) {
     return this.call<Highlight[]>("read_highlights", { pdf });
   }
+  openPdf(pdf: string, label: string) {
+    return this.call<PdfState>("open_pdf", { pdf, label });
+  }
   writeHighlights(pdf: string, label: string, highlights: Highlight[], baseIds: string[]) {
     return this.call<void>("write_highlights", { pdf, label, highlights, baseIds });
+  }
+  writePdfViewState(pdf: string, page: number, scale: number) {
+    return this.call<void>("write_pdf_view_state", { pdf, page, scale });
   }
   savePdfAreaImage(pdf: string, page: number, id: string, stamp: number, bytes: Uint8Array) {
     return this.call<string>("save_pdf_area_image", {

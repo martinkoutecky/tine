@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assetKey, hlsPageName, rectInPageSpace, rectWithSourceSpace } from "./pdf";
+import { areaHighlightPosition, assetKey, hlsPageName, rectInPageSpace, rectWithSourceSpace } from "./pdf";
 
 // These MUST match the Rust asset_key tests (crates/tine-core/src/pdf.rs) so the
 // frontend's hls__ page name equals the page the backend reads/writes.
@@ -45,6 +45,22 @@ describe("PDF highlight coordinate interoperability", () => {
       ...old,
       source_width: 612,
       source_height: 792,
+    });
+  });
+
+  it("uses OG's empty rect list for an area highlight", () => {
+    const bounding = {
+      left: 10,
+      top: 20,
+      width: 30,
+      height: 40,
+      source_width: 612,
+      source_height: 792,
+    };
+    expect(areaHighlightPosition(3, bounding)).toEqual({
+      page: 3,
+      bounding,
+      rects: [],
     });
   });
 });

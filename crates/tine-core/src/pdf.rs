@@ -9,6 +9,7 @@
 
 use crate::doc::{DocBlock, Document};
 use crate::edn::{self, Edn};
+use crate::model::Format;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -44,6 +45,13 @@ pub struct Highlight {
     pub text: Option<String>,
     /// Image stamp (area highlight) or None for text highlights.
     pub image: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct PdfState {
+    pub highlights: Vec<Highlight>,
+    pub page: Option<i64>,
+    pub scale: Option<f64>,
 }
 
 // ----------------------------------------------------------------- EDN <-> model
@@ -165,11 +173,17 @@ fn highlight_from(e: &Edn) -> Option<Highlight> {
         .unwrap_or("yellow")
         .to_string();
     let content = e.get("content");
-    let text = content
+    let mut text = content
         .and_then(|c| c.get("text"))
         .and_then(Edn::as_str)
         .map(String::from);
     let image = content.and_then(|c| c.get("image")).and_then(Edn::as_i64);
+    // OG writes an explicit empty text value for area highlights. Keep Tine's
+    // internal `None` representation stable while preserving the OG bytes on
+    // serialization.
+    if image.is_some() && text.as_deref() == Some("") {
+        text = None;
+    }
     Some(Highlight {
         id,
         page,
@@ -192,6 +206,8 @@ fn highlight_to(h: &Highlight) -> Edn {
     let mut content_pairs = Vec::new();
     if let Some(t) = &h.text {
         content_pairs.push((kw("text"), Edn::Str(t.clone())));
+    } else if h.image.is_some() {
+        content_pairs.push((kw("text"), Edn::Str(String::new())));
     }
     content_pairs.push((kw("image"), h.image.map(Edn::Int).unwrap_or(Edn::Nil)));
     Edn::Map(vec![
@@ -215,6 +231,78 @@ pub fn parse_highlights(edn_str: &str) -> Vec<Highlight> {
         .and_then(Edn::as_vec)
         .map(|v| v.iter().filter_map(highlight_from).collect())
         .unwrap_or_default()
+}
+
+/// Read highlights plus OG's persisted last-view page and scale. Unsupported
+/// string scale modes such as `"auto"` intentionally map to `None`; Tine's
+/// fit-width default is their visual equivalent and the original EDN remains
+/// untouched until the user actually changes the view.
+pub fn parse_pdf_state(edn_str: &str) -> PdfState {
+    let Some(root) = edn::parse_strict(edn_str) else {
+        return PdfState::default();
+    };
+    let highlights = root
+        .get("highlights")
+        .and_then(Edn::as_vec)
+        .map(|v| v.iter().filter_map(highlight_from).collect())
+        .unwrap_or_default();
+    let extra = root.get("extra");
+    let page = extra
+        .and_then(|e| e.get("page"))
+        .and_then(Edn::as_i64)
+        .filter(|page| *page >= 1);
+    let scale = extra
+        .and_then(|e| e.get("scale"))
+        .and_then(Edn::as_f64)
+        .filter(|scale| scale.is_finite() && *scale > 0.0);
+    PdfState {
+        highlights,
+        page,
+        scale,
+    }
+}
+
+/// Update only OG's `:extra` view fields while retaining highlights and all
+/// foreign root/extra fields. Invalid existing EDN fails closed (`None`).
+pub fn write_pdf_view_state(
+    existing_edn: &str,
+    page: i64,
+    scale: f64,
+) -> Option<String> {
+    if page < 1 || !scale.is_finite() || scale <= 0.0 {
+        return None;
+    }
+    let mut pairs = if existing_edn.trim().is_empty() {
+        vec![(kw("highlights"), Edn::Vec(Vec::new()))]
+    } else {
+        match edn::parse_strict(existing_edn)? {
+            Edn::Map(pairs) => pairs,
+            _ => return None,
+        }
+    };
+    let mut extra = match pairs
+        .iter()
+        .find(|(key, _)| matches!(key, Edn::Keyword(name) if name == "extra"))
+        .map(|(_, value)| value)
+    {
+        Some(Edn::Map(existing)) => existing.clone(),
+        _ => Vec::new(),
+    };
+    deep_merge(
+        &mut extra,
+        vec![(kw("page"), Edn::Int(page)), (kw("scale"), Edn::Float(scale))],
+    );
+    if let Some((_, value)) = pairs
+        .iter_mut()
+        .find(|(key, _)| matches!(key, Edn::Keyword(name) if name == "extra"))
+    {
+        *value = Edn::Map(extra);
+    } else {
+        pairs.push((kw("extra"), Edn::Map(extra)));
+    }
+    let mut out = edn::to_string(&Edn::Map(pairs));
+    out.push('\n');
+    Some(out)
 }
 
 /// Recursively merge `new` pairs onto `old` (in place): a key present in both whose
@@ -329,7 +417,7 @@ pub fn write_highlights(highlights: &[Highlight], existing_edn: &str) -> String 
 /// Sanitize a PDF filename into the key used for the edn file + hls page.
 ///
 /// Matches Logseq's `safe-sanitize-file-name` (the npm `sanitize-filename`
-/// 1.6.4 library applied to the filename **stem**): only OS-illegal characters
+/// 1.6.3 library applied to the filename **stem**): only OS-illegal characters
 /// are stripped — **case, `-`, `_`, spaces, and unicode letters are preserved**.
 /// So `paper-1.pdf` and `paper_1.pdf` get *distinct* keys, exactly as OG keeps
 /// them; `My Paper.pdf` → key `My Paper`. (Tine's old key lowercased and mapped
@@ -343,7 +431,7 @@ pub fn asset_key(pdf_filename: &str) -> String {
     sanitize_filename(stem)
 }
 
-/// Strip only the characters the npm `sanitize-filename` 1.6.4 library removes
+/// Strip only the characters the npm `sanitize-filename` 1.6.3 library removes
 /// (default empty-string replacement), so the result matches OG's key byte-for-
 /// byte: drop the reserved set `/ ? < > \ : * | "`, control chars
 /// (`0x00–0x1f`, `0x80–0x9f`), trailing dots/spaces, and Windows reserved device
@@ -394,7 +482,16 @@ pub fn hls_page_name(key: &str) -> String {
 
 /// Build the `hls__<key>` index page document for a set of highlights.
 pub fn hls_page_document(pdf_filename: &str, label: &str, highlights: &[Highlight]) -> Document {
-    merge_hls_page(None, pdf_filename, label, highlights)
+    hls_page_document_for_format(pdf_filename, label, highlights, Format::Md)
+}
+
+pub fn hls_page_document_for_format(
+    pdf_filename: &str,
+    label: &str,
+    highlights: &[Highlight],
+    format: Format,
+) -> Document {
+    merge_hls_page_for_format(None, pdf_filename, label, highlights, format)
 }
 
 /// Upsert highlights into an existing `hls__` page, **preserving each existing
@@ -407,19 +504,34 @@ pub fn merge_hls_page(
     label: &str,
     highlights: &[Highlight],
 ) -> Document {
+    merge_hls_page_for_format(existing, pdf_filename, label, highlights, Format::Md)
+}
+
+pub fn merge_hls_page_for_format(
+    existing: Option<&Document>,
+    pdf_filename: &str,
+    label: &str,
+    highlights: &[Highlight],
+    format: Format,
+) -> Document {
     let asset_path = format!("../assets/{pdf_filename}");
     // Start with the generated file::/file-path::, then keep any OTHER pre-block
     // properties the user added (e.g. tags::) — replacing only the generated two
     // rather than discarding the whole pre-block.
-    let mut pre_lines = vec![
-        format!("file:: [{label}]({asset_path})"),
-        format!("file-path:: {asset_path}"),
-    ];
+    let mut pre_lines = match format {
+        Format::Md => vec![
+            format!("file:: [{label}]({asset_path})"),
+            format!("file-path:: {asset_path}"),
+        ],
+        Format::Org => vec![
+            format!("#+FILE: [[{asset_path}][{label}]]"),
+            format!("#+FILE-PATH: {asset_path}"),
+        ],
+    };
     if let Some(doc) = existing {
         if let Some(prev) = &doc.pre_block {
             for line in prev.lines() {
-                let key =
-                    crate::doc::parse_property_line(line).map(|(k, _)| k.to_ascii_lowercase());
+                let key = page_property_key(line, format);
                 if matches!(key.as_deref(), Some("file") | Some("file-path")) {
                     continue;
                 }
@@ -453,8 +565,8 @@ pub fn merge_hls_page(
             // Keep the user's note text + child blocks, but refresh the highlight
             // metadata (color/page) from the authoritative highlight — so
             // recoloring in the PDF pane updates the colored badge here too.
-            Some(existing) => refresh_annotation(existing, h),
-            None => highlight_block(h),
+            Some(existing) => refresh_annotation(existing, h, format),
+            None => highlight_block(h, format),
         })
         .collect();
     // Keep the user's own top-level notes (after the generated annotations).
@@ -465,25 +577,58 @@ pub fn merge_hls_page(
     }
 }
 
+fn page_property_key(line: &str, format: Format) -> Option<String> {
+    match format {
+        Format::Md => crate::doc::parse_property_line(line).map(|(k, _)| k.to_ascii_lowercase()),
+        Format::Org => line
+            .trim()
+            .strip_prefix("#+")
+            .and_then(|line| line.split_once(':'))
+            .map(|(key, _)| key.to_ascii_lowercase()),
+    }
+}
+
+fn block_property_key(line: &str, format: Format) -> Option<String> {
+    match format {
+        Format::Md => crate::doc::parse_property_line(line).map(|(k, _)| k.to_ascii_lowercase()),
+        Format::Org => {
+            let line = line.trim();
+            if line.eq_ignore_ascii_case(":PROPERTIES:") || line.eq_ignore_ascii_case(":END:") {
+                return None;
+            }
+            line.strip_prefix(':')
+                .and_then(|line| line.split_once(':'))
+                .map(|(key, _)| key.to_ascii_lowercase())
+        }
+    }
+}
+
+fn property_line(key: &str, value: impl std::fmt::Display, format: Format) -> String {
+    match format {
+        Format::Md => format!("{key}:: {value}"),
+        Format::Org => format!(":{key}: {value}"),
+    }
+}
+
 /// Refresh an existing annotation block's `hl-color::` / `hl-page::` to match the
 /// (possibly recolored / re-paged) highlight, preserving everything else — the
 /// user's highlight-text line, any extra properties, and the note children. The
 /// old block was previously kept verbatim, so a recolor never reached the page.
-fn refresh_annotation(mut block: DocBlock, h: &Highlight) -> DocBlock {
+fn refresh_annotation(mut block: DocBlock, h: &Highlight, format: Format) -> DocBlock {
     let mut saw_color = false;
     let mut saw_page = false;
     let mut lines: Vec<String> = block
         .raw
         .lines()
         .map(|line| {
-            match crate::doc::parse_property_line(line).map(|(k, _)| k.to_ascii_lowercase()) {
+            match block_property_key(line, format) {
                 Some(k) if k == "hl-color" => {
                     saw_color = true;
-                    format!("hl-color:: {}", h.color)
+                    property_line("hl-color", &h.color, format)
                 }
                 Some(k) if k == "hl-page" => {
                     saw_page = true;
-                    format!("hl-page:: {}", h.page)
+                    property_line("hl-page", h.page, format)
                 }
                 _ => line.to_string(),
             }
@@ -491,23 +636,37 @@ fn refresh_annotation(mut block: DocBlock, h: &Highlight) -> DocBlock {
         .collect();
     // If the metadata lines were missing (hand-edited file), add them before id::.
     if !saw_color || !saw_page {
-        let id_pos = lines.iter().position(|l| {
-            crate::doc::parse_property_line(l)
-                .map(|(k, _)| k.to_ascii_lowercase())
-                .as_deref()
-                == Some("id")
-        });
+        let id_pos = lines
+            .iter()
+            .position(|line| block_property_key(line, format).as_deref() == Some("id"));
         let mut add: Vec<String> = Vec::new();
         if !saw_page {
-            add.push(format!("hl-page:: {}", h.page));
+            add.push(property_line("hl-page", h.page, format));
         }
         if !saw_color {
-            add.push(format!("hl-color:: {}", h.color));
+            add.push(property_line("hl-color", &h.color, format));
         }
         match id_pos {
             Some(i) => {
                 for (j, l) in add.into_iter().enumerate() {
                     lines.insert(i + j, l);
+                }
+            }
+            None if format == Format::Org => {
+                let end = lines
+                    .iter()
+                    .position(|line| line.trim().eq_ignore_ascii_case(":END:"));
+                match end {
+                    Some(index) => {
+                        for (offset, line) in add.into_iter().enumerate() {
+                            lines.insert(index + offset, line);
+                        }
+                    }
+                    None => {
+                        lines.push(":PROPERTIES:".to_string());
+                        lines.extend(add);
+                        lines.push(":END:".to_string());
+                    }
                 }
             }
             None => lines.extend(add),
@@ -517,26 +676,34 @@ fn refresh_annotation(mut block: DocBlock, h: &Highlight) -> DocBlock {
     block
 }
 
-fn highlight_block(h: &Highlight) -> DocBlock {
+fn highlight_block(h: &Highlight, format: Format) -> DocBlock {
     let mut lines = Vec::new();
     if let Some(t) = &h.text {
         lines.push(t.clone());
+    } else {
+        lines.push(String::new());
     }
-    lines.push(format!("hl-page:: {}", h.page));
-    lines.push(format!("hl-color:: {}", h.color));
+    if format == Format::Org {
+        lines.push(":PROPERTIES:".to_string());
+    }
+    lines.push(property_line("hl-page", h.page, format));
+    lines.push(property_line("hl-color", &h.color, format));
     if let Some(image_stamp) = h.image {
-        lines.push("hl-type:: area".to_string());
+        lines.push(property_line("hl-type", "area", format));
         // OG's file-graph writer copies :content.image verbatim into hl-stamp.
         // Text highlights have no image stamp and omit both area properties.
-        lines.push(format!("hl-stamp:: {image_stamp}"));
+        lines.push(property_line("hl-stamp", image_stamp, format));
     }
-    lines.push("ls-type:: annotation".to_string());
-    lines.push(format!("id:: {}", h.id));
+    lines.push(property_line("ls-type", "annotation", format));
+    lines.push(property_line("id", &h.id, format));
+    if format == Format::Org {
+        lines.push(":END:".to_string());
+    }
     DocBlock {
         raw: lines.join("\n"),
         children: Vec::new(),
         uuid: String::new(),
-        is_org: false,
+        is_org: format == Format::Org,
         proj: std::sync::OnceLock::new(),
     }
 }
@@ -681,6 +848,45 @@ mod tests {
     }
 
     #[test]
+    fn area_highlight_writes_og_empty_text_and_empty_rect_list() {
+        let mut h = sample();
+        h.text = None;
+        h.image = Some(1659920114630);
+        h.position.rects.clear();
+        let out = write_highlights(&[h.clone()], "");
+        let root = edn::parse_strict(&out).unwrap();
+        let stored = &root.get("highlights").and_then(Edn::as_vec).unwrap()[0];
+        assert_eq!(
+            stored.get("content").unwrap().get("text").and_then(Edn::as_str),
+            Some("")
+        );
+        assert!(stored
+            .get("position")
+            .unwrap()
+            .get("rects")
+            .and_then(Edn::as_vec)
+            .unwrap()
+            .is_empty());
+        assert_eq!(parse_highlights(&out), vec![h]);
+    }
+
+    #[test]
+    fn pdf_state_reads_and_updates_og_extra_without_touching_foreign_data() {
+        let existing = r#"{:highlights [] :extra {:page 7 :scale 1.75 :plugin "keep"} :future 42}"#;
+        let state = parse_pdf_state(existing);
+        assert_eq!(state.page, Some(7));
+        assert_eq!(state.scale, Some(1.75));
+
+        let out = write_pdf_view_state(existing, 9, 2.25).unwrap();
+        let root = edn::parse_strict(&out).unwrap();
+        let extra = root.get("extra").unwrap();
+        assert_eq!(extra.get("page").and_then(Edn::as_i64), Some(9));
+        assert_eq!(extra.get("scale").and_then(Edn::as_f64), Some(2.25));
+        assert_eq!(extra.get("plugin").and_then(Edn::as_str), Some("keep"));
+        assert_eq!(root.get("future").and_then(Edn::as_i64), Some(42));
+    }
+
+    #[test]
     fn geometry_migration_removes_shadowing_old_keys_but_keeps_foreign_metadata() {
         let existing = r#"{:highlights [{:id #uuid "5e8f9c7b-1234-5678-abcd-ef1234567890"
           :page 42 :position {:page 42
@@ -717,6 +923,27 @@ mod tests {
         let back = crate::doc::parse(&md);
         assert_eq!(back.roots.len(), 1);
         assert_eq!(back.roots[0].property("hl-page").as_deref(), Some("42"));
+    }
+
+    #[test]
+    fn org_hls_page_uses_og_page_properties_and_annotation_drawer() {
+        let doc = hls_page_document_for_format(
+            "my-book.pdf",
+            "My Book",
+            &[sample()],
+            crate::model::Format::Org,
+        );
+        let org = crate::org::serialize_org(&doc);
+        assert!(org.contains("#+FILE: [[../assets/my-book.pdf][My Book]]"), "{org}");
+        assert!(org.contains("#+FILE-PATH: ../assets/my-book.pdf"), "{org}");
+        assert!(org.contains("* some highlighted text"), "{org}");
+        assert!(org.contains(":PROPERTIES:"), "{org}");
+        assert!(org.contains(":hl-page: 42"), "{org}");
+        assert!(org.contains(":ls-type: annotation"), "{org}");
+        assert!(org.contains(":id: 5e8f9c7b-1234-5678-abcd-ef1234567890"), "{org}");
+        assert!(crate::org::org_round_trips(&org));
+        let parsed = crate::org::parse_org(&org);
+        assert_eq!(parsed.roots[0].property("hl-page").as_deref(), Some("42"));
     }
 
     #[test]

@@ -27,16 +27,19 @@ const EDN = `{:highlights [{:id #uuid "6a5604f8-a337-4336-a711-2ba6bc14fbfd"
              :page 1}
   :content {:text "Tine PDF viewer"}
   :properties {:color "yellow"}}]
-  :extra {:page 1}}
+  :extra {:page 1 :scale 1.75 :plugin "keep"}
+  :future-root 42}
 `;
 
 fs.rmSync(TMP, { recursive: true, force: true });
 for (const dir of ["pages", "journals", "logseq", "assets"]) fs.mkdirSync(path.join(GRAPH, dir), { recursive: true });
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(path.join(TMP, "xdg", dir), { recursive: true });
-fs.writeFileSync(path.join(GRAPH, "logseq", "config.edn"), "{}\n");
+fs.writeFileSync(path.join(GRAPH, "logseq", "config.edn"), "{:preferred-format \"Org\"}\n");
 fs.writeFileSync(path.join(GRAPH, "assets", "logseq-sample.pdf"), Buffer.from(PDF, "base64"));
 const sidecar = path.join(GRAPH, "assets", "logseq-sample.edn");
 fs.writeFileSync(sidecar, EDN);
+const originalSidecar = fs.readFileSync(sidecar, "utf8");
+const hlsPage = path.join(GRAPH, "pages", "hls__logseq-sample.org");
 const now = new Date();
 const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
 fs.writeFileSync(path.join(GRAPH, "journals", `${journal}.md`), "- ![Logseq sample](../assets/logseq-sample.pdf)\n");
@@ -142,6 +145,23 @@ try {
   }
   await browser.$(".pdf-page canvas").waitForExist({ timeout: 20_000 });
   await browser.$(".pdf-hl").waitForExist({ timeout: 10_000 });
+  const restoredZoom = await browser.$(".pdf-zoom-level").getText();
+  if (restoredZoom !== "175%") throw new Error(`PDF scale was not restored from :extra: ${restoredZoom}`);
+  if (fs.readFileSync(sidecar, "utf8") !== originalSidecar) {
+    throw new Error("opening the PDF rewrote an existing Logseq sidecar before a user change");
+  }
+  const hls = fs.readFileSync(hlsPage, "utf8");
+  for (const expected of [
+    "#+FILE: [[../assets/logseq-sample.pdf][Logseq sample]]",
+    "#+FILE-PATH: ../assets/logseq-sample.pdf",
+    "* Tine PDF viewer",
+    ":PROPERTIES:",
+    ":hl-page: 1",
+    ":ls-type: annotation",
+    ":id: 6a5604f8-a337-4336-a711-2ba6bc14fbfd",
+  ]) {
+    if (!hls.includes(expected)) throw new Error(`OG-compatible Org hls page is missing ${expected}: ${hls}`);
+  }
   const geometry = await browser.execute(() => {
     const highlight = document.querySelector(".pdf-hl");
     const page = document.querySelector(".pdf-page");
@@ -161,6 +181,14 @@ try {
     throw new Error(`Logseq zoom-space highlight was misplaced: ${JSON.stringify(geometry)}`);
   }
 
+  // OG persists last-view page/scale in :extra after a debounce. Tine must
+  // update only those fields, retaining both unknown :extra and root data.
+  await browser.$('button[title="Zoom in"]').click();
+  await browser.waitUntil(() => {
+    const written = fs.readFileSync(sidecar, "utf8");
+    return written.includes(":scale 1.93") && written.includes(':plugin "keep"') && written.includes(":future-root 42");
+  }, { timeout: 10_000, timeoutMsg: "Tine did not persist OG PDF view state without dropping foreign EDN" });
+
   // Recoloring is a real mutation. It must preserve the foreign root metadata
   // while writing the UUID/list/corner shape that Logseq itself consumes.
   await browser.$(".pdf-hl").click();
@@ -172,9 +200,9 @@ try {
     const written = fs.readFileSync(sidecar, "utf8");
     return written.includes('#uuid "6a5604f8-a337-4336-a711-2ba6bc14fbfd"') &&
       written.includes(":rects (") && written.includes(":x1 ") &&
-      written.includes(":extra {:page 1}");
+      written.includes(":extra {:page 1") && written.includes(':plugin "keep"') && written.includes(":future-root 42");
   }, { timeout: 10_000, timeoutMsg: "Tine did not persist a Logseq-compatible sidecar" });
-  console.log(`PASS: Logseq PDF opened with bounded resources, correct zoom-space geometry, and compatible write-back on ${process.platform}`);
+  console.log(`PASS: Logseq PDF opened with bounded resources, restored view state, an OG-compatible Org notes page, correct geometry, and compatible write-back on ${process.platform}`);
 } finally {
   try { await browser?.deleteSession(); } catch {}
   if (process.platform === "win32") spawnSync("taskkill", ["/PID", String(td.pid), "/T", "/F"], { stdio: "ignore" });

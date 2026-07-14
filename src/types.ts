@@ -297,6 +297,12 @@ export interface Highlight {
   image: number | null;
 }
 
+export interface PdfState {
+  highlights: Highlight[];
+  page: number | null;
+  scale: number | null;
+}
+
 /** Options for the print-to-PDF export (chosen in the pre-export dialog). Field
  *  names are snake_case to match the Rust `PrintOpts` serde deserialization. */
 export interface PrintOpts {

@@ -1243,6 +1243,15 @@ pub(crate) fn read_highlights(
 }
 
 #[tauri::command]
+pub(crate) fn open_pdf(
+    pdf: String,
+    label: String,
+    state: GraphContext<'_>,
+) -> Result<tine_core::pdf::PdfState, String> {
+    with_graph(&state, |g| g.open_pdf(&pdf, &label).map_err(|e| e.to_string()))
+}
+
+#[tauri::command]
 pub(crate) fn write_highlights(
     pdf: String,
     label: String,
@@ -1252,6 +1261,19 @@ pub(crate) fn write_highlights(
 ) -> Result<(), String> {
     with_graph(&state, |g| {
         g.write_highlights(&pdf, &label, &highlights, &base_ids)
+            .map_err(|e| e.to_string())
+    })
+}
+
+#[tauri::command]
+pub(crate) fn write_pdf_view_state(
+    pdf: String,
+    page: i64,
+    scale: f64,
+    state: GraphContext<'_>,
+) -> Result<(), String> {
+    with_graph(&state, |g| {
+        g.write_pdf_view_state(&pdf, page, scale)
             .map_err(|e| e.to_string())
     })
 }

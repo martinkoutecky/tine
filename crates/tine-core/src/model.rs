@@ -3612,6 +3612,10 @@ impl Graph {
     /// the new key on the next `write_highlights`). This keeps highlights made
     /// by pre-launch Tine builds from disappearing after the key change.
     pub fn read_highlights(&self, pdf_filename: &str) -> Vec<crate::pdf::Highlight> {
+        self.read_pdf_state(pdf_filename).highlights
+    }
+
+    fn read_pdf_state(&self, pdf_filename: &str) -> crate::pdf::PdfState {
         let key = crate::pdf::asset_key(pdf_filename);
         let s = self
             .asset_file_for_read(&format!("{key}.edn"))
@@ -3627,8 +3631,167 @@ impl Graph {
                     })
                     .flatten()
             });
-        s.map(|s| crate::pdf::parse_highlights(&s))
+        s.map(|s| crate::pdf::parse_pdf_state(&s))
             .unwrap_or_default()
+    }
+
+    fn existing_hls_page_path(&self, key: &str) -> io::Result<Option<PathBuf>> {
+        let name = crate::pdf::hls_page_name(key);
+        let md = self.pages_path().join(format!("{name}.md"));
+        let org = self.pages_path().join(format!("{name}.org"));
+        match (md.exists(), org.exists()) {
+            (true, true) => Err(twin_error(&name)),
+            (true, false) => Ok(Some(md)),
+            (false, true) => Ok(Some(org)),
+            (false, false) => Ok(self
+                .find_entry(&name, PageKind::Page)
+                .map(|entry| entry.path)),
+        }
+    }
+
+    fn hls_page_path(&self, pdf_filename: &str, key: &str) -> io::Result<PathBuf> {
+        if let Some(existing) = self.existing_hls_page_path(key)? {
+            return Ok(existing);
+        }
+        // A key migration renames the annotation page but must not implicitly
+        // convert its syntax because the graph's preference changed meanwhile.
+        let legacy_key = crate::pdf::legacy_asset_key(pdf_filename);
+        if legacy_key != key && !self.asset_key_in_use_by_pdf(&legacy_key) {
+            if let Some(legacy) = self.existing_hls_page_path(&legacy_key)? {
+                let ext = legacy.extension().and_then(|ext| ext.to_str()).unwrap_or("md");
+                return Ok(legacy.with_file_name(format!(
+                    "{}.{}",
+                    crate::pdf::hls_page_name(key),
+                    ext
+                )));
+            }
+        }
+        Ok(self.pages_path().join(format!(
+            "{}.{}",
+            crate::pdf::hls_page_name(key),
+            self.preferred_format().ext()
+        )))
+    }
+
+    fn pdf_sidecar_for_update(&self, pdf_filename: &str) -> io::Result<PathBuf> {
+        let key = crate::pdf::asset_key(pdf_filename);
+        let primary = self.assets_path().join(format!("{key}.edn"));
+        if primary.exists() {
+            return Ok(primary);
+        }
+        let legacy_key = crate::pdf::legacy_asset_key(pdf_filename);
+        if legacy_key != key && !self.asset_key_in_use_by_pdf(&legacy_key) {
+            let legacy = self.assets_path().join(format!("{legacy_key}.edn"));
+            if legacy.exists() {
+                return Ok(legacy);
+            }
+        }
+        Ok(primary)
+    }
+
+    /// Open-time OG artifact initialization plus the persisted PDF state. Existing
+    /// sidecars/pages are read without being rewritten; only missing artifacts are
+    /// created. Old Tine-key artifacts remain in place until the established
+    /// edit-time migration path can carry their notes forward safely.
+    pub fn open_pdf(
+        &self,
+        pdf_filename: &str,
+        label: &str,
+    ) -> io::Result<crate::pdf::PdfState> {
+        let key = crate::pdf::asset_key(pdf_filename);
+        let page_path = self.hls_page_path(pdf_filename, &key)?;
+        self.ensure_write_target(&page_path)?;
+        let page_lock = self.page_lock(&page_path);
+        let _guard = page_lock.lock().unwrap();
+
+        fs::create_dir_all(self.assets_path())?;
+        let sidecar_path = self.pdf_sidecar_for_update(pdf_filename)?;
+        self.ensure_asset_write_target(&sidecar_path)?;
+        let mut sidecar = read_optional_text(&sidecar_path)?;
+        if let Some(raw) = &sidecar {
+            validate_highlight_edn(raw)?;
+        } else {
+            let skeleton = crate::pdf::write_highlights(&[], "");
+            // Recheck immediately before publish so an external creator wins.
+            if let Some(external) = read_optional_text(&sidecar_path)? {
+                validate_highlight_edn(&external)?;
+                sidecar = Some(external);
+            } else {
+                atomic_write(&sidecar_path, skeleton.as_bytes())?;
+                sidecar = Some(skeleton);
+            }
+        }
+        let state = crate::pdf::parse_pdf_state(sidecar.as_deref().unwrap_or(""));
+
+        // Do not create a new-key page on top of an unmigrated legacy page: the
+        // normal highlight write carries its notes forward under one guarded merge.
+        let legacy_key = crate::pdf::legacy_asset_key(pdf_filename);
+        let legacy_page_exists = legacy_key != key
+            && !self.asset_key_in_use_by_pdf(&legacy_key)
+            && self.existing_hls_page_path(&legacy_key)?.is_some();
+        let page_baseline = read_optional_text(&page_path)?;
+        if page_baseline.is_none() && !legacy_page_exists {
+            let format = Format::from_path(&page_path);
+            let page_doc = crate::pdf::hls_page_document_for_format(
+                pdf_filename,
+                label,
+                &state.highlights,
+                format,
+            );
+            let content = serialize_pdf_hls_page(&page_path, &page_doc, None)?;
+            let page_rev = self.commit_write(&page_path, &content, None, true)?;
+            let name = crate::pdf::hls_page_name(&key);
+            let entry = PageEntry {
+                name,
+                kind: PageKind::Page,
+                date_key: None,
+                rel_path: self.rel_path(&page_path),
+                path: page_path.clone(),
+            };
+            self.cache_upsert(entry, page_doc, page_rev.clone());
+            self.drop_self_write_marker(&page_path, &page_rev);
+        }
+        Ok(state)
+    }
+
+    /// Persist only OG's last-view page/scale fields. The hls-page lock is shared
+    /// with highlight writes so an in-app highlight update cannot race this
+    /// read-modify-write; external writers are handled by the same bounded
+    /// compare/retry discipline.
+    pub fn write_pdf_view_state(
+        &self,
+        pdf_filename: &str,
+        page: i64,
+        scale: f64,
+    ) -> io::Result<()> {
+        let key = crate::pdf::asset_key(pdf_filename);
+        let page_path = self.hls_page_path(pdf_filename, &key)?;
+        let lock = self.page_lock(&page_path);
+        let _guard = lock.lock().unwrap();
+        fs::create_dir_all(self.assets_path())?;
+        let sidecar_path = self.pdf_sidecar_for_update(pdf_filename)?;
+        self.ensure_asset_write_target(&sidecar_path)?;
+        for _attempt in 0..4 {
+            let baseline = read_optional_text(&sidecar_path)?;
+            if let Some(raw) = &baseline {
+                validate_highlight_edn(raw)?;
+            }
+            let next = crate::pdf::write_pdf_view_state(
+                baseline.as_deref().unwrap_or(""),
+                page,
+                scale,
+            )
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid PDF view state"))?;
+            if read_optional_text(&sidecar_path)? != baseline {
+                continue;
+            }
+            atomic_write(&sidecar_path, next.as_bytes())?;
+            return Ok(());
+        }
+        Err(io::Error::new(
+            io::ErrorKind::WouldBlock,
+            "highlight sidecar changed repeatedly during view-state update",
+        ))
     }
 
     fn asset_key_in_use_by_pdf(&self, candidate_key: &str) -> bool {
@@ -3666,17 +3829,16 @@ impl Graph {
         let legacy_active = legacy_key != key && !self.asset_key_in_use_by_pdf(&legacy_key);
         let legacy_edn =
             legacy_active.then(|| self.assets_path().join(format!("{legacy_key}.edn")));
-        let legacy_page = legacy_active.then(|| {
-            self.pages_path()
-                .join(format!("{}.md", crate::pdf::hls_page_name(&legacy_key)))
-        });
+        let legacy_page = if legacy_active {
+            self.existing_hls_page_path(&legacy_key)?
+        } else {
+            None
+        };
         // Serialize against an editor save of the SAME `hls__` page (see
         // `page_locks`): hold the page lock across the .edn merge AND the page
         // read→merge→write→cache_upsert, so the two writers can't clobber each
         // other or trip a false self-write conflict.
-        let page_path = self
-            .pages_path()
-            .join(format!("{}.md", crate::pdf::hls_page_name(&key)));
+        let page_path = self.hls_page_path(pdf_filename, &key)?;
         self.ensure_write_target(&page_path)?;
         let lock = self.page_lock(&page_path);
         let _guard = lock.lock().unwrap();
@@ -3704,6 +3866,19 @@ impl Graph {
         let existing_raw = page_baseline
             .clone()
             .or_else(|| legacy_page_baseline.clone());
+        // The sidecar and annotation page are one logical update. Reject a
+        // non-round-trippable Org page before publishing the sidecar so a failed
+        // page serialization cannot leave the pair half-updated.
+        if Format::from_path(&page_path) == Format::Org
+            && existing_raw
+                .as_deref()
+                .is_some_and(|raw| !crate::org::org_editable(raw))
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "org highlight page is read-only (does not round-trip)",
+            ));
+        }
         // Merge and publish the sidecar with the same external-writer guard as
         // config updates. If Logseq/Syncthing changes either the primary or the
         // legacy fallback after our read, retry against those new bytes instead
@@ -3769,8 +3944,16 @@ impl Graph {
         // The hls page's OWN bytes are its write baseline; the legacy fallback is
         // used only as a migration merge source. The A3-style recheck below
         // compares the page against this baseline.
-        let existing = existing_raw.as_deref().map(doc::parse);
-        let page_doc = crate::pdf::merge_hls_page(existing.as_ref(), pdf_filename, label, &merged);
+        let existing = existing_raw
+            .as_deref()
+            .map(|raw| parse_doc(&page_path, raw));
+        let page_doc = crate::pdf::merge_hls_page_for_format(
+            existing.as_ref(),
+            pdf_filename,
+            label,
+            &merged,
+            Format::from_path(&page_path),
+        );
         // Preserve the notes page's CRLF (shared with write_page), then go through
         // the shared write commit (self-write marker → A3 recheck vs `page_baseline`
         // → atomic_write). The recheck is mandatory here precisely because this path
@@ -3779,7 +3962,7 @@ impl Graph {
         // only carried notes from the bytes we read — so an overwrite would clobber it.
         // On mismatch → conflict; PdfViewer.persist toasts + reverts and a retry merges
         // cleanly (the .edn was already 3-way-merged, so no highlight is lost).
-        let page_md = preserve_crlf(doc::serialize(&page_doc), existing_raw.as_deref());
+        let page_md = serialize_pdf_hls_page(&page_path, &page_doc, existing_raw.as_deref())?;
         let page_rev = match self.commit_write(&page_path, &page_md, page_baseline.as_deref(), true)
         {
             Ok(rev) => rev,
@@ -4390,6 +4573,25 @@ fn top_level_asset_name(name: &str) -> io::Result<()> {
 /// real edit produces a minimal diff instead of flipping every line (Syncthing
 /// churn vs a Windows editor). New files stay LF. Shared by write_page +
 /// write_highlights so the two can't drift on it.
+fn serialize_pdf_hls_page(
+    path: &Path,
+    document: &Document,
+    existing: Option<&str>,
+) -> io::Result<String> {
+    match Format::from_path(path) {
+        Format::Md => Ok(preserve_crlf(doc::serialize(document), existing)),
+        Format::Org => {
+            if existing.is_some_and(|raw| !crate::org::org_editable(raw)) {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "org highlight page is read-only (does not round-trip)",
+                ));
+            }
+            Ok(crate::org::serialize_org_detect(document, existing))
+        }
+    }
+}
+
 fn preserve_crlf(content: String, existing: Option<&str>) -> String {
     if existing.is_some_and(|e| e.contains("\r\n")) && !content.contains('\r') {
         content.replace('\n', "\r\n")
@@ -7072,6 +7274,97 @@ mod tests {
     }
 
     #[test]
+    fn opening_pdf_creates_og_artifacts_in_preferred_org_format() {
+        let dir = scratch("pdf-open-org");
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq").join("config.edn"),
+            "{:preferred-format \"Org\"}\n",
+        )
+        .unwrap();
+        let g = Graph::open(&dir);
+        let state = g.open_pdf("paper.pdf", "Paper").unwrap();
+        assert!(state.highlights.is_empty());
+        assert_eq!(state.page, None);
+        assert_eq!(state.scale, None);
+
+        let sidecar = fs::read_to_string(dir.join("assets").join("paper.edn")).unwrap();
+        assert_eq!(crate::pdf::parse_pdf_state(&sidecar), state);
+        let org_path = dir.join("pages").join("hls__paper.org");
+        assert!(org_path.exists());
+        assert!(!dir.join("pages").join("hls__paper.md").exists());
+        let org = fs::read_to_string(org_path).unwrap();
+        assert!(org.contains("#+FILE: [[../assets/paper.pdf][Paper]]"), "{org}");
+        assert!(org.contains("#+FILE-PATH: ../assets/paper.pdf"), "{org}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn pdf_view_state_update_preserves_highlights_and_foreign_edn() {
+        let dir = scratch("pdf-view-state");
+        let g = Graph::open(&dir);
+        let key = crate::pdf::asset_key("paper.pdf");
+        let sidecar_path = dir.join("assets").join(format!("{key}.edn"));
+        fs::create_dir_all(dir.join("assets")).unwrap();
+        let h = mkhl("11111111-1111-1111-1111-111111111111", 3, Some("text"));
+        let original = crate::pdf::write_highlights(&[h.clone()], "{:extra {:plugin \"keep\"}}");
+        fs::write(&sidecar_path, original).unwrap();
+
+        g.write_pdf_view_state("paper.pdf", 8, 1.9).unwrap();
+
+        let written = fs::read_to_string(&sidecar_path).unwrap();
+        let state = crate::pdf::parse_pdf_state(&written);
+        assert_eq!(state.highlights, vec![h]);
+        assert_eq!(state.page, Some(8));
+        assert_eq!(state.scale, Some(1.9));
+        let root = crate::edn::parse_strict(&written).unwrap();
+        assert_eq!(
+            root.get("extra")
+                .unwrap()
+                .get("plugin")
+                .and_then(crate::edn::Edn::as_str),
+            Some("keep")
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn highlight_write_keeps_existing_hls_format_and_uses_org_drawers() {
+        let dir = scratch("pdf-highlight-org");
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq").join("config.edn"),
+            "{:preferred-format \"Org\"}\n",
+        )
+        .unwrap();
+        let g = Graph::open(&dir);
+        let h = mkhl("11111111-1111-1111-1111-111111111111", 3, Some("text"));
+        g.write_highlights("paper.pdf", "Paper", &[h], &[]).unwrap();
+        let org_path = dir.join("pages").join("hls__paper.org");
+        let org = fs::read_to_string(&org_path).unwrap();
+        assert!(org.contains("* text"), "{org}");
+        assert!(org.contains(":PROPERTIES:"), "{org}");
+        assert!(org.contains(":hl-page: 3"), "{org}");
+        assert!(crate::org::org_round_trips(&org));
+
+        // Preferred format changes later must not fork the existing annotation
+        // page into a second extension.
+        fs::write(
+            dir.join("logseq").join("config.edn"),
+            "{:preferred-format \"Markdown\"}\n",
+        )
+        .unwrap();
+        let reopened = Graph::open(&dir);
+        let h2 = mkhl("22222222-2222-2222-2222-222222222222", 4, Some("more"));
+        reopened
+            .write_highlights("paper.pdf", "Paper", &[h2], &[])
+            .unwrap();
+        assert!(org_path.exists());
+        assert!(!dir.join("pages").join("hls__paper.md").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn write_highlights_checks_notes_page_before_sidecar_commit() {
         let dir = scratch("highlights-invalid-page");
         let g = Graph::open(&dir);
@@ -7088,6 +7381,34 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
         assert_eq!(fs::read(&page_path).unwrap(), unknown);
         assert!(!dir.join("assets").join(format!("{key}.edn")).exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn write_highlights_checks_read_only_org_page_before_sidecar_commit() {
+        let dir = scratch("highlights-readonly-org-page");
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq").join("config.edn"),
+            "{:preferred-format \"Org\"}\n",
+        )
+        .unwrap();
+        let key = crate::pdf::asset_key("paper.pdf");
+        let page_path = dir.join("pages").join(format!("hls__{key}.org"));
+        fs::write(&page_path, "* a\n*** c\n").unwrap();
+        let sidecar_path = dir.join("assets").join(format!("{key}.edn"));
+        fs::create_dir_all(dir.join("assets")).unwrap();
+        let original = "{:highlights [] :extra {:plugin \"keep\"}}\n";
+        fs::write(&sidecar_path, original).unwrap();
+        let h = mkhl("11111111-1111-1111-1111-111111111111", 1, Some("text"));
+
+        let err = Graph::open(&dir)
+            .write_highlights("paper.pdf", "Paper", &[h], &[])
+            .unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(fs::read_to_string(&sidecar_path).unwrap(), original);
+        assert_eq!(fs::read_to_string(&page_path).unwrap(), "* a\n*** c\n");
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -7195,6 +7516,44 @@ mod tests {
                 .exists(),
             "legacy hls page removed"
         );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn legacy_hls_migration_preserves_page_format_when_preference_changed() {
+        let dir = scratch("hlmig-format");
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::create_dir_all(dir.join("assets")).unwrap();
+        fs::write(
+            dir.join("logseq").join("config.edn"),
+            "{:preferred-format \"Org\"}\n",
+        )
+        .unwrap();
+        let pdf = "My Paper.pdf";
+        let legacy_key = crate::pdf::legacy_asset_key(pdf);
+        let new_key = crate::pdf::asset_key(pdf);
+        let h = mkhl("11111111-1111-1111-1111-111111111111", 3, Some("legacy"));
+        fs::write(
+            dir.join("assets").join(format!("{legacy_key}.edn")),
+            crate::pdf::write_highlights(&[h.clone()], ""),
+        )
+        .unwrap();
+        let mut legacy_page = crate::pdf::hls_page_document(pdf, "Paper", &[h.clone()]);
+        legacy_page.roots[0].children.push(DocBlock::new("private note"));
+        fs::write(
+            dir.join("pages").join(format!("hls__{legacy_key}.md")),
+            doc::serialize(&legacy_page),
+        )
+        .unwrap();
+
+        let g = Graph::open(&dir);
+        g.write_highlights(pdf, "Paper", &[h.clone()], &[h.id.clone()])
+            .unwrap();
+
+        let migrated = dir.join("pages").join(format!("hls__{new_key}.md"));
+        assert!(migrated.exists(), "legacy .md format should be retained");
+        assert!(!dir.join("pages").join(format!("hls__{new_key}.org")).exists());
+        assert!(fs::read_to_string(migrated).unwrap().contains("private note"));
         let _ = fs::remove_dir_all(&dir);
     }
 
