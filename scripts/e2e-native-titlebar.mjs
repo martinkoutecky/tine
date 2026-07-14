@@ -51,7 +51,20 @@ const xdo = (...args) => execFileSync(XDOTOOL, args, { encoding: "utf8", env: xd
 const windowIds = () => {
   try {
     // xdotool uses POSIX extended regular expressions (no `(?:...)`).
-    return xdo("search", "--name", "^Tine( — .*)?$").split(/\s+/).filter(Boolean);
+    return xdo("search", "--onlyvisible", "--name", "^Tine( — .*)?$")
+      .split(/\s+/)
+      .filter(Boolean)
+      // Tauri/Openbox can also expose a tiny same-title helper surface. The
+      // graph window is the largest visible match and owns the real frame.
+      .sort((a, b) => {
+        try {
+          const ga = geometry(a);
+          const gb = geometry(b);
+          return gb.WIDTH * gb.HEIGHT - ga.WIDTH * ga.HEIGHT;
+        } catch {
+          return 0;
+        }
+      });
   } catch {
     return [];
   }
