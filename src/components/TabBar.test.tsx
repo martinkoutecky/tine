@@ -260,9 +260,50 @@ describe("TabBar overflow overview", () => {
 
       trigger!.click();
       const list = document.querySelector<HTMLElement>("[role=listbox]")!;
-      list.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true, cancelable: true }));
+      const firstRow = list.querySelector<HTMLElement>("[data-tab-overview-row]")!;
+      firstRow.focus();
+      list.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "ArrowDown",
+        altKey: true,
+        bubbles: true,
+        cancelable: true,
+      }));
+      expect(namesForPane("main").slice(0, 2)).toEqual([
+        "Second readable page title",
+        "First readable page title",
+      ]);
+
+      const reorderedRows = [...list.querySelectorAll<HTMLElement>("[data-tab-overview-row]")];
+      const draggedRow = reorderedRows.find((row) => row.textContent?.includes("First readable page title"))!;
+      const targetRow = reorderedRows.find((row) => row.textContent?.includes("Third readable page title"))!;
+      const handle = draggedRow.querySelector<HTMLElement>(".tab-overview-drag-handle")!;
+      expect(handle.getAttribute("aria-label")).toContain("First readable page title");
+      setRect(targetRow, 0, 100, 300, 32);
+      const previousElementFromPoint = document.elementFromPoint;
+      document.elementFromPoint = () => targetRow;
+      handle.dispatchEvent(pointer("pointerdown", 10, 10));
+      window.dispatchEvent(pointer("pointermove", 10, 130));
+      window.dispatchEvent(pointer("pointerup", 10, 130, { buttons: 0 }));
+      document.elementFromPoint = previousElementFromPoint;
+      expect(namesForPane("main").slice(0, 3)).toEqual([
+        "Second readable page title",
+        "Third readable page title",
+        "First readable page title",
+      ]);
+
+      list.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      expect(document.querySelector("[role=listbox]")).toBeNull();
+      trigger!.click();
+      const reopenedList = document.querySelector<HTMLElement>("[role=listbox]")!;
+      expect([...reopenedList.querySelectorAll<HTMLElement>("[data-tab-overview-row]")]
+        .slice(0, 3).map((row) => row.textContent)).toEqual([
+          expect.stringContaining("Second readable page title"),
+          expect.stringContaining("Third readable page title"),
+          expect.stringContaining("First readable page title"),
+        ]);
+      reopenedList.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true, cancelable: true }));
       expect(document.activeElement).toBe(document.querySelectorAll("[data-tab-overview-row]")[5]);
-      list.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true, cancelable: true }));
+      reopenedList.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true, cancelable: true }));
       await vi.waitFor(() => expect(paneRouter("main").tabs()).toHaveLength(5));
     } finally {
       dispose();
@@ -296,6 +337,52 @@ describe("TabBar overflow overview", () => {
 
       expect(root.querySelectorAll('[data-pane-id="main"] [data-tab-overview-trigger]')).toHaveLength(1);
       expect(root.querySelectorAll('[data-pane-id="pane-2"] [data-tab-overview-trigger]')).toHaveLength(0);
+    } finally {
+      dispose();
+      globalThis.ResizeObserver = OriginalResizeObserver;
+    }
+  });
+
+  it("keeps overview reordering pane-local and constrained by the pinned partition", async () => {
+    const callbacks: ResizeObserverCallback[] = [];
+    const OriginalResizeObserver = globalThis.ResizeObserver;
+    globalThis.ResizeObserver = class {
+      constructor(callback: ResizeObserverCallback) { callbacks.push(callback); }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    };
+    const { root, dispose } = renderSplit(["A", "B", "C"], ["X", "Y"]);
+    try {
+      const main = paneRouter("main");
+      const activeId = main.activeId();
+      main.togglePin(activeId);
+      const strip = root.querySelector<HTMLElement>('[data-pane-id="main"] .tab-strip-scroll')!;
+      Object.defineProperties(strip, {
+        clientWidth: { configurable: true, value: 160 },
+        scrollWidth: { configurable: true, value: 500 },
+      });
+      callbacks.forEach((callback) => callback([], {} as ResizeObserver));
+      await Promise.resolve();
+
+      root.querySelector<HTMLButtonElement>('[data-pane-id="main"] [data-tab-overview-trigger]')!.click();
+      const list = document.querySelector<HTMLElement>("[role=listbox]")!;
+      const rows = [...list.querySelectorAll<HTMLElement>("[data-tab-overview-row]")];
+      rows[0].focus();
+      rows[0].dispatchEvent(new KeyboardEvent("keydown", {
+        key: "ArrowDown", altKey: true, bubbles: true, cancelable: true,
+      }));
+      expect(namesForPane("main")).toEqual(["A", "B", "C"]);
+      expect(main.tabs()[0].pinned).toBe(true);
+      expect(main.activeId()).toBe(activeId);
+
+      rows[1].focus();
+      rows[1].dispatchEvent(new KeyboardEvent("keydown", {
+        key: "ArrowDown", altKey: true, bubbles: true, cancelable: true,
+      }));
+      expect(namesForPane("main")).toEqual(["A", "C", "B"]);
+      expect(namesForPane("pane-2")).toEqual(["X", "Y"]);
+      expect(main.activeId()).toBe(activeId);
     } finally {
       dispose();
       globalThis.ResizeObserver = OriginalResizeObserver;

@@ -235,6 +235,8 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
   const [overflowing, setOverflowing] = createSignal(false);
   const [overviewOpen, setOverviewOpen] = createSignal(false);
   const [overviewPosition, setOverviewPosition] = createSignal({ left: 8, top: 48, width: 360 });
+  const [overviewDragId, setOverviewDragId] = createSignal<string | null>(null);
+  const [overviewDrop, setOverviewDrop] = createSignal<{ tabId: string; before: boolean } | null>(null);
 
   const measureOverflow = () => {
     if (!strip) return;
@@ -268,6 +270,21 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
     const rows = [...(document.getElementById(overviewId)?.querySelectorAll<HTMLElement>("[data-tab-overview-row]") ?? [])];
     rows[Math.min(Math.max(index, 0), rows.length - 1)]?.focus();
   };
+  const focusOverviewTab = (tabId: string) => {
+    document.getElementById(overviewId)
+      ?.querySelector<HTMLElement>(`[data-tab-overview-row][data-tab-id="${cssEsc(tabId)}"]`)
+      ?.focus();
+  };
+  const moveOverviewTab = (tabId: string, direction: -1 | 1) => {
+    const tabs = router.tabs();
+    const from = tabs.findIndex((tab) => tab.id === tabId);
+    if (from < 0) return;
+    const target = Math.min(Math.max(0, from + direction), tabs.length - 1);
+    if (target === from) return;
+    // moveTabToIndex takes an insertion boundary in the pre-removal list.
+    router.moveTabToIndex(tabId, direction > 0 ? target + 1 : target);
+    queueMicrotask(() => focusOverviewTab(tabId));
+  };
   const activateOverviewTab = (id: string) => {
     router.setActiveTab(id);
     dismissOverview();
@@ -284,6 +301,12 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
     if (!rows.length) return;
     const row = (event.target as HTMLElement).closest<HTMLElement>("[data-tab-overview-row]");
     const index = Math.max(0, rows.indexOf(row ?? rows[0]));
+    if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+      event.preventDefault();
+      const id = rows[index].dataset.tabId;
+      if (id) moveOverviewTab(id, event.key === "ArrowUp" ? -1 : 1);
+      return;
+    }
     let next = index;
     if (event.key === "ArrowDown") next = (index + 1) % rows.length;
     else if (event.key === "ArrowUp") next = (index - 1 + rows.length) % rows.length;
@@ -305,6 +328,53 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
     } else return;
     event.preventDefault();
     focusOverviewRow(next);
+  };
+
+  const beginOverviewDrag = (tabId: string, event: PointerEvent) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const startX = event.clientX;
+    const startY = event.clientY;
+    let dragging = false;
+
+    const cleanup = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
+      setOverviewDragId(null);
+      setOverviewDrop(null);
+    };
+    const onMove = (move: PointerEvent) => {
+      if (!dragging && Math.hypot(move.clientX - startX, move.clientY - startY) < DRAG_THRESHOLD_PX) return;
+      if (!dragging) {
+        dragging = true;
+        setOverviewDragId(tabId);
+      }
+      move.preventDefault();
+      const row = document.elementFromPoint(move.clientX, move.clientY)
+        ?.closest<HTMLElement>("[data-tab-overview-row]");
+      const targetId = row?.dataset.tabId;
+      if (!row || !targetId || targetId === tabId) {
+        setOverviewDrop(null);
+        return;
+      }
+      const rect = row.getBoundingClientRect();
+      setOverviewDrop({ tabId: targetId, before: move.clientY < rect.top + rect.height / 2 });
+    };
+    const onCancel = () => cleanup();
+    const onUp = () => {
+      const drop = overviewDrop();
+      if (dragging && drop) {
+        const index = router.tabs().findIndex((tab) => tab.id === drop.tabId);
+        if (index >= 0) router.moveTabToIndex(tabId, index + (drop.before ? 0 : 1));
+      }
+      cleanup();
+      if (dragging) queueMicrotask(() => focusOverviewTab(tabId));
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
   };
 
   createEffect(() => {
@@ -507,9 +577,15 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
               {(tab, index) => (
                 <div
                   class="tab-overview-row"
-                  classList={{ active: tab.id === router.activeId() }}
+                  classList={{
+                    active: tab.id === router.activeId(),
+                    "tab-overview-dragging": overviewDragId() === tab.id,
+                    "tab-overview-drop-before": overviewDrop()?.tabId === tab.id && overviewDrop()?.before,
+                    "tab-overview-drop-after": overviewDrop()?.tabId === tab.id && !overviewDrop()?.before,
+                  }}
                   role="option"
                   aria-selected={tab.id === router.activeId()}
+                  aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
                   tabIndex={-1}
                   data-tab-overview-row
                   data-tab-id={tab.id}
@@ -520,6 +596,18 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
                     void closeOverviewTab(tab.id, index());
                   }}
                 >
+                  <button
+                    class="tab-overview-drag-handle"
+                    type="button"
+                    tabIndex={-1}
+                    aria-label={`Reorder ${tabFullTitle(router.tabRoute(tab))}`}
+                    title="Drag to reorder; Alt+Up/Down moves the focused tab"
+                    onPointerDown={(event) => beginOverviewDrag(tab.id, event)}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                    }}
+                  >⠿</button>
                   <span class="tab-overview-active" aria-hidden="true">{tab.id === router.activeId() ? "✓" : ""}</span>
                   <Show when={tab.pinned}><span class="tab-overview-pin" title="Pinned"><EmojiText text="📌" /></span></Show>
                   <span class="tab-overview-title"><EmojiText text={tabFullTitle(router.tabRoute(tab))} /></span>

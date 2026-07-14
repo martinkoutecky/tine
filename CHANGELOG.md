@@ -10,6 +10,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Added
 
+- **Tabs can now be reordered directly in the overflow menu.** A visible drag
+  handle and Alt+Up/Down keyboard actions update the pane's canonical tab order
+  while preserving active, pinned, split-pane, close, and persistence behavior.
+  (GH #141)
 - **Page-valued properties now provide direct navigation.** Bare values in
   `tags`, `alias`, and `aliases` are rendered as page links (including
   comma-separated values), while custom and wholly quoted properties stay
