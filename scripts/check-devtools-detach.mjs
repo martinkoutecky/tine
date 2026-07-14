@@ -10,6 +10,10 @@ const attach = body.indexOf("connect_attach");
 const open = body.lastIndexOf("window.open_devtools()");
 if (attach < 0) throw new Error("Linux devtools must subscribe to WebKit's attach signal");
 if (open < 0 || attach > open) throw new Error("the attach hook must be installed before devtools open");
+const waylandGuard = body.indexOf("display().backend().is_wayland()");
+if (waylandGuard < 0 || waylandGuard > attach) {
+  throw new Error("native Wayland must stay docked before the X11/XWayland detach hook is armed");
+}
 if (!body.includes("idle_add_local_once")) {
   throw new Error("detach must run after WebKit finishes the attach signal, without a timer");
 }
@@ -20,4 +24,4 @@ if (/sleep\s*\(|timeout_add|setTimeout/.test(body)) {
   throw new Error("devtools detach must not depend on a timeout");
 }
 
-console.log("Developer-tools detach lifecycle OK: hook-before-open, one-shot, timer-free.");
+console.log("Developer-tools detach lifecycle OK: Wayland-safe, hook-before-open, one-shot, timer-free.");

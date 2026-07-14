@@ -4502,6 +4502,7 @@ dependencies = [
  "base64 0.22.1",
  "clipboard-rs",
  "dirs",
+ "gtk",
  "libc",
  "notify",
  "serde",

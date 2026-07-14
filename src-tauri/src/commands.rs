@@ -523,10 +523,13 @@ pub(crate) fn tine_open_devtools(window: tauri::WebviewWindow) {
     if window.is_devtools_open() {
         window.close_devtools();
     } else {
-        // #31 follow-up: open the inspector as its OWN window (detached) instead of
-        // docked into the app. Docked, WebKitGTK puts the window's resize grip at the
-        // top of the inspector pane (confusing) and the inspector renders at the wrong
-        // scale on HiDPI/fractional displays; a separate top-level window avoids both.
+        // #31 follow-up: on X11/XWayland, open the inspector as its OWN window
+        // instead of docked into the app. Docked, WebKitGTK puts the window's resize
+        // grip at the top of the inspector pane. Do not force this on native Wayland:
+        // Fedora 44 / WebKitGTK 2.52 renders the detached inspector black, while its
+        // docked inspector is correctly scaled and usable. Query the actual GDK
+        // display rather than session environment variables because an AppImage in a
+        // Wayland session deliberately runs GTK through XWayland.
         // WebKit creates/attaches the inspector asynchronously, so an immediate
         // is_attached()+detach() races and usually does nothing. Arm a one-shot hook
         // BEFORE opening instead. The attach signal is the event boundary; its idle
@@ -537,7 +540,11 @@ pub(crate) fn tine_open_devtools(window: tauri::WebviewWindow) {
         {
             let _ = window.with_webview(|wv| {
                 use std::{cell::RefCell, rc::Rc};
+                use gtk::{gdk::prelude::DisplayExtManual, prelude::WidgetExt};
                 use webkit2gtk::{glib, glib::prelude::ObjectExt, WebInspectorExt, WebViewExt};
+                if wv.inner().display().backend().is_wayland() {
+                    return;
+                }
                 if let Some(inspector) = wv.inner().inspector() {
                     let handler_slot = Rc::new(RefCell::new(None));
                     let callback_slot = Rc::clone(&handler_slot);
