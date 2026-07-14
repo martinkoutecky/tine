@@ -22,6 +22,7 @@
     "docs:check-geometry": "node scripts/check-publish-outline-geometry.mjs",
     "ui:check-mobile-layout": "node scripts/check-mobile-layout.mjs",
     "ui:check-selection-toolbar": "node scripts/check-selection-toolbar.mjs",
+    "ui:check-devtools-detach": "node scripts/check-devtools-detach.mjs",
     "blog:check": "node scripts/check-reddit-blog.mjs",
     "blog:sync": "node scripts/sync-reddit-blog.mjs",
     "e2e:caret": "CARET_LABEL=release-required CARET_MODE=agenda node scripts/e2e-caret.mjs",

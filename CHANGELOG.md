@@ -42,6 +42,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Linux Developer Tools now detach on WebKit's actual attach event.** The old
+  implementation asked an asynchronously-created inspector to detach too early,
+  so the request was normally a no-op and the inspector opened docked. A
+  one-shot, timer-free lifecycle hook is now armed before opening and leaves
+  later manual reattachment alone. Mixed-DPI inspector rendering remains a
+  separate WebKitGTK/AppImage diagnostic rather than an unverified scaling
+  change. (GH #31)
 - **Help with Tine now canonicalizes optional parser fields before classifying
   known oracle artifacts.** A harmless `undefined`-versus-omitted field can no
   longer make a backtick-state-only mismatch look like a new divergence.
