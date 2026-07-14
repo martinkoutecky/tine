@@ -54,8 +54,8 @@ describe("property line helpers", () => {
     expect(upsertPropertyLine("tags:: x", "alias", "Foo")).toBe("tags:: x\nalias:: Foo");
   });
 
-  it("replaces an existing property in place-ish and preserves siblings", () => {
-    expect(upsertPropertyLine("alias:: Old\ntags:: x", "alias", "New")).toBe("tags:: x\nalias:: New");
+  it("replaces an existing property in place and preserves siblings", () => {
+    expect(upsertPropertyLine("alias:: Old\ntags:: x", "alias", "New")).toBe("alias:: New\ntags:: x");
   });
 
   it("removes a property when value is null/empty, returning null if none remain", () => {
@@ -64,8 +64,30 @@ describe("property line helpers", () => {
     expect(upsertPropertyLine("alias:: Foo\ntags:: x", "alias", null)).toBe("tags:: x");
   });
 
-  it("trims the value and drops blank lines", () => {
-    expect(upsertPropertyLine("\n\ntags:: x\n\n", "alias", "  Foo  ")).toBe("tags:: x\nalias:: Foo");
+  it("trims the value while preserving blank separators", () => {
+    expect(upsertPropertyLine("\n\ntags:: x\n\n", "alias", "  Foo  ")).toBe("\n\ntags:: x\nalias:: Foo\n\n");
+  });
+
+  it("preserves the issue-163 page-property layout byte-for-byte outside the edited line", () => {
+    const before = [
+      "alias:: Test Record",
+      "ai-prompt:: [[Prompt-Test]]",
+      "usage-frequency:: [[Frequency-High]]",
+      "",
+      "page-level:: [[Level-Two]]",
+      "layout:: [[Layout-Top-Collapsed]]",
+      "component-state:: [[Component-Wide]]",
+      "",
+      "timestamp:: 20250707092601",
+      "observation-target:: [[Object-Test-Page]]",
+      "external-impact::",
+      "--:: --",
+      "methods:: [[Method-A]] [[Method-B]]",
+      "key-conclusion:: [[Conclusion-A]] [[Conclusion-B]]",
+    ].join("\n");
+    const expected = before.replace("alias:: Test Record", "alias:: Updated Record");
+
+    expect(upsertPropertyLine(before, "alias", "Updated Record")).toBe(expected);
   });
 });
 
