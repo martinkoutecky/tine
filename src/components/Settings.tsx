@@ -503,6 +503,21 @@ function ThemeGalleryCard(props: {
 }
 
 function AppearanceTab(props: { search: string }): JSX.Element {
+  const [savingNativeFrame, setSavingNativeFrame] = createSignal(false);
+  const changeNativeFrame = async () => {
+    if (savingNativeFrame()) return;
+    setSavingNativeFrame(true);
+    const next = !nativeFrameEnabled();
+    try {
+      await setNativeFrame(next);
+      pushToast("Saved. Restart Tine to apply the window-frame change.", "info");
+    } catch (error) {
+      pushToast(`Couldn't save the window-frame setting. (${String(error)})`, "error");
+    } finally {
+      setSavingNativeFrame(false);
+    }
+  };
+
   return (
     <>
       <div class="settings-row">
@@ -654,9 +669,9 @@ function AppearanceTab(props: { search: string }): JSX.Element {
       <Show when={isTauri() && !isMac}>
         <Field
           label="System title bar & window controls"
-          hint="Use your OS's native window frame (title bar, minimize/maximize/close, rounded corners) instead of Tine's compact built-in controls. Off by default — the built-in controls save a row of vertical space."
+          hint="Use your OS's native window frame (title bar, minimize/maximize/close, rounded corners) instead of Tine's compact built-in controls. Restart Tine after changing this setting. Off by default — the built-in controls save a row of vertical space."
         >
-          <Toggle on={nativeFrameEnabled()} onClick={() => setNativeFrame(!nativeFrameEnabled())} />
+          <Toggle on={nativeFrameEnabled()} onClick={() => void changeNativeFrame()} />
         </Field>
       </Show>
       <Show when={isTauri() && isMac}>

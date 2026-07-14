@@ -355,10 +355,36 @@ pub fn run() {
     // page.tine.app and run_early() is a no-op there.
     migrate_identifier::run_early();
 
+    // Tao cannot reliably change Linux decorations after a GTK window exists.
+    // Read the device preference before Tauri constructs the configured windows,
+    // and expose the frozen value to each webview so custom controls never flash.
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    let native_frame_active = settings::init_native_frame_active();
+    let context = tauri::generate_context!();
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    let context = {
+        let mut context = context;
+        if let Some(main) = context
+            .config_mut()
+            .app
+            .windows
+            .iter_mut()
+            .find(|window| window.label == "main")
+        {
+            main.decorations = native_frame_active;
+        }
+        context
+    };
+
     let builder = tauri::Builder::default().register_uri_scheme_protocol(
         "tine-media",
         |ctx, request| media_protocol::respond(ctx, request),
     );
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    let builder = builder.append_invoke_initialization_script(format!(
+        "globalThis.__TINE_NATIVE_FRAME__ = {native_frame_active};"
+    ));
 
     #[cfg(desktop)]
     let builder = builder
@@ -659,6 +685,6 @@ pub fn run() {
             close_graph_window,
             tine_open_devtools
         ])
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running tauri application");
 }

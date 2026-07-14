@@ -1,6 +1,8 @@
-// Linux native-titlebar regression: toggle the real Settings switch, prove the
-// window manager added a decorated frame, then click its actual close button.
-// The window must traverse Tine's safe persistence handler and disappear.
+// Linux native-titlebar regression: start the real app with the persisted native
+// frame preference, prove the window manager added a decorated frame, then click
+// its actual close button. The window must traverse Tine's safe persistence
+// handler and disappear. Preference-vs-active behavior is covered separately by
+// nativeChrome.test.ts because Tao cannot redecorate an existing GTK window.
 import { execFileSync, spawn } from "node:child_process";
 import { remote } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -25,6 +27,9 @@ fs.rmSync(TMP, { recursive: true, force: true });
 for (const dir of ["pages", "journals", "logseq", "assets"]) fs.mkdirSync(`${GRAPH}/${dir}`, { recursive: true });
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(`${TMP}/xdg/${dir}`, { recursive: true });
 fs.mkdirSync(ARTIFACTS, { recursive: true });
+const appData = `${TMP}/xdg/data/page.tine.Tine`;
+fs.mkdirSync(appData, { recursive: true });
+fs.writeFileSync(`${appData}/tine-settings.json`, '{"native_window_frame":true}\n');
 fs.writeFileSync(`${GRAPH}/logseq/config.edn`, "{}\n");
 fs.writeFileSync(`${GRAPH}/pages/Home.md`, "- native titlebar fixture\n");
 const now = new Date();
@@ -121,26 +126,24 @@ try {
     },
   });
   await browser.$(".ls-block, .page-title").waitForExist({ timeout: 20_000 });
-  const original = await waitFor(() => windowIds()[0], 10_000, "Tine window did not appear");
-  const before = frameExtents(original);
+  const decoratedId = await waitFor(() => windowIds()[0], 10_000, "Tine window did not appear");
+  if (!decoratedId) throw new Error("Tine window disappeared before the native close test");
+  const decorated = { id: decoratedId, extents: frameExtents(decoratedId) };
+  if (decorated.extents.top <= 4) {
+    throw new Error(`persisted native frame was not applied at window construction: ${JSON.stringify(decorated.extents)}`);
+  }
 
   await browser.$('button[title^="Settings"]').click();
   const field = await browser.$('[data-setting-label="System title bar & window controls"]');
   await field.waitForExist({ timeout: 5_000 });
   const toggle = await field.$('button[role="switch"]');
-  if ((await toggle.getAttribute("aria-checked")) !== "false") throw new Error("native titlebar fixture did not start disabled");
-  await toggle.click();
-  await browser.waitUntil(async () => (await toggle.getAttribute("aria-checked")) === "true", {
-    timeout: 5_000,
-    timeoutMsg: "system titlebar toggle did not turn on",
-  });
+  if ((await toggle.getAttribute("aria-checked")) !== "true") {
+    throw new Error("Settings did not reflect the native frame applied at startup");
+  }
 
-  // Runtime decoration changes are asynchronous in GTK. Give the window
-  // manager one full turn, then record both the visible frame and X11 metadata.
-  await sleep(1000);
-  const decoratedId = windowIds()[0];
-  if (!decoratedId) throw new Error("Tine window disappeared before the native close test");
-  const decorated = { id: decoratedId, extents: frameExtents(decoratedId) };
+  // Allow the close-request handler to be installed before driving the actual
+  // window-manager widget rather than synthesizing WM_DELETE_WINDOW directly.
+  await sleep(500);
   const g = geometry(decorated.id);
   // X/Y describe the client-area origin. The native close button lives in the
   // top-right of the window-manager frame, above that client area.

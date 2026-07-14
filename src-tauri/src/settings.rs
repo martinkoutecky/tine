@@ -1,6 +1,10 @@
 use crate::state::{slot_for_context, GraphContext};
 use std::path::PathBuf;
+use std::sync::OnceLock;
 use tauri::Manager;
+
+pub(crate) const NATIVE_FRAME_KEY: &str = "native_window_frame";
+static NATIVE_FRAME_ACTIVE: OnceLock<bool> = OnceLock::new();
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub(crate) struct KnownGraph {
@@ -15,6 +19,29 @@ pub(crate) fn settings_path(app: &tauri::AppHandle) -> Option<PathBuf> {
         .app_data_dir()
         .ok()
         .map(|d| d.join("tine-settings.json"))
+}
+
+fn app_bool_at(path: &std::path::Path, key: &str, default: bool) -> bool {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|contents| serde_json::from_str::<serde_json::Value>(&contents).ok())
+        .and_then(|value| value.get(key).and_then(serde_json::Value::as_bool))
+        .unwrap_or(default)
+}
+
+/// Freeze the native-frame preference before Tauri constructs any windows.
+/// Tao does not support changing Linux decorations on an existing window, so
+/// every window created by this process must use the same startup value.
+pub(crate) fn init_native_frame_active() -> bool {
+    *NATIVE_FRAME_ACTIVE.get_or_init(|| {
+        crate::migrate_identifier::current_app_data_dir()
+            .map(|dir| app_bool_at(&dir.join("tine-settings.json"), NATIVE_FRAME_KEY, false))
+            .unwrap_or(false)
+    })
+}
+
+pub(crate) fn native_frame_active() -> bool {
+    init_native_frame_active()
 }
 /// Serializes ALL device-settings (tine-settings.json) writers; every `set_*` below
 /// goes through `update_settings`, which routes to the shared `tine_core` atomic_update
@@ -230,9 +257,7 @@ pub(crate) fn set_smooth_scroll(value: bool, app: tauri::AppHandle) -> Result<()
 #[tauri::command]
 pub(crate) fn get_app_bool(key: String, default: bool, app: tauri::AppHandle) -> bool {
     settings_path(&app)
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-        .and_then(|v| v.get(&key).and_then(|x| x.as_bool()))
+        .map(|path| app_bool_at(&path, &key, default))
         .unwrap_or(default)
 }
 
@@ -398,5 +423,26 @@ mod tests {
         assert_eq!(approvals["/graphs/a"], "/media/retargeted");
         assert_eq!(approvals["/graphs/b"], "/media/two");
         assert_eq!(json["unrelated"], true);
+    }
+
+    #[test]
+    fn app_bool_reader_preserves_defaults_for_missing_or_invalid_settings() {
+        let root = std::env::temp_dir().join(format!(
+            "tine-settings-bool-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("settings.json");
+
+        assert!(app_bool_at(&path, "frame", true));
+        std::fs::write(&path, "not json").unwrap();
+        assert!(!app_bool_at(&path, "frame", false));
+        std::fs::write(&path, r#"{"frame":true,"other":false}"#).unwrap();
+        assert!(app_bool_at(&path, "frame", false));
+        assert!(app_bool_at(&path, "missing", true));
+
+        let _ = std::fs::remove_dir_all(root);
     }
 }
