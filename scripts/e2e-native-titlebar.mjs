@@ -151,8 +151,18 @@ try {
   xdo("mousemove", "--sync", String(closeX), String(closeY));
   xdo("click", "1");
 
+  await sleep(800);
+  let clickState = { closed: windowIds().length === 0 };
+  if (!clickState.closed) {
+    clickState = await browser.execute(() => ({
+      closed: false,
+      transitionShield: Boolean(document.querySelector(".graph-transition-shield")),
+      activeTag: document.activeElement?.tagName ?? "",
+      activeClass: document.activeElement?.getAttribute("class") ?? "",
+    }));
+  }
   await waitFor(() => windowIds().length === 0, 12_000,
-    `native close control did not close Tine; geometry=${JSON.stringify(g)} extents=${JSON.stringify(decorated.extents)} click=${closeX},${closeY}`);
+    `native close control did not close Tine; geometry=${JSON.stringify(g)} extents=${JSON.stringify(decorated.extents)} click=${closeX},${closeY} state=${JSON.stringify(clickState)}`);
   console.log(`PASS: Linux native close control closed Tine safely; extents=${JSON.stringify(decorated.extents)} click=${closeX},${closeY}`);
 } finally {
   try { await browser?.deleteSession(); } catch {}
