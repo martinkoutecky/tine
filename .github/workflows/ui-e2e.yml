@@ -50,9 +50,15 @@ jobs:
           retention-days: 14
 
   windows-smoke:
-    name: Windows x64 real-app smoke (advisory)
+    name: Windows x64 ${{ matrix.scenario }} real-app smoke (advisory)
     runs-on: windows-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario:
+          - windows-core
+          - pdf-logseq
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -85,12 +91,12 @@ jobs:
         continue-on-error: true
         env:
           TINE_APP: ${{ github.workspace }}\target\release\tine.exe
-        run: npm run e2e:windows:smoke
+        run: npm run e2e:windows:smoke -- --scenario=${{ matrix.scenario }}
       - name: Upload Windows E2E evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ui-e2e-windows-${{ github.run_attempt }}
+          name: ui-e2e-windows-${{ matrix.scenario }}-${{ github.run_attempt }}
           path: test-results/e2e/windows-smoke
           if-no-files-found: warn
           retention-days: 14
