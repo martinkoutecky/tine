@@ -335,23 +335,9 @@ try {
     throw new Error("same-PDF highlight navigation rewrote the sidecar");
   }
 
-  // Exercise the sibling entry surface too: navigate to the hls page and click
-  // the rendered annotation badge, not merely an inline ((block ref)).
-  await browser.$("=hls__logseq-second").click();
-  await browser.$(`.pdf-annotation-line .hl-prefix[data-highlight-id="${SECOND_FIRST_ID}"]`)
-    .waitForExist({ timeout: 10_000 });
-  await browser.$(`.pdf-annotation-line .hl-prefix[data-highlight-id="${SECOND_FIRST_ID}"]`).click();
-  await browser.waitUntil(() => browser.execute((highlightId) =>
-    document.querySelector(".pdf-hl-target")?.getAttribute("data-highlight-id") === highlightId, SECOND_FIRST_ID), {
-    timeout: 10_000,
-    timeoutMsg: "a rendered AnnotationBody did not navigate to its exact highlight",
-  });
-  if ((await browser.$(".pdf-viewer")).elementId !== secondViewerElementId) {
-    throw new Error("AnnotationBody navigation remounted the same PDF resource");
-  }
-
-  await browser.back();
-  await browser.$(`[data-block-ref="${SECOND_FIRST_ID}"]`).waitForExist({ timeout: 10_000 });
+  // Return to A while the journal's real links are still present. Recoloring is
+  // a real mutation and must preserve foreign root metadata while writing the
+  // UUID/list/corner shape Logseq consumes.
   pdfLinks = await browser.$$(".pdf-link");
   await pdfLinks[0].click();
   await browser.waitUntil(() => browser.execute(() =>
@@ -362,13 +348,6 @@ try {
   });
   const returnedZoom = await browser.$(".pdf-zoom-level").getText();
   if (returnedZoom !== "193%") throw new Error(`PDF A did not restore its own state after B: ${returnedZoom}`);
-
-  // Recoloring is a real mutation. It must preserve the foreign root metadata
-  // while writing the UUID/list/corner shape that Logseq itself consumes.
-  // Center the highlight explicitly before asking WebDriver to click it. Its
-  // implicit scroll can otherwise place a zoomed highlight underneath the
-  // fixed PDF toolbar and report an intercepted click even though the element
-  // itself is a valid pointer target in the app.
   await browser.$(".pdf-hl").waitForExist({
     timeout: 10_000,
     timeoutMsg: "PDF A restored its view state before its highlight overlay was ready",
@@ -376,15 +355,38 @@ try {
   await browser.execute(() => document.querySelector(".pdf-hl")?.scrollIntoView({ block: "center", inline: "center" }));
   await browser.$(".pdf-hl").click();
   await browser.$(".pdf-color-menu").waitForExist({ timeout: 5000 });
-  await browser.execute(() => {
-    document.querySelector(".pdf-color-swatch")?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-  });
+  await browser.$(".pdf-color-swatch").click();
   await browser.waitUntil(() => {
     const written = fs.readFileSync(sidecar, "utf8");
     return written.includes('#uuid "6a5604f8-a337-4336-a711-2ba6bc14fbfd"') &&
       written.includes(":rects (") && written.includes(":x1 ") &&
       written.includes(":extra {:page 1") && written.includes(':plugin "keep"') && written.includes(":future-root 42");
   }, { timeout: 10_000, timeoutMsg: "Tine did not persist a Logseq-compatible sidecar" });
+
+  // Exercise the sibling entry surface too: navigate to the hls page and click
+  // a different rendered annotation badge, not merely an inline ((block ref)).
+  await browser.$(`[data-block-ref="${SECOND_FIRST_ID}"]`).click();
+  await browser.waitUntil(() => browser.execute((highlightId) =>
+    document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-filename") === "logseq-second.pdf" &&
+    document.querySelector(".pdf-hl-target")?.getAttribute("data-highlight-id") === highlightId, SECOND_FIRST_ID), {
+    timeout: 10_000,
+    timeoutMsg: "the second B open did not restore its exact first highlight",
+  });
+  const annotationViewerElementId = (await browser.$(".pdf-viewer")).elementId;
+  const hlsLink = browser.$('//a[contains(@class,"ref") and contains(normalize-space(.),"logseq-second")]');
+  await hlsLink.waitForExist({ timeout: 10_000 });
+  await hlsLink.click();
+  await browser.$(`.pdf-annotation-line .hl-prefix[data-highlight-id="${SECOND_SECOND_ID}"]`)
+    .waitForExist({ timeout: 10_000 });
+  await browser.$(`.pdf-annotation-line .hl-prefix[data-highlight-id="${SECOND_SECOND_ID}"]`).click();
+  await browser.waitUntil(() => browser.execute((highlightId) =>
+    document.querySelector(".pdf-hl-target")?.getAttribute("data-highlight-id") === highlightId, SECOND_SECOND_ID), {
+    timeout: 10_000,
+    timeoutMsg: "a rendered AnnotationBody did not navigate to its exact highlight",
+  });
+  if ((await browser.$(".pdf-viewer")).elementId !== annotationViewerElementId) {
+    throw new Error("AnnotationBody navigation remounted the same PDF resource");
+  }
   console.log(`PASS: Logseq PDFs keep asset identity separate from exact highlight navigation, with bounded resources, restored view state, OG-compatible notes, correct geometry, and compatible write-back on ${process.platform}`);
 } finally {
   try { await browser?.deleteSession(); } catch {}
