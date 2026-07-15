@@ -8,6 +8,7 @@ use crate::refs::block_id;
 use cap_std::ambient_authority;
 use cap_std::fs::{Dir, OpenOptions};
 use lsdoc::ast::{Block, Inline, Url};
+#[cfg(not(target_os = "windows"))]
 use same_file::Handle as FileIdentity;
 use serde_json::json;
 use std::cell::RefCell;
@@ -15,6 +16,52 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+
+// `same_file::Handle` intentionally keeps its Windows handle open, but an open
+// directory handle created without FILE_SHARE_DELETE makes MoveFileW reject the
+// final stage rename. Retain the stable volume/file identity instead, then
+// close the capability handle before the move. The post-move comparison still
+// detects a stage-path replacement and quarantines the wrong directory.
+#[cfg(target_os = "windows")]
+#[derive(Debug, Eq, PartialEq)]
+struct FileIdentity {
+    volume: u32,
+    index: u64,
+}
+
+#[cfg(target_os = "windows")]
+fn identity_from_file(file: fs::File) -> io::Result<FileIdentity> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+    };
+
+    let mut information = BY_HANDLE_FILE_INFORMATION::default();
+    let result = unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut information) };
+    if result == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(FileIdentity {
+        volume: information.dwVolumeSerialNumber,
+        index: (u64::from(information.nFileIndexHigh) << 32) | u64::from(information.nFileIndexLow),
+    })
+}
+
+#[cfg(not(target_os = "windows"))]
+fn identity_from_file(file: fs::File) -> io::Result<FileIdentity> {
+    FileIdentity::from_file(file)
+}
+
+#[cfg(target_os = "windows")]
+fn identity_from_path(path: &Path) -> io::Result<FileIdentity> {
+    let dir = Dir::open_ambient_dir(path, ambient_authority())?;
+    identity_from_file(dir.into_std_file())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn identity_from_path(path: &Path) -> io::Result<FileIdentity> {
+    FileIdentity::from_path(path)
+}
 
 /// URL/file-safe slug for a page name (links and filenames must match).
 pub fn slug(name: &str) -> String {
@@ -1727,7 +1774,7 @@ struct PublishRecovery {
 }
 
 fn dir_identity(dir: &Dir) -> io::Result<FileIdentity> {
-    FileIdentity::from_file(dir.try_clone()?.into_std_file())
+    identity_from_file(dir.try_clone()?.into_std_file())
 }
 
 fn reserve_publish_stage(graph: &Graph) -> io::Result<PublishStage> {
@@ -1839,15 +1886,15 @@ fn publish_recovery_race_hook(_recovery: &PublishRecovery) -> io::Result<()> {
     Ok(())
 }
 
-fn reserve_publish_recovery(graph: &Graph, stage: &PublishStage) -> io::Result<PublishRecovery> {
+fn reserve_publish_recovery(graph: &Graph, root: &Dir) -> io::Result<PublishRecovery> {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
     static SEQ: AtomicU64 = AtomicU64::new(0);
     let recovery_rel = Path::new("logseq").join(".tine-trash").join("conflicts");
     let recovery = graph.root.join(&recovery_rel);
     graph.ensure_write_target(&recovery)?;
-    stage.root.create_dir_all(&recovery_rel)?;
-    let recovery_root = stage.root.open_dir(&recovery_rel)?;
+    root.create_dir_all(&recovery_rel)?;
+    let recovery_root = root.open_dir(&recovery_rel)?;
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis())
@@ -1875,17 +1922,27 @@ fn reserve_publish_recovery(graph: &Graph, stage: &PublishStage) -> io::Result<P
     ))
 }
 
-fn commit_publish_stage(graph: &Graph, stage: &PublishStage, out: &Path) -> io::Result<()> {
+fn commit_publish_stage(graph: &Graph, stage: PublishStage, out: &Path) -> io::Result<()> {
     graph.ensure_write_target(out)?;
     // cap-std may represent a directory capability with an O_PATH descriptor on
     // Linux, which cannot itself be fsynced. Every generated file is fsynced;
     // directory durability remains best-effort, matching the other atomic paths.
     let _ = stage.dir.try_clone()?.into_std_file().sync_all();
+    let PublishStage {
+        path,
+        root,
+        dir,
+        identity,
+    } = stage;
+    // Windows refuses to rename a directory while this capability is open.
+    // Every file is already synced and the stable identity above survives the
+    // close for the post-move replacement check.
+    drop(dir);
 
     // Reject a pre-existing alias without touching it. A replacement racing the
     // check is moved as an inode into bound recovery and rejected there; it is
     // never followed for a write.
-    let old_recovery = match stage.root.symlink_metadata("publish") {
+    let old_recovery = match root.symlink_metadata("publish") {
         Ok(metadata) => {
             if !metadata.is_dir() || metadata.file_type().is_symlink() {
                 return Err(io::Error::new(
@@ -1893,9 +1950,9 @@ fn commit_publish_stage(graph: &Graph, stage: &PublishStage, out: &Path) -> io::
                     "static-publish output is not a real directory",
                 ));
             }
-            let recovery = reserve_publish_recovery(graph, stage)?;
+            let recovery = reserve_publish_recovery(graph, &root)?;
             publish_recovery_race_hook(&recovery)?;
-            stage.root.rename("publish", &recovery.dir, "previous")?;
+            root.rename("publish", &recovery.dir, "previous")?;
             let retired = recovery.dir.symlink_metadata("previous")?;
             if !retired.is_dir() || retired.file_type().is_symlink() {
                 return Err(io::Error::new(
@@ -1909,7 +1966,7 @@ fn commit_publish_stage(graph: &Graph, stage: &PublishStage, out: &Path) -> io::
         Err(error) => return Err(error),
     };
 
-    if let Err(error) = crate::model::move_file_noreplace(&stage.path, out) {
+    if let Err(error) = crate::model::move_file_noreplace(&path, out) {
         // The previous site stays complete in conflict recovery. Avoid a
         // compare-then-replace restoration that could clobber a late winner.
         let _ = old_recovery;
@@ -1918,7 +1975,7 @@ fn commit_publish_stage(graph: &Graph, stage: &PublishStage, out: &Path) -> io::
     let out_meta = fs::symlink_metadata(out)?;
     let same_stage = out_meta.is_dir()
         && !out_meta.file_type().is_symlink()
-        && FileIdentity::from_path(out).is_ok_and(|live| live == stage.identity);
+        && identity_from_path(out).is_ok_and(|live| live == identity);
     if same_stage {
         return Ok(());
     }
@@ -1926,8 +1983,8 @@ fn commit_publish_stage(graph: &Graph, stage: &PublishStage, out: &Path) -> io::
     // A replaced stage must never remain live. Move it through the bound graph
     // and recovery directory handles; the previous complete site is already
     // retained separately and is not overwritten during automatic recovery.
-    let bad = reserve_publish_recovery(graph, stage)?;
-    let _ = stage.root.rename("publish", &bad.dir, "invalid-stage");
+    let bad = reserve_publish_recovery(graph, &root)?;
+    let _ = root.rename("publish", &bad.dir, "invalid-stage");
     Err(io::Error::new(
         io::ErrorKind::InvalidInput,
         "static-publish staging directory changed during commit",
@@ -2101,7 +2158,7 @@ pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
     write_publish_stage_file(&stage, "pages.html", pages_html.as_bytes())?;
     let entry_html = welcome_html.unwrap_or(pages_html);
     write_publish_stage_file(&stage, "index.html", entry_html.as_bytes())?;
-    commit_publish_stage(graph, &stage, &out)?;
+    commit_publish_stage(graph, stage, &out)?;
     Ok((out.display().to_string(), count))
 }
 
@@ -2472,7 +2529,7 @@ mod tests {
         write_publish_stage_file(&stage, "index.html", b"generated site").unwrap();
         symlink(&outside, dir.join("publish")).unwrap();
 
-        assert!(commit_publish_stage(&graph, &stage, &dir.join("publish")).is_err());
+        assert!(commit_publish_stage(&graph, stage, &dir.join("publish")).is_err());
 
         assert_eq!(
             fs::read_to_string(outside.join("index.html")).unwrap(),
