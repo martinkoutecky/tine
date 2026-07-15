@@ -23,6 +23,12 @@ describe("Android voice-recording bounds", () => {
     const commands = readFileSync("src-tauri/src/commands.rs", "utf8");
     expect(commands).toMatch(/pub\(crate\) fn import_recording/);
     expect(commands).toMatch(/import_asset_file\(&mut capture, &name, MAX_RECORDING_BYTES\)/);
+    const bridge = readFileSync("src-tauri/src/android_media.rs", "utf8");
+    const result = bridge.slice(
+      bridge.indexOf("struct MediaCaptureResult"),
+      bridge.indexOf("#[cfg(target_os = \"android\")]", bridge.indexOf("struct MediaCaptureResult"))
+    );
+    expect(result).toMatch(/path:\s*Option<String>/);
     const block = readFileSync("src/components/Block.tsx", "utf8");
     expect(block).toMatch(/backend\(\)\.importRecording\(res\.path, candidate\)/);
   });

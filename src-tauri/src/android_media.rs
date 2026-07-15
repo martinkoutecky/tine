@@ -1,7 +1,8 @@
 // Android media capture bridge: camera / photo-picker (`capture_photo`) and
 // voice-memo recording (`start_recording` / `stop_recording` / `cancel_recording`).
-// Each returns the captured bytes as base64 in `data` + a file `ext`; the
-// frontend writes them into the graph's assets/ and inserts the media ref.
+// Photos return captured bytes as base64 in `data` + a file `ext`. Voice memos
+// return a native-cache `path`; Rust streams that token into the graph before
+// the frontend inserts the media ref.
 // Mirrors android_folder_picker.rs. Non-android targets get erroring stubs so the
 // desktop build links and the JS calls fail gracefully.
 use serde::{Deserialize, Serialize};
@@ -18,12 +19,34 @@ const PLUGIN_IDENTIFIER: &str = "page.tine.app";
 
 #[derive(Debug, Deserialize, Serialize)]
 pub(crate) struct MediaCaptureResult {
-    /// "ok" (data+ext set), "cancelled", or "recording" (start ack).
+    /// "ok" (data or path + ext set), "cancelled", or "recording" (start ack).
     status: String,
-    /// Base64-encoded file bytes (present when status == "ok").
+    /// Base64-encoded photo bytes (present for successful photo capture).
     data: Option<String>,
+    /// Native app-cache token (present for a successfully stopped voice memo).
+    path: Option<String>,
     /// File extension without the dot, e.g. "jpg" / "png" / "m4a".
     ext: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MediaCaptureResult;
+
+    #[test]
+    fn voice_memo_path_survives_mobile_plugin_deserialization() {
+        let result: MediaCaptureResult = serde_json::from_str(
+            r#"{"status":"ok","path":"/data/user/0/page.tine.app/cache/voice.m4a","ext":"m4a"}"#,
+        )
+        .expect("voice memo result should deserialize");
+
+        assert_eq!(
+            result.path.as_deref(),
+            Some("/data/user/0/page.tine.app/cache/voice.m4a")
+        );
+        assert_eq!(result.ext.as_deref(), Some("m4a"));
+        assert!(result.data.is_none());
+    }
 }
 
 #[cfg(target_os = "android")]
