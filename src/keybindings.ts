@@ -586,6 +586,19 @@ function eventToChord(e: KeyboardEvent): Chord {
   };
 }
 
+/** WebKitGTK can report Shift+Tab with a non-Tab key, but preserves its code. */
+export function isTabLikeEvent(e: KeyboardEvent, chord = eventToChord(e)): boolean {
+  return e.code === "Tab" || chord.key === "tab";
+}
+
+/** Bare Tab permits Shift but declines every platform modifier.
+ *
+ * Raw Control is deliberate: on macOS eventToChord maps `mod` from Meta, so
+ * Ctrl+Tab must not normalize into a plain editor Tab. */
+export function isPermittedTabGesture(e: KeyboardEvent, chord = eventToChord(e)): boolean {
+  return isTabLikeEvent(e, chord) && !e.ctrlKey && !chord.mod && !chord.alt && !chord.meta;
+}
+
 function chordEq(a: Chord, b: Chord): boolean {
   return a.mod === b.mod && a.shift === b.shift && a.alt === b.alt && a.meta === b.meta && a.key === b.key;
 }
@@ -681,6 +694,11 @@ function isEditableTarget(t: EventTarget | null): boolean {
   if (!el) return false;
   const tag = el.tagName;
   return tag === "TEXTAREA" || tag === "INPUT" || el.isContentEditable;
+}
+
+function isOutlineBlockEditorTarget(t: EventTarget | null): boolean {
+  const el = t as { tagName?: unknown; classList?: { contains?: (name: string) => boolean } } | null;
+  return el?.tagName === "TEXTAREA" && el.classList?.contains?.("block-editor") === true;
 }
 
 function focusedGridSurface(gridId: string): string | null {
@@ -875,9 +893,10 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
     // While typing, only modifier chords are eligible (so "g j" doesn't fire).
     if (editing && !chord.mod) {
       // Cancel GTK/browser focus traversal on Tab/Shift+Tab in the capture
-      // phase (WebKitGTK grabs it before the textarea can), but still let the
-      // event reach the editor so it can indent/outdent.
-      if (e.code === "Tab" || chord.key === "tab") e.preventDefault();
+      // phase (WebKitGTK grabs it before an outline editor can), but still let
+      // that editor receive its owned gesture. Native form controls retain
+      // their browser focus traversal and blur behavior.
+      if (isOutlineBlockEditorTarget(e.target) && isPermittedTabGesture(e, chord)) e.preventDefault();
       resetSeq();
       return;
     }

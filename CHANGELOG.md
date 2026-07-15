@@ -19,6 +19,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   same click or right-click menu; both actions safely ensure the annotation
   block before copying or opening it with its ordinary referrers visible.
   (GH #168)
+- **Native form fields now retain Tab and Shift+Tab focus traversal, including
+  their blur commits, while outline and Sheet-cell editors keep their
+  application-owned indentation, autocomplete, and cell-navigation behavior.**
+  (GH #157)
 - **The page-bottom Add block target now opens one focused, writable editor in
   the originating pane.** It reuses only a rendered empty structural leaf;
   collapsed and opaque Sheet storage tails create at the normal page or zoom

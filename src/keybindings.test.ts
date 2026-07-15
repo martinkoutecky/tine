@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { closeInPageFind, inPageFindOpen } from "./inpageFind";
-import { commandDefaults, eventToBindingString, installKeybindings } from "./keybindings";
+import { commandDefaults, eventToBindingString, installKeybindings, isPermittedTabGesture } from "./keybindings";
 import { closeSwitcher, focusMode, openSwitcher, setFocusMode, setPdfTarget, setWorkflow, switcherOpen } from "./ui";
 import { focusedPaneId, focusPane, layoutPaneIds, layoutRoot, paneRouter, resetPaneLayoutToSingle, splitRootAtEdge } from "./panes";
 import { exitPaneSelect, paneSel } from "./paneSelect";
@@ -116,6 +116,14 @@ function trackedKeyEvent(init: Partial<KeyboardEvent>) {
   };
 }
 
+function editableTarget(tagName: string, options: { blockEditor?: boolean; contentEditable?: boolean } = {}) {
+  return {
+    tagName,
+    isContentEditable: options.contentEditable ?? false,
+    classList: { contains: (name: string) => options.blockEditor === true && name === "block-editor" },
+  } as unknown as EventTarget;
+}
+
 const pageSnapshot = (name: string): PaneSnapshot => ({
   tabs: [{ history: [{ kind: "page", name, pageKind: "page" }], pos: 0, pinned: false }],
   activeIndex: 0,
@@ -173,6 +181,70 @@ describe("keyboard binding strings", () => {
     // mod+shift+j (Chrome's console shortcut) is free and reaches the dispatcher.
     const byId = Object.fromEntries(commandDefaults().map((c) => [c.id, c]));
     expect(byId["ui/toggle-devtools"]).toMatchObject({ binding: "mod+shift+j", scope: "global" });
+  });
+});
+
+describe("editable Tab ownership (GH #157)", () => {
+  it("reserves permitted Tab for outline editors instead of native form controls", () => {
+    const fake = installFakeWindow();
+    const dispose = installKeybindings();
+    const input = editableTarget("INPUT");
+    const textarea = editableTarget("TEXTAREA");
+    const contenteditable = editableTarget("DIV", { contentEditable: true });
+    const editor = editableTarget("TEXTAREA", { blockEditor: true });
+
+    const plainInput = trackedKeyEvent({ key: "Tab", code: "Tab", target: input });
+    fake.dispatchCaptureKeydown(plainInput.event);
+    expect(plainInput.prevented()).toBe(false);
+
+    const shiftInput = trackedKeyEvent({ key: "Unidentified", code: "Tab", shiftKey: true, target: input });
+    fake.dispatchCaptureKeydown(shiftInput.event);
+    expect(shiftInput.prevented()).toBe(false);
+
+    const plainTextarea = trackedKeyEvent({ key: "Tab", code: "Tab", target: textarea });
+    fake.dispatchCaptureKeydown(plainTextarea.event);
+    expect(plainTextarea.prevented()).toBe(false);
+
+    const contenteditableTab = trackedKeyEvent({ key: "Tab", code: "Tab", target: contenteditable });
+    fake.dispatchCaptureKeydown(contenteditableTab.event);
+    expect(contenteditableTab.prevented()).toBe(false);
+
+    // Editable targets must still clear global chord state, so typing the first
+    // half of g j in a form cannot trigger navigation after focus leaves it.
+    resetPaneLayoutToSingle(pageSnapshot("Source"));
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "g", code: "KeyG", target: input }).event);
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "j", code: "KeyJ" }).event);
+    expect(paneRouter("main").route()).toMatchObject({ kind: "page", name: "Source" });
+
+    const plainEditor = trackedKeyEvent({ key: "Tab", code: "Tab", target: editor });
+    fake.dispatchCaptureKeydown(plainEditor.event);
+    expect(plainEditor.prevented()).toBe(true);
+
+    const shiftEditor = trackedKeyEvent({ key: "Unidentified", code: "Tab", shiftKey: true, target: editor });
+    fake.dispatchCaptureKeydown(shiftEditor.event);
+    expect(shiftEditor.prevented()).toBe(true);
+
+    expect(isPermittedTabGesture(keyEvent({ key: "Tab", code: "Tab", ctrlKey: true }))).toBe(false);
+    expect(isPermittedTabGesture(keyEvent({ key: "Unidentified", code: "Tab", ctrlKey: true, shiftKey: true }))).toBe(false);
+
+    for (const init of [
+      { altKey: true },
+      { ctrlKey: true },
+      { metaKey: true },
+    ]) {
+      const modified = trackedKeyEvent({ key: "Tab", code: "Tab", target: editor, ...init });
+      fake.dispatchCaptureKeydown(modified.event);
+      expect(modified.prevented()).toBe(false);
+    }
+
+    // WebKitGTK/Wayland can omit metaKey from the Tab event, so exercise the
+    // tracked Super fallback used by the global dispatcher.
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "Super", code: "SuperLeft", type: "keydown" }).event);
+    const trackedSuper = trackedKeyEvent({ key: "Tab", code: "Tab", target: editor });
+    fake.dispatchCaptureKeydown(trackedSuper.event);
+    expect(trackedSuper.prevented()).toBe(false);
+    fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "Super", code: "SuperLeft", type: "keyup" }).event);
+    dispose();
   });
 });
 

@@ -135,6 +135,62 @@ async function waitForFile(file, predicate, label) {
   throw new Error(`${label} was not persisted: ${fs.readFileSync(file, "utf8")}`);
 }
 
+async function nativeTab({ shift = false } = {}) {
+  const actions = shift
+    ? [{ type: "keyDown", value: "\uE008" }, { type: "keyDown", value: "\uE004" }, { type: "keyUp", value: "\uE004" }, { type: "keyUp", value: "\uE008" }]
+    : [{ type: "keyDown", value: "\uE004" }, { type: "keyUp", value: "\uE004" }];
+  await browser.performActions([{ type: "key", id: "page-properties-keyboard", actions }]);
+  await browser.releaseActions();
+}
+
+async function activePagePropertyControl() {
+  return browser.execute(() => {
+    const panel = document.querySelector(".page-props-panel");
+    const active = document.activeElement;
+    if (!panel || !active || !panel.contains(active)) return null;
+    if (active.classList.contains("pp-input")) {
+      return active.closest(".pp-field")?.querySelector(".pp-label")?.textContent?.trim() ?? null;
+    }
+    if (active.matches(".pp-bool input")) return active.closest(".pp-field")?.querySelector(".pp-label")?.textContent?.trim() ?? null;
+    return active.classList.contains("pp-done") ? "Done" : null;
+  });
+}
+
+async function exerciseNativeFormTabTraversal(aliasValue) {
+  // Pointer-open the actual routed named-page panel; the key actions below are
+  // W3C native actions, not synthetic DOM events, so WebKit performs its focus
+  // default action if the capture handler leaves it alone.
+  await browser.$(".page-gear").click();
+  await browser.$(".page-props-panel").waitForExist({ timeout: 5_000 });
+  const aliases = (await browser.$$(".page-props-panel .pp-input"))[0];
+  await aliases.click();
+  await aliases.setValue(aliasValue);
+
+  await nativeTab();
+  if (await activePagePropertyControl() !== "Tags") {
+    throw new Error(`native Tab did not leave Aliases for Tags; active=${JSON.stringify(await activePagePropertyControl())}`);
+  }
+  await waitForFile(
+    `${GRAPH}/pages/Property detailed.md`,
+    (text) => text.includes(`alias:: ${aliasValue}`),
+    "Aliases blur commit after native Tab",
+  );
+
+  await nativeTab({ shift: true });
+  if (await activePagePropertyControl() !== "Aliases") {
+    throw new Error(`native Shift+Tab did not return to Aliases; active=${JSON.stringify(await activePagePropertyControl())}`);
+  }
+
+  for (const expected of ["Tags", "Display title", "Icon", "Public", "Done"]) {
+    await nativeTab();
+    if (await activePagePropertyControl() !== expected) {
+      throw new Error(`native Tab focus order expected ${expected}; active=${JSON.stringify(await activePagePropertyControl())}`);
+    }
+  }
+  await browser.$(".pp-done").click();
+  await browser.$(".page-props-panel").waitForExist({ reverse: true, timeout: 5_000 });
+}
+
 try {
   browser = await remote({
     hostname: "127.0.0.1",
@@ -152,7 +208,7 @@ try {
   await sleep(3500);
 
   await openPage("Property detailed");
-  await setGearField("Aliases", "Test Record, Alternate");
+  await exerciseNativeFormTabTraversal("Test Record, Alternate");
   const detailedAfter = await waitForFile(
     `${GRAPH}/pages/Property detailed.md`,
     (text) => text.includes("alias:: Test Record, Alternate"),
@@ -181,7 +237,7 @@ try {
   if (!lines.includes("A:: XX") || !lines.includes("B:: XX") || !lines.includes("C:: XX") || !lines.includes("icon:: ★")) {
     throw new Error(`simple page properties were lost or merged: ${JSON.stringify(lines)}`);
   }
-  console.log("PASS: page-property gear preserves literal reporter files through native save");
+  console.log("PASS: page-property native Tab traversal and literal reporter files survive the real Tauri/WebKit save path");
 } finally {
   try { await browser?.deleteSession(); } catch {}
   if (process.platform === "win32") {

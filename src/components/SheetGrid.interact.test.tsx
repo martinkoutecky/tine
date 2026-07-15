@@ -703,6 +703,35 @@ describe("SheetGrid interaction", () => {
     dispose();
   });
 
+  it("tabs from an actively edited cell through the block-editor ownership path", async () => {
+    const { root, dispose } = setup();
+
+    setCellSel({ gridId: "grid", row: 0, col: 1 });
+    keydown(window, "Enter");
+    await tick();
+    const editor = activeEditor(root);
+    inputText(editor, "Edited Beta");
+
+    const forward = keydown(editor, "Tab");
+    await tick();
+    expect(forward.defaultPrevented).toBe(true);
+    expect(doc.byId.c2.raw).toBe("Edited Beta");
+    expect(editingId()).toBeNull();
+    expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 1, col: 0 });
+    expect(selectedCell(root)).toBe(cell(root, 1, 0));
+
+    keydown(window, "Enter");
+    await tick();
+    const reverse = keydown(activeEditor(root), "Unidentified", { code: "Tab", shiftKey: true });
+    await tick();
+    expect(reverse.defaultPrevented).toBe(true);
+    expect(editingId()).toBeNull();
+    expect(cellSel()).toEqual({ kind: "cell", gridId: "grid", row: 0, col: 1 });
+    expect(selectedCell(root)).toBe(cell(root, 0, 1));
+
+    dispose();
+  });
+
   it("overtype edits through the mounted editor and Enter commits without structural mutation", async () => {
     const { root, dispose } = setup();
     const beforeChildren = childrenSnapshot();

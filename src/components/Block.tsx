@@ -116,7 +116,7 @@ import { seedAssetBlob } from "../assetCache";
 import { openPageInNewTab } from "../router";
 import { blockRefCount } from "../blockRefCounts";
 import { BlockReferences } from "./BlockReferences";
-import { editorCommandFor } from "../keybindings";
+import { editorCommandFor, isPermittedTabGesture, isTabLikeEvent } from "../keybindings";
 import { cycleMarkerSmart, toggleTaskDone } from "../editor/repeat";
 
 import { taskCheckboxState } from "../markers";
@@ -2237,7 +2237,7 @@ export function Editor(props: { id: string }): JSX.Element {
       commitAndSelect();
       return true;
     }
-    if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key === "Tab" || e.code === "Tab")) {
+    if (isPermittedTabGesture(e)) {
       e.preventDefault();
       commitAndMove(e.shiftKey ? "tab-back" : "tab-forward");
       return true;
@@ -2318,7 +2318,7 @@ export function Editor(props: { id: string }): JSX.Element {
         setAcIndex((acIndex() - 1 + n) % n);
         return;
       }
-      if (e.key === "Enter" || e.code === "Tab") {
+      if (e.key === "Enter" || isPermittedTabGesture(e)) {
         e.preventDefault();
         selectAc(acItems()[acIndex()]);
         return;
@@ -2331,6 +2331,10 @@ export function Editor(props: { id: string }): JSX.Element {
     }
 
     if (handleSheetCellKey(e, start, end, raw)) return;
+
+    // Raw Control is not represented by `mod` on macOS. Decline every
+    // modified Tab before command lookup so it cannot become indent/outdent.
+    if (isTabLikeEvent(e) && !isPermittedTabGesture(e)) return;
 
     // Resolve configured editor commands before incidental literal-key behavior:
     // an explicit user binding (including Alt+[) must win over selection wrapping.
