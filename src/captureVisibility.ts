@@ -18,23 +18,27 @@ export async function resettleIfVisible(
  * native focus retries can run. Arm blur-to-dismiss only after this show has
  * actually owned focus; explicit hides disarm the next stale transition too.
  */
-export function createCaptureBlurGate(): {
+export function createCaptureBlurGate(
+  now: () => number = Date.now,
+  stableFocusMs = 200,
+): {
   focusChanged(focused: boolean): boolean;
   disarm(): void;
 } {
-  let armed = false;
+  let focusedAt: number | null = null;
   return {
     focusChanged(focused) {
       if (focused) {
-        armed = true;
+        focusedAt = now();
         return false;
       }
-      if (!armed) return false;
-      armed = false;
-      return true;
+      if (focusedAt === null) return false;
+      const heldFocusLongEnough = now() - focusedAt >= stableFocusMs;
+      focusedAt = null;
+      return heldFocusLongEnough;
     },
     disarm() {
-      armed = false;
+      focusedAt = null;
     },
   };
 }

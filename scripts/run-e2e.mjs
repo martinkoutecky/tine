@@ -122,63 +122,99 @@ function xmlEscape(value) {
   return String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll('"', "&quot;");
 }
 
+function isRetryableDriverTransportFailure(output, errors, timedOut) {
+  if (timedOut) return false;
+  const combined = `${output}\n${errors}`;
+  return /WebDriverError/.test(combined)
+    && /\/session/.test(combined)
+    && /(UND_ERR_SOCKET|ECONNREFUSED|ECONNRESET|socket hang up)/.test(combined);
+}
+
+function archiveInfrastructureAttempt(dir, attempt) {
+  const archive = path.join(dir, `infrastructure-attempt-${attempt}`);
+  fs.mkdirSync(archive, { recursive: true });
+  for (const entry of fs.readdirSync(dir)) {
+    if (entry.startsWith("infrastructure-attempt-")) continue;
+    fs.renameSync(path.join(dir, entry), path.join(archive, entry));
+  }
+}
+
 async function runScenario([id, script, extraEnv]) {
   const started = Date.now();
   const dir = path.join(artifactRoot, id);
   fs.mkdirSync(dir, { recursive: true });
-  const stdout = fs.openSync(path.join(dir, "stdout.log"), "w");
-  const stderr = fs.openSync(path.join(dir, "stderr.log"), "w");
-  const driverPort = await freePort();
-  const nativePort = await freePort();
-  const previewPort = await freePort();
-  const env = {
-    ...baseProcessEnv,
-    ...extraEnv,
-    TINE_APP: app,
-    E2E_ARTIFACT_DIR: dir,
-    E2E_DRIVER_PORT: String(driverPort),
-    E2E_NATIVE_PORT: String(nativePort),
-    E2E_PREVIEW_PORT: String(previewPort),
-    E2E_LEGACY_NOTES: "0",
-    TAURI_DRIVER: process.env.TAURI_DRIVER || "tauri-driver",
-    WEBKIT_DRIVER: process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver",
-  };
-  const nativeLinux = process.platform === "linux" && id !== "selection-wrap";
-  // Tauri's Linux single-instance plugin owns a well-known session-bus name.
-  // Give each native scenario a private bus so a slow WebKit/Tauri teardown
-  // cannot forward the next scenario into the previous app. Processes spawned
-  // inside one scenario still share the bus, preserving the multigraph and
-  // Quick Capture handoff coverage.
-  const command = nativeLinux ? "xvfb-run" : process.execPath;
-  const args = nativeLinux
-    // Xvfb must wrap the private bus: D-Bus-activated GTK portal services need
-    // DISPLAY in the activation environment for auxiliary-window behavior.
-    ? ["-a", process.env.DBUS_RUN_SESSION || "dbus-run-session", "--", process.execPath, path.join(root, script)]
-    : [path.join(root, script)];
-  const child = spawn(command, args, { cwd: root, env, detached: process.platform !== "win32", stdio: ["ignore", stdout, stderr] });
-  let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    try {
-      if (process.platform === "win32") child.kill("SIGKILL");
-      else process.kill(-child.pid, "SIGKILL");
-    } catch {}
-  }, timeoutMs);
-  const result = await new Promise((resolve) => {
-    child.once("error", (error) => resolve({ code: 1, error: String(error) }));
-    child.once("exit", (code, signal) => resolve({ code: code ?? 1, signal }));
-  });
-  clearTimeout(timer);
-  fs.closeSync(stdout);
-  fs.closeSync(stderr);
-  const output = fs.readFileSync(path.join(dir, "stdout.log"), "utf8");
-  const errors = fs.readFileSync(path.join(dir, "stderr.log"), "utf8");
-  const status = result.code === 0 && !timedOut ? "passed" : "failed";
-  const record = { id, script, status, exitCode: result.code, signal: result.signal ?? null, timedOut, durationMs: Date.now() - started };
-  fs.writeFileSync(path.join(dir, "result.json"), JSON.stringify(record, null, 2) + "\n");
-  process.stdout.write(`${status === "passed" ? "PASS" : "FAIL"} ${id} (${(record.durationMs / 1000).toFixed(1)}s)\n`);
-  if (status === "failed") process.stdout.write(`${output.slice(-2000)}\n${errors.slice(-2000)}\n`);
-  return record;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const stdout = fs.openSync(path.join(dir, "stdout.log"), "w");
+    const stderr = fs.openSync(path.join(dir, "stderr.log"), "w");
+    const driverPort = await freePort();
+    const nativePort = await freePort();
+    const previewPort = await freePort();
+    const env = {
+      ...baseProcessEnv,
+      ...extraEnv,
+      TINE_APP: app,
+      E2E_ARTIFACT_DIR: dir,
+      E2E_DRIVER_PORT: String(driverPort),
+      E2E_NATIVE_PORT: String(nativePort),
+      E2E_PREVIEW_PORT: String(previewPort),
+      E2E_LEGACY_NOTES: "0",
+      TAURI_DRIVER: process.env.TAURI_DRIVER || "tauri-driver",
+      WEBKIT_DRIVER: process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver",
+    };
+    const nativeLinux = process.platform === "linux" && id !== "selection-wrap";
+    // Tauri's Linux single-instance plugin owns a well-known session-bus name.
+    // Give each native scenario a private bus so a slow WebKit/Tauri teardown
+    // cannot forward the next scenario into the previous app. Processes spawned
+    // inside one scenario still share the bus, preserving the multigraph and
+    // Quick Capture handoff coverage.
+    const command = nativeLinux ? "xvfb-run" : process.execPath;
+    const args = nativeLinux
+      // Xvfb must wrap the private bus: D-Bus-activated GTK portal services need
+      // DISPLAY in the activation environment for auxiliary-window behavior.
+      ? ["-a", process.env.DBUS_RUN_SESSION || "dbus-run-session", "--", process.execPath, path.join(root, script)]
+      : [path.join(root, script)];
+    const child = spawn(command, args, { cwd: root, env, detached: process.platform !== "win32", stdio: ["ignore", stdout, stderr] });
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try {
+        if (process.platform === "win32") child.kill("SIGKILL");
+        else process.kill(-child.pid, "SIGKILL");
+      } catch {}
+    }, timeoutMs);
+    const result = await new Promise((resolve) => {
+      child.once("error", (error) => resolve({ code: 1, error: String(error) }));
+      child.once("exit", (code, signal) => resolve({ code: code ?? 1, signal }));
+    });
+    clearTimeout(timer);
+    fs.closeSync(stdout);
+    fs.closeSync(stderr);
+    const output = fs.readFileSync(path.join(dir, "stdout.log"), "utf8");
+    const errors = fs.readFileSync(path.join(dir, "stderr.log"), "utf8");
+    const status = result.code === 0 && !timedOut ? "passed" : "failed";
+    if (status === "failed" && attempt === 1 && isRetryableDriverTransportFailure(output, errors, timedOut)) {
+      process.stdout.write(`RETRY ${id}: WebDriver session transport failed before app assertions; retaining attempt 1\n`);
+      process.stdout.write(`${output.slice(-1200)}\n${errors.slice(-1200)}\n`);
+      archiveInfrastructureAttempt(dir, attempt);
+      continue;
+    }
+    const record = {
+      id,
+      script,
+      status,
+      exitCode: result.code,
+      signal: result.signal ?? null,
+      timedOut,
+      attempts: attempt,
+      infrastructureRetries: attempt - 1,
+      durationMs: Date.now() - started,
+    };
+    fs.writeFileSync(path.join(dir, "result.json"), JSON.stringify(record, null, 2) + "\n");
+    process.stdout.write(`${status === "passed" ? "PASS" : "FAIL"} ${id} (${(record.durationMs / 1000).toFixed(1)}s)\n`);
+    if (status === "failed") process.stdout.write(`${output.slice(-2000)}\n${errors.slice(-2000)}\n`);
+    return record;
+  }
+  throw new Error(`unreachable scenario retry state for ${id}`);
 }
 
 validateEmbeddedFrontend();

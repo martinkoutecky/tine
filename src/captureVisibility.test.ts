@@ -28,11 +28,27 @@ describe("createCaptureBlurGate", () => {
   });
 
   it("dismisses once after the capture window has genuinely held focus", () => {
-    const gate = createCaptureBlurGate();
+    let now = 1_000;
+    const gate = createCaptureBlurGate(() => now, 200);
 
     expect(gate.focusChanged(true)).toBe(false);
+    now += 200;
     expect(gate.focusChanged(false)).toBe(true);
     expect(gate.focusChanged(false)).toBe(false);
+  });
+
+  it("ignores transient focus lost while the forwarding process exits, then arms on a stable retry", () => {
+    let now = 1_000;
+    const gate = createCaptureBlurGate(() => now, 200);
+
+    gate.focusChanged(true);
+    now += 40;
+    expect(gate.focusChanged(false)).toBe(false);
+
+    now += 80;
+    gate.focusChanged(true);
+    now += 240;
+    expect(gate.focusChanged(false)).toBe(true);
   });
 
   it("disarms a stale blur after an explicit hide", () => {

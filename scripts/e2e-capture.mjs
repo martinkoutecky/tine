@@ -114,6 +114,18 @@ const waitForWindow = async (wanted, timeoutMs) => {
   }
   throw new Error(`${wanted} never received native focus; state=${JSON.stringify(state)} windows=${JSON.stringify(namedWindows(wanted))}`);
 };
+const waitForForwarderExit = (child, timeoutMs) => new Promise((resolve, reject) => {
+  const timeout = setTimeout(() => reject(new Error(`secondary --capture process did not exit within ${timeoutMs}ms`)), timeoutMs);
+  child.once("error", (error) => {
+    clearTimeout(timeout);
+    reject(error);
+  });
+  child.once("exit", (code, signal) => {
+    clearTimeout(timeout);
+    if (code === 0) resolve();
+    else reject(new Error(`secondary --capture process exited with code=${code} signal=${signal}`));
+  });
+});
 
 const driverLog = fs.openSync(`${ARTIFACT_DIR}/tauri-driver.log`, "w");
 const td = spawn(
@@ -164,6 +176,12 @@ try {
   await waitForWindow("Tine", 5000);
 
   const second = spawn(APP, ["--capture"], { env, stdio: ["ignore", driverLog, driverLog], detached: true });
+  // The single-instance callback runs in the primary while this short-lived
+  // forwarding process still owns GTK/X11 resources. On slower hosted runners,
+  // probing native focus during that teardown observes a destroyed transient
+  // frame rather than the final user-visible state. Require the forwarder to
+  // exit successfully, then prove that Quick Capture owns focus without clicks.
+  await waitForForwarderExit(second, 5000);
   second.unref();
   await waitForWindow("Quick Capture", 10_000);
 
