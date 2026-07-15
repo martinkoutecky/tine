@@ -1219,6 +1219,10 @@ export interface PdfTarget {
 }
 export const [pdfTarget, setPdfTarget] = createSignal<PdfTarget | null>(null);
 export function openPdf(filename: string, label: string, page?: number, highlightId?: string) {
+  // Logseq treats re-opening the current PDF resource without a page/highlight
+  // intent as a no-op. Preserve the reader's current location; explicit targets
+  // within the same file still publish a new reactive navigation intent.
+  if (pdfTarget()?.filename === filename && page == null && highlightId == null) return;
   setPdfTarget({ filename, label, page, highlightId });
 }
 export function closePdf() {

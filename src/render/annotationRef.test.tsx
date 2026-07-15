@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
-import { pdfTarget, setPdfTarget } from "../ui";
+import { openPdf, pdfTarget, setPdfTarget } from "../ui";
 import { setDoc } from "../store";
 import { AnnotationBody } from "../components/AnnotationBody";
 import { AstBody } from "./body";
@@ -11,7 +11,7 @@ beforeAll(async () => {
   await initParser();
 });
 
-afterEach(() => {
+  afterEach(() => {
   vi.restoreAllMocks();
   setPdfTarget(null);
   setDoc("pages", []);
@@ -66,6 +66,19 @@ describe("PDF annotation block references (GH #61)", () => {
     } finally {
       dispose();
     }
+  });
+
+  it("keeps the current location when a direct link reopens the same PDF", () => {
+    setPdfTarget({ filename: "assets/paper.pdf", label: "Paper", page: 7 });
+    openPdf("assets/paper.pdf", "Paper");
+    expect(pdfTarget()).toEqual({
+      filename: "assets/paper.pdf",
+      label: "Paper",
+      page: 7,
+    });
+
+    openPdf("assets/paper.pdf", "Paper", 3);
+    expect(pdfTarget()?.page).toBe(3);
   });
 
   it("carries the exact id from a rendered annotation block", async () => {

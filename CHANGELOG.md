@@ -19,7 +19,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   Changing assets tears down the old viewer before mounting the new identity,
   including delayed state writes and late pdf.js loads; references into the
   already-open asset keep it mounted and scroll to the exact highlight rather
-  than only its page, with both Markdown and Org annotation-page metadata.
+  than only its page, while a targetless direct reopen preserves the current
+  reading location, with both Markdown and Org annotation-page metadata.
   Find retains a bounded text LRU, caps page text and occurrences, and drops
   cancelled work. (GH #169)
 - **Graph-open background work and result construction have hard ceilings.** A
@@ -27,7 +28,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   process-wide permits prevent I/O amplification, failed `.partial-*` backups
   are removed, and queries, references, facets, block resolution, publishing,
   and query export enforce row/byte limits while constructing—not after cloning
-  a complete result.
+  a complete result. Reference occurrence evidence is capped while scanning,
+  all live bounded result families retain warm caches across unrelated edits,
+  and overflow metadata is never retained across an unknowable negative
+  transition. Unlinked-reference edges follow Logseq's ASCII boundary rule.
 - **Clipboard image paste validates dimensions before decoding RGBA.** Pixel,
   raw-buffer, PNG, frontend IPC, and native base64 limits now form one bounded
   ingress path, avoiding several simultaneous unbounded image copies.

@@ -453,19 +453,30 @@ fn block_reference_evidence(
     names_norm: &[String],
     kind: ReferenceKind,
 ) -> Option<ReferenceBlockEvidence> {
-    let occurrences = crate::reference_evidence::occurrences(
+    let occurrences = crate::reference_evidence::occurrences_of_kind(
         &block.raw,
         &block.projection().reference_source,
         canonical,
         names_norm,
-    )
-    .into_iter()
-    .filter(|occurrence| occurrence.kind == kind)
-    .collect::<Vec<_>>();
+        kind,
+    );
     (!occurrences.is_empty()).then(|| ReferenceBlockEvidence {
         block_id: block.uuid.clone(),
         occurrences,
     })
+}
+
+fn block_has_reference(
+    block: &DocBlock,
+    names_norm: &[String],
+    kind: ReferenceKind,
+) -> bool {
+    crate::reference_evidence::has_occurrence_kind(
+        &block.raw,
+        &block.projection().reference_source,
+        names_norm,
+        kind,
+    )
 }
 
 fn collect_reference_occurrences(
@@ -509,7 +520,12 @@ fn collect_reference_occurrences_bounded(
                     .as_deref()
                     .and_then(|pre| page_property_block(entry, pre))
                 {
-                    if let Some(hit) = block_reference_evidence(&block, canonical, names_norm, kind)
+                    if budget.closed() {
+                        if block_has_reference(&block, names_norm, kind) {
+                            budget.deny_match();
+                        }
+                    } else if let Some(hit) =
+                        block_reference_evidence(&block, canonical, names_norm, kind)
                     {
                         let mut dto = block_to_shallow_dto(&block);
                         dto.page_property = true;
@@ -527,20 +543,30 @@ fn collect_reference_occurrences_bounded(
             }
             let mut path = Vec::new();
             let mut found: Vec<(BlockDto, ReferenceBlockEvidence)> = Vec::new();
+            let construction_closed = std::cell::Cell::new(budget.closed());
             collect_reference_matches(
                 &doc.roots,
                 &mut path,
-                &mut |block, _| block_reference_evidence(block, canonical, names_norm, kind),
-                &mut |block, ancestors, hit| {
-                    if budget.closed() {
-                        budget.deny_match();
-                        return None;
+                &mut |block, _| {
+                    if construction_closed.get() {
+                        block_has_reference(block, names_norm, kind).then_some(None)
+                    } else {
+                        block_reference_evidence(block, canonical, names_norm, kind).map(Some)
                     }
+                },
+                &mut |block, ancestors, hit| {
+                    let Some(hit) = hit else {
+                        budget.deny_match();
+                        construction_closed.set(true);
+                        return None;
+                    };
                     let estimated = shallow_dto_estimated_bytes(block, ancestors)
                         .saturating_add(reference_evidence_estimated_bytes(&hit));
                     if !budget.admit_estimated(&entry.name, estimated) {
+                        construction_closed.set(true);
                         return None;
                     }
+                    construction_closed.set(budget.closed());
                     let mut dto = result_dto(block);
                     dto.breadcrumb = ancestors
                         .iter()
@@ -1025,6 +1051,52 @@ pub(crate) fn page_affects_unlinked(
     hit
 }
 
+/// Whether this page contains a referrer to one block UUID. This is the exact
+/// predicate used by `block_referrers_bounded`, without DTO construction.
+pub(crate) fn page_affects_block_referrers(uuid: &str, doc: &Document) -> bool {
+    let uuid = uuid.trim();
+    if uuid.is_empty() {
+        return false;
+    }
+    let mut hit = false;
+    walk(&doc.roots, &mut |block| {
+        if !hit && block.projection().block_refs.iter().any(|reference| reference == uuid) {
+            hit = true;
+        }
+    });
+    hit
+}
+
+/// Whether an edited page can contribute to the supported advanced-query
+/// subset. Parsing and evaluation are shared with the real advanced query, so
+/// scoped cache invalidation cannot drift into a second query dialect.
+pub(crate) fn page_affects_advanced_query(
+    query_src: &str,
+    current_page: Option<&str>,
+    entry: &PageEntry,
+    doc: &Document,
+) -> bool {
+    let today = JournalDate::today();
+    let (Some(pred), _, _) = advanced_pred(query_src, current_page, today) else {
+        return false;
+    };
+    let (page_props, page_tags) = page_facets(doc.pre_block.as_deref());
+    let ctx = EvalCtx {
+        journal: entry.date_key,
+        is_journal: entry.kind == PageKind::Journal,
+        page_name: &entry.name,
+        page_props: &page_props,
+        page_tags: &page_tags,
+    };
+    let mut hit = false;
+    walk(&doc.roots, &mut |block| {
+        if !hit && pred.eval(block, &ctx) {
+            hit = true;
+        }
+    });
+    hit
+}
+
 /// Result of an advanced (datalog) query: matched groups + which clause heads
 /// ran vs were ignored, so the UI shows "ran X; ignored Y" rather than a blunt
 /// "unsupported". `supported` is false only when nothing in the subset matched.
@@ -1058,14 +1130,8 @@ pub fn run_advanced_query_bounded(
     max_bytes: usize,
 ) -> (AdvancedResult, bool, usize) {
     let today = JournalDate::today();
-    let inputs = resolve_inputs(query_src, current_page, today);
-    let mut ran = Vec::new();
-    let mut ignored = Vec::new();
-    let preds: Vec<Pred> = where_groups(query_src)
-        .iter()
-        .filter_map(|g| parse_adv_group(g, &inputs, today, &mut ran, &mut ignored))
-        .collect();
-    if preds.is_empty() {
+    let (pred, ran, ignored) = advanced_pred(query_src, current_page, today);
+    let Some(pred) = pred else {
         return (
             AdvancedResult {
                 groups: Vec::new(),
@@ -1076,11 +1142,6 @@ pub fn run_advanced_query_bounded(
             false,
             0,
         );
-    }
-    let pred = if preds.len() == 1 {
-        preds.into_iter().next().unwrap()
-    } else {
-        Pred::And(preds)
     };
     let mut opts = QueryOpts::default();
     pred.collect_opts(&mut opts);
@@ -1095,6 +1156,29 @@ pub fn run_advanced_query_bounded(
         bounded.exceeded,
         bounded.total,
     )
+}
+
+fn advanced_pred(
+    query_src: &str,
+    current_page: Option<&str>,
+    today: JournalDate,
+) -> (Option<Pred>, Vec<String>, Vec<String>) {
+    let inputs = resolve_inputs(query_src, current_page, today);
+    let mut ran = Vec::new();
+    let mut ignored = Vec::new();
+    let preds: Vec<Pred> = where_groups(query_src)
+        .iter()
+        .filter_map(|g| parse_adv_group(g, &inputs, today, &mut ran, &mut ignored))
+        .collect();
+    if preds.is_empty() {
+        return (None, ran, ignored);
+    }
+    let pred = if preds.len() == 1 {
+        preds.into_iter().next().unwrap()
+    } else {
+        Pred::And(preds)
+    };
+    (Some(pred), ran, ignored)
 }
 
 /// Collect balanced `(...)`/`[...]` groups at the top level of `s` (string-aware),
@@ -3880,6 +3964,7 @@ mod tests {
         assert_eq!(RESULT_DTO_CONSTRUCTIONS.with(std::cell::Cell::get), 3);
 
         RESULT_DTO_CONSTRUCTIONS.with(|count| count.set(0));
+        crate::reference_evidence::reset_occurrence_constructions();
         let refs = backlinks_bounded(&graph, "Target", 2, usize::MAX);
         assert!(refs.exceeded);
         assert_eq!(refs.total, 12);
@@ -3891,6 +3976,7 @@ mod tests {
             2
         );
         assert_eq!(RESULT_DTO_CONSTRUCTIONS.with(std::cell::Cell::get), 2);
+        assert_eq!(crate::reference_evidence::occurrence_constructions(), 2);
 
         RESULT_DTO_CONSTRUCTIONS.with(|count| count.set(0));
         let sample = run_query_bounded(&graph, "(and (task TODO) (sample 1))", 20, usize::MAX);

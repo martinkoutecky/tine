@@ -373,59 +373,214 @@ fn byte_to_utf16(raw: &str, byte: usize) -> usize {
         .unwrap_or_else(|| raw.encode_utf16().count())
 }
 
-fn is_word(ch: Option<char>) -> bool {
-    ch.is_some_and(|ch| ch.is_alphanumeric() || ch == '_')
+fn is_og_edge_alphanumeric(ch: Option<char>) -> bool {
+    ch.is_some_and(|ch| ch.is_ascii_alphanumeric())
 }
 
 fn overlaps(range: &Range<usize>, other: &Range<usize>) -> bool {
     range.start < other.end && other.start < range.end
 }
 
-fn folded_with_byte_map(value: &str, base: usize) -> (Vec<char>, Vec<Range<usize>>) {
-    let mut folded = Vec::new();
-    let mut map = Vec::new();
-    for (offset, ch) in value.char_indices() {
-        let range = base + offset..base + offset + ch.len_utf8();
-        for lower in ch.to_lowercase() {
-            folded.push(lower);
-            map.push(range.clone());
-        }
-    }
-    (folded, map)
-}
-
-fn plain_matches(raw: &str, range: &Range<usize>, needle: &str) -> Vec<Range<usize>> {
+/// Visit source-order matches with memory bounded by the target name, not the
+/// number or size of matches in the block.
+fn visit_plain_matches(
+    raw: &str,
+    range: &Range<usize>,
+    needle: &str,
+    mut visit: impl FnMut(Range<usize>) -> bool,
+) {
     let Some(source) = raw.get(range.clone()) else {
-        return Vec::new();
+        return;
     };
-    let (haystack, map) = folded_with_byte_map(source, range.start);
-    let needle_chars: Vec<char> = needle.chars().flat_map(char::to_lowercase).collect();
-    if needle_chars.is_empty() || needle_chars.len() > haystack.len() {
-        return Vec::new();
+    if needle.is_empty() {
+        return;
     }
     let first_requires_boundary = needle.chars().next().is_some_and(|ch| ch.is_alphanumeric());
     let last_requires_boundary = needle
         .chars()
         .next_back()
         .is_some_and(|ch| ch.is_alphanumeric());
-    let mut out = Vec::new();
-    for index in 0..=haystack.len() - needle_chars.len() {
-        if haystack[index..index + needle_chars.len()] != needle_chars {
+    for (offset, _) in source.char_indices() {
+        let start = range.start + offset;
+        let mut candidate = source[offset..].char_indices().flat_map(|(relative, ch)| {
+            let end = start + relative + ch.len_utf8();
+            ch.to_lowercase().map(move |lower| (lower, end))
+        });
+        let mut end = start;
+        let matched = needle.chars().flat_map(char::to_lowercase).all(|expected| {
+            candidate.next().is_some_and(|(actual, actual_end)| {
+                end = actual_end;
+                actual == expected
+            })
+        });
+        if !matched {
             continue;
         }
-        let start = map[index].start;
-        let end = map[index + needle_chars.len() - 1].end;
         let before = raw
             .get(..start)
             .and_then(|prefix| prefix.chars().next_back());
         let after = raw.get(end..).and_then(|suffix| suffix.chars().next());
-        if (!first_requires_boundary || !is_word(before))
-            && (!last_requires_boundary || !is_word(after))
+        // Exact OG edge semantics: only adjacent ASCII alphanumerics exclude
+        // an unlinked match. `_` and continuous CJK are valid boundaries.
+        if (!first_requires_boundary || !is_og_edge_alphanumeric(before))
+            && (!last_requires_boundary || !is_og_edge_alphanumeric(after))
+            && !visit(start..end)
         {
-            out.push(start..end);
+            return;
         }
     }
+}
+
+fn push_unique_bounded(
+    out: &mut Vec<ReferenceOccurrence>,
+    matched_name: &str,
+    canonical: &str,
+    kind: ReferenceKind,
+    span: ReferenceSpan,
+    rule: &str,
+) -> bool {
+    if out.iter().any(|existing| {
+        existing.span == span
+            && existing.kind == kind
+            && refs::same_page(&existing.matched_name, matched_name)
+    }) {
+        return true;
+    }
+    if out.len() >= MAX_OCCURRENCES_PER_BLOCK {
+        return false;
+    }
+    #[cfg(test)]
+    OCCURRENCE_CONSTRUCTIONS.with(|count| count.set(count.get().saturating_add(1)));
+    out.push(ReferenceOccurrence {
+        matched_name: matched_name.to_string(),
+        canonical: canonical.to_string(),
+        kind,
+        span,
+        rule: rule.to_string(),
+    });
+    true
+}
+
+#[cfg(test)]
+thread_local! {
+    static OCCURRENCE_CONSTRUCTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_occurrence_constructions() {
+    OCCURRENCE_CONSTRUCTIONS.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn occurrence_constructions() -> usize {
+    OCCURRENCE_CONSTRUCTIONS.with(std::cell::Cell::get)
+}
+
+pub(crate) fn occurrences_of_kind(
+    raw: &str,
+    projection: &ReferenceSourceProjection,
+    canonical: &str,
+    names_norm: &[String],
+    kind: ReferenceKind,
+) -> Vec<ReferenceOccurrence> {
+    let mut out = Vec::with_capacity(MAX_OCCURRENCES_PER_BLOCK.min(8));
+    if kind == ReferenceKind::Explicit {
+        for reference in &projection.explicit {
+            if !names_norm
+                .iter()
+                .any(|name| refs::same_page(name, &reference.name))
+            {
+                continue;
+            }
+            if out.len() >= MAX_OCCURRENCES_PER_BLOCK {
+                break;
+            }
+            if !push_unique_bounded(
+                &mut out,
+                reference.name.trim(),
+                canonical,
+                kind,
+                ReferenceSpan {
+                    start: byte_to_utf16(raw, reference.range.start),
+                    end: byte_to_utf16(raw, reference.range.end),
+                },
+                reference.rule,
+            ) {
+                break;
+            }
+        }
+        return out;
+    }
+
+    'names: for name in names_norm {
+        for eligible in &projection.plain_ranges {
+            let mut full = false;
+            visit_plain_matches(raw, eligible, name, |range| {
+                if projection
+                    .explicit
+                    .iter()
+                    .any(|reference| overlaps(&range, &reference.range))
+                {
+                    return true;
+                }
+                if out.len() >= MAX_OCCURRENCES_PER_BLOCK {
+                    full = true;
+                    return false;
+                }
+                let keep_scanning = push_unique_bounded(
+                    &mut out,
+                    raw.get(range.clone()).unwrap_or(name),
+                    canonical,
+                    kind,
+                    ReferenceSpan {
+                        start: byte_to_utf16(raw, range.start),
+                        end: byte_to_utf16(raw, range.end),
+                    },
+                    "plain_og_boundary",
+                );
+                full = !keep_scanning;
+                keep_scanning
+            });
+            if full {
+                break 'names;
+            }
+        }
+    }
+    out.sort_by_key(|occurrence| (occurrence.span.start, occurrence.span.end));
     out
+}
+
+/// Cheap membership path used once a result construction budget is closed.
+/// It performs no occurrence/string construction and stops at the first hit.
+pub(crate) fn has_occurrence_kind(
+    raw: &str,
+    projection: &ReferenceSourceProjection,
+    names_norm: &[String],
+    kind: ReferenceKind,
+) -> bool {
+    if kind == ReferenceKind::Explicit {
+        return projection.explicit.iter().any(|reference| {
+            names_norm
+                .iter()
+                .any(|name| refs::same_page(name, &reference.name))
+        });
+    }
+    for name in names_norm {
+        for eligible in &projection.plain_ranges {
+            let mut found = false;
+            visit_plain_matches(raw, eligible, name, |range| {
+                found = !projection
+                    .explicit
+                    .iter()
+                    .any(|reference| overlaps(&range, &reference.range));
+                !found
+            });
+            if found {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 pub(crate) fn occurrences(
@@ -434,46 +589,20 @@ pub(crate) fn occurrences(
     canonical: &str,
     names_norm: &[String],
 ) -> Vec<ReferenceOccurrence> {
-    let mut out = Vec::new();
-    for reference in &projection.explicit {
-        let normalized = refs::normalize(&reference.name);
-        if names_norm.iter().any(|name| name == &normalized) {
-            out.push(ReferenceOccurrence {
-                matched_name: reference.name.trim().to_string(),
-                canonical: canonical.to_string(),
-                kind: ReferenceKind::Explicit,
-                span: ReferenceSpan {
-                    start: byte_to_utf16(raw, reference.range.start),
-                    end: byte_to_utf16(raw, reference.range.end),
-                },
-                rule: reference.rule.to_string(),
-            });
-        }
-    }
-
-    for name in names_norm {
-        for eligible in &projection.plain_ranges {
-            for range in plain_matches(raw, eligible, name) {
-                if projection
-                    .explicit
-                    .iter()
-                    .any(|reference| overlaps(&range, &reference.range))
-                {
-                    continue;
-                }
-                out.push(ReferenceOccurrence {
-                    matched_name: raw.get(range.clone()).unwrap_or(name).to_string(),
-                    canonical: canonical.to_string(),
-                    kind: ReferenceKind::Plain,
-                    span: ReferenceSpan {
-                        start: byte_to_utf16(raw, range.start),
-                        end: byte_to_utf16(raw, range.end),
-                    },
-                    rule: "plain_unicode_boundary".to_string(),
-                });
-            }
-        }
-    }
+    let mut out = occurrences_of_kind(
+        raw,
+        projection,
+        canonical,
+        names_norm,
+        ReferenceKind::Explicit,
+    );
+    out.extend(occurrences_of_kind(
+        raw,
+        projection,
+        canonical,
+        names_norm,
+        ReferenceKind::Plain,
+    ));
     out.sort_by(|a, b| {
         a.span
             .start
@@ -481,11 +610,6 @@ pub(crate) fn occurrences(
             .then_with(|| a.span.end.cmp(&b.span.end))
             .then_with(|| a.kind.cmp(&b.kind))
             .then_with(|| a.matched_name.cmp(&b.matched_name))
-    });
-    out.dedup_by(|a, b| {
-        a.span == b.span
-            && a.kind == b.kind
-            && refs::normalize(&a.matched_name) == refs::normalize(&b.matched_name)
     });
     out.truncate(MAX_OCCURRENCES_PER_BLOCK);
     out
@@ -560,5 +684,34 @@ mod tests {
         let got = evidence("\\[[Target]] and `Target`\n```\nTarget\n```", &["Target"]);
         assert_eq!(got.len(), 1, "{got:?}");
         assert_eq!(got[0].kind, ReferenceKind::Plain);
+    }
+
+    #[test]
+    fn occurrence_construction_is_capped_while_scanning_many_matches() {
+        let raw = "Target ".repeat(50_000);
+        let parsed = crate::render::parse_projection(&raw, false);
+        let projected = project(&raw, false, &parsed.blocks);
+        reset_occurrence_constructions();
+        let got = occurrences_of_kind(
+            &raw,
+            &projected,
+            "Target",
+            &[refs::normalize("Target")],
+            ReferenceKind::Plain,
+        );
+        assert_eq!(got.len(), MAX_OCCURRENCES_PER_BLOCK);
+        assert_eq!(occurrence_constructions(), MAX_OCCURRENCES_PER_BLOCK);
+        assert!(got.capacity() <= MAX_OCCURRENCES_PER_BLOCK);
+    }
+
+    #[test]
+    fn plain_boundaries_match_logseq_ascii_edge_rules() {
+        let got = evidence("北京Target北京 foo_Target_bar aTargetz", &["Target"]);
+        let plains = got
+            .iter()
+            .filter(|hit| hit.kind == ReferenceKind::Plain)
+            .collect::<Vec<_>>();
+        assert_eq!(plains.len(), 2);
+        assert!(plains.iter().all(|hit| hit.matched_name == "Target"));
     }
 }

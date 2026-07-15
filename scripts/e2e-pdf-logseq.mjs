@@ -335,6 +335,23 @@ try {
     throw new Error("same-PDF highlight navigation rewrote the sidecar");
   }
 
+  // OG direct-link parity: reopening the already-current resource without a
+  // page/highlight intent is a no-op, not an implicit jump to page 1. The exact
+  // current highlight and the mounted reader identity must survive.
+  pdfLinks = await browser.$$(".pdf-link");
+  await pdfLinks[1].click();
+  await sleep(250);
+  const sameResourceDirectState = await browser.execute(() => ({
+    target: document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-highlight-target"),
+    overlay: document.querySelector(".pdf-hl-target")?.getAttribute("data-highlight-id"),
+  }));
+  if (sameResourceDirectState.target !== SECOND_SECOND_ID || sameResourceDirectState.overlay !== SECOND_SECOND_ID) {
+    throw new Error(`same-resource direct link discarded the current location: ${JSON.stringify(sameResourceDirectState)}`);
+  }
+  if ((await browser.$(".pdf-viewer")).elementId !== secondViewerElementId) {
+    throw new Error("same-resource direct link remounted the PDF resource");
+  }
+
   // Return to A while the journal's real links are still present. Recoloring is
   // a real mutation and must preserve foreign root metadata while writing the
   // UUID/list/corner shape Logseq consumes.

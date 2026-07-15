@@ -412,6 +412,24 @@
         "scenario": "performance.result-family-construction-time-budgets",
         "failBefore": "source-proven"
       }
+    },
+    {
+      "id": "REG-BOUNDED-RESULT-EVIDENCE-CACHE-001",
+      "title": "Bounded query and reference results cap occurrence construction and retain every warm result family across unrelated edits without preserving stale overflow metadata",
+      "family": "performance-correctness",
+      "sources": { "issues": [], "commits": [] },
+      "platforms": ["all"],
+      "layer": "core-native",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "crates/tine-core/src/reference_evidence.rs",
+          "crates/tine-core/src/query.rs",
+          "crates/tine-core/src/model.rs"
+        ],
+        "scenario": "performance.bounded-result-evidence-and-scoped-family-cache",
+        "failBefore": "source-proven"
+      }
     }
   ]
 }
