@@ -59,7 +59,7 @@ try {
   await browser.$(".page-ref").waitForExist({ timeout: 20_000 });
   const routed = await browser.execute(() => {
     const ref = [...document.querySelectorAll(".page-ref")]
-      .find((element) => element.textContent?.trim() === "Print proof");
+      .find((element) => element.textContent?.includes("Print proof"));
     if (!ref) return {
       ok: false,
       refs: [...document.querySelectorAll(".page-ref")].map((element) => element.textContent?.trim()),
