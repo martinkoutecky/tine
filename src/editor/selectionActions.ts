@@ -14,7 +14,7 @@ export interface SelectionAction {
   label: string;
   title: string;
   tier: "essential" | "secondary";
-  apply(text: string, start: number, end: number): Edit;
+  apply(text: string, start: number, end: number, format?: "md" | "org"): Edit;
 }
 
 const wrap = (
@@ -45,7 +45,7 @@ export const SELECTION_ACTIONS: readonly SelectionAction[] = [
     label: "Link",
     title: "Markdown link",
     tier: "secondary",
-    apply: insertLink,
+    apply: (text, start, end, format = "md") => insertLink(text, start, end, format),
   },
   wrap("strikethrough", "S", "Strikethrough", "~~", "secondary"),
   wrap("highlight", "H", "Highlight", "==", "secondary"),

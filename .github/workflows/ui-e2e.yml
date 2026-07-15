@@ -69,6 +69,7 @@ jobs:
       matrix:
         scenario:
           - windows-core
+          - og-parity-references
           - page-properties
           - page-trailing-block
           - pdf-logseq

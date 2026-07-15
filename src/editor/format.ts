@@ -49,10 +49,38 @@ export function toggleWrap(text: string, start: number, end: number, left: strin
   };
 }
 
-/** Insert a markdown link. With a selection, it becomes the label and the caret
- *  lands inside the (url); with no selection, inserts `[]()` caret in the label. */
-export function insertLink(text: string, start: number, end: number): Edit {
+/** Narrow transcription of mldoc-link? for the keyboard/link-toolbar boundary.
+ * This is intentionally not the paste-url regex: page refs, block refs and
+ * already formatted links are link nodes too. It accepts only one complete
+ * inline link form, so surrounding prose is never silently promoted. */
+export function isMldocLink(text: string): boolean {
+  const value = text.trim();
+  if (!value || value !== text) return false;
+  try {
+    const url = new URL(value);
+    if (["http:", "https:", "mailto:"].includes(url.protocol)) return true;
+  } catch {
+    // The remaining mldoc inline forms are grammar-delimited, not URLs.
+  }
+  return /^(?:\[\[[^\]\n]+\]\]|\(\([^()\n]+\)\)|\[[^\]\n]*\]\([^\n)]*\)|\[\[[^\]\n]*\]\[[^\]\n]*\]\])$/u.test(value);
+}
+
+/** Insert a format-aware external link. Selected parser-recognized inline links
+ * become the target with an empty label; ordinary selected text remains the
+ * label. This matches OG's no-argument html-link-format! branches. */
+export function insertLink(text: string, start: number, end: number, format: "md" | "org" = "md"): Edit {
   const sel = text.slice(start, end);
+  const recognizedLink = !!sel && isMldocLink(sel);
+  if (format === "org") {
+    const link = recognizedLink ? `[[${sel}][]]` : sel ? `[[][${sel}]]` : "[[][]]";
+    const caret = recognizedLink ? start + sel.length + 4 : start + 2;
+    const next = text.slice(0, start) + link + text.slice(end);
+    return { text: next, start: caret, end: caret };
+  }
+  if (recognizedLink) {
+    const next = text.slice(0, start) + `[](${sel})` + text.slice(end);
+    return { text: next, start: start + 1, end: start + 1 };
+  }
   if (sel) {
     const out = `[${sel}](`;
     const next = text.slice(0, start) + out + ")" + text.slice(end);

@@ -9,6 +9,16 @@ use tine_core::model::Graph;
 
 pub(crate) type WindowKey = String;
 
+/// Read-only graph lease used by the auxiliary Quick Capture WebView. Capture
+/// deliberately does not own a graph slot: the registry permits one writable
+/// window per graph root, while this surface only needs the selected graph's
+/// query/read commands before it hands writes back to the owning window.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CaptureGraphBinding {
+    pub(crate) target: WindowKey,
+    pub(crate) binding_generation: u64,
+}
+
 pub(crate) struct GraphSlot {
     pub(crate) graph: Arc<Graph>,
     pub(crate) root_key: PathBuf,
@@ -124,6 +134,7 @@ pub(crate) struct AppState {
     pub(crate) graph_load: Mutex<()>,
     pub(crate) watch_ctl: Mutex<Option<Sender<()>>>,
     pub(crate) last_focused: Mutex<Option<WindowKey>>,
+    pub(crate) capture_graph: Mutex<Option<CaptureGraphBinding>>,
     #[cfg(desktop)]
     pub(crate) next_window: AtomicU64,
 }
@@ -143,6 +154,25 @@ impl AppState {
             *last = Some(label.to_string());
             true
         }
+    }
+
+    /// Atomically publish the graph snapshot selected for the next Quick
+    /// Capture show. The capture WebView must present this exact generation on
+    /// every graph-scoped invoke; a later show, graph switch, or close makes
+    /// older requests stale rather than letting them read another graph.
+    pub(crate) fn bind_capture_graph(&self, target: WindowKey, binding_generation: u64) {
+        *self.capture_graph.lock().unwrap() = Some(CaptureGraphBinding {
+            target,
+            binding_generation,
+        });
+    }
+
+    pub(crate) fn capture_graph_binding(&self) -> Option<CaptureGraphBinding> {
+        self.capture_graph.lock().unwrap().clone()
+    }
+
+    pub(crate) fn clear_capture_graph(&self) {
+        *self.capture_graph.lock().unwrap() = None;
     }
 }
 
@@ -194,9 +224,45 @@ pub(crate) fn slot_for_window(state: &AppState, window: &str) -> Result<Arc<Grap
 }
 
 pub(crate) fn slot_for_context(ctx: &GraphContext<'_>) -> Result<Arc<GraphSlot>, String> {
-    let slot = slot_for_window(&ctx.state, ctx.window.label())?;
-    let generation = ctx.binding_generation.ok_or("missing-graph-binding")?;
+    slot_for_bound_window(&ctx.state, ctx.window.label(), ctx.binding_generation)
+}
+
+/// Resolve a normal graph-window command. Quick Capture intentionally has no
+/// graph slot, so this path cannot be used to grant it any GraphContext command
+/// (including save, delete, trash, or other mutations).
+pub(crate) fn slot_for_bound_window(
+    state: &AppState,
+    window: &str,
+    binding_generation: Option<u64>,
+) -> Result<Arc<GraphSlot>, String> {
+    let slot = slot_for_window(state, window)?;
+    let generation = binding_generation.ok_or("missing-graph-binding")?;
     if generation != slot.binding_generation {
+        return Err("stale-graph-binding".into());
+    }
+    Ok(slot)
+}
+
+/// Resolve the only graph capability granted to the capture WebView: a bounded
+/// page/tag quick-switch query. This is deliberately not a GraphContext route;
+/// capture retains no generic read or write access to the selected graph.
+pub(crate) fn capture_quick_switch_slot(
+    state: &AppState,
+    caller: &str,
+    binding_generation: Option<u64>,
+) -> Result<Arc<GraphSlot>, String> {
+    if caller != "capture" {
+        return Err("capture quick switch is only available to quick capture".into());
+    }
+    let capture = state
+        .capture_graph_binding()
+        .ok_or("no graph bound for quick capture")?;
+    let generation = binding_generation.ok_or("missing-graph-binding")?;
+    if generation != capture.binding_generation {
+        return Err("stale-graph-binding".into());
+    }
+    let slot = slot_for_window(state, &capture.target)?;
+    if slot.binding_generation != capture.binding_generation {
         return Err("stale-graph-binding".into());
     }
     Ok(slot)
@@ -247,6 +313,7 @@ mod tests {
             graph_load: Mutex::new(()),
             watch_ctl: Mutex::new(None),
             last_focused: Mutex::new(Some("graph-1".into())),
+            capture_graph: Mutex::new(None),
             #[cfg(desktop)]
             next_window: AtomicU64::new(2),
         };
@@ -254,6 +321,36 @@ mod tests {
         assert!(state.note_focused("main"));
         assert_eq!(state.last_focused.lock().unwrap().as_deref(), Some("main"));
         assert!(!state.note_focused("main"));
+    }
+
+    #[test]
+    fn capture_binding_retains_the_selected_graph_lease() {
+        let state = AppState {
+            graphs: RwLock::new(GraphRegistry::default()),
+            graph_load: Mutex::new(()),
+            watch_ctl: Mutex::new(None),
+            last_focused: Mutex::new(Some("main".into())),
+            capture_graph: Mutex::new(None),
+            #[cfg(desktop)]
+            next_window: AtomicU64::new(2),
+        };
+
+        state.bind_capture_graph("main".into(), 17);
+        assert_eq!(
+            state.capture_graph_binding(),
+            Some(CaptureGraphBinding {
+                target: "main".into(),
+                binding_generation: 17,
+            })
+        );
+        state.bind_capture_graph("graph-1".into(), 18);
+        assert_eq!(
+            state.capture_graph_binding(),
+            Some(CaptureGraphBinding {
+                target: "graph-1".into(),
+                binding_generation: 18,
+            })
+        );
     }
 
     #[test]

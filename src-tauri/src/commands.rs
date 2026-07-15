@@ -2,8 +2,11 @@
 use crate::debug::diag;
 #[cfg(desktop)]
 use crate::platform::{open_page_source, opener_command, reveal_page_source};
-use crate::state::{refresh_graph, slot_for_context, with_graph, GraphContext};
+use crate::state::{
+    capture_quick_switch_slot, refresh_graph, slot_for_context, with_graph, AppState, GraphContext,
+};
 use std::sync::Arc;
+use tauri::{State, WebviewWindow};
 use tine_core::model::{PageDto, PageEntry, PageKind, RefGroup};
 
 const RESULT_BRIDGE_MAX_ROWS: usize = 20_000;
@@ -723,6 +726,142 @@ pub(crate) fn quick_switch(
     state: GraphContext<'_>,
 ) -> Result<Vec<PageEntry>, String> {
     with_graph(&state, |g| Ok(g.quick_switch(&query, limit)))
+}
+
+fn capture_quick_switch_for(
+    state: &AppState,
+    caller: &str,
+    binding_generation: Option<u64>,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<PageEntry>, String> {
+    let slot = capture_quick_switch_slot(state, caller, binding_generation)?;
+    Ok(slot.graph.quick_switch(query, limit.min(8)))
+}
+
+/// The sole graph-backed capability exposed to Quick Capture. It is deliberately
+/// not a `GraphContext` command: capture may ask for bounded page/tag candidates
+/// but cannot save, delete, trash, or invoke any other graph command.
+#[tauri::command]
+pub(crate) fn capture_quick_switch(
+    query: String,
+    limit: usize,
+    binding_generation: Option<u64>,
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+) -> Result<Vec<PageEntry>, String> {
+    capture_quick_switch_for(&state, window.label(), binding_generation, &query, limit)
+}
+
+#[cfg(test)]
+mod capture_quick_switch_tests {
+    use super::*;
+    use crate::state::{slot_for_bound_window, GraphRegistry, GraphSlot};
+    use std::path::PathBuf;
+    use std::sync::atomic::AtomicU64;
+    use std::sync::{Mutex, RwLock};
+    use tine_core::model::Graph;
+
+    fn state_with_selected_graph() -> (AppState, PathBuf) {
+        let base = std::env::temp_dir().join(format!(
+            "tine-capture-quick-switch-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let selected = base.join("selected");
+        let other = base.join("other");
+        for (root, page) in [
+            (&selected, "Selected Capture Target"),
+            (&other, "Other Target"),
+        ] {
+            std::fs::create_dir_all(root.join("pages")).unwrap();
+            std::fs::create_dir_all(root.join("journals")).unwrap();
+            std::fs::write(root.join("pages").join(format!("{page}.md")), "- fixture\n").unwrap();
+        }
+        let state = AppState {
+            graphs: RwLock::new(GraphRegistry::default()),
+            graph_load: Mutex::new(()),
+            watch_ctl: Mutex::new(None),
+            last_focused: Mutex::new(Some("main".into())),
+            capture_graph: Mutex::new(None),
+            #[cfg(desktop)]
+            next_window: AtomicU64::new(2),
+        };
+        let selected_slot = Arc::new(GraphSlot::new(Graph::open(&selected), selected.clone()));
+        let generation = selected_slot.binding_generation;
+        state
+            .graphs
+            .write()
+            .unwrap()
+            .bind("main".into(), selected_slot)
+            .unwrap();
+        state
+            .graphs
+            .write()
+            .unwrap()
+            .bind(
+                "other".into(),
+                Arc::new(GraphSlot::new(Graph::open(&other), other)),
+            )
+            .unwrap();
+        state.bind_capture_graph("main".into(), generation);
+        (state, base)
+    }
+
+    #[test]
+    fn returns_candidates_from_the_selected_capture_graph() {
+        let (state, base) = state_with_selected_graph();
+        let generation = state.capture_graph_binding().unwrap().binding_generation;
+        let result =
+            capture_quick_switch_for(&state, "capture", Some(generation), "Selected Capture", 8)
+                .unwrap();
+        assert!(result
+            .iter()
+            .any(|page| page.name == "Selected Capture Target"));
+        assert!(!result.iter().any(|page| page.name == "Other Target"));
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn rejects_a_stale_capture_binding_generation() {
+        let (state, base) = state_with_selected_graph();
+        let generation = state.capture_graph_binding().unwrap().binding_generation;
+        assert_eq!(
+            capture_quick_switch_for(&state, "capture", Some(generation + 1), "Selected", 8)
+                .unwrap_err(),
+            "stale-graph-binding"
+        );
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn rejects_non_capture_callers() {
+        let (state, base) = state_with_selected_graph();
+        let generation = state.capture_graph_binding().unwrap().binding_generation;
+        assert_eq!(
+            capture_quick_switch_for(&state, "main", Some(generation), "Selected", 8).unwrap_err(),
+            "capture quick switch is only available to quick capture"
+        );
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn capture_binding_never_grants_generic_graphcontext_mutation_access() {
+        let (state, base) = state_with_selected_graph();
+        let generation = state.capture_graph_binding().unwrap().binding_generation;
+        // `save_page` and other mutations resolve through GraphContext, which
+        // uses this normal window-slot path and therefore has no capture fallback.
+        assert_eq!(
+            slot_for_bound_window(&state, "capture", Some(generation))
+                .err()
+                .unwrap(),
+            "no graph loaded for window capture"
+        );
+        std::fs::remove_dir_all(base).unwrap();
+    }
 }
 
 #[tauri::command]

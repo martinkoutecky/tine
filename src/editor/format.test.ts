@@ -43,6 +43,26 @@ describe("insertLink", () => {
   it("inserts empty link with caret in [] on no selection", () => {
     expect(insertLink("a b", 2, 2)).toEqual({ text: "a []()b", start: 3, end: 3 });
   });
+
+  it("uses the page format and parser-recognized selected links rather than a URL regex", () => {
+    const formatAware = insertLink as (text: string, start: number, end: number, format: "md" | "org") => ReturnType<typeof insertLink>;
+    expect(formatAware("Label", 0, 5, "org")).toEqual({ text: "[[][Label]]", start: 2, end: 2 });
+    expect(formatAware("https://example.com", 0, 19, "md")).toEqual({ text: "[](https://example.com)", start: 1, end: 1 });
+    expect(formatAware("[[Page]]", 0, 8, "org")).toEqual({ text: "[[[[Page]]][]]", start: 12, end: 12 });
+  });
+
+  it("preserves surrounding text and recognizes block refs and already formatted links", () => {
+    const formatAware = insertLink as (text: string, start: number, end: number, format: "md" | "org") => ReturnType<typeof insertLink>;
+    expect(formatAware("before Label after", 7, 12, "org")).toEqual({
+      text: "before [[][Label]] after", start: 9, end: 9,
+    });
+    expect(formatAware("((abc-123))", 0, 11, "md")).toEqual({
+      text: "[](((abc-123)))", start: 1, end: 1,
+    });
+    expect(formatAware("[label](https://example.com)", 0, 28, "md")).toEqual({
+      text: "[]([label](https://example.com))", start: 1, end: 1,
+    });
+  });
 });
 
 describe("isPasteableUrl", () => {

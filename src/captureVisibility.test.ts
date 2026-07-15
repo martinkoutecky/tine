@@ -17,6 +17,21 @@ describe("resettleIfVisible", () => {
 
     expect(resettle).not.toHaveBeenCalled();
   });
+
+  it("waits for an asynchronous visible-window readiness barrier", async () => {
+    let release!: () => void;
+    const barrier = new Promise<void>((resolve) => { release = resolve; });
+    const resettle = vi.fn(async () => { await barrier; });
+    let finished = false;
+    const recovery = resettleIfVisible({ isVisible: async () => true }, resettle).then(() => { finished = true; });
+
+    await Promise.resolve();
+    expect(resettle).toHaveBeenCalledOnce();
+    expect(finished).toBe(false);
+    release();
+    await recovery;
+    expect(finished).toBe(true);
+  });
 });
 
 describe("createCaptureBlurGate", () => {

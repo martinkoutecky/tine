@@ -10,6 +10,7 @@
 import { render } from "solid-js/web";
 import { For, Show, createSignal, createEffect, onCleanup, onMount } from "solid-js";
 import { initParser } from "./render/parse";
+import { initLinkDefault } from "./editor/linkDefault";
 import { Block, CaptureCtx, type CaptureApi } from "./components/Block";
 import { DatePicker } from "./components/DatePicker";
 import { datePicker } from "./ui";
@@ -212,6 +213,20 @@ function Capture() {
     resettle();
     activateWhenEditorReady();
   };
+  // Quick Capture is a separate WebView, so its module-local completion-policy
+  // signal starts at the default and it has no graph binding. Do not acknowledge
+  // an activation until this WebView has read the persisted policy *and* leased
+  // the selected graph for quickSwitch; otherwise a fast first `[[…]]` can
+  // either use adaptive or issue its query without any graph candidates.
+  // A later show wins if refreshes overlap while the window is being hidden or
+  // re-shown, so stale reads cannot activate an older lifecycle.
+  let policyRefreshGeneration = 0;
+  const refreshPolicyThenResettleAndActivate = async () => {
+    const generation = ++policyRefreshGeneration;
+    await Promise.all([initLinkDefault(), backend().bindCaptureGraph()]);
+    if (generation !== policyRefreshGeneration) return;
+    resettleAndActivate();
+  };
   const blurGate = createCaptureBlurGate();
   let fitRaf: number | undefined;
   const scheduleFit = () => {
@@ -400,7 +415,13 @@ function Capture() {
     void hideWindow();
   };
 
-  const captureApi: CaptureApi = { submit, cancel, enterFiles, bulletHint };
+  const captureApi: CaptureApi = {
+    submit,
+    cancel,
+    enterFiles,
+    bulletHint,
+    quickSwitch: (query, limit) => backend().captureQuickSwitch(query, limit),
+  };
 
   // Grow/shrink the window whenever the rendered content changes: new/removed
   // blocks and popups (childList), or a textarea autosizing (inline `style`).
@@ -454,9 +475,9 @@ function Capture() {
         // while we were hidden.
         const unShown = await listen("capture-shown", () => {
           loadPref();
+          void refreshPolicyThenResettleAndActivate();
           void requestTheme();
           void requestShortcuts();
-          resettleAndActivate();
         });
         const unFocusEditor = await listen("capture-focus-editor", refit);
         // Cold `tine --capture` can show + emit before this asynchronously
@@ -465,7 +486,7 @@ function Capture() {
         // visible capture editor unfocused (GH #117). A later show still follows
         // the normal event path above.
         const { getCurrentWindow } = await import("@tauri-apps/api/window");
-        await resettleIfVisible(getCurrentWindow(), resettleAndActivate);
+        await resettleIfVisible(getCurrentWindow(), refreshPolicyThenResettleAndActivate);
         onCleanup(() => {
           unTheme();
           unKeys();

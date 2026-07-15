@@ -22,7 +22,7 @@ controls. Search indexes both levels.
 | Editor | File format | Basic | Determines new files' durable format. |
 | Editor | Spell checker and languages | Basic | Accessibility and language support. |
 | Editor | Click a block reference to zoom in | Basic | Common navigation convention and explicit OG divergence. |
-| Editor | Link autocomplete default | Advanced | Niche completion ordering/compatibility preference. |
+| Editor | Link autocomplete default | Advanced | Three-mode device-local completion policy: OG adaptive default, existing-first, or typed-first; exact existing pages are never duplicated. |
 | Editor | Reuse already-open tabs | Advanced | Niche navigation policy. |
 | Editor | Learn Ctrl+K choices and reset ranking | Advanced | Optional device-local, graph-scoped tie-breaking; saved search/query order remains deterministic. |
 | Editor | Copy parent sub-blocks | Advanced | Clipboard compatibility policy. |

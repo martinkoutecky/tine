@@ -38,6 +38,10 @@ pub(crate) fn startup_graph_path(app: tauri::AppHandle) -> Option<String> {
 
 #[tauri::command]
 pub(crate) fn capture_target(state: State<'_, AppState>) -> Result<String, String> {
+    capture_target_for_state(&state)
+}
+
+fn capture_target_for_state(state: &AppState) -> Result<String, String> {
     let preferred = state.last_focused.lock().unwrap().clone();
     if let Some(label) =
         preferred.filter(|label| state.graphs.read().unwrap().slot(label).is_some())
@@ -53,6 +57,43 @@ pub(crate) fn capture_target(state: State<'_, AppState>) -> Result<String, Strin
         .next()
         .map(|entry| entry.0)
         .ok_or_else(|| "no graph window is open".to_string())
+}
+
+#[derive(serde::Serialize)]
+pub(crate) struct CaptureGraphBindingResult {
+    pub(crate) binding_generation: u64,
+}
+
+/// Snapshot the graph selected for a Quick Capture show. Calling this from the
+/// native show path revokes the prior capture lease before a focused, persistent
+/// capture WebView can issue a query against an older graph. The frontend calls
+/// it again to learn the generation it must present with IPC.
+pub(crate) fn refresh_capture_graph_binding(state: &AppState) -> Result<u64, String> {
+    let target = capture_target_for_state(state)?;
+    let slot = slot_for_window(state, &target)?;
+    let binding_generation = slot.binding_generation;
+    state.bind_capture_graph(target, binding_generation);
+    Ok(binding_generation)
+}
+
+/// Return the binding selected by the native capture-show path. This is
+/// intentionally separate from `GraphRegistry::bind`: the capture surface must
+/// never become a second owner/writer for the graph root. Do not choose again
+/// here: the frontend must receive the exact target/generation selected for
+/// this show, so an old asynchronous activation cannot retarget itself.
+#[tauri::command]
+pub(crate) fn capture_graph_binding(
+    window: tauri::WebviewWindow,
+    state: State<'_, AppState>,
+) -> Result<CaptureGraphBindingResult, String> {
+    if window.label() != "capture" {
+        return Err("capture graph binding is only available to quick capture".into());
+    }
+    let binding_generation = state
+        .capture_graph_binding()
+        .ok_or("no graph bound for quick capture")?
+        .binding_generation;
+    Ok(CaptureGraphBindingResult { binding_generation })
 }
 
 struct LoadedGraph {

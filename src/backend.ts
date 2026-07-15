@@ -121,6 +121,10 @@ export type LoadGraphResult =
   | { kind: "loaded" | "already_current"; meta: GraphMeta; binding_generation: number }
   | { kind: "focused_existing"; window_label: string };
 
+export interface CaptureGraphBindingResult {
+  binding_generation: number;
+}
+
 export interface GraphAccessInspection {
   graph_root: string;
   external_assets_path: string | null;
@@ -134,6 +138,9 @@ export interface Backend {
   openGraphWindow(path: string): Promise<LoadGraphResult>;
   startupGraphPath(): Promise<string | null>;
   captureTarget(): Promise<string>;
+  /** Lease the graph selected for this Quick Capture show before issuing
+   * graph-scoped reads from its independent WebView. */
+  bindCaptureGraph(): Promise<void>;
   listKnownGraphs(): Promise<KnownGraph[]>;
   forgetKnownGraph(path: string): Promise<void>;
   appPlatform(): Promise<"android" | "ios" | "desktop">;
@@ -293,6 +300,9 @@ export interface Backend {
     explain?: boolean
   ): Promise<QueryExecution>;
   quickSwitch(query: string, limit: number): Promise<PageEntry[]>;
+  /** Capture-only page/tag completion capability. It is intentionally not the
+   * general graph command route used by the main WebView. */
+  captureQuickSwitch(query: string, limit: number): Promise<PageEntry[]>;
   listTemplates(): Promise<TemplateDto[]>;
   resolveBlock(uuid: string): Promise<RefGroup | null>;
   resolveBlocks(uuids: string[]): Promise<(RefGroup | null)[]>;
@@ -500,6 +510,10 @@ class TauriBackend implements Backend {
   captureTarget() {
     return this.call<string>("capture_target");
   }
+  async bindCaptureGraph() {
+    const result = await this.call<CaptureGraphBindingResult>("capture_graph_binding");
+    this.bindingGeneration = result.binding_generation;
+  }
   listKnownGraphs() {
     return this.call<KnownGraph[]>("list_known_graphs");
   }
@@ -652,6 +666,9 @@ class TauriBackend implements Backend {
   }
   quickSwitch(query: string, limit: number) {
     return this.call<PageEntry[]>("quick_switch", { query, limit });
+  }
+  captureQuickSwitch(query: string, limit: number) {
+    return this.call<PageEntry[]>("capture_quick_switch", { query, limit });
   }
   listTemplates() {
     return this.call<TemplateDto[]>("list_templates");

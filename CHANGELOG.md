@@ -19,6 +19,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   same click or right-click menu; both actions safely ensure the annotation
   block before copying or opening it with its ordinary referrers visible.
   (GH #168)
+- **Bare `/` now defaults to Page reference.** `/` then Enter, Tab, or pointer
+  selection inserts `[[]]`, leaves the caret inside it, and continues directly
+  into page completion without changing typed slash-command ranking. (GH #155)
+- **Page and tag completion now use OG's adaptive default.** Exact pages remain
+  exact; strict-prefix candidates lead deterministically with Create immediately
+  after the leading match, while fuzzy-only matches leave Create first. Advanced
+  Settings also offer explicit existing-first and typed-first policies.
+- **Mod-L now inserts a format-aware external link.** Markdown and Org handle
+  empty text, selected labels, and selected parser-recognized links/references
+  through the same command, toolbar, and simple slash-Link boundary.
 - **Native form fields now retain Tab and Shift+Tab focus traversal, including
   their blur commits, while outline and Sheet-cell editors keep their
   application-owned indentation, autocomplete, and cell-navigation behavior.**

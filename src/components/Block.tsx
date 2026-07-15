@@ -18,7 +18,7 @@ import {
 } from "../editor/autocomplete";
 import { autoPairInsertOnInput, wrapSelectionEdit, doubleRefKind, backspacePairEdit, SELECTION_WRAP } from "../editor/autopair";
 import { typoTypeReplace } from "../render/typography";
-import { linkFirstMatch } from "../editor/linkDefault";
+import { linkAutocompletePolicy } from "../editor/linkDefault";
 import { spellcheckEnabled } from "../spellcheckSettings";
 import { spaceAfterRefCompletion } from "../refCompletionSettings";
 import {
@@ -272,6 +272,9 @@ export interface CaptureApi {
   /** Grey-italic placeholder for an empty capture bullet (e.g. "Edit as usual,
    *  Ctrl-Shift-Enter to submit"), with the live, configured submit shortcut. */
   bulletHint?: () => string;
+  /** The capture WebView may only query page/tag candidates through its
+   * dedicated native capability; it never receives the general graph route. */
+  quickSwitch: (query: string, limit: number) => Promise<import("../types").PageEntry[]>;
 }
 export const CaptureCtx = createContext<CaptureApi | null>(null);
 
@@ -1194,12 +1197,12 @@ export function Editor(props: { id: string }): JSX.Element {
       // defined order — commands before templates — as the stable tiebreaker.
       const showAllTemplates = !!q && "template".startsWith(q.toLowerCase()); // /t…/template lists them all
       const scored: { item: AcItem; s: number; idx: number }[] = [];
-      COMMANDS.forEach((c, i) => {
+      COMMANDS.forEach((c) => {
         // /drawio launches an external editor — desktop only (GH #38).
         if (c.action === "drawio" && isMobilePlatform) return;
         const s = q ? commandScore(q, c) : 1;
         if (s > 0)
-          scored.push({ item: { label: c.label, insert: c.insert, caret: c.caret, action: c.action }, s, idx: i });
+          scored.push({ item: { label: c.label, insert: c.insert, caret: c.caret, action: c.action }, s, idx: q ? c.matchTieOrder : c.bareOrder });
       });
       if (q) {
         tmpls.forEach((tp, j) => {
@@ -1232,17 +1235,16 @@ export function Editor(props: { id: string }): JSX.Element {
       setAcItems(items);
       return;
     }
-    const pages = await backend().quickSwitch(t.query, 8);
+    // OG leaves blank page/tag search active but renders no rows and does not
+    // ask the backend for its legacy all-pages result.
+    const q = t.query.trim();
+    if (!q) {
+      setAcItems([]);
+      return;
+    }
+    const pages = await (cap ? cap.quickSwitch(t.query, 8) : backend().quickSwitch(t.query, 8));
     const cur = ac();
     if (!cur || cur.start !== t.start) return; // trigger changed while awaiting
-    // Default (first / Enter) item when the query is neither blank nor an exact
-    // existing page. OG behavior (linkFirstMatch OFF): "Create <typed>" leads, so
-    // a fresh #tag or [[page]] + Enter MAKES it — even when it prefix-/fuzzy-
-    // matches an existing page (e.g. #book → a "Books" page) — and the matches
-    // follow (arrow down to link instead). With linkFirstMatch ON: the first
-    // match leads (Enter LINKS) and "Create" goes to the end. Either way, no
-    // create option for a blank query or an exact match.
-    const q = t.query.trim();
     const pageItem = (name: string): AcItem =>
       t.kind === "page"
         ? { label: name, insert: pageInsert(name) }
@@ -1251,11 +1253,11 @@ export function Editor(props: { id: string }): JSX.Element {
       t.kind === "page"
         ? { label: `Create "${q}"`, insert: pageInsert(q) }
         : { label: `Create #${q}`, insert: tagInsert(q) };
-    const matches = pages.map((p) => pageItem(p.name));
-    const exact = pages.some((p) => p.name.toLowerCase() === q.toLowerCase());
-    setAcItems(
-      orderAcItems(matches, createItem, { hasQuery: !!q, exact, linkFirst: linkFirstMatch() })
-    );
+    setAcItems(orderAcItems(
+      pages.map((page) => ({ name: page.name, item: pageItem(page.name) })),
+      { name: q, item: createItem },
+      { query: q, policy: linkAutocompletePolicy() },
+    ));
   };
 
   // Apply a pure text edit (format toggle / kill motion) to the textarea and
@@ -1279,7 +1281,7 @@ export function Editor(props: { id: string }): JSX.Element {
   const updateSel = () => setHasSel(ref.selectionStart !== ref.selectionEnd);
   const [selectionOverflowOpen, setSelectionOverflowOpen] = createSignal(false);
   const runSelectionAction = (action: SelectionAction) => {
-    applyEdit(action.apply(ref.value, ref.selectionStart, ref.selectionEnd));
+    applyEdit(action.apply(ref.value, ref.selectionStart, ref.selectionEnd, pageFmt()));
     setSelectionOverflowOpen(false);
     queueMicrotask(updateSel);
   };
@@ -1702,6 +1704,25 @@ export function Editor(props: { id: string }): JSX.Element {
       case "now-time":
         replaceTrigger(timeStamp());
         return;
+      case "page-reference":
+        // Page reference is a chained command: no GH #35 continuation space,
+        // then the ordinary trigger detector owns the blank page lifecycle.
+        replaceTrigger("[[]]", 2);
+        queueMicrotask(() => void updateAutocomplete());
+        return;
+      case "insert-link": {
+        const removed = applyCompletion(ref.value, t.start, t.end, "", 0);
+        const edit = insertLink(removed.raw, t.start, t.start, pageFmt());
+        commit(edit.text);
+        closeAc();
+        queueMicrotask(() => {
+          ref.value = edit.text;
+          ref.setSelectionRange(edit.start, edit.end);
+          ref.focus();
+          autosize();
+        });
+        return;
+      }
       case "query-builder": {
         // Insert an empty query, commit it, and drop straight to the rendered
         // view so the visual builder appears — then flag this block so the
@@ -2050,7 +2071,7 @@ export function Editor(props: { id: string }): JSX.Element {
     "editor/italics": (e) => { e.preventDefault(); applyEdit(toggleWrap(ref.value, ref.selectionStart, ref.selectionEnd, "*")); return true; },
     "editor/strike-through": (e) => { e.preventDefault(); applyEdit(toggleWrap(ref.value, ref.selectionStart, ref.selectionEnd, "~~")); return true; },
     "editor/highlight": (e) => { e.preventDefault(); applyEdit(toggleWrap(ref.value, ref.selectionStart, ref.selectionEnd, "==")); return true; },
-    "editor/insert-link": (e) => { e.preventDefault(); applyEdit(insertLink(ref.value, ref.selectionStart, ref.selectionEnd)); return true; },
+    "editor/insert-link": (e) => { e.preventDefault(); applyEdit(insertLink(ref.value, ref.selectionStart, ref.selectionEnd, pageFmt())); return true; },
     "editor/clear-block": (e) => { e.preventDefault(); applyEdit({ text: "", start: 0, end: 0 }); return true; },
     "editor/kill-line-before": (e) => { e.preventDefault(); applyEdit(killLineBefore(ref.value, ref.selectionStart)); return true; },
     "editor/kill-line-after": (e) => { e.preventDefault(); applyEdit(killLineAfter(ref.value, ref.selectionStart)); return true; },

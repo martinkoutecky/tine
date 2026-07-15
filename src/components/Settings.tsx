@@ -66,7 +66,7 @@ import {
 import { navReuseTabs, setNavReuseTabs } from "../navSettings";
 import { spaceAfterRefCompletion, setSpaceAfterRefCompletion } from "../refCompletionSettings";
 import { allowLocalFileImages, setAllowLocalFileImages } from "../localFileSettings";
-import { linkFirstMatch, setLinkFirstMatch } from "../editor/linkDefault";
+import { linkAutocompletePolicy, setLinkAutocompletePolicy, type LinkAutocompletePolicy } from "../editor/linkDefault";
 import {
   spellcheckEnabled,
   setSpellcheckEnabled,
@@ -155,7 +155,7 @@ const SETTING_SEARCH: SettingSearchEntry[] = [
   { tab: "appearance", label: "Smooth scrolling (experimental)", description: "animated journal scrolling WebKit", aliases: ["scroll animation"], level: "advanced" },
   { tab: "appearance", label: "System title bar & window controls", description: "native frame chrome" },
   { tab: "editor", label: "File format", description: "new pages Markdown Org" },
-  { tab: "editor", label: "Link autocomplete default", description: "create page first match", level: "advanced" },
+  { tab: "editor", label: "Link autocomplete default", description: "OG adaptive existing typed page tag completion", level: "advanced" },
   { tab: "editor", label: "Switch to an already-open tab when navigating", description: "reuse tabs", level: "advanced" },
   { tab: "editor", label: "Learn Ctrl+K choices", description: "adaptive launcher ranking reset history", level: "advanced" },
   { tab: "editor", label: "Spell checker", description: "dictionaries languages spelling" },
@@ -865,9 +865,17 @@ function EditorTab(props: { search: string }): JSX.Element {
       <AdvancedSection tab="editor" forceOpen={advancedMatch("editor", props.search)}>
         <Field
           label="Link autocomplete default"
-          hint={`When you type [[name (or #name) that isn’t an exact existing page: ON → Enter LINKS to the first match (and “Create…” moves to the end of the list); OFF (default, like Logseq) → Enter CREATES a new page/tag unless an exact match exists. Either way the arrow keys reach the other options.`}
+          hint="Controls Enter for non-exact [[name and #name completion. OG adaptive (default) picks the shortest lexical strict-prefix match and puts Create immediately after it; fuzzy-only matches leave Create first. Prefer existing always leads with a match; Prefer exactly what I typed leads with Create. Exact existing names always select the existing page."
         >
-          <Toggle on={linkFirstMatch()} onClick={() => setLinkFirstMatch(!linkFirstMatch())} />
+          <select
+            aria-label="Link autocomplete default"
+            value={linkAutocompletePolicy()}
+            onChange={(event) => setLinkAutocompletePolicy(event.currentTarget.value as LinkAutocompletePolicy)}
+          >
+            <option value="adaptive">OG adaptive</option>
+            <option value="existing">Prefer existing</option>
+            <option value="typed">Prefer exactly what I typed</option>
+          </select>
         </Field>
 
         <Field

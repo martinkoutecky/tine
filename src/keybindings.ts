@@ -347,7 +347,7 @@ const COMMANDS: CommandDef[] = [
   { id: "editor/italics", binding: "mod+i", label: "Italic", scope: "editor" },
   { id: "editor/strike-through", binding: "mod+shift+s", label: "Strikethrough", scope: "editor" },
   { id: "editor/highlight", binding: "mod+shift+h", label: "Highlight", scope: "editor" },
-  { id: "editor/insert-link", binding: "mod+shift+l", label: "Insert link", scope: "editor" },
+  { id: "editor/insert-link", binding: "mod+l", label: "Insert link", scope: "editor" },
   { id: "editor/clear-block", binding: "alt+l", label: "Clear block content", scope: "editor" },
   // Emacs-style cursor/kill motions.
   { id: "editor/kill-line-before", binding: "alt+u", label: "Delete to line start", scope: "editor" },

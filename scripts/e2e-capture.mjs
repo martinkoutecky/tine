@@ -28,8 +28,15 @@ const ARTIFACT_DIR = process.env.E2E_ARTIFACT_DIR || TMP;
 fs.rmSync(TMP, { recursive: true, force: true });
 for (const dir of ["pages", "journals", "logseq", "assets"]) fs.mkdirSync(`${GRAPH}/${dir}`, { recursive: true });
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(`${TMP}/xdg/${dir}`, { recursive: true });
+const appData = `${TMP}/xdg/data/page.tine.Tine`;
+fs.mkdirSync(appData, { recursive: true });
+const settingsPath = `${appData}/tine-settings.json`;
+// Capture is an independent WebView: begin with a persisted non-default mode
+// so its cold start cannot accidentally inherit the main WebView's default.
+fs.writeFileSync(settingsPath, '{"link_autocomplete_policy":"existing","space_after_ref_completion":true}\n');
 fs.writeFileSync(`${GRAPH}/logseq/config.edn`, "{}\n");
 fs.writeFileSync(`${GRAPH}/pages/Home.md`, "- capture focus fixture\n");
+fs.writeFileSync(`${GRAPH}/pages/Fuzzy Existing.md`, "- completion target\n");
 const now = new Date();
 const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
 const journalPath = `${GRAPH}/journals/${journal}.md`;
@@ -128,7 +135,7 @@ const waitForForwarderExit = (child, timeoutMs) => new Promise((resolve, reject)
 });
 
 const driverLog = fs.openSync(`${ARTIFACT_DIR}/tauri-driver.log`, "w");
-const td = spawn(
+let td = spawn(
   TD,
   ["--port", String(DRIVER_PORT), "--native-port", String(NATIVE_PORT), "--native-driver", WD],
   { env, stdio: ["ignore", driverLog, driverLog], detached: true },
@@ -233,6 +240,50 @@ try {
   if (!settledDomFocus.documentHasFocus || !settledDomFocus.editorIsActive) {
     throw new Error(`Quick Capture bullet did not retain focus after first paint: ${JSON.stringify(settledDomFocus)}`);
   }
+  const activeAutocomplete = () => browser.execute(() => ({
+    active: document.querySelector(".autocomplete .ac-item.active .ac-label")?.textContent?.trim() ?? "",
+    labels: [...document.querySelectorAll(".autocomplete .ac-label")].map((node) => node.textContent?.trim() ?? ""),
+    value: document.activeElement instanceof HTMLTextAreaElement ? document.activeElement.value : null,
+  }));
+  const expectActiveAutocomplete = async (expected, message) => {
+    let last = null;
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      last = await activeAutocomplete();
+      if (last.active === expected) return;
+      await sleep(50);
+    }
+    // WebDriverIO interpolates timeoutMsg when waitUntil is created, so its
+    // previous message always reported `last=null`. Keep the assertion equally
+    // strict while exposing the actual capture popup/value for a policy failure.
+    throw new Error(`${message}; last=${JSON.stringify(last)}`);
+  };
+  const expectAutocompleteValue = async (expected, message) => {
+    let last = null;
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline) {
+      last = await activeAutocomplete();
+      if (last.value === expected) return;
+      await sleep(50);
+    }
+    throw new Error(`${message}; expected=${JSON.stringify(expected)} actual=${JSON.stringify(last)}`);
+  };
+  // A fuzzy-only query distinguishes existing-first from adaptive/Create-first.
+  // Exercise both page and tag acceptance in the cold, independently initialized
+  // capture WebView using literal keys.
+  await browser.keys(["["]);
+  await browser.keys(["["]);
+  await browser.keys(["F", "z"]);
+  await expectActiveAutocomplete("Fuzzy Existing", "cold Quick Capture ignored persisted existing-first page policy");
+  await browser.keys(["Enter"]);
+  // Existing page acceptance keeps Tine's configured GH #35 continuation space.
+  // Do not type another separator before the following tag query: that would
+  // conceal a doubled-space regression instead of proving the actual edit.
+  await expectAutocompleteValue("[[Fuzzy Existing]] ", "cold Quick Capture did not accept the existing page with its configured continuation space");
+  await browser.keys(["#", "F", "z"]);
+  await expectActiveAutocomplete("#Fuzzy Existing", "cold Quick Capture ignored persisted existing-first tag policy");
+  await browser.keys(["Enter"]);
+  await expectAutocompleteValue("[[Fuzzy Existing]] #[[Fuzzy Existing]] ", "cold Quick Capture did not accept the existing multiword tag with its configured continuation space");
   // Send keyboard input to the already-active element without clicking or
   // calling focus(). Xvfb's XTest transport is rejected by a never-clicked
   // WebKitGTK child on some runners, so WebDriver supplies the keystrokes only
@@ -256,6 +307,113 @@ try {
   if (!fs.readFileSync(journalPath, "utf8").includes(PROOF)) {
     throw new Error(`keyboard input did not reach the graph despite proven native + DOM focus; dom=${JSON.stringify(domFocus)} journal=${JSON.stringify(fs.readFileSync(journalPath, "utf8"))}`);
   }
+  // Change the policy through the main Settings UI while the persistent capture
+  // window is hidden. Reopening that exact WebView must refresh before Enter can
+  // choose a completion; otherwise it would retain the cold existing-first signal.
+  await browser.switchToWindow(mainHandle);
+  await browser.$('button[title^="Settings"]').click();
+  // The settings launcher opens its default tab, while this policy deliberately
+  // lives under Editor → Advanced. Follow that visible flow rather than reaching
+  // into the collapsed setting or mutating its persisted value directly.
+  const settingsState = () => browser.execute(() => ({
+    modalOpen: Boolean(document.querySelector(".settings-modal")),
+    tabs: [...document.querySelectorAll(".settings-nav-item")].map((tab) => ({
+      label: tab.textContent?.trim() ?? "",
+      active: tab.classList.contains("active"),
+    })),
+    advanced: [...document.querySelectorAll(".settings-advanced-toggle")].map((toggle) => ({
+      label: toggle.textContent?.trim() ?? "",
+      expanded: toggle.getAttribute("aria-expanded"),
+    })),
+    policyVisible: Boolean(document.querySelector('select[aria-label="Link autocomplete default"]')),
+  }));
+  const waitForSettingsState = async (matches, message) => {
+    let last = null;
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline) {
+      last = await settingsState();
+      if (matches(last)) return last;
+      await sleep(50);
+    }
+    throw new Error(`${message}; settings=${JSON.stringify(last)}`);
+  };
+  const openedSettings = await waitForSettingsState((state) => state.modalOpen, "Settings UI did not open");
+  if (!openedSettings.tabs.some((tab) => tab.label === "Editor")) {
+    throw new Error(`Settings UI lacks its Editor tab; settings=${JSON.stringify(openedSettings)}`);
+  }
+  const editorTab = await browser.$("//button[contains(concat(' ', normalize-space(@class), ' '), ' settings-nav-item ') and normalize-space(.)='Editor']");
+  await editorTab.click();
+  let currentSettings = await waitForSettingsState(
+    (state) => state.tabs.some((tab) => tab.label === "Editor" && tab.active),
+    "Settings UI did not activate the Editor tab",
+  );
+  if (!currentSettings.advanced.some((section) => section.expanded === "true")) {
+    if (!currentSettings.advanced.length) {
+      throw new Error(`Editor Settings lacks an Advanced disclosure; settings=${JSON.stringify(currentSettings)}`);
+    }
+    const advanced = await browser.$(".settings-advanced-toggle");
+    await advanced.click();
+    currentSettings = await waitForSettingsState(
+      (state) => state.advanced.some((section) => section.expanded === "true"),
+      "Settings UI did not reveal Editor Advanced",
+    );
+  }
+  await waitForSettingsState((state) => state.policyVisible, "Editor Advanced did not reveal Link autocomplete default");
+  const policy = await browser.$('select[aria-label="Link autocomplete default"]');
+  await policy.selectByAttribute("value", "typed");
+  await browser.waitUntil(() => fs.existsSync(settingsPath) && fs.readFileSync(settingsPath, "utf8").includes('"link_autocomplete_policy": "typed"'), {
+    timeout: 5_000, timeoutMsg: "Settings UI did not persist typed completion policy",
+  });
+  await browser.keys(["Escape"]);
+  const reopen = spawn(APP, ["--capture"], { env, stdio: ["ignore", driverLog, driverLog], detached: true });
+  await waitForForwarderExit(reopen, 5_000);
+  reopen.unref();
+  await waitForWindow("Quick Capture", 10_000);
+  await browser.switchToWindow(captureHandle);
+  await browser.keys(["Control", "a"]);
+  await browser.keys(["Backspace"]);
+  await browser.keys(["["]);
+  await browser.keys(["["]);
+  await browser.keys(["F", "z"]);
+  await expectActiveAutocomplete('Create "Fz"', "reopened Quick Capture retained the hidden existing-first policy");
+  await browser.keys(["Escape"]);
+  // Repeat from a fresh process with the same XDG home. This is distinct from
+  // reopening the hidden window above: it proves persisted policy initialization
+  // before a cold Capture WebView can accept a page completion.
+  await browser.deleteSession();
+  browser = undefined;
+  try { process.kill(-td.pid, "SIGKILL"); } catch {}
+  await sleep(700);
+  td = spawn(
+    TD,
+    ["--port", String(DRIVER_PORT), "--native-port", String(NATIVE_PORT), "--native-driver", WD],
+    { env, stdio: ["ignore", driverLog, driverLog], detached: true },
+  );
+  await sleep(2_500);
+  browser = await remote({
+    hostname: "127.0.0.1", port: DRIVER_PORT, path: "/",
+    capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: APP } },
+    logLevel: "error", connectionRetryCount: 1, connectionRetryTimeout: 60_000,
+  });
+  const restartedHandles = await browser.getWindowHandles();
+  const restartedCapture = await (async () => {
+    for (const handle of restartedHandles) {
+      await browser.switchToWindow(handle);
+      if (matchesWindowName(await browser.getTitle(), "Quick Capture")) return handle;
+    }
+    return null;
+  })();
+  if (!restartedCapture) throw new Error("fresh process lacked the pre-created Quick Capture WebView");
+  const coldReopen = spawn(APP, ["--capture"], { env, stdio: ["ignore", driverLog, driverLog], detached: true });
+  await waitForForwarderExit(coldReopen, 5_000);
+  coldReopen.unref();
+  await waitForWindow("Quick Capture", 10_000);
+  await browser.switchToWindow(restartedCapture);
+  await browser.keys(["["]);
+  await browser.keys(["["]);
+  await browser.keys(["F", "z"]);
+  await expectActiveAutocomplete('Create "Fz"', "cold restarted Quick Capture did not initialize persisted typed policy");
+  await browser.keys(["Escape"]);
   console.log(`PASS: cold Quick Capture exposed a focused bullet and saved keyboard input without a click; dom=${JSON.stringify(domFocus)} frame=${JSON.stringify({ lightShadow, darkShadow })}`);
 } finally {
   try { await browser?.deleteSession(); } catch {}

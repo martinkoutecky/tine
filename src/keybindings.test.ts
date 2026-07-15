@@ -147,6 +147,11 @@ afterEach(() => {
 });
 
 describe("keyboard binding strings", () => {
+  it("binds Insert link to Mod-L by default", () => {
+    const byId = Object.fromEntries(commandDefaults().map((c) => [c.id, c]));
+    expect(byId["editor/insert-link"]).toMatchObject({ binding: "mod+l", scope: "editor" });
+  });
+
   it("serializes Shift+/ as shift+? because KeyboardEvent.key is already shifted", () => {
     expect(eventToBindingString(keyEvent({ key: "?", code: "Slash", shiftKey: true }))).toBe("shift+?");
   });

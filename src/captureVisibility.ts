@@ -6,9 +6,9 @@
  */
 export async function resettleIfVisible(
   window: { isVisible(): Promise<boolean> },
-  resettle: () => void,
+  resettle: () => void | Promise<void>,
 ): Promise<void> {
-  if (await window.isVisible()) resettle();
+  if (await window.isVisible()) await resettle();
 }
 
 /**

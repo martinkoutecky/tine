@@ -127,9 +127,16 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   literal unless they contain explicit page-reference syntax.
 - The `((` popup full-text-searches blocks and inserts a **durable** reference
   (writes a stable `id::` first).
-- The `[[`/`#` Enter default is configurable (Settings → *Journals & tasks* →
-  **Link autocomplete default**): create-a-new-page (default, like Logseq) or
-  link-the-first-match.
+- **Page references lead the bare `/` menu.** `/` then Enter inserts `[[]]`,
+  keeps the caret inside, and opens page completion once you start typing;
+  typed slash commands retain their existing fuzzy ranking (including `/A`).
+- The `[[`/`#` Enter default is configurable (Settings → *Editor* → Advanced →
+  **Link autocomplete default**): **OG adaptive** (default: strict-prefix
+  matches lead, fuzzy-only matches keep Create first), **Prefer existing**, or
+  **Prefer exactly what I typed**. Exact existing names always select the page.
+- **Mod-L inserts an external link** in Markdown or Org. It wraps selected plain
+  text as a label, or uses a selected URL/page/block/already-formatted link as
+  the target with an empty label.
 - **Linked & unlinked references** on every page (live/editable), with co-reference
   filtering and hover previews — and in the **right sidebar** page view too
   (shift-click a page to open it there). Both panels use the same parser-owned

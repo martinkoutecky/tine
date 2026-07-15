@@ -225,18 +225,48 @@ export function tagInsert(name: string): string {
   return tagRef(name);
 }
 
-/** Order the `[[`/`#` completion list, deciding which item is the DEFAULT (first,
- *  Enter) action. A blank query or an exact existing match shows the matches with
- *  no "Create" option. Otherwise `linkFirst` chooses the default: false (OG) →
- *  "Create" leads (Enter makes a new page/tag); true → the first match leads
- *  (Enter links it) and "Create" trails. The other items stay reachable by arrow. */
+export type LinkAutocompletePolicy = "adaptive" | "existing" | "typed";
+
+/** An autocomplete row whose canonical page name is still available at this
+ * boundary. `PageEntry` does not expose the alias that matched in the backend,
+ * so alias hits deliberately use this canonical deterministic fallback. */
+export interface NamedAutocompleteItem<T> {
+  name: string;
+  item: T;
+}
+
+function canonicalName(name: string): string {
+  return name.normalize("NFKC").toLowerCase();
+}
+
+function canonicalCompare<T extends NamedAutocompleteItem<unknown>>(a: T, b: T): number {
+  const an = canonicalName(a.name);
+  const bn = canonicalName(b.name);
+  return an.length - bn.length || (an < bn ? -1 : an > bn ? 1 : 0);
+}
+
+/** OG 1.0.0 page/tag default-action ordering. Blank queries retain their trigger
+ * lifecycle but deliberately expose no rows; the editor also skips quickSwitch
+ * for them. Nonblank results are canonical-name ordered so graph/index order is
+ * never an accidental Enter policy. */
 export function orderAcItems<T>(
-  matches: T[],
-  createItem: T,
-  opts: { hasQuery: boolean; exact: boolean; linkFirst: boolean }
+  matches: readonly NamedAutocompleteItem<T>[],
+  createItem: NamedAutocompleteItem<T>,
+  opts: { query: string; policy: LinkAutocompletePolicy },
 ): T[] {
-  if (!opts.hasQuery || opts.exact) return matches;
-  return opts.linkFirst ? [...matches, createItem] : [createItem, ...matches];
+  const query = canonicalName(opts.query.trim());
+  if (!query) return [];
+  const exact = matches.filter((match) => canonicalName(match.name) === query).sort(canonicalCompare);
+  if (exact.length) return exact.map((match) => match.item);
+
+  const prefix = matches.filter((match) => canonicalName(match.name).startsWith(query)).sort(canonicalCompare);
+  const fuzzy = matches.filter((match) => !canonicalName(match.name).startsWith(query)).sort(canonicalCompare);
+  const ordered = [...prefix, ...fuzzy];
+  if (opts.policy === "typed") return [createItem.item, ...ordered.map((match) => match.item)];
+  if (opts.policy === "existing") return [...ordered.map((match) => match.item), createItem.item];
+  return prefix.length
+    ? [prefix[0].item, createItem.item, ...prefix.slice(1).map((match) => match.item), ...fuzzy.map((match) => match.item)]
+    : [createItem.item, ...fuzzy.map((match) => match.item)];
 }
 
 /** Action commands need runtime behaviour (date stamps, file picker) rather
@@ -257,7 +287,9 @@ export type CommandAction =
   | "sheet-board"
   | "priority-a"
   | "priority-b"
-  | "priority-c";
+  | "priority-c"
+  | "page-reference"
+  | "insert-link";
 
 export interface Command {
   label: string;
@@ -272,9 +304,17 @@ export interface Command {
    *  literally named "A"/"B"/"C" — a full-length exact match that outranks longer
    *  partial matches). Display still uses `label`. */
   key?: string;
+  /** Immutable pre-v0.5.10 typed-query tiebreaker. Never derive this from the
+   * visible bare-menu order: `/A` and every existing fuzzy tie depend on it. */
+  readonly matchTieOrder: number;
+  /** Explicit empty-slash menu order. This is intentionally independent of
+   * `matchTieOrder`; changing `/` must not perturb `/query`. */
+  readonly bareOrder: number;
 }
 
-export const COMMANDS: Command[] = [
+type CommandDefinition = Omit<Command, "matchTieOrder" | "bareOrder">;
+
+const COMMAND_DEFINITIONS: readonly CommandDefinition[] = [
   { label: "TODO", insert: "TODO " },
   { label: "DOING", insert: "DOING " },
   { label: "LATER", insert: "LATER " },
@@ -298,8 +338,8 @@ export const COMMANDS: Command[] = [
   { label: "Heading 2", insert: "## " },
   { label: "Heading 3", insert: "### " },
   { label: "Heading 4", insert: "#### " },
-  { label: "Page reference", insert: "[[]]", caret: 2 },
-  { label: "Link", insert: "[]()", caret: 1 },
+  { label: "Page reference", action: "page-reference" },
+  { label: "Link", action: "insert-link" },
   { label: "Upload an asset", action: "upload-asset" },
   { label: "Voice recording", action: "record" },
   { label: "Draw.io diagram", action: "drawio" },
@@ -326,6 +366,28 @@ export const COMMANDS: Command[] = [
   ...TEMPLATE_VARS.map((v) => ({ label: `Template var: ${v.label}`, insert: v.insert })),
   { label: "Template var: date…", insert: "<% date:  %>", caret: 9 },
 ];
+
+const BARE_ORDER = new Map<string, number>([
+  "Page reference", "Link", "Upload an asset", "Voice recording", "Draw.io diagram",
+  "Heading 1", "Heading 2", "Heading 3", "Heading 4",
+  "Today", "Current time",
+  "TODO", "DOING", "LATER", "NOW", "DONE", "WAITING", "WAIT", "IN-PROGRESS", "CANCELED", "Scheduled", "Deadline",
+  "Priority A", "Priority B", "Priority C",
+  "Grid", "Table", "Board",
+  "Code block", "Calculator", "Quote",
+  "Admonition: note", "Admonition: tip", "Admonition: important", "Admonition: warning", "Admonition: caution",
+  "Divider", "Query", "Query (visual builder)", "Embed", "Math block", "Page properties",
+].map((label, index) => [label, index]));
+
+/** One registry drives rendering, matching, selection and tests. The old
+ * definition order is frozen into matchTieOrder before the bare menu is sorted. */
+export const COMMANDS: readonly Command[] = Object.freeze(COMMAND_DEFINITIONS.map((command, matchTieOrder) =>
+  Object.freeze({
+    ...command,
+    matchTieOrder,
+    bareOrder: BARE_ORDER.get(command.label) ?? 1000 + matchTieOrder,
+  }),
+));
 
 // --- Fuzzy ranking (port of OG Logseq's frontend.search/score) ---------------
 // Higher = better; a score of 0 means "not a match" (the query isn't even a
@@ -407,9 +469,9 @@ export function commandScore(query: string, c: Command): number {
 /** Slash-command matches for `query`, ranked best-first (OG-style). An empty
  *  query (bare `/`) lists every command in its defined order. */
 export function filterCommands(query: string): Command[] {
-  if (!query) return COMMANDS.slice();
+  if (!query) return COMMANDS.slice().sort((a, b) => a.bareOrder - b.bareOrder);
   return COMMANDS.map((c) => ({ c, s: commandScore(query, c) }))
     .filter((x) => x.s > 0)
-    .sort((a, b) => b.s - a.s) // stable: equal scores keep their defined order
+    .sort((a, b) => b.s - a.s || a.c.matchTieOrder - b.c.matchTieOrder)
     .map((x) => x.c);
 }

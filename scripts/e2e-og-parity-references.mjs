@@ -12,7 +12,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
+const APP = process.env.TINE_APP || path.join(ROOT, "target/release", process.platform === "win32" ? "tine.exe" : "tine");
 const TD = process.env.TAURI_DRIVER || (process.env.CARGO_HOME ? path.join(process.env.CARGO_HOME, "bin", "tauri-driver") : "tauri-driver");
 const DRIVER_PORT = Number(process.env.E2E_DRIVER_PORT || 4660);
 const NATIVE_PORT = Number(process.env.E2E_NATIVE_PORT || 4661);
@@ -21,7 +21,37 @@ const GRAPH = `${TMP}/graph`;
 const ARTIFACTS = process.env.E2E_ARTIFACT_DIR || `${TMP}/artifacts`;
 const TARGET = "11111111-1111-4111-8111-111111111111";
 const EDITOR = "22222222-2222-4222-8222-222222222222";
+const SLASH_EDITOR = "33333333-3333-4333-8333-333333333333";
+const LINK_EDITOR = "44444444-4444-4444-8444-444444444444";
 const TEST_PAGE = `${GRAPH}/pages/OG Parity References.md`;
+
+/** WebDriver's `addValue` is a convenience mutation, not the literal key path
+ * the reported Linux behavior uses. Keep all user-facing autocomplete probes on
+ * real key events so WebKit dispatch, Solid's input handler, and the debounce
+ * are exercised together. */
+const typeKeys = async (browser, text) => {
+  // Separate WebDriver commands preserve key-up/key-down boundaries for repeated
+  // delimiters such as `[[` and `((` on WebKitGTK.
+  for (const key of text) await browser.keys([key]);
+};
+const activeAutocomplete = async (browser) => browser.execute(() => {
+  const active = document.querySelector(".autocomplete .ac-item.active");
+  return {
+    active: active?.querySelector(".ac-label")?.textContent?.trim() ?? "",
+    labels: [...document.querySelectorAll(".autocomplete .ac-label")].map((node) => node.textContent?.trim() ?? ""),
+    editor: document.activeElement instanceof HTMLTextAreaElement ? document.activeElement.value : null,
+  };
+});
+const waitForActiveAutocomplete = async (browser, expected, timeoutMsg) => {
+  let last = null;
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    last = await activeAutocomplete(browser);
+    if (last.active === expected) return;
+    await sleep(50);
+  }
+  throw new Error(`${timeoutMsg}; last=${JSON.stringify(last)}`);
+};
 
 fs.rmSync(TMP, { recursive: true, force: true });
 for (const dir of ["pages", "journals", "logseq", "assets"]) fs.mkdirSync(`${GRAPH}/${dir}`, { recursive: true });
@@ -33,8 +63,14 @@ fs.writeFileSync(TEST_PAGE, [
   `  id:: ${TARGET}`,
   "- ",
   `  id:: ${EDITOR}`,
+  "- ",
+  `  id:: ${SLASH_EDITOR}`,
+  "- Parity label",
+  `  id:: ${LINK_EDITOR}`,
   "",
 ].join("\n"));
+fs.writeFileSync(`${GRAPH}/pages/Parity Target.md`, "- target\n");
+fs.writeFileSync(`${GRAPH}/pages/Parity Target___Child.md`, "- child\n");
 const now = new Date();
 const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
 fs.writeFileSync(`${GRAPH}/journals/${journal}.md`, "- Open [[OG Parity References]]\n");
@@ -53,7 +89,10 @@ if (process.env.OG_PARITY_NORMAL_COMPOSITING !== "1") {
   env.WEBKIT_DISABLE_COMPOSITING_MODE = "1";
 }
 const log = fs.openSync(`${ARTIFACTS}/tauri-driver.log`, "w");
-const td = spawn(TD, ["--port", String(DRIVER_PORT), "--native-port", String(NATIVE_PORT), "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"], {
+const driverArgs = process.platform === "linux"
+  ? ["--port", String(DRIVER_PORT), "--native-port", String(NATIVE_PORT), "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"]
+  : ["--port", String(DRIVER_PORT)];
+const td = spawn(TD, driverArgs, {
   env,
   stdio: ["ignore", log, log],
 });
@@ -62,7 +101,7 @@ await sleep(2500);
 let browser;
 const receipt = {
   schemaVersion: 1,
-  scenario: "references.block-autocomplete",
+  scenario: "references.authoring",
   app: "tine",
   appIdentity: {
     path: path.resolve(APP),
@@ -144,7 +183,7 @@ try {
   await content.click();
   const editor = await browser.$(`[data-block-id="${EDITOR}"] textarea.block-editor`);
   await editor.waitForExist({ timeout: 5000 });
-  await editor.addValue("((test");
+  await typeKeys(browser, "((test");
 
   const activeItem = await browser.$(".autocomplete .ac-item.active");
   await activeItem.waitForExist({ timeout: 10_000 });
@@ -198,6 +237,56 @@ try {
   receipt.observations.persistedEditorValue = persistedEditorValue();
   if (receipt.observations.renderedText !== "Testing block") {
     throw new Error(`rendered block reference was ${JSON.stringify(receipt.observations.renderedText)}`);
+  }
+  // GH #155: bare slash must select Page reference, chain into the active but
+  // row-free blank page lifecycle, then use ordinary adaptive page completion.
+  const slashContent = await browser.$(`[data-block-id="${SLASH_EDITOR}"] .block-content`);
+  await slashContent.click();
+  const slashEditor = await browser.$(`[data-block-id="${SLASH_EDITOR}"] textarea.block-editor`);
+  await slashEditor.waitForExist({ timeout: 5000 });
+  await typeKeys(browser, "/");
+  await waitForActiveAutocomplete(browser, "Page reference", "bare slash did not activate Page reference");
+  await browser.keys(["Enter"]);
+  await browser.waitUntil(async () => (await slashEditor.getValue()) === "[[]]", {
+    timeout: 5000,
+    timeoutMsg: "Page reference did not leave the caret in an empty pair",
+  });
+  const blankPopupRows = await browser.execute(() => document.querySelectorAll(".autocomplete .ac-item").length);
+  if (blankPopupRows !== 0) throw new Error(`blank page lifecycle rendered ${blankPopupRows} rows`);
+  receipt.observations.bareSlash = await browser.execute(() => {
+    const active = document.activeElement;
+    return active instanceof HTMLTextAreaElement ? { value: active.value, start: active.selectionStart, end: active.selectionEnd } : null;
+  });
+  if (receipt.observations.bareSlash?.start !== 2 || receipt.observations.bareSlash?.end !== 2) {
+    throw new Error(`Page reference caret was not inside [[]]: ${JSON.stringify(receipt.observations.bareSlash)}`);
+  }
+  await typeKeys(browser, "Parity Tar");
+  await waitForActiveAutocomplete(browser, "Parity Target", "adaptive page completion did not activate the shortest prefix match");
+  await browser.keys(["Enter"]);
+  await browser.waitUntil(async () => (await slashEditor.getValue()).startsWith("[[Parity Target]]"), {
+    timeout: 5000,
+    timeoutMsg: "adaptive page completion did not accept the existing page",
+  });
+  await browser.keys(["Escape"]);
+
+  // The literal Linux Mod-L chord reaches the editor dispatcher, wraps selected
+  // text and leaves the collapsed caret in the Markdown URL field.
+  const linkContent = await browser.$(`[data-block-id="${LINK_EDITOR}"] .block-content`);
+  await linkContent.click();
+  const linkEditor = await browser.$(`[data-block-id="${LINK_EDITOR}"] textarea.block-editor`);
+  await linkEditor.waitForExist({ timeout: 5000 });
+  await browser.keys(["Control", "a"]);
+  await browser.keys(["Control", "l"]);
+  await browser.waitUntil(async () => (await linkEditor.getValue()) === "[Parity label]()", {
+    timeout: 5000,
+    timeoutMsg: "Mod-L did not insert the selected Markdown link",
+  });
+  receipt.observations.modL = await browser.execute(() => {
+    const active = document.activeElement;
+    return active instanceof HTMLTextAreaElement ? { value: active.value, start: active.selectionStart, end: active.selectionEnd } : null;
+  });
+  if (receipt.observations.modL?.start !== 15 || receipt.observations.modL?.end !== 15) {
+    throw new Error(`Mod-L caret was not inside (): ${JSON.stringify(receipt.observations.modL)}`);
   }
   await sleep(300);
   await browser.saveScreenshot(`${ARTIFACTS}/rendered.png`);

@@ -659,6 +659,7 @@ export function mockBackend(): Backend {
     async captureTarget() {
       return "main";
     },
+    async bindCaptureGraph() {},
     async forgetKnownGraph() {},
     async appPlatform(): Promise<"android" | "ios" | "desktop"> {
       return "desktop";
@@ -1050,6 +1051,9 @@ export function mockBackend(): Backend {
         .filter((p) => p.name.toLowerCase().includes(q))
         .slice(0, limit)
         .map(mockPageEntry);
+    },
+    async captureQuickSwitch(query: string, limit: number): Promise<PageEntry[]> {
+      return this.quickSwitch(query, limit);
     },
     async resolveBlock(uuid: string): Promise<RefGroup | null> {
       const find = (blocks: BlockDto[]): BlockDto | null => {

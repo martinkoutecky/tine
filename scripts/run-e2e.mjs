@@ -93,6 +93,7 @@ const suites = {
     ["page-trailing-block", "scripts/e2e-page-trailing-block.mjs", {}],
   ],
   "windows-smoke": [
+    ["og-parity-references", "scripts/e2e-og-parity-references.mjs", {}],
     ["page-properties", "scripts/e2e-page-properties.mjs", {}],
     ["pdf-logseq", "scripts/e2e-pdf-logseq.mjs", {}],
     ["print-security", "scripts/e2e-print-security.mjs", {}],

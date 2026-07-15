@@ -21,26 +21,27 @@ mod watcher;
 
 use backup::{get_backup_keep, list_backups, restore_backup, set_backup_keep};
 use commands::{
-    asset_trash_stats, block_ref_counts, block_referrers, close_graph_window,
+    asset_trash_stats, block_ref_counts, block_referrers, capture_quick_switch, close_graph_window,
     copy_guide_into_graph, delete_page, detect_media_editor, edit_asset_external,
-    empty_asset_trash, get_backlinks, get_page, get_page_by_path, get_unlinked_refs,
-    graph_source_files, guide_pages, import_asset, import_native_capture, journal_content_days, journals_desc,
-    list_journal_conflicts, list_orphan_assets, list_pages, list_sync_conflicts, list_templates,
-    merge_pages, open_asset, open_page_file, page_aliases, page_icons, page_print_html, publish_html, query_facets,
-    open_pdf, quick_switch, read_asset, read_custom_css, read_highlights, read_journal_file,
-    preview_block, read_local_image, read_text_file, rename_file_to_page, rename_page,
-    resolve_block, resolve_blocks, resolve_sync_conflict, run_advanced_query, run_graph_search,
-    run_query, export_query_subtrees, save_asset, save_page,
-    save_pdf_area_image, search, set_default_journal_template, set_favorites, set_guide_announced,
-    set_journal_title_format, set_preferred_format, set_preferred_workflow, set_start_of_week,
-    set_timetracking_enabled, stream_asset_path, sync_conflict_diff, tine_open_devtools, tine_quit, trash_asset,
-    trash_journal_file, trash_sync_conflict, write_highlights, write_pdf_view_state,
+    empty_asset_trash, export_query_subtrees, get_backlinks, get_page, get_page_by_path,
+    get_unlinked_refs, graph_source_files, guide_pages, import_asset, import_native_capture,
+    journal_content_days, journals_desc, list_journal_conflicts, list_orphan_assets, list_pages,
+    list_sync_conflicts, list_templates, merge_pages, open_asset, open_page_file, open_pdf,
+    page_aliases, page_icons, page_print_html, preview_block, publish_html, query_facets,
+    quick_switch, read_asset, read_custom_css, read_highlights, read_journal_file,
+    read_local_image, read_text_file, rename_file_to_page, rename_page, resolve_block,
+    resolve_blocks, resolve_sync_conflict, run_advanced_query, run_graph_search, run_query,
+    save_asset, save_page, save_pdf_area_image, search, set_default_journal_template,
+    set_favorites, set_guide_announced, set_journal_title_format, set_preferred_format,
+    set_preferred_workflow, set_start_of_week, set_timetracking_enabled, stream_asset_path,
+    sync_conflict_diff, tine_open_devtools, tine_quit, trash_asset, trash_journal_file,
+    trash_sync_conflict, write_highlights, write_pdf_view_state,
 };
 use debug::{
     debug_enabled, debug_header, debug_info, debug_init, debug_log, diag, install_panic_logger,
 };
 use graph::{
-    app_platform, approve_external_assets, capture_target, create_graph, default_graph_parent,
+    app_platform, approve_external_assets, capture_graph_binding, capture_target, create_graph, default_graph_parent,
     inspect_graph_access, load_graph, open_graph_window, resolve_root, startup_graph_path, warm_done,
 };
 use platform::{clipboard_files, copy_image_to_clipboard, gpu_env, open_external};
@@ -117,6 +118,14 @@ fn show_capture(app: &tauri::AppHandle) {
             let _ = w.center();
         }
         let _ = w.show();
+        // Retarget the read-only capture lease before the window can receive
+        // the fallback focus. Until its frontend obtains this generation, old
+        // WebView requests fail stale instead of querying a previously selected
+        // graph after a hidden-window reopen.
+        let state = app.state::<AppState>();
+        if graph::refresh_capture_graph_binding(&state).is_err() {
+            state.clear_capture_graph();
+        }
         // Do not activate until the frontend acknowledges that its textarea and
         // capture-shown listener exist. Activating a newly mapped window first
         // lets a fast typist send keys into an unready WebView; Plasma can also
@@ -480,9 +489,12 @@ pub fn run() {
             let state = app.state::<AppState>();
             match event {
                 tauri::WindowEvent::Focused(true) => {
-                    let changed = state.note_focused(label);
-                    if changed {
-                        if let Ok(slot) = state::slot_for_window(&state, label) {
+                    // Auxiliary windows (Quick Capture in particular) never own
+                    // a graph slot. Letting one replace `last_focused` makes a
+                    // later capture fall back to HashMap iteration and can route
+                    // it to the wrong graph in a multi-window session.
+                    if let Ok(slot) = state::slot_for_window(&state, label) {
+                        if state.note_focused(label) {
                             let _ =
                                 settings::remember_graph(app, &slot.root_key.display().to_string());
                         }
@@ -505,6 +517,7 @@ pub fn run() {
             graph_load: Mutex::new(()),
             watch_ctl: Mutex::new(None),
             last_focused: Mutex::new(None),
+            capture_graph: Mutex::new(None),
             #[cfg(desktop)]
             next_window: AtomicU64::new(1),
         })
@@ -611,6 +624,7 @@ pub fn run() {
             open_graph_window,
             startup_graph_path,
             capture_target,
+            capture_graph_binding,
             capture_frontend_ready,
             create_graph,
             app_platform,
@@ -676,6 +690,7 @@ pub fn run() {
             rename_file_to_page,
             search,
             quick_switch,
+            capture_quick_switch,
             list_templates,
             journal_content_days,
             resolve_block,
