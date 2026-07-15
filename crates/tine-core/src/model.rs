@@ -2561,10 +2561,6 @@ impl Graph {
         !cancelled()
     }
 
-    fn warm_page_cache(&self) {
-        let _ = self.warm_page_cache_cancellable(&|| false);
-    }
-
     fn warm_page_cache_cancellable(&self, cancelled: &impl Fn() -> bool) -> bool {
         use std::sync::atomic::Ordering;
         if cancelled() {

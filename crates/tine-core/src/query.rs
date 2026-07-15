@@ -150,8 +150,8 @@ fn crumb_line(b: &DocBlock) -> String {
 /// I/O or re-parsing happens per call.
 fn collect(
     graph: &Graph,
-    mut keep: impl FnMut(&DocBlock) -> bool,
-    mut keep_page_properties: impl FnMut(&PageEntry, &str) -> Option<BlockDto>,
+    keep: impl FnMut(&DocBlock) -> bool,
+    keep_page_properties: impl FnMut(&PageEntry, &str) -> Option<BlockDto>,
     exclude: Option<&str>,
 ) -> Vec<RefGroup> {
     collect_bounded(
@@ -709,12 +709,6 @@ pub fn run_query_bounded(
     let mut opts = QueryOpts::default();
     pred.collect_opts(&mut opts);
     run_pred_bounded(graph, &pred, &opts, max_rows, max_bytes)
-}
-
-/// Evaluate a parsed predicate against the whole graph (shared by the simple-DSL
-/// `run_query` and the advanced-datalog `run_advanced_query`).
-fn run_pred(graph: &Graph, pred: &Pred, opts: &QueryOpts) -> Vec<RefGroup> {
-    run_pred_bounded(graph, pred, opts, usize::MAX, usize::MAX).groups
 }
 
 fn run_pred_bounded(
