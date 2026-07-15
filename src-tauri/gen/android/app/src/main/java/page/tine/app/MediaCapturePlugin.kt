@@ -30,6 +30,8 @@ import java.io.File
 // `assets/` (backend save_asset) and inserts the media ref. Mirrors the
 // GraphFolderPickerPlugin bridge pattern.
 private const val TAG = "Tine/MediaCapture"
+private const val MAX_RECORDING_BYTES = 32L * 1024L * 1024L
+private const val MAX_RECORDING_DURATION_MS = 30 * 60 * 1000
 
 @TauriPlugin(
   permissions = [
@@ -42,6 +44,7 @@ class MediaCapturePlugin(private val activity: Activity) : Plugin(activity) {
   // Active voice-memo recorder + its output file (null when not recording).
   private var recorder: MediaRecorder? = null
   private var recordFile: File? = null
+  private var recordingStoppedAtLimit = false
 
   // --- Photo: a single "take or choose" chooser (camera capture + file pick) ---
 
@@ -161,11 +164,23 @@ class MediaCapturePlugin(private val activity: Activity) : Plugin(activity) {
       rec.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
       rec.setAudioEncodingBitRate(128000)
       rec.setAudioSamplingRate(44100)
+      rec.setMaxDuration(MAX_RECORDING_DURATION_MS)
+      rec.setMaxFileSize(MAX_RECORDING_BYTES)
       rec.setOutputFile(out.absolutePath)
+      rec.setOnInfoListener { stopped, what, _ ->
+        if (what == MediaRecorder.MEDIA_RECORDER_INFO_MAX_DURATION_REACHED ||
+          what == MediaRecorder.MEDIA_RECORDER_INFO_MAX_FILESIZE_REACHED) {
+          try { stopped.stop() } catch (_: Exception) {}
+          try { stopped.release() } catch (_: Exception) {}
+          if (recorder === stopped) recorder = null
+          recordingStoppedAtLimit = true
+        }
+      }
       rec.prepare()
       rec.start()
       recorder = rec
       recordFile = out
+      recordingStoppedAtLimit = false
       val ret = JSObject()
       ret.put("status", "recording")
       invoke.resolve(ret)
@@ -179,24 +194,31 @@ class MediaCapturePlugin(private val activity: Activity) : Plugin(activity) {
   fun stopRecording(invoke: Invoke) {
     val rec = recorder
     val out = recordFile
-    if (rec == null || out == null) {
+    if ((rec == null && !recordingStoppedAtLimit) || out == null) {
       invoke.reject("Not recording")
       return
     }
-    try {
-      rec.stop()
-    } catch (ex: Exception) {
-      // A stop() right after start() (empty recording) throws; treat as cancelled.
-      Log.w(TAG, "MediaRecorder.stop failed: ${ex.message}")
-      releaseRecorder()
-      out.delete()
-      val ret = JSObject()
-      ret.put("status", "cancelled")
-      invoke.resolve(ret)
-      return
+    if (rec != null) {
+      try {
+        rec.stop()
+      } catch (ex: Exception) {
+        // A stop() right after start() (empty recording) throws; treat as cancelled.
+        Log.w(TAG, "MediaRecorder.stop failed: ${ex.message}")
+        releaseRecorder()
+        out.delete()
+        val ret = JSObject()
+        ret.put("status", "cancelled")
+        invoke.resolve(ret)
+        return
+      }
     }
     releaseRecorder()
     try {
+      if (out.length() > MAX_RECORDING_BYTES) {
+        out.delete()
+        invoke.reject("Recording exceeded the 32 MiB limit")
+        return
+      }
       val bytes = if (out.exists() && out.length() > 0) out.readBytes() else null
       out.delete()
       if (bytes == null || bytes.isEmpty()) {
@@ -232,5 +254,6 @@ class MediaCapturePlugin(private val activity: Activity) : Plugin(activity) {
     try { recorder?.release() } catch (_: Exception) {}
     recorder = null
     recordFile = null
+    recordingStoppedAtLimit = false
   }
 }

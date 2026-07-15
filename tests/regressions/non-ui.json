@@ -158,6 +158,34 @@
         "scenario": "rename.rollback-destination-recovery",
         "failBefore": "proven"
       }
+    },
+    {
+      "id": "REG-PUBLISH-PUBLIC-MACRO-CAPABILITY-001",
+      "title": "Static-publish queries embeds and namespaces can expose only public pages",
+      "family": "privacy",
+      "sources": { "issues": [], "commits": [] },
+      "platforms": ["all"],
+      "layer": "core-native",
+      "status": "covered",
+      "coverage": {
+        "tests": ["crates/tine-core/src/publish.rs"],
+        "scenario": "publish.public-macro-capability",
+        "failBefore": "proven"
+      }
+    },
+    {
+      "id": "REG-PUBLISH-ATOMIC-TREE-REPLACEMENT-001",
+      "title": "Republishing atomically retires stale pages without following a replaced output directory",
+      "family": "data-safety",
+      "sources": { "issues": [], "commits": [] },
+      "platforms": ["all"],
+      "layer": "core-native",
+      "status": "covered",
+      "coverage": {
+        "tests": ["crates/tine-core/src/publish.rs", "crates/tine-core/src/model.rs"],
+        "scenario": "publish.atomic-tree-replacement",
+        "failBefore": "proven"
+      }
     }
   ]
 }

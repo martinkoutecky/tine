@@ -898,6 +898,15 @@ fn render_query(graph: &Graph, src: &str, ctx: &Ctx, depth: u8) -> String {
         publish_test_counts::bump_query_run(graph);
         crate::query::run_query(graph, src)
     };
+    // A site export is a projection of the public page set, not an alternate
+    // frontend over the live graph. Query execution still reuses the ordinary
+    // engine, but results from pages outside the pass-1 public capability must
+    // never cross into generated HTML. Print export has no page capability and
+    // deliberately retains its existing whole-graph behavior.
+    let groups: Vec<RefGroup> = groups
+        .into_iter()
+        .filter(|group| publish_page_allowed(ctx, &group.page))
+        .collect();
     let total: usize = groups.iter().map(|g| g.blocks.len()).sum();
     let mut out = format!(
         "<div class=\"query\"><div class=\"query-head\">Query <span class=\"query-count\">{}</span></div>",
@@ -921,8 +930,13 @@ fn render_query(graph: &Graph, src: &str, ctx: &Ctx, depth: u8) -> String {
 /// Inline an `{{embed ((uuid))}}` or `{{embed [[Page]]}}`.
 fn render_embed(graph: &Graph, arg: &str, ctx: &Ctx, depth: u8) -> String {
     if let Some(uuid) = arg.strip_prefix("((").and_then(|s| s.strip_suffix("))")) {
-        return match crate::query::resolve_block(graph, uuid.trim()) {
-            Some(g) => {
+        let uuid = uuid.trim();
+        if ctx.pages.is_some() && !ctx.refs.contains_key(uuid) {
+            return "<div class=\"embed embed-missing\">Embedded content is not public.</div>"
+                .into();
+        }
+        return match crate::query::resolve_block(graph, uuid) {
+            Some(g) if publish_page_allowed(ctx, &g.page) => {
                 let mut out = String::from(
                     "<div class=\"embed block-embed single-root\"><ul class=\"embed-outline\">",
                 );
@@ -931,6 +945,9 @@ fn render_embed(graph: &Graph, arg: &str, ctx: &Ctx, depth: u8) -> String {
                 }
                 out.push_str("</ul></div>");
                 out
+            }
+            Some(_) => {
+                "<div class=\"embed embed-missing\">Embedded content is not public.</div>".into()
             }
             None => "<div class=\"embed embed-missing\">Embedded block not found.</div>".into(),
         };
@@ -942,6 +959,10 @@ fn render_embed(graph: &Graph, arg: &str, ctx: &Ctx, depth: u8) -> String {
             .and_then(|pages| pages.get(&crate::refs::page_key(page)).copied())
         {
             return render_page_embed_doc(page, doc, ctx, depth);
+        }
+        if ctx.pages.is_some() {
+            return "<div class=\"embed embed-missing\">Embedded content is not public.</div>"
+                .into();
         }
         return match load_page_doc(graph, page) {
             Some(doc) => render_page_embed_doc(page, &doc, ctx, depth),
@@ -1004,7 +1025,7 @@ fn render_namespace(graph: &Graph, ns: &str, ctx: &Ctx) -> String {
         .list_pages()
         .into_iter()
         .map(|e| e.name)
-        .filter(|n| n.starts_with(&prefix))
+        .filter(|n| n.starts_with(&prefix) && publish_page_allowed(ctx, n))
         .collect();
     children.sort();
     children.dedup();
@@ -1027,6 +1048,11 @@ fn render_namespace(graph: &Graph, ns: &str, ctx: &Ctx) -> String {
     }
     out.push_str("</ul></div>");
     out
+}
+
+fn publish_page_allowed(ctx: &Ctx, page: &str) -> bool {
+    ctx.pages
+        .is_none_or(|pages| pages.contains_key(&crate::refs::page_key(page)))
 }
 
 fn render_page_embed_doc(page: &str, doc: &doc::Document, ctx: &Ctx, depth: u8) -> String {
@@ -1683,21 +1709,132 @@ fn page_is_public(pre_block: Option<&str>) -> bool {
     })
 }
 
+fn reserve_publish_stage(graph: &Graph) -> io::Result<std::path::PathBuf> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    for _ in 0..128 {
+        let stage = graph.root.join(format!(
+            ".tine-publish-stage-{}-{}",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        graph.ensure_write_target(&stage)?;
+        match fs::create_dir(&stage) {
+            Ok(()) => return Ok(stage),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "could not reserve a unique static-publish staging directory",
+    ))
+}
+
+fn write_publish_stage_file(
+    graph: &Graph,
+    stage: &std::path::Path,
+    name: &str,
+    bytes: &[u8],
+) -> io::Result<()> {
+    let target = stage.join(name);
+    // Revalidate the actual target immediately before every write. If the
+    // reserved stage was renamed and replaced by a managed-directory alias,
+    // fail closed instead of following it outside the graph.
+    graph.ensure_write_target(&target)?;
+    crate::model::atomic_write(&target, bytes)
+}
+
+fn publish_recovery_path(graph: &Graph) -> io::Result<std::path::PathBuf> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let recovery = graph
+        .root
+        .join("logseq")
+        .join(".tine-trash")
+        .join("conflicts");
+    graph.ensure_write_target(&recovery)?;
+    fs::create_dir_all(&recovery)?;
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+    Ok(recovery.join(format!(
+        "{stamp}-{}__previous-publish",
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    )))
+}
+
+fn commit_publish_stage(
+    graph: &Graph,
+    stage: &std::path::Path,
+    out: &std::path::Path,
+) -> io::Result<()> {
+    graph.ensure_write_target(stage)?;
+    graph.ensure_write_target(out)?;
+    let stage_meta = fs::symlink_metadata(stage)?;
+    if !stage_meta.is_dir() || stage_meta.file_type().is_symlink() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "static-publish staging directory was replaced",
+        ));
+    }
+
+    // The old tree may contain user-added files as well as generated output, so
+    // retire it intact rather than deleting it. Moving the currently named inode
+    // is race-safe even if an external process swaps `publish/` at the boundary.
+    let old_recovery = if fs::symlink_metadata(out).is_ok() {
+        let recovery = publish_recovery_path(graph)?;
+        crate::model::move_file_noreplace(out, &recovery)?;
+        Some(recovery)
+    } else {
+        None
+    };
+
+    if let Err(error) = crate::model::move_file_noreplace(stage, out) {
+        if !out.exists() {
+            if let Some(old) = &old_recovery {
+                let _ = crate::model::move_file_noreplace(old, out);
+            }
+        }
+        return Err(error);
+    }
+    let out_meta = fs::symlink_metadata(out)?;
+    if out_meta.is_dir() && !out_meta.file_type().is_symlink() {
+        return Ok(());
+    }
+
+    // A replaced stage must never become a live alias. Quarantine it and restore
+    // the previous tree when possible; all versions remain recoverable.
+    let bad = publish_recovery_path(graph)?;
+    let _ = crate::model::move_file_noreplace(out, &bad);
+    if let Some(old) = &old_recovery {
+        let _ = crate::model::move_file_noreplace(old, out);
+    }
+    Err(io::Error::new(
+        io::ErrorKind::InvalidInput,
+        "static-publish staging directory changed during commit",
+    ))
+}
+
 /// Export public pages to `<root>/publish/`. Returns (output dir, page count).
 /// Only pages with `public:: true` are published, unless
 /// `:publishing/all-pages-public?` is set in config (matching Logseq).
 pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
     let out = graph.root.join("publish");
     graph.ensure_write_target(&out)?;
-    fs::create_dir_all(&out)?;
-    crate::model::atomic_write(&out.join("style.css"), STYLE.as_bytes())?;
+    let stage = reserve_publish_stage(graph)?;
+    write_publish_stage_file(graph, &stage, "style.css", STYLE.as_bytes())?;
     // Sidebar + fuzzy search are JS-driven: Fuse (vendored, OG's version) + our tiny
     // app.js, both loaded as `<script src>` so they work offline / over file://.
-    crate::model::atomic_write(
-        &out.join("fuse.min.js"),
+    write_publish_stage_file(
+        graph,
+        &stage,
+        "fuse.min.js",
         include_str!("../assets/fuse.min.js").as_bytes(),
     )?;
-    crate::model::atomic_write(&out.join("app.js"), APP_JS.as_bytes())?;
+    write_publish_stage_file(graph, &stage, "app.js", APP_JS.as_bytes())?;
     let all_public = graph.config.all_pages_public;
     let favorites: HashSet<&str> = graph.config.favorites.iter().map(|s| s.as_str()).collect();
 
@@ -1792,11 +1929,19 @@ pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
     for (name, kind, parsed) in &public {
         let slug = slug_of(name);
         let file = format!("{slug}.html");
-        let html = page_html(name, &slug, parsed, *kind, &ctx, &mut all_blocks, &home_file);
+        let html = page_html(
+            name,
+            &slug,
+            parsed,
+            *kind,
+            &ctx,
+            &mut all_blocks,
+            &home_file,
+        );
         if name.eq_ignore_ascii_case("Welcome to Tine") {
             welcome_html = Some(html.clone());
         }
-        crate::model::atomic_write(&out.join(&file), html.as_bytes())?;
+        write_publish_stage_file(graph, &stage, &file, html.as_bytes())?;
         let journal = *kind == PageKind::Journal;
         let tag = if journal {
             "<span class=\"k\">journal</span>"
@@ -1826,7 +1971,7 @@ pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
         serde_json::to_string(&sidebar_pages).unwrap_or_else(|_| "[]".into()),
         serde_json::to_string(&all_blocks).unwrap_or_else(|_| "[]".into()),
     );
-    crate::model::atomic_write(&out.join("search-index.js"), data.as_bytes())?;
+    write_publish_stage_file(graph, &stage, "search-index.js", data.as_bytes())?;
 
     // Keep the alphabetical page list separately discoverable. When the public
     // set contains Welcome to Tine, index.html is that actual rendered page and
@@ -1838,9 +1983,10 @@ pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
         index_list
     );
     let pages_html = shell("Pages", &main, &home_file);
-    crate::model::atomic_write(&out.join("pages.html"), pages_html.as_bytes())?;
+    write_publish_stage_file(graph, &stage, "pages.html", pages_html.as_bytes())?;
     let entry_html = welcome_html.unwrap_or(pages_html);
-    crate::model::atomic_write(&out.join("index.html"), entry_html.as_bytes())?;
+    write_publish_stage_file(graph, &stage, "index.html", entry_html.as_bytes())?;
+    commit_publish_stage(graph, &stage, &out)?;
     Ok((out.display().to_string(), count))
 }
 
@@ -2108,6 +2254,124 @@ mod tests {
     }
 
     #[test]
+    fn publish_macros_never_expand_private_graph_content() {
+        let dir = std::env::temp_dir().join(format!(
+            "tine-publish-private-macros-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        let private_id = "99999999-9999-4999-8999-999999999999";
+        fs::write(
+            dir.join("pages/Dashboard.md"),
+            format!(
+                "public:: true\n- {{{{query (task TODO)}}}}\n- {{{{embed [[Secret]]}}}}\n- {{{{embed (({private_id}))}}}}\n- {{{{namespace PrivateNS}}}}\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages/Secret.md"),
+            format!("- TODO PRIVATE_QUERY_AND_EMBED_TOKEN\n  id:: {private_id}\n"),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages/PrivateNS___Child.md"),
+            "- PRIVATE_NAMESPACE_TOKEN\n",
+        )
+        .unwrap();
+
+        let graph = Graph::open(&dir);
+        let (outdir, count) = publish_graph(&graph).unwrap();
+        assert_eq!(count, 1);
+        let dashboard =
+            fs::read_to_string(std::path::Path::new(&outdir).join("dashboard.html")).unwrap();
+        assert!(!dashboard.contains("PRIVATE_QUERY_AND_EMBED_TOKEN"));
+        assert!(!dashboard.contains("PRIVATE_NAMESPACE_TOKEN"));
+        assert!(!dashboard.contains("PrivateNS/Child"));
+        assert!(
+            dashboard.contains("No matching blocks")
+                || dashboard.contains("Embedded content is not public"),
+            "private macro targets should fail closed: {dashboard}"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn republish_retires_pages_that_are_no_longer_public() {
+        let dir =
+            std::env::temp_dir().join(format!("tine-publish-retire-stale-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("pages/Visible.md"),
+            "public:: true\n- visible body\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages/Secret.md"),
+            "public:: true\n- stale private token\n",
+        )
+        .unwrap();
+
+        let graph = Graph::open(&dir);
+        let (outdir, count) = publish_graph(&graph).unwrap();
+        assert_eq!(count, 2);
+        let out = std::path::Path::new(&outdir);
+        assert!(out.join("secret.html").exists());
+
+        fs::write(dir.join("pages/Secret.md"), "- stale private token\n").unwrap();
+        let graph = Graph::open(&dir);
+        let (outdir, count) = publish_graph(&graph).unwrap();
+        assert_eq!(count, 1);
+        let out = std::path::Path::new(&outdir);
+        assert!(out.join("visible.html").exists());
+        assert!(
+            !out.join("secret.html").exists(),
+            "a formerly public page must not remain deployable after republish"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn publish_commit_never_writes_through_a_replaced_output_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let dir =
+            std::env::temp_dir().join(format!("tine-publish-output-swap-{}", std::process::id()));
+        let outside = std::env::temp_dir().join(format!(
+            "tine-publish-output-swap-outside-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&outside);
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("index.html"), "outside sentinel").unwrap();
+        let graph = Graph::open(&dir);
+        let stage = reserve_publish_stage(&graph).unwrap();
+        write_publish_stage_file(&graph, &stage, "index.html", b"generated site").unwrap();
+        symlink(&outside, dir.join("publish")).unwrap();
+
+        assert!(commit_publish_stage(&graph, &stage, &dir.join("publish")).is_err());
+
+        assert_eq!(
+            fs::read_to_string(outside.join("index.html")).unwrap(),
+            "outside sentinel"
+        );
+        assert!(fs::symlink_metadata(dir.join("publish"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&outside);
+    }
+
+    #[test]
     fn publish_uses_welcome_home_and_public_reverse_block_refs() {
         let dir = std::env::temp_dir().join(format!("tine-publish-welcome-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
@@ -2144,7 +2408,10 @@ mod tests {
         assert!(welcome.contains("aria-label=\"2 block references\">2</summary>"));
         assert!(welcome.contains("href=\"welcome-to-tine.html#b0\""));
         assert!(welcome.contains("href=\"other.html#b0\""));
-        assert!(!welcome.contains("Private"), "private referrer must not leak");
+        assert!(
+            !welcome.contains("Private"),
+            "private referrer must not leak"
+        );
         assert!(pages.contains("welcome-to-tine.html") && pages.contains("other.html"));
         assert!(pages.contains("href=\"welcome-to-tine.html\">⌂ Home</a>"));
         let _ = fs::remove_dir_all(&dir);
@@ -2158,8 +2425,7 @@ mod tests {
         // first) and `日本語` writes a degenerate `.html`. Post-fix every page must
         // get a distinct, nonempty file, and every cross-page link must point at
         // the file its target was actually written to.
-        let dir =
-            std::env::temp_dir().join(format!("tine-publish-collide-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("tine-publish-collide-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("journals")).unwrap();
         fs::create_dir_all(dir.join("pages")).unwrap();
@@ -2203,7 +2469,10 @@ mod tests {
             assert!(seen.insert(s.to_string()), "slugs must be distinct: {s}");
             let f = out.join(format!("{s}.html"));
             assert!(f.exists(), "file for slug {s} exists");
-            assert!(fs::metadata(&f).unwrap().len() > 0, "file {s}.html nonempty");
+            assert!(
+                fs::metadata(&f).unwrap().len() > 0,
+                "file {s}.html nonempty"
+            );
         }
         // No page landed in a degenerate empty-slug file.
         assert!(!out.join(".html").exists(), "no empty-slug .html file");
@@ -2437,10 +2706,8 @@ mod tests {
 
     #[test]
     fn publish_memoizes_repeated_query_macros() {
-        let dir = std::env::temp_dir().join(format!(
-            "tine-publish-query-memo-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("tine-publish-query-memo-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("journals")).unwrap();
         fs::create_dir_all(dir.join("pages")).unwrap();
@@ -2487,10 +2754,8 @@ mod tests {
 
     #[test]
     fn publish_reuses_pass1_docs_for_repeated_page_embeds() {
-        let dir = std::env::temp_dir().join(format!(
-            "tine-publish-embed-reuse-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("tine-publish-embed-reuse-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("journals")).unwrap();
         fs::create_dir_all(dir.join("pages")).unwrap();

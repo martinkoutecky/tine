@@ -118,6 +118,7 @@ import { blockRefCount } from "../blockRefCounts";
 import { BlockReferences } from "./BlockReferences";
 import { editorCommandFor } from "../keybindings";
 import { cycleMarkerSmart, toggleTaskDone } from "../editor/repeat";
+
 import { taskCheckboxState } from "../markers";
 import { applyTemplateVars } from "../editor/templateVars";
 import {
@@ -134,7 +135,15 @@ import { AnnotationBody } from "./AnnotationBody";
 import { logbookInfo, type LogbookInfo } from "../logbook";
 import { inPageFindPreservesEditorBlur } from "../inpageFind";
 import { registerFocusedEditorCommandBridge, type MobileEditorCommandId } from "../editorCommandBridge";
-import { isRecordingAudio, setRecordingAudio, base64ToBytes } from "../mediaCapture";
+import {
+  isRecordingAudio,
+  setRecordingAudio,
+  base64ToBytes,
+  cancelDesktopVoiceRecording,
+  desktopVoiceRecordingActive,
+  startDesktopVoiceRecording,
+  stopDesktopVoiceRecording,
+} from "../mediaCapture";
 import { sheetConfig } from "../sheet/config";
 import { SheetCellContext } from "../sheet/context";
 import { appendSheetCellChild, structuralSheetPasteNode } from "../sheet/mutations";
@@ -145,6 +154,20 @@ import { SheetTable } from "./SheetTable";
 import { SheetBoard } from "./SheetBoard";
 import { blockBackgroundColor } from "../blockColors";
 import { SheetContainer } from "./SheetContainer";
+
+export function shouldOpenBlockContextMenu(
+  target: EventTarget | null,
+  mobile = isMobilePlatform
+): boolean {
+  const element = target instanceof Element ? target : null;
+  if (element?.closest("textarea,input,select,[contenteditable='true']")) return false;
+  // Android WebView emits `contextmenu` as part of long-press text selection.
+  // Match OG's bullet-only targeting on mobile so selection handles and the
+  // native edit menu remain usable; the explicit bullet still exposes Tine's
+  // block actions.
+  if (mobile && !element?.closest(".bullet-container")) return false;
+  return true;
+}
 
 type SheetSlashView = "grid" | "table" | "board";
 
@@ -396,6 +419,7 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
           editing: editing(),
         }}
         onContextMenu={(e) => {
+          if (!shouldOpenBlockContextMenu(e.target)) return;
           e.preventDefault();
           openContextMenu(e.clientX, e.clientY, props.id);
         }}
@@ -1534,61 +1558,32 @@ export function Editor(props: { id: string }): JSX.Element {
     }
   };
 
-  // Desktop voice memo (/record): the Android start_recording/stop_recording Tauri
-  // commands are stubbed to error on desktop, so record entirely in the WebView with
-  // getUserMedia + MediaRecorder, then reuse insertAssetBytes with the real ext.
-  // First /record starts; second stops and inserts.
-  let desktopRecorder: MediaRecorder | undefined;
-  let desktopRecorderStream: MediaStream | undefined;
-  let desktopRecorderChunks: Blob[] = [];
+  // Desktop voice memo (/record): one process-wide owner reserves the physical
+  // recorder before permission, bounds time/bytes, and is cancelled if this editor
+  // unmounts. This keeps the microphone reachable and prevents concurrent sessions.
+  const desktopRecordingOwner = Symbol(`voice-recording:${props.id}`);
+  onCleanup(() => cancelDesktopVoiceRecording(desktopRecordingOwner));
   const desktopVoiceMemoToggle = async () => {
-    if (isRecordingAudio() && desktopRecorder) {
-      // Second /record: stop; onstop (below) inserts the asset.
-      desktopRecorder.stop();
+    if (desktopVoiceRecordingActive()) {
+      stopDesktopVoiceRecording();
       return;
     }
-    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
-      pushToast("Mic capture isn’t available here", "error");
-      return;
-    }
-    let stream: MediaStream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const status = await startDesktopVoiceRecording(desktopRecordingOwner, {
+        complete: async (bytes, mime, limited) => {
+          if (limited) pushToast("Recording limit reached; saving the captured audio", "info");
+          await insertAssetBytes(bytes, undefined, recordingExt(mime));
+        },
+        error: (message) => pushToast(`Couldn’t save the recording (${message})`, "error"),
+      });
+      if (status === "busy") {
+        pushToast("Another voice recording is already active", "error");
+        return;
+      }
+      pushToast("Recording… run /record again to stop", "info");
     } catch (err) {
       pushToast(`Couldn’t access the microphone (${String(err)})`, "error");
-      return;
     }
-    let recorder: MediaRecorder;
-    try {
-      recorder = new MediaRecorder(stream);
-    } catch (err) {
-      stream.getTracks().forEach((t) => t.stop());
-      pushToast(`Couldn’t start recording (${String(err)})`, "error");
-      return;
-    }
-    desktopRecorder = recorder;
-    desktopRecorderStream = stream;
-    desktopRecorderChunks = [];
-    recorder.ondataavailable = (e) => {
-      if (e.data && e.data.size > 0) desktopRecorderChunks.push(e.data);
-    };
-    recorder.onstop = () => {
-      const chunks = desktopRecorderChunks;
-      const mime = recorder.mimeType;
-      desktopRecorderStream?.getTracks().forEach((t) => t.stop());
-      desktopRecorder = undefined;
-      desktopRecorderStream = undefined;
-      desktopRecorderChunks = [];
-      setRecordingAudio(false);
-      void (async () => {
-        const blob = new Blob(chunks, { type: mime });
-        const bytes = new Uint8Array(await blob.arrayBuffer());
-        if (bytes.length) insertAssetBytes(bytes, undefined, recordingExt(mime));
-      })();
-    };
-    recorder.start();
-    setRecordingAudio(true);
-    pushToast("Recording… run /record again to stop", "info");
   };
 
   const uploadAsset = async () => {

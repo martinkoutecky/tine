@@ -5608,7 +5608,7 @@ fn move_to_trash(src: &Path, dest: &Path, trash: &Path) -> io::Result<()> {
 /// Atomically move one file without ever replacing an existing destination.
 /// Platform-native no-replace rename semantics ensure the source name and inode
 /// cannot be swapped between a check and an unlink.
-fn move_file_noreplace(src: &Path, dest: &Path) -> io::Result<()> {
+pub(crate) fn move_file_noreplace(src: &Path, dest: &Path) -> io::Result<()> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         use std::os::unix::ffi::OsStrExt;
