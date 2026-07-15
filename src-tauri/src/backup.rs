@@ -1,5 +1,5 @@
 use crate::settings::{settings_path, update_settings};
-use crate::state::{slot_for_context, GraphContext};
+use crate::state::{slot_for_context, GraphContext, GraphSlot};
 use cap_std::{
     ambient_authority,
     fs::{Dir, OpenOptions},
@@ -7,6 +7,8 @@ use cap_std::{
 use sha2::{Digest, Sha256};
 use std::io::Read;
 use std::path::PathBuf;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use tauri::Manager;
 use tine_core::model::Graph;
 
@@ -16,9 +18,10 @@ use tine_core::model::Graph;
 // it never blocks startup or holds the graph lock during file copies.
 const BACKUP_KEEP_DEFAULT: usize = 12;
 const ASSET_RESTORE_RECOVERY_DIR: &str = ".tine-restore-recovery";
+static BACKUP_WORK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
 
-pub(crate) fn backup_async(app: tauri::AppHandle, graph: &Graph) {
-    let source = BackupSource::from_graph(graph);
+pub(crate) fn backup_async(app: tauri::AppHandle, slot: Arc<GraphSlot>) {
+    let source = BackupSource::from_graph(&slot.graph);
     std::thread::spawn(move || {
         // Defer the launch snapshot ~1s so its whole-graph file copy doesn't
         // contend for disk I/O with first-journal paint and the warm-cache parse
@@ -27,7 +30,21 @@ pub(crate) fn backup_async(app: tauri::AppHandle, graph: &Graph) {
         // the first second — the on-disk files are still intact — so a crash in
         // that window loses nothing the snapshot would have protected.
         std::thread::sleep(std::time::Duration::from_millis(1000));
-        let _ = do_backup_source(&app, source, ""); // launch snapshot is best-effort
+        if slot.background_cancelled.load(Ordering::Acquire) {
+            return;
+        }
+        // Bound whole-graph copying process-wide. Revoked bindings check again
+        // after obtaining the permit and between directory entries/files.
+        let _worker = BACKUP_WORK
+            .get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .unwrap();
+        if slot.background_cancelled.load(Ordering::Acquire) {
+            return;
+        }
+        let _ = do_backup_source_cancellable(&app, source, "", &|| {
+            slot.background_cancelled.load(Ordering::Acquire)
+        }); // launch snapshot is best-effort
     });
 }
 
@@ -188,6 +205,51 @@ fn verify_snapshot(dir: &std::path::Path, manifest: &SnapshotManifest) -> bool {
 }
 
 fn do_backup_source(app: &tauri::AppHandle, source: BackupSource, suffix: &str) -> (usize, bool) {
+    let _worker = BACKUP_WORK
+        .get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .unwrap();
+    do_backup_source_cancellable(app, source, suffix, &|| false)
+}
+
+struct PartialBackup {
+    path: PathBuf,
+    committed: bool,
+}
+
+impl Drop for PartialBackup {
+    fn drop(&mut self) {
+        if !self.committed {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+}
+
+fn cleanup_partial_backups(base: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(base) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if entry.file_name().to_string_lossy().starts_with(".partial-") {
+            let path = entry.path();
+            if path.is_dir() {
+                let _ = std::fs::remove_dir_all(path);
+            } else {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+    }
+}
+
+fn do_backup_source_cancellable(
+    app: &tauri::AppHandle,
+    source: BackupSource,
+    suffix: &str,
+    cancelled: &dyn Fn() -> bool,
+) -> (usize, bool) {
+    if cancelled() {
+        return (0, false);
+    }
     let Ok(data_dir) = app.path().app_data_dir() else {
         return (0, false);
     };
@@ -206,6 +268,7 @@ fn do_backup_source(app: &tauri::AppHandle, source: BackupSource, suffix: &str) 
     // (non-recursive) fails atomically if the name is taken, so we bump a counter
     // until we win an unused name.
     let _ = std::fs::create_dir_all(&base);
+    cleanup_partial_backups(&base);
     let mut final_dest = base.join(&name);
     let mut dest = base.join(format!(".partial-{name}"));
     let mut k = 2;
@@ -217,16 +280,28 @@ fn do_backup_source(app: &tauri::AppHandle, source: BackupSource, suffix: &str) 
                 dest = base.join(format!(".partial-{name}-{k}"));
                 k += 1;
             }
-            Err(_) => break, // other error → fall through; copy below is best-effort
+            Err(_) => return (0, false),
         }
     }
-    let live_text_n = count_md_recursive(&source.journals) + count_md_recursive(&source.pages);
-    let (cj, fj) = copy_md_dir(&source.journals, &dest.join("journals"));
-    let (cp, fp) = copy_md_dir(&source.pages, &dest.join("pages"));
-    let (ca, fa) = copy_asset_sidecars_dir(&source.assets, &dest.join(dir_name(&source.assets)));
+    let mut partial = PartialBackup {
+        path: dest.clone(),
+        committed: false,
+    };
+    let live_text_n = count_md_recursive_cancellable(&source.journals, cancelled)
+        + count_md_recursive_cancellable(&source.pages, cancelled);
+    if cancelled() {
+        return (0, false);
+    }
+    let (cj, fj) = copy_md_dir_cancellable(&source.journals, &dest.join("journals"), cancelled);
+    let (cp, fp) = copy_md_dir_cancellable(&source.pages, &dest.join("pages"), cancelled);
+    let (ca, fa) = copy_asset_sidecars_dir_cancellable(
+        &source.assets,
+        &dest.join(dir_name(&source.assets)),
+        cancelled,
+    );
     let mut n = cj + cp + ca;
     let mut failed = fj + fp + fa;
-    if source.cfg.exists() {
+    if !cancelled() && source.cfg.exists() {
         let out = dest.join("logseq");
         if std::fs::create_dir_all(&out).is_ok()
             && std::fs::copy(&source.cfg, out.join("config.edn")).is_ok()
@@ -236,9 +311,8 @@ fn do_backup_source(app: &tauri::AppHandle, source: BackupSource, suffix: &str) 
             failed += 1;
         }
     }
-    let complete = failed == 0 && cj + cp == live_text_n;
+    let complete = !cancelled() && failed == 0 && cj + cp == live_text_n;
     if n == 0 {
-        let _ = std::fs::remove_dir_all(&dest);
         return (0, complete);
     }
     if complete {
@@ -263,6 +337,7 @@ fn do_backup_source(app: &tauri::AppHandle, source: BackupSource, suffix: &str) 
         {
             return (n, false);
         }
+        partial.committed = true;
     }
     prune_backups(&base, backup_keep(app));
     (n, complete)
@@ -352,11 +427,21 @@ pub(crate) fn list_backups(
 }
 
 fn count_md_recursive(dir: &std::path::Path) -> usize {
+    count_md_recursive_cancellable(dir, &|| false)
+}
+
+fn count_md_recursive_cancellable(dir: &std::path::Path, cancelled: &dyn Fn() -> bool) -> usize {
     let mut n = 0;
     let mut stack = vec![dir.to_path_buf()];
     while let Some(d) = stack.pop() {
+        if cancelled() {
+            return n;
+        }
         if let Ok(rd) = std::fs::read_dir(&d) {
             for e in rd.flatten() {
+                if cancelled() {
+                    return n;
+                }
                 let p = e.path();
                 if is_graph_text(&p) {
                     n += 1;
@@ -1109,6 +1194,17 @@ fn dir_name(p: &std::path::Path) -> String {
 /// Copy every graph text file from `src` to `dest`. Returns (copied, failed) so
 /// the caller can tell a complete snapshot from a partial one.
 fn copy_md_dir(src: &std::path::Path, dest: &std::path::Path) -> (usize, usize) {
+    copy_md_dir_cancellable(src, dest, &|| false)
+}
+
+fn copy_md_dir_cancellable(
+    src: &std::path::Path,
+    dest: &std::path::Path,
+    cancelled: &dyn Fn() -> bool,
+) -> (usize, usize) {
+    if cancelled() {
+        return (0, 1);
+    }
     // Materialize the dest dir up front, even when src has no .md files — so the
     // snapshot records "this dir existed and was empty". Otherwise restore can't
     // tell an empty-at-backup dir from a missing one, and leaves destination .md
@@ -1127,6 +1223,9 @@ fn copy_md_dir(src: &std::path::Path, dest: &std::path::Path) -> (usize, usize) 
     let (mut copied, mut failed) = (0usize, 0usize);
     let mut stack = vec![(src.to_path_buf(), std::path::PathBuf::new())];
     while let Some((dir, rel)) = stack.pop() {
+        if cancelled() {
+            return (copied, failed + 1);
+        }
         let target_dir = dest.join(&rel);
         let _ = std::fs::create_dir_all(&target_dir);
         let rd = match std::fs::read_dir(&dir) {
@@ -1137,6 +1236,9 @@ fn copy_md_dir(src: &std::path::Path, dest: &std::path::Path) -> (usize, usize) 
             }
         };
         for entry in rd {
+            if cancelled() {
+                return (copied, failed + 1);
+            }
             let entry = match entry {
                 Ok(entry) => entry,
                 Err(_) => {
@@ -1172,6 +1274,17 @@ fn copy_md_dir(src: &std::path::Path, dest: &std::path::Path) -> (usize, usize) 
 }
 
 fn copy_asset_sidecars_dir(src: &std::path::Path, dest: &std::path::Path) -> (usize, usize) {
+    copy_asset_sidecars_dir_cancellable(src, dest, &|| false)
+}
+
+fn copy_asset_sidecars_dir_cancellable(
+    src: &std::path::Path,
+    dest: &std::path::Path,
+    cancelled: &dyn Fn() -> bool,
+) -> (usize, usize) {
+    if cancelled() {
+        return (0, 1);
+    }
     let _ = std::fs::create_dir_all(dest);
     let rd = match std::fs::read_dir(src) {
         Ok(rd) => rd,
@@ -1180,6 +1293,9 @@ fn copy_asset_sidecars_dir(src: &std::path::Path, dest: &std::path::Path) -> (us
     };
     let (mut copied, mut failed) = (0usize, 0usize);
     for entry in rd {
+        if cancelled() {
+            return (copied, failed + 1);
+        }
         let Ok(entry) = entry else {
             failed += 1;
             continue;
@@ -1191,7 +1307,7 @@ fn copy_asset_sidecars_dir(src: &std::path::Path, dest: &std::path::Path) -> (us
         };
         let target = dest.join(entry.file_name());
         if ft.is_dir() && !is_asset_restore_recovery_entry(&entry) {
-            let (c, f) = copy_asset_sidecars_dir(&p, &target);
+            let (c, f) = copy_asset_sidecars_dir_cancellable(&p, &target, cancelled);
             copied += c;
             failed += f;
         } else if ft.is_file() && is_asset_sidecar(&p) {
@@ -1278,6 +1394,40 @@ mod tests {
         std::fs::create_dir_all(&underscore).unwrap();
         assert_ne!(root_backup_id(&dash), root_backup_id(&underscore));
         assert_eq!(root_backup_id(&dash), root_backup_id(&dash));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn failed_and_abandoned_partial_backups_are_removed() {
+        let root = scratch("partial-backup-cleanup");
+        let failed = root.join(".partial-failed");
+        std::fs::create_dir_all(&failed).unwrap();
+        std::fs::write(failed.join("half.md"), b"partial").unwrap();
+        {
+            let _guard = PartialBackup {
+                path: failed.clone(),
+                committed: false,
+            };
+        }
+        assert!(!failed.exists());
+
+        let crashed = root.join(".partial-crashed");
+        std::fs::create_dir_all(&crashed).unwrap();
+        std::fs::write(crashed.join("half.md"), b"partial").unwrap();
+        cleanup_partial_backups(&root);
+        assert!(!crashed.exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn cancellable_copy_stops_before_traversing_the_tree() {
+        let root = scratch("backup-cancel");
+        let src = root.join("src");
+        let dest = root.join("dest");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("note.md"), b"secret").unwrap();
+        assert_eq!(copy_md_dir_cancellable(&src, &dest, &|| true), (0, 1));
+        assert!(!dest.exists());
         let _ = std::fs::remove_dir_all(root);
     }
 

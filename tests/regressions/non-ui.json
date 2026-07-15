@@ -328,6 +328,90 @@
         "scenario": "performance.print-image-per-file-and-cumulative-budget",
         "failBefore": "source-proven"
       }
+    },
+    {
+      "id": "REG-PUBLISH-CLOSED-CAPABILITY-URL-001",
+      "title": "Static publication authorizes exact public source identities and contextualizes every anchor and navigable URL",
+      "family": "security-privacy",
+      "sources": { "issues": [], "commits": [] },
+      "platforms": ["all"],
+      "layer": "core-browser",
+      "status": "covered",
+      "coverage": {
+        "tests": ["crates/tine-core/src/publish.rs", "scripts/e2e-publish-security.mjs"],
+        "scenario": "publish.exact-source-capability-anchor-and-url-policy",
+        "failBefore": "source-proven"
+      }
+    },
+    {
+      "id": "REG-PDF-FIND-BOUNDED-LIFECYCLE-001",
+      "title": "PDF Find bounds retained text and occurrences and prevents cancelled searches from admitting stale work",
+      "family": "performance",
+      "sources": { "issues": [], "commits": [] },
+      "platforms": ["all"],
+      "layer": "frontend",
+      "status": "covered",
+      "coverage": {
+        "tests": ["src/components/PdfViewer.test.tsx"],
+        "scenario": "performance.pdf-find-text-match-and-cancellation-budgets",
+        "failBefore": "source-proven"
+      }
+    },
+    {
+      "id": "REG-GRAPH-BACKGROUND-WORK-BOUND-001",
+      "title": "Graph switches cancel stale warm and backup work under process-wide concurrency bounds",
+      "family": "performance",
+      "sources": { "issues": [], "commits": [] },
+      "platforms": ["desktop"],
+      "layer": "native",
+      "status": "covered",
+      "coverage": {
+        "tests": ["src-tauri/src/graph.rs", "src-tauri/src/backup.rs", "src-tauri/src/state.rs"],
+        "scenario": "performance.graph-switch-cancellable-bounded-background-workers",
+        "failBefore": "source-proven"
+      }
+    },
+    {
+      "id": "REG-BACKUP-PARTIAL-CLEANUP-001",
+      "title": "Failed and crash-abandoned backup staging trees cannot accumulate outside retention",
+      "family": "data-safety-performance",
+      "sources": { "issues": [], "commits": [] },
+      "platforms": ["desktop"],
+      "layer": "native",
+      "status": "covered",
+      "coverage": {
+        "tests": ["src-tauri/src/backup.rs"],
+        "scenario": "backup.partial-raii-cleanup-and-scavenge",
+        "failBefore": "source-proven"
+      }
+    },
+    {
+      "id": "REG-CLIPBOARD-IMAGE-INGRESS-BOUND-001",
+      "title": "Clipboard images are admitted by pixels and bytes before RGBA canvas and base64 amplification",
+      "family": "performance",
+      "sources": { "issues": [], "commits": [] },
+      "platforms": ["all"],
+      "layer": "frontend-native",
+      "status": "covered",
+      "coverage": {
+        "tests": ["src/backend.clipboard.test.tsx", "src/components/Block.assetPaste.test.tsx", "src-tauri/src/commands.rs"],
+        "scenario": "performance.clipboard-image-predecode-and-native-ingress-budgets",
+        "failBefore": "source-proven"
+      }
+    },
+    {
+      "id": "REG-RESULT-CONSTRUCTION-BUDGET-001",
+      "title": "Queries references facets and export enforce row and byte budgets while constructing results",
+      "family": "performance",
+      "sources": { "issues": [], "commits": [] },
+      "platforms": ["all"],
+      "layer": "core-native-ui",
+      "status": "covered",
+      "coverage": {
+        "tests": ["crates/tine-core/src/query.rs", "src-tauri/src/commands.rs"],
+        "scenario": "performance.result-family-construction-time-budgets",
+        "failBefore": "source-proven"
+      }
     }
   ]
 }

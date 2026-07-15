@@ -107,8 +107,8 @@ pub(crate) fn inspect_graph_access(
         .ok_or_else(|| "no graph path provided (set TINE_GRAPH or pass a path)".to_string())?;
     let root = canonical_graph_root(&root)?;
     let external = Graph::external_assets_target(&root).map_err(|error| error.to_string())?;
-    let approved_target = approved_external_assets(&app, &root)
-        .and_then(|path| std::fs::canonicalize(path).ok());
+    let approved_target =
+        approved_external_assets(&app, &root).and_then(|path| std::fs::canonicalize(path).ok());
     let approved = external
         .as_ref()
         .is_none_or(|target| approved_target.as_ref() == Some(target));
@@ -208,7 +208,7 @@ pub(crate) fn load_graph_for_label(
     state.note_focused(window_label);
     poke_watcher(&state);
     if !launch_backup_done {
-        backup_async(app.clone(), &slot.graph);
+        backup_async(app.clone(), slot.clone());
     }
     remember_graph(app, &meta.root)?;
     if let Some(window) = app.get_webview_window(window_label) {
@@ -378,20 +378,42 @@ pub(crate) fn warm_cache_async(
         // background so the first search / query / `g j` agenda doesn't pay for
         // parsing every file synchronously under the lock.
         std::thread::sleep(std::time::Duration::from_millis(250));
-        if slot.warm_generation.load(Ordering::Acquire) != warm_generation {
+        if slot.background_cancelled.load(Ordering::Acquire)
+            || slot.warm_generation.load(Ordering::Acquire) != warm_generation
+        {
             return; // the graph was switched while we slept — a newer warm owns it
         }
-        slot.graph.warm_cache();
+        // At most one process-wide graph warm parses files at a time. Rapid
+        // switches may leave short-lived sleepers, but cannot amplify disk/CPU
+        // work; revoked slots stop between page parses.
+        static WARM_WORK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        let _worker = WARM_WORK
+            .get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .unwrap();
+        if slot.background_cancelled.load(Ordering::Acquire)
+            || slot.warm_generation.load(Ordering::Acquire) != warm_generation
+        {
+            return;
+        }
+        let completed = slot.graph.warm_cache_cancellable(|| {
+            slot.background_cancelled.load(Ordering::Acquire)
+                || slot.warm_generation.load(Ordering::Acquire) != warm_generation
+        });
+        if !completed {
+            return;
+        }
         let state: State<'_, AppState> = app.state();
-        let still_current = state
+        let current = state
             .graphs
             .read()
             .unwrap()
-            .slot(&window_label)
-            .map(|current| Arc::ptr_eq(&current, &slot))
-            .unwrap_or(false);
+            .slot(&window_label);
+        let still_current = current.as_ref().is_some_and(|current| {
+            current.binding_generation == slot.binding_generation && current.root_key == slot.root_key
+        });
         if still_current && slot.warm_generation.load(Ordering::Acquire) == warm_generation {
-            slot.warm_done.store(true, Ordering::Release);
+            current.unwrap().warm_done.store(true, Ordering::Release);
             let _ = app.emit_to(&window_label, "warm-cache-done", ());
         }
     });

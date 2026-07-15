@@ -5,8 +5,8 @@ import { QueryWorkspace } from "./components/QueryWorkspace";
 import { QuickSwitcher } from "./components/QuickSwitcher";
 // pdf.js (~hundreds of KB) is heavy and most sessions never open a PDF — load
 // the viewer only when one is opened.
-const PdfViewer = lazy(() =>
-  import("./components/PdfViewer").then((m) => ({ default: m.PdfViewer }))
+const KeyedPdfViewer = lazy(() =>
+  import("./components/PdfViewer").then((m) => ({ default: m.KeyedPdfViewer }))
 );
 import { TabBar, tabDropHighlightsPane, tabSplitPreviewSideForPane } from "./components/TabBar";
 import { ContextMenu } from "./components/ContextMenu";
@@ -1011,11 +1011,7 @@ export function App(): JSX.Element {
             }}
           />
           <Suspense fallback={<div class="pdf-loading" />}>
-            <PdfViewer
-              filename={pdfTarget()!.filename}
-              label={pdfTarget()!.label}
-              page={pdfTarget()!.page}
-            />
+            <KeyedPdfViewer target={pdfTarget} />
           </Suspense>
         </div>
           </Show>

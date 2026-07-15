@@ -13,6 +13,54 @@ use crate::model::{
 use crate::refs;
 use crate::search_query::Matcher;
 
+#[derive(Debug, Clone)]
+pub struct BoundedGroups {
+    pub groups: Vec<RefGroup>,
+    pub total: usize,
+    pub exceeded: bool,
+}
+
+struct ConstructionBudget {
+    max_rows: usize,
+    max_bytes: usize,
+    rows: usize,
+    bytes: usize,
+    total: usize,
+    exceeded: bool,
+}
+
+enum Budgeted<T> {
+    Admitted(T),
+    Denied,
+}
+
+impl ConstructionBudget {
+    fn new(max_rows: usize, max_bytes: usize) -> Self {
+        Self {
+            max_rows,
+            max_bytes,
+            rows: 0,
+            bytes: 0,
+            total: 0,
+            exceeded: false,
+        }
+    }
+
+    fn admit(&mut self, page: &str, block: &BlockDto) -> bool {
+        self.total = self.total.saturating_add(1);
+        let bytes = crate::model::block_dto_estimated_bytes(block)
+            .saturating_add(page.len())
+            .saturating_add(256);
+        if self.rows >= self.max_rows || self.bytes.saturating_add(bytes) > self.max_bytes {
+            self.exceeded = true;
+            return false;
+        }
+        self.rows += 1;
+        self.bytes += bytes;
+        true
+    }
+}
+
 /// Parse a journal-page title (e.g. "Jan 1st, 2022") to a `yyyymmdd` ordinal.
 fn journal_ordinal(title: &str) -> Option<i64> {
     JournalDate::from_title(title).map(|d| d.ordinal_key())
@@ -106,8 +154,28 @@ fn collect(
     mut keep_page_properties: impl FnMut(&PageEntry, &str) -> Option<BlockDto>,
     exclude: Option<&str>,
 ) -> Vec<RefGroup> {
+    collect_bounded(
+        graph,
+        keep,
+        keep_page_properties,
+        exclude,
+        usize::MAX,
+        usize::MAX,
+    )
+    .groups
+}
+
+fn collect_bounded(
+    graph: &Graph,
+    mut keep: impl FnMut(&DocBlock) -> bool,
+    mut keep_page_properties: impl FnMut(&PageEntry, &str) -> Option<BlockDto>,
+    exclude: Option<&str>,
+    max_rows: usize,
+    max_bytes: usize,
+) -> BoundedGroups {
     let ex = exclude.map(refs::normalize);
-    graph.with_pages(|pages| {
+    let mut budget = ConstructionBudget::new(max_rows, max_bytes);
+    let groups = graph.with_pages(|pages| {
         // Pair each group with the referring page's journal `date_key` so the result
         // can be ordered like OG (the page cache itself is in arbitrary read_dir order).
         let mut groups: Vec<(Option<i64>, RefGroup)> = Vec::new();
@@ -115,10 +183,12 @@ fn collect(
             if ex.as_deref() == Some(&refs::normalize(&entry.name)) {
                 continue;
             }
-            let mut matched: Vec<BlockDto> = Vec::new();
+            let mut matched: Vec<Budgeted<BlockDto>> = Vec::new();
             if let Some(pre) = doc.pre_block.as_deref() {
                 if let Some(property_ref) = keep_page_properties(entry, pre) {
-                    matched.push(property_ref);
+                    if budget.admit(&entry.name, &property_ref) {
+                        matched.push(Budgeted::Admitted(property_ref));
+                    }
                 }
             }
             let mut path: Vec<&DocBlock> = Vec::new();
@@ -129,11 +199,22 @@ fn collect(
                     keep(b).then(|| {
                         let mut dto = block_to_shallow_dto(b);
                         dto.breadcrumb = anc.iter().map(|a| crumb_line(a)).collect();
-                        dto
+                        if budget.admit(&entry.name, &dto) {
+                            Budgeted::Admitted(dto)
+                        } else {
+                            Budgeted::Denied
+                        }
                     })
                 },
                 &mut matched,
             );
+            let matched = matched
+                .into_iter()
+                .filter_map(|item| match item {
+                    Budgeted::Admitted(dto) => Some(dto),
+                    Budgeted::Denied => None,
+                })
+                .collect::<Vec<_>>();
             if !matched.is_empty() {
                 groups.push((
                     entry.date_key,
@@ -157,7 +238,12 @@ fn collect(
                 .then_with(|| a.1.page.cmp(&b.1.page))
         });
         groups.into_iter().map(|(_, g)| g).collect()
-    })
+    });
+    BoundedGroups {
+        groups,
+        total: budget.total,
+        exceeded: budget.exceeded,
+    }
 }
 
 /// True when every non-empty line of a block's raw text is a `key:: value`
@@ -318,8 +404,28 @@ fn collect_reference_occurrences(
     names_norm: &[String],
     kind: ReferenceKind,
 ) -> Vec<RefGroup> {
+    collect_reference_occurrences_bounded(
+        graph,
+        canonical,
+        names_norm,
+        kind,
+        usize::MAX,
+        usize::MAX,
+    )
+    .groups
+}
+
+fn collect_reference_occurrences_bounded(
+    graph: &Graph,
+    canonical: &str,
+    names_norm: &[String],
+    kind: ReferenceKind,
+    max_rows: usize,
+    max_bytes: usize,
+) -> BoundedGroups {
     let exclude = refs::normalize(canonical);
-    graph.with_pages(|pages| {
+    let mut budget = ConstructionBudget::new(max_rows, max_bytes);
+    let groups = graph.with_pages(|pages| {
         let mut groups: Vec<(Option<i64>, RefGroup)> = Vec::new();
         for (entry, doc) in pages {
             if refs::normalize(&entry.name) == exclude {
@@ -337,8 +443,10 @@ fn collect_reference_occurrences(
                     {
                         let mut dto = block_to_shallow_dto(&block);
                         dto.page_property = true;
-                        blocks.push(dto);
-                        evidence.push(hit);
+                        if budget.admit(&entry.name, &dto) {
+                            blocks.push(dto);
+                            evidence.push(hit);
+                        }
                     }
                     // Make it impossible to accidentally retain this synthetic
                     // block past the result construction boundary.
@@ -346,7 +454,7 @@ fn collect_reference_occurrences(
                 }
             }
             let mut path = Vec::new();
-            let mut found = Vec::new();
+            let mut found: Vec<Budgeted<(BlockDto, ReferenceBlockEvidence)>> = Vec::new();
             collect_reference_matches(
                 &doc.roots,
                 &mut path,
@@ -357,14 +465,20 @@ fn collect_reference_occurrences(
                             .iter()
                             .map(|ancestor| crumb_line(ancestor))
                             .collect();
-                        (dto, hit)
+                        if budget.admit(&entry.name, &dto) {
+                            Budgeted::Admitted((dto, hit))
+                        } else {
+                            Budgeted::Denied
+                        }
                     })
                 },
                 &mut found,
             );
-            for (dto, hit) in found {
-                blocks.push(dto);
-                evidence.push(hit);
+            for found in found {
+                if let Budgeted::Admitted((dto, hit)) = found {
+                    blocks.push(dto);
+                    evidence.push(hit);
+                }
             }
             if !blocks.is_empty() {
                 groups.push((
@@ -384,13 +498,36 @@ fn collect_reference_occurrences(
                 .then_with(|| a.1.page.cmp(&b.1.page))
         });
         groups.into_iter().map(|(_, group)| group).collect()
-    })
+    });
+    BoundedGroups {
+        groups,
+        total: budget.total,
+        exceeded: budget.exceeded,
+    }
 }
 
 pub fn backlinks(graph: &Graph, target: &str) -> Vec<RefGroup> {
     let aliases = graph.page_aliases();
     let (canonical, names_norm) = equivalent_page_names(&aliases, target);
     collect_reference_occurrences(graph, &canonical, &names_norm, ReferenceKind::Explicit)
+}
+
+pub fn backlinks_bounded(
+    graph: &Graph,
+    target: &str,
+    max_rows: usize,
+    max_bytes: usize,
+) -> BoundedGroups {
+    let aliases = graph.page_aliases();
+    let (canonical, names_norm) = equivalent_page_names(&aliases, target);
+    collect_reference_occurrences_bounded(
+        graph,
+        &canonical,
+        &names_norm,
+        ReferenceKind::Explicit,
+        max_rows,
+        max_bytes,
+    )
 }
 
 /// Block-level referrers: every block across the graph that references the block
@@ -411,6 +548,30 @@ pub fn block_referrers(graph: &Graph, uuid: &str) -> Vec<RefGroup> {
     )
 }
 
+pub fn block_referrers_bounded(
+    graph: &Graph,
+    uuid: &str,
+    max_rows: usize,
+    max_bytes: usize,
+) -> BoundedGroups {
+    let u = uuid.trim();
+    if u.is_empty() {
+        return BoundedGroups {
+            groups: Vec::new(),
+            total: 0,
+            exceeded: false,
+        };
+    }
+    collect_bounded(
+        graph,
+        |b| b.projection().block_refs.iter().any(|r| r == u),
+        |_, _| None,
+        None,
+        max_rows,
+        max_bytes,
+    )
+}
+
 /// Unlinked references: parser-visible plain occurrences outside explicit
 /// reference syntax. A block containing both kinds appears once in each surface,
 /// with the corresponding occurrence evidence.
@@ -418,6 +579,24 @@ pub fn unlinked_refs(graph: &Graph, target: &str) -> Vec<RefGroup> {
     let aliases = graph.page_aliases();
     let (canonical, names_norm) = equivalent_page_names(&aliases, target);
     collect_reference_occurrences(graph, &canonical, &names_norm, ReferenceKind::Plain)
+}
+
+pub fn unlinked_refs_bounded(
+    graph: &Graph,
+    target: &str,
+    max_rows: usize,
+    max_bytes: usize,
+) -> BoundedGroups {
+    let aliases = graph.page_aliases();
+    let (canonical, names_norm) = equivalent_page_names(&aliases, target);
+    collect_reference_occurrences_bounded(
+        graph,
+        &canonical,
+        &names_norm,
+        ReferenceKind::Plain,
+        max_rows,
+        max_bytes,
+    )
 }
 
 /// Target-scoped trace for bug reports. Membership comes from the exact same
@@ -510,18 +689,47 @@ fn page_facets(pre_block: Option<&str>) -> (Vec<(String, String)>, Vec<String>) 
 }
 
 pub fn run_query(graph: &Graph, query_src: &str) -> Vec<RefGroup> {
+    run_query_bounded(graph, query_src, usize::MAX, usize::MAX).groups
+}
+
+pub fn run_query_bounded(
+    graph: &Graph,
+    query_src: &str,
+    max_rows: usize,
+    max_bytes: usize,
+) -> BoundedGroups {
     let today = JournalDate::today();
     let Some(pred) = Pred::parse(query_src, today) else {
-        return Vec::new();
+        return BoundedGroups {
+            groups: Vec::new(),
+            total: 0,
+            exceeded: false,
+        };
     };
     let mut opts = QueryOpts::default();
     pred.collect_opts(&mut opts);
-    run_pred(graph, &pred, &opts)
+    run_pred_bounded(graph, &pred, &opts, max_rows, max_bytes)
 }
 
 /// Evaluate a parsed predicate against the whole graph (shared by the simple-DSL
 /// `run_query` and the advanced-datalog `run_advanced_query`).
 fn run_pred(graph: &Graph, pred: &Pred, opts: &QueryOpts) -> Vec<RefGroup> {
+    run_pred_bounded(graph, pred, opts, usize::MAX, usize::MAX).groups
+}
+
+fn run_pred_bounded(
+    graph: &Graph,
+    pred: &Pred,
+    opts: &QueryOpts,
+    max_rows: usize,
+    max_bytes: usize,
+) -> BoundedGroups {
+    let mut budget = ConstructionBudget::new(max_rows, max_bytes);
+    // An unsorted `(sample N)` semantically needs only the first N matches in
+    // deterministic traversal order. Do not construct or classify the rest as
+    // an over-budget failure. Sorted samples still require global ranking and
+    // therefore retain the ordinary construction ceiling.
+    let sample_admission_cap = opts.sample.filter(|_| opts.sort.is_none());
     // A recency sort (`(sort-by modified …)`) needs each result page's position on
     // a single time axis: journal pages by the day they represent, other pages by
     // file mtime. Only computed when such a sort is active (else we skip the stat).
@@ -538,14 +746,35 @@ fn run_pred(graph: &Graph, pred: &Pred, opts: &QueryOpts) -> Vec<RefGroup> {
                 page_props: &page_props,
                 page_tags: &page_tags,
             };
-            let mut matched: Vec<BlockDto> = Vec::new();
+            let mut matched: Vec<Budgeted<BlockDto>> = Vec::new();
             let mut path = Vec::new();
             collect_og_query_roots(
                 &doc.roots,
                 &mut path,
-                &mut |block, _| pred.eval(block, &ctx).then(|| block_to_shallow_dto(block)),
+                &mut |block, _| {
+                    if !pred.eval(block, &ctx) {
+                        return None;
+                    }
+                    let dto = block_to_shallow_dto(block);
+                    Some(
+                        if sample_admission_cap.is_some_and(|cap| budget.rows >= cap) {
+                            Budgeted::Denied
+                        } else if budget.admit(&entry.name, &dto) {
+                            Budgeted::Admitted(dto)
+                        } else {
+                            Budgeted::Denied
+                        },
+                    )
+                },
                 &mut matched,
             );
+            let matched = matched
+                .into_iter()
+                .filter_map(|item| match item {
+                    Budgeted::Admitted(dto) => Some(dto),
+                    Budgeted::Denied => None,
+                })
+                .collect::<Vec<_>>();
             if !matched.is_empty() {
                 if want_recency {
                     recency.insert(entry.name.clone(), page_recency_secs(entry));
@@ -649,7 +878,11 @@ fn run_pred(graph: &Graph, pred: &Pred, opts: &QueryOpts) -> Vec<RefGroup> {
             true
         });
     }
-    groups
+    BoundedGroups {
+        groups,
+        total: budget.total,
+        exceeded: budget.exceeded,
+    }
 }
 
 // --- Scoped-invalidation support (#52) --------------------------------------
@@ -751,6 +984,16 @@ pub fn run_advanced_query(
     query_src: &str,
     current_page: Option<&str>,
 ) -> AdvancedResult {
+    run_advanced_query_bounded(graph, query_src, current_page, usize::MAX, usize::MAX).0
+}
+
+pub fn run_advanced_query_bounded(
+    graph: &Graph,
+    query_src: &str,
+    current_page: Option<&str>,
+    max_rows: usize,
+    max_bytes: usize,
+) -> (AdvancedResult, bool, usize) {
     let today = JournalDate::today();
     let inputs = resolve_inputs(query_src, current_page, today);
     let mut ran = Vec::new();
@@ -760,12 +1003,16 @@ pub fn run_advanced_query(
         .filter_map(|g| parse_adv_group(g, &inputs, today, &mut ran, &mut ignored))
         .collect();
     if preds.is_empty() {
-        return AdvancedResult {
-            groups: Vec::new(),
-            ran,
-            ignored,
-            supported: false,
-        };
+        return (
+            AdvancedResult {
+                groups: Vec::new(),
+                ran,
+                ignored,
+                supported: false,
+            },
+            false,
+            0,
+        );
     }
     let pred = if preds.len() == 1 {
         preds.into_iter().next().unwrap()
@@ -774,13 +1021,17 @@ pub fn run_advanced_query(
     };
     let mut opts = QueryOpts::default();
     pred.collect_opts(&mut opts);
-    let groups = run_pred(graph, &pred, &opts);
-    AdvancedResult {
-        groups,
-        ran,
-        ignored,
-        supported: true,
-    }
+    let bounded = run_pred_bounded(graph, &pred, &opts, max_rows, max_bytes);
+    (
+        AdvancedResult {
+            groups: bounded.groups,
+            ran,
+            ignored,
+            supported: true,
+        },
+        bounded.exceeded,
+        bounded.total,
+    )
 }
 
 /// Collect balanced `(...)`/`[...]` groups at the top level of `s` (string-aware),
@@ -1239,9 +1490,20 @@ const INTERNAL_PROPS: &[&str] = &[
 /// Distinct property keys (each with its sorted distinct values) used across the
 /// graph. Drives the query builder's property-filter pickers.
 pub fn property_facets(graph: &Graph) -> Vec<(String, Vec<String>)> {
+    property_facets_bounded(graph, usize::MAX, usize::MAX).0
+}
+
+pub fn property_facets_bounded(
+    graph: &Graph,
+    max_values: usize,
+    max_bytes: usize,
+) -> (Vec<(String, Vec<String>)>, bool) {
     use std::collections::BTreeMap;
     use std::collections::BTreeSet;
-    graph.with_pages(|pages| {
+    let mut values = 0usize;
+    let mut bytes = 0usize;
+    let mut exceeded = false;
+    let facets = graph.with_pages(|pages| {
         let mut map: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         for (_entry, doc) in pages {
             walk(&doc.roots, &mut |b| {
@@ -1249,9 +1511,27 @@ pub fn property_facets(graph: &Graph) -> Vec<(String, Vec<String>)> {
                     if INTERNAL_PROPS.iter().any(|p| p.eq_ignore_ascii_case(&k)) {
                         continue;
                     }
-                    let set = map.entry(k).or_default();
-                    if !v.trim().is_empty() {
-                        set.insert(v);
+                    if v.trim().is_empty() {
+                        continue;
+                    }
+                    if map.get(&k).is_some_and(|set| set.contains(&v)) {
+                        continue;
+                    }
+                    let key_bytes = if map.contains_key(&k) {
+                        0
+                    } else {
+                        k.len() + 64
+                    };
+                    let next_bytes = bytes
+                        .saturating_add(key_bytes)
+                        .saturating_add(v.len())
+                        .saturating_add(64);
+                    if values >= max_values || next_bytes > max_bytes {
+                        exceeded = true;
+                    } else {
+                        values += 1;
+                        bytes = next_bytes;
+                        map.entry(k).or_default().insert(v);
                     }
                 }
             });
@@ -1259,7 +1539,8 @@ pub fn property_facets(graph: &Graph) -> Vec<(String, Vec<String>)> {
         map.into_iter()
             .map(|(k, vs)| (k, vs.into_iter().collect()))
             .collect()
-    })
+    });
+    (facets, exceeded)
 }
 
 #[cfg(test)]
@@ -1411,11 +1692,20 @@ pub fn resolve_block(graph: &Graph, uuid: &str) -> Option<RefGroup> {
 /// wins ordering are identical to `resolve_block`. Output is positional and
 /// per-input (duplicate input uuids each get their own `Some(..)`/`None`).
 pub fn resolve_blocks(graph: &Graph, uuids: &[String]) -> Vec<Option<RefGroup>> {
+    resolve_blocks_bounded(graph, uuids, usize::MAX, usize::MAX).0
+}
+
+pub fn resolve_blocks_bounded(
+    graph: &Graph,
+    uuids: &[String],
+    max_rows: usize,
+    max_bytes: usize,
+) -> (Vec<Option<RefGroup>>, bool, usize) {
     use std::collections::{HashMap, HashSet};
     // Distinct requested ids (a page often refs the same uuid repeatedly).
     let distinct: HashSet<&str> = uuids.iter().map(String::as_str).collect();
     if distinct.is_empty() {
-        return uuids.iter().map(|_| None).collect();
+        return (uuids.iter().map(|_| None).collect(), false, 0);
     }
     // Bucket each distinct id under its page hint (O(1) per id off the cached
     // uuid index); unhinted ids go straight to the whole-graph fallback.
@@ -1429,6 +1719,7 @@ pub fn resolve_blocks(graph: &Graph, uuids: &[String]) -> Vec<Option<RefGroup>> 
     }
 
     let mut resolved: HashMap<&str, RefGroup> = HashMap::new();
+    let mut resolved_budget = ConstructionBudget::new(max_rows, max_bytes);
     graph.with_pages(|pages| {
         let mut page_by_name: HashMap<&str, (&PageEntry, &std::sync::Arc<Document>)> =
             HashMap::with_capacity(pages.len());
@@ -1441,7 +1732,7 @@ pub fn resolve_blocks(graph: &Graph, uuids: &[String]) -> Vec<Option<RefGroup>> 
         for (page, ids) in &by_page {
             if let Some(&(entry, doc)) = page_by_name.get(page.as_str()) {
                 let want: HashSet<&str> = ids.iter().copied().collect();
-                resolve_ids_in_page(entry, doc, &want, &mut resolved);
+                resolve_ids_in_page(entry, doc, &want, &mut resolved, &mut resolved_budget);
             }
         }
         // 2) Remaining ids (no hint, or the hinted page didn't actually hold the
@@ -1457,15 +1748,27 @@ pub fn resolve_blocks(graph: &Graph, uuids: &[String]) -> Vec<Option<RefGroup>> 
                 if resolved.len() == distinct.len() {
                     break; // everything found
                 }
-                resolve_ids_in_page(entry, doc, &remaining, &mut resolved);
+                resolve_ids_in_page(entry, doc, &remaining, &mut resolved, &mut resolved_budget);
             }
         }
     });
 
-    uuids
+    let mut output_budget = ConstructionBudget::new(max_rows, max_bytes);
+    let output = uuids
         .iter()
-        .map(|u| resolved.get(u.as_str()).cloned())
-        .collect()
+        .map(|u| {
+            let group = resolved.get(u.as_str())?;
+            let block = group.blocks.first()?;
+            output_budget
+                .admit(&group.page, block)
+                .then(|| group.clone())
+        })
+        .collect();
+    (
+        output,
+        resolved_budget.exceeded || output_budget.exceeded,
+        output_budget.total,
+    )
 }
 
 fn subtree_node_count(root: &DocBlock) -> usize {
@@ -1583,14 +1886,39 @@ pub fn export_query_subtrees(
     // across the whole session. Cached shallow results may be larger, but they are
     // dropped before the next query and never become complete page trees.
     for spec in specs.iter().take(query_limit) {
-        let groups = if spec.advanced {
-            graph.run_advanced_query(&spec.query, None).groups
+        const QUERY_EXPORT_CONSTRUCTION_ROWS: usize = 20_000;
+        const QUERY_EXPORT_CONSTRUCTION_BYTES: usize = 32 * 1024 * 1024;
+        let bounded = if spec.advanced {
+            let (result, exceeded, total) = run_advanced_query_bounded(
+                graph,
+                &spec.query,
+                None,
+                QUERY_EXPORT_CONSTRUCTION_ROWS,
+                QUERY_EXPORT_CONSTRUCTION_BYTES,
+            );
+            BoundedGroups {
+                groups: result.groups,
+                total,
+                exceeded,
+            }
         } else {
-            graph.run_query(&spec.query).as_ref().clone()
+            run_query_bounded(
+                graph,
+                &spec.query,
+                QUERY_EXPORT_CONSTRUCTION_ROWS,
+                QUERY_EXPORT_CONSTRUCTION_BYTES,
+            )
         };
-        let total = groups.iter().map(|group| group.blocks.len()).sum();
+        let total = bounded.total;
         let mut roots = Vec::new();
-        for group in &groups {
+        // Do not emit a wrongly ordered prefix of a globally-sorted query. A
+        // query over the construction ceiling is disclosed as entirely omitted;
+        // ordinary bounded queries still retain the existing first-N export.
+        for group in if bounded.exceeded {
+            &[]
+        } else {
+            bounded.groups.as_slice()
+        } {
             for block in &group.blocks {
                 if remaining_roots == 0 {
                     break;
@@ -1794,6 +2122,7 @@ fn resolve_ids_in_page<'a>(
     doc: &Document,
     want: &std::collections::HashSet<&'a str>,
     resolved: &mut std::collections::HashMap<&'a str, RefGroup>,
+    budget: &mut ConstructionBudget,
 ) {
     walk(&doc.roots, &mut |b| {
         // A block's identity is its uuid OR its persisted `id::`; check both
@@ -1808,15 +2137,18 @@ fn resolve_ids_in_page<'a>(
                     .filter(|id| !resolved.contains_key(id))
             });
         if let Some(id) = hit {
-            resolved.insert(
-                id,
-                RefGroup {
-                    page: entry.name.clone(),
-                    kind: entry.kind,
-                    blocks: vec![block_to_shallow_dto(b)],
-                    evidence: Vec::new(),
-                },
-            );
+            let dto = block_to_shallow_dto(b);
+            if budget.admit(&entry.name, &dto) {
+                resolved.insert(
+                    id,
+                    RefGroup {
+                        page: entry.name.clone(),
+                        kind: entry.kind,
+                        blocks: vec![dto],
+                        evidence: Vec::new(),
+                    },
+                );
+            }
         }
     });
 }
@@ -3458,6 +3790,59 @@ mod tests {
         });
         assert!(result.is_empty());
         assert!(checks.get() < 40, "cancellation checks: {}", checks.get());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn result_families_stop_constructing_at_row_and_byte_budgets() {
+        use std::fs;
+        let dir = std::env::temp_dir().join(format!(
+            "tine-result-construction-budget-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        let content = (0..12)
+            .map(|i| {
+                format!(
+                    "- TODO [[Target]] item {i}\n  field-{i}:: {}",
+                    "x".repeat(100)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(dir.join("pages/Source.md"), content).unwrap();
+        fs::write(dir.join("pages/Target.md"), "- target\n").unwrap();
+        let graph = Graph::open(&dir);
+
+        let query = run_query_bounded(&graph, "(task TODO)", 3, usize::MAX);
+        assert!(query.exceeded);
+        assert_eq!(query.total, 12);
+        assert_eq!(
+            query
+                .groups
+                .iter()
+                .map(|group| group.blocks.len())
+                .sum::<usize>(),
+            3
+        );
+
+        let refs = backlinks_bounded(&graph, "Target", 2, usize::MAX);
+        assert!(refs.exceeded);
+        assert_eq!(refs.total, 12);
+        assert_eq!(
+            refs.groups
+                .iter()
+                .map(|group| group.blocks.len())
+                .sum::<usize>(),
+            2
+        );
+
+        let (facets, facets_exceeded) = property_facets_bounded(&graph, 2, usize::MAX);
+        assert!(facets_exceeded);
+        assert!(facets.iter().map(|(_, values)| values.len()).sum::<usize>() <= 2);
         let _ = fs::remove_dir_all(&dir);
     }
 }

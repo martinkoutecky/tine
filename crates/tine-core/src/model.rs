@@ -505,9 +505,7 @@ fn page_cache_key(kind: PageKind, name: &str) -> (PageKind, String) {
     (kind, crate::refs::page_key(name))
 }
 
-fn document_block_ref_counts(
-    doc: &Document,
-) -> std::collections::HashMap<String, usize> {
+fn document_block_ref_counts(doc: &Document) -> std::collections::HashMap<String, usize> {
     fn walk(blocks: &[DocBlock], counts: &mut std::collections::HashMap<String, usize>) {
         for block in blocks {
             // projection().block_refs is already de-duplicated per referrer block,
@@ -2544,17 +2542,36 @@ impl Graph {
     /// Eagerly build the page cache plus graph-open derived maps (call once after
     /// opening, off the hot path).
     pub fn warm_cache(&self) {
-        self.warm_page_cache();
+        let _ = self.warm_cache_cancellable(|| false);
+    }
+
+    /// Build graph-open caches while allowing a revoked window binding to stop
+    /// between files and derived-map phases. Returns false when cancelled.
+    pub fn warm_cache_cancellable(&self, cancelled: impl Fn() -> bool) -> bool {
+        if !self.warm_page_cache_cancellable(&cancelled) || cancelled() {
+            return false;
+        }
         // Warm the derived maps the frontend fetches right after `warm-cache-done`
         // (aliases + block-ref counts), so those fetches are pure cache hits.
         let _ = self.page_aliases();
+        if cancelled() {
+            return false;
+        }
         let _ = self.block_ref_counts();
+        !cancelled()
     }
 
     fn warm_page_cache(&self) {
+        let _ = self.warm_page_cache_cancellable(&|| false);
+    }
+
+    fn warm_page_cache_cancellable(&self, cancelled: &impl Fn() -> bool) -> bool {
         use std::sync::atomic::Ordering;
+        if cancelled() {
+            return false;
+        }
         if self.cache.read().unwrap().is_some() {
-            return; // already built (e.g. by a query) — nothing to warm
+            return true; // already built (e.g. by a query) — nothing to warm
         }
         // Build PACED and WITHOUT holding build_lock during the parse: on a
         // thermally throttled laptop the warm would otherwise peg a core in one
@@ -2572,6 +2589,9 @@ impl Graph {
         let mut mtimes: Vec<(PathBuf, Option<std::time::SystemTime>)> =
             Vec::with_capacity(entries.len());
         for (i, e) in entries.into_iter().enumerate() {
+            if cancelled() {
+                return false;
+            }
             let mtime = fs::metadata(&e.path).and_then(|m| m.modified()).ok();
             if let Ok(content) = fs::read_to_string(&e.path) {
                 let rev = content_rev(&content);
@@ -2582,7 +2602,7 @@ impl Graph {
             }
             if i % 24 == 23 {
                 if self.cache.read().unwrap().is_some() {
-                    return; // a query built the cache while we parsed
+                    return true; // a query built the cache while we parsed
                 }
                 std::thread::sleep(std::time::Duration::from_millis(2));
             }
@@ -2594,7 +2614,10 @@ impl Graph {
             .iter()
             .any(|(p, m)| fs::metadata(p).and_then(|md| md.modified()).ok() != *m)
         {
-            return;
+            return false;
+        }
+        if cancelled() {
+            return false;
         }
         // Install only if nobody else built it and no Tine save/remove raced our
         // reads (its cache mutation would have no-op'd against the None cache, so
@@ -2604,6 +2627,7 @@ impl Graph {
         if self.cache.read().unwrap().is_none() && self.cache_gen.load(Ordering::Acquire) == gen0 {
             self.install_built(built);
         }
+        !cancelled()
     }
 
     /// Discard the cache; it rebuilds on the next whole-graph query. Use when an
@@ -3831,7 +3855,10 @@ impl Graph {
         let legacy_key = crate::pdf::legacy_asset_key(pdf_filename);
         if legacy_key != key && !self.asset_key_in_use_by_pdf(&legacy_key) {
             if let Some(legacy) = self.existing_hls_page_path(&legacy_key)? {
-                let ext = legacy.extension().and_then(|ext| ext.to_str()).unwrap_or("md");
+                let ext = legacy
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .unwrap_or("md");
                 return Ok(legacy.with_file_name(format!(
                     "{}.{}",
                     crate::pdf::hls_page_name(key),
@@ -3866,11 +3893,7 @@ impl Graph {
     /// sidecars/pages are read without being rewritten; only missing artifacts are
     /// created. Old Tine-key artifacts remain in place until the established
     /// edit-time migration path can carry their notes forward safely.
-    pub fn open_pdf(
-        &self,
-        pdf_filename: &str,
-        label: &str,
-    ) -> io::Result<crate::pdf::PdfState> {
+    pub fn open_pdf(&self, pdf_filename: &str, label: &str) -> io::Result<crate::pdf::PdfState> {
         let key = crate::pdf::asset_key(pdf_filename);
         let page_path = self.hls_page_path(pdf_filename, &key)?;
         self.ensure_write_target(&page_path)?;
@@ -3956,12 +3979,11 @@ impl Graph {
             if let Some(raw) = &baseline {
                 validate_highlight_edn(raw)?;
             }
-            let next = crate::pdf::write_pdf_view_state(
-                baseline.as_deref().unwrap_or(""),
-                page,
-                scale,
-            )
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid PDF view state"))?;
+            let next =
+                crate::pdf::write_pdf_view_state(baseline.as_deref().unwrap_or(""), page, scale)
+                    .ok_or_else(|| {
+                        io::Error::new(io::ErrorKind::InvalidData, "invalid PDF view state")
+                    })?;
             if read_optional_text(&sidecar_path)? != baseline {
                 continue;
             }
@@ -4134,17 +4156,13 @@ impl Graph {
             committed_sidecar = Some((merged, primary_baseline, legacy_baseline, next));
             break;
         }
-        let (
-            merged,
-            committed_primary_edn_baseline,
-            committed_legacy_edn_baseline,
-            committed_edn,
-        ) = committed_sidecar.ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::WouldBlock,
-                "highlight sidecar changed repeatedly during update",
-            )
-        })?;
+        let (merged, committed_primary_edn_baseline, committed_legacy_edn_baseline, committed_edn) =
+            committed_sidecar.ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "highlight sidecar changed repeatedly during update",
+                )
+            })?;
 
         // Upsert into the existing hls page, preserving note children by id.
         // (`page_path` + its lock were taken at the top of this fn.) Prefer the
@@ -4172,7 +4190,8 @@ impl Graph {
         // On mismatch → conflict; PdfViewer.persist toasts + reverts and a retry merges
         // cleanly (the .edn was already 3-way-merged, so no highlight is lost).
         let page_md = serialize_pdf_hls_page(&page_path, &page_doc, existing_raw.as_deref())?;
-        let page_rev = match self.commit_write(&page_path, &page_md, page_baseline.as_deref(), true) {
+        let page_rev = match self.commit_write(&page_path, &page_md, page_baseline.as_deref(), true)
+        {
             Ok(rev) => rev,
             Err(page_error) => {
                 if let Err(rollback_error) = self.rollback_highlight_sidecar(
@@ -4340,10 +4359,7 @@ impl Graph {
             .file_name()
             .and_then(|value| value.to_str())
             .unwrap_or("highlights.edn");
-        let destination = trash.join(format!(
-            "{}__failed-highlight-pair__{name}",
-            trash_stamp()
-        ));
+        let destination = trash.join(format!("{}__failed-highlight-pair__{name}", trash_stamp()));
         move_file_noreplace(path, &destination)?;
         if read_optional_text(&destination)?.as_deref() == Some(committed) {
             return Ok(());
@@ -5968,11 +5984,7 @@ pub fn atomic_copy_new(src: &Path, dst: &Path) -> io::Result<()> {
 /// enforcing a byte ceiling during the stream. This is the native-capture path:
 /// it avoids reopening an attacker-replaceable pathname and avoids whole-value
 /// Android/IPC/base64 amplification.
-pub fn atomic_copy_file_new(
-    input: &mut fs::File,
-    dst: &Path,
-    max_bytes: u64,
-) -> io::Result<()> {
+pub fn atomic_copy_file_new(input: &mut fs::File, dst: &Path, max_bytes: u64) -> io::Result<()> {
     use std::sync::atomic::{AtomicU64, Ordering};
     static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
     let dir = dst.parent().unwrap_or_else(|| Path::new("."));
@@ -6065,9 +6077,7 @@ fn atomic_update_with_hooks(
         };
         match published {
             Ok(()) => return Ok(()),
-            Err(error)
-                if baseline.is_none() && error.kind() == io::ErrorKind::AlreadyExists =>
-            {
+            Err(error) if baseline.is_none() && error.kind() == io::ErrorKind::AlreadyExists => {
                 continue;
             }
             Err(error) => return Err(error),
@@ -6945,9 +6955,7 @@ mod tests {
             "a non-reference edit must retain the already-built whole-graph count map"
         );
         assert_eq!(
-            after
-                .get("aaaaaaaa-0000-0000-0000-000000000001")
-                .copied(),
+            after.get("aaaaaaaa-0000-0000-0000-000000000001").copied(),
             Some(1)
         );
         let _ = fs::remove_dir_all(&dir);
@@ -7929,7 +7937,10 @@ mod tests {
         assert!(org_path.exists());
         assert!(!dir.join("pages").join("hls__paper.md").exists());
         let org = fs::read_to_string(org_path).unwrap();
-        assert!(org.contains("#+FILE: [[../assets/paper.pdf][Paper]]"), "{org}");
+        assert!(
+            org.contains("#+FILE: [[../assets/paper.pdf][Paper]]"),
+            "{org}"
+        );
         assert!(org.contains("#+FILE-PATH: ../assets/paper.pdf"), "{org}");
         let _ = fs::remove_dir_all(&dir);
     }
@@ -8062,11 +8073,7 @@ mod tests {
         fs::create_dir_all(dir.join("assets")).unwrap();
         let sidecar_before = "{:highlights [] :extra {:plugin \"keep\"}}\n";
         fs::write(&sidecar_path, sidecar_before).unwrap();
-        let h = mkhl(
-            "11111111-1111-1111-1111-111111111111",
-            1,
-            Some("text"),
-        );
+        let h = mkhl("11111111-1111-1111-1111-111111111111", 1, Some("text"));
 
         let pages = dir.join("pages");
         let original_permissions = fs::metadata(&pages).unwrap().permissions();
@@ -8076,7 +8083,10 @@ mod tests {
         let result = g.write_highlights("paper.pdf", "Paper", &[h], &[]);
         fs::set_permissions(&pages, original_permissions).unwrap();
 
-        assert!(result.is_err(), "the notes-page commit must fail in a read-only directory");
+        assert!(
+            result.is_err(),
+            "the notes-page commit must fail in a read-only directory"
+        );
         assert_eq!(fs::read_to_string(&sidecar_path).unwrap(), sidecar_before);
         assert_eq!(fs::read_to_string(&page_path).unwrap(), page_before);
         assert!(
@@ -8099,11 +8109,7 @@ mod tests {
         fs::write(&page_path, page_before).unwrap();
         fs::create_dir_all(dir.join("assets")).unwrap();
         let sidecar_path = dir.join("assets").join(format!("{key}.edn"));
-        let h = mkhl(
-            "11111111-1111-1111-1111-111111111111",
-            1,
-            Some("text"),
-        );
+        let h = mkhl("11111111-1111-1111-1111-111111111111", 1, Some("text"));
 
         let pages = dir.join("pages");
         let original_permissions = fs::metadata(&pages).unwrap().permissions();
@@ -8114,7 +8120,10 @@ mod tests {
         fs::set_permissions(&pages, original_permissions).unwrap();
 
         assert!(result.is_err());
-        assert!(!sidecar_path.exists(), "the failed pair must leave the primary target absent");
+        assert!(
+            !sidecar_path.exists(),
+            "the failed pair must leave the primary target absent"
+        );
         assert_eq!(fs::read_to_string(&page_path).unwrap(), page_before);
         let trash = typed_trash_dir(&dir, TrashEntryKind::Conflict);
         assert!(
@@ -8256,7 +8265,9 @@ mod tests {
         )
         .unwrap();
         let mut legacy_page = crate::pdf::hls_page_document(pdf, "Paper", &[h.clone()]);
-        legacy_page.roots[0].children.push(DocBlock::new("private note"));
+        legacy_page.roots[0]
+            .children
+            .push(DocBlock::new("private note"));
         fs::write(
             dir.join("pages").join(format!("hls__{legacy_key}.md")),
             doc::serialize(&legacy_page),
@@ -8269,8 +8280,13 @@ mod tests {
 
         let migrated = dir.join("pages").join(format!("hls__{new_key}.md"));
         assert!(migrated.exists(), "legacy .md format should be retained");
-        assert!(!dir.join("pages").join(format!("hls__{new_key}.org")).exists());
-        assert!(fs::read_to_string(migrated).unwrap().contains("private note"));
+        assert!(!dir
+            .join("pages")
+            .join(format!("hls__{new_key}.org"))
+            .exists());
+        assert!(fs::read_to_string(migrated)
+            .unwrap()
+            .contains("private note"));
         let _ = fs::remove_dir_all(&dir);
     }
 

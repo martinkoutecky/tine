@@ -134,7 +134,7 @@ enum QueryCacheKey {
     Advanced(String),
 }
 
-type QueryCache = RefCell<HashMap<QueryCacheKey, Vec<RefGroup>>>;
+type QueryCache = RefCell<HashMap<QueryCacheKey, crate::query::BoundedGroups>>;
 
 #[cfg(test)]
 mod publish_test_counts {
@@ -436,6 +436,66 @@ fn esc_attr(s: &str) -> String {
         .replace('\'', "&#39;")
 }
 
+/// Encode an opaque block id for the URL-fragment context. The same raw value is
+/// HTML-escaped separately when emitted as an `id` attribute; treating these as
+/// distinct contexts prevents a user-controlled `id::` from breaking either.
+fn fragment(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for byte in s.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
+}
+
+/// Closed URL policy for navigable content in a static export. External links
+/// are limited to ordinary web/contact schemes; graph assets and local export
+/// links may use a relative path or fragment. Scheme-like and network-path
+/// references do not fall through to the relative case.
+fn safe_export_url(url: &str) -> Option<&str> {
+    let url = url.trim();
+    if url.is_empty()
+        || url.bytes().any(|b| b == 0 || b.is_ascii_control())
+        || url.starts_with("//")
+        || url.starts_with('\\')
+        || url.contains('\\')
+    {
+        return None;
+    }
+    let first_delimiter = url.find(['/', '?', '#']).unwrap_or(url.len());
+    if let Some(colon) = url.find(':').filter(|colon| *colon < first_delimiter) {
+        let scheme = &url[..colon];
+        if !scheme.bytes().enumerate().all(|(i, b)| {
+            if i == 0 {
+                b.is_ascii_alphabetic()
+            } else {
+                b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.')
+            }
+        }) {
+            return None;
+        }
+        return matches!(
+            scheme.to_ascii_lowercase().as_str(),
+            "http" | "https" | "mailto" | "tel"
+        )
+        .then_some(url);
+    }
+    Some(url)
+}
+
+fn safe_media_url(url: &str) -> Option<&str> {
+    let safe = safe_export_url(url)?;
+    let lower = safe.to_ascii_lowercase();
+    if lower.starts_with("mailto:") || lower.starts_with("tel:") {
+        None
+    } else {
+        Some(safe)
+    }
+}
+
 /// Reverse lsdoc's HTML escaping for a `data-*` payload we re-emit elsewhere (e.g.
 /// `data-tex` → visible KaTeX text, `data-asset` → an `src`). `&amp;` decodes LAST so
 /// an escaped `&amp;lt;` becomes `&lt;`, not `<`.
@@ -511,6 +571,7 @@ fn decorate(html: &str, ctx: &Ctx, depth: u8) -> String {
     // `[[ ]]` (unlabeled `[[name]]`). A labeled ref's body starts with a tag, so the flag
     // is cleared without stripping.
     let mut strip_brackets = false;
+    let mut inert_link_closures = 0usize;
     while i < b.len() {
         if b[i] != b'<' {
             let start = i;
@@ -544,6 +605,12 @@ fn decorate(html: &str, ctx: &Ctx, depth: u8) -> String {
         }
         let name = inner.split([' ', '\t', '/']).next().unwrap_or("");
 
+        if inner == "/a" && inert_link_closures > 0 {
+            inert_link_closures -= 1;
+            out.push_str("</span>");
+            continue;
+        }
+
         if name == "a" && has_class(inner, "page-ref") {
             if let Some(page) = tag_attr(inner, "data-page") {
                 out.push_str(&format!(
@@ -573,7 +640,9 @@ fn decorate(html: &str, ctx: &Ctx, depth: u8) -> String {
                         let text = if body == auto { esc(&t.text) } else { body };
                         out.push_str(&format!(
                             "<a class=\"ref block-ref\" href=\"{}.html#{}\">{}</a>",
-                            t.slug, id, text
+                            t.slug,
+                            fragment(&id),
+                            text
                         ));
                     }
                     None => out.push_str(&format!("<span class=\"block-ref\">{body}</span>")),
@@ -630,12 +699,14 @@ fn decorate(html: &str, ctx: &Ctx, depth: u8) -> String {
                             "<span class=\"print-asset-omitted\">[Image omitted from PDF: unavailable or exceeds the print size limit]</span>",
                         );
                     }
-                } else {
+                } else if let Some(src) = safe_media_url(&src) {
                     out.push_str(&format!(
                         "<img class=\"inline-image\" src=\"{}\" alt=\"{}\">",
                         esc_attr(&src),
                         esc_attr(&alt)
                     ));
+                } else {
+                    out.push_str("<span class=\"unsafe-link\">[Unsafe image URL omitted]</span>");
                 }
                 continue;
             }
@@ -643,10 +714,28 @@ fn decorate(html: &str, ctx: &Ctx, depth: u8) -> String {
         if (name == "video" || name == "audio") && has_class(inner, "media-embed") {
             if let Some(asset) = tag_attr(inner, "data-asset") {
                 let _ = take_to_close(html, &mut i, name); // empty element
-                out.push_str(&format!(
-                    "<{name} class=\"media-embed\" controls src=\"{}\"></{name}>",
-                    esc_attr(&unescape(asset))
-                ));
+                let src = unescape(asset);
+                if let Some(src) = safe_media_url(&src) {
+                    out.push_str(&format!(
+                        "<{name} class=\"media-embed\" controls src=\"{}\"></{name}>",
+                        esc_attr(src)
+                    ));
+                } else {
+                    out.push_str("<span class=\"unsafe-link\">[Unsafe media URL omitted]</span>");
+                }
+                continue;
+            }
+        }
+        if name == "a" {
+            if let Some(href) = tag_attr(inner, "href").map(unescape) {
+                if safe_export_url(&href).is_some() {
+                    out.push('<');
+                    out.push_str(inner);
+                    out.push('>');
+                } else {
+                    out.push_str("<span class=\"unsafe-link\">");
+                    inert_link_closures += 1;
+                }
                 continue;
             }
         }
@@ -976,13 +1065,7 @@ fn collect_wanted_doc_blocks<'a>(
 /// Query DTOs intentionally carry shallow membership rows. Static publishing
 /// has the source graph in-process, so hydrate each result subtree directly from
 /// its page once instead of shipping/caching overlapping owned DTO trees.
-fn render_query_groups(
-    graph: &Graph,
-    groups: &[RefGroup],
-    out: &mut String,
-    ctx: &Ctx,
-    depth: u8,
-) {
+fn render_query_groups(graph: &Graph, groups: &[RefGroup], out: &mut String, ctx: &Ctx, depth: u8) {
     graph.with_pages(|pages| {
         // One lookup index for the complete query avoids O(pages * groups)
         // source-page scans during static/print export.
@@ -1055,8 +1138,10 @@ fn expand_macro(name: &str, args: &[String], ctx: &Ctx, depth: u8) -> String {
 
 /// Run a `{{query …}}` against the graph and render its results as a bordered block.
 fn render_query(graph: &Graph, src: &str, ctx: &Ctx, depth: u8) -> String {
+    const STATIC_QUERY_MAX_ROWS: usize = 20_000;
+    const STATIC_QUERY_MAX_BYTES: usize = 32 * 1024 * 1024;
     let is_advanced = crate::query::is_advanced(src);
-    let groups = if let Some(cache) = ctx.query_cache {
+    let bounded = if let Some(cache) = ctx.query_cache {
         let key = if is_advanced {
             QueryCacheKey::Advanced(src.to_string())
         } else {
@@ -1069,9 +1154,25 @@ fn render_query(graph: &Graph, src: &str, ctx: &Ctx, depth: u8) -> String {
             #[cfg(test)]
             publish_test_counts::bump_query_run(graph);
             let groups = if is_advanced {
-                crate::query::run_advanced_query(graph, src, None).groups
+                let (result, exceeded, total) = crate::query::run_advanced_query_bounded(
+                    graph,
+                    src,
+                    None,
+                    STATIC_QUERY_MAX_ROWS,
+                    STATIC_QUERY_MAX_BYTES,
+                );
+                crate::query::BoundedGroups {
+                    groups: result.groups,
+                    total,
+                    exceeded,
+                }
             } else {
-                crate::query::run_query(graph, src)
+                crate::query::run_query_bounded(
+                    graph,
+                    src,
+                    STATIC_QUERY_MAX_ROWS,
+                    STATIC_QUERY_MAX_BYTES,
+                )
             };
             cache.borrow_mut().insert(key, groups.clone());
             groups
@@ -1079,18 +1180,36 @@ fn render_query(graph: &Graph, src: &str, ctx: &Ctx, depth: u8) -> String {
     } else if is_advanced {
         #[cfg(test)]
         publish_test_counts::bump_query_run(graph);
-        crate::query::run_advanced_query(graph, src, None).groups
+        let (result, exceeded, total) = crate::query::run_advanced_query_bounded(
+            graph,
+            src,
+            None,
+            STATIC_QUERY_MAX_ROWS,
+            STATIC_QUERY_MAX_BYTES,
+        );
+        crate::query::BoundedGroups {
+            groups: result.groups,
+            total,
+            exceeded,
+        }
     } else {
         #[cfg(test)]
         publish_test_counts::bump_query_run(graph);
-        crate::query::run_query(graph, src)
+        crate::query::run_query_bounded(graph, src, STATIC_QUERY_MAX_ROWS, STATIC_QUERY_MAX_BYTES)
     };
+    if bounded.exceeded {
+        return format!(
+            "<div class=\"query query-too-large\">Query has {} matches; narrow it before publishing.</div>",
+            bounded.total
+        );
+    }
     // A site export is a projection of the public page set, not an alternate
     // frontend over the live graph. Query execution still reuses the ordinary
     // engine, but results from pages outside the pass-1 public capability must
     // never cross into generated HTML. Print export has no page capability and
     // deliberately retains its existing whole-graph behavior.
-    let groups: Vec<RefGroup> = groups
+    let groups: Vec<RefGroup> = bounded
+        .groups
         .into_iter()
         .filter(|group| publish_page_allowed(ctx, &group.page))
         .collect();
@@ -1180,11 +1299,14 @@ fn render_video(url: &str) -> String {
             esc_attr(&id)
         );
     }
-    format!(
-        "<div class=\"video-embed\"><a href=\"{}\">{}</a></div>",
-        esc_attr(url),
-        esc(url)
-    )
+    match safe_media_url(url) {
+        Some(url) => format!(
+            "<div class=\"video-embed\"><a href=\"{}\">{}</a></div>",
+            esc_attr(url),
+            esc(url)
+        ),
+        None => format!("<div class=\"video-embed unsafe-link\">{}</div>", esc(url)),
+    }
 }
 
 /// Extract a YouTube video id from a watch/short/embed URL, if this is one.
@@ -1300,7 +1422,7 @@ fn render_block(
             a
         }
     };
-    out.push_str(&format!("<li id=\"{anchor}\">"));
+    out.push_str(&format!("<li id=\"{}\">", esc_attr(&anchor)));
     let text = ast_plain_text(&blocks);
     if !text.is_empty() {
         index.push(json!({"slug": slug, "title": title, "anchor": anchor, "text": text}));
@@ -1335,7 +1457,7 @@ fn render_block(
                 out.push_str(&format!(
                     "<li><a href=\"{}.html#{}\"><span class=\"referrer-page\">{}</span>: {}</a></li>",
                     referrer.slug,
-                    referrer.anchor,
+                    fragment(&referrer.anchor),
                     esc(&referrer.page),
                     esc(text)
                 ));
@@ -1406,7 +1528,9 @@ stroke=\"currentColor\" stroke-width=\"1.7\"><rect x=\"4\" y=\"5\" width=\"16\" 
 fn shell(title: &str, main: &str, home_href: &str) -> String {
     format!(
         "<!doctype html><html><head><meta charset=\"utf-8\">\
-<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{title}</title>\
+<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
+<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'self'; base-uri 'none'; object-src 'none'; form-action 'none'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data: https: http:; media-src 'self' blob: https: http:; frame-src https://www.youtube.com https://player.vimeo.com\">\
+<title>{title}</title>\
 <link rel=\"stylesheet\" href=\"style.css\">{katex}{hljs}</head><body>\
 <aside class=\"sidebar\">\
 <a class=\"home\" href=\"{home_href}\">\u{2302} Home</a>\
@@ -1415,7 +1539,7 @@ fn shell(title: &str, main: &str, home_href: &str) -> String {
 <div id=\"tine-results\" hidden></div>\
 <nav id=\"tine-pages\"></nav>\
 </aside><main>{main}</main>\
-<script src=\"search-index.js\"></script><script src=\"fuse.min.js\"></script><script src=\"app.js\"></script>\
+<script src=\"search-index.js\"></script><script src=\"fuse.min.js\"></script><script src=\"app.js\"></script><script defer src=\"enhance.js\"></script>\
 </body></html>",
         title = esc(title),
         katex = KATEX_HEAD,
@@ -1623,13 +1747,28 @@ impl Default for PrintOpts {
 // register before auto-render runs; `defer` preserves script order, so auto-render's
 // onload fires only after katex.min.js and mhchem have executed. Math therefore
 // typesets when the page is viewed online; an offline viewer shows the raw TeX.
-const KATEX_HEAD: &str = r#"<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.47/dist/katex.min.css"><script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.47/dist/katex.min.js"></script><script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.47/dist/contrib/mhchem.min.js"></script><script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.47/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false}],throwOnError:false})"></script>"#;
+const KATEX_HEAD: &str = r#"<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.47/dist/katex.min.css"><script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.47/dist/katex.min.js"></script><script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.47/dist/contrib/mhchem.min.js"></script><script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.47/dist/contrib/auto-render.min.js"></script>"#;
 
 // highlight.js (from CDN) syntax-highlights the `<pre class="code-block"><code
 // class="hljs language-X">` blocks lsdoc emits (the export's `data-lang` → `language-X`).
 // `highlightAll()` reads the `language-X` class; `defer` + onload runs it after the body
 // parses. Offline / no network → plain (already-escaped) code, never broken.
-const HLJS_HEAD: &str = r#"<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/styles/github.min.css"><script defer src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/highlight.min.js" onload="hljs.highlightAll()"></script>"#;
+const HLJS_HEAD: &str = r#"<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/styles/github.min.css"><script defer src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/highlight.min.js"></script>"#;
+
+const ENHANCE_JS: &str = r#"(function () {
+  'use strict';
+  if (window.renderMathInElement) {
+    window.renderMathInElement(document.body, {
+      delimiters: [
+        {left: '\\[', right: '\\]', display: true},
+        {left: '\\(', right: '\\)', display: false}
+      ],
+      throwOnError: false
+    });
+  }
+  if (window.hljs) window.hljs.highlightAll();
+})();
+"#;
 
 const STYLE: &str = r#":root{
   --bg:#fff;--fg:#2e2e2e;--muted:#8a8f98;--line:#e9e9ec;--accent:#10b981;--link:#0b6ec9;--code:#f4f5f7;
@@ -1874,7 +2013,7 @@ const APP_JS: &str = r#"(function () {
     } else {
       results.innerHTML = hits.map(function (h) {
         var e = h.item;
-        var href = e.slug + '.html#' + e.anchor;
+        var href = e.slug + '.html#' + encodeURIComponent(String(e.anchor));
         return '<a class="res" href="' + href + '">' +
           '<span class="res-title">' + esc(e.title) + '</span>' +
           '<span class="res-snip">' + snippet(e, h.matches) + '</span></a>';
@@ -2169,10 +2308,22 @@ pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
         include_str!("../assets/fuse.min.js").as_bytes(),
     )?;
     write_publish_stage_file(&stage, "app.js", APP_JS.as_bytes())?;
+    write_publish_stage_file(&stage, "enhance.js", ENHANCE_JS.as_bytes())?;
     let all_public = graph.config.all_pages_public;
     let favorites: HashSet<&str> = graph.config.favorites.iter().map(|s| s.as_str()).collect();
 
     let pages = graph.list_pages();
+    // Query/reference DTOs currently identify their source by logical page name.
+    // If two physical files claim that identity, a name-only authorization check
+    // cannot prove which file produced a result. Fail closed for that identity:
+    // publish neither twin rather than let a private twin borrow the public
+    // capability. Ordinary unique pages retain the exact one-file capability.
+    let mut source_identity_counts: HashMap<String, usize> = HashMap::new();
+    for page in &pages {
+        *source_identity_counts
+            .entry(crate::refs::page_key(&page.name))
+            .or_default() += 1;
+    }
     let mut entries: Vec<_> = pages.iter().collect();
     entries.sort_by(|a, b| a.name.cmp(&b.name));
 
@@ -2186,6 +2337,18 @@ pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
         };
         let parsed = doc::parse(&content);
         if !all_public && !page_is_public(parsed.pre_block.as_deref()) {
+            continue;
+        }
+        if source_identity_counts
+            .get(&crate::refs::page_key(&e.name))
+            .copied()
+            .unwrap_or(0)
+            != 1
+        {
+            eprintln!(
+                "tine export: refusing ambiguous public page identity {:?}; more than one source file claims it",
+                e.name
+            );
             continue;
         }
         public.push((e.name.as_str(), e.kind, parsed));
@@ -2459,6 +2622,56 @@ mod tests {
     }
 
     #[test]
+    fn ordinary_links_and_video_macros_use_the_closed_url_policy() {
+        let js = render_body("[click](javascript:alert(1))", &no_refs());
+        assert!(!js.contains("href="), "{js}");
+        assert!(js.contains("unsafe-link"), "{js}");
+        let data = render_body("[click](data:text/html,boom)", &no_refs());
+        assert!(!data.contains("href="), "{data}");
+        let web = render_body("[safe](https://example.com/x)", &no_refs());
+        assert!(web.contains("href=\"https://example.com/x\""), "{web}");
+        let local = render_body("[safe](../assets/report.pdf)", &no_refs());
+        assert!(local.contains("href=\"../assets/report.pdf\""), "{local}");
+        assert!(render_video("javascript:alert(1)").contains("unsafe-link"));
+        assert!(!render_video("javascript:alert(1)").contains("href="));
+    }
+
+    #[test]
+    fn user_block_ids_are_contextualized_for_attributes_and_fragments() {
+        let id = "bad\" onmouseover=\"alert(1) #/%";
+        let mut refs = RefIndex::new();
+        refs.insert(
+            id.into(),
+            RefTarget {
+                slug: "safe".into(),
+                text: "target".into(),
+            },
+        );
+        let link = decorate(
+            &format!(
+                "<span class=\"block-ref\" data-block=\"{}\">label</span>",
+                esc_attr(id)
+            ),
+            &Ctx {
+                refs: &refs,
+                reverse_refs: None,
+                graph: None,
+                slugs: None,
+                inline_assets: false,
+                print_asset_budget: None,
+                query_cache: None,
+                pages: None,
+            },
+            0,
+        );
+        assert!(
+            link.contains("#bad%22%20onmouseover%3D%22alert%281%29%20%23%2F%25"),
+            "{link}"
+        );
+        assert!(!link.contains(" onmouseover="), "{link}");
+    }
+
+    #[test]
     fn decorates_image_and_code_block() {
         // image: `data-asset` → src; the inline-image skeleton survives.
         let h = render_body("![cat](../assets/cat.png)", &no_refs());
@@ -2538,6 +2751,10 @@ mod tests {
         // assets emitted alongside the pages
         assert!(out.join("fuse.min.js").exists(), "vendored Fuse shipped");
         assert!(out.join("app.js").exists(), "app.js shipped");
+        assert!(
+            out.join("enhance.js").exists(),
+            "script-free enhancement shipped"
+        );
 
         // embedded search data: pages + blocks globals, favorite flag, stripped text
         let sidx = fs::read_to_string(out.join("search-index.js")).unwrap();
@@ -2546,6 +2763,9 @@ mod tests {
             "{}",
             &sidx[..60.min(sidx.len())]
         );
+        let alpha = fs::read_to_string(out.join("alpha.html")).unwrap();
+        assert!(alpha.contains("Content-Security-Policy"), "{alpha}");
+        assert!(!alpha.contains(" onload="), "{alpha}");
         assert!(sidx.contains("window.__tineBlocks="));
         assert!(
             sidx.contains("\"favorite\":true"),
@@ -2586,6 +2806,34 @@ mod tests {
             "index uses the sidebar shell"
         );
 
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn publish_fails_closed_when_public_and_private_files_claim_one_page_identity() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("tine-publish-ambiguous-{unique}"));
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("pages/Twin.md"),
+            "public:: true\n- public sentinel\n- {{query (page Twin)}}\n",
+        )
+        .unwrap();
+        fs::write(dir.join("journals/Twin.md"), "- PRIVATE SENTINEL\n").unwrap();
+        fs::write(dir.join("pages/Visible.md"), "public:: true\n- visible\n").unwrap();
+
+        let graph = Graph::open(&dir);
+        let (outdir, count) = publish_graph(&graph).unwrap();
+        let out = Path::new(&outdir);
+        assert_eq!(count, 1);
+        assert!(!out.join("twin.html").exists());
+        let all = fs::read_to_string(out.join("search-index.js")).unwrap();
+        assert!(!all.contains("PRIVATE SENTINEL"), "{all}");
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -3041,7 +3289,10 @@ mod tests {
         );
         assert!(!html.contains("src=\"app.js\""), "no app.js in print doc");
         assert!(!html.contains("<script"), "print doc executes no scripts");
-        assert!(!html.contains("cdn.jsdelivr.net"), "print doc has no CDN resources");
+        assert!(
+            !html.contains("cdn.jsdelivr.net"),
+            "print doc has no CDN resources"
+        );
         assert!(
             html.contains("script-src 'none'"),
             "print doc denies script execution even if markup regresses"
@@ -3238,10 +3489,8 @@ mod tests {
 
     #[test]
     fn publish_query_keeps_and_hydrates_a_match_below_a_nonmatching_gap() {
-        let dir = std::env::temp_dir().join(format!(
-            "tine-publish-query-gap-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("tine-publish-query-gap-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("journals")).unwrap();
         fs::create_dir_all(dir.join("pages")).unwrap();
@@ -3267,7 +3516,11 @@ mod tests {
         let dashboard =
             fs::read_to_string(std::path::Path::new(&outdir).join("dashboard.html")).unwrap();
 
-        assert_eq!(dashboard.matches("parity grandchild").count(), 2, "{dashboard}");
+        assert_eq!(
+            dashboard.matches("parity grandchild").count(),
+            2,
+            "{dashboard}"
+        );
         assert_eq!(
             dashboard
                 .matches("live child below retained grandchild")

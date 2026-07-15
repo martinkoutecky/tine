@@ -1,7 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
-import { PdfViewer, PDF_CANVAS_CACHE_PIXEL_BUDGET } from "./PdfViewer";
+import {
+  KeyedPdfViewer,
+  PdfViewer,
+  PDF_CANVAS_CACHE_PIXEL_BUDGET,
+  PDF_FIND_MATCH_CAP,
+} from "./PdfViewer";
 
 const getDocumentMock = vi.hoisted(() => vi.fn());
 
@@ -354,6 +360,69 @@ describe("PdfViewer OG state and reference behavior", () => {
 
       expect(writeHighlights).toHaveBeenCalledOnce();
       expect(writeText).toHaveBeenCalledWith("((11111111-1111-4111-8111-111111111111))");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("tears down the complete document identity before opening another PDF", async () => {
+    const openPdf = vi.spyOn(backend() as any, "openPdf").mockImplementation(async (...args: unknown[]) => {
+      const filename = String(args[0]);
+      return {
+        highlights: [],
+        page: filename === "a.pdf" ? 2 : 1,
+        scale: filename === "a.pdf" ? 2 : 1,
+      };
+    });
+    vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+    const first = documentWithPages([page(612, 792), page(612, 792)]);
+    const second = documentWithPages([page(612, 792)]);
+    getDocumentMock
+      .mockReturnValueOnce({ promise: Promise.resolve(first) })
+      .mockReturnValueOnce({ promise: Promise.resolve(second) });
+    const [target, setTarget] = createSignal({ filename: "a.pdf", label: "A" });
+
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <KeyedPdfViewer target={target} />, host);
+    try {
+      await flush();
+      expect(host.querySelector(".pdf-viewer")?.getAttribute("data-pdf-filename")).toBe("a.pdf");
+
+      setTarget({ filename: "b.pdf", label: "B" });
+      await flush();
+
+      expect(openPdf.mock.calls.map(([filename]) => filename)).toEqual(["a.pdf", "b.pdf"]);
+      expect(first.destroy).toHaveBeenCalledOnce();
+      expect(host.querySelectorAll(".pdf-viewer")).toHaveLength(1);
+      expect(host.querySelector(".pdf-viewer")?.getAttribute("data-pdf-filename")).toBe("b.pdf");
+      expect((host.querySelector(".pdf-page-input") as HTMLInputElement).value).toBe("1");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("caps PDF Find occurrences and labels the result as truncated", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(backend() as any, "openPdf").mockResolvedValue({ highlights: [], page: 1, scale: 1 });
+    vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+    const textPage = page(612, 792);
+    textPage.getTextContent.mockResolvedValue({ items: [{ str: "a".repeat(PDF_FIND_MATCH_CAP + 500) }] });
+    getDocumentMock.mockReturnValue({ promise: Promise.resolve(documentWithPages([textPage])) });
+
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <PdfViewer filename="search.pdf" label="Search" />, host);
+    try {
+      await flush();
+      (host.querySelector('button[title="Find in document (Ctrl+F)"]') as HTMLButtonElement).click();
+      const input = host.querySelector(".pdf-find-input") as HTMLInputElement;
+      input.value = "a";
+      input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      await vi.advanceTimersByTimeAsync(180);
+      await flush();
+
+      expect(host.querySelector(".pdf-find-count")?.textContent).toBe(`1 / ${PDF_FIND_MATCH_CAP}+`);
     } finally {
       dispose();
     }

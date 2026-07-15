@@ -43,6 +43,41 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
+export const CLIPBOARD_IMAGE_MAX_PIXELS = 32 * 1024 * 1024;
+export const CLIPBOARD_IMAGE_MAX_RGBA_BYTES = 128 * 1024 * 1024;
+export const ASSET_INGRESS_MAX_BYTES = 64 * 1024 * 1024;
+
+type ClipboardImage = {
+  size(): Promise<{ width: number; height: number }>;
+  rgba(): Promise<Uint8Array>;
+};
+
+export async function clipboardImageToPng(img: ClipboardImage): Promise<Uint8Array | null> {
+  // Dimensions are metadata: validate them before asking the native plugin to
+  // materialize an attacker-controlled RGBA allocation on the WebView thread.
+  const { width, height } = await img.size();
+  if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width <= 0 || height <= 0) return null;
+  const pixels = width * height;
+  const rgbaBytes = pixels * 4;
+  if (!Number.isSafeInteger(pixels) || pixels > CLIPBOARD_IMAGE_MAX_PIXELS
+      || rgbaBytes > CLIPBOARD_IMAGE_MAX_RGBA_BYTES) {
+    return null;
+  }
+  const rgba = await img.rgba();
+  if (rgba.byteLength !== rgbaBytes) return null;
+  const clamped = new Uint8ClampedArray(rgba.buffer as ArrayBuffer, rgba.byteOffset, rgba.byteLength);
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+  ctx.putImageData(new ImageData(clamped, width, height), 0, 0);
+  const blob: Blob | null = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+  if (!blob || blob.size > ASSET_INGRESS_MAX_BYTES) return null;
+  const encoded = await blob.arrayBuffer();
+  return encoded.byteLength <= ASSET_INGRESS_MAX_BYTES ? new Uint8Array(encoded) : null;
+}
+
 /** One raw graph file, as returned by `graphSourceFiles` — the input to the
  *  in-app lsdoc↔mldoc diff panel. `text` is the file's bytes exactly as on disk. */
 export interface GraphSourceFile {
@@ -645,24 +680,14 @@ class TauriBackend implements Backend {
     return new Uint8Array(buf);
   }
   saveAsset(name: string, bytes: Uint8Array) {
+    if (bytes.byteLength > ASSET_INGRESS_MAX_BYTES) return Promise.reject(new Error("asset exceeds 64 MiB ingress limit"));
     return this.call<string>("save_asset", { name, bytesB64: bytesToBase64(bytes) });
   }
   async readClipboardImage(): Promise<Uint8Array | null> {
     try {
       const { readImage } = await import("@tauri-apps/plugin-clipboard-manager");
       const img = await readImage();
-      const rgba = await img.rgba();
-      const { width, height } = await img.size();
-      if (!width || !height || !rgba.length) return null;
-      const canvas = document.createElement("canvas");
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return null;
-      ctx.putImageData(new ImageData(new Uint8ClampedArray(rgba), width, height), 0, 0);
-      const blob: Blob | null = await new Promise((res) => canvas.toBlob(res, "image/png"));
-      if (!blob) return null;
-      return new Uint8Array(await blob.arrayBuffer());
+      return await clipboardImageToPng(img);
     } catch {
       return null; // no image in clipboard, or plugin unavailable
     }
@@ -805,6 +830,7 @@ class TauriBackend implements Backend {
     await this.writeText(text);
   }
   copyImageToClipboard(bytes: Uint8Array): Promise<void> {
+    if (bytes.byteLength > ASSET_INGRESS_MAX_BYTES) return Promise.reject(new Error("image exceeds 64 MiB clipboard limit"));
     return this.call<void>("copy_image_to_clipboard", { bytesB64: bytesToBase64(bytes) });
   }
   readHighlights(pdf: string) {
@@ -820,6 +846,7 @@ class TauriBackend implements Backend {
     return this.call<void>("write_pdf_view_state", { pdf, page, scale });
   }
   savePdfAreaImage(pdf: string, page: number, id: string, stamp: number, bytes: Uint8Array) {
+    if (bytes.byteLength > ASSET_INGRESS_MAX_BYTES) return Promise.reject(new Error("PDF area image exceeds 64 MiB ingress limit"));
     return this.call<string>("save_pdf_area_image", {
       pdf,
       page,

@@ -26,6 +26,18 @@ fn enforce_result_bridge_budget(groups: &[RefGroup]) -> Result<(), String> {
     Ok(())
 }
 
+fn bounded_groups_or_error(
+    result: tine_core::query::BoundedGroups,
+) -> Result<Arc<Vec<RefGroup>>, String> {
+    if result.exceeded {
+        return Err(format!(
+            "result-too-large: {} matching blocks; narrow the query or add (sample N) (construction limits: {RESULT_BRIDGE_MAX_ROWS} blocks / {RESULT_BRIDGE_MAX_BYTES} bytes)",
+            result.total
+        ));
+    }
+    Ok(Arc::new(result.groups))
+}
+
 fn enforce_query_execution_budget(
     execution: &tine_core::query_plan::QueryExecution,
 ) -> Result<(), String> {
@@ -108,11 +120,55 @@ mod result_bridge_budget_tests {
 /// Decode a base64 asset payload. The frontend sends bytes as one base64 string
 /// rather than a JSON number[] (which inflated the IPC payload ~4-5x and forced a
 /// per-element parse + a giant throwaway array on the webview thread).
+const ASSET_INGRESS_MAX_BYTES: usize = 64 * 1024 * 1024;
+
+fn decoded_base64_len(input: &str) -> Option<usize> {
+    if input.len() % 4 != 0 {
+        return None;
+    }
+    let padding = input
+        .as_bytes()
+        .iter()
+        .rev()
+        .take_while(|byte| **byte == b'=')
+        .count()
+        .min(2);
+    input
+        .len()
+        .checked_div(4)?
+        .checked_mul(3)?
+        .checked_sub(padding)
+}
+
 pub(crate) fn decode_asset_b64(b64: &str) -> Result<Vec<u8>, String> {
     use base64::Engine;
-    base64::engine::general_purpose::STANDARD
+    let max_encoded = ASSET_INGRESS_MAX_BYTES.div_ceil(3) * 4;
+    if b64.len() > max_encoded
+        || decoded_base64_len(b64).is_some_and(|len| len > ASSET_INGRESS_MAX_BYTES)
+    {
+        return Err("asset payload exceeds 64 MiB ingress limit".into());
+    }
+    let decoded = base64::engine::general_purpose::STANDARD
         .decode(b64)
-        .map_err(|e| format!("bad base64 asset payload: {e}"))
+        .map_err(|e| format!("bad base64 asset payload: {e}"))?;
+    if decoded.len() > ASSET_INGRESS_MAX_BYTES {
+        return Err("asset payload exceeds 64 MiB ingress limit".into());
+    }
+    Ok(decoded)
+}
+
+#[cfg(test)]
+mod asset_ingress_tests {
+    use super::{decoded_base64_len, ASSET_INGRESS_MAX_BYTES};
+
+    #[test]
+    fn base64_size_gate_accounts_for_padding_before_decode() {
+        let encoded = ASSET_INGRESS_MAX_BYTES.div_ceil(3) * 4;
+        assert!(encoded / 4 * 3 > ASSET_INGRESS_MAX_BYTES);
+        assert_eq!(decoded_base64_len("AAAA"), Some(3));
+        assert_eq!(decoded_base64_len("AA=="), Some(1));
+        assert_eq!(decoded_base64_len("AAA="), Some(2));
+    }
 }
 
 #[tauri::command]
@@ -274,9 +330,12 @@ pub(crate) fn get_backlinks(
     state: GraphContext<'_>,
 ) -> Result<Arc<Vec<RefGroup>>, String> {
     with_graph(&state, |g| {
-        let groups = g.backlinks(&name);
-        enforce_result_bridge_budget(&groups)?;
-        Ok(groups)
+        bounded_groups_or_error(tine_core::query::backlinks_bounded(
+            g,
+            &name,
+            RESULT_BRIDGE_MAX_ROWS,
+            RESULT_BRIDGE_MAX_BYTES,
+        ))
     })
 }
 
@@ -286,9 +345,12 @@ pub(crate) fn get_unlinked_refs(
     state: GraphContext<'_>,
 ) -> Result<Arc<Vec<RefGroup>>, String> {
     with_graph(&state, |g| {
-        let groups = g.unlinked_refs(&name);
-        enforce_result_bridge_budget(&groups)?;
-        Ok(groups)
+        bounded_groups_or_error(tine_core::query::unlinked_refs_bounded(
+            g,
+            &name,
+            RESULT_BRIDGE_MAX_ROWS,
+            RESULT_BRIDGE_MAX_BYTES,
+        ))
     })
 }
 
@@ -313,9 +375,12 @@ pub(crate) fn block_referrers(
     state: GraphContext<'_>,
 ) -> Result<Arc<Vec<RefGroup>>, String> {
     with_graph(&state, |g| {
-        let groups = g.block_referrers(&uuid);
-        enforce_result_bridge_budget(&groups)?;
-        Ok(groups)
+        bounded_groups_or_error(tine_core::query::block_referrers_bounded(
+            g,
+            &uuid,
+            RESULT_BRIDGE_MAX_ROWS,
+            RESULT_BRIDGE_MAX_BYTES,
+        ))
     })
 }
 
@@ -364,9 +429,12 @@ pub(crate) fn run_query(
     state: GraphContext<'_>,
 ) -> Result<Arc<Vec<RefGroup>>, String> {
     with_graph(&state, |g| {
-        let groups = g.run_query(&query);
-        enforce_result_bridge_budget(&groups)?;
-        Ok(groups)
+        bounded_groups_or_error(tine_core::query::run_query_bounded(
+            g,
+            &query,
+            RESULT_BRIDGE_MAX_ROWS,
+            RESULT_BRIDGE_MAX_BYTES,
+        ))
     })
 }
 
@@ -442,7 +510,9 @@ pub(crate) async fn run_graph_search(
     let page_limit = page_limit.min(RESULT_BRIDGE_MAX_ROWS);
     let block_limit = block_limit.min(RESULT_BRIDGE_MAX_ROWS - page_limit);
     let execution = tauri::async_runtime::spawn_blocking(move || match lane.as_deref() {
-        Some(lane) => graph.run_graph_search_latest(lane, &source, page_limit, block_limit, explain),
+        Some(lane) => {
+            graph.run_graph_search_latest(lane, &source, page_limit, block_limit, explain)
+        }
         None => graph.run_graph_search(&source, page_limit, block_limit, explain),
     })
     .await
@@ -458,15 +528,36 @@ pub(crate) fn run_advanced_query(
     state: GraphContext<'_>,
 ) -> Result<tine_core::query::AdvancedResult, String> {
     with_graph(&state, |g| {
-        let result = g.run_advanced_query(&query, current_page.as_deref());
-        enforce_result_bridge_budget(&result.groups)?;
+        let (result, exceeded, total) = tine_core::query::run_advanced_query_bounded(
+            g,
+            &query,
+            current_page.as_deref(),
+            RESULT_BRIDGE_MAX_ROWS,
+            RESULT_BRIDGE_MAX_BYTES,
+        );
+        if exceeded {
+            return Err(format!(
+                "result-too-large: {total} advanced-query matches; narrow the query"
+            ));
+        }
         Ok(result)
     })
 }
 
 #[tauri::command]
 pub(crate) fn query_facets(state: GraphContext<'_>) -> Result<Vec<(String, Vec<String>)>, String> {
-    with_graph(&state, |g| Ok(g.property_facets()))
+    with_graph(&state, |g| {
+        let (facets, exceeded) = tine_core::query::property_facets_bounded(
+            g,
+            RESULT_BRIDGE_MAX_ROWS,
+            RESULT_BRIDGE_MAX_BYTES,
+        );
+        if exceeded {
+            Err("result-too-large: property facets exceed the construction budget".into())
+        } else {
+            Ok(facets)
+        }
+    })
 }
 
 #[tauri::command]
@@ -641,10 +732,17 @@ pub(crate) fn resolve_blocks(
         ));
     }
     with_graph(&state, |g| {
-        let groups = g.resolve_blocks(&uuids);
-        let present = groups.iter().flatten().cloned().collect::<Vec<_>>();
-        enforce_result_bridge_budget(&present)?;
-        Ok(groups)
+        let (groups, exceeded, total) = tine_core::query::resolve_blocks_bounded(
+            g,
+            &uuids,
+            RESULT_BRIDGE_MAX_ROWS,
+            RESULT_BRIDGE_MAX_BYTES,
+        );
+        if exceeded {
+            Err(format!("result-too-large: {total} resolved block-reference rows exceed the construction budget"))
+        } else {
+            Ok(groups)
+        }
     })
 }
 
@@ -697,10 +795,7 @@ pub(crate) fn read_asset(
 /// range-aware `tine-media:` protocol. The protocol revalidates against the
 /// requesting window's current graph on every request.
 #[tauri::command]
-pub(crate) fn stream_asset_path(
-    name: String,
-    state: GraphContext<'_>,
-) -> Result<String, String> {
+pub(crate) fn stream_asset_path(name: String, state: GraphContext<'_>) -> Result<String, String> {
     let slot = slot_for_context(&state)?;
     slot.graph
         .stream_asset_path(&name)
@@ -764,8 +859,8 @@ pub(crate) fn tine_open_devtools(window: tauri::WebviewWindow) {
         #[cfg(target_os = "linux")]
         {
             let _ = window.with_webview(|wv| {
-                use std::{cell::RefCell, rc::Rc};
                 use gtk::{gdk::prelude::DisplayExtManual, prelude::WidgetExt};
+                use std::{cell::RefCell, rc::Rc};
                 use webkit2gtk::{glib, glib::prelude::ObjectExt, WebInspectorExt, WebViewExt};
                 if wv.inner().display().backend().is_wayland() {
                     return;
@@ -864,15 +959,14 @@ pub(crate) fn import_native_capture(
         .file_name()
         .and_then(|value| value.to_str())
         .ok_or_else(|| "invalid native capture token".to_string())?;
-    let (max_bytes, media_label) = if filename.starts_with("tine_memo_")
-        && filename.ends_with(".m4a")
-    {
-        (MAX_RECORDING_BYTES, "recording")
-    } else if filename.starts_with("tine_photo_") && filename.ends_with(".jpg") {
-        (MAX_PHOTO_BYTES, "photo")
-    } else {
-        return Err("invalid native capture token".into());
-    };
+    let (max_bytes, media_label) =
+        if filename.starts_with("tine_memo_") && filename.ends_with(".m4a") {
+            (MAX_RECORDING_BYTES, "recording")
+        } else if filename.starts_with("tine_photo_") && filename.ends_with(".jpg") {
+            (MAX_PHOTO_BYTES, "photo")
+        } else {
+            return Err("invalid native capture token".into());
+        };
     let cache_path = app
         .path()
         .app_cache_dir()
@@ -880,10 +974,10 @@ pub(crate) fn import_native_capture(
     let token_parent = source
         .parent()
         .ok_or_else(|| "recording has no cache parent".to_string())?;
-    let cache_dir =
-        Dir::open_ambient_dir(&cache_path, ambient_authority()).map_err(|error| error.to_string())?;
-    let token_dir =
-        Dir::open_ambient_dir(token_parent, ambient_authority()).map_err(|error| error.to_string())?;
+    let cache_dir = Dir::open_ambient_dir(&cache_path, ambient_authority())
+        .map_err(|error| error.to_string())?;
+    let token_dir = Dir::open_ambient_dir(token_parent, ambient_authority())
+        .map_err(|error| error.to_string())?;
     let cache_identity = same_file::Handle::from_file(
         cache_dir
             .try_clone()
@@ -963,7 +1057,9 @@ pub(crate) fn read_text_file(path: String) -> Result<String, String> {
 /// (canonicalized) so a crafted name can't open a file outside the graph.
 #[tauri::command]
 pub(crate) fn open_asset(name: String, state: GraphContext<'_>) -> Result<(), String> {
-    let target = with_graph(&state, |g| g.asset_file_for_read(&name).map_err(|e| e.to_string()))?;
+    let target = with_graph(&state, |g| {
+        g.asset_file_for_read(&name).map_err(|e| e.to_string())
+    })?;
     #[cfg(desktop)]
     {
         #[cfg(target_os = "linux")]
@@ -1039,7 +1135,9 @@ pub(crate) fn edit_asset_external(
     command: String,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
-    let target = with_graph(&state, |g| g.asset_file_for_read(&name).map_err(|e| e.to_string()))?;
+    let target = with_graph(&state, |g| {
+        g.asset_file_for_read(&name).map_err(|e| e.to_string())
+    })?;
     #[cfg(desktop)]
     {
         let target_str = target.to_string_lossy().to_string();
@@ -1553,7 +1651,9 @@ pub(crate) fn open_pdf(
     label: String,
     state: GraphContext<'_>,
 ) -> Result<tine_core::pdf::PdfState, String> {
-    with_graph(&state, |g| g.open_pdf(&pdf, &label).map_err(|e| e.to_string()))
+    with_graph(&state, |g| {
+        g.open_pdf(&pdf, &label).map_err(|e| e.to_string())
+    })
 }
 
 #[tauri::command]

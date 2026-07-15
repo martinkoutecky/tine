@@ -18,6 +18,9 @@ pub(crate) struct GraphSlot {
     pub(crate) binding_generation: u64,
     pub(crate) warm_done: AtomicBool,
     pub(crate) warm_generation: AtomicU64,
+    /// Revoked as soon as this exact window→graph binding is replaced/removed.
+    /// Detached warm/backup workers check it before and during graph-sized work.
+    pub(crate) background_cancelled: AtomicBool,
 }
 
 impl GraphSlot {
@@ -29,6 +32,7 @@ impl GraphSlot {
             binding_generation: NEXT_BINDING.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             warm_done: AtomicBool::new(false),
             warm_generation: AtomicU64::new(0),
+            background_cancelled: AtomicBool::new(false),
         }
     }
 
@@ -47,6 +51,7 @@ impl GraphSlot {
                 old.warm_generation
                     .load(std::sync::atomic::Ordering::Acquire),
             ),
+            background_cancelled: AtomicBool::new(false),
         }
     }
 }
@@ -90,6 +95,13 @@ impl GraphRegistry {
             }
         }
         if let Some(old) = self.by_window.insert(window.clone(), slot.clone()) {
+            // A same-root refresh replaces only the in-memory Graph object and
+            // preserves the frontend binding lease. Let its already-running
+            // warm/backup finish; a real graph switch revokes the old source.
+            if old.binding_generation != slot.binding_generation || old.root_key != slot.root_key {
+                old.background_cancelled
+                    .store(true, std::sync::atomic::Ordering::Release);
+            }
             self.by_root.remove(&old.root_key);
         }
         self.by_root.insert(slot.root_key.clone(), window);
@@ -98,6 +110,8 @@ impl GraphRegistry {
 
     pub(crate) fn remove(&mut self, window: &str) -> Option<Arc<GraphSlot>> {
         let slot = self.by_window.remove(window)?;
+        slot.background_cancelled
+            .store(true, std::sync::atomic::Ordering::Release);
         self.by_root.remove(&slot.root_key);
         Some(slot)
     }
@@ -199,7 +213,8 @@ pub(crate) fn with_graph<T>(
 pub(crate) fn refresh_graph(ctx: &GraphContext<'_>) -> Result<(), String> {
     let label = ctx.window.label().to_string();
     let old = slot_for_window(&ctx.state, &label)?;
-    let approved = crate::settings::approved_external_assets(ctx.window.app_handle(), &old.root_key);
+    let approved =
+        crate::settings::approved_external_assets(ctx.window.app_handle(), &old.root_key);
     let graph = Graph::open_checked_with_assets(&old.root_key, approved.as_deref())
         .map_err(|e| e.to_string())?;
     graph.migrate_journal_filenames();
@@ -243,10 +258,10 @@ mod tests {
 
     #[test]
     fn same_root_refresh_preserves_frontend_binding_lease() {
-        let base =
-            std::env::temp_dir().join(format!("tine-slot-refresh-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!("tine-slot-refresh-{}", std::process::id()));
         let old = graph(&base);
-        old.warm_done.store(true, std::sync::atomic::Ordering::Release);
+        old.warm_done
+            .store(true, std::sync::atomic::Ordering::Release);
         old.warm_generation
             .store(7, std::sync::atomic::Ordering::Release);
 
@@ -254,7 +269,9 @@ mod tests {
 
         assert_eq!(replacement.binding_generation, old.binding_generation);
         assert_eq!(replacement.root_key, old.root_key);
-        assert!(replacement.warm_done.load(std::sync::atomic::Ordering::Acquire));
+        assert!(replacement
+            .warm_done
+            .load(std::sync::atomic::Ordering::Acquire));
         assert_eq!(
             replacement
                 .warm_generation
@@ -270,12 +287,20 @@ mod tests {
         let a = base.join("a");
         let b = base.join("b");
         let mut registry = GraphRegistry::default();
-        registry.bind("main".into(), graph(&a)).unwrap();
+        let old = graph(&a);
+        registry.bind("main".into(), old.clone()).unwrap();
         assert_eq!(registry.owner(&a).as_deref(), Some("main"));
         registry.bind("main".into(), graph(&b)).unwrap();
+        assert!(old
+            .background_cancelled
+            .load(std::sync::atomic::Ordering::Acquire));
         assert!(registry.owner(&a).is_none());
         assert_eq!(registry.owner(&b).as_deref(), Some("main"));
+        let current = registry.slot("main").unwrap();
         registry.remove("main");
+        assert!(current
+            .background_cancelled
+            .load(std::sync::atomic::Ordering::Acquire));
         assert!(registry.owner(&b).is_none());
         assert_eq!(registry.len(), 0);
         let _ = std::fs::remove_dir_all(base);

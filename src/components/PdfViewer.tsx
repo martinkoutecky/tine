@@ -37,12 +37,35 @@ const MAX_CANVAS_PIXELS = isMobilePlatform ? 8_388_608 : 16_777_216;
 // fit-width pages. Mobile keeps at most ~64 MiB; desktop ~192 MiB.
 export const PDF_CANVAS_CACHE_PIXEL_BUDGET = isMobilePlatform ? 16_777_216 : 50_331_648;
 const PDF_CANVAS_CACHE_PAGE_CAP = isMobilePlatform ? 6 : 12;
+export const PDF_FIND_TEXT_CACHE_BYTES = isMobilePlatform ? 4 * 1024 * 1024 : 8 * 1024 * 1024;
+export const PDF_FIND_PAGE_TEXT_BYTES = 1024 * 1024;
+export const PDF_FIND_MATCH_CAP = 10_000;
 
 interface Pending {
   page: number;
   rects: Rect[];
   bounding: Rect;
   text: string;
+}
+
+export interface PdfTarget {
+  filename: string;
+  label: string;
+  page?: number;
+}
+
+/**
+ * A PDF filename is a resource identity, not merely a reactive prop. Keying the
+ * child mirrors Logseq's teardown-before-open lifecycle: all document-local
+ * caches, delayed view writes, highlights, and pdf.js tasks belong to exactly
+ * one asset and are disposed before another asset mounts.
+ */
+export function KeyedPdfViewer(props: { target: () => PdfTarget | null }): JSX.Element {
+  return (
+    <Show when={props.target()} keyed>
+      {(target) => <PdfViewer filename={target.filename} label={target.label} page={target.page} />}
+    </Show>
+  );
 }
 
 export function PdfViewer(props: { filename: string; label: string; page?: number }): JSX.Element {
@@ -79,8 +102,11 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
   const [findQuery, setFindQuery] = createSignal("");
   const [findCount, setFindCount] = createSignal(0);
   const [findCur, setFindCur] = createSignal(0);
+  const [findTruncated, setFindTruncated] = createSignal(false);
   let findMatches: { page: number }[] = [];
   const pageTextCache: Record<number, string> = {};
+  const pageTextLru: number[] = [];
+  let pageTextCacheBytes = 0;
   let findToken = 0;
   let findDebounce: number | undefined;
   let findInputEl: HTMLInputElement | undefined;
@@ -90,6 +116,7 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
   // preserving externally-added highlights.
   let baseIds: string[] = [];
   let pdfDoc: pdfjs.PDFDocumentProxy | null = null;
+  let disposed = false;
 
   // Per-page unscaled dimensions (index 1..N), fetched once so we can size every
   // page wrapper up front — that gives correct scroll geometry without having to
@@ -663,6 +690,7 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
     let restoredScale: number | null = null;
     try {
       const state = await backend().openPdf(props.filename, props.label);
+      if (disposed) return;
       setHighlights(state.highlights);
       restoredPage = state.page;
       restoredScale = state.scale;
@@ -674,6 +702,7 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
     let bytes: Uint8Array;
     try {
       bytes = await backend().readAsset(props.filename, MAX_PDF_BYTES);
+      if (disposed) return;
     } catch (err) {
       if (String(err).includes("asset exceeds"))
         failPdf("This PDF is larger than 256 MiB and can't be opened safely.");
@@ -689,7 +718,12 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
       return;
     }
     try {
-      pdfDoc = await pdfjs.getDocument({ data: bytes }).promise;
+      const loaded = await pdfjs.getDocument({ data: bytes }).promise;
+      if (disposed) {
+        void loaded.destroy().catch(() => {});
+        return;
+      }
+      pdfDoc = loaded;
     } catch (err) {
       failPdf(errorMessage("Couldn't load this PDF", err));
       return;
@@ -706,6 +740,7 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
     let p1: pdfjs.PDFPageProxy;
     try {
       p1 = await doc.getPage(1);
+      if (disposed) return;
     } catch (err) {
       failPdf(errorMessage("Couldn't read this PDF's first page", err));
       return;
@@ -735,6 +770,8 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
   });
 
   onCleanup(() => {
+    disposed = true;
+    findToken++;
     io?.disconnect();
     clearTimeout(zoomTimer);
     clearTimeout(textTimer);
@@ -1082,13 +1119,43 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
   });
 
   // --- find in document ----------------------------------------------------
-  async function pageText(n: number): Promise<string> {
-    if (pageTextCache[n] !== undefined) return pageTextCache[n];
+  function touchPageText(n: number) {
+    const index = pageTextLru.indexOf(n);
+    if (index >= 0) pageTextLru.splice(index, 1);
+    pageTextLru.push(n);
+  }
+  function admitPageText(n: number, text: string) {
+    const bytes = text.length * 2;
+    if (bytes > PDF_FIND_PAGE_TEXT_BYTES || bytes > PDF_FIND_TEXT_CACHE_BYTES) return;
+    while (pageTextCacheBytes + bytes > PDF_FIND_TEXT_CACHE_BYTES && pageTextLru.length) {
+      const evicted = pageTextLru.shift()!;
+      pageTextCacheBytes -= pageTextCache[evicted].length * 2;
+      delete pageTextCache[evicted];
+    }
+    pageTextCache[n] = text;
+    pageTextCacheBytes += bytes;
+    touchPageText(n);
+  }
+  async function pageText(n: number, token: number): Promise<string | null> {
+    if (pageTextCache[n] !== undefined) {
+      touchPageText(n);
+      return pageTextCache[n];
+    }
     if (!pdfDoc) return "";
     const page = await pdfDoc.getPage(n);
+    if (token !== findToken || disposed) return null;
     const tc = await page.getTextContent();
-    const s = (tc.items as any[]).map((it) => (typeof it.str === "string" ? it.str : "")).join("");
-    pageTextCache[n] = s;
+    if (token !== findToken || disposed) return null;
+    let s = "";
+    for (const item of tc.items as any[]) {
+      const part = typeof item.str === "string" ? item.str : "";
+      if ((s.length + part.length) * 2 > PDF_FIND_PAGE_TEXT_BYTES) {
+        setFindTruncated(true);
+        break;
+      }
+      s += part;
+    }
+    admitPageText(n, s);
     return s;
   }
   const scheduleFind = (q: string) => {
@@ -1103,19 +1170,28 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
       findMatches = [];
       setFindCount(0);
       setFindCur(0);
+      setFindTruncated(false);
       window.getSelection()?.removeAllRanges();
       return;
     }
     const acc: { page: number }[] = [];
+    setFindTruncated(false);
     const np = pdfDoc.numPages;
     for (let n = 1; n <= np; n++) {
-      const text = (await pageText(n)).toLowerCase();
+      const loadedText = await pageText(n, token);
+      if (loadedText === null) return;
+      const text = loadedText.toLowerCase();
       if (token !== findToken) return; // a newer query superseded this run
       let i = text.indexOf(q);
       while (i >= 0) {
         acc.push({ page: n });
+        if (acc.length >= PDF_FIND_MATCH_CAP) {
+          setFindTruncated(true);
+          break;
+        }
         i = text.indexOf(q, i + q.length);
       }
+      if (acc.length >= PDF_FIND_MATCH_CAP) break;
     }
     if (token !== findToken) return;
     findMatches = acc;
@@ -1221,7 +1297,7 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
   };
 
   return (
-    <div class="pdf-viewer">
+    <div class="pdf-viewer" data-pdf-filename={props.filename}>
       <div class="pdf-toolbar">
         <span class="pdf-title">{props.label}</span>
         <div class="pdf-toolbar-actions">
@@ -1317,7 +1393,11 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
             }}
           />
           <span class="pdf-find-count">
-            {findCount() ? `${findCur()} / ${findCount()}` : findQuery().trim() ? "No results" : ""}
+            {findCount()
+              ? `${findCur()} / ${findCount()}${findTruncated() ? "+" : ""}`
+              : findQuery().trim()
+                ? findTruncated() ? "No results in scanned text+" : "No results"
+                : ""}
           </span>
           <button class="icon-btn" title="Previous match (Shift+Enter)" onClick={() => nextMatch(-1)}>
             ↑

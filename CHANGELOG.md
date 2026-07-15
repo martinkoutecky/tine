@@ -10,6 +10,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Static publication is now a closed capability boundary.** Ambiguous
+  public/private source identities fail closed, generated anchors are escaped
+  separately for HTML attributes and URL fragments, ordinary links and media
+  macros share a safe-scheme policy, and the site CSP no longer permits inline
+  script handlers.
+- **PDF switching and Find are document-scoped and memory-bounded.** Changing
+  assets tears down the old viewer before mounting the new identity, including
+  delayed state writes and late pdf.js loads; Find retains a bounded text LRU,
+  caps page text and occurrences, and drops cancelled work. (GH #169)
+- **Graph-open background work and result construction have hard ceilings.** A
+  replaced graph binding cancels warm-cache and backup work between files,
+  process-wide permits prevent I/O amplification, failed `.partial-*` backups
+  are removed, and queries, references, facets, block resolution, publishing,
+  and query export enforce row/byte limits while constructing—not after cloning
+  a complete result.
+- **Clipboard image paste validates dimensions before decoding RGBA.** Pixel,
+  raw-buffer, PNG, frontend IPC, and native base64 limits now form one bounded
+  ingress path, avoiding several simultaneous unbounded image copies.
 - **PDF export now bounds image bytes before crossing the native/WebView
   boundary.** Each image has a 12 MiB ceiling and one export shares a 32 MiB
   source-byte budget; missing, remote, oversized, and over-budget images become

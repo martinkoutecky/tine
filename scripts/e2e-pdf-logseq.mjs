@@ -30,19 +30,31 @@ const EDN = `{:highlights [{:id #uuid "6a5604f8-a337-4336-a711-2ba6bc14fbfd"
   :extra {:page 1 :scale 1.75 :plugin "keep"}
   :future-root 42}
 `;
+const EDN_SECOND = `{:highlights []
+  :extra {:page 1 :scale 1.25 :plugin "second-keep"}
+  :future-root 84}
+`;
 
 fs.rmSync(TMP, { recursive: true, force: true });
 for (const dir of ["pages", "journals", "logseq", "assets"]) fs.mkdirSync(path.join(GRAPH, dir), { recursive: true });
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(path.join(TMP, "xdg", dir), { recursive: true });
 fs.writeFileSync(path.join(GRAPH, "logseq", "config.edn"), "{:preferred-format \"Org\"}\n");
 fs.writeFileSync(path.join(GRAPH, "assets", "logseq-sample.pdf"), Buffer.from(PDF, "base64"));
+fs.writeFileSync(path.join(GRAPH, "assets", "logseq-second.pdf"), Buffer.from(PDF, "base64"));
 const sidecar = path.join(GRAPH, "assets", "logseq-sample.edn");
 fs.writeFileSync(sidecar, EDN);
 const originalSidecar = fs.readFileSync(sidecar, "utf8");
+const secondSidecar = path.join(GRAPH, "assets", "logseq-second.edn");
+fs.writeFileSync(secondSidecar, EDN_SECOND);
+const originalSecondSidecar = fs.readFileSync(secondSidecar, "utf8");
 const hlsPage = path.join(GRAPH, "pages", "hls__logseq-sample.org");
 const now = new Date();
 const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
-fs.writeFileSync(path.join(GRAPH, "journals", `${journal}.md`), "- ![Logseq sample](../assets/logseq-sample.pdf)\n");
+fs.writeFileSync(path.join(GRAPH, "journals", `${journal}.md`), [
+  "- ![Logseq sample](../assets/logseq-sample.pdf)",
+  "- ![Logseq second](../assets/logseq-second.pdf)",
+  "",
+].join("\n"));
 
 // Windows Tauri/WebView2 can outlive tauri-driver briefly after a preceding
 // scenario. On an isolated CI runner, remove only this test binary before
@@ -182,12 +194,39 @@ try {
   }
 
   // OG persists last-view page/scale in :extra after a debounce. Tine must
-  // update only those fields, retaining both unknown :extra and root data.
+  // update only those fields, retaining both unknown :extra and root data. A
+  // target switch is a complete viewer identity boundary: cleanup flushes A to
+  // A, then B opens with only B's state and sidecar baseline.
   await browser.$('button[title="Zoom in"]').click();
+  await browser.execute(() => {
+    const links = [...document.querySelectorAll(".pdf-link")];
+    links[1]?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+  });
+  await browser.waitUntil(() => browser.execute(() =>
+    document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-filename") === "logseq-second.pdf"), {
+    timeout: 10_000,
+    timeoutMsg: "switching PDFs did not replace the viewer identity",
+  });
+  const secondZoom = await browser.$(".pdf-zoom-level").getText();
+  if (secondZoom !== "125%") throw new Error(`second PDF inherited the first PDF scale: ${secondZoom}`);
   await browser.waitUntil(() => {
     const written = fs.readFileSync(sidecar, "utf8");
     return written.includes(":scale 1.93") && written.includes(':plugin "keep"') && written.includes(":future-root 42");
-  }, { timeout: 10_000, timeoutMsg: "Tine did not persist OG PDF view state without dropping foreign EDN" });
+  }, { timeout: 10_000, timeoutMsg: "PDF A cleanup did not persist A's pending view state" });
+  if (fs.readFileSync(secondSidecar, "utf8") !== originalSecondSidecar) {
+    throw new Error("switching from PDF A wrote A's pending state or baseline into PDF B");
+  }
+  await browser.execute(() => {
+    const links = [...document.querySelectorAll(".pdf-link")];
+    links[0]?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+  });
+  await browser.waitUntil(() => browser.execute(() =>
+    document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-filename") === "logseq-sample.pdf"), {
+    timeout: 10_000,
+    timeoutMsg: "switching back to PDF A did not remount its identity",
+  });
+  const returnedZoom = await browser.$(".pdf-zoom-level").getText();
+  if (returnedZoom !== "193%") throw new Error(`PDF A did not restore its own state after B: ${returnedZoom}`);
 
   // Recoloring is a real mutation. It must preserve the foreign root metadata
   // while writing the UUID/list/corner shape that Logseq itself consumes.
@@ -207,7 +246,7 @@ try {
       written.includes(":rects (") && written.includes(":x1 ") &&
       written.includes(":extra {:page 1") && written.includes(':plugin "keep"') && written.includes(":future-root 42");
   }, { timeout: 10_000, timeoutMsg: "Tine did not persist a Logseq-compatible sidecar" });
-  console.log(`PASS: Logseq PDF opened with bounded resources, restored view state, an OG-compatible Org notes page, correct geometry, and compatible write-back on ${process.platform}`);
+  console.log(`PASS: Logseq PDFs switch as isolated identities with bounded resources, restored view state, OG-compatible notes, correct geometry, and compatible write-back on ${process.platform}`);
 } finally {
   try { await browser?.deleteSession(); } catch {}
   if (process.platform === "win32") spawnSync("taskkill", ["/PID", String(td.pid), "/T", "/F"], { stdio: "ignore" });
