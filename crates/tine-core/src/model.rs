@@ -587,6 +587,12 @@ const DERIVED_CACHE_MAX_ENTRIES: usize = 64;
 const DERIVED_CACHE_MAX_BYTES: usize = 64 * 1024 * 1024;
 const DERIVED_CACHE_MAX_ENTRY_BYTES: usize = 16 * 1024 * 1024;
 
+fn result_cache_key_estimated_bytes(key: &str) -> usize {
+    // The HashMap owns one key and the LRU owns another. Account both copies so
+    // a result with an enormous query source cannot bypass the payload budget.
+    key.len().saturating_mul(2).saturating_add(128)
+}
+
 pub fn block_dto_estimated_bytes(block: &BlockDto) -> usize {
     block.id.len()
         + block.raw.len()
@@ -2702,6 +2708,7 @@ impl Graph {
         // (the original is moved into the cache slot; this clone is a refcount bump).
         let evict_doc = Arc::clone(&doc);
         let evict_entry = entry.clone();
+        let mut previous_doc: Option<Arc<Document>> = None;
         let mut is_new_page = false;
         let mut guard = self.cache.write().unwrap();
         let cache_built = guard.is_some();
@@ -2712,6 +2719,7 @@ impl Graph {
                     let slot = &mut pages[i];
                     alias_touched = new_has_alias || doc_has_alias(&slot.1);
                     block_refs_touched = document_block_ref_counts(&slot.1) != new_block_refs;
+                    previous_doc = Some(Arc::clone(&slot.1));
                     slot.1 = doc;
                 }
                 None => {
@@ -2768,7 +2776,13 @@ impl Graph {
         // has graph-wide effects → drop everything. Guarded by the differential
         // fuzz oracle in tests/derived_cache_fuzz.rs.
         let scoped = cache_built && !alias_touched && !is_new_page;
-        self.scope_derived_invalidation(&evict_entry, &evict_doc, newgen, scoped);
+        self.scope_derived_invalidation(
+            &evict_entry,
+            previous_doc.as_deref(),
+            &evict_doc,
+            newgen,
+            scoped,
+        );
     }
 
     /// See `cache_upsert`. When `scoped`, evict only derived entries the edited
@@ -2777,6 +2791,7 @@ impl Graph {
     fn scope_derived_invalidation(
         &self,
         entry: &PageEntry,
+        previous_doc: Option<&Document>,
         doc: &Document,
         newgen: u64,
         scoped: bool,
@@ -2803,127 +2818,153 @@ impl Graph {
             let mut g = self.derived_cache.write().unwrap();
             let Some(dc) = g.as_mut() else {
                 drop(g);
-                self.scope_advanced_invalidation(entry, doc, newgen, scoped, today);
+                self.scope_advanced_invalidation(
+                    entry,
+                    previous_doc,
+                    doc,
+                    newgen,
+                    scoped,
+                    today,
+                );
                 return;
             };
             if !scoped || dc.today != today {
                 *g = None; // full invalidate (alias/page-set/cold-cache, or day rollover)
                 drop(g);
-                self.scope_advanced_invalidation(entry, doc, newgen, scoped, today);
+                self.scope_advanced_invalidation(
+                    entry,
+                    previous_doc,
+                    doc,
+                    newgen,
+                    scoped,
+                    today,
+                );
                 return;
             }
             let mut removed_bytes = 0usize;
             dc.results.retain(|key, (result, result_bytes)| {
-            // Evict iff this page is already in the result OR now matches the key's
-            // predicate; keep (still correct) otherwise. An overflowed result
-            // omitted some matching pages, so its prior membership is unknowable:
-            // conservatively recompute it after every edit instead of preserving
-            // stale `total`/`exceeded` metadata on a negative transition.
-            if result.exceeded
-                || result
-                .groups
-                .iter()
-                .any(|grp| crate::refs::same_page(&grp.page, pname))
-            {
-                removed_bytes = removed_bytes.saturating_add(*result_bytes);
-                return false;
-            }
-            let affects = match key.split_once('\0') {
-                Some(("b", target)) => {
-                    crate::query::page_affects_backlinks(&aliases, target, entry, doc)
+                // Evict iff this page is already in the result OR matches the key's
+                // predicate in either the old or new page; keep (still correct)
+                // otherwise. Comparing both parsed documents makes omitted overflow
+                // matches visible without retaining a graph-sized membership set.
+                if result
+                    .groups
+                    .iter()
+                    .any(|grp| crate::refs::same_page(&grp.page, pname))
+                {
+                    removed_bytes = removed_bytes.saturating_add(*result_bytes);
+                    return false;
                 }
-                Some(("u", target)) => {
-                    crate::query::page_affects_unlinked(&aliases, target, doc)
+                let page_affects = |candidate: &Document| match key.split_once('\0') {
+                    Some(("b", target)) => {
+                        crate::query::page_affects_backlinks(&aliases, target, entry, candidate)
+                    }
+                    Some(("u", target)) => {
+                        crate::query::page_affects_unlinked(&aliases, target, candidate)
+                    }
+                    Some(("br", uuid)) => {
+                        crate::query::page_affects_block_referrers(uuid, candidate)
+                    }
+                    Some(("q", source)) => {
+                        crate::query::page_affects_query(source, entry, candidate)
+                    }
+                    Some(("B", rest)) => rest.splitn(3, '\0').nth(2).is_none_or(|target| {
+                        crate::query::page_affects_backlinks(&aliases, target, entry, candidate)
+                    }),
+                    Some(("U", rest)) => rest.splitn(3, '\0').nth(2).is_none_or(|target| {
+                        crate::query::page_affects_unlinked(&aliases, target, candidate)
+                    }),
+                    Some(("Q", rest)) => rest.splitn(3, '\0').nth(2).is_none_or(|source| {
+                        crate::query::page_affects_query(source, entry, candidate)
+                    }),
+                    Some(("R", rest)) => rest.splitn(3, '\0').nth(2).is_none_or(|uuid| {
+                        crate::query::page_affects_block_referrers(uuid, candidate)
+                    }),
+                    _ => true, // unknown key shape → evict to stay safe
+                };
+                let affects = page_affects(doc) || previous_doc.is_some_and(&page_affects);
+                if affects {
+                    removed_bytes = removed_bytes.saturating_add(*result_bytes);
                 }
-                Some(("br", uuid)) => crate::query::page_affects_block_referrers(uuid, doc),
-                Some(("q", source)) => crate::query::page_affects_query(source, entry, doc),
-                Some(("B", rest)) => rest
-                    .splitn(3, '\0')
-                    .nth(2)
-                    .is_none_or(|target| {
-                        crate::query::page_affects_backlinks(&aliases, target, entry, doc)
-                    }),
-                Some(("U", rest)) => rest
-                    .splitn(3, '\0')
-                    .nth(2)
-                    .is_none_or(|target| {
-                        crate::query::page_affects_unlinked(&aliases, target, doc)
-                    }),
-                Some(("Q", rest)) => rest
-                    .splitn(3, '\0')
-                    .nth(2)
-                    .is_none_or(|source| crate::query::page_affects_query(source, entry, doc)),
-                Some(("R", rest)) => rest
-                    .splitn(3, '\0')
-                    .nth(2)
-                    .is_none_or(|uuid| crate::query::page_affects_block_referrers(uuid, doc)),
-                _ => true, // unknown key shape → evict to stay safe
-            };
-            if affects {
-                removed_bytes = removed_bytes.saturating_add(*result_bytes);
-            }
-            !affects
+                !affects
             });
             dc.bytes = dc.bytes.saturating_sub(removed_bytes);
             dc.lru.retain(|key| dc.results.contains_key(key));
             dc.gen = newgen; // survivors are valid for the post-bump generation
         }
-        self.scope_advanced_invalidation(entry, doc, newgen, scoped, today);
+        self.scope_advanced_invalidation(
+            entry,
+            previous_doc,
+            doc,
+            newgen,
+            scoped,
+            today,
+        );
     }
 
     fn scope_advanced_invalidation(
         &self,
         entry: &PageEntry,
+        previous_doc: Option<&Document>,
         doc: &Document,
         newgen: u64,
         scoped: bool,
         today: i64,
     ) {
         let mut cache = self.advanced_cache.write().unwrap();
-        let Some(advanced) = cache.as_mut() else { return };
+        let Some(advanced) = cache.as_mut() else {
+            return;
+        };
         if !scoped || advanced.today != today {
             *cache = None;
             return;
         }
         let mut removed_bytes = 0usize;
         advanced.results.retain(|key, (result, result_bytes)| {
-            if result.exceeded
-                || result
-                    .result
-                    .groups
-                    .iter()
-                    .any(|group| crate::refs::same_page(&group.page, &entry.name))
+            if result.result.groups.iter().any(|group| {
+                crate::refs::same_page(&group.page, &entry.name)
+            })
             {
                 removed_bytes = removed_bytes.saturating_add(*result_bytes);
                 return false;
             }
-            let mut parts = key.split('\0');
-            let prefix = parts.next();
-            let (page_key, query_src) = match prefix {
-                Some("aq") => (parts.next(), parts.next()),
-                Some("AQ") => {
-                    let _max_rows = parts.next();
-                    let _max_bytes = parts.next();
-                    (parts.next(), parts.next())
-                }
-                _ => (None, None),
+            // Split only structural fields; the final query source is opaque and
+            // may itself contain NUL bytes. Treating it as another delimiter used
+            // to make warm invalidation evaluate a truncated query.
+            let (page_key, query_src) = if let Some(rest) = key.strip_prefix("aq\0") {
+                rest.split_once('\0')
+                    .map_or((None, None), |(page, query)| (Some(page), Some(query)))
+            } else if let Some(rest) = key.strip_prefix("AQ\0") {
+                let mut parts = rest.splitn(4, '\0');
+                let _max_rows = parts.next();
+                let _max_bytes = parts.next();
+                (parts.next(), parts.next())
+            } else {
+                (None, None)
             };
-            let affects = page_key.zip(query_src).is_none_or(|(page_key, query_src)| {
-                let current_page = page_key.strip_prefix("p:");
-                crate::query::page_affects_advanced_query(
-                    query_src,
-                    current_page,
-                    entry,
-                    doc,
-                )
-            });
+            let page_affects = |candidate: &Document| {
+                page_key
+                    .zip(query_src)
+                    .is_none_or(|(page_key, query_src)| {
+                        let current_page = page_key.strip_prefix("p:");
+                        crate::query::page_affects_advanced_query(
+                            query_src,
+                            current_page,
+                            entry,
+                            candidate,
+                        )
+                    })
+            };
+            let affects = page_affects(doc) || previous_doc.is_some_and(page_affects);
             if affects {
                 removed_bytes = removed_bytes.saturating_add(*result_bytes);
             }
             !affects
         });
         advanced.bytes = advanced.bytes.saturating_sub(removed_bytes);
-        advanced.lru.retain(|key| advanced.results.contains_key(key));
+        advanced
+            .lru
+            .retain(|key| advanced.results.contains_key(key));
         advanced.gen = newgen;
     }
 
@@ -2999,7 +3040,8 @@ impl Graph {
             total: computed.total,
             exceeded: computed.exceeded,
         };
-        let result_bytes = ref_groups_estimated_bytes(result.groups.as_slice());
+        let result_bytes = ref_groups_estimated_bytes(result.groups.as_slice())
+            .saturating_add(result_cache_key_estimated_bytes(&key));
         if result_bytes > DERIVED_CACHE_MAX_ENTRY_BYTES {
             return result;
         }
@@ -3075,8 +3117,9 @@ impl Graph {
             exceeded,
         };
         let result_bytes = ref_groups_estimated_bytes(&result.result.groups)
-            + result.result.ran.iter().map(String::len).sum::<usize>()
-            + result.result.ignored.iter().map(String::len).sum::<usize>();
+            .saturating_add(result.result.ran.iter().map(String::len).sum::<usize>())
+            .saturating_add(result.result.ignored.iter().map(String::len).sum::<usize>())
+            .saturating_add(result_cache_key_estimated_bytes(&key));
         if result_bytes > DERIVED_CACHE_MAX_ENTRY_BYTES {
             return result;
         }
@@ -9060,12 +9103,21 @@ mod tests {
         let dir = scratch("bounded-overflow-negative-transition");
         fs::write(dir.join("pages").join("A.md"), "- TODO first\n").unwrap();
         fs::write(dir.join("pages").join("B.md"), "- TODO second\n").unwrap();
+        fs::write(dir.join("pages").join("Notes.md"), "- unrelated\n").unwrap();
         let g = Graph::open(&dir);
         g.warm_cache();
 
         let first = g.run_query_bounded("(task TODO)", 1, 32 * 1024 * 1024);
         assert!(first.exceeded);
         assert_eq!(first.total, 2);
+        let mut notes = g.load_named("Notes", PageKind::Page).unwrap().unwrap();
+        notes.blocks[0].raw = "still unrelated".into();
+        g.save_page(&notes, notes.rev.as_deref()).unwrap();
+        let after_unrelated = g.run_query_bounded("(task TODO)", 1, 32 * 1024 * 1024);
+        assert!(Arc::ptr_eq(&first.groups, &after_unrelated.groups));
+        assert!(after_unrelated.exceeded);
+        assert_eq!(after_unrelated.total, 2);
+
         let admitted = first.groups[0].page.clone();
         let omitted = if admitted == "A" { "B" } else { "A" };
         let mut page = g.load_named(omitted, PageKind::Page).unwrap().unwrap();
@@ -9076,6 +9128,26 @@ mod tests {
         assert!(!Arc::ptr_eq(&first.groups, &after.groups));
         assert!(!after.exceeded);
         assert_eq!(after.total, 1);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn advanced_cache_invalidation_preserves_nul_inside_opaque_query_source() {
+        let dir = scratch("advanced-cache-nul-query");
+        fs::write(dir.join("pages").join("P.md"), "- DONE ship\n").unwrap();
+        let g = Graph::open(&dir);
+        g.warm_cache();
+        let query = "[:find (pull ?b [*]) :where \0 (task ?b #{\"TODO\"})]";
+        let first = g.run_advanced_query_cached(query, None);
+        assert!(first.groups.is_empty());
+
+        let mut page = g.load_named("P", PageKind::Page).unwrap().unwrap();
+        page.blocks[0].raw = "TODO ship".into();
+        g.save_page(&page, page.rev.as_deref()).unwrap();
+        let warm = g.run_advanced_query_cached(query, None);
+        let fresh = Graph::open(&dir).run_advanced_query(query, None);
+        assert_eq!(warm.groups.len(), 1);
+        assert_eq!(warm.groups.len(), fresh.groups.len());
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -9092,12 +9164,22 @@ mod tests {
                 supported: true,
             });
         }
+        let oversized_key = "x".repeat(DERIVED_CACHE_MAX_ENTRY_BYTES / 2 + 1);
+        let _ = g.derived_memo(oversized_key.clone(), Vec::new);
+        let _ = g.advanced_memo(oversized_key.clone(), || crate::query::AdvancedResult {
+            groups: Vec::new(),
+            ran: Vec::new(),
+            ignored: Vec::new(),
+            supported: true,
+        });
         let derived = g.derived_cache.read().unwrap();
         let advanced = g.advanced_cache.read().unwrap();
         assert_eq!(
             derived.as_ref().unwrap().results.len(),
             DERIVED_CACHE_MAX_ENTRIES
         );
+        assert!(!derived.as_ref().unwrap().results.contains_key(&oversized_key));
+        assert!(!advanced.as_ref().unwrap().results.contains_key(&oversized_key));
         assert_eq!(
             advanced.as_ref().unwrap().results.len(),
             DERIVED_CACHE_MAX_ENTRIES
