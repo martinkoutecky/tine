@@ -1193,6 +1193,7 @@ fn dir_name(p: &std::path::Path) -> String {
 }
 /// Copy every graph text file from `src` to `dest`. Returns (copied, failed) so
 /// the caller can tell a complete snapshot from a partial one.
+#[cfg(test)]
 fn copy_md_dir(src: &std::path::Path, dest: &std::path::Path) -> (usize, usize) {
     copy_md_dir_cancellable(src, dest, &|| false)
 }
@@ -1273,6 +1274,7 @@ fn copy_md_dir_cancellable(
     (copied, failed)
 }
 
+#[cfg(test)]
 fn copy_asset_sidecars_dir(src: &std::path::Path, dest: &std::path::Path) -> (usize, usize) {
     copy_asset_sidecars_dir_cancellable(src, dest, &|| false)
 }

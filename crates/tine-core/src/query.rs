@@ -1615,28 +1615,6 @@ pub fn quick_switch(graph: &Graph, query: &str, limit: usize) -> Vec<PageEntry> 
     crate::query_plan::page_hits_to_entries(execution.hits)
 }
 
-#[cfg(test)]
-fn score_name(name: &str, q: &str) -> Option<i32> {
-    if q.is_empty() {
-        return Some(0);
-    }
-    if name.starts_with(q) {
-        Some(1000)
-    } else if name.contains(q) {
-        Some(500)
-    } else if is_subsequence(q, name) {
-        Some(100)
-    } else {
-        None
-    }
-}
-
-#[cfg(test)]
-fn is_subsequence(needle: &str, hay: &str) -> bool {
-    let mut it = hay.chars();
-    needle.chars().all(|c| it.any(|h| h == c))
-}
-
 /// Resolve a `((uuid))` block reference to a shallow identity/result row.
 /// Descendants are owned by the source page; explicit bounded consumers use
 /// `preview_block`.
