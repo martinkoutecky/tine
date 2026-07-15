@@ -228,6 +228,25 @@
         "scenario": "media.android-photo-bounded-native-import",
         "failBefore": "proven"
       }
+    },
+    {
+      "id": "REG-RESULT-SUBTREE-NONOVERLAP-001",
+      "title": "Nested query reference and resolution membership never duplicates overlapping subtrees across the bridge",
+      "family": "performance",
+      "sources": { "issues": [], "commits": [] },
+      "platforms": ["all"],
+      "layer": "core-native-ui",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "crates/tine-core/src/query.rs",
+          "src-tauri/src/commands.rs",
+          "src/components/Block.embedHierarchy.test.tsx",
+          "src/render/pagePeek.test.tsx"
+        ],
+        "scenario": "performance.result-subtree-nonoverlap-and-bounded-preview",
+        "failBefore": "proven"
+      }
     }
   ]
 }

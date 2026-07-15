@@ -39,7 +39,13 @@ function fixture(targetId: string): { page: PageDto; group: RefGroup } {
     pre_block: null,
     blocks: [target, { id: `${targetId}-host`, raw: `{{embed ((${targetId}))}}`, collapsed: false, children: [] }],
   };
-  return { page, group: { page: page.name, kind: page.kind, blocks: [target] } };
+  // Resolution/query membership is intentionally shallow; LiveRefGroup must
+  // hydrate the hierarchy once from the source page rather than rely on an
+  // overlapping subtree copy in every result row.
+  return {
+    page,
+    group: { page: page.name, kind: page.kind, blocks: [{ ...target, children: [] }] },
+  };
 }
 
 function renderFixture(targetId: string) {

@@ -205,6 +205,17 @@ pub struct RefGroup {
     pub evidence: Vec<ReferenceBlockEvidence>,
 }
 
+/// A deliberately bounded block-reference hover preview. Ordinary query,
+/// reference, and batched-resolution results carry shallow block identities;
+/// callers that genuinely need a subtree must ask for one explicitly and give
+/// it a node budget so an outline cannot be multiplied across the IPC bridge.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlockPreview {
+    pub group: RefGroup,
+    /// Number of descendant nodes omitted after `max_nodes` was reached.
+    pub truncated: usize,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReferenceKind {
@@ -560,7 +571,7 @@ const DERIVED_CACHE_MAX_ENTRIES: usize = 64;
 const DERIVED_CACHE_MAX_BYTES: usize = 64 * 1024 * 1024;
 const DERIVED_CACHE_MAX_ENTRY_BYTES: usize = 16 * 1024 * 1024;
 
-fn block_dto_bytes(block: &BlockDto) -> usize {
+pub fn block_dto_estimated_bytes(block: &BlockDto) -> usize {
     block.id.len()
         + block.raw.len()
         + block.breadcrumb.iter().map(String::len).sum::<usize>()
@@ -570,16 +581,28 @@ fn block_dto_bytes(block: &BlockDto) -> usize {
             .iter()
             .map(|(key, value)| key.len() + value.len())
             .sum::<usize>()
-        + block.children.iter().map(block_dto_bytes).sum::<usize>()
+        + block
+            .children
+            .iter()
+            .map(block_dto_estimated_bytes)
+            .sum::<usize>()
         + 128
 }
 
-fn ref_groups_bytes(groups: &[RefGroup]) -> usize {
+/// Conservative owned-memory estimate for a result payload. Tauri commands use
+/// this before serialization as a second guard beside the row cap; derived
+/// caches use the same accounting so transport and retention budgets cannot
+/// drift apart.
+pub fn ref_groups_estimated_bytes(groups: &[RefGroup]) -> usize {
     groups
         .iter()
         .map(|group| {
             group.page.len()
-                + group.blocks.iter().map(block_dto_bytes).sum::<usize>()
+                + group
+                    .blocks
+                    .iter()
+                    .map(block_dto_estimated_bytes)
+                    .sum::<usize>()
                 + group
                     .evidence
                     .iter()
@@ -2822,7 +2845,7 @@ impl Graph {
             }
         }
         let result = Arc::new(compute());
-        let result_bytes = ref_groups_bytes(result.as_slice());
+        let result_bytes = ref_groups_estimated_bytes(result.as_slice());
         if result_bytes > DERIVED_CACHE_MAX_ENTRY_BYTES {
             return result;
         }
@@ -2875,7 +2898,7 @@ impl Graph {
             }
         }
         let result = Arc::new(compute());
-        let result_bytes = ref_groups_bytes(&result.groups)
+        let result_bytes = ref_groups_estimated_bytes(&result.groups)
             + result.ran.iter().map(String::len).sum::<usize>()
             + result.ignored.iter().map(String::len).sum::<usize>();
         if result_bytes > DERIVED_CACHE_MAX_ENTRY_BYTES {
@@ -3407,7 +3430,7 @@ impl Graph {
         crate::query::templates(self)
     }
 
-    /// Resolve a `((uuid))` block reference.
+    /// Resolve a `((uuid))` block reference to its shallow identity row.
     pub fn resolve_block(&self, uuid: &str) -> Option<RefGroup> {
         crate::query::resolve_block(self, uuid)
     }
@@ -3418,6 +3441,11 @@ impl Graph {
     /// whole-graph fallback for hint misses.
     pub fn resolve_blocks(&self, uuids: &[String]) -> Vec<Option<RefGroup>> {
         crate::query::resolve_blocks(self, uuids)
+    }
+
+    /// Resolve a bounded subtree for an explicitly expanded preview/export.
+    pub fn preview_block(&self, uuid: &str, max_nodes: usize) -> Option<BlockPreview> {
+        crate::query::preview_block(self, uuid, max_nodes)
     }
 
     /// The graph's `logseq/custom.css`, if present (for user theming).
@@ -5177,6 +5205,33 @@ pub fn block_to_dto(b: &DocBlock) -> BlockDto {
         // All header facets off the one lsdoc projection (marker/priority/heading/
         // properties/scheduled/deadline) — priority is header-position only, matching
         // the chip, so a loaded block never shows a priority the edit path wouldn't.
+        marker: b.marker().map(str::to_string),
+        priority: b.priority().map(str::to_string),
+        heading_level: b.heading_level(),
+        scheduled: b.scheduled().map(str::to_string),
+        deadline: b.deadline().map(str::to_string),
+        tags: b.tags(),
+        properties: b.properties(),
+    }
+}
+
+/// Convert one block to the result-row wire shape. Result membership is about
+/// block identity, raw text, and facets; descendants belong to the source page
+/// and are hydrated once per page by live consumers. Keeping this constructor
+/// separate makes it difficult to accidentally reintroduce overlapping subtree
+/// amplification in queries, references, search, or batched resolution.
+pub fn block_to_shallow_dto(b: &DocBlock) -> BlockDto {
+    BlockDto {
+        id: if b.uuid.is_empty() {
+            Uuid::new_v4().to_string()
+        } else {
+            b.uuid.clone()
+        },
+        raw: b.raw.clone(),
+        collapsed: b.collapsed(),
+        children: Vec::new(),
+        breadcrumb: Vec::new(),
+        page_property: false,
         marker: b.marker().map(str::to_string),
         priority: b.priority().map(str::to_string),
         heading_level: b.heading_level(),

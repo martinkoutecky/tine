@@ -1096,7 +1096,15 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
     const block = grp()?.blocks[0];
     return block ? annotationInfoForBlock(block) : null;
   };
-  const capped = createMemo(() => capBlockTree(grp()?.blocks ?? [], PEEK_BLOCK_CAP));
+  // Summary resolution stays shallow and graph-lifetime cached. Fetch the
+  // descendant tree only after the hover dwell, through a backend operation
+  // that applies the cap before DTO allocation and IPC serialization.
+  const [preview] = createResource(
+    () => (peek.open() && grp() ? `${props.id}\0${graphEpoch()}` : null),
+    () => backend().previewBlock(props.id, PEEK_BLOCK_CAP),
+  );
+  const capped = createMemo(() => capBlockTree(preview()?.group.blocks ?? [], PEEK_BLOCK_CAP));
+  const previewTruncated = () => (preview()?.truncated ?? 0) + capped().truncated;
   return (
     <>
       <span
@@ -1153,14 +1161,14 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
           <InlineText text={text()!} format={fmt()} />
         </Show>
       </span>
-      <Show when={peek.open() && grp() && capped().blocks.length > 0}>
+      <Show when={peek.open() && preview() && capped().blocks.length > 0}>
         <PeekPopup
           anchor={() => anchorEl}
-          title={<span class="peek-popup-title-name">{grp()!.page}</span>}
+          title={<span class="peek-popup-title-name">{preview()!.group.page}</span>}
           blocks={() => capped().blocks}
-          page={grp()!.page}
-          pageKind={grp()!.kind}
-          truncatedCount={() => capped().truncated}
+          page={preview()!.group.page}
+          pageKind={preview()!.group.kind}
+          truncatedCount={previewTruncated}
           onPointerEnter={peek.popupEnter}
           onPointerLeave={peek.popupLeave}
         />

@@ -7,7 +7,7 @@
 //! durable query workspace can grow into later.
 
 use crate::doc::DocBlock;
-use crate::model::{block_to_dto, BlockDto, Graph, PageEntry, PageKind};
+use crate::model::{BlockDto, Graph, PageEntry, PageKind};
 use crate::refs;
 use crate::search_query::{Matcher, Term};
 use regex::Regex;
@@ -1077,7 +1077,10 @@ fn execute_blocks(
                     let matched =
                         eval_expr(plan, &branch.predicate, TextField::VisibleContent, visible)
                             .expect("fast and evidence evaluators must agree");
-                    let mut dto = block_to_dto(block);
+                    // Search hits are result identities, not independent copies
+                    // of their entire descendant trees. The source page owns the
+                    // hierarchy and live consumers hydrate it once per page.
+                    let mut dto = crate::model::block_to_shallow_dto(block);
                     dto.breadcrumb = path.iter().map(|ancestor| crumb_line(ancestor)).collect();
                     hits.push(QueryHit::Block {
                         page: entry.name.clone(),

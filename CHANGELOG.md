@@ -10,6 +10,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Nested query, reference, and block-resolution results no longer amplify
+  overlapping subtrees quadratically.** Matching membership now follows
+  Logseq's top-level-result rule and crosses the native bridge as shallow block
+  identities; live pages hydrate hierarchy once, hover/export subtree requests
+  are explicitly bounded, and oversized result payloads stop with a useful
+  narrowing message before serialization.
 - **Backup restore stays inside the selected graph under symlink and directory
   races.** Recovery areas and live-file publication are now bound to opened
   directory capabilities, use create-without-replace semantics, and refuse a

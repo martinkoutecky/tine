@@ -33,6 +33,15 @@ match evidence, diagnostics, and optional explanation data. Existing query DSL
 defaults to block targets and non-fuzzy matching. Ctrl+K may execute a combined
 page/block plan, but commands and page creation remain outside the query engine.
 
+Block-result membership is identity-based and non-overlapping. Matching follows
+Logseq OG's `tree/filter-top-level-blocks`: if a matching block contains another
+match, the ancestor is the result root and the descendant remains in its live
+subtree rather than becoming a second overlapping root. Query, reference,
+search, and batched block-resolution DTOs are shallow; list/embed renderers load
+the source page once to obtain hierarchy. A consumer that genuinely needs an
+owned subtree (hover or export) must use an explicit pre-serialization node
+budget. Native bridge commands also enforce total row and byte budgets.
+
 Search workspaces are virtual, graph-scoped, device-local routes that persist the
 source expression rather than a result snapshot. They create no graph file until
 the user names one. Naming performs a collision check, materializes one normal
@@ -56,3 +65,7 @@ on-demand explanation/count/timing work. The first fuzzy implementation is page
 names only; fuzzy block content requires indexing or prefiltering before it can be
 considered. Arbitrary scripting, bulk mutation, commands, and page creation do
 not enter this model.
+
+This result-shape contract is part of the performance model, not an optional
+serialization optimization. Reintroducing recursive DTOs for every result would
+make nested matches quadratic and would also multiply retained frontend state.

@@ -291,6 +291,16 @@ export function QueryMacro(props: {
       return sharedQueryResult(scope, `simple\0${requestKey}`, () => backend().runQuery(form()));
     }
   );
+  const groupsError = () => {
+    const error = groups.error;
+    if (!error) return null;
+    const message = error instanceof Error ? error.message : String(error);
+    const oversized = message.startsWith("result-too-large:");
+    return {
+      lead: oversized ? "Query result is too large to display safely:" : "Query couldn't be loaded:",
+      message: message.replace(/^result-too-large:\s*/, ""),
+    };
+  };
   // Presentation never changes membership. Canonical `(search "…")` queries
   // already carry page/block hits and match evidence from QueryPlan. Ordinary
   // DSL queries return RefGroups, so adapt those same blocks into evidence-free
@@ -508,6 +518,13 @@ export function QueryMacro(props: {
                 the ran/ignored note above shows which clauses took. */}
             <Show when={props.blockId && !isAdvanced()}>
               <QueryBuilder dsl={form} onChange={applyDsl} blockId={props.blockId} />
+            </Show>
+            <Show when={groupsError()}>
+              {(message) => (
+                <div class="query-unsupported" role="alert">
+                  {message().lead} {message().message}
+                </div>
+              )}
             </Show>
             <Show when={!collapsed()}>
               <Show

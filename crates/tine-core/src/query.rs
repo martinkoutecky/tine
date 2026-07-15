@@ -6,8 +6,9 @@
 use crate::date::JournalDate;
 use crate::doc::{DocBlock, Document};
 use crate::model::{
-    block_to_dto, BlockDto, Format, Graph, PageEntry, PageKind, RefGroup, ReferenceBlockEvidence,
-    ReferenceDiagnosticTrace, ReferenceDiagnostics, ReferenceKind, TemplateDto,
+    block_to_shallow_dto, BlockDto, BlockPreview, Format, Graph, PageEntry, PageKind, RefGroup,
+    ReferenceBlockEvidence, ReferenceDiagnosticTrace, ReferenceDiagnostics, ReferenceKind,
+    TemplateDto,
 };
 use crate::refs;
 use crate::search_query::Matcher;
@@ -25,16 +26,24 @@ fn walk<'a>(blocks: &'a [DocBlock], f: &mut impl FnMut(&'a DocBlock)) {
     }
 }
 
-/// Walk depth-first, passing each block's ancestor chain (outermost first).
-fn walk_path<'a>(
+/// Collect the outermost matches in document order. This mirrors Logseq OG's
+/// `tree/filter-top-level-blocks`: once a block is a result, matching descendants
+/// remain part of that block's live subtree instead of becoming overlapping
+/// result roots of their own. `classify` is evaluated exactly once per visited
+/// candidate and can carry evidence alongside the match.
+fn collect_top_level_path<'a, T>(
     blocks: &'a [DocBlock],
     path: &mut Vec<&'a DocBlock>,
-    f: &mut impl FnMut(&'a DocBlock, &[&'a DocBlock]),
+    classify: &mut impl FnMut(&'a DocBlock, &[&'a DocBlock]) -> Option<T>,
+    out: &mut Vec<T>,
 ) {
-    for b in blocks {
-        f(b, path);
-        path.push(b);
-        walk_path(&b.children, path, f);
+    for block in blocks {
+        if let Some(item) = classify(block, path) {
+            out.push(item);
+            continue;
+        }
+        path.push(block);
+        collect_top_level_path(&block.children, path, classify, out);
         path.pop();
     }
 }
@@ -82,13 +91,18 @@ fn collect(
                 }
             }
             let mut path: Vec<&DocBlock> = Vec::new();
-            walk_path(&doc.roots, &mut path, &mut |b, anc| {
-                if keep(b) {
-                    let mut dto = block_to_dto(b);
-                    dto.breadcrumb = anc.iter().map(|a| crumb_line(a)).collect();
-                    matched.push(dto);
-                }
-            });
+            collect_top_level_path(
+                &doc.roots,
+                &mut path,
+                &mut |b, anc| {
+                    keep(b).then(|| {
+                        let mut dto = block_to_shallow_dto(b);
+                        dto.breadcrumb = anc.iter().map(|a| crumb_line(a)).collect();
+                        dto
+                    })
+                },
+                &mut matched,
+            );
             if !matched.is_empty() {
                 groups.push((
                     entry.date_key,
@@ -290,7 +304,7 @@ fn collect_reference_occurrences(
                 {
                     if let Some(hit) = block_reference_evidence(&block, canonical, names_norm, kind)
                     {
-                        let mut dto = block_to_dto(&block);
+                        let mut dto = block_to_shallow_dto(&block);
                         dto.page_property = true;
                         blocks.push(dto);
                         evidence.push(hit);
@@ -301,17 +315,26 @@ fn collect_reference_occurrences(
                 }
             }
             let mut path = Vec::new();
-            walk_path(&doc.roots, &mut path, &mut |block, ancestors| {
-                if let Some(hit) = block_reference_evidence(block, canonical, names_norm, kind) {
-                    let mut dto = block_to_dto(block);
-                    dto.breadcrumb = ancestors
-                        .iter()
-                        .map(|ancestor| crumb_line(ancestor))
-                        .collect();
-                    blocks.push(dto);
-                    evidence.push(hit);
-                }
-            });
+            let mut found = Vec::new();
+            collect_top_level_path(
+                &doc.roots,
+                &mut path,
+                &mut |block, ancestors| {
+                    block_reference_evidence(block, canonical, names_norm, kind).map(|hit| {
+                        let mut dto = block_to_shallow_dto(block);
+                        dto.breadcrumb = ancestors
+                            .iter()
+                            .map(|ancestor| crumb_line(ancestor))
+                            .collect();
+                        (dto, hit)
+                    })
+                },
+                &mut found,
+            );
+            for (dto, hit) in found {
+                blocks.push(dto);
+                evidence.push(hit);
+            }
             if !blocks.is_empty() {
                 groups.push((
                     entry.date_key,
@@ -484,21 +507,22 @@ fn run_pred(graph: &Graph, pred: &Pred, opts: &QueryOpts) -> Vec<RefGroup> {
                 page_props: &page_props,
                 page_tags: &page_tags,
             };
-            let mut matched: Vec<&DocBlock> = Vec::new();
-            walk(&doc.roots, &mut |b| {
-                if pred.eval(b, &ctx) {
-                    matched.push(b);
-                }
-            });
+            let mut matched: Vec<BlockDto> = Vec::new();
+            let mut path = Vec::new();
+            collect_top_level_path(
+                &doc.roots,
+                &mut path,
+                &mut |block, _| pred.eval(block, &ctx).then(|| block_to_shallow_dto(block)),
+                &mut matched,
+            );
             if !matched.is_empty() {
                 if want_recency {
                     recency.insert(entry.name.clone(), page_recency_secs(entry));
                 }
-                let blocks: Vec<BlockDto> = matched.into_iter().map(block_to_dto).collect();
                 groups.push(RefGroup {
                     page: entry.name.clone(),
                     kind: entry.kind,
-                    blocks,
+                    blocks: matched,
                     evidence: Vec::new(),
                 });
             }
@@ -1307,7 +1331,9 @@ fn is_subsequence(needle: &str, hay: &str) -> bool {
     needle.chars().all(|c| it.any(|h| h == c))
 }
 
-/// Resolve a `((uuid))` block reference to its block (with subtree).
+/// Resolve a `((uuid))` block reference to a shallow identity/result row.
+/// Descendants are owned by the source page; explicit bounded consumers use
+/// `preview_block`.
 pub fn resolve_block(graph: &Graph, uuid: &str) -> Option<RefGroup> {
     // Jump to the owning page via the uuid index, falling back to a full scan if
     // the hint is missing or stale (so a lagging index can never give a wrong
@@ -1325,7 +1351,7 @@ pub fn resolve_block(graph: &Graph, uuid: &str) -> Option<RefGroup> {
             found.map(|b| RefGroup {
                 page: entry.name.clone(),
                 kind: entry.kind,
-                blocks: vec![block_to_dto(b)],
+                blocks: vec![block_to_shallow_dto(b)],
                 evidence: Vec::new(),
             })
         };
@@ -1411,6 +1437,80 @@ pub fn resolve_blocks(graph: &Graph, uuids: &[String]) -> Vec<Option<RefGroup>> 
         .collect()
 }
 
+fn subtree_node_count(root: &DocBlock) -> usize {
+    let mut count = 0usize;
+    let mut stack = vec![root];
+    while let Some(block) = stack.pop() {
+        count = count.saturating_add(1);
+        stack.extend(block.children.iter());
+    }
+    count
+}
+
+fn block_to_bounded_dto(block: &DocBlock, remaining: &mut usize) -> Option<BlockDto> {
+    if *remaining == 0 {
+        return None;
+    }
+    *remaining -= 1;
+    let mut dto = block_to_shallow_dto(block);
+    for child in &block.children {
+        let Some(child_dto) = block_to_bounded_dto(child, remaining) else {
+            break;
+        };
+        dto.children.push(child_dto);
+    }
+    Some(dto)
+}
+
+/// Resolve one block for a hover/export consumer that explicitly needs a
+/// subtree. Unlike ordinary resolution this operation is bounded before DTO
+/// allocation and serialization; `truncated` reports the omitted node count.
+pub fn preview_block(graph: &Graph, uuid: &str, max_nodes: usize) -> Option<BlockPreview> {
+    let max_nodes = max_nodes.max(1);
+    let hint = graph.block_page_hint(uuid);
+    graph.with_pages(|pages| {
+        let find_in = |entry: &PageEntry, doc: &Document| -> Option<BlockPreview> {
+            let mut found: Option<&DocBlock> = None;
+            walk(&doc.roots, &mut |block| {
+                if found.is_none()
+                    && (block.uuid == uuid || block.property("id").as_deref() == Some(uuid))
+                {
+                    found = Some(block);
+                }
+            });
+            found.map(|block| {
+                let total = subtree_node_count(block);
+                let mut remaining = max_nodes;
+                let dto = block_to_bounded_dto(block, &mut remaining)
+                    .expect("a positive preview budget always emits its root");
+                let emitted = max_nodes - remaining;
+                BlockPreview {
+                    group: RefGroup {
+                        page: entry.name.clone(),
+                        kind: entry.kind,
+                        blocks: vec![dto],
+                        evidence: Vec::new(),
+                    },
+                    truncated: total.saturating_sub(emitted),
+                }
+            })
+        };
+        if let Some(hint) = &hint {
+            if let Some((entry, doc)) = pages.iter().find(|(entry, _)| &entry.name == hint) {
+                if let Some(preview) = find_in(entry, doc) {
+                    return Some(preview);
+                }
+            }
+        }
+        for (entry, doc) in pages {
+            if let Some(preview) = find_in(entry, doc) {
+                return Some(preview);
+            }
+        }
+        None
+    })
+}
+
 /// Walk `doc` once, resolving any block whose uuid (or persisted `id::`) is a
 /// still-unresolved id in `want`. First block in walk order wins per id (matches
 /// `resolve_block`).
@@ -1438,7 +1538,7 @@ fn resolve_ids_in_page<'a>(
                 RefGroup {
                     page: entry.name.clone(),
                     kind: entry.kind,
-                    blocks: vec![block_to_dto(b)],
+                    blocks: vec![block_to_shallow_dto(b)],
                     evidence: Vec::new(),
                 },
             );
@@ -2803,6 +2903,80 @@ mod tests {
         assert!(!serde_json::to_string(&diagnostics)
             .unwrap()
             .contains("launcher-ranking"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Regression for the pre-0.6 performance audit: recursive `block_to_dto`
+    /// used to clone a nested suffix for every matching/query/reference id,
+    /// producing N(N+1)/2 wire nodes (and ~1.8 GiB RSS at N=2,000). OG first
+    /// filters result membership to top-level matches; ordinary/batch resolution
+    /// is shallow, and an explicit preview is bounded before allocation.
+    #[test]
+    fn nested_result_contract_is_non_overlapping_and_preview_is_bounded() {
+        use std::fs;
+
+        fn collect_ids(blocks: &[BlockDto], out: &mut Vec<String>) {
+            for block in blocks {
+                out.push(block.id.clone());
+                collect_ids(&block.children, out);
+            }
+        }
+        fn dto_nodes(blocks: &[BlockDto]) -> usize {
+            blocks
+                .iter()
+                .map(|block| 1 + dto_nodes(&block.children))
+                .sum()
+        }
+
+        const DEPTH: usize = 512;
+        let dir = std::env::temp_dir().join(format!(
+            "tine-non-overlap-results-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        let nested = (0..DEPTH)
+            .map(|depth| format!("{}- TODO [[Target]] node {depth}\n", "  ".repeat(depth)))
+            .collect::<String>();
+        fs::write(dir.join("pages").join("Nested.md"), nested).unwrap();
+
+        let graph = Graph::open(&dir);
+        graph.warm_cache();
+        let entry = graph
+            .list_pages()
+            .into_iter()
+            .find(|entry| entry.name == "Nested")
+            .unwrap();
+        let page = graph.load_page(&entry).unwrap();
+        let mut ids = Vec::new();
+        collect_ids(&page.blocks, &mut ids);
+        assert_eq!(ids.len(), DEPTH);
+
+        let query = run_query(&graph, "(task TODO)");
+        assert_eq!(query.iter().map(|g| g.blocks.len()).sum::<usize>(), 1);
+        assert_eq!(dto_nodes(&query[0].blocks), 1, "query membership DTOs stay shallow");
+
+        let linked = backlinks(&graph, "Target");
+        assert_eq!(linked.iter().map(|g| g.blocks.len()).sum::<usize>(), 1);
+        assert_eq!(dto_nodes(&linked[0].blocks), 1, "reference rows stay shallow");
+
+        let resolved = resolve_blocks(&graph, &ids);
+        assert_eq!(resolved.len(), DEPTH);
+        assert_eq!(
+            resolved
+                .iter()
+                .flatten()
+                .map(|group| dto_nodes(&group.blocks))
+                .sum::<usize>(),
+            DEPTH,
+            "N requested nested ids must produce N DTO nodes, not N(N+1)/2"
+        );
+
+        let preview = preview_block(&graph, &ids[0], 50).unwrap();
+        assert_eq!(dto_nodes(&preview.group.blocks), 50);
+        assert_eq!(preview.truncated, DEPTH - 50);
+
         let _ = fs::remove_dir_all(&dir);
     }
 

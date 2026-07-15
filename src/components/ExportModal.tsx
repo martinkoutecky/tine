@@ -61,6 +61,8 @@ const TOGGLES: { key: keyof ExportOptions; label: string; sourceOnly?: boolean; 
 ];
 
 const QUERY_EXPORT_BLOCK_LIMIT = 50;
+const QUERY_EXPORT_NODE_LIMIT = 2_000;
+const EMBED_EXPORT_NODE_LIMIT = 2_000;
 const ADVANCED_RE = /\[\s*:find|:where|:find/;
 
 const BUILT_IN_MACRO_NAMES = new Set([
@@ -137,17 +139,71 @@ function refGroupToExportNodes(group: RefGroup): ExportNode[] {
   return blockDtosToExportNodes(group.blocks, formatForPage(group.page));
 }
 
-function queryGroupsToExportNodes(groups: RefGroup[]): { nodes: ExportNode[]; shown: number; total: number } {
+type PageReadCache = Map<string, Promise<PageDto | null>>;
+
+function cachedPage(cache: PageReadCache, page: string, kind: "page" | "journal"): Promise<PageDto | null> {
+  const key = `${kind}\0${page}`;
+  let pending = cache.get(key);
+  if (!pending) {
+    pending = backend().getPage(page, kind);
+    cache.set(key, pending);
+  }
+  return pending;
+}
+
+function indexPageBlocks(blocks: BlockDto[]): Map<string, BlockDto> {
+  const byId = new Map<string, BlockDto>();
+  const stack = [...blocks];
+  while (stack.length) {
+    const block = stack.pop()!;
+    byId.set(block.id, block);
+    stack.push(...block.children);
+  }
+  return byId;
+}
+
+function copyTreeWithinBudget(block: BlockDto, remaining: { nodes: number; omitted: number }): BlockDto | null {
+  if (remaining.nodes <= 0) {
+    const stack = [block];
+    while (stack.length) {
+      const current = stack.pop()!;
+      remaining.omitted++;
+      stack.push(...current.children);
+    }
+    return null;
+  }
+  remaining.nodes--;
+  const children: BlockDto[] = [];
+  for (const child of block.children) {
+    const copied = copyTreeWithinBudget(child, remaining);
+    if (copied) children.push(copied);
+  }
+  return { ...block, children };
+}
+
+async function queryGroupsToExportNodes(
+  groups: RefGroup[],
+  pages: PageReadCache,
+): Promise<{ nodes: ExportNode[]; shown: number; total: number; omittedNodes: number }> {
   let shown = 0;
+  let selected = 0;
   let total = 0;
   const nodes: ExportNode[] = [];
+  const remaining = { nodes: QUERY_EXPORT_NODE_LIMIT, omitted: 0 };
   for (const g of groups) {
+    const page = await cachedPage(pages, g.page, g.kind);
+    const byId = page ? indexPageBlocks(page.blocks) : new Map<string, BlockDto>();
     const kept: BlockDto[] = [];
     for (const block of g.blocks) {
       total++;
-      if (shown < QUERY_EXPORT_BLOCK_LIMIT) {
-        kept.push(block);
-        shown++;
+      if (selected < QUERY_EXPORT_BLOCK_LIMIT) {
+        selected++;
+        const source = byId.get(block.id) ?? block;
+        const copied = copyTreeWithinBudget(source, remaining);
+        if (copied) {
+          kept.push(copied);
+          shown++;
+        }
       }
     }
     if (kept.length) {
@@ -158,7 +214,7 @@ function queryGroupsToExportNodes(groups: RefGroup[]): { nodes: ExportNode[]; sh
       });
     }
   }
-  return { nodes, shown, total };
+  return { nodes, shown, total, omittedNodes: remaining.omitted };
 }
 
 function literalBuiltInMacroText(name: string, args: string[]): string | null {
@@ -242,7 +298,11 @@ function collectNodeTargets(nodes: ExportNode[], targets: WarmTargets): void {
   }
 }
 
-async function warmMacro(macro: { name: string; args: string[] }, warmed: Map<string, WarmedMacro>): Promise<void> {
+async function warmMacro(
+  macro: { name: string; args: string[] },
+  warmed: Map<string, WarmedMacro>,
+  pages: PageReadCache,
+): Promise<void> {
   const key = macroKey(macro.name, macro.args);
   const name = macro.name.toLowerCase();
   const arg = macroArg(macro.args);
@@ -250,13 +310,19 @@ async function warmMacro(macro: { name: string; args: string[] }, warmed: Map<st
     if (name === "embed") {
       const uuid = blockRefTarget(arg);
       if (uuid) {
-        const group = await resolveBlockBatched(uuid);
-        if (group) warmed.set(key, { kind: "nodes", nodes: refGroupToExportNodes(group) });
+        const preview = await backend().previewBlock(uuid, EMBED_EXPORT_NODE_LIMIT);
+        if (preview) warmed.set(key, {
+          kind: "nodes",
+          nodes: refGroupToExportNodes(preview.group),
+          truncation: preview.truncated > 0
+            ? `[embed truncated: ${preview.truncated} descendant blocks omitted]`
+            : undefined,
+        });
         return;
       }
       const page = pageRefTarget(arg);
       if (page) {
-        const dto = await backend().getPage(page, "page");
+        const dto = await cachedPage(pages, page, "page");
         if (dto) warmed.set(key, { kind: "nodes", nodes: pageToExportNodes(dto) });
         return;
       }
@@ -264,14 +330,16 @@ async function warmMacro(macro: { name: string; args: string[] }, warmed: Map<st
     if (name === "query") {
       const { form } = splitTrailingMap(arg);
       const groups = ADVANCED_RE.test(form) ? (await backend().runAdvancedQuery(form)).groups : await backend().runQuery(form);
-      const result = queryGroupsToExportNodes(groups);
+      const result = await queryGroupsToExportNodes(groups, pages);
       warmed.set(key, {
         kind: "nodes",
         nodes: result.nodes,
         emptyText: "No results",
         truncation:
-          result.total > result.shown
-            ? `[query truncated: showing first ${result.shown} of ${result.total} results]`
+          result.total > result.shown || result.omittedNodes > 0
+            ? `[query truncated: showing first ${result.shown} of ${result.total} results${
+              result.omittedNodes > 0 ? `; ${result.omittedNodes} descendant blocks omitted` : ""
+            }]`
             : undefined,
       });
       return;
@@ -285,9 +353,10 @@ async function warmMacro(macro: { name: string; args: string[] }, warmed: Map<st
 
 async function warmExportResolutions(nodes: ExportNode[], warmed: Map<string, WarmedMacro>): Promise<void> {
   const targets: WarmTargets = { refs: new Set(), macros: new Map() };
+  const pages: PageReadCache = new Map();
   collectNodeTargets(nodes, targets);
   await Promise.all([...targets.refs].map((uuid) => resolveBlockBatched(uuid).catch(() => null)));
-  await Promise.all([...targets.macros.values()].map((macro) => warmMacro(macro, warmed)));
+  await Promise.all([...targets.macros.values()].map((macro) => warmMacro(macro, warmed, pages)));
 }
 
 // "Copy / Export" modal — live-preview text export of a block subtree or a

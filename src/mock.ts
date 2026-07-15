@@ -3,7 +3,7 @@
 // backend's shape so the UI behaves identically.
 
 import type { Backend, GpuEnv, DebugInfo } from "./backend";
-import type { BlockDto, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PdfState, QueryExecution, RefGroup } from "./types";
+import type { BlockDto, BlockPreview, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PdfState, QueryExecution, RefGroup } from "./types";
 import { SAMPLE_PDF_B64 } from "./sample-pdf";
 import { hlsPageName } from "./pdf";
 import { MARKER_RE } from "./markers";
@@ -983,20 +983,57 @@ export function mockBackend(): Backend {
         .map(mockPageEntry);
     },
     async resolveBlock(uuid: string): Promise<RefGroup | null> {
+      const find = (blocks: BlockDto[]): BlockDto | null => {
+        for (const block of blocks) {
+          if (block.raw.includes(`id:: ${uuid}`)) return block;
+          const child = find(block.children);
+          if (child) return child;
+        }
+        return null;
+      };
       for (const p of all) {
-        let found: BlockDto | null = null;
-        const walk = (bs: BlockDto[]) =>
-          bs.forEach((b) => {
-            if (!found && b.raw.includes(`id:: ${uuid}`)) found = b;
-            walk(b.children);
-          });
-        walk(p.blocks);
-        if (found) return { page: p.name, kind: p.kind, blocks: [found] };
+        const found = find(p.blocks);
+        if (found) return { page: p.name, kind: p.kind, blocks: [{ ...found, children: [] }] };
       }
       return null;
     },
     async resolveBlocks(uuids: string[]): Promise<(RefGroup | null)[]> {
       return Promise.all(uuids.map((u) => this.resolveBlock(u)));
+    },
+    async previewBlock(uuid: string, maxNodes: number): Promise<BlockPreview | null> {
+      let group: RefGroup | null = null;
+      const find = (blocks: BlockDto[]): BlockDto | null => {
+        for (const block of blocks) {
+          if (block.id === uuid || block.raw.includes(`id:: ${uuid}`)) return block;
+          const child = find(block.children);
+          if (child) return child;
+        }
+        return null;
+      };
+      for (const page of all) {
+        const found = find(page.blocks);
+        if (found) {
+          group = { page: page.name, kind: page.kind, blocks: [found] };
+          break;
+        }
+      }
+      if (!group) return null;
+      let emitted = 0;
+      let truncated = 0;
+      const count = (blocks: BlockDto[]): number => blocks.reduce((n, b) => n + 1 + count(b.children), 0);
+      const copy = (blocks: BlockDto[]): BlockDto[] => {
+        const out: BlockDto[] = [];
+        for (const block of blocks) {
+          if (emitted >= Math.max(1, maxNodes)) {
+            truncated += count([block]);
+            continue;
+          }
+          emitted++;
+          out.push({ ...block, children: copy(block.children) });
+        }
+        return out;
+      };
+      return { group: { ...group, blocks: copy(group.blocks) }, truncated };
     },
     async readAsset(name: string, maxBytes?: number): Promise<Uint8Array> {
       void maxBytes;

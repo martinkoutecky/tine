@@ -6,6 +6,96 @@ use crate::state::{refresh_graph, slot_for_context, with_graph, GraphContext};
 use std::sync::Arc;
 use tine_core::model::{PageDto, PageEntry, PageKind, RefGroup};
 
+const RESULT_BRIDGE_MAX_ROWS: usize = 20_000;
+const RESULT_BRIDGE_MAX_BYTES: usize = 32 * 1024 * 1024;
+
+fn enforce_result_bridge_budget(groups: &[RefGroup]) -> Result<(), String> {
+    let rows = groups.iter().map(|group| group.blocks.len()).sum::<usize>();
+    let bytes = tine_core::model::ref_groups_estimated_bytes(groups);
+    if rows > RESULT_BRIDGE_MAX_ROWS || bytes > RESULT_BRIDGE_MAX_BYTES {
+        return Err(format!(
+            "result-too-large: {rows} matching blocks (~{bytes} bytes); narrow the query or add (sample N) (limits: {RESULT_BRIDGE_MAX_ROWS} blocks / {RESULT_BRIDGE_MAX_BYTES} bytes)"
+        ));
+    }
+    Ok(())
+}
+
+fn enforce_query_execution_budget(
+    execution: &tine_core::query_plan::QueryExecution,
+) -> Result<(), String> {
+    use tine_core::query_plan::QueryHit;
+    let bytes = execution.hits.iter().fold(0usize, |total, hit| {
+        total.saturating_add(match hit {
+            QueryHit::Page {
+                page,
+                display_text,
+                evidence,
+                matched_alias,
+                ..
+            } => {
+                page.name.len()
+                    + page.rel_path.len()
+                    + display_text.len()
+                    + matched_alias.as_ref().map_or(0, String::len)
+                    + evidence.len() * 128
+                    + 256
+            }
+            QueryHit::Block {
+                page,
+                block,
+                display_text,
+                evidence,
+                ..
+            } => {
+                page.len()
+                    + tine_core::model::block_dto_estimated_bytes(block)
+                    + display_text.len()
+                    + evidence.len() * 128
+                    + 256
+            }
+        })
+    });
+    if execution.hits.len() > RESULT_BRIDGE_MAX_ROWS || bytes > RESULT_BRIDGE_MAX_BYTES {
+        return Err(format!(
+            "result-too-large: {} search hits (~{bytes} bytes); narrow the search (limits: {RESULT_BRIDGE_MAX_ROWS} hits / {RESULT_BRIDGE_MAX_BYTES} bytes)",
+            execution.hits.len()
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod result_bridge_budget_tests {
+    use super::{enforce_result_bridge_budget, RESULT_BRIDGE_MAX_BYTES, RESULT_BRIDGE_MAX_ROWS};
+    use tine_core::{BlockDto, PageKind, RefGroup};
+
+    fn group(blocks: Vec<BlockDto>) -> RefGroup {
+        RefGroup {
+            page: "Budget".into(),
+            kind: PageKind::Page,
+            blocks,
+            evidence: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn rejects_oversized_result_count_before_ipc() {
+        let groups = [group(vec![BlockDto::default(); RESULT_BRIDGE_MAX_ROWS + 1])];
+        assert!(enforce_result_bridge_budget(&groups)
+            .unwrap_err()
+            .starts_with("result-too-large:"));
+    }
+
+    #[test]
+    fn rejects_oversized_result_bytes_before_ipc() {
+        let mut block = BlockDto::default();
+        block.raw = "x".repeat(RESULT_BRIDGE_MAX_BYTES + 1);
+        assert!(enforce_result_bridge_budget(&[group(vec![block])])
+            .unwrap_err()
+            .starts_with("result-too-large:"));
+    }
+}
+
 /// Write a PNG image to the OS clipboard. The lightbox encodes the shown image to
 /// PNG and sends the bytes. On Linux we prefer `wl-copy`/`xclip` (see above) and
 /// fall back to the Tauri clipboard plugin; elsewhere the plugin is reliable.
@@ -177,7 +267,11 @@ pub(crate) fn get_backlinks(
     name: String,
     state: GraphContext<'_>,
 ) -> Result<Arc<Vec<RefGroup>>, String> {
-    with_graph(&state, |g| Ok(g.backlinks(&name)))
+    with_graph(&state, |g| {
+        let groups = g.backlinks(&name);
+        enforce_result_bridge_budget(&groups)?;
+        Ok(groups)
+    })
 }
 
 #[tauri::command]
@@ -185,7 +279,11 @@ pub(crate) fn get_unlinked_refs(
     name: String,
     state: GraphContext<'_>,
 ) -> Result<Arc<Vec<RefGroup>>, String> {
-    with_graph(&state, |g| Ok(g.unlinked_refs(&name)))
+    with_graph(&state, |g| {
+        let groups = g.unlinked_refs(&name);
+        enforce_result_bridge_budget(&groups)?;
+        Ok(groups)
+    })
 }
 
 /// `block uuid → # of referrers` over the whole graph (drives the per-block
@@ -208,7 +306,11 @@ pub(crate) fn block_referrers(
     uuid: String,
     state: GraphContext<'_>,
 ) -> Result<Arc<Vec<RefGroup>>, String> {
-    with_graph(&state, |g| Ok(g.block_referrers(&uuid)))
+    with_graph(&state, |g| {
+        let groups = g.block_referrers(&uuid);
+        enforce_result_bridge_budget(&groups)?;
+        Ok(groups)
+    })
 }
 
 #[tauri::command]
@@ -255,7 +357,11 @@ pub(crate) fn run_query(
     query: String,
     state: GraphContext<'_>,
 ) -> Result<Arc<Vec<RefGroup>>, String> {
-    with_graph(&state, |g| Ok(g.run_query(&query)))
+    with_graph(&state, |g| {
+        let groups = g.run_query(&query);
+        enforce_result_bridge_budget(&groups)?;
+        Ok(groups)
+    })
 }
 
 #[tauri::command]
@@ -268,12 +374,16 @@ pub(crate) async fn run_graph_search(
     state: GraphContext<'_>,
 ) -> Result<tine_core::query_plan::QueryExecution, String> {
     let graph = Arc::clone(&slot_for_context(&state)?.graph);
-    tauri::async_runtime::spawn_blocking(move || match lane.as_deref() {
+    let page_limit = page_limit.min(RESULT_BRIDGE_MAX_ROWS);
+    let block_limit = block_limit.min(RESULT_BRIDGE_MAX_ROWS - page_limit);
+    let execution = tauri::async_runtime::spawn_blocking(move || match lane.as_deref() {
         Some(lane) => graph.run_graph_search_latest(lane, &source, page_limit, block_limit, explain),
         None => graph.run_graph_search(&source, page_limit, block_limit, explain),
     })
     .await
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+    enforce_query_execution_budget(&execution)?;
+    Ok(execution)
 }
 
 #[tauri::command]
@@ -283,7 +393,9 @@ pub(crate) fn run_advanced_query(
     state: GraphContext<'_>,
 ) -> Result<tine_core::query::AdvancedResult, String> {
     with_graph(&state, |g| {
-        Ok(g.run_advanced_query(&query, current_page.as_deref()))
+        let result = g.run_advanced_query(&query, current_page.as_deref());
+        enforce_result_bridge_budget(&result.groups)?;
+        Ok(result)
     })
 }
 
@@ -406,12 +518,15 @@ pub(crate) async fn search(
     state: GraphContext<'_>,
 ) -> Result<Vec<RefGroup>, String> {
     let graph = Arc::clone(&slot_for_context(&state)?.graph);
-    tauri::async_runtime::spawn_blocking(move || match lane.as_deref() {
+    let limit = limit.min(RESULT_BRIDGE_MAX_ROWS);
+    let groups = tauri::async_runtime::spawn_blocking(move || match lane.as_deref() {
         Some(lane) => graph.search_latest(lane, &query, limit),
         None => graph.search(&query, limit),
     })
     .await
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+    enforce_result_bridge_budget(&groups)?;
+    Ok(groups)
 }
 
 #[tauri::command]
@@ -440,7 +555,13 @@ pub(crate) fn resolve_block(
     uuid: String,
     state: GraphContext<'_>,
 ) -> Result<Option<RefGroup>, String> {
-    with_graph(&state, |g| Ok(g.resolve_block(&uuid)))
+    with_graph(&state, |g| {
+        let group = g.resolve_block(&uuid);
+        if let Some(group) = &group {
+            enforce_result_bridge_budget(std::slice::from_ref(group))?;
+        }
+        Ok(group)
+    })
 }
 
 #[tauri::command]
@@ -448,7 +569,33 @@ pub(crate) fn resolve_blocks(
     uuids: Vec<String>,
     state: GraphContext<'_>,
 ) -> Result<Vec<Option<RefGroup>>, String> {
-    with_graph(&state, |g| Ok(g.resolve_blocks(&uuids)))
+    if uuids.len() > RESULT_BRIDGE_MAX_ROWS {
+        return Err(format!(
+            "result-too-large: {} requested block references (limit: {RESULT_BRIDGE_MAX_ROWS})",
+            uuids.len()
+        ));
+    }
+    with_graph(&state, |g| {
+        let groups = g.resolve_blocks(&uuids);
+        let present = groups.iter().flatten().cloned().collect::<Vec<_>>();
+        enforce_result_bridge_budget(&present)?;
+        Ok(groups)
+    })
+}
+
+/// Explicit, bounded subtree resolution for hover previews. Ordinary
+/// `resolve_block(s)` stays shallow so a page containing nested references
+/// cannot multiply the same descendants across the IPC bridge.
+#[tauri::command]
+pub(crate) fn preview_block(
+    uuid: String,
+    max_nodes: usize,
+    state: GraphContext<'_>,
+) -> Result<Option<tine_core::BlockPreview>, String> {
+    const MAX_PREVIEW_NODES: usize = 2_000;
+    with_graph(&state, |g| {
+        Ok(g.preview_block(&uuid, max_nodes.clamp(1, MAX_PREVIEW_NODES)))
+    })
 }
 
 #[tauri::command]

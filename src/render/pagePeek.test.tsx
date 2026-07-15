@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
+import { backend } from "../backend";
 import { AstBody } from "./body";
 import { initParser } from "./parse";
 
@@ -19,6 +20,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
   document.body.replaceChildren();
 });
 
@@ -187,6 +189,7 @@ describe("page hover-peek (GH #40)", () => {
   });
 
   it("opens block-ref peeks only after dwell", async () => {
+    const preview = vi.spyOn(backend(), "previewBlock");
     const { root, dispose } = mountAttached("Inline ref ((arch-1)) here");
     try {
       const ref = root.querySelector(".block-ref")!;
@@ -194,12 +197,14 @@ describe("page hover-peek (GH #40)", () => {
       fireEnter(ref);
       await advance(PEEK_OPEN_MS - 1);
       expect(popup()).toBeFalsy();
+      expect(preview).not.toHaveBeenCalled();
 
       await advance(1);
       const shown = await waitFor(() => !!popup()?.querySelector(".ls-block"));
       expect(shown).toBe(true);
       expect(popup()!.querySelector(".peek-popup-title-name")?.textContent).toContain("Tine");
       expect(popup()!.querySelector(".ls-block")).toBeTruthy();
+      expect(preview).toHaveBeenCalledWith("arch-1", 50);
     } finally {
       dispose();
     }

@@ -28,4 +28,4 @@ pub use lsdoc;
 pub use config::{Config, Workflow};
 pub use date::JournalDate;
 pub use doc::{DocBlock, Document};
-pub use model::{BlockDto, Graph, GraphMeta, PageDto, PageEntry, PageKind, RefGroup};
+pub use model::{BlockDto, BlockPreview, Graph, GraphMeta, PageDto, PageEntry, PageKind, RefGroup};

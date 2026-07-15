@@ -12,6 +12,7 @@ import type {
   PageDto,
   PageEntry,
   RefGroup,
+  BlockPreview,
   TemplateDto,
   TrashStats,
   JournalConflict,
@@ -256,6 +257,8 @@ export interface Backend {
   listTemplates(): Promise<TemplateDto[]>;
   resolveBlock(uuid: string): Promise<RefGroup | null>;
   resolveBlocks(uuids: string[]): Promise<(RefGroup | null)[]>;
+  /** Explicit bounded subtree; ordinary resolution is intentionally shallow. */
+  previewBlock(uuid: string, maxNodes: number): Promise<BlockPreview | null>;
   readAsset(name: string, maxBytes?: number): Promise<Uint8Array>;
   /** Native range-aware URL for audio/video. Unlike `readAsset`, this never
    *  copies the whole media file through IPC. */
@@ -616,6 +619,9 @@ class TauriBackend implements Backend {
   }
   resolveBlocks(uuids: string[]) {
     return this.call<(RefGroup | null)[]>("resolve_blocks", { uuids });
+  }
+  previewBlock(uuid: string, maxNodes: number) {
+    return this.call<BlockPreview | null>("preview_block", { uuid, maxNodes });
   }
   async readAsset(name: string, maxBytes?: number) {
     // read_asset now returns raw bytes (tauri::ipc::Response) → an ArrayBuffer,

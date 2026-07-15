@@ -23,6 +23,13 @@ export interface BlockDto {
   properties?: [string, string][];
 }
 
+/** Explicitly bounded subtree used only for block-reference previews/exports. */
+export interface BlockPreview {
+  group: RefGroup;
+  /** Descendant nodes omitted after the requested preview budget. */
+  truncated: number;
+}
+
 /** On-disk page format: markdown (default) or org. */
 export type Format = "md" | "org";
 

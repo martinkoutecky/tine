@@ -921,6 +921,59 @@ fn render_result_block(dto: &BlockDto, out: &mut String, ctx: &Ctx, depth: u8) {
     out.push_str("</li>");
 }
 
+fn collect_wanted_doc_blocks<'a>(
+    blocks: &'a [DocBlock],
+    wanted: &std::collections::HashSet<&str>,
+    found: &mut std::collections::HashMap<&'a str, &'a DocBlock>,
+) {
+    for block in blocks {
+        if wanted.contains(block.uuid.as_str()) {
+            found.insert(block.uuid.as_str(), block);
+            // Query results are top-level/non-overlapping, so a matched root's
+            // descendants cannot be independent roots in the same group.
+            continue;
+        }
+        collect_wanted_doc_blocks(&block.children, wanted, found);
+    }
+}
+
+/// Query DTOs intentionally carry shallow membership rows. Static publishing
+/// has the source graph in-process, so hydrate each result subtree directly from
+/// its page once instead of shipping/caching overlapping owned DTO trees.
+fn render_query_group(
+    graph: &Graph,
+    group: &RefGroup,
+    out: &mut String,
+    ctx: &Ctx,
+    depth: u8,
+) {
+    graph.with_pages(|pages| {
+        let Some((_, doc)) = pages
+            .iter()
+            .find(|(entry, _)| entry.name == group.page && entry.kind == group.kind)
+        else {
+            for block in &group.blocks {
+                render_result_block(block, out, ctx, depth);
+            }
+            return;
+        };
+        let wanted = group
+            .blocks
+            .iter()
+            .map(|block| block.id.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        let mut found = std::collections::HashMap::with_capacity(wanted.len());
+        collect_wanted_doc_blocks(&doc.roots, &wanted, &mut found);
+        for block in &group.blocks {
+            if let Some(source) = found.get(block.id.as_str()) {
+                render_embedded_block(source, out, ctx, depth);
+            } else {
+                render_result_block(block, out, ctx, depth);
+            }
+        }
+    });
+}
+
 /// Render an embedded page's block (a `DocBlock`) as an `<li>`, mirroring `render_result_block`.
 fn render_embedded_block(b: &DocBlock, out: &mut String, ctx: &Ctx, depth: u8) {
     out.push_str("<li>");
@@ -1009,10 +1062,8 @@ fn render_query(graph: &Graph, src: &str, ctx: &Ctx, depth: u8) -> String {
         out.push_str("<div class=\"query-empty\">No matching blocks.</div>");
     } else {
         out.push_str("<ul class=\"query-results\">");
-        for g in &groups {
-            for blk in &g.blocks {
-                render_result_block(blk, &mut out, ctx, depth);
-            }
+        for group in &groups {
+            render_query_group(graph, group, &mut out, ctx, depth);
         }
         out.push_str("</ul>");
     }
@@ -1028,13 +1079,20 @@ fn render_embed(graph: &Graph, arg: &str, ctx: &Ctx, depth: u8) -> String {
             return "<div class=\"embed embed-missing\">Embedded content is not public.</div>"
                 .into();
         }
-        return match crate::query::resolve_block(graph, uuid) {
-            Some(g) if publish_page_allowed(ctx, &g.page) => {
+        const STATIC_EMBED_BLOCK_LIMIT: usize = 10_000;
+        return match crate::query::preview_block(graph, uuid, STATIC_EMBED_BLOCK_LIMIT) {
+            Some(preview) if publish_page_allowed(ctx, &preview.group.page) => {
                 let mut out = String::from(
                     "<div class=\"embed block-embed single-root\"><ul class=\"embed-outline\">",
                 );
-                for blk in &g.blocks {
+                for blk in &preview.group.blocks {
                     render_result_block(blk, &mut out, ctx, depth);
+                }
+                if preview.truncated > 0 {
+                    out.push_str(&format!(
+                        "<li class=\"query-truncated\">{} more blocks omitted</li>",
+                        preview.truncated
+                    ));
                 }
                 out.push_str("</ul></div>");
                 out
