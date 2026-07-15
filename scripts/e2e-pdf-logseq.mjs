@@ -236,6 +236,10 @@ try {
   // implicit scroll can otherwise place a zoomed highlight underneath the
   // fixed PDF toolbar and report an intercepted click even though the element
   // itself is a valid pointer target in the app.
+  await browser.$(".pdf-hl").waitForExist({
+    timeout: 10_000,
+    timeoutMsg: "PDF A restored its view state before its highlight overlay was ready",
+  });
   await browser.execute(() => document.querySelector(".pdf-hl")?.scrollIntoView({ block: "center", inline: "center" }));
   await browser.$(".pdf-hl").click();
   await browser.$(".pdf-color-menu").waitForExist({ timeout: 5000 });
