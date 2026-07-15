@@ -19,11 +19,9 @@ const PLUGIN_IDENTIFIER: &str = "page.tine.app";
 
 #[derive(Debug, Deserialize, Serialize)]
 pub(crate) struct MediaCaptureResult {
-    /// "ok" (data or path + ext set), "cancelled", or "recording" (start ack).
+    /// "ok" (path + ext set), "cancelled", or "recording" (start ack).
     status: String,
-    /// Base64-encoded photo bytes (present for successful photo capture).
-    data: Option<String>,
-    /// Native app-cache token (present for a successfully stopped voice memo).
+    /// Native app-cache token (present for successful photo or voice capture).
     path: Option<String>,
     /// File extension without the dot, e.g. "jpg" / "png" / "m4a".
     ext: Option<String>,
@@ -34,7 +32,7 @@ mod tests {
     use super::MediaCaptureResult;
 
     #[test]
-    fn voice_memo_path_survives_mobile_plugin_deserialization() {
+    fn native_capture_path_survives_mobile_plugin_deserialization() {
         let result: MediaCaptureResult = serde_json::from_str(
             r#"{"status":"ok","path":"/data/user/0/page.tine.app/cache/voice.m4a","ext":"m4a"}"#,
         )
@@ -45,7 +43,6 @@ mod tests {
             Some("/data/user/0/page.tine.app/cache/voice.m4a")
         );
         assert_eq!(result.ext.as_deref(), Some("m4a"));
-        assert!(result.data.is_none());
     }
 }
 

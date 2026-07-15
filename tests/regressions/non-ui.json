@@ -186,6 +186,48 @@
         "scenario": "publish.atomic-tree-replacement-and-bound-directories",
         "failBefore": "proven"
       }
+    },
+    {
+      "id": "REG-BENCH-PREVIOUS-RELEASE-CURRENCY-001",
+      "title": "The rolling performance gate always compares with the most recently published release",
+      "family": "performance",
+      "sources": { "issues": [], "commits": [] },
+      "platforms": ["all"],
+      "layer": "release-process",
+      "status": "covered",
+      "coverage": {
+        "tests": ["scripts/check-bench-policy.mjs", "scripts/test-release-pipeline.mjs", ".github/workflows/ci.yml", ".github/workflows/release.yml"],
+        "scenario": "performance.previous-release-baseline-currency",
+        "failBefore": "proven"
+      }
+    },
+    {
+      "id": "REG-BACKUP-RESTORE-RECOVERY-CAPABILITY-001",
+      "title": "Backup restore recovery moves stay bound to the graph and approved assets roots",
+      "family": "data-safety",
+      "sources": { "issues": [], "commits": [] },
+      "platforms": ["all"],
+      "layer": "native",
+      "status": "covered",
+      "coverage": {
+        "tests": ["src-tauri/src/backup.rs"],
+        "scenario": "backup.restore-recovery-capability-boundary",
+        "failBefore": "proven"
+      }
+    },
+    {
+      "id": "REG-ANDROID-PHOTO-BOUNDED-NATIVE-IMPORT-001",
+      "title": "Android photo capture and picking stream a bounded native cache token without base64 amplification",
+      "family": "performance",
+      "sources": { "issues": [], "commits": [] },
+      "platforms": ["android"],
+      "layer": "native",
+      "status": "covered",
+      "coverage": {
+        "tests": ["src/mediaCaptureNative.test.ts", "src-tauri/src/commands.rs", "src-tauri/gen/android/app/src/main/java/page/tine/app/MediaCapturePlugin.kt"],
+        "scenario": "media.android-photo-bounded-native-import",
+        "failBefore": "proven"
+      }
     }
   ]
 }

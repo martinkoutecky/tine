@@ -160,11 +160,3 @@ export function cancelDesktopVoiceRecording(owner?: symbol): boolean {
   clearSession(session);
   return true;
 }
-
-/** Decode a base64 string (as returned by the Android capture plugin) to bytes. */
-export function base64ToBytes(b64: string): Uint8Array {
-  const bin = atob(b64);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
-}

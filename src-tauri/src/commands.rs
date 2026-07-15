@@ -622,11 +622,11 @@ pub(crate) fn import_asset(
     })
 }
 
-/// Import a bounded Android voice memo by native cache-file capability. The
-/// recording never crosses Kotlin/WebView/Rust as base64; Rust streams the open
-/// file into the graph and removes the temp only after the durable asset commit.
+/// Import a bounded Android photo or voice memo by native cache-file capability.
+/// Media never crosses Kotlin/WebView/Rust as base64; Rust streams the open file
+/// into the graph and removes the temp only after the durable asset commit.
 #[tauri::command]
-pub(crate) fn import_recording(
+pub(crate) fn import_native_capture(
     path: String,
     name: String,
     app: tauri::AppHandle,
@@ -635,13 +635,22 @@ pub(crate) fn import_recording(
     use cap_std::{ambient_authority, fs::Dir};
     use tauri::Manager;
 
+    const MAX_PHOTO_BYTES: u64 = 64 * 1024 * 1024;
     const MAX_RECORDING_BYTES: u64 = 32 * 1024 * 1024;
     let source = std::path::Path::new(&path);
     let filename = source
         .file_name()
         .and_then(|value| value.to_str())
-        .filter(|value| value.starts_with("tine_memo_") && value.ends_with(".m4a"))
-        .ok_or_else(|| "invalid recording token".to_string())?;
+        .ok_or_else(|| "invalid native capture token".to_string())?;
+    let (max_bytes, media_label) = if filename.starts_with("tine_memo_")
+        && filename.ends_with(".m4a")
+    {
+        (MAX_RECORDING_BYTES, "recording")
+    } else if filename.starts_with("tine_photo_") && filename.ends_with(".jpg") {
+        (MAX_PHOTO_BYTES, "photo")
+    } else {
+        return Err("invalid native capture token".into());
+    };
     let cache_path = app
         .path()
         .app_cache_dir()
@@ -668,20 +677,23 @@ pub(crate) fn import_recording(
     )
     .map_err(|error| error.to_string())?;
     if token_identity != cache_identity {
-        return Err("recording is outside Tine's native cache".into());
+        return Err("capture is outside Tine's native cache".into());
     }
 
     let capture = token_dir
         .open(filename)
         .map_err(|error| error.to_string())?;
     let metadata = capture.metadata().map_err(|error| error.to_string())?;
-    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_RECORDING_BYTES {
-        return Err("recording is empty or exceeds the 32 MiB limit".into());
+    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > max_bytes {
+        return Err(format!(
+            "{media_label} is empty or exceeds the {} MiB limit",
+            max_bytes / (1024 * 1024)
+        ));
     }
     let mut capture = capture.into_std();
     let stored = with_graph(&state, |graph| {
         graph
-            .import_asset_file(&mut capture, &name, MAX_RECORDING_BYTES)
+            .import_asset_file(&mut capture, &name, max_bytes)
             .map_err(|error| error.to_string())
     })?;
     // The graph asset is authoritative now. Cleanup failure is harmless cache

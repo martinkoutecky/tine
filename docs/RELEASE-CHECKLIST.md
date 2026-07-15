@@ -39,6 +39,11 @@ may tag, publish, comment, and close issues.
 9. After publication, inventory the real assets and prepare issue-specific
    reporter follow-ups. Comment/closure authority remains in the canonical
    agent agreement.
+10. As release housekeeping, advance `previousRelease.ref` to the tag that was
+    just published, run `node scripts/check-bench-policy.mjs`, and push that
+    change to `master`. Tagged-candidate preflight deliberately compares with
+    the release before the candidate; ordinary post-release `master` must point
+    at the newly published tag so cumulative patch-cycle drift stays visible.
 
 ## Additional `0.x.0` minor-release gates
 

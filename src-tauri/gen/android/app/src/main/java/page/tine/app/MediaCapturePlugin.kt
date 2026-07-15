@@ -3,12 +3,12 @@ package page.tine.app
 import android.Manifest
 import android.app.Activity
 import android.content.Intent
+import android.graphics.BitmapFactory
 import android.media.MediaRecorder
 import android.net.Uri
 import android.os.Build
 import android.os.Parcelable
 import android.provider.MediaStore
-import android.util.Base64
 import android.util.Log
 import android.webkit.MimeTypeMap
 import androidx.activity.result.ActivityResult
@@ -23,13 +23,15 @@ import app.tauri.plugin.Invoke
 import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
 import java.io.File
+import java.io.FileOutputStream
 
 // Camera / photo-picker capture and voice-memo recording for the mobile editor
-// toolbar (#7 camera, mic). Photos remain bounded separately in the legacy
-// bridge path. Voice memos return a native cache-file token; Rust streams that
-// file into the graph so an allowed recording is never multiplied through two
-// base64 bridge round trips.
+// toolbar (#7 camera, mic). Both return bounded native cache-file tokens; Rust
+// streams those files into the graph so allowed media is never multiplied
+// through base64 bridge round trips.
 private const val TAG = "Tine/MediaCapture"
+private const val MAX_PHOTO_BYTES = 64L * 1024L * 1024L
+private const val MAX_PHOTO_PIXELS = 64L * 1024L * 1024L
 private const val MAX_RECORDING_BYTES = 32L * 1024L * 1024L
 private const val MAX_RECORDING_DURATION_MS = 30 * 60 * 1000
 
@@ -51,6 +53,10 @@ class MediaCapturePlugin(private val activity: Activity) : Plugin(activity) {
   @Command
   fun capturePhoto(invoke: Invoke) {
     try {
+      // Keep at most one failed/recoverable photo token between attempts.
+      activity.cacheDir.listFiles()
+        ?.filter { it.name.startsWith("tine_photo_") }
+        ?.forEach { it.delete() }
       val photo = File.createTempFile("tine_photo_", ".jpg", activity.cacheDir)
       pendingPhotoFile = photo
       val outUri: Uri = FileProvider.getUriForFile(
@@ -78,6 +84,42 @@ class MediaCapturePlugin(private val activity: Activity) : Plugin(activity) {
     }
   }
 
+  private fun copyPickedPhoto(uri: Uri, out: File): Long {
+    val input = activity.contentResolver.openInputStream(uri)
+      ?: throw IllegalArgumentException("No image data returned")
+    input.use { source ->
+      FileOutputStream(out, false).use { target ->
+        val buffer = ByteArray(64 * 1024)
+        var total = 0L
+        while (true) {
+          val count = source.read(buffer)
+          if (count < 0) break
+          if (count == 0) continue
+          total += count
+          if (total > MAX_PHOTO_BYTES) {
+            throw IllegalArgumentException("Image exceeded the 64 MiB limit")
+          }
+          target.write(buffer, 0, count)
+        }
+        target.fd.sync()
+        return total
+      }
+    }
+  }
+
+  private fun validatePhotoDimensions(photo: File) {
+    val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeFile(photo.absolutePath, options)
+    val width = options.outWidth
+    val height = options.outHeight
+    if (width <= 0 || height <= 0) {
+      throw IllegalArgumentException("Captured file is not a supported image")
+    }
+    if (width.toLong() * height.toLong() > MAX_PHOTO_PIXELS) {
+      throw IllegalArgumentException("Image dimensions exceed the 64-megapixel limit")
+    }
+  }
+
   @ActivityCallback
   fun photoResult(invoke: Invoke, result: ActivityResult) {
     val photo = pendingPhotoFile
@@ -87,25 +129,32 @@ class MediaCapturePlugin(private val activity: Activity) : Plugin(activity) {
         Activity.RESULT_OK -> {
           val uri = result.data?.data
           var ext = "jpg"
-          val bytes: ByteArray? = if (uri != null) {
-            // Picked an existing file — read it and keep its real extension.
+          val bytes = if (uri != null && photo != null) {
+            // Stream a picked image into our bounded native cache token and keep
+            // its real extension for the final graph asset name.
             val mime = activity.contentResolver.getType(uri)
             MimeTypeMap.getSingleton().getExtensionFromMimeType(mime)?.let { ext = it }
-            activity.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            copyPickedPhoto(uri, photo)
           } else if (photo != null && photo.exists() && photo.length() > 0) {
-            // Camera wrote the full-res jpeg into our temp file.
-            photo.readBytes()
+            // Camera wrote the full-res jpeg directly into our temp file.
+            photo.length()
           } else {
-            null
+            0L
           }
-          photo?.delete()
-          if (bytes == null || bytes.isEmpty()) {
+          if (bytes <= 0L) {
+            photo?.delete()
             invoke.reject("No image data returned")
             return
           }
+          if (bytes > MAX_PHOTO_BYTES) {
+            photo?.delete()
+            invoke.reject("Image exceeded the 64 MiB limit")
+            return
+          }
+          validatePhotoDimensions(photo!!)
           val ret = JSObject()
           ret.put("status", "ok")
-          ret.put("data", Base64.encodeToString(bytes, Base64.NO_WRAP))
+          ret.put("path", photo.absolutePath)
           ret.put("ext", ext)
           invoke.resolve(ret)
         }

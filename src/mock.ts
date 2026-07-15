@@ -1028,7 +1028,7 @@ export function mockBackend(): Backend {
     async importAsset(path: string, name?: string): Promise<string> {
       return name ?? path.split("/").pop() ?? path;
     },
-    async importRecording(path: string, name: string): Promise<string> {
+    async importNativeCapture(path: string, name: string): Promise<string> {
       return name || path.split("/").pop() || path;
     },
     async clipboardFiles() {

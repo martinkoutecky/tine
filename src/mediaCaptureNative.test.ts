@@ -21,8 +21,8 @@ describe("Android voice-recording bounds", () => {
     expect(source).toMatch(/listFiles\(\)[\s\S]*startsWith\("tine_memo_"\)[\s\S]*forEach \{ it\.delete\(\) \}/);
 
     const commands = readFileSync("src-tauri/src/commands.rs", "utf8");
-    expect(commands).toMatch(/pub\(crate\) fn import_recording/);
-    expect(commands).toMatch(/import_asset_file\(&mut capture, &name, MAX_RECORDING_BYTES\)/);
+    expect(commands).toMatch(/pub\(crate\) fn import_native_capture/);
+    expect(commands).toMatch(/import_asset_file\(&mut capture, &name, max_bytes\)/);
     const bridge = readFileSync("src-tauri/src/android_media.rs", "utf8");
     const result = bridge.slice(
       bridge.indexOf("struct MediaCaptureResult"),
@@ -30,6 +30,27 @@ describe("Android voice-recording bounds", () => {
     );
     expect(result).toMatch(/path:\s*Option<String>/);
     const block = readFileSync("src/components/Block.tsx", "utf8");
-    expect(block).toMatch(/backend\(\)\.importRecording\(res\.path, candidate\)/);
+    expect(block).toMatch(/backend\(\)\.importNativeCapture\(res\.path, candidate\)/);
+  });
+
+  it("streams captured and picked photos through a bounded native cache token", () => {
+    const source = readFileSync(
+      "src-tauri/gen/android/app/src/main/java/page/tine/app/MediaCapturePlugin.kt",
+      "utf8"
+    );
+    const photo = source.slice(source.indexOf("fun photoResult"), source.indexOf("fun startRecording"));
+    expect(source).toMatch(/MAX_PHOTO_BYTES/);
+    expect(source).toMatch(/MAX_PHOTO_PIXELS/);
+    expect(source).toMatch(/inJustDecodeBounds\s*=\s*true/);
+    expect(photo).toContain('ret.put("path"');
+    expect(photo).not.toContain("readBytes()");
+    expect(photo).not.toContain("Base64.encodeToString");
+    expect(source).toMatch(/copyPickedPhoto[\s\S]*MAX_PHOTO_BYTES/);
+
+    const commands = readFileSync("src-tauri/src/commands.rs", "utf8");
+    expect(commands).toMatch(/tine_photo_/);
+    expect(commands).toMatch(/MAX_PHOTO_BYTES/);
+    const block = readFileSync("src/components/Block.tsx", "utf8");
+    expect(block).toMatch(/capturePhoto[\s\S]*importNativeCapture\(res\.path, candidate\)/);
   });
 });

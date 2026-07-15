@@ -10,6 +10,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Backup restore stays inside the selected graph under symlink and directory
+  races.** Recovery areas and live-file publication are now bound to opened
+  directory capabilities, use create-without-replace semantics, and refuse a
+  replaced ancestor instead of following it outside the graph or approved
+  assets root.
+- **Android photo capture and picking are memory-bounded.** Camera and picker
+  results are checked for byte and pixel limits, streamed through a native cache
+  token, and then streamed into the graph without whole-file or base64 copies
+  across the Kotlin/WebView/Rust bridge.
 - **Static publishing now treats the public page set as a hard privacy
   boundary.** Queries, page/block embeds, and namespace macros cannot expand
   private content; each export is assembled in a guarded staging tree and then

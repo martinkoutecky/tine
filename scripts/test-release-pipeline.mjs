@@ -13,6 +13,8 @@ const commit = "a".repeat(40);
 const repository = "martinkoutecky/tine";
 const layout = releaseLayout(version);
 const releaseWorkflow = fs.readFileSync(path.join(process.cwd(), ".github/workflows/release.yml"), "utf8");
+const ciWorkflow = fs.readFileSync(path.join(process.cwd(), ".github/workflows/ci.yml"), "utf8");
+const preflight = fs.readFileSync(path.join(process.cwd(), "scripts/check-release-preflight.mjs"), "utf8");
 
 // Architecture guard: the expensive release build must test that exact binary
 // before it can be staged for the atomic assembler/publisher. Keep Windows
@@ -23,6 +25,22 @@ assert(linuxGate >= 0, "release workflow is missing the Linux real-app gate");
 assert(stageLane > linuxGate, "release lane is staged before the Linux real-app gate");
 assert.match(releaseWorkflow, /name: Run advisory Windows x64 real-app smoke[\s\S]*?continue-on-error: true/);
 assert.match(releaseWorkflow, /name: Upload release E2E evidence[\s\S]*?if: always\(\)/);
+assert.match(
+  ciWorkflow,
+  /name: Performance baseline policy is current[\s\S]*?node scripts\/check-bench-policy\.mjs/,
+  "ordinary CI does not reject a stale previous-release performance baseline"
+);
+assert.match(
+  ciWorkflow,
+  /bench:[\s\S]*?fetch-depth: 0[\s\S]*?name: Require the rolling baseline to be the latest published release[\s\S]*?node scripts\/check-bench-policy\.mjs/,
+  "the A/B benchmark job does not fetch tags and validate baseline currency before measuring"
+);
+assert.match(
+  releaseWorkflow,
+  /preflight:[\s\S]*?fetch-depth: 0/,
+  "release preflight cannot determine the previous release from a shallow checkout"
+);
+assert.match(preflight, /check-bench-policy\.mjs/, "release preflight omits the performance-baseline currency guard");
 
 function makeInput(base) {
   const input = path.join(base, "input");

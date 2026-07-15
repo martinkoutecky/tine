@@ -13,6 +13,8 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -35,6 +37,9 @@ jobs:
 
       - name: Release pipeline contract fixtures
         run: node scripts/test-release-pipeline.mjs
+
+      - name: Performance baseline policy is current
+        run: node scripts/check-bench-policy.mjs
 
       - name: UI regression catalog and release evidence contracts
         run: |
@@ -106,6 +111,11 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Require the rolling baseline to be the latest published release
+        run: node scripts/check-bench-policy.mjs
 
       - name: Read performance baseline refs
         id: perf-policy

@@ -5,8 +5,8 @@
     "purpose": "Last pre-Sheets and pre-split-view patch release; never advances automatically."
   },
   "previousRelease": {
-    "ref": "v0.5.8",
-    "purpose": "Most recently published release before the next candidate. Update during release preparation."
+    "ref": "v0.5.9",
+    "purpose": "Most recently published release. Advance immediately after publication; a tagged candidate automatically compares with the preceding tag."
   },
   "reliability": {
     "maxCalibrationSpreadPct": 25

@@ -138,7 +138,6 @@ import { registerFocusedEditorCommandBridge, type MobileEditorCommandId } from "
 import {
   isRecordingAudio,
   setRecordingAudio,
-  base64ToBytes,
   cancelDesktopVoiceRecording,
   desktopVoiceRecordingActive,
   startDesktopVoiceRecording,
@@ -1527,7 +1526,15 @@ export function Editor(props: { id: string }): JSX.Element {
       pushToast(`Couldn’t capture a photo (${String(err)})`, "error");
       return;
     }
-    if (res.status === "ok" && res.data) insertAssetBytes(base64ToBytes(res.data), undefined, res.ext || "jpg");
+    if (res.status === "ok" && res.path) {
+      const candidate = captureAssetFileName(res.ext || "jpg");
+      try {
+        const stored = await trackAssetWrite(backend().importNativeCapture(res.path, candidate));
+        insertStoredAssets([{ stored }]);
+      } catch (err) {
+        pushToast(`Couldn’t import the photo (${String(err)})`, "error");
+      }
+    }
   };
 
   // Mobile: toggle voice-memo recording. First tap starts (prompts for mic
@@ -1545,7 +1552,7 @@ export function Editor(props: { id: string }): JSX.Element {
       if (res.status === "ok" && res.path) {
         const candidate = captureAssetFileName(res.ext || "m4a");
         try {
-          const stored = await trackAssetWrite(backend().importRecording(res.path, candidate));
+          const stored = await trackAssetWrite(backend().importNativeCapture(res.path, candidate));
           insertStoredAssets([{ stored }]);
         } catch (err) {
           pushToast(`Couldn’t import the recording (${String(err)})`, "error");

@@ -65,12 +65,11 @@ export interface ClipboardFileList {
   truncated: boolean;
 }
 
-/** Result of an Android media-capture command. Photos return bounded legacy
- *  base64 `data`; voice memos return a native cache-file `path` which Rust
- *  streams directly into the graph. */
+/** Result of an Android media-capture command. Successful photos and voice
+ *  memos return a bounded native cache-file `path` which Rust streams directly
+ *  into the graph. */
 export interface MediaCaptureResult {
   status: "ok" | "recording" | "cancelled";
-  data?: string | null;
   path?: string | null;
   ext?: string | null;
 }
@@ -278,7 +277,7 @@ export interface Backend {
   importAsset(path: string, name?: string): Promise<string>;
   /** Stream a bounded native Android voice-memo temp into assets and retire the
    *  temp only after the graph copy commits. */
-  importRecording(path: string, name: string): Promise<string>;
+  importNativeCapture(path: string, name: string): Promise<string>;
   /** Paths explicitly copied in the OS file manager. Empty when the clipboard
    *  has no native file-list flavor or the platform cannot expose one. */
   clipboardFiles(): Promise<ClipboardFileList>;
@@ -717,8 +716,8 @@ class TauriBackend implements Backend {
   importAsset(path: string, name?: string) {
     return this.call<string>("import_asset", { path, name });
   }
-  importRecording(path: string, name: string) {
-    return this.call<string>("import_recording", { path, name });
+  importNativeCapture(path: string, name: string) {
+    return this.call<string>("import_native_capture", { path, name });
   }
   clipboardFiles() {
     return this.call<ClipboardFileList>("clipboard_files");
