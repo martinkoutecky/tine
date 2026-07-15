@@ -27,6 +27,7 @@ pub fn query_source_within_limit(source: &str) -> bool {
 /// Count parentheses because those are the only delimiters that construct
 /// recursive predicates; brackets/braces are scanned iteratively as data.
 pub fn query_nesting_within_limit(source: &str) -> bool {
+    let semicolon_comments = is_advanced(source);
     let mut depth = 0usize;
     let mut in_string = false;
     let mut escaped = false;
@@ -49,7 +50,7 @@ pub fn query_nesting_within_limit(source: &str) -> bool {
             continue;
         }
         match byte {
-            b';' => in_comment = true,
+            b';' if semicolon_comments => in_comment = true,
             b'"' => in_string = true,
             b'(' => {
                 depth = depth.saturating_add(1);
@@ -3148,6 +3149,20 @@ mod tests {
 
         let harmless = format!("(and (content \"{}\"))", "(".repeat(QUERY_NESTING_MAX + 10));
         assert!(query_nesting_within_limit(&harmless));
+
+        let simple_semicolon = format!(";{}", "(".repeat(QUERY_NESTING_MAX + 1));
+        assert!(
+            !query_nesting_within_limit(&simple_semicolon),
+            "semicolon is ordinary text, not a comment, in the simple DSL"
+        );
+        let advanced_comment = format!(
+            "[:find ?b :where ;; {}\n(task ?b #{{\"TODO\"}})]",
+            "(".repeat(QUERY_NESTING_MAX + 1)
+        );
+        assert!(
+            query_nesting_within_limit(&advanced_comment),
+            "advanced EDN comments must not count delimiter text"
+        );
     }
 
     /// A minimal eval context for a block on a named (non-journal) page.

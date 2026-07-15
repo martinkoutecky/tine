@@ -415,7 +415,7 @@
     },
     {
       "id": "REG-QUERY-SOURCE-RESOURCE-BOUNDS-001",
-      "title": "Persisted simple and advanced queries fail closed at shared source-size and nesting-depth limits before parser recursion or cache-key construction, including bounded static-publication memoization",
+      "title": "Persisted simple and advanced queries fail closed at dialect-aware source-size and nesting-depth limits before parser recursion or cache-key construction, including bounded static-publication memoization",
       "family": "performance-data-safety",
       "sources": { "issues": [], "commits": [] },
       "platforms": ["all"],
