@@ -1,14 +1,8 @@
-// TS port of the anonymization core of `lsdoc/tools/graph-check.mjs` (Martin's
-// verified reference tool), with stricter in-app privacy for source names, URL
-// content, numeric identifiers, and percent escapes. The privacy contract is
-// enforced by focused tests and verify-after-scrub before anything is shown.
-//
-// Ported verbatim (graph-check.mjs lines 881-940): the two scrub tiers, the
-// codepoint transformer, the protected-keyword spans, and the UTF-8-length
-// replacement table. `Buffer.byteLength(ch,"utf8")` → `enc.encode(ch).length`.
-// All indexing stays in JS-string (UTF-16) space exactly as the original does
-// (protectedSpans' `m.index` and transformCodepoints' `i` are both UTF-16), so
-// the port is index-consistent with the source without a byte conversion here.
+// Privacy-hardened descendant of `lsdoc/tools/graph-check.mjs`. Unlike the
+// developer CLI, this output is offered to end users for public bug reports, so
+// only irreversible class/byte-length collapse is allowed. A scrub that no
+// longer reproduces the same parser delta is omitted rather than falling back to
+// a reversible encoding.
 
 import { projectionKey } from "./projection";
 
@@ -29,20 +23,6 @@ export function anonymizeTier1(input: string, protectedRanges: Range[] = []): st
     if (cp >= 0x61 && cp <= 0x7a) return "a";
     if (cp >= 0x30 && cp <= 0x39) return "9";
     if (cp > 0x7f) return replacementForUtf8Len(enc.encode(ch).length);
-    return ch;
-  });
-}
-
-/** Tier 2: Caesar-shift letters and digits by 1 (A→B, z→a, 9→0). Retains more
- *  of the original structure than tier 1 — used when tier-1's total collapse
- *  destroyed the divergence (keyword/length-sensitive parses), without leaking
- *  numeric identifiers in page names or URLs. */
-export function anonymizeTier2(input: string, protectedRanges: Range[] = []): string {
-  return transformCodepoints(input, protectedRanges, (ch) => {
-    const cp = ch.codePointAt(0)!;
-    if (cp >= 0x41 && cp <= 0x5a) return String.fromCharCode(((cp - 0x41 + 1) % 26) + 0x41);
-    if (cp >= 0x61 && cp <= 0x7a) return String.fromCharCode(((cp - 0x61 + 1) % 26) + 0x61);
-    if (cp >= 0x30 && cp <= 0x39) return String.fromCharCode(((cp - 0x30 + 1) % 10) + 0x30);
     return ch;
   });
 }
@@ -82,25 +62,24 @@ function replacementForUtf8Len(len: number): string {
   return "中";
 }
 
-/** Spans that must survive scrubbing because their literal text drives parser
- *  behavior: URL schemes, org block markers, `#+KEY:`, PROPERTIES drawers,
- *  task markers / SCHEDULED / DEADLINE, weekday + month names.
+/** Fixed public grammar tokens that may survive scrubbing because their literal
+ *  text drives parser behavior: URL schemes, known Org markers/directives,
+ *  property drawers, and workflow/planning markers.
  *
  *  Only the `http://` / `https://` prefix is protected. Protecting the complete
  *  URL used to leak private hosts and paths; scrubbing the prefix used to stop
  *  both parsers from recognizing a URL and could erase a URL-sensitive
- *  divergence. The remaining URL characters keep their punctuation and byte
- *  shape through the normal anonymizer. */
+ *  divergence. Custom Org block/directive identifiers and ordinary weekday or
+ *  month words are deliberately NOT protected: if their scrubbed form loses the
+ *  mismatch, the candidate must fail closed rather than reveal them. */
 export function protectedSpans(input: string): Range[] {
   const ranges: Range[] = [];
   const patterns = [
     /https?:\/\//gi,
-    /#\+(?:BEGIN|END)_[A-Z0-9_+-]+/gi,
-    /#\+[A-Z0-9_+-]+:/gi,
+    /#\+(?:BEGIN|END)_/gi,
+    /#\+(?:TITLE|ALIAS|TAGS|FILETAGS|ROAM_TAGS|PROPERTY|PROPERTIES|OPTIONS|STARTUP|AUTHOR|DATE|NAME|CAPTION|RESULTS|ATTR_HTML|ATTR_ORG):/gi,
     /:PROPERTIES:|:END:/gi,
     /\b(?:TODO|DOING|DONE|NOW|LATER|WAITING|WAIT|CANCELED|CANCELLED|SCHEDULED:|DEADLINE:|CLOSED:)\b/gi,
-    /\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b/gi,
-    /\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|June|July|August|September|October|November|December)\b/gi,
   ];
   for (const re of patterns) {
     for (const m of input.matchAll(re)) ranges.push({ start: m.index!, end: m.index! + m[0].length });
@@ -191,11 +170,11 @@ export function divergenceSignature(left: unknown, right: unknown): string {
   return out.sort().join("\n");
 }
 
-/** Try each scrub tier in escalating order and ACCEPT the first whose scrubbed
+/** Try each privacy-safe scrub tier in escalating order and ACCEPT the first whose scrubbed
  *  output STILL reproduces the divergence when re-parsed by both parsers. This is
  *  the guarantee: a shared snippet contains no original prose AND provably
  *  triggers the bug. `verify` re-parses a candidate in FRESH parser state.
- *  Ported from graph-check.mjs:857-879. */
+ *  There is intentionally no structure-preserving reversible fallback. */
 export async function anonymizeAndVerify<P>(
   input: string,
   verify: (candidate: string) => Promise<VerifiedCandidate<P>>,
@@ -210,9 +189,7 @@ export async function anonymizeAndVerify<P>(
     : null;
   const attempts: [string, () => string][] = [
     ["tier 1", () => anonymizeTier1(input, [])],
-    ["tier 2", () => anonymizeTier2(input, [])],
     ["tier 1 + protected keywords", () => anonymizeTier1(input, protectedSpans(input))],
-    ["tier 2 + protected keywords", () => anonymizeTier2(input, protectedSpans(input))],
   ];
   for (const [tier, make] of attempts) {
     const candidate = make();

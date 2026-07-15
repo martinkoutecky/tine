@@ -10,6 +10,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Help improve Tine now fails closed when a parser reproduction cannot be
+  irreversibly anonymized.** The reversible fallback was removed, non-ASCII
+  content and custom Org identifiers are always scrubbed, only fixed public
+  grammar tokens may survive, and the UI no longer makes an absolute sharing
+  guarantee.
 - **PDF export documents no longer inherit Tine's native privileges.** Math and
   code highlighting are rendered from bundled libraries before printing; the
   resulting document is script-free, carries a restrictive content-security

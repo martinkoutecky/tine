@@ -280,6 +280,54 @@
         "scenario": "security.print-script-free-sandbox-and-local-rendering",
         "failBefore": "source-proven"
       }
+    },
+    {
+      "id": "REG-HELP-IMPROVE-IRREVERSIBLE-SCRUB-001",
+      "title": "Help improve Tine exposes only irreversibly scrubbed parser reproductions and fails closed when privacy-safe tiers lose the mismatch",
+      "family": "privacy",
+      "sources": { "issues": [82], "commits": [] },
+      "platforms": ["all"],
+      "layer": "frontend-core",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "src/devtools/lsdoc-diff/engine.test.ts",
+          "src/components/ImproveTab.test.tsx"
+        ],
+        "scenario": "privacy.help-improve-irreversible-fail-closed-anonymization",
+        "failBefore": "source-proven"
+      }
+    },
+    {
+      "id": "REG-PDF-CANVAS-AGGREGATE-BUDGET-001",
+      "title": "PDF rendering admits canvases by aggregate backing-store pixels and zeroes evicted allocations",
+      "family": "performance",
+      "sources": { "issues": [], "commits": [] },
+      "platforms": ["all"],
+      "layer": "frontend",
+      "status": "fixing",
+      "coverage": {
+        "tests": ["src/components/PdfViewer.test.tsx"],
+        "scenario": "performance.pdf-canvas-aggregate-backing-store-budget",
+        "failBefore": "source-proven"
+      }
+    },
+    {
+      "id": "REG-PRINT-ASSET-CUMULATIVE-BUDGET-001",
+      "title": "PDF export rejects individual and cumulative image bytes before base64 and IPC amplification",
+      "family": "performance",
+      "sources": { "issues": [], "commits": [] },
+      "platforms": ["desktop"],
+      "layer": "core-native-ui",
+      "status": "fixing",
+      "coverage": {
+        "tests": [
+          "crates/tine-core/src/publish.rs",
+          "scripts/e2e-print-security.mjs"
+        ],
+        "scenario": "performance.print-image-per-file-and-cumulative-budget",
+        "failBefore": "source-proven"
+      }
     }
   ]
 }
