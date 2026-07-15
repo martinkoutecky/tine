@@ -84,7 +84,7 @@ requireMatch(
 );
 requireMatch(
   cargo,
-  /^x11 = "2\.21\.0"$/m,
+  /^x11 = \{ version = "2\.21\.0", features = \["xlib"\] \}$/m,
   "Linux builds do not directly link the Xlib thread initializer",
 );
 requireMatch(
