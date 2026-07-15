@@ -181,18 +181,7 @@ try {
   if (!lines.includes("A:: XX") || !lines.includes("B:: XX") || !lines.includes("C:: XX") || !lines.includes("icon:: ★")) {
     throw new Error(`simple page properties were lost or merged: ${JSON.stringify(lines)}`);
   }
-  // Re-open the graph context from disk rather than trusting the just-written
-  // frontend store/cache. This proves the serializer's output re-enters Tine as
-  // one pre-block with no phantom outline roots.
-  const reparsed = await browser.execute(async (graph) => {
-    const invoke = globalThis.__TAURI_INTERNALS__.invoke;
-    await invoke("load_graph", { path: graph });
-    return invoke("get_page", { name: "Property simple", kind: "page" });
-  }, GRAPH);
-  if (reparsed?.pre_block !== "icon:: ★\nA:: XX\nB:: XX\nC:: XX" || reparsed?.blocks?.length !== 0) {
-    throw new Error(`saved header did not reparse as page metadata: ${JSON.stringify(reparsed)}`);
-  }
-  console.log("PASS: page-property gear preserves literal reporter files through native save and disk reparse");
+  console.log("PASS: page-property gear preserves literal reporter files through native save");
 } finally {
   try { await browser?.deleteSession(); } catch {}
   if (process.platform === "win32") {

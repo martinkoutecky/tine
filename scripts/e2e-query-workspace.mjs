@@ -33,7 +33,10 @@ fs.writeFileSync(`${GRAPH}/pages/Research.md`, [
 const longPageToken = `GH140-${"unbroken-page-token-".repeat(8)}`;
 for (let index = 0; index < 140; index += 1) {
   const suffix = index === 0 ? longPageToken : `result-${String(index).padStart(3, "0")}`;
-  fs.writeFileSync(`${GRAPH}/pages/Overflow ${suffix}.md`, "- geometry witness alpha\n");
+  // The persistent workspace returns at most 40 page hits plus 100 block hits.
+  // Matching both the title and body reproduces the reporter's literal 140-row
+  // result composition instead of a smaller page-only approximation.
+  fs.writeFileSync(`${GRAPH}/pages/Overflow ${suffix}.md`, "- Overflow geometry witness alpha\n");
 }
 fs.writeFileSync(`${GRAPH}/pages/Query parity.md`, [
   "- {{query (and (task TODO) (priority A) (not (page Templates)) (sort-by modified desc))}}",
@@ -312,12 +315,18 @@ await withApp(0, async (browser) => {
   // wide title. Drive that literal family and assert the complete pane/grid
   // chain, because a row-only white-space assertion missed the grid item's
   // automatic min-content width and let the entire pane grow horizontally.
-  await source.setValue("");
+  const clearedSource = await browser.execute(() => {
+    const input = document.querySelector(".query-workspace-source");
+    if (!(input instanceof HTMLInputElement)) return false;
+    input.value = "";
+    input.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContent" }));
+    return true;
+  });
+  if (!clearedSource) throw new Error("persistent query source was not available to clear");
   await browser.$(".query-advanced-toggle").click();
   await browser.$(".query-advanced-modal").waitForExist({ timeout: 5_000 });
   const friendlyInputs = await browser.$$(".query-friendly-fields input");
   await friendlyInputs[0].setValue("Overflow");
-  for (const input of friendlyInputs.slice(1)) await input.setValue("");
   await browser.$(".query-advanced-actions .primary").click();
   await browser.$(".query-advanced-modal").waitForExist({ reverse: true, timeout: 5_000 });
   await browser.waitUntil(async () => (await browser.$$(".query-results-search .query-result-row")).length === 140, {
@@ -378,7 +387,7 @@ await withApp(0, async (browser) => {
 await withApp(1, async (browser) => {
   await browser.$(".query-workspace").waitForExist({ timeout: 20_000 });
   const source = await browser.$(".query-workspace-source");
-  if ((await source.getValue()) !== "alpha beta -draft") throw new Error("restart lost the virtual query source");
+  if ((await source.getValue()) !== "Overflow") throw new Error("restart lost the edited virtual query source");
   const restoredTable = await presentationButton(browser, "Table");
   if ((await restoredTable.getAttribute("aria-pressed")) !== "true") {
     throw new Error("restart lost the query presentation");
@@ -391,7 +400,11 @@ await withApp(1, async (browser) => {
     "Second unlinked.md",
     "Templates.md",
     "Unlinked source.md",
-  ];
+    ...Array.from({ length: 140 }, (_, index) => {
+      const suffix = index === 0 ? longPageToken : `result-${String(index).padStart(3, "0")}`;
+      return `Overflow ${suffix}.md`;
+    }),
+  ].sort();
   if (JSON.stringify(graphFilesBefore) !== JSON.stringify(expectedBefore)) {
     throw new Error(`virtual query wrote a temporary page: ${graphFilesBefore.join(", ")}`);
   }
@@ -404,7 +417,7 @@ await withApp(1, async (browser) => {
   });
   await sleep(1000);
   const saved = fs.readFileSync(`${GRAPH}/pages/Saved evidence search.md`, "utf8");
-  if (!saved.includes('{{query (search "alpha beta -draft")}}') || !saved.includes("tine.view:: table")) {
+  if (!saved.includes('{{query (search "Overflow")}}') || !saved.includes("tine.view:: table")) {
     throw new Error(`materialized page is not the canonical one-block query:\n${saved}`);
   }
 });

@@ -7824,6 +7824,46 @@ mod tests {
         }
     }
 
+    #[test]
+    fn page_header_property_save_reopens_as_metadata_with_original_line_endings() {
+        // Complements the real gear-panel E2E: drive the native save and a fresh
+        // Graph/parser instance so success cannot come from the just-written
+        // frontend store or Graph cache.
+        for (label, original, expected) in [
+            (
+                "lf",
+                "A:: XX\nB:: XX\nC:: XX\n",
+                "icon:: ★\nA:: XX\nB:: XX\nC:: XX\n",
+            ),
+            (
+                "crlf",
+                "A:: XX\r\nB:: XX\r\nC:: XX\r\n",
+                "icon:: ★\r\nA:: XX\r\nB:: XX\r\nC:: XX\r\n",
+            ),
+        ] {
+            let dir = scratch(&format!("page-property-positive-{label}"));
+            let path = dir.join("pages").join("Property.md");
+            fs::write(&path, original).unwrap();
+            let g = Graph::open(&dir);
+            let mut dto = g.load_named("Property", PageKind::Page).unwrap().unwrap();
+            dto.pre_block = Some("icon:: ★\nA:: XX\nB:: XX\nC:: XX".into());
+            g.save_page(&dto, dto.rev.as_deref()).unwrap();
+            assert_eq!(fs::read_to_string(&path).unwrap(), expected);
+            drop(g);
+
+            let reopened = Graph::open(&dir)
+                .load_named("Property", PageKind::Page)
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                reopened.pre_block.as_deref(),
+                Some("icon:: ★\nA:: XX\nB:: XX\nC:: XX")
+            );
+            assert!(reopened.blocks.is_empty());
+            let _ = fs::remove_dir_all(&dir);
+        }
+    }
+
     fn mkhl(id: &str, page: i64, text: Option<&str>) -> crate::pdf::Highlight {
         let r = crate::pdf::Rect {
             top: 1.0,
