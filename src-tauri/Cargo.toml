@@ -71,6 +71,10 @@ gtk = "0.18.2"
 # Set xdg_toplevel.app_id per native Wayland window without turning GTK into a
 # competing single-instance router (which would swallow `tine --capture`).
 gdkwayland-sys = { version = "0.18.2", features = ["v3_24_22"] }
+# A secondary X11 launch can initialize GTK/Xlib work on more than one thread
+# while the single-instance plugin forwards `--capture`. XInitThreads must run
+# before any GTK/Xlib call or XCB can abort the short-lived forwarder.
+x11 = "2.21.0"
 # SIGKILL WebKitGTK's helper subprocesses at quit so they don't run their GL/EGL
 # driver atexit teardown (which double-frees → SIGABRT coredump on many Mesa/driver
 # combos). See platform::kill_webkit_children and GH #28.

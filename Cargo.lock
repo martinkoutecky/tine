@@ -4529,6 +4529,7 @@ dependencies = [
  "tauri-plugin-window-state",
  "tine-core",
  "webkit2gtk",
+ "x11",
 ]
 
 [[package]]

@@ -36,6 +36,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   Wayland top-level exists, while retaining the compatible post-map update for
   older GTK 3.24 runtimes; the advertised ID now matches the installed desktop
   entry before the first visible buffer.
+- **Linux Quick Capture secondary launches no longer risk an Xlib/XCB abort.**
+  Xlib's process-wide thread mode is initialized before GTK or Tauri, so the
+  short-lived global-shortcut forwarder can hand off safely while the primary
+  app is active.
 
 ## [0.5.9] - 2026-07-14
 

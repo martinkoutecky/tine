@@ -63,6 +63,19 @@ use watcher::{get_watch_mode, set_watch_mode, start_watcher};
 #[cfg(desktop)]
 const MAIN_WINDOW_REVEAL_FALLBACK_MS: u64 = 3_000;
 
+/// Xlib's thread mode is process-global and must be selected before the first
+/// GTK/Xlib call. Secondary `--capture` launches are short-lived forwarders, but
+/// GTK and Tauri can still touch X11 from separate threads during their startup
+/// and teardown; without this initialization XCB aborts instead of forwarding.
+#[cfg(target_os = "linux")]
+fn init_xlib_threads() {
+    // SAFETY: this is the first native-window call in `run`, before GTK/Tauri is
+    // initialized. Repeated calls across tests or an AppImage re-exec are safe.
+    unsafe {
+        let _ = x11::xlib::XInitThreads();
+    }
+}
+
 /// The frontend normally reveals the main window after its themed App has
 /// painted. Keep a native fail-safe so a parser/session/frontend failure cannot
 /// strand the process as an invisible application.
@@ -278,6 +291,9 @@ mod multi_window_tests {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "linux")]
+    init_xlib_threads();
+
     // Bring up debug logging FIRST (TINE_DEBUG=1 / --debug), so every later
     // milestone — and any panic — is captured to the log file from the very start.
     debug_init();
