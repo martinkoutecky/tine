@@ -59,6 +59,7 @@ import {
   dimInactiveBlocks,
   exitFocusMode,
   dataRev,
+  bumpDataRev,
   installPaneTracker,
   markConflict,
   isConflicted,
@@ -113,6 +114,11 @@ import { SurfaceContext } from "./components/Block";
 import { endEdit } from "./editorController";
 
 async function handleGraphChange(c: GraphChange) {
+  // The backend watcher has already landed this transaction in its graph cache.
+  // Invalidate every derived visible-entity view even when the changed page is
+  // outside the bounded frontend working set (#166); loaded pages are refreshed
+  // below, while unloaded block references re-resolve by UUID from dataRev.
+  bumpDataRev();
   const routes = layoutPaneIds().map((paneId) => ({ paneId, router: paneRouter(paneId), route: paneRouter(paneId).route() }));
   if (c.removed) {
     const disp = reloadDisposition(c.name);

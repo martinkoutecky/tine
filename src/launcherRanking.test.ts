@@ -42,6 +42,21 @@ describe("bounded Ctrl+K frecency (GH #143)", () => {
       .toEqual(["exact", "b", "a"]);
   });
 
+  it("uses favorite status only inside the same objective class", () => {
+    const exact = item("exact", "exact");
+    const ordinary = item("ordinary", "prefix");
+    const favorite = { ...item("favorite", "prefix"), adaptiveFavorite: true };
+    const weakerFavorite = { ...item("weaker-favorite", "substring"), adaptiveFavorite: true };
+    expect(rankLauncherItems("graph", "ti", [exact, ordinary, favorite, weakerFavorite], 100, storage)
+      .map((x) => x.adaptiveIdentity))
+      .toEqual(["exact", "favorite", "ordinary", "weaker-favorite"]);
+    // Defend the contract even if a future producer accidentally interleaves
+    // shallow rows; the ranking comparator must remain transitive.
+    expect(rankLauncherItems("graph", "ti", [ordinary, weakerFavorite, favorite, exact], 100, storage)
+      .map((x) => x.adaptiveIdentity))
+      .toEqual(["exact", "favorite", "ordinary", "weaker-favorite"]);
+  });
+
   it("isolates queries and graphs, decays, resets, and obeys disable", () => {
     const items = [item("a", "body_evidence"), item("b", "body_evidence")];
     recordLauncherActivation("one", "query", "b", 100, storage);

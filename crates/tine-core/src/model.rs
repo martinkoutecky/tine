@@ -4741,6 +4741,23 @@ impl Graph {
                 .map(|b| dto_to_doc(b, dto_is_org))
                 .collect(),
         };
+        // Data-preservation firewall for page-header properties (GH #163).
+        // A frontend/store bug once reclassified a suffix of the page pre-block
+        // as the first outline block (`A::` stayed in the header while `B::` and
+        // `C::` were serialized as `- B::` / indented continuation text).  The
+        // string helper used by the gear panel was correct, so helper tests could
+        // not protect the actual DTO -> disk boundary.  No Tine editing command
+        // intentionally moves an existing page-header property line into the
+        // outline; promotion keeps property lines in the pre-block.  Refuse both
+        // normal and force writes that do so, leaving the original bytes intact.
+        if let Some(existing) = existing {
+            if let Some(line) = moved_page_property_line(existing, &doc) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("refusing to move page-header property into outline content: {line}"),
+                ));
+            }
+        }
         // Own the caller's resolved+locked path (M2: never re-resolve path_for here).
         let path = path.to_path_buf();
         let content = match Format::from_path(&path) {
@@ -4867,6 +4884,57 @@ impl Graph {
         // serialized, or the identical existing bytes on a no-op) — no re-read.
         Ok(rev)
     }
+}
+
+/// Return the first existing page-header property line that a proposed DTO has
+/// removed from the pre-block and reproduced verbatim inside an outline block.
+/// There is deliberately no implicit "repair" here: once the frontend has sent
+/// contradictory structure, retaining the original file and surfacing an error
+/// is safer than guessing which representation the user intended.
+fn moved_page_property_line(existing: &str, proposed: &Document) -> Option<String> {
+    // The general data-preservation guard is intentionally a little broader
+    // than Tine's editable property grammar: Logseq graphs can contain Unicode
+    // or plugin-defined keys that Tine does not expose in its settings panel,
+    // but they still must never be reclassified into outline content.
+    fn page_header_property(line: &str) -> bool {
+        let Some((key, _)) = line.split_once("::") else {
+            return false;
+        };
+        let key = key.trim();
+        !key.is_empty() && key.chars().all(|ch| !ch.is_whitespace() && ch != ':')
+    }
+
+    let existing_doc = doc::parse(existing);
+    let proposed_pre: std::collections::HashSet<&str> = proposed
+        .pre_block
+        .as_deref()
+        .unwrap_or("")
+        .split('\n')
+        .collect();
+    let moved: std::collections::HashSet<&str> = existing_doc
+        .pre_block
+        .as_deref()
+        .unwrap_or("")
+        .split('\n')
+        .filter(|line| page_header_property(line))
+        .filter(|line| !proposed_pre.contains(line))
+        .collect();
+    if moved.is_empty() {
+        return None;
+    }
+
+    fn find(blocks: &[DocBlock], moved: &std::collections::HashSet<&str>) -> Option<String> {
+        for block in blocks {
+            if let Some(line) = block.raw.split('\n').find(|line| moved.contains(line)) {
+                return Some(line.to_string());
+            }
+            if let Some(line) = find(&block.children, moved) {
+                return Some(line);
+            }
+        }
+        None
+    }
+    find(&proposed.roots, &moved)
 }
 
 /// Atomically reserve a unique filename in `assets/` for `name`, de-duplicating
@@ -7713,6 +7781,47 @@ mod tests {
             "no cache_gen bump on a trivia-only no-op"
         );
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_refuses_page_header_properties_reclassified_as_outline() {
+        // GH #163's v0.5.9 Windows follow-up.  The pure property-line helper was
+        // innocent; the damaging shape arrived at the native save boundary.
+        // Prove that even a contradictory frontend DTO cannot turn B/C into a
+        // bullet and continuation line, for either common line-ending family.
+        for (label, original) in [
+            ("lf", "A:: XX\nB:: XX\nC:: XX\n"),
+            ("crlf", "A:: XX\r\nB:: XX\r\nC:: XX\r\n"),
+            ("unicode", "A:: XX\nklíč:: hodnota\nC:: XX\n"),
+        ] {
+            let dir = scratch(&format!("page-property-firewall-{label}"));
+            let path = dir.join("pages").join("Property.md");
+            fs::write(&path, original).unwrap();
+            let g = Graph::open(&dir);
+            let mut dto = g.load_named("Property", PageKind::Page).unwrap().unwrap();
+            let normalized = original.replace("\r\n", "\n");
+            let normalized = normalized.trim_end_matches('\n');
+            assert_eq!(dto.pre_block.as_deref(), Some(normalized));
+            assert!(dto.blocks.is_empty());
+
+            let (kept, moved) = normalized.split_once('\n').unwrap();
+            dto.pre_block = Some(kept.into());
+            dto.blocks = vec![BlockDto {
+                id: "corrupt-shape".into(),
+                raw: moved.into(),
+                ..Default::default()
+            }];
+
+            let err = g.save_page(&dto, dto.rev.as_deref()).unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+            assert!(err.to_string().contains("page-header property"));
+            assert_eq!(fs::read_to_string(&path).unwrap(), original);
+
+            let err = g.force_save_page(&dto).unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+            assert_eq!(fs::read_to_string(&path).unwrap(), original);
+            let _ = fs::remove_dir_all(&dir);
+        }
     }
 
     fn mkhl(id: &str, page: i64, text: Option<&str>) -> crate::pdf::Highlight {

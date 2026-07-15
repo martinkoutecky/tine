@@ -1,6 +1,6 @@
 import { For, Show, createSignal, createResource, createEffect, createMemo, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
-import { switcherOpen, closeSwitcher, switcherMode, switcherEmbryo, recentPages, graphMeta } from "../ui";
+import { switcherOpen, closeSwitcher, switcherMode, switcherEmbryo, recentPages, graphMeta, isFavorite } from "../ui";
 import { openPage, openPageAtBlock, openPageInNewTab, openFile, openInNewTab, openQueryInNewTab, route } from "../router";
 import { paletteCommands } from "../keybindings";
 import { closePane, focusPane, openRouteInOtherPane, paneRouter } from "../panes";
@@ -13,10 +13,10 @@ import { rankLauncherItems, recordLauncherActivation } from "../launcherRanking"
 
 // One selectable result row.
 type Item =
-  | { t: "page"; name: string; pageKind: PageKind; path?: string; spans?: MatchSpan[]; adaptiveClass: ObjectiveMatchClass; adaptiveIdentity: string }
+  | { t: "page"; name: string; pageKind: PageKind; path?: string; spans?: MatchSpan[]; adaptiveClass: ObjectiveMatchClass; adaptiveIdentity: string; adaptiveFavorite: boolean }
   | { t: "create"; name: string }
   | { t: "command"; label: string; binding: string; run: () => void }
-  | { t: "block"; page: string; pageKind: PageKind; blockId: string; text: string; crumb: string[]; spans: MatchSpan[]; adaptiveClass: ObjectiveMatchClass; adaptiveIdentity: string };
+  | { t: "block"; page: string; pageKind: PageKind; blockId: string; text: string; crumb: string[]; spans: MatchSpan[]; adaptiveClass: ObjectiveMatchClass; adaptiveIdentity: string; adaptiveFavorite: boolean };
 
 interface Section {
   header: string;
@@ -124,6 +124,7 @@ export function QuickSwitcher(): JSX.Element {
         pageKind: r.kind,
         adaptiveClass: "exact",
         adaptiveIdentity: `page:${r.kind}:${r.name.toLocaleLowerCase()}`,
+        adaptiveFavorite: isFavorite(r.name),
       }));
       if (recents.length) out.push({ header: "Recent", items: recents });
       return out;
@@ -142,6 +143,7 @@ export function QuickSwitcher(): JSX.Element {
         spans: hit.evidence.flatMap((evidence) => evidence.spans),
         adaptiveClass: hit.match_class ?? "substring",
         adaptiveIdentity: `page:${hit.page.kind}:${hit.page.path || hit.page.name.toLocaleLowerCase()}`,
+        adaptiveFavorite: isFavorite(hit.page.name),
       }));
     const rankedPages = rankLauncherItems(
       graphMeta()?.root ?? "",
@@ -183,6 +185,7 @@ export function QuickSwitcher(): JSX.Element {
           spans: hit.evidence.flatMap((evidence) => evidence.spans),
           adaptiveClass: hit.match_class ?? "body_evidence",
           adaptiveIdentity: `block:${hit.kind}:${hit.page.toLocaleLowerCase()}:${hit.block.id}`,
+          adaptiveFavorite: isFavorite(hit.page),
         },
         onCur: !!(cur && hit.page === cur),
       });

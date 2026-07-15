@@ -17,13 +17,15 @@ const NATIVE_PORT = Number(process.env.E2E_NATIVE_PORT || 4531);
 const TMP = "/tmp/tine-block-ref-count-e2e";
 const GRAPH = `${TMP}/graph`;
 const TARGET = "77777777-7777-4777-8777-777777777777";
+const COLD_TARGET = "88888888-8888-4888-8888-888888888888";
 
 fs.rmSync(TMP, { recursive: true, force: true });
 for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(`${GRAPH}/${dir}`, { recursive: true });
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(`${TMP}/xdg/${dir}`, { recursive: true });
 fs.writeFileSync(`${GRAPH}/logseq/config.edn`, "{}\n");
 fs.writeFileSync(`${GRAPH}/pages/Source Target.md`, `- Source target\n  id:: ${TARGET}\n`);
-fs.writeFileSync(`${GRAPH}/pages/Tester.md`, "- \n");
+fs.writeFileSync(`${GRAPH}/pages/Cold Source.md`, `- Cold source\n  id:: ${COLD_TARGET}\n`);
+fs.writeFileSync(`${GRAPH}/pages/Tester.md`, `- \n- ((${COLD_TARGET}))\n`);
 const now = new Date();
 const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
 fs.writeFileSync(`${GRAPH}/journals/${journal}.md`, "- Open [[Source Target]]\n- Open [[Tester]]\n");
@@ -74,6 +76,25 @@ try {
     timeout: 10_000, timeoutMsg: "journal links did not return after Back",
   });
   await openPage("Tester");
+
+  // The cold source has never been opened in the frontend working set. A
+  // filesystem watcher transaction must nevertheless refresh every visible
+  // duplicate/reference by UUID, and deletion must invalidate the old value.
+  const coldRef = await browser.$(".page-blocks .block-ref");
+  await coldRef.waitForExist({ timeout: 10_000 });
+  if ((await coldRef.getText()).trim() !== "Cold source") {
+    throw new Error(`cold block reference did not resolve: ${JSON.stringify(await coldRef.getText())}`);
+  }
+  fs.writeFileSync(`${GRAPH}/pages/Cold Source.md`, `- Externally updated cold source\n  id:: ${COLD_TARGET}\n`);
+  await browser.waitUntil(async () => (await coldRef.getText()).trim() === "Externally updated cold source", {
+    timeout: 10_000,
+    timeoutMsg: "visible block reference did not follow an external edit to an unloaded source",
+  });
+  fs.unlinkSync(`${GRAPH}/pages/Cold Source.md`);
+  await browser.waitUntil(async () => await coldRef.getAttribute("class").then((value) => value.includes("block-ref-missing")), {
+    timeout: 10_000,
+    timeoutMsg: "visible block reference retained an externally deleted unloaded source",
+  });
 
   await browser.$(".page-blocks .block-content-wrapper").click();
   const editor = await browser.$(".page-blocks textarea.block-editor");
@@ -131,7 +152,7 @@ try {
   await browser.waitUntil(async () => (await browser.$(".page-blocks .block-ref").getText()).trim() === "Updated source target", {
     timeout: 10_000, timeoutMsg: "inline block reference kept stale source text",
   });
-  console.log("PASS: reference count refreshed to 1 and inline text followed the loaded source edit");
+  console.log("PASS: reference counts and loaded/unloaded external block-reference lifecycles refresh live");
 } finally {
   try { await browser?.deleteSession(); } catch {}
   try { process.kill(-td.pid, "SIGKILL"); } catch {}

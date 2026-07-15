@@ -36,6 +36,16 @@ assert.match(
   "the A/B benchmark job does not fetch tags and validate baseline currency before measuring"
 );
 assert.match(
+  ciWorkflow,
+  /bench:[\s\S]*?node scripts\/bench-ab\.mjs[\s\S]*?--candidate-dir \.[\s\S]*?--immutable-dir \.bench\/immutable[\s\S]*?--previous-dir \.bench\/previous/,
+  "the A/B benchmark job does not measure all three versions through the interleaved multi-round harness"
+);
+assert.match(
+  ciWorkflow,
+  /name: Performance A\/B multi-round reliability fixtures[\s\S]*?node scripts\/test-bench-ab\.mjs/,
+  "ordinary CI does not prove the performance gate rejects metric-level variance"
+);
+assert.match(
   releaseWorkflow,
   /preflight:[\s\S]*?fetch-depth: 0/,
   "release preflight cannot determine the previous release from a shallow checkout"

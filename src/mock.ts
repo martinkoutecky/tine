@@ -3,7 +3,7 @@
 // backend's shape so the UI behaves identically.
 
 import type { Backend, GpuEnv, DebugInfo } from "./backend";
-import type { BlockDto, BlockPreview, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PdfState, QueryExecution, RefGroup } from "./types";
+import type { BlockDto, BlockPreview, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PdfState, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup } from "./types";
 import { SAMPLE_PDF_B64 } from "./sample-pdf";
 import { hlsPageName } from "./pdf";
 import { MARKER_RE } from "./markers";
@@ -828,6 +828,75 @@ export function mockBackend(): Backend {
         return collect((b) => pageRefs(b.raw).some((r) => r.toLowerCase() === n));
       }
       return [];
+    },
+    async exportQuerySubtrees(specs: QueryExportSpec[]): Promise<QueryExportBatch> {
+      let remainingRoots = 50;
+      let remainingNodes = 2_000;
+      let remainingBytes = 8 * 1024 * 1024;
+      const estimate = (block: BlockDto) => block.id.length + block.raw.length + 128;
+      const countTree = (root: BlockDto) => {
+        let count = 0;
+        const stack = [root];
+        while (stack.length) {
+          const block = stack.pop()!;
+          count++;
+          for (const child of block.children) stack.push(child);
+        }
+        return count;
+      };
+      const copyTree = (block: BlockDto): BlockDto | null => {
+        const bytes = estimate(block);
+        if (remainingNodes === 0 || bytes > remainingBytes) return null;
+        remainingNodes--;
+        remainingBytes -= bytes;
+        const children: BlockDto[] = [];
+        for (const child of block.children) {
+          const copied = copyTree(child);
+          if (!copied) break;
+          children.push(copied);
+        }
+        return { ...block, children };
+      };
+      const findBlock = (page: PageDto, id: string): BlockDto | null => {
+        const stack = [...page.blocks];
+        while (stack.length) {
+          const block = stack.pop()!;
+          if (block.id === id) return block;
+          for (const child of block.children) stack.push(child);
+        }
+        return null;
+      };
+      const results = [];
+      for (const spec of specs.slice(0, 64)) {
+        const groups = spec.advanced
+          ? (await this.runAdvancedQuery(spec.query)).groups
+          : await this.runQuery(spec.query);
+        const total = groups.reduce((sum, group) => sum + group.blocks.length, 0);
+        const hydrated: RefGroup[] = [];
+        let shown = 0;
+        let omittedNodes = 0;
+        for (const group of groups) {
+          const page = find(group.page);
+          if (!page) continue;
+          const blocks: BlockDto[] = [];
+          for (const shallow of group.blocks) {
+            if (remainingRoots === 0) break;
+            remainingRoots--;
+            const source = findBlock(page, shallow.id) ?? shallow;
+            const before = remainingNodes;
+            const copied = copyTree(source);
+            omittedNodes += Math.max(0, countTree(source) - (before - remainingNodes));
+            if (copied) {
+              blocks.push(copied);
+              shown++;
+            }
+          }
+          if (blocks.length) hydrated.push({ page: group.page, kind: group.kind, blocks });
+          if (remainingRoots === 0) break;
+        }
+        results.push({ key: spec.key, groups: hydrated, shown, total, omitted_nodes: omittedNodes });
+      }
+      return { results, omitted_queries: Math.max(0, specs.length - 64) };
     },
     async readCustomCss(): Promise<string> {
       return (globalThis as unknown as { __tineMockCustomCss?: string }).__tineMockCustomCss ?? "";

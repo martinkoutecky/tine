@@ -69,6 +69,7 @@ jobs:
       matrix:
         scenario:
           - windows-core
+          - page-properties
           - pdf-logseq
     steps:
       - uses: actions/checkout@v4

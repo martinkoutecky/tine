@@ -25,7 +25,7 @@
     },
     {
       "id": "REG-ANDROID-BACKUP-RESTORE-EXDEV-001",
-      "title": "Backup restore keeps atomic recovery moves on the live graph filesystem",
+      "title": "Backup restore pages journals sidecars and config keep recovery and publication on the live graph filesystem when app data is on another device",
       "family": "backup-recovery",
       "sources": {
         "issues": [130],
@@ -33,7 +33,7 @@
       },
       "platforms": ["android", "linux"],
       "layer": "core-native",
-      "status": "closed",
+      "status": "covered",
       "coverage": {
         "tests": [
           "src-tauri/src/backup.rs"
@@ -231,7 +231,7 @@
     },
     {
       "id": "REG-RESULT-SUBTREE-NONOVERLAP-001",
-      "title": "Nested query/reference memberships stay complete and shallow while preview/export work remains bounded",
+      "title": "Nested query/reference memberships stay complete and shallow while previews and multi-query exports share native construction budgets",
       "family": "performance",
       "sources": { "issues": [], "commits": [] },
       "platforms": ["all"],
@@ -245,7 +245,21 @@
           "src/components/Block.embedHierarchy.test.tsx",
           "src/render/pagePeek.test.tsx"
         ],
-        "scenario": "performance.complete-shallow-membership-and-bounded-preview-export",
+        "scenario": "performance.complete-shallow-membership-and-native-shared-preview-export-budgets",
+        "failBefore": "proven"
+      }
+    },
+    {
+      "id": "REG-BENCH-MULTIROUND-RELIABILITY-001",
+      "title": "Release performance decisions use interleaved distributions and reject metric-level variance",
+      "family": "performance",
+      "sources": { "issues": [], "commits": [] },
+      "platforms": ["linux"],
+      "layer": "release-process",
+      "status": "covered",
+      "coverage": {
+        "tests": ["scripts/test-bench-ab.mjs", "scripts/test-release-pipeline.mjs", ".github/workflows/ci.yml"],
+        "scenario": "performance.interleaved-multiround-median-and-spread-gate",
         "failBefore": "proven"
       }
     }

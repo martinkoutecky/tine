@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "immutableBaseline": {
     "ref": "v0.4.7",
     "purpose": "Last pre-Sheets and pre-split-view patch release; never advances automatically."
@@ -9,16 +9,20 @@
     "purpose": "Most recently published release. Advance immediately after publication; a tagged candidate automatically compares with the preceding tag."
   },
   "reliability": {
+    "rounds": 3,
+    "runsPerRound": 4,
     "maxCalibrationSpreadPct": 25
   },
   "metrics": {
     "bigLoad": {
       "maxVsImmutablePct": 25,
-      "maxVsPreviousPct": 15
+      "maxVsPreviousPct": 15,
+      "maxRoundSpreadPct": 30
     },
     "scrollBig": {
       "maxVsImmutablePct": 30,
-      "maxVsPreviousPct": 20
+      "maxVsPreviousPct": 20,
+      "maxRoundSpreadPct": 15
     }
   },
   "parseStats": {

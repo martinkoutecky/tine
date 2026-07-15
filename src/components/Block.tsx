@@ -153,20 +153,7 @@ import { SheetTable } from "./SheetTable";
 import { SheetBoard } from "./SheetBoard";
 import { blockBackgroundColor } from "../blockColors";
 import { SheetContainer } from "./SheetContainer";
-
-export function shouldOpenBlockContextMenu(
-  target: EventTarget | null,
-  mobile = isMobilePlatform
-): boolean {
-  const element = target instanceof Element ? target : null;
-  if (element?.closest("textarea,input,select,[contenteditable='true']")) return false;
-  // Android WebView emits `contextmenu` as part of long-press text selection.
-  // Match OG's bullet-only targeting on mobile so selection handles and the
-  // native edit menu remain usable; the explicit bullet still exposes Tine's
-  // block actions.
-  if (mobile && !element?.closest(".bullet-container")) return false;
-  return true;
-}
+import { shouldOpenBlockContextMenu } from "../contextMenuPolicy";
 
 type SheetSlashView = "grid" | "table" | "board";
 
@@ -299,8 +286,10 @@ export interface CollapseSurfaceApi {
   toggle: (id: string, current: boolean) => void;
   setMany: (ids: readonly string[], collapsed: boolean) => void;
 }
-// A transclusion can fold a source block locally, matching Logseq, without
-// writing collapsed:: into the source outline.
+// Deliberate Tine divergence from OG Logseq: OG block embeds use the source
+// block's persisted collapsed state, while Tine lets a secondary/transcluded
+// rendering fold locally so interacting with a view cannot mutate its source.
+// Keep this surface-local contract explicit when changing collapse parity.
 export const CollapseSurfaceContext = createContext<CollapseSurfaceApi | null>(null);
 
 export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded?: boolean }): JSX.Element {

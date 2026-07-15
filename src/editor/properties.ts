@@ -341,11 +341,10 @@ export function upsertPropertyLine(
     }
     out.push(line);
   }
-  if (!matched && v) {
-    let insertAt = out.length;
-    while (insertAt > 0 && out[insertAt - 1].trim() === "") insertAt--;
-    out.splice(insertAt, 0, `${key}:: ${v}`);
-  }
+  // Actual Logseq `frontend.util.page-property/insert-property` prepends a new
+  // page property and replaces an existing one in place.  Keep that ordering
+  // contract instead of inventing a Tine-local append rule.
+  if (!matched && v) out.unshift(`${key}:: ${v}`);
   return out.some((line) => line.trim() !== "") ? out.join("\n") : null;
 }
 

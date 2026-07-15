@@ -25,6 +25,7 @@ import type { PageDto, RefGroup } from "../types";
 import { tagRef } from "../tags";
 import { copyGuideIntoGraph, ensureGuidePagesLoaded, isGuidePageName } from "../guide";
 import { isPropertiesOnly, splitPagePreamble } from "../editor/properties";
+import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 
 export const FEED_PAGE = 3;
 let journalOffset = 0;
@@ -476,6 +477,7 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
             onDblClick={startRename}
             onContextMenu={(e) => {
               if (props.page.guide) return;
+              if (!shouldOpenTextContextMenu(e.target)) return;
               e.preventDefault();
               openPageContextMenu(e.clientX, e.clientY, props.page.name, props.page.kind, true);
             }}

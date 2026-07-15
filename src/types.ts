@@ -30,6 +30,28 @@ export interface BlockPreview {
   truncated: number;
 }
 
+/** One rendered query macro requested by a Copy / Export session. */
+export interface QueryExportSpec {
+  key: string;
+  query: string;
+  advanced: boolean;
+}
+
+/** Native hierarchy projection for one query macro. */
+export interface QueryExportResult {
+  key: string;
+  groups: RefGroup[];
+  shown: number;
+  total: number;
+  omitted_nodes: number;
+}
+
+/** Every result in this batch shared one native root/node/byte budget. */
+export interface QueryExportBatch {
+  results: QueryExportResult[];
+  omitted_queries: number;
+}
+
 /** On-disk page format: markdown (default) or org. */
 export type Format = "md" | "org";
 

@@ -10,6 +10,8 @@
 // (protectedSpans' `m.index` and transformCodepoints' `i` are both UTF-16), so
 // the port is index-consistent with the source without a byte conversion here.
 
+import { projectionKey } from "./projection";
+
 export interface Range {
   start: number;
   end: number;
@@ -131,6 +133,64 @@ interface VerifiedCandidate<P> {
   mldocProjection?: P;
 }
 
+/** Structural identity of the delta between the two canonical parser
+ * projections. Scalar payloads are intentionally ignored (the anonymizer must
+ * change them), while side, path, type, missing keys and array shape are kept.
+ * Thus "a mismatch still exists" is insufficient: it must be the same class of
+ * mismatch at the same structural location. */
+export function divergenceSignature(left: unknown, right: unknown): string {
+  const a = JSON.parse(projectionKey(left as never));
+  const b = JSON.parse(projectionKey(right as never));
+  const out: string[] = [];
+  const typeOf = (value: unknown) => value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
+  // Syntax discriminators must retain their actual values; paragraph→heading is
+  // not the same defect as paragraph→list. Prose/URL/ref payloads may be scrubbed,
+  // so other scalar mismatches retain path and type but not private values.
+  const structuralScalarKeys = new Set([
+    "kind", "k", "type", "format", "level", "marker", "checkbox",
+    "ordered", "start", "indent", "style", "delimiter", "language",
+  ]);
+  const pathPart = (key: string) => key.replaceAll("~", "~0").replaceAll("/", "~1");
+  const walk = (path: string, av: unknown, bv: unknown, aPresent = true, bPresent = true) => {
+    if (!aPresent || !bPresent) {
+      out.push(`${path}|missing-${aPresent ? "right" : "left"}|${typeOf(aPresent ? av : bv)}`);
+      return;
+    }
+    const at = typeOf(av);
+    const bt = typeOf(bv);
+    if (at !== bt) {
+      out.push(`${path}|type|${at}->${bt}`);
+      return;
+    }
+    if (Array.isArray(av) && Array.isArray(bv)) {
+      if (av.length !== bv.length) out.push(`${path}|array-length|${av.length}->${bv.length}`);
+      const length = Math.max(av.length, bv.length);
+      for (let index = 0; index < length; index += 1) {
+        walk(`${path}/${index}`, av[index], bv[index], index < av.length, index < bv.length);
+      }
+      return;
+    }
+    if (av && bv && at === "object") {
+      const ao = av as Record<string, unknown>;
+      const bo = bv as Record<string, unknown>;
+      const keys = [...new Set([...Object.keys(ao), ...Object.keys(bo)])].sort();
+      for (const key of keys) {
+        walk(`${path}/${pathPart(key)}`, ao[key], bo[key], Object.hasOwn(ao, key), Object.hasOwn(bo, key));
+      }
+      return;
+    }
+    if (!Object.is(av, bv)) {
+      const key = path.slice(path.lastIndexOf("/") + 1).replaceAll("~1", "/").replaceAll("~0", "~");
+      const detail = structuralScalarKeys.has(key)
+        ? `${JSON.stringify(av)}->${JSON.stringify(bv)}`
+        : `${at}->${bt}`;
+      out.push(`${path}|scalar|${detail}`);
+    }
+  };
+  walk("", a, b);
+  return out.sort().join("\n");
+}
+
 /** Try each scrub tier in escalating order and ACCEPT the first whose scrubbed
  *  output STILL reproduces the divergence when re-parsed by both parsers. This is
  *  the guarantee: a shared snippet contains no original prose AND provably
@@ -140,7 +200,14 @@ export async function anonymizeAndVerify<P>(
   input: string,
   verify: (candidate: string) => Promise<VerifiedCandidate<P>>,
   accept: (parsed: VerifiedCandidate<P>) => boolean = () => true,
+  expected?: VerifiedCandidate<P>,
 ): Promise<AnonResult<P>> {
+  const expectedSignature = expected?.ok
+    && expected.diverges
+    && expected.lsdocProjection !== undefined
+    && expected.mldocProjection !== undefined
+    ? divergenceSignature(expected.lsdocProjection, expected.mldocProjection)
+    : null;
   const attempts: [string, () => string][] = [
     ["tier 1", () => anonymizeTier1(input, [])],
     ["tier 2", () => anonymizeTier2(input, [])],
@@ -154,7 +221,11 @@ export async function anonymizeAndVerify<P>(
     // original actionable delta while leaving only a known oracle artifact.
     // Callers may reject that candidate and let the remaining tiers try to
     // preserve a faithful, shareable reproduction.
-    if (parsed.ok && parsed.diverges && accept(parsed)) {
+    const signature = parsed.lsdocProjection !== undefined && parsed.mldocProjection !== undefined
+      ? divergenceSignature(parsed.lsdocProjection, parsed.mldocProjection)
+      : null;
+    if (parsed.ok && parsed.diverges && accept(parsed)
+      && (expected === undefined || (expectedSignature !== null && signature === expectedSignature))) {
       return {
         ok: true,
         tier,

@@ -20,8 +20,9 @@ child; the script SIGKILLs vite itself in a `finally`).
 ## What it measures
 
 Headless Chromium drives the mock backend's gated **2000-block "Big" page**
-(`?big` in `src/mock.ts`). Each metric is timed **in-page** with `performance.now`
-and reported as the **min of K=8** runs (least noise), after one discarded warmup.
+(`?big` in `src/mock.ts`). A local invocation times each metric **in-page** with
+`performance.now` and reports the **min of K=8** runs (least noise), after one
+discarded warmup. CI wraps the same harness in the multi-round protocol below.
 It boots once and measures **warm navigations** (journals ↔ Big) so the numbers
 reflect the app's own mount/render cost, not per-reload JIT + WASM-compile jitter.
 
@@ -58,9 +59,17 @@ baseline recorded on the same machine retains the local regression exit code.
 ## CI hard gate: same-machine A/B without baseline ratcheting
 
 CI checks out and builds three exact trees on one runner: the candidate, the
-immutable long-term anchor, and the most recently published release. It measures
-all three sequentially and compares their **raw** values. A calibration-spread
-guard rejects a noisy/throttled run instead of calling it a code regression.
+immutable long-term anchor, and the most recently published release. It runs
+three interleaved rounds and rotates the order, so every version occupies the
+first, middle, and last position once. Each decision uses the **median of the
+three round minima**, not a single invocation. The artifact retains every round,
+its exact order, and its within-round samples.
+
+Reliability is checked at both levels: calibration spread across all nine
+measurements, and per-version/per-metric spread across rounds. A volatile
+`scrollBig` baseline therefore fails as unreliable even when its median would
+make the candidate pass. Rerunning a red job cannot erase the first attempt's
+evidence; every attempt uploads its complete distribution.
 
 `scripts/bench-policy.json` is the contract:
 
@@ -71,8 +80,9 @@ guard rejects a noisy/throttled run instead of calling it a code regression.
   published version. It catches a large one-release jump.
 - Budgets are metric-specific: large-page load is allowed 25% over the immutable
   anchor and 15% over the previous release; scroll is allowed 30% and 20% because
-  its browser scheduling noise differs. Cold parse misses have an absolute cap of
-  15, independent of timing.
+  its browser scheduling noise differs. Round-spread limits are 30% for the
+  coarser load metric and 15% for scroll. Cold parse misses use the worst of the
+  three rounds and have an absolute cap of 15, independent of timing.
 
 The job is a hard gate. A feature expected to exceed a budget stops for a product
 decision and performance design; do not move either baseline to make it pass.

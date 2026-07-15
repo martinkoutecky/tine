@@ -12,9 +12,24 @@ const immutable = JSON.parse(readFileSync(arg("--immutable"), "utf8"));
 const previous = JSON.parse(readFileSync(arg("--previous"), "utf8"));
 const failures = [];
 
-if (policy.schemaVersion !== 1) failures.push(`unsupported policy schema ${policy.schemaVersion}`);
+if (policy.schemaVersion !== 2) failures.push(`unsupported policy schema ${policy.schemaVersion}`);
 
-const calibrations = [candidate.calib, immutable.calib, previous.calib];
+const measurements = { candidate, immutable, previous };
+for (const [label, measurement] of Object.entries(measurements)) {
+  if (measurement.schemaVersion !== 2 || !Array.isArray(measurement.rounds)) {
+    failures.push(`${label}: expected a schema-2 multi-round measurement`);
+  } else if (measurement.rounds.length < policy.reliability.rounds) {
+    failures.push(
+      `${label}: only ${measurement.rounds.length} rounds; policy requires ${policy.reliability.rounds}`,
+    );
+  }
+}
+
+const calibrations = Object.values(measurements).flatMap((measurement) =>
+  Array.isArray(measurement.rounds)
+    ? measurement.rounds.map((round) => round.calib)
+    : [measurement.calib],
+);
 if (calibrations.some((n) => !Number.isFinite(n) || n <= 0)) {
   failures.push("one or more measurements has an invalid calibration");
 } else {
@@ -27,11 +42,27 @@ if (calibrations.some((n) => !Number.isFinite(n) || n <= 0)) {
 
 console.log("metric      candidate  immutable  delta/limit     previous  delta/limit");
 for (const [name, budget] of Object.entries(policy.metrics)) {
-  const value = candidate.metrics?.[name]?.rawMin;
-  const old = immutable.metrics?.[name]?.rawMin;
-  const prev = previous.metrics?.[name]?.rawMin;
+  for (const [label, measurement] of Object.entries(measurements)) {
+    const metric = measurement.metrics?.[name];
+    const spread = metric?.roundSpreadPct;
+    if (!Number.isFinite(spread)) {
+      failures.push(`${label}/${name}: missing round spread`);
+    } else {
+      console.log(
+        `${label}/${name} round spread: ${spread.toFixed(1)}% (limit ${budget.maxRoundSpreadPct}%)`,
+      );
+      if (spread > budget.maxRoundSpreadPct) {
+        failures.push(
+          `${label}/${name}: ${spread.toFixed(1)}% round spread exceeds ${budget.maxRoundSpreadPct}% reliability limit; investigate runner/metric variance`,
+        );
+      }
+    }
+  }
+  const value = candidate.metrics?.[name]?.rawMedianOfRoundMins;
+  const old = immutable.metrics?.[name]?.rawMedianOfRoundMins;
+  const prev = previous.metrics?.[name]?.rawMedianOfRoundMins;
   if (![value, old, prev].every((n) => Number.isFinite(n) && n > 0)) {
-    failures.push(`${name}: missing or invalid rawMin measurement`);
+    failures.push(`${name}: missing or invalid median-of-round-mins measurement`);
     continue;
   }
   const vsOld = ((value / old) - 1) * 100;

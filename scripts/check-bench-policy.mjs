@@ -10,6 +10,19 @@ const policy = JSON.parse(fs.readFileSync(path.join(root, "scripts/bench-policy.
 const version = JSON.parse(fs.readFileSync(path.join(root, "src-tauri/tauri.conf.json"), "utf8")).version;
 const problems = [];
 
+if (policy.schemaVersion !== 2) problems.push(`bench policy schema is ${policy.schemaVersion}; expected 2`);
+if (!Number.isInteger(policy.reliability?.rounds) || policy.reliability.rounds < 3) {
+  problems.push("bench policy must require at least three interleaved rounds");
+}
+if (!Number.isInteger(policy.reliability?.runsPerRound) || policy.reliability.runsPerRound < 2) {
+  problems.push("bench policy must require at least two measured runs per round");
+}
+for (const [name, budget] of Object.entries(policy.metrics ?? {})) {
+  if (!Number.isFinite(budget.maxRoundSpreadPct) || budget.maxRoundSpreadPct <= 0) {
+    problems.push(`${name} is missing a positive maxRoundSpreadPct reliability budget`);
+  }
+}
+
 function argument(name) {
   const index = process.argv.indexOf(name);
   return index >= 0 ? process.argv[index + 1] : undefined;

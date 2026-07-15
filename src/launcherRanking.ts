@@ -7,6 +7,13 @@ const VERSION = 1;
 const MAX_RECORDS = 400;
 const MAX_AGE_MS = 180 * 24 * 60 * 60 * 1000;
 const HALF_LIFE_MS = 30 * 24 * 60 * 60 * 1000;
+const OBJECTIVE_CLASS_RANK: Record<ObjectiveMatchClass, number> = {
+  exact: 0,
+  prefix: 1,
+  substring: 2,
+  fuzzy: 3,
+  body_evidence: 4,
+};
 
 interface ActivationRecord {
   query: string;
@@ -23,6 +30,7 @@ interface RankingStore {
 export interface LauncherRankable {
   adaptiveClass: ObjectiveMatchClass;
   adaptiveIdentity: string;
+  adaptiveFavorite?: boolean;
 }
 
 const [enabled, setEnabledSignal] = createSignal(true);
@@ -126,10 +134,17 @@ export function rankLauncherItems<T extends LauncherRankable>(
   return items
     .map((item, index) => ({ item, index, score: frecency(byIdentity.get(item.adaptiveIdentity), now) }))
     .sort((a, b) => {
-      // Objective classes never cross. The backend's deterministic order is the
-      // stable tie breaker inside a class.
-      if (a.item.adaptiveClass !== b.item.adaptiveClass) return a.index - b.index;
-      return b.score - a.score || a.index - b.index;
+      // Objective classes never cross. Compare their semantic rank directly;
+      // using original indices here would make the comparator non-transitive if
+      // one producer ever interleaved two bands.
+      if (a.item.adaptiveClass !== b.item.adaptiveClass) {
+        return OBJECTIVE_CLASS_RANK[a.item.adaptiveClass] - OBJECTIVE_CLASS_RANK[b.item.adaptiveClass];
+      }
+      // The backend's deterministic order is the final stable tie breaker inside
+      // a class; favorites and frecency cannot promote a weaker objective match.
+      return Number(!!b.item.adaptiveFavorite) - Number(!!a.item.adaptiveFavorite)
+        || b.score - a.score
+        || a.index - b.index;
     })
     .map(({ item }) => item);
 }
@@ -144,4 +159,3 @@ export function resetLauncherRanking(root: string, storage: Storage = localStora
 }
 
 void initLauncherRankingSetting();
-

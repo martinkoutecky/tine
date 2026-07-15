@@ -194,15 +194,19 @@ async function runDiff(
         continue;
       }
     }
-    const anon = await anonymizeAndVerify<Projection>(
-      min.input,
-      (candidate) => parseBothFresh(candidate, f.format),
-      (parsed) => !(
-        parsed.lsdocProjection
-        && parsed.mldocProjection
-        && isMldocBacktickStateArtifact(parsed.lsdocProjection, parsed.mldocProjection)
-      ),
-    );
+    const minimizedOriginal = await parseBothFresh(min.input, f.format);
+    const anon = minimizedOriginal.ok && minimizedOriginal.diverges
+      ? await anonymizeAndVerify<Projection>(
+          min.input,
+          (candidate) => parseBothFresh(candidate, f.format),
+          (parsed) => !(
+            parsed.lsdocProjection
+            && parsed.mldocProjection
+            && isMldocBacktickStateArtifact(parsed.lsdocProjection, parsed.mldocProjection)
+          ),
+          minimizedOriginal,
+        )
+      : { ok: false };
     findings.push({
       type: "divergence",
       rel,

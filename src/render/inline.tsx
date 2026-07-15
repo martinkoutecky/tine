@@ -8,7 +8,7 @@ import { mediaKind } from "../media";
 import { openPage, openPageInNewTab, openPageAtBlock, focusBlock } from "../router";
 import { refClickZoom } from "../copySettings";
 import { isJournalTitle } from "../journal";
-import { openPdf, openPageInSidebar, openBlockInSidebar, openPageContextMenu, openBlockRefContextMenu, setLightbox, setAudioPlayer, graphEpoch, graphMeta, pushToast } from "../ui";
+import { openPdf, openPageInSidebar, openBlockInSidebar, openPageContextMenu, openBlockRefContextMenu, setLightbox, setAudioPlayer, dataRev, graphEpoch, graphMeta, pushToast } from "../ui";
 import { copyImageFromSrc } from "../copyImage";
 import { parseBlock, parserReady } from "./parse";
 import type { Inline, Url, MacroInline, TimestampInline, EmailValue, Block as AstBlock, Format } from "./ast";
@@ -38,6 +38,7 @@ import { NamespaceMacro } from "../components/Namespace";
 import { guideTargetForLink, isGuidePageName } from "../guide";
 import { PeekPopup, PeekContext, capBlockTree } from "./PeekPopup";
 import { annotationInfoForBlock, pdfFileFromPreBlock } from "../editor/annotation";
+import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 
 
 // ===========================================================================
@@ -291,6 +292,7 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
           }
         }}
         onContextMenu={(e) => {
+          if (!shouldOpenTextContextMenu(e.target)) return;
           e.preventDefault();
           e.stopPropagation();
           if (!isGuidePageName(targetName())) openPageContextMenu(e.clientX, e.clientY, targetName());
@@ -1079,15 +1081,23 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
   const insidePeek = useContext(PeekContext);
   let anchorEl: HTMLSpanElement | undefined;
   const [grp] = createResource(
-    () => `${props.id}\0${graphEpoch()}`, // resolve once per open graph; batched + cached
+    () => `${props.id}\0${graphEpoch()}\0${dataRev()}`,
     () => resolveBlockBatched(props.id)
   );
   const peek = createPeekBridge(() => insidePeek);
   // A loaded target shares the editor's reactive node, so references update on
   // the keystroke without re-resolving every visible uuid after every save. The
-  // backend snapshot remains the fallback for targets outside the working set.
+  // backend snapshot remains the fallback for targets outside the working set;
+  // visible fallback UUIDs are batch-refreshed after landed graph transactions.
   const liveTarget = () => doc.byId[props.id];
-  const targetRaw = () => liveTarget()?.raw ?? grp()?.blocks[0].raw;
+  const targetRaw = () => {
+    const resolved = grp();
+    // `undefined` is the initial/loading state, where a loaded reactive entity
+    // may paint immediately. `null` is an authoritative post-transaction miss:
+    // do not let an evicted/deleted page's stale working-set node win forever.
+    if (resolved === null) return undefined;
+    return liveTarget()?.raw ?? resolved?.blocks[0].raw;
+  };
   // Visible text: an explicit label wins; otherwise the target's first line.
   const text = () => props.label ?? (targetRaw() ? visibleBody(targetRaw()!)[0] : undefined);
   // Parse the referenced block's text with ITS page's format (org refs render org).
@@ -1100,7 +1110,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
   // descendant tree only after the hover dwell, through a backend operation
   // that applies the cap before DTO allocation and IPC serialization.
   const [preview] = createResource(
-    () => (peek.open() && grp() ? `${props.id}\0${graphEpoch()}` : null),
+    () => (peek.open() && grp() ? `${props.id}\0${graphEpoch()}\0${dataRev()}` : null),
     () => backend().previewBlock(props.id, PEEK_BLOCK_CAP),
   );
   const capped = createMemo(() => capBlockTree(preview()?.group.blocks ?? [], PEEK_BLOCK_CAP));
@@ -1122,6 +1132,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
         onContextMenu={(e) => {
           const g = grp();
           if (!g) return; // missing target → let the default menu through
+          if (!shouldOpenTextContextMenu(e.target)) return;
           e.preventDefault();
           e.stopPropagation();
           openBlockRefContextMenu(e.clientX, e.clientY, props.id, g.page, g.kind);

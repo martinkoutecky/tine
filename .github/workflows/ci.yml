@@ -41,6 +41,9 @@ jobs:
       - name: Performance baseline policy is current
         run: node scripts/check-bench-policy.mjs
 
+      - name: Performance A/B multi-round reliability fixtures
+        run: node scripts/test-bench-ab.mjs
+
       - name: UI regression catalog and release evidence contracts
         run: |
           npm run check:regressions
@@ -154,20 +157,23 @@ jobs:
           npm --prefix .bench/immutable run build
           npm --prefix .bench/previous run build
 
-      - name: Measure immutable baseline, previous release, and candidate
+      - name: Measure immutable baseline, previous release, and candidate in interleaved rounds
         run: |
           mkdir -p test-results/perf
-          npm --prefix .bench/immutable run bench -- --update
-          npm --prefix .bench/previous run bench -- --update
-          npm run bench -- --update --output test-results/perf/candidate.json
+          node scripts/bench-ab.mjs \
+            --policy scripts/bench-policy.json \
+            --candidate-dir . \
+            --immutable-dir .bench/immutable \
+            --previous-dir .bench/previous \
+            --output-dir test-results/perf
 
       - name: Enforce metric-specific A/B budgets
         run: |
           node scripts/check-bench-ab.mjs \
             --policy scripts/bench-policy.json \
             --candidate test-results/perf/candidate.json \
-            --immutable .bench/immutable/scripts/bench-baseline.json \
-            --previous .bench/previous/scripts/bench-baseline.json
+            --immutable test-results/perf/immutable.json \
+            --previous test-results/perf/previous.json
 
       - name: Upload performance measurements
         if: always()
@@ -175,6 +181,4 @@ jobs:
         with:
           name: perf-ab-${{ github.run_attempt }}
           path: |
-            test-results/perf/candidate.json
-            .bench/immutable/scripts/bench-baseline.json
-            .bench/previous/scripts/bench-baseline.json
+            test-results/perf/

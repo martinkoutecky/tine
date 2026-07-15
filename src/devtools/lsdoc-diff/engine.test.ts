@@ -6,6 +6,7 @@ import {
   anonymizeTier1,
   anonymizeTier2,
   anonymizeAndVerify,
+  divergenceSignature,
   anonymizeSourceRel,
   protectedSpans,
 } from "./anonymize";
@@ -104,10 +105,42 @@ describe("anonymizeAndVerify tier escalation", () => {
         return { ok: true, diverges: true, lsdocProjection: pair.lsdoc, mldocProjection: pair.mldoc };
       },
       (parsed) => !isMldocBacktickStateArtifact(parsed.lsdocProjection!, parsed.mldocProjection!),
+      { ok: true, diverges: true, lsdocProjection: actionable.lsdoc, mldocProjection: actionable.mldoc },
     );
     expect(r.ok).toBe(true);
     expect(r.tier).toBe("tier 2");
     expect(r.input).toBe("Bc2");
+  });
+
+  it("rejects a scrub that changes which structural parser delta survived", async () => {
+    const sameLeft = { blocks: [{ kind: "paragraph", text: "private" }], refs: { page: [], block: [] } };
+    const sameRight = { blocks: [{ kind: "heading", text: "other" }], refs: { page: [], block: [] } };
+    const differentLeft = { blocks: [{ kind: "paragraph" }], refs: { page: ["x"], block: [] } };
+    const differentRight = { blocks: [{ kind: "paragraph" }], refs: { page: [], block: [] } };
+    const r = await anonymizeAndVerify(
+      "Ab1",
+      async (candidate) => {
+        const pair = candidate === "Aa9"
+          ? { left: differentLeft, right: differentRight }
+          : { left: sameLeft, right: sameRight };
+        return { ok: true, diverges: true, lsdocProjection: pair.left, mldocProjection: pair.right };
+      },
+      () => true,
+      { ok: true, diverges: true, lsdocProjection: sameLeft, mldocProjection: sameRight },
+    );
+    expect(r.ok).toBe(true);
+    expect(r.tier).toBe("tier 2");
+  });
+
+  it("treats scrubbed scalar payloads as the same divergence identity", () => {
+    const a1 = { blocks: [{ kind: "plain", text: "secret" }], refs: { page: [], block: [] } };
+    const b1 = { blocks: [{ kind: "code", text: "private" }], refs: { page: [], block: [] } };
+    const a2 = { blocks: [{ kind: "plain", text: "aaaaaa" }], refs: { page: [], block: [] } };
+    const b2 = { blocks: [{ kind: "code", text: "bbbbbbb" }], refs: { page: [], block: [] } };
+    expect(divergenceSignature(a1, b1)).toBe(divergenceSignature(a2, b2));
+
+    const structurallyDifferent = { blocks: [{ kind: "heading", text: "bbbbbbb" }], refs: { page: [], block: [] } };
+    expect(divergenceSignature(a2, structurallyDifferent)).not.toBe(divergenceSignature(a1, b1));
   });
 
   it("can retain a URL-sensitive divergence without retaining the private URL", async () => {

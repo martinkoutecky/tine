@@ -22,6 +22,8 @@ import type {
   PrintOpts,
   PdfState,
   QueryExecution,
+  QueryExportBatch,
+  QueryExportSpec,
 } from "./types";
 import { assetFileName } from "./media";
 import { mockBackend } from "./mock";
@@ -152,6 +154,8 @@ export interface Backend {
    *  the page doesn't exist. */
   pagePrintHtml(name: string, opts: PrintOpts): Promise<string>;
   runQuery(query: string): Promise<RefGroup[]>;
+  /** Resolve all Copy / Export query macros under one cumulative native budget. */
+  exportQuerySubtrees(specs: QueryExportSpec[]): Promise<QueryExportBatch>;
   /** Advanced (datalog-subset) query: maps the supported clauses onto the engine
    *  and reports what ran vs was ignored. `currentPage` resolves `:current-page`. */
   runAdvancedQuery(query: string, currentPage?: string): Promise<AdvancedQueryResult>;
@@ -544,6 +548,9 @@ class TauriBackend implements Backend {
   }
   runQuery(query: string) {
     return this.call<RefGroup[]>("run_query", { query });
+  }
+  exportQuerySubtrees(specs: QueryExportSpec[]) {
+    return this.call<QueryExportBatch>("export_query_subtrees", { specs });
   }
   runAdvancedQuery(query: string, currentPage?: string) {
     return this.call<AdvancedQueryResult>("run_advanced_query", { query, currentPage });

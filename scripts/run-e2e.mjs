@@ -63,6 +63,7 @@ const suites = {
     ["block-ref-count", "scripts/e2e-block-ref-count.mjs", {}],
     ["rename", "scripts/e2e-rename.mjs", {}],
     ["alias", "scripts/e2e-alias.mjs", {}],
+    ["page-properties", "scripts/e2e-page-properties.mjs", {}],
     ["journal-format", "scripts/e2e-journal-format.mjs", {}],
     ["multigraph", "scripts/e2e-multigraph.mjs", {}],
     ["sheets", "scripts/e2e-sheets.mjs", {}],
@@ -83,6 +84,7 @@ const suites = {
     ["scrollbars", "scripts/e2e-scrollbars.mjs", {}],
   ],
   "windows-smoke": [
+    ["page-properties", "scripts/e2e-page-properties.mjs", {}],
     ["pdf-logseq", "scripts/e2e-pdf-logseq.mjs", {}],
     ["windows-core", "scripts/e2e-windows-smoke.mjs", {}],
   ],

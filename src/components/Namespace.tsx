@@ -5,6 +5,7 @@ import { openPageInSidebar } from "../ui";
 import { allPageNames } from "../pages";
 import { EmojiText } from "../render/emoji";
 import type { PageKind } from "../types";
+import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 
 // Namespace hierarchy for a page named `a/b/c`: a clickable breadcrumb of the
 // ancestor namespaces (shown above the title) and a list of direct child pages
@@ -93,7 +94,10 @@ function NsNodeView(props: {
               ? openPageInSidebar(props.node.full, "page")
               : openPage(props.node.full, "page")
           }
-          onContextMenu={(e) => props.onPageContextMenu?.(e, props.node.full, "page")}
+          onContextMenu={(e) => {
+            if (!shouldOpenTextContextMenu(e.target)) return;
+            props.onPageContextMenu?.(e, props.node.full, "page");
+          }}
         >
           {props.node.seg}
         </span>

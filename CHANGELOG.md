@@ -15,8 +15,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   shaping now transcribes Logseq's actual rule—suppress a match only when its
   immediate parent also matched—while reference panels retain every independently
   countable occurrence. All native result rows stay shallow; hover previews are
-  bounded by nodes and bytes before transport, and Copy/Export applies its
-  50-root/2,000-node cap before loading source pages.
+  bounded by nodes and bytes before transport, and all query macros in one
+  Copy/Export session are hydrated natively under one shared root/node/byte
+  budget without transferring their complete source pages to the WebView.
+- **The release performance gate now rejects noisy measurements instead of
+  changing its verdict on retry.** Candidate, v0.4.7, and the previous release
+  run in three order-rotated rounds; decisions use the median round result, keep
+  every sample as evidence, and fail reliability when an individual metric's
+  cross-round spread exceeds its declared limit.
 - **Backup restore stays inside the selected graph under symlink and directory
   races.** Recovery areas and live-file publication are now bound to opened
   directory capabilities, use create-without-replace semantics, and refuse a
@@ -40,13 +46,32 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   multiplying a valid recording through Kotlin, JavaScript, and Rust base64
   buffers. Failed native setup also releases its recorder and temp file.
 - **Android long-press text selection keeps the native selection UI.** Tine no
-  longer intercepts editor/content `contextmenu` gestures with the desktop
-  block menu; the bullet remains the explicit mobile block-action target.
+  longer intercepts textual `contextmenu` gestures with desktop menus, including
+  page links, block references, reference panels, namespaces, embeds, and query
+  results; the bullet remains the explicit mobile block-action target.
   (GH #162)
-- **Inline block-reference text follows source edits immediately.** A referenced
-  block that is already loaded shares its reactive editor node with every
-  visible `((reference))`, avoiding stale text without graph-wide refreshes on
-  ordinary saves. (GH #166)
+- **Inline block-reference text follows every landed source transaction.** Loaded
+  targets update immediately through their reactive editor node; visible UUIDs
+  whose source was never loaded are batch-refreshed after external edits and
+  become missing after deletion, without graph-wide work on each keystroke.
+  Block embeds, previews, referrer panels, and count badges share the revision
+  invalidation contract. (GH #166)
+- **Page-property settings preserve the literal page-header structure.** New
+  properties follow Logseq's prepend behavior, updates stay in place, and the
+  real UI-to-disk round trip preserves CRLF, blank separators, and all unrelated
+  lines. The guarded native writer rejects even a forced save if an existing
+  header property has been reclassified as outline content. (GH #163)
+- **Large Search result sets remain inside persistent and inline query panes.**
+  The full workspace/grid/item chain can shrink around long unbroken content,
+  including the Filters/Advanced path with hundreds of page hits. (GH #140)
+- **Help-with-Tine anonymization now preserves the structural identity of a
+  parser divergence.** A safe scrub tier is accepted only when it retains the
+  original mismatch paths and classes; a different surviving mismatch is not
+  treated as the same report. (GH #82)
+- **Ctrl+K now includes favorites in its bounded adaptive tie-breaking.** A
+  favorite can rank first only within the same objective relevance class, just
+  like local selection history; neither signal can promote a weaker match over
+  an exact or prefix result. (GH #143)
 - **Graph writes are safer under sync and filesystem races.** New pages, PDF
   artifacts, and demo files use no-replace publication when no baseline exists;
   PDF highlight sidecars are restored or quarantined if their paired annotation

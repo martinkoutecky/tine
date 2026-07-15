@@ -16,7 +16,7 @@ import {
   type IndentStyle,
 } from "../editor/exportText";
 import type { Block, Format, Inline, ListItem } from "../render/ast";
-import type { BlockDto, PageDto, RefGroup } from "../types";
+import type { BlockDto, PageDto, QueryExportResult, QueryExportSpec, RefGroup } from "../types";
 
 const STORE_KEY = "tine.exportOptions";
 
@@ -60,8 +60,6 @@ const TOGGLES: { key: keyof ExportOptions; label: string; sourceOnly?: boolean; 
   { key: "resolveRefsFully", label: "Resolve refs fully", renderedOnly: true },
 ];
 
-const QUERY_EXPORT_BLOCK_LIMIT = 50;
-const QUERY_EXPORT_NODE_LIMIT = 2_000;
 const EMBED_EXPORT_NODE_LIMIT = 2_000;
 const ADVANCED_RE = /\[\s*:find|:where|:find/;
 
@@ -151,77 +149,12 @@ function cachedPage(cache: PageReadCache, page: string, kind: "page" | "journal"
   return pending;
 }
 
-function indexPageBlocks(blocks: BlockDto[]): Map<string, BlockDto> {
-  const byId = new Map<string, BlockDto>();
-  const stack = [...blocks];
-  while (stack.length) {
-    const block = stack.pop()!;
-    byId.set(block.id, block);
-    stack.push(...block.children);
-  }
-  return byId;
-}
-
-function copyTreeWithinBudget(block: BlockDto, remaining: { nodes: number; omitted: number }): BlockDto | null {
-  if (remaining.nodes <= 0) {
-    const stack = [block];
-    while (stack.length) {
-      const current = stack.pop()!;
-      remaining.omitted++;
-      stack.push(...current.children);
-    }
-    return null;
-  }
-  remaining.nodes--;
-  const children: BlockDto[] = [];
-  for (const child of block.children) {
-    const copied = copyTreeWithinBudget(child, remaining);
-    if (copied) children.push(copied);
-  }
-  return { ...block, children };
-}
-
-export async function queryGroupsToExportNodes(
-  groups: RefGroup[],
-  pages: PageReadCache,
-  loadPage: typeof cachedPage = cachedPage,
-): Promise<{ nodes: ExportNode[]; shown: number; total: number; omittedNodes: number }> {
-  let shown = 0;
-  let selected = 0;
-  const total = groups.reduce((count, group) => count + group.blocks.length, 0);
-  const nodes: ExportNode[] = [];
-  const remaining = { nodes: QUERY_EXPORT_NODE_LIMIT, omitted: 0 };
-  for (const g of groups) {
-    // The result and node caps bound work, not just emitted text. Count every
-    // shallow membership row up front, then hydrate only source pages that can
-    // still contribute one of the first roots. A broad query must not turn a
-    // 50-root clipboard export into thousands of full-page IPCs and retained
-    // PageDto promises.
-    if (selected >= QUERY_EXPORT_BLOCK_LIMIT || remaining.nodes <= 0) break;
-    const candidates = g.blocks.slice(0, QUERY_EXPORT_BLOCK_LIMIT - selected);
-    if (!candidates.length) continue;
-    const page = await loadPage(pages, g.page, g.kind);
-    const byId = page ? indexPageBlocks(page.blocks) : new Map<string, BlockDto>();
-    const kept: BlockDto[] = [];
-    for (const block of candidates) {
-      if (remaining.nodes <= 0) break;
-      selected++;
-      const source = byId.get(block.id) ?? block;
-      const copied = copyTreeWithinBudget(source, remaining);
-      if (copied) {
-        kept.push(copied);
-        shown++;
-      }
-    }
-    if (kept.length) {
-      nodes.push({
-        raw: g.page,
-        format: "md",
-        children: blockDtosToExportNodes(kept, formatForPage(g.page)),
-      });
-    }
-  }
-  return { nodes, shown, total, omittedNodes: remaining.omitted };
+export function queryGroupsToExportNodes(result: QueryExportResult): ExportNode[] {
+  return result.groups.map((group) => ({
+    raw: group.page,
+    format: "md",
+    children: blockDtosToExportNodes(group.blocks, formatForPage(group.page)),
+  }));
 }
 
 function literalBuiltInMacroText(name: string, args: string[]): string | null {
@@ -334,23 +267,6 @@ async function warmMacro(
         return;
       }
     }
-    if (name === "query") {
-      const { form } = splitTrailingMap(arg);
-      const groups = ADVANCED_RE.test(form) ? (await backend().runAdvancedQuery(form)).groups : await backend().runQuery(form);
-      const result = await queryGroupsToExportNodes(groups, pages);
-      warmed.set(key, {
-        kind: "nodes",
-        nodes: result.nodes,
-        emptyText: "No results",
-        truncation:
-          result.total > result.shown || result.omittedNodes > 0
-            ? `[query truncated: showing first ${result.shown} of ${result.total} results${
-              result.omittedNodes > 0 ? `; ${result.omittedNodes} descendant blocks omitted` : ""
-            }]`
-            : undefined,
-      });
-      return;
-    }
     const text = literalBuiltInMacroText(name, macro.args);
     if (text != null) warmed.set(key, { kind: "text", text });
   } catch {
@@ -358,12 +274,69 @@ async function warmMacro(
   }
 }
 
-async function warmExportResolutions(nodes: ExportNode[], warmed: Map<string, WarmedMacro>): Promise<void> {
+async function warmQueryMacros(
+  macros: { name: string; args: string[] }[],
+  warmed: Map<string, WarmedMacro>,
+): Promise<void> {
+  if (!macros.length) return;
+  const specs: QueryExportSpec[] = macros.map((macro) => {
+    const { form } = splitTrailingMap(macroArg(macro.args));
+    return {
+      key: macroKey(macro.name, macro.args),
+      query: form,
+      advanced: ADVANCED_RE.test(form),
+    };
+  });
+  try {
+    const batch = await backend().exportQuerySubtrees(specs);
+    const byKey = new Map(batch.results.map((result) => [result.key, result]));
+    for (const spec of specs) {
+      const result = byKey.get(spec.key);
+      if (!result) {
+        warmed.set(spec.key, {
+          kind: "nodes",
+          nodes: [],
+          emptyText: "Query expansion omitted",
+          truncation: `[query truncated: shared export budget supports the first ${batch.results.length} query macros; ${batch.omitted_queries} omitted]`,
+        });
+        continue;
+      }
+      warmed.set(spec.key, {
+        kind: "nodes",
+        nodes: queryGroupsToExportNodes(result),
+        emptyText: "No results",
+        truncation:
+          result.total > result.shown || result.omitted_nodes > 0
+            ? `[query truncated: showing first ${result.shown} of ${result.total} results${
+              result.omitted_nodes > 0 ? `; ${result.omitted_nodes} descendant blocks omitted` : ""
+            }]`
+            : undefined,
+      });
+    }
+  } catch {
+    // Leave the literal macro visible when native resolution rejects the bounded
+    // request; never fall back to whole-page hydration in the WebView.
+  }
+}
+
+export async function warmExportResolutions(nodes: ExportNode[], warmed: Map<string, WarmedMacro>): Promise<void> {
   const targets: WarmTargets = { refs: new Set(), macros: new Map() };
   const pages: PageReadCache = new Map();
   collectNodeTargets(nodes, targets);
   await Promise.all([...targets.refs].map((uuid) => resolveBlockBatched(uuid).catch(() => null)));
-  await Promise.all([...targets.macros.values()].map((macro) => warmMacro(macro, warmed, pages)));
+  const macros = [...targets.macros.values()];
+  await warmQueryMacros(
+    macros.filter((macro) => macro.name.toLowerCase() === "query"),
+    warmed,
+  );
+  // Page embeds are intentionally whole-page exports, but run them after the
+  // globally bounded query batch so their PageDto cache cannot overlap query
+  // source-page hydration (which no longer uses getPage at all).
+  await Promise.all(
+    macros
+      .filter((macro) => macro.name.toLowerCase() !== "query")
+      .map((macro) => warmMacro(macro, warmed, pages)),
+  );
 }
 
 // "Copy / Export" modal — live-preview text export of a block subtree or a

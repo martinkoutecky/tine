@@ -8,6 +8,12 @@ use tine_core::model::{PageDto, PageEntry, PageKind, RefGroup};
 
 const RESULT_BRIDGE_MAX_ROWS: usize = 20_000;
 const RESULT_BRIDGE_MAX_BYTES: usize = 32 * 1024 * 1024;
+const QUERY_EXPORT_MAX_QUERIES: usize = 64;
+const QUERY_EXPORT_REQUEST_MAX_QUERIES: usize = 1_024;
+const QUERY_EXPORT_MAX_QUERY_BYTES: usize = 64 * 1024;
+const QUERY_EXPORT_MAX_ROOTS: usize = 50;
+const QUERY_EXPORT_MAX_NODES: usize = 2_000;
+const QUERY_EXPORT_MAX_BYTES: usize = 8 * 1024 * 1024;
 
 fn enforce_result_bridge_budget(groups: &[RefGroup]) -> Result<(), String> {
     let rows = groups.iter().map(|group| group.blocks.len()).sum::<usize>();
@@ -361,6 +367,65 @@ pub(crate) fn run_query(
         let groups = g.run_query(&query);
         enforce_result_bridge_budget(&groups)?;
         Ok(groups)
+    })
+}
+
+/// Resolve every query macro in one Copy / Export session under one cumulative
+/// construction budget. Unlike `get_page`, this returns only selected subtrees;
+/// unrelated page content is never cloned across IPC or retained by the WebView.
+#[tauri::command]
+pub(crate) fn export_query_subtrees(
+    specs: Vec<tine_core::query::QueryExportSpec>,
+    state: GraphContext<'_>,
+) -> Result<tine_core::query::QueryExportBatch, String> {
+    let query_bytes = specs.iter().fold(0usize, |total, spec| {
+        total
+            .saturating_add(spec.key.len())
+            .saturating_add(spec.query.len())
+    });
+    if specs.len() > QUERY_EXPORT_REQUEST_MAX_QUERIES || query_bytes > QUERY_EXPORT_MAX_QUERY_BYTES
+    {
+        return Err(format!(
+            "query-export-request-too-large: {} macros / {} bytes (request limits: {} macros / {} bytes; processing cap: {} macros)",
+            specs.len(),
+            query_bytes,
+            QUERY_EXPORT_REQUEST_MAX_QUERIES,
+            QUERY_EXPORT_MAX_QUERY_BYTES,
+            QUERY_EXPORT_MAX_QUERIES,
+        ));
+    }
+    with_graph(&state, |graph| {
+        let batch = tine_core::query::export_query_subtrees(
+            graph,
+            &specs,
+            QUERY_EXPORT_MAX_QUERIES,
+            QUERY_EXPORT_MAX_ROOTS,
+            QUERY_EXPORT_MAX_NODES,
+            QUERY_EXPORT_MAX_BYTES,
+        );
+        let bytes = batch
+            .results
+            .iter()
+            .map(|result| {
+                result.key.len()
+                    + result
+                        .groups
+                        .iter()
+                        .map(|group| {
+                            tine_core::model::ref_groups_estimated_bytes(std::slice::from_ref(
+                                group,
+                            ))
+                        })
+                        .sum::<usize>()
+                    + 128
+            })
+            .sum::<usize>();
+        if bytes > QUERY_EXPORT_MAX_BYTES {
+            return Err(format!(
+                "query-export-result-too-large: ~{bytes} bytes (limit: {QUERY_EXPORT_MAX_BYTES} bytes)"
+            ));
+        }
+        Ok(batch)
     })
 }
 

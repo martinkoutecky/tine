@@ -51,7 +51,7 @@ describe("property line helpers", () => {
 
   it("adds a new property", () => {
     expect(upsertPropertyLine(null, "alias", "Foo")).toBe("alias:: Foo");
-    expect(upsertPropertyLine("tags:: x", "alias", "Foo")).toBe("tags:: x\nalias:: Foo");
+    expect(upsertPropertyLine("tags:: x", "alias", "Foo")).toBe("alias:: Foo\ntags:: x");
   });
 
   it("replaces an existing property in place and preserves siblings", () => {
@@ -65,7 +65,7 @@ describe("property line helpers", () => {
   });
 
   it("trims the value while preserving blank separators", () => {
-    expect(upsertPropertyLine("\n\ntags:: x\n\n", "alias", "  Foo  ")).toBe("\n\ntags:: x\nalias:: Foo\n\n");
+    expect(upsertPropertyLine("\n\ntags:: x\n\n", "alias", "  Foo  ")).toBe("alias:: Foo\n\n\ntags:: x\n\n");
   });
 
   it("preserves the issue-163 page-property layout byte-for-byte outside the edited line", () => {

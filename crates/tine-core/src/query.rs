@@ -1489,7 +1489,11 @@ fn block_to_bounded_dto(
     let minimum_bytes = block
         .raw
         .len()
-        .saturating_add(if block.uuid.is_empty() { 36 } else { block.uuid.len() })
+        .saturating_add(if block.uuid.is_empty() {
+            36
+        } else {
+            block.uuid.len()
+        })
         .saturating_add(128);
     if minimum_bytes > *remaining_bytes {
         return None;
@@ -1508,6 +1512,210 @@ fn block_to_bounded_dto(
         dto.children.push(child_dto);
     }
     Some(dto)
+}
+
+/// One query macro requested by Copy / Export. Query evaluation and subtree
+/// hydration stay in the same native operation so a shallow result never causes
+/// the WebView to fetch and retain its complete source page.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct QueryExportSpec {
+    pub key: String,
+    pub query: String,
+    pub advanced: bool,
+}
+
+/// A single query macro's bounded, hierarchy-preserving export projection.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct QueryExportResult {
+    pub key: String,
+    pub groups: Vec<RefGroup>,
+    pub shown: usize,
+    pub total: usize,
+    pub omitted_nodes: usize,
+}
+
+/// All query macros in one export session share the same construction budget.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct QueryExportBatch {
+    pub results: Vec<QueryExportResult>,
+    /// Query macros beyond the native request cap are not evaluated. The caller
+    /// renders an explicit truncation note rather than silently expanding them
+    /// through an unbounded sequence of independent requests.
+    pub omitted_queries: usize,
+}
+
+#[derive(Debug)]
+struct SelectedExportRoot {
+    page: String,
+    kind: PageKind,
+    id: String,
+}
+
+#[derive(Debug)]
+struct SelectedExportQuery {
+    key: String,
+    total: usize,
+    roots: Vec<SelectedExportRoot>,
+}
+
+/// Evaluate and hydrate several Copy / Export query macros under one cumulative
+/// root, node, and byte budget. Only the selected block subtrees are cloned into
+/// DTOs; complete PageDto values never cross IPC or accumulate in the WebView.
+///
+/// `max_roots` is deliberately global, not per macro. This keeps a selection
+/// containing many distinct query blocks from multiplying the same advertised
+/// export limit. Each relevant source document is scanned at most once and only
+/// references to the requested roots are retained while the graph snapshot is
+/// borrowed.
+pub fn export_query_subtrees(
+    graph: &Graph,
+    specs: &[QueryExportSpec],
+    max_queries: usize,
+    max_roots: usize,
+    max_nodes: usize,
+    max_bytes: usize,
+) -> QueryExportBatch {
+    let query_limit = max_queries.max(1);
+    let mut remaining_roots = max_roots.max(1);
+    let mut selected = Vec::new();
+
+    // Evaluate one query at a time and retain only at most `max_roots` identities
+    // across the whole session. Cached shallow results may be larger, but they are
+    // dropped before the next query and never become complete page trees.
+    for spec in specs.iter().take(query_limit) {
+        let groups = if spec.advanced {
+            graph.run_advanced_query(&spec.query, None).groups
+        } else {
+            graph.run_query(&spec.query).as_ref().clone()
+        };
+        let total = groups.iter().map(|group| group.blocks.len()).sum();
+        let mut roots = Vec::new();
+        for group in &groups {
+            for block in &group.blocks {
+                if remaining_roots == 0 {
+                    break;
+                }
+                roots.push(SelectedExportRoot {
+                    page: group.page.clone(),
+                    kind: group.kind,
+                    id: block.id.clone(),
+                });
+                remaining_roots -= 1;
+            }
+            if remaining_roots == 0 {
+                break;
+            }
+        }
+        selected.push(SelectedExportQuery {
+            key: spec.key.clone(),
+            total,
+            roots,
+        });
+    }
+
+    let results = graph.with_pages(|pages| {
+        use std::collections::{HashMap, HashSet};
+
+        let mut wanted_by_page: HashMap<(PageKind, String), HashSet<String>> = HashMap::new();
+        for query in &selected {
+            for root in &query.roots {
+                wanted_by_page
+                    .entry((root.kind, root.page.clone()))
+                    .or_default()
+                    .insert(root.id.clone());
+            }
+        }
+
+        // Borrow at most `max_roots` matching blocks. Walking with an explicit
+        // stack avoids both recursive call growth and variadic child spreading on
+        // a page with hundreds of thousands of direct children.
+        let total_wanted = wanted_by_page.values().map(HashSet::len).sum::<usize>();
+        let mut found: HashMap<(PageKind, String, String), &DocBlock> = HashMap::new();
+        for (entry, doc) in pages {
+            if found.len() == total_wanted {
+                break;
+            }
+            let page_key = (entry.kind, entry.name.clone());
+            let Some(wanted) = wanted_by_page.get(&page_key) else {
+                continue;
+            };
+            let mut stack: Vec<&DocBlock> = doc.roots.iter().rev().collect();
+            while let Some(block) = stack.pop() {
+                let property_id = block.property("id");
+                let matched = if wanted.contains(block.uuid.as_str()) {
+                    Some(block.uuid.as_str())
+                } else {
+                    property_id.as_deref().filter(|id| wanted.contains(*id))
+                };
+                if let Some(id) = matched {
+                    found.insert((entry.kind, entry.name.clone(), id.to_string()), block);
+                    if found.len() == total_wanted {
+                        break;
+                    }
+                }
+                for child in block.children.iter().rev() {
+                    stack.push(child);
+                }
+            }
+        }
+
+        let mut remaining_nodes = max_nodes.max(1);
+        let mut remaining_bytes = max_bytes.max(1);
+        selected
+            .into_iter()
+            .map(|query| {
+                let mut groups: Vec<RefGroup> = Vec::new();
+                let mut shown = 0usize;
+                let mut omitted_nodes = 0usize;
+                for root in query.roots {
+                    let Some(block) = found.get(&(root.kind, root.page.clone(), root.id.clone()))
+                    else {
+                        // The graph changed between query evaluation and the
+                        // borrowed hydration snapshot. Count the missing result as
+                        // omitted instead of falling back to an unbounded page load.
+                        omitted_nodes = omitted_nodes.saturating_add(1);
+                        continue;
+                    };
+                    let total_nodes = subtree_node_count(block);
+                    let before_nodes = remaining_nodes;
+                    let dto =
+                        block_to_bounded_dto(block, &mut remaining_nodes, &mut remaining_bytes);
+                    let emitted = before_nodes.saturating_sub(remaining_nodes);
+                    omitted_nodes =
+                        omitted_nodes.saturating_add(total_nodes.saturating_sub(emitted));
+                    let Some(dto) = dto else {
+                        continue;
+                    };
+                    shown += 1;
+                    if let Some(group) = groups
+                        .iter_mut()
+                        .find(|group| group.kind == root.kind && group.page == root.page)
+                    {
+                        group.blocks.push(dto);
+                    } else {
+                        groups.push(RefGroup {
+                            page: root.page,
+                            kind: root.kind,
+                            blocks: vec![dto],
+                            evidence: Vec::new(),
+                        });
+                    }
+                }
+                QueryExportResult {
+                    key: query.key,
+                    groups,
+                    shown,
+                    total: query.total,
+                    omitted_nodes,
+                }
+            })
+            .collect()
+    });
+
+    QueryExportBatch {
+        results,
+        omitted_queries: specs.len().saturating_sub(query_limit),
+    }
 }
 
 /// Resolve one block for a hover/export consumer that explicitly needs a
@@ -1546,13 +1754,10 @@ pub fn preview_block_with_budget(
                 let total = subtree_node_count(block);
                 let mut remaining_nodes = max_nodes;
                 let mut remaining_bytes = max_bytes;
-                let blocks = block_to_bounded_dto(
-                    block,
-                    &mut remaining_nodes,
-                    &mut remaining_bytes,
-                )
-                .into_iter()
-                .collect::<Vec<_>>();
+                let blocks =
+                    block_to_bounded_dto(block, &mut remaining_nodes, &mut remaining_bytes)
+                        .into_iter()
+                        .collect::<Vec<_>>();
                 let emitted = max_nodes - remaining_nodes;
                 BlockPreview {
                     group: RefGroup {
@@ -3000,10 +3205,8 @@ mod tests {
         }
 
         const DEPTH: usize = 512;
-        let dir = std::env::temp_dir().join(format!(
-            "tine-non-overlap-results-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("tine-non-overlap-results-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::create_dir_all(dir.join("journals")).unwrap();
@@ -3026,7 +3229,11 @@ mod tests {
 
         let query = run_query(&graph, "(task TODO)");
         assert_eq!(query.iter().map(|g| g.blocks.len()).sum::<usize>(), 1);
-        assert_eq!(dto_nodes(&query[0].blocks), 1, "query membership DTOs stay shallow");
+        assert_eq!(
+            dto_nodes(&query[0].blocks),
+            1,
+            "query membership DTOs stay shallow"
+        );
 
         let linked = backlinks(&graph, "Target");
         assert_eq!(linked.iter().map(|g| g.blocks.len()).sum::<usize>(), DEPTH);
@@ -3080,10 +3287,8 @@ mod tests {
         use std::fs;
 
         const TARGET_ID: &str = "11111111-1111-4111-8111-111111111111";
-        let dir = std::env::temp_dir().join(format!(
-            "tine-og-query-root-gap-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("tine-og-query-root-gap-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("pages")).unwrap();
         fs::create_dir_all(dir.join("journals")).unwrap();
@@ -3125,13 +3330,108 @@ mod tests {
 
         let linked = backlinks(&graph, "Target");
         assert_eq!(raws(&linked).len(), 2);
-        assert_eq!(linked.iter().map(|group| group.evidence.len()).sum::<usize>(), 2);
+        assert_eq!(
+            linked
+                .iter()
+                .map(|group| group.evidence.len())
+                .sum::<usize>(),
+            2
+        );
 
         let unlinked = unlinked_refs(&graph, "PlainName");
         assert_eq!(raws(&unlinked).len(), 2);
-        assert_eq!(unlinked.iter().map(|group| group.evidence.len()).sum::<usize>(), 2);
+        assert_eq!(
+            unlinked
+                .iter()
+                .map(|group| group.evidence.len())
+                .sum::<usize>(),
+            2
+        );
 
         assert_eq!(raws(&block_referrers(&graph, TARGET_ID)).len(), 2);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn query_export_hydrates_only_selected_subtrees_under_one_session_budget() {
+        use std::fs;
+
+        let dir =
+            std::env::temp_dir().join(format!("tine-query-export-budget-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("journals")).unwrap();
+
+        let wide_children = |prefix: &str| {
+            (0..5_000)
+                .map(|index| format!("  - {prefix} child {index}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        // Each matching root has 5,000 descendants. Page A also has a 5,000-node
+        // unrelated branch: whole-page hydration would clone/index all 10,002
+        // nodes before noticing the export cap.
+        fs::write(
+            dir.join("pages").join("A.md"),
+            format!(
+                "- TODO selected A\n{}\n- unrelated branch\n{}\n",
+                wide_children("selected-a"),
+                wide_children("unrelated-a"),
+            ),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages").join("B.md"),
+            format!("- DONE selected B\n{}\n", wide_children("selected-b")),
+        )
+        .unwrap();
+
+        let graph = Graph::open(&dir);
+        graph.warm_cache();
+        let batch = export_query_subtrees(
+            &graph,
+            &[
+                QueryExportSpec {
+                    key: "todo".into(),
+                    query: "(task TODO)".into(),
+                    advanced: false,
+                },
+                QueryExportSpec {
+                    key: "done".into(),
+                    query: "(task DONE)".into(),
+                    advanced: false,
+                },
+            ],
+            64,
+            50,
+            3,
+            1024 * 1024,
+        );
+
+        assert_eq!(batch.results.len(), 2);
+        assert_eq!(batch.results[0].total, 1);
+        assert_eq!(batch.results[0].shown, 1);
+        assert_eq!(batch.results[0].groups[0].blocks[0].children.len(), 2);
+        assert_eq!(batch.results[0].omitted_nodes, 4_998);
+        assert_eq!(batch.results[1].total, 1);
+        assert_eq!(batch.results[1].shown, 0);
+        assert_eq!(batch.results[1].omitted_nodes, 5_001);
+        let emitted = batch
+            .results
+            .iter()
+            .flat_map(|result| result.groups.iter())
+            .flat_map(|group| group.blocks.iter())
+            .map(crate::model::block_dto_estimated_bytes)
+            .sum::<usize>();
+        assert!(emitted <= 1024 * 1024);
+        assert!(batch.results.iter().all(|result| {
+            result
+                .groups
+                .iter()
+                .flat_map(|group| group.blocks.iter())
+                .all(|block| !block.raw.contains("unrelated branch"))
+        }));
 
         let _ = fs::remove_dir_all(&dir);
     }

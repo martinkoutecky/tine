@@ -6353,16 +6353,25 @@ img.emoji {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 .query-search-hit,
 .query-search-page {
+  box-sizing: border-box;
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   border: 0;
   border-radius: 6px;
   background: transparent;
   color: inherit;
   font: inherit;
   text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .query-search-hit:hover,
 .query-search-hit:focus-visible,
@@ -7928,6 +7937,8 @@ img.emoji {
 }
 .query-workspace {
   width: min(100%, 1120px);
+  max-width: 100%;
+  min-width: 0;
   margin: 0 auto;
   padding: 26px clamp(16px, 3vw, 34px) 48px;
   box-sizing: border-box;
@@ -8095,7 +8106,18 @@ img.emoji {
 .query-results-search,
 .query-results-list {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   gap: 3px;
+}
+.query-results-search > [role="listitem"] {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 .query-result-row {
   box-sizing: border-box;
@@ -8106,6 +8128,7 @@ img.emoji {
   padding: 6px 9px;
   text-align: left;
   white-space: normal;
+  overflow-wrap: anywhere;
 }
 .query-results-list {
   margin: 0;

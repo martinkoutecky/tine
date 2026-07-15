@@ -1633,4 +1633,134 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&root);
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn complete_restore_crosses_from_app_data_to_a_distinct_live_filesystem() {
+        use std::os::unix::fs::MetadataExt;
+
+        // GH #130's actual fault boundary: Android's app-data snapshot and the
+        // user-selected graph can have distinct st_dev values.  Use /dev/shm as
+        // the live device when the host exposes it; skip only on hosts where it
+        // is unavailable or aliases the temp filesystem.
+        let app_data = scratch("restore-cross-device-source");
+        let live_root = PathBuf::from("/dev/shm").join(format!(
+            "tine-restore-cross-device-live-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&live_root);
+        if std::fs::create_dir_all(&live_root).is_err()
+            || std::fs::metadata(&app_data).unwrap().dev()
+                == std::fs::metadata(&live_root).unwrap().dev()
+        {
+            let _ = std::fs::remove_dir_all(&app_data);
+            let _ = std::fs::remove_dir_all(&live_root);
+            return;
+        }
+
+        let snapshot = app_data.join("snapshot");
+        for dir in ["pages", "journals", "assets", "logseq"] {
+            std::fs::create_dir_all(snapshot.join(dir)).unwrap();
+            std::fs::create_dir_all(live_root.join(dir)).unwrap();
+        }
+        std::fs::write(snapshot.join("pages/Kept.md"), b"snapshot page\n").unwrap();
+        std::fs::write(
+            snapshot.join("journals/2026_07_15.md"),
+            b"snapshot journal\n",
+        )
+        .unwrap();
+        std::fs::write(snapshot.join("assets/doc.edn"), b"{:snapshot true}\n").unwrap();
+        std::fs::write(snapshot.join("logseq/config.edn"), b"{:snapshot true}\n").unwrap();
+        std::fs::write(live_root.join("pages/Kept.md"), b"live page\n").unwrap();
+        std::fs::write(live_root.join("pages/Stale.md"), b"stale page\n").unwrap();
+        std::fs::write(live_root.join("journals/Old.md"), b"old journal\n").unwrap();
+        std::fs::write(live_root.join("assets/doc.edn"), b"{:live true}\n").unwrap();
+        std::fs::write(live_root.join("assets/stale.edn"), b"{:stale true}\n").unwrap();
+        std::fs::write(live_root.join("assets/binary.pdf"), b"keep binary").unwrap();
+        std::fs::write(live_root.join("logseq/config.edn"), b"{:live true}\n").unwrap();
+
+        let graph_recovery = reserve_restore_recovery(
+            &live_root,
+            std::path::Path::new("logseq/.tine-trash"),
+            "restore-cross-device",
+        )
+        .unwrap();
+        let asset_recovery = reserve_restore_recovery(
+            &live_root.join("assets"),
+            std::path::Path::new(ASSET_RESTORE_RECOVERY_DIR),
+            "restore-cross-device",
+        )
+        .unwrap();
+
+        restore_md_dir(
+            &snapshot.join("pages"),
+            &live_root.join("pages"),
+            &graph_recovery,
+            std::path::Path::new("pages"),
+        )
+        .unwrap();
+        restore_md_dir(
+            &snapshot.join("journals"),
+            &live_root.join("journals"),
+            &graph_recovery,
+            std::path::Path::new("journals"),
+        )
+        .unwrap();
+        restore_asset_sidecars_dir(
+            &snapshot.join("assets"),
+            &live_root.join("assets"),
+            &asset_recovery,
+            std::path::Path::new(""),
+        )
+        .unwrap();
+        let live_config = live_root.join("logseq/config.edn");
+        move_live_to_recovery(
+            &graph_recovery,
+            &live_config,
+            std::path::Path::new("logseq/config.edn"),
+        )
+        .unwrap();
+        atomic_copy_new_into_live(
+            &graph_recovery,
+            &snapshot.join("logseq/config.edn"),
+            &live_config,
+        )
+        .unwrap();
+
+        assert_eq!(
+            std::fs::read(live_root.join("pages/Kept.md")).unwrap(),
+            b"snapshot page\n"
+        );
+        assert!(!live_root.join("pages/Stale.md").exists());
+        assert_eq!(
+            std::fs::read(live_root.join("journals/2026_07_15.md")).unwrap(),
+            b"snapshot journal\n"
+        );
+        assert!(!live_root.join("journals/Old.md").exists());
+        assert_eq!(
+            std::fs::read(live_root.join("assets/doc.edn")).unwrap(),
+            b"{:snapshot true}\n"
+        );
+        assert!(!live_root.join("assets/stale.edn").exists());
+        assert_eq!(
+            std::fs::read(live_root.join("assets/binary.pdf")).unwrap(),
+            b"keep binary"
+        );
+        assert_eq!(std::fs::read(&live_config).unwrap(), b"{:snapshot true}\n");
+        assert_eq!(
+            std::fs::read(graph_recovery.path.join("pages/Stale.md")).unwrap(),
+            b"stale page\n"
+        );
+        assert_eq!(
+            std::fs::read(graph_recovery.path.join("logseq/config.edn")).unwrap(),
+            b"{:live true}\n"
+        );
+        assert_eq!(
+            std::fs::read(asset_recovery.path.join("stale.edn")).unwrap(),
+            b"{:stale true}\n"
+        );
+
+        let _ = std::fs::remove_dir_all(&app_data);
+        let _ = std::fs::remove_dir_all(&live_root);
+    }
 }

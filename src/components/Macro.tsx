@@ -4,6 +4,7 @@ import { openPage, openPageAtBlock, openPageInNewTab } from "../router";
 import { openPageInSidebar, openPageContextMenu, dataRev, graphEpoch, graphMeta } from "../ui";
 import { blockProperty, doc, formatForPage, formatForBlock, resolveGuidePageDto, setBlockProperty, setRaw, withUndoUnit } from "../store";
 import { resolveBlockBatched } from "../resolveBatch";
+import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { LiveRefGroup } from "./LiveRefGroup";
 import { QueryBuilder } from "./QueryBuilder";
 import { SearchResultRow } from "./SearchResultRow";
@@ -669,6 +670,7 @@ export function QueryMacro(props: {
                                       }
                                     }}
                                     onContextMenu={(e) => {
+                                      if (!shouldOpenTextContextMenu(e.target)) return;
                                       e.preventDefault();
                                       e.stopPropagation();
                                       openPageContextMenu(e.clientX, e.clientY, r.page, r.kind);
@@ -740,6 +742,7 @@ function QueryGroup(props: { page: string; group: () => RefGroup | undefined; fl
               }
             }}
             onContextMenu={(e) => {
+              if (!shouldOpenTextContextMenu(e.target)) return;
               e.preventDefault();
               e.stopPropagation();
               openPageContextMenu(e.clientX, e.clientY, props.page, kind());
@@ -877,7 +880,7 @@ export function EmbedMacro(props: { body: string }): JSX.Element {
   const target = () => props.body.replace(/^embed\s*/i, "").trim();
 
   const [data] = createResource(
-    () => `${target()} ${graphEpoch()}`,
+    () => `${target()} ${graphEpoch()} ${dataRev()}`,
     async () => {
     const t = target();
     const blockRef = /^\(\(([^)]+)\)\)$/.exec(t);

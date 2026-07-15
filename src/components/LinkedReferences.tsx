@@ -4,6 +4,7 @@ import { openPage, openPageInNewTab } from "../router";
 import { openPageInSidebar, openPageContextMenu } from "../ui";
 import { LiveRefGroup } from "./LiveRefGroup";
 import type { BlockDto, RefGroup } from "../types";
+import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 
 const norm = (s: string) => s.trim().toLowerCase();
 
@@ -190,6 +191,7 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
                       }
                     }}
                     onContextMenu={(e) => {
+                      if (!shouldOpenTextContextMenu(e.target)) return;
                       e.preventDefault();
                       openPageContextMenu(e.clientX, e.clientY, g.page, g.kind);
                     }}
