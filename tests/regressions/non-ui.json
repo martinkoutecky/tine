@@ -116,6 +116,48 @@
         "scenario": "references.count-index-scoped-invalidation",
         "failBefore": "source-proven"
       }
+    },
+    {
+      "id": "REG-CONFIG-ABSENT-PUBLISH-NOREPLACE-001",
+      "title": "A missing config or device-settings file preserves a concurrent external creator",
+      "family": "data-safety",
+      "sources": { "issues": [], "commits": [] },
+      "platforms": ["all"],
+      "layer": "core-native",
+      "status": "covered",
+      "coverage": {
+        "tests": ["crates/tine-core/src/model.rs", "src-tauri/src/settings.rs"],
+        "scenario": "settings.absent-publish-no-replace",
+        "failBefore": "proven"
+      }
+    },
+    {
+      "id": "REG-GUIDE-TWIN-WITHDRAW-RECOVERY-001",
+      "title": "Copy Guide never unlinks a Markdown page replaced during twin withdrawal",
+      "family": "data-safety",
+      "sources": { "issues": [], "commits": [] },
+      "platforms": ["all"],
+      "layer": "core-native",
+      "status": "covered",
+      "coverage": {
+        "tests": ["crates/tine-core/src/model.rs"],
+        "scenario": "guide.twin-withdraw-recovery",
+        "failBefore": "proven"
+      }
+    },
+    {
+      "id": "REG-RENAME-ROLLBACK-DEST-RECOVERY-001",
+      "title": "Rename rollback preserves a destination replaced after the rollback check",
+      "family": "data-safety",
+      "sources": { "issues": [], "commits": [] },
+      "platforms": ["all"],
+      "layer": "core-native",
+      "status": "covered",
+      "coverage": {
+        "tests": ["crates/tine-core/src/model.rs"],
+        "scenario": "rename.rollback-destination-recovery",
+        "failBefore": "proven"
+      }
     }
   ]
 }

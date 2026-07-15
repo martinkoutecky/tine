@@ -727,6 +727,8 @@ fn path_uses_managed_alias(root: &Path, target: &Path) -> bool {
 #[cfg(test)]
 thread_local! {
     static FAIL_NEXT_RENAME_SOURCE_REMOVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static WITHDRAW_RACE_REPLACEMENT: std::cell::RefCell<Option<Vec<u8>>> = const { std::cell::RefCell::new(None) };
+    static GUIDE_TWIN_RACE_CONTENT: std::cell::RefCell<Option<Vec<u8>>> = const { std::cell::RefCell::new(None) };
 }
 
 #[cfg(test)]
@@ -741,6 +743,36 @@ fn rename_source_remove_failpoint() -> io::Result<()> {
             Ok(())
         }
     })
+}
+
+#[cfg(test)]
+fn withdrawal_race_hook(path: &Path) -> io::Result<()> {
+    WITHDRAW_RACE_REPLACEMENT.with(|replacement| {
+        if let Some(bytes) = replacement.borrow_mut().take() {
+            fs::write(path, bytes)?;
+        }
+        Ok(())
+    })
+}
+
+#[cfg(not(test))]
+fn withdrawal_race_hook(_path: &Path) -> io::Result<()> {
+    Ok(())
+}
+
+#[cfg(test)]
+fn guide_twin_race_hook(path: &Path) -> io::Result<()> {
+    GUIDE_TWIN_RACE_CONTENT.with(|content| {
+        if let Some(bytes) = content.borrow_mut().take() {
+            fs::write(path.with_extension("org"), bytes)?;
+        }
+        Ok(())
+    })
+}
+
+#[cfg(not(test))]
+fn guide_twin_race_hook(_path: &Path) -> io::Result<()> {
+    Ok(())
 }
 
 #[cfg(not(test))]
@@ -1921,16 +1953,21 @@ impl Graph {
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => return Ok(false),
             Err(e) => return Err(e),
         }
+        guide_twin_race_hook(&path)?;
         let alt = self.pages_path().join(format!(
             "{}.org",
             encode_page_name(name, self.config.file_name_format)
         ));
         if alt.exists() {
             // An Org twin appeared during publication. Withdraw only the exact
-            // guide bytes we just created; never touch either external file.
-            if fs::read(&path).is_ok_and(|disk| disk == content.as_bytes()) {
-                let _ = fs::remove_file(&path);
-            }
+            // guide inode we just created. Stage the currently named inode first
+            // and verify it in recovery, so an external replacement that wins at
+            // the syscall boundary is restored or retained rather than unlinked.
+            let _ = self.withdraw_file_to_conflict_if_exact(
+                &path,
+                content.as_bytes(),
+                "guide-twin-withdrawal",
+            )?;
             return Ok(false);
         }
         *self.page_list_cache.write().unwrap() = None;
@@ -3228,10 +3265,14 @@ impl Graph {
                         None => e.src.exists(),
                     };
                     if source_restored {
-                        let ours = content_rev(&e.new_content);
-                        if fs::read_to_string(&e.dst).is_ok_and(|disk| content_rev(&disk) == ours) {
-                            let _ = fs::remove_file(&e.dst);
-                        }
+                        // Never compare and unlink the live destination. Detach
+                        // whichever inode currently owns the name, inspect it in
+                        // recovery, and restore/retain any external replacement.
+                        let _ = self.withdraw_file_to_conflict_if_exact(
+                            &e.dst,
+                            e.new_content.as_bytes(),
+                            "rename-rollback-destination",
+                        );
                     }
                     self.recent_writes.lock().unwrap().remove(&e.dst);
                 } else {
@@ -4245,6 +4286,54 @@ impl Graph {
             io::ErrorKind::AlreadyExists,
             "highlight sidecar changed during rollback",
         ))
+    }
+
+    /// Remove a transaction-owned live file without ever unlinking a race winner.
+    /// The currently named inode is first moved atomically into recoverable
+    /// conflict trash. Exact expected bytes stay there as the withdrawn copy; a
+    /// different inode is restored if the live name is free, or retained in
+    /// recovery if another writer has already recreated the name.
+    fn withdraw_file_to_conflict_if_exact(
+        &self,
+        path: &Path,
+        expected: &[u8],
+        reason: &str,
+    ) -> io::Result<bool> {
+        withdrawal_race_hook(path)?;
+        if fs::symlink_metadata(path).is_err_and(|error| error.kind() == io::ErrorKind::NotFound) {
+            return Ok(false);
+        }
+        self.ensure_write_target(path)?;
+        let trash = typed_trash_dir(&self.root, TrashEntryKind::Conflict);
+        self.ensure_write_target(&trash)?;
+        fs::create_dir_all(&trash)?;
+        let name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("file");
+        let staged = trash.join(format!("{}__{reason}__{name}", trash_stamp()));
+        match move_file_noreplace(path, &staged) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(error),
+        }
+        let staged_bytes = match fs::read(&staged) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                let _ = move_file_noreplace(&staged, path);
+                return Err(error);
+            }
+        };
+        if staged_bytes == expected {
+            return Ok(true);
+        }
+        match move_file_noreplace(&staged, path) {
+            Ok(()) => Ok(false),
+            // A new live winner appeared after staging. Keeping the displaced
+            // inode in conflict trash preserves both versions.
+            Err(_) if path.exists() => Ok(false),
+            Err(error) => Err(error),
+        }
     }
 
     /// The shared page-write commit protocol, written ONCE so `write_page` and
@@ -5727,14 +5816,15 @@ pub fn atomic_update(
     lock: &std::sync::Mutex<()>,
     edit: impl Fn(&str) -> io::Result<String>,
 ) -> io::Result<()> {
-    atomic_update_with_hook(path, lock, edit, |_| {})
+    atomic_update_with_hooks(path, lock, edit, |_| {}, |_| {})
 }
 
-fn atomic_update_with_hook(
+fn atomic_update_with_hooks(
     path: &Path,
     lock: &std::sync::Mutex<()>,
     edit: impl Fn(&str) -> io::Result<String>,
     before_recheck: impl Fn(usize),
+    before_publish: impl Fn(usize),
 ) -> io::Result<()> {
     let _guard = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     for attempt in 0..4 {
@@ -5757,10 +5847,24 @@ fn atomic_update_with_hook(
         if current != baseline {
             continue;
         }
+        before_publish(attempt);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        return atomic_write(path, next.as_bytes());
+        let published = if baseline.is_none() {
+            atomic_write_new(path, next.as_bytes())
+        } else {
+            atomic_write(path, next.as_bytes())
+        };
+        match published {
+            Ok(()) => return Ok(()),
+            Err(error)
+                if baseline.is_none() && error.kind() == io::ErrorKind::AlreadyExists =>
+            {
+                continue;
+            }
+            Err(error) => return Err(error),
+        }
     }
     Err(io::Error::new(
         io::ErrorKind::WouldBlock,
@@ -6843,12 +6947,19 @@ mod tests {
         let g = Graph::open(&dir);
         g.warm_cache();
         FAIL_NEXT_RENAME_SOURCE_REMOVE.with(|flag| flag.set(true));
+        WITHDRAW_RACE_REPLACEMENT.with(|replacement| {
+            *replacement.borrow_mut() = Some(b"- external replacement\n".to_vec());
+        });
         assert!(g.rename_page("Alpha", "Beta").is_err());
         assert_eq!(
             fs::read_to_string(dir.join("pages/Alpha.md")).unwrap(),
             original
         );
-        assert!(!dir.join("pages/Beta.md").exists());
+        assert_eq!(
+            fs::read_to_string(dir.join("pages/Beta.md")).unwrap(),
+            "- external replacement\n",
+            "rollback must not unlink a destination replaced after its check"
+        );
         assert_eq!(
             fs::read_to_string(dir.join("pages/Other.md")).unwrap(),
             ref_original
@@ -8387,7 +8498,7 @@ mod tests {
         fs::write(&path, "{:base 1}\n").unwrap();
         let lock = std::sync::Mutex::new(());
         let injected = std::sync::atomic::AtomicBool::new(false);
-        atomic_update_with_hook(
+        atomic_update_with_hooks(
             &path,
             &lock,
             |content| Ok(content.replace('}', " :mine 3}")),
@@ -8396,11 +8507,61 @@ mod tests {
                     fs::write(&path, "{:base 1 :external 2}\n").unwrap();
                 }
             },
+            |_| {},
         )
         .unwrap();
         let final_content = fs::read_to_string(&path).unwrap();
         assert!(final_content.contains(":external 2"));
         assert!(final_content.contains(":mine 3"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn atomic_update_absent_publish_preserves_a_concurrent_creator() {
+        let dir = scratch("atomic-update-absent-race");
+        let path = dir.join("config.edn");
+        let lock = std::sync::Mutex::new(());
+        let injected = std::sync::atomic::AtomicBool::new(false);
+        atomic_update_with_hooks(
+            &path,
+            &lock,
+            |content| Ok(content.replace('}', " :mine 3}")),
+            |_| {},
+            |_| {
+                if !injected.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                    fs::write(&path, "{:external 2}\n").unwrap();
+                }
+            },
+        )
+        .unwrap();
+        let final_content = fs::read_to_string(&path).unwrap();
+        assert!(final_content.contains(":external 2"));
+        assert!(final_content.contains(":mine 3"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn guide_twin_withdrawal_preserves_a_concurrent_markdown_replacement() {
+        let dir = scratch("guide-twin-withdrawal-race");
+        let graph = Graph::open(&dir);
+        GUIDE_TWIN_RACE_CONTENT.with(|content| {
+            *content.borrow_mut() = Some(b"* external org twin\n".to_vec());
+        });
+        WITHDRAW_RACE_REPLACEMENT.with(|replacement| {
+            *replacement.borrow_mut() = Some(b"- external markdown replacement\n".to_vec());
+        });
+
+        assert!(!graph
+            .create_markdown_page_if_absent("Guide", "- bundled guide\n")
+            .unwrap());
+        assert_eq!(
+            fs::read_to_string(dir.join("pages/Guide.md")).unwrap(),
+            "- external markdown replacement\n"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("pages/Guide.org")).unwrap(),
+            "* external org twin\n"
+        );
         let _ = fs::remove_dir_all(dir);
     }
 

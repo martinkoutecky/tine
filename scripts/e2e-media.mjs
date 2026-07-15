@@ -99,6 +99,28 @@ try {
     throw new Error("audio playback actions are missing");
   }
   console.log(`PASS: supported MP3 loaded and played through ${audioState.src}`);
+
+  await browser.$(".media-audio-widen").click();
+  const overlay = await browser.$(".audio-overlay");
+  await overlay.waitForExist({ timeout: 10_000 });
+  await browser.waitUntil(async () => (await browser.execute(() => {
+    const media = document.querySelector(".audio-overlay audio");
+    return media ? { readyState: media.readyState, error: media.error?.code ?? 0 } : null;
+  }))?.readyState >= 1, { timeout: 20_000, timeoutMsg: "expanded MP3 never loaded metadata" });
+  const overlayState = await browser.execute(async () => {
+    const media = document.querySelector(".audio-overlay audio");
+    const before = media.currentTime;
+    await media.play();
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    media.pause();
+    return { before, after: media.currentTime, duration: media.duration, error: media.error?.code ?? 0, src: media.currentSrc || media.src };
+  });
+  if (overlayState.error || !(overlayState.duration > 0) || !(overlayState.after > overlayState.before)) {
+    throw new Error(`expanded MP3 playback did not advance: ${JSON.stringify(overlayState)}`);
+  }
+  await browser.$(".audio-close").click();
+  await overlay.waitForExist({ reverse: true, timeout: 10_000 });
+  console.log(`PASS: expanded MP3 streamed, played, and released on close through ${overlayState.src}`);
 } finally {
   try { await browser?.deleteSession(); } catch {}
   try { process.kill(-td.pid, "SIGKILL"); } catch {}
