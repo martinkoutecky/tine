@@ -13,6 +13,57 @@ use crate::model::{
 use crate::refs;
 use crate::search_query::Matcher;
 
+/// Query source crosses several boundaries (live macros, native IPC, static
+/// publication, and export). Keep one shared ceiling so no caller can make the
+/// parser or its cache key proportional to an unbounded graph-authored string.
+pub const QUERY_SOURCE_MAX_BYTES: usize = 64 * 1024;
+const QUERY_NESTING_MAX: usize = 64;
+
+pub fn query_source_within_limit(source: &str) -> bool {
+    source.len() <= QUERY_SOURCE_MAX_BYTES
+}
+
+/// Iterative, string/comment-aware guard before either recursive DSL parser.
+/// Count parentheses because those are the only delimiters that construct
+/// recursive predicates; brackets/braces are scanned iteratively as data.
+pub fn query_nesting_within_limit(source: &str) -> bool {
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut in_comment = false;
+    for byte in source.bytes() {
+        if in_comment {
+            if byte == b'\n' {
+                in_comment = false;
+            }
+            continue;
+        }
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match byte {
+            b';' => in_comment = true,
+            b'"' => in_string = true,
+            b'(' => {
+                depth = depth.saturating_add(1);
+                if depth > QUERY_NESTING_MAX {
+                    return false;
+                }
+            }
+            b')' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    true
+}
+
 #[derive(Debug, Clone)]
 pub struct BoundedGroups {
     pub groups: Vec<RefGroup>,
@@ -815,6 +866,13 @@ pub fn run_query_bounded(
     max_rows: usize,
     max_bytes: usize,
 ) -> BoundedGroups {
+    if !query_source_within_limit(query_src) || !query_nesting_within_limit(query_src) {
+        return BoundedGroups {
+            groups: Vec::new(),
+            total: 0,
+            exceeded: false,
+        };
+    }
     let today = JournalDate::today();
     let Some(pred) = Pred::parse(query_src, today) else {
         return BoundedGroups {
@@ -1125,6 +1183,15 @@ pub struct AdvancedResult {
     pub supported: bool,
 }
 
+pub(crate) fn rejected_advanced_query(reason: &str) -> AdvancedResult {
+    AdvancedResult {
+        groups: Vec::new(),
+        ran: Vec::new(),
+        ignored: vec![reason.to_string()],
+        supported: false,
+    }
+}
+
 /// Run an advanced `[:find … :where …]` / `{:query … :inputs …}` query by mapping
 /// the common clause subset (task / between / page-ref / property / page-property
 /// / priority + and/or/not) onto the simple-DSL `Pred` engine — the matching
@@ -1146,6 +1213,20 @@ pub fn run_advanced_query_bounded(
     max_rows: usize,
     max_bytes: usize,
 ) -> (AdvancedResult, bool, usize) {
+    if !query_source_within_limit(query_src) {
+        return (
+            rejected_advanced_query("query-too-large"),
+            false,
+            0,
+        );
+    }
+    if !query_nesting_within_limit(query_src) {
+        return (
+            rejected_advanced_query("query-nesting-too-deep"),
+            false,
+            0,
+        );
+    }
     let today = JournalDate::today();
     let (pred, ran, ignored) = advanced_pred(query_src, current_page, today);
     let Some(pred) = pred else {
@@ -1180,13 +1261,23 @@ fn advanced_pred(
     current_page: Option<&str>,
     today: JournalDate,
 ) -> (Option<Pred>, Vec<String>, Vec<String>) {
+    if !query_nesting_within_limit(query_src) {
+        return (
+            None,
+            Vec::new(),
+            vec!["query-nesting-too-deep".to_string()],
+        );
+    }
     let inputs = resolve_inputs(query_src, current_page, today);
     let mut ran = Vec::new();
     let mut ignored = Vec::new();
     let preds: Vec<Pred> = where_groups(query_src)
         .iter()
-        .filter_map(|g| parse_adv_group(g, &inputs, today, &mut ran, &mut ignored))
+        .filter_map(|g| parse_adv_group(g, &inputs, today, &mut ran, &mut ignored, 0))
         .collect();
+    if ignored.iter().any(|item| item == "query-nesting-too-deep") {
+        return (None, Vec::new(), ignored);
+    }
     if preds.is_empty() {
         return (None, ran, ignored);
     }
@@ -1274,7 +1365,12 @@ fn parse_adv_group(
     today: JournalDate,
     ran: &mut Vec<String>,
     ignored: &mut Vec<String>,
+    depth: usize,
 ) -> Option<Pred> {
+    if depth > QUERY_NESTING_MAX {
+        ignored.push("query-nesting-too-deep".into());
+        return None;
+    }
     let c = group.trim();
     if !c.starts_with('(') {
         ignored.push("pattern".into()); // `[?e :a ?v]` joins, etc. — not in the subset
@@ -1290,7 +1386,7 @@ fn parse_adv_group(
         "and" | "or" | "not" => {
             let kids: Vec<Pred> = scan_groups(inner)
                 .iter()
-                .filter_map(|g| parse_adv_group(g, inputs, today, ran, ignored))
+                .filter_map(|g| parse_adv_group(g, inputs, today, ran, ignored, depth + 1))
                 .collect();
             if kids.is_empty() {
                 None
@@ -2514,12 +2610,15 @@ fn block_date_ordinals(raw: &str, only: Option<&str>) -> Vec<i64> {
 
 impl Pred {
     fn parse(src: &str, today: JournalDate) -> Option<Pred> {
-        if is_advanced(src) {
+        if is_advanced(src)
+            || !query_source_within_limit(src)
+            || !query_nesting_within_limit(src)
+        {
             return None;
         }
         let tokens = tokenize(src);
         let mut pos = 0;
-        let p = parse_expr(&tokens, &mut pos, today)?;
+        let p = parse_expr(&tokens, &mut pos, today, 0)?;
         Some(p)
     }
 
@@ -2752,7 +2851,15 @@ fn tokenize(src: &str) -> Vec<Tok> {
     toks
 }
 
-fn parse_expr(toks: &[Tok], pos: &mut usize, today: JournalDate) -> Option<Pred> {
+fn parse_expr(
+    toks: &[Tok],
+    pos: &mut usize,
+    today: JournalDate,
+    depth: usize,
+) -> Option<Pred> {
+    if depth > QUERY_NESTING_MAX {
+        return None;
+    }
     let t = toks.get(*pos)?.clone();
     match t {
         Tok::PageRef(name) | Tok::Tag(name) => {
@@ -2775,9 +2882,9 @@ fn parse_expr(toks: &[Tok], pos: &mut usize, today: JournalDate) -> Option<Pred>
             };
             *pos += 1;
             let pred = match head.as_str() {
-                "and" => Pred::And(parse_list(toks, pos, today)),
-                "or" => Pred::Or(parse_list(toks, pos, today)),
-                "not" => Pred::Not(Box::new(parse_expr(toks, pos, today)?)),
+                "and" => Pred::And(parse_list(toks, pos, today, depth + 1)),
+                "or" => Pred::Or(parse_list(toks, pos, today, depth + 1)),
+                "not" => Pred::Not(Box::new(parse_expr(toks, pos, today, depth + 1)?)),
                 "task" | "todo" => {
                     let markers = parse_words(toks, pos);
                     // `(todo)` with no args means any open task.
@@ -2895,13 +3002,18 @@ fn parse_expr(toks: &[Tok], pos: &mut usize, today: JournalDate) -> Option<Pred>
     }
 }
 
-fn parse_list(toks: &[Tok], pos: &mut usize, today: JournalDate) -> Vec<Pred> {
+fn parse_list(
+    toks: &[Tok],
+    pos: &mut usize,
+    today: JournalDate,
+    depth: usize,
+) -> Vec<Pred> {
     let mut out = Vec::new();
     while let Some(t) = toks.get(*pos) {
         if *t == Tok::RParen {
             break;
         }
-        match parse_expr(toks, pos, today) {
+        match parse_expr(toks, pos, today, depth) {
             Some(p) => out.push(p),
             None => break,
         }
@@ -2993,6 +3105,49 @@ mod tests {
 
     fn pred(src: &str) -> Pred {
         Pred::parse(src, TODAY).expect("parse")
+    }
+
+    fn nested_boolean(head: &str, depth: usize, leaf: &str) -> String {
+        format!(
+            "{}{}{}",
+            format!("({head} ").repeat(depth),
+            leaf,
+            ")".repeat(depth)
+        )
+    }
+
+    #[test]
+    fn query_parsers_fail_closed_past_the_shared_depth_and_size_limits() {
+        let simple_at_limit = nested_boolean("and", QUERY_NESTING_MAX - 1, "(task TODO)");
+        assert!(Pred::parse(&simple_at_limit, TODAY).is_some());
+        let simple_too_deep = nested_boolean("and", QUERY_NESTING_MAX, "(task TODO)");
+        assert!(Pred::parse(&simple_too_deep, TODAY).is_none());
+
+        let advanced_at_limit = format!(
+            "[:find (pull ?b [*]) :where {}]",
+            nested_boolean("and", QUERY_NESTING_MAX - 1, "(task ?b #{\"TODO\"})")
+        );
+        let (accepted, _, rejected) = advanced_pred(&advanced_at_limit, None, TODAY);
+        assert!(accepted.is_some(), "unexpected ignored clauses: {rejected:?}");
+        let advanced_too_deep = format!(
+            "[:find (pull ?b [*]) :where {}]",
+            nested_boolean(
+                "and",
+                QUERY_NESTING_MAX,
+                "(task ?b #{\"TODO\"})"
+            )
+        );
+        let (rejected, ran, ignored) = advanced_pred(&advanced_too_deep, None, TODAY);
+        assert!(rejected.is_none());
+        assert!(ran.is_empty());
+        assert!(ignored.iter().any(|item| item == "query-nesting-too-deep"));
+
+        let oversized = "x".repeat(QUERY_SOURCE_MAX_BYTES + 1);
+        assert!(!query_source_within_limit(&oversized));
+        assert!(Pred::parse(&oversized, TODAY).is_none());
+
+        let harmless = format!("(and (content \"{}\"))", "(".repeat(QUERY_NESTING_MAX + 10));
+        assert!(query_nesting_within_limit(&harmless));
     }
 
     /// A minimal eval context for a block on a named (non-journal) page.

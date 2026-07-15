@@ -15,6 +15,20 @@ const QUERY_EXPORT_MAX_ROOTS: usize = 50;
 const QUERY_EXPORT_MAX_NODES: usize = 2_000;
 const QUERY_EXPORT_MAX_BYTES: usize = 8 * 1024 * 1024;
 
+fn validate_query_source(query: &str) -> Result<(), String> {
+    if !tine_core::query::query_source_within_limit(query) {
+        return Err(format!(
+            "query-too-large: query source is {} bytes (limit: {} bytes)",
+            query.len(),
+            tine_core::query::QUERY_SOURCE_MAX_BYTES
+        ));
+    }
+    if !tine_core::query::query_nesting_within_limit(query) {
+        return Err("query-nesting-too-deep: simplify nested boolean clauses".to_string());
+    }
+    Ok(())
+}
+
 fn enforce_result_bridge_budget(groups: &[RefGroup]) -> Result<(), String> {
     let rows = groups.iter().map(|group| group.blocks.len()).sum::<usize>();
     let bytes = tine_core::model::ref_groups_estimated_bytes(groups);
@@ -84,7 +98,10 @@ fn enforce_query_execution_budget(
 
 #[cfg(test)]
 mod result_bridge_budget_tests {
-    use super::{enforce_result_bridge_budget, RESULT_BRIDGE_MAX_BYTES, RESULT_BRIDGE_MAX_ROWS};
+    use super::{
+        enforce_result_bridge_budget, validate_query_source, RESULT_BRIDGE_MAX_BYTES,
+        RESULT_BRIDGE_MAX_ROWS,
+    };
     use tine_core::{BlockDto, PageKind, RefGroup};
 
     fn group(blocks: Vec<BlockDto>) -> RefGroup {
@@ -111,6 +128,23 @@ mod result_bridge_budget_tests {
         assert!(enforce_result_bridge_budget(&[group(vec![block])])
             .unwrap_err()
             .starts_with("result-too-large:"));
+    }
+
+    #[test]
+    fn rejects_oversized_query_source_before_cache_or_parser() {
+        let source = "x".repeat(tine_core::query::QUERY_SOURCE_MAX_BYTES + 1);
+        assert!(validate_query_source(&source)
+            .unwrap_err()
+            .starts_with("query-too-large:"));
+
+        let nested = format!(
+            "{}(task TODO){}",
+            "(and ".repeat(65),
+            ")".repeat(65)
+        );
+        assert!(validate_query_source(&nested)
+            .unwrap_err()
+            .starts_with("query-nesting-too-deep:"));
     }
 }
 
@@ -425,6 +459,7 @@ pub(crate) fn run_query(
     query: String,
     state: GraphContext<'_>,
 ) -> Result<Arc<Vec<RefGroup>>, String> {
+    validate_query_source(&query)?;
     with_graph(&state, |g| {
         bounded_groups_or_error(g.run_query_bounded(
             &query,
@@ -523,6 +558,7 @@ pub(crate) fn run_advanced_query(
     current_page: Option<String>,
     state: GraphContext<'_>,
 ) -> Result<tine_core::query::AdvancedResult, String> {
+    validate_query_source(&query)?;
     with_graph(&state, |g| {
         let (result, exceeded, total) = g.run_advanced_query_bounded_cached(
             &query,

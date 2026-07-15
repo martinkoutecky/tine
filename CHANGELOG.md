@@ -32,8 +32,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   all live bounded result families retain warm caches across unrelated edits
   (including pages with unchanged aliases), semantic alias transitions still
   invalidate them, and overflow metadata is never retained across an unknowable
-  negative transition. Unlinked-reference edges follow Logseq's ASCII boundary
-  rule.
+  negative transition. Persisted simple and advanced query sources fail closed
+  at shared byte and nesting ceilings before parser recursion or cache-key
+  construction. Unlinked-reference edges follow Logseq's ASCII boundary rule.
 - **Clipboard image paste validates dimensions before decoding RGBA.** Pixel,
   raw-buffer, PNG, frontend IPC, and native base64 limits now form one bounded
   ingress path, avoiding several simultaneous unbounded image copies.

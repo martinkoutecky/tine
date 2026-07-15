@@ -3169,6 +3169,14 @@ impl Graph {
         query_src: &str,
         current_page: Option<&str>,
     ) -> Arc<crate::query::AdvancedResult> {
+        if !crate::query::query_source_within_limit(query_src) {
+            return Arc::new(crate::query::rejected_advanced_query("query-too-large"));
+        }
+        if !crate::query::query_nesting_within_limit(query_src) {
+            return Arc::new(crate::query::rejected_advanced_query(
+                "query-nesting-too-deep",
+            ));
+        }
         let page_key = current_page
             .map(|p| format!("p:{}", crate::refs::page_key(p)))
             .unwrap_or_else(|| "n:".to_string());
@@ -3184,6 +3192,20 @@ impl Graph {
         max_rows: usize,
         max_bytes: usize,
     ) -> (crate::query::AdvancedResult, bool, usize) {
+        if !crate::query::query_source_within_limit(query_src) {
+            return (
+                crate::query::rejected_advanced_query("query-too-large"),
+                false,
+                0,
+            );
+        }
+        if !crate::query::query_nesting_within_limit(query_src) {
+            return (
+                crate::query::rejected_advanced_query("query-nesting-too-deep"),
+                false,
+                0,
+            );
+        }
         let page_key = current_page
             .map(|page| format!("p:{}", crate::refs::page_key(page)))
             .unwrap_or_else(|| "n:".to_string());
@@ -3251,6 +3273,11 @@ impl Graph {
 
     /// Evaluate a `{{query ...}}` body over the graph (memoized).
     pub fn run_query(&self, query_src: &str) -> Arc<Vec<RefGroup>> {
+        if !crate::query::query_source_within_limit(query_src)
+            || !crate::query::query_nesting_within_limit(query_src)
+        {
+            return Arc::new(Vec::new());
+        }
         self.derived_memo(format!("q\0{query_src}"), || {
             crate::query::run_query(self, query_src)
         })
@@ -3262,6 +3289,15 @@ impl Graph {
         max_rows: usize,
         max_bytes: usize,
     ) -> BoundedRefGroups {
+        if !crate::query::query_source_within_limit(query_src)
+            || !crate::query::query_nesting_within_limit(query_src)
+        {
+            return BoundedRefGroups {
+                groups: Arc::new(Vec::new()),
+                total: 0,
+                exceeded: false,
+            };
+        }
         self.derived_memo_bounded(
             format!("Q\0{max_rows}\0{max_bytes}\0{query_src}"),
             || crate::query::run_query_bounded(self, query_src, max_rows, max_bytes),
@@ -8916,6 +8952,35 @@ mod tests {
             total, 2,
             "TODO + DOING match; the commented (page-ref \"Nope\") is inert"
         );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn persisted_query_sources_cannot_reach_unbounded_cache_keys_or_parser_recursion() {
+        let dir = scratch("query-source-recursion-bound");
+        fs::write(dir.join("pages").join("P.md"), "- TODO ship\n").unwrap();
+        let g = Graph::open(&dir);
+        g.warm_cache();
+
+        // This is the graph-authored shape that previously overflowed the Rust
+        // stack when a persisted query macro rendered. Keep it below the byte
+        // ceiling so the independent nesting guard is the reason it fails shut.
+        let nested = format!(
+            "{}(task TODO){}",
+            "(and ".repeat(1_000),
+            ")".repeat(1_000)
+        );
+        assert!(crate::query::query_source_within_limit(&nested));
+        assert!(!crate::query::query_nesting_within_limit(&nested));
+        let simple = g.run_query_bounded(&nested, 20_000, 32 * 1024 * 1024);
+        assert!(simple.groups.is_empty());
+        assert!(g.derived_cache.read().unwrap().is_none());
+
+        let advanced = format!("[:find (pull ?b [*]) :where {nested}]");
+        let result = g.run_advanced_query(&advanced, None);
+        assert!(!result.supported);
+        assert_eq!(result.ignored, vec!["query-nesting-too-deep"]);
+        assert!(g.advanced_cache.read().unwrap().is_none());
         let _ = fs::remove_dir_all(&dir);
     }
 
