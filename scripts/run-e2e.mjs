@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import crypto from "node:crypto";
 import net from "node:net";
@@ -15,6 +15,7 @@ const app = path.resolve(process.env.TINE_APP || path.join(root, process.platfor
 const artifactRoot = path.resolve(process.env.E2E_ARTIFACT_DIR || path.join(root, "test-results/e2e", suiteName));
 const timeoutMs = Number(process.env.E2E_SCENARIO_TIMEOUT_MS || 180_000);
 const suiteStartedAt = new Date().toISOString();
+const checkoutRevision = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
 
 // Rootless/container fallback for native focus tests. CI images normally
 // install openbox + xdotool system-wide; a developer sandbox may instead keep
@@ -49,6 +50,9 @@ if (portableX11Deps) {
 }
 
 const suites = {
+  "og-parity-pilot": [
+    ["og-parity-references", "scripts/e2e-og-parity-references.mjs", {}],
+  ],
   "linux-smoke": [
     ["caret-agenda", "scripts/e2e-caret.mjs", { CARET_MODE: "agenda", CARET_LABEL: "runner" }],
     ["multigraph", "scripts/e2e-multigraph.mjs", {}],
@@ -61,6 +65,7 @@ const suites = {
     ["click-caret", "scripts/e2e-clickcaret-repro.mjs", {}],
     ["block-select", "scripts/e2e-blockselect.mjs", {}],
     ["block-ref-count", "scripts/e2e-block-ref-count.mjs", {}],
+    ["og-parity-references", "scripts/e2e-og-parity-references.mjs", {}],
     ["rename", "scripts/e2e-rename.mjs", {}],
     ["alias", "scripts/e2e-alias.mjs", {}],
     ["page-properties", "scripts/e2e-page-properties.mjs", {}],
@@ -174,10 +179,15 @@ async function runScenario([id, script, extraEnv]) {
       E2E_DRIVER_PORT: String(driverPort),
       E2E_NATIVE_PORT: String(nativePort),
       E2E_PREVIEW_PORT: String(previewPort),
+      TINE_SOURCE_REVISION: process.env.TINE_SOURCE_REVISION || checkoutRevision,
       E2E_LEGACY_NOTES: "0",
       TAURI_DRIVER: process.env.TAURI_DRIVER || "tauri-driver",
       WEBKIT_DRIVER: process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver",
     };
+    if (id === "og-parity-references") {
+      env.E2E_TMP_DIR = process.env.E2E_TMP_DIR
+        || path.join(os.tmpdir(), `tine-e2e-${suiteName}-${id}-${process.pid}-${driverPort}`);
+    }
     const nativeLinux = process.platform === "linux" && id !== "selection-wrap" && id !== "wayland-app-id";
     // Tauri's Linux single-instance plugin owns a well-known session-bus name.
     // Give each native scenario a private bus so a slow WebKit/Tauri teardown
