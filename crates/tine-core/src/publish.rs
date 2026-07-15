@@ -17,33 +17,53 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-// `same_file::Handle` intentionally keeps its Windows handle open, but an open
-// directory handle created without FILE_SHARE_DELETE makes MoveFileW reject the
-// final stage rename. Retain the stable volume/file identity instead, then
-// close the capability handle before the move. The post-move comparison still
-// detects a stage-path replacement and quarantines the wrong directory.
+// `same_file::Handle` keeps its Windows handle open without FILE_SHARE_DELETE,
+// which makes MoveFileW reject the final stage rename. Keep a separately-opened
+// identity handle that does share deletion instead. We first compare it against
+// the bound capability while both are open, so an ambient path swap cannot make
+// the identity refer to a different directory; the live handle then prevents
+// file-ID reuse through the move and supports ReFS's full 128-bit identities.
 #[cfg(target_os = "windows")]
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug)]
 struct FileIdentity {
-    volume: u32,
-    index: u64,
+    _file: fs::File,
+    volume: u64,
+    id: [u8; 16],
 }
+
+#[cfg(target_os = "windows")]
+impl PartialEq for FileIdentity {
+    fn eq(&self, other: &Self) -> bool {
+        self.volume == other.volume && self.id == other.id
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Eq for FileIdentity {}
 
 #[cfg(target_os = "windows")]
 fn identity_from_file(file: fs::File) -> io::Result<FileIdentity> {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Storage::FileSystem::{
-        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+        FileIdInfo, GetFileInformationByHandleEx, FILE_ID_INFO,
     };
 
-    let mut information = BY_HANDLE_FILE_INFORMATION::default();
-    let result = unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut information) };
+    let mut information = FILE_ID_INFO::default();
+    let result = unsafe {
+        GetFileInformationByHandleEx(
+            file.as_raw_handle(),
+            FileIdInfo,
+            (&mut information as *mut FILE_ID_INFO).cast(),
+            std::mem::size_of::<FILE_ID_INFO>() as u32,
+        )
+    };
     if result == 0 {
         return Err(io::Error::last_os_error());
     }
     Ok(FileIdentity {
-        volume: information.dwVolumeSerialNumber,
-        index: (u64::from(information.nFileIndexHigh) << 32) | u64::from(information.nFileIndexLow),
+        _file: file,
+        volume: information.VolumeSerialNumber,
+        id: information.FileId.Identifier,
     })
 }
 
@@ -54,8 +74,30 @@ fn identity_from_file(file: fs::File) -> io::Result<FileIdentity> {
 
 #[cfg(target_os = "windows")]
 fn identity_from_path(path: &Path) -> io::Result<FileIdentity> {
-    let dir = Dir::open_ambient_dir(path, ambient_authority())?;
-    identity_from_file(dir.into_std_file())
+    use std::os::windows::{ffi::OsStrExt, io::FromRawHandle};
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::Storage::FileSystem::{
+        CreateFileW, FILE_FLAG_BACKUP_SEMANTICS, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE,
+        FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+    };
+
+    let mut wide: Vec<u16> = path.as_os_str().encode_wide().collect();
+    wide.push(0);
+    let handle = unsafe {
+        CreateFileW(
+            wide.as_ptr(),
+            FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS,
+            std::ptr::null_mut(),
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE {
+        return Err(io::Error::last_os_error());
+    }
+    identity_from_file(unsafe { fs::File::from_raw_handle(handle) })
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -1773,7 +1815,21 @@ struct PublishRecovery {
     dir: Dir,
 }
 
-fn dir_identity(dir: &Dir) -> io::Result<FileIdentity> {
+#[cfg(target_os = "windows")]
+fn dir_identity(dir: &Dir, path: &Path) -> io::Result<FileIdentity> {
+    let capability = identity_from_file(dir.try_clone()?.into_std_file())?;
+    let share_delete = identity_from_path(path)?;
+    if capability != share_delete {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "static-publish staging path changed while binding its identity",
+        ));
+    }
+    Ok(share_delete)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn dir_identity(dir: &Dir, _path: &Path) -> io::Result<FileIdentity> {
     identity_from_file(dir.try_clone()?.into_std_file())
 }
 
@@ -1792,7 +1848,7 @@ fn reserve_publish_stage(graph: &Graph) -> io::Result<PublishStage> {
         match root.create_dir(&name) {
             Ok(()) => {
                 let dir = root.open_dir(&name)?;
-                let identity = dir_identity(&dir)?;
+                let identity = dir_identity(&dir, &path)?;
                 return Ok(PublishStage {
                     path,
                     root,
