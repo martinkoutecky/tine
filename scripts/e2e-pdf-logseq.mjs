@@ -203,9 +203,10 @@ try {
     links[1]?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
   });
   await browser.waitUntil(() => browser.execute(() =>
-    document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-filename") === "logseq-second.pdf"), {
+    document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-filename") === "logseq-second.pdf" &&
+    document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-ready") === "true"), {
     timeout: 10_000,
-    timeoutMsg: "switching PDFs did not replace the viewer identity",
+    timeoutMsg: "switching PDFs did not replace and finish loading the viewer identity",
   });
   const secondZoom = await browser.$(".pdf-zoom-level").getText();
   if (secondZoom !== "125%") throw new Error(`second PDF inherited the first PDF scale: ${secondZoom}`);
@@ -221,9 +222,10 @@ try {
     links[0]?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
   });
   await browser.waitUntil(() => browser.execute(() =>
-    document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-filename") === "logseq-sample.pdf"), {
+    document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-filename") === "logseq-sample.pdf" &&
+    document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-ready") === "true"), {
     timeout: 10_000,
-    timeoutMsg: "switching back to PDF A did not remount its identity",
+    timeoutMsg: "switching back to PDF A did not remount and finish loading its identity",
   });
   const returnedZoom = await browser.$(".pdf-zoom-level").getText();
   if (returnedZoom !== "193%") throw new Error(`PDF A did not restore its own state after B: ${returnedZoom}`);

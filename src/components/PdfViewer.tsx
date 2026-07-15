@@ -84,6 +84,7 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
   let areaDrag: { page: number; wrap: HTMLElement; startX: number; startY: number; band: HTMLDivElement } | null =
     null;
   const [scale, setScale] = createSignal(1.4);
+  const [ready, setReady] = createSignal(false);
   const [loadError, setLoadError] = createSignal<string | null>(null);
   // Page indicator: total pages + the page currently filling the viewport, and a
   // separately-tracked editable field (so a scroll doesn't fight the user typing).
@@ -767,6 +768,7 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
     }
     viewStateBaseline = { page: startPage, scale: scale() };
     viewStateReady = true;
+    setReady(true);
   });
 
   onCleanup(() => {
@@ -1297,7 +1299,7 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
   };
 
   return (
-    <div class="pdf-viewer" data-pdf-filename={props.filename}>
+    <div class="pdf-viewer" data-pdf-filename={props.filename} data-pdf-ready={ready() ? "true" : "false"}>
       <div class="pdf-toolbar">
         <span class="pdf-title">{props.label}</span>
         <div class="pdf-toolbar-actions">

@@ -396,7 +396,9 @@ describe("PdfViewer OG state and reference behavior", () => {
       expect(first.destroy).toHaveBeenCalledOnce();
       expect(host.querySelectorAll(".pdf-viewer")).toHaveLength(1);
       expect(host.querySelector(".pdf-viewer")?.getAttribute("data-pdf-filename")).toBe("b.pdf");
+      expect(host.querySelector(".pdf-viewer")?.getAttribute("data-pdf-ready")).toBe("true");
       expect((host.querySelector(".pdf-page-input") as HTMLInputElement).value).toBe("1");
+      expect(host.querySelector(".pdf-zoom-level")?.textContent).toBe("100%");
     } finally {
       dispose();
     }
