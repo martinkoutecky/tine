@@ -50,6 +50,7 @@ import {
   exportNodesFor,
   prevVisible,
   nextVisible,
+  trailingVisibleEmptyLeaf,
   orderedListMarker,
   blockProperty,
   setBlockProperty,
@@ -1030,6 +1031,20 @@ describe("collapse / visible order", () => {
 
     toggleCollapse(dto.blocks[1].id);
     expect(visibleOrder().map((id) => doc.byId[id].raw.split("\n")[0])).toEqual(["grid", "plain"]);
+  });
+
+  it("finds a reusable trailing leaf only through an explicit rendered scope", () => {
+    const expanded = blk("parent", [blk("")]);
+    const collapsed = blk("collapsed", [blk("")]);
+    collapsed.collapsed = true;
+    const grid = blk("tine.view:: grid", [blk("")]);
+    grid.properties = [["tine.view", "grid"]];
+    const dto = load([expanded, collapsed, grid]);
+    const expandedLeaf = dto.blocks[0].children[0].id;
+
+    expect(trailingVisibleEmptyLeaf({ roots: [dto.blocks[0].id] })).toBe(expandedLeaf);
+    expect(trailingVisibleEmptyLeaf({ roots: [dto.blocks[1].id] })).toBeNull();
+    expect(trailingVisibleEmptyLeaf({ roots: [dto.blocks[2].id] })).toBeNull();
   });
 });
 

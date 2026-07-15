@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, untrack, useContext, type JSX } from "solid-js";
-import { doc, mainPages, pageByName, loadFeed, appendFeed, emptyPage, ensurePageLoaded, setFeedExtender, flushAll, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, insertOutlineAfter, promotePagePreamble, type FeedPage } from "../store";
+import { doc, mainPages, pageByName, loadFeed, appendFeed, emptyPage, ensurePageLoaded, setFeedExtender, flushAll, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, insertOutlineAfter, promotePagePreamble, trailingVisibleEmptyLeaf, type FeedPage } from "../store";
 import { sameRoute, type PaneRouter } from "../router";
 import { PaneContext, focusedRouter } from "../panes";
 import {
@@ -317,14 +317,15 @@ function ZoomedView(props: { id: string }): JSX.Element {
   const pageName = () => doc.byId[props.id]?.page ?? "";
   const pageKind = () => doc.pages.find((p) => p.name === pageName())?.kind ?? "page";
   const crumb = (id: string) => visibleBody(doc.byId[id].raw)[0] || "…";
+  const editSurface = () => pane.paneId === "main" ? "main" : `pane:${pane.paneId}`;
   const focusTrailing = () => {
     const root = doc.byId[props.id];
     if (!root || pageByName(root.page)?.readOnly || pageByName(root.page)?.guide) return;
-    const leaf = trailingLeaf(props.id);
-    const id = leaf && !doc.byId[leaf].raw.trim()
+    const leaf = trailingVisibleEmptyLeaf({ roots: [props.id], forceExpandedRoot: props.id });
+    const id = leaf
       ? leaf
       : insertEmptyChildBlock(props.id, root.children.length);
-    if (id) startEditing(id, 0, pane.paneId === "main" ? "main" : `pane:${pane.paneId}`);
+    if (id) startEditing(id, 0, null, editSurface());
   };
 
   return (
@@ -382,6 +383,7 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
   };
   const rootsToRender = () => firstPropertiesId() ? props.page.roots.slice(1) : props.page.roots;
   const preambleContent = () => props.page.format === "md" ? splitPagePreamble(props.page.preBlock).content : null;
+  const editSurface = () => pane.paneId === "main" ? "main" : `pane:${pane.paneId}`;
   const editPreamble = () => {
     const id = promotePagePreamble(props.page.name);
     if (id) startEditing(id, doc.byId[id].raw.length);
@@ -390,14 +392,14 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
     const roots = rootsToRender();
     if (!roots.length) {
       const id = ensureEmptyBlock(props.page.name, { afterProperties: true });
-      if (id) startEditing(id, 0, pane.paneId === "main" ? "main" : `pane:${pane.paneId}`);
+      if (id) startEditing(id, 0, null, editSurface());
       return;
     }
-    const leaf = trailingLeaf(roots[roots.length - 1]);
-    const id = leaf && !doc.byId[leaf].raw.trim()
+    const leaf = trailingVisibleEmptyLeaf({ roots });
+    const id = leaf
       ? leaf
       : insertOutlineAfter(roots[roots.length - 1], [{ raw: "", children: [] }]);
-    startEditing(id, 0, pane.paneId === "main" ? "main" : `pane:${pane.paneId}`);
+    startEditing(id, 0, null, editSurface());
   };
   // A page emptied of its last block (explicit Delete bypasses the Backspace
   // last-block guard) would render nothing to type into. Re-seed the phantom empty
@@ -609,17 +611,6 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
       </Show>
     </div>
   );
-}
-
-function trailingLeaf(id: string): string | null {
-  let current = doc.byId[id];
-  if (!current) return null;
-  while (current.children.length) {
-    const next = doc.byId[current.children[current.children.length - 1]];
-    if (!next) break;
-    current = next;
-  }
-  return current.id;
 }
 
 function TrailingBlockTarget(props: { onActivate: () => void }): JSX.Element {

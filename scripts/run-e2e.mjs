@@ -90,12 +90,14 @@ const suites = {
     ["outline-guide", "scripts/e2e-outline-guide.mjs", {}],
     ["query-workspace", "scripts/e2e-query-workspace.mjs", {}],
     ["scrollbars", "scripts/e2e-scrollbars.mjs", {}],
+    ["page-trailing-block", "scripts/e2e-page-trailing-block.mjs", {}],
   ],
   "windows-smoke": [
     ["page-properties", "scripts/e2e-page-properties.mjs", {}],
     ["pdf-logseq", "scripts/e2e-pdf-logseq.mjs", {}],
     ["print-security", "scripts/e2e-print-security.mjs", {}],
     ["windows-core", "scripts/e2e-windows-smoke.mjs", {}],
+    ["page-trailing-block", "scripts/e2e-page-trailing-block.mjs", {}],
   ],
 };
 

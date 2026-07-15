@@ -735,6 +735,18 @@ function scopedVisibleOrder(scope: OutlineScope): string[] {
   return order;
 }
 
+/** The only trailing-block reuse candidate for a rendered outline boundary.
+ * The caller must supply the actual page or zoom scope so journal days cannot
+ * cross-select each other. A collapsed parent and an opaque Sheet host remain
+ * visible terminal rows, but their storage children mean neither is a leaf. */
+export function trailingVisibleEmptyLeaf(scope: OutlineScope): string | null {
+  const id = scopedVisibleOrder(scope).at(-1);
+  if (!id) return null;
+  const node = doc.byId[id];
+  if (!node || node.children.length !== 0) return null;
+  return splitProps(node.raw, isBuiltinHidden, formatForBlock(id)).visible.trim() === "" ? id : null;
+}
+
 let activeSelectionScope: OutlineScope | null = null;
 
 /** Visible order to resolve a block SELECTION against. The journals feed lives in

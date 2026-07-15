@@ -207,7 +207,7 @@ describe("zoomed block view", () => {
 });
 
 describe("trailing page block target", () => {
-  it("creates one root, then reuses its empty trailing leaf, with one-step Undo", async () => {
+  it("creates one focused root, accepts immediate input, then reuses its empty trailing leaf", async () => {
     const dto = {
       name: "Continue",
       kind: "page" as const,
@@ -230,11 +230,38 @@ describe("trailing page block target", () => {
       expect(doc.pages[0].roots).toHaveLength(2);
       const created = doc.pages[0].roots[1];
       expect(editingId()).toBe(created);
+      const textarea = root.querySelector(`[data-block-id="${created}"] textarea`) as HTMLTextAreaElement | null;
+      expect(textarea).not.toBeNull();
+      expect(document.activeElement).toBe(textarea);
+      expect(textarea?.selectionStart).toBe(0);
+      expect(textarea?.selectionEnd).toBe(0);
+      textarea!.value = "typed immediately";
+      textarea!.dispatchEvent(new Event("input", { bubbles: true }));
+      expect(doc.byId[created].raw).toBe("typed immediately");
+      textarea!.value = "";
+      textarea!.dispatchEvent(new Event("input", { bubbles: true }));
       endEdit("blur");
       target.click();
       await tick();
       expect(doc.pages[0].roots).toEqual(["last", created]);
       expect(editingId()).toBe(created);
+    } finally { dispose(); }
+  });
+
+  it("keeps creation as one structural Undo entry when no text edit intervenes", async () => {
+    const dto = {
+      name: "Undo tail", kind: "page" as const, title: "Undo tail", pre_block: null,
+      blocks: [{ id: "last", raw: "Last text", collapsed: false, children: [] }],
+    };
+    setDoc({ byId: { last: node("last", "Last text", dto.name) }, pages: [page(dto.name, "page", ["last"])], feed: [], loaded: true });
+    vi.spyOn(backend(), "getPage").mockResolvedValue(dto);
+    mainPaneRouter.openPage(dto.name, "page");
+    const { root, dispose } = mount(() => <PageView />);
+    try {
+      await tick(); await tick();
+      (root.querySelector(".page-trailing-block-target") as HTMLButtonElement).click();
+      await tick();
+      endEdit("blur");
       undo();
       expect(doc.pages[0].roots).toEqual(["last"]);
     } finally { dispose(); }
@@ -308,6 +335,90 @@ describe("page route loading", () => {
       await tick();
       expect(root.textContent).toContain("new route content");
       expect(root.textContent).not.toContain("obsolete slow-page failure");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("does not select a collapsed final root's hidden empty descendant", async () => {
+    const dto = {
+      name: "Collapsed tail",
+      kind: "page" as const,
+      title: "Collapsed tail",
+      pre_block: null,
+      blocks: [{
+        id: "lead",
+        raw: "Lead",
+        collapsed: false,
+        children: [],
+      }, {
+        id: "parent",
+        raw: "collapsed:: true\nid:: parent",
+        collapsed: true,
+        children: [{ id: "hidden", raw: "", collapsed: false, children: [] }],
+      }],
+    };
+    setDoc({
+      byId: {
+        lead: node("lead", "Lead", dto.name),
+        parent: { ...node("parent", dto.blocks[1].raw, dto.name, null, ["hidden"]), collapsed: true },
+        hidden: node("hidden", "", dto.name, "parent"),
+      },
+      pages: [page(dto.name, "page", ["lead", "parent"])], feed: [], loaded: true,
+    });
+    vi.spyOn(backend(), "getPage").mockResolvedValue(dto);
+    mainPaneRouter.openPage(dto.name, "page");
+    const { root, dispose } = mount(() => <PageView />);
+    try {
+      await tick(); await tick();
+      (root.querySelector(".page-trailing-block-target") as HTMLButtonElement).click();
+      await tick();
+      expect(editingId()).not.toBe("hidden");
+      expect(doc.pages[0].roots).toHaveLength(3);
+      const created = doc.pages[0].roots[2];
+      expect(root.querySelector(`[data-block-id="${created}"] textarea`)).not.toBeNull();
+    } finally {
+      dispose();
+    }
+  });
+
+  it("does not select storage children of a blank-looking opaque Sheet tail", async () => {
+    const dto = {
+      name: "Opaque tail",
+      kind: "page" as const,
+      title: "Opaque tail",
+      pre_block: null,
+      blocks: [{
+        id: "lead",
+        raw: "Lead",
+        collapsed: false,
+        children: [],
+      }, {
+        id: "grid",
+        raw: "tine.view:: grid",
+        collapsed: false,
+        children: [{ id: "storage", raw: "", collapsed: false, children: [] }],
+      }],
+    };
+    setDoc({
+      byId: {
+        lead: node("lead", "Lead", dto.name),
+        grid: node("grid", dto.blocks[1].raw, dto.name, null, ["storage"]),
+        storage: node("storage", "", dto.name, "grid"),
+      },
+      pages: [page(dto.name, "page", ["lead", "grid"])], feed: [], loaded: true,
+    });
+    vi.spyOn(backend(), "getPage").mockResolvedValue(dto);
+    mainPaneRouter.openPage(dto.name, "page");
+    const { root, dispose } = mount(() => <PageView />);
+    try {
+      await tick(); await tick();
+      (root.querySelector(".page-trailing-block-target") as HTMLButtonElement).click();
+      await tick();
+      expect(editingId()).not.toBe("storage");
+      expect(doc.pages[0].roots).toHaveLength(3);
+      const created = doc.pages[0].roots[2];
+      expect(root.querySelector(`[data-block-id="${created}"] textarea`)).not.toBeNull();
     } finally {
       dispose();
     }

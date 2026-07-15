@@ -70,6 +70,7 @@ jobs:
         scenario:
           - windows-core
           - page-properties
+          - page-trailing-block
           - pdf-logseq
     steps:
       - uses: actions/checkout@v4
