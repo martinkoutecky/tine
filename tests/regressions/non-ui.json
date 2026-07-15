@@ -305,7 +305,7 @@
       "sources": { "issues": [], "commits": [] },
       "platforms": ["all"],
       "layer": "frontend",
-      "status": "fixing",
+      "status": "covered",
       "coverage": {
         "tests": ["src/components/PdfViewer.test.tsx"],
         "scenario": "performance.pdf-canvas-aggregate-backing-store-budget",

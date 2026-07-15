@@ -8,6 +8,7 @@ import { openPage } from "../router";
 import { areaHighlightPosition, hlsPageName, rectInPageSpace, rectWithSourceSpace, type PdfPageDimensions } from "../pdf";
 import { decideWheelZoomGesture, type WheelZoomGestureState } from "../zoom";
 import type { Highlight, Rect } from "../types";
+import { isMobilePlatform } from "../nativeChrome";
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -30,7 +31,12 @@ const MAX_PDF_BYTES = 256 * 1024 * 1024;
 const MAX_PDF_PAGES = 5000;
 const MAX_PAGE_DIMENSION = 14_400; // PDF points: 200 inches at 72 dpi.
 const MAX_CANVAS_DIMENSION = 16_384;
-const MAX_CANVAS_PIXELS = 16_777_216; // 64 MiB for an RGBA backing store.
+const MAX_CANVAS_PIXELS = isMobilePlatform ? 8_388_608 : 16_777_216;
+// Canvas backing stores are normally 4-byte RGBA. Bound the aggregate rather
+// than counting pages: at high zoom one page can be far larger than 24 ordinary
+// fit-width pages. Mobile keeps at most ~64 MiB; desktop ~192 MiB.
+export const PDF_CANVAS_CACHE_PIXEL_BUDGET = isMobilePlatform ? 16_777_216 : 50_331_648;
+const PDF_CANVAS_CACHE_PAGE_CAP = isMobilePlatform ? 6 : 12;
 
 interface Pending {
   page: number;
@@ -98,12 +104,11 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
   // estimate until first render), so opening a long PDF doesn't parse every page
   // dict before first paint.
   const dimsKnown = new Set<number>();
-  // Rendered pages in recency order (LRU). A canvas + text layer is freed once we
-  // exceed CANVAS_CAP so a long PDF doesn't keep a bitmap for every page ever
-  // viewed; the wrapper stays (sized) and re-renders on scroll-back. Small papers
-  // never hit the cap, so they keep every canvas (instant scroll-back).
+  // Rendered pages in recency order (LRU). Admission is governed primarily by
+  // actual aggregate backing-store pixels, with a page count as a secondary
+  // guard. The wrapper stays sized and re-renders on scroll-back.
   const lru: number[] = [];
-  const CANVAS_CAP = 24;
+  const canvasPixels: Record<number, number> = {};
   // Actual backing-store scale used for each rendered page. This can be lower
   // than devicePixelRatio for an unusually large page, keeping canvas memory
   // bounded while preserving the requested CSS zoom level.
@@ -252,6 +257,7 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
     clearTimeout(zoomTimer);
     clearTimeout(textTimer);
     clearTimeout(findDebounce);
+    releaseAllCanvases();
     for (const k of Object.keys(tasks)) {
       tasks[Number(k)]?.cancel();
       delete tasks[Number(k)];
@@ -278,13 +284,14 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
     return null;
   }
 
-  function safeCanvasSize(width: number, height: number) {
+  function safeCanvasSize(width: number, height: number, maxPixels = MAX_CANVAS_PIXELS) {
+    const pixelLimit = Math.max(1, Math.min(MAX_CANVAS_PIXELS, maxPixels));
     const requestedRatio = Math.min(window.devicePixelRatio || 1, 2);
     const ratio = Math.min(
       requestedRatio,
       MAX_CANVAS_DIMENSION / width,
       MAX_CANVAS_DIMENSION / height,
-      Math.sqrt(MAX_CANVAS_PIXELS / (width * height))
+      Math.sqrt(pixelLimit / (width * height))
     );
     if (!Number.isFinite(ratio) || ratio <= 0) return null;
     return {
@@ -299,12 +306,14 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
   // in as they scroll into view.
   function buildLayout() {
     if (!pdfDoc) return;
+    releaseAllCanvases();
     scrollRef.innerHTML = "";
     for (const k of Object.keys(pageEls)) delete pageEls[Number(k)];
     for (const k of Object.keys(textLayers)) delete textLayers[Number(k)];
     for (const k of Object.keys(hlLayers)) delete hlLayers[Number(k)];
     for (const k of Object.keys(renderedScale)) delete renderedScale[Number(k)];
     for (const k of Object.keys(renderedPixelRatio)) delete renderedPixelRatio[Number(k)];
+    for (const k of Object.keys(canvasPixels)) delete canvasPixels[Number(k)];
     for (const k of Object.keys(textScale)) delete textScale[Number(k)];
     for (const k of Object.keys(textLayerObjs)) delete textLayerObjs[Number(k)];
     pendingText.clear();
@@ -408,14 +417,23 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
     // back down, so text is crisp on HiDPI displays. Cap the device-pixel factor
     // at 2 — beyond that the extra pixels aren't visible but the raster cost (and
     // zoom-in lag) grows quadratically.
-    const canvasSize = safeCanvasSize(viewport.width, viewport.height);
+    const otherVisiblePixels = [...visible]
+      .filter((pageNumber) => pageNumber !== n)
+      .reduce((total, pageNumber) => total + (canvasPixels[pageNumber] ?? 0), 0);
+    const availablePixels = Math.max(1, PDF_CANVAS_CACHE_PIXEL_BUDGET - otherVisiblePixels);
+    const canvasSize = safeCanvasSize(viewport.width, viewport.height, availablePixels);
     if (!canvasSize) {
       failPdf(`PDF page ${n} couldn't be sized safely for rendering.`);
       return;
     }
+    const nextPixels = canvasSize.width * canvasSize.height;
+    makeRoomForCanvas(n, nextPixels);
     const dpr = canvasSize.ratio;
     canvas.width = canvasSize.width;
     canvas.height = canvasSize.height;
+    // Reserve immediately, before pdf.js's async render, so concurrent visible
+    // page renders see the allocation and cannot all admit the full budget.
+    canvasPixels[n] = nextPixels;
     canvas.style.width = `${Math.floor(viewport.width)}px`;
     canvas.style.height = `${Math.floor(viewport.height)}px`;
     canvas.style.transform = "";
@@ -453,31 +471,62 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
     if (i >= 0) lru.splice(i, 1);
     lru.push(n);
   }
-  // Free canvases/text for the least-recently rendered OFF-SCREEN pages once we're
-  // over the cap. The wrapper (and its size) stays, so scroll geometry is intact
-  // and the page re-renders when scrolled back into view.
-  function evictCanvases() {
-    let i = 0;
-    while (lru.length > CANVAS_CAP && i < lru.length) {
-      const n = lru[i];
-      if (visible.has(n)) {
-        i++;
-        continue;
-      }
-      freePage(n);
-      lru.splice(i, 1);
+  function retainedCanvasPixels(except?: number) {
+    return Object.entries(canvasPixels).reduce(
+      (total, [page, pixels]) => Number(page) === except ? total : total + pixels,
+      0,
+    );
+  }
+  // Free least-recently rendered off-screen pages BEFORE allocating the next
+  // backing store. This prevents a valid high-zoom document from transiently
+  // building the old count-based 1.5 GiB cache.
+  function makeRoomForCanvas(n: number, incomingPixels: number) {
+    let total = retainedCanvasPixels(n);
+    let count = Object.keys(canvasPixels).filter((page) => Number(page) !== n).length;
+    const incomingCount = n >= 1 ? 1 : 0;
+    while (
+      total + incomingPixels > PDF_CANVAS_CACHE_PIXEL_BUDGET
+      || count + incomingCount > PDF_CANVAS_CACHE_PAGE_CAP
+    ) {
+      // Completed pages use true LRU order. Include an off-screen in-flight
+      // allocation as a fallback so rapid scrolling cannot outrun the LRU.
+      const candidate = lru.find((page) => page !== n && !visible.has(page))
+        ?? Object.keys(canvasPixels)
+          .map(Number)
+          .find((page) => page !== n && !visible.has(page));
+      if (candidate === undefined) break;
+      total -= canvasPixels[candidate] ?? 0;
+      count -= canvasPixels[candidate] === undefined ? 0 : 1;
+      freePage(candidate);
+      const lruIndex = lru.indexOf(candidate);
+      if (lruIndex >= 0) lru.splice(lruIndex, 1);
     }
+  }
+  function evictCanvases() {
+    makeRoomForCanvas(-1, 0);
   }
   function freePage(n: number) {
     tasks[n]?.cancel();
     delete tasks[n];
-    pageEls[n]?.querySelector("canvas")?.remove();
+    const canvas = pageEls[n]?.querySelector("canvas") as HTMLCanvasElement | null;
+    if (canvas) {
+      // WebKit may defer freeing a detached canvas's backing store. Resizing to
+      // zero releases it synchronously before the DOM node is removed.
+      canvas.width = 0;
+      canvas.height = 0;
+      canvas.remove();
+    }
+    delete canvasPixels[n];
     delete renderedScale[n];
     delete renderedPixelRatio[n];
     if (textLayers[n]) textLayers[n].innerHTML = "";
     delete textLayerObjs[n];
     delete textScale[n];
     pendingText.delete(n);
+  }
+  function releaseAllCanvases() {
+    for (const page of Object.keys(canvasPixels)) freePage(Number(page));
+    lru.length = 0;
   }
 
   // Coalesced, deferred text-layer (re)build. Runs ~after the view settles, only
@@ -692,6 +741,7 @@ export function PdfViewer(props: { filename: string; label: string; page?: numbe
     clearTimeout(findDebounce);
     if (viewStateTimer !== undefined || pendingViewState) void flushViewState();
     if (scrollRaf !== undefined) cancelAnimationFrame(scrollRaf);
+    releaseAllCanvases();
     for (const k of Object.keys(tasks)) tasks[Number(k)]?.cancel();
     const doc = pdfDoc;
     pdfDoc = null;

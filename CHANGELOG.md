@@ -10,6 +10,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Long high-zoom PDF sessions have a real memory ceiling.** Canvas admission
+  now uses aggregate backing-store pixels (with a lower mobile budget) instead
+  of retaining up to 24 maximum-size pages, evicts before allocating, and zeroes
+  each canvas before removal so WebKit releases its bitmap promptly.
 - **Help improve Tine now fails closed when a parser reproduction cannot be
   irreversibly anonymized.** The reversible fallback was removed, non-ASCII
   content and custom Org identifiers are always scrubbed, only fixed public

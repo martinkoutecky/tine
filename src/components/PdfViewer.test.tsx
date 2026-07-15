@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
-import { PdfViewer } from "./PdfViewer";
+import { PdfViewer, PDF_CANVAS_CACHE_PIXEL_BUDGET } from "./PdfViewer";
 
 const getDocumentMock = vi.hoisted(() => vi.fn());
 
@@ -45,6 +45,10 @@ class TestIntersectionObserver {
 
   show(element: Element) {
     this.callback([{ isIntersecting: true, target: element } as IntersectionObserverEntry], this as unknown as IntersectionObserver);
+  }
+
+  hide(element: Element) {
+    this.callback([{ isIntersecting: false, target: element } as IntersectionObserverEntry], this as unknown as IntersectionObserver);
   }
 }
 
@@ -211,6 +215,41 @@ describe("PdfViewer resource safety", () => {
       expect(canvas.width * canvas.height).toBeLessThanOrEqual(16_777_216);
       expect(largePage.render).toHaveBeenCalledOnce();
       expect(largePage.render.mock.calls[0][0].transform[0]).toBeLessThan(2);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("bounds all retained backing stores by pixels and zeroes each evicted canvas", async () => {
+    vi.spyOn(backend() as any, "openPdf").mockResolvedValue({ highlights: [], page: 1, scale: 4 });
+    vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+    vi.spyOn(window, "devicePixelRatio", "get").mockReturnValue(2);
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as CanvasRenderingContext2D);
+    const pdf = documentWithPages(Array.from({ length: 5 }, () => page(612, 792)));
+    getDocumentMock.mockReturnValue({ promise: Promise.resolve(pdf) });
+
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <PdfViewer filename="long.pdf" label="Long PDF" />, host);
+    try {
+      await flush();
+      const pageElements = [...host.querySelectorAll<HTMLElement>(".pdf-page")];
+      const observer = TestIntersectionObserver.instances[0];
+      let firstCanvas: HTMLCanvasElement | null = null;
+      for (const element of pageElements) {
+        observer.show(element);
+        await flush();
+        firstCanvas ??= element.querySelector("canvas");
+        observer.hide(element);
+      }
+
+      const retained = [...host.querySelectorAll<HTMLCanvasElement>(".pdf-page canvas")];
+      const retainedPixels = retained.reduce((total, canvas) => total + canvas.width * canvas.height, 0);
+      expect(retainedPixels).toBeLessThanOrEqual(PDF_CANVAS_CACHE_PIXEL_BUDGET);
+      expect(retained.length).toBeLessThan(pageElements.length);
+      expect(firstCanvas?.isConnected).toBe(false);
+      expect(firstCanvas?.width).toBe(0);
+      expect(firstCanvas?.height).toBe(0);
     } finally {
       dispose();
     }
