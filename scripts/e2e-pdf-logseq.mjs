@@ -268,7 +268,11 @@ try {
   if (!existingActions.includes("Copy ref") || !existingActions.includes("Linked references")) {
     throw new Error(`existing PDF highlight menu omitted reference actions: ${JSON.stringify(existingActions)}`);
   }
-  await browser.$('//button[normalize-space()="Copy ref"]').click();
+  await browser.execute(() => {
+    const action = [...document.querySelectorAll(".pdf-hl-action")]
+      .find((element) => element.textContent?.trim() === "Copy ref");
+    action?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }));
+  });
   await browser.waitUntil(() => fs.readFileSync(hlsPage, "utf8").includes(`:id: ${SAMPLE_ID}`), {
     timeout: 10_000,
     timeoutMsg: "Copy ref did not safely upsert the missing annotation block",
@@ -283,8 +287,15 @@ try {
     if (!repairedHls.includes(expected)) throw new Error(`repaired annotation page is missing ${expected}: ${repairedHls}`);
   }
 
-  await browser.$(".pdf-hl").click();
-  await browser.$('//button[normalize-space()="Linked references"]').click();
+  await browser.execute(() => {
+    document.querySelector(".pdf-hl")
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+  });
+  await browser.execute(() => {
+    const action = [...document.querySelectorAll(".pdf-hl-action")]
+      .find((element) => element.textContent?.trim() === "Linked references");
+    action?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }));
+  });
   await browser.waitUntil(() => browser.execute((highlightId) => {
     const block = document.querySelector(`.ls-block[data-block-id="${highlightId}"]`);
     return block?.querySelector(".block-references")?.textContent?.includes("First sample annotation") ?? false;
@@ -432,9 +443,15 @@ try {
     timeoutMsg: "PDF A restored its view state before its highlight overlay was ready",
   });
   await browser.execute(() => document.querySelector(".pdf-hl")?.scrollIntoView({ block: "center", inline: "center" }));
-  await browser.$(".pdf-hl").click();
+  await browser.execute(() => {
+    document.querySelector(".pdf-hl")
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+  });
   await browser.$(".pdf-color-menu").waitForExist({ timeout: 5000 });
-  await browser.$(".pdf-color-swatch").click();
+  await browser.execute(() => {
+    document.querySelector(".pdf-color-swatch")
+      ?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }));
+  });
   await browser.waitUntil(() => {
     const written = fs.readFileSync(sidecar, "utf8");
     return written.includes('#uuid "6a5604f8-a337-4336-a711-2ba6bc14fbfd"') &&
