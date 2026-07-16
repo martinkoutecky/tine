@@ -17,6 +17,7 @@ describe("pane focus tracker", () => {
     document.body.innerHTML = `
       <div data-pane-id="pane-7"><input id="inside" /></div>
       <div class="overlay"><input id="outside" /></div>
+      <button id="pane-neutral" data-pane-focus-neutral>Go back</button>
     `;
   });
 
@@ -42,5 +43,12 @@ describe("pane focus tracker", () => {
     const outside = document.getElementById("outside") as HTMLInputElement;
     outside.dispatchEvent(new Event("pointerdown", { bubbles: true }));
     expect(calls).toContain("main");
+  });
+
+  it("a pane-targeted global control preserves the focused split pane", () => {
+    (document.getElementById("inside") as HTMLInputElement).focus();
+    calls = [];
+    document.getElementById("pane-neutral")!.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    expect(calls).toEqual([]);
   });
 });

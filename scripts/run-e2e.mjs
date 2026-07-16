@@ -67,6 +67,7 @@ const suites = {
     ["block-ref-count", "scripts/e2e-block-ref-count.mjs", {}],
     ["og-parity-references", "scripts/e2e-og-parity-references.mjs", {}],
     ["rename", "scripts/e2e-rename.mjs", {}],
+    ["split-history", "scripts/e2e-split-history.mjs", {}],
     ["alias", "scripts/e2e-alias.mjs", {}],
     ["page-properties", "scripts/e2e-page-properties.mjs", {}],
     ["journal-format", "scripts/e2e-journal-format.mjs", {}],

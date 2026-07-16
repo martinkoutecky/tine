@@ -268,6 +268,13 @@ export function installPaneTracker(): () => void {
     // mode goes stale — the ring lingers and, worse, its keyboard handler
     // would still be armed after the user clicks off to do something else.
     exitPaneSelect();
+    // Global chrome can still target the pane the user last focused. Back,
+    // Forward, Search, and Journals all call the focused-router facade; letting
+    // this capture-phase pointer event fall through would retarget to `main`
+    // before their click handler runs, making right-pane history look dead.
+    // Ordinary outside-pane clicks keep the deliberate main fallback below.
+    const target = e.target as Element | null;
+    if (target?.closest?.("[data-pane-focus-neutral]")) return;
     update(e);
   };
   window.addEventListener("pointerdown", pointerdown, true);

@@ -878,6 +878,7 @@ export function App(): JSX.Element {
               title="Search (Ctrl+K)"
               aria-label="Search"
               data-search-trigger
+              data-pane-focus-neutral
               onClick={() => openSwitcher()}
             >
               <svg viewBox="0 0 24 24" class="nav-icon">
@@ -888,6 +889,7 @@ export function App(): JSX.Element {
             <button
               class="icon-btn"
               title="Go back"
+              data-pane-focus-neutral
               disabled={!canGoBack()}
               onClick={goBack}
             >
@@ -898,6 +900,7 @@ export function App(): JSX.Element {
             <button
               class="icon-btn"
               title="Go forward"
+              data-pane-focus-neutral
               disabled={!canGoForward()}
               onClick={goForward}
             >
@@ -918,7 +921,7 @@ export function App(): JSX.Element {
           </Show>
           <div class="topbar-right">
             <CalendarJump />
-            <button class="icon-btn" title="Journals" onClick={() => openJournals()}>
+            <button class="icon-btn" title="Journals" data-pane-focus-neutral onClick={() => openJournals()}>
               <svg viewBox="0 0 24 24" class="nav-icon">
                 <path d="M4 5h11a2 2 0 0 1 2 2v12H6a2 2 0 0 1-2-2V5z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
                 <line x1="8" y1="9" x2="14" y2="9" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />

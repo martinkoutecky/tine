@@ -10,6 +10,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Split-pane Back and Forward stay with the pane you focused.** Clicking the
+  global navigation toolbar no longer retargets history to the main pane before
+  the action runs; pane-targeted Search and Journals controls preserve the same
+  focused-router contract. (GH #170)
 - **Existing PDF highlights now expose their reference workflow.** On desktop,
   text and area highlights offer **Copy ref** and **Linked references** from the
   same click or right-click menu; both actions safely ensure the annotation
