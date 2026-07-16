@@ -1358,6 +1358,20 @@ impl Graph {
         js
     }
 
+    /// Feed membership is narrower than the raw journal inventory: future
+    /// journals remain directly reachable graph pages, but are not in Journals.
+    pub fn feed_journals_desc_through(&self, cutoff: JournalDate) -> Vec<PageEntry> {
+        let cutoff = cutoff.ordinal_key();
+        self.journals_desc()
+            .into_iter()
+            .filter(|entry| entry.date_key.is_some_and(|day| day <= cutoff))
+            .collect()
+    }
+
+    pub fn feed_journals_desc(&self) -> Vec<PageEntry> {
+        self.feed_journals_desc_through(JournalDate::today())
+    }
+
     /// Journal `date_key`s (yyyymmdd) whose page has real content — i.e. at
     /// least one block with a non-empty, non-property line. Drives the calendar
     /// picker's empty/non-empty day marking. Served from the cache.
@@ -7470,6 +7484,99 @@ mod tests {
             day26.path.file_name().unwrap().to_str().unwrap(),
             "2026_06_26.org"
         );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn future_journals_are_feed_only_excluded_but_keep_raw_identity() {
+        let dir = scratch("future-feed-raw-identity");
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq/config.edn"),
+            "{:journal/file-name-format \"dd-MM-yyyy\"\n :journal/page-title-format \"EEEE, dd-MM-yyyy\"}\n",
+        )
+        .unwrap();
+        let future = dir.join("journals/17-07-2030.md");
+        let future_bytes = b"- future-search-sentinel\n";
+        fs::write(&future, future_bytes).unwrap();
+        fs::write(dir.join("journals/15-07-2030.md"), "- today sentinel\n").unwrap();
+        fs::write(dir.join("journals/14-07-2030.md"), "- past sentinel\n").unwrap();
+        let g = Graph::open(&dir);
+        let future_title = "Wednesday, 17-07-2030";
+        assert_eq!(g.journals_desc().len(), 3, "raw inventory retains future journals");
+        let feed = g.feed_journals_desc_through(JournalDate { year: 2030, month: 7, day: 15 });
+        assert_eq!(feed.iter().map(|e| e.date_key).collect::<Vec<_>>(), vec![Some(20300715), Some(20300714)]);
+        let future_entry = g.journals_desc().into_iter().find(|e| e.date_key == Some(20300717)).unwrap();
+        assert_eq!(future_entry.path, future);
+        assert_eq!(g.load_page(&future_entry).unwrap().blocks[0].raw, "future-search-sentinel");
+        assert!(g.list_pages().iter().any(|e| e.path == future));
+        assert_eq!(g.find_entry(future_title, PageKind::Journal).unwrap().path, future);
+        assert_eq!(
+            g.load_named(future_title, PageKind::Journal).unwrap().unwrap().blocks[0].raw,
+            "future-search-sentinel"
+        );
+        // Ctrl-K uses the current combined latest-wins graph-search path, not
+        // the legacy quick_switch adapter. Its whole-graph inventory remains
+        // deliberately separate from the filtered Journals feed.
+        assert!(g.run_graph_search_latest("future-feed-test", future_title, 8, 8, false)
+            .hits.iter().any(|hit| matches!(hit,
+                crate::query_plan::QueryHit::Page { page, .. } if page.path == future
+            )));
+        assert!(!g.search("future-search-sentinel", 8).is_empty());
+        assert_eq!(g.path_for(future_title, PageKind::Journal), future);
+        assert_eq!(
+            g.page_source_file(future_title, PageKind::Journal, None).unwrap(),
+            future.canonicalize().unwrap()
+        );
+        assert_eq!(fs::read(&future).unwrap(), future_bytes, "feed/list/search performed no write");
+
+        // The warmed cache retains exactly the cold membership/order and later
+        // whole-graph lookups still see the excluded future page.
+        g.warm_cache();
+        assert_eq!(
+            g.feed_journals_desc_through(JournalDate { year: 2030, month: 7, day: 15 })
+                .iter().map(|e| e.date_key).collect::<Vec<_>>(),
+            vec![Some(20300715), Some(20300714)]
+        );
+        assert!(g.run_graph_search_latest("future-feed-test", future_title, 8, 8, false)
+            .hits.iter().any(|hit| matches!(hit,
+                crate::query_plan::QueryHit::Page { page, .. } if page.path == future
+            )));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn warmed_save_cache_upsert_keeps_future_and_duplicate_days_out_of_feed() {
+        let dir = scratch("future-feed-warm-save");
+        let g = Graph::open(&dir);
+        g.warm_cache();
+
+        let mut past = jdto("Jul 14th, 2030");
+        past.blocks[0].raw = "past after warm cache".into();
+        g.save_page(&past, None).unwrap();
+        let mut today = jdto("Jul 15th, 2030");
+        today.blocks[0].raw = "today after warm cache".into();
+        g.save_page(&today, None).unwrap();
+        let mut future = jdto("Jul 17th, 2030");
+        future.blocks[0].raw = "future after warm cache".into();
+        g.save_page(&future, None).unwrap();
+
+        let cutoff = JournalDate { year: 2030, month: 7, day: 15 };
+        assert_eq!(
+            g.feed_journals_desc_through(cutoff).iter().map(|e| e.date_key).collect::<Vec<_>>(),
+            vec![Some(20300715), Some(20300714)],
+            "guarded save/cache-upsert must not leak a future day into warm feed membership"
+        );
+        assert!(g.load_named("Jul 17th, 2030", PageKind::Journal).unwrap().is_some());
+        assert!(g.list_pages().iter().any(|e| e.name == "Jul 17th, 2030"));
+
+        // The raw inventory retains duplicate future files for conflict discovery,
+        // while date deduplication still leaves no future feed row at all.
+        fs::write(dir.join("journals/2030_07_17.org"), "* future twin\n").unwrap();
+        let duplicate = Graph::open(&dir);
+        assert_eq!(duplicate.journals_desc().iter().filter(|e| e.date_key == Some(20300717)).count(), 1);
+        assert!(duplicate.feed_journals_desc_through(cutoff).iter().all(|e| e.date_key != Some(20300717)));
+        assert!(!duplicate.journal_conflicts().is_empty(), "future duplicate remains discoverable outside feed");
         let _ = fs::remove_dir_all(&dir);
     }
 

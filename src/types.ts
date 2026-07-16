@@ -79,6 +79,15 @@ export interface PageDto {
   guide?: boolean;
 }
 
+/** One authoritative Journals-feed transaction.  Cursor fields are ordinal
+ * journal days, never counts of returned DTOs (a selected file may vanish). */
+export interface JournalFeedPage {
+  pages: PageDto[];
+  next_before_day: number | null;
+  done: boolean;
+  as_of_day: number;
+}
+
 export interface GuidePage {
   title: string;
   markdown: string;

@@ -1985,7 +1985,7 @@ export function Editor(props: { id: string }): JSX.Element {
     e.preventDefault();
     const start = ref.selectionStart;
     commit(ref.value);
-    setBlockMoving(true);
+    setBlockMoving(true, doc.byId[props.id]?.page);
     startEditing(props.id, start);
     const move = outlineScope
       ? (moveItem(props.id, dir), Promise.resolve())

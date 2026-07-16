@@ -5,8 +5,10 @@ use crate::platform::{open_page_source, opener_command, reveal_page_source};
 use crate::state::{
     capture_quick_switch_slot, refresh_graph, slot_for_context, with_graph, AppState, GraphContext,
 };
+use serde::Serialize;
 use std::sync::Arc;
 use tauri::{State, WebviewWindow};
+use tine_core::date::JournalDate;
 use tine_core::model::{PageDto, PageEntry, PageKind, RefGroup};
 
 const RESULT_BRIDGE_MAX_ROWS: usize = 20_000;
@@ -140,11 +142,7 @@ mod result_bridge_budget_tests {
             .unwrap_err()
             .starts_with("query-too-large:"));
 
-        let nested = format!(
-            "{}(task TODO){}",
-            "(and ".repeat(65),
-            ")".repeat(65)
-        );
+        let nested = format!("{}(task TODO){}", "(and ".repeat(65), ")".repeat(65));
         assert!(validate_query_source(&nested)
             .unwrap_err()
             .starts_with("query-nesting-too-deep:"));
@@ -213,27 +211,194 @@ pub(crate) fn list_pages(state: GraphContext<'_>) -> Result<Vec<PageEntry>, Stri
     with_graph(&state, |g| Ok(g.list_pages()))
 }
 
-#[tauri::command]
-pub(crate) fn journals_desc(
+#[derive(Serialize)]
+pub(crate) struct JournalFeedPage {
+    pages: Vec<PageDto>,
+    next_before_day: Option<i64>,
+    done: bool,
+    as_of_day: i64,
+}
+
+fn collect_journal_feed_page<F>(
+    entries: Vec<PageEntry>,
     limit: usize,
-    offset: usize,
-    state: GraphContext<'_>,
-) -> Result<Vec<PageDto>, String> {
-    with_graph(&state, |g| {
-        let entries = g.journals_desc();
-        let mut out = Vec::new();
-        for e in entries.into_iter().skip(offset).take(limit) {
-            match g.load_page(&e) {
-                Ok(dto) => out.push(dto),
-                // A journal deleted from disk between the cache listing and this
-                // load just drops out of the feed — don't fail the whole batch (and
-                // don't serve a stale ghost; load_page already evicted it).
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-                Err(err) => return Err(err.to_string()),
-            }
+    before_day: Option<i64>,
+    as_of_day: i64,
+    mut load: F,
+) -> Result<JournalFeedPage, String>
+where
+    F: FnMut(&PageEntry) -> Result<PageDto, std::io::Error>,
+{
+    // A zero limit is authoritative: do not scan/load the feed merely to
+    // discover that the caller requested no rows. No cursor advances because
+    // no day was examined.
+    if limit == 0 {
+        let done = !entries
+            .iter()
+            .any(|entry| before_day.is_none_or(|before| entry.date_key.unwrap_or(0) < before));
+        return Ok(JournalFeedPage {
+            pages: Vec::new(),
+            next_before_day: None,
+            done,
+            as_of_day,
+        });
+    }
+    let mut out = Vec::new();
+    let mut last_examined = None;
+    let mut candidates = entries
+        .into_iter()
+        .filter(|e| before_day.is_none_or(|before| e.date_key.unwrap_or(0) < before))
+        .peekable();
+    while let Some(e) = candidates.next() {
+        let day = e
+            .date_key
+            .expect("feed inventory only contains dated journals");
+        last_examined = Some(day);
+        match load(&e) {
+            Ok(dto) => out.push(dto),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err.to_string()),
         }
-        Ok(out)
+        if out.len() == limit {
+            break;
+        }
+    }
+    let done = candidates.peek().is_none();
+    Ok(JournalFeedPage {
+        pages: out,
+        next_before_day: if done { None } else { last_examined },
+        done,
+        as_of_day,
     })
+}
+
+/// Feed-only pagination. `before_day` is an ordinal-day cursor rather than a
+/// mutable vector offset, so a file disappearing after inventory cannot make a
+/// later day duplicate or disappear from the next request.
+#[tauri::command]
+pub(crate) fn journal_feed_page(
+    limit: usize,
+    before_day: Option<i64>,
+    state: GraphContext<'_>,
+) -> Result<JournalFeedPage, String> {
+    with_graph(&state, |g| {
+        let as_of_day = JournalDate::today().ordinal_key();
+        let entries = g.feed_journals_desc_through(JournalDate::from_ordinal(as_of_day));
+        collect_journal_feed_page(entries, limit, before_day, as_of_day, |entry| {
+            // A journal deleted from disk between inventory and load is skipped,
+            // but its day still advances the cursor in the helper above.
+            g.load_page(entry)
+        })
+    })
+}
+
+#[cfg(test)]
+mod journal_feed_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn entry(day: i64) -> PageEntry {
+        PageEntry {
+            name: day.to_string(),
+            kind: PageKind::Journal,
+            date_key: Some(day),
+            rel_path: String::new(),
+            path: PathBuf::new(),
+        }
+    }
+    fn dto(entry: &PageEntry) -> PageDto {
+        serde_json::from_value(serde_json::json!({
+            "name": entry.name, "kind": "journal", "title": entry.name,
+            "pre_block": null, "blocks": []
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn deletion_stable_day_cursor_fills_then_continues_without_duplicates() {
+        let entries = [5, 4, 3, 2, 1].into_iter().map(entry).collect();
+        let first = collect_journal_feed_page(entries, 3, None, 5, |e| {
+            if e.date_key == Some(5) {
+                Err(std::io::Error::from(std::io::ErrorKind::NotFound))
+            } else {
+                Ok(dto(e))
+            }
+        })
+        .unwrap();
+        assert_eq!(
+            first
+                .pages
+                .iter()
+                .map(|p| p.name.as_str())
+                .collect::<Vec<_>>(),
+            ["4", "3", "2"]
+        );
+        assert_eq!(first.next_before_day, Some(2));
+        assert!(!first.done);
+        let entries = [5, 4, 3, 2, 1].into_iter().map(entry).collect();
+        let second =
+            collect_journal_feed_page(entries, 3, first.next_before_day, 5, |e| Ok(dto(e)))
+                .unwrap();
+        assert_eq!(
+            second
+                .pages
+                .iter()
+                .map(|p| p.name.as_str())
+                .collect::<Vec<_>>(),
+            ["1"]
+        );
+        assert!(second.done);
+        assert_eq!(second.next_before_day, None);
+    }
+
+    #[test]
+    fn cursor_handles_second_page_loss_empty_suffix_exact_limit_zero_and_hard_errors() {
+        let first = collect_journal_feed_page(
+            [5, 4, 3, 2, 1].into_iter().map(entry).collect(), 3, None, 5, |e| Ok(dto(e)),
+        )
+        .unwrap();
+        assert_eq!(first.next_before_day, Some(3));
+        let second = collect_journal_feed_page(
+            [5, 4, 3, 2, 1].into_iter().map(entry).collect(), 3, first.next_before_day, 5, |e| {
+                if e.date_key == Some(2) { Err(std::io::Error::from(std::io::ErrorKind::NotFound)) } else { Ok(dto(e)) }
+            },
+        )
+        .unwrap();
+        assert_eq!(second.pages.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["1"]);
+        assert!(second.done, "a missing second-page row still exhausts the suffix");
+
+        let empty = collect_journal_feed_page(
+            [5, 4].into_iter().map(entry).collect(), 3, Some(4), 5, |e| Ok(dto(e)),
+        )
+        .unwrap();
+        assert!(empty.pages.is_empty());
+        assert!(empty.done);
+
+        let exact = collect_journal_feed_page(
+            [3, 2, 1].into_iter().map(entry).collect(), 3, None, 3, |e| Ok(dto(e)),
+        )
+        .unwrap();
+        assert!(exact.done, "an exactly-full final page is done");
+        assert_eq!(exact.next_before_day, None);
+
+        let mut loads = 0;
+        let zero = collect_journal_feed_page(
+            [3, 2, 1].into_iter().map(entry).collect(), 0, None, 3, |_e| {
+                loads += 1;
+                Ok(dto(&entry(0)))
+            },
+        )
+        .unwrap();
+        assert_eq!(loads, 0, "zero limit loads no entries");
+        assert!(!zero.done);
+
+        let hard = collect_journal_feed_page(
+            [3].into_iter().map(entry).collect(), 1, None, 3, |_e| {
+                Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied"))
+            },
+        );
+        assert!(matches!(hard, Err(err) if err.contains("denied")));
+    }
 }
 
 #[tauri::command]

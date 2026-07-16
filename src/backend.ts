@@ -162,7 +162,7 @@ export interface Backend {
    *  `dir` if empty, else in a fresh `tine-demo` subfolder. */
   createGraph(dir: string): Promise<string>;
   listPages(): Promise<PageEntry[]>;
-  journalsDesc(limit: number, offset: number): Promise<PageDto[]>;
+  journalFeedPage(limit: number, beforeDay: number | null): Promise<import("./types").JournalFeedPage>;
   /** Journal date-keys (yyyymmdd) whose page has real content. */
   journalContentDays(): Promise<number[]>;
   getPage(name: string, kind: "journal" | "page"): Promise<PageDto | null>;
@@ -544,8 +544,8 @@ class TauriBackend implements Backend {
   listPages() {
     return this.call<PageEntry[]>("list_pages");
   }
-  journalsDesc(limit: number, offset: number) {
-    return this.call<PageDto[]>("journals_desc", { limit, offset });
+  journalFeedPage(limit: number, beforeDay: number | null) {
+    return this.call<import("./types").JournalFeedPage>("journal_feed_page", { limit, beforeDay });
   }
   journalContentDays() {
     return this.call<number[]>("journal_content_days");

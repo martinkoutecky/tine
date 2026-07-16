@@ -77,14 +77,17 @@ impl JournalDate {
         }
     }
 
-    /// Today's date (UTC) from the system clock.
+    /// Today's date in the device's local civil calendar.  Journal membership,
+    /// relative queries, and their date-keyed caches must all agree on this
+    /// boundary; UTC epoch days split those user-facing meanings near midnight.
     pub fn today() -> JournalDate {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let secs = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
-        JournalDate::from_days(secs.div_euclid(86_400))
+        use chrono::{Datelike, Local};
+        let now = Local::now();
+        JournalDate {
+            year: now.year(),
+            month: now.month(),
+            day: now.day(),
+        }
     }
 
     /// Default display title, e.g. "Jun 14th, 2026".

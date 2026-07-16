@@ -8,23 +8,33 @@ import {
   pageByName,
   readPageProperty,
   resetStore,
+  setRaw,
   setDoc,
+  extendFeedForScroll,
+  flushPage,
+  setBlockMoving,
   undo,
   type FeedPage,
   type Node as StoreNode,
 } from "../store";
 import { editingId, endEdit, startEditing } from "../editorController";
 import { journalTitle } from "../journal";
-import type { RefGroup } from "../types";
+import type { JournalFeedPage, PageDto, RefGroup } from "../types";
 import { TagPageTable, TagTableToggle } from "./Page";
-import { PageView } from "./Page";
+import { PageView, reloadJournalsFeedFromStart, withToday } from "./Page";
 import { focusBlock, mainPaneRouter, resetTabsToJournals } from "../router";
+import { clearConflict, graphEpoch, markConflict } from "../ui";
 
 beforeAll(async () => {
   await initParser();
 });
 
 afterEach(() => {
+  // The feed owns a local-midnight timeout. Clear any timer a failed/early-
+  // disposed render left behind before handing control back to the next render
+  // test; otherwise `tick()` can inherit fake timers and never resolve.
+  vi.clearAllTimers();
+  vi.useRealTimers();
   vi.restoreAllMocks();
   endEdit("blur");
   resetStore();
@@ -48,8 +58,320 @@ function node(id: string, raw: string, pageName: string, parent: string | null =
 }
 
 function tick(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0));
+  // Keep general render settling independent of timer virtualization. Focused
+  // fake-clock cases drive their own timers explicitly below.
+  return new Promise((resolve) => queueMicrotask(resolve));
 }
+
+async function flushMicrotasks() {
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+function localDay() {
+  const now = new Date();
+  return now.getFullYear() * 10_000 + (now.getMonth() + 1) * 100 + now.getDate();
+}
+
+function journalDto(name: string, raw = name): PageDto {
+  return {
+    name, kind: "journal", title: name, pre_block: null,
+    blocks: [{ id: `${name}-id`, raw, collapsed: false, children: [] }],
+  };
+}
+
+function feedResponse(pages: PageDto[], patch: Partial<JournalFeedPage> = {}): JournalFeedPage {
+  return { pages, next_before_day: null, done: true, as_of_day: localDay(), ...patch };
+}
+
+describe("Journals feed generation lifecycle", () => {
+  it("settles an initial Journals route load without reacting to its own feed replacement", async () => {
+    const api = vi.spyOn(backend(), "journalFeedPage").mockResolvedValue(feedResponse([journalDto("settled")]));
+    const mounted = mount(() => <PageView />);
+    try {
+      await flushMicrotasks();
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      await flushMicrotasks();
+      expect(api).toHaveBeenCalledTimes(1);
+      expect(api).toHaveBeenLastCalledWith(3, null);
+    } finally {
+      mounted.dispose();
+    }
+  });
+
+  it("uses a real route/graph owner and discards an out-of-order older restart", async () => {
+    let resolveOld!: (value: JournalFeedPage) => void;
+    let resolveNew!: (value: JournalFeedPage) => void;
+    let calls = 0;
+    vi.spyOn(backend(), "journalFeedPage").mockImplementation(() => {
+      calls += 1;
+      return new Promise((resolve) => {
+        if (calls === 1) resolveOld = resolve;
+        else resolveNew = resolve;
+      });
+    });
+    const mounted = mount(() => <PageView />);
+    try {
+      await flushMicrotasks();
+      const owner = { graphEpoch: graphEpoch(), isLive: () => true };
+      const winning = reloadJournalsFeedFromStart(owner);
+      await flushMicrotasks();
+      resolveNew(feedResponse([journalDto("newer")], { next_before_day: 20300714, done: false }));
+      await winning;
+      expect(doc.feed).toContain("newer");
+      resolveOld(feedResponse([journalDto("older")]));
+      await flushMicrotasks();
+      expect(doc.feed).toContain("newer");
+      expect(doc.feed).not.toContain("older");
+
+      const beforeInactive = calls;
+      await reloadJournalsFeedFromStart({ graphEpoch: graphEpoch(), isLive: () => false });
+      expect(calls).toBe(beforeInactive);
+    } finally {
+      mounted.dispose();
+    }
+  });
+
+  it("arms one local-calendar timer and cleans it up when the Journals surface disposes", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2030, 6, 15, 23, 59, 59, 990));
+    const call = vi.spyOn(backend(), "journalFeedPage").mockImplementation(async () =>
+      feedResponse([journalDto("timer-day")])
+    );
+    const mounted = mount(() => <PageView />);
+    try {
+      await flushMicrotasks();
+      expect(call).toHaveBeenCalledTimes(1);
+      vi.advanceTimersByTime(34);
+      await flushMicrotasks();
+      expect(call).toHaveBeenCalledTimes(1);
+      // 10 ms to local midnight plus the intentional 25 ms post-midnight
+      // margin: this is the timer, not the old loader self-loop.
+      vi.advanceTimersByTime(1);
+      await flushMicrotasks();
+      expect(call).toHaveBeenCalledTimes(2);
+      expect(call.mock.calls).toEqual([[3, null], [3, null]]);
+      expect(vi.getTimerCount()).toBeGreaterThan(0);
+    } finally {
+      mounted.dispose();
+    }
+    const afterDispose = call.mock.calls.length;
+    vi.advanceTimersByTime(24 * 60 * 60 * 1000);
+    expect(call.mock.calls.length).toBe(afterDispose);
+  });
+
+  it("does not let an unrelated sidebar/page editor defer the visible feed refresh", async () => {
+    const today = journalTitle(new Date());
+    setDoc({
+      byId: {
+        feed: node("feed", "feed", today),
+        sidebar: node("sidebar", "sidebar", "Unrelated"),
+      },
+      pages: [page(today, "journal", ["feed"]), page("Unrelated", "page", ["sidebar"])],
+      feed: [today], loaded: true,
+    });
+    startEditing("sidebar", 0);
+    const call = vi.spyOn(backend(), "journalFeedPage").mockResolvedValue(feedResponse([journalDto("fresh")]));
+    await reloadJournalsFeedFromStart({ graphEpoch: graphEpoch(), isLive: () => true });
+    expect(call).toHaveBeenCalledTimes(1);
+    expect(doc.feed).toContain("fresh");
+  });
+
+  it("defers a visible dirty edit without replacing its working-set object", async () => {
+    const today = journalTitle(new Date());
+    setDoc({
+      byId: { feed: node("feed", "unsaved", today) },
+      pages: [page(today, "journal", ["feed"])], feed: [today], loaded: true,
+    });
+    const before = pageByName(today);
+    setRaw("feed", "unsaved changed");
+    const call = vi.spyOn(backend(), "journalFeedPage").mockResolvedValue(feedResponse([journalDto("would-clobber")]));
+    await reloadJournalsFeedFromStart({ graphEpoch: graphEpoch(), isLive: () => true });
+    expect(call).not.toHaveBeenCalled();
+    expect(pageByName(today)).toBe(before);
+    expect(doc.feed).toEqual([today]);
+  });
+
+  it("rejects a false owner before generation acquisition so its live request still lands", async () => {
+    let resolveLive!: (value: JournalFeedPage) => void;
+    const api = vi.spyOn(backend(), "journalFeedPage").mockImplementation(() => new Promise((resolve) => { resolveLive = resolve; }));
+    const live = reloadJournalsFeedFromStart({ graphEpoch: graphEpoch(), isLive: () => true });
+    await flushMicrotasks();
+    await reloadJournalsFeedFromStart({ graphEpoch: graphEpoch(), isLive: () => false });
+    expect(api).toHaveBeenCalledTimes(1);
+    resolveLive(feedResponse([journalDto("live-response")]));
+    await live;
+    expect(doc.feed).toContain("live-response");
+    expect(api).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops an unresolved response after its Journals surface is disposed", async () => {
+    let resolve!: (value: JournalFeedPage) => void;
+    vi.spyOn(backend(), "journalFeedPage").mockImplementation(() => new Promise((done) => { resolve = done; }));
+    const mounted = mount(() => <PageView />);
+    await flushMicrotasks();
+    expect(doc.feed).toEqual([]);
+    mounted.dispose();
+    resolve(feedResponse([journalDto("must-not-land")]));
+    await flushMicrotasks();
+    expect(doc.feed).toEqual([]);
+    await expect(extendFeedForScroll()).resolves.toBe(false);
+  });
+
+  it.each(["active edit", "dirty", "saving", "conflict", "moving"] as const)("defers a %s feed gate then retries on its real release", async (gate) => {
+    const api = vi.spyOn(backend(), "journalFeedPage").mockResolvedValue(feedResponse([journalDto("initial")]))
+    const mounted = mount(() => <PageView />);
+    await flushMicrotasks();
+    api.mockClear();
+    const today = journalTitle(new Date());
+    setDoc({
+      byId: { feed: node("feed", "original", today) },
+      pages: [page(today, "journal", ["feed"])], feed: [today], loaded: true,
+    });
+    const oldPage = pageByName(today);
+    api.mockResolvedValue(feedResponse([journalDto(`released-${gate}`)]));
+    if (gate === "active edit") startEditing("feed", 0);
+    if (gate === "dirty" || gate === "saving") setRaw("feed", "dirty");
+    if (gate === "conflict") markConflict(today);
+    if (gate === "moving") setBlockMoving(true, today);
+    let saved: Promise<boolean> | null = null;
+    let releaseSave: (() => void) | null = null;
+    if (gate === "saving") {
+      vi.spyOn(backend(), "savePage").mockImplementation(() => new Promise((resolve) => { releaseSave = () => resolve("rev"); }));
+      saved = flushPage(today);
+      await flushMicrotasks();
+    }
+    try {
+      await reloadJournalsFeedFromStart({ graphEpoch: graphEpoch(), isLive: () => true });
+      await flushMicrotasks();
+      expect(api).not.toHaveBeenCalled();
+      expect(pageByName(today)).toBe(oldPage);
+      expect(doc.feed).toEqual([today]);
+      if (gate === "active edit") endEdit("blur");
+      if (gate === "dirty") {
+        // Saving is the real dirty release and bumps dataRev after the backend
+        // accepts it; leave the PageView retry effect to consume that event.
+        vi.spyOn(backend(), "savePage").mockResolvedValue("rev");
+        await flushPage(today);
+        await new Promise<void>((resolve) => setTimeout(resolve, 750));
+      }
+      if (gate === "saving") {
+        releaseSave!();
+        await saved!;
+        await new Promise<void>((resolve) => setTimeout(resolve, 750));
+      }
+      if (gate === "conflict") clearConflict(today);
+      if (gate === "moving") setBlockMoving(false);
+      await flushMicrotasks();
+      await flushMicrotasks();
+      expect(api).toHaveBeenCalledTimes(1);
+      expect(doc.feed).toContain(`released-${gate}`);
+    } finally {
+      mounted.dispose();
+    }
+  });
+
+  it("retains the old feed after a current-generation error and retries it", async () => {
+    const today = journalTitle(new Date());
+    setDoc({
+      byId: { old: node("old", "old visible content", today) },
+      pages: [page(today, "journal", ["old"])], feed: [today], loaded: true,
+    });
+    const api = vi.spyOn(backend(), "journalFeedPage")
+      .mockRejectedValueOnce(new Error("temporary backend error"))
+      .mockResolvedValueOnce(feedResponse([journalDto("retried", "fresh content")]));
+    const owner = { graphEpoch: graphEpoch(), isLive: () => true };
+    await reloadJournalsFeedFromStart(owner);
+    expect(doc.feed).toEqual([today]);
+    await reloadJournalsFeedFromStart(owner);
+    expect(api).toHaveBeenCalledTimes(2);
+    expect(doc.feed).toContain("retried");
+  });
+
+  it("makes at most one immediate retry when native and browser local days disagree", async () => {
+    const api = vi.spyOn(backend(), "journalFeedPage")
+      .mockResolvedValueOnce(feedResponse([journalDto("wrong-day")], { as_of_day: 19990101 }))
+      .mockResolvedValueOnce(feedResponse([journalDto("matched-day")]));
+    await reloadJournalsFeedFromStart({ graphEpoch: graphEpoch(), isLive: () => true });
+    expect(api).toHaveBeenCalledTimes(2);
+    expect(doc.feed).toContain("matched-day");
+  });
+
+  it("revalidates on focus and visible rollover, but bounds a second clock mismatch", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2030, 6, 15, 12));
+    const api = vi.spyOn(backend(), "journalFeedPage")
+      .mockResolvedValueOnce(feedResponse([journalDto("day-one")]))
+      .mockResolvedValueOnce(feedResponse([journalDto("wrong-one")], { as_of_day: 19990101 }))
+      .mockResolvedValueOnce(feedResponse([journalDto("wrong-two")], { as_of_day: 19990101 }))
+      .mockResolvedValueOnce(feedResponse([journalDto("day-two")], { as_of_day: 20300716 }));
+    const mounted = mount(() => <PageView />);
+    try {
+      await flushMicrotasks();
+      expect(api).toHaveBeenCalledTimes(1);
+      vi.setSystemTime(new Date(2030, 6, 16, 12));
+      window.dispatchEvent(new Event("focus"));
+      await flushMicrotasks();
+      expect(api).toHaveBeenCalledTimes(3);
+      await flushMicrotasks();
+      expect(api).toHaveBeenCalledTimes(3);
+      Object.defineProperty(document, "hidden", { configurable: true, value: false });
+      document.dispatchEvent(new Event("visibilitychange"));
+      await flushMicrotasks();
+      expect(api).toHaveBeenCalledTimes(4);
+      expect(doc.feed).toContain("day-two");
+    } finally {
+      mounted.dispose();
+    }
+  });
+
+  it("discards a stale append after a newer restart owns the cursor", async () => {
+    let resolveAppend!: (value: JournalFeedPage) => void;
+    let resolveRestart!: (value: JournalFeedPage) => void;
+    const api = vi.spyOn(backend(), "journalFeedPage");
+    // A prior failed refresh intentionally leaves a retry pending. Establish a
+    // completed generation first, as a real Journals route would, so this test
+    // isolates append ownership instead of inheriting another test's retry.
+    api.mockResolvedValueOnce(feedResponse([journalDto("baseline")]));
+    await reloadJournalsFeedFromStart({ graphEpoch: graphEpoch(), isLive: () => true });
+    api.mockReset()
+      .mockResolvedValueOnce(feedResponse([journalDto("initial")], { next_before_day: 20300714, done: false }))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveAppend = resolve; }))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveRestart = resolve; }));
+    const mounted = mount(() => <PageView />);
+    try {
+      await tick(); await tick();
+      const append = extendFeedForScroll();
+      await flushMicrotasks();
+      const restart = reloadJournalsFeedFromStart({ graphEpoch: graphEpoch(), isLive: () => true });
+      await flushMicrotasks();
+      resolveAppend(feedResponse([journalDto("stale-append")], { next_before_day: null, done: true }));
+      await append;
+      // The old append's finally must not clear the newer restart's loading
+      // marker: a second intersection is blocked until that restart resolves.
+      await extendFeedForScroll();
+      expect(api).toHaveBeenCalledTimes(3);
+      resolveRestart(feedResponse([journalDto("restart-winner")], { next_before_day: null, done: true }));
+      await restart;
+      expect(api).toHaveBeenCalledTimes(3);
+      expect(api.mock.calls).toEqual([[3, null], [3, 20300714], [3, null]]);
+      expect(doc.feed).toContain("restart-winner");
+      expect(doc.feed).not.toContain("stale-append");
+    } finally {
+      mounted.dispose();
+    }
+  });
+
+  it("keeps a returned real today DTO and only creates a placeholder when absent", () => {
+    const today = journalTitle(new Date());
+    const real = journalDto(today, "real today content");
+    expect(withToday([real])[0]).toBe(real);
+    const missing = withToday([journalDto("older")]);
+    expect(missing[0].name).toBe(today);
+    expect(missing[0].blocks[0].raw).toBe("");
+  });
+});
 
 describe("tag-page table", () => {
   it("toggles a query-sourced table and adds new rows to today's journal", async () => {
@@ -108,8 +430,8 @@ describe("tag-page table", () => {
     expect(root.textContent).toContain("Martin");
 
     (root.querySelector(".sheet-add-row-ghost") as HTMLButtonElement).click();
-    await tick();
-    await tick();
+    await flushMicrotasks();
+    await flushMicrotasks();
 
     const today = pageByName(todayName)!;
     const newId = today.roots[today.roots.length - 1];
@@ -307,7 +629,10 @@ describe("page route loading", () => {
       pre_block: null,
       blocks: [{ id: fastId, raw: "new route content", collapsed: false, children: [] }],
     };
-    vi.spyOn(backend(), "journalsDesc").mockResolvedValue([]);
+    vi.spyOn(backend(), "journalFeedPage").mockResolvedValue({
+      pages: [], next_before_day: null, done: true,
+      as_of_day: new Date().getFullYear() * 10000 + (new Date().getMonth() + 1) * 100 + new Date().getDate(),
+    });
     let rejectSlow!: (reason: Error) => void;
     let resolveFast!: (value: typeof fast) => void;
     vi.spyOn(backend(), "getPage").mockImplementation((name) => {

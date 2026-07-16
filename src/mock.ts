@@ -9,6 +9,19 @@ import { hlsPageName } from "./pdf";
 import { MARKER_RE } from "./markers";
 import { fuzzyScore } from "./editor/autocomplete";
 import { matcherMatches, matchHighlights, parseSearchQuery, simpleTerm } from "./editor/searchQuery";
+import { parseJournalWith } from "./journal";
+
+/** Mock feed membership must use a Logseq journal-title parser, never the
+ * host's permissive/non-portable Date string parser. Keep the same explicit
+ * patterns the fixture can emit so pagination remains deterministic in every
+ * browser/runtime. */
+function mockJournalDayKey(name: string): number | null {
+  for (const format of ["MMM do, yyyy", "EEEE, dd-MM-yyyy", "yyyy-MM-dd", "dd-MM-yyyy", "yyyy_MM_dd"]) {
+    const parsed = parseJournalWith(name, format);
+    if (parsed) return parsed.y * 10_000 + parsed.m * 100 + parsed.d;
+  }
+  return null;
+}
 
 function pageRefs(raw: string): string[] {
   const out: string[] = [];
@@ -680,8 +693,24 @@ export function mockBackend(): Backend {
     async listPages(): Promise<PageEntry[]> {
       return all.map(mockPageEntry);
     },
-    async journalsDesc(limit: number, offset: number): Promise<PageDto[]> {
-      return PAGES.slice(offset, offset + limit);
+    async journalFeedPage(limit: number, beforeDay: number | null) {
+      const now = new Date();
+      const as_of_day = now.getFullYear() * 10_000 + (now.getMonth() + 1) * 100 + now.getDate();
+      const candidates = PAGES
+        .filter((p) => p.kind === "journal")
+        .map((page) => ({ page, day: mockJournalDayKey(page.name) }))
+        .filter((row): row is { page: PageDto; day: number } =>
+          row.day !== null && row.day <= as_of_day && (beforeDay === null || row.day < beforeDay)
+        )
+        .sort((a, b) => b.day - a.day);
+      const rows = candidates.slice(0, limit);
+      const done = rows.length === candidates.length;
+      return {
+        pages: rows.map(({ page }) => page),
+        next_before_day: done || !rows.length ? null : rows[rows.length - 1].day,
+        done,
+        as_of_day,
+      };
     },
     async journalContentDays(): Promise<number[]> {
       return [];

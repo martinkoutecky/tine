@@ -71,6 +71,7 @@ const suites = {
     ["alias", "scripts/e2e-alias.mjs", {}],
     ["page-properties", "scripts/e2e-page-properties.mjs", {}],
     ["journal-format", "scripts/e2e-journal-format.mjs", {}],
+    ["journal-future-feed", "scripts/e2e-journal-future-feed.mjs", {}],
     ["multigraph", "scripts/e2e-multigraph.mjs", {}],
     ["sheets", "scripts/e2e-sheets.mjs", {}],
     ["selection-wrap", "scripts/e2e-selectwrap.mjs", {}],

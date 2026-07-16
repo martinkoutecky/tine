@@ -19,6 +19,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   same click or right-click menu; both actions safely ensure the annotation
   block before copying or opening it with its ordinary referrers visible.
   (GH #168)
+- **Future-dated journals no longer displace today from the Journals feed.** They
+  remain intact and directly reachable through search, links, the calendar, and
+  All pages. (GH #171)
+
 - **Mobile disclosure controls stay separate from bullets without stealing text
   taps.** Foldable blocks keep a wide trailing touch target on narrow Android
   layouts, while leaf blocks no longer retain an invisible right-edge disclosure
