@@ -1,4 +1,4 @@
-// Linux real-WebKit regression for GH #98/#99/#69/#137/#144/#145:
+// Linux real-WebKit regression for GH #98/#99/#69/#137/#144/#145/#173:
 // authoritative evidence in Ctrl+K and references, a graph-scoped virtual
 // query tab that survives restart, friendly filters/explanation, and guarded
 // materialization as one ordinary query page.
@@ -51,7 +51,11 @@ const unlinkedRaw = [
 ].join(" ");
 fs.writeFileSync(`${GRAPH}/pages/Unlinked source.md`, `- ${unlinkedRaw}\n`);
 fs.writeFileSync(`${GRAPH}/pages/Second unlinked.md`, "- A second source also names Query parity without brackets\n");
-fs.writeFileSync(`${GRAPH}/pages/Linked source.md`, "- [[Query parity]] appears explicitly and [[Query parity]] appears again\n");
+fs.writeFileSync(`${GRAPH}/pages/Linked source.md`, [
+  "- [[Query parity]] appears explicitly and [[Query parity]] appears again",
+  "  - A descendant-only filter witness carries #Evidence",
+  "",
+].join("\n"));
 const now = new Date();
 const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
 fs.writeFileSync(`${GRAPH}/journals/${journal}.md`, "- Open [[Research]] and [[Query parity]]\n");
@@ -487,6 +491,53 @@ await withApp(2, async (browser) => {
   if (linkedProof.groupCount < 2 || linkedProof.mentions !== "2 mentions" || linkedProof.jumps !== 2) {
     throw new Error(`linked reference evidence is incomplete: ${JSON.stringify(linkedProof)}`);
   }
+
+  const linkedFilterToggle = await browser.$('.linked-references button[aria-label="Filter linked references"]');
+  await linkedFilterToggle.click();
+  const linkedFilterSearch = await browser.$(".linked-references .reference-filter-search");
+  await linkedFilterSearch.waitForExist({ timeout: 5_000 });
+  await linkedFilterSearch.setValue('"descendant-only filter witness"');
+  await browser.waitUntil(() => browser.execute(() => {
+    const summary = document.querySelector(".linked-references .reference-filter-summary")?.textContent ?? "";
+    const pages = [...document.querySelectorAll(".linked-references .reference-page")]
+      .map((item) => item.textContent?.trim());
+    return summary.includes("1 of 2") && pages.length === 1 && pages[0] === "Linked source";
+  }), { timeout: 10_000, timeoutMsg: "descendant-only linked-reference search did not retain its backlink root" });
+  await browser.saveScreenshot(`${ARTIFACTS}/linked-reference-filter.png`);
+
+  await browser.$(".linked-references .reference-filter-clear").click();
+  await browser.waitUntil(() => browser.execute(() =>
+    (document.querySelector(".linked-references .reference-filter-summary")?.textContent ?? "").includes("2 of 2")), {
+    timeout: 5_000,
+    timeoutMsg: "clearing linked-reference search did not restore every root",
+  });
+  let evidenceFacet;
+  for (const button of await browser.$$(".linked-references .ref-filter-chip")) {
+    if ((await button.getText()).includes("Evidence")) {
+      evidenceFacet = button;
+      break;
+    }
+  }
+  if (!evidenceFacet) throw new Error("native descendant Evidence facet did not appear");
+  await evidenceFacet.click();
+  await browser.waitUntil(() => browser.execute(() => {
+    const pages = [...document.querySelectorAll(".linked-references .reference-page")]
+      .map((item) => item.textContent?.trim());
+    return pages.length === 1 && pages[0] === "Linked source";
+  }), { timeout: 5_000, timeoutMsg: "including the descendant Evidence facet did not retain Linked source" });
+  await evidenceFacet.click();
+  await browser.waitUntil(() => browser.execute(() => {
+    const pages = [...document.querySelectorAll(".linked-references .reference-page")]
+      .map((item) => item.textContent?.trim());
+    return pages.length === 1 && pages[0] !== "Linked source";
+  }), { timeout: 5_000, timeoutMsg: "excluding the descendant Evidence facet did not hide Linked source" });
+  await evidenceFacet.click();
+  await browser.waitUntil(() => browser.execute(() =>
+    document.querySelectorAll(".linked-references .reference-page").length === linkedProof.groupCount), {
+    timeout: 5_000,
+    timeoutMsg: "third facet click did not clear the persisted include/exclude state",
+  });
+
   const linkedBulk = await browser.$$(".linked-references .reference-bulk-controls button");
   await linkedBulk[0].click();
   await browser.waitUntil(async () => (await browser.$$(".linked-references .reference-blocks")).length === 0, {

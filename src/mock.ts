@@ -3,7 +3,7 @@
 // backend's shape so the UI behaves identically.
 
 import type { Backend, GpuEnv, DebugInfo } from "./backend";
-import type { BlockDto, BlockPreview, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PdfState, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup } from "./types";
+import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, BlockPreview, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PdfState, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup } from "./types";
 import { SAMPLE_PDF_B64 } from "./sample-pdf";
 import { hlsPageName } from "./pdf";
 import { MARKER_RE } from "./markers";
@@ -772,6 +772,36 @@ export function mockBackend(): Backend {
     async getBacklinks(name: string): Promise<RefGroup[]> {
       const n = name.toLowerCase();
       return collect((b) => pageRefs(b.raw).some((r) => r.toLowerCase() === n), name);
+    },
+    async getBacklinkFilterContext(name: string, targets: BacklinkFilterTarget[]): Promise<BacklinkFilterContext> {
+      const excluded = name.trim().toLowerCase();
+      const wanted = new Map(targets.map((item) => [
+        `${item.kind}\0${item.page.toLowerCase()}\0${item.block_id}`,
+        item,
+      ]));
+      const entries: BacklinkFilterContext["entries"] = [];
+      const visit = (page: PageDto, block: BlockDto): void => {
+        const key = `${page.kind}\0${page.name.toLowerCase()}\0${block.id}`;
+        const target = wanted.get(key);
+        if (target) {
+          const text: string[] = [];
+          const facets = new Map<string, string>();
+          const subtree = (node: BlockDto) => {
+            text.push(node.raw);
+            for (const ref of pageRefs(node.raw)) {
+              const normalized = ref.trim().toLowerCase();
+              if (normalized && normalized !== excluded && !facets.has(normalized)) facets.set(normalized, ref);
+            }
+            if (node.marker) facets.set(node.marker.toLowerCase(), node.marker);
+            node.children.forEach(subtree);
+          };
+          subtree(block);
+          entries.push({ ...target, text: text.join("\n"), facets: [...facets.values()] });
+        }
+        block.children.forEach((child) => visit(page, child));
+      };
+      for (const page of all) page.blocks.forEach((block) => visit(page, block));
+      return { entries, truncated: entries.length < wanted.size };
     },
     async getUnlinkedRefs(name: string): Promise<RefGroup[]> {
       const n = name.toLowerCase();

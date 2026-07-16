@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
-import type { BlockDto, RefGroup } from "../types";
+import type { BacklinkFilterContext, BlockDto, RefGroup } from "../types";
 import { LinkedReferences } from "./LinkedReferences";
 
 vi.mock("./LiveRefGroup", () => ({
@@ -22,6 +22,10 @@ function tick(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 afterEach(() => {
   document.body.innerHTML = "";
   localStorage.clear();
@@ -29,6 +33,54 @@ afterEach(() => {
 });
 
 describe("Linked References filters", () => {
+  it("keeps a backlink root when ephemeral content search matches only a descendant (GH #173)", async () => {
+    const groups: RefGroup[] = [
+      {
+        page: "Journal",
+        kind: "journal",
+        blocks: [
+          block("matching-root", "Planning [[My Project]]"),
+          block("other-root", "Another [[My Project]] reference"),
+        ],
+      },
+    ];
+    vi.spyOn(backend(), "getBacklinks").mockResolvedValue(groups);
+    vi.spyOn(backend(), "getBacklinkFilterContext").mockResolvedValue({
+      entries: [
+        { page: "Journal", kind: "journal", block_id: "matching-root", text: "Planning\nA descendant carries the exact needle", facets: [] },
+        { page: "Journal", kind: "journal", block_id: "other-root", text: "Another reference\nUnrelated descendant", facets: [] },
+      ],
+    });
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const dispose = render(() => <LinkedReferences name="My Project" />, root);
+
+    await tick();
+    await tick();
+    const filterButton = root.querySelector<HTMLButtonElement>(
+      'button[aria-label="Filter linked references"]'
+    );
+    expect(filterButton).not.toBeNull();
+    filterButton!.click();
+    await tick();
+
+    const input = root.querySelector<HTMLInputElement>('.reference-filter-search');
+    expect(input).not.toBeNull();
+    input!.value = '"exact needle"';
+    input!.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    await wait(150);
+
+    expect(root.querySelector(".reference-filter-summary")?.textContent).toContain("1 of 2");
+    expect(root.querySelector(".test-ref-group")?.textContent).toBe("matching-root");
+
+    root.querySelector<HTMLButtonElement>(".reference-filter-clear")!.click();
+    await tick();
+    expect(root.querySelector(".reference-filter-summary")?.textContent).toContain("2 of 2");
+    expect(root.querySelector(".test-ref-group")?.textContent).toBe("matching-root,other-root");
+
+    dispose();
+  });
+
   it("includes task markers and references from child blocks", async () => {
     const groups: RefGroup[] = [
       {
@@ -52,11 +104,21 @@ describe("Linked References filters", () => {
       },
     ];
     vi.spyOn(backend(), "getBacklinks").mockResolvedValue(groups);
+    const context: BacklinkFilterContext = {
+      entries: [
+        { page: "Jul 10th, 2026", kind: "journal", block_id: "planning", text: "Planning", facets: ["fun", "pin", "TODO"] },
+        { page: "Jul 9th, 2026", kind: "journal", block_id: "sync", text: "Sync", facets: ["fun", "pin"] },
+        { page: "Jul 9th, 2026", kind: "journal", block_id: "direct-todo", text: "TODO should be detected", facets: ["TODO"] },
+      ],
+    };
+    vi.spyOn(backend(), "getBacklinkFilterContext").mockResolvedValue(context);
     const root = document.createElement("div");
     document.body.appendChild(root);
     const dispose = render(() => <LinkedReferences name="My Project" />, root);
 
     await tick();
+    await tick();
+    root.querySelector<HTMLButtonElement>('button[aria-label="Filter linked references"]')!.click();
     await tick();
 
     const chips = [...root.querySelectorAll<HTMLButtonElement>(".ref-filter-chip")].map((el) =>
@@ -82,11 +144,19 @@ describe("Linked References filters", () => {
       },
     ];
     vi.spyOn(backend(), "getBacklinks").mockResolvedValue(groups);
+    vi.spyOn(backend(), "getBacklinkFilterContext").mockResolvedValue({
+      entries: [
+        { page: "Journal", kind: "journal", block_id: "with-task", text: "Planning\nTODO nested task", facets: ["work", "TODO"] },
+        { page: "Journal", kind: "journal", block_id: "without-task", text: "Notes", facets: ["notes"] },
+      ],
+    });
     const root = document.createElement("div");
     document.body.appendChild(root);
     const dispose = render(() => <LinkedReferences name="My Project" />, root);
 
     await tick();
+    await tick();
+    root.querySelector<HTMLButtonElement>('button[aria-label="Filter linked references"]')!.click();
     await tick();
     const todo = [...root.querySelectorAll<HTMLButtonElement>(".ref-filter-chip")].find((el) =>
       el.textContent?.includes("TODO")

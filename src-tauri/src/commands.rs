@@ -9,7 +9,9 @@ use serde::Serialize;
 use std::sync::Arc;
 use tauri::{State, WebviewWindow};
 use tine_core::date::JournalDate;
-use tine_core::model::{PageDto, PageEntry, PageKind, RefGroup};
+use tine_core::model::{
+    BacklinkFilterContext, BacklinkFilterTarget, PageDto, PageEntry, PageKind, RefGroup,
+};
 
 const RESULT_BRIDGE_MAX_ROWS: usize = 20_000;
 const RESULT_BRIDGE_MAX_BYTES: usize = 32 * 1024 * 1024;
@@ -536,6 +538,25 @@ pub(crate) fn get_backlinks(
             &name,
             RESULT_BRIDGE_MAX_ROWS,
             RESULT_BRIDGE_MAX_BYTES,
+        ))
+    })
+}
+
+#[tauri::command]
+pub(crate) fn get_backlink_filter_context(
+    name: String,
+    targets: Vec<BacklinkFilterTarget>,
+    state: GraphContext<'_>,
+) -> Result<BacklinkFilterContext, String> {
+    if targets.len() > RESULT_BRIDGE_MAX_ROWS {
+        return Err(format!(
+            "too many backlink filter roots: {} (limit: {RESULT_BRIDGE_MAX_ROWS})",
+            targets.len()
+        ));
+    }
+    with_graph(&state, |graph| {
+        Ok(tine_core::query::backlink_filter_context(
+            graph, &name, &targets,
         ))
     })
 }

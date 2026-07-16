@@ -1,10 +1,11 @@
-import { For, Show, createResource, createSignal, createMemo, createEffect, type JSX } from "solid-js";
+import { For, Show, createResource, createSignal, createMemo, createEffect, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
 import { openPage, openPageInNewTab } from "../router";
 import { openPageInSidebar, openPageContextMenu } from "../ui";
 import { LiveRefGroup } from "./LiveRefGroup";
-import type { BlockDto, RefGroup } from "../types";
+import type { BacklinkFilterEntry, BacklinkFilterTarget, BlockDto, RefGroup } from "../types";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
+import { matcherMatches, parseSearchQuery } from "../editor/searchQuery";
 
 const norm = (s: string) => s.trim().toLowerCase();
 
@@ -28,24 +29,17 @@ function saveFilters(page: string, f: FilterMap) {
     // ignore
   }
 }
-function refsInRaw(raw: string): string[] {
-  const out: string[] = [];
-  const re = /\[\[([^\]]+)\]\]|#\[\[([^\]]+)\]\]|#([\w/_.-]+)/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(raw))) out.push(m[1] ?? m[2] ?? m[3]);
-  return out;
-}
+const filterKey = (page: string, kind: string, blockId: string) => `${kind}\0${norm(page)}\0${blockId}`;
 
-/** Filter facets contributed by a backlink root and its visible descendants.
- *  OG's reference filter treats task states like TODO as facets too. Keep one
- *  value per root (so counts are backlink counts, not repeated-token counts). */
-function filterFacets(block: BlockDto, target: string): Map<string, string> {
+/** A bounded fallback while native context is loading or stale. It intentionally
+ *  uses only DTO-owned semantic facets (never a raw reference regex); the native
+ *  context replaces it with parser-owned descendant refs as soon as it arrives. */
+function fallbackFilterEntry(block: BlockDto): Pick<BacklinkFilterEntry, "text" | "facets"> {
+  const text: string[] = [];
   const facets = new Map<string, string>();
   const visit = (current: BlockDto) => {
-    for (const ref of refsInRaw(current.raw)) {
-      const key = norm(ref);
-      if (key !== norm(target) && !facets.has(key)) facets.set(key, ref);
-    }
+    text.push(current.raw);
+    for (const tag of current.tags ?? []) if (!facets.has(norm(tag))) facets.set(norm(tag), tag);
     if (current.marker) {
       const key = norm(current.marker);
       if (!facets.has(key)) facets.set(key, current.marker);
@@ -53,7 +47,7 @@ function filterFacets(block: BlockDto, target: string): Map<string, string> {
     for (const child of current.children) visit(child);
   };
   visit(block);
-  return facets;
+  return { text: text.join("\n"), facets: [...facets.values()] };
 }
 
 // The "Linked References" section (backlinks). Live, editable, collapsible, and
@@ -66,17 +60,55 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
   );
   const [collapsed, setCollapsed] = createSignal(false);
   const [collapsedGroups, setCollapsedGroups] = createSignal<Set<string>>(new Set());
+  const [filterOpen, setFilterOpen] = createSignal(false);
+  const [searchDraft, setSearchDraft] = createSignal("");
+  const [searchQuery, setSearchQuery] = createSignal("");
+  let searchTimer: ReturnType<typeof setTimeout> | undefined;
+  onCleanup(() => {
+    if (searchTimer !== undefined) clearTimeout(searchTimer);
+  });
   // page name -> "in" (must also reference) | "out" (must not reference).
   const [filters, setFilters] = createSignal<FilterMap>(loadFilters(props.name));
   // Reload the saved filter when the page changes.
-  createEffect(() => setFilters(loadFilters(props.name)));
+  createEffect(() => {
+    props.name;
+    setFilters(loadFilters(props.name));
+    setFilterOpen(false);
+    setSearchDraft("");
+    setSearchQuery("");
+  });
+
+  const targets = createMemo<BacklinkFilterTarget[]>(() =>
+    (groups() ?? []).flatMap((group) =>
+      group.blocks.map((block) => ({ page: group.page, kind: group.kind, block_id: block.id }))
+    )
+  );
+  const needsNativeContext = () => filterOpen() || Object.keys(filters()).length > 0;
+  const [nativeContext] = createResource(
+    () => {
+      if (!needsNativeContext() || !groups()) return null;
+      return { name: props.name, targets: targets() };
+    },
+    ({ name, targets }) => backend().getBacklinkFilterContext(name, targets)
+  );
+  const nativeByRoot = createMemo(() =>
+    new Map(
+      (nativeContext()?.entries ?? []).map((entry) => [
+        filterKey(entry.page, entry.kind, entry.block_id),
+        entry,
+      ] as const)
+    )
+  );
+  const rootEntry = (group: RefGroup, block: BlockDto) =>
+    nativeByRoot().get(filterKey(group.page, group.kind, block.id)) ?? fallbackFilterEntry(block);
 
   // Co-referenced pages/tags and task states in each backlink tree, with counts.
   const coRefs = createMemo(() => {
     const counts = new Map<string, { name: string; count: number }>();
     for (const g of groups() ?? []) {
       for (const b of g.blocks) {
-        for (const [key, name] of filterFacets(b, props.name)) {
+        for (const name of rootEntry(g, b).facets) {
+          const key = norm(name);
           const previous = counts.get(key);
           counts.set(key, { name: previous?.name ?? name, count: (previous?.count ?? 0) + 1 });
         }
@@ -87,17 +119,34 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   });
 
+  const parsedSearch = createMemo(() => parseSearchQuery(searchQuery()));
+  const searchError = createMemo(() => {
+    const parsed = parsedSearch();
+    return parsed.kind === "invalid" ? parsed.error : null;
+  });
+  const filterState = (name: string): "in" | "out" | undefined => {
+    const key = norm(name);
+    return Object.entries(filters()).find(([candidate]) => norm(candidate) === key)?.[1];
+  };
+
   const shown = createMemo<RefGroup[]>(() => {
     const f = filters();
     const ins = Object.keys(f).filter((k) => f[k] === "in").map(norm);
     const outs = Object.keys(f).filter((k) => f[k] === "out").map(norm);
-    if (!ins.length && !outs.length) return groups() ?? [];
+    const parsed = parsedSearch();
+    const searching = parsed.kind !== "empty" && parsed.kind !== "invalid";
+    // Do not flash descendant-only matches away while their on-demand native
+    // index is still in flight. Once it arrives, filtering is synchronous.
+    if ((searching || ins.length || outs.length) && nativeContext.loading) return groups() ?? [];
+    if (!searching && !ins.length && !outs.length) return groups() ?? [];
     return (groups() ?? [])
       .map((g) => ({
         ...g,
         blocks: g.blocks.filter((b) => {
-          const facets = filterFacets(b, props.name);
-          return ins.every((i) => facets.has(i)) && outs.every((o) => !facets.has(o));
+          const entry = rootEntry(g, b);
+          const facets = new Set(entry.facets.map(norm));
+          const contentMatches = !searching || matcherMatches(parsed, entry.text.toLowerCase(), entry.text);
+          return contentMatches && ins.every((i) => facets.has(i)) && outs.every((o) => !facets.has(o));
         }),
       }))
       .map((g) => {
@@ -122,13 +171,29 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
   };
 
   const cycle = (name: string) => {
-    const f = { ...filters() };
-    f[name] = f[name] === "in" ? "out" : f[name] === "out" ? (undefined as never) : "in";
-    if (f[name] === undefined) delete f[name];
+    const key = norm(name);
+    const f = Object.fromEntries(Object.entries(filters()).filter(([candidate]) => norm(candidate) !== key)) as FilterMap;
+    const current = filterState(name);
+    if (current === "in") f[name] = "out";
+    else if (current !== "out") f[name] = "in";
     setFilters(f);
     saveFilters(props.name, f);
   };
   const count = () => shown().reduce((acc, g) => acc + g.blocks.length, 0);
+  const totalCount = () => (groups() ?? []).reduce((acc, g) => acc + g.blocks.length, 0);
+  const hasActiveFilter = () => searchDraft().trim() !== "" || Object.keys(filters()).length > 0;
+  const updateSearch = (value: string) => {
+    setSearchDraft(value);
+    if (searchTimer !== undefined) clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => setSearchQuery(value), 120);
+  };
+  const clearAllFilters = () => {
+    if (searchTimer !== undefined) clearTimeout(searchTimer);
+    setSearchDraft("");
+    setSearchQuery("");
+    setFilters({});
+    saveFilters(props.name, {});
+  };
 
   return (
     <Show when={groups() && groups()!.length > 0}>
@@ -140,22 +205,69 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
             </svg>
           </span>
           Linked References <span class="references-count">{count()}</span>
+          <button
+            type="button"
+            class="reference-filter-toggle"
+            classList={{ active: filterOpen() || hasActiveFilter() }}
+            aria-label="Filter linked references"
+            aria-expanded={filterOpen()}
+            title="Filter linked references"
+            onClick={(event) => {
+              event.stopPropagation();
+              setFilterOpen(!filterOpen());
+            }}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16l-6.2 7.1v5.4l-3.6 1.8v-7.2z" /></svg>
+          </button>
         </div>
         <Show when={!collapsed()}>
-          <Show when={coRefs().length > 1}>
-            <div class="ref-filter" onClick={(e) => e.stopPropagation()}>
-              <For each={coRefs()}>
-                {([name, n]) => (
-                  <button
-                    class="ref-filter-chip"
-                    classList={{ "f-in": filters()[name] === "in", "f-out": filters()[name] === "out" }}
-                    title="Click: include · again: exclude · again: clear"
-                    onClick={() => cycle(name)}
-                  >
-                    {name} <span class="ref-filter-count">{n}</span>
-                  </button>
-                )}
-              </For>
+          <Show when={filterOpen()}>
+            <div class="reference-filter-panel">
+              <div class="reference-filter-search-row">
+                <input
+                  class="reference-filter-search"
+                  type="search"
+                  value={searchDraft()}
+                  placeholder="Search reference text"
+                  aria-label="Search linked reference text"
+                  onInput={(event) => updateSearch(event.currentTarget.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") setFilterOpen(false);
+                  }}
+                />
+                <button type="button" class="reference-filter-clear" disabled={!hasActiveFilter()} onClick={clearAllFilters}>
+                  Clear
+                </button>
+              </div>
+              <div class="reference-filter-summary">
+                {count()} of {totalCount()} references
+                <Show when={nativeContext.loading}> · indexing…</Show>
+              </div>
+              <Show when={searchError()}>
+                {(error) => <div class="reference-filter-error">Invalid search: {error()}</div>}
+              </Show>
+              <Show when={nativeContext.error}>
+                <div class="reference-filter-error">Couldn’t index descendant text; searching visible root text only.</div>
+              </Show>
+              <Show when={nativeContext()?.truncated || nativeContext()?.entries.some((entry) => entry.truncated)}>
+                <div class="reference-filter-warning">Some very large reference trees are searched partially.</div>
+              </Show>
+              <Show when={coRefs().length > 0}>
+                <div class="ref-filter" aria-label="Reference facets">
+                  <For each={coRefs()}>
+                    {([name, n]) => (
+                      <button
+                        class="ref-filter-chip"
+                        classList={{ "f-in": filterState(name) === "in", "f-out": filterState(name) === "out" }}
+                        title="Click: include · again: exclude · again: clear"
+                        onClick={() => cycle(name)}
+                      >
+                        {name} <span class="ref-filter-count">{n}</span>
+                      </button>
+                    )}
+                  </For>
+                </div>
+              </Show>
             </div>
           </Show>
           <Show when={shown().length > 1}>

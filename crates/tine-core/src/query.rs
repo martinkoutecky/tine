@@ -6,9 +6,9 @@
 use crate::date::JournalDate;
 use crate::doc::{DocBlock, Document};
 use crate::model::{
-    block_to_shallow_dto, BlockDto, BlockPreview, Format, Graph, PageEntry, PageKind, RefGroup,
-    ReferenceBlockEvidence, ReferenceDiagnosticTrace, ReferenceDiagnostics, ReferenceKind,
-    TemplateDto,
+    block_to_shallow_dto, BacklinkFilterContext, BacklinkFilterEntry, BacklinkFilterTarget,
+    BlockDto, BlockPreview, Format, Graph, PageEntry, PageKind, RefGroup, ReferenceBlockEvidence,
+    ReferenceDiagnosticTrace, ReferenceDiagnostics, ReferenceKind, TemplateDto,
 };
 use crate::refs;
 use crate::search_query::Matcher;
@@ -697,6 +697,221 @@ pub fn backlinks_bounded(
         max_rows,
         max_bytes,
     )
+}
+
+const BACKLINK_FILTER_MAX_BYTES: usize = 16 * 1024 * 1024;
+const BACKLINK_FILTER_MAX_TEXT_BYTES: usize = 64 * 1024;
+const BACKLINK_FILTER_MAX_FACETS: usize = 256;
+
+fn append_bounded_text(out: &mut String, value: &str, max_bytes: usize) -> bool {
+    if value.is_empty() || out.len() >= max_bytes {
+        return !value.is_empty() && out.len() >= max_bytes;
+    }
+    if !out.is_empty() {
+        if out.len() + 1 > max_bytes {
+            return true;
+        }
+        out.push('\n');
+    }
+    let remaining = max_bytes.saturating_sub(out.len());
+    if value.len() <= remaining {
+        out.push_str(value);
+        return false;
+    }
+    let mut end = remaining;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    out.push_str(&value[..end]);
+    true
+}
+
+fn backlink_filter_entry(
+    page: &str,
+    kind: PageKind,
+    block: &DocBlock,
+    excluded_refs: &std::collections::HashSet<String>,
+    remaining_bytes: usize,
+) -> BacklinkFilterEntry {
+    let max_text = BACKLINK_FILTER_MAX_TEXT_BYTES.min(remaining_bytes);
+    let mut text = String::new();
+    let mut facets = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut facets_truncated = false;
+
+    let mut add_facet = |name: &str| {
+        let name = name.trim();
+        if name.is_empty() {
+            return;
+        }
+        let key = refs::normalize(name);
+        if excluded_refs.contains(&key) || !seen.insert(key) {
+            return;
+        }
+        if facets.len() >= BACKLINK_FILTER_MAX_FACETS {
+            facets_truncated = true;
+        } else {
+            facets.push(name.to_string());
+        }
+    };
+
+    fn visit(
+        block: &DocBlock,
+        text: &mut String,
+        max_text: usize,
+        add_facet: &mut impl FnMut(&str),
+        truncated: &mut bool,
+    ) {
+        *truncated |= append_bounded_text(text, block.visible_text(), max_text);
+        let projection = block.projection();
+        for name in &projection.refs_page {
+            add_facet(name);
+        }
+        if let Some(marker) = projection.marker.as_deref() {
+            add_facet(marker);
+        }
+        // OG treats tags::/alias:: property values as page references too. The
+        // property boundary itself is parser-owned; only its comma-separated
+        // semantic values are unwrapped here.
+        for (key, value) in &projection.properties {
+            if !(key.eq_ignore_ascii_case("tags")
+                || key.eq_ignore_ascii_case("alias")
+                || key.eq_ignore_ascii_case("aliases"))
+            {
+                continue;
+            }
+            let quoted = value.trim();
+            if quoted.len() >= 2 && quoted.starts_with('"') && quoted.ends_with('"') {
+                continue;
+            }
+            for value in value.split([',', '，']) {
+                let name = strip_ref(value.trim());
+                add_facet(&name);
+            }
+        }
+        for child in &block.children {
+            visit(child, text, max_text, add_facet, truncated);
+        }
+    }
+
+    let mut text_truncated = false;
+    visit(block, &mut text, max_text, &mut add_facet, &mut text_truncated);
+    BacklinkFilterEntry {
+        page: page.to_string(),
+        kind,
+        block_id: block.uuid.clone(),
+        text,
+        facets,
+        truncated: text_truncated || facets_truncated,
+    }
+}
+
+/// Build search/facet metadata only for the shallow backlink roots already in
+/// one rendered panel. This deliberately does not rerun backlink selection and
+/// cannot turn into a graph-sized arbitrary export: the request is ID-scoped,
+/// de-duplicated, and the response has both per-root and total byte ceilings.
+pub fn backlink_filter_context(
+    graph: &Graph,
+    target: &str,
+    targets: &[BacklinkFilterTarget],
+) -> BacklinkFilterContext {
+    let aliases = graph.page_aliases();
+    let (_, names_norm) = equivalent_page_names(&aliases, target);
+    let excluded_refs = names_norm.into_iter().collect::<std::collections::HashSet<_>>();
+    let mut requested = std::collections::HashMap::<
+        (PageKind, String),
+        std::collections::HashSet<String>,
+    >::new();
+    for item in targets {
+        requested
+            .entry((item.kind, refs::normalize(&item.page)))
+            .or_default()
+            .insert(item.block_id.clone());
+    }
+    let requested_unique = requested
+        .values()
+        .map(std::collections::HashSet::len)
+        .sum::<usize>();
+
+    let mut context = BacklinkFilterContext::default();
+    let mut bytes = 0usize;
+    graph.with_pages(|pages| {
+        for (page, document) in pages {
+            let Some(ids) = requested.get(&(page.kind, refs::normalize(&page.name))) else {
+                continue;
+            };
+            if let Some(pre) = document.pre_block.as_deref() {
+                if let Some(block) = page_property_block(page, pre) {
+                    if ids.contains(&block.uuid) {
+                        let entry = backlink_filter_entry(
+                            &page.name,
+                            page.kind,
+                            &block,
+                            &excluded_refs,
+                            BACKLINK_FILTER_MAX_BYTES.saturating_sub(bytes),
+                        );
+                        let estimated = entry.text.len()
+                            + entry.facets.iter().map(String::len).sum::<usize>()
+                            + entry.page.len()
+                            + entry.block_id.len()
+                            + 128;
+                        if bytes.saturating_add(estimated) > BACKLINK_FILTER_MAX_BYTES {
+                            context.truncated = true;
+                        } else {
+                            bytes += estimated;
+                            context.entries.push(entry);
+                        }
+                    }
+                }
+            }
+            fn collect<'a>(
+                blocks: &'a [DocBlock],
+                ids: &std::collections::HashSet<String>,
+                out: &mut Vec<&'a DocBlock>,
+            ) {
+                for block in blocks {
+                    if ids.contains(&block.uuid) {
+                        out.push(block);
+                    }
+                    collect(&block.children, ids, out);
+                }
+            }
+            let mut blocks = Vec::new();
+            collect(&document.roots, ids, &mut blocks);
+            for block in blocks {
+                if bytes >= BACKLINK_FILTER_MAX_BYTES {
+                    context.truncated = true;
+                    break;
+                }
+                let entry = backlink_filter_entry(
+                    &page.name,
+                    page.kind,
+                    block,
+                    &excluded_refs,
+                    BACKLINK_FILTER_MAX_BYTES.saturating_sub(bytes),
+                );
+                let estimated = entry.text.len()
+                    + entry.facets.iter().map(String::len).sum::<usize>()
+                    + entry.page.len()
+                    + entry.block_id.len()
+                    + 128;
+                if bytes.saturating_add(estimated) > BACKLINK_FILTER_MAX_BYTES {
+                    context.truncated = true;
+                    break;
+                }
+                bytes += estimated;
+                context.truncated |= entry.truncated;
+                context.entries.push(entry);
+            }
+        }
+    });
+    if context.entries.len() < requested_unique {
+        // Missing IDs can be stale results after an external edit; the frontend
+        // can still search each root's shallow raw text but must not claim the
+        // descendant index is complete.
+        context.truncated = true;
+    }
+    context
 }
 
 /// Block-level referrers: every block across the graph that references the block
@@ -3195,6 +3410,65 @@ mod tests {
             query_nesting_within_limit(&advanced_comment),
             "advanced EDN comments must not count delimiter text"
         );
+    }
+
+    #[test]
+    fn backlink_filter_context_indexes_visible_descendants_and_parser_owned_facets() {
+        use std::fs;
+
+        const ROOT: &str = "12345678-1234-4234-8234-123456789abc";
+        let dir = std::env::temp_dir().join(format!(
+            "tine-backlink-filter-context-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::write(
+            dir.join("pages/Source.md"),
+            format!(
+                "- Parent [[Target]]\n  id:: {ROOT}\n  - A descendant carries the exact needle [[Other]] #tag\n    tags:: Team\n  - TODO parser-owned task state\n  - ```\n    [[CodeOnly]]\n    ```\n"
+            ),
+        )
+        .unwrap();
+
+        let graph = Graph::open(&dir);
+        let context = backlink_filter_context(
+            &graph,
+            "Target",
+            &[
+                BacklinkFilterTarget {
+                    page: "Source".into(),
+                    kind: PageKind::Page,
+                    block_id: ROOT.into(),
+                },
+                // Defensive duplicate input must not make a complete response
+                // look truncated or duplicate its payload.
+                BacklinkFilterTarget {
+                    page: "Source".into(),
+                    kind: PageKind::Page,
+                    block_id: ROOT.into(),
+                },
+            ],
+        );
+
+        assert!(!context.truncated);
+        assert_eq!(context.entries.len(), 1);
+        let entry = &context.entries[0];
+        assert!(entry.text.contains("exact needle"), "{:?}", entry.text);
+        assert!(!entry.text.contains("id::"), "properties are not visible text");
+        let facets = entry
+            .facets
+            .iter()
+            .map(|facet| refs::normalize(facet))
+            .collect::<std::collections::HashSet<_>>();
+        for expected in ["other", "tag", "team", "todo"] {
+            assert!(facets.contains(expected), "missing {expected}: {:?}", entry.facets);
+        }
+        assert!(!facets.contains("target"));
+        assert!(!facets.contains("codeonly"), "code-fence text is not a reference facet");
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     /// A minimal eval context for a block on a named (non-journal) page.

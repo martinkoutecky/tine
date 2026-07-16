@@ -205,6 +205,35 @@ pub struct RefGroup {
     pub evidence: Vec<ReferenceBlockEvidence>,
 }
 
+/// One backlink root whose visible subtree can be searched and whose OG-style
+/// co-reference facets came from the cached lsdoc projection. This is fetched
+/// only when the Linked References filter opens; ordinary backlink DTOs remain
+/// shallow so their lazy-loading and bridge cost do not change.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BacklinkFilterTarget {
+    pub page: String,
+    pub kind: PageKind,
+    pub block_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BacklinkFilterEntry {
+    pub page: String,
+    pub kind: PageKind,
+    pub block_id: String,
+    pub text: String,
+    pub facets: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BacklinkFilterContext {
+    pub entries: Vec<BacklinkFilterEntry>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub truncated: bool,
+}
+
 /// Cache-friendly bounded result metadata. The groups stay behind one `Arc` so
 /// routine frontend refreshes can reuse the generation-scoped native result
 /// without a deep clone while preserving the construction ceiling's outcome.

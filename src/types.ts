@@ -214,6 +214,23 @@ export interface RefGroup {
   evidence?: ReferenceBlockEvidence[];
 }
 
+export interface BacklinkFilterTarget {
+  page: string;
+  kind: PageKind;
+  block_id: string;
+}
+
+export interface BacklinkFilterEntry extends BacklinkFilterTarget {
+  text: string;
+  facets: string[];
+  truncated?: boolean;
+}
+
+export interface BacklinkFilterContext {
+  entries: BacklinkFilterEntry[];
+  truncated?: boolean;
+}
+
 export type ReferenceKind = "explicit" | "plain";
 
 export interface ReferenceOccurrence {

@@ -5776,7 +5776,7 @@ body.file-drop-active::after {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-bottom: 10px;
+  margin: 8px 0 0;
 }
 .ref-filter-chip {
   border: 1px solid var(--border-color);
@@ -6105,6 +6105,100 @@ img.emoji {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.reference-filter-toggle {
+  width: 26px;
+  height: 26px;
+  margin-left: auto;
+  padding: 5px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.reference-filter-toggle svg {
+  width: 100%;
+  height: 100%;
+  fill: currentColor;
+}
+
+.reference-filter-toggle:hover,
+.reference-filter-toggle:focus-visible,
+.reference-filter-toggle.active {
+  color: var(--link-color);
+  background: var(--bg-tertiary);
+}
+
+.reference-filter-panel {
+  margin: -3px 0 12px;
+  padding: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+}
+
+.reference-filter-search-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.reference-filter-search {
+  min-width: 0;
+  flex: 1;
+  height: 30px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+}
+
+.reference-filter-search:focus {
+  outline: 1px solid var(--link-color);
+  border-color: var(--link-color);
+}
+
+.reference-filter-clear {
+  border: 0;
+  border-radius: 5px;
+  padding: 4px 7px;
+  background: transparent;
+  color: var(--link-color);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.reference-filter-clear:hover:not(:disabled) {
+  background: var(--bg-tertiary);
+}
+
+.reference-filter-clear:disabled {
+  color: var(--text-muted);
+  cursor: default;
+  opacity: 0.65;
+}
+
+.reference-filter-summary,
+.reference-filter-error,
+.reference-filter-warning {
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.reference-filter-error {
+  color: var(--danger, #dc2626);
+}
+
+.reference-filter-warning {
+  color: var(--text-secondary);
 }
 
 .references-count,
