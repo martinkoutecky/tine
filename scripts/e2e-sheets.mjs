@@ -54,6 +54,17 @@ const GRID_MD = [
   "  tine.group-by:: tags",
   "\t- paper one #alpha",
   "\t- paper two #alpha #beta",
+  "- ## Query filter proof",
+  "  {{query (and (todo WAIT) \"score\")}}",
+  "  tine.view:: table",
+  "  tine.fields:: points=number;tier=text",
+  "  tine.group-by:: prop:tier",
+  "- WAIT Low score",
+  "  points:: 1",
+  "  tier:: low",
+  "- WAIT High score",
+  "  points:: 3",
+  "  tier:: high",
   "",
 ].join("\n");
 
@@ -176,10 +187,11 @@ try {
   await sleep(2500);
   const disk = fs.readFileSync(JFILE, "utf8");
   check("edited text saved to disk", disk.includes("alpha-edited"), JSON.stringify(disk));
-  // Seeded file has 9 bullets (host + 2 rows + 4 cells + board query + task) —
+  // Seeded file has 17 bullets (the original 14 plus the query-filter owner and
+  // its two result rows) —
   // an Enter-split would add one.
   const bulletCount = (disk.match(/^\s*-/gm) || []).length;
-  check("no block was split/created (14 bullets)", bulletCount === 14, `got ${bulletCount}: ${JSON.stringify(disk)}`);
+  check("no block was split/created (17 bullets)", bulletCount === 17, `got ${bulletCount}: ${JSON.stringify(disk)}`);
   check("grid config intact", disk.includes("tine.view:: grid"), JSON.stringify(disk));
 
   // Esc from selection → outline selection on the grid block (no doc change).
@@ -205,7 +217,7 @@ try {
   await sleep(2500);
   const disk3 = fs.readFileSync(JFILE, "utf8");
   const bullets3 = (disk3.match(/^\s*-/gm) || []).length;
-  check("seam-typing inserted a row on disk (16 bullets: +row +cell)", bullets3 === 16, `got ${bullets3}: ${JSON.stringify(disk3)}`);
+  check("seam-typing inserted a row on disk (19 bullets: +row +cell)", bullets3 === 19, `got ${bullets3}: ${JSON.stringify(disk3)}`);
   check("inserted cell holds the typed char", /-\s*z\s*$/m.test(disk3), JSON.stringify(disk3));
   // The typed char rides the editor's own undo entry; the structural insert is
   // its own atomic unit — so TWO undos fully revert (text, then structure).
@@ -736,6 +748,151 @@ try {
       });
       check("aggregate row adds no vertical scroller overflow", aggOverflow.ok, JSON.stringify(aggOverflow));
     }
+  }
+
+  // GH #92: refine a REAL query result set through the Sheets filter UI. This
+  // is intentionally native-WebKit evidence rather than a mocked component
+  // proof: the backend must materialize both coarse rows, the formula editor
+  // must persist tine.filter, and the same filtered identity must survive the
+  // actual Table -> Board view switch without rewriting the coarse query.
+  const queryFilterInitial = await browser.execute(() => {
+    const block = [...document.querySelectorAll(".ls-block")].find((el) =>
+      (el.querySelector(".heading-text")?.textContent ?? "").includes("Query filter proof")
+    );
+    if (!block) return { found: false, reason: "missing query-filter block" };
+    const titles = [...block.querySelectorAll(".sheet-title-cell .sheet-cell-body")]
+      .map((el) => (el.textContent ?? "").trim());
+    return {
+      found: true,
+      active: block.querySelector(".query-view-switcher button.active")?.textContent?.trim() ?? null,
+      count: block.querySelector(".query-count")?.textContent?.trim() ?? null,
+      titles,
+    };
+  });
+  check(
+    "query-sourced Table starts from both coarse numeric rows",
+    queryFilterInitial.found && queryFilterInitial.active === "Table" &&
+      queryFilterInitial.count === "2" &&
+      queryFilterInitial.titles.includes("Low score") && queryFilterInitial.titles.includes("High score"),
+    JSON.stringify(queryFilterInitial)
+  );
+
+  const filterMenuOpened = await browser.execute(() => {
+    const block = [...document.querySelectorAll(".ls-block")].find((el) =>
+      (el.querySelector(".heading-text")?.textContent ?? "").includes("Query filter proof")
+    );
+    const table = block?.querySelector(".sheet-table");
+    if (!table) return false;
+    table.dispatchEvent(new MouseEvent("contextmenu", {
+      bubbles: true, cancelable: true, button: 2, clientX: 440, clientY: 320,
+    }));
+    return true;
+  });
+  await sleep(250);
+  const filterMenuClicked = filterMenuOpened && await browser.execute(() => {
+    const item = [...document.querySelectorAll(".ctx-item")]
+      .find((el) => (el.textContent ?? "").trim() === "Edit filter…");
+    if (!item) return false;
+    item.click();
+    return true;
+  });
+  await sleep(250);
+  const filterEntered = filterMenuClicked && await browser.execute(() => {
+    const textarea = document.querySelector(".formula-editor-textarea");
+    if (!(textarea instanceof HTMLTextAreaElement)) return false;
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set.call(textarea, "points > 2");
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    return true;
+  });
+  check("query Sheet opens the real filter editor", !!filterEntered);
+  if (filterEntered) {
+    const filterSaved = await browser.execute(() => {
+      const save = [...document.querySelectorAll(".formula-editor-btn")]
+        .find((el) => (el.textContent ?? "").trim() === "Save");
+      if (!(save instanceof HTMLButtonElement) || save.disabled) return false;
+      save.click();
+      return true;
+    });
+    check("query Sheet filter expression is accepted by the real editor", filterSaved);
+    await browser.waitUntil(async () => browser.execute(() => {
+      const block = [...document.querySelectorAll(".ls-block")].find((el) =>
+        (el.querySelector(".heading-text")?.textContent ?? "").includes("Query filter proof")
+      );
+      const titles = [...(block?.querySelectorAll(".sheet-title-cell .sheet-cell-body") ?? [])]
+        .map((el) => (el.textContent ?? "").trim());
+      return titles.length === 1 && titles[0] === "High score";
+    }), { timeout: 10_000, timeoutMsg: "query Table did not apply points > 2" });
+    const filteredTable = await browser.execute(() => {
+      const block = [...document.querySelectorAll(".ls-block")].find((el) =>
+        (el.querySelector(".heading-text")?.textContent ?? "").includes("Query filter proof")
+      );
+      return {
+        count: block?.querySelector(".query-count")?.textContent?.trim() ?? null,
+        titles: [...(block?.querySelectorAll(".sheet-title-cell .sheet-cell-body") ?? [])]
+          .map((el) => (el.textContent ?? "").trim()),
+      };
+    });
+    check(
+      "query-sourced Table filters only the fine-grained subset while retaining coarse count",
+      filteredTable.count === "2" && JSON.stringify(filteredTable.titles) === JSON.stringify(["High score"]),
+      JSON.stringify(filteredTable)
+    );
+    await sleep(2400);
+    const tableDisk = fs.readFileSync(JFILE, "utf8");
+    check(
+      "query filter persists without rewriting coarse query membership",
+      tableDisk.includes('{{query (and (todo WAIT) "score")}}') &&
+        tableDisk.includes("tine.filter:: points > 2") && tableDisk.includes("tine.view:: table"),
+      JSON.stringify(tableDisk)
+    );
+
+    const boardClicked = await browser.execute(() => {
+      const block = [...document.querySelectorAll(".ls-block")].find((el) =>
+        (el.querySelector(".heading-text")?.textContent ?? "").includes("Query filter proof")
+      );
+      const button = [...(block?.querySelectorAll(".query-view-switcher button") ?? [])]
+        .find((el) => (el.textContent ?? "").trim() === "Board");
+      if (!(button instanceof HTMLButtonElement)) return false;
+      button.click();
+      return true;
+    });
+    check("query filter proof switches through the real Board control", boardClicked);
+    await browser.waitUntil(async () => browser.execute(() => {
+      const block = [...document.querySelectorAll(".ls-block")].find((el) =>
+        (el.querySelector(".heading-text")?.textContent ?? "").includes("Query filter proof")
+      );
+      const titles = [...(block?.querySelectorAll(".sheet-board-card-title") ?? [])]
+        .map((el) => (el.textContent ?? "").trim());
+      return titles.length === 1 && titles[0] === "High score";
+    }), { timeout: 10_000, timeoutMsg: "query Board did not retain points > 2" });
+    const filteredBoard = await browser.execute(() => {
+      const block = [...document.querySelectorAll(".ls-block")].find((el) =>
+        (el.querySelector(".heading-text")?.textContent ?? "").includes("Query filter proof")
+      );
+      return {
+        active: block?.querySelector(".query-view-switcher button.active")?.textContent?.trim() ?? null,
+        count: block?.querySelector(".query-count")?.textContent?.trim() ?? null,
+        titles: [...(block?.querySelectorAll(".sheet-board-card-title") ?? [])]
+          .map((el) => (el.textContent ?? "").trim()),
+      };
+    });
+    check(
+      "query-sourced Board retains the same filtered subset and coarse count",
+      filteredBoard.active === "Board" && filteredBoard.count === "2" &&
+        JSON.stringify(filteredBoard.titles) === JSON.stringify(["High score"]),
+      JSON.stringify(filteredBoard)
+    );
+    await sleep(2400);
+    const boardDisk = fs.readFileSync(JFILE, "utf8");
+    check(
+      "Board switch preserves query, filter, fields, and grouping on disk",
+      boardDisk.includes('{{query (and (todo WAIT) "score")}}') &&
+        boardDisk.includes("tine.filter:: points > 2") &&
+        boardDisk.includes("tine.view:: board") &&
+        boardDisk.includes("tine.fields:: points=number;tier=text") &&
+        boardDisk.includes("tine.group-by:: prop:tier"),
+      JSON.stringify(boardDisk)
+    );
   }
 } catch (e) {
   failures++;
