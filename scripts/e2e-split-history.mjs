@@ -52,6 +52,13 @@ try {
   await browser.$(".ls-block, .page-title").waitForExist({ timeout: 20_000 });
 
   const openPageViaSwitcher = async (paneId, name) => {
+    // Make the pane choice an explicit user observation, not an assumption
+    // about which async split/layout event happened last. This also exercises
+    // the production capture-phase pane tracker before opening the overlay.
+    await browser.execute((id) => {
+      const pane = document.querySelector(`[data-pane-id="${id}"]`);
+      pane?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0 }));
+    }, paneId);
     await browser.keys(["Control", "k"]);
     const input = await browser.$(".switcher-input");
     await input.waitForExist({ timeout: 5_000 });
