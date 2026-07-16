@@ -2,6 +2,24 @@
   "schemaVersion": 1,
   "entries": [
     {
+      "id": "REG-QUERY-OG-MEMBERSHIP-BOUNDS-001",
+      "title": "Simple query page terms unquoted search and date ranges match OG membership and bounds across presentations",
+      "family": "query-correctness",
+      "sources": { "issues": [], "commits": ["b54a331", "8fa8c51", "cb9e749"] },
+      "platforms": ["all"],
+      "layer": "core-native-ui",
+      "status": "covered",
+      "coverage": {
+        "tests": [
+          "crates/tine-core/src/query.rs",
+          "src/editor/queryBuilder.test.ts",
+          "src/components/QueryMacro.test.tsx"
+        ],
+        "scenario": "queries.og-membership-and-date-bounds",
+        "failBefore": "proven"
+      }
+    },
+    {
       "id": "REG-EXTERNAL-ASSETS-TRUST-001",
       "title": "A graph can use an explicitly approved external assets link without widening filesystem access",
       "family": "filesystem-safety",
