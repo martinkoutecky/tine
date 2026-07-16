@@ -22,7 +22,8 @@ child; the script SIGKILLs vite itself in a `finally`).
 Headless Chromium drives the mock backend's gated **2000-block "Big" page**
 (`?big` in `src/mock.ts`). A local invocation times each metric **in-page** with
 `performance.now` and reports the **min of K=8** runs (least noise), after one
-discarded warmup. CI wraps the same harness in the multi-round protocol below.
+discarded warmup. Manual full/focused CI wraps the same harness in the
+multi-round protocol below.
 It boots once and measures **warm navigations** (journals ↔ Big) so the numbers
 reflect the app's own mount/render cost, not per-reload JIT + WASM-compile jitter.
 
@@ -56,10 +57,11 @@ browser layout/paint to normalize scrolling reliably. Accordingly, `npm run
 bench` reports a different-machine baseline as advisory and does not fail; a
 baseline recorded on the same machine retains the local regression exit code.
 
-## CI hard gate: same-machine A/B without baseline ratcheting
+## Release/focused CI hard gate: same-machine A/B without baseline ratcheting
 
-CI checks out and builds three exact trees on one runner: the candidate, the
-immutable long-term anchor, and the most recently published release. It runs
+The manual performance job checks out and builds three exact trees on one
+runner: the candidate, the immutable long-term anchor, and the most recently
+published release. It runs
 three interleaved rounds and rotates the order, so every version occupies the
 first, middle, and last position once. Each decision uses the **median of the
 three round minima**, not a single invocation. The artifact retains every round,
@@ -84,8 +86,11 @@ evidence; every attempt uploads its complete distribution.
   coarser load metric and 15% for scroll. Cold parse misses use the worst of the
   three rounds and have an absolute cap of 15, independent of timing.
 
-The job is a hard gate. A feature expected to exceed a budget stops for a product
-decision and performance design; do not move either baseline to make it pass.
+The job is a hard release gate when `ci.yml` is dispatched with `scope=full`.
+Use the same workflow with `scope=performance` for focused proof between
+releases; it does not count as full release evidence. A feature expected to
+exceed a budget stops for a product decision and performance design; do not move
+either baseline to make it pass.
 
 ## Native startup and early-frame paint
 

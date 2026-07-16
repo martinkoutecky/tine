@@ -1,15 +1,80 @@
-# Checks on every push to master and every PR: frontend/type/Rust tests plus
-# platform compile probes. The probes exist because Linux host tests cannot see
-# Windows-only code or Android-specific libc declarations.
+# Full CI is a release-candidate gate, not a per-push tax. Dispatch `scope=full`
+# only after the candidate SHA is frozen; release.yml independently verifies that
+# this exact SHA has successful evidence from every full job before packaging.
+# Focused scopes remain available between releases for platform/performance work.
+# Pull requests get one lightweight Linux validation job and docs-only PRs skip it.
 name: ci
 
+run-name: ci / ${{ github.event_name == 'workflow_dispatch' && inputs.scope || 'pull-request' }} / ${{ github.sha }}
+
 on:
-  push:
-    branches: [master]
   pull_request:
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**/*.png"
+      - "docs/**/*.jpg"
+      - "docs/**/*.jpeg"
+      - "docs/**/*.gif"
+      - "docs/**/*.webp"
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: Full release gate or one focused proof lane
+        required: true
+        default: full
+        type: choice
+        options:
+          - full
+          - windows
+          - android
+          - performance
+
+permissions:
+  contents: read
 
 jobs:
+  pr-validation:
+    name: PR validation / Linux unit and contract checks
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - run: npm ci
+
+      - name: Release and offline-source contract fixtures
+        run: |
+          node scripts/check-flatpak-node-sources.mjs
+          node scripts/check-flatpak-cargo-sources.mjs
+          node scripts/test-release-pipeline.mjs
+
+      - name: lsdoc generated artifacts are current
+        run: |
+          node scripts/check-wasm-pin.mjs
+          node scripts/check-lsdoc-oracle-sync.mjs
+
+      - name: Typecheck and frontend tests
+        run: |
+          npx tsc --noEmit
+          npm test
+
+      - name: Rust core tests
+        run: cargo test -p tine-core
+
   test:
+    name: Full CI / Linux tests and release contracts
+    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'full'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -75,10 +140,11 @@ jobs:
       - name: Rust core tests
         run: cargo test -p tine-core
 
-  # Compile platform-gated source on every change. Linux host tests do not see
-  # either branch: Windows has its own cfg implementation, while Android's libc
-  # declarations differ from desktop Linux even for the same syscall.
+  # Linux host tests do not see either platform branch: Windows has its own cfg
+  # implementation, while Android's libc declarations differ from desktop Linux.
   windows-compile:
+    name: Full CI / Windows compile and core tests
+    if: github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'windows')
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -98,6 +164,8 @@ jobs:
         run: cargo check -p tine --features custom-protocol
 
   android-core-compile:
+    name: Full CI / Android core compile
+    if: github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'android')
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -115,6 +183,8 @@ jobs:
   # abrupt regressions. All three builds run on this one runner, so CPU model is
   # not confused with code performance (docs/BENCH.md).
   bench:
+    name: Full CI / performance A/B
+    if: github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'performance')
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
