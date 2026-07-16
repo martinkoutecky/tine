@@ -65,13 +65,13 @@ assert.doesNotMatch(
 );
 assert.match(
   ciWorkflow,
-  /name: Performance baseline policy is current[\s\S]*?node scripts\/check-bench-policy\.mjs/,
-  "ordinary CI does not reject a stale previous-release performance baseline"
+  /name: Performance baseline policy is current[\s\S]*?releases\/latest[\s\S]*?node scripts\/check-bench-policy\.mjs --expected-previous "\$latest"/,
+  "ordinary CI does not compare the performance baseline with the actually published release"
 );
 assert.match(
   ciWorkflow,
-  /bench:[\s\S]*?fetch-depth: 0[\s\S]*?name: Require the rolling baseline to be the latest published release[\s\S]*?node scripts\/check-bench-policy\.mjs/,
-  "the A/B benchmark job does not fetch tags and validate baseline currency before measuring"
+  /bench:[\s\S]*?fetch-depth: 0[\s\S]*?name: Require the rolling baseline to be the latest published release[\s\S]*?releases\/latest[\s\S]*?node scripts\/check-bench-policy\.mjs --expected-previous "\$latest"/,
+  "the A/B benchmark job does not validate baseline currency against the published release before measuring"
 );
 assert.match(
   ciWorkflow,

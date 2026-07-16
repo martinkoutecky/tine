@@ -39,7 +39,11 @@ jobs:
         run: node scripts/test-release-pipeline.mjs
 
       - name: Performance baseline policy is current
-        run: node scripts/check-bench-policy.mjs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          latest=$(gh api "repos/${{ github.repository }}/releases/latest" --jq .tag_name)
+          node scripts/check-bench-policy.mjs --expected-previous "$latest"
 
       - name: Performance A/B multi-round reliability fixtures
         run: node scripts/test-bench-ab.mjs
@@ -118,7 +122,11 @@ jobs:
           fetch-depth: 0
 
       - name: Require the rolling baseline to be the latest published release
-        run: node scripts/check-bench-policy.mjs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          latest=$(gh api "repos/${{ github.repository }}/releases/latest" --jq .tag_name)
+          node scripts/check-bench-policy.mjs --expected-previous "$latest"
 
       - name: Read performance baseline refs
         id: perf-policy
