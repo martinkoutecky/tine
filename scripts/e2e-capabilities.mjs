@@ -27,6 +27,15 @@ export function tauriCapabilities(application, session = "default", platform = p
   };
 }
 
+export function webdriverServerArgs(port, nativePort, nativeDriver, platform = process.platform) {
+  if (platform === "win32") return [`--port=${port}`];
+  return [
+    "--port", String(port),
+    "--native-port", String(nativePort),
+    "--native-driver", nativeDriver,
+  ];
+}
+
 function nestedActivePort(directory, depth = 0) {
   if (depth > 4 || !fs.existsSync(directory)) return undefined;
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {

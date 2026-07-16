@@ -8,7 +8,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { tauriCapabilities } from "./e2e-capabilities.mjs";
+import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, process.platform === "win32" ? "target/release/tine.exe" : "target/release/tine");
@@ -47,9 +47,7 @@ if (process.platform === "win32" && process.env.CI === "true") {
 const driverLog = fs.openSync(path.join(ARTIFACTS, "tauri-driver.log"), "w");
 const driver = spawn(
   process.env.TAURI_DRIVER || "tauri-driver",
-  process.platform === "win32"
-    ? ["--port", String(DRIVER)]
-    : ["--port", String(DRIVER), "--native-port", String(NATIVE), "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"],
+  webdriverServerArgs(DRIVER, NATIVE, process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"),
   { env, stdio: ["ignore", driverLog, driverLog], detached: process.platform !== "win32" },
 );
 

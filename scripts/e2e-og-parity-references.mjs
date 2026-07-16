@@ -10,7 +10,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { tauriCapabilities } from "./e2e-capabilities.mjs";
+import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release", process.platform === "win32" ? "tine.exe" : "tine");
@@ -221,9 +221,11 @@ if (process.env.OG_PARITY_NORMAL_COMPOSITING !== "1") {
   env.WEBKIT_DISABLE_COMPOSITING_MODE = "1";
 }
 const log = fs.openSync(`${ARTIFACTS}/tauri-driver.log`, "w");
-const driverArgs = process.platform === "linux"
-  ? ["--port", String(DRIVER_PORT), "--native-port", String(NATIVE_PORT), "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"]
-  : ["--port", String(DRIVER_PORT)];
+const driverArgs = webdriverServerArgs(
+  DRIVER_PORT,
+  NATIVE_PORT,
+  process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver",
+);
 let td = spawn(TD, driverArgs, {
   env,
   stdio: ["ignore", log, log],

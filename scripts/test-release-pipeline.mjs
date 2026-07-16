@@ -9,6 +9,7 @@ import { assembleCandidate } from "./assemble-release-candidate.mjs";
 import {
   mirrorWindowsDevToolsActivePortOnce,
   tauriCapabilities,
+  webdriverServerArgs,
   windowsWebviewProfileSnapshot,
 } from "./e2e-capabilities.mjs";
 import { candidateProblems, releaseLayout, RELEASE_LANES } from "./release-layout.mjs";
@@ -84,7 +85,7 @@ assert.ok(
 );
 assert.match(
   printSecurity,
-  /const driverArgs = process\.platform === "linux"[\s\S]*?: \["--port", String\(DRIVER_PORT\)\];/,
+  /const driverArgs = webdriverServerArgs\([\s\S]*?DRIVER_PORT,[\s\S]*?NATIVE_PORT,[\s\S]*?WEBKIT_DRIVER/,
   "print-security does not select the native WebDriver by platform"
 );
 assert.match(
@@ -179,6 +180,10 @@ try {
   );
   assert.equal(windowsCapabilities.browserName, "webview2");
   assert.equal(windowsCapabilities["ms:edgeOptions"].binary, "C:/Tine.exe");
+  assert.deepEqual(webdriverServerArgs(4444, 4445, "/driver", "win32"), ["--port=4444"]);
+  assert.deepEqual(webdriverServerArgs(4444, 4445, "/driver", "linux"), [
+    "--port", "4444", "--native-port", "4445", "--native-driver", "/driver",
+  ]);
   const nestedPort = path.join(temporary, "webview2", "fixture-session", "EBWebView", "DevToolsActivePort");
   fs.mkdirSync(path.dirname(nestedPort), { recursive: true });
   fs.writeFileSync(nestedPort, "12345\n/devtools/browser/fixture\n");
@@ -194,7 +199,7 @@ try {
   else process.env.E2E_WEBVIEW_USER_DATA_ROOT = priorWebviewRoot;
   for (const script of windowsScenarios) {
     const source = fs.readFileSync(path.join(process.cwd(), "scripts", script), "utf8");
-    assert.match(source, /import \{ tauriCapabilities \} from "\.\/e2e-capabilities\.mjs";/);
+    assert.match(source, /import \{[^}]*tauriCapabilities[^}]*\} from "\.\/e2e-capabilities\.mjs";/);
     assert.match(source, /capabilities: tauriCapabilities\(APP/);
   }
 

@@ -8,7 +8,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { tauriCapabilities } from "./e2e-capabilities.mjs";
+import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, process.platform === "win32" ? "target/release/tine.exe" : "target/release/tine");
@@ -136,13 +136,11 @@ const env = {
   GDK_BACKEND: "x11",
 };
 const log = fs.openSync(path.join(process.env.E2E_ARTIFACT_DIR || TMP, "tauri-driver.log"), "w");
-const driverArgs = process.platform === "win32"
-  ? ["--port", String(DRIVER_PORT)]
-  : [
-      "--port", String(DRIVER_PORT),
-      "--native-port", String(NATIVE_PORT),
-      "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver",
-    ];
+const driverArgs = webdriverServerArgs(
+  DRIVER_PORT,
+  NATIVE_PORT,
+  process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver",
+);
 const td = spawn(TD, driverArgs, { env, stdio: ["ignore", log, log], detached: process.platform !== "win32" });
 await sleep(2500);
 

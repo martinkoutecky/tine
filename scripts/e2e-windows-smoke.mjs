@@ -5,7 +5,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { tauriCapabilities } from "./e2e-capabilities.mjs";
+import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
 
 if (process.platform !== "win32") throw new Error("windows smoke must run on Windows");
 const APP = process.env.TINE_APP;
@@ -27,7 +27,7 @@ const env = {
   LOCALAPPDATA: path.join(root, "localappdata"),
 };
 const log = fs.openSync(path.join(process.env.E2E_ARTIFACT_DIR || root, "tauri-driver.log"), "w");
-const driver = spawn(TD, ["--port", String(DRIVER_PORT)], { env, stdio: ["ignore", log, log] });
+const driver = spawn(TD, webdriverServerArgs(DRIVER_PORT), { env, stdio: ["ignore", log, log] });
 await sleep(3000);
 
 let browser;
