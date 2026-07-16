@@ -261,8 +261,10 @@ try {
     }));
   });
   await browser.$(".pdf-color-menu").waitForExist({ timeout: 5000 });
-  const existingActionElements = await browser.$$(".pdf-hl-action");
-  const existingActions = await Promise.all(existingActionElements.map((element) => element.getText()));
+  // WebKitDriver can invalidate the session when several element-text commands
+  // are issued together. Snapshot both labels in one document command instead.
+  const existingActions = await browser.execute(() =>
+    [...document.querySelectorAll(".pdf-hl-action")].map((element) => element.textContent?.trim()));
   if (!existingActions.includes("Copy ref") || !existingActions.includes("Linked references")) {
     throw new Error(`existing PDF highlight menu omitted reference actions: ${JSON.stringify(existingActions)}`);
   }
