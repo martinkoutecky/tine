@@ -5,7 +5,12 @@ import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
+import {
+  startWebdriverApplication,
+  stopWebdriverApplication,
+  tauriCapabilities,
+  webdriverServerArgs,
+} from "./e2e-capabilities.mjs";
 
 if (process.platform !== "win32") throw new Error("windows smoke must run on Windows");
 const APP = process.env.TINE_APP;
@@ -26,8 +31,9 @@ const env = {
   APPDATA: path.join(root, "appdata"),
   LOCALAPPDATA: path.join(root, "localappdata"),
 };
+const webviewTarget = await startWebdriverApplication(APP, env, Number(process.env.E2E_NATIVE_PORT || 4445));
 const log = fs.openSync(path.join(process.env.E2E_ARTIFACT_DIR || root, "tauri-driver.log"), "w");
-const driver = spawn(TD, webdriverServerArgs(DRIVER_PORT), { env, stdio: ["ignore", log, log] });
+const driver = spawn(TD, webdriverServerArgs(DRIVER_PORT), { env: webviewTarget.env, stdio: ["ignore", log, log] });
 await sleep(3000);
 
 let browser;
@@ -36,7 +42,7 @@ try {
     hostname: "127.0.0.1",
     port: DRIVER_PORT,
     path: "/",
-    capabilities: tauriCapabilities(APP),
+    capabilities: tauriCapabilities(APP, "default", process.platform, webviewTarget.debuggerAddress),
     logLevel: "error",
     connectionRetryCount: 1,
     connectionRetryTimeout: 60000,
@@ -68,6 +74,7 @@ try {
 } finally {
   try { await browser?.deleteSession(); } catch {}
   spawnSync("taskkill", ["/PID", String(driver.pid), "/T", "/F"], { stdio: "ignore" });
+  stopWebdriverApplication(webviewTarget);
   if (process.env.CI === "true") {
     spawnSync("taskkill", ["/IM", path.basename(APP), "/T", "/F"], { stdio: "ignore" });
   }

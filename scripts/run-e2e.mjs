@@ -7,7 +7,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { startWindowsDevToolsActivePortMirror, windowsWebviewProfileSnapshot } from "./e2e-capabilities.mjs";
+import { windowsWebviewProfileSnapshot } from "./e2e-capabilities.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const suiteName = process.argv[2] ?? "linux-smoke";
@@ -226,7 +226,6 @@ async function runScenario([id, script, extraEnv]) {
       // DISPLAY in the activation environment for auxiliary-window behavior.
       ? ["-a", process.env.DBUS_RUN_SESSION || "dbus-run-session", "--", process.execPath, path.join(root, script)]
       : [path.join(root, script)];
-    const stopActivePortMirror = startWindowsDevToolsActivePortMirror(env.E2E_WEBVIEW_USER_DATA_ROOT);
     const child = spawn(command, args, { cwd: root, env, detached: process.platform !== "win32", stdio: ["ignore", stdout, stderr] });
     let timedOut = false;
     const timer = setTimeout(() => {
@@ -241,7 +240,6 @@ async function runScenario([id, script, extraEnv]) {
       child.once("exit", (code, signal) => resolve({ code: code ?? 1, signal }));
     });
     clearTimeout(timer);
-    stopActivePortMirror();
     if (process.platform === "win32") {
       fs.writeFileSync(
         path.join(dir, "webview2-profile.json"),

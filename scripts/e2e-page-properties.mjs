@@ -8,7 +8,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { tauriCapabilities, webdriverServerArgs } from "./e2e-capabilities.mjs";
+import {
+  startWebdriverApplication,
+  stopWebdriverApplication,
+  tauriCapabilities,
+  webdriverServerArgs,
+} from "./e2e-capabilities.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, process.platform === "win32" ? "target/release/tine.exe" : "target/release/tine");
@@ -65,6 +70,7 @@ const env = {
 if (process.platform === "win32" && process.env.CI === "true") {
   spawnSync("taskkill", ["/IM", path.basename(APP), "/T", "/F"], { stdio: "ignore" });
 }
+const webviewTarget = await startWebdriverApplication(APP, env, NATIVE);
 const log = fs.openSync(path.join(process.env.E2E_ARTIFACT_DIR || TMP, "tauri-driver.log"), "w");
 const driverArgs = webdriverServerArgs(
   DRIVER,
@@ -72,7 +78,7 @@ const driverArgs = webdriverServerArgs(
   process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver",
 );
 const driver = spawn(TD, driverArgs, {
-  env,
+  env: webviewTarget.env,
   stdio: ["ignore", log, log],
   detached: process.platform !== "win32",
 });
@@ -202,7 +208,7 @@ try {
     logLevel: "error",
     connectionRetryCount: 1,
     connectionRetryTimeout: 60_000,
-    capabilities: tauriCapabilities(APP),
+    capabilities: tauriCapabilities(APP, "default", process.platform, webviewTarget.debuggerAddress),
   });
   await browser.$(".page-title").waitForExist({ timeout: 20_000 });
   // The graph page index warms asynchronously after first paint. Wait for the
@@ -249,5 +255,6 @@ try {
       spawnSync("taskkill", ["/IM", path.basename(APP), "/T", "/F"], { stdio: "ignore" });
     }
   } else try { process.kill(-driver.pid, "SIGKILL"); } catch {}
+  stopWebdriverApplication(webviewTarget);
   fs.closeSync(log);
 }

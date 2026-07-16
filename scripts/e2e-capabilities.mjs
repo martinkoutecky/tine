@@ -1,8 +1,27 @@
 import fs from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { setTimeout as sleep } from "node:timers/promises";
 import path from "node:path";
 
-export function tauriCapabilities(application, session = "default", platform = process.platform) {
+export function tauriCapabilities(
+  application,
+  session = "default",
+  platform = process.platform,
+  debuggerAddress,
+) {
   if (platform === "win32") {
+    // When the app was started explicitly with a fixed remote-debugging port,
+    // use EdgeDriver's documented WebView2 attach mode.  This deliberately
+    // avoids its launch-mode DevToolsActivePort handshake, which is not
+    // reliable on current hosted Windows/WebView2 runners.
+    if (debuggerAddress) {
+      return {
+        browserName: "webview2",
+        "wdio:enforceWebDriverClassic": true,
+        "ms:edgeChromium": true,
+        "ms:edgeOptions": { debuggerAddress },
+      };
+    }
     const root = process.env.E2E_WEBVIEW_USER_DATA_ROOT;
     if (!root) throw new Error("Windows WebView2 E2E requires E2E_WEBVIEW_USER_DATA_ROOT");
     const userDataFolder = path.join(root, session.replaceAll(/[^A-Za-z0-9_-]/g, "-"));
@@ -27,6 +46,91 @@ export function tauriCapabilities(application, session = "default", platform = p
   };
 }
 
+function windowsUserDataFolder(session) {
+  const root = process.env.E2E_WEBVIEW_USER_DATA_ROOT;
+  if (!root) throw new Error("Windows WebView2 E2E requires E2E_WEBVIEW_USER_DATA_ROOT");
+  const userDataFolder = path.join(root, session.replaceAll(/[^A-Za-z0-9_-]/g, "-"));
+  fs.mkdirSync(userDataFolder, { recursive: true });
+  return userDataFolder;
+}
+
+function withFixedRemoteDebuggingPort(argumentsValue, port) {
+  const withoutDynamicPort = String(argumentsValue || "")
+    .replace(/(?:^|\s)--remote-debugging-port(?:=|\s+)\S+/g, " ")
+    .trim();
+  return [withoutDynamicPort, `--remote-debugging-port=${port}`].filter(Boolean).join(" ");
+}
+
+async function waitForDevTools(debuggerAddress, applicationProcess, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  const endpoint = `http://${debuggerAddress}/json/version`;
+  let lastError = "endpoint not ready";
+  while (Date.now() < deadline) {
+    if (applicationProcess.exitCode !== null) {
+      throw new Error(`WebView2 host exited before DevTools became ready (exit ${applicationProcess.exitCode})`);
+    }
+    try {
+      const response = await fetch(endpoint, { signal: AbortSignal.timeout(1_000) });
+      if (response.ok) {
+        const version = await response.json();
+        if (version.webSocketDebuggerUrl) return version;
+        lastError = `missing webSocketDebuggerUrl in ${JSON.stringify(version)}`;
+      } else {
+        lastError = `HTTP ${response.status}`;
+      }
+    } catch (error) {
+      lastError = String(error);
+    }
+    await sleep(100);
+  }
+  throw new Error(`WebView2 DevTools did not become ready at ${endpoint}: ${lastError}`);
+}
+
+export async function startWebdriverApplication(
+  application,
+  env,
+  debuggerPort,
+  session = "default",
+  platform = process.platform,
+) {
+  if (platform !== "win32") return { env, applicationProcess: undefined, debuggerAddress: undefined };
+
+  const userDataFolder = windowsUserDataFolder(session);
+  const debuggerAddress = `127.0.0.1:${debuggerPort}`;
+  const applicationEnv = {
+    ...env,
+    TAURI_AUTOMATION: "true",
+    TAURI_WEBVIEW_AUTOMATION: "true",
+    WEBVIEW2_USER_DATA_FOLDER: userDataFolder,
+    WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: withFixedRemoteDebuggingPort(
+      env.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS,
+      debuggerPort,
+    ),
+  };
+  const applicationProcess = spawn(application, [], {
+    env: applicationEnv,
+    stdio: "ignore",
+    windowsHide: false,
+  });
+  try {
+    await waitForDevTools(debuggerAddress, applicationProcess);
+  } catch (error) {
+    stopWebdriverApplication({ applicationProcess }, platform);
+    throw error;
+  }
+  return { env: applicationEnv, applicationProcess, debuggerAddress, userDataFolder };
+}
+
+export function stopWebdriverApplication(target, platform = process.platform) {
+  const applicationProcess = target?.applicationProcess;
+  if (!applicationProcess || applicationProcess.exitCode !== null) return;
+  if (platform === "win32") {
+    spawnSync("taskkill", ["/PID", String(applicationProcess.pid), "/T", "/F"], { stdio: "ignore" });
+  } else {
+    applicationProcess.kill("SIGKILL");
+  }
+}
+
 export function webdriverServerArgs(port, nativePort, nativeDriver, platform = process.platform) {
   if (platform === "win32") return [`--port=${port}`];
   return [
@@ -34,52 +138,6 @@ export function webdriverServerArgs(port, nativePort, nativeDriver, platform = p
     "--native-port", String(nativePort),
     "--native-driver", nativeDriver,
   ];
-}
-
-function nestedActivePort(directory, depth = 0) {
-  if (depth > 4 || !fs.existsSync(directory)) return undefined;
-  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-    const candidate = path.join(directory, entry.name);
-    if (entry.isFile() && entry.name === "DevToolsActivePort") return candidate;
-    if (entry.isDirectory()) {
-      const found = nestedActivePort(candidate, depth + 1);
-      if (found) return found;
-    }
-  }
-  return undefined;
-}
-
-export function mirrorWindowsDevToolsActivePortOnce(root) {
-  if (!fs.existsSync(root)) return 0;
-  let mirrored = 0;
-  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const session = path.join(root, entry.name);
-    const expected = path.join(session, "DevToolsActivePort");
-    if (fs.existsSync(expected)) continue;
-    const actual = nestedActivePort(session);
-    if (!actual || actual === expected || fs.statSync(actual).size === 0) continue;
-    // Current Edge/WebView2 releases can put this file in EBWebView/ while
-    // EdgeDriver polls the configured UDF root.  Mirror, do not move: WebView2
-    // continues to own its original profile layout.
-    fs.copyFileSync(actual, expected);
-    mirrored += 1;
-  }
-  return mirrored;
-}
-
-export function startWindowsDevToolsActivePortMirror(root, platform = process.platform) {
-  if (platform !== "win32") return () => {};
-  const timer = setInterval(() => {
-    try {
-      mirrorWindowsDevToolsActivePortOnce(root);
-    } catch {
-      // The WebView process creates and renames profile files concurrently.
-      // A later poll gets a stable snapshot; the scenario timeout remains the
-      // fail-closed boundary if no valid port ever appears.
-    }
-  }, 50);
-  return () => clearInterval(timer);
 }
 
 export function windowsWebviewProfileSnapshot(root) {

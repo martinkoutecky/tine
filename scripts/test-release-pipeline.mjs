@@ -7,7 +7,6 @@ import os from "node:os";
 import path from "node:path";
 import { assembleCandidate } from "./assemble-release-candidate.mjs";
 import {
-  mirrorWindowsDevToolsActivePortOnce,
   tauriCapabilities,
   webdriverServerArgs,
   windowsWebviewProfileSnapshot,
@@ -180,6 +179,14 @@ try {
   );
   assert.equal(windowsCapabilities.browserName, "webview2");
   assert.equal(windowsCapabilities["ms:edgeOptions"].binary, "C:/Tine.exe");
+  const attachedCapabilities = tauriCapabilities(
+    "C:/Tine.exe",
+    "fixture session",
+    "win32",
+    "127.0.0.1:9222",
+  );
+  assert.equal(attachedCapabilities["ms:edgeOptions"].debuggerAddress, "127.0.0.1:9222");
+  assert.equal(attachedCapabilities["ms:edgeOptions"].binary, undefined);
   assert.deepEqual(webdriverServerArgs(4444, 4445, "/driver", "win32"), ["--port=4444"]);
   assert.deepEqual(webdriverServerArgs(4444, 4445, "/driver", "linux"), [
     "--port", "4444", "--native-port", "4445", "--native-driver", "/driver",
@@ -187,20 +194,16 @@ try {
   const nestedPort = path.join(temporary, "webview2", "fixture-session", "EBWebView", "DevToolsActivePort");
   fs.mkdirSync(path.dirname(nestedPort), { recursive: true });
   fs.writeFileSync(nestedPort, "12345\n/devtools/browser/fixture\n");
-  assert.equal(mirrorWindowsDevToolsActivePortOnce(path.join(temporary, "webview2")), 1);
-  assert.equal(
-    fs.readFileSync(path.join(temporary, "webview2", "fixture-session", "DevToolsActivePort"), "utf8"),
-    "12345\n/devtools/browser/fixture\n",
-  );
   const profileSnapshot = windowsWebviewProfileSnapshot(path.join(temporary, "webview2"));
-  assert.ok(profileSnapshot.files.some((entry) => entry.path === "fixture-session/DevToolsActivePort"));
   assert.ok(profileSnapshot.files.some((entry) => entry.path === "fixture-session/EBWebView/DevToolsActivePort"));
   if (priorWebviewRoot === undefined) delete process.env.E2E_WEBVIEW_USER_DATA_ROOT;
   else process.env.E2E_WEBVIEW_USER_DATA_ROOT = priorWebviewRoot;
   for (const script of windowsScenarios) {
     const source = fs.readFileSync(path.join(process.cwd(), "scripts", script), "utf8");
     assert.match(source, /import \{[^}]*tauriCapabilities[^}]*\} from "\.\/e2e-capabilities\.mjs";/);
-    assert.match(source, /capabilities: tauriCapabilities\(APP/);
+    assert.match(source, /startWebdriverApplication\(APP,/);
+    assert.match(source, /capabilities: tauriCapabilities\(APP,[^\n]*webviewTarget\.debuggerAddress/);
+    assert.match(source, /stopWebdriverApplication\(webviewTarget\)/);
   }
 
   {
