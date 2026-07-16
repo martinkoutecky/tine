@@ -195,7 +195,7 @@
     },
     {
       "section": "Fixed",
-      "text": "**Page and tag completion now use OG's adaptive default.** Exact pages remain exact; strict-prefix candidates lead deterministically with Create immediately after the leading match, while fuzzy-only matches leave Create first. Advanced Settings also offer explicit existing-first and typed-first policies.",
+      "text": "**Page and tag completion now use OG's adaptive default.** Exact pages remain exact; strict-prefix candidates lead deterministically with Create immediately after the leading match, while fuzzy-only matches leave Create first. Advanced Settings also offer explicit existing-first and typed-first policies. Rapidly accepting a visible result now replaces the complete current trigger, and a slower older lookup cannot overwrite results for newer input.",
       "userVisible": true,
       "regressions": [
         "UI-PAGE-REFERENCE-AUTOCOMPLETE-POLICY-001"
@@ -968,4 +968,3 @@
     }
   ]
 }
-

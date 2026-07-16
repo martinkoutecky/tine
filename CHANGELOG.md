@@ -48,7 +48,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 - **Page and tag completion now use OG's adaptive default.** Exact pages remain
   exact; strict-prefix candidates lead deterministically with Create immediately
   after the leading match, while fuzzy-only matches leave Create first. Advanced
-  Settings also offer explicit existing-first and typed-first policies.
+  Settings also offer explicit existing-first and typed-first policies. Rapidly
+  accepting a visible result now replaces the complete current trigger, and a
+  slower older lookup cannot overwrite results for newer input.
 - **Mod-L now inserts a format-aware external link.** Markdown and Org handle
   empty text, selected labels, and selected parser-recognized links/references
   through the same command, toolbar, and simple slash-Link boundary.

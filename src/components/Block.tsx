@@ -1168,6 +1168,12 @@ export function Editor(props: { id: string }): JSX.Element {
     setAcItems([]);
     setAcIndex(0);
   };
+  const sameAcTrigger = (left: Trigger | null, right: Trigger): boolean =>
+    left !== null &&
+    left.kind === right.kind &&
+    left.query === right.query &&
+    left.start === right.start &&
+    left.end === right.end;
   // Page/block/tag/command/code completion is a real transient above its editor
   // and, on mobile, above the drawer. One Escape peels only this popup.
   createEffect(() => {
@@ -1204,7 +1210,7 @@ export function Editor(props: { id: string }): JSX.Element {
       const q = t.query;
       const tmpls = await getTemplates();
       const cur = ac();
-      if (!cur || cur.start !== t.start) return; // trigger changed while awaiting
+      if (!sameAcTrigger(cur, t)) return; // trigger changed while awaiting
       // Commands AND templates in one fuzzy-ranked list, so a strong template
       // match can outrank a weak command (and vice-versa). Empty query (bare `/`)
       // lists all commands in defined order, no templates. `idx` preserves the
@@ -1235,7 +1241,7 @@ export function Editor(props: { id: string }): JSX.Element {
       // the user types. Selecting inserts `((uuid))` (see selectAc).
       const groups = await backend().search(t.query, 8, "block-picker");
       const cur = ac();
-      if (!cur || cur.start !== t.start) return; // trigger changed while awaiting
+      if (!sameAcTrigger(cur, t)) return; // trigger changed while awaiting
       const items: AcItem[] = [];
       for (const g of groups) {
         for (const b of g.blocks) {
@@ -1258,7 +1264,7 @@ export function Editor(props: { id: string }): JSX.Element {
     }
     const pages = await (cap ? cap.quickSwitch(t.query, 8) : backend().quickSwitch(t.query, 8));
     const cur = ac();
-    if (!cur || cur.start !== t.start) return; // trigger changed while awaiting
+    if (!sameAcTrigger(cur, t)) return; // trigger changed while awaiting
     const pageItem = (name: string): AcItem =>
       t.kind === "page"
         ? { label: name, insert: pageInsert(name) }
@@ -1930,10 +1936,29 @@ export function Editor(props: { id: string }): JSX.Element {
     // Close the popup synchronously when the trigger ends (instant), but debounce
     // the page/template IPC fetch so holding down a key doesn't fire a backend
     // round-trip per character.
-    if (!detectTrigger(ref.value, ref.selectionStart)) {
+    const next = detectTrigger(ref.value, ref.selectionStart);
+    if (!next) {
       clearTimeout(acTimer);
       closeAc();
       return;
+    }
+    // Keep the replacement span in lockstep with the textarea even while the
+    // candidate fetch is debounced. Otherwise Enter can accept a still-visible
+    // row using the trigger range from an earlier character and leave the newly
+    // typed suffix behind (for example `[[P` -> `[[Parity Tar` becoming
+    // `[[Parity Target]]arity Tar`). Rows may remain visible while a SAME trigger
+    // is refined, but a different trigger family/location or a now-blank page/tag
+    // lifecycle must never expose an accept-able stale row.
+    const previous = ac();
+    setAc(next);
+    setAcIndex(0);
+    if (
+      !previous ||
+      previous.kind !== next.kind ||
+      previous.start !== next.start ||
+      ((next.kind === "page" || next.kind === "tag") && !next.query.trim())
+    ) {
+      setAcItems([]);
     }
     clearTimeout(acTimer);
     acTimer = setTimeout(() => void updateAutocomplete(), 90);
