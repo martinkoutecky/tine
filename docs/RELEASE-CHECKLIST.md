@@ -37,13 +37,20 @@ may tag, publish, comment, and close issues.
    the immutable v0.4.7 native binary, retain its timing JSON and early-frame
    sequence, and inspect those frames for new blank, intermediate, or corrupt
    paints before shipping.
-9. Run ordinary CI plus the manual release
-   workflow. Tag only after the exact commit's platform builds, Linux E2E,
-   Android, and real offline Flatpak job pass.
-10. After publication, inventory the real assets and prepare issue-specific
+9. Push the frozen exact candidate, manually dispatch `ci.yml` with
+   `scope=full`, and require all four full jobs to succeed on that SHA. Record
+   the Actions URL and confirm it with `scripts/check-ci-evidence.mjs`. PR or
+   focused CI is not release evidence. Any source/rebase/version change creates
+   a new SHA and requires a new full run. See `docs/CI.md`.
+10. Manually dispatch `release.yml` on that same frozen ref. Its preflight must
+    verify the exact-SHA CI evidence before packaging begins. Tag only after the
+    exact commit's platform builds, Linux E2E, Android, real offline Flatpak job,
+    and candidate assembly pass. The tag-triggered workflow enforces the same
+    CI evidence before it rebuilds/publishes release artifacts.
+11. After publication, inventory the real assets and prepare issue-specific
    reporter follow-ups. Comment/closure authority remains in the canonical
    agent agreement.
-11. As release housekeeping, advance `previousRelease.ref` to the tag that was
+12. As release housekeeping, advance `previousRelease.ref` to the tag that was
     just published, run `node scripts/check-bench-policy.mjs`, and push that
     change to `master`. Tagged-candidate preflight deliberately compares with
     the release before the candidate; ordinary post-release `master` must point
@@ -69,6 +76,9 @@ may tag, publish, comment, and close issues.
 ## Fail-closed rules
 
 - Missing or stale evidence is a failure, never a successful skip.
+- No release packaging or tag-triggered build may begin without a completed
+  manual full-CI run whose four required jobs succeeded on the exact candidate
+  SHA. A green PR/focused run or a green run for a parent commit is insufficient.
 - A scenario that does not reach its intended assertions fails.
 - Retries may diagnose a flake but never erase the original failure.
 - If documentation or website impact needs a product decision, stop with a

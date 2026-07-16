@@ -7,6 +7,11 @@ import os from "node:os";
 import path from "node:path";
 import { assembleCandidate } from "./assemble-release-candidate.mjs";
 import {
+  collectGithubPages,
+  REQUIRED_FULL_CI_JOBS,
+  selectExactCiEvidence,
+} from "./ci-evidence-lib.mjs";
+import {
   mirrorWindowsDevToolsActivePortOnce,
   tauriCapabilities,
   webdriverServerArgs,
@@ -21,6 +26,11 @@ const layout = releaseLayout(version);
 const releaseWorkflow = fs.readFileSync(path.join(process.cwd(), ".github/workflows/release.yml"), "utf8");
 const ciWorkflow = fs.readFileSync(path.join(process.cwd(), ".github/workflows/ci.yml"), "utf8");
 const uiE2eWorkflow = fs.readFileSync(path.join(process.cwd(), ".github/workflows/ui-e2e.yml"), "utf8");
+const flatpakWorkflow = fs.readFileSync(path.join(process.cwd(), ".github/workflows/flatpak.yml"), "utf8");
+const flatpakMetadataWorkflow = fs.readFileSync(
+  path.join(process.cwd(), ".github/workflows/flatpak-metadata.yml"),
+  "utf8"
+);
 const preflight = fs.readFileSync(path.join(process.cwd(), "scripts/check-release-preflight.mjs"), "utf8");
 const e2eRunner = fs.readFileSync(path.join(process.cwd(), "scripts/run-e2e.mjs"), "utf8");
 const printSecurity = fs.readFileSync(path.join(process.cwd(), "scripts/e2e-print-security.mjs"), "utf8");
@@ -34,10 +44,102 @@ const windowsScenarios = [
   "e2e-print-security.mjs",
 ];
 
+const successfulFullCiRun = {
+  id: 1234,
+  event: "workflow_dispatch",
+  head_sha: commit,
+  status: "completed",
+  conclusion: "success",
+  html_url: "https://example.invalid/actions/runs/1234",
+};
+const successfulFullCiJobs = REQUIRED_FULL_CI_JOBS.map((name) => ({ name, conclusion: "success" }));
+
 // Architecture guard: the expensive Linux release build must test that exact
 // binary before it can be staged for the atomic assembler/publisher. Windows
 // consumes the staged portable binary in independent advisory jobs that neither
 // serialize assembly nor hide one runner-wide 0/N failure.
+assert.doesNotMatch(ciWorkflow, /\n  push:/, "ordinary CI still runs automatically on pushes");
+assert.match(
+  ciWorkflow,
+  /workflow_dispatch:[\s\S]*?scope:[\s\S]*?options:[\s\S]*?- full[\s\S]*?- windows[\s\S]*?- android[\s\S]*?- performance/,
+  "manual CI does not expose full and focused proof scopes"
+);
+assert.match(
+  ciWorkflow,
+  /pull_request:[\s\S]*?paths-ignore:[\s\S]*?"\*\*\/\*\.md"/,
+  "docs-only pull requests still start app validation"
+);
+for (const name of REQUIRED_FULL_CI_JOBS) {
+  assert.ok(ciWorkflow.includes(`name: ${name}`), `CI workflow is missing stable evidence job ${name}`);
+}
+assert.match(
+  ciWorkflow,
+  /test:[\s\S]*?name: Full CI \/ Linux tests and release contracts[\s\S]*?inputs\.scope == 'full'/,
+  "the Linux full-CI evidence job can run in a focused dispatch"
+);
+assert.match(
+  ciWorkflow,
+  /windows-compile:[\s\S]*?inputs\.scope == 'full'[\s\S]*?inputs\.scope == 'windows'/,
+  "the Windows lane cannot distinguish full and focused dispatches"
+);
+assert.match(
+  ciWorkflow,
+  /android-core-compile:[\s\S]*?inputs\.scope == 'full'[\s\S]*?inputs\.scope == 'android'/,
+  "the Android lane cannot distinguish full and focused dispatches"
+);
+assert.match(
+  ciWorkflow,
+  /bench:[\s\S]*?inputs\.scope == 'full'[\s\S]*?inputs\.scope == 'performance'/,
+  "the performance lane cannot distinguish full and focused dispatches"
+);
+assert.doesNotMatch(flatpakWorkflow, /\n  push:/, "the expensive Flatpak build still runs automatically on pushes");
+assert.match(flatpakMetadataWorkflow, /\n  pull_request:/, "lightweight Flatpak metadata validation is not on PRs");
+assert.doesNotMatch(flatpakMetadataWorkflow, /\n  push:/, "Flatpak metadata validation still runs after merge");
+assert.match(
+  releaseWorkflow,
+  /permissions:[\s\S]*?contents: read[\s\S]*?actions: read[\s\S]*?preflight:[\s\S]*?name: Require exact-SHA full CI evidence[\s\S]*?node scripts\/check-ci-evidence\.mjs[\s\S]*?uses: dtolnay\/rust-toolchain/,
+  "release packaging does not fail closed on exact-SHA full CI evidence before expensive setup"
+);
+
+assert.equal(
+  selectExactCiEvidence(commit, [{ run: successfulFullCiRun, jobs: successfulFullCiJobs }]).run.id,
+  successfulFullCiRun.id
+);
+assert.throws(
+  () => selectExactCiEvidence("b".repeat(40), [{ run: successfulFullCiRun, jobs: successfulFullCiJobs }]),
+  /No successful full CI evidence for exact SHA/
+);
+assert.throws(
+  () => selectExactCiEvidence(commit, [{
+    run: { ...successfulFullCiRun, event: "pull_request" },
+    jobs: successfulFullCiJobs,
+  }]),
+  /run event is pull_request, not workflow_dispatch/
+);
+assert.throws(
+  () => selectExactCiEvidence(commit, [{ run: successfulFullCiRun, jobs: successfulFullCiJobs.slice(0, 1) }]),
+  /Full CI \/ Windows compile and core tests concluded missing/
+);
+assert.throws(
+  () => selectExactCiEvidence(commit, [{
+    run: successfulFullCiRun,
+    jobs: successfulFullCiJobs.map((job) => ({
+      ...job,
+      conclusion: job.name === REQUIRED_FULL_CI_JOBS[3] ? "failure" : job.conclusion,
+    })),
+  }]),
+  /Full CI \/ performance A\/B concluded failure/
+);
+const paginationCalls = [];
+assert.deepEqual(
+  await collectGithubPages(async (page) => {
+    paginationCalls.push(page);
+    return { jobs: page === 1 ? [{ id: 1 }, { id: 2 }] : [{ id: 3 }] };
+  }, "jobs", { perPage: 2 }),
+  [{ id: 1 }, { id: 2 }, { id: 3 }]
+);
+assert.deepEqual(paginationCalls, [1, 2], "GitHub pagination did not stop after the short final page");
+
 const linuxGate = releaseWorkflow.indexOf("Gate Linux x64 on the complete real-app regression catalog");
 const stageLane = releaseWorkflow.indexOf("Stage immutable release artifact");
 assert(linuxGate >= 0, "release workflow is missing the Linux real-app gate");
@@ -255,4 +357,4 @@ try {
   fs.rmSync(temporary, { recursive: true, force: true });
 }
 
-console.log("Release pipeline fixture tests passed (workflow gate + valid + 5 fail-closed cases).");
+console.log("Release pipeline fixture tests passed (exact-SHA CI gate + release workflow + fail-closed cases).");

@@ -25,6 +25,14 @@ fragment. After every required job succeeds, one short publisher downloads the
 artifacts, assembles `latest.json` once, uploads files sequentially, verifies the
 remote draft, and makes it public.
 
+As of the release-only CI policy, this packaging workflow begins only after a
+manually dispatched full `ci.yml` run succeeded on the exact frozen candidate
+SHA. Release preflight queries Actions and verifies all four stable full-job
+conclusions; PR, focused, skipped, stale-SHA, and failed runs are rejected before
+toolchain setup or packaging. This preserves one full test/performance pass plus
+one necessary platform packaging pass instead of rebuilding ordinary CI inside
+the release workflow.
+
 Expected effect: tagged release wall time becomes approximately the slowest
 platform build plus a short publication step, rather than the sum of five
 desktop build times.
@@ -42,26 +50,29 @@ publication is the only release mutation and has one owner.
 
 ## Invariants to preserve
 
-The v0.5.6 hardening remains mandatory:
+The v0.5.6 hardening remains mandatory, together with the exact-SHA CI gate:
 
-1. Metadata version, tag, changelog, Cargo locks, npm locks, and Android
+1. A manually dispatched full CI run succeeded on the exact candidate SHA; all
+   four stable full jobs are successful.
+2. Metadata version, tag, changelog, Cargo locks, npm locks, and Android
    `versionCode` agree.
-2. Vendored lsdoc WASM/oracle pins are current and the byte-pinned oracle keeps
+3. Vendored lsdoc WASM/oracle pins are current and the byte-pinned oracle keeps
    LF checkout semantics on every platform.
-3. Both Flatpak offline dependency manifests are current, and the real Flatpak
+4. Both Flatpak offline dependency manifests are current, and the real Flatpak
    bundle build succeeds.
-4. Tagged releases require a signed Android APK; missing secrets are fatal.
-5. The final release contains exactly the expected 21 assets.
-6. `latest.json` contains exactly the expected 12 signed Linux/Windows updater
+5. Tagged releases require a signed Android APK; missing secrets are fatal.
+6. The final release contains exactly the expected 21 assets.
+7. `latest.json` contains exactly the expected 12 signed Linux/Windows updater
    platform entries.
-7. Any failure leaves no public partial release.
-8. A rerun is idempotent: it may reuse/replace a draft, but it must refuse to
+8. Any failure leaves no public partial release.
+9. A rerun is idempotent: it may reuse/replace a draft, but it must refuse to
    overwrite an already-public release.
 
 ## Target workflow
 
 ```mermaid
 flowchart LR
+  C["Exact-SHA full CI evidence"] --> P
   P["Preflight"] --> B1["Linux x64 build"]
   P --> B2["Linux ARM64 build"]
   P --> B3["macOS universal build"]

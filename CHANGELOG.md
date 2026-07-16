@@ -8,6 +8,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Changed
+
+- **Broad CI now runs once for a frozen release candidate instead of after each
+  merge.** Pull requests retain a lightweight Linux validation path, while
+  Windows, Android, performance, UI E2E, and Flatpak proofs remain manually
+  dispatchable between releases. Release packaging fails closed unless all full
+  CI jobs succeeded on the exact candidate commit.
+
 ## [0.5.10] - 2026-07-16
 
 ### Added

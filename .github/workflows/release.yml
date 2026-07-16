@@ -4,7 +4,8 @@
 #   git tag v0.1.0 && git push origin v0.1.0
 #
 # …or run it manually from the Actions tab (workflow_dispatch) to smoke-test the
-# build matrix WITHOUT cutting a release.
+# build matrix WITHOUT cutting a release. Both paths fail before packaging unless
+# the exact candidate SHA already has a successful manually dispatched full CI.
 #
 # Publication is atomic at the workflow level: every expensive build writes only
 # an immutable workflow artifact; one assembler creates latest.json; and one
@@ -23,6 +24,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -42,6 +44,12 @@ jobs:
         with:
           node-version: 20
           cache: npm
+      - name: Require exact-SHA full CI evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_EVIDENCE_SHA: ${{ github.sha }}
+          CI_EVIDENCE_REPOSITORY: ${{ github.repository }}
+        run: node scripts/check-ci-evidence.mjs
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
         with:
