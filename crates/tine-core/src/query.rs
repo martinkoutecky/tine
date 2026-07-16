@@ -1483,6 +1483,7 @@ fn parse_adv_group(
                 ignored.push("between".into());
                 return None;
             }
+            let (lo, hi) = ordered_bounds(lo, hi);
             ran.push("between".into());
             Some(Pred::Between(field, lo, hi))
         }
@@ -1690,7 +1691,6 @@ pub fn templates(graph: &Graph) -> Vec<TemplateDto> {
                 }
                 let include_parent =
                     b.property("template-including-parent").as_deref() != Some("false");
-            let (lo, hi) = ordered_bounds(lo, hi);
                 let blocks = if include_parent {
                     vec![template_dto(b, true)]
                 } else {
@@ -2745,6 +2745,16 @@ fn resolve_date_token(tok: &str, today: JournalDate) -> Option<i64> {
     journal_ordinal(t)
 }
 
+/// OG's `build-between-two-arg` orders its two resolved bounds before building
+/// the predicate, so `(between END START)` has the same inclusive interval as
+/// `(between START END)`. Preserve open bounds used by Tine's advanced subset.
+fn ordered_bounds(lo: Option<i64>, hi: Option<i64>) -> (Option<i64>, Option<i64>) {
+    match (lo, hi) {
+        (Some(lo), Some(hi)) if lo > hi => (Some(hi), Some(lo)),
+        pair => pair,
+    }
+}
+
 /// Parse a signed relative duration like `-7d`, `+2w`, `3m`, `-1y` off `today`.
 fn parse_relative(t: &str, today: JournalDate) -> Option<JournalDate> {
     let bytes = t.as_bytes();
@@ -2883,6 +2893,14 @@ fn parse_expr(
             *pos += 1;
             Some(Pred::Content(s.to_lowercase()))
         }
+        // Logseq's simple-query macros substitute parser-decoded arguments into
+        // the query template. A quoted invocation argument can therefore arrive
+        // here as a bare word. It is still a block-content term, not syntax to
+        // silently discard.
+        Tok::Word(s) => {
+            *pos += 1;
+            Some(Pred::Content(s.to_lowercase()))
+        }
         Tok::LParen => {
             *pos += 1; // consume (
             let head = match toks.get(*pos)? {
@@ -2953,16 +2971,6 @@ fn parse_expr(
                     // or `yyyy-MM-dd`.
                     let field = match toks.get(*pos) {
                         Some(Tok::Word(w)) => match w.to_ascii_lowercase().as_str() {
-/// OG's `build-between-two-arg` orders its two resolved bounds before building
-/// the predicate, so `(between END START)` has the same inclusive interval as
-/// `(between START END)`. Preserve open bounds used by Tine's advanced subset.
-fn ordered_bounds(lo: Option<i64>, hi: Option<i64>) -> (Option<i64>, Option<i64>) {
-    match (lo, hi) {
-        (Some(lo), Some(hi)) if lo > hi => (Some(hi), Some(lo)),
-        pair => pair,
-    }
-}
-
                             "journal" => {
                                 *pos += 1;
                                 BetweenField::Journal
@@ -2985,6 +2993,7 @@ fn ordered_bounds(lo: Option<i64>, hi: Option<i64>) -> (Option<i64>, Option<i64>
                     };
                     let lo = parse_name(toks, pos).and_then(|s| resolve_date_token(&s, today));
                     let hi = parse_name(toks, pos).and_then(|s| resolve_date_token(&s, today));
+                    let (lo, hi) = ordered_bounds(lo, hi);
                     Pred::Between(field, lo, hi)
                 }
                 "sample" => {
@@ -3105,14 +3114,6 @@ fn normalize_prop_key(k: &str) -> String {
 /// or `#tag` token (Logseq's parse-property-value extracts the page name and
 /// strips a leading `#`; `value_matches` does the ref/tag stripping on both
 /// sides). WITHOUT this, `(property k [[Page]])` / `(property k #tag)` dropped the
-        // Logseq's simple-query macros substitute parser-decoded arguments into
-        // the query template. A quoted invocation argument can therefore arrive
-        // here as a bare word. It is still a block-content term, not syntax to
-        // silently discard.
-        Tok::Word(s) => {
-            *pos += 1;
-            Some(Pred::Content(s.to_lowercase()))
-        }
 /// value AND leaked the ref token, which was then mis-parsed as a stray page-ref
 /// clause — the second reported failure mode.
 fn parse_opt_value(toks: &[Tok], pos: &mut usize) -> Option<String> {
@@ -3200,7 +3201,6 @@ mod tests {
     fn ctx_named<'a>() -> EvalCtx<'a> {
         EvalCtx {
             journal: None,
-                    let (lo, hi) = ordered_bounds(lo, hi);
             is_journal: false,
             page_name: "Test",
             page_props: &[],
@@ -3782,6 +3782,9 @@ mod tests {
             }
         }
 
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     /// OG 1.0.0 (`query_dsl.cljs` + the `:page-ref` rule) evaluates a bare
     /// `[[Page]]` simple-query clause against `:block/path-refs`. That relation
     /// includes both explicit references and the page the block physically
@@ -3854,9 +3857,6 @@ mod tests {
             &DocBlock::new("DONE Publish release notes"),
             &ctx_named()
         ));
-    }
-
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
