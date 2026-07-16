@@ -31,10 +31,24 @@ function saveFilters(page: string, f: FilterMap) {
 }
 const filterKey = (page: string, kind: string, blockId: string) => `${kind}\0${norm(page)}\0${blockId}`;
 
+type SearchableFilterEntry = Pick<BacklinkFilterEntry, "text" | "facets"> & {
+  normalizedText: string;
+};
+
+function searchableFilterEntry(
+  entry: Pick<BacklinkFilterEntry, "text" | "facets">
+): SearchableFilterEntry {
+  return {
+    text: entry.text,
+    facets: entry.facets,
+    normalizedText: entry.text.toLowerCase(),
+  };
+}
+
 /** A bounded fallback while native context is loading or stale. It intentionally
  *  uses only DTO-owned semantic facets (never a raw reference regex); the native
  *  context replaces it with parser-owned descendant refs as soon as it arrives. */
-function fallbackFilterEntry(block: BlockDto): Pick<BacklinkFilterEntry, "text" | "facets"> {
+function fallbackFilterEntry(block: BlockDto): SearchableFilterEntry {
   const text: string[] = [];
   const facets = new Map<string, string>();
   const visit = (current: BlockDto) => {
@@ -47,7 +61,7 @@ function fallbackFilterEntry(block: BlockDto): Pick<BacklinkFilterEntry, "text" 
     for (const child of current.children) visit(child);
   };
   visit(block);
-  return { text: text.join("\n"), facets: [...facets.values()] };
+  return searchableFilterEntry({ text: text.join("\n"), facets: [...facets.values()] });
 }
 
 // The "Linked References" section (backlinks). Live, editable, collapsible, and
@@ -91,16 +105,27 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
     },
     ({ name, targets }) => backend().getBacklinkFilterContext(name, targets)
   );
+  const fallbackByRoot = createMemo(() =>
+    new Map(
+      (groups() ?? []).flatMap((group) =>
+        group.blocks.map((block) => [
+          filterKey(group.page, group.kind, block.id),
+          fallbackFilterEntry(block),
+        ] as const)
+      )
+    )
+  );
   const nativeByRoot = createMemo(() =>
     new Map(
       (nativeContext()?.entries ?? []).map((entry) => [
         filterKey(entry.page, entry.kind, entry.block_id),
-        entry,
+        searchableFilterEntry(entry),
       ] as const)
     )
   );
   const rootEntry = (group: RefGroup, block: BlockDto) =>
-    nativeByRoot().get(filterKey(group.page, group.kind, block.id)) ?? fallbackFilterEntry(block);
+    nativeByRoot().get(filterKey(group.page, group.kind, block.id))
+      ?? fallbackByRoot().get(filterKey(group.page, group.kind, block.id))!;
 
   // Co-referenced pages/tags and task states in each backlink tree, with counts.
   const coRefs = createMemo(() => {
@@ -145,7 +170,7 @@ export function LinkedReferences(props: { name: string }): JSX.Element {
         blocks: g.blocks.filter((b) => {
           const entry = rootEntry(g, b);
           const facets = new Set(entry.facets.map(norm));
-          const contentMatches = !searching || matcherMatches(parsed, entry.text.toLowerCase(), entry.text);
+          const contentMatches = !searching || matcherMatches(parsed, entry.normalizedText, entry.text);
           return contentMatches && ins.every((i) => facets.has(i)) && outs.every((o) => !facets.has(o));
         }),
       }))

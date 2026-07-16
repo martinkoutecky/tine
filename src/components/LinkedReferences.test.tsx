@@ -33,6 +33,50 @@ afterEach(() => {
 });
 
 describe("Linked References filters", () => {
+  it("normalizes each native search corpus once instead of once per search evaluation", async () => {
+    const groups: RefGroup[] = [
+      {
+        page: "Journal",
+        kind: "journal",
+        blocks: [block("root", "Planning [[My Project]]")],
+      },
+    ];
+    const indexedText = "UNIQUE INDEXED SEARCH CORPUS";
+    const originalToLowerCase = String.prototype.toLowerCase;
+    let corpusNormalizations = 0;
+    vi.spyOn(String.prototype, "toLowerCase").mockImplementation(function (this: string) {
+      if (String(this) === indexedText) corpusNormalizations += 1;
+      return originalToLowerCase.call(this);
+    });
+    vi.spyOn(backend(), "getBacklinks").mockResolvedValue(groups);
+    vi.spyOn(backend(), "getBacklinkFilterContext").mockResolvedValue({
+      entries: [
+        { page: "Journal", kind: "journal", block_id: "root", text: indexedText, facets: [] },
+      ],
+    });
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const dispose = render(() => <LinkedReferences name="My Project" />, root);
+
+    await tick();
+    await tick();
+    root.querySelector<HTMLButtonElement>('button[aria-label="Filter linked references"]')!.click();
+    await tick();
+    await tick();
+    expect(corpusNormalizations).toBe(1);
+
+    const input = root.querySelector<HTMLInputElement>(".reference-filter-search")!;
+    for (const query of ["unique", "indexed", "search corpus"]) {
+      input.value = query;
+      input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      await wait(150);
+      expect(root.querySelector(".references-count")?.textContent).toBe("1");
+    }
+    expect(corpusNormalizations).toBe(1);
+
+    dispose();
+  });
+
   it("keeps a backlink root when ephemeral content search matches only a descendant (GH #173)", async () => {
     const groups: RefGroup[] = [
       {
