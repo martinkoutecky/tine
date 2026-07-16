@@ -18,8 +18,23 @@ struct ProtectedCode {
 
 struct Prepared {
     input: String,
-    fallback: String,
     protected: Vec<ProtectedCode>,
+}
+
+enum Preparation {
+    /// The ordinary path: exactly the re-bulleted input that lsdoc requires.
+    /// In particular, there is no cloned source buffer or eager fallback.
+    Plain(String),
+    /// The exceptional line-leading-code path. `original` is kept borrowed by
+    /// the caller and its fallback input is allocated only if restoration fails.
+    Protected(Prepared),
+}
+
+#[derive(Debug)]
+struct Candidate {
+    opener: usize,
+    ticks: usize,
+    close: usize,
 }
 
 fn run_len(bytes: &[u8], at: usize, byte: u8) -> usize {
@@ -58,10 +73,9 @@ fn fence_marker(line: &[u8]) -> Option<(u8, usize)> {
     (len >= 3).then_some((marker, len))
 }
 
-fn prepare_markdown(trimmed: &str) -> Prepared {
-    let mut protected_input = trimmed.as_bytes().to_vec();
+fn discover_markdown_candidates(trimmed: &str) -> Vec<Candidate> {
     let bytes = trimmed.as_bytes();
-    let mut protected = Vec::new();
+    let mut candidates = Vec::new();
     let mut line_start = 0;
     let mut covered_until = 0;
     let mut fence: Option<(u8, usize)> = None;
@@ -102,35 +116,10 @@ fn prepare_markdown(trimmed: &str) -> Prepared {
                             .windows(2)
                             .any(|window| window == b"::");
                         if has_separator {
-                            let mut at = content_start;
-                            while at < close {
-                                if protected_input[at] == b':'
-                                    && at + 1 < close
-                                    && protected_input[at + 1] == b':'
-                                {
-                                    protected_input[at] = b';';
-                                    protected_input[at + 1] = b';';
-                                    at += 2;
-                                } else {
-                                    // Hide non-closing tick runs and EOLs from
-                                    // lsdoc's narrower inline scanners. Every byte
-                                    // keeps its width and the full code text is
-                                    // restored by exact span below.
-                                    if protected_input[at] == b'`' {
-                                        protected_input[at] = b'~';
-                                    } else if protected_input[at] == b'\n'
-                                        || protected_input[at] == b'\r'
-                                    {
-                                        protected_input[at] = b' ';
-                                    }
-                                    at += 1;
-                                }
-                            }
-                            protected.push(ProtectedCode {
-                                // The prepared outline bullet contributes `- `.
-                                start: opener + 2,
-                                end: close + ticks + 2,
-                                text: trimmed[content_start..close].to_string(),
+                            candidates.push(Candidate {
+                                opener,
+                                ticks,
+                                close,
                             });
                             covered_until = close + ticks;
                         }
@@ -150,23 +139,70 @@ fn prepare_markdown(trimmed: &str) -> Prepared {
             };
     }
 
-    let protected_text =
-        String::from_utf8(protected_input).expect("ASCII replacement preserves UTF-8");
-    Prepared {
-        input: format!("- {protected_text}"),
-        fallback: format!("- {trimmed}"),
-        protected,
-    }
+    candidates
 }
 
-fn prepare(raw: &str, is_org: bool) -> Prepared {
+fn prepare_markdown(trimmed: &str) -> Preparation {
+    // Most blocks have neither a backtick nor a property separator. Keep their
+    // pre-fix cost shape: one required re-bulleted String and no protection
+    // census, source clone, restoration walk, or fallback. This cheap immutable
+    // prefilter also keeps ordinary properties (`key:: value`) on the fast path.
+    if !trimmed.contains('`') || !trimmed.contains("::") {
+        return Preparation::Plain(format!("- {trimmed}"));
+    }
+
+    // Discovery is immutable. Only an actual line-leading inline-code candidate
+    // earns the exceptional copy/mutation work below.
+    let candidates = discover_markdown_candidates(trimmed);
+    if candidates.is_empty() {
+        return Preparation::Plain(format!("- {trimmed}"));
+    }
+
+    let mut protected_input = trimmed.as_bytes().to_vec();
+    let mut protected = Vec::with_capacity(candidates.len());
+    for candidate in candidates {
+        let content_start = candidate.opener + candidate.ticks;
+        let mut at = content_start;
+        while at < candidate.close {
+            if protected_input[at] == b':'
+                && at + 1 < candidate.close
+                && protected_input[at + 1] == b':'
+            {
+                protected_input[at] = b';';
+                protected_input[at + 1] = b';';
+                at += 2;
+            } else {
+                // Hide non-closing tick runs and EOLs from lsdoc's narrower
+                // inline scanners. Every byte keeps its width and the full code
+                // text is restored by exact span below.
+                if protected_input[at] == b'`' {
+                    protected_input[at] = b'~';
+                } else if protected_input[at] == b'\n' || protected_input[at] == b'\r' {
+                    protected_input[at] = b' ';
+                }
+                at += 1;
+            }
+        }
+        protected.push(ProtectedCode {
+            // The prepared outline bullet contributes `- `.
+            start: candidate.opener + 2,
+            end: candidate.close + candidate.ticks + 2,
+            text: trimmed[content_start..candidate.close].to_string(),
+        });
+    }
+
+    let protected_text =
+        String::from_utf8(protected_input).expect("ASCII replacement preserves UTF-8");
+    Preparation::Protected(Prepared {
+        input: format!("- {protected_text}"),
+        protected,
+    })
+}
+
+fn prepare(raw: &str, is_org: bool) -> Preparation {
     let trimmed = raw.trim_start();
     if is_org {
-        Prepared {
-            input: format!("* {trimmed}"),
-            fallback: format!("* {trimmed}"),
-            protected: Vec::new(),
-        }
+        Preparation::Plain(format!("* {trimmed}"))
     } else {
         prepare_markdown(trimmed)
     }
@@ -236,8 +272,13 @@ fn restore_blocks(blocks: &mut [Block], protected: &[ProtectedCode], restored: &
 }
 
 pub(crate) fn parse_block(raw: &str, is_org: bool) -> Vec<Block> {
-    let prepared = prepare(raw, is_org);
-    let mut blocks = lsdoc::parse(&prepared.input, if is_org { "org" } else { "md" });
+    let prepared = match prepare(raw, is_org) {
+        Preparation::Plain(input) => {
+            return lsdoc::parse(&input, if is_org { "org" } else { "md" })
+        }
+        Preparation::Protected(prepared) => prepared,
+    };
+    let mut blocks = lsdoc::parse(&prepared.input, "md");
     let mut restored = vec![false; prepared.protected.len()];
     restore_blocks(&mut blocks, &prepared.protected, &mut restored);
     if restored.iter().all(|value| *value) {
@@ -245,19 +286,58 @@ pub(crate) fn parse_block(raw: &str, is_org: bool) -> Vec<Block> {
     } else {
         // Fail closed: an unanticipated parser shape may retain lsdoc's original
         // classification, but transformed bytes must never leak into the AST.
-        lsdoc::parse(&prepared.fallback, if is_org { "org" } else { "md" })
+        lsdoc::parse(&format!("- {}", raw.trim_start()), "md")
     }
 }
 
 #[allow(dead_code)] // the wasm crate needs block parsing only; tine-core uses the full projection
 pub(crate) fn parse_projection(raw: &str, is_org: bool) -> Projection {
-    let prepared = prepare(raw, is_org);
-    let mut projection = lsdoc::parse_format(&prepared.input, if is_org { "org" } else { "md" });
+    let prepared = match prepare(raw, is_org) {
+        Preparation::Plain(input) => {
+            return lsdoc::parse_format(&input, if is_org { "org" } else { "md" })
+        }
+        Preparation::Protected(prepared) => prepared,
+    };
+    let mut projection = lsdoc::parse_format(&prepared.input, "md");
     let mut restored = vec![false; prepared.protected.len()];
     restore_blocks(&mut projection.blocks, &prepared.protected, &mut restored);
     if restored.iter().all(|value| *value) {
         projection
     } else {
-        lsdoc::parse_format(&prepared.fallback, if is_org { "org" } else { "md" })
+        lsdoc::parse_format(&format!("- {}", raw.trim_start()), "md")
+    }
+}
+
+#[cfg(test)]
+mod preparation_tests {
+    use super::*;
+
+    #[test]
+    fn ordinary_blocks_keep_the_single_input_fast_path() {
+        for raw in [
+            "ordinary **formatted** text",
+            "tine.view:: grid",
+            "inline `code` without a separator",
+            "a:: value with `later code`",
+        ] {
+            let Preparation::Plain(input) = prepare(raw, false) else {
+                panic!("ordinary block entered protection path: {raw}")
+            };
+            assert_eq!(input, format!("- {raw}"));
+        }
+
+        let Preparation::Plain(input) = prepare("DONE finished", true) else {
+            panic!("Org must never enter the Markdown protection path")
+        };
+        assert_eq!(input, "* DONE finished");
+    }
+
+    #[test]
+    fn property_lookalike_enters_the_exceptional_path() {
+        let Preparation::Protected(prepared) = prepare("`a:: b` tail", false) else {
+            panic!("line-leading inline code requires protection")
+        };
+        assert_eq!(prepared.protected.len(), 1);
+        assert_eq!(prepared.input, "- `a;; b` tail");
     }
 }
