@@ -19,6 +19,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   same click or right-click menu; both actions safely ensure the annotation
   block before copying or opening it with its ordinary referrers visible.
   (GH #168)
+- **Mobile disclosure controls stay separate from bullets without stealing text
+  taps.** Foldable blocks keep a wide trailing touch target on narrow Android
+  layouts, while leaf blocks no longer retain an invisible right-edge disclosure
+  hit area. Nested outlines, headings, live embeds, and sidebar rows share the
+  same touch-geometry regression. (GH #159)
 - **Bare `/` now defaults to Page reference.** `/` then Enter, Tab, or pointer
   selection inserts `[[]]`, leaves the caret inside it, and continues directly
   into page completion without changing typed slash-command ranking. (GH #155)

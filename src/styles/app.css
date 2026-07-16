@@ -3389,6 +3389,12 @@ textarea {
     opacity: 0.62;
   }
 
+  /* Leaves retain the structural control placeholder for the shared bullet
+     column, but it must not sit invisibly over the last 44px of editable text. */
+  .collapse-toggle:not(.has-children) {
+    pointer-events: none;
+  }
+
   .ls-block:hover > .block-main > .block-controls > .collapse-toggle.has-children,
   .collapse-toggle.has-children:focus-visible {
     opacity: 1;
