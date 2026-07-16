@@ -42,6 +42,27 @@ beforeEach(() => {
 
 const pinActive = () => togglePin(activeId());
 
+describe("independent empty query workspaces (GH #172)", () => {
+  it("keeps same-timestamp empty query routes identity-distinct through edits, presentation, and tab history", () => {
+    vi.spyOn(Date, "now").mockReturnValue(1_725_000_000_000);
+    const first = openQueryInNewTab("", "search", true);
+    const firstTab = activeId();
+    const second = openQueryInNewTab("", "search", true);
+    const secondTab = activeId();
+    expect(first.id).not.toBe(second.id);
+    expect(sameRoute(first, second)).toBe(false);
+
+    setActiveTab(firstTab);
+    updateActiveQuery({ source: "alpha", presentation: "table" });
+    expect(route()).toMatchObject({ id: first.id, source: "alpha", presentation: "table" });
+    expect(activeTab().history).toHaveLength(1);
+    setActiveTab(secondTab);
+    expect(route()).toMatchObject({ id: second.id, source: "", presentation: "search" });
+    expect(activeTab().history).toHaveLength(1);
+    vi.restoreAllMocks();
+  });
+});
+
 describe("reuse already-open tabs on user navigation", () => {
   it("edits a virtual query in one stable history entry and can materialize it in place", () => {
     openQueryInNewTab("alpha", "search", true);

@@ -1,9 +1,9 @@
 import { For, Show, createSignal, createResource, createEffect, createMemo, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
-import { switcherOpen, closeSwitcher, switcherMode, switcherEmbryo, recentPages, graphMeta, isFavorite } from "../ui";
-import { openPage, openPageAtBlock, openPageInNewTab, openFile, openInNewTab, openQueryInNewTab, route } from "../router";
+import { switcherOpen, closeSwitcher, switcherMode, switcherEmbryo, recentPages, graphMeta, isFavorite, pushToast } from "../ui";
+import { openPage, openPageAtBlock, openPageInNewTab, openFile, openInNewTab, route } from "../router";
 import { paletteCommands } from "../keybindings";
-import { closePane, focusPane, openRouteInOtherPane, paneRouter } from "../panes";
+import { closePane, focusPane, focusedRouter, layoutPaneIds, openRouteInOtherPane, paneRouter } from "../panes";
 import { fuzzyScore } from "../editor/autocomplete";
 import { SEARCH_SYNTAX } from "../editor/searchQuery";
 import { EmojiText } from "../render/emoji";
@@ -52,6 +52,8 @@ export function QuickSwitcher(): JSX.Element {
   });
   let inputRef: HTMLInputElement | undefined;
   let resultsRef: HTMLDivElement | undefined;
+  let originPaneId: string | null = null;
+  let wasOpen = false;
   // X11/WebKitGTK pastes the PRIMARY selection into the focused input on ANY
   // middle-click (not cancelable from the row's mousedown). We want that paste
   // only when the user middle-clicks the input itself — so a middle-click on a
@@ -230,12 +232,15 @@ export function QuickSwitcher(): JSX.Element {
   const flat = createMemo<Item[]>(() => sections().flatMap((s) => s.items));
 
   createEffect(() => {
-    if (switcherOpen()) {
+    const open = switcherOpen();
+    if (open && !wasOpen) {
+      originPaneId = switcherEmbryo()?.paneId ?? focusedRouter().paneId;
       setQuery(switcherEmbryo()?.prefill ?? "");
       setSel(0);
       setSyntaxOpen(false);
       queueMicrotask(() => inputRef?.focus());
     }
+    wasOpen = open;
   });
   // Keep the highlight in range as results change.
   createEffect(() => {
@@ -511,13 +516,18 @@ export function QuickSwitcher(): JSX.Element {
                 type="button"
                 class="switcher-syntax-toggle"
                 data-open-search-tab
-                disabled={!query().trim() || !!graphResults()?.diagnostics.length}
                 onClick={() => {
-                  openQueryInNewTab(query().trim(), "search", true);
+                  const paneId = originPaneId;
+                  if (!paneId || !layoutPaneIds().includes(paneId)) {
+                    pushToast("That pane is no longer available. Close this search and try again.", "error");
+                    return;
+                  }
+                  focusPane(paneId);
+                  paneRouter(paneId).openQueryInNewTab(query().trim(), "search", true);
                   closeSwitcher();
                 }}
               >
-                Open results in tab
+                Open search tab
               </button>
             </Show>
           </div>

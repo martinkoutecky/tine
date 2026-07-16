@@ -1,15 +1,81 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { QuickSwitcher } from "./QuickSwitcher";
-import { closeSwitcher, openSwitcher } from "../ui";
+import { closeSwitcher, openSwitcher, toasts } from "../ui";
 import { activeId, closeTab, route } from "../router";
+import { backend } from "../backend";
+import { closePane, focusPane, paneRouter, resetPaneLayoutToSingle, setFocusedPaneId, splitPane } from "../panes";
 
 afterEach(() => {
   closeSwitcher();
+  resetPaneLayoutToSingle({ tabs: [{ history: [{ kind: "journals" }], pos: 0, pinned: false }], activeIndex: 0 });
   document.body.innerHTML = "";
 });
 
 describe("QuickSwitcher search syntax help", () => {
+  it("opens an empty virtual Search tab from an enabled authoring action", async () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => <QuickSwitcher />, root);
+    openSwitcher();
+    const graphSearch = vi.spyOn(backend(), "runGraphSearch");
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    const openTab = root.querySelector("[data-open-search-tab]") as HTMLButtonElement;
+    expect(openTab.disabled).toBe(false);
+    expect(openTab.textContent).toContain("Open search tab");
+    openTab.click();
+    expect(route()).toMatchObject({ kind: "query", sourceKind: "search", source: "", presentation: "search" });
+    expect(graphSearch).not.toHaveBeenCalled();
+    graphSearch.mockRestore();
+    await closeTab(activeId());
+    dispose();
+  });
+
+  it("keeps a non-main origin despite overlay pointer retargeting and honors embryo/PDF ownership", async () => {
+    resetPaneLayoutToSingle({ tabs: [{ history: [{ kind: "page", name: "Main", pageKind: "page" }], pos: 0, pinned: false }], activeIndex: 0 });
+    const other = splitPane("main", "row")!;
+    focusPane(other);
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <QuickSwitcher />, root);
+    openSwitcher(); await Promise.resolve();
+    // The global overlay's capture tracker reports this pointer as main before
+    // the button click. The route must still use the snapshot above.
+    focusPane("main");
+    (root.querySelector("[data-open-search-tab]") as HTMLButtonElement).click();
+    expect(paneRouter(other).route()).toMatchObject({ kind: "query", source: "" });
+
+    focusPane("main");
+    openSwitcher({ mode: "embryo", paneId: other, prefill: " embryo " }); await Promise.resolve();
+    (root.querySelector("[data-open-search-tab]") as HTMLButtonElement).click();
+    expect(paneRouter(other).route()).toMatchObject({ kind: "query", source: "embryo" });
+
+    setFocusedPaneId("pdf");
+    openSwitcher(); await Promise.resolve();
+    (root.querySelector("[data-open-search-tab]") as HTMLButtonElement).click();
+    expect(paneRouter("main").route()).toMatchObject({ kind: "query", source: "" });
+    dispose();
+  });
+
+  it("keeps invalid sources promotable after their debounced diagnostic and exposes a stale-origin retry path", async () => {
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <QuickSwitcher />, root);
+    openSwitcher(); await Promise.resolve();
+    const input = root.querySelector<HTMLInputElement>(".switcher-input")!;
+    input.value = "/(unclosed/"; input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    expect((root.querySelector("[data-open-search-tab]") as HTMLButtonElement).disabled).toBe(false);
+    closeSwitcher();
+
+    const other = splitPane("main", "row")!;
+    focusPane(other); openSwitcher(); await Promise.resolve();
+    closePane(other);
+    (root.querySelector("[data-open-search-tab]") as HTMLButtonElement).click();
+    expect(route().kind).not.toBe("query");
+    expect(toasts().at(-1)?.message).toContain("no longer available");
+    expect(root.querySelector(".switcher")).not.toBeNull();
+    dispose();
+  });
+
   it("is keyboard-accessible and Escape returns focus to search before closing", async () => {
     const root = document.createElement("div");
     document.body.append(root);

@@ -38,29 +38,26 @@ export interface MaterializeQueryInput {
   sourceKind: QueryRoute["sourceKind"];
   source: string;
   presentation: QueryPresentation;
+  /** Stable workspace identity: also bounds the native validation cancellation lane. */
+  routeId: string;
 }
 
 export interface MaterializeQueryDependencies {
   getPage(name: string, kind: "page"): Promise<PageDto | null>;
   savePage(page: PageDto, baseRev: null, force: false): Promise<string>;
+  /** Rust-authoritative friendly-search validation; required before every nonblank friendly save. */
+  runGraphSearch(source: string, pageLimit: number, blockLimit: number, lane: string, explain: boolean): Promise<QueryExecution>;
 }
 
 export type MaterializeQueryResult =
   | { ok: true; name: string; page: PageDto; rev: string }
   | {
       ok: false;
-      kind: "invalid-name" | "empty-query" | "exists" | "conflict" | "error";
+      kind: "invalid-name" | "empty-query" | "invalid-query" | "exists" | "conflict" | "error";
       message: string;
     };
 
 export interface QueryWorkspaceDependencies extends MaterializeQueryDependencies {
-  runGraphSearch(
-    source: string,
-    pageLimit: number,
-    blockLimit: number,
-    lane: string,
-    explain: boolean
-  ): Promise<QueryExecution>;
   runQuery(source: string): Promise<RefGroup[]>;
   runAdvancedQuery(source: string): Promise<AdvancedQueryResult>;
 }
@@ -70,6 +67,7 @@ export interface QueryWorkspaceProps {
   router: PaneRouter;
   /** Dependency injection keeps create/save races and rendering testable without IPC. */
   deps?: QueryWorkspaceDependencies;
+  focusSource?: boolean;
 }
 
 function savedQueryRaw(input: Pick<MaterializeQueryInput, "source" | "sourceKind" | "presentation">): string {
@@ -97,6 +95,17 @@ export async function materializeQueryWorkspace(
   }
   if (!input.source.trim()) {
     return { ok: false, kind: "empty-query", message: "Enter a search or query before saving." };
+  }
+  if (input.sourceKind === "search") {
+    try {
+      const execution = await deps.runGraphSearch(input.source.trim(), 0, 0, `query-workspace:${input.routeId}:materialize`, true);
+      if (execution.cancelled) return { ok: false, kind: "invalid-query", message: "Search validation was superseded. Try saving again." };
+      if (execution.diagnostics.length) return { ok: false, kind: "invalid-query", message: execution.diagnostics.map((item) => item.message).join(" · ") };
+      if (!execution.explanation.branches.length) return { ok: false, kind: "empty-query", message: "Enter a search with at least one included term before saving." };
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      return { ok: false, kind: "invalid-query", message: detail ? `Could not validate this search: ${detail}` : "Could not validate this search." };
+    }
   }
 
   try {
@@ -545,12 +554,30 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
   const [saveError, setSaveError] = createSignal<string | null>(null);
   const [saving, setSaving] = createSignal(false);
   let advancedButton!: HTMLButtonElement;
+  let sourceInput: HTMLInputElement | undefined;
+  // Props replace the whole route object on source/presentation edits. Keep an
+  // explicit identity latch so that replacement cannot re-run the focus work.
+  let lastFocusRouteId: string | undefined;
+  let previouslyFocused = false;
 
   createEffect(() => {
     props.route.id;
     setSource(props.route.source);
     setSourceKind(props.route.sourceKind);
     setPresentation(props.route.presentation);
+  });
+  createEffect(() => {
+    const routeId = props.route.id;
+    const focusSource = !!props.focusSource;
+    const shouldFocus = focusSource && (routeId !== lastFocusRouteId || !previouslyFocused);
+    lastFocusRouteId = routeId;
+    previouslyFocused = focusSource;
+    if (!shouldFocus) return;
+    queueMicrotask(() => {
+      if (!props.router.route) return;
+      const active = props.router.route();
+      if (props.focusSource && active.kind === "query" && active.id === routeId) sourceInput?.focus();
+    });
   });
 
   const [execution] = createResource(
@@ -623,6 +650,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
         sourceKind: sourceKind(),
         source: source(),
         presentation: presentation(),
+        routeId: props.route.id,
       }, deps());
       if (!result.ok) {
         setSaveError(result.message);
@@ -646,12 +674,13 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
   );
 
   return (
-    <section class="query-workspace" aria-label="Search and query workspace">
+    <section class="query-workspace" data-query-route-id={props.route.id} aria-label="Search and query workspace">
       <header class="query-workspace-header">
         <div class="query-workspace-search-row">
           <label class="query-workspace-source-label">
             <span class="sr-only">{sourceKind() === "search" ? "Search" : "Query DSL"}</span>
             <input
+              ref={sourceInput}
               class="query-workspace-source"
               type="search"
               value={source()}
@@ -721,14 +750,15 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
       </header>
 
       <section class="query-workspace-status" aria-live="polite" aria-atomic="true">
-        <Show when={execution.loading}>Searching…</Show>
-        <Show when={!execution.loading && execution.error}>
+        <Show when={!source().trim()}>{sourceKind() === "search" ? "Enter a search to begin." : "Enter a query to begin."}</Show>
+        <Show when={!!source().trim() && execution.loading}>Searching…</Show>
+        <Show when={!!source().trim() && !execution.loading && execution.error}>
           Search failed: {execution.error instanceof Error ? execution.error.message : String(execution.error)}
         </Show>
-        <Show when={!execution.loading && !execution.error && execution()?.cancelled}>
+        <Show when={!!source().trim() && !execution.loading && !execution.error && execution()?.cancelled}>
           Search superseded by a newer request.
         </Show>
-        <Show when={!execution.loading && !execution.error && execution() && !execution()?.cancelled}>
+        <Show when={!!source().trim() && !execution.loading && !execution.error && execution() && !execution()?.cancelled}>
           {hits().length} result{hits().length === 1 ? "" : "s"}
         </Show>
       </section>

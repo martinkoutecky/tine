@@ -1324,6 +1324,18 @@ mod tests {
     }
 
     #[test]
+    fn zero_limit_friendly_plans_still_classify_saveable_sources() {
+        let rust_only_invalid = QueryPlan::friendly("/(a)\\1/", 0, 0);
+        assert!(rust_only_invalid.branches.is_empty());
+        assert_eq!(rust_only_invalid.diagnostics.first().map(|item| item.code.as_str()), Some("invalid_regex"));
+        let valid = QueryPlan::friendly("alpha", 0, 0);
+        assert!(!valid.branches.is_empty());
+        assert!(valid.branches.iter().all(|branch| branch.limit == 0));
+        let excluded = QueryPlan::friendly("-draft", 0, 0);
+        assert!(excluded.diagnostics.is_empty() && excluded.branches.is_empty());
+    }
+
+    #[test]
     fn pure_negation_and_empty_friendly_search_have_no_branches() {
         assert!(QueryPlan::friendly("-draft", 8, 8).branches.is_empty());
         assert!(QueryPlan::friendly("", 8, 8).branches.is_empty());

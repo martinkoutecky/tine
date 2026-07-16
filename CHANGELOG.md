@@ -19,6 +19,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   same click or right-click menu; both actions safely ensure the annotation
   block before copying or opening it with its ordinary referrers visible.
   (GH #168)
+- **Search tabs can now be opened before entering a search.** Empty virtual
+  search tabs focus their own input and remain independent until a valid search
+  is explicitly named and saved. (GH #172)
+
 - **Future-dated journals no longer displace today from the Journals feed.** They
   remain intact and directly reachable through search, links, the calendar, and
   All pages. (GH #171)

@@ -291,7 +291,7 @@ function PaneContent(props: { router: PaneRouter }): JSX.Element {
       when={props.router.route().kind === "query"}
       fallback={<PageView />}
     >
-      <QueryWorkspace route={props.router.route() as QueryRoute} router={props.router} />
+      <QueryWorkspace route={props.router.route() as QueryRoute} router={props.router} focusSource={focusedPaneId() === props.router.paneId} />
     </Show>
   );
 }

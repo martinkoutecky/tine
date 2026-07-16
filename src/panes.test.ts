@@ -133,6 +133,18 @@ describe("pane layout mutations", () => {
     expect(snap.scrolls?.[snap.activeIndex]).toBe(73);
   });
 
+  it("adopts an empty query route without changing its identity/source or the intended focus", () => {
+    resetPaneLayoutToSingle({
+      tabs: [{ history: [{ kind: "query", id: "query-empty-adopt", sourceKind: "search", source: "", presentation: "search" }], pos: 0, pinned: false }],
+      activeIndex: 0,
+    });
+    const target = splitPane("main", "row", { focusNew: false })!;
+    focusPane("main");
+    expect(moveActiveTabToPane("main", target)).toBe(true);
+    expect(paneRouter(target).route()).toEqual({ kind: "query", id: "query-empty-adopt", sourceKind: "search", source: "", presentation: "search" });
+    expect(focusedPaneId()).toBe(target);
+  });
+
   it("moving the last page tab out closes the emptied pane", () => {
     resetPaneLayoutToSingle(pageSnapshot("Source"));
     const target = splitPane("main", "row")!;

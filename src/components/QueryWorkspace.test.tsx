@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import type { PaneRouter, QueryRoute } from "../router";
 import type { PageDto, QueryExecution } from "../types";
@@ -17,11 +18,52 @@ function materializeDeps(overrides: Partial<MaterializeQueryDependencies> = {}):
   return {
     getPage: vi.fn(async () => null),
     savePage: vi.fn(async () => "rev-new"),
+    runGraphSearch: vi.fn(async () => ({ hits: [], diagnostics: [], explanation: { branches: [{ description: "valid", children: [] }] }, cancelled: false })),
     ...overrides,
   };
 }
 
 describe("materializeQueryWorkspace", () => {
+  it("rejects empty, exclusion-only, and Rust-diagnostic friendly searches before any graph write", async () => {
+    for (const source of ["   ", "-draft", "/(a)\\1/"]) {
+      const deps = materializeDeps({ runGraphSearch: vi.fn(async () => source === "-draft"
+        ? { hits: [], diagnostics: [], explanation: { branches: [] }, cancelled: false }
+        : { hits: [], diagnostics: [{ code: "invalid_regex", message: "invalid regex" }], explanation: { branches: [] }, cancelled: false }) });
+      const result = await materializeQueryWorkspace({ title: "Unsafe", sourceKind: "search", source, presentation: "search", routeId: "query-unsafe" }, deps);
+      expect(result.ok).toBe(false);
+      expect(deps.getPage).not.toHaveBeenCalled();
+      expect(deps.savePage).not.toHaveBeenCalled();
+    }
+  });
+  it("uses an explicit stable route lane and zero-limit Rust validation for every nonblank friendly save", async () => {
+    const validate = vi.fn(async () => ({ hits: [], diagnostics: [], explanation: { branches: [{ description: "valid", children: [] }] }, cancelled: false }));
+    const deps = materializeDeps({ runGraphSearch: validate });
+    const input = { title: "Saved", sourceKind: "search" as const, source: " alpha ", presentation: "search" as const, routeId: "query-stable" };
+    await materializeQueryWorkspace(input, deps);
+    await materializeQueryWorkspace(input, deps);
+    expect(validate).toHaveBeenCalledTimes(2);
+    expect(validate).toHaveBeenNthCalledWith(1, "alpha", 0, 0, "query-workspace:query-stable:materialize", true);
+    expect(validate).toHaveBeenNthCalledWith(2, "alpha", 0, 0, "query-workspace:query-stable:materialize", true);
+
+    const blank = materializeDeps();
+    await materializeQueryWorkspace({ ...input, source: "   " }, blank);
+    expect(blank.runGraphSearch).not.toHaveBeenCalled();
+    expect(blank.getPage).not.toHaveBeenCalled();
+    expect(blank.savePage).not.toHaveBeenCalled();
+  });
+  it("rejects JavaScript-invalid, cancelled, and failed Rust validation before page lookup", async () => {
+    const input = { title: "Unsafe", sourceKind: "search" as const, source: "/(unclosed/", presentation: "search" as const, routeId: "query-rejected" };
+    const diagnostic = materializeDeps({ runGraphSearch: vi.fn(async () => ({ hits: [], diagnostics: [{ code: "invalid_regex", message: "invalid regex" }], explanation: { branches: [] }, cancelled: false })) });
+    await materializeQueryWorkspace(input, diagnostic);
+    expect(diagnostic.runGraphSearch).toHaveBeenCalledWith("/(unclosed/", 0, 0, "query-workspace:query-rejected:materialize", true);
+    expect(diagnostic.getPage).not.toHaveBeenCalled(); expect(diagnostic.savePage).not.toHaveBeenCalled();
+    const cancelled = materializeDeps({ runGraphSearch: vi.fn(async () => ({ hits: [], diagnostics: [], explanation: { branches: [] }, cancelled: true })) });
+    await materializeQueryWorkspace({ ...input, source: "alpha" }, cancelled);
+    expect(cancelled.getPage).not.toHaveBeenCalled(); expect(cancelled.savePage).not.toHaveBeenCalled();
+    const failed = materializeDeps({ runGraphSearch: vi.fn(async () => { throw new Error("IPC unavailable"); }) });
+    await materializeQueryWorkspace({ ...input, source: "alpha" }, failed);
+    expect(failed.getPage).not.toHaveBeenCalled(); expect(failed.savePage).not.toHaveBeenCalled();
+  });
   it("creates one canonical friendly query block through the guarded no-baseline save", async () => {
     const deps = materializeDeps();
     const result = await materializeQueryWorkspace({
@@ -29,6 +71,7 @@ describe("materializeQueryWorkspace", () => {
       sourceKind: "search",
       source: "alpha -draft",
       presentation: "search",
+      routeId: "query-project-dashboard",
     }, deps);
 
     expect(result.ok).toBe(true);
@@ -57,6 +100,7 @@ describe("materializeQueryWorkspace", () => {
       sourceKind: "dsl",
       source: "  (and (todo TODO) (priority A))  ",
       presentation: "list",
+      routeId: "query-tasks",
     }, listDeps);
     expect(list.ok && list.page.blocks).toHaveLength(1);
     expect(list.ok && list.page.blocks[0].raw).toBe("{{query (and (todo TODO) (priority A))}}");
@@ -67,6 +111,7 @@ describe("materializeQueryWorkspace", () => {
       sourceKind: "dsl",
       source: "(todo TODO)",
       presentation: "table",
+      routeId: "query-task-table",
     }, tableDeps);
     expect(table.ok && table.page.blocks).toHaveLength(1);
     expect(table.ok && table.page.blocks[0].raw).toBe("{{query (todo TODO)}}\ntine.view:: table");
@@ -86,6 +131,7 @@ describe("materializeQueryWorkspace", () => {
       sourceKind: "search",
       source: "alpha",
       presentation: "list",
+      routeId: "query-taken",
     }, deps);
 
     expect(result).toMatchObject({ ok: false, kind: "exists" });
@@ -101,6 +147,7 @@ describe("materializeQueryWorkspace", () => {
       sourceKind: "search",
       source: "alpha",
       presentation: "board",
+      routeId: "query-raced",
     }, deps);
 
     expect(result).toMatchObject({ ok: false, kind: "conflict" });
@@ -108,8 +155,9 @@ describe("materializeQueryWorkspace", () => {
   });
 });
 
-function routerMock() {
+function routerMock(activeRoute: QueryRoute = { kind: "query", id: "query-mock", sourceKind: "search", source: "", presentation: "search" }) {
   return {
+    route: vi.fn(() => activeRoute),
     updateActiveQuery: vi.fn(),
     replaceActiveRoute: vi.fn(),
     openPage: vi.fn(),
@@ -168,8 +216,10 @@ function workspaceDeps(): QueryWorkspaceDependencies {
   return {
     getPage: vi.fn(async () => null),
     savePage: vi.fn(async () => "saved-rev"),
-    runGraphSearch: vi.fn(async (_source, _pageLimit, _blockLimit, _lane, explain) =>
-      executionFixture(explain)),
+    runGraphSearch: vi.fn(async (_source, pageLimit, blockLimit, _lane, explain) =>
+      pageLimit === 0 && blockLimit === 0
+        ? { hits: [], diagnostics: [], explanation: { branches: [{ description: "valid", children: [] }] }, cancelled: false }
+        : executionFixture(explain)),
     runQuery: vi.fn(async () => []),
     runAdvancedQuery: vi.fn(async () => ({ groups: [], ran: [], ignored: [], supported: true })),
   };
@@ -180,6 +230,71 @@ async function waitFor(check: () => void): Promise<void> {
 }
 
 describe("QueryWorkspace", () => {
+  it("keeps empty workspaces local, neutral, and query-free", async () => {
+    const route: QueryRoute = { kind: "query", id: "query-empty", sourceKind: "search", source: "", presentation: "search" };
+    const deps = workspaceDeps();
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <QueryWorkspace route={route} router={routerMock()} deps={deps} focusSource />, root);
+    await Promise.resolve(); await Promise.resolve();
+    expect(root.querySelector(".query-workspace-status")?.textContent).toContain("Enter a search to begin.");
+    expect(root.querySelector(".query-workspace-status")?.textContent).not.toContain("0 results");
+    expect(root.querySelector(".query-workspace")?.getAttribute("data-query-route-id")).toBe("query-empty");
+    expect(deps.runGraphSearch).not.toHaveBeenCalled(); expect(deps.runQuery).not.toHaveBeenCalled(); expect(deps.runAdvancedQuery).not.toHaveBeenCalled();
+    dispose();
+  });
+  it("uses the correct empty DSL prompt and focuses on pane activation or a route transition without stealing same-route control focus", async () => {
+    const emptyDsl: QueryRoute = { kind: "query", id: "query-dsl", sourceKind: "dsl", source: "", presentation: "list" };
+    const root = document.createElement("div"); document.body.append(root);
+    const disposeDsl = render(() => <QueryWorkspace route={emptyDsl} router={routerMock(emptyDsl)} deps={workspaceDeps()} focusSource />, root);
+    await Promise.resolve(); await Promise.resolve();
+    expect(root.querySelector(".query-workspace-status")?.textContent).toContain("Enter a query to begin.");
+    expect(root.querySelector(".query-workspace-status")?.textContent).not.toContain("0 results");
+    disposeDsl(); root.innerHTML = "";
+
+    const first: QueryRoute = { kind: "query", id: "query-focus-a", sourceKind: "search", source: "", presentation: "search" };
+    const second: QueryRoute = { ...first, id: "query-focus-b" };
+    const [active, setActive] = createSignal<QueryRoute>(first);
+    const [focusSource, setFocusSource] = createSignal(false);
+    const router = routerMock(first);
+    vi.mocked(router.route).mockImplementation(active);
+    const dispose = render(() => <QueryWorkspace route={active()} router={router} deps={workspaceDeps()} focusSource={focusSource()} />, root);
+    await Promise.resolve(); await Promise.resolve();
+    const source = root.querySelector<HTMLInputElement>(".query-workspace-source")!;
+    const filters = root.querySelector<HTMLButtonElement>(".query-advanced-toggle")!;
+    filters.focus();
+    expect(document.activeElement).toBe(filters);
+    // A restored route may have mounted while its pane was inactive. Activating
+    // that pane must focus this same route once, rather than waiting for a new
+    // tab/route identity.
+    setFocusSource(true);
+    await Promise.resolve(); await Promise.resolve();
+    expect(document.activeElement).toBe(source);
+    filters.focus();
+    setActive({ ...first, source: "alpha" });
+    await Promise.resolve(); await Promise.resolve();
+    expect(document.activeElement).toBe(filters);
+    setActive({ ...first, source: "alpha", presentation: "table" });
+    await Promise.resolve(); await Promise.resolve();
+    expect(document.activeElement).toBe(filters);
+    setActive(second);
+    await Promise.resolve(); await Promise.resolve();
+    expect(document.activeElement).toBe(source);
+    dispose();
+  });
+  it("keeps invalid friendly input editable and reports the Rust diagnostic", async () => {
+    const route: QueryRoute = { kind: "query", id: "query-invalid", sourceKind: "search", source: "/(a)\\1/", presentation: "search" };
+    const deps = workspaceDeps();
+    vi.mocked(deps.runGraphSearch).mockResolvedValue({ hits: [], diagnostics: [{ code: "invalid_regex", message: "invalid regex" }], explanation: { branches: [] }, cancelled: false });
+    const root = document.createElement("div"); document.body.append(root);
+    const router = routerMock(route);
+    const dispose = render(() => <QueryWorkspace route={route} router={router} deps={deps} />, root);
+    await waitFor(() => expect(root.querySelector(".query-workspace-diagnostics")?.textContent).toContain("invalid regex"));
+    const input = root.querySelector<HTMLInputElement>(".query-workspace-source")!;
+    expect(input.value).toBe("/(a)\\1/");
+    input.value = "  /(a)\\1/  "; input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    expect(router.updateActiveQuery).toHaveBeenLastCalledWith({ source: "  /(a)\\1/  ", sourceKind: "search" });
+    dispose();
+  });
   it("shows evidence, diagnostics and explanations, and switches presentations without changing membership", async () => {
     const route: QueryRoute = {
       kind: "query",
