@@ -341,10 +341,20 @@ try {
       document.querySelector('.sheet-table .sheet-cell[data-row="0"][data-col="5"] input.sheet-prop-input')?.value ?? null
     );
     check("typing after Tab targets the next cell", occurrenceDraft === "3", JSON.stringify(occurrenceDraft));
-    await browser.keys(["Enter"]);
     await browser.keys(["Tab"]);
+    await sleep(250);
+    const afterOccurrenceTab = await browser.execute(() => {
+      const selected = document.querySelector('.sheet-table .sheet-cell-selected');
+      return selected ? { row: selected.getAttribute("data-row"), col: selected.getAttribute("data-col") } : null;
+    });
+    check("repeated typed Table Tab keeps advancing", afterOccurrenceTab?.row === "0" && afterOccurrenceTab?.col === "6", JSON.stringify(afterOccurrenceTab));
+
     await browser.keys(["4"]);
     await sleep(150);
+    const detectionDraft = await browser.execute(() =>
+      document.querySelector('.sheet-table .sheet-cell[data-row="0"][data-col="6"] input.sheet-prop-input')?.value ?? null
+    );
+    check("typing after repeated Tab targets the third cell", detectionDraft === "4", JSON.stringify(detectionDraft));
     await browser.keys(["Enter"]);
     await sleep(500);
 

@@ -795,7 +795,7 @@ describe("SheetTable", () => {
     dispose();
   });
 
-  it("commits a typed cell before Tab advances so the next value does not overwrite it (GH #176)", () => {
+  it("commits a typed cell before Tab advances so the next value does not overwrite it (GH #176)", async () => {
     setDoc({
       byId: {
         table: node(
@@ -823,8 +823,10 @@ describe("SheetTable", () => {
     const afterTab = cellSel();
 
     expect(handleCellSelectionKey(new KeyboardEvent("keydown", { key: "3" }))).toBe(true);
+    await tick();
     const nextDraft = root.querySelector("input.sheet-prop-input") as HTMLInputElement;
     expect(nextDraft.value).toBe("3");
+    const nextWasFocused = document.activeElement === nextDraft;
     keydown(nextDraft, "Enter");
 
     // Assert the literal outcome only after the uninterrupted second edit. On
@@ -833,6 +835,7 @@ describe("SheetTable", () => {
     expect(doc.byId.r1.raw).toBe("Risk\nseverity:: 2\noccurrence:: 3");
     expect(cell(root, 0, 3).textContent).toContain("6");
     expect(afterTab).toMatchObject({ kind: "cell", gridId: "table", row: 0, col: 2 });
+    expect(nextWasFocused).toBe(true);
 
     dispose();
   });

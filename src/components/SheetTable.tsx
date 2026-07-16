@@ -1272,6 +1272,18 @@ function FieldCell(props: {
           class="sheet-prop-input"
           classList={{ "sheet-input-invalid": inputInvalid() }}
           autofocus
+          ref={(el) => {
+            // Dynamically inserted autofocus inputs are not focused reliably by
+            // WebKit. Without an explicit handoff, type-to-overtype displays
+            // its first character but the next Tab is handled from selection
+            // mode and discards that draft (GH #176).
+            queueMicrotask(() => {
+              if (!el.isConnected) return;
+              el.focus();
+              const end = el.value.length;
+              el.setSelectionRange(end, end);
+            });
+          }}
           value={props.initial}
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
