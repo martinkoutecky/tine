@@ -785,6 +785,8 @@ export function clearRecent() {
   }
 }
 export function pushRecent(name: string, kind: "page" | "journal" = "page") {
+  const first = recentPages()[0];
+  if (first?.name === name && first.kind === kind) return;
   const cur = recentPages().filter((r) => !(r.name === name && r.kind === kind));
   const next = [{ name, kind }, ...cur].slice(0, 20);
   setRecentPages(next);

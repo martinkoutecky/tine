@@ -291,7 +291,9 @@ export function closePane(paneId = focusedPaneId()): boolean {
 }
 
 export function focusPane(paneId: string) {
-  if (layoutPaneIds().includes(paneId)) setFocusedPaneId(paneId);
+  if (!layoutPaneIds().includes(paneId) || focusedPaneId() === paneId) return;
+  setFocusedPaneId(paneId);
+  paneRouter(paneId).activateCurrentRoute();
 }
 
 function finishMovedTab(sourcePaneId: string, targetPaneId: string, moved: { emptied: boolean }) {
@@ -468,4 +470,7 @@ installNavigationInterceptor((paneId, r) => {
   return false;
 });
 registerPaneRouteProvider(activePaneRoutes);
-registerPaneFocusSetter(setFocusedPaneId);
+// Pointer/focus-driven pane changes are genuine foreground activations. Raw
+// setFocusedPaneId remains for restore/preload/layout construction, which must
+// not rewrite RECENT merely because a saved session was reconstructed.
+registerPaneFocusSetter(focusPane);

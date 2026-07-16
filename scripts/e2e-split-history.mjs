@@ -1,5 +1,6 @@
 // Linux real-app proof for GH #170. A global Back/Forward toolbar click must
-// preserve the focused split pane and navigate that pane's active-tab history.
+// preserve the focused split pane, navigate that pane's active-tab history,
+// and promote the route the user actually brought to the foreground in RECENT.
 import { spawn } from "node:child_process";
 import { remote } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -109,6 +110,14 @@ try {
   await browser.waitUntil(async () => browser.execute((id) =>
     document.querySelector(`[data-pane-id="${id}"] .page-title`)?.textContent?.trim() === "Page 2",
   rightPane), { timeout: 5_000, timeoutMsg: "toolbar Back did not return the focused split pane to Page 2" });
+  const recentAfterBack = await browser.execute(() =>
+    [...document.querySelectorAll("#sidebar-recent-list .nav-page")]
+      .map((item) => item.textContent?.trim())
+      .filter(Boolean),
+  );
+  if (recentAfterBack[0] !== "Page 2") {
+    throw new Error(`Back did not promote Page 2 in RECENT: ${JSON.stringify(recentAfterBack)}`);
+  }
 
   const forward = await browser.$('button[title="Go forward"]');
   if (!(await forward.isEnabled())) throw new Error("Forward was disabled after split-pane Back");
@@ -116,13 +125,21 @@ try {
   await browser.waitUntil(async () => browser.execute((id) =>
     document.querySelector(`[data-pane-id="${id}"] .page-title`)?.textContent?.trim() === "B",
   rightPane), { timeout: 5_000, timeoutMsg: "toolbar Forward did not return the focused split pane to B" });
+  const recentAfterForward = await browser.execute(() =>
+    [...document.querySelectorAll("#sidebar-recent-list .nav-page")]
+      .map((item) => item.textContent?.trim())
+      .filter(Boolean),
+  );
+  if (recentAfterForward[0] !== "B") {
+    throw new Error(`Forward did not promote B in RECENT: ${JSON.stringify(recentAfterForward)}`);
+  }
 
   const leftAfter = await browser.execute(() =>
     document.querySelector('[data-pane-id="main"] .page-title')?.textContent?.trim() ?? null,
   );
   if (leftAfter !== leftBefore) throw new Error(`toolbar history mutated the main pane: ${leftBefore} -> ${leftAfter}`);
 
-  console.log("PASS: global Back/Forward preserved the focused split pane and navigated only its active-tab history");
+  console.log("PASS: global Back/Forward preserved split history and promoted only foreground routes in RECENT");
 } finally {
   try { await browser?.deleteSession(); } catch {}
   try { process.kill(-td.pid, "SIGKILL"); } catch {}
