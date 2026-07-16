@@ -820,17 +820,19 @@ describe("SheetTable", () => {
     // jsdom does not perform native focus traversal. Mirror the browser blur
     // only when the component did not take ownership of the Tab gesture.
     if (!tab.defaultPrevented) severity.dispatchEvent(new FocusEvent("blur"));
-
-    expect(blockProperty("r1", "severity")).toBe("2");
-    expect(cellSel()).toMatchObject({ kind: "cell", gridId: "table", row: 0, col: 2 });
+    const afterTab = cellSel();
 
     expect(handleCellSelectionKey(new KeyboardEvent("keydown", { key: "3" }))).toBe(true);
-    const occurrence = root.querySelector("input.sheet-prop-input") as HTMLInputElement;
-    expect(occurrence.value).toBe("3");
-    keydown(occurrence, "Enter");
+    const nextDraft = root.querySelector("input.sheet-prop-input") as HTMLInputElement;
+    expect(nextDraft.value).toBe("3");
+    keydown(nextDraft, "Enter");
 
+    // Assert the literal outcome only after the uninterrupted second edit. On
+    // the pre-fix code, Tab left selection on severity and this exact sequence
+    // produced `severity:: 3` with no occurrence value or formula result.
     expect(doc.byId.r1.raw).toBe("Risk\nseverity:: 2\noccurrence:: 3");
     expect(cell(root, 0, 3).textContent).toContain("6");
+    expect(afterTab).toMatchObject({ kind: "cell", gridId: "table", row: 0, col: 2 });
 
     dispose();
   });
