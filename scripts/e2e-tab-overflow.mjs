@@ -113,9 +113,10 @@ try {
   // Drive the reporter's literal pointer path. A programmatic HTMLElement.click()
   // bypasses WebView2's pointer-capture retargeting and cannot reproduce GH #174.
   const beforePointerClose = await browser.$$(".tab-strip-scroll > .tab").length;
+  const expectedTabsAfterPointerClose = beforePointerClose - 1;
   const pointerClose = await browser.$(".tab-strip-scroll > .tab:last-child .tab-close");
   await pointerClose.click();
-  await browser.waitUntil(async () => (await browser.$$(".tab-strip-scroll > .tab")).length === beforePointerClose - 1, {
+  await browser.waitUntil(async () => (await browser.$$(".tab-strip-scroll > .tab")).length === expectedTabsAfterPointerClose, {
     timeout: 5000,
     timeoutMsg: "native close-button pointer click did not close its tab",
   });
@@ -124,7 +125,9 @@ try {
   await browser.keys("Enter");
   await browser.$("[role=listbox]").waitForExist({ timeout: 5000 });
   const rows = await browser.$$("[data-tab-overview-row]");
-  if (rows.length !== initial.tabs) throw new Error(`${rows.length} overview rows for ${initial.tabs} tabs`);
+  if (rows.length !== expectedTabsAfterPointerClose) {
+    throw new Error(`${rows.length} overview rows for ${expectedTabsAfterPointerClose} remaining tabs`);
+  }
   await browser.keys("End");
   const selectedId = await browser.execute(() => document.activeElement?.getAttribute("data-tab-id"));
   if (!selectedId) throw new Error("End did not focus the final overview row");
