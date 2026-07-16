@@ -41,6 +41,7 @@ const windowsScenarios = [
   "e2e-page-trailing-block.mjs",
   "e2e-pdf-logseq.mjs",
   "e2e-print-security.mjs",
+  "e2e-tab-overflow.mjs",
 ];
 
 const successfulFullCiRun = {
@@ -150,7 +151,7 @@ assert.match(
 );
 assert.match(
   uiE2eWorkflow,
-  /windows_scenario == 'all'[\s\S]*?\["windows-core","og-parity-references","page-properties","page-trailing-block","pdf-logseq","print-security"\]/,
+  /windows_scenario == 'all'[\s\S]*?\["windows-core","og-parity-references","page-properties","page-trailing-block","pdf-logseq","print-security","tab-overflow"\]/,
   "the focused UI workflow cannot fan out all Windows scenarios explicitly"
 );
 assert.doesNotMatch(

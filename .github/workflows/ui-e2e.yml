@@ -72,7 +72,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        scenario: ${{ fromJSON((inputs.windows_scenario == '' || inputs.windows_scenario == 'all') && '["windows-core","og-parity-references","page-properties","page-trailing-block","pdf-logseq","print-security"]' || format('["{0}"]', inputs.windows_scenario)) }}
+        scenario: ${{ fromJSON((inputs.windows_scenario == '' || inputs.windows_scenario == 'all') && '["windows-core","og-parity-references","page-properties","page-trailing-block","pdf-logseq","print-security","tab-overflow"]' || format('["{0}"]', inputs.windows_scenario)) }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

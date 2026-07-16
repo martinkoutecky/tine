@@ -276,6 +276,7 @@ jobs:
           - page-trailing-block
           - pdf-logseq
           - print-security
+          - tab-overflow
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4

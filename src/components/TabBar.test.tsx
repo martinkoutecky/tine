@@ -119,6 +119,26 @@ describe("TabBar pointer tab drag", () => {
     dispose();
   });
 
+  it("keeps the visible close control out of tab drag pointer capture", () => {
+    resetPaneLayoutToSingle(pageSnapshot(["A", "B"]));
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const dispose = render(() => <TabBar router={paneRouter("main")} />, root);
+    const first = root.querySelector<HTMLElement>(".tab")!;
+    const close = first.querySelector<HTMLElement>(".tab-close")!;
+    const setPointerCapture = vi.fn();
+    Object.defineProperty(first, "setPointerCapture", { configurable: true, value: setPointerCapture });
+
+    const down = pointer("pointerdown", 95, 10, { pointerId: 174 });
+    close.dispatchEvent(down);
+
+    expect(down.defaultPrevented).toBe(false);
+    expect(setPointerCapture).not.toHaveBeenCalled();
+    close.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+    expect(namesForPane("main")).toEqual(["B"]);
+    dispose();
+  });
+
   it("reorders a tab within the same strip after the pointer threshold", () => {
     const { root, dispose } = renderSplit(["A", "B", "C"], ["X"]);
     const first = tab(root, "main", 0);
