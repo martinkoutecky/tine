@@ -1,8 +1,9 @@
-import { createSignal, Show, type JSX } from "solid-js";
+import { createEffect, createSignal, onCleanup, Show, type JSX } from "solid-js";
 import { switchGraph, createNewGraph } from "../graph";
 import { isTauri } from "../backend";
 import { WindowControls } from "./WindowChrome";
 import { osDrawsWindowControls } from "../nativeChrome";
+import { registerTransientLayer } from "../transientLayers";
 
 /** First-run onboarding. Shown (as a full-cover layer) when the app starts with
  *  no graph configured: choose to open an existing Logseq graph, or create a new
@@ -10,7 +11,7 @@ import { osDrawsWindowControls } from "../nativeChrome";
 export function Welcome(props: { onClose?: () => void } = {}): JSX.Element {
   const [busy, setBusy] = createSignal<null | "open" | "create">(null);
 
-  const run = (which: "open" | "create", fn: () => Promise<void>) => async () => {
+  const run = (which: "open" | "create", fn: () => Promise<unknown>) => async () => {
     if (busy()) return;
     setBusy(which);
     try {
@@ -98,5 +99,33 @@ export function Welcome(props: { onClose?: () => void } = {}): JSX.Element {
         </p>
       </div>
     </div>
+  );
+}
+
+/** Production truth-table seam: first-load/forced Welcome is mandatory even
+ * when Help's optional signal is also set.  Only the optional-on-a-graph layer
+ * owns a transient dismissal rung. */
+export function WelcomeLayer(props: {
+  mandatory: boolean;
+  optionalOpen: boolean;
+  onClose: () => void;
+}): JSX.Element {
+  const visible = () => props.mandatory || props.optionalOpen;
+  const dismissible = () => props.optionalOpen && !props.mandatory;
+  // First-load Welcome has no close action and deliberately does not consume
+  // Escape/Back. A Help-opened Welcome over a real graph is the distinct owner.
+  createEffect(() => {
+    if (!dismissible()) return;
+    const unregister = registerTransientLayer({
+      id: "welcome",
+      root: () => document.querySelector<HTMLElement>(".welcome-card"),
+      dismiss: () => { props.onClose(); return true; },
+    });
+    onCleanup(unregister);
+  });
+  return (
+    <Show when={visible()}>
+      <Welcome onClose={dismissible() ? props.onClose : undefined} />
+    </Show>
   );
 }

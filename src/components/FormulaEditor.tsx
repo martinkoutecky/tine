@@ -7,6 +7,7 @@ import {
 } from "../ui";
 import { blockPageReadOnly, doc, pageByName, setBlockProperty, setPageProperty } from "../store";
 import { astToExpr, encodeFormulaExpr, formulaNameValid, parseFormula, type Ast, type BinaryOp } from "../sheet/formula";
+import { registerTransientLayer } from "../transientLayers";
 
 const STDLIB_CHIPS = [
   "if()",
@@ -180,6 +181,11 @@ export function FormulaEditor(): JSX.Element {
 }
 
 function FormulaEditorPopup(props: { target: FormulaEditorTarget }): JSX.Element {
+  let root: HTMLFormElement | undefined;
+  createEffect(() => {
+    const unregister = registerTransientLayer({ id: "formula-editor", root: () => root ?? null, dismiss: () => { closeFormulaEditor(); return true; } });
+    onCleanup(unregister);
+  });
   const [name, setName] = createSignal(props.target.mode === "add" ? "" : props.target.name ?? "");
   const [expr, setExpr] = createSignal(props.target.expr);
   const initialParsed = (() => {
@@ -290,18 +296,9 @@ function FormulaEditorPopup(props: { target: FormulaEditorTarget }): JSX.Element
       setWinW(window.innerWidth);
       setWinH(window.innerHeight);
     };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        e.stopPropagation();
-        closeFormulaEditor();
-      }
-    };
     window.addEventListener("resize", onResize);
-    window.addEventListener("keydown", onKey, true);
     onCleanup(() => {
       window.removeEventListener("resize", onResize);
-      window.removeEventListener("keydown", onKey, true);
     });
   });
 
@@ -315,6 +312,7 @@ function FormulaEditorPopup(props: { target: FormulaEditorTarget }): JSX.Element
       }}
     >
       <form
+        ref={root}
         class="formula-editor"
         style={{ left: `${left()}px`, top: `${top()}px` }}
         onClick={(e) => e.stopPropagation()}

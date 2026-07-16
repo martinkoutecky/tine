@@ -189,7 +189,8 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   chronologically. (`sort-by modified/priority/page/deadline/scheduled` extend
   Logseq's property-only `sort-by`.)
 - ⊕ **Persistent search/query workspaces** — Ctrl+K can open its complete page and
-  block result set in a graph-scoped virtual tab. The workspace survives restart,
+  block result set in a graph-scoped virtual tab; an empty workspace can be opened
+  first and then searched directly in its own input. The workspace survives restart,
   switches between Search/List/Table/Board without changing membership, and remains
   outside the graph until named. Giving it a title materializes one ordinary query
   page, so exploratory search and durable dashboards share a single path.
@@ -545,6 +546,11 @@ within a column; merged cells are still v2+.
   a hardware **Back** button that navigates within Tine (exiting only at the root),
   and compact journal headers and settings for a phone. Interface size scales the
   complete Android document and persists locally.
+- **Width-responsive sidebars** — below 640 px, the left and right sidebars are
+  modal drawers over an unchanged page: tap the shaded outside edge, use their
+  close control, press Escape, or press Android Back to dismiss them safely. At
+  640 px and wider—including tablets—they remain persistent desktop-style panes,
+  can be open together, and retain their resize controls.
 - **Distribution** — sideloaded, release-signed APK attached to each GitHub
   release (built and signed in CI). Play Store / F-Droid are planned; iOS is
   being scoped.

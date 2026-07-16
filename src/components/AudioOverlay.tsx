@@ -9,6 +9,7 @@ import { For, Show, createEffect, createResource, createSignal, onCleanup, onMou
 import { audioPlayer, setAudioPlayer } from "../ui";
 import { backend, isTauri } from "../backend";
 import { acquireMediaBlobFallback, type MediaBlobLease } from "../mediaBlobFallback";
+import { registerTransientLayer } from "../transientLayers";
 
 /** Bare `assets/`-relative path of a media URL (mirrors inline.tsx's helper). */
 function relOf(url: string): string | null {
@@ -134,6 +135,15 @@ export function AudioOverlay(): JSX.Element {
     releaseBlobFallback();
     setAudioPlayer(null);
   };
+  createEffect(() => {
+    if (!audioPlayer()) return;
+    const unregister = registerTransientLayer({
+      id: "expanded-audio",
+      root: () => document.querySelector<HTMLElement>(".audio-overlay"),
+      dismiss: () => { close(); return true; },
+    });
+    onCleanup(unregister);
+  });
   const togglePlay = () => {
     if (!audioEl) return;
     if (audioEl.paused) void audioEl.play().catch(() => {});
@@ -158,15 +168,12 @@ export function AudioOverlay(): JSX.Element {
     }
   });
 
-  // Esc closes; Space toggles play (capture phase so it wins over block handlers).
+  // Escape is owned by the application transient registry; this listener keeps
+  // the non-dismissal Space transport control local.
   onMount(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!audioPlayer()) return;
-      if (e.key === "Escape") {
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        close();
-      } else if (e.key === " " || e.code === "Space") {
+      if (e.key === " " || e.code === "Space") {
         e.preventDefault();
         e.stopImmediatePropagation();
         togglePlay();

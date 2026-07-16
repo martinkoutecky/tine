@@ -21,6 +21,7 @@
     "docs:check": "node scripts/build-guide-demo.mjs --check",
     "docs:check-geometry": "node scripts/check-publish-outline-geometry.mjs",
     "ui:check-mobile-layout": "node scripts/check-mobile-layout.mjs",
+    "ui:check-mobile-drawers": "node scripts/check-mobile-drawers.mjs",
     "ui:check-selection-toolbar": "node scripts/check-selection-toolbar.mjs",
     "ui:check-devtools-detach": "node scripts/check-devtools-detach.mjs",
     "e2e:wayland-app-id": "node scripts/e2e-wayland-app-id.mjs",

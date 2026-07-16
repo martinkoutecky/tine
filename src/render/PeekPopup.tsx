@@ -1,7 +1,8 @@
-import { Show, createContext, createEffect, createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { Show, createContext, createEffect, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { Portal } from "solid-js/web";
 import { RefBlocks } from "../components/RefBlocks";
 import type { BlockDto } from "../types";
+import { registerTransientLayer } from "../transientLayers";
 
 export const PeekContext = createContext(false);
 
@@ -46,8 +47,10 @@ export function PeekPopup(props: {
   truncatedCount?: () => number;
   onPointerEnter: () => void;
   onPointerLeave: () => void;
+  onDismiss: () => void;
 }): JSX.Element {
   let popupEl: HTMLDivElement | undefined;
+  const layerId = `peek-popup-${createUniqueId()}`;
   const [style, setStyle] = createSignal<Record<string, string>>({});
 
   const updatePosition = () => {
@@ -78,6 +81,15 @@ export function PeekPopup(props: {
     queueMicrotask(updatePosition);
   });
 
+  createEffect(() => {
+    const unregister = registerTransientLayer({
+      id: layerId,
+      root: () => popupEl ?? null,
+      dismiss: () => { props.onDismiss(); return true; },
+    });
+    onCleanup(unregister);
+  });
+
   onMount(() => {
     const close = () => props.onPointerLeave();
     // Dismiss when the PAGE BEHIND scrolls, but NOT when the user scrolls the
@@ -88,16 +100,11 @@ export function PeekPopup(props: {
       if (popupEl && t && (popupEl === t || popupEl.contains(t))) return;
       close();
     };
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close();
-    };
     window.addEventListener("scroll", onScroll, true);
     window.addEventListener("resize", close);
-    window.addEventListener("keydown", onKeyDown);
     onCleanup(() => {
       window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("resize", close);
-      window.removeEventListener("keydown", onKeyDown);
     });
   });
 
@@ -113,9 +120,6 @@ export function PeekPopup(props: {
         onMouseEnter={props.onPointerEnter}
         onMouseLeave={props.onPointerLeave}
         onMouseDown={(e) => e.stopPropagation()}
-        onKeyDown={(e) => {
-          if (e.key === "Escape") props.onPointerLeave();
-        }}
       >
         <Show when={props.title}>
           <div class="peek-popup-title">{props.title}</div>

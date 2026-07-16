@@ -111,6 +111,21 @@ function Capture() {
     ta.style.height = `${ta.scrollHeight}px`;
   };
 
+  // Moving focus to the title is a real editor blur: Block commits and exits
+  // editing, so its textarea is unmounted. Plain title Enter must therefore
+  // restart the real scratch-root editing lifecycle before refitting/focusing
+  // the textarea; querying for the old node after blur can never work.
+  const resumeScratchEditor = () => {
+    const root = roots()[0];
+    if (!root) return;
+    if (!document.querySelector(".capture-shell .page-blocks textarea")) {
+      startEditing(root, doc.byId[root]?.raw.length ?? 0, null);
+    }
+    // Solid mounts the real Editor synchronously from startEditing; defer the
+    // capture-specific fit/focus until that lifecycle has attached its textarea.
+    queueMicrotask(refit);
+  };
+
   // --- auto-grow the window to fit its content + any open popup --------------
   // The capture window starts tiny (one line). As you add blocks, wrap lines, or
   // open an autocomplete popup / date picker, paint would overflow the OS window
@@ -539,6 +554,10 @@ function Capture() {
             placeholder="Page Title (optional, if empty → appended to Today)"
             onInput={(e) => setTitle(e.currentTarget.value)}
             onKeyDown={(e) => {
+              // The global capture dispatcher declines IME Escape, so the title
+              // target must do the same rather than falling through to submit,
+              // cancellation, or title-to-editor focus movement.
+              if (e.isComposing || e.keyCode === 229) return;
               const want = shortcuts()["editor/quick-capture-file"] || "mod+shift+enter";
               if (eventToBindingString(e) === want) {
                 e.preventDefault();
@@ -548,7 +567,7 @@ function Capture() {
                 cancel();
               } else if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
                 e.preventDefault();
-                document.querySelector<HTMLTextAreaElement>(".capture-shell .page-blocks textarea")?.focus();
+                resumeScratchEditor();
               }
             }}
           />

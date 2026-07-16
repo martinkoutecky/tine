@@ -229,11 +229,16 @@ function createPeekBridge(disabled: () => boolean) {
     clearClose();
     closeT = setTimeout(() => setOpen(false), PEEK_CLOSE_MS);
   };
+  const dismiss = () => {
+    clearOpen();
+    clearClose();
+    setOpen(false);
+  };
   onCleanup(() => {
     clearOpen();
     clearClose();
   });
-  return { open, anchorEnter, anchorLeave, popupEnter, popupLeave };
+  return { open, anchorEnter, anchorLeave, popupEnter, popupLeave, dismiss };
 }
 
 // A `[[page]]` / `#tag` anchor — shared by page_ref links, bare refs, and #tags.
@@ -319,6 +324,7 @@ export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolea
           truncatedCount={() => capped().truncated}
           onPointerEnter={peek.popupEnter}
           onPointerLeave={peek.popupLeave}
+          onDismiss={peek.dismiss}
         />
       </Show>
     </>
@@ -1183,6 +1189,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
           truncatedCount={previewTruncated}
           onPointerEnter={peek.popupEnter}
           onPointerLeave={peek.popupLeave}
+          onDismiss={peek.dismiss}
         />
       </Show>
     </>

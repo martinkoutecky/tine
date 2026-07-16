@@ -10,6 +10,7 @@ import { EmojiText } from "../render/emoji";
 import { SearchResultRow } from "./SearchResultRow";
 import type { MatchSpan, ObjectiveMatchClass, PageKind } from "../types";
 import { rankLauncherItems, recordLauncherActivation } from "../launcherRanking";
+import { dismissTopTransient, registerTransientLayer } from "../transientLayers";
 
 // One selectable result row.
 type Item =
@@ -371,13 +372,8 @@ export function QuickSwitcher(): JSX.Element {
         else choose(it);
       }
     } else if (e.key === "Escape") {
-      e.preventDefault();
-      if (syntaxOpen()) {
-        setSyntaxOpen(false);
-        queueMicrotask(() => inputRef?.focus());
-      } else {
-        cancelSwitcher();
-      }
+      if (e.isComposing || e.keyCode === 229) return;
+      if (dismissTopTransient("escape")) e.preventDefault();
     }
   };
 
@@ -386,6 +382,20 @@ export function QuickSwitcher(): JSX.Element {
     closeSwitcher();
     if (embryo) closePane(embryo.paneId);
   };
+  createEffect(() => {
+    if (!switcherOpen()) return;
+    const unregister = registerTransientLayer({
+      id: "quick-switcher",
+      root: () => document.querySelector(".switcher"),
+      trigger: () => inputRef ?? null,
+      dismiss: () => {
+        if (syntaxOpen()) { setSyntaxOpen(false); queueMicrotask(() => inputRef?.focus()); return true; }
+        cancelSwitcher();
+        return true;
+      },
+    });
+    onCleanup(unregister);
+  });
 
   // Running flat index for a given (section, itemIndex), to match the cursor.
   const flatIndex = (sIdx: number, iIdx: number): number => {

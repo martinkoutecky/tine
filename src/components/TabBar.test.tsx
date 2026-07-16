@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { PaneTree } from "../App";
+import { installKeybindings } from "../keybindings";
 import { layoutPaneIds, layoutRoot, paneRouter, resetPaneLayoutToSingle, restorePaneLayout } from "../panes";
 import { resetStore } from "../store";
+import { clearTransientLayersForTest, registerTransientLayer } from "../transientLayers";
 import { tabRoute, type PaneSnapshot } from "../router";
-import { TabBar } from "./TabBar";
+import { TabBar, tabDragState } from "./TabBar";
 
 const pageSnapshot = (names: string[], activeIndex = 0): PaneSnapshot => ({
   tabs: names.map((name) => ({ history: [{ kind: "page", name, pageKind: "page" }], pos: 0, pinned: false })),
@@ -39,7 +41,7 @@ function setRect(el: Element | null, left: number, top: number, width: number, h
 
 function pointer(type: string, x: number, y: number, init: PointerEventInit = {}): PointerEvent {
   const Ctor = window.PointerEvent ?? MouseEvent;
-  return new Ctor(type, {
+  const event = new Ctor(type, {
     bubbles: true,
     cancelable: true,
     clientX: x,
@@ -47,6 +49,10 @@ function pointer(type: string, x: number, y: number, init: PointerEventInit = {}
     button: init.button ?? 0,
     buttons: init.buttons ?? 1,
   }) as PointerEvent;
+  if (init.pointerId != null && event.pointerId !== init.pointerId) {
+    Object.defineProperty(event, "pointerId", { value: init.pointerId });
+  }
+  return event;
 }
 
 function namesForPane(paneId: string): string[] {
@@ -84,6 +90,7 @@ function tab(root: ParentNode, paneId: string, index: number): HTMLElement {
 }
 
 afterEach(() => {
+  clearTransientLayersForTest();
   document.body.innerHTML = "";
   resetStore();
   resetPaneLayoutToSingle(journalsSnapshot());
@@ -187,8 +194,17 @@ describe("TabBar pointer tab drag", () => {
     dispose();
   });
 
-  it("Escape cancels an armed tab drag before drop", () => {
+  it("the shared dispatcher gives an armed tab drag one Escape before a lower layer", () => {
     const { root, dispose } = renderSplit(["A", "B", "C"], ["X"]);
+    const uninstall = installKeybindings();
+    let lowerDismissals = 0;
+    const lowerRoot = document.createElement("button");
+    document.body.append(lowerRoot);
+    const unregisterLower = registerTransientLayer({
+      id: "tab-drag-lower",
+      root: () => lowerRoot,
+      dismiss: () => { lowerDismissals += 1; return true; },
+    });
     const first = tab(root, "main", 0);
     const third = tab(root, "main", 2);
     setRect(third, 100, 0, 50, 24);
@@ -197,11 +213,78 @@ describe("TabBar pointer tab drag", () => {
 
     first.dispatchEvent(pointer("pointerdown", 10, 10));
     window.dispatchEvent(pointer("pointermove", 140, 10));
-    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    const escape = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    first.dispatchEvent(escape);
+    expect(escape.defaultPrevented).toBe(true);
+    expect(lowerDismissals).toBe(0);
+    expect(tabDragState()).toBeNull();
     window.dispatchEvent(pointer("pointerup", 140, 10, { buttons: 0 }));
 
     expect(namesForPane("main")).toEqual(["A", "B", "C"]);
+    first.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    expect(lowerDismissals).toBe(1);
     document.elementFromPoint = prevElementFromPoint;
+    unregisterLower();
+    uninstall();
+    dispose();
+  });
+
+  it.each([
+    ["composing", { composing: true, keyCode: undefined }],
+    ["keyCode 229", { composing: false, keyCode: 229 }],
+  ] as const)("keeps an armed tab drag active for %s Escape", (_name, variant) => {
+    const { root, dispose } = renderSplit(["A", "B", "C"], ["X"]);
+    const uninstall = installKeybindings();
+    const first = tab(root, "main", 0);
+    const third = tab(root, "main", 2);
+    setRect(third, 100, 0, 50, 24);
+    const prevElementFromPoint = document.elementFromPoint;
+    document.elementFromPoint = () => third;
+
+    first.dispatchEvent(pointer("pointerdown", 10, 10));
+    window.dispatchEvent(pointer("pointermove", 140, 10));
+    const event = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    if (variant.composing) Object.defineProperty(event, "isComposing", { value: true });
+    if (variant.keyCode != null) Object.defineProperty(event, "keyCode", { value: variant.keyCode });
+    first.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(tabDragState()).not.toBeNull();
+
+    first.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    expect(tabDragState()).toBeNull();
+    document.elementFromPoint = prevElementFromPoint;
+    uninstall();
+    dispose();
+  });
+
+  it("makes replacement generation-safe so a retired pointer release cannot finish the newer strip drag", () => {
+    const { root, dispose } = renderSplit(["A", "B", "C"], ["X", "Y"]);
+    const uninstall = installKeybindings();
+    const first = tab(root, "main", 0);
+    const second = tab(root, "pane-2", 0);
+    const target = tab(root, "main", 2);
+    const prevElementFromPoint = document.elementFromPoint;
+    document.elementFromPoint = () => target;
+
+    first.dispatchEvent(pointer("pointerdown", 10, 10, { pointerId: 11 }));
+    window.dispatchEvent(pointer("pointermove", 140, 10, { pointerId: 11 }));
+    expect(tabDragState()?.paneId).toBe("main");
+
+    second.dispatchEvent(pointer("pointerdown", 210, 10, { pointerId: 22 }));
+    window.dispatchEvent(pointer("pointermove", 140, 10, { pointerId: 22 }));
+    expect(tabDragState()?.paneId).toBe("pane-2");
+
+    window.dispatchEvent(pointer("pointerup", 140, 10, { pointerId: 11, buttons: 0 }));
+    expect(tabDragState()?.paneId).toBe("pane-2");
+    second.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    window.dispatchEvent(pointer("pointerup", 140, 10, { pointerId: 22, buttons: 0 }));
+    expect(tabDragState()).toBeNull();
+    expect(namesForPane("main")).toEqual(["A", "B", "C"]);
+    expect(namesForPane("pane-2")).toEqual(["X", "Y"]);
+
+    document.elementFromPoint = prevElementFromPoint;
+    uninstall();
     dispose();
   });
 });
@@ -291,8 +374,13 @@ describe("TabBar overflow overview", () => {
         "First readable page title",
       ]);
 
-      list.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
-      expect(document.querySelector("[role=listbox]")).toBeNull();
+      const uninstall = installKeybindings();
+      try {
+        list.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+        expect(document.querySelector("[role=listbox]")).toBeNull();
+      } finally {
+        uninstall();
+      }
       trigger!.click();
       const reopenedList = document.querySelector<HTMLElement>("[role=listbox]")!;
       expect([...reopenedList.querySelectorAll<HTMLElement>("[data-tab-overview-row]")]

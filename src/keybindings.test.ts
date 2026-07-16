@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { closeInPageFind, inPageFindOpen } from "./inpageFind";
 import { commandDefaults, eventToBindingString, installKeybindings, isPermittedTabGesture } from "./keybindings";
-import { closeSwitcher, focusMode, openSwitcher, setFocusMode, setPdfTarget, setWorkflow, switcherOpen } from "./ui";
-import { focusedPaneId, focusPane, layoutPaneIds, layoutRoot, paneRouter, resetPaneLayoutToSingle, splitRootAtEdge } from "./panes";
+import { closeSwitcher, focusMode, openSwitcher, setFocusMode, setPdfTarget, setWorkflow, switcherEmbryo, switcherOpen } from "./ui";
+import { closePane, focusedPaneId, focusPane, layoutPaneIds, layoutRoot, paneRouter, resetPaneLayoutToSingle, splitRootAtEdge } from "./panes";
+import { clearTransientLayersForTest, registerTransientLayer } from "./transientLayers";
 import { exitPaneSelect, paneSel } from "./paneSelect";
 import { clearSelection, doc, loadSingle, moveSelection, resetStore, selectBlock } from "./store";
 import type { PaneSnapshot } from "./router";
@@ -108,6 +109,7 @@ function trackedKeyEvent(init: Partial<KeyboardEvent>) {
       prevented = true;
     },
     stopPropagation: () => {},
+    stopImmediatePropagation: () => {},
     ...init,
   } as unknown as KeyboardEvent;
   return {
@@ -135,6 +137,7 @@ const journalsSnapshot = (): PaneSnapshot => ({
 });
 
 afterEach(() => {
+  clearTransientLayersForTest();
   setPdfTarget(null);
   setWorkflow("now");
   setFocusMode(false);
@@ -376,11 +379,15 @@ describe("pane-select Esc cascade", () => {
     openSwitcher({ mode: "embryo", paneId: embryo, prefill: "x" });
     const fake = installFakeWindow();
     const dispose = installKeybindings();
+    const unregister = registerTransientLayer({ id: "test-switcher", dismiss: () => {
+      const current = switcherEmbryo(); closeSwitcher(); if (current) closePane(current.paneId); return true;
+    } });
 
     fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "Escape", code: "Escape" }).event);
 
     expect(switcherOpen()).toBe(false);
     expect(layoutPaneIds()).toEqual(["main"]);
+    unregister();
     dispose();
   });
 
@@ -395,11 +402,15 @@ describe("pane-select Esc cascade", () => {
 
     expect(switcherOpen()).toBe(true);
     expect(layoutPaneIds()).toHaveLength(2);
+    const unregister = registerTransientLayer({ id: "test-switcher", dismiss: () => {
+      const current = switcherEmbryo(); closeSwitcher(); if (current) closePane(current.paneId); return true;
+    } });
 
     fake.dispatchCaptureKeydown(trackedKeyEvent({ key: "Escape", code: "Escape" }).event);
 
     expect(switcherOpen()).toBe(false);
     expect(layoutPaneIds()).toEqual(["main"]);
+    unregister();
     dispose();
   });
 

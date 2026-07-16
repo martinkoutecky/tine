@@ -1,12 +1,13 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, type JSX } from "solid-js";
 import { openJournals, openPage, openPageInNewTab, openFile, openInNewTab, route } from "../router";
 import { openSwitcher, favorites, recentPages, openPageContextMenu, graphMeta, openPageInSidebar, pushToast, resolveAlias, favoritesSectionExpanded, recentSectionExpanded, toggleFavoritesSection, toggleRecentSection } from "../ui";
-import { switchGraph, createNewGraph, loadGraphPath, authorizeGraphAccess } from "../graph";
+import { switchGraph, createNewGraph, loadGraphPath, authorizeGraphAccess, type LoadGraphPathOutcome } from "../graph";
 import { backend } from "../backend";
 import { allPages as allGraphPages, pageListLabel } from "../pages";
 import { EmojiText } from "../render/emoji";
 import { NamespaceTree } from "./Namespace";
 import type { PageKind } from "../types";
+import { registerTransientLayer } from "../transientLayers";
 
 // Cap the rendered "All pages" list. Beyond this, rendering every row (each
 // reading route() for its active state) makes both the initial render and every
@@ -38,15 +39,31 @@ export function openSidebarPageTarget(
   gesture: "normal" | "sidebar" | "new-tab" | "context",
   point: { x: number; y: number } = { x: 0, y: 0 },
   deps: SidebarPageOpenDeps = sidebarPageOpenDeps,
+  onActiveNavigationComplete?: () => void,
 ) {
   const target = sidebarPageTarget(name, kind);
-  if (gesture === "normal") deps.normal(target.name, target.kind);
+  if (gesture === "normal") { deps.normal(target.name, target.kind); onActiveNavigationComplete?.(); }
   else if (gesture === "sidebar") deps.sidebar(target.name, target.kind);
   else if (gesture === "new-tab") deps.newTab(target.name, target.kind);
   else deps.context(point.x, point.y, target.name, target.kind);
 }
 
-export function Sidebar(): JSX.Element {
+export interface GraphNavigationActions {
+  openKnown(path: string, newWindow: boolean): Promise<LoadGraphPathOutcome>;
+  openPicked(): Promise<LoadGraphPathOutcome>;
+  createNew(): Promise<LoadGraphPathOutcome>;
+}
+
+const graphNavigationActions: GraphNavigationActions = {
+  openKnown: openKnownGraph,
+  openPicked: switchGraph,
+  createNew: createNewGraph,
+};
+
+export function Sidebar(props: {
+  onActiveNavigationComplete?: () => void;
+  graphActions?: GraphNavigationActions;
+} = {}): JSX.Element {
   // The whole-graph page list is the shared, graph-epoch-keyed resource (see
   // src/pages.ts) — fetched once per graph generation and shared with the
   // namespace tree/macro/hierarchy, not a sidebar-private fetch. Epoch keying
@@ -76,6 +93,7 @@ export function Sidebar(): JSX.Element {
   };
   const openEntry = (path: string, name: string) => {
     path ? openFile(path, name, "page") : openPage(name, "page");
+    props.onActiveNavigationComplete?.();
   };
   // Shift+click on a sidebar page row opens it in the right sidebar (mirrors the
   // center-pane page-link behavior; GH #63). The onMouseDown guard suppresses the
@@ -92,14 +110,17 @@ export function Sidebar(): JSX.Element {
     <div class="left-sidebar-inner">
       <div class="sidebar-header">
         <div class="app-logo">Tine</div>
-        <GraphSwitcher />
+        <GraphSwitcher
+          onActiveNavigationComplete={props.onActiveNavigationComplete}
+          actions={props.graphActions ?? graphNavigationActions}
+        />
       </div>
 
       <div class="nav-contents">
         <div
           class="nav-item"
           classList={{ active: route().kind === "journals" }}
-          onClick={() => openJournals()}
+          onClick={() => { openJournals(); props.onActiveNavigationComplete?.(); }}
           onAuxClick={(e) => {
             if (e.button === 1) {
               e.preventDefault();
@@ -135,7 +156,7 @@ export function Sidebar(): JSX.Element {
                         class="nav-page"
                         classList={{ active: isActive(target().name) }}
                         onMouseDown={shiftGuard}
-                        onClick={(e) => openSidebarPageTarget(fav.name, fav.kind, e.shiftKey ? "sidebar" : "normal")}
+                        onClick={(e) => openSidebarPageTarget(fav.name, fav.kind, e.shiftKey ? "sidebar" : "normal", { x: 0, y: 0 }, sidebarPageOpenDeps, props.onActiveNavigationComplete)}
                         onAuxClick={(e) => {
                           if (e.button === 1) {
                             e.preventDefault();
@@ -184,7 +205,7 @@ export function Sidebar(): JSX.Element {
                         class="nav-page"
                         classList={{ active: isActive(target().name) }}
                         onMouseDown={shiftGuard}
-                        onClick={(e) => openSidebarPageTarget(r.name, r.kind, e.shiftKey ? "sidebar" : "normal")}
+                        onClick={(e) => openSidebarPageTarget(r.name, r.kind, e.shiftKey ? "sidebar" : "normal", { x: 0, y: 0 }, sidebarPageOpenDeps, props.onActiveNavigationComplete)}
                         onAuxClick={(e) => {
                           if (e.button === 1) {
                             e.preventDefault();
@@ -258,7 +279,7 @@ export function Sidebar(): JSX.Element {
             NAMESPACES
           </div>
           <Show when={showNs()}>
-            <NamespaceTree onPageContextMenu={openRowMenu} />
+            <NamespaceTree onPageContextMenu={openRowMenu} onActiveNavigationComplete={props.onActiveNavigationComplete} />
           </Show>
         </div>
       </div>
@@ -280,8 +301,8 @@ function graphDisplayName(): string {
 }
 
 export interface KnownGraphOpenDeps {
-  switchInPlace(path: string): Promise<unknown>;
-  openNewWindow(path: string): Promise<unknown>;
+  switchInPlace(path: string): Promise<LoadGraphPathOutcome>;
+  openNewWindow(path: string): Promise<LoadGraphPathOutcome>;
 }
 
 export function openKnownGraph(
@@ -291,17 +312,24 @@ export function openKnownGraph(
     switchInPlace: loadGraphPath,
     openNewWindow: async (target) => {
       if (!(await authorizeGraphAccess(target))) return { kind: "aborted" };
-      return backend().openGraphWindow(target);
+      // A graph opened in a peer window is never an in-place navigation even
+      // when the backend had to construct that window, so it must keep the
+      // mobile drawer open.
+      await backend().openGraphWindow(target);
+      return { kind: "focused_existing" };
     },
   }
-): Promise<unknown> {
+): Promise<LoadGraphPathOutcome> {
   return newWindow ? deps.openNewWindow(path) : deps.switchInPlace(path);
 }
 
 // The current-graph control in the sidebar header. OG puts a graph-name dropdown
 // top-left (database icon → switch/new/all-graphs/re-index). Tine lists its known
 // graphs here alongside open/create actions; Shift-click opens a peer window.
-function GraphSwitcher(): JSX.Element {
+export function GraphSwitcher(props: {
+  onActiveNavigationComplete?: () => void;
+  actions: GraphNavigationActions;
+}): JSX.Element {
   const [open, setOpen] = createSignal(false);
   const [knownGraphs, { refetch }] = createResource(() => backend().listKnownGraphs());
   const close = () => setOpen(false);
@@ -310,14 +338,14 @@ function GraphSwitcher(): JSX.Element {
     if (open()) void refetch();
   });
 
-  // Esc closes the menu (the backdrop handles click-outside).
   createEffect(() => {
     if (!open()) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close();
-    };
-    window.addEventListener("keydown", onKey);
-    onCleanup(() => window.removeEventListener("keydown", onKey));
+    const unregister = registerTransientLayer({
+      id: "graph-switch-menu",
+      root: () => document.querySelector(".graph-switch-menu"),
+      dismiss: () => { close(); return true; },
+    });
+    onCleanup(unregister);
   });
 
   return (
@@ -352,11 +380,15 @@ function GraphSwitcher(): JSX.Element {
                 classList={{ active: graph.path === graphMeta()?.root }}
                 title={graph.path}
                 onClick={(event) => {
+                  const newWindow = event.shiftKey;
                   close();
-                  const open = openKnownGraph(graph.path, event.shiftKey);
-                  void open.catch((error) =>
-                    pushToast(`Couldn't open ${graph.name}. (${String(error)})`, "error")
-                  );
+                  void props.actions.openKnown(graph.path, newWindow)
+                    .then((outcome) => {
+                      if (!newWindow && (outcome.kind === "loaded" || outcome.kind === "already_current")) {
+                        props.onActiveNavigationComplete?.();
+                      }
+                    })
+                    .catch((error) => pushToast(`Couldn't open ${graph.name}. (${String(error)})`, "error"));
                 }}
               >
                 <span class="graph-switch-row-name">{graph.name}</span>
@@ -384,7 +416,11 @@ function GraphSwitcher(): JSX.Element {
             class="ctx-item"
             onClick={() => {
               close();
-              void switchGraph();
+              void props.actions.openPicked()
+                .then((outcome) => {
+                  if (outcome.kind === "loaded" || outcome.kind === "already_current") props.onActiveNavigationComplete?.();
+                })
+                .catch((error) => pushToast(`Couldn't open the selected graph. (${String(error)})`, "error"));
             }}
           >
             Open graph…
@@ -393,7 +429,11 @@ function GraphSwitcher(): JSX.Element {
             class="ctx-item"
             onClick={() => {
               close();
-              void createNewGraph();
+              void props.actions.createNew()
+                .then((outcome) => {
+                  if (outcome.kind === "loaded" || outcome.kind === "already_current") props.onActiveNavigationComplete?.();
+                })
+                .catch((error) => pushToast(`Couldn't create the graph. (${String(error)})`, "error"));
             }}
           >
             New graph…

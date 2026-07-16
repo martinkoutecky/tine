@@ -8,6 +8,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ## [Unreleased]
 
+### Added
+
+- **At viewport widths below 640 px, sidebars now behave as modal drawers.**
+  They overlay instead of squeezing the page, isolate background controls, and
+  dismiss safely via the scrim, Escape, or Android Back while restoring focus.
+  At 640 px and wider, including tablets, persistent sidebar and split-pane
+  behavior is unchanged. (GH #161)
+
 ### Fixed
 
 - **Split-pane Back and Forward stay with the pane you focused.** Clicking the

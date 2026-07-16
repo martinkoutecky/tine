@@ -75,6 +75,7 @@ function NsNodeView(props: {
   node: NsNode;
   depth: number;
   onPageContextMenu?: (e: MouseEvent, name: string, kind: PageKind) => void;
+  onActiveNavigationComplete?: () => void;
 }): JSX.Element {
   const [open, setOpen] = createSignal(props.depth < 1);
   const has = () => props.node.children.length > 0;
@@ -92,7 +93,7 @@ function NsNodeView(props: {
           onClick={(e) =>
             e.shiftKey
               ? openPageInSidebar(props.node.full, "page")
-              : openPage(props.node.full, "page")
+              : (openPage(props.node.full, "page"), props.onActiveNavigationComplete?.())
           }
           onContextMenu={(e) => {
             if (!shouldOpenTextContextMenu(e.target)) return;
@@ -109,6 +110,7 @@ function NsNodeView(props: {
               node={c}
               depth={props.depth + 1}
               onPageContextMenu={props.onPageContextMenu}
+              onActiveNavigationComplete={props.onActiveNavigationComplete}
             />
           )}
         </For>
@@ -120,6 +122,7 @@ function NsNodeView(props: {
 /** A collapsible tree of all namespaces in the graph, for the left sidebar. */
 export function NamespaceTree(props: {
   onPageContextMenu?: (e: MouseEvent, name: string, kind: PageKind) => void;
+  onActiveNavigationComplete?: () => void;
 } = {}): JSX.Element {
   // Pure CPU derivation off the shared, epoch-keyed page list (src/pages.ts) —
   // no longer its own whole-graph listPages() fetch.
@@ -128,7 +131,7 @@ export function NamespaceTree(props: {
     <Show when={tree().length > 0}>
       <div class="ns-tree">
         <For each={tree()}>
-          {(n) => <NsNodeView node={n} depth={0} onPageContextMenu={props.onPageContextMenu} />}
+          {(n) => <NsNodeView node={n} depth={0} onPageContextMenu={props.onPageContextMenu} onActiveNavigationComplete={props.onActiveNavigationComplete} />}
         </For>
       </div>
     </Show>

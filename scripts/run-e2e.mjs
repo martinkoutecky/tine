@@ -87,6 +87,7 @@ const suites = {
     ["block-embed", "scripts/e2e-block-embed.mjs", {}],
     ["sidebar-sections", "scripts/e2e-sidebar-sections.mjs", {}],
     ["right-sidebar-collapse", "scripts/e2e-right-sidebar-collapse.mjs", {}],
+    ["mobile-drawers", "scripts/e2e-mobile-drawers.mjs", { TINE_E2E_FORCE_MOBILE_DRAWERS: "1" }],
     ["tab-overflow", "scripts/e2e-tab-overflow.mjs", {}],
     ["outline-guide", "scripts/e2e-outline-guide.mjs", {}],
     ["query-workspace", "scripts/e2e-query-workspace.mjs", {}],

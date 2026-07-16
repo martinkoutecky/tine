@@ -118,6 +118,7 @@ import { blockRefCount } from "../blockRefCounts";
 import { BlockReferences } from "./BlockReferences";
 import { editorCommandFor, isPermittedTabGesture, isTabLikeEvent } from "../keybindings";
 import { cycleMarkerSmart, toggleTaskDone } from "../editor/repeat";
+import { registerTransientLayer } from "../transientLayers";
 
 import { taskCheckboxState } from "../markers";
 import { applyTemplateVars } from "../editor/templateVars";
@@ -1028,6 +1029,7 @@ export function Editor(props: { id: string }): JSX.Element {
   // transclusion the user is looking at.
   const editSurface = () => surfaceKey.startsWith("embed:") ? surfaceKey : null;
   let ref!: HTMLTextAreaElement;
+  const autocompleteLayerId = `block-completion-${createUniqueId()}`;
   // Caret/selection stashed when the *window* (not this block) loses focus, so
   // returning to Tine resumes editing exactly where you left off.
   let savedSel: { start: number; end: number } | null = null;
@@ -1166,6 +1168,18 @@ export function Editor(props: { id: string }): JSX.Element {
     setAcItems([]);
     setAcIndex(0);
   };
+  // Page/block/tag/command/code completion is a real transient above its editor
+  // and, on mobile, above the drawer. One Escape peels only this popup.
+  createEffect(() => {
+    if (!ac() || !acItems().length) return;
+    const unregister = registerTransientLayer({
+      id: autocompleteLayerId,
+      root: () => acListRef ?? null,
+      trigger: () => ref ?? null,
+      dismiss: () => { closeAc(); ref?.focus(); return true; },
+    });
+    onCleanup(unregister);
+  });
 
   const updateAutocomplete = async () => {
     const t = detectTrigger(ref.value, ref.selectionStart);
@@ -2309,6 +2323,11 @@ export function Editor(props: { id: string }): JSX.Element {
     const start = ref.selectionStart;
     const end = ref.selectionEnd;
     const raw = ref.value;
+
+    // IME owns Escape.  The global capture handler already declines it, and the
+    // textarea must not then close completion or leave editing on the target
+    // phase (notably Android/WebKit's legacy keyCode 229 path).
+    if (e.key === "Escape" && (e.isComposing || e.keyCode === 229)) return;
 
     // Ctrl/Cmd+Shift+V is Logseq's "paste as plain text" gesture: multiline
     // clipboard text stays inside this block instead of becoming an outline.

@@ -121,9 +121,77 @@ try {
   await browser.execute(() => document.querySelector("[data-tab-overview-trigger]")?.focus());
   await browser.keys("Enter");
   await browser.keys("Escape");
-  const restored = await browser.execute(() =>
-    document.activeElement?.hasAttribute("data-tab-overview-trigger") && !document.querySelector("[role=listbox]"));
-  if (!restored) throw new Error("Escape did not dismiss the overview and restore trigger focus");
+  const escapeState = await browser.execute(() => ({
+    triggerFocused: document.activeElement?.hasAttribute("data-tab-overview-trigger"),
+    overviewOpen: !!document.querySelector("[role=listbox]"),
+    paneSelected: !!document.querySelector(".pane-selected, .pane-select-hint"),
+  }));
+  if (!escapeState.triggerFocused || escapeState.overviewOpen || escapeState.paneSelected) {
+    throw new Error(`Escape ownership failed: ${JSON.stringify(escapeState)}`);
+  }
+
+  // WebDriver W3C pointer actions retain a pressed pointer across commands. Hold
+  // a real overview-row drag over another row, retire it with Escape, and only
+  // then release the original pointer. A late native pointer-up must be inert.
+  await trigger.click();
+  await browser.$("[role=listbox]").waitForExist({ timeout: 5000 });
+  const heldDrag = await browser.execute(() => {
+    const rows = [...document.querySelectorAll("[data-tab-overview-row]")];
+    const handle = rows[0]?.querySelector(".tab-overview-drag-handle");
+    const target = rows[1];
+    if (!(handle instanceof HTMLElement) || !(target instanceof HTMLElement)) return null;
+    const start = handle.getBoundingClientRect();
+    const end = target.getBoundingClientRect();
+    return {
+      before: rows.map((row) => row.getAttribute("data-tab-id")),
+      sourceId: rows[0].getAttribute("data-tab-id"),
+      targetId: target.getAttribute("data-tab-id"),
+      start: { x: Math.round(start.left + start.width / 2), y: Math.round(start.top + start.height / 2) },
+      end: { x: Math.round(end.left + end.width / 2), y: Math.round(end.top + end.height * 0.8) },
+    };
+  });
+  if (!heldDrag?.sourceId || !heldDrag.targetId) throw new Error("overview rows did not expose a native drag path");
+  let heldPointer = false;
+  try {
+    await browser.performActions([{
+      type: "pointer",
+      id: "p1e-o-held-overview-row",
+      parameters: { pointerType: "mouse" },
+      actions: [
+        { type: "pointerMove", duration: 0, x: heldDrag.start.x, y: heldDrag.start.y },
+        { type: "pointerDown", button: 0 },
+        { type: "pointerMove", duration: 120, x: heldDrag.end.x, y: heldDrag.end.y },
+      ],
+    }]);
+    heldPointer = true;
+    await browser.waitUntil(() => browser.execute((sourceId, targetId) =>
+      document.querySelector(`[data-tab-id="${sourceId}"]`)?.classList.contains("tab-overview-dragging")
+      && document.querySelector(`[data-tab-id="${targetId}"]`)?.classList.contains("tab-overview-drop-after"), heldDrag.sourceId, heldDrag.targetId), {
+      timeout: 5000, timeoutMsg: "native held overview-row drag did not arm a reorder session",
+    });
+    await browser.keys("Escape");
+    await browser.$("[role=listbox]").waitForExist({ reverse: true, timeout: 5000 });
+    await browser.performActions([{
+      type: "pointer",
+      id: "p1e-o-held-overview-row",
+      parameters: { pointerType: "mouse" },
+      actions: [{ type: "pointerUp", button: 0 }],
+    }]);
+    heldPointer = false;
+  } finally {
+    if (heldPointer) await browser.releaseActions();
+  }
+  const heldRetirement = await browser.execute((before) => ({
+    order: [...document.querySelectorAll(".tab-strip-scroll > .tab")].map((tab) => tab.getAttribute("data-tab-id")),
+    triggerFocused: document.activeElement?.hasAttribute("data-tab-overview-trigger"),
+    overviewOpen: !!document.querySelector("[role=listbox]"),
+    paneSelected: !!document.querySelector(".pane-selected, .pane-select-hint"),
+    before,
+  }), heldDrag.before);
+  if (heldRetirement.overviewOpen || !heldRetirement.triggerFocused || heldRetirement.paneSelected
+    || JSON.stringify(heldRetirement.order) !== JSON.stringify(heldRetirement.before)) {
+    throw new Error(`held overview-row retirement failed: ${JSON.stringify(heldRetirement)}`);
+  }
 
   // Delete follows the ordinary close path and keeps the overview usable.
   const beforeClose = await browser.$$(".tab-strip-scroll > .tab").length;

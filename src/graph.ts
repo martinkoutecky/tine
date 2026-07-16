@@ -250,7 +250,7 @@ async function injectCustomCss(): Promise<void> {
 }
 
 /** Pick a folder and open it as the graph. No-op if cancelled. */
-export async function switchGraph(): Promise<void> {
+export async function switchGraph(): Promise<LoadGraphPathOutcome> {
   const platform = await platformKind();
   if (platform === "android") {
     let result;
@@ -258,7 +258,7 @@ export async function switchGraph(): Promise<void> {
       result = await backend().pickGraphFolder();
     } catch (e) {
       pushToast(`Couldn't open the Android folder picker. (${String(e)})`, "error");
-      return;
+      return { kind: "aborted" };
     }
     // Diagnostic breadcrumbs (visible in `adb logcat`, chromium console channel):
     // an intermittent first-run stall on "Opening…" — these pin down whether the
@@ -267,49 +267,51 @@ export async function switchGraph(): Promise<void> {
     if (result.status === "picked") {
       if (result.path) {
         console.info("[tine/android] loadGraphPath: start");
-        await loadGraphPath(result.path);
+        const outcome = await loadGraphPath(result.path);
         console.info("[tine/android] loadGraphPath: done");
+        return outcome;
       }
-      return;
+      return { kind: "aborted" };
     }
     if (result.status === "permission-requested" || result.status === "permission-needed") {
       pushToast('Grant "All files access" for Tine, then tap Open again.', "info");
     }
-    return;
+    return { kind: "aborted" };
   }
   if (platform === "ios") {
     pushToast(
       "Opening an existing graph on iOS is coming soon. For now, tap “Create a new graph” to try Tine.",
       "info"
     );
-    return;
+    return { kind: "aborted" };
   }
   const path = await backend().pickFolder();
-  if (path) await loadGraphPath(path);
+  return path ? loadGraphPath(path) : { kind: "aborted" };
 }
 
 /** Onboarding "create a new graph": pick where to put it, scaffold a small
  *  narrated demo graph there, open it, and land on the "Welcome to Tine" tour.
  *  No-op if the folder picker is cancelled. */
-export async function createNewGraph(): Promise<void> {
+export async function createNewGraph(): Promise<LoadGraphPathOutcome> {
   const dir = (await isMobile())
     ? await backend().defaultGraphParent()
     : await backend().pickFolder("Choose where to create your new graph");
-  if (!dir) return;
+  if (!dir) return { kind: "aborted" };
   let root: string;
   try {
     root = await backend().createGraph(dir);
   } catch (e) {
     pushToast(`Couldn't create the graph. (${String(e)})`, "error");
-    return;
+    return { kind: "aborted" };
   }
   const loaded = await loadGraphPath(root);
   if (loaded.kind !== "loaded" || loaded.root !== root) {
     pushToast(`Created the graph at ${root}, but kept the current graph open.`, "info");
-    return;
+    return loaded;
   }
   await seedTodayJournal();
   openPage("Welcome to Tine", "page"); // land on the tour, not the empty journal feed
+  return loaded;
 }
 
 /** Give a freshly-created demo graph a friendly today's-journal entry so the

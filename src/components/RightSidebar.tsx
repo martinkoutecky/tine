@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createSignal, createUniqueId, type JSX } from "solid-js";
+import { For, Show, createEffect, createSignal, createUniqueId, onCleanup, type JSX } from "solid-js";
 import {
   rightSidebar,
   rightSidebarOpen,
@@ -12,8 +12,12 @@ import {
   persistRightSidebarWidth,
   graphEpoch,
   sidebarItemKey,
+  registerRightSidebarClosePreparation,
   type SidebarItem,
 } from "../ui";
+import { mobileDrawerMode } from "../mobileDrawers";
+import { registerTransientLayer } from "../transientLayers";
+import { MobileDrawerPanel, dismissDrawerAndRestore } from "./MobileDrawerShell";
 import { openPage } from "../router";
 import { EmojiText } from "../render/emoji";
 import { backend } from "../backend";
@@ -63,6 +67,17 @@ export function RightSidebar(): JSX.Element {
   const prepareAll = () => {
     for (const item of rightSidebar()) prepareSurfaceForUnmount(surfaceKey(item));
   };
+  onCleanup(registerRightSidebarClosePreparation(prepareAll));
+  createEffect(() => {
+    if (!actionsOpen()) return;
+    const unregister = registerTransientLayer({
+      id: "right-sidebar-actions",
+      root: () => actionsMenu ?? null,
+      trigger: () => actionsButton ?? null,
+      dismiss: () => { setActionsOpen(false); actionsButton?.focus(); return true; },
+    });
+    onCleanup(unregister);
+  });
   const runBulk = (action: "collapse" | "expand" | "close") => {
     if (action !== "expand") prepareAll();
     if (action === "collapse") setAllRightSidebarItemsCollapsed(true);
@@ -79,20 +94,22 @@ export function RightSidebar(): JSX.Element {
     else if (event.key === "ArrowUp") next = (index - 1 + buttons.length) % buttons.length;
     else if (event.key === "Home") next = 0;
     else if (event.key === "End") next = buttons.length - 1;
-    else if (event.key === "Escape") {
-      event.preventDefault();
-      setActionsOpen(false);
-      actionsButton?.focus();
-      return;
-    } else return;
+    else if (event.key === "Escape") return; // global transient registry owns it
+    else return;
     event.preventDefault();
     buttons[next]?.focus();
   };
   return (
     <Show when={rightSidebarOpen()}>
-      <div
+      <MobileDrawerPanel
+        side="right"
+        label="Reference sidebar"
         class="right-sidebar"
-        style={{ flex: `0 0 ${rightSidebarWidth()}px`, width: `${rightSidebarWidth()}px` }}
+        style={{
+          flex: `0 0 ${rightSidebarWidth()}px`,
+          width: `${rightSidebarWidth()}px`,
+          "--mobile-drawer-width": `${rightSidebarWidth()}px`,
+        }}
       >
         <div
           class="rs-resizer"
@@ -130,7 +147,10 @@ export function RightSidebar(): JSX.Element {
                 <button type="button" role="menuitem" data-right-sidebar-action="close-all" onClick={() => runBulk("close")}>Close all</button>
               </div>
             </Show>
-            <button class="rs-close" title="Close sidebar (t r)" onClick={toggleRightSidebar}>✕</button>
+            <button class="rs-close" title="Close sidebar (t r)" onClick={() => {
+              if (mobileDrawerMode()) dismissDrawerAndRestore("explicit");
+              else toggleRightSidebar();
+            }}>✕</button>
           </div>
         </div>
         <div class="right-sidebar-body">
@@ -167,7 +187,7 @@ export function RightSidebar(): JSX.Element {
             </For>
           </Show>
         </div>
-      </div>
+      </MobileDrawerPanel>
     </Show>
   );
 }

@@ -65,6 +65,30 @@ use watcher::{get_watch_mode, set_watch_mode, start_watcher};
 #[cfg(desktop)]
 const MAIN_WINDOW_REVEAL_FALLBACK_MS: u64 = 3_000;
 
+/// Test-only policy used by the native WebKit drawer scenario.  Keeping this
+/// narrow (only `main`) prevents a phone-sized E2E process from changing capture
+/// or later graph windows.
+fn force_mobile_drawers_e2e() -> bool {
+    std::env::var("TINE_E2E_FORCE_MOBILE_DRAWERS").as_deref() == Ok("1")
+}
+
+fn apply_mobile_drawer_e2e_window_policy(
+    windows: &mut [tauri::utils::config::WindowConfig],
+    force: bool,
+) -> bool {
+    if !force {
+        return false;
+    }
+    if let Some(main) = windows.iter_mut().find(|window| window.label == "main") {
+        main.width = 390.0;
+        main.height = 844.0;
+        main.min_width = Some(390.0);
+        true
+    } else {
+        false
+    }
+}
+
 /// Xlib's thread mode is process-global and must be selected before the first
 /// GTK/Xlib call. Secondary `--capture` launches are short-lived forwarders, but
 /// GTK and Tauri can still touch X11 from separate threads during their startup
@@ -395,10 +419,14 @@ pub fn run() {
     // and expose the frozen value to each webview so custom controls never flash.
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     let native_frame_active = settings::init_native_frame_active();
-    let context = tauri::generate_context!();
+    let force_mobile_drawers = force_mobile_drawers_e2e();
+    let mut context = tauri::generate_context!();
+    let deny_main_window_state_restore = apply_mobile_drawer_e2e_window_policy(
+        &mut context.config_mut().app.windows,
+        force_mobile_drawers,
+    );
     #[cfg(any(target_os = "linux", target_os = "windows"))]
-    let context = {
-        let mut context = context;
+    {
         if let Some(main) = context
             .config_mut()
             .app
@@ -408,8 +436,7 @@ pub fn run() {
         {
             main.decorations = native_frame_active;
         }
-        context
-    };
+    }
 
     let builder = tauri::Builder::default().register_uri_scheme_protocol(
         "tine-media",
@@ -460,7 +487,7 @@ pub fn run() {
                         | tauri_plugin_window_state::StateFlags::POSITION
                         | tauri_plugin_window_state::StateFlags::MAXIMIZED,
                 )
-                .with_denylist(&["capture"])
+                .with_denylist(if deny_main_window_state_restore { &["capture", "main"] } else { &["capture"] })
                 .build(),
         );
 
@@ -740,4 +767,59 @@ pub fn run() {
         ])
         .run(context)
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod mobile_drawer_policy_tests {
+    use super::apply_mobile_drawer_e2e_window_policy;
+
+    #[test]
+    fn production_policy_does_not_mutate_the_real_window_config() {
+        let mut context: tauri::Context<tauri::Wry> = tauri::generate_context!();
+        let before = context.config_mut().app.windows.clone();
+        assert!(!apply_mobile_drawer_e2e_window_policy(
+            &mut context.config_mut().app.windows,
+            false,
+        ));
+        assert_eq!(context.config_mut().app.windows, before);
+    }
+
+    #[test]
+    fn forced_policy_changes_only_main_in_the_real_window_config() {
+        let mut context: tauri::Context<tauri::Wry> = tauri::generate_context!();
+        let capture = context
+            .config_mut()
+            .app
+            .windows
+            .iter()
+            .find(|window| window.label == "capture")
+            .expect("configured capture window")
+            .clone();
+        let mut neighbor = capture.clone();
+        neighbor.label = "neighbor".into();
+        neighbor.width = 777.0;
+        context.config_mut().app.windows.push(neighbor.clone());
+
+        assert!(apply_mobile_drawer_e2e_window_policy(
+            &mut context.config_mut().app.windows,
+            true,
+        ));
+        let windows = &context.config_mut().app.windows;
+        let main = windows
+            .iter()
+            .find(|window| window.label == "main")
+            .unwrap();
+        assert_eq!(
+            (main.width, main.height, main.min_width),
+            (390.0, 844.0, Some(390.0))
+        );
+        assert_eq!(
+            windows.iter().find(|window| window.label == "capture"),
+            Some(&capture)
+        );
+        assert_eq!(
+            windows.iter().find(|window| window.label == "neighbor"),
+            Some(&neighbor)
+        );
+    }
 }

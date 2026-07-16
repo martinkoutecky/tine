@@ -10,10 +10,12 @@ import {
   setInPageFindQuery,
   stepInPageFind,
 } from "../inpageFind";
+import { dismissTopTransient, registerTransientLayer } from "../transientLayers";
 
 const FIND_QUERY_DEBOUNCE_MS = 110;
 
 export function InPageFind(): JSX.Element {
+  let root: HTMLDivElement | undefined;
   let inputEl: HTMLInputElement | undefined;
   let queryTimer: ReturnType<typeof setTimeout> | undefined;
   const [draftQuery, setDraftQuery] = createSignal(inPageFindQuery());
@@ -47,6 +49,15 @@ export function InPageFind(): JSX.Element {
     inPageFindActiveIndex();
     queueMicrotask(refreshInPageFindHighlights);
   });
+  createEffect(() => {
+    if (!inPageFindOpen()) return;
+    const unregister = registerTransientLayer({
+      id: "in-page-find",
+      root: () => root ?? null,
+      dismiss: () => { closeFind(); return true; },
+    });
+    onCleanup(unregister);
+  });
 
   createEffect(() => {
     inPageFindFocusRequest();
@@ -77,7 +88,7 @@ export function InPageFind(): JSX.Element {
 
   return (
     <Show when={inPageFindOpen()}>
-      <div class="inpage-find-bar" role="search">
+      <div ref={root} class="inpage-find-bar" role="search">
         <input
           ref={inputEl}
           class="inpage-find-input"
@@ -90,8 +101,8 @@ export function InPageFind(): JSX.Element {
               if (queryTimer) commitQuery();
               stepInPageFind(e.shiftKey ? -1 : 1);
             } else if (e.key === "Escape") {
-              e.preventDefault();
-              closeFind();
+              if (e.isComposing || e.keyCode === 229) return;
+              if (dismissTopTransient("escape")) e.preventDefault();
             }
           }}
         />

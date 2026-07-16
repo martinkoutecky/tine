@@ -5,6 +5,7 @@ import { doc, formatForBlock } from "../store";
 import { splitProps, isBuiltinHidden, type PropFormat } from "../editor/properties";
 import { EmojiText } from "../render/emoji";
 import { moveTabToPane, moveTabToRootEdge, moveTabToSeamSplit, moveTabToSplitPane } from "../panes";
+import { registerTransientLayer } from "../transientLayers";
 
 const MAX_TITLE = 32;
 const DRAG_THRESHOLD_PX = 4;
@@ -68,6 +69,8 @@ export type TabDropTarget =
 
 const [activeTabDrag, setActiveTabDrag] = createSignal<{ paneId: string; tabId: string } | null>(null);
 const [currentTabDropTarget, setCurrentTabDropTarget] = createSignal<TabDropTarget | null>(null);
+type ActiveStripDragSession = { cancel: () => void };
+let activeStripDragSession: ActiveStripDragSession | null = null;
 
 export const tabDragState = activeTabDrag;
 export const tabDropTarget = currentTabDropTarget;
@@ -232,11 +235,21 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
   let overviewTrigger: HTMLButtonElement | undefined;
   const router = props.router;
   const overviewId = `tab-overview-${createUniqueId()}`;
+  const stripDragLayerId = `tab-strip-drag-${createUniqueId()}`;
   const [overflowing, setOverflowing] = createSignal(false);
   const [overviewOpen, setOverviewOpen] = createSignal(false);
   const [overviewPosition, setOverviewPosition] = createSignal({ left: 8, top: 48, width: 360 });
   const [overviewDragId, setOverviewDragId] = createSignal<string | null>(null);
   const [overviewDrop, setOverviewDrop] = createSignal<{ tabId: string; before: boolean } | null>(null);
+  let cancelOverviewReorder: (() => void) | undefined;
+  let cancelStripDrag: (() => void) | undefined;
+  let stripDragTabId: string | null = null;
+
+  onCleanup(() => cancelStripDrag?.());
+  createEffect(() => {
+    const ids = router.tabs().map((tab) => tab.id);
+    if (stripDragTabId && !ids.includes(stripDragTabId)) cancelStripDrag?.();
+  });
 
   const measureOverflow = () => {
     if (!strip) return;
@@ -253,6 +266,7 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
     else if (right > strip.scrollLeft + strip.clientWidth) strip.scrollLeft = right - strip.clientWidth;
   };
   const dismissOverview = (restoreFocus = true) => {
+    cancelOverviewReorder?.();
     setOverviewOpen(false);
     if (restoreFocus) queueMicrotask(() => overviewTrigger?.focus());
   };
@@ -321,10 +335,6 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
       const id = rows[index].dataset.tabId;
       if (id) void closeOverviewTab(id, index);
       return;
-    } else if (event.key === "Escape") {
-      event.preventDefault();
-      dismissOverview();
-      return;
     } else return;
     event.preventDefault();
     focusOverviewRow(next);
@@ -334,18 +344,28 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
     if (event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
+    cancelOverviewReorder?.();
     const startX = event.clientX;
     const startY = event.clientY;
+    const pointerId = event.pointerId;
     let dragging = false;
+    let active = true;
 
     const cleanup = () => {
+      if (!active) return;
+      active = false;
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onCancel);
-      setOverviewDragId(null);
-      setOverviewDrop(null);
+      if (cancelOverviewReorder === cleanup) {
+        cancelOverviewReorder = undefined;
+        setOverviewDragId(null);
+        setOverviewDrop(null);
+      }
     };
+    const ownsPointer = (pointer: PointerEvent) => pointer.pointerId === pointerId;
     const onMove = (move: PointerEvent) => {
+      if (!ownsPointer(move)) return;
       if (!dragging && Math.hypot(move.clientX - startX, move.clientY - startY) < DRAG_THRESHOLD_PX) return;
       if (!dragging) {
         dragging = true;
@@ -362,16 +382,22 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
       const rect = row.getBoundingClientRect();
       setOverviewDrop({ tabId: targetId, before: move.clientY < rect.top + rect.height / 2 });
     };
-    const onCancel = () => cleanup();
-    const onUp = () => {
+    const onCancel = (cancel: PointerEvent) => {
+      if (ownsPointer(cancel)) cleanup();
+    };
+    const onUp = (up: PointerEvent) => {
+      if (!ownsPointer(up)) return;
+      if (!active) return;
       const drop = overviewDrop();
-      if (dragging && drop) {
+      const didDrag = dragging;
+      cleanup();
+      if (didDrag && drop) {
         const index = router.tabs().findIndex((tab) => tab.id === drop.tabId);
         if (index >= 0) router.moveTabToIndex(tabId, index + (drop.before ? 0 : 1));
       }
-      cleanup();
-      if (dragging) queueMicrotask(() => focusOverviewTab(tabId));
+      if (didDrag) queueMicrotask(() => focusOverviewTab(tabId));
     };
+    cancelOverviewReorder = cleanup;
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
     window.addEventListener("pointercancel", onCancel);
@@ -383,10 +409,22 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
     queueMicrotask(revealActive);
   });
   createEffect(() => {
-    if (!overflowing() && overviewOpen()) setOverviewOpen(false);
+    if (!overflowing() && overviewOpen()) dismissOverview(false);
   });
   createEffect(() => {
     if (!overviewOpen()) return;
+    const unregister = registerTransientLayer({
+      id: overviewId,
+      root: () => document.getElementById(overviewId),
+      trigger: () => overviewTrigger ?? null,
+      dismiss: () => {
+        // The capture dispatcher owns ordinary Escape.  Let its registry
+        // restoration focus the real trigger after this exact row session has
+        // been retired, rather than competing with a target-local handler.
+        dismissOverview(false);
+        return true;
+      },
+    });
     queueMicrotask(() => {
       positionOverview();
       const activeIndex = Math.max(0, router.tabs().findIndex((tab) => tab.id === router.activeId()));
@@ -400,6 +438,8 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
     window.addEventListener("resize", positionOverview);
     window.addEventListener("scroll", positionOverview, true);
     onCleanup(() => {
+      cancelOverviewReorder?.();
+      unregister();
       document.removeEventListener("pointerdown", outside, true);
       window.removeEventListener("resize", positionOverview);
       window.removeEventListener("scroll", positionOverview, true);
@@ -419,35 +459,61 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
   function beginDrag(tabId: string, e: PointerEvent) {
     if (e.button !== 0) return;
     e.preventDefault();
+    activeStripDragSession?.cancel();
+    const card = e.currentTarget as HTMLElement;
+    const pointerId = e.pointerId;
+    const restoreTarget = document.activeElement instanceof HTMLElement && document.activeElement !== document.body
+      ? document.activeElement
+      : card;
     const sourcePaneId = router.paneId;
     const startX = e.clientX;
     const startY = e.clientY;
     let dragging = false;
-    let cancelled = false;
+    let finished = false;
+    let unregister = () => {};
+    let session!: ActiveStripDragSession;
 
-    const cleanup = () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("pointercancel", onCancel);
-      window.removeEventListener("keydown", onKeyDown, true);
-      setActiveTabDrag(null);
-      setCurrentTabDropTarget(null);
-    };
     const markMoved = () => {
       suppressClick = true;
       setTimeout(() => (suppressClick = false), 0);
     };
-    const onCancel = () => {
-      cancelled = true;
-      if (dragging) markMoved();
-      cleanup();
+    const finish = (cancelled: boolean, restoreFocus: boolean) => {
+      if (finished) return;
+      finished = true;
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
+      window.removeEventListener("blur", onBlur, true);
+      card.removeEventListener("lostpointercapture", onLostPointerCapture, true);
+      try {
+        if (typeof card.hasPointerCapture === "function" &&
+            typeof card.releasePointerCapture === "function" &&
+            card.hasPointerCapture(pointerId)) card.releasePointerCapture(pointerId);
+      } catch {
+        // The platform may already have revoked capture during disposal.
+      }
+      unregister();
+      if (activeStripDragSession === session) activeStripDragSession = null;
+      if (cancelStripDrag === session.cancel) {
+        cancelStripDrag = undefined;
+        stripDragTabId = null;
+      }
+      if (activeTabDrag()?.paneId === sourcePaneId && activeTabDrag()?.tabId === tabId) {
+        setActiveTabDrag(null);
+        setCurrentTabDropTarget(null);
+      }
+      if (cancelled) markMoved();
+      if (restoreFocus && restoreTarget.isConnected && !restoreTarget.inert) {
+        queueMicrotask(() => restoreTarget.isConnected && restoreTarget.focus());
+      }
     };
-    const onKeyDown = (ev: KeyboardEvent) => {
-      if (ev.key !== "Escape") return;
-      ev.preventDefault();
-      onCancel();
+    session = { cancel: () => finish(true, true) };
+    const ownsPointer = (event: PointerEvent) => event.pointerId === pointerId && activeStripDragSession === session;
+    const onCancel = (event: PointerEvent) => {
+      if (ownsPointer(event)) finish(true, true);
     };
     const onMove = (ev: PointerEvent) => {
+      if (!ownsPointer(ev)) return;
       if (!dragging && Math.hypot(ev.clientX - startX, ev.clientY - startY) < DRAG_THRESHOLD_PX) return;
       if (!dragging) {
         dragging = true;
@@ -457,18 +523,40 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
       const el = document.elementFromPoint(ev.clientX, ev.clientY);
       setCurrentTabDropTarget(tabDropTargetAt(el, ev.clientX, ev.clientY, sourcePaneId));
     };
-    const onUp = () => {
+    const onUp = (event: PointerEvent) => {
+      if (!ownsPointer(event)) return;
       const target = currentTabDropTarget();
-      const shouldDrop = dragging && !cancelled && !!target;
+      const shouldDrop = dragging && !!target;
       if (dragging) markMoved();
-      cleanup();
+      finish(false, false);
       if (shouldDrop) applyTabDrop(sourcePaneId, tabId, target!);
     };
+    const onBlur = () => finish(true, true);
+    const onLostPointerCapture = (event: PointerEvent) => {
+      if (ownsPointer(event)) finish(true, true);
+    };
+
+    activeStripDragSession = session;
+    cancelStripDrag = session.cancel;
+    stripDragTabId = tabId;
+    unregister = registerTransientLayer({
+      id: stripDragLayerId,
+      root: () => card,
+      trigger: () => restoreTarget,
+      dismiss: () => {
+        if (finished || activeStripDragSession !== session) return false;
+        // Registry focus restoration owns the Escape/Back path.
+        finish(true, false);
+        return true;
+      },
+    });
+    try { card.setPointerCapture?.(pointerId); } catch { /* optional platform support */ }
 
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
     window.addEventListener("pointercancel", onCancel);
-    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("blur", onBlur, true);
+    card.addEventListener("lostpointercapture", onLostPointerCapture, true);
   }
 
   return (
@@ -557,7 +645,7 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
           aria-expanded={overviewOpen()}
           aria-controls={overviewId}
           data-tab-overview-trigger
-          onClick={() => setOverviewOpen((open) => !open)}
+          onClick={() => overviewOpen() ? dismissOverview() : setOverviewOpen(true)}
         >⌄</button>
         <Show when={overviewOpen()}>
           <Portal>

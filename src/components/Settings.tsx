@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { ImproveTab } from "./ImproveTab";
 import { AboutTab } from "./AboutTab";
 import {
@@ -101,6 +101,7 @@ import {
   resetLauncherRanking,
   setLauncherRankingEnabled,
 } from "../launcherRanking";
+import { registerTransientLayer } from "../transientLayers";
 
 // Journal display-title formats offered in the date-format dropdown — OG's
 // `journal-title-formatters` set (frontend/date.cljs). Display-only; the on-disk
@@ -236,6 +237,23 @@ export function Settings(): JSX.Element {
 
   // Recording: capture the next chord for the command being remapped.
   const [recording, setRecording] = createSignal<string | null>(null);
+  // Settings owns its semantic Escape rungs.  Registering here (rather than in
+  // App) keeps shortcut recording/search/disclosures from being skipped by a
+  // blanket modal close and ensures disposal follows this component lifetime.
+  createEffect(() => {
+    if (!settingsOpen()) return;
+    const unregister = registerTransientLayer({
+      id: "settings",
+      root: () => document.querySelector<HTMLElement>(".settings-modal"),
+      dismiss: () => {
+        if (recording()) { setRecording(null); return true; }
+        if (settingsQuery()) { setSettingsQuery(""); return true; }
+        closeSettings();
+        return true;
+      },
+    });
+    onCleanup(unregister);
+  });
   createEffect(() => {
     const id = recording();
     if (!id) {
@@ -245,12 +263,11 @@ export function Settings(): JSX.Element {
     setKeybindingsSuspended(true);
     onCleanup(() => setKeybindingsSuspended(false));
     const onKey = (e: KeyboardEvent) => {
+      // Escape belongs to the one capture dispatcher.  It will dismiss this
+      // recording rung before the lower Settings/modal ladder.
+      if (e.key === "Escape" || e.isComposing || e.keyCode === 229) return;
       e.preventDefault();
       e.stopPropagation();
-      if (e.key === "Escape") {
-        setRecording(null);
-        return;
-      }
       const b = eventToBindingString(e);
       if (!b) return; // bare modifier — keep waiting
       setShortcutOverride(id, b);
@@ -291,6 +308,7 @@ export function Settings(): JSX.Element {
                 value={settingsQuery()}
                 onInput={(event) => setSettingsQuery(event.currentTarget.value)}
                 onKeyDown={(event) => {
+                  if (event.isComposing || event.keyCode === 229) return;
                   if (event.key === "Escape" && settingsQuery()) {
                     event.preventDefault();
                     setSettingsQuery("");
@@ -428,6 +446,7 @@ function OgField(props: {
 }
 
 function AdvancedSection(props: { tab: Tab; forceOpen: boolean; children: JSX.Element }): JSX.Element {
+  const layerId = `settings-advanced-${createUniqueId()}`;
   const key = `tine.settings.advanced.${props.tab}`;
   let initial = false;
   try { initial = localStorage.getItem(key) === "1"; } catch {}
@@ -442,6 +461,17 @@ function AdvancedSection(props: { tab: Tab; forceOpen: boolean; children: JSX.El
     setOpen(next);
     persist(next);
   };
+  createEffect(() => {
+    if (!open() || props.forceOpen) return;
+    const unregister = registerTransientLayer({
+      id: layerId,
+      parentId: "settings",
+      root: () => button?.closest<HTMLElement>(".settings-advanced") ?? null,
+      trigger: () => button ?? null,
+      dismiss: () => { setOpen(false); persist(false); return true; },
+    });
+    onCleanup(unregister);
+  });
   return (
     <section class="settings-advanced">
       <button
@@ -451,6 +481,7 @@ function AdvancedSection(props: { tab: Tab; forceOpen: boolean; children: JSX.El
         aria-expanded={expanded()}
         onClick={toggle}
         onKeyDown={(event) => {
+          if (event.isComposing || event.keyCode === 229) return;
           if (event.key === "Escape" && open() && !props.forceOpen) {
             event.preventDefault();
             setOpen(false);
@@ -1266,6 +1297,9 @@ function ConflictFileRow(props: {
   onRename: (newName: string) => void;
   onTrash: () => void;
 }): JSX.Element {
+  const rowLayerId = `journal-conflict-${props.file.path}`;
+  let renameRoot: HTMLDivElement | undefined;
+  let contentRoot: HTMLPreElement | undefined;
   const [open, setOpen] = createSignal(false);
   const [renaming, setRenaming] = createSignal(false);
   const [newName, setNewName] = createSignal("");
@@ -1279,9 +1313,29 @@ function ConflictFileRow(props: {
     setRenaming(false);
     setNewName("");
   };
+  createEffect(() => {
+    if (!open()) return;
+    const unregister = registerTransientLayer({
+      id: `${rowLayerId}-content`,
+      parentId: "settings",
+      root: () => contentRoot ?? null,
+      dismiss: () => { setOpen(false); return true; },
+    });
+    onCleanup(unregister);
+  });
+  createEffect(() => {
+    if (!renaming()) return;
+    const unregister = registerTransientLayer({
+      id: `${rowLayerId}-rename`,
+      parentId: "settings",
+      root: () => renameRoot ?? null,
+      dismiss: () => { setRenaming(false); setNewName(""); return true; },
+    });
+    onCleanup(unregister);
+  });
   return (
     <>
-      <div class="journal-conflict-row">
+      <div class="journal-conflict-row" data-journal-conflict={props.file.path}>
         <button class="settings-asset-name mono" title="Show this file's contents" onClick={() => setOpen(!open())}>
           {open() ? "▾ " : "▸ "}
           {props.file.name}
@@ -1308,13 +1362,14 @@ function ConflictFileRow(props: {
       </div>
       <div class="journal-conflict-preview">{props.file.preview}</div>
       <Show when={renaming()}>
-        <div class="journal-conflict-rename">
+        <div ref={renameRoot} class="journal-conflict-rename">
           <input
             class="settings-input"
             placeholder="New page name"
             value={newName()}
             onInput={(e) => setNewName(e.currentTarget.value)}
             onKeyDown={(e) => {
+              if (e.isComposing || e.keyCode === 229) return;
               if (e.key === "Enter") submitRename();
               else if (e.key === "Escape") setRenaming(false);
             }}
@@ -1324,7 +1379,7 @@ function ConflictFileRow(props: {
         </div>
       </Show>
       <Show when={open()}>
-        <pre class="journal-conflict-content">{content.loading ? "…" : content() || "(empty file)"}</pre>
+        <pre ref={contentRoot} class="journal-conflict-content">{content.loading ? "…" : content() || "(empty file)"}</pre>
       </Show>
     </>
   );
@@ -1577,6 +1632,11 @@ function DiffRowView(props: {
 // until "Merge & trash copy". Resolving goes through the safe backend path
 // (base_rev-guarded save + stage-before-commit trash).
 function SyncConflictMergeModal(props: { conflict: SyncConflict; onClose: () => void }): JSX.Element {
+  let root: HTMLDivElement | undefined;
+  createEffect(() => {
+    const unregister = registerTransientLayer({ id: `sync-conflict-merge-${props.conflict.path}`, parentId: "settings", root: () => root ?? null, dismiss: () => { props.onClose(); return true; } });
+    onCleanup(unregister);
+  });
   const winner = props.conflict.base_path!; // only opened when the winner exists
   const [decisions, setDecisions] = createSignal<Record<string, MergeDecision>>({});
   const [preChoice, setPreChoice] = createSignal<"mine" | "theirs" | "union">("union");
@@ -1643,7 +1703,7 @@ function SyncConflictMergeModal(props: { conflict: SyncConflict; onClose: () => 
   });
   return (
     <div class="sync-merge-overlay" onClick={props.onClose}>
-      <div class="sync-merge-modal" onClick={(e) => e.stopPropagation()}>
+      <div ref={root} class="sync-merge-modal" onClick={(e) => e.stopPropagation()}>
         <div class="sync-merge-header">
           <div>
             <div class="sync-merge-title">Merge “{props.conflict.base_name}”</div>

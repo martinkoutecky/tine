@@ -20,6 +20,7 @@ icon:: ⌨️
 - ## The sidebars
 	- **t l** toggles the left sidebar — journals, favorites, recents, all pages, and a namespace tree. Favorites and Recent can be folded independently.
 	- **t r** toggles the right sidebar; **Shift-click** any bullet's dot to open it there and keep it beside your work. Each right-sidebar item can be folded independently, and its menu can collapse, expand, or close them all.
+	- On a phone-width window (below 640 px), either sidebar opens over the page. Tap the shaded outside edge, use the close button, press **Esc**, or press Android **Back** to return to the page. Wider tablet and desktop windows keep the ordinary persistent, resizable sidebars.
 	- Click the vertical outline guide below a bullet to expand its complete descendant subtree when anything inside is folded, or collapse all of those descendants when everything is open. The bullet itself keeps its ordinary one-level action.
 - ## Focus mode & dimming — t f / t b
 	- **t f** (focus mode) hides the sidebars and toolbar so the screen is just your text; layered **Esc** steps back out.

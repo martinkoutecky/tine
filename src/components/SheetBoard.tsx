@@ -46,6 +46,7 @@ import type { RefGroup } from "../types";
 import { Editor, SurfaceContext } from "./Block";
 import { isBareTagName } from "../tags";
 import { hydrateVisibleQueryPages, SHEET_RENDER_PAGE } from "../sheet/queryHydration";
+import { registerTransientLayer } from "../transientLayers";
 
 interface RowRecord extends FormulaEvalRow {}
 
@@ -817,6 +818,7 @@ function BoardCard(props: {
     let targetColumnId: string | null = null;
     let ghost: HTMLElement | null = null;
     let finished = false;
+    let unregisterTransient = () => {};
     const rowKey = formulaRowKey(props.row);
     const sourceColumnId = props.columnId;
     const dragGroupBy = props.groupBy;
@@ -850,7 +852,6 @@ function BoardCard(props: {
       window.removeEventListener("pointerup", onUp, true);
       window.removeEventListener("pointercancel", onPointerCancel, true);
       window.removeEventListener("blur", onCancel, true);
-      window.removeEventListener("keydown", onKeyDown, true);
       card.removeEventListener("lostpointercapture", onLostPointerCapture, true);
     };
     const onMove = (ev: PointerEvent) => {
@@ -887,6 +888,7 @@ function BoardCard(props: {
       if (finished) return;
       finished = true;
       removeListeners();
+      unregisterTransient();
       // Escape/blur/supersession can finish before the browser's natural
       // pointerup release. Drop capture after detaching lostpointercapture so a
       // canceled pointer cannot keep retargeting later gestures to this card.
@@ -912,17 +914,21 @@ function BoardCard(props: {
       if (ev.pointerId !== pointerId || !props.dragCoordinator.owns(pointerId, onCancel)) return;
       onCancel();
     };
-    const onKeyDown = (ev: KeyboardEvent) => {
-      if (ev.key !== "Escape") return;
-      ev.preventDefault();
-      onCancel();
-    };
     props.dragCoordinator.start(pointerId, onCancel);
+    unregisterTransient = registerTransientLayer({
+      id: "sheet-board-drag",
+      root: () => card,
+      trigger: () => card,
+      dismiss: () => {
+        if (finished || !props.dragCoordinator.owns(pointerId, onCancel)) return false;
+        finish();
+        return true;
+      },
+    });
     window.addEventListener("pointermove", onMove, true);
     window.addEventListener("pointerup", onUp, true);
     window.addEventListener("pointercancel", onPointerCancel, true);
     window.addEventListener("blur", onCancel, true);
-    window.addEventListener("keydown", onKeyDown, true);
     card.addEventListener("lostpointercapture", onLostPointerCapture, true);
     cancelActiveDrag = onCancel;
   };

@@ -13,8 +13,6 @@ import {
   openDevtools,
   toggleTheme,
   toggleSidebar,
-  closeSwitcher,
-  closeSettings,
   openSettings,
   toggleHelpPopup,
   toggleRightSidebar,
@@ -24,24 +22,14 @@ import {
   toggleDimInactiveBlocks,
   focusMode,
   exitFocusMode,
-  switcherOpen,
-  switcherEmbryo,
-  settingsOpen,
   carryDays,
-  audioPlayer,
-  contextMenu,
-  datePicker,
-  exportModal,
-  formulaEditor,
-  helpPopupOpen,
-  lightbox,
-  pagePropsPanel,
-  pdfExportPage,
   pushToast,
   openPdfExport,
   pdfTarget,
-  welcomeOpen,
+  dismissMobileDrawer,
 } from "./ui";
+import { restoreDrawerFocus } from "./mobileDrawers";
+import { dismissTopTransient } from "./transientLayers";
 import { carryDaysBack } from "./carry";
 import {
   openJournals,
@@ -70,7 +58,7 @@ import {
 } from "./store";
 import { startEditing } from "./editorController";
 import { copyOutline } from "./clipboard";
-import { closeInPageFind, inPageFindOpen, openInPageFind } from "./inpageFind";
+import { openInPageFind } from "./inpageFind";
 import { cellSel, enterGridSelection, handleCellSelectionKey, handleSheetPasteEvent, outlinedGridSelectionId } from "./sheet/selection";
 import { decodeNavIntent } from "./navProtocol";
 import {
@@ -223,23 +211,6 @@ export function handlePaneSelectKey(e: KeyboardEvent): boolean {
       if (target.kind !== "pane") materializePaneSelection(intent.char);
       return true; // swallow stray typing even on a pane target
   }
-}
-
-function anyOverlayOpen(): boolean {
-  return !!(
-    switcherOpen() ||
-    settingsOpen() ||
-    datePicker() ||
-    formulaEditor() ||
-    pagePropsPanel() ||
-    exportModal() ||
-    contextMenu() ||
-    helpPopupOpen() ||
-    lightbox() ||
-    audioPlayer() ||
-    pdfExportPage() ||
-    welcomeOpen()
-  );
 }
 
 // Default command table. Editor command ids mirror OG Logseq where practical.
@@ -786,21 +757,14 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
   };
 
   const handler = (e: KeyboardEvent) => {
-    if (suspended) return;
+    // IME composition owns Escape.  It must not fall through to a transient,
+    // shortcut recorder, editor, or pane handler.
+    if (e.isComposing || e.keyCode === 229) return;
     // Ignore bare modifier presses (incl. Super/Windows).
     if (isModifierKey(e)) return;
 
     const chord = eventToChord(e);
     const editing = isEditableTarget(e.target);
-
-    // !editing guard: pane-select must NEVER eat keys while a text field has
-    // focus — a stale mode (entered via Esc, then click into a block) would
-    // otherwise swallow every printable/arrow/Enter and break typing.
-    if (paneSel() && !editing && handlePaneSelectKey(e)) {
-      e.preventDefault();
-      resetSeq();
-      return;
-    }
 
     // Escape, in priority order, so focus mode peels off one layer at a time
     // (Logseq-like): overlays first; then if editing a block's text let the
@@ -808,20 +772,22 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
     // deselects (and in focus mode that same Esc exits focus); else exit focus.
     // Net: editing → Esc (to block-select) → Esc (exit focus) = twice, not once.
     if (e.key === "Escape") {
-      if (inPageFindOpen()) {
-        closeInPageFind();
-        e.preventDefault();
-        resetSeq();
-        return;
+      if (dismissTopTransient("escape")) {
+        e.preventDefault(); e.stopImmediatePropagation(); resetSeq(); return;
       }
-      if (switcherOpen() || settingsOpen()) {
-        const embryo = switcherEmbryo();
-        closeSwitcher();
-        if (embryo) closePane(embryo.paneId);
-        closeSettings();
-        e.preventDefault();
-        resetSeq();
-        return;
+      if (dismissMobileDrawer("escape")) {
+        restoreDrawerFocus("escape");
+        e.preventDefault(); e.stopImmediatePropagation(); resetSeq(); return;
+      }
+      // Settings shortcut recording suspends only the ordinary shortcut/editor/
+      // pane ladder. Escape's transient/drawer prefix above remains available,
+      // but an unconsumed Escape must be stopped at capture so it cannot reach a
+      // target-local editor handler.
+      if (suspended) {
+        e.preventDefault(); e.stopImmediatePropagation(); resetSeq(); return;
+      }
+      if (paneSel() && !editing && handlePaneSelectKey(e)) {
+        e.preventDefault(); resetSeq(); return;
       }
       if (editing) return; // defer to the editor's own Esc (capture phase)
       if (cellSel() && handleCellSelectionKey(e)) {
@@ -846,11 +812,19 @@ export function installKeybindings(overrides: Record<string, string> = {}): () =
         resetSeq();
         return;
       }
-      if (anyOverlayOpen()) {
-        resetSeq();
-        return;
-      }
       enterPaneSelectFromFocus();
+      e.preventDefault();
+      resetSeq();
+      return;
+    }
+
+    // Settings shortcut recording still declines non-Escape input so its own
+    // capture listener can record ordinary chords.
+    if (suspended) return;
+
+    // !editing guard: pane-select must NEVER eat ordinary keys while a text
+    // field has focus. Escape itself was handled after transient/drawer.
+    if (paneSel() && !editing && handlePaneSelectKey(e)) {
       e.preventDefault();
       resetSeq();
       return;

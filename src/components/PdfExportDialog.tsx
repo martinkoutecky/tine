@@ -1,7 +1,8 @@
-import { For, Show, createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { For, Show, createEffect, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { pdfExportPage, closePdfExport } from "../ui";
 import { exportPagePdf, DEFAULT_PRINT_OPTS } from "../print";
 import type { PrintOpts } from "../types";
+import { registerTransientLayer } from "../transientLayers";
 
 const STORE_KEY = "tine.pdfExportOpts";
 
@@ -49,6 +50,11 @@ export function PdfExportDialog(): JSX.Element {
 }
 
 function Dialog(props: { name: string }): JSX.Element {
+  let root: HTMLDivElement | undefined;
+  createEffect(() => {
+    const unregister = registerTransientLayer({ id: "pdf-export", root: () => root ?? null, dismiss: () => { closePdfExport(); return true; } });
+    onCleanup(unregister);
+  });
   const [opts, setOpts] = createSignal<PrintOpts>(loadOpts());
   const update = (patch: Partial<PrintOpts>) => {
     const next = { ...opts(), ...patch };
@@ -65,10 +71,7 @@ function Dialog(props: { name: string }): JSX.Element {
 
   onMount(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        closePdfExport();
-      } else if (e.key === "Enter") {
+      if (e.key === "Enter") {
         e.preventDefault();
         doExport();
       }
@@ -79,7 +82,7 @@ function Dialog(props: { name: string }): JSX.Element {
 
   return (
     <div class="modal-overlay" onClick={closePdfExport}>
-      <div class="export-modal pdf-export-modal" onClick={(e) => e.stopPropagation()}>
+      <div ref={root} class="export-modal pdf-export-modal" onClick={(e) => e.stopPropagation()}>
         <div class="export-head">
           Export to PDF <span class="export-count">{props.name}</span>
         </div>

@@ -1,4 +1,4 @@
-import { For, Show, Switch, Match, createEffect, createSignal, type JSX } from "solid-js";
+import { For, Show, Switch, Match, createEffect, createSignal, onCleanup, type JSX } from "solid-js";
 import {
   contextMenu,
   closeContextMenu,
@@ -54,6 +54,7 @@ import { startEditing } from "../editorController";
 import { copyStripCollapsed } from "../copySettings";
 import { copyOutline } from "../clipboard";
 import type { PageKind } from "../types";
+import { registerTransientLayer } from "../transientLayers";
 
 // Copy a block reference/embed — but only after the block's id:: is durably on
 // disk. ensureBlockId returns null if the save couldn't land (conflict/error), in
@@ -116,6 +117,20 @@ export function ContextMenu(): JSX.Element {
       const r = el.getBoundingClientRect();
       setPlace(placeContextMenu(x, y, r.width, r.height, window.innerWidth, window.innerHeight));
     });
+  });
+  createEffect(() => {
+    if (!contextMenu()) return;
+    const unregister = registerTransientLayer({
+      id: "context-menu",
+      root: () => menuEl ?? null,
+      dismiss: () => {
+        const inline = menuEl?.querySelector<HTMLInputElement>(".ctx-template-name, .ctx-rename-name");
+        if (inline) { inline.dispatchEvent(new Event("tine-dismiss-inline")); return true; }
+        close();
+        return true;
+      },
+    });
+    onCleanup(unregister);
   });
 
   return (
@@ -641,11 +656,13 @@ function MakeTemplate(props: { id: string; close: () => void }): JSX.Element {
       <div class="ctx-template-form">
         <input
           class="ctx-template-name"
+          ref={(el) => el.addEventListener("tine-dismiss-inline", () => setEditing(false), { once: true })}
           placeholder="Template name"
           autofocus
           value={name()}
           onInput={(e) => setName(e.currentTarget.value)}
           onKeyDown={(e) => {
+            if (e.isComposing || e.keyCode === 229) return;
             if (e.key === "Enter") { e.preventDefault(); void submit(); }
             else if (e.key === "Escape") { e.preventDefault(); setEditing(false); }
           }}
@@ -855,10 +872,14 @@ function RenamePage(props: {
       <div class="ctx-rename-form" onClick={(e) => e.stopPropagation()}>
         <input
           class="ctx-rename-name"
-          ref={(el) => queueMicrotask(() => (el.focus(), el.select()))}
+          ref={(el) => {
+            queueMicrotask(() => (el.focus(), el.select()));
+            el.addEventListener("tine-dismiss-inline", () => setEditing(false), { once: true });
+          }}
           value={value()}
           onInput={(e) => setValue(e.currentTarget.value)}
           onKeyDown={(e) => {
+            if (e.isComposing || e.keyCode === 229) return;
             if (e.key === "Enter") { e.preventDefault(); void submit(); }
             else if (e.key === "Escape") { e.preventDefault(); setEditing(false); }
           }}

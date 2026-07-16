@@ -1,4 +1,4 @@
-import { For, Show, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { exportModal, closeExportModal, pushToast, typographyMode, graphMeta } from "../ui";
 import { exportNodesFor, formatForPage } from "../store";
 import { backend } from "../backend";
@@ -17,6 +17,7 @@ import {
 } from "../editor/exportText";
 import type { Block, Format, Inline, ListItem } from "../render/ast";
 import type { BlockDto, PageDto, QueryExportResult, QueryExportSpec, RefGroup } from "../types";
+import { registerTransientLayer } from "../transientLayers";
 
 const STORE_KEY = "tine.exportOptions";
 
@@ -351,6 +352,11 @@ export function ExportModal(): JSX.Element {
 }
 
 function Modal(props: { ids: string[] }): JSX.Element {
+  let root: HTMLDivElement | undefined;
+  createEffect(() => {
+    const unregister = registerTransientLayer({ id: "copy-export", root: () => root ?? null, dismiss: () => { closeExportModal(); return true; } });
+    onCleanup(unregister);
+  });
   const [opts, setOpts] = createSignal<ExportOptions>(loadOptions());
   const [warmRev, setWarmRev] = createSignal(0);
   const [warming, setWarming] = createSignal(false);
@@ -413,10 +419,7 @@ function Modal(props: { ids: string[] }): JSX.Element {
     });
 
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        closeExportModal();
-      } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         copy();
       }
@@ -436,7 +439,7 @@ function Modal(props: { ids: string[] }): JSX.Element {
   const blockCount = props.ids.length;
   return (
     <div class="modal-overlay" onClick={closeExportModal}>
-      <div class="export-modal" onClick={(e) => e.stopPropagation()}>
+      <div ref={root} class="export-modal" onClick={(e) => e.stopPropagation()}>
         <div class="export-head">
           Copy / export <span class="export-count">{blockCount} block{blockCount === 1 ? "" : "s"}</span>
         </div>
