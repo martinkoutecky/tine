@@ -83,6 +83,23 @@ function activeView(root: HTMLElement): string | undefined {
   return root.querySelector(".query-view-switcher button.active")?.textContent?.trim();
 }
 
+function presentedResultNumbers(
+  root: HTMLElement,
+  view: "Search" | "List" | "Table" | "Board"
+): number[] {
+  const selectors = {
+    Search: ".query-search-hit",
+    List: '.query-group [data-block-id^="todo-"]',
+    Table: '.sheet-title-cell[data-block-id^="todo-"]',
+    Board: '.sheet-board-card[data-block-id^="todo-"]',
+  } as const;
+  return [...root.querySelectorAll(selectors[view])].map((element) => {
+    const match = /Result\s+(\d+)/.exec(element.textContent ?? "");
+    if (!match) throw new Error(`${view} result did not expose its fixture identity: ${element.textContent}`);
+    return Number(match[1]);
+  });
+}
+
 function loadQueryDoc(queryRaw: string) {
   setDoc({
     byId: {
@@ -150,7 +167,7 @@ describe("QueryMacro sheet integration", () => {
     dispose();
   });
 
-  it("keeps ordinary DSL query membership when switching to the Search presentation", async () => {
+  it("keeps ordinary DSL query membership across Search, List, Table, and Board presentations", async () => {
     const ids = Array.from({ length: 9 }, (_, index) => `todo-${index + 1}`);
     setDoc({
       byId: {
@@ -175,6 +192,16 @@ describe("QueryMacro sheet integration", () => {
     expect(root.querySelector(".query-count")?.textContent).toBe("9");
     expect(root.querySelectorAll(".query-search-results .query-search-hit")).toHaveLength(9);
     expect(root.querySelector(".query-search-hit")?.textContent).toContain("Result 1");
+    expect(presentedResultNumbers(root, "Search")).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(graphSearch).not.toHaveBeenCalled();
+
+    for (const view of ["List", "Table", "Board", "Search"] as const) {
+      clickView(root, view);
+      await settleQuery();
+      expect(activeView(root)).toBe(view);
+      expect(root.querySelector(".query-count")?.textContent).toBe("9");
+      expect(presentedResultNumbers(root, view)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    }
     expect(graphSearch).not.toHaveBeenCalled();
 
     dispose();
