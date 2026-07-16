@@ -48,6 +48,18 @@ try {
     connectionRetryTimeout: 60000,
   });
   await browser.$(".ls-block").waitForExist({ timeout: 30000 });
+  const overscroll = await browser.execute(() => ({
+    html: getComputedStyle(document.documentElement).overscrollBehavior,
+    body: getComputedStyle(document.body).overscrollBehavior,
+    shell: getComputedStyle(document.querySelector(".app-container")).overscrollBehavior,
+    mainOverflow: getComputedStyle(document.querySelector(".main-content")).overflowY,
+  }));
+  if (overscroll.html !== "none" || overscroll.body !== "none" || overscroll.shell !== "none") {
+    throw new Error(`viewport scroll chain is not contained: ${JSON.stringify(overscroll)}`);
+  }
+  if (!["auto", "scroll"].includes(overscroll.mainOverflow)) {
+    throw new Error(`main pane no longer has ordinary scrolling: ${JSON.stringify(overscroll)}`);
+  }
   const body = await browser.$("body").getText();
   if (!body.includes("WINDOWS_SMOKE_ORIGINAL")) throw new Error("seeded graph did not render");
   await browser.$(".ls-block .block-content").click();
@@ -70,7 +82,7 @@ try {
   if (!reloaded.includes("WINDOWS_SMOKE_SAVED") || reloaded.includes("WINDOWS_SMOKE_ORIGINAL")) {
     throw new Error("saved text did not survive reload");
   }
-  console.log("PASS: Windows WebView2 launch, graph render, edit, save, and reload");
+  console.log("PASS: Windows WebView2 launch, overscroll containment, graph render, edit, save, and reload");
 } finally {
   try { await browser?.deleteSession(); } catch {}
   spawnSync("taskkill", ["/PID", String(driver.pid), "/T", "/F"], { stdio: "ignore" });

@@ -28,9 +28,9 @@ function mount(node: () => JSX.Element) {
   return { root, dispose: render(node, root) };
 }
 
-function mountEditor(raw = "before selected after") {
+function mountEditor(raw = "before selected after", format: "md" | "org" = "md") {
   const block: BlockDto = { id: "selection-wrap", raw, collapsed: false, children: [] };
-  loadSingle({ name: "Wrap", kind: "page", title: "Wrap", pre_block: null, blocks: [block] });
+  loadSingle({ name: "Wrap", kind: "page", title: "Wrap", pre_block: null, blocks: [block], format });
   startEditing(block.id, 0);
   const mounted = mount(() => (
     <For each={pageByName("Wrap")?.roots ?? []}>{(id) => <Block id={id} />}</For>
@@ -134,6 +134,63 @@ describe("selection toolbar actions (GH #142)", () => {
       await vi.waitFor(() => expect(doc.byId["selection-wrap"].raw).toBe("`alpha` beta"));
       undo();
       expect(doc.byId["selection-wrap"].raw).toBe("alpha beta");
+    } finally {
+      dispose();
+    }
+  });
+
+  it.each([
+    ["md", "bold", "**"],
+    ["md", "italic", "*"],
+    ["md", "strikethrough", "~~"],
+    ["md", "highlight", "=="],
+    ["org", "bold", "*"],
+    ["org", "italic", "/"],
+    ["org", "strikethrough", "+"],
+    ["org", "highlight", "^^"],
+  ] as const)("applies %s %s from the toolbar without wrapping the trailing space", async (format, action, delimiter) => {
+    const { textarea, root, dispose } = mountEditor("before selected after", format);
+    try {
+      textarea.focus();
+      textarea.setSelectionRange(7, 16, "backward");
+      textarea.dispatchEvent(new Event("select", { bubbles: true }));
+      root.querySelector<HTMLButtonElement>(`[data-selection-action="${action}"]`)!.click();
+      await vi.waitFor(() => expect(textarea.value).toBe(`before ${delimiter}selected${delimiter} after`));
+      expect([textarea.selectionStart, textarea.selectionEnd, textarea.selectionDirection]).toEqual([
+        7 + delimiter.length,
+        15 + delimiter.length,
+        "backward",
+      ]);
+    } finally {
+      dispose();
+    }
+  });
+});
+
+describe("selection formatting keyboard commands (GH #178)", () => {
+  it.each([
+    ["md", "b", false, "**"],
+    ["md", "i", false, "*"],
+    ["md", "s", true, "~~"],
+    ["md", "h", true, "=="],
+    ["org", "b", false, "*"],
+    ["org", "i", false, "/"],
+    ["org", "s", true, "+"],
+    ["org", "h", true, "^^"],
+  ] as const)("applies %s %s without moving the selected trailing space inside its delimiter", async (format, key, shiftKey, delimiter) => {
+    const { textarea, dispose } = mountEditor("before selected after", format);
+    try {
+      textarea.focus();
+      textarea.setSelectionRange(7, 16, "backward");
+      const event = keydown(textarea, { key, code: `Key${key.toUpperCase()}`, ctrlKey: true, shiftKey });
+      expect(event.defaultPrevented).toBe(true);
+      await vi.waitFor(() => expect(textarea.value).toBe(`before ${delimiter}selected${delimiter} after`));
+      expect([textarea.selectionStart, textarea.selectionEnd, textarea.selectionDirection]).toEqual([
+        7 + delimiter.length,
+        15 + delimiter.length,
+        "backward",
+      ]);
+      expect(doc.byId["selection-wrap"].raw).toBe(`before ${delimiter}selected${delimiter} after`);
     } finally {
       dispose();
     }

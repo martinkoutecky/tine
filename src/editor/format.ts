@@ -9,7 +9,18 @@ export interface Edit {
   text: string;
   start: number;
   end: number;
+  /** Preserve which end of a live textarea selection is active. */
+  direction?: "forward" | "backward" | "none";
 }
+
+export type InlineFormat = "bold" | "italic" | "strikethrough" | "highlight";
+
+const INLINE_FORMAT_DELIMITERS: Record<"md" | "org", Record<InlineFormat, string>> = {
+  md: { bold: "**", italic: "*", strikethrough: "~~", highlight: "==" },
+  org: { bold: "*", italic: "/", strikethrough: "+", highlight: "^^" },
+};
+
+const ASCII_WHITESPACE = /[\t\n\v\f\r ]/;
 
 /** Toggle a symmetric inline wrap (e.g. `**` … `**`). Unwraps if the selection
  *  is already wrapped (markers just outside, or included in the selection).
@@ -47,6 +58,34 @@ export function toggleWrap(text: string, start: number, end: number, left: strin
     start: start + left.length,
     end: end + left.length,
   };
+}
+
+/** Toggle a parser-recognized inline format. Browser word selection commonly
+ * includes the adjacent space (notably Ctrl+Shift+Left on Windows). OG trims
+ * that outer whitespace before adding delimiters; keep the bytes in place and
+ * retain Tine's live inner selection. Generic wrappers such as page links and
+ * inline code deliberately keep using toggleWrap: their whitespace semantics
+ * are a separate contract. */
+export function toggleInlineFormat(
+  text: string,
+  start: number,
+  end: number,
+  format: "md" | "org",
+  kind: InlineFormat,
+  direction?: "forward" | "backward" | "none",
+): Edit {
+  let innerStart = start;
+  let innerEnd = end;
+  if (start !== end) {
+    while (innerStart < innerEnd && ASCII_WHITESPACE.test(text[innerStart])) innerStart += 1;
+    while (innerEnd > innerStart && ASCII_WHITESPACE.test(text[innerEnd - 1])) innerEnd -= 1;
+    if (innerStart === innerEnd) {
+      const unchanged: Edit = { text, start, end };
+      return direction === undefined ? unchanged : { ...unchanged, direction };
+    }
+  }
+  const edit = toggleWrap(text, innerStart, innerEnd, INLINE_FORMAT_DELIMITERS[format][kind]);
+  return direction === undefined ? edit : { ...edit, direction };
 }
 
 /** Narrow transcription of mldoc-link? for the keyboard/link-toolbar boundary.

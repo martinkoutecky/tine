@@ -25,4 +25,34 @@ describe("selection action registry", () => {
       text: "`alpha` beta", start: 1, end: 6,
     });
   });
+
+  it.each([
+    ["md", "bold", "**"],
+    ["md", "italic", "*"],
+    ["md", "strikethrough", "~~"],
+    ["md", "highlight", "=="],
+    ["org", "bold", "*"],
+    ["org", "italic", "/"],
+    ["org", "strikethrough", "+"],
+    ["org", "highlight", "^^"],
+  ] as const)(
+    "uses %s %s syntax and leaves browser-selected outer whitespace outside the delimiters",
+    (format, id, delimiter) => {
+      const action = SELECTION_ACTIONS.find((candidate) => candidate.id === id)!;
+      const edit = action.apply("before \tselected \r\nafter", 6, 18, format, "backward");
+      expect(edit).toEqual({
+        text: `before \t${delimiter}selected${delimiter} \r\nafter`,
+        start: 8 + delimiter.length,
+        end: 16 + delimiter.length,
+        direction: "backward",
+      });
+    },
+  );
+
+  it("does not change the neighboring page-link and inline-code whitespace semantics", () => {
+    const page = SELECTION_ACTIONS.find((action) => action.id === "page-link")!;
+    const code = SELECTION_ACTIONS.find((action) => action.id === "inline-code")!;
+    expect(page.apply("alpha ", 0, 6, "org").text).toBe("[[alpha ]]");
+    expect(code.apply("alpha ", 0, 6, "org").text).toBe("`alpha `");
+  });
 });

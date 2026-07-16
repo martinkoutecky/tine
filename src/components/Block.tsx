@@ -76,7 +76,7 @@ import {
 import { parseOutline } from "../editor/outline";
 import { structuredHtmlOutline } from "../editor/htmlPaste";
 import {
-  toggleWrap,
+  toggleInlineFormat,
   insertLink,
   wrapLink,
   isPasteableUrl,
@@ -88,6 +88,7 @@ import {
   killWordBackward,
   setPriority,
   type Edit,
+  type InlineFormat,
 } from "../editor/format";
 import {
   essentialSelectionActions,
@@ -1287,7 +1288,7 @@ export function Editor(props: { id: string }): JSX.Element {
     commit(ed.text);
     queueMicrotask(() => {
       ref.value = ed.text;
-      ref.setSelectionRange(ed.start, ed.end);
+      ref.setSelectionRange(ed.start, ed.end, ed.direction);
       ref.focus();
       autosize();
     });
@@ -1328,7 +1329,7 @@ export function Editor(props: { id: string }): JSX.Element {
     onCleanup(unregister);
   });
   const runSelectionAction = (action: SelectionAction) => {
-    applyEdit(action.apply(ref.value, ref.selectionStart, ref.selectionEnd, pageFmt()));
+    applyEdit(action.apply(ref.value, ref.selectionStart, ref.selectionEnd, pageFmt(), ref.selectionDirection));
     setSelectionOverflowOpen(false);
     queueMicrotask(updateSel);
   };
@@ -2129,14 +2130,25 @@ export function Editor(props: { id: string }): JSX.Element {
     openDatePicker(props.id, "scheduled", r.left, r.bottom + 4);
   };
 
+  const applyInlineFormat = (kind: InlineFormat) => {
+    applyEdit(toggleInlineFormat(
+      ref.value,
+      ref.selectionStart,
+      ref.selectionEnd,
+      pageFmt(),
+      kind,
+      ref.selectionDirection,
+    ));
+  };
+
   // Editor command handlers keyed by command id (see keybindings.ts). Each does
   // its own preventDefault when it handles the event and returns whether it did
   // (false → fall through to native handling). Read ref fresh at call time.
   const runEditorCmd: Record<string, (e: KeyboardEvent) => boolean> = {
-    "editor/bold": (e) => { e.preventDefault(); applyEdit(toggleWrap(ref.value, ref.selectionStart, ref.selectionEnd, "**")); return true; },
-    "editor/italics": (e) => { e.preventDefault(); applyEdit(toggleWrap(ref.value, ref.selectionStart, ref.selectionEnd, "*")); return true; },
-    "editor/strike-through": (e) => { e.preventDefault(); applyEdit(toggleWrap(ref.value, ref.selectionStart, ref.selectionEnd, "~~")); return true; },
-    "editor/highlight": (e) => { e.preventDefault(); applyEdit(toggleWrap(ref.value, ref.selectionStart, ref.selectionEnd, "==")); return true; },
+    "editor/bold": (e) => { e.preventDefault(); applyInlineFormat("bold"); return true; },
+    "editor/italics": (e) => { e.preventDefault(); applyInlineFormat("italic"); return true; },
+    "editor/strike-through": (e) => { e.preventDefault(); applyInlineFormat("strikethrough"); return true; },
+    "editor/highlight": (e) => { e.preventDefault(); applyInlineFormat("highlight"); return true; },
     "editor/insert-link": (e) => { e.preventDefault(); applyEdit(insertLink(ref.value, ref.selectionStart, ref.selectionEnd, pageFmt())); return true; },
     "editor/clear-block": (e) => { e.preventDefault(); applyEdit({ text: "", start: 0, end: 0 }); return true; },
     "editor/kill-line-before": (e) => { e.preventDefault(); applyEdit(killLineBefore(ref.value, ref.selectionStart)); return true; },

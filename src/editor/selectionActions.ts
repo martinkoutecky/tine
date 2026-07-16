@@ -1,4 +1,4 @@
-import { insertLink, toggleWrap, type Edit } from "./format";
+import { insertLink, toggleInlineFormat, toggleWrap, type Edit, type InlineFormat } from "./format";
 
 export type SelectionActionId =
   | "bold"
@@ -14,7 +14,13 @@ export interface SelectionAction {
   label: string;
   title: string;
   tier: "essential" | "secondary";
-  apply(text: string, start: number, end: number, format?: "md" | "org"): Edit;
+  apply(
+    text: string,
+    start: number,
+    end: number,
+    format?: "md" | "org",
+    direction?: "forward" | "backward" | "none",
+  ): Edit;
 }
 
 const wrap = (
@@ -32,12 +38,27 @@ const wrap = (
   apply: (text, start, end) => toggleWrap(text, start, end, left, right),
 });
 
+const inlineFormat = (
+  id: SelectionActionId,
+  label: string,
+  title: string,
+  kind: InlineFormat,
+  tier: SelectionAction["tier"] = "essential",
+): SelectionAction => ({
+  id,
+  label,
+  title,
+  tier,
+  apply: (text, start, end, format = "md", direction) =>
+    toggleInlineFormat(text, start, end, format, kind, direction),
+});
+
 /** Host-owned selection actions. Stable IDs let keybindings, command surfaces,
  * and a future declarative plugin capability refer to the same semantic edits
  * without handing arbitrary DOM/editor access to extensions. */
 export const SELECTION_ACTIONS: readonly SelectionAction[] = [
-  wrap("bold", "B", "Bold (mod+b)", "**"),
-  wrap("italic", "I", "Italic (mod+i)", "*"),
+  inlineFormat("bold", "B", "Bold (mod+b)", "bold"),
+  inlineFormat("italic", "I", "Italic (mod+i)", "italic"),
   wrap("page-link", "[[ ]]", "Page link", "[[", "essential", "]]"),
   wrap("inline-code", "`", "Inline code", "`"),
   {
@@ -47,8 +68,8 @@ export const SELECTION_ACTIONS: readonly SelectionAction[] = [
     tier: "secondary",
     apply: (text, start, end, format = "md") => insertLink(text, start, end, format),
   },
-  wrap("strikethrough", "S", "Strikethrough", "~~", "secondary"),
-  wrap("highlight", "H", "Highlight", "==", "secondary"),
+  inlineFormat("strikethrough", "S", "Strikethrough", "strikethrough", "secondary"),
+  inlineFormat("highlight", "H", "Highlight", "highlight", "secondary"),
 ];
 
 export const essentialSelectionActions = SELECTION_ACTIONS.filter((action) => action.tier === "essential");

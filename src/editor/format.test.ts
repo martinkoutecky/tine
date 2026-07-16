@@ -12,6 +12,7 @@ import {
   trimBlockTrailingSpace,
   wrapLink,
   isPasteableUrl,
+  toggleInlineFormat,
 } from "./format";
 
 describe("toggleWrap", () => {
@@ -32,6 +33,36 @@ describe("toggleWrap", () => {
       text: "<ins>x</ins>",
       start: 5,
       end: 6,
+    });
+  });
+});
+
+describe("toggleInlineFormat (GH #178)", () => {
+  it.each([
+    ["leading", " selected", 0, 9, " **selected**", 3, 11],
+    ["trailing", "selected ", 0, 9, "**selected** ", 2, 10],
+    ["both", " \tselected \r\n", 0, 13, " \t**selected** \r\n", 4, 12],
+  ] as const)("keeps %s ASCII whitespace outside Markdown delimiters", (_label, text, start, end, expected, nextStart, nextEnd) => {
+    expect(toggleInlineFormat(text, start, end, "md", "bold", "forward")).toEqual({
+      text: expected,
+      start: nextStart,
+      end: nextEnd,
+      direction: "forward",
+    });
+  });
+
+  it("preserves a backward selection while unwrapping a whitespace-surrounded format", () => {
+    expect(toggleInlineFormat(" **selected** ", 0, 14, "md", "bold", "backward")).toEqual({
+      text: " selected ",
+      start: 1,
+      end: 9,
+      direction: "backward",
+    });
+  });
+
+  it("leaves an all-whitespace selection unchanged", () => {
+    expect(toggleInlineFormat("a \t b", 1, 4, "org", "italic")).toEqual({
+      text: "a \t b", start: 1, end: 4,
     });
   });
 });

@@ -7,6 +7,10 @@ body {
   margin: 0;
   padding: 0;
   height: 100%;
+  /* WebView2 otherwise propagates an exhausted descendant scroll chain to the
+     viewport and rubber-bands the entire compositor layer, fixed chrome and
+     all. This is a viewport effect, not ordinary content scrolling. */
+  overscroll-behavior: none;
 }
 
 body {
@@ -54,6 +58,10 @@ textarea {
   display: flex;
   height: 100vh;
   overflow: hidden;
+  /* Terminate every pane/sidebar/drawer chain at the common shell. Keeping the
+     rule here (rather than on every nested scroller) preserves normal chaining
+     between nested regions while preventing it from reaching the viewport. */
+  overscroll-behavior: none;
   /* Keep the app shell out from under the system bars on edge-to-edge mobile
      (Android targetSdk 36 forces this): without it the topbar's sidebar/settings
      buttons sit behind the status bar and can't be tapped. All four insets are
