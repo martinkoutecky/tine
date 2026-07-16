@@ -151,6 +151,18 @@ try {
     };
   });
   if (!heldDrag?.sourceId || !heldDrag.targetId) throw new Error("overview rows did not expose a native drag path");
+  await browser.execute(() => {
+    window.__tabOverviewPointerTrace = [];
+    const record = (event) => window.__tabOverviewPointerTrace.push({
+      type: event.type,
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      target: event.target?.className ?? "",
+    });
+    document.addEventListener("pointerdown", record, true);
+    window.addEventListener("pointermove", record, true);
+  });
   let heldPointer = false;
   try {
     await browser.performActions([{
@@ -164,11 +176,22 @@ try {
       ],
     }]);
     heldPointer = true;
-    await browser.waitUntil(() => browser.execute((sourceId, targetId) =>
-      document.querySelector(`[data-tab-id="${sourceId}"]`)?.classList.contains("tab-overview-dragging")
-      && document.querySelector(`[data-tab-id="${targetId}"]`)?.classList.contains("tab-overview-drop-after"), heldDrag.sourceId, heldDrag.targetId), {
-      timeout: 5000, timeoutMsg: "native held overview-row drag did not arm a reorder session",
-    });
+    try {
+      await browser.waitUntil(() => browser.execute((sourceId, targetId) =>
+        document.querySelector(`[data-tab-overview-row][data-tab-id="${sourceId}"]`)?.classList.contains("tab-overview-dragging")
+        && document.querySelector(`[data-tab-overview-row][data-tab-id="${targetId}"]`)?.classList.contains("tab-overview-drop-after"), heldDrag.sourceId, heldDrag.targetId), {
+        timeout: 5000, timeoutMsg: "native held overview-row drag did not arm a reorder session",
+      });
+    } catch (error) {
+      const state = await browser.execute((start, end) => ({
+        trace: window.__tabOverviewPointerTrace,
+        startHit: document.elementFromPoint(start.x, start.y)?.className ?? "",
+        endHit: document.elementFromPoint(end.x, end.y)?.className ?? "",
+        dragging: document.querySelector(".tab-overview-dragging")?.getAttribute("data-tab-id") ?? null,
+        drop: document.querySelector(".tab-overview-drop-before, .tab-overview-drop-after")?.className ?? null,
+      }), heldDrag.start, heldDrag.end);
+      throw new Error(`${String(error)}; state=${JSON.stringify(state)}`);
+    }
     await browser.keys("Escape");
     await browser.$("[role=listbox]").waitForExist({ reverse: true, timeout: 5000 });
     await browser.performActions([{

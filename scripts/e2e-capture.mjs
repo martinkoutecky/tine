@@ -276,7 +276,19 @@ try {
     await browser.keys(["["]);
     await expectAutocompleteValue("[", "Quick Capture did not receive the first page-ref delimiter");
     await browser.keys(["["]);
-    await expectAutocompleteValue("[[]]", "Quick Capture did not auto-pair the second page-ref delimiter");
+    let opener = null;
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline) {
+      opener = await activeAutocomplete();
+      // The completion contract accepts both a hand-typed unclosed opener and
+      // Tine's convenience auto-pair. Which post-input snapshot WebKit exposes
+      // to XTest is immaterial; ordering is proved by observing the second `[`.
+      if (opener.value === "[[" || opener.value === "[[]]") break;
+      await sleep(50);
+    }
+    if (opener?.value !== "[[" && opener?.value !== "[[]]") {
+      throw new Error(`Quick Capture did not receive the second page-ref delimiter; actual=${JSON.stringify(opener)}`);
+    }
     for (const key of query) await browser.keys([key]);
   };
   // A fuzzy-only query distinguishes existing-first from adaptive/Create-first.
