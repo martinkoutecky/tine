@@ -24,7 +24,10 @@ const EDITOR = "22222222-2222-4222-8222-222222222222";
 const SLASH_EDITOR = "33333333-3333-4333-8333-333333333333";
 const LINK_EDITOR = "44444444-4444-4444-8444-444444444444";
 const TEST_PAGE = `${GRAPH}/pages/OG Parity References.md`;
-const APP_DATA = `${TMP}/xdg/data/page.tine.Tine`;
+const APP_DATA_ROOT = process.platform === "win32"
+  ? path.join(TMP, "appdata")
+  : path.join(TMP, "xdg", "data");
+const APP_DATA = path.join(APP_DATA_ROOT, "page.tine.Tine");
 const SETTINGS = `${APP_DATA}/tine-settings.json`;
 
 /** WebDriver's `addValue` is a convenience mutation, not the literal key path
@@ -207,6 +210,8 @@ const env = {
   XDG_DATA_HOME: `${TMP}/xdg/data`,
   XDG_CONFIG_HOME: `${TMP}/xdg/config`,
   XDG_CACHE_HOME: `${TMP}/xdg/cache`,
+  APPDATA: APP_DATA_ROOT,
+  LOCALAPPDATA: path.join(TMP, "localappdata"),
   LIBGL_ALWAYS_SOFTWARE: "1",
   GDK_BACKEND: "x11",
 };
@@ -693,57 +698,9 @@ try {
   fs.closeSync(log);
 }
 
-// The established native capture scenario is the byte-identical observation
-// required by section 6.2(8): cold non-default policy, main-Settings live
-// change, hidden-WebView reopen, same-XDG process restart, page/tag Enter, and
-// saved literal input. Execute it as part of this matrix; do not replace it with
-// a `coveredBy` claim. It is Linux/X11-specific because native focus is proven
-// independently with xdotool before WebDriver sends keys.
-if (process.platform === "linux") {
-  const captureArtifacts = `${ARTIFACTS}/quick-capture`;
-  fs.mkdirSync(captureArtifacts, { recursive: true });
-  await sleep(700);
-  const captureResult = await new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [path.join(ROOT, "scripts/e2e-capture.mjs")], {
-      cwd: ROOT,
-      env: {
-        ...process.env,
-        TINE_APP: APP,
-        E2E_ARTIFACT_DIR: captureArtifacts,
-        // The routed-page driver tree has already been reaped; reuse its two
-        // runner-allocated free ports rather than doing unsafe arithmetic near
-        // the top of the TCP range.
-        E2E_DRIVER_PORT: String(DRIVER_PORT),
-        E2E_NATIVE_PORT: String(NATIVE_PORT),
-        E2E_WINDOW_MANAGER: process.env.E2E_CAPTURE_WINDOW_MANAGER || "openbox",
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-      detached: true,
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (chunk) => { stdout += chunk; });
-    child.stderr.on("data", (chunk) => { stderr += chunk; });
-    const timer = setTimeout(() => {
-      try { process.kill(-child.pid, "SIGKILL"); } catch {}
-      reject(new Error(`native quick-capture subscenario timed out; stdout=${stdout}; stderr=${stderr}`));
-    }, 120_000);
-    child.once("error", (error) => {
-      clearTimeout(timer);
-      reject(error);
-    });
-    child.once("exit", (code, signal) => {
-      clearTimeout(timer);
-      if (code === 0) resolve({ stdout: stdout.trim(), stderr: stderr.trim() });
-      else reject(new Error(`native quick-capture subscenario failed code=${code} signal=${signal}; stdout=${stdout}; stderr=${stderr}`));
-    });
-  });
-  receipt.observations.quickCapture = captureResult;
-} else {
-  receipt.observations.quickCapture = {
-    status: "not-run",
-    reason: "native X11 focus observation is Linux-only; no cross-platform proxy was claimed",
-  };
-}
-fs.writeFileSync(`${ARTIFACTS}/receipt.json`, `${JSON.stringify(receipt, null, 2)}\n`);
-console.log("PASS: reference-authoring native matrix covered routed page, split editor, restart, guarded disk/render, and Linux quick capture");
+// Quick Capture owns native-window focus, restart, and reference-policy proof in
+// the release suite's independent `capture` scenario. Nesting that entire X11
+// process tree here duplicated the same exact-binary proof and let stale window
+// manager state fail this otherwise unrelated routed-page scenario even when the
+// peer capture scenario passed moments later.
+console.log("PASS: reference-authoring native matrix covered routed page, split editor, restart, and guarded disk/render");

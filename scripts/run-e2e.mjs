@@ -189,8 +189,12 @@ async function runScenario([id, script, extraEnv]) {
       TINE_SOURCE_REVISION: process.env.TINE_SOURCE_REVISION || checkoutRevision,
       E2E_LEGACY_NOTES: "0",
       TAURI_DRIVER: process.env.TAURI_DRIVER || "tauri-driver",
-      WEBKIT_DRIVER: process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver",
     };
+    if (process.platform === "linux") {
+      env.WEBKIT_DRIVER = process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver";
+    } else if (process.env.WEBKIT_DRIVER) {
+      env.WEBKIT_DRIVER = process.env.WEBKIT_DRIVER;
+    }
     // Windows WebView2 session creation can fail before WebDriver exposes any
     // application output. Preserve Tine's own startup milestones and panic hook
     // beside the scenario evidence so hosted failures can be classified as an

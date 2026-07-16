@@ -48,7 +48,10 @@ const env = {
   GDK_BACKEND: "x11",
 };
 const log = fs.openSync(path.join(TMP, "tauri-driver.log"), "w");
-const td = spawn(TD, ["--port", String(DRIVER_PORT), "--native-port", String(NATIVE_PORT), "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"], {
+const driverArgs = process.platform === "linux"
+  ? ["--port", String(DRIVER_PORT), "--native-port", String(NATIVE_PORT), "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"]
+  : ["--port", String(DRIVER_PORT)];
+const td = spawn(TD, driverArgs, {
   env, stdio: ["ignore", log, log], detached: process.platform !== "win32",
 });
 await sleep(2500);

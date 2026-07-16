@@ -200,26 +200,12 @@ jobs:
           $zip = "Tine_${version}_${{ matrix.win-arch }}-portable.zip"
           Compress-Archive -Path $exe -DestinationPath $zip -Force
 
-      # The expensive platform build above is also the exact binary under test:
-      # Linux is a hard publication gate; Windows x64 is retained as advisory
-      # evidence until its hosted reliability has been calibrated further.
+      # The expensive Linux build above is also the exact binary under test and
+      # is a hard publication gate. Windows advisory evidence runs independently
+      # from the staged portable artifact below so it cannot serialize assembly.
       - name: Install Tauri WebDriver bridge
-        if: matrix.lane == 'linux-x64' || matrix.lane == 'windows-x64'
+        if: matrix.lane == 'linux-x64'
         run: cargo install tauri-driver --locked
-
-      - name: Install Edge WebDriver matching the hosted browser
-        if: matrix.lane == 'windows-x64'
-        shell: pwsh
-        run: |
-          $edgeExe = "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
-          if (-not (Test-Path $edgeExe)) { throw "Microsoft Edge not found at $edgeExe" }
-          $version = (Get-Item $edgeExe).VersionInfo.ProductVersion
-          $driverDir = "$env:RUNNER_TEMP\edgedriver"
-          $zip = "$env:RUNNER_TEMP\edgedriver.zip"
-          Invoke-WebRequest "https://msedgedriver.microsoft.com/$version/edgedriver_win64.zip" -OutFile $zip
-          Expand-Archive $zip -DestinationPath $driverDir -Force
-          $driverDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          & "$driverDir\msedgedriver.exe" --version
 
       - name: Gate Linux x64 on the complete real-app regression catalog
         if: matrix.lane == 'linux-x64'
@@ -227,15 +213,8 @@ jobs:
           E2E_ALLOW_SYNTHETIC_FOCUS: "1"
         run: npm run e2e:linux:release
 
-      - name: Run advisory Windows x64 real-app smoke
-        if: matrix.lane == 'windows-x64'
-        continue-on-error: true
-        env:
-          TINE_APP: ${{ github.workspace }}\target\release\tine.exe
-        run: npm run e2e:windows:smoke
-
       - name: Upload release E2E evidence
-        if: always() && (matrix.lane == 'linux-x64' || matrix.lane == 'windows-x64')
+        if: always() && matrix.lane == 'linux-x64'
         uses: actions/upload-artifact@v4
         with:
           name: release-e2e-${{ matrix.lane }}
@@ -254,6 +233,71 @@ jobs:
           if-no-files-found: error
           retention-days: 3
           compression-level: 0
+
+  # Advisory Windows scenarios consume the already-staged portable x64 binary.
+  # They run on independent hosts and in parallel with candidate assembly, so a
+  # bad runner neither cascades into 0/N evidence nor delays atomic publication.
+  # Job-level continue-on-error keeps the advisory policy while leaving each
+  # scenario's real failure visible instead of turning one 0/N step green.
+  windows-smoke:
+    needs: [preflight, build]
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario:
+          - windows-core
+          - og-parity-references
+          - page-properties
+          - page-trailing-block
+          - pdf-logseq
+          - print-security
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-windows-x64
+          path: release-windows-x64
+      - name: Extract the exact staged portable app
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem release-windows-x64 -Filter '*-portable.zip' | Select-Object -First 1
+          if (-not $zip) { throw "staged Windows portable zip is missing" }
+          Expand-Archive $zip.FullName -DestinationPath "$env:RUNNER_TEMP\tine-portable" -Force
+          $exe = Get-ChildItem "$env:RUNNER_TEMP\tine-portable" -Filter '*.exe' | Select-Object -First 1
+          if (-not $exe) { throw "portable Tine executable is missing" }
+          "TINE_APP=$($exe.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Install Tauri WebDriver bridge
+        run: cargo install tauri-driver --locked
+      - name: Install Edge WebDriver matching the hosted browser
+        shell: pwsh
+        run: |
+          $edgeExe = "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
+          if (-not (Test-Path $edgeExe)) { throw "Microsoft Edge not found at $edgeExe" }
+          $version = (Get-Item $edgeExe).VersionInfo.ProductVersion
+          $driverDir = "$env:RUNNER_TEMP\edgedriver"
+          $zip = "$env:RUNNER_TEMP\edgedriver.zip"
+          Invoke-WebRequest "https://msedgedriver.microsoft.com/$version/edgedriver_win64.zip" -OutFile $zip
+          Expand-Archive $zip -DestinationPath $driverDir -Force
+          $driverDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          & "$driverDir\msedgedriver.exe" --version
+      - name: Run advisory Windows x64 real-app scenario
+        run: npm run e2e:windows:smoke -- --scenario=${{ matrix.scenario }}
+      - name: Upload Windows E2E evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-e2e-windows-x64-${{ matrix.scenario }}
+          path: test-results/e2e/windows-smoke
+          if-no-files-found: warn
+          retention-days: 14
 
   # Android builds concurrently and contributes another immutable workflow
   # artifact. Signed Android output is mandatory for every release smoke/tag.

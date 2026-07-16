@@ -23,9 +23,13 @@ may tag, publish, comment, and close issues.
    against the production-protocol candidate binary. Retain screenshots, DOM,
    console/backend logs, graph diff, JUnit, and JSON on failure. See
    `docs/UI-REGRESSION-TESTING.md` for the exact binary and evidence contract.
-6. Run the Windows x64 smoke suite when available. It is advisory until the
+6. As soon as that frozen candidate passes its local exact-commit gates, deploy
+   that exact tested artifact to `~/research/tine` without waiting to be asked.
+   Record and compare the staged/deployed SHA-256 so Martin can test the actual
+   release candidate while the slower platform workflows run.
+7. Run the Windows x64 smoke suite when available. It is advisory until the
    release policy explicitly promotes it.
-7. Set `scripts/bench-policy.json`'s `previousRelease.ref` to the most recently
+8. Set `scripts/bench-policy.json`'s `previousRelease.ref` to the most recently
    published release (never the unshipped candidate). Do not advance the
    immutable baseline. Push the exact candidate and require the same-machine A/B
    performance job to pass; an expected budget breach is a stop/consult decision,
@@ -33,13 +37,13 @@ may tag, publish, comment, and close issues.
    the immutable v0.4.7 native binary, retain its timing JSON and early-frame
    sequence, and inspect those frames for new blank, intermediate, or corrupt
    paints before shipping.
-8. Run ordinary CI plus the manual release
+9. Run ordinary CI plus the manual release
    workflow. Tag only after the exact commit's platform builds, Linux E2E,
    Android, and real offline Flatpak job pass.
-9. After publication, inventory the real assets and prepare issue-specific
+10. After publication, inventory the real assets and prepare issue-specific
    reporter follow-ups. Comment/closure authority remains in the canonical
    agent agreement.
-10. As release housekeeping, advance `previousRelease.ref` to the tag that was
+11. As release housekeeping, advance `previousRelease.ref` to the tag that was
     just published, run `node scripts/check-bench-policy.mjs`, and push that
     change to `master`. Tagged-candidate preflight deliberately compares with
     the release before the candidate; ordinary post-release `master` must point

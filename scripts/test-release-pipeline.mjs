@@ -15,16 +15,54 @@ const layout = releaseLayout(version);
 const releaseWorkflow = fs.readFileSync(path.join(process.cwd(), ".github/workflows/release.yml"), "utf8");
 const ciWorkflow = fs.readFileSync(path.join(process.cwd(), ".github/workflows/ci.yml"), "utf8");
 const preflight = fs.readFileSync(path.join(process.cwd(), "scripts/check-release-preflight.mjs"), "utf8");
+const e2eRunner = fs.readFileSync(path.join(process.cwd(), "scripts/run-e2e.mjs"), "utf8");
+const printSecurity = fs.readFileSync(path.join(process.cwd(), "scripts/e2e-print-security.mjs"), "utf8");
+const referenceParity = fs.readFileSync(path.join(process.cwd(), "scripts/e2e-og-parity-references.mjs"), "utf8");
 
-// Architecture guard: the expensive release build must test that exact binary
-// before it can be staged for the atomic assembler/publisher. Keep Windows
-// advisory while Linux x64 is a hard gate.
+// Architecture guard: the expensive Linux release build must test that exact
+// binary before it can be staged for the atomic assembler/publisher. Windows
+// consumes the staged portable binary in independent advisory jobs that neither
+// serialize assembly nor hide one runner-wide 0/N failure.
 const linuxGate = releaseWorkflow.indexOf("Gate Linux x64 on the complete real-app regression catalog");
 const stageLane = releaseWorkflow.indexOf("Stage immutable release artifact");
 assert(linuxGate >= 0, "release workflow is missing the Linux real-app gate");
 assert(stageLane > linuxGate, "release lane is staged before the Linux real-app gate");
-assert.match(releaseWorkflow, /name: Run advisory Windows x64 real-app smoke[\s\S]*?continue-on-error: true/);
-assert.match(releaseWorkflow, /name: Upload release E2E evidence[\s\S]*?if: always\(\)/);
+assert.match(
+  releaseWorkflow,
+  /windows-smoke:\n    needs: \[preflight, build\]\n    continue-on-error: true[\s\S]*?name: release-windows-x64[\s\S]*?npm run e2e:windows:smoke -- --scenario=\$\{\{ matrix\.scenario \}\}/,
+  "Windows advisory scenarios do not consume the staged app independently of assembly"
+);
+assert.match(
+  releaseWorkflow,
+  /assemble:\n    needs: \[preflight, flatpak, build, android\]/,
+  "candidate assembly accidentally waits for advisory Windows scenarios"
+);
+assert.match(releaseWorkflow, /name: Upload Windows E2E evidence[\s\S]*?if: always\(\)/);
+assert.match(
+  e2eRunner,
+  /if \(process\.platform === "linux"\) \{\n      env\.WEBKIT_DRIVER = process\.env\.WEBKIT_DRIVER \|\| "\/usr\/bin\/WebKitWebDriver";/,
+  "the suite runner leaks Linux WebKitWebDriver into Windows"
+);
+assert.match(
+  printSecurity,
+  /const driverArgs = process\.platform === "linux"[\s\S]*?: \["--port", String\(DRIVER_PORT\)\];/,
+  "print-security does not select the native WebDriver by platform"
+);
+assert.match(
+  referenceParity,
+  /APP_DATA_ROOT = process\.platform === "win32"[\s\S]*?APPDATA: APP_DATA_ROOT,[\s\S]*?LOCALAPPDATA:/,
+  "reference parity does not isolate and seed Windows app settings"
+);
+assert.match(
+  e2eRunner,
+  /\["og-parity-references", "scripts\/e2e-og-parity-references\.mjs"[\s\S]*?\["capture", "scripts\/e2e-capture\.mjs"/,
+  "the release suite does not retain independent reference and Quick Capture proofs"
+);
+assert.doesNotMatch(
+  referenceParity,
+  /scripts\/e2e-capture\.mjs/,
+  "reference parity nests the independent native Quick Capture process tree"
+);
 assert.match(
   ciWorkflow,
   /name: Performance baseline policy is current[\s\S]*?node scripts\/check-bench-policy\.mjs/,
