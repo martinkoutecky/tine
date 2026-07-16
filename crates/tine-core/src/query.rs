@@ -133,6 +133,49 @@ fn walk<'a>(blocks: &'a [DocBlock], f: &mut impl FnMut(&'a DocBlock)) {
     }
 }
 
+type PathRefCounts = std::collections::HashMap<String, usize>;
+
+fn push_path_refs(block: &DocBlock, refs: &mut PathRefCounts) {
+    for reference in &block.projection().refs_norm {
+        *refs.entry(reference.clone()).or_default() += 1;
+    }
+}
+
+fn pop_path_refs(block: &DocBlock, refs: &mut PathRefCounts) {
+    for reference in &block.projection().refs_norm {
+        let remove = if let Some(count) = refs.get_mut(reference) {
+            *count -= 1;
+            *count == 0
+        } else {
+            false
+        };
+        if remove {
+            refs.remove(reference);
+        }
+    }
+}
+
+/// Walk all blocks while maintaining the normalized union of ancestor refs.
+/// This mirrors OG's materialized `:block/path-refs` without adding a second
+/// persistent index or turning deep outlines into an O(nodes * depth) scan.
+fn walk_path_refs<'a>(
+    blocks: &'a [DocBlock],
+    refs: &mut PathRefCounts,
+    track_refs: bool,
+    f: &mut impl FnMut(&'a DocBlock, &PathRefCounts),
+) {
+    for block in blocks {
+        f(block, refs);
+        if track_refs {
+            push_path_refs(block, refs);
+        }
+        walk_path_refs(&block.children, refs, track_refs, f);
+        if track_refs {
+            pop_path_refs(block, refs);
+        }
+    }
+}
+
 /// Collect matches in document order while evaluating every candidate exactly
 /// once. OG query presentation removes a result only when its *immediate parent*
 /// is also in the unfiltered result set (`tree/filter-top-level-blocks`); it does
@@ -175,11 +218,42 @@ fn collect_matching_path<'a, M, T>(
 fn collect_og_query_roots<'a, M, T>(
     blocks: &'a [DocBlock],
     path: &mut Vec<&'a DocBlock>,
-    classify: &mut impl FnMut(&'a DocBlock, &[&'a DocBlock]) -> Option<M>,
+    path_refs: &mut PathRefCounts,
+    track_path_refs: bool,
+    parent_matched: bool,
+    classify: &mut impl FnMut(&'a DocBlock, &[&'a DocBlock], &PathRefCounts) -> Option<M>,
     materialize: &mut impl FnMut(&'a DocBlock, &[&'a DocBlock], M) -> Option<T>,
     out: &mut Vec<T>,
 ) {
-    collect_matching_path(blocks, path, false, true, classify, materialize, out);
+    for block in blocks {
+        let classification = classify(block, path, path_refs);
+        let matched = classification.is_some();
+        if !parent_matched {
+            if let Some(classification) = classification {
+                if let Some(item) = materialize(block, path, classification) {
+                    out.push(item);
+                }
+            }
+        }
+        path.push(block);
+        if track_path_refs {
+            push_path_refs(block, path_refs);
+        }
+        collect_og_query_roots(
+            &block.children,
+            path,
+            path_refs,
+            track_path_refs,
+            matched,
+            classify,
+            materialize,
+            out,
+        );
+        if track_path_refs {
+            pop_path_refs(block, path_refs);
+        }
+        path.pop();
+    }
 }
 
 fn collect_reference_matches<'a, M, T>(
@@ -1133,10 +1207,18 @@ fn run_pred_bounded(
             };
             let mut matched: Vec<BlockDto> = Vec::new();
             let mut path = Vec::new();
+            let mut path_refs = PathRefCounts::new();
+            let track_path_refs = pred.uses_path_refs();
             collect_og_query_roots(
                 &doc.roots,
                 &mut path,
-                &mut |block, _| pred.eval(block, &ctx).then_some(()),
+                &mut path_refs,
+                track_path_refs,
+                false,
+                &mut |block, _, ancestor_refs| {
+                    pred.eval_with_path_refs(block, ancestor_refs, &ctx)
+                        .then_some(())
+                },
                 &mut |block, _, ()| {
                     if sample_admission_cap.is_some_and(|cap| budget.rows >= cap) {
                         return None;
@@ -1285,11 +1367,17 @@ pub(crate) fn page_affects_query(src: &str, entry: &PageEntry, doc: &Document) -
         page_tags: &page_tags,
     };
     let mut hit = false;
-    walk(&doc.roots, &mut |b| {
-        if !hit && pred.eval(b, &ctx) {
-            hit = true;
-        }
-    });
+    let mut path_refs = PathRefCounts::new();
+    walk_path_refs(
+        &doc.roots,
+        &mut path_refs,
+        pred.uses_path_refs(),
+        &mut |block, ancestor_refs| {
+            if !hit && pred.eval_with_path_refs(block, ancestor_refs, &ctx) {
+                hit = true;
+            }
+        },
+    );
     hit
 }
 
@@ -1380,11 +1468,17 @@ pub(crate) fn page_affects_advanced_query(
         page_tags: &page_tags,
     };
     let mut hit = false;
-    walk(&doc.roots, &mut |block| {
-        if !hit && pred.eval(block, &ctx) {
-            hit = true;
-        }
-    });
+    let mut path_refs = PathRefCounts::new();
+    walk_path_refs(
+        &doc.roots,
+        &mut path_refs,
+        pred.uses_path_refs(),
+        &mut |block, ancestor_refs| {
+            if !hit && pred.eval_with_path_refs(block, ancestor_refs, &ctx) {
+                hit = true;
+            }
+        },
+    );
     hit
 }
 
@@ -2851,14 +2945,35 @@ impl Pred {
         }
     }
 
+    fn uses_path_refs(&self) -> bool {
+        match self {
+            Pred::PageRef(_) => true,
+            Pred::And(ps) | Pred::Or(ps) => ps.iter().any(Pred::uses_path_refs),
+            Pred::Not(p) => p.uses_path_refs(),
+            _ => false,
+        }
+    }
+
     fn eval(&self, block: &DocBlock, ctx: &EvalCtx) -> bool {
+        self.eval_with_path_refs(block, &PathRefCounts::new(), ctx)
+    }
+
+    fn eval_with_path_refs(
+        &self,
+        block: &DocBlock,
+        ancestor_refs: &PathRefCounts,
+        ctx: &EvalCtx,
+    ) -> bool {
         match self {
             // OG's `:page-ref` query rule reads `:block/path-refs`, which is the
-            // union of explicit references and the page a block physically
-            // belongs to. `(page …)` below deliberately remains membership-only.
+            // union of this block's explicit refs, every ancestor's refs, and
+            // the page a block physically belongs to. `(page …)` below
+            // deliberately remains membership-only.
             Pred::PageRef(name) => {
-                block.projection().refs_contains(name)
-                    || refs::normalize(ctx.page_name) == refs::normalize(name)
+                let normalized = refs::normalize(name);
+                block.projection().refs_contains_norm(&normalized)
+                    || ancestor_refs.contains_key(&normalized)
+                    || refs::normalize(ctx.page_name) == normalized
             }
             Pred::Task(markers) => block
                 .marker()
@@ -2911,9 +3026,13 @@ impl Pred {
             Pred::Content(s) => block.projection().visible_lower.contains(s.as_str()),
             Pred::Search(search) => search.matches(block),
             Pred::ContentRegex(regex) => regex.matches(block),
-            Pred::And(ps) => ps.iter().all(|p| p.eval(block, ctx)),
-            Pred::Or(ps) => ps.iter().any(|p| p.eval(block, ctx)),
-            Pred::Not(p) => !p.eval(block, ctx),
+            Pred::And(ps) => ps
+                .iter()
+                .all(|p| p.eval_with_path_refs(block, ancestor_refs, ctx)),
+            Pred::Or(ps) => ps
+                .iter()
+                .any(|p| p.eval_with_path_refs(block, ancestor_refs, ctx)),
+            Pred::Not(p) => !p.eval_with_path_refs(block, ancestor_refs, ctx),
             // Options and frontend-computed directives are not filters.
             Pred::Sample(_) | Pred::SortBy(..) | Pred::Aggregate(_) | Pred::GroupBy(_) => true,
         }
@@ -4109,6 +4228,105 @@ mod tests {
             ids("(and (task TODO) (page \"Parity Target\"))"),
             vec![ON_PAGE.to_string()]
         );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// OG's graph parser materializes `:block/path-refs` from every ancestor's
+    /// explicit refs (`with-path-refs`), so a bare page-ref query also matches a
+    /// descendant whose own text does not repeat the reference. The explicit
+    /// `(page ...)` operator remains physical page membership only.
+    #[test]
+    fn og_bare_page_token_inherits_ancestor_path_refs() {
+        use std::fs;
+
+        const ON_PAGE: &str = "44444444-4444-4444-8444-444444444444";
+        const INHERITED_CHILD: &str = "55555555-5555-4555-8555-555555555555";
+        const INHERITED_GRANDCHILD: &str = "66666666-6666-4666-8666-666666666666";
+        const DIRECT_REF: &str = "77777777-7777-4777-8777-777777777777";
+        const UNRELATED_CHILD: &str = "88888888-8888-4888-8888-888888888888";
+        const INVALIDATION_WITNESS: &str = "99999999-9999-4999-8999-999999999999";
+        let dir = std::env::temp_dir().join(format!(
+            "tine-og-bare-page-path-refs-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::write(
+            dir.join("pages/Target.md"),
+            format!("- TODO physically on target\n  id:: {ON_PAGE}\n"),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages/Workflows.md"),
+            format!(
+                "- Parent [[Target]]\n  - TODO inherited child\n    id:: {INHERITED_CHILD}\n    - TODO inherited grandchild\n      id:: {INHERITED_GRANDCHILD}\n- Other parent\n  - TODO unrelated child\n    id:: {UNRELATED_CHILD}\n- TODO direct [[Target]]\n  id:: {DIRECT_REF}\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages/Inherited Only.md"),
+            format!(
+                "- Cache context [[Target]]\n  - TODO inherited invalidation witness\n    id:: {INVALIDATION_WITNESS}\n"
+            ),
+        )
+        .unwrap();
+
+        let graph = Graph::open(&dir);
+        let ids = |query: &str| {
+            run_query(&graph, query)
+                .into_iter()
+                .flat_map(|group| group.blocks.into_iter().map(|block| block.id))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            ids("(and (task TODO) [[Target]])")
+                .into_iter()
+                .collect::<std::collections::HashSet<_>>(),
+            [ON_PAGE, INHERITED_CHILD, INVALIDATION_WITNESS, DIRECT_REF]
+                .into_iter()
+                .map(str::to_string)
+                .collect()
+        );
+        // OG query presentation suppresses a matching block only when its
+        // immediate parent also matched, so the matching grandchild is not a
+        // second top-level result.
+        assert!(
+            !ids("(and (task TODO) [[Target]])")
+                .contains(&INHERITED_GRANDCHILD.to_string())
+        );
+        assert_eq!(
+            ids("(and (task TODO) (not [[Target]]))"),
+            vec![UNRELATED_CHILD.to_string()]
+        );
+        assert_eq!(
+            ids("(and (task TODO) (page \"Target\"))"),
+            vec![ON_PAGE.to_string()]
+        );
+
+        graph.with_pages(|pages| {
+            let (entry, doc) = pages
+                .iter()
+                .find(|(entry, _)| entry.name == "Inherited Only")
+                .expect("inherited-only fixture page");
+            assert!(page_affects_query(
+                "(and (task TODO) [[Target]])",
+                entry,
+                doc
+            ));
+            assert!(!page_affects_query(
+                "(and (task TODO) (page \"Target\"))",
+                entry,
+                doc
+            ));
+            assert!(page_affects_advanced_query(
+                r#"[:find (pull ?b [*]) :where (and (task ?b #{"TODO"}) (page-ref ?b "Target"))]"#,
+                None,
+                entry,
+                doc,
+            ));
+        });
 
         let _ = fs::remove_dir_all(&dir);
     }
