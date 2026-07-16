@@ -40,9 +40,9 @@ export type Clause =
   // (but non-datalog) query round-trips losslessly instead of being discarded.
   | { kind: "raw"; text: string };
 
-// Which date a `between` range tests against. "any" = the permissive default
-// (journal date OR scheduled OR deadline); "journal" matches OG's journal-only
-// `between`. Serialized as a leading keyword for everything but "any".
+// Which date a `between` range tests against. The unqualified form is OG's
+// journal-only predicate. `any` is Tine's broader extension and must stay
+// explicit so loading/saving a query never changes its membership.
 export type BetweenField = "any" | "journal" | "scheduled" | "deadline";
 export const BETWEEN_FIELDS: BetweenField[] = ["journal", "scheduled", "deadline", "any"];
 
@@ -159,6 +159,13 @@ function parseExpr(toks: Tok[], cur: Cur, src: string): Clause | null {
     cur.pos++;
     return { kind: "content", text: t.v };
   }
+  // Macro expansion can remove source quotes around an argument. OG still
+  // treats the resulting bare value as a block-content term; retain it in the
+  // visual tree instead of hiding it and rewriting a broader query.
+  if (t.t === "word") {
+    cur.pos++;
+    return { kind: "content", text: t.v };
+  }
   if (t.t === "(") {
     const open = t;
     cur.pos++;
@@ -233,10 +240,11 @@ function parseExpr(toks: Tok[], cur: Cur, src: string): Clause | null {
         clause = { kind: "journal" };
         break;
       case "between": {
-        // Optional leading field keyword (journal/scheduled/deadline).
-        let field: BetweenField = "any";
+        // Optional leading field keyword. Unqualified means journal (OG);
+        // explicit `any` preserves Tine's broader extension.
+        let field: BetweenField = "journal";
         const peek = toks[cur.pos];
-        if (peek && peek.t === "word" && ["journal", "scheduled", "deadline"].includes(peek.v.toLowerCase())) {
+        if (peek && peek.t === "word" && ["journal", "scheduled", "deadline", "any"].includes(peek.v.toLowerCase())) {
           field = peek.v.toLowerCase() as BetweenField;
           cur.pos++;
         }
@@ -301,8 +309,7 @@ function parseExpr(toks: Tok[], cur: Cur, src: string): Clause | null {
     }
     return clause;
   }
-  // A bare word/string at expression position isn't part of Tine's runnable
-  // grammar; skip it.
+  // Other token kinds at expression position aren't runnable grammar.
   cur.pos++;
   return null;
 }
@@ -415,7 +422,7 @@ function clauseDsl(c: Clause): string {
     case "journal":
       return "(journal)";
     case "between": {
-      const f = c.field && c.field !== "any" ? `${c.field} ` : "";
+      const f = c.field && c.field !== "journal" ? `${c.field} ` : "";
       return `(between ${f}${dateBound(c.start)} ${dateBound(c.end)})`;
     }
     case "onPage":
@@ -535,7 +542,7 @@ export function clauseToAdvanced(root: Clause): AdvancedConversion {
         return `(namespace ?b ${quoteStr(c.ns)})`;
       case "between": {
         const bounds = `?b ${quoteStr(c.start)} ${quoteStr(c.end)}`;
-        // "any" (simple default: journal OR scheduled OR deadline) has no
+        // "any" (explicit journal OR scheduled OR deadline) has no
         // single advanced head — expand it to the faithful (or …).
         if (c.field === "any") {
           return `(or (between :journal ${bounds}) (between :scheduled ${bounds}) (between :deadline ${bounds}))`;
@@ -893,7 +900,7 @@ export function clauseLabel(c: Clause): string {
     case "journal":
       return "on journal page";
     case "between": {
-      const f = c.field && c.field !== "any" ? `${c.field} ` : "";
+      const f = c.field && c.field !== "journal" ? `${c.field} ` : "";
       return `${f}between: ${c.start || "?"} ~ ${c.end || "?"}`;
     }
     case "onPage":

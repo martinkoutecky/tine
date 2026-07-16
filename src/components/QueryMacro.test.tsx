@@ -201,6 +201,44 @@ describe("QueryMacro sheet integration", () => {
     dispose();
   });
 
+  it("applies the Sheets formula filter to query-sourced Table and Board faces", async () => {
+    setDoc({
+      byId: {
+        query: node(
+          "query",
+          "{{query (and (todo TODO) \"score\")}}\ntine.view:: table\ntine.fields:: points=number\ntine.filter:: points > 2",
+          null
+        ),
+        low: node("low", "TODO Low score\npoints:: 1", null),
+        high: node("high", "TODO High score\npoints:: 3", null),
+      },
+      pages: [page(["query", "low", "high"])],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    vi.spyOn(backend(), "runQuery").mockResolvedValue(queryGroups(["low", "high"]));
+
+    const { root, dispose } = mount(() => <Block id="query" />);
+    await settleQuery();
+
+    expect(activeView(root)).toBe("Table");
+    expect(
+      [...root.querySelectorAll(".sheet-title-cell .sheet-cell-body")].map((cell) => cell.textContent?.trim())
+    ).toEqual(["High score"]);
+
+    clickView(root, "Board");
+    await settleQuery();
+    expect(activeView(root)).toBe("Board");
+    expect([...root.querySelectorAll(".sheet-board-card-title")].map((card) => card.textContent?.trim())).toEqual([
+      "High score",
+    ]);
+    // View switching must retain the coarse query and the formula refinement.
+    expect(blockProperty("query", "tine.filter")).toBe("points > 2");
+    expect(backend().runQuery).toHaveBeenCalledWith('(and (todo TODO) "score")');
+
+    dispose();
+  });
+
   it("persists List, Table, and Board through tine.view properties with one undo unit per switch", async () => {
     loadQueryDoc("{{query (todo TODO)}}");
     const originalRaw = doc.byId.query.raw;

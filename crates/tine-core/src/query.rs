@@ -1690,6 +1690,7 @@ pub fn templates(graph: &Graph) -> Vec<TemplateDto> {
                 }
                 let include_parent =
                     b.property("template-including-parent").as_deref() != Some("false");
+            let (lo, hi) = ordered_bounds(lo, hi);
                 let blocks = if include_parent {
                     vec![template_dto(b, true)]
                 } else {
@@ -2537,8 +2538,9 @@ enum AggKind {
 /// Which date a `between` range is tested against.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum BetweenField {
-    /// Journal date OR scheduled OR deadline (Tine's permissive default;
-    /// fieldless `(between …)` keeps this for back-compat).
+    /// Journal date OR scheduled OR deadline. This is a Tine extension and is
+    /// requested explicitly as `(between any …)`; OG's fieldless form is
+    /// journal-only.
     Any,
     /// The page's journal date only — implies journal pages, matching OG's
     /// `:between` rule (`:block/journal? true`).
@@ -2636,7 +2638,13 @@ impl Pred {
 
     fn eval(&self, block: &DocBlock, ctx: &EvalCtx) -> bool {
         match self {
-            Pred::PageRef(name) => block.projection().refs_contains(name),
+            // OG's `:page-ref` query rule reads `:block/path-refs`, which is the
+            // union of explicit references and the page a block physically
+            // belongs to. `(page …)` below deliberately remains membership-only.
+            Pred::PageRef(name) => {
+                block.projection().refs_contains(name)
+                    || refs::normalize(ctx.page_name) == refs::normalize(name)
+            }
             Pred::Task(markers) => block
                 .marker()
                 .map(|m| markers.iter().any(|x| x.eq_ignore_ascii_case(m)))
@@ -2938,12 +2946,23 @@ fn parse_expr(
                 "journal" => Pred::Journal,
                 "between" => {
                     // (between [FIELD] START END): optional leading field keyword
-                    // journal|scheduled|deadline (default Any = journal-or-
-                    // scheduled-or-deadline); bounds are journal titles,
+                    // journal|scheduled|deadline|any (default Journal, matching
+                    // OG; `any` retains Tine's journal-or-planning extension);
+                    // bounds are journal titles,
                     // `today`/`yesterday`/`tomorrow`, signed durations `±N[dwmy]`,
                     // or `yyyy-MM-dd`.
                     let field = match toks.get(*pos) {
                         Some(Tok::Word(w)) => match w.to_ascii_lowercase().as_str() {
+/// OG's `build-between-two-arg` orders its two resolved bounds before building
+/// the predicate, so `(between END START)` has the same inclusive interval as
+/// `(between START END)`. Preserve open bounds used by Tine's advanced subset.
+fn ordered_bounds(lo: Option<i64>, hi: Option<i64>) -> (Option<i64>, Option<i64>) {
+    match (lo, hi) {
+        (Some(lo), Some(hi)) if lo > hi => (Some(hi), Some(lo)),
+        pair => pair,
+    }
+}
+
                             "journal" => {
                                 *pos += 1;
                                 BetweenField::Journal
@@ -2956,9 +2975,13 @@ fn parse_expr(
                                 *pos += 1;
                                 BetweenField::Deadline
                             }
-                            _ => BetweenField::Any,
+                            "any" => {
+                                *pos += 1;
+                                BetweenField::Any
+                            }
+                            _ => BetweenField::Journal,
                         },
-                        _ => BetweenField::Any,
+                        _ => BetweenField::Journal,
                     };
                     let lo = parse_name(toks, pos).and_then(|s| resolve_date_token(&s, today));
                     let hi = parse_name(toks, pos).and_then(|s| resolve_date_token(&s, today));
@@ -3082,6 +3105,14 @@ fn normalize_prop_key(k: &str) -> String {
 /// or `#tag` token (Logseq's parse-property-value extracts the page name and
 /// strips a leading `#`; `value_matches` does the ref/tag stripping on both
 /// sides). WITHOUT this, `(property k [[Page]])` / `(property k #tag)` dropped the
+        // Logseq's simple-query macros substitute parser-decoded arguments into
+        // the query template. A quoted invocation argument can therefore arrive
+        // here as a bare word. It is still a block-content term, not syntax to
+        // silently discard.
+        Tok::Word(s) => {
+            *pos += 1;
+            Some(Pred::Content(s.to_lowercase()))
+        }
 /// value AND leaked the ref token, which was then mis-parsed as a stray page-ref
 /// clause — the second reported failure mode.
 fn parse_opt_value(toks: &[Tok], pos: &mut usize) -> Option<String> {
@@ -3169,6 +3200,7 @@ mod tests {
     fn ctx_named<'a>() -> EvalCtx<'a> {
         EvalCtx {
             journal: None,
+                    let (lo, hi) = ordered_bounds(lo, hi);
             is_journal: false,
             page_name: "Test",
             page_props: &[],
@@ -3409,7 +3441,100 @@ mod tests {
         assert!(q.eval(&b, &on_2022));
         assert!(!q.eval(&b, &on_2019));
         let sched = DocBlock::new("TODO x\nSCHEDULED: <2022-03-03 Thu>");
-        assert!(q.eval(&sched, &ctx_named()));
+        assert!(!q.eval(&sched, &ctx_named()));
+        assert!(pred("(between any [[Jan 1st, 2021]] [[Jan 1st, 2100]])")
+            .eval(&sched, &ctx_named()));
+    }
+
+    /// The unqualified two-bound form is OG's journal-page range. Scheduled and
+    /// deadline ranges remain available through their explicit field selectors;
+    /// Tine's former permissive union is retained only as explicit `any`.
+    #[test]
+    fn og_unqualified_between_is_bounded_to_journal_pages() {
+        use std::fs;
+
+        const DEC_5_A: &str = "44444444-4444-4444-8444-444444444441";
+        const DEC_5_B: &str = "44444444-4444-4444-8444-444444444442";
+        const DEC_7_A: &str = "44444444-4444-4444-8444-444444444443";
+        const DEC_7_B: &str = "44444444-4444-4444-8444-444444444444";
+        const OUTSIDE_JOURNAL: &str = "55555555-5555-4555-8555-555555555555";
+        const NAMED_SCHEDULED: &str = "66666666-6666-4666-8666-666666666666";
+        let dir = std::env::temp_dir().join(format!(
+            "tine-og-between-journal-bounds-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::write(
+            dir.join("journals/2020_12_05.md"),
+            format!(
+                "- first in range\n  id:: {DEC_5_A}\n- second in range\n  id:: {DEC_5_B}\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("journals/2020_12_07.md"),
+            format!(
+                "- third in range\n  id:: {DEC_7_A}\n- fourth in range\n  id:: {DEC_7_B}\n"
+            ),
+        )
+        .unwrap();
+        // Both rows have an in-range planning timestamp but live outside the
+        // requested journal-page interval. The old Any default leaked them.
+        fs::write(
+            dir.join("journals/2021_07_01.md"),
+            format!(
+                "- outside journal\n  SCHEDULED: <2020-12-06 Sun>\n  id:: {OUTSIDE_JOURNAL}\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages/Named.md"),
+            format!(
+                "- named scheduled\n  DEADLINE: <2020-12-06 Sun>\n  id:: {NAMED_SCHEDULED}\n"
+            ),
+        )
+        .unwrap();
+
+        let graph = Graph::open(&dir);
+        let ids = run_query(
+            &graph,
+            "(between [[Dec 5th, 2020]] [[Dec 7th, 2020]])",
+        )
+        .into_iter()
+        .flat_map(|group| group.blocks.into_iter().map(|block| block.id))
+        .collect::<Vec<_>>();
+        assert_eq!(
+            ids,
+            vec![
+                DEC_5_A.to_string(),
+                DEC_5_B.to_string(),
+                DEC_7_A.to_string(),
+                DEC_7_B.to_string(),
+            ]
+        );
+
+        // Reversed bounds are normalized by OG's build-between-two-arg.
+        let reversed = run_query(
+            &graph,
+            "(between [[Dec 7th, 2020]] [[Dec 5th, 2020]])",
+        );
+        assert_eq!(
+            reversed.iter().map(|group| group.blocks.len()).sum::<usize>(),
+            4
+        );
+        // Tine's union remains explicitly requestable.
+        let any = run_query(
+            &graph,
+            "(between any [[Dec 5th, 2020]] [[Dec 7th, 2020]])",
+        );
+        assert_eq!(
+            any.iter().map(|group| group.blocks.len()).sum::<usize>(),
+            6
+        );
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -3418,7 +3543,7 @@ mod tests {
         let q = pred("(between -7d +7d)");
         assert_eq!(
             q,
-            Pred::Between(BetweenField::Any, Some(20260609), Some(20260623))
+            Pred::Between(BetweenField::Journal, Some(20260609), Some(20260623))
         );
         let b = DocBlock::new("x");
         assert!(q.eval(&b, &ctx_journal(20260616)));
@@ -3427,11 +3552,11 @@ mod tests {
         // keyword bounds + month/year units
         assert_eq!(
             pred("(between today tomorrow)"),
-            Pred::Between(BetweenField::Any, Some(20260616), Some(20260617))
+            Pred::Between(BetweenField::Journal, Some(20260616), Some(20260617))
         );
         assert_eq!(
             pred("(between -1m +1y)"),
-            Pred::Between(BetweenField::Any, Some(20260516), Some(20270616))
+            Pred::Between(BetweenField::Journal, Some(20260516), Some(20270616))
         );
     }
 
@@ -3656,6 +3781,80 @@ mod tests {
                 assert_eq!(got, expected, "query={query:?} limit={limit}");
             }
         }
+
+    /// OG 1.0.0 (`query_dsl.cljs` + the `:page-ref` rule) evaluates a bare
+    /// `[[Page]]` simple-query clause against `:block/path-refs`. That relation
+    /// includes both explicit references and the page the block physically
+    /// belongs to. Keep the explicit `(page …)` operator narrower: it means
+    /// physical membership only.
+    #[test]
+    fn og_bare_page_token_unions_physical_membership_and_explicit_refs() {
+        use std::fs;
+
+        const ON_PAGE: &str = "11111111-1111-4111-8111-111111111111";
+        const EXPLICIT_REF: &str = "22222222-2222-4222-8222-222222222222";
+        const UNRELATED: &str = "33333333-3333-4333-8333-333333333333";
+        let dir = std::env::temp_dir().join(format!(
+            "tine-og-bare-page-union-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::write(
+            dir.join("pages/Parity Target.md"),
+            format!("- TODO physically on target\n  id:: {ON_PAGE}\n"),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages/Parity Workflows.md"),
+            format!("- TODO explicit [[Parity Target]] witness\n  id:: {EXPLICIT_REF}\n"),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages/Other.md"),
+            format!("- TODO unrelated witness\n  id:: {UNRELATED}\n"),
+        )
+        .unwrap();
+
+        let graph = Graph::open(&dir);
+        let ids = |query: &str| {
+            run_query(&graph, query)
+                .into_iter()
+                .flat_map(|group| group.blocks.into_iter().map(|block| block.id))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            ids("(and (task TODO) [[Parity Target]])"),
+            vec![ON_PAGE.to_string(), EXPLICIT_REF.to_string()]
+        );
+        assert_eq!(
+            ids("(and (task TODO) (page \"Parity Target\"))"),
+            vec![ON_PAGE.to_string()]
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Macro arguments arrive without their source quotes after the parser has
+    /// expanded `$1`. OG's simple query reader treats that bare value as a
+    /// block-content term; Tine must not silently drop it from an `and` form.
+    #[test]
+    fn og_bare_word_is_a_content_term() {
+        let parsed = pred("(and (task DONE) changelog)");
+        assert_eq!(
+            parsed,
+            Pred::And(vec![Pred::Task(vec!["DONE".into()]), Pred::Content("changelog".into())])
+        );
+        assert!(parsed.eval(
+            &DocBlock::new("DONE Write changelog for v0.0.9"),
+            &ctx_named()
+        ));
+        assert!(!parsed.eval(
+            &DocBlock::new("DONE Publish release notes"),
+            &ctx_named()
+        ));
+    }
 
         let _ = fs::remove_dir_all(&dir);
     }
