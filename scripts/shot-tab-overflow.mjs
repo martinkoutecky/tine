@@ -54,6 +54,16 @@ try {
   }
   await page.keyboard.press("Escape");
 
+  // A synthetic HTMLElement.click() skips pointer capture. Use Playwright's
+  // real Chromium pointer path so the close child must survive the draggable
+  // tab card's pointerdown before its click can close the tab (GH #174).
+  const beforePointerClose = await page.locator(".tab-strip-scroll > .tab").count();
+  await page.locator(".tab-strip-scroll > .tab:last-child .tab-close").click();
+  await page.waitForFunction(
+    (count) => document.querySelectorAll(".tab-strip-scroll > .tab").length === count - 1,
+    beforePointerClose,
+  );
+
   for (const testCase of CASES) {
     await page.setViewportSize({ width: testCase.width, height: 720 });
     await page.evaluate(({ mode, theme }) => {
