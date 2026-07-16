@@ -8,6 +8,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { tauriCapabilities } from "./e2e-capabilities.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, process.platform === "win32" ? "target/release/tine.exe" : "target/release/tine");
@@ -199,7 +200,7 @@ try {
     logLevel: "error",
     connectionRetryCount: 1,
     connectionRetryTimeout: 60_000,
-    capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: APP } },
+    capabilities: tauriCapabilities(APP),
   });
   await browser.$(".page-title").waitForExist({ timeout: 20_000 });
   // The graph page index warms asynchronously after first paint. Wait for the

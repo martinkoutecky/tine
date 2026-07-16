@@ -8,6 +8,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { tauriCapabilities } from "./e2e-capabilities.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, process.platform === "win32" ? "target/release/tine.exe" : "target/release/tine");
@@ -178,7 +179,7 @@ try {
   browser = await remote({
     hostname: "127.0.0.1", port: DRIVER_PORT, path: "/", logLevel: "error",
     connectionRetryCount: 1, connectionRetryTimeout: 60_000,
-    capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: APP } },
+    capabilities: tauriCapabilities(APP),
   });
   await browser.$(".ls-block").waitForExist({ timeout: 30_000 });
   const pdfLink = browser.$(".pdf-link");

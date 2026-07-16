@@ -204,6 +204,10 @@ async function runScenario([id, script, extraEnv]) {
       env.TINE_DEBUG = process.env.TINE_DEBUG || "1";
       env.TINE_DEBUG_LOG = process.env.TINE_DEBUG_LOG || path.join(dir, "tine-debug.log");
       env.RUST_BACKTRACE = process.env.RUST_BACKTRACE || "1";
+      env.E2E_WEBVIEW_USER_DATA_ROOT = path.join(
+        os.tmpdir(),
+        `tine-e2e-webview2-${suiteName}-${id}-${process.pid}-${driverPort}`,
+      );
     }
     if (id === "og-parity-references") {
       env.E2E_TMP_DIR = process.env.E2E_TMP_DIR

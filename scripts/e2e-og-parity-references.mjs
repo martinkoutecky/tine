@@ -10,6 +10,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { tauriCapabilities } from "./e2e-capabilities.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APP = process.env.TINE_APP || path.join(ROOT, "target/release", process.platform === "win32" ? "tine.exe" : "tine");
@@ -261,11 +262,7 @@ try {
     logLevel: "error",
     connectionRetryCount: 1,
     connectionRetryTimeout: 60_000,
-    capabilities: {
-      browserName: "wry",
-      "wdio:enforceWebDriverClassic": true,
-      "tauri:options": { application: APP },
-    },
+    capabilities: tauriCapabilities(APP, "initial"),
   });
   receipt.appIdentity.version = await browser.execute(() => window.__TAURI_INTERNALS__.invoke("plugin:app|version"));
   if (receipt.appIdentity.version !== receipt.appIdentity.declaredVersion) {
@@ -601,11 +598,7 @@ try {
     logLevel: "error",
     connectionRetryCount: 1,
     connectionRetryTimeout: 60_000,
-    capabilities: {
-      browserName: "wry",
-      "wdio:enforceWebDriverClassic": true,
-      "tauri:options": { application: APP },
-    },
+    capabilities: tauriCapabilities(APP, "typed-restart"),
   });
   await ensureParityPage(browser);
   const restartedSlashContent = await browser.$(`[data-block-id="${SLASH_EDITOR}"] .block-content`);
@@ -676,7 +669,7 @@ try {
   browser = await remote({
     hostname: "127.0.0.1", port: DRIVER_PORT, path: "/", logLevel: "error",
     connectionRetryCount: 1, connectionRetryTimeout: 60_000,
-    capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: APP } },
+    capabilities: tauriCapabilities(APP, "committed-reload"),
   });
   await ensureParityPage(browser);
   const reloadedRef = await browser.$(`[data-block-id="${SLASH_EDITOR}"] .page-ref`);

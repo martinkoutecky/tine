@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { assembleCandidate } from "./assemble-release-candidate.mjs";
+import { tauriCapabilities } from "./e2e-capabilities.mjs";
 import { candidateProblems, releaseLayout, RELEASE_LANES } from "./release-layout.mjs";
 
 const version = "0.5.6";
@@ -18,6 +19,14 @@ const preflight = fs.readFileSync(path.join(process.cwd(), "scripts/check-releas
 const e2eRunner = fs.readFileSync(path.join(process.cwd(), "scripts/run-e2e.mjs"), "utf8");
 const printSecurity = fs.readFileSync(path.join(process.cwd(), "scripts/e2e-print-security.mjs"), "utf8");
 const referenceParity = fs.readFileSync(path.join(process.cwd(), "scripts/e2e-og-parity-references.mjs"), "utf8");
+const windowsScenarios = [
+  "e2e-windows-smoke.mjs",
+  "e2e-og-parity-references.mjs",
+  "e2e-page-properties.mjs",
+  "e2e-page-trailing-block.mjs",
+  "e2e-pdf-logseq.mjs",
+  "e2e-print-security.mjs",
+];
 
 // Architecture guard: the expensive Linux release build must test that exact
 // binary before it can be staged for the atomic assembler/publisher. Windows
@@ -141,6 +150,21 @@ function assemble(input, output) {
 
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "tine-release-pipeline-test-"));
 try {
+  const priorWebviewRoot = process.env.E2E_WEBVIEW_USER_DATA_ROOT;
+  process.env.E2E_WEBVIEW_USER_DATA_ROOT = path.join(temporary, "webview2");
+  const windowsCapabilities = tauriCapabilities("C:/Tine.exe", "fixture session", "win32");
+  assert.equal(
+    windowsCapabilities["tauri:options"].webviewOptions.userDataFolder,
+    path.join(temporary, "webview2", "fixture-session"),
+  );
+  if (priorWebviewRoot === undefined) delete process.env.E2E_WEBVIEW_USER_DATA_ROOT;
+  else process.env.E2E_WEBVIEW_USER_DATA_ROOT = priorWebviewRoot;
+  for (const script of windowsScenarios) {
+    const source = fs.readFileSync(path.join(process.cwd(), "scripts", script), "utf8");
+    assert.match(source, /import \{ tauriCapabilities \} from "\.\/e2e-capabilities\.mjs";/);
+    assert.match(source, /capabilities: tauriCapabilities\(APP/);
+  }
+
   {
     const base = path.join(temporary, "valid");
     const input = makeInput(base);

@@ -5,6 +5,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { tauriCapabilities } from "./e2e-capabilities.mjs";
 
 if (process.platform !== "win32") throw new Error("windows smoke must run on Windows");
 const APP = process.env.TINE_APP;
@@ -35,7 +36,7 @@ try {
     hostname: "127.0.0.1",
     port: DRIVER_PORT,
     path: "/",
-    capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: APP } },
+    capabilities: tauriCapabilities(APP),
     logLevel: "error",
     connectionRetryCount: 1,
     connectionRetryTimeout: 60000,
