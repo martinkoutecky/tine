@@ -96,6 +96,13 @@ const selectSetting = async (browser, value) => {
     timeout: 5000,
     timeoutMsg: `Settings UI did not persist ${value} policy`,
   });
+  // Advanced is a semantic child transient of Settings: the first Escape folds
+  // it and restores its toggle, the second closes the parent modal.
+  await browser.keys(["Escape"]);
+  await browser.waitUntil(async () => (await advanced.getAttribute("aria-expanded")) === "false", {
+    timeout: 5000,
+    timeoutMsg: "first Escape did not fold the Advanced Settings child",
+  });
   await browser.keys(["Escape"]);
   await browser.$(".settings-modal").waitForExist({ reverse: true, timeout: 5000 });
 };
