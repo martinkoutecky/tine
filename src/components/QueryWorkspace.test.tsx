@@ -4,6 +4,11 @@ import { render } from "solid-js/web";
 import type { PaneRouter, QueryRoute } from "../router";
 import type { PageDto, QueryExecution } from "../types";
 import {
+  clearTransientLayersForTest,
+  dismissTopTransient,
+  registerTransientLayer,
+} from "../transientLayers";
+import {
   QueryWorkspace,
   materializeQueryWorkspace,
   type MaterializeQueryDependencies,
@@ -11,6 +16,7 @@ import {
 } from "./QueryWorkspace";
 
 afterEach(() => {
+  clearTransientLayersForTest();
   document.body.innerHTML = "";
 });
 
@@ -230,6 +236,48 @@ async function waitFor(check: () => void): Promise<void> {
 }
 
 describe("QueryWorkspace", () => {
+  it("peels a QueryBuilder child before its Advanced parent and preserves the draft", async () => {
+    const route: QueryRoute = {
+      kind: "query",
+      id: "query-transient-ladder",
+      sourceKind: "dsl",
+      source: "(and (task TODO))",
+      presentation: "list",
+    };
+    const lower = vi.fn(() => true);
+    const unregisterLower = registerTransientLayer({ id: "query-workspace-lower", dismiss: lower });
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => <QueryWorkspace route={route} router={routerMock(route)} deps={workspaceDeps()} />, root);
+    try {
+      const toggle = root.querySelector<HTMLButtonElement>(".query-advanced-toggle")!;
+      toggle.click();
+      await Promise.resolve();
+      const dialog = root.querySelector<HTMLElement>(".query-advanced-modal")!;
+      expect(dialog).not.toBeNull();
+
+      root.querySelector<HTMLButtonElement>(".qb-chip")!.click();
+      expect(root.querySelector(".qb-menu")).not.toBeNull();
+      dialog.querySelector(".query-advanced-header")!
+        .dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+
+      expect(dismissTopTransient("escape")).toBe(true);
+      expect(root.querySelector(".qb-menu")).toBeNull();
+      expect(root.querySelector(".query-advanced-modal")).not.toBeNull();
+      expect(root.querySelector<HTMLTextAreaElement>(".query-dsl-editor textarea")?.value).toBe(route.source);
+      expect(lower).not.toHaveBeenCalled();
+
+      expect(dismissTopTransient("back")).toBe(true);
+      await Promise.resolve();
+      expect(root.querySelector(".query-advanced-modal")).toBeNull();
+      expect(document.activeElement).toBe(toggle);
+      expect(lower).not.toHaveBeenCalled();
+    } finally {
+      unregisterLower();
+      dispose();
+    }
+  });
+
   it("keeps empty workspaces local, neutral, and query-free", async () => {
     const route: QueryRoute = { kind: "query", id: "query-empty", sourceKind: "search", source: "", presentation: "search" };
     const deps = workspaceDeps();

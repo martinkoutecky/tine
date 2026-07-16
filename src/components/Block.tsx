@@ -1030,6 +1030,7 @@ export function Editor(props: { id: string }): JSX.Element {
   const editSurface = () => surfaceKey.startsWith("embed:") ? surfaceKey : null;
   let ref!: HTMLTextAreaElement;
   const autocompleteLayerId = `block-completion-${createUniqueId()}`;
+  const selectionOverflowLayerId = `block-selection-overflow-${createUniqueId()}`;
   // Caret/selection stashed when the *window* (not this block) loses focus, so
   // returning to Tine resumes editing exactly where you left off.
   let savedSel: { start: number; end: number } | null = null;
@@ -1298,8 +1299,34 @@ export function Editor(props: { id: string }): JSX.Element {
   // Floating selection toolbar (bold/italic/highlight/link) — shown while a
   // non-empty selection exists in this block's editor.
   const [hasSel, setHasSel] = createSignal(false);
-  const updateSel = () => setHasSel(ref.selectionStart !== ref.selectionEnd);
   const [selectionOverflowOpen, setSelectionOverflowOpen] = createSignal(false);
+  let selectionOverflowRef: HTMLDivElement | undefined;
+  const updateSel = () => {
+    const selected = ref.selectionStart !== ref.selectionEnd;
+    setHasSel(selected);
+    if (!selected) setSelectionOverflowOpen(false);
+  };
+  createEffect(() => {
+    if (!selectionOverflowOpen() || !hasSel()) return;
+    const unregister = registerTransientLayer({
+      id: selectionOverflowLayerId,
+      root: () => selectionOverflowRef ?? null,
+      trigger: () => ref ?? null,
+      dismiss: () => {
+        const start = ref.selectionStart;
+        const end = ref.selectionEnd;
+        const direction = ref.selectionDirection;
+        setSelectionOverflowOpen(false);
+        queueMicrotask(() => {
+          if (!ref.isConnected) return;
+          ref.focus();
+          ref.setSelectionRange(start, end, direction);
+        });
+        return true;
+      },
+    });
+    onCleanup(unregister);
+  });
   const runSelectionAction = (action: SelectionAction) => {
     applyEdit(action.apply(ref.value, ref.selectionStart, ref.selectionEnd, pageFmt()));
     setSelectionOverflowOpen(false);
@@ -2940,7 +2967,7 @@ export function Editor(props: { id: string }): JSX.Element {
             onClick={() => setSelectionOverflowOpen((open) => !open)}
           >…</button>
           <Show when={selectionOverflowOpen()}>
-            <div class="sel-toolbar-overflow" role="menu" aria-label="More formatting">
+            <div ref={selectionOverflowRef} class="sel-toolbar-overflow" role="menu" aria-label="More formatting">
               <For each={secondarySelectionActions}>{(action) => (
                 <button
                   role="menuitem"

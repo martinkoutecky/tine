@@ -254,6 +254,49 @@ try {
   // GH #168: both click and right-click share the existing-highlight menu. The
   // reference actions must safely ensure a missing annotation block before
   // copying or routing, and Linked references must reveal ordinary referrers.
+  // Post-#161 closure: Find and the highlight menu are peer transient owners.
+  // Open Find first, then the real highlight menu; one Escape must peel only
+  // the newer menu without changing PDF state or sidecar bytes, and the next
+  // Escape closes Find while leaving the viewer mounted.
+  await browser.$('button[title="Find in document (Ctrl+F)"]').click();
+  await browser.$(".pdf-find-bar").waitForExist({ timeout: 5000 });
+  const transientSidecarBefore = fs.readFileSync(sidecar, "utf8");
+  const transientViewBefore = await browser.execute(() => ({
+    filename: document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-filename"),
+    zoom: document.querySelector(".pdf-zoom-level")?.textContent?.trim(),
+    target: document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-highlight-target"),
+  }));
+  await browser.execute(() => {
+    const highlight = document.querySelector(".pdf-hl");
+    const rect = highlight?.getBoundingClientRect();
+    highlight?.dispatchEvent(new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      clientX: rect?.left ?? 120,
+      clientY: rect?.top ?? 120,
+      view: window,
+    }));
+  });
+  await browser.$(".pdf-color-menu").waitForExist({ timeout: 5000 });
+  await browser.keys(["Escape"]);
+  await browser.$(".pdf-color-menu").waitForExist({ reverse: true, timeout: 5000 });
+  if (!(await browser.$(".pdf-find-bar").isExisting())) {
+    throw new Error("PDF highlight-menu Escape also closed the older Find owner");
+  }
+  const transientViewAfterMenu = await browser.execute(() => ({
+    filename: document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-filename"),
+    zoom: document.querySelector(".pdf-zoom-level")?.textContent?.trim(),
+    target: document.querySelector(".pdf-viewer")?.getAttribute("data-pdf-highlight-target"),
+  }));
+  if (JSON.stringify(transientViewAfterMenu) !== JSON.stringify(transientViewBefore)
+    || fs.readFileSync(sidecar, "utf8") !== transientSidecarBefore) {
+    throw new Error(`PDF menu dismissal mutated state: ${JSON.stringify({ transientViewBefore, transientViewAfterMenu })}`);
+  }
+  await browser.keys(["Escape"]);
+  await browser.$(".pdf-find-bar").waitForExist({ reverse: true, timeout: 5000 });
+  if (!(await browser.$(".pdf-viewer").isExisting())) throw new Error("PDF Find Escape closed the viewer");
+
+  // Reopen the real menu for the existing reference-action checks below.
   await browser.execute(() => {
     const highlight = document.querySelector(".pdf-hl");
     const rect = highlight?.getBoundingClientRect();

@@ -7,6 +7,8 @@ import {
   createMemo,
   createResource,
   createSignal,
+  createUniqueId,
+  onCleanup,
   type JSX,
 } from "solid-js";
 import { backend } from "../backend";
@@ -28,6 +30,7 @@ import type {
 } from "../types";
 import { QueryBuilder } from "./QueryBuilder";
 import { SearchResultRow, buildSearchExcerpt } from "./SearchResultRow";
+import { registerTransientLayer } from "../transientLayers";
 
 const PAGE_LIMIT = 40;
 const BLOCK_LIMIT = 100;
@@ -366,6 +369,8 @@ function AdvancedModal(props: {
   sourceKind: () => QueryRoute["sourceKind"];
   onApply: (source: string, sourceKind: QueryRoute["sourceKind"]) => void;
   onClose: () => void;
+  layerId: string;
+  trigger: () => HTMLElement | null;
 }): JSX.Element {
   const initialFields = props.sourceKind() === "search" ? friendlyFieldsFromSource(props.source()) : null;
   const [all, setAll] = createSignal(initialFields?.all ?? "");
@@ -381,6 +386,16 @@ function AdvancedModal(props: {
   const [error, setError] = createSignal<string | null>(null);
   let dialog!: HTMLDivElement;
   let firstField: HTMLElement | undefined;
+
+  createEffect(() => {
+    const unregister = registerTransientLayer({
+      id: props.layerId,
+      root: () => dialog ?? null,
+      trigger: props.trigger,
+      dismiss: () => { props.onClose(); return true; },
+    });
+    onCleanup(unregister);
+  });
 
   queueMicrotask(() => (firstField ?? dialog)?.focus());
 
@@ -441,10 +456,7 @@ function AdvancedModal(props: {
         aria-labelledby="query-advanced-title"
         tabIndex={-1}
         onKeyDown={(event) => {
-          if (event.key === "Escape") {
-            event.preventDefault();
-            props.onClose();
-          } else if (event.key === "Tab") {
+          if (event.key === "Tab") {
             const focusable = focusableElements(dialog);
             const first = focusable[0];
             const last = focusable[focusable.length - 1];
@@ -469,7 +481,11 @@ function AdvancedModal(props: {
 
         <Show when={draftKind() === "search"} fallback={
           <div class="query-dsl-editor">
-            <QueryBuilder dsl={dsl} onChange={(next) => { setDsl(next); setError(null); }} />
+            <QueryBuilder
+              dsl={dsl}
+              onChange={(next) => { setDsl(next); setError(null); }}
+              parentTransientId={props.layerId}
+            />
             <details>
               <summary>Raw query DSL</summary>
               <label>
@@ -554,6 +570,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
   const [saveError, setSaveError] = createSignal<string | null>(null);
   const [saving, setSaving] = createSignal(false);
   let advancedButton!: HTMLButtonElement;
+  const advancedLayerId = `query-advanced-${createUniqueId()}`;
   let sourceInput: HTMLInputElement | undefined;
   // Props replace the whole route object on source/presentation edits. Keep an
   // explicit identity latch so that replacement cannot re-run the focus work.
@@ -865,6 +882,8 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
           sourceKind={sourceKind}
           onApply={(next, kind) => { updateSource(next, kind); closeAdvanced(); }}
           onClose={closeAdvanced}
+          layerId={advancedLayerId}
+          trigger={() => advancedButton ?? null}
         />
       </Show>
     </section>

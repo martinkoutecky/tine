@@ -75,6 +75,7 @@ const suites = {
     ["journal-future-feed", "scripts/e2e-journal-future-feed.mjs", {}],
     ["multigraph", "scripts/e2e-multigraph.mjs", {}],
     ["sheets", "scripts/e2e-sheets.mjs", {}],
+    ["formula-builder", "scripts/probe-formula-builder.mjs", {}],
     ["selection-wrap", "scripts/e2e-selectwrap.mjs", {}],
     ["tag-autocomplete", "scripts/e2e-tag-autocomplete.mjs", {}],
     ["structured-paste", "scripts/e2e-structured-paste.mjs", {}],

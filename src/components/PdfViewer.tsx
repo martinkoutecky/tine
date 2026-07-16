@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createSignal, on, onCleanup, onMount, type JSX } from "solid-js";
+import { For, Show, createEffect, createSignal, createUniqueId, on, onCleanup, onMount, type JSX } from "solid-js";
 import * as pdfjs from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { backend } from "../backend";
@@ -9,6 +9,7 @@ import { areaHighlightPosition, hlsPageName, rectInPageSpace, rectWithSourceSpac
 import { decideWheelZoomGesture, type WheelZoomGestureState } from "../zoom";
 import type { Highlight, Rect } from "../types";
 import { isMobilePlatform } from "../nativeChrome";
+import { registerTransientLayer } from "../transientLayers";
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -74,7 +75,13 @@ export function PdfViewer(props: {
   page?: number;
   navigation?: () => PdfTarget | null;
 }): JSX.Element {
+  const instanceStem = `pdf-viewer-${createUniqueId()}`;
+  const findLayerId = `${instanceStem}-find`;
+  const highlightMenuLayerId = `${instanceStem}-highlight-menu`;
   let scrollRef!: HTMLDivElement;
+  let findTriggerEl: HTMLButtonElement | undefined;
+  let findRootEl: HTMLDivElement | undefined;
+  let highlightMenuRootEl: HTMLDivElement | undefined;
   const pageEls: Record<number, HTMLDivElement> = {};
   const textLayers: Record<number, HTMLDivElement> = {};
   const hlLayers: Record<number, HTMLDivElement> = {};
@@ -1372,6 +1379,31 @@ export function PdfViewer(props: {
     setFindOpen(false);
     window.getSelection()?.removeAllRanges();
   };
+  createEffect(() => {
+    if (!findOpen()) return;
+    const unregister = registerTransientLayer({
+      id: findLayerId,
+      root: () => findRootEl ?? null,
+      trigger: () => findTriggerEl ?? null,
+      dismiss: () => {
+        closeFind();
+        return true;
+      },
+    });
+    onCleanup(unregister);
+  });
+  createEffect(() => {
+    if (!menu()) return;
+    const unregister = registerTransientLayer({
+      id: highlightMenuLayerId,
+      root: () => highlightMenuRootEl ?? null,
+      dismiss: () => {
+        setMenu(null);
+        return true;
+      },
+    });
+    onCleanup(unregister);
+  });
 
   return (
     <div
@@ -1414,6 +1446,7 @@ export function PdfViewer(props: {
             </button>
           </div>
           <button
+            ref={(el) => (findTriggerEl = el)}
             class="icon-btn"
             classList={{ active: findOpen() }}
             title="Find in document (Ctrl+F)"
@@ -1457,7 +1490,7 @@ export function PdfViewer(props: {
         </div>
       </div>
       <Show when={findOpen()}>
-        <div class="pdf-find-bar">
+        <div ref={(el) => (findRootEl = el)} class="pdf-find-bar">
           <input
             ref={(el) => (findInputEl = el)}
             class="pdf-find-input"
@@ -1468,9 +1501,6 @@ export function PdfViewer(props: {
               if (e.key === "Enter") {
                 e.preventDefault();
                 nextMatch(e.shiftKey ? -1 : 1);
-              } else if (e.key === "Escape") {
-                e.preventDefault();
-                closeFind();
               }
             }}
           />
@@ -1507,7 +1537,11 @@ export function PdfViewer(props: {
         />
       </Show>
       <Show when={menu()}>
-        <div class="pdf-color-menu" style={{ left: `${menu()!.x}px`, top: `${menu()!.y + 8}px` }}>
+        <div
+          ref={(el) => (highlightMenuRootEl = el)}
+          class="pdf-color-menu"
+          style={{ left: `${menu()!.x}px`, top: `${menu()!.y + 8}px` }}
+        >
           <For each={COLORS}>
             {(c) => (
               <button

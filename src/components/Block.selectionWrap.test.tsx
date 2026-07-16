@@ -1,16 +1,22 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { For, type JSX } from "solid-js";
 import { render } from "solid-js/web";
-import { startEditing } from "../editorController";
+import { editingId, startEditing } from "../editorController";
 import { installKeybindings } from "../keybindings";
 import { initParser } from "../render/parse";
 import { doc, loadSingle, pageByName, resetStore, undo } from "../store";
 import type { BlockDto } from "../types";
-import { Block } from "./Block";
+import {
+  clearTransientLayersForTest,
+  dismissTopTransient,
+  registerTransientLayer,
+} from "../transientLayers";
+import { Block, Editor } from "./Block";
 
 beforeAll(() => initParser());
 
 afterEach(() => {
+  clearTransientLayersForTest();
   installKeybindings()();
   resetStore();
   document.body.innerHTML = "";
@@ -130,6 +136,116 @@ describe("selection toolbar actions (GH #142)", () => {
       expect(doc.byId["selection-wrap"].raw).toBe("alpha beta");
     } finally {
       dispose();
+    }
+  });
+});
+
+function openSelectionOverflow(
+  root: ParentNode,
+  textarea: HTMLTextAreaElement,
+  start: number,
+  end: number,
+) {
+  textarea.focus();
+  textarea.setSelectionRange(start, end);
+  textarea.dispatchEvent(new Event("select", { bubbles: true }));
+  const more = root.querySelector<HTMLButtonElement>('.sel-toolbar-more');
+  expect(more).not.toBeNull();
+  more!.click();
+  expect(root.querySelector('.sel-toolbar-overflow')).not.toBeNull();
+}
+
+function registerLower(id: string) {
+  let dismissals = 0;
+  const unregister = registerTransientLayer({
+    id,
+    dismiss: () => { dismissals += 1; return true; },
+  });
+  return { unregister, dismissals: () => dismissals };
+}
+
+describe("selection toolbar overflow transient ownership", () => {
+  it.each(["escape", "back"] as const)(
+    "owns one %s rung without losing the live editor selection",
+    async (reason) => {
+      const lower = registerLower(`selection-overflow-lower-${reason}`);
+      const { textarea, root, dispose } = mountEditor("alpha beta gamma");
+      try {
+        openSelectionOverflow(root, textarea, 6, 10);
+
+        expect(dismissTopTransient(reason)).toBe(true);
+        await vi.waitFor(() => expect(root.querySelector('.sel-toolbar-overflow')).toBeNull());
+        expect(lower.dismissals()).toBe(0);
+        expect(document.activeElement).toBe(textarea);
+        expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([6, 10]);
+        expect(textarea.value).toBe("alpha beta gamma");
+        expect(doc.byId["selection-wrap"].raw).toBe("alpha beta gamma");
+        expect(editingId()).toBe("selection-wrap");
+
+        expect(dismissTopTransient(reason)).toBe(true);
+        expect(lower.dismissals()).toBe(1);
+      } finally {
+        lower.unregister();
+        dispose();
+      }
+    },
+  );
+
+  it("drops a stale overflow when the selection empties and unregisters on unmount", async () => {
+    const lower = registerLower("selection-overflow-cleanup-lower");
+    const { textarea, root, dispose } = mountEditor("alpha beta gamma");
+    openSelectionOverflow(root, textarea, 0, 5);
+
+    textarea.setSelectionRange(5, 5);
+    textarea.dispatchEvent(new Event("select", { bubbles: true }));
+    await vi.waitFor(() => expect(root.querySelector('.sel-toolbar')).toBeNull());
+
+    textarea.setSelectionRange(6, 10);
+    textarea.dispatchEvent(new Event("select", { bubbles: true }));
+    await vi.waitFor(() => expect(root.querySelector('.sel-toolbar')).not.toBeNull());
+    expect(root.querySelector('.sel-toolbar-overflow')).toBeNull();
+    expect(dismissTopTransient("escape")).toBe(true);
+    expect(lower.dismissals()).toBe(1);
+
+    openSelectionOverflow(root, textarea, 6, 10);
+    dispose();
+    expect(dismissTopTransient("back")).toBe(true);
+    expect(lower.dismissals()).toBe(2);
+    lower.unregister();
+  });
+
+  it("keeps two directly mounted editors as independent overflow owners", async () => {
+    const blocks: BlockDto[] = [
+      { id: "selection-a", raw: "alpha one", collapsed: false, children: [] },
+      { id: "selection-b", raw: "beta two", collapsed: false, children: [] },
+    ];
+    loadSingle({ name: "Wrap", kind: "page", title: "Wrap", pre_block: null, blocks });
+    const lower = registerLower("selection-overflow-instances-lower");
+    const mounted = mount(() => <><Editor id="selection-a" /><Editor id="selection-b" /></>);
+    try {
+      const textareas = Array.from(mounted.root.querySelectorAll<HTMLTextAreaElement>("textarea.block-editor"));
+      const wraps = Array.from(mounted.root.querySelectorAll<HTMLElement>(".editor-wrap"));
+      openSelectionOverflow(wraps[0], textareas[0], 0, 5);
+      openSelectionOverflow(wraps[1], textareas[1], 0, 4);
+      expect(mounted.root.querySelectorAll('.sel-toolbar-overflow')).toHaveLength(2);
+
+      expect(dismissTopTransient("escape")).toBe(true);
+      await vi.waitFor(() => expect(mounted.root.querySelectorAll('.sel-toolbar-overflow')).toHaveLength(1));
+      expect(lower.dismissals()).toBe(0);
+      expect(document.activeElement).toBe(textareas[1]);
+      expect([textareas[1].selectionStart, textareas[1].selectionEnd]).toEqual([0, 4]);
+
+      expect(dismissTopTransient("back")).toBe(true);
+      await vi.waitFor(() => expect(mounted.root.querySelectorAll('.sel-toolbar-overflow')).toHaveLength(0));
+      expect(lower.dismissals()).toBe(0);
+      expect(document.activeElement).toBe(textareas[0]);
+      expect([textareas[0].selectionStart, textareas[0].selectionEnd]).toEqual([0, 5]);
+
+      expect(dismissTopTransient("escape")).toBe(true);
+      expect(lower.dismissals()).toBe(1);
+    } finally {
+      lower.unregister();
+      mounted.dispose();
     }
   });
 });

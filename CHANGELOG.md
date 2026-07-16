@@ -18,6 +18,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Escape and Android Back now close every visible popup before the surface
+  beneath it.** Calendar Jump, selection formatting overflow, PDF Find and
+  highlight actions, QueryBuilder menus, and formula value pickers all join the
+  shared one-gesture/one-layer dismissal order without losing selections,
+  drafts, or reader state. (post-GH #161 follow-up)
 - **Tab close buttons work on Windows again.** The visible X keeps its native
   pointer action instead of handing the pointer to the parent tab-drag capture
   session, while ordinary tab activation and drag-to-reorder stay unchanged.

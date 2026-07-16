@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createSignal } from "solid-js";
+import { Show, createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
 import {
@@ -8,6 +8,11 @@ import {
   PDF_CANVAS_CACHE_PIXEL_BUDGET,
   PDF_FIND_MATCH_CAP,
 } from "./PdfViewer";
+import {
+  clearTransientLayersForTest,
+  dismissTopTransient,
+  registerTransientLayer,
+} from "../transientLayers";
 
 const getDocumentMock = vi.hoisted(() => vi.fn());
 
@@ -591,6 +596,259 @@ describe("PdfViewer OG state and reference behavior", () => {
 
       expect(host.querySelector(".pdf-find-count")?.textContent).toBe(`1 / ${PDF_FIND_MATCH_CAP}+`);
     } finally {
+      dispose();
+    }
+  });
+});
+
+describe("PdfViewer local transient ownership", () => {
+  beforeEach(() => {
+    clearTransientLayersForTest();
+    getDocumentMock.mockReset();
+    TestIntersectionObserver.instances = [];
+    vi.stubGlobal("IntersectionObserver", TestIntersectionObserver);
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    vi.spyOn(backend() as any, "openPdf").mockResolvedValue({
+      highlights: [],
+      page: 2,
+      scale: 2,
+    });
+    vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+    getDocumentMock.mockImplementation(() => ({
+      promise: Promise.resolve(documentWithPages([page(612, 792), page(612, 792)])),
+    }));
+  });
+
+  afterEach(() => {
+    clearTransientLayersForTest();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    document.body.replaceChildren();
+    Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+    Reflect.deleteProperty(document, "elementFromPoint");
+  });
+
+  it("owns Find above a lower transient for Escape and Back without losing viewer state or query", async () => {
+    const writeViewState = vi.spyOn(backend() as any, "writePdfViewState").mockResolvedValue(undefined);
+    const selection = { removeAllRanges: vi.fn() } as unknown as Selection;
+    vi.spyOn(window, "getSelection").mockReturnValue(selection);
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <PdfViewer filename="search.pdf" label="Search" />, host);
+    let lowerDismissals = 0;
+    const unregisterLower = registerTransientLayer({
+      id: "pdf-find-lower",
+      dismiss: () => { lowerDismissals += 1; return true; },
+    });
+    try {
+      await flush();
+      const findButton = host.querySelector('button[title="Find in document (Ctrl+F)"]') as HTMLButtonElement;
+      findButton.click();
+      const input = host.querySelector(".pdf-find-input") as HTMLInputElement;
+      input.value = "retained query";
+      input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+
+      expect(dismissTopTransient("escape")).toBe(true);
+      await flush();
+      expect(host.querySelector(".pdf-find-bar")).toBeNull();
+      expect(lowerDismissals).toBe(0);
+      expect((host.querySelector(".pdf-page-input") as HTMLInputElement).value).toBe("2");
+      expect(host.querySelector(".pdf-zoom-level")?.textContent).toBe("200%");
+      expect(writeViewState).not.toHaveBeenCalled();
+
+      findButton.click();
+      expect((host.querySelector(".pdf-find-input") as HTMLInputElement).value).toBe("retained query");
+      expect(dismissTopTransient("back")).toBe(true);
+      await flush();
+      expect(host.querySelector(".pdf-find-bar")).toBeNull();
+      expect(lowerDismissals).toBe(0);
+
+      expect(dismissTopTransient("escape")).toBe(true);
+      expect(lowerDismissals).toBe(1);
+    } finally {
+      unregisterLower();
+      dispose();
+    }
+  });
+
+  it("dismisses the highlight menu only, preserving highlight, selection, and view state", async () => {
+    const highlightId = "11111111-1111-4111-8111-111111111111";
+    const rect = { top: 40, left: 20, width: 80, height: 12 };
+    vi.mocked(backend().openPdf).mockResolvedValue({
+      highlights: [{
+        id: highlightId,
+        page: 1,
+        position: { page: 1, bounding: rect, rects: [rect] },
+        color: "yellow",
+        text: "existing text highlight",
+        image: null,
+      }],
+      page: 2,
+      scale: 2,
+    });
+    const writeHighlights = vi.spyOn(backend(), "writeHighlights").mockResolvedValue(undefined);
+    const writeViewState = vi.spyOn(backend() as any, "writePdfViewState").mockResolvedValue(undefined);
+    const selection = { removeAllRanges: vi.fn() } as unknown as Selection;
+    vi.spyOn(window, "getSelection").mockReturnValue(selection);
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as CanvasRenderingContext2D);
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <PdfViewer filename="marked.pdf" label="Marked" />, host);
+    let lowerDismissals = 0;
+    const unregisterLower = registerTransientLayer({
+      id: "pdf-menu-lower",
+      dismiss: () => { lowerDismissals += 1; return true; },
+    });
+    try {
+      await flush();
+      TestIntersectionObserver.instances[0].show(host.querySelector(".pdf-page")!);
+      await flush();
+      const highlight = host.querySelector(`[data-highlight-id="${highlightId}"]`) as HTMLElement;
+      highlight.click();
+      await flush();
+      expect(host.querySelector(".pdf-color-menu")).not.toBeNull();
+
+      expect(dismissTopTransient("escape")).toBe(true);
+      await flush();
+      expect(host.querySelector(".pdf-color-menu")).toBeNull();
+      expect(host.querySelector(`[data-highlight-id="${highlightId}"]`)).not.toBeNull();
+      expect(lowerDismissals).toBe(0);
+      expect(writeHighlights).not.toHaveBeenCalled();
+      expect(writeViewState).not.toHaveBeenCalled();
+      expect(selection.removeAllRanges).not.toHaveBeenCalled();
+      expect((host.querySelector(".pdf-page-input") as HTMLInputElement).value).toBe("2");
+      expect(host.querySelector(".pdf-zoom-level")?.textContent).toBe("200%");
+
+      highlight.click();
+      await flush();
+      expect(dismissTopTransient("back")).toBe(true);
+      await flush();
+      expect(host.querySelector(".pdf-color-menu")).toBeNull();
+      expect(lowerDismissals).toBe(0);
+    } finally {
+      unregisterLower();
+      dispose();
+    }
+  });
+
+  it("orders simultaneous Find and highlight-menu peers by their latest interaction", async () => {
+    const selection = {
+      isCollapsed: false,
+      toString: () => "selected text",
+      getRangeAt: () => ({
+        getClientRects: () => [{ left: 10, top: 20, right: 110, bottom: 32, width: 100, height: 12 }],
+      }),
+      removeAllRanges: vi.fn(),
+    } as unknown as Selection;
+    vi.spyOn(window, "getSelection").mockReturnValue(selection);
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <PdfViewer filename="peers.pdf" label="Peers" />, host);
+    let lowerDismissals = 0;
+    const unregisterLower = registerTransientLayer({
+      id: "pdf-peer-lower",
+      dismiss: () => { lowerDismissals += 1; return true; },
+    });
+    try {
+      await flush();
+      const findButton = host.querySelector('button[title="Find in document (Ctrl+F)"]') as HTMLButtonElement;
+      findButton.click();
+      const pageElement = host.querySelector(".pdf-page") as HTMLElement;
+      vi.spyOn(pageElement, "getBoundingClientRect").mockReturnValue({
+        left: 0, top: 0, right: 612, bottom: 792, width: 612, height: 792, x: 0, y: 0,
+        toJSON: () => ({}),
+      });
+      pageElement.dispatchEvent(new MouseEvent("mouseup", {
+        bubbles: true,
+        clientX: 20,
+        clientY: 30,
+      }));
+      await flush();
+      expect(host.querySelector(".pdf-find-bar")).not.toBeNull();
+      expect(host.querySelector(".pdf-color-menu")).not.toBeNull();
+
+      const findInput = host.querySelector(".pdf-find-input") as HTMLInputElement;
+      findInput.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+      expect(dismissTopTransient("escape")).toBe(true);
+      await flush();
+      expect(host.querySelector(".pdf-find-bar")).toBeNull();
+      expect(host.querySelector(".pdf-color-menu")).not.toBeNull();
+      expect(lowerDismissals).toBe(0);
+
+      findButton.click();
+      const menuRoot = host.querySelector(".pdf-color-menu") as HTMLElement;
+      menuRoot.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+      expect(dismissTopTransient("back")).toBe(true);
+      await flush();
+      expect(host.querySelector(".pdf-color-menu")).toBeNull();
+      expect(host.querySelector(".pdf-find-bar")).not.toBeNull();
+      expect(lowerDismissals).toBe(0);
+    } finally {
+      unregisterLower();
+      dispose();
+    }
+  });
+
+  it("keeps two same-filename viewers independently registered and removes owners on explicit close or unmount", async () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const [showSecond, setShowSecond] = createSignal(true);
+    const dispose = render(() => (
+      <>
+        <PdfViewer filename="same.pdf" label="First" />
+        <Show when={showSecond()}>
+          <PdfViewer filename="same.pdf" label="Second" />
+        </Show>
+      </>
+    ), host);
+    let lowerDismissals = 0;
+    const unregisterLower = registerTransientLayer({
+      id: "pdf-instance-lower",
+      dismiss: () => { lowerDismissals += 1; return true; },
+    });
+    try {
+      await flush();
+      const viewers = [...host.querySelectorAll<HTMLElement>(".pdf-viewer")];
+      for (const viewer of viewers) {
+        (viewer.querySelector('button[title="Find in document (Ctrl+F)"]') as HTMLButtonElement).click();
+      }
+      expect(viewers.every((viewer) => viewer.querySelector(".pdf-find-bar"))).toBe(true);
+
+      expect(dismissTopTransient("back")).toBe(true);
+      await flush();
+      expect(viewers[0].querySelector(".pdf-find-bar")).not.toBeNull();
+      expect(viewers[1].querySelector(".pdf-find-bar")).toBeNull();
+      expect(lowerDismissals).toBe(0);
+
+      (viewers[1].querySelector('button[title="Find in document (Ctrl+F)"]') as HTMLButtonElement).click();
+      await flush();
+      expect(viewers[1].querySelector(".pdf-find-bar")).not.toBeNull();
+      setShowSecond(false);
+      await flush();
+      expect(dismissTopTransient("escape")).toBe(true);
+      await flush();
+      expect(viewers[0].querySelector(".pdf-find-bar")).toBeNull();
+      expect(lowerDismissals).toBe(0);
+
+      const firstFindButton = viewers[0].querySelector('button[title="Find in document (Ctrl+F)"]') as HTMLButtonElement;
+      firstFindButton.click();
+      await flush();
+      expect(viewers[0].querySelector(".pdf-find-bar")).not.toBeNull();
+      firstFindButton.click();
+      await flush();
+      expect(viewers[0].querySelector(".pdf-find-bar")).toBeNull();
+      expect(dismissTopTransient("escape")).toBe(true);
+      expect(lowerDismissals).toBe(1);
+    } finally {
+      unregisterLower();
       dispose();
     }
   });
