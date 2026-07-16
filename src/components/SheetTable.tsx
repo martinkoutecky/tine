@@ -2,6 +2,7 @@ import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCle
 import {
   blockPageReadOnly,
   blockProperty,
+  blockWritable,
   doc,
   formatForBlock,
   formatForPage,
@@ -10,6 +11,7 @@ import {
   readPageProperty,
   setBlockProperty,
   setPageProperty,
+  setRaw,
   withUndoUnit,
 } from "../store";
 import { facetsFromDto, facetsOf, type Facets } from "../render/facets";
@@ -50,6 +52,7 @@ import {
   type FieldValue,
 } from "../sheet/fields";
 import { parseFields, serializeFields, sheetConfig, type FieldSpec, type FieldType } from "../sheet/config";
+import { planSheetFieldRename } from "../sheet/renameField";
 import { formulaFieldId, formulaNameFromField, formulasOf, mergeFormulas } from "../sheet/formulaFields";
 import {
   createFormulaFilterMemo,
@@ -70,6 +73,7 @@ import {
   openFormulaEditor,
   openSheetCellContextMenu,
   openSheetContextMenu,
+  pushToast,
   type ContextMenuAction,
 } from "../ui";
 import { blockBackgroundColor } from "../blockColors";
@@ -131,9 +135,11 @@ export function SheetTable(props: {
   const [sort, setSort] = createSignal<SortState>(null);
   const [extraFields, setExtraFields] = createSignal<FieldId[]>([]);
   const [addingColumn, setAddingColumn] = createSignal(false);
+  const [renamingField, setRenamingField] = createSignal<{ field: FieldId; value: string } | null>(null);
   const [editingProp, setEditingProp] = createSignal<{ rowId: string; field: FieldId; initial: string } | null>(null);
   const [hovering, setHovering] = createSignal(false);
   const [stableColumns, setStableColumns] = createSignal<string | null>(null);
+  let sortBeforePotentialHeaderDoubleClick: SortState | undefined;
   const sheetOverlay = useContext(SheetContainerOverlayContext);
   const sheetHovering = () => sheetOverlay?.hovering() ?? hovering();
   const config = createMemo(() => {
@@ -469,6 +475,64 @@ export function SheetTable(props: {
     // being removed from the schema, until an app restart clears the signal.
     setExtraFields((cur) => cur.filter((f) => f !== field));
   };
+  const renameDisabledReason = (field: FieldId, declared: FieldSpec | null): string | null => {
+    if (props.rowSource !== "children") return "only children-backed tables can rename fields";
+    if (!declared) return "declare this field first";
+    if (!declared.field.startsWith("prop:")) return "built-in fields cannot be renamed";
+    if (schemaHome()?.kind !== "block") return "page-inherited fields cannot be renamed here";
+    if (!schemaWriteAllowed() || !blockWritable(props.ownerId)) return "this table is read-only";
+    return null;
+  };
+  const startFieldRename = (field: FieldId, declared: FieldSpec | null) => {
+    if (renameDisabledReason(field, declared)) return;
+    setRenamingField({ field, value: field.slice("prop:".length) });
+  };
+  const commitFieldRename = (field: FieldId, value: string): boolean => {
+    const owner = doc.byId[props.ownerId];
+    const home = schemaHome();
+    if (!owner || home?.kind !== "block") return false;
+    const rowNodes = owner.children.map((id) => doc.byId[id]).filter((row): row is NonNullable<typeof row> => !!row);
+    if (rowNodes.length !== owner.children.length) {
+      pushToast("Some direct rows are not loaded; no fields were renamed.", "error");
+      return false;
+    }
+    const page = props.schemaPage ? pageByName(props.schemaPage) : undefined;
+    const result = planSheetFieldRename({
+      rowSource: props.rowSource,
+      ownerWritable: blockWritable(props.ownerId),
+      schemaHome: home.kind,
+      owner: {
+        id: props.ownerId,
+        page: owner.page,
+        raw: owner.raw,
+        format: formatForBlock(props.ownerId),
+        recognizedProperties: facetsOf(owner.raw, formatForBlock(props.ownerId)).properties,
+      },
+      rows: rowNodes.map((row) => ({
+        id: row.id,
+        page: row.page,
+        raw: row.raw,
+        format: formatForBlock(row.id),
+        recognizedProperties: facetsOf(row.raw, formatForBlock(row.id)).properties,
+      })),
+      pageProperties: page ? pageProperties(page.preBlock, page.format) : [],
+      recognizeProperties: (raw, format) => facetsOf(raw, format).properties,
+      oldField: field,
+      newName: value,
+    });
+    if (!result.ok) {
+      pushToast(result.error, "error");
+      return false;
+    }
+    const plan = result.plan;
+    withUndoUnit("sheet:rename-field", [plan.page], () => {
+      setRaw(plan.ownerId, plan.ownerRaw, { timetracking: false });
+      for (const row of plan.rows) setRaw(row.id, row.raw, { timetracking: false });
+    });
+    setExtraFields((current) => current.filter((candidate) => candidate !== plan.oldField && candidate !== plan.newField));
+    setRenamingField(null);
+    return true;
+  };
   const openFieldHeaderMenu = (e: MouseEvent, field: FieldId) => {
     e.preventDefault();
     e.stopPropagation();
@@ -476,6 +540,12 @@ export function SheetTable(props: {
       const name = formulaNameFromField(field);
       const home = name ? formulaHomes().get(name) ?? null : null;
       openActionContextMenu(e.clientX, e.clientY, [
+        {
+          label: props.rowSource === "children"
+            ? "Rename field… (formula columns cannot be renamed here)"
+            : "Rename field… (only children-backed tables can rename fields)",
+          disabled: true,
+        },
         {
           label: "Edit formula…",
           disabled: !name || !formulaWriteAllowed(home),
@@ -503,6 +573,12 @@ export function SheetTable(props: {
     const declared = schemaFields().find((spec) => spec.field === field) ?? null;
     const disabled = !schemaWriteAllowed();
     const actions: ContextMenuAction[] = [];
+    const renameReason = renameDisabledReason(field, declared);
+    actions.push({
+      label: renameReason ? `Rename field… (${renameReason})` : "Rename field…",
+      disabled: !!renameReason,
+      run: () => startFieldRename(field, declared),
+    });
     if (!schemaHome()) {
       if (field.startsWith("prop:")) actions.push({ label: "Declare field (text)", disabled, run: declareFreshSchema });
     } else if (!declared) {
@@ -708,13 +784,53 @@ export function SheetTable(props: {
                 "sheet-col-formula": isFormulaField(field),
                 "sheet-col-stray": !!schemaHome() && !schemaFieldSet().has(field) && !isFormulaField(field),
               }}
-              onClick={() => sortHeader(i() + 1)}
+              onClick={(e) => {
+                if ((e.target as HTMLElement).closest("input")) return;
+                if (e.detail > 1) return;
+                sortBeforePotentialHeaderDoubleClick = sort();
+                sortHeader(i() + 1);
+              }}
+              onDblClick={(e) => {
+                const declared = schemaFields().find((spec) => spec.field === field) ?? null;
+                if (renameDisabledReason(field, declared)) return;
+                e.preventDefault();
+                e.stopPropagation();
+                if (sortBeforePotentialHeaderDoubleClick !== undefined) {
+                  setSort(sortBeforePotentialHeaderDoubleClick);
+                  sortBeforePotentialHeaderDoubleClick = undefined;
+                }
+                startFieldRename(field, declared);
+              }}
               onContextMenu={(e) => openFieldHeaderMenu(e, field)}
             >
-              <Show when={isFormulaField(field)}>
-                <span class="sheet-formula-marker">ƒ</span>
+              <Show
+                when={renamingField()?.field === field}
+                fallback={
+                  <>
+                    <Show when={isFormulaField(field)}>
+                      <span class="sheet-formula-marker">ƒ</span>
+                    </Show>
+                    {fieldLabel(field)}{sortArrow(i() + 1)}
+                  </>
+                }
+              >
+                <input
+                  class="sheet-prop-input sheet-header-rename-input"
+                  autofocus
+                  value={renamingField()?.value ?? ""}
+                  aria-label={`Rename ${fieldLabel(field)} field`}
+                  onClick={(e) => e.stopPropagation()}
+                  onInput={(e) => setRenamingField({ field, value: e.currentTarget.value })}
+                  onKeyDown={(e) => {
+                    e.stopPropagation();
+                    if (e.key === "Enter") commitFieldRename(field, e.currentTarget.value);
+                    else if (e.key === "Escape") setRenamingField(null);
+                  }}
+                  onBlur={(e) => {
+                    if (renamingField()?.field === field) commitFieldRename(field, e.currentTarget.value);
+                  }}
+                />
               </Show>
-              {fieldLabel(field)}{sortArrow(i() + 1)}
             </div>
           )}
         </For>

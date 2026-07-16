@@ -370,6 +370,87 @@ try {
     check("typed Table Tab commits then advances", false, "no Table cell (0,4)");
   }
 
+  // GH #175: a declared, children-backed property field is a local schema
+  // identity. Rename it through the literal header menu and prove that schema,
+  // row keys and dependent formulas move together as one persisted Undo unit.
+  const renameMenuOpened = await browser.execute(() => {
+    const header = [...document.querySelectorAll(".sheet-table .sheet-field-header")]
+      .find((el) => (el.textContent ?? "").trim() === "occurrence");
+    if (!header) return false;
+    header.dispatchEvent(new MouseEvent("contextmenu", {
+      bubbles: true, cancelable: true, clientX: 420, clientY: 260,
+    }));
+    return true;
+  });
+  await sleep(250);
+  const renameMenuClicked = renameMenuOpened && await browser.execute(() => {
+    const item = [...document.querySelectorAll(".ctx-item")]
+      .find((el) => (el.textContent ?? "").trim() === "Rename field…");
+    if (!item) return false;
+    item.click();
+    return true;
+  });
+  await sleep(250);
+  const renameInputFilled = renameMenuClicked && await browser.execute(() => {
+    const input = document.querySelector(".sheet-header-rename-input");
+    if (!(input instanceof HTMLInputElement)) return false;
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, "OCC");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.focus();
+    return true;
+  });
+  check("declared Table field opens the inline rename editor", !!renameInputFilled);
+  if (renameInputFilled) {
+    await browser.keys(["Enter"]);
+    await sleep(2600);
+    const renamedView = await browser.execute(() => {
+      const headers = [...document.querySelectorAll(".sheet-table .sheet-field-header")]
+        .map((el) => (el.textContent ?? "").trim());
+      const formula = document.querySelector('.sheet-table .sheet-cell[data-row="0"][data-col="7"]')
+        ?.textContent?.replace("⋮", "").trim() ?? null;
+      return { headers, formula };
+    });
+    const renamedDisk = fs.readFileSync(JFILE, "utf8");
+    check("rename produces exactly one OCC header and keeps the formula live",
+      renamedView.headers.filter((h) => h === "OCC").length === 1 &&
+      !renamedView.headers.includes("occurrence") && renamedView.formula === "24",
+      JSON.stringify(renamedView));
+    check("rename persists schema, row key and formula with no old identity",
+      renamedDisk.includes("tine.fields:: state=state;topic=enum:infra,ui;shipped=checkbox;severity=number;OCC=number;DET=number") &&
+      renamedDisk.includes("tine.formula.rpn:: severity * OCC * DET") &&
+      renamedDisk.includes("OCC:: 3") && !renamedDisk.includes("occurrence::") &&
+      !renamedDisk.includes("severity * occurrence * DET"), JSON.stringify(renamedDisk));
+
+    await browser.keys(["Control", "z"]);
+    await sleep(2400);
+    const undoneDisk = fs.readFileSync(JFILE, "utf8");
+    check("one Undo restores schema, row key and formula together",
+      undoneDisk.includes("occurrence=number") && undoneDisk.includes("occurrence:: 3") &&
+      undoneDisk.includes("severity * occurrence * DET") && !undoneDisk.includes("OCC:: 3"),
+      JSON.stringify(undoneDisk));
+
+    await browser.keys(["Control", "Shift", "z"]);
+    await sleep(2400);
+    const redoneDisk = fs.readFileSync(JFILE, "utf8");
+    check("one Redo reapplies the complete field migration",
+      redoneDisk.includes("OCC=number") && redoneDisk.includes("OCC:: 3") &&
+      redoneDisk.includes("severity * OCC * DET") && !redoneDisk.includes("occurrence:: 3"),
+      JSON.stringify(redoneDisk));
+
+    await browser.refresh();
+    await browser.$(".sheet-table").waitForExist({ timeout: 15_000 });
+    const reloaded = await browser.execute(() => {
+      const headers = [...document.querySelectorAll(".sheet-table .sheet-field-header")]
+        .map((el) => (el.textContent ?? "").trim());
+      const formula = document.querySelector('.sheet-table .sheet-cell[data-row="0"][data-col="7"]')
+        ?.textContent?.replace("⋮", "").trim() ?? null;
+      return { headers, formula };
+    });
+    check("renamed field and formula survive a real app reload",
+      reloaded.headers.filter((h) => h === "OCC").length === 1 && reloaded.formula === "24",
+      JSON.stringify(reloaded));
+  }
+
   // --- Formula editor (phase 7c): add a formula, value computed not stored ---
   const tableEl = await browser.$(".sheet-table");
   if (await tableEl.isExisting()) {
