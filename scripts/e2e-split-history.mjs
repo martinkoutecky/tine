@@ -59,13 +59,21 @@ try {
       const pane = document.querySelector(`[data-pane-id="${id}"]`);
       pane?.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0 }));
     }, paneId);
+    await browser.waitUntil(() => browser.execute((id) =>
+      document.querySelector(`.pane-leaf[data-pane-id="${id}"]`)?.classList.contains("pane-focused")
+      ?? (id === "main" && !document.querySelector(".pane-leaf")), paneId), {
+      timeout: 5_000,
+      timeoutMsg: `${paneId} did not become the focused switcher origin`,
+    });
     await browser.keys(["Control", "k"]);
     const input = await browser.$(".switcher-input");
     await input.waitForExist({ timeout: 5_000 });
     await input.setValue(name);
-    await browser.waitUntil(async () => browser.execute((label) =>
-      [...document.querySelectorAll(".switcher-row")].some((node) => node.textContent?.includes(label)),
-    name), { timeout: 10_000, timeoutMsg: `${name} did not appear in the switcher` });
+    await browser.waitUntil(async () => browser.execute((label) => {
+      const active = document.querySelector(".switcher-row.active");
+      return active?.querySelector(".switcher-kind")?.textContent?.trim() === "page"
+        && active.querySelector(".switcher-name")?.textContent?.trim() === label;
+    }, name), { timeout: 10_000, timeoutMsg: `${name} did not become the active page result in the switcher` });
     await browser.keys("Enter");
     await browser.waitUntil(async () => browser.execute((id, expected) =>
       document.querySelector(`[data-pane-id="${id}"] .page-title`)?.textContent?.trim() === expected,
