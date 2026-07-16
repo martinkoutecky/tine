@@ -268,19 +268,28 @@ try {
     }
     throw new Error(`${message}; expected=${JSON.stringify(expected)} actual=${JSON.stringify(last)}`);
   };
+  const typePageQueryFromEmpty = async (query) => {
+    // Keep every physical key in its own WebDriver command and observe the
+    // editor between the repeated delimiters. WebKitGTK can otherwise deliver
+    // a queued second `[` after the following text (`[Fz[`), which is an XTest
+    // transport artefact rather than the user's literal ordering.
+    await browser.keys(["["]);
+    await expectAutocompleteValue("[", "Quick Capture did not receive the first page-ref delimiter");
+    await browser.keys(["["]);
+    await expectAutocompleteValue("[[]]", "Quick Capture did not auto-pair the second page-ref delimiter");
+    for (const key of query) await browser.keys([key]);
+  };
   // A fuzzy-only query distinguishes existing-first from adaptive/Create-first.
   // Exercise both page and tag acceptance in the cold, independently initialized
   // capture WebView using literal keys.
-  await browser.keys(["["]);
-  await browser.keys(["["]);
-  await browser.keys(["F", "z"]);
+  await typePageQueryFromEmpty("Fz");
   await expectActiveAutocomplete("Fuzzy Existing", "cold Quick Capture ignored persisted existing-first page policy");
   await browser.keys(["Enter"]);
   // Existing page acceptance keeps Tine's configured GH #35 continuation space.
   // Do not type another separator before the following tag query: that would
   // conceal a doubled-space regression instead of proving the actual edit.
   await expectAutocompleteValue("[[Fuzzy Existing]] ", "cold Quick Capture did not accept the existing page with its configured continuation space");
-  await browser.keys(["#", "F", "z"]);
+  for (const key of "#Fz") await browser.keys([key]);
   await expectActiveAutocomplete("#Fuzzy Existing", "cold Quick Capture ignored persisted existing-first tag policy");
   await browser.keys(["Enter"]);
   await expectAutocompleteValue("[[Fuzzy Existing]] #[[Fuzzy Existing]] ", "cold Quick Capture did not accept the existing multiword tag with its configured continuation space");
@@ -372,9 +381,7 @@ try {
   await browser.switchToWindow(captureHandle);
   await browser.keys(["Control", "a"]);
   await browser.keys(["Backspace"]);
-  await browser.keys(["["]);
-  await browser.keys(["["]);
-  await browser.keys(["F", "z"]);
+  await typePageQueryFromEmpty("Fz");
   await expectActiveAutocomplete('Create "Fz"', "reopened Quick Capture retained the hidden existing-first policy");
   await browser.keys(["Escape"]);
   // Repeat from a fresh process with the same XDG home. This is distinct from
@@ -409,9 +416,7 @@ try {
   coldReopen.unref();
   await waitForWindow("Quick Capture", 10_000);
   await browser.switchToWindow(restartedCapture);
-  await browser.keys(["["]);
-  await browser.keys(["["]);
-  await browser.keys(["F", "z"]);
+  await typePageQueryFromEmpty("Fz");
   await expectActiveAutocomplete('Create "Fz"', "cold restarted Quick Capture did not initialize persisted typed policy");
   await browser.keys(["Escape"]);
   console.log(`PASS: cold Quick Capture exposed a focused bullet and saved keyboard input without a click; dom=${JSON.stringify(domFocus)} frame=${JSON.stringify({ lightShadow, darkShadow })}`);

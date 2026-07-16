@@ -57,16 +57,40 @@ const waitForActiveAutocomplete = async (browser, expected, timeoutMsg) => {
 const editorState = (browser) => browser.execute(() => {
   const active = document.activeElement;
   return active instanceof HTMLTextAreaElement
-    ? { value: active.value, start: active.selectionStart, end: active.selectionEnd }
-    : { value: null, start: null, end: null };
+    ? {
+        value: active.value,
+        start: active.selectionStart,
+        end: active.selectionEnd,
+        blockId: active.closest("[data-block-id]")?.getAttribute("data-block-id") ?? null,
+      }
+    : { value: null, start: null, end: null, blockId: null };
 });
+const focusBlockEditor = async (browser, id) => {
+  const content = await browser.$(`[data-block-id="${id}"] .block-content`);
+  await content.waitForExist({ timeout: 5000 });
+  await content.click();
+  const editor = await browser.$(`[data-block-id="${id}"] textarea.block-editor`);
+  await editor.waitForExist({ timeout: 5000 });
+  await browser.waitUntil(async () => (await editorState(browser)).blockId === id, {
+    timeout: 5000,
+    timeoutMsg: `clicking block ${id} did not focus its editor`,
+  });
+  return editor;
+};
 const clearActiveEditor = async (browser) => {
+  // Backspace on an already-empty outline block is structural: it removes the
+  // block and focuses its predecessor. Do not turn a setup no-op into a merge.
+  if ((await editorState(browser)).value === "") return;
   await browser.keys(["Control", "a"]);
   await browser.keys(["Backspace"]);
-  await browser.waitUntil(async () => (await editorState(browser)).value === "", {
-    timeout: 5000,
-    timeoutMsg: "literal Ctrl-A/Backspace did not clear the active editor",
-  });
+  let last = null;
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    last = await editorState(browser);
+    if (last.value === "") return;
+    await sleep(50);
+  }
+  throw new Error(`literal Ctrl-A/Backspace did not clear the active editor; last=${JSON.stringify(last)}`);
 };
 const expectEditor = async (browser, expected, caret, message) => {
   let last = null;
@@ -105,6 +129,11 @@ const selectSetting = async (browser, value) => {
   });
   await browser.keys(["Escape"]);
   await browser.$(".settings-modal").waitForExist({ reverse: true, timeout: 5000 });
+  // WebDriver may issue the next command before WebKit has drained the dismissal
+  // microtask that restores the pre-Settings editor. A physical follow-up click
+  // cannot occur in that interval, so let the event turn settle before clicking
+  // a different block and testing live policy consumption.
+  await sleep(50);
 };
 const toggleReferenceSpacing = async (browser) => {
   await browser.$('button[title^="Settings"]').click();
@@ -543,8 +572,7 @@ try {
   // editor consumes the new mode without a reload.
   await browser.keys(["Escape"]);
   await selectSetting(browser, "typed");
-  await slashContent.click();
-  await slashEditor.waitForExist({ timeout: 5000 });
+  await focusBlockEditor(browser, SLASH_EDITOR);
   await clearActiveEditor(browser);
   await typeKeys(browser, "[[FEx");
   await waitForActiveAutocomplete(browser, 'Create "FEx"', "typed policy was not live in the mounted main WebView");
@@ -627,7 +655,7 @@ try {
     if (propertyIndex < 1) return null;
     return lines[propertyIndex - 1].replace(/^- /, "");
   };
-  await browser.waitUntil(() => persistedSplitValue() === "[[Fuzzy Existing]]", {
+  await browser.waitUntil(() => persistedSplitValue() === "[[Fuzzy Existing]] ", {
     timeout: 10_000,
     timeoutMsg: "split acceptance did not commit through the guarded save path",
   });
@@ -653,7 +681,7 @@ try {
     disk: persistedSplitValue(),
     policy: JSON.parse(fs.readFileSync(SETTINGS, "utf8")).link_autocomplete_policy,
   };
-  if (receipt.observations.reload.rendered !== "Fuzzy Existing" || receipt.observations.reload.disk !== "[[Fuzzy Existing]]") {
+  if (receipt.observations.reload.rendered !== "[[Fuzzy Existing]]" || receipt.observations.reload.disk !== "[[Fuzzy Existing]] ") {
     throw new Error(`committed page reference did not survive reload: ${JSON.stringify(receipt.observations.reload)}`);
   }
   await sleep(300);
