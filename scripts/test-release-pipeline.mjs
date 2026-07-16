@@ -6,7 +6,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { assembleCandidate } from "./assemble-release-candidate.mjs";
-import { mirrorWindowsDevToolsActivePortOnce, tauriCapabilities } from "./e2e-capabilities.mjs";
+import {
+  mirrorWindowsDevToolsActivePortOnce,
+  tauriCapabilities,
+  windowsWebviewProfileSnapshot,
+} from "./e2e-capabilities.mjs";
 import { candidateProblems, releaseLayout, RELEASE_LANES } from "./release-layout.mjs";
 
 const version = "0.5.6";
@@ -176,6 +180,9 @@ try {
     fs.readFileSync(path.join(temporary, "webview2", "fixture-session", "DevToolsActivePort"), "utf8"),
     "12345\n/devtools/browser/fixture\n",
   );
+  const profileSnapshot = windowsWebviewProfileSnapshot(path.join(temporary, "webview2"));
+  assert.ok(profileSnapshot.files.some((entry) => entry.path === "fixture-session/DevToolsActivePort"));
+  assert.ok(profileSnapshot.files.some((entry) => entry.path === "fixture-session/EBWebView/DevToolsActivePort"));
   if (priorWebviewRoot === undefined) delete process.env.E2E_WEBVIEW_USER_DATA_ROOT;
   else process.env.E2E_WEBVIEW_USER_DATA_ROOT = priorWebviewRoot;
   for (const script of windowsScenarios) {

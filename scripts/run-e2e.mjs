@@ -7,7 +7,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { startWindowsDevToolsActivePortMirror } from "./e2e-capabilities.mjs";
+import { startWindowsDevToolsActivePortMirror, windowsWebviewProfileSnapshot } from "./e2e-capabilities.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const suiteName = process.argv[2] ?? "linux-smoke";
@@ -242,6 +242,12 @@ async function runScenario([id, script, extraEnv]) {
     });
     clearTimeout(timer);
     stopActivePortMirror();
+    if (process.platform === "win32") {
+      fs.writeFileSync(
+        path.join(dir, "webview2-profile.json"),
+        `${JSON.stringify(windowsWebviewProfileSnapshot(env.E2E_WEBVIEW_USER_DATA_ROOT), null, 2)}\n`,
+      );
+    }
     fs.closeSync(stdout);
     fs.closeSync(stderr);
     const output = fs.readFileSync(path.join(dir, "stdout.log"), "utf8");

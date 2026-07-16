@@ -65,3 +65,35 @@ export function startWindowsDevToolsActivePortMirror(root, platform = process.pl
   }, 50);
   return () => clearInterval(timer);
 }
+
+export function windowsWebviewProfileSnapshot(root) {
+  const files = [];
+  function walk(directory, depth = 0) {
+    if (depth > 6 || !directory || !fs.existsSync(directory)) return;
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const absolute = path.join(directory, entry.name);
+      const relative = path.relative(root, absolute);
+      try {
+        if (entry.isDirectory()) {
+          files.push({ path: `${relative}/`, type: "directory" });
+          walk(absolute, depth + 1);
+        } else if (entry.isFile()) {
+          const stat = fs.statSync(absolute);
+          const record = { path: relative, type: "file", size: stat.size };
+          if (entry.name === "DevToolsActivePort") {
+            record.contents = fs.readFileSync(absolute, "utf8").slice(0, 500);
+          }
+          files.push(record);
+        }
+      } catch (error) {
+        files.push({ path: relative, type: "error", error: String(error) });
+      }
+    }
+  }
+  try {
+    walk(root);
+  } catch (error) {
+    return { root, error: String(error), files };
+  }
+  return { root, files };
+}
