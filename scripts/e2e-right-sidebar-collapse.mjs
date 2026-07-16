@@ -76,7 +76,15 @@ async function openPagesInSidebar(browser) {
     const input = await browser.$(".switcher-input");
     await input.waitForExist({ timeout: 5000 });
     await input.setValue(name);
-    await browser.$(".switcher-row").click();
+    // Ctrl-K initially contains recent rows and updates results asynchronously.
+    // Clicking the first row immediately after setValue can therefore select the
+    // preceding page while the requested query is still in flight. Wait for and
+    // physically click the exact non-block page row the user intended.
+    const row = await browser.$(
+      `//*[contains(concat(' ', normalize-space(@class), ' '), ' switcher-row ') and not(contains(concat(' ', normalize-space(@class), ' '), ' block-result '))][.//*[contains(concat(' ', normalize-space(@class), ' '), ' switcher-name ') and normalize-space(.)='${name}']]`,
+    );
+    await row.waitForExist({ timeout: 10_000 });
+    await row.click();
     await browser.waitUntil(async () => (await browser.$("h1.page-title").getText()).trim() === name, {
       timeout: 10_000, timeoutMsg: `${name} did not open`,
     });
