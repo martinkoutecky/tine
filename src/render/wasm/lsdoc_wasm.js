@@ -112,15 +112,9 @@ export function lsdoc_tag() {
 /**
  * Parse one de-bulleted block body into lsdoc's render AST, serialized to JSON.
  *
- * Mirrors `tine_core::render::parse_block` EXACTLY (the OG-faithful boundary):
- * re-prepend the block pattern (`-` Markdown / `*` Org) to `raw.trim_start()`,
- * then `lsdoc::parse`. The first returned block carries the block header
- * (marker / priority / heading size); continuation constructs follow as siblings.
- *
- * KEEP IN SYNC with `crates/tine-core/src/render.rs::parse_block`. The two share
- * no code (this crate can't cheaply depend on tine-core — see Cargo.toml), so the
- * 3-line re-prepend is duplicated; the transition diff-oracle (parse via WASM and
- * via the `parse_blocks` IPC, assert equal) guards against drift.
+ * Mirrors `tine_core::render::parse_block` exactly. Both bridges compile the same
+ * shared boundary helper: OG-compatible re-bullet parsing plus Tine's deliberate
+ * correction for line-leading Markdown inline code containing `::`.
  * @param {string} raw
  * @param {boolean} is_org
  * @returns {string}
