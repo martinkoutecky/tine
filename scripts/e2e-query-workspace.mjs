@@ -532,8 +532,10 @@ await withApp(2, async (browser) => {
     return pages.length === 1 && pages[0] !== "Linked source";
   }), { timeout: 5_000, timeoutMsg: "excluding the descendant Evidence facet did not hide Linked source" });
   await evidenceFacet.click();
-  await browser.waitUntil(() => browser.execute(() =>
-    document.querySelectorAll(".linked-references .reference-page").length === linkedProof.groupCount), {
+  await browser.waitUntil(() => browser.execute(
+    (expectedGroups) => document.querySelectorAll(".linked-references .reference-page").length === expectedGroups,
+    linkedProof.groupCount,
+  ), {
     timeout: 5_000,
     timeoutMsg: "third facet click did not clear the persisted include/exclude state",
   });
