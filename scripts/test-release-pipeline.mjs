@@ -29,7 +29,7 @@ assert(linuxGate >= 0, "release workflow is missing the Linux real-app gate");
 assert(stageLane > linuxGate, "release lane is staged before the Linux real-app gate");
 assert.match(
   releaseWorkflow,
-  /windows-smoke:\n    needs: \[preflight, build\]\n    continue-on-error: true[\s\S]*?name: release-windows-x64[\s\S]*?name: release-e2e-frontend-windows-x64[\s\S]*?npm run e2e:windows:smoke -- --scenario=\$\{\{ matrix\.scenario \}\}/,
+  /windows-smoke:\n    needs: \[preflight, build\][\s\S]*?if: \$\{\{ always\(\) && needs\.preflight\.result == 'success' && needs\.build\.result != 'cancelled' \}\}[\s\S]*?continue-on-error: true[\s\S]*?name: release-windows-x64[\s\S]*?name: release-e2e-frontend-windows-x64[\s\S]*?npm run e2e:windows:smoke -- --scenario=\$\{\{ matrix\.scenario \}\}/,
   "Windows advisory scenarios do not consume the staged app independently of assembly"
 );
 assert.match(
@@ -47,6 +47,11 @@ assert.match(
   e2eRunner,
   /if \(process\.platform === "linux"\) \{\n      env\.WEBKIT_DRIVER = process\.env\.WEBKIT_DRIVER \|\| "\/usr\/bin\/WebKitWebDriver";/,
   "the suite runner leaks Linux WebKitWebDriver into Windows"
+);
+assert.ok(
+  e2eRunner.includes("return /BadWindow \\(invalid Window parameter\\)/.test(combined)")
+    && e2eRunner.includes("xdo_get_active_window reported an error"),
+  "the release runner does not retry a hosted Quick Capture active-window race"
 );
 assert.match(
   printSecurity,

@@ -253,6 +253,10 @@ jobs:
   # scenario's real failure visible instead of turning one 0/N step green.
   windows-smoke:
     needs: [preflight, build]
+    # A failure in another build-matrix lane (for example the hard Linux E2E
+    # gate) must not suppress evidence from an already-staged Windows x64 app.
+    # If x64 itself failed, the artifact download below fails visibly instead.
+    if: ${{ always() && needs.preflight.result == 'success' && needs.build.result != 'cancelled' }}
     continue-on-error: true
     strategy:
       fail-fast: false

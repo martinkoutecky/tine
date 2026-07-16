@@ -156,7 +156,7 @@ function isRetryableNativeHarnessFailure(id, output, errors, timedOut) {
   // Retry the entire isolated scenario once; the second run must still prove
   // first-show native + DOM focus and save real keyboard input.
   return /BadWindow \(invalid Window parameter\)/.test(combined)
-    && /Quick Capture never received native focus/.test(combined);
+    && /(xdo_get_active_window reported an error|XGetWindowProperty\[_NET_ACTIVE_WINDOW\] failed)/.test(combined);
 }
 
 function archiveInfrastructureAttempt(dir, attempt) {
