@@ -191,6 +191,16 @@ async function runScenario([id, script, extraEnv]) {
       TAURI_DRIVER: process.env.TAURI_DRIVER || "tauri-driver",
       WEBKIT_DRIVER: process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver",
     };
+    // Windows WebView2 session creation can fail before WebDriver exposes any
+    // application output. Preserve Tine's own startup milestones and panic hook
+    // beside the scenario evidence so hosted failures can be classified as an
+    // app regression or driver infrastructure rather than guessed from Edge's
+    // generic DevToolsActivePort error.
+    if (process.platform === "win32") {
+      env.TINE_DEBUG = process.env.TINE_DEBUG || "1";
+      env.TINE_DEBUG_LOG = process.env.TINE_DEBUG_LOG || path.join(dir, "tine-debug.log");
+      env.RUST_BACKTRACE = process.env.RUST_BACKTRACE || "1";
+    }
     if (id === "og-parity-references") {
       env.E2E_TMP_DIR = process.env.E2E_TMP_DIR
         || path.join(os.tmpdir(), `tine-e2e-${suiteName}-${id}-${process.pid}-${driverPort}`);

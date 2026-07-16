@@ -7,6 +7,10 @@ on:
         description: Optional single Linux scenario for focused debugging
         required: false
         default: ""
+      windows_scenario:
+        description: Optional single Windows scenario for focused debugging
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -14,6 +18,7 @@ permissions:
 jobs:
   linux-release:
     name: Linux x64 real-app release suite
+    if: ${{ inputs.windows_scenario == '' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 45
     steps:
@@ -67,12 +72,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        scenario:
-          - windows-core
-          - og-parity-references
-          - page-properties
-          - page-trailing-block
-          - pdf-logseq
+        scenario: ${{ fromJSON(inputs.windows_scenario != '' && format('["{0}"]', inputs.windows_scenario) || '["windows-core","og-parity-references","page-properties","page-trailing-block","pdf-logseq"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
