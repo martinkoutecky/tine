@@ -222,6 +222,18 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+      # The staged Windows smoke jobs verify that the downloaded portable exe
+      # embeds this exact production frontend.  Preserve the already-built dist
+      # once instead of rebuilding it independently in every advisory job.
+      - name: Upload exact Windows x64 frontend proof
+        if: matrix.lane == 'windows-x64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-e2e-frontend-windows-x64
+          path: dist
+          if-no-files-found: error
+          retention-days: 3
+
       - name: Stage immutable release artifact
         run: node scripts/stage-release-lane.mjs "${{ matrix.lane }}" release-candidate "${{ github.sha }}"
 
@@ -265,6 +277,11 @@ jobs:
         with:
           name: release-windows-x64
           path: release-windows-x64
+      - name: Download the exact embedded frontend proof
+        uses: actions/download-artifact@v4
+        with:
+          name: release-e2e-frontend-windows-x64
+          path: dist
       - name: Extract the exact staged portable app
         shell: pwsh
         run: |

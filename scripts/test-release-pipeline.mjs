@@ -29,8 +29,13 @@ assert(linuxGate >= 0, "release workflow is missing the Linux real-app gate");
 assert(stageLane > linuxGate, "release lane is staged before the Linux real-app gate");
 assert.match(
   releaseWorkflow,
-  /windows-smoke:\n    needs: \[preflight, build\]\n    continue-on-error: true[\s\S]*?name: release-windows-x64[\s\S]*?npm run e2e:windows:smoke -- --scenario=\$\{\{ matrix\.scenario \}\}/,
+  /windows-smoke:\n    needs: \[preflight, build\]\n    continue-on-error: true[\s\S]*?name: release-windows-x64[\s\S]*?name: release-e2e-frontend-windows-x64[\s\S]*?npm run e2e:windows:smoke -- --scenario=\$\{\{ matrix\.scenario \}\}/,
   "Windows advisory scenarios do not consume the staged app independently of assembly"
+);
+assert.match(
+  releaseWorkflow,
+  /name: Upload exact Windows x64 frontend proof[\s\S]*?if: matrix\.lane == 'windows-x64'[\s\S]*?name: release-e2e-frontend-windows-x64[\s\S]*?path: dist/,
+  "the release build does not preserve the exact frontend needed to validate the staged Windows executable"
 );
 assert.match(
   releaseWorkflow,
