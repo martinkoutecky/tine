@@ -458,6 +458,10 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
 
   function beginDrag(tabId: string, e: PointerEvent) {
     if (e.button !== 0) return;
+    // Interactive children keep their native pointer sequence. Capturing their
+    // pointer on the tab card retargets the later click to the card in WebView2,
+    // so the visible close control only activates the tab instead of closing it.
+    if ((e.target as Element | null)?.closest("[data-tab-drag-exempt]")) return;
     e.preventDefault();
     activeStripDragSession?.cancel();
     const card = e.currentTarget as HTMLElement;
@@ -622,6 +626,7 @@ export function TabBar(props: { router: PaneRouter; dragRegion?: boolean; paneSt
             <Show when={router.tabs().length > 1}>
               <span
                 class="tab-close"
+                data-tab-drag-exempt
                 onClick={(e) => {
                   e.stopPropagation();
                   router.closeTab(t.id);

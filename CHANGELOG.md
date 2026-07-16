@@ -16,6 +16,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   dispatchable between releases. Release packaging fails closed unless all full
   CI jobs succeeded on the exact candidate commit.
 
+### Fixed
+
+- **Tab close buttons work on Windows again.** The visible X keeps its native
+  pointer action instead of handing the pointer to the parent tab-drag capture
+  session, while ordinary tab activation and drag-to-reorder stay unchanged.
+  (GH #174)
+
 ## [0.5.10] - 2026-07-16
 
 ### Added
