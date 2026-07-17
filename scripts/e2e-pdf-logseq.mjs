@@ -29,9 +29,6 @@ const APP_DATA = path.join(TMP, "xdg", "data", "page.tine.Tine");
 const SETTINGS = path.join(APP_DATA, "tine-settings.json");
 const SAMPLE_ID = "6a5604f8-a337-4336-a711-2ba6bc14fbfd";
 const PDF = "JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCA2MTIgNzkyXSAvUmVzb3VyY2VzIDw8IC9Gb250IDw8IC9GMSA1IDAgUiA+PiA+PiAvQ29udGVudHMgNCAwIFIgPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCAyMDUgPj4Kc3RyZWFtCkJUIC9GMSAyMCBUZiA3MiA3MjAgVGQgKFRpbmUgUERGIHZpZXdlcikgVGogRVQKQlQgL0YxIDEzIFRmIDcyIDY5MCBUZCAoU2VsZWN0IHRoaXMgdGV4dCB0byBjcmVhdGUgYSBoaWdobGlnaHQuKSBUaiBFVApCVCAvRjEgMTMgVGYgNzIgNjY4IFRkIChIaWdobGlnaHRzIHBlcnNpc3QgdG8gYXNzZXRzLzxrZXk+LmVkbiArIGFuIGhsc19fIHBhZ2UuKSBUaiBFVAoKZW5kc3RyZWFtCmVuZG9iago1IDAgb2JqCjw8IC9UeXBlIC9Gb250IC9TdWJ0eXBlIC9UeXBlMSAvQmFzZUZvbnQgL0hlbHZldGljYSA+PgplbmRvYmoKeHJlZgowIDYKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDA5IDAwMDAwIG4gCjAwMDAwMDAwNTggMDAwMDAgbiAKMDAwMDAwMDExNSAwMDAwMCBuIAowMDAwMDAwMjQxIDAwMDAwIG4gCjAwMDAwMDA0OTcgMDAwMDAgbiAKdHJhaWxlcgo8PCAvU2l6ZSA2IC9Sb290IDEgMCBSID4+CnN0YXJ0eHJlZgo1NjcKJSVFT0Y=";
-// Two real pages and a parsed nested outline. This is embedded rather than
-// generated at runtime so the native row never depends on network/tooling.
-const OUTLINE_PDF = "JVBERi0xLjcKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgL091dGxpbmVzIDggMCBSIC9QYWdlTW9kZSAvVXNlT3V0bGluZXMgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUiA1IDAgUl0gL0NvdW50IDIgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCA2MTIgNzkyXSAvUmVzb3VyY2VzIDw8IC9Gb250IDw8IC9GMSA3IDAgUiA+PiA+PiAvQ29udGVudHMgNCAwIFIgPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCAxMzQgPj4Kc3RyZWFtCkJUIC9GMSAyMiBUZiA3MiA3MjAgVGQgKE91dGxpbmUgZml4dHVyZSBwYWdlIG9uZSkgVGogRVQKQlQgL0YxIDEzIFRmIDcyIDY5MCBUZCAoU2VsZWN0IHRoaXMgZGV0ZXJtaW5pc3RpYyB0ZXh0IGZvciBhIGhpZ2hsaWdodC4pIFRqIEVUCmVuZHN0cmVhbQplbmRvYmoKNSAwIG9iago8PCAvVHlwZSAvUGFnZSAvUGFyZW50IDIgMCBSIC9NZWRpYUJveCBbMCAwIDYxMiA3OTJdIC9SZXNvdXJjZXMgPDwgL0ZvbnQgPDwgL0YxIDcgMCBSID4+ID4+IC9Db250ZW50cyA2IDAgUiA+PgplbmRvYmoKNiAwIG9iago8PCAvTGVuZ3RoIDEyMyA+PgpzdHJlYW0KQlQgL0YxIDIyIFRmIDcyIDcyMCBUZCAoT3V0bGluZSB0YXJnZXQgcGFnZSB0d28pIFRqIEVUCkJUIC9GMSAxMyBUZiA3MiA2OTAgVGQgKE5lc3RlZCBib29rbWFyayBuYXZpZ2F0aW9uIHN1Y2NlZWRlZC4pIFRqIEVUCmVuZHN0cmVhbQplbmRvYmoKNyAwIG9iago8PCAvVHlwZSAvRm9udCAvU3VidHlwZSAvVHlwZTEgL0Jhc2VGb250IC9IZWx2ZXRpY2EgPj4KZW5kb2JqCjggMCBvYmoKPDwgL1R5cGUgL091dGxpbmVzIC9GaXJzdCA5IDAgUiAvTGFzdCA5IDAgUiAvQ291bnQgMiA+PgplbmRvYmoKOSAwIG9iago8PCAvVGl0bGUgKENoYXB0ZXIgT25lKSAvUGFyZW50IDggMCBSIC9GaXJzdCAxMCAwIFIgL0xhc3QgMTAgMCBSIC9Db3VudCAxIC9EZXN0IFszIDAgUiAvWFlaIG51bGwgbnVsbCBudWxsXSA+PgplbmRvYmoKMTAgMCBvYmoKPDwgL1RpdGxlIChOZXN0ZWQgUGFnZSBUd28pIC9QYXJlbnQgOSAwIFIgL0Rlc3QgWzUgMCBSIC9YWVogbnVsbCBudWxsIG51bGxdID4+CmVuZG9iagp4cmVmCjAgMTEKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDA5IDAwMDAwIG4gCjAwMDAwMDAwOTcgMDAwMDAgbiAKMDAwMDAwMDE2MCAwMDAwMCBuIAowMDAwMDAwMjg2IDAwMDAwIG4gCjAwMDAwMDA0NzEgMDAwMDAgbiAKMDAwMDAwMDU5NyAwMDAwMCBuIAowMDAwMDAwNzcxIDAwMDAwIG4gCjAwMDAwMDA4NDEgMDAwMDAgbiAKMDAwMDAwMDkxMiAwMDAwMCBuIAowMDAwMDAxMDM4IDAwMDAwIG4gCnRyYWlsZXIKPDwgL1NpemUgMTEgL1Jvb3QgMSAwIFIgPj4Kc3RhcnR4cmVmCjExMzMKJSVFT0YK";
 const MARKDOWN_UPLOAD_SOURCE = path.join(TMP, "literal-markdown.pdf");
 const ORG_UPLOAD_SOURCE = path.join(TMP, "literal-org.pdf");
 const OUTLINE_PAGE = path.join(GRAPH, "pages", "PDF Outline.md");
@@ -82,6 +79,58 @@ const EDN_SECOND = `{:highlights [{:id #uuid "${SECOND_FIRST_ID}"
   :future-root 84}
 `;
 
+// A self-contained, two-page PDF with nested bookmarks. The parent has an
+// explicit page-reference destination; its child resolves a named destination.
+// The filled red/green/blue rectangles make the real canvas visibly coloured so
+// the theme proof does not infer filtering from an all-black fixture.
+function makeNamedOutlinePdf() {
+  const firstPageContent = [
+    "q",
+    "1 0 0 rg", "360 560 160 48 re f",
+    "0 0.62 0 rg", "360 490 160 48 re f",
+    "0 0.25 1 rg", "360 420 160 48 re f",
+    "Q",
+    "BT /F1 22 Tf 72 720 Td (Outline fixture page one) Tj ET",
+    "BT /F1 13 Tf 72 690 Td (Select this deterministic text for a highlight.) Tj ET",
+    "BT /F1 13 Tf 72 668 Td (Explicit and named outline destinations are real.) Tj ET",
+  ].join("\n");
+  const secondPageContent = [
+    "q",
+    "0.85 0 0.85 rg", "360 560 160 48 re f",
+    "0 0.6 0.85 rg", "360 490 160 48 re f",
+    "Q",
+    "BT /F1 22 Tf 72 720 Td (Outline target page two) Tj ET",
+    "BT /F1 13 Tf 72 690 Td (Named bookmark navigation succeeded.) Tj ET",
+  ].join("\n");
+  const stream = (content) => `<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}\nendstream`;
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R /Outlines 8 0 R /PageMode /UseOutlines /Names << /Dests 11 0 R >> >>",
+    "<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 7 0 R >> >> /Contents 4 0 R >>",
+    stream(firstPageContent),
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 7 0 R >> >> /Contents 6 0 R >>",
+    stream(secondPageContent),
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    "<< /Type /Outlines /First 9 0 R /Last 9 0 R /Count 2 >>",
+    "<< /Title (Explicit Page One) /Parent 8 0 R /First 10 0 R /Last 10 0 R /Count 1 /Dest [3 0 R /XYZ null null null] >>",
+    "<< /Title (Named Page Two) /Parent 9 0 R /Dest /named-page-two >>",
+    "<< /Names [(named-page-two) [5 0 R /XYZ null null null]] >>",
+  ];
+  let pdf = "%PDF-1.7\n";
+  const offsets = [0];
+  for (const [index, object] of objects.entries()) {
+    offsets.push(Buffer.byteLength(pdf));
+    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  }
+  const xref = Buffer.byteLength(pdf);
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (let index = 1; index < offsets.length; index += 1) {
+    pdf += `${String(offsets[index]).padStart(10, "0")} 00000 n \n`;
+  }
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(pdf, "utf8");
+}
+
 fs.rmSync(TMP, { recursive: true, force: true });
 for (const dir of ["pages", "journals", "logseq", "assets"]) fs.mkdirSync(path.join(GRAPH, dir), { recursive: true });
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(path.join(TMP, "xdg", dir), { recursive: true });
@@ -89,7 +138,7 @@ fs.mkdirSync(ARTIFACTS, { recursive: true });
 fs.mkdirSync(APP_DATA, { recursive: true });
 fs.writeFileSync(SETTINGS, '{"asset_name_format":"e2e-%assetname.%ext"}\n');
 fs.writeFileSync(path.join(GRAPH, "logseq", "config.edn"), "{:preferred-format \"Org\"}\n");
-const outlineBytes = Buffer.from(OUTLINE_PDF, "base64");
+const outlineBytes = makeNamedOutlinePdf();
 fs.writeFileSync(MARKDOWN_UPLOAD_SOURCE, outlineBytes);
 fs.writeFileSync(ORG_UPLOAD_SOURCE, outlineBytes);
 fs.writeFileSync(OUTLINE_STORED, outlineBytes);
@@ -327,6 +376,60 @@ async function nativePointerDrag(start, end, id, duration = 450) {
   }
 }
 
+async function nextPaint() {
+  await browser.execute(() => new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(resolve));
+  }));
+}
+
+async function toolbarAreaBoundaryGeometry() {
+  return browser.execute(() => {
+    const scroll = document.querySelector(".pdf-scroll");
+    const page = document.querySelector(".pdf-page");
+    if (!(scroll instanceof HTMLElement) || !(page instanceof HTMLElement)) return null;
+    // Keep the first page's known coloured rectangle in view and avoid starting
+    // directly on a text glyph. WebKit may still route a later ordinary drag to
+    // the transparent text layer; that case is observed separately as ordinary
+    // browser selection rather than treated as a hidden area capture.
+    scroll.scrollTop = Math.max(0, page.offsetTop);
+    const rect = page.getBoundingClientRect();
+    const scale = rect.width / 612;
+    const start = {
+      x: Math.round(rect.left + 420 * scale),
+      y: Math.round(rect.top + 208 * scale),
+    };
+    const viewport = { width: window.innerWidth, height: window.innerHeight };
+    const inside = (point) =>
+      point.x > rect.left + 2 && point.x < rect.right - 2 && point.y > rect.top + 2 && point.y < rect.bottom - 2 &&
+      point.x > 2 && point.x < viewport.width - 2 && point.y > 2 && point.y < viewport.height - 2;
+    const ten = { x: start.x + 10, y: start.y + 10 };
+    const eleven = { x: start.x + 11, y: start.y + 11 };
+    const hitText = [...document.elementsFromPoint(start.x, start.y)]
+      .some((element) => element.matches(".textLayer span"));
+    if (!Number.isFinite(scale) || scale <= 0 || !inside(start) || !inside(ten) || !inside(eleven) || hitText) {
+      return {
+        unusable: true,
+        rect: { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
+        start,
+        ten,
+        eleven,
+        devicePixelRatio: window.devicePixelRatio,
+        hitText,
+      };
+    }
+    return {
+      start,
+      ten,
+      eleven,
+      requestedTenCssDelta: { x: ten.x - start.x, y: ten.y - start.y },
+      requestedElevenCssDelta: { x: eleven.x - start.x, y: eleven.y - start.y },
+      devicePixelRatio: window.devicePixelRatio,
+      pageCssWidth: rect.width,
+      pageScale: scale,
+    };
+  });
+}
+
 async function nativeKeyChord(modifier, key, id) {
   try {
     await browser.performActions([{
@@ -426,6 +529,48 @@ function graphSnapshot() {
   };
   walk(GRAPH);
   return snapshot;
+}
+
+// A pending area chooser must be completely side-effect free. Hashes are useful
+// for the final receipt, but retain the actual bytes here so a cancellation
+// proves literal equality for the real sidecar, hls page, and every asset.
+function treeByteSnapshot(directory) {
+  const snapshot = new Map();
+  const walk = (current) => {
+    if (!fs.existsSync(current)) return;
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const absolute = path.join(current, entry.name);
+      if (entry.isDirectory()) walk(absolute);
+      else if (entry.isFile()) snapshot.set(path.relative(directory, absolute), fs.readFileSync(absolute));
+    }
+  };
+  walk(directory);
+  return snapshot;
+}
+
+function captureAreaWriteState(sidecarFile, hlsFile) {
+  return {
+    sidecar: fs.readFileSync(sidecarFile),
+    hls: fs.readFileSync(hlsFile),
+    assets: treeByteSnapshot(path.join(GRAPH, "assets")),
+  };
+}
+
+function assertAreaWriteStateUnchanged(before, sidecarFile, hlsFile, label) {
+  const nowSidecar = fs.readFileSync(sidecarFile);
+  const nowHls = fs.readFileSync(hlsFile);
+  if (!before.sidecar.equals(nowSidecar) || !before.hls.equals(nowHls)) {
+    throw new Error(`${label} changed the real sidecar or hls annotation page`);
+  }
+  const afterAssets = treeByteSnapshot(path.join(GRAPH, "assets"));
+  const names = [...new Set([...before.assets.keys(), ...afterAssets.keys()])].sort();
+  for (const name of names) {
+    const expected = before.assets.get(name);
+    const actual = afterAssets.get(name);
+    if (!expected || !actual || !expected.equals(actual)) {
+      throw new Error(`${label} changed graph asset bytes at ${name}`);
+    }
+  }
 }
 
 function ednIds(content) {
@@ -620,6 +765,34 @@ async function proveNativeUploadsThemesAndHighlights() {
   await closePdfWithNativePointer("close-existing-pdf-before-native-upload");
   await routeToPage("PDF Outline");
   await reopenCurrentPagePdf(path.basename(OUTLINE_STORED), "Outline fixture", "pdf-outline-open-fixture");
+  await browser.$(".pdf-page .textLayer").waitForExist({ timeout: 10_000 });
+  const colouredCanvas = await browser.execute(() => {
+    const canvas = document.querySelector(".pdf-page canvas");
+    if (!(canvas instanceof HTMLCanvasElement) || !canvas.width || !canvas.height) return null;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) return null;
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+    let saturated = 0;
+    let red = 0;
+    let green = 0;
+    let blue = 0;
+    // Sampling every fourth backing pixel remains a direct canvas signal while
+    // avoiding a megabyte-scale WebDriver response on HiDPI renderers.
+    for (let index = 0; index < pixels.length; index += 16) {
+      const r = pixels[index];
+      const g = pixels[index + 1];
+      const b = pixels[index + 2];
+      if (Math.max(r, g, b) - Math.min(r, g, b) > 80) saturated += 1;
+      if (r > g + 80 && r > b + 80) red += 1;
+      if (g > r + 80 && g > b + 80) green += 1;
+      if (b > r + 80 && b > g + 80) blue += 1;
+    }
+    return { width: canvas.width, height: canvas.height, saturated, red, green, blue };
+  });
+  if (!colouredCanvas || colouredCanvas.saturated < 100
+    || !colouredCanvas.red || !colouredCanvas.green || !colouredCanvas.blue) {
+    throw new Error(`the real outline fixture canvas did not expose its coloured content: ${JSON.stringify(colouredCanvas)}`);
+  }
 
   // Every theme choice is a literal pointer click. Inspect only after each click
   // to prove the local reader state rather than manufacturing its state from DOM.
@@ -637,22 +810,46 @@ async function proveNativeUploadsThemesAndHighlights() {
         pressed: choice?.getAttribute("aria-pressed"),
         background: viewer ? getComputedStyle(viewer).backgroundColor : null,
         local: localStorage.getItem("ls-pdf-viewer-theme"),
+        canvasFilter: viewer?.querySelector(".pdf-page canvas")
+          ? getComputedStyle(viewer.querySelector(".pdf-page canvas")).filter
+          : null,
+        textFilter: viewer?.querySelector(".pdf-page .textLayer")
+          ? getComputedStyle(viewer.querySelector(".pdf-page .textLayer")).filter
+          : null,
+        highlightLayerFilter: viewer?.querySelector(".pdf-hl-layer")
+          ? getComputedStyle(viewer.querySelector(".pdf-hl-layer")).filter
+          : null,
       };
     }, theme);
     if (state.theme !== theme || !state.active || state.pressed !== "true" || state.background !== cssBackground || state.local !== theme) {
       throw new Error(`native ${theme} theme click did not produce the local reader state: ${JSON.stringify(state)}`);
     }
+    const normalizedFilter = state.canvasFilter?.replaceAll(/\s+/g, "").toLowerCase();
+    if ((theme === "light" || theme === "warm") && (state.canvasFilter !== "none" || state.textFilter !== "none")) {
+      throw new Error(`native ${theme} theme filtered the rendered PDF instead of leaving it unfiltered: ${JSON.stringify(state)}`);
+    }
+    if (theme === "dark" && !["invert(1)", "invert(100%)"].includes(normalizedFilter || "")) {
+      throw new Error(`native dark theme did not compute to plain inversion: ${JSON.stringify(state)}`);
+    }
+    if (theme === "dark" && /hue-rotate/i.test(state.canvasFilter || "")) {
+      throw new Error(`native dark theme retained a hue rotation: ${JSON.stringify(state)}`);
+    }
+    if (state.highlightLayerFilter !== "none") {
+      throw new Error(`native ${theme} theme filtered the whole highlight layer: ${JSON.stringify(state)}`);
+    }
     themeState[theme] = state;
   }
+  try { await browser.saveScreenshot(path.join(ARTIFACTS, "pdf-theme-dark-colour-proof.png")); } catch {}
   await browser.keys(["Escape"]);
   await browser.$(".pdf-settings-menu").waitForExist({ reverse: true, timeout: 5_000 });
 
-  // The fixture contains Chapter One → Nested Page Two. Expansion and destination
-  // navigation are pointer actions; the DOM only observes their visible result.
+  // The real fixture contains an explicit page-reference parent and a nested
+  // named destination. Expansion and both navigation kinds are pointer actions;
+  // the DOM only observes their visible result.
   await nativeClickSelector('button[title="Outline"]', "pdf-outline-open");
   try {
     await browser.waitUntil(() => browser.execute(() =>
-      document.querySelector(".pdf-outline-panel")?.textContent?.includes("Chapter One")), {
+      document.querySelector(".pdf-outline-panel")?.textContent?.includes("Explicit Page One")), {
       timeout: 10_000,
       timeoutMsg: "embedded nested PDF outline did not parse into the native reader",
     });
@@ -672,11 +869,17 @@ async function proveNativeUploadsThemesAndHighlights() {
   await browser.$(".pdf-outline-children .pdf-outline-label").waitForExist({ timeout: 5_000 });
   const expanded = await browser.$(".pdf-outline-disclosure").getAttribute("aria-expanded");
   if (expanded !== "true") throw new Error(`real outline expansion did not set aria-expanded=true: ${expanded}`);
-  await nativeClickSelector(".pdf-outline-children .pdf-outline-label", "pdf-outline-navigate", "Nested Page Two");
+  await nativeClickSelector(".pdf-outline-children .pdf-outline-label", "pdf-outline-named-destination", "Named Page Two");
   await browser.waitUntil(() => browser.execute(() =>
     document.querySelector(".pdf-page-input")?.value === "2"), {
     timeout: 10_000,
-    timeoutMsg: "nested outline pointer navigation did not move to page two",
+    timeoutMsg: "nested named outline pointer navigation did not move to page two",
+  });
+  await nativeClickSelector(".pdf-outline-list .pdf-outline-label", "pdf-outline-explicit-destination", "Explicit Page One");
+  await browser.waitUntil(() => browser.execute(() =>
+    document.querySelector(".pdf-page-input")?.value === "1"), {
+    timeout: 10_000,
+    timeoutMsg: "explicit outline pointer navigation did not return to page one",
   });
   await browser.keys(["Escape"]);
   await browser.$(".pdf-outline-panel").waitForExist({ reverse: true, timeout: 5_000 });
@@ -696,7 +899,13 @@ async function proveNativeUploadsThemesAndHighlights() {
   if (remountedTheme.theme !== "dark" || remountedTheme.local !== "dark") {
     throw new Error(`PDF theme was not locally persistent after a real close/reopen: ${JSON.stringify(remountedTheme)}`);
   }
-  literalReceipt.rows.themesOutline = { choices: themeState, remountedTheme, nestedDestinationPage: 2 };
+  literalReceipt.rows.themesOutline = {
+    choices: themeState,
+    remountedTheme,
+    colouredCanvas,
+    explicitDestinationPage: 1,
+    namedDestinationPage: 2,
+  };
 
   // The two upload pages deliberately have explicit extensions: the same literal
   // picker action must write Markdown versus Org syntax, while both stored assets
@@ -796,6 +1005,25 @@ async function proveNativeUploadsThemesAndHighlights() {
     timeout: 5_000,
     timeoutMsg: "persisted text highlight did not paint a live overlay",
   });
+  const darkOverlayPresentation = await browser.execute(() => {
+    const viewer = document.querySelector(".pdf-viewer");
+    const canvas = viewer?.querySelector(".pdf-page canvas");
+    const layer = viewer?.querySelector(".pdf-hl-layer");
+    const highlight = viewer?.querySelector(".pdf-hl");
+    return {
+      theme: viewer?.getAttribute("data-theme"),
+      canvasFilter: canvas ? getComputedStyle(canvas).filter : null,
+      layerFilter: layer ? getComputedStyle(layer).filter : null,
+      highlightFilter: highlight ? getComputedStyle(highlight).filter : null,
+    };
+  });
+  const darkCanvasFilter = darkOverlayPresentation.canvasFilter?.replaceAll(/\s+/g, "").toLowerCase();
+  if (darkOverlayPresentation.theme !== "dark"
+    || !["invert(1)", "invert(100%)"].includes(darkCanvasFilter || "")
+    || darkOverlayPresentation.layerFilter !== "none" || darkOverlayPresentation.highlightFilter !== "none") {
+    throw new Error(`dark reader presentation filtered an actual highlight overlay or lost plain inversion: ${JSON.stringify(darkOverlayPresentation)}`);
+  }
+  literalReceipt.rows.themesOutline.darkOverlayPresentation = darkOverlayPresentation;
 
   // Tauri copied the generated block ref to the native clipboard; this actual
   // Ctrl+V in a separately routed Markdown editor proves it is pasteable text.
@@ -817,43 +1045,93 @@ async function proveNativeUploadsThemesAndHighlights() {
   await reopenCurrentPagePdf(path.basename(ORG_STORED), path.basename(ORG_UPLOAD_SOURCE), "org-reopen-text-highlight");
   await browser.$(`.pdf-hl[data-highlight-id="${textHighlightId}"]`).waitForExist({ timeout: 10_000 });
 
-  // A separate real Shift+drag (the OG non-macOS gesture) creates an area image
-  // with a nondefault red swatch, then a close/reopen proves the saved overlay.
+  // The real toolbar's Area toggle owns the exact CSS-pixel threshold. The
+  // pointer actions use integer viewport coordinates (WebDriver's CSS-pixel
+  // coordinate space) and record the renderer DPR rather than pretending that
+  // physical-pixel rounding is irrelevant.
   let areaHighlightId;
   if (process.platform !== "darwin") {
-    await browser.$(".pdf-page").scrollIntoView({ block: "center", inline: "center" });
-    const areaDrag = await browser.execute(() => {
-      const page = document.querySelector(".pdf-page");
-      const rect = page?.getBoundingClientRect();
-      if (!rect) return null;
-      const start = { x: Math.max(rect.left + 24, 24), y: Math.max(rect.top + 24, 80) };
-      const end = { x: Math.min(start.x + 130, rect.right - 24), y: Math.min(start.y + 76, rect.bottom - 24) };
-      return end.x - start.x > 10 && end.y - start.y > 10 ? { start, end } : null;
-    });
-    if (!areaDrag) throw new Error("uploaded PDF did not expose a usable Shift-area drag region");
+    await nativeClickSelector('button[title^="Area highlight"]', "pdf-toolbar-area-enable");
+    const toolbarEnabled = await browser.execute(() =>
+      document.querySelector('button[title^="Area highlight"]')?.classList.contains("active") ?? false);
+    if (!toolbarEnabled) throw new Error("real toolbar Area button did not become active");
+    const boundary = await toolbarAreaBoundaryGeometry();
+    if (!boundary || boundary.unusable
+      || boundary.requestedTenCssDelta?.x !== 10 || boundary.requestedTenCssDelta?.y !== 10
+      || boundary.requestedElevenCssDelta?.x !== 11 || boundary.requestedElevenCssDelta?.y !== 11) {
+      throw new Error(`native WebDriver could not express an honest 10 CSS-pixel area boundary: ${JSON.stringify(boundary)}`);
+    }
+    const thresholdBefore = captureAreaWriteState(ORG_SIDECAR, ORG_HLS_PAGE);
+    await nativePointerDrag(boundary.start, boundary.ten, "pdf-toolbar-area-exact-ten", 180);
+    await nextPaint();
+    const exactTenState = await browser.execute(() => ({
+      chooser: !!document.querySelector(".pdf-color-menu"),
+      active: document.querySelector('button[title^="Area highlight"]')?.classList.contains("active") ?? false,
+      band: document.querySelectorAll(".pdf-area-band").length,
+    }));
+    if (exactTenState.chooser || !exactTenState.active || exactTenState.band) {
+      throw new Error(`literal 10 CSS-pixel toolbar drag did not remain a no-op: ${JSON.stringify({ boundary, exactTenState })}`);
+    }
+    assertAreaWriteStateUnchanged(thresholdBefore, ORG_SIDECAR, ORG_HLS_PAGE, "literal 10 CSS-pixel area drag");
+
     const beforeAreaIds = ednIds(fs.readFileSync(ORG_SIDECAR, "utf8"));
-    await nativeShiftDrag(areaDrag.start, areaDrag.end);
+    await nativePointerDrag(boundary.start, boundary.eleven, "pdf-toolbar-area-eleven", 180);
     await browser.$(".pdf-color-menu").waitForExist({ timeout: 5_000 });
+    assertAreaWriteStateUnchanged(thresholdBefore, ORG_SIDECAR, ORG_HLS_PAGE, "pending >10 CSS-pixel toolbar area chooser");
     await nativeClickIndexed(".pdf-color-swatch", 3, "pdf-area-red");
     await browser.$(".pdf-color-menu").waitForExist({ reverse: true, timeout: 5_000 });
     await browser.waitUntil(() => {
       const written = fs.readFileSync(ORG_SIDECAR, "utf8");
       areaHighlightId = ednIds(written).find((id) => !beforeAreaIds.includes(id));
       if (!areaHighlightId || !written.includes(':properties {:color "red"}')) return false;
-      const image = fs.readdirSync(path.join(GRAPH, "assets", "e2e-literal-org"))
+      const imageDir = path.join(GRAPH, "assets", "e2e-literal-org");
+      if (!fs.existsSync(imageDir)) return false;
+      const image = fs.readdirSync(imageDir)
         .find((name) => name.startsWith(`1_${areaHighlightId}_`) && name.endsWith(".png"));
-      return !!image && fs.statSync(path.join(GRAPH, "assets", "e2e-literal-org", image)).size > 0
+      return !!image && fs.statSync(path.join(imageDir, image)).size > 0
         && fs.readFileSync(ORG_HLS_PAGE, "utf8").includes(`:id: ${areaHighlightId}`);
-    }, { timeout: 15_000, timeoutMsg: "native Shift-area drag did not persist its red crop and hls annotation" });
+    }, { timeout: 15_000, timeoutMsg: "native >10 CSS-pixel toolbar area drag did not persist its red crop and hls annotation" });
     const areaEntry = ednHighlightEntry(fs.readFileSync(ORG_SIDECAR, "utf8"), areaHighlightId, "red");
     const areaHls = fs.readFileSync(ORG_HLS_PAGE, "utf8");
     if (!areaEntry.includes(":image ") || !areaHls.includes(":hl-color: red") || !areaHls.includes(":hl-type: area")) {
       throw new Error(`native area highlight persistence is incomplete: ${JSON.stringify({ areaEntry, areaHls })}`);
     }
+    const resetAfterValidArea = await browser.execute(() =>
+      document.querySelector('button[title^="Area highlight"]')?.classList.contains("active") ?? false);
+    if (resetAfterValidArea) throw new Error("toolbar Area mode remained active after a valid >10px drag and colour selection");
+
+    // This is deliberately the same real canvas region as the boundary drag but
+    // without Shift or the toolbar mode. WebKit may turn an ordinary drag into
+    // an ordinary text selection when its transparent text layer owns that
+    // point; that is acceptable only when the non-empty browser selection proves
+    // it did not enter the pending-area path.
+    const ordinaryDragBefore = captureAreaWriteState(ORG_SIDECAR, ORG_HLS_PAGE);
+    await nativePointerDrag(boundary.start, boundary.eleven, "pdf-toolbar-area-ordinary-after-reset", 180);
+    await nextPaint();
+    const ordinaryDragState = await browser.execute(() => ({
+      chooser: !!document.querySelector(".pdf-color-menu"),
+      active: document.querySelector('button[title^="Area highlight"]')?.classList.contains("active") ?? false,
+      band: document.querySelectorAll(".pdf-area-band").length,
+      selection: window.getSelection()?.toString() ?? "",
+    }));
+    if (ordinaryDragState.active || ordinaryDragState.band
+      || (ordinaryDragState.chooser && !ordinaryDragState.selection)) {
+      throw new Error(`ordinary unmodified drag was hijacked after toolbar Area reset: ${JSON.stringify(ordinaryDragState)}`);
+    }
+    if (ordinaryDragState.chooser) {
+      await browser.keys(["Escape"]);
+      await browser.$(".pdf-color-menu").waitForExist({ reverse: true, timeout: 5_000 });
+    }
+    assertAreaWriteStateUnchanged(ordinaryDragBefore, ORG_SIDECAR, ORG_HLS_PAGE, "ordinary drag after toolbar Area reset");
     await closePdfWithNativePointer("org-close-area-reopen");
     await reopenCurrentPagePdf(path.basename(ORG_STORED), path.basename(ORG_UPLOAD_SOURCE), "org-reopen-area-highlight");
     await browser.$(`.pdf-hl-area[data-highlight-id="${areaHighlightId}"]`).waitForExist({ timeout: 10_000 });
-    literalReceipt.rows.area = { id: areaHighlightId, color: "red", reopened: true };
+    literalReceipt.rows.area = {
+      id: areaHighlightId,
+      color: "red",
+      reopened: true,
+      toolbar: { boundary, exactTenState, resetAfterValidArea, ordinaryDragState },
+    };
   }
   literalReceipt.rows.textHighlight = {
     id: textHighlightId,
@@ -930,6 +1208,17 @@ try {
   if (hls.includes(`:id: ${SAMPLE_ID}`)) {
     throw new Error("opening an existing hls page unexpectedly repaired its missing annotation before a reference action");
   }
+  // `logseq-sample.pdf` deliberately has no outline dictionary. Open the real
+  // reader's outline popover by pointer and observe its visible empty state;
+  // this is not a component mock or a synthetic outline result.
+  await nativeClickSelector('button[title="Outline"]', "pdf-no-outline-open");
+  await browser.waitUntil(() => browser.execute(() =>
+    document.querySelector(".pdf-outline-empty")?.textContent?.trim() === "No outlines"), {
+    timeout: 10_000,
+    timeoutMsg: "real no-outline PDF did not visibly report No outlines",
+  });
+  await browser.keys(["Escape"]);
+  await browser.$(".pdf-outline-panel").waitForExist({ reverse: true, timeout: 5_000 });
   const geometry = await browser.execute(() => {
     const highlight = document.querySelector(".pdf-hl");
     const page = document.querySelector(".pdf-page");
@@ -954,10 +1243,7 @@ try {
   // swatch click may crop, persist the chosen color, create the annotation, and
   // copy its block reference. Keep this branch free of DOM-dispatched gestures.
   if (process.platform !== "darwin") {
-    const areaSidecarBefore = fs.readFileSync(sidecar, "utf8");
-    const areaHlsBefore = fs.readFileSync(hlsPage, "utf8");
     const areaImageDir = path.join(GRAPH, "assets", "logseq-sample");
-    const areaImagesBefore = fs.existsSync(areaImageDir) ? fs.readdirSync(areaImageDir).sort() : [];
     await browser.$(".pdf-page").scrollIntoView({ block: "center", inline: "center" });
     const areaDrag = await browser.execute(() => {
       const rect = document.querySelector(".pdf-page")?.getBoundingClientRect();
@@ -974,13 +1260,30 @@ try {
       return end.x - start.x > 10 && end.y - start.y > 10 ? { start, end } : null;
     });
     if (!areaDrag) throw new Error("the visible PDF page did not expose a >10px native area-drag region");
+
+    // The chooser is a pending mutation, not an already-created annotation.
+    // Snapshot the actual bytes, dismiss a real chooser with WebDriver Escape,
+    // and prove the sidecar, notes page, and complete asset tree are identical.
+    const cancelledAreaBefore = captureAreaWriteState(sidecar, hlsPage);
     await nativeShiftDrag(areaDrag.start, areaDrag.end);
     await browser.$(".pdf-color-menu").waitForExist({ timeout: 5000 });
-    if (fs.readFileSync(sidecar, "utf8") !== areaSidecarBefore
-      || fs.readFileSync(hlsPage, "utf8") !== areaHlsBefore
-      || JSON.stringify(fs.existsSync(areaImageDir) ? fs.readdirSync(areaImageDir).sort() : []) !== JSON.stringify(areaImagesBefore)) {
-      throw new Error("releasing a native area drag wrote before the user chose a color");
-    }
+    await browser.keys(["Escape"]);
+    await browser.$(".pdf-color-menu").waitForExist({ reverse: true, timeout: 5000 });
+    await nextPaint();
+    assertAreaWriteStateUnchanged(cancelledAreaBefore, sidecar, hlsPage, "cancelling the native area chooser");
+    literalReceipt.rows.areaCancellation = {
+      dismiss: "Escape",
+      sidecar: sidecar,
+      hls: hlsPage,
+      assetFiles: [...cancelledAreaBefore.assets.keys()].sort(),
+    };
+
+    // Repeat the same real Shift path and choose a swatch to retain the existing
+    // OG-compatible direct-area persistence proof.
+    const areaWriteBefore = captureAreaWriteState(sidecar, hlsPage);
+    await nativeShiftDrag(areaDrag.start, areaDrag.end);
+    await browser.$(".pdf-color-menu").waitForExist({ timeout: 5000 });
+    assertAreaWriteStateUnchanged(areaWriteBefore, sidecar, hlsPage, "opening the native area chooser before color choice");
 
     const bluePoint = await browser.execute(() => {
       const swatch = document.querySelectorAll(".pdf-color-swatch")[2];
