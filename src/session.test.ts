@@ -10,6 +10,8 @@ import {
   parseStoredSidebarItems,
   openBlockInSidebar,
   openPageInSidebar,
+  recentPages,
+  setRecentPages,
   setRightSidebar,
   setFavoritesSectionExpanded,
   setRecentSectionExpanded,
@@ -144,18 +146,22 @@ describe("persisted split session", () => {
   });
 
   it("round-trips graph-scoped Favorites and Recent disclosure state and defaults legacy sessions open", () => {
+    setRecentPages([{ name: "Twin", kind: "page", path: "pages/client-b/Twin.md" }]);
     setFavoritesSectionExpanded(false);
     setRecentSectionExpanded(true);
     const persisted = buildPersistedSession();
     expect(persisted.favoritesSectionExpanded).toBe(false);
     expect(persisted.recentSectionExpanded).toBe(true);
+    expect(persisted.recentPages).toEqual([{ name: "Twin", kind: "page", path: "pages/client-b/Twin.md" }]);
 
     const parsed = parsePersistedSession(JSON.stringify(persisted))!;
     setFavoritesSectionExpanded(true);
     setRecentSectionExpanded(false);
     applySidebarSession(parsed.sidebar);
+    setRecentPages(parsed.recent);
     expect(favoritesSectionExpanded()).toBe(false);
     expect(recentSectionExpanded()).toBe(true);
+    expect(recentPages()).toEqual([{ name: "Twin", kind: "page", path: "pages/client-b/Twin.md" }]);
 
     applySidebarSession({});
     expect(favoritesSectionExpanded()).toBe(true);

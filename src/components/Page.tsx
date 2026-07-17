@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, untrack, useContext, type JSX } from "solid-js";
 import { doc, mainPages, pageByName, loadFeed, appendFeed, emptyPage, ensurePageLoaded, setFeedExtender, flushAll, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, insertOutlineAfter, promotePagePreamble, beginPageHeaderEdit, trailingVisibleEmptyLeaf, isBlockMoving, isDirty, isSaving, type FeedPage } from "../store";
-import { sameRoute, type PaneRouter } from "../router";
+import { sameRoute, pageTargetFromFeedPage, pageTargetFromRoute, pageTargetMatchesLoaded, type PaneRouter } from "../router";
 import { PaneContext, focusedRouter } from "../panes";
 import {
   zoomedBlock, isFavorite, toggleFavorite,
@@ -232,6 +232,9 @@ export function PageView(): JSX.Element {
             ? await backend().getPageByPath(r.path)
             : await backend().getPage(r.name, r.pageKind);
           if (epoch !== graphEpoch()) return; // graph switched mid-load — drop it
+          if (r.path && (!dto || dto.path !== r.path || dto.name !== r.name || dto.kind !== r.pageKind)) {
+            throw new Error("The selected physical page is no longer available at that path.");
+          }
           // Core page identity is Unicode-case-insensitive while display names
           // preserve their original spelling. Alias-map warmup normally
           // canonicalizes before navigation; this adoption also covers an early
@@ -387,7 +390,8 @@ export function PageView(): JSX.Element {
     if (r.kind === "journals") return mainPages();
     if (r.kind === "query") return [];
     const p = pageByName(r.name);
-    return p ? [p] : [];
+    const target = pageTargetFromRoute(r);
+    return p && target && pageTargetMatchesLoaded(target, p) ? [p] : [];
   };
   const zoomValid = () => {
     const r = currentRoute();
@@ -483,6 +487,10 @@ function ZoomedView(props: { id: string }): JSX.Element {
   };
   const pageName = () => doc.byId[props.id]?.page ?? "";
   const pageKind = () => doc.pages.find((p) => p.name === pageName())?.kind ?? "page";
+  const pageTarget = () => {
+    const owner = pageByName(pageName());
+    return owner ? pageTargetFromFeedPage(owner) : { name: pageName(), pageKind: pageKind() };
+  };
   const crumb = (id: string) => visibleBody(doc.byId[id].raw)[0] || "…";
   const editSurface = () => pane.paneId === "main" ? "main" : `pane:${pane.paneId}`;
   const focusTrailing = () => {
@@ -500,7 +508,7 @@ function ZoomedView(props: { id: string }): JSX.Element {
       <div class="zoom-breadcrumb">
         <a
           class="crumb crumb-page"
-          onClick={() => router.openPage(pageName(), pageKind())}
+          onClick={() => router.openPageTarget(pageTarget())}
         >
           {pageName()}
         </a>
@@ -536,6 +544,7 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
   const [renaming, setRenaming] = createSignal(false);
   const [newName, setNewName] = createSignal("");
   let pageActionsTrigger: HTMLButtonElement | undefined;
+  const pageTarget = () => pageTargetFromFeedPage(props.page);
   const pageActionsOpen = () => {
     const menu = contextMenu();
     return menu?.kind === "page"
@@ -613,11 +622,12 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
         alert("Couldn't save pending edits — resolve the conflict before renaming.");
         return;
       }
-      await backend().renamePage(props.page.name, next);
+      if (props.page.path) await backend().renamePage(props.page.name, next, props.page.path);
+      else await backend().renamePage(props.page.name, next);
       // The backend rewrote refs across many pages via the self-write guard (no
       // watcher reload), so every in-memory page is now potentially stale; reset
       // + reload so a stale copy can't be saved back and revert the rename.
-      refreshAfterRename(props.page.name, next);
+      refreshAfterRename(props.page.name, next, pageTarget());
       router.openPage(next, "page");
     } catch (e) {
       alert(`Rename failed: ${String(e)}`);
@@ -651,13 +661,13 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
             classList={{ "journal-title": props.page.kind === "journal" }}
             title={props.page.guide ? "Bundled Guide page" : props.page.kind === "page" ? "Double-click to rename (shift-click → sidebar, middle-click → new tab)" : "Shift-click to open in sidebar, middle-click → new tab"}
             onClick={(e) => {
-              if (e.shiftKey && !props.page.guide) openPageInSidebar(props.page.name, props.page.kind);
-              else router.openPage(props.page.name, props.page.kind);
+              if (e.shiftKey && !props.page.guide) openPageInSidebar(pageTarget());
+              else router.openPageTarget(pageTarget());
             }}
             onAuxClick={(e) => {
               if (e.button === 1) {
                 e.preventDefault(); // middle-click → background tab, like a body link
-                router.openPageInNewTab(props.page.name, props.page.kind);
+                router.openPageTargetInNewTab(pageTarget());
               }
             }}
             onDblClick={startRename}
@@ -665,7 +675,7 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
               if (props.page.guide) return;
               if (!shouldOpenTextContextMenu(e.target)) return;
               e.preventDefault();
-              openPageContextMenu(e.clientX, e.clientY, props.page.name, props.page.kind, true);
+              openPageContextMenu(e.clientX, e.clientY, pageTarget(), true);
             }}
           >
             <Show when={props.page.kind === "journal"}>
@@ -721,8 +731,7 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
               openPageContextMenu(
                 rect.left,
                 rect.bottom + 4,
-                props.page.name,
-                props.page.kind,
+                pageTarget(),
                 true,
                 e.currentTarget,
               );

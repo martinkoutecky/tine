@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, type JSX } from "solid-js";
-import { openJournals, openPage, openPageInNewTab, openFile, openInNewTab, route } from "../router";
+import { openJournals, openPage, openPageInNewTab, openFile, openInNewTab, openPageTarget, openPageTargetInNewTab, route, type PageTarget } from "../router";
 import { openSwitcher, favorites, recentPages, openPageContextMenu, graphMeta, openPageInSidebar, pushToast, resolveAlias, favoritesSectionExpanded, recentSectionExpanded, toggleFavoritesSection, toggleRecentSection } from "../ui";
 import { switchGraph, createNewGraph, loadGraphPath, authorizeGraphAccess, type LoadGraphPathOutcome } from "../graph";
 import { backend } from "../backend";
@@ -199,22 +199,25 @@ export function Sidebar(props: {
               <div id="sidebar-recent-list">
                 <For each={recentPages()}>
                   {(r) => {
-                    const target = () => sidebarPageTarget(r.name, r.kind);
+                    const target = (): PageTarget => ({ name: r.name, pageKind: r.kind, ...(r.path ? { path: r.path } : {}) });
                     return (
                       <div
                         class="nav-page"
-                        classList={{ active: isActive(target().name) }}
+                        classList={{ active: isActive(target().name, target().path) }}
                         onMouseDown={shiftGuard}
-                        onClick={(e) => openSidebarPageTarget(r.name, r.kind, e.shiftKey ? "sidebar" : "normal", { x: 0, y: 0 }, sidebarPageOpenDeps, props.onActiveNavigationComplete)}
+                        onClick={(e) => {
+                          if (e.shiftKey) openPageInSidebar(target());
+                          else { openPageTarget(target()); props.onActiveNavigationComplete?.(); }
+                        }}
                         onAuxClick={(e) => {
                           if (e.button === 1) {
                             e.preventDefault();
-                            openSidebarPageTarget(r.name, r.kind, "new-tab");
+                            openPageTargetInNewTab(target());
                           }
                         }}
                         onContextMenu={(e) => {
                           e.preventDefault();
-                          openSidebarPageTarget(r.name, r.kind, "context", { x: e.clientX, y: e.clientY });
+                          openPageContextMenu(e.clientX, e.clientY, target());
                         }}
                       >
                         <EmojiText text={r.name.startsWith("hls__") ? r.name.slice(5) : r.name} />
@@ -246,7 +249,7 @@ export function Sidebar(props: {
                   classList={{ active: isActive(p.name, p.path) }}
                   onMouseDown={shiftGuard}
                   onClick={(e) =>
-                    e.shiftKey ? openPageInSidebar(p.name, "page") : openEntry(p.path, p.name)
+                    e.shiftKey ? openPageInSidebar({ name: p.name, pageKind: "page", path: p.path }) : openEntry(p.path, p.name)
                   }
                   onAuxClick={(e) => {
                     if (e.button === 1) {
@@ -256,7 +259,10 @@ export function Sidebar(props: {
                         : openPageInNewTab(p.name, "page");
                     }
                   }}
-                  onContextMenu={(e) => openRowMenu(e, p.name, "page")}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    openPageContextMenu(e.clientX, e.clientY, { name: p.name, pageKind: "page", path: p.path });
+                  }}
                 >
                   <EmojiText text={pageListLabel(p, allPages())} />
                 </div>

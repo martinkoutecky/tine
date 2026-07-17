@@ -3413,6 +3413,15 @@ impl Graph {
     /// and rolls back every write on any failure. Aborts (no change) if a target
     /// name already exists or a touched file changed under us.
     pub fn rename_page(&self, old: &str, new: &str) -> io::Result<()> {
+        self.rename_page_expected(old, new, None)
+    }
+
+    pub fn rename_page_expected(
+        &self,
+        old: &str,
+        new: &str,
+        expected_path: Option<&str>,
+    ) -> io::Result<()> {
         let old = old.trim();
         let new = new.trim();
         if new.is_empty() {
@@ -3421,6 +3430,7 @@ impl Graph {
         if old.is_empty() || crate::refs::same_page(old, new) {
             return Ok(()); // nothing to do (case-only rename is intentionally a no-op)
         }
+        self.validate_page_mutation_target(old, PageKind::Page, expected_path)?;
         // M1: refuse to rename an ambiguous page (both .md and .org on disk) — which
         // twin moves, and which content is authoritative, is undecidable here.
         if self.has_twin(old, PageKind::Page) || self.has_twin(new, PageKind::Page) {
@@ -3713,6 +3723,15 @@ impl Graph {
     /// simple misclick, is recoverable. If the trash move fails, the live file is
     /// left in place and the error is returned.
     pub fn delete_page(&self, name: &str, kind: PageKind) -> io::Result<()> {
+        self.delete_page_expected(name, kind, None)
+    }
+
+    pub fn delete_page_expected(
+        &self,
+        name: &str,
+        kind: PageKind,
+        expected_path: Option<&str>,
+    ) -> io::Result<()> {
         // M1: with both a .md and a .org twin, "which file?" is ambiguous — refuse
         // rather than trash an arbitrary one.
         if self.has_twin(name, kind) {
@@ -3729,6 +3748,7 @@ impl Graph {
                 "multiple files share this page identity; delete by name is ambiguous",
             ));
         }
+        self.validate_page_mutation_target(name, kind, expected_path)?;
         if let Some(entry) = matching.into_iter().next() {
             let trash = typed_trash_dir(
                 &self.root,
@@ -3747,6 +3767,41 @@ impl Graph {
             move_to_trash(&entry.path, &dest, &trash)?;
         }
         self.cache_remove(name, kind);
+        Ok(())
+    }
+
+    /// Validate the snapshot captured by a page menu/title before any mutation.
+    /// Even an exact path does not authorize choosing one logical duplicate: the
+    /// semantics of rewriting `[[page]]` references remain ambiguous.
+    fn validate_page_mutation_target(
+        &self,
+        name: &str,
+        kind: PageKind,
+        expected_path: Option<&str>,
+    ) -> io::Result<()> {
+        let matching: Vec<_> = self
+            .list_pages()
+            .into_iter()
+            .filter(|entry| entry.kind == kind && crate::refs::same_page(&entry.name, name))
+            .collect();
+        if matching.len() > 1 {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "multiple files share this page identity; mutation is ambiguous",
+            ));
+        }
+        let Some(expected) = expected_path.filter(|path| !path.trim().is_empty()) else {
+            return Ok(());
+        };
+        let expected_abs = self.resolve_rel(expected).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "invalid expected page path")
+        })?;
+        let Some(entry) = matching.first() else {
+            return Err(io::Error::new(io::ErrorKind::NotFound, "stale page target"));
+        };
+        if entry.path != expected_abs {
+            return Err(io::Error::new(io::ErrorKind::NotFound, "stale page target"));
+        }
         Ok(())
     }
 
@@ -10486,6 +10541,34 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(fs::read_to_string(&a).unwrap(), "- body a\n");
         assert_eq!(fs::read_to_string(&b).unwrap(), "- body b\n");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn page_mutations_require_the_captured_exact_owner_and_still_refuse_duplicates() {
+        let dir = scratch("expected-page-owner");
+        fs::create_dir_all(dir.join("pages/client-a")).unwrap();
+        fs::create_dir_all(dir.join("pages/client-b")).unwrap();
+        let a = dir.join("pages/client-a/Twin.md");
+        let b = dir.join("pages/client-b/Twin.md");
+        fs::write(&a, "- client a\n").unwrap();
+        let g = Graph::open(&dir);
+
+        let stale = g
+            .delete_page_expected("Twin", PageKind::Page, Some("pages/client-b/Twin.md"))
+            .unwrap_err();
+        assert_eq!(stale.kind(), io::ErrorKind::NotFound);
+        assert_eq!(fs::read_to_string(&a).unwrap(), "- client a\n");
+
+        fs::write(&b, "- client b\n").unwrap();
+        let g = Graph::open(&dir);
+        let ambiguous = g
+            .rename_page_expected("Twin", "Renamed", Some("pages/client-b/Twin.md"))
+            .unwrap_err();
+        assert_eq!(ambiguous.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read_to_string(&a).unwrap(), "- client a\n");
+        assert_eq!(fs::read_to_string(&b).unwrap(), "- client b\n");
+        assert!(!dir.join("pages/Renamed.md").exists());
         let _ = fs::remove_dir_all(&dir);
     }
 

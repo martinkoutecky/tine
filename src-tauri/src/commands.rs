@@ -608,17 +608,25 @@ pub(crate) fn block_referrers(
 pub(crate) fn delete_page(
     name: String,
     kind: PageKind,
+    expected_path: Option<String>,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
     with_graph(&state, |g| {
-        g.delete_page(&name, kind).map_err(|e| e.to_string())
+        g.delete_page_expected(&name, kind, expected_path.as_deref())
+            .map_err(|e| e.to_string())
     })
 }
 
 #[tauri::command]
-pub(crate) fn rename_page(old: String, new: String, state: GraphContext<'_>) -> Result<(), String> {
+pub(crate) fn rename_page(
+    old: String,
+    new: String,
+    expected_path: Option<String>,
+    state: GraphContext<'_>,
+) -> Result<(), String> {
     with_graph(&state, |g| {
-        g.rename_page(&old, &new).map_err(|e| e.to_string())
+        g.rename_page_expected(&old, &new, expected_path.as_deref())
+            .map_err(|e| e.to_string())
     })
 }
 

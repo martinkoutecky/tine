@@ -210,6 +210,8 @@ export type MergeDecision = "mine" | "theirs" | "both";
 export interface RefGroup {
   page: string;
   kind: PageKind;
+  /** Exact owner for path-bearing search presentations; absent for legacy DSL results. */
+  path?: string;
   blocks: BlockDto[];
   evidence?: ReferenceBlockEvidence[];
 }

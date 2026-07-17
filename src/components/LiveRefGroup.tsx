@@ -27,6 +27,7 @@ import { visibleBody } from "../render/block";
 export function LiveRefGroup(props: {
   page: string;
   kind: PageKind;
+  path?: string;
   blocks: BlockDto[];
   embedId?: string;
   showBreadcrumb?: boolean;
@@ -44,13 +45,13 @@ export function LiveRefGroup(props: {
 
   // Load the source page only once the group is near the viewport.
   const [ready] = createResource(
-    () => (near() ? { p: props.page, k: props.kind } : null),
-    async ({ p, k }) => {
+    () => (near() ? { p: props.page, k: props.kind, path: props.path } : null),
+    async ({ p, k, path }) => {
       const occupied = pageByName(p);
-      if (occupied) return occupied.kind === k;
+      if (occupied) return occupied.kind === k && (!path || occupied.path === path);
       const epoch = graphEpoch();
       const root = graphMeta()?.root ?? "";
-      const dto = await backend().getPage(p, k);
+      const dto = path ? await backend().getPageByPath(path) : await backend().getPage(p, k);
       // The component may have unmounted while this read was in flight. Never
       // let an old graph's DTO enter the new graph's shared working set.
       if (graphEpoch() !== epoch || (graphMeta()?.root ?? "") !== root) return false;
@@ -58,10 +59,11 @@ export function LiveRefGroup(props: {
       // is name-keyed. Refuse a page/journal twin that occupied the slot during
       // the await, and reject a mismatched backend response defensively.
       const after = pageByName(p);
-      if (after) return after.kind === k;
-      if (!dto || dto.name !== p || dto.kind !== k) return false;
+      if (after) return after.kind === k && (!path || after.path === path);
+      if (!dto || dto.name !== p || dto.kind !== k || (path && dto.path !== path)) return false;
       ensurePageLoaded(dto);
-      return pageByName(p)?.kind === k;
+      const loaded = pageByName(p);
+      return loaded?.kind === k && (!path || loaded.path === path);
     }
   );
 

@@ -81,8 +81,8 @@ export function retryQueryHydrationCircuit(): boolean {
   return true;
 }
 
-function groupIdentity(group: Pick<RefGroup, "kind" | "page">): string {
-  return `${group.kind}\0${group.page}`;
+function groupIdentity(group: Pick<RefGroup, "kind" | "page" | "path">): string {
+  return `${group.kind}\0${group.page}\0${group.path ?? ""}`;
 }
 
 /** Resolve a rendered query row to its exact source identity. Page names alone
@@ -288,7 +288,8 @@ export async function hydrateVisibleQueryPages(
     if ((kindsByName.get(group.page)?.size ?? 0) > 1) return false;
     // A differently-kinded same-name page already occupies the name-keyed store.
     // ensurePageLoaded cannot install this group safely without replacing it.
-    return !pageByName(group.page);
+    const loaded = pageByName(group.page);
+    return !loaded || (!!group.path && loaded.path !== group.path);
   });
   await Promise.all(pending.map((group) => {
     const epoch = graphEpoch();
@@ -311,13 +312,16 @@ export async function hydrateVisibleQueryPages(
       // A stale queued task must die before IPC, not merely discard afterward.
       if (!sameGraph(root, epoch)) return;
       const occupied = pageByName(group.page);
-      if (occupied) return; // exact kind is already ready; wrong kind owns the slot
-      const dto = await backend().getPage(group.page, group.kind);
+      if (occupied && occupied.kind === group.kind && (!group.path || occupied.path === group.path)) return;
+      const dto = group.path
+        ? await backend().getPageByPath(group.path)
+        : await backend().getPage(group.page, group.kind);
       if (!sameGraph(root, epoch)) return;
       // Recheck occupancy after the await: another surface may have loaded a
       // same-name twin meanwhile. Never replace or alias that identity.
-      if (pageByName(group.page)) return;
-      if (!dto || dto.name !== group.page || dto.kind !== group.kind) return;
+      const after = pageByName(group.page);
+      if (after && (!group.path || after.path === group.path)) return;
+      if (!dto || dto.name !== group.page || dto.kind !== group.kind || (group.path && dto.path !== group.path)) return;
       ensurePageLoaded(dto);
     }).finally(() => {
       pageHydrations.delete(key);

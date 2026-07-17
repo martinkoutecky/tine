@@ -67,10 +67,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
-- **Ctrl-K page and block results now keep their exact physical file owner.**
-  Current, alternate, background-tab, and right-sidebar activation preserve the
-  selected graph-relative path, including duplicate-name sidebar restore and
-  block-reference persistence, without breaking older pathless sessions.
+- **Explicitly selected pages and blocks now keep their exact physical file
+  owner through follow-on actions.** Ctrl-K, page titles, block zoom, sidebar,
+  tabs, Recent, friendly query results, menus, and session restore preserve the
+  selected graph-relative path. Stale or ambiguous rename/delete targets fail
+  closed instead of touching a same-name sibling, while older logical/pathless
+  links, Favorites, and sessions remain compatible.
 - **Cached signed plugin and theme revocations now take effect before startup
   activation.** A stalled catalogue refresh is abort-bounded, one broken plugin
   no longer blocks the rest, and a newer verified revocation immediately stops

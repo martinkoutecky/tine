@@ -363,8 +363,9 @@ export function forgetPage(name: string) {
  *  and feed, then delete on disk. Routing deletion through the store — rather than
  *  calling the backend directly — is what prevents a queued baseRev=null save from
  *  resurrecting a just-typed, never-saved page. Returns backend success. */
-export async function deletePage(name: string, kind: PageKind): Promise<boolean> {
+export async function deletePage(name: string, kind: PageKind, expectedPath?: string): Promise<boolean> {
   const loaded = pageByName(name);
+  if (expectedPath && loaded?.path !== expectedPath) return false;
   if (loaded?.readOnly || loaded?.guide) return false;
   // Capture the current (possibly unsaved) content first, so the recoverable trash
   // copy is the LATEST version — not the stale bytes on disk. A CONFLICTED page can
@@ -380,13 +381,14 @@ export async function deletePage(name: string, kind: PageKind): Promise<boolean>
   // delete fails, the page (and its unsaved edits) must survive.
   tombstone(name);
   try {
-    await backend().deletePage(name, kind);
+    if (expectedPath) await backend().deletePage(name, kind, expectedPath);
+    else await backend().deletePage(name, kind);
   } catch {
     untombstone(name); // delete failed — lift the tombstone; page + edits stay intact
     return false;
   }
   forgetPage(name); // success — now drop it from the working set + feed
-  removeDeletedPageFromNavigation(name, kind);
+  removeDeletedPageFromNavigation({ name, pageKind: kind, ...(expectedPath ? { path: expectedPath } : {}) });
   // A page delete changes every live query / backlink result (the backend already
   // dropped its derived cache + bumped cache_gen in delete_page). Nudge dataRev so
   // open {{query}} panels re-run and drop the deleted page's rows — otherwise they
@@ -2052,9 +2054,15 @@ export async function ensureBlockId(id: string): Promise<string | null> {
 /** A live reference to a loaded block — its stable uuid + the page it lives on
  *  (so a satellite surface can load that page and render the same editable
  *  node). The uuid IS the store key, so no snapshot is needed. */
-export function blockRef(id: string): { uuid: string; page: string; pageKind: PageKind } {
+export function blockRef(id: string): { uuid: string; page: string; pageKind: PageKind; path?: string } {
   const n = doc.byId[id];
-  return { uuid: n.id, page: n.page, pageKind: pageByName(n.page)?.kind ?? "page" };
+  const owner = pageByName(n.page);
+  return {
+    uuid: n.id,
+    page: n.page,
+    pageKind: owner?.kind ?? "page",
+    ...(owner?.path ? { path: owner.path } : {}),
+  };
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -2082,7 +2090,7 @@ export function ensureStableBlockId(id: string): void {
  *  a new tab, and zoom all stamp `id::` so the spot survives a relaunch (Martin's
  *  call — he wants these to persist; the `id::` is harmless in the file and is
  *  stripped from clipboard copies anyway, see `blockSubtreeMarkdown`). */
-export function persistentBlockRef(id: string): { uuid: string; page: string; pageKind: PageKind } {
+export function persistentBlockRef(id: string): { uuid: string; page: string; pageKind: PageKind; path?: string } {
   ensureStableBlockId(id);
   return blockRef(id);
 }

@@ -117,7 +117,7 @@ import { calcSource, serializeCalcExitCommit, evalCalc } from "../editor/calc";
 import { QueryMacro, EmbedMacro } from "./Macro";
 import { workflow, zoomInto, openContextMenu, openDatePicker, openBlockInSidebar, graphMeta, dataRev, setQueryBuilderAutoOpen, openPageProps, pushToast, dismissToast, autoPairing, typographyMode, timetrackingEnabled, logbookWithSecondSupport, blockReferencesRequest } from "../ui";
 import { seedAssetBlob } from "../assetCache";
-import { openPageInNewTab } from "../router";
+import { openInNewTab } from "../router";
 import { blockRefCount } from "../blockRefCounts";
 import { BlockReferences } from "./BlockReferences";
 import { editorCommandFor, isPermittedTabGesture, isTabLikeEvent } from "../keybindings";
@@ -465,7 +465,13 @@ export function Block(props: { id: string; hideRefCount?: boolean; forceExpanded
               e.preventDefault();
               e.stopPropagation();
               const ref = persistentBlockRef(props.id); // writes id:: so the tab survives a restart
-              openPageInNewTab(ref.page, ref.pageKind, ref.uuid);
+              openInNewTab({
+                kind: "page",
+                name: ref.page,
+                pageKind: ref.pageKind,
+                block: ref.uuid,
+                ...(ref.path ? { path: ref.path } : {}),
+              });
             }}
           >
             <Show when={orderMarker()} fallback={<span class="bullet" />}>

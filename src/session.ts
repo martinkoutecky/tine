@@ -10,12 +10,18 @@ import {
 import {
   applySidebarSession,
   favoritesSectionExpanded,
+  clearLegacyRecentSource,
+  legacyRecentPages,
   recentSectionExpanded,
+  recentPages,
   rightSidebar,
   rightSidebarOpen,
   sidebarOpen,
   type SidebarItem,
+  type RecentItem,
   type SidebarSessionState,
+  sanitizeRecent,
+  setRecentPages,
 } from "./ui";
 import {
   feedPaneId,
@@ -49,22 +55,32 @@ export interface PersistedSession extends PaneSnapshot {
   recentSectionExpanded?: boolean;
   layout?: PersistedLayoutNode;
   focusedPaneId?: string;
+  recentPages?: RecentItem[];
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 
-function validRoute(r: unknown): r is Route {
-  if (!r || typeof r !== "object") return false;
+function validRoute(r: unknown): Route | null {
+  if (!r || typeof r !== "object") return null;
   const o = r as Record<string, unknown>;
-  if (o.kind === "journals") return true;
+  if (o.kind === "journals") return { kind: "journals" };
   if (o.kind === "query") {
-    return typeof o.id === "string" && o.id.length > 0 && o.id.length <= 128
+    if (!(typeof o.id === "string" && o.id.length > 0 && o.id.length <= 128
       && (o.sourceKind === "search" || o.sourceKind === "dsl")
       && typeof o.source === "string" && o.source.length <= 65_536
       && (o.presentation === "search" || o.presentation === "list"
-        || o.presentation === "table" || o.presentation === "board");
+        || o.presentation === "table" || o.presentation === "board"))) return null;
+    return { kind: "query", id: o.id, sourceKind: o.sourceKind, source: o.source, presentation: o.presentation };
   }
-  return o.kind === "page" && typeof o.name === "string" && (o.pageKind === "journal" || o.pageKind === "page");
+  if (o.kind !== "page" || typeof o.name !== "string" || o.name.length > 4096
+    || (o.pageKind !== "journal" && o.pageKind !== "page")) return null;
+  if (o.path !== undefined && (typeof o.path !== "string" || o.path.length > 4096)) return null;
+  if (o.block !== undefined && (typeof o.block !== "string" || o.block.length > 4096)) return null;
+  return {
+    kind: "page", name: o.name, pageKind: o.pageKind,
+    ...(o.path ? { path: o.path } : {}),
+    ...(o.block ? { block: o.block } : {}),
+  };
 }
 
 function parseSnapshotValue(raw: unknown): PaneSnapshot | null {
@@ -73,7 +89,7 @@ function parseSnapshotValue(raw: unknown): PaneSnapshot | null {
   const tabs: SerializedTab[] = [];
   for (const t of s.tabs as Partial<SerializedTab>[]) {
     if (!t || !Array.isArray(t.history) || !t.history.length) continue;
-    const history = t.history.filter(validRoute);
+    const history = t.history.map(validRoute).filter((route): route is Route => !!route);
     if (!history.length) continue;
     tabs.push({
       history,
@@ -188,6 +204,7 @@ export function buildPersistedSession(): PersistedSession {
     recentSectionExpanded: recentSectionExpanded(),
     layout: serializeLayout(layoutRoot()),
     focusedPaneId: focusedPaneId(),
+    recentPages: recentPages(),
   };
 }
 
@@ -196,6 +213,7 @@ export function parsePersistedSession(raw: string): {
   snapshots: Map<string, PaneSnapshot>;
   focusedPaneId: string;
   sidebar: SidebarSessionState;
+  recent: RecentItem[];
 } | null {
   try {
     const s = JSON.parse(raw) as PersistedSession;
@@ -206,6 +224,7 @@ export function parsePersistedSession(raw: string): {
       favoritesExpanded: s.favoritesSectionExpanded,
       recentExpanded: s.recentSectionExpanded,
     };
+    const recent = s.recentPages === undefined ? legacyRecentPages() : sanitizeRecent(s.recentPages);
     if (s.layout && !isMobilePlatform) {
       const snapshots = new Map<string, PaneSnapshot>();
       const layout = parseLayoutNode(s.layout, snapshots, { value: false });
@@ -215,6 +234,7 @@ export function parsePersistedSession(raw: string): {
           snapshots,
           focusedPaneId: typeof s.focusedPaneId === "string" ? s.focusedPaneId : "main",
           sidebar,
+          recent,
         };
       }
     }
@@ -231,6 +251,7 @@ export function parsePersistedSession(raw: string): {
           snapshots: new Map([["main", snapshots.get(feedId)!]]),
           focusedPaneId: "main",
           sidebar,
+          recent,
         };
       }
     }
@@ -241,6 +262,7 @@ export function parsePersistedSession(raw: string): {
       snapshots: new Map([["main", legacy]]),
       focusedPaneId: "main",
       sidebar,
+      recent,
     };
   } catch {
     return null;
@@ -256,6 +278,7 @@ function pristineDefault(): boolean {
 
 export function applyParsedSession(parsed: NonNullable<ReturnType<typeof parsePersistedSession>>) {
   applySidebarSession(parsed.sidebar);
+  setRecentPages(parsed.recent);
   if (parsed.layout.kind === "pane" && parsed.layout.paneId === "main") {
     resetPaneLayoutToSingle(parsed.snapshots.get("main"));
   } else {
@@ -267,6 +290,7 @@ export async function flushSession(): Promise<void> {
   clearTimeout(saveTimer);
   try {
     await backend().saveSession(JSON.stringify(buildPersistedSession()));
+    clearLegacyRecentSource();
   } catch {
     // best-effort
   }
@@ -275,7 +299,9 @@ export async function flushSession(): Promise<void> {
 export function scheduleSessionSave() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    void backend().saveSession(JSON.stringify(buildPersistedSession())).catch(() => {});
+    void backend().saveSession(JSON.stringify(buildPersistedSession()))
+      .then(clearLegacyRecentSource)
+      .catch(() => {});
   }, 150);
 }
 
@@ -286,10 +312,14 @@ export async function restoreSession(): Promise<void> {
   } catch {
     return;
   }
-  if (!raw) return;
+  if (!raw) {
+    setRecentPages(legacyRecentPages());
+    return;
+  }
   const parsed = parsePersistedSession(raw);
   if (!parsed) return;
   applySidebarSession(parsed.sidebar);
+  setRecentPages(parsed.recent);
   if (!pristineDefault()) return;
   applyParsedSession(parsed);
 }

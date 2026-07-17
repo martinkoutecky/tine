@@ -24,8 +24,8 @@ import { journalTitle } from "../journal";
 import type { JournalFeedPage, PageDto, RefGroup } from "../types";
 import { TagPageTable, TagTableToggle } from "./Page";
 import { PageView, reloadJournalsFeedFromStart, withToday } from "./Page";
-import { focusBlock, mainPaneRouter, resetTabsToJournals } from "../router";
-import { clearConflict, clearRecent, closeContextMenu, graphEpoch, markConflict, recentPages } from "../ui";
+import { focusBlock, mainPaneRouter, resetTabsToJournals, tabRoute } from "../router";
+import { clearConflict, clearRecent, closeContextMenu, contextMenu, graphEpoch, markConflict, recentPages, rightSidebar, setRightSidebar } from "../ui";
 
 beforeAll(async () => {
   await initParser();
@@ -623,6 +623,39 @@ describe("trailing page block target", () => {
 });
 
 describe("page actions entry point", () => {
+  it("keeps a path-bearing title owner through sidebar, new-tab, and menu gestures", async () => {
+    const path = "pages/client-b/Twin.md";
+    const dto: PageDto = {
+      name: "Twin", kind: "page", title: "Twin", pre_block: null, path,
+      blocks: [{ id: "twin-b", raw: "Client B", collapsed: false, children: [] }],
+    };
+    setDoc({
+      byId: { "twin-b": node("twin-b", "Client B", "Twin") },
+      pages: [{ ...page("Twin", "page", ["twin-b"]), path }], feed: [], loaded: true,
+    });
+    vi.spyOn(backend(), "getPageByPath").mockResolvedValue(dto);
+    mainPaneRouter.openFile(path, "Twin", "page", { inPlace: true });
+    const { root, dispose } = mount(() => <PageView />);
+    try {
+      await tick(); await tick();
+      const title = root.querySelector<HTMLElement>(".page-title")!;
+      title.dispatchEvent(new MouseEvent("click", { bubbles: true, shiftKey: true }));
+      expect(rightSidebar()[0]).toMatchObject({ kind: "page", name: "Twin", path });
+
+      title.dispatchEvent(new MouseEvent("auxclick", { bubbles: true, button: 1 }));
+      expect(mainPaneRouter.tabs().some((tab) => {
+        const route = tabRoute(tab);
+        return route.kind === "page" && route.name === "Twin" && route.path === path;
+      })).toBe(true);
+
+      title.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+      expect(contextMenu()).toMatchObject({ kind: "page", name: "Twin", pageKind: "page", path });
+    } finally {
+      setRightSidebar([]);
+      dispose();
+    }
+  });
+
   it("exposes expanded state only on the trigger that owns the open page menu", async () => {
     const dto: PageDto = {
       name: "Duplicate actions",
@@ -734,6 +767,7 @@ describe("page actions entry point", () => {
       expect(root.querySelector("[data-page-actions-trigger]")).not.toBeNull();
 
       setDoc("pages", 0, "kind", "journal");
+      mainPaneRouter.openPage(dto.name, "journal", { inPlace: true });
       await tick();
       expect(root.querySelector("[data-page-actions-trigger]")).not.toBeNull();
 
