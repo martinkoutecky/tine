@@ -73,6 +73,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   activation.** A stalled catalogue refresh is abort-bounded, one broken plugin
   no longer blocks the rest, and a newer verified revocation immediately stops
   an affected active plugin without restoring older cached state afterward.
+- **Pending PDF work now stays with the graph that owns it during graph changes.**
+  In-place graph switches and safe close drain the old graph's PDF work first,
+  stale callbacks cannot write into the new graph, and drain failures abort the
+  transition with the old graph still open.
 - **PDF area selection now follows Logseq's platform gesture and confirmation
   flow.** Shift-drag on Linux and Windows, or Command-drag on macOS, must exceed
   10 pixels in both dimensions and opens the color chooser before anything is
