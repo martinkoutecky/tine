@@ -10,6 +10,13 @@ import { decideWheelZoomGesture, type WheelZoomGestureState } from "../zoom";
 import type { Highlight, Rect } from "../types";
 import { isMac, isMobilePlatform } from "../nativeChrome";
 import { registerTransientLayer } from "../transientLayers";
+import {
+  isPdfOwnershipCurrent,
+  pdfOwnershipKey,
+  registerPdfParticipant,
+  trackPdfMutation,
+  type PdfOwnership,
+} from "../pdfOwnership";
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -165,16 +172,24 @@ interface PendingArea {
  * switching assets still tears down every document-local cache and pdf.js task.
  */
 export function KeyedPdfViewer(props: { target: () => PdfTarget | null }): JSX.Element {
+  const resourceKey = () => {
+    const target = props.target();
+    return target ? `${pdfOwnershipKey(target.owner)}:${target.filename}` : null;
+  };
   return (
-    <Show when={props.target()?.filename} keyed>
-      {(filename) => (
-        <PdfViewer
-          filename={filename}
-          label={props.target()?.label ?? filename}
-          page={props.target()?.page}
-          navigation={props.target}
-        />
-      )}
+    <Show when={resourceKey()} keyed>
+      {(_key) => {
+        const target = props.target()!;
+        return (
+          <PdfViewer
+            filename={target.filename}
+            label={props.target()?.label ?? target.filename}
+            owner={target.owner}
+            page={props.target()?.page}
+            navigation={props.target}
+          />
+        );
+      }}
     </Show>
   );
 }
@@ -182,9 +197,11 @@ export function KeyedPdfViewer(props: { target: () => PdfTarget | null }): JSX.E
 export function PdfViewer(props: {
   filename: string;
   label: string;
+  owner: PdfOwnership;
   page?: number;
   navigation?: () => PdfTarget | null;
 }): JSX.Element {
+  const owner = props.owner;
   const instanceStem = `pdf-viewer-${createUniqueId()}`;
   const findLayerId = `${instanceStem}-find`;
   const highlightMenuLayerId = `${instanceStem}-highlight-menu`;
@@ -371,7 +388,7 @@ export function PdfViewer(props: {
   // Persist the current highlight set to disk. Returns false (and toasts) without
   // mutating the on-disk baseline if anything failed, so the caller can revert the
   // optimistic UI change rather than show a highlight that didn't actually save.
-  const persist = async (): Promise<boolean> => {
+  const persistOwned = async (): Promise<boolean> => {
     const hlsName = hlsPageName(props.filename);
     // If the notes (hls__) page is open with unsaved edits, get them onto disk
     // FIRST so the backend merges against them. Otherwise this write reads a disk
@@ -401,6 +418,16 @@ export function PdfViewer(props: {
     // Refresh the loaded notes page (content + save baseline) to include the change.
     await reloadHlsIfLoaded(hlsName);
     return true;
+  };
+
+  const persist = async (): Promise<boolean> => {
+    try {
+      return await trackPdfMutation(owner, persistOwned);
+    } catch {
+      // A retired owner is an expected cancellation path.  The graph switch
+      // already drained before retirement; never retry against a later binding.
+      return false;
+    }
   };
 
   const copyCreatedHighlightRef = async (id: string) => {
@@ -447,28 +474,40 @@ export function PdfViewer(props: {
   const fitWidthScale = () => (dims[1] ? clampScale((scrollRef.clientWidth - 32) / dims[1].w) : 1);
   const fitHeightScale = () => (dims[1] ? clampScale((scrollRef.clientHeight - 24) / dims[1].h) : 1);
 
-  const flushViewState = async () => {
+  const flushViewState = async (): Promise<boolean> => {
     if (viewStateTimer !== undefined) {
       clearTimeout(viewStateTimer);
       viewStateTimer = undefined;
     }
     const next = pendingViewState;
-    pendingViewState = null;
-    if (!next || (viewStateBaseline?.page === next.page && viewStateBaseline?.scale === next.scale)) return;
+    if (!next || (viewStateBaseline?.page === next.page && viewStateBaseline?.scale === next.scale)) {
+      pendingViewState = null;
+      return true;
+    }
     try {
-      await trackAssetWrite(backend().writePdfViewState(props.filename, next.page, next.scale));
+      await trackPdfMutation(owner, () =>
+        trackAssetWrite(backend().writePdfViewState(props.filename, next.page, next.scale))
+      );
       viewStateBaseline = next;
+      if (pendingViewState === next) pendingViewState = null;
+      return true;
     } catch (error) {
-      pushToast(`Couldn't save PDF view position. (${String(error)})`, "error");
+      if (isPdfOwnershipCurrent(owner)) {
+        pushToast(`Couldn't save PDF view position. (${String(error)})`, "error");
+      }
+      return false;
     }
   };
 
   const scheduleViewState = (page: number, nextScale: number) => {
+    if (!isPdfOwnershipCurrent(owner)) return;
     if (!viewStateReady || !Number.isFinite(nextScale) || nextScale <= 0) return;
     if (viewStateBaseline?.page === page && viewStateBaseline?.scale === nextScale) return;
     pendingViewState = { page, scale: nextScale };
     if (viewStateTimer !== undefined) clearTimeout(viewStateTimer);
-    viewStateTimer = window.setTimeout(() => void flushViewState(), 4000);
+    viewStateTimer = window.setTimeout(() => {
+      if (isPdfOwnershipCurrent(owner)) void flushViewState();
+    }, 4000);
   };
 
   function failPdf(message: string) {
@@ -690,7 +729,7 @@ export function PdfViewer(props: {
     const target = props.navigation?.();
     return target?.filename === props.filename
       ? target
-      : { filename: props.filename, label: props.label, page: props.page };
+      : { filename: props.filename, label: props.label, owner, page: props.page };
   }
 
   async function navigateToTarget(target: PdfTarget) {
@@ -921,6 +960,32 @@ export function PdfViewer(props: {
     for (const n of visible) void renderPage(n);
   }
 
+  function cancelOwnedWork() {
+    disposed = true;
+    findToken++;
+    navigationToken++;
+    io?.disconnect();
+    io = null;
+    clearTimeout(zoomTimer);
+    clearTimeout(textTimer);
+    clearTimeout(findDebounce);
+    if (viewStateTimer !== undefined) {
+      clearTimeout(viewStateTimer);
+      viewStateTimer = undefined;
+    }
+    if (scrollRaf !== undefined) {
+      cancelAnimationFrame(scrollRaf);
+      scrollRaf = undefined;
+    }
+    for (const k of Object.keys(tasks)) tasks[Number(k)]?.cancel();
+    window.removeEventListener("mousemove", onAreaMove);
+    window.removeEventListener("mouseup", onAreaUp);
+    areaDrag?.band.remove();
+    areaDrag = null;
+  }
+
+  let unregisterPdfParticipant = () => {};
+
   onMount(async () => {
     setLoadError(null);
     let restoredPage: number | null = null;
@@ -1008,26 +1073,21 @@ export function PdfViewer(props: {
   });
 
   onCleanup(() => {
-    disposed = true;
-    findToken++;
+    // Ordinary viewer close remains in the same graph and must persist its last
+    // location. Graph switch retired the owner first, so this branch is skipped
+    // there after the explicit awaited drain.
+    if (isPdfOwnershipCurrent(owner) && pendingViewState) void flushViewState();
+    unregisterPdfParticipant();
+    cancelOwnedWork();
     setOutlineOpen(false);
     setSettingsOpen(false);
     setOutlineItems([]);
     setOutlineReady(false);
     setExpandedOutlineIds(new Set<string>());
-    io?.disconnect();
-    clearTimeout(zoomTimer);
-    clearTimeout(textTimer);
-    clearTimeout(findDebounce);
-    if (viewStateTimer !== undefined || pendingViewState) void flushViewState();
-    if (scrollRaf !== undefined) cancelAnimationFrame(scrollRaf);
     releaseAllCanvases();
-    for (const k of Object.keys(tasks)) tasks[Number(k)]?.cancel();
     const doc = pdfDoc;
     pdfDoc = null;
     if (doc) void doc.destroy().catch(() => {});
-    window.removeEventListener("mousemove", onAreaMove);
-    window.removeEventListener("mouseup", onAreaUp);
   });
 
   // Zoom changes: relayout + lazy re-raster of visible pages only.
@@ -1314,16 +1374,16 @@ export function PdfViewer(props: {
     return blob ? new Uint8Array(await blob.arrayBuffer()) : null;
   }
 
-  const createAreaHighlight = async (color: string) => {
+  const createAreaHighlightOwned = async (color: string): Promise<boolean> => {
     const area = pendingArea;
-    if (!area) return;
+    if (!area) return true;
     pendingArea = null;
     setMenu(null);
     const { page, wrap, rect } = area;
     const bytes = await cropArea(page, wrap, rect);
     if (!bytes) {
       pushToast("Couldn't capture that region — try again.", "error");
-      return;
+      return false;
     }
     const id = crypto.randomUUID();
     const stamp = Date.now();
@@ -1334,7 +1394,7 @@ export function PdfViewer(props: {
       );
     } catch (e) {
       pushToast(`Couldn't save the area image — try again. (${String(e)})`, "error");
-      return;
+      return false;
     }
     const h: Highlight = {
       id,
@@ -1346,8 +1406,21 @@ export function PdfViewer(props: {
     };
     const prev = highlights();
     setHighlights([...prev, h]);
-    if (!(await persist())) setHighlights(prev); // revert the optimistic add on failure
-    else await copyCreatedHighlightRef(h.id);
+    if (!(await persistOwned())) {
+      setHighlights(prev); // revert the optimistic add on failure
+      return false;
+    }
+    await copyCreatedHighlightRef(h.id);
+    return true;
+  };
+
+  const createAreaHighlight = async (color: string) => {
+    try {
+      await trackPdfMutation(owner, () => createAreaHighlightOwned(color));
+    } catch {
+      // Ownership retirement cancels a not-yet-started area mutation.  It must
+      // not be retried after another graph is bound.
+    }
   };
 
   // --- page navigation -----------------------------------------------------
@@ -1668,6 +1741,11 @@ export function PdfViewer(props: {
       document.removeEventListener("pointerdown", dismissPendingAreaOnOutsidePointer, true);
       unregister();
     });
+  });
+
+  unregisterPdfParticipant = registerPdfParticipant(owner, {
+    flush: flushViewState,
+    cancel: cancelOwnedWork,
   });
 
   return (

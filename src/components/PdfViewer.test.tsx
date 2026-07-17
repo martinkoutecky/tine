@@ -4,12 +4,20 @@ import { Show, createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
 import {
-  KeyedPdfViewer,
-  PdfViewer,
+  KeyedPdfViewer as OwnedKeyedPdfViewer,
+  PdfViewer as OwnedPdfViewer,
   PDF_CANVAS_CACHE_PIXEL_BUDGET,
   PDF_FIND_MATCH_CAP,
   isPdfAreaModifier,
 } from "./PdfViewer";
+import {
+  activatePdfOwnership,
+  currentPdfOwnership,
+  drainPdfWork,
+  resetPdfOwnershipForTest,
+  retirePdfOwnership,
+  type PdfOwnership,
+} from "../pdfOwnership";
 import {
   clearTransientLayersForTest,
   dismissTopTransient,
@@ -17,6 +25,28 @@ import {
 } from "../transientLayers";
 
 const getDocumentMock = vi.hoisted(() => vi.fn());
+
+function testPdfOwner(): PdfOwnership {
+  return currentPdfOwnership() ?? activatePdfOwnership("/test/pdf-graph");
+}
+
+function PdfViewer(props: {
+  filename: string;
+  label: string;
+  owner?: PdfOwnership;
+  page?: number;
+  navigation?: () => any;
+}) {
+  return <OwnedPdfViewer {...props} owner={props.owner ?? testPdfOwner()} />;
+}
+
+function KeyedPdfViewer(props: { target: () => any }) {
+  const ownedTarget = () => {
+    const target = props.target();
+    return target ? { ...target, owner: target.owner ?? testPdfOwner() } : null;
+  };
+  return <OwnedKeyedPdfViewer target={ownedTarget} />;
+}
 
 vi.mock("pdfjs-dist", () => ({
   GlobalWorkerOptions: {},
@@ -37,7 +67,7 @@ vi.mock("pdfjs-dist/build/pdf.worker.min.mjs?url", () => ({
 }));
 
 async function flush() {
-  for (let i = 0; i < 8; i++) await Promise.resolve();
+  for (let i = 0; i < 16; i++) await Promise.resolve();
 }
 
 class TestIntersectionObserver {
@@ -496,7 +526,7 @@ describe("PdfViewer OG area-highlight selection", () => {
       const blue = host.querySelectorAll<HTMLButtonElement>(".pdf-color-swatch")[2];
       blue.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
       await flush();
-      await flush();
+      await expect(drainPdfWork()).resolves.toBe(true);
 
       expect(saveArea).toHaveBeenCalledWith("paper.pdf", 1, id, 1234, new Uint8Array([1, 2, 3]));
       expect(writeHighlights).toHaveBeenCalledOnce();
@@ -566,6 +596,57 @@ describe("PdfViewer OG state and reference behavior", () => {
       expect(writeState).toHaveBeenCalledWith("paper.pdf", 2, 2.2);
     } finally {
       dispose();
+    }
+  });
+
+  it("flushes same-name graph-A state before remounting graph B and cancels the old debounce", async () => {
+    vi.useFakeTimers();
+    resetPdfOwnershipForTest();
+    const ownerA = activatePdfOwnership("/graphs/A");
+    const writes: Array<{ root: string | undefined; pdf: string; page: number; scale: number }> = [];
+    vi.spyOn(backend() as any, "openPdf").mockResolvedValue({ highlights: [], page: 1, scale: 1 });
+    vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+    vi.spyOn(backend(), "writePdfViewState").mockImplementation(async (pdf, pageNumber, nextScale) => {
+      writes.push({ root: currentPdfOwnership()?.graphRoot, pdf, page: pageNumber, scale: nextScale });
+    });
+    const first = documentWithPages([page(612, 792)]);
+    const second = documentWithPages([page(612, 792)]);
+    getDocumentMock
+      .mockReturnValueOnce({ promise: Promise.resolve(first) })
+      .mockReturnValueOnce({ promise: Promise.resolve(second) });
+    const [target, setTarget] = createSignal<any>({
+      filename: "shared.pdf",
+      label: "Graph A shared PDF",
+      owner: ownerA,
+    });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <KeyedPdfViewer target={target} />, host);
+    try {
+      await flush();
+      const viewerA = host.querySelector(".pdf-viewer");
+      (host.querySelector('button[title="Zoom in"]') as HTMLButtonElement).click();
+      await flush();
+
+      await expect(drainPdfWork()).resolves.toBe(true);
+      expect(writes).toEqual([{ root: "/graphs/A", pdf: "shared.pdf", page: 1, scale: 1.1 }]);
+
+      retirePdfOwnership();
+      setTarget(null);
+      await flush();
+      const ownerB = activatePdfOwnership("/graphs/B");
+      setTarget({ filename: "shared.pdf", label: "Graph B shared PDF", owner: ownerB });
+      await flush();
+
+      expect(first.destroy).toHaveBeenCalledOnce();
+      expect(host.querySelector(".pdf-viewer")).not.toBe(viewerA);
+      expect(host.querySelector(".pdf-viewer")?.getAttribute("data-pdf-filename")).toBe("shared.pdf");
+      await vi.advanceTimersByTimeAsync(4_000);
+      await flush();
+      expect(writes).toEqual([{ root: "/graphs/A", pdf: "shared.pdf", page: 1, scale: 1.1 }]);
+    } finally {
+      dispose();
+      resetPdfOwnershipForTest();
     }
   });
 

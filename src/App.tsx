@@ -125,6 +125,7 @@ import { SurfaceContext } from "./components/Block";
 import { endEdit } from "./editorController";
 import { installAndroidBackHandler, requestAndroidRootClose } from "./androidBack";
 import { createSafeCloseCoordinator } from "./safeClose";
+import { drainPdfWork } from "./pdfOwnership";
 
 /** The single persistence transaction used by both desktop close and Android
  * root Back.  Callers choose only the final platform action. */
@@ -136,6 +137,7 @@ const safeClose = createSafeCloseCoordinator({
   endEdit() {
     endEdit("graph-switch");
   },
+  flushPdfWork: drainPdfWork,
   flushAll,
   confirmDiscard: () => backend().confirm(
     "Tine has unsaved changes that couldn't be saved (a conflict or a stuck save).\n\nClose this window anyway and lose them?",
@@ -143,6 +145,9 @@ const safeClose = createSafeCloseCoordinator({
   ),
   flushSession,
   setTransition: setGraphTransitioning,
+  notifyPdfFailure: () => {
+    pushToast("Couldn't save pending PDF changes. The graph remains open.", "error");
+  },
   notifyConfirmationFailure: () => {
     pushToast("Couldn't confirm closing the window. Your unsaved changes are still open.", "error");
   },

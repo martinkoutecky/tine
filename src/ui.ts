@@ -9,6 +9,7 @@ import { PaneContext } from "./paneContext";
 import { exitPaneSelect } from "./paneSelect";
 import { setJournalTitleFormat, isJournalTitle } from "./journal";
 import { clearDrawerOpener, mobileDrawerMode, captureDrawerOpener, restoreDrawerFocus, type DrawerSide } from "./mobileDrawers";
+import { currentPdfOwnership, type PdfOwnership } from "./pdfOwnership";
 
 const THEME_KEY = "logseq-claude.theme";
 function loadTheme(): "light" | "dark" {
@@ -1446,16 +1447,21 @@ export function closePdfExport() {
 export interface PdfTarget {
   filename: string;
   label: string;
+  owner: PdfOwnership;
   page?: number;
   highlightId?: string;
 }
 export const [pdfTarget, setPdfTarget] = createSignal<PdfTarget | null>(null);
 export function openPdf(filename: string, label: string, page?: number, highlightId?: string) {
+  const owner = currentPdfOwnership();
+  if (!owner) return;
   // Logseq treats re-opening the current PDF resource without a page/highlight
   // intent as a no-op. Preserve the reader's current location; explicit targets
   // within the same file still publish a new reactive navigation intent.
-  if (pdfTarget()?.filename === filename && page == null && highlightId == null) return;
-  setPdfTarget({ filename, label, page, highlightId });
+  const current = pdfTarget();
+  if (current?.filename === filename && current.owner.generation === owner.generation &&
+      page == null && highlightId == null) return;
+  setPdfTarget({ filename, label, owner, page, highlightId });
 }
 export function closePdf() {
   setPdfTarget(null);

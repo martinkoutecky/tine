@@ -14,10 +14,12 @@ function harness(overrides: Partial<SafeCloseDeps> = {}) {
   const deps: SafeCloseDeps = {
     blurActive: vi.fn(),
     endEdit: vi.fn(),
+    flushPdfWork: vi.fn(async () => true),
     flushAll: vi.fn(async () => true),
     confirmDiscard: vi.fn(async () => false),
     flushSession: vi.fn(async () => {}),
     setTransition: vi.fn((active) => transitions.push(active)),
+    notifyPdfFailure: vi.fn(),
     notifyConfirmationFailure: vi.fn(),
     runBounded: async (operation) => operation,
     ...overrides,
@@ -33,6 +35,7 @@ describe("GH #161 shared safe-close transaction", () => {
     await expect(requestAndroidRootClose(safeClose, exit, vi.fn())).resolves.toBe("exit_requested");
     expect(deps.blurActive).toHaveBeenCalledOnce();
     expect(deps.endEdit).toHaveBeenCalledOnce();
+    expect(deps.flushPdfWork).toHaveBeenCalledOnce();
     expect(deps.flushAll).toHaveBeenCalledOnce();
     expect(deps.confirmDiscard).not.toHaveBeenCalled();
     expect(deps.flushSession).toHaveBeenCalledOnce();
@@ -72,12 +75,35 @@ describe("GH #161 shared safe-close transaction", () => {
     expect(safeClose.inFlight()).toBe(false);
   });
 
+  it("enrolls pending PDF state before page flush and rejects a failed PDF drain", async () => {
+    const order: string[] = [];
+    const { deps, safeClose, transitions } = harness({
+      flushPdfWork: vi.fn(async () => {
+        order.push("pdf");
+        return false;
+      }),
+      flushAll: vi.fn(async () => {
+        order.push("pages");
+        return true;
+      }),
+      confirmDiscard: vi.fn(async () => false),
+    });
+
+    await expect(safeClose.prepare()).resolves.toBe("rejected");
+
+    expect(order).toEqual(["pdf"]);
+    expect(deps.flushAll).not.toHaveBeenCalled();
+    expect(deps.confirmDiscard).not.toHaveBeenCalled();
+    expect(deps.notifyPdfFailure).toHaveBeenCalledOnce();
+    expect(transitions).toEqual([true, false]);
+  });
+
   it("continues only after explicit discard when graph flush fails or times out", async () => {
     for (const mode of ["failure", "timeout"] as const) {
       const never = new Promise<boolean>(() => {});
       const flushAll = mode === "failure" ? vi.fn(async () => false) : vi.fn(() => never);
       const runBounded: SafeCloseDeps["runBounded"] = async (operation, timeoutMs, fallback) => {
-        if (mode === "timeout" && timeoutMs === 4000) return fallback;
+        if (mode === "timeout" && operation === never && timeoutMs === 4000) return fallback;
         return operation;
       };
       const { deps, safeClose } = harness({
