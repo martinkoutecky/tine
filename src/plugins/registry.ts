@@ -456,7 +456,11 @@ export function seedCachedCommunityRegistry(cached: VerifiedRegistrySnapshot | n
   return cached.revoked;
 }
 
-async function applyLiveSnapshot(current: VerifiedRegistrySnapshot, generation: number): Promise<void> {
+async function applyLiveSnapshot(
+  current: VerifiedRegistrySnapshot,
+  generation: number,
+  cache: { indexJson: string; signature: string }
+): Promise<void> {
   liveApplyChain = liveApplyChain.catch(() => {}).then(async () => {
     if (generation !== latestVerifiedGeneration) return;
     await pluginManager.applyRevocations(current.revoked);
@@ -467,6 +471,13 @@ async function applyLiveSnapshot(current: VerifiedRegistrySnapshot, generation: 
     applyTheme(selectedGalleryTheme());
     hasVerifiedRegistry = true;
     setRegistryState("ready");
+    // Keep the durable pair inside the same accepted-generation queue as live
+    // application. A stale response writes nothing; if a newer response verifies
+    // while this write is already in flight, its queued write runs afterward.
+    await Promise.all([
+      backend().setAppString("plugin-registry-index", cache.indexJson),
+      backend().setAppString("plugin-registry-signature", cache.signature.trim()),
+    ]).catch(() => {});
   });
   await liveApplyChain;
 }
@@ -483,11 +494,7 @@ export async function refreshCommunityRegistry(
     ]);
     const current = snapshot(await verifiedIndex(indexJson, signature));
     latestVerifiedGeneration = Math.max(latestVerifiedGeneration, generation);
-    await applyLiveSnapshot(current, generation);
-    void Promise.all([
-      backend().setAppString("plugin-registry-index", indexJson),
-      backend().setAppString("plugin-registry-signature", signature.trim()),
-    ]).catch(() => {});
+    await applyLiveSnapshot(current, generation, { indexJson, signature });
   } catch {
     // Cache verification and application are a separate startup phase. A live
     // timeout never clears or re-applies older state over a verified snapshot.

@@ -164,4 +164,53 @@ describe("community extension startup revocations", () => {
     expect(registryState()).toBe("ready");
     expect(revokedThemeVersions()).toEqual(new Set([liveKey]));
   });
+
+  it("does not let an older verified refresh overwrite the newer cached registry", async () => {
+    const api = backend();
+    vi.spyOn(api, "verifyPluginRegistry").mockResolvedValue();
+    vi.spyOn(pluginManager, "applyRevocations").mockResolvedValue();
+    const stored = new Map<string, string>();
+    vi.spyOn(api, "setAppString").mockImplementation(async (key, value) => {
+      stored.set(key, value);
+    });
+    const oldIndex = JSON.stringify({
+      schemaVersion: 1,
+      generatedAt: "2026-07-17T00:01:00Z",
+      plugins: [],
+      themes: [],
+      revocations: [],
+    });
+    const newIndex = JSON.stringify({
+      schemaVersion: 1,
+      generatedAt: "2026-07-17T00:02:00Z",
+      plugins: [],
+      themes: [],
+      revocations: [{
+        id: "page.tine.newer-cache",
+        version: "1.0.0",
+        severity: "high",
+        reason: "The newer response must remain restart-durable.",
+        revokedAt: "2026-07-17T00:02:00Z",
+      }],
+    });
+    const pending = Array.from({ length: 4 }, () => {
+      let resolve!: (response: Response) => void;
+      const promise = new Promise<Response>((done) => { resolve = done; });
+      return { promise, resolve };
+    });
+    let request = 0;
+    vi.stubGlobal("fetch", vi.fn(() => pending[request++].promise));
+
+    const older = refreshCommunityRegistry({ timeoutMs: 1_000 });
+    const newer = refreshCommunityRegistry({ timeoutMs: 1_000 });
+    pending[2].resolve(new Response(newIndex));
+    pending[3].resolve(new Response("new-signature"));
+    await newer;
+    pending[0].resolve(new Response(oldIndex));
+    pending[1].resolve(new Response("old-signature"));
+    await older;
+    await vi.waitFor(() => expect(stored.get("plugin-registry-signature")).toBe("new-signature"));
+
+    expect(stored.get("plugin-registry-index")).toBe(newIndex);
+  });
 });
