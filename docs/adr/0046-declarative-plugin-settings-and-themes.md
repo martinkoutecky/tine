@@ -1,4 +1,4 @@
-# 0044. Plugin settings and themes are separate declarative host contracts
+# 0046. Plugin settings and themes are separate declarative host contracts
 
 - **Status:** Accepted
 - **Date:** 2026-07-12

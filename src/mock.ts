@@ -3,12 +3,25 @@
 // backend's shape so the UI behaves identically.
 
 import type { Backend, GpuEnv, DebugInfo, InstalledPluginRecord } from "./backend";
-import type { BlockDto, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, QueryExecution, RefGroup } from "./types";
+import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, BlockPreview, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PdfState, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup } from "./types";
 import { SAMPLE_PDF_B64 } from "./sample-pdf";
 import { hlsPageName } from "./pdf";
 import { MARKER_RE } from "./markers";
 import { fuzzyScore } from "./editor/autocomplete";
-import { matcherMatches, matchHighlights, parseSearchQuery, simpleTerm } from "./editor/searchQuery";
+import { canonicalFold, matcherMatches, matchHighlights, parseSearchQuery, simpleTerm } from "./editor/searchQuery";
+import { parseJournalWith } from "./journal";
+
+/** Mock feed membership must use a Logseq journal-title parser, never the
+ * host's permissive/non-portable Date string parser. Keep the same explicit
+ * patterns the fixture can emit so pagination remains deterministic in every
+ * browser/runtime. */
+function mockJournalDayKey(name: string): number | null {
+  for (const format of ["MMM do, yyyy", "EEEE, dd-MM-yyyy", "yyyy-MM-dd", "dd-MM-yyyy", "yyyy_MM_dd"]) {
+    const parsed = parseJournalWith(name, format);
+    if (parsed) return parsed.y * 10_000 + parsed.m * 100 + parsed.d;
+  }
+  return null;
+}
 
 function pageRefs(raw: string): string[] {
   const out: string[] = [];
@@ -418,7 +431,7 @@ if (typeof location !== "undefined" && /[?&]regressions\b/.test(location.search)
   );
 }
 
-const mockHighlights: Record<string, { label: string; highlights: Highlight[] }> = {};
+const mockHighlights: Record<string, { label: string; highlights: Highlight[]; page?: number; scale?: number }> = {};
 // In-memory UI session for the browser mock (no backend file).
 let mockSession: string | null = null;
 let mockLinkFirstMatch = false;
@@ -661,6 +674,7 @@ export function mockBackend(): Backend {
     async captureTarget() {
       return "main";
     },
+    async bindCaptureGraph() {},
     async forgetKnownGraph() {},
     async appPlatform(): Promise<"android" | "ios" | "desktop"> {
       const requested = new URLSearchParams(globalThis.location?.search ?? "").get("platform");
@@ -714,6 +728,7 @@ export function mockBackend(): Backend {
     async verifyPluginRegistry() {
       // Browser mock has no embedded native key. Registry tests mock this boundary.
     },
+    async setSystemBarAppearance(): Promise<void> {},
     async quit(): Promise<void> {
       // No-op in the mock/screenshot harness — there's no process to exit.
     },
@@ -729,8 +744,24 @@ export function mockBackend(): Backend {
     async listPages(): Promise<PageEntry[]> {
       return all.map(mockPageEntry);
     },
-    async journalsDesc(limit: number, offset: number): Promise<PageDto[]> {
-      return PAGES.slice(offset, offset + limit);
+    async journalFeedPage(limit: number, beforeDay: number | null) {
+      const now = new Date();
+      const as_of_day = now.getFullYear() * 10_000 + (now.getMonth() + 1) * 100 + now.getDate();
+      const candidates = PAGES
+        .filter((p) => p.kind === "journal")
+        .map((page) => ({ page, day: mockJournalDayKey(page.name) }))
+        .filter((row): row is { page: PageDto; day: number } =>
+          row.day !== null && row.day <= as_of_day && (beforeDay === null || row.day < beforeDay)
+        )
+        .sort((a, b) => b.day - a.day);
+      const rows = candidates.slice(0, limit);
+      const done = rows.length === candidates.length;
+      return {
+        pages: rows.map(({ page }) => page),
+        next_before_day: done || !rows.length ? null : rows[rows.length - 1].day,
+        done,
+        as_of_day,
+      };
     },
     async journalContentDays(): Promise<number[]> {
       return [];
@@ -792,6 +823,36 @@ export function mockBackend(): Backend {
     async getBacklinks(name: string): Promise<RefGroup[]> {
       const n = name.toLowerCase();
       return collect((b) => pageRefs(b.raw).some((r) => r.toLowerCase() === n), name);
+    },
+    async getBacklinkFilterContext(name: string, targets: BacklinkFilterTarget[]): Promise<BacklinkFilterContext> {
+      const excluded = name.trim().toLowerCase();
+      const wanted = new Map(targets.map((item) => [
+        `${item.kind}\0${item.page.toLowerCase()}\0${item.block_id}`,
+        item,
+      ]));
+      const entries: BacklinkFilterContext["entries"] = [];
+      const visit = (page: PageDto, block: BlockDto): void => {
+        const key = `${page.kind}\0${page.name.toLowerCase()}\0${block.id}`;
+        const target = wanted.get(key);
+        if (target) {
+          const text: string[] = [];
+          const facets = new Map<string, string>();
+          const subtree = (node: BlockDto) => {
+            text.push(node.raw);
+            for (const ref of pageRefs(node.raw)) {
+              const normalized = ref.trim().toLowerCase();
+              if (normalized && normalized !== excluded && !facets.has(normalized)) facets.set(normalized, ref);
+            }
+            if (node.marker) facets.set(node.marker.toLowerCase(), node.marker);
+            node.children.forEach(subtree);
+          };
+          subtree(block);
+          entries.push({ ...target, text: text.join("\n"), facets: [...facets.values()] });
+        }
+        block.children.forEach((child) => visit(page, child));
+      };
+      for (const page of all) page.blocks.forEach((block) => visit(page, block));
+      return { entries, truncated: entries.length < wanted.size };
     },
     async getUnlinkedRefs(name: string): Promise<RefGroup[]> {
       const n = name.toLowerCase();
@@ -879,6 +940,75 @@ export function mockBackend(): Backend {
       }
       return [];
     },
+    async exportQuerySubtrees(specs: QueryExportSpec[]): Promise<QueryExportBatch> {
+      let remainingRoots = 50;
+      let remainingNodes = 2_000;
+      let remainingBytes = 8 * 1024 * 1024;
+      const estimate = (block: BlockDto) => block.id.length + block.raw.length + 128;
+      const countTree = (root: BlockDto) => {
+        let count = 0;
+        const stack = [root];
+        while (stack.length) {
+          const block = stack.pop()!;
+          count++;
+          for (const child of block.children) stack.push(child);
+        }
+        return count;
+      };
+      const copyTree = (block: BlockDto): BlockDto | null => {
+        const bytes = estimate(block);
+        if (remainingNodes === 0 || bytes > remainingBytes) return null;
+        remainingNodes--;
+        remainingBytes -= bytes;
+        const children: BlockDto[] = [];
+        for (const child of block.children) {
+          const copied = copyTree(child);
+          if (!copied) break;
+          children.push(copied);
+        }
+        return { ...block, children };
+      };
+      const findBlock = (page: PageDto, id: string): BlockDto | null => {
+        const stack = [...page.blocks];
+        while (stack.length) {
+          const block = stack.pop()!;
+          if (block.id === id) return block;
+          for (const child of block.children) stack.push(child);
+        }
+        return null;
+      };
+      const results = [];
+      for (const spec of specs.slice(0, 64)) {
+        const groups = spec.advanced
+          ? (await this.runAdvancedQuery(spec.query)).groups
+          : await this.runQuery(spec.query);
+        const total = groups.reduce((sum, group) => sum + group.blocks.length, 0);
+        const hydrated: RefGroup[] = [];
+        let shown = 0;
+        let omittedNodes = 0;
+        for (const group of groups) {
+          const page = find(group.page);
+          if (!page) continue;
+          const blocks: BlockDto[] = [];
+          for (const shallow of group.blocks) {
+            if (remainingRoots === 0) break;
+            remainingRoots--;
+            const source = findBlock(page, shallow.id) ?? shallow;
+            const before = remainingNodes;
+            const copied = copyTree(source);
+            omittedNodes += Math.max(0, countTree(source) - (before - remainingNodes));
+            if (copied) {
+              blocks.push(copied);
+              shown++;
+            }
+          }
+          if (blocks.length) hydrated.push({ page: group.page, kind: group.kind, blocks });
+          if (remainingRoots === 0) break;
+        }
+        results.push({ key: spec.key, groups: hydrated, shown, total, omitted_nodes: omittedNodes });
+      }
+      return { results, omitted_queries: Math.max(0, specs.length - 64) };
+    },
     async readCustomCss(): Promise<string> {
       return (globalThis as unknown as { __tineMockCustomCss?: string }).__tineMockCustomCss ?? "";
     },
@@ -940,17 +1070,17 @@ export function mockBackend(): Backend {
       return [...map.entries()].map(([k, vs]) => [k, [...vs].sort()] as [string, string[]]);
     },
     async search(query: string, limit: number): Promise<RefGroup[]> {
-      const q = query.trim().toLowerCase();
+      const q = canonicalFold(query.trim());
       if (!q) return [];
       let n = limit;
-      const groups = collect((b) => b.raw.toLowerCase().includes(q));
+      const groups = collect((b) => canonicalFold(b.raw).includes(q));
       for (const g of groups) {
         if (g.blocks.length > n) g.blocks = g.blocks.slice(0, n);
         n -= g.blocks.length;
       }
       return groups.filter((g) => g.blocks.length > 0);
     },
-    async runGraphSearch(source: string, pageLimit: number, blockLimit: number, _lane?: string, explain = false): Promise<QueryExecution> {
+    async runGraphSearch(source: string, pageLimit: number, blockLimit: number, _lane?: string, explain = false, scope?: import("./types").QueryPageScope): Promise<QueryExecution> {
       // Browser-preview approximation only (ADR 0016). Production matching,
       // diagnostics, and UTF-16 evidence come from Rust's QueryPlan evaluator.
       const matcher = parseSearchQuery(source);
@@ -963,9 +1093,9 @@ export function mockBackend(): Backend {
         };
       }
       const bare = simpleTerm(matcher);
-      const pages = all
-        .map((page) => ({ page, score: bare ? fuzzyScore(bare, page.name) : 0 }))
-        .filter(({ page, score }) => bare ? score > 0 : matcherMatches(matcher, page.name.toLowerCase(), page.name))
+      const pages = scope ? [] : all
+        .map((page) => ({ page, score: bare ? fuzzyScore(bare, canonicalFold(page.name)) : 0 }))
+        .filter(({ page, score }) => bare ? score > 0 : matcherMatches(matcher, canonicalFold(page.name), page.name))
         .sort((a, b) => b.score - a.score)
         .slice(0, pageLimit)
         .map(({ page, score }) => ({
@@ -980,8 +1110,23 @@ export function mockBackend(): Backend {
             score,
           }],
           score,
+          match_class: bare
+            ? canonicalFold(page.name) === bare ? "exact" as const
+              : canonicalFold(page.name).startsWith(bare) ? "prefix" as const
+              : canonicalFold(page.name).includes(bare) ? "substring" as const
+              : "fuzzy" as const
+            : undefined,
         }));
-      const blocks = collect((block) => matcherMatches(matcher, block.raw.toLowerCase(), block.raw))
+      const inScope = (group: RefGroup) => {
+        if (!scope) return true;
+        const page = all.find((candidate) => candidate.kind === group.kind && canonicalFold(candidate.name) === canonicalFold(group.page));
+        if (!page) return false;
+        return scope.path
+          ? mockPagePath(page) === scope.path
+          : page.kind === scope.pageKind && canonicalFold(page.name) === canonicalFold(scope.name);
+      };
+      const blocks = collect((block) => matcherMatches(matcher, canonicalFold(block.raw), block.raw))
+        .filter(inScope)
         .flatMap((group) => group.blocks.map((block) => ({ group, block })))
         .slice(0, Math.max(0, blockLimit))
         .map(({ group, block }) => {
@@ -1026,27 +1171,67 @@ export function mockBackend(): Backend {
       ];
     },
     async quickSwitch(query: string, limit: number): Promise<PageEntry[]> {
-      const q = query.trim().toLowerCase();
+      const q = canonicalFold(query.trim());
       return all
-        .filter((p) => p.name.toLowerCase().includes(q))
+        .filter((p) => canonicalFold(p.name).includes(q))
         .slice(0, limit)
         .map(mockPageEntry);
     },
+    async captureQuickSwitch(query: string, limit: number): Promise<PageEntry[]> {
+      return this.quickSwitch(query, limit);
+    },
     async resolveBlock(uuid: string): Promise<RefGroup | null> {
+      const find = (blocks: BlockDto[]): BlockDto | null => {
+        for (const block of blocks) {
+          if (block.raw.includes(`id:: ${uuid}`)) return block;
+          const child = find(block.children);
+          if (child) return child;
+        }
+        return null;
+      };
       for (const p of all) {
-        let found: BlockDto | null = null;
-        const walk = (bs: BlockDto[]) =>
-          bs.forEach((b) => {
-            if (!found && b.raw.includes(`id:: ${uuid}`)) found = b;
-            walk(b.children);
-          });
-        walk(p.blocks);
-        if (found) return { page: p.name, kind: p.kind, blocks: [found] };
+        const found = find(p.blocks);
+        if (found) return { page: p.name, kind: p.kind, blocks: [{ ...found, children: [] }] };
       }
       return null;
     },
     async resolveBlocks(uuids: string[]): Promise<(RefGroup | null)[]> {
       return Promise.all(uuids.map((u) => this.resolveBlock(u)));
+    },
+    async previewBlock(uuid: string, maxNodes: number): Promise<BlockPreview | null> {
+      let group: RefGroup | null = null;
+      const find = (blocks: BlockDto[]): BlockDto | null => {
+        for (const block of blocks) {
+          if (block.id === uuid || block.raw.includes(`id:: ${uuid}`)) return block;
+          const child = find(block.children);
+          if (child) return child;
+        }
+        return null;
+      };
+      for (const page of all) {
+        const found = find(page.blocks);
+        if (found) {
+          group = { page: page.name, kind: page.kind, blocks: [found] };
+          break;
+        }
+      }
+      if (!group) return null;
+      let emitted = 0;
+      let truncated = 0;
+      const count = (blocks: BlockDto[]): number => blocks.reduce((n, b) => n + 1 + count(b.children), 0);
+      const copy = (blocks: BlockDto[]): BlockDto[] => {
+        const out: BlockDto[] = [];
+        for (const block of blocks) {
+          if (emitted >= Math.max(1, maxNodes)) {
+            truncated += count([block]);
+            continue;
+          }
+          emitted++;
+          out.push({ ...block, children: copy(block.children) });
+        }
+        return out;
+      };
+      return { group: { ...group, blocks: copy(group.blocks) }, truncated };
     },
     async readAsset(name: string, maxBytes?: number): Promise<Uint8Array> {
       void maxBytes;
@@ -1077,6 +1262,9 @@ export function mockBackend(): Backend {
     },
     async importAsset(path: string, name?: string): Promise<string> {
       return name ?? path.split("/").pop() ?? path;
+    },
+    async importNativeCapture(path: string, name: string): Promise<string> {
+      return name || path.split("/").pop() || path;
     },
     async clipboardFiles() {
       return { files: [], skipped: 0, truncated: false };
@@ -1325,8 +1513,21 @@ export function mockBackend(): Backend {
     async readHighlights(pdf: string): Promise<Highlight[]> {
       return mockHighlights[pdf]?.highlights ?? [];
     },
+    async openPdf(pdf: string, label: string): Promise<PdfState> {
+      const current = mockHighlights[pdf] ?? { label, highlights: [] };
+      mockHighlights[pdf] = current;
+      return {
+        highlights: current.highlights,
+        page: current.page ?? null,
+        scale: current.scale ?? null,
+      };
+    },
     async writeHighlights(pdf: string, label: string, highlights: Highlight[], _baseIds: string[]): Promise<void> {
-      mockHighlights[pdf] = { label, highlights };
+      mockHighlights[pdf] = { ...mockHighlights[pdf], label, highlights };
+    },
+    async writePdfViewState(pdf: string, page: number, scale: number): Promise<void> {
+      const current = mockHighlights[pdf] ?? { label: pdf, highlights: [] };
+      mockHighlights[pdf] = { ...current, page, scale };
     },
     async savePdfAreaImage(
       pdf: string,

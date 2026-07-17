@@ -38,6 +38,10 @@ pub(crate) fn startup_graph_path(app: tauri::AppHandle) -> Option<String> {
 
 #[tauri::command]
 pub(crate) fn capture_target(state: State<'_, AppState>) -> Result<String, String> {
+    capture_target_for_state(&state)
+}
+
+fn capture_target_for_state(state: &AppState) -> Result<String, String> {
     let preferred = state.last_focused.lock().unwrap().clone();
     if let Some(label) =
         preferred.filter(|label| state.graphs.read().unwrap().slot(label).is_some())
@@ -53,6 +57,43 @@ pub(crate) fn capture_target(state: State<'_, AppState>) -> Result<String, Strin
         .next()
         .map(|entry| entry.0)
         .ok_or_else(|| "no graph window is open".to_string())
+}
+
+#[derive(serde::Serialize)]
+pub(crate) struct CaptureGraphBindingResult {
+    pub(crate) binding_generation: u64,
+}
+
+/// Snapshot the graph selected for a Quick Capture show. Calling this from the
+/// native show path revokes the prior capture lease before a focused, persistent
+/// capture WebView can issue a query against an older graph. The frontend calls
+/// it again to learn the generation it must present with IPC.
+pub(crate) fn refresh_capture_graph_binding(state: &AppState) -> Result<u64, String> {
+    let target = capture_target_for_state(state)?;
+    let slot = slot_for_window(state, &target)?;
+    let binding_generation = slot.binding_generation;
+    state.bind_capture_graph(target, binding_generation);
+    Ok(binding_generation)
+}
+
+/// Return the binding selected by the native capture-show path. This is
+/// intentionally separate from `GraphRegistry::bind`: the capture surface must
+/// never become a second owner/writer for the graph root. Do not choose again
+/// here: the frontend must receive the exact target/generation selected for
+/// this show, so an old asynchronous activation cannot retarget itself.
+#[tauri::command]
+pub(crate) fn capture_graph_binding(
+    window: tauri::WebviewWindow,
+    state: State<'_, AppState>,
+) -> Result<CaptureGraphBindingResult, String> {
+    if window.label() != "capture" {
+        return Err("capture graph binding is only available to quick capture".into());
+    }
+    let binding_generation = state
+        .capture_graph_binding()
+        .ok_or("no graph bound for quick capture")?
+        .binding_generation;
+    Ok(CaptureGraphBindingResult { binding_generation })
 }
 
 struct LoadedGraph {
@@ -107,8 +148,8 @@ pub(crate) fn inspect_graph_access(
         .ok_or_else(|| "no graph path provided (set TINE_GRAPH or pass a path)".to_string())?;
     let root = canonical_graph_root(&root)?;
     let external = Graph::external_assets_target(&root).map_err(|error| error.to_string())?;
-    let approved_target = approved_external_assets(&app, &root)
-        .and_then(|path| std::fs::canonicalize(path).ok());
+    let approved_target =
+        approved_external_assets(&app, &root).and_then(|path| std::fs::canonicalize(path).ok());
     let approved = external
         .as_ref()
         .is_none_or(|target| approved_target.as_ref() == Some(target));
@@ -208,7 +249,7 @@ pub(crate) fn load_graph_for_label(
     state.note_focused(window_label);
     poke_watcher(&state);
     if !launch_backup_done {
-        backup_async(app.clone(), &slot.graph);
+        backup_async(app.clone(), slot.clone());
     }
     remember_graph(app, &meta.root)?;
     if let Some(window) = app.get_webview_window(window_label) {
@@ -259,11 +300,19 @@ pub(crate) async fn open_graph_window(
                 .decorations(true)
                 .title_bar_style(tauri::TitleBarStyle::Overlay)
                 .hidden_title(true);
-            #[cfg(not(target_os = "macos"))]
-            let builder = builder.decorations(false);
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
+            let builder = builder.decorations(crate::settings::native_frame_active());
+            #[cfg(target_os = "windows")]
+            let builder = if let Some(arguments) = crate::windows_webdriver_args_from_env(None) {
+                builder.additional_browser_args(&arguments)
+            } else {
+                builder
+            };
             let built = builder.build();
             match built {
                 Ok(window) => {
+                    #[cfg(target_os = "linux")]
+                    crate::linux_window_identity::apply_to_window(&window);
                     let _ = window.set_focus();
                 }
                 Err(error) => {
@@ -376,20 +425,42 @@ pub(crate) fn warm_cache_async(
         // background so the first search / query / `g j` agenda doesn't pay for
         // parsing every file synchronously under the lock.
         std::thread::sleep(std::time::Duration::from_millis(250));
-        if slot.warm_generation.load(Ordering::Acquire) != warm_generation {
+        if slot.background_cancelled.load(Ordering::Acquire)
+            || slot.warm_generation.load(Ordering::Acquire) != warm_generation
+        {
             return; // the graph was switched while we slept — a newer warm owns it
         }
-        slot.graph.warm_cache();
+        // At most one process-wide graph warm parses files at a time. Rapid
+        // switches may leave short-lived sleepers, but cannot amplify disk/CPU
+        // work; revoked slots stop between page parses.
+        static WARM_WORK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        let _worker = WARM_WORK
+            .get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .unwrap();
+        if slot.background_cancelled.load(Ordering::Acquire)
+            || slot.warm_generation.load(Ordering::Acquire) != warm_generation
+        {
+            return;
+        }
+        let completed = slot.graph.warm_cache_cancellable(|| {
+            slot.background_cancelled.load(Ordering::Acquire)
+                || slot.warm_generation.load(Ordering::Acquire) != warm_generation
+        });
+        if !completed {
+            return;
+        }
         let state: State<'_, AppState> = app.state();
-        let still_current = state
+        let current = state
             .graphs
             .read()
             .unwrap()
-            .slot(&window_label)
-            .map(|current| Arc::ptr_eq(&current, &slot))
-            .unwrap_or(false);
+            .slot(&window_label);
+        let still_current = current.as_ref().is_some_and(|current| {
+            current.binding_generation == slot.binding_generation && current.root_key == slot.root_key
+        });
         if still_current && slot.warm_generation.load(Ordering::Acquire) == warm_generation {
-            slot.warm_done.store(true, Ordering::Release);
+            current.unwrap().warm_done.store(true, Ordering::Release);
             let _ = app.emit_to(&window_label, "warm-cache-done", ());
         }
     });

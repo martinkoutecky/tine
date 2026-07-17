@@ -22,7 +22,7 @@ fs.mkdirSync(ARTIFACT, { recursive: true });
 for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(`${GRAPH}/${dir}`, { recursive: true });
 for (const dir of ["data", "config", "cache"]) fs.mkdirSync(`${TMP}/xdg/${dir}`, { recursive: true });
 fs.writeFileSync(`${GRAPH}/logseq/config.edn`, "{}\n");
-fs.writeFileSync(PAGE_A, "- Editable sidebar text\n- Open [[Page B]]\n");
+fs.writeFileSync(PAGE_A, "- Sidebar fold parent\n  id:: sidebar-fold-parent-159\n  - Sidebar fold child\n    id:: sidebar-fold-child-159\n- Editable sidebar text\n- Open [[Page B]]\n");
 fs.writeFileSync(`${GRAPH}/pages/Page B.md`, "- Open [[Page A]]\n");
 const now = new Date();
 const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
@@ -76,7 +76,15 @@ async function openPagesInSidebar(browser) {
     const input = await browser.$(".switcher-input");
     await input.waitForExist({ timeout: 5000 });
     await input.setValue(name);
-    await browser.$(".switcher-row").click();
+    // Ctrl-K initially contains recent rows and updates results asynchronously.
+    // Clicking the first row immediately after setValue can therefore select the
+    // preceding page while the requested query is still in flight. Wait for and
+    // physically click the exact non-block page row the user intended.
+    const row = await browser.$(
+      `//*[contains(concat(' ', normalize-space(@class), ' '), ' switcher-row ') and not(contains(concat(' ', normalize-space(@class), ' '), ' block-result '))][.//*[contains(concat(' ', normalize-space(@class), ' '), ' switcher-name ') and normalize-space(.)='${name}']]`,
+    );
+    await row.waitForExist({ timeout: 10_000 });
+    await row.click();
     await browser.waitUntil(async () => (await browser.$("h1.page-title").getText()).trim() === name, {
       timeout: 10_000, timeoutMsg: `${name} did not open`,
     });
@@ -127,6 +135,22 @@ await withApp(0, async (browser) => {
   await openPagesInSidebar(browser);
   await browser.saveScreenshot(`${ARTIFACT}/expanded-items.png`);
   const pageA = await itemSelector("Page A");
+  const parentBlock = `${pageA} [data-block-id="sidebar-fold-parent-159"]`;
+  const childBlock = `${pageA} [data-block-id="sidebar-fold-child-159"]`;
+  const parentToggle = `${parentBlock} > .block-main .collapse-toggle.has-children`;
+  await browser.$(parentToggle).waitForExist({ timeout: 10_000 });
+  await browser.$(parentToggle).click();
+  await browser.waitUntil(() => browser.execute(({ pageSelector, childSelector }) => {
+    const item = document.querySelector(pageSelector);
+    return !document.querySelector(childSelector)
+      && !!item?.querySelector(":scope > .rs-item-body")
+      && item?.querySelector("[data-right-sidebar-item-toggle]")?.getAttribute("aria-expanded") === "true";
+  }, { pageSelector: pageA, childSelector: childBlock }), {
+    timeout: 10_000, timeoutMsg: "sidebar Block disclosure did not hide only its child",
+  });
+  await browser.$(parentToggle).click();
+  await browser.$(childBlock).waitForExist({ timeout: 10_000 });
+
   await browser.execute((selector) => document.querySelector(`${selector} [data-right-sidebar-item-toggle]`)?.focus(), pageA);
   await browser.keys("Enter");
   await expectBodies(browser, 1);
@@ -173,4 +197,4 @@ await withApp(1, async (browser) => {
   if (!empty.includes("Nothing open")) throw new Error(`missing empty collection state: ${empty}`);
 });
 
-console.log("PASS: right-sidebar disclosures, safe edit unmount, bulk controls, and restart restore work in WebKit");
+console.log("PASS: sidebar Block disclosure, item disclosures, safe edit unmount, bulk controls, and restart restore work in WebKit");

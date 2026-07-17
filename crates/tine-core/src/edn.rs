@@ -1,8 +1,17 @@
 //! A small EDN value model + parser/writer — just enough for the PDF highlight
 //! files Logseq writes (`assets/<key>.edn`): nil/bool/int/float/string/keyword,
-//! vectors, and maps. Not a full EDN implementation.
+//! vectors, lists, maps, and tagged values such as `#uuid`. Not a full EDN
+//! implementation.
 
 use std::fmt::Write as _;
+
+// A sidecar is user-controlled input opened by the native process. These limits
+// are intentionally far above any realistic highlight file, but keep malformed
+// or hostile EDN from consuming unbounded native memory or stack.
+const MAX_INPUT_BYTES: usize = 64 * 1024 * 1024;
+const MAX_DEPTH: usize = 128;
+const MAX_NODES: usize = 1_000_000;
+const MAX_COLLECTION_ITEMS: usize = 250_000;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Edn {
@@ -13,7 +22,9 @@ pub enum Edn {
     Str(String),
     Keyword(String), // without the leading ':'
     Vec(Vec<Edn>),
+    List(Vec<Edn>),
     Map(Vec<(Edn, Edn)>),
+    Tagged(String, Box<Edn>),
 }
 
 impl Edn {
@@ -31,6 +42,7 @@ impl Edn {
     pub fn as_str(&self) -> Option<&str> {
         match self {
             Edn::Str(s) => Some(s),
+            Edn::Tagged(_, value) => value.as_str(),
             _ => None,
         }
     }
@@ -50,17 +62,22 @@ impl Edn {
     }
     pub fn as_vec(&self) -> Option<&[Edn]> {
         match self {
-            Edn::Vec(v) => Some(v),
+            Edn::Vec(v) | Edn::List(v) => Some(v),
             _ => None,
         }
     }
 }
 
 pub fn parse(input: &str) -> Option<Edn> {
+    if input.len() > MAX_INPUT_BYTES {
+        return None;
+    }
     let mut p = Parser {
         s: input.as_bytes(),
         i: 0,
         src: input,
+        depth: 0,
+        nodes: 0,
     };
     p.skip_ws();
     let v = p.value()?;
@@ -72,10 +89,15 @@ pub fn parse(input: &str) -> Option<Edn> {
 /// Mutation baselines use this stricter form so recoverable trailing bytes are
 /// never silently discarded by a parse-and-reserialize cycle.
 pub fn parse_strict(input: &str) -> Option<Edn> {
+    if input.len() > MAX_INPUT_BYTES {
+        return None;
+    }
     let mut p = Parser {
         s: input.as_bytes(),
         i: 0,
         src: input,
+        depth: 0,
+        nodes: 0,
     };
     p.skip_ws();
     let value = p.value()?;
@@ -87,6 +109,8 @@ struct Parser<'a> {
     s: &'a [u8],
     i: usize,
     src: &'a str,
+    depth: usize,
+    nodes: usize,
 }
 
 impl<'a> Parser<'a> {
@@ -110,13 +134,22 @@ impl<'a> Parser<'a> {
         if self.i >= self.s.len() {
             return None;
         }
-        match self.s[self.i] {
+        if self.depth >= MAX_DEPTH || self.nodes >= MAX_NODES {
+            return None;
+        }
+        self.depth += 1;
+        self.nodes += 1;
+        let value = match self.s[self.i] {
             b'{' => self.map(),
             b'[' => self.vector(),
+            b'(' => self.list(),
             b'"' => self.string(),
             b':' => self.keyword(),
+            b'#' => self.tagged(),
             _ => self.atom(),
-        }
+        };
+        self.depth -= 1;
+        value
     }
 
     fn map(&mut self) -> Option<Edn> {
@@ -130,6 +163,9 @@ impl<'a> Parser<'a> {
             if self.s[self.i] == b'}' {
                 self.i += 1;
                 break;
+            }
+            if pairs.len() >= MAX_COLLECTION_ITEMS {
+                return None;
             }
             let k = self.value()?;
             let v = self.value()?;
@@ -150,9 +186,46 @@ impl<'a> Parser<'a> {
                 self.i += 1;
                 break;
             }
+            if items.len() >= MAX_COLLECTION_ITEMS {
+                return None;
+            }
             items.push(self.value()?);
         }
         Some(Edn::Vec(items))
+    }
+
+    fn list(&mut self) -> Option<Edn> {
+        self.i += 1; // (
+        let mut items = Vec::new();
+        loop {
+            self.skip_ws();
+            if self.i >= self.s.len() {
+                return None;
+            }
+            if self.s[self.i] == b')' {
+                self.i += 1;
+                break;
+            }
+            if items.len() >= MAX_COLLECTION_ITEMS {
+                return None;
+            }
+            items.push(self.value()?);
+        }
+        Some(Edn::List(items))
+    }
+
+    fn tagged(&mut self) -> Option<Edn> {
+        self.i += 1; // '#'
+        let start = self.i;
+        while self.i < self.s.len() && !is_delim(self.s[self.i]) {
+            self.i += 1;
+        }
+        if self.i == start {
+            return None;
+        }
+        let tag = self.src[start..self.i].to_string();
+        let value = self.value()?;
+        Some(Edn::Tagged(tag, Box::new(value)))
     }
 
     fn string(&mut self) -> Option<Edn> {
@@ -190,13 +263,18 @@ impl<'a> Parser<'a> {
         while self.i < self.s.len() && !is_delim(self.s[self.i]) {
             self.i += 1;
         }
-        Some(Edn::Keyword(self.src[start..self.i].to_string()))
+        (self.i > start).then(|| Edn::Keyword(self.src[start..self.i].to_string()))
     }
 
     fn atom(&mut self) -> Option<Edn> {
         let start = self.i;
         while self.i < self.s.len() && !is_delim(self.s[self.i]) {
             self.i += 1;
+        }
+        // Never return a value without consuming input. Unsupported delimiters
+        // must fail closed instead of making a collection loop allocate forever.
+        if self.i == start {
+            return None;
         }
         let tok = &self.src[start..self.i];
         Some(match tok {
@@ -269,6 +347,16 @@ fn write_edn(e: &Edn, out: &mut String) {
             }
             out.push(']');
         }
+        Edn::List(items) => {
+            out.push('(');
+            for (i, it) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push(' ');
+                }
+                write_edn(it, out);
+            }
+            out.push(')');
+        }
         Edn::Map(pairs) => {
             out.push('{');
             for (i, (k, v)) in pairs.iter().enumerate() {
@@ -280,6 +368,12 @@ fn write_edn(e: &Edn, out: &mut String) {
                 write_edn(v, out);
             }
             out.push('}');
+        }
+        Edn::Tagged(tag, value) => {
+            out.push('#');
+            out.push_str(tag);
+            out.push(' ');
+            write_edn(value, out);
         }
     }
 }
@@ -306,5 +400,32 @@ mod tests {
         let e = parse(r#"{:top 100.5 :image nil}"#).unwrap();
         assert_eq!(e.get("top").unwrap().as_f64(), Some(100.5));
         assert_eq!(e.get("image"), Some(&Edn::Nil));
+    }
+
+    #[test]
+    fn parses_and_preserves_logseq_uuid_tags_and_rect_lists() {
+        let src = r#"{:id #uuid "6a5604f8-a337-4336-a711-2ba6bc14fbfd"
+            :rects ({:x1 10 :y1 20 :x2 30 :y2 40})}"#;
+        let parsed = parse_strict(src).unwrap();
+        assert_eq!(
+            parsed.get("id").and_then(Edn::as_str),
+            Some("6a5604f8-a337-4336-a711-2ba6bc14fbfd")
+        );
+        assert_eq!(parsed.get("rects").and_then(Edn::as_vec).unwrap().len(), 1);
+        assert_eq!(parse_strict(&to_string(&parsed)), Some(parsed));
+    }
+
+    #[test]
+    fn malformed_or_excessively_nested_collections_fail_closed() {
+        for src in ["(", "[1 2", "{:a 1", "(#uuid", "]", ")", "}", ":"] {
+            assert_eq!(parse_strict(src), None, "accepted malformed EDN: {src}");
+        }
+
+        let too_deep = format!(
+            "{}nil{}",
+            "[".repeat(MAX_DEPTH + 1),
+            "]".repeat(MAX_DEPTH + 1)
+        );
+        assert_eq!(parse_strict(&too_deep), None);
     }
 }

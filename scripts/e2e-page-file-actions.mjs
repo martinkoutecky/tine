@@ -43,6 +43,31 @@ const td = spawn(TD, ["--port", String(DRIVER_PORT), "--native-port", String(NAT
 await sleep(2500);
 
 let browser;
+async function activePageAction() {
+  return browser.execute(() => document.activeElement?.getAttribute("data-page-action-id") ?? null);
+}
+
+async function openTitleActions() {
+  const trigger = await browser.$("[data-page-actions-trigger]");
+  await trigger.click();
+  await browser.$('.ctx-menu[role="menu"]').waitForExist({ timeout: 5_000 });
+  await browser.waitUntil(async () => (await activePageAction()) === "open", {
+    timeout: 5_000,
+    timeoutMsg: "page actions did not focus the first enabled item",
+  });
+  return trigger;
+}
+
+async function focusFavoriteAction() {
+  await browser.keys("Home");
+  await browser.keys("ArrowDown");
+  await browser.keys("ArrowDown");
+  await browser.keys("ArrowDown");
+  if (await activePageAction() !== "favorite-toggle") {
+    throw new Error(`keyboard navigation missed favorite-toggle; active=${await activePageAction()}`);
+  }
+}
+
 async function runMenu(label) {
   await browser.execute(() => {
     const title = document.querySelector("h1.page-title");
@@ -68,13 +93,140 @@ try {
     if (await link.isExisting()) { await link.click(); break; }
   }
   await browser.$("h1.page-title").waitForExist({ timeout: 10_000 });
+
+  // GH #184: a duplicated page surface must expose expanded state only on the
+  // exact trigger that owns the global page menu. A title right-click has no
+  // ellipsis owner, so neither duplicate trigger may claim it.
+  await browser.execute(() => {
+    window.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "\\", code: "Backslash", ctrlKey: true, altKey: true,
+      bubbles: true, cancelable: true,
+    }));
+  });
+  await browser.waitUntil(() => browser.execute(() =>
+    document.querySelectorAll(".pane-leaf[data-pane-id]").length === 2,
+  ), { timeout: 10_000, timeoutMsg: "duplicate page split was not created" });
+  const splitPane = await browser.execute(() =>
+    [...document.querySelectorAll(".pane-leaf[data-pane-id]")]
+      .map((pane) => pane.getAttribute("data-pane-id"))
+      .find((id) => id && id !== "main") ?? null,
+  );
+  if (!splitPane) throw new Error("duplicate page split id was not found");
+  const expandedByPane = () => browser.execute(() => Object.fromEntries(
+    [...document.querySelectorAll(".pane-leaf[data-pane-id]")]
+      .map((pane) => [
+        pane.getAttribute("data-pane-id"),
+        pane.querySelector("[data-page-actions-trigger]")?.getAttribute("aria-expanded") ?? null,
+      ]),
+  ));
+  const assertExpanded = async (expected, label) => {
+    const actual = await expandedByPane();
+    const keys = Object.keys(actual);
+    if (keys.length !== Object.keys(expected).length
+        || Object.entries(expected).some(([paneId, value]) => actual[paneId] !== value)) {
+      throw new Error(`${label}: ${JSON.stringify(actual)} expected ${JSON.stringify(expected)}`);
+    }
+  };
+
+  await browser.$('.pane-leaf[data-pane-id="main"] [data-page-actions-trigger]').click();
+  await browser.$('.ctx-menu[role="menu"]').waitForExist({ timeout: 5_000 });
+  await assertExpanded({ main: "true", [splitPane]: "false" }, "main page-actions owner mismatch");
+  await browser.keys("Escape");
+  await browser.$('.ctx-menu[role="menu"]').waitForExist({ reverse: true, timeout: 5_000 });
+  await assertExpanded({ main: "false", [splitPane]: "false" }, "closed duplicate page-actions state mismatch");
+
+  await browser.$(`.pane-leaf[data-pane-id="${splitPane}"] [data-page-actions-trigger]`).click();
+  await browser.$('.ctx-menu[role="menu"]').waitForExist({ timeout: 5_000 });
+  await assertExpanded({ main: "false", [splitPane]: "true" }, "split page-actions owner mismatch");
+  await browser.keys("Escape");
+  await browser.$('.ctx-menu[role="menu"]').waitForExist({ reverse: true, timeout: 5_000 });
+
+  await browser.execute(() => {
+    const title = document.querySelector('.pane-leaf[data-pane-id="main"] h1.page-title');
+    title?.dispatchEvent(new MouseEvent("contextmenu", {
+      bubbles: true, cancelable: true, clientX: 100, clientY: 100,
+    }));
+  });
+  await browser.$('.ctx-menu[role="menu"]').waitForExist({ timeout: 5_000 });
+  await assertExpanded({ main: "false", [splitPane]: "false" }, "title right-click claimed an ellipsis owner");
+  await browser.keys("Escape");
+  await browser.$('.ctx-menu[role="menu"]').waitForExist({ reverse: true, timeout: 5_000 });
+
+  await openTitleActions();
+  const ids = await browser.execute(() => [...document.querySelectorAll("[data-page-action-id]")]
+    .map((item) => item.getAttribute("data-page-action-id")));
+  const expectedIds = [
+    "open", "open-sidebar", "open-new-tab", "favorite-toggle",
+    "copy-page-ref", "copy-page-markdown", "export-pdf",
+    "show-in-folder", "open-default-app", "page-properties",
+    "rename-page", "delete-page",
+  ];
+  if (JSON.stringify(ids) !== JSON.stringify(expectedIds)) {
+    throw new Error(`page action identity/order mismatch: ${JSON.stringify(ids)}`);
+  }
+  await browser.keys("ArrowUp");
+  if (await activePageAction() !== "delete-page") throw new Error("ArrowUp did not wrap to the last page action");
+  await browser.keys("Home");
+  if (await activePageAction() !== "open") throw new Error("Home did not focus the first page action");
+  await browser.keys("End");
+  if (await activePageAction() !== "delete-page") throw new Error("End did not focus the last page action");
+
+  await browser.$('[data-page-action-id="rename-page"]').click();
+  await browser.$(".ctx-rename-name").waitForExist({ timeout: 5_000 });
+  await browser.keys("Escape");
+  await browser.waitUntil(async () => (await activePageAction()) === "rename-page", {
+    timeout: 5_000,
+    timeoutMsg: "first rename Escape did not keep the menu open and restore the rename item",
+  });
+  await browser.keys("Escape");
+  await browser.$('.ctx-menu[role="menu"]').waitForExist({ reverse: true, timeout: 5_000 });
+  const triggerRestored = await browser.execute(() => document.activeElement?.hasAttribute("data-page-actions-trigger") ?? false);
+  if (!triggerRestored) throw new Error("second Escape did not restore the page actions trigger");
+
+  await openTitleActions();
+  await focusFavoriteAction();
+  await browser.keys("Enter");
+  await browser.$('.ctx-menu[role="menu"]').waitForExist({ reverse: true, timeout: 5_000 });
+  if (!(await browser.$(".fav-star").getAttribute("class")).includes("active")) {
+    throw new Error("Enter did not activate favorite-toggle exactly once");
+  }
+  await openTitleActions();
+  await focusFavoriteAction();
+  await browser.keys(" ");
+  await browser.$('.ctx-menu[role="menu"]').waitForExist({ reverse: true, timeout: 5_000 });
+  if ((await browser.$(".fav-star").getAttribute("class")).includes("active")) {
+    throw new Error("Space did not activate favorite-toggle exactly once");
+  }
+
+  await browser.setWindowSize(360, 640);
+  await openTitleActions();
+  const narrowGeometry = await browser.execute(() => {
+    const menu = document.querySelector('.ctx-menu[role="menu"]')?.getBoundingClientRect();
+    const trigger = document.querySelector("[data-page-actions-trigger]")?.getBoundingClientRect();
+    return menu && trigger ? {
+      innerWidth,
+      innerHeight,
+      menu: { left: menu.left, top: menu.top, right: menu.right, bottom: menu.bottom },
+      trigger: { width: trigger.width, height: trigger.height },
+    } : null;
+  });
+  if (!narrowGeometry
+      || narrowGeometry.menu.left < 0
+      || narrowGeometry.menu.top < 0
+      || narrowGeometry.menu.right > narrowGeometry.innerWidth
+      || narrowGeometry.menu.bottom > narrowGeometry.innerHeight) {
+    throw new Error(`360px page actions escaped the viewport: ${JSON.stringify(narrowGeometry)}`);
+  }
+  await browser.keys("Escape");
+  await browser.setWindowSize(1000, 720);
+
   await runMenu("Show in folder");
   await browser.waitUntil(() => fs.existsSync(CALLS), { timeout: 5000 });
   await runMenu("Open with default app");
   await browser.waitUntil(() => fs.readFileSync(CALLS, "utf8").trim().split("\n").length >= 2, { timeout: 5000 });
   const calls = fs.readFileSync(CALLS, "utf8").trim().split("\n");
   if (calls[0] !== path.dirname(SOURCE) || calls[1] !== SOURCE) throw new Error(`wrong opener argv: ${JSON.stringify(calls)}`);
-  console.log(`PASS: reveal used ${calls[0]} and open used exact source ${calls[1]}`);
+  console.log(`PASS: accessible ellipsis keyboard/focus flow and title right-click used exact source actions ${calls[0]} / ${calls[1]}`);
 } finally {
   try { await browser?.deleteSession(); } catch {}
   try { process.kill(-td.pid, "SIGKILL"); } catch {}

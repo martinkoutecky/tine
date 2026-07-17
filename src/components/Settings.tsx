@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, onMount, type JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { ImproveTab } from "./ImproveTab";
 import { AboutTab } from "./AboutTab";
 import {
@@ -66,7 +66,7 @@ import {
 import { navReuseTabs, setNavReuseTabs } from "../navSettings";
 import { spaceAfterRefCompletion, setSpaceAfterRefCompletion } from "../refCompletionSettings";
 import { allowLocalFileImages, setAllowLocalFileImages } from "../localFileSettings";
-import { linkFirstMatch, setLinkFirstMatch } from "../editor/linkDefault";
+import { linkAutocompletePolicy, setLinkAutocompletePolicy, type LinkAutocompletePolicy } from "../editor/linkDefault";
 import {
   spellcheckEnabled,
   setSpellcheckEnabled,
@@ -116,6 +116,12 @@ import {
   type RegistryPlugin,
   type RegistryVersion,
 } from "../plugins/registry";
+import {
+  launcherRankingEnabled,
+  resetLauncherRanking,
+  setLauncherRankingEnabled,
+} from "../launcherRanking";
+import { registerTransientLayer } from "../transientLayers";
 
 // Journal display-title formats offered in the date-format dropdown — OG's
 // `journal-title-formatters` set (frontend/date.cljs). Display-only; the on-disk
@@ -171,8 +177,9 @@ const SETTING_SEARCH: SettingSearchEntry[] = [
   { tab: "appearance", label: "Smooth scrolling (experimental)", description: "animated journal scrolling WebKit", aliases: ["scroll animation"], level: "advanced" },
   { tab: "appearance", label: "System title bar & window controls", description: "native frame chrome" },
   { tab: "editor", label: "File format", description: "new pages Markdown Org" },
-  { tab: "editor", label: "Link autocomplete default", description: "create page first match", level: "advanced" },
+  { tab: "editor", label: "Link autocomplete default", description: "OG adaptive existing typed page tag completion", level: "advanced" },
   { tab: "editor", label: "Switch to an already-open tab when navigating", description: "reuse tabs", level: "advanced" },
+  { tab: "editor", label: "Learn Ctrl+K choices", description: "adaptive launcher ranking reset history", level: "advanced" },
   { tab: "editor", label: "Spell checker", description: "dictionaries languages spelling" },
   { tab: "editor", label: "Copy a parent block's sub-blocks", description: "clipboard subtree", level: "advanced" },
   { tab: "editor", label: "Strip collapsed:: when copying", description: "clipboard properties", level: "advanced" },
@@ -251,6 +258,23 @@ export function Settings(): JSX.Element {
 
   // Recording: capture the next chord for the command being remapped.
   const [recording, setRecording] = createSignal<string | null>(null);
+  // Settings owns its semantic Escape rungs.  Registering here (rather than in
+  // App) keeps shortcut recording/search/disclosures from being skipped by a
+  // blanket modal close and ensures disposal follows this component lifetime.
+  createEffect(() => {
+    if (!settingsOpen()) return;
+    const unregister = registerTransientLayer({
+      id: "settings",
+      root: () => document.querySelector<HTMLElement>(".settings-modal"),
+      dismiss: () => {
+        if (recording()) { setRecording(null); return true; }
+        if (settingsQuery()) { setSettingsQuery(""); return true; }
+        closeSettings();
+        return true;
+      },
+    });
+    onCleanup(unregister);
+  });
   createEffect(() => {
     const id = recording();
     if (!id) {
@@ -260,12 +284,11 @@ export function Settings(): JSX.Element {
     setKeybindingsSuspended(true);
     onCleanup(() => setKeybindingsSuspended(false));
     const onKey = (e: KeyboardEvent) => {
+      // Escape belongs to the one capture dispatcher.  It will dismiss this
+      // recording rung before the lower Settings/modal ladder.
+      if (e.key === "Escape" || e.isComposing || e.keyCode === 229) return;
       e.preventDefault();
       e.stopPropagation();
-      if (e.key === "Escape") {
-        setRecording(null);
-        return;
-      }
       const b = eventToBindingString(e);
       if (!b) return; // bare modifier — keep waiting
       setShortcutOverride(id, b);
@@ -306,6 +329,7 @@ export function Settings(): JSX.Element {
                 value={settingsQuery()}
                 onInput={(event) => setSettingsQuery(event.currentTarget.value)}
                 onKeyDown={(event) => {
+                  if (event.isComposing || event.keyCode === 229) return;
                   if (event.key === "Escape" && settingsQuery()) {
                     event.preventDefault();
                     setSettingsQuery("");
@@ -941,6 +965,7 @@ function OgField(props: {
 }
 
 function AdvancedSection(props: { tab: Tab; forceOpen: boolean; children: JSX.Element }): JSX.Element {
+  const layerId = `settings-advanced-${createUniqueId()}`;
   const key = `tine.settings.advanced.${props.tab}`;
   let initial = false;
   try { initial = localStorage.getItem(key) === "1"; } catch {}
@@ -955,6 +980,17 @@ function AdvancedSection(props: { tab: Tab; forceOpen: boolean; children: JSX.El
     setOpen(next);
     persist(next);
   };
+  createEffect(() => {
+    if (!open() || props.forceOpen) return;
+    const unregister = registerTransientLayer({
+      id: layerId,
+      parentId: "settings",
+      root: () => button?.closest<HTMLElement>(".settings-advanced") ?? null,
+      trigger: () => button ?? null,
+      dismiss: () => { setOpen(false); persist(false); return true; },
+    });
+    onCleanup(unregister);
+  });
   return (
     <section class="settings-advanced">
       <button
@@ -964,6 +1000,7 @@ function AdvancedSection(props: { tab: Tab; forceOpen: boolean; children: JSX.El
         aria-expanded={expanded()}
         onClick={toggle}
         onKeyDown={(event) => {
+          if (event.isComposing || event.keyCode === 229) return;
           if (event.key === "Escape" && open() && !props.forceOpen) {
             event.preventDefault();
             setOpen(false);
@@ -1065,6 +1102,21 @@ function AppearanceTab(props: { search: string }): JSX.Element {
       setThemePackageBusy(null);
     }
   };
+  const [savingNativeFrame, setSavingNativeFrame] = createSignal(false);
+  const changeNativeFrame = async () => {
+    if (savingNativeFrame()) return;
+    setSavingNativeFrame(true);
+    const next = !nativeFrameEnabled();
+    try {
+      await setNativeFrame(next);
+      pushToast("Saved. Restart Tine to apply the window-frame change.", "info");
+    } catch (error) {
+      pushToast(`Couldn't save the window-frame setting. (${String(error)})`, "error");
+    } finally {
+      setSavingNativeFrame(false);
+    }
+  };
+
   return (
     <>
       <div class="settings-row">
@@ -1320,9 +1372,9 @@ function AppearanceTab(props: { search: string }): JSX.Element {
       <Show when={isTauri() && !isMac}>
         <Field
           label="System title bar & window controls"
-          hint="Use your OS's native window frame (title bar, minimize/maximize/close, rounded corners) instead of Tine's compact built-in controls. Off by default — the built-in controls save a row of vertical space."
+          hint="Use your OS's native window frame (title bar, minimize/maximize/close, rounded corners) instead of Tine's compact built-in controls. Restart Tine after changing this setting. Off by default — the built-in controls save a row of vertical space."
         >
-          <Toggle on={nativeFrameEnabled()} onClick={() => setNativeFrame(!nativeFrameEnabled())} />
+          <Toggle on={nativeFrameEnabled()} onClick={() => void changeNativeFrame()} />
         </Field>
       </Show>
       <Show when={isTauri() && isMac}>
@@ -1516,9 +1568,17 @@ function EditorTab(props: { search: string }): JSX.Element {
       <AdvancedSection tab="editor" forceOpen={advancedMatch("editor", props.search)}>
         <Field
           label="Link autocomplete default"
-          hint={`When you type [[name (or #name) that isn’t an exact existing page: ON → Enter LINKS to the first match (and “Create…” moves to the end of the list); OFF (default, like Logseq) → Enter CREATES a new page/tag unless an exact match exists. Either way the arrow keys reach the other options.`}
+          hint="Controls Enter for non-exact [[name and #name completion. OG adaptive (default) picks the shortest lexical strict-prefix match and puts Create immediately after it; fuzzy-only matches leave Create first. Prefer existing always leads with a match; Prefer exactly what I typed leads with Create. Exact existing names always select the existing page."
         >
-          <Toggle on={linkFirstMatch()} onClick={() => setLinkFirstMatch(!linkFirstMatch())} />
+          <select
+            aria-label="Link autocomplete default"
+            value={linkAutocompletePolicy()}
+            onChange={(event) => setLinkAutocompletePolicy(event.currentTarget.value as LinkAutocompletePolicy)}
+          >
+            <option value="adaptive">OG adaptive</option>
+            <option value="existing">Prefer existing</option>
+            <option value="typed">Prefer exactly what I typed</option>
+          </select>
         </Field>
 
         <Field
@@ -1526,6 +1586,28 @@ function EditorTab(props: { search: string }): JSX.Element {
           hint="Plain navigation to a page, journal, or exact zoomed/file-pinned view focuses the matching tab if one is already open. Middle-click and explicit Open in new tab still create another tab."
         >
           <Toggle on={navReuseTabs()} onClick={() => setNavReuseTabs(!navReuseTabs())} />
+        </Field>
+
+        <Field
+          label="Learn Ctrl+K choices"
+          hint="After you deliberately open the same result more than once for a query, Ctrl+K may prefer it only among equally strong matches. History stays on this device and in this graph; saved searches and queries remain deterministic."
+        >
+          <>
+            <Toggle
+              on={launcherRankingEnabled()}
+              onClick={() => setLauncherRankingEnabled(!launcherRankingEnabled())}
+            />
+            <button
+              type="button"
+              class="og-revert"
+              onClick={() => {
+                resetLauncherRanking(graphMeta()?.root ?? "");
+                pushToast("Ctrl+K ranking reset for this graph");
+              }}
+            >
+              Reset ranking
+            </button>
+          </>
         </Field>
 
         <OgField
@@ -1887,6 +1969,9 @@ function ConflictFileRow(props: {
   onRename: (newName: string) => void;
   onTrash: () => void;
 }): JSX.Element {
+  const rowLayerId = `journal-conflict-${props.file.path}`;
+  let renameRoot: HTMLDivElement | undefined;
+  let contentRoot: HTMLPreElement | undefined;
   const [open, setOpen] = createSignal(false);
   const [renaming, setRenaming] = createSignal(false);
   const [newName, setNewName] = createSignal("");
@@ -1900,9 +1985,29 @@ function ConflictFileRow(props: {
     setRenaming(false);
     setNewName("");
   };
+  createEffect(() => {
+    if (!open()) return;
+    const unregister = registerTransientLayer({
+      id: `${rowLayerId}-content`,
+      parentId: "settings",
+      root: () => contentRoot ?? null,
+      dismiss: () => { setOpen(false); return true; },
+    });
+    onCleanup(unregister);
+  });
+  createEffect(() => {
+    if (!renaming()) return;
+    const unregister = registerTransientLayer({
+      id: `${rowLayerId}-rename`,
+      parentId: "settings",
+      root: () => renameRoot ?? null,
+      dismiss: () => { setRenaming(false); setNewName(""); return true; },
+    });
+    onCleanup(unregister);
+  });
   return (
     <>
-      <div class="journal-conflict-row">
+      <div class="journal-conflict-row" data-journal-conflict={props.file.path}>
         <button class="settings-asset-name mono" title="Show this file's contents" onClick={() => setOpen(!open())}>
           {open() ? "▾ " : "▸ "}
           {props.file.name}
@@ -1929,13 +2034,14 @@ function ConflictFileRow(props: {
       </div>
       <div class="journal-conflict-preview">{props.file.preview}</div>
       <Show when={renaming()}>
-        <div class="journal-conflict-rename">
+        <div ref={renameRoot} class="journal-conflict-rename">
           <input
             class="settings-input"
             placeholder="New page name"
             value={newName()}
             onInput={(e) => setNewName(e.currentTarget.value)}
             onKeyDown={(e) => {
+              if (e.isComposing || e.keyCode === 229) return;
               if (e.key === "Enter") submitRename();
               else if (e.key === "Escape") setRenaming(false);
             }}
@@ -1945,7 +2051,7 @@ function ConflictFileRow(props: {
         </div>
       </Show>
       <Show when={open()}>
-        <pre class="journal-conflict-content">{content.loading ? "…" : content() || "(empty file)"}</pre>
+        <pre ref={contentRoot} class="journal-conflict-content">{content.loading ? "…" : content() || "(empty file)"}</pre>
       </Show>
     </>
   );
@@ -2198,6 +2304,11 @@ function DiffRowView(props: {
 // until "Merge & trash copy". Resolving goes through the safe backend path
 // (base_rev-guarded save + stage-before-commit trash).
 function SyncConflictMergeModal(props: { conflict: SyncConflict; onClose: () => void }): JSX.Element {
+  let root: HTMLDivElement | undefined;
+  createEffect(() => {
+    const unregister = registerTransientLayer({ id: `sync-conflict-merge-${props.conflict.path}`, parentId: "settings", root: () => root ?? null, dismiss: () => { props.onClose(); return true; } });
+    onCleanup(unregister);
+  });
   const winner = props.conflict.base_path!; // only opened when the winner exists
   const [decisions, setDecisions] = createSignal<Record<string, MergeDecision>>({});
   const [preChoice, setPreChoice] = createSignal<"mine" | "theirs" | "union">("union");
@@ -2264,7 +2375,7 @@ function SyncConflictMergeModal(props: { conflict: SyncConflict; onClose: () => 
   });
   return (
     <div class="sync-merge-overlay" onClick={props.onClose}>
-      <div class="sync-merge-modal" onClick={(e) => e.stopPropagation()}>
+      <div ref={root} class="sync-merge-modal" onClick={(e) => e.stopPropagation()}>
         <div class="sync-merge-header">
           <div>
             <div class="sync-merge-title">Merge “{props.conflict.base_name}”</div>

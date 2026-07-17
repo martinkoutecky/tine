@@ -12,6 +12,30 @@ afterEach(() => {
 });
 
 describe("Settings progressive disclosure and search", () => {
+  it("exposes the accessible three-mode Link autocomplete policy through Settings search", async () => {
+    const root = document.createElement("div");
+    document.body.append(root);
+    const dispose = render(() => <Settings />, root);
+    openSettings("editor");
+    await tick();
+
+    const search = root.querySelector(".settings-search-input") as HTMLInputElement;
+    search.value = "link autocomplete default";
+    search.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    await tick();
+    expect(root.textContent).toContain("Link autocomplete default");
+    const policy = root.querySelector<HTMLSelectElement>('select[aria-label="Link autocomplete default"]');
+    expect(policy?.value).toBe("adaptive");
+    expect([...policy!.options].map((option) => option.text)).toEqual([
+      "OG adaptive", "Prefer existing", "Prefer exactly what I typed",
+    ]);
+    policy!.value = "typed";
+    policy!.dispatchEvent(new Event("change", { bubbles: true }));
+    await tick();
+    expect(policy!.value).toBe("typed");
+    dispose();
+  });
+
   it("reveals an Advanced match across tabs and clearing restores the collapsed state", async () => {
     const root = document.createElement("div");
     document.body.append(root);

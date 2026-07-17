@@ -98,8 +98,11 @@ try {
   await page.screenshot({ path: "screenshots/plugins-mobile.png" });
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   if (overflow > 1) throw new Error(`plugin settings overflow the mobile viewport by ${overflow}px`);
+  // At phone width the Settings sheet can physically overlap a toast. This gate
+  // is about the uninstall lifecycle, not toast stacking, so force dismissal
+  // instead of depending on that unrelated pointer geometry.
   for (let attempt = 0; attempt < 10 && await page.locator(".toast-close").count(); attempt += 1) {
-    await page.locator(".toast-close").first().click();
+    await page.locator(".toast-close").first().click({ force: true });
   }
   page.once("dialog", (dialog) => void dialog.accept());
   await installed.getByRole("button", { name: "Uninstall…", exact: true }).click();

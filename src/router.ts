@@ -78,6 +78,9 @@ export interface PaneRouter {
   tabRoute(t: Tab): Route;
   route(): Route;
   restoreScrollFor(r: Route): void;
+  /** Record the currently displayed route as a real foreground activation.
+   *  Session restore/preload deliberately do not call this boundary. */
+  activateCurrentRoute(): void;
   openPage(
     name: string,
     pageKind?: "journal" | "page",
@@ -173,6 +176,12 @@ function isGuideRouteName(name: string): boolean {
   return name.startsWith(GUIDE_DISPLAY_PREFIX);
 }
 
+/** RECENT is a graph-global MRU of pages the user actually brought to the
+ *  foreground, not a log of route objects that happened to be constructed. */
+function promoteRecentRoute(r: Route): void {
+  if (r.kind === "page" && !isGuideRouteName(r.name)) pushRecent(r.name, r.pageKind);
+}
+
 /** Stable partition: all pinned tabs first (in their relative order), then the
  *  unpinned ones. Pinned tabs always sit to the left of the strip (matches the
  *  OG plugin), so a pinned tab can't be visually stranded among unpinned ones. */
@@ -214,8 +223,8 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
 
   // Start on a single journals tab. The saved session (if any) is loaded
   // asynchronously from the backend by restoreSession(), called once at startup
-  // before first paint - see main.tsx. (localStorage isn't durably persisted in
-  // this WebKitGTK app, so the session round-trips through a real backend file.)
+  // before first paint - see main.tsx. The structured session round-trips through
+  // an atomic backend file rather than being tied to one WebView's localStorage.
   const [tabs, setTabs] = createSignal<Tab[]>([
     { id: newId(), history: [{ kind: "journals" }], pos: 0, pinned: false },
   ]);
@@ -255,6 +264,10 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     return tabRoute(activeTab());
   }
 
+  function activateCurrentRoute(): void {
+    promoteRecentRoute(route());
+  }
+
   function mobileHistoryAvailable(): boolean {
     return (
       isMobilePlatform &&
@@ -285,6 +298,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
   function applyRouterBack() {
     rememberScroll(); // save this entry's scroll before stepping back
     setTabs(tabs().map((t) => (t.id === activeId() ? { ...t, pos: t.pos - 1 } : t)));
+    activateCurrentRoute();
     persist();
   }
 
@@ -407,6 +421,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
         return { ...t, history, pos: history.length - 1 };
       })
     );
+    activateCurrentRoute();
     persist();
     pushMobileHistoryEntry();
   }
@@ -419,7 +434,6 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     // Resolve aliases so the route + working-set key use the canonical page name.
     if (pageKind === "page" && !isGuideRouteName(name)) name = resolveAlias(name);
     navigate({ kind: "page", name, pageKind }, { sticky: !opts.inPlace });
-    if (!isGuideRouteName(name)) pushRecent(name, pageKind);
   }
 
   function openJournals(opts: { inPlace?: boolean } = {}) {
@@ -434,6 +448,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
       history[tab.pos] = nextRoute;
       return { ...tab, history };
     }));
+    activateCurrentRoute();
     persist();
   }
 
@@ -486,7 +501,6 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     opts: { inPlace?: boolean } = {}
   ) {
     navigate({ kind: "page", name, pageKind, path }, { sticky: !opts.inPlace });
-    pushRecent(name, pageKind);
   }
 
   /** Zoom the active tab into a block (or back out, when null). Zoom is part of the
@@ -541,7 +555,10 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     // appending keeps the pinned-left invariant (all pinned precede all unpinned).
     const id = newId();
     setTabs([...tabs(), { id, history: [r], pos: 0, pinned: false }]);
-    if (foreground) setActiveId(id);
+    if (foreground) {
+      setActiveId(id);
+      activateCurrentRoute();
+    }
     persist();
   }
 
@@ -553,7 +570,6 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
   ) {
     if (pageKind === "page" && !isGuideRouteName(name)) name = resolveAlias(name);
     openInNewTab({ kind: "page", name, pageKind, block }, foreground);
-    if (!isGuideRouteName(name)) pushRecent(name, pageKind);
   }
 
   // ---- back / forward ----
@@ -577,15 +593,18 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     if (!canGoForward()) return;
     rememberScroll(); // save this entry's scroll before stepping forward
     setTabs(tabs().map((t) => (t.id === activeId() ? { ...t, pos: t.pos + 1 } : t)));
+    activateCurrentRoute();
     persist();
     pushMobileHistoryEntry();
   }
 
   function setActiveTab(id: string) {
     const next = tabs().find((t) => t.id === id);
-    if (next && navigationInterceptor(paneId, tabRoute(next), {})) return;
+    if (!next || next.id === activeId()) return;
+    if (navigationInterceptor(paneId, tabRoute(next), {})) return;
     rememberScroll(); // save the outgoing tab's scroll so switching back restores it
     setActiveId(id);
+    activateCurrentRoute();
     persist();
   }
 
@@ -620,7 +639,10 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
       if (closedTabs.length > CLOSED_CAP) closedTabs.shift();
     }
     setTabs(next);
-    if (activeId() === id) setActiveId(next[Math.max(0, idx - 1)].id);
+    if (activeId() === id) {
+      setActiveId(next[Math.max(0, idx - 1)].id);
+      activateCurrentRoute();
+    }
     persist();
   }
 
@@ -635,6 +657,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     // New tabs are unpinned, so appending preserves the pinned-left invariant.
     setTabs([...tabs(), { id, history: last.history, pos, pinned: false }]);
     setActiveId(id);
+    activateCurrentRoute();
     persist();
   }
 
@@ -731,7 +754,10 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     const to = typeof index === "number" ? Math.min(Math.max(0, index | 0), list.length) : list.length;
     list.splice(to, 0, adopted);
     setTabs(partitionPinned(list));
-    if (foreground) setActiveId(id);
+    if (foreground) {
+      setActiveId(id);
+      activateCurrentRoute();
+    }
     persist();
   }
 
@@ -804,6 +830,7 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
     tabRoute,
     route,
     restoreScrollFor,
+    activateCurrentRoute,
     openPage,
     openJournals,
     openQueryInNewTab,

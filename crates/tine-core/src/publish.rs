@@ -5,12 +5,106 @@
 use crate::doc::{self, DocBlock};
 use crate::model::{BlockDto, Graph, PageKind, RefGroup};
 use crate::refs::block_id;
+use cap_std::ambient_authority;
+use cap_std::fs::{Dir, OpenOptions};
 use lsdoc::ast::{Block, Inline, Url};
+#[cfg(not(target_os = "windows"))]
+use same_file::Handle as FileIdentity;
 use serde_json::json;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::io;
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+// `same_file::Handle` keeps its Windows handle open without FILE_SHARE_DELETE,
+// which makes MoveFileW reject the final stage rename. Keep a separately-opened
+// identity handle that does share deletion instead. We first compare it against
+// the bound capability while both are open, so an ambient path swap cannot make
+// the identity refer to a different directory; the live handle then prevents
+// file-ID reuse through the move and supports ReFS's full 128-bit identities.
+#[cfg(target_os = "windows")]
+#[derive(Debug)]
+struct FileIdentity {
+    _file: fs::File,
+    volume: u64,
+    id: [u8; 16],
+}
+
+#[cfg(target_os = "windows")]
+impl PartialEq for FileIdentity {
+    fn eq(&self, other: &Self) -> bool {
+        self.volume == other.volume && self.id == other.id
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Eq for FileIdentity {}
+
+#[cfg(target_os = "windows")]
+fn identity_from_file(file: fs::File) -> io::Result<FileIdentity> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FileIdInfo, GetFileInformationByHandleEx, FILE_ID_INFO,
+    };
+
+    let mut information = FILE_ID_INFO::default();
+    let result = unsafe {
+        GetFileInformationByHandleEx(
+            file.as_raw_handle(),
+            FileIdInfo,
+            (&mut information as *mut FILE_ID_INFO).cast(),
+            std::mem::size_of::<FILE_ID_INFO>() as u32,
+        )
+    };
+    if result == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(FileIdentity {
+        _file: file,
+        volume: information.VolumeSerialNumber,
+        id: information.FileId.Identifier,
+    })
+}
+
+#[cfg(not(target_os = "windows"))]
+fn identity_from_file(file: fs::File) -> io::Result<FileIdentity> {
+    FileIdentity::from_file(file)
+}
+
+#[cfg(target_os = "windows")]
+fn identity_from_path(path: &Path) -> io::Result<FileIdentity> {
+    use std::os::windows::{ffi::OsStrExt, io::FromRawHandle};
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::Storage::FileSystem::{
+        CreateFileW, FILE_FLAG_BACKUP_SEMANTICS, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE,
+        FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+    };
+
+    let mut wide: Vec<u16> = path.as_os_str().encode_wide().collect();
+    wide.push(0);
+    let handle = unsafe {
+        CreateFileW(
+            wide.as_ptr(),
+            FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS,
+            std::ptr::null_mut(),
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE {
+        return Err(io::Error::last_os_error());
+    }
+    identity_from_file(unsafe { fs::File::from_raw_handle(handle) })
+}
+
+#[cfg(not(target_os = "windows"))]
+fn identity_from_path(path: &Path) -> io::Result<FileIdentity> {
+    FileIdentity::from_path(path)
+}
 
 /// URL/file-safe slug for a page name (links and filenames must match).
 pub fn slug(name: &str) -> String {
@@ -41,64 +135,93 @@ enum QueryCacheKey {
     Advanced(String),
 }
 
-type QueryCache = RefCell<HashMap<QueryCacheKey, Vec<RefGroup>>>;
+impl QueryCacheKey {
+    fn source_len(&self) -> usize {
+        match self {
+            Self::Simple(source) | Self::Advanced(source) => source.len(),
+        }
+    }
+}
+
+const QUERY_CACHE_MAX_ENTRIES: usize = 64;
+const QUERY_CACHE_MAX_BYTES: usize = 32 * 1024 * 1024;
+
+#[derive(Default)]
+struct QueryCache {
+    entries: HashMap<QueryCacheKey, crate::query::BoundedGroups>,
+    bytes: usize,
+}
+
+impl QueryCache {
+    fn get(&self, key: &QueryCacheKey) -> Option<crate::query::BoundedGroups> {
+        self.entries.get(key).cloned()
+    }
+
+    fn insert(&mut self, key: QueryCacheKey, groups: crate::query::BoundedGroups) {
+        if self.entries.contains_key(&key) || self.entries.len() >= QUERY_CACHE_MAX_ENTRIES {
+            return;
+        }
+        let bytes = key
+            .source_len()
+            .saturating_add(crate::model::ref_groups_estimated_bytes(&groups.groups))
+            .saturating_add(256);
+        if bytes > QUERY_CACHE_MAX_BYTES
+            || self.bytes.saturating_add(bytes) > QUERY_CACHE_MAX_BYTES
+        {
+            return;
+        }
+        self.bytes += bytes;
+        self.entries.insert(key, groups);
+    }
+}
+
+type SharedQueryCache = RefCell<QueryCache>;
 
 #[cfg(test)]
 mod publish_test_counts {
     use crate::model::Graph;
-    use std::path::{Path, PathBuf};
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Mutex, MutexGuard};
+    use std::cell::Cell;
+    use std::path::Path;
 
-    static SERIAL: Mutex<()> = Mutex::new(());
-    static ACTIVE_ROOT: Mutex<Option<PathBuf>> = Mutex::new(None);
-    static QUERY_RUNS: AtomicUsize = AtomicUsize::new(0);
-    static PAGE_DOC_LOADS: AtomicUsize = AtomicUsize::new(0);
-
-    pub(super) struct Guard {
-        _serial: MutexGuard<'static, ()>,
+    thread_local! {
+        static ACTIVE: Cell<bool> = const { Cell::new(false) };
+        static QUERY_RUNS: Cell<usize> = const { Cell::new(0) };
+        static PAGE_DOC_LOADS: Cell<usize> = const { Cell::new(0) };
     }
 
-    pub(super) fn count_for(root: &Path) -> Guard {
-        let serial = SERIAL.lock().unwrap();
-        *ACTIVE_ROOT.lock().unwrap() = Some(root.to_path_buf());
-        QUERY_RUNS.store(0, Ordering::SeqCst);
-        PAGE_DOC_LOADS.store(0, Ordering::SeqCst);
-        Guard { _serial: serial }
+    pub(super) struct Guard;
+
+    pub(super) fn count_for(_root: &Path) -> Guard {
+        ACTIVE.set(true);
+        QUERY_RUNS.set(0);
+        PAGE_DOC_LOADS.set(0);
+        Guard
     }
 
     impl Drop for Guard {
         fn drop(&mut self) {
-            *ACTIVE_ROOT.lock().unwrap() = None;
+            ACTIVE.set(false);
         }
     }
 
-    fn active_for(graph: &Graph) -> bool {
-        ACTIVE_ROOT
-            .lock()
-            .unwrap()
-            .as_ref()
-            .is_some_and(|root| root == &graph.root)
-    }
-
-    pub(super) fn bump_query_run(graph: &Graph) {
-        if active_for(graph) {
-            QUERY_RUNS.fetch_add(1, Ordering::SeqCst);
+    pub(super) fn bump_query_run(_graph: &Graph) {
+        if ACTIVE.get() {
+            QUERY_RUNS.set(QUERY_RUNS.get() + 1);
         }
     }
 
-    pub(super) fn bump_page_doc_load(graph: &Graph) {
-        if active_for(graph) {
-            PAGE_DOC_LOADS.fetch_add(1, Ordering::SeqCst);
+    pub(super) fn bump_page_doc_load(_graph: &Graph) {
+        if ACTIVE.get() {
+            PAGE_DOC_LOADS.set(PAGE_DOC_LOADS.get() + 1);
         }
     }
 
     pub(super) fn query_runs() -> usize {
-        QUERY_RUNS.load(Ordering::SeqCst)
+        QUERY_RUNS.get()
     }
 
     pub(super) fn page_doc_loads() -> usize {
-        PAGE_DOC_LOADS.load(Ordering::SeqCst)
+        PAGE_DOC_LOADS.get()
     }
 }
 
@@ -177,13 +300,37 @@ fn esc(s: &str) -> String {
         .replace('>', "&gt;")
 }
 
+/// A print document crosses Rust -> IPC -> WebKit and base64 expands its inputs.
+/// Bound both one pathological file and the complete export before any bytes are
+/// read. The cumulative input ceiling keeps the resulting HTML below roughly
+/// 43 MiB even when many otherwise-valid images are present.
+const PRINT_ASSET_MAX_BYTES: u64 = 12 * 1024 * 1024;
+const PRINT_ASSETS_TOTAL_MAX_BYTES: u64 = 32 * 1024 * 1024;
+
+#[derive(Debug)]
+struct PrintAssetBudget {
+    per_asset: u64,
+    remaining: u64,
+}
+
+impl PrintAssetBudget {
+    fn standard() -> Self {
+        Self {
+            per_asset: PRINT_ASSET_MAX_BYTES,
+            remaining: PRINT_ASSETS_TOTAL_MAX_BYTES,
+        }
+    }
+}
+
 /// Read a local `assets/<file>` image referenced by an export `data-asset` path
 /// (e.g. `../assets/cat.png`) and return it as a self-contained `data:` URI, for
 /// the single-page print/PDF export. Returns `None` for a non-local URL (http/…),
-/// no graph, an unreadable file, or a path that escapes `assets/` — the caller
-/// then keeps the original `src` (a broken image, never a failed export).
+/// no graph, an unreadable/oversized file, an exhausted export budget, or a path
+/// that escapes `assets/`. The caller emits an inert omission marker rather than
+/// leaving a broken or network-capable image in the privileged export flow.
 fn inline_asset_uri(ctx: &Ctx, src: &str) -> Option<String> {
     let graph = ctx.graph?;
+    let budget_cell = ctx.print_asset_budget?;
     // Only local asset references; leave remote/data URLs untouched.
     if src.contains("://") || src.starts_with("data:") {
         return None;
@@ -191,7 +338,10 @@ fn inline_asset_uri(ctx: &Ctx, src: &str) -> Option<String> {
     // `read_asset` re-guards against traversal; pass just the file name so a
     // `../assets/x` (or `assets/x`) ref resolves to `<graph>/assets/x`.
     let name = src.rsplit('/').next().unwrap_or(src);
-    let bytes = graph.read_asset(name).ok()?;
+    let mut budget = budget_cell.borrow_mut();
+    let admission_limit = budget.per_asset.min(budget.remaining);
+    let bytes = graph.read_asset_limited(name, admission_limit).ok()?;
+    budget.remaining = budget.remaining.saturating_sub(bytes.len() as u64);
     let mime = match name
         .rsplit('.')
         .next()
@@ -316,6 +466,66 @@ fn esc_attr(s: &str) -> String {
         .replace('\'', "&#39;")
 }
 
+/// Encode an opaque block id for the URL-fragment context. The same raw value is
+/// HTML-escaped separately when emitted as an `id` attribute; treating these as
+/// distinct contexts prevents a user-controlled `id::` from breaking either.
+fn fragment(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for byte in s.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
+}
+
+/// Closed URL policy for navigable content in a static export. External links
+/// are limited to ordinary web/contact schemes; graph assets and local export
+/// links may use a relative path or fragment. Scheme-like and network-path
+/// references do not fall through to the relative case.
+fn safe_export_url(url: &str) -> Option<&str> {
+    let url = url.trim();
+    if url.is_empty()
+        || url.bytes().any(|b| b == 0 || b.is_ascii_control())
+        || url.starts_with("//")
+        || url.starts_with('\\')
+        || url.contains('\\')
+    {
+        return None;
+    }
+    let first_delimiter = url.find(['/', '?', '#']).unwrap_or(url.len());
+    if let Some(colon) = url.find(':').filter(|colon| *colon < first_delimiter) {
+        let scheme = &url[..colon];
+        if !scheme.bytes().enumerate().all(|(i, b)| {
+            if i == 0 {
+                b.is_ascii_alphabetic()
+            } else {
+                b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.')
+            }
+        }) {
+            return None;
+        }
+        return matches!(
+            scheme.to_ascii_lowercase().as_str(),
+            "http" | "https" | "mailto" | "tel"
+        )
+        .then_some(url);
+    }
+    Some(url)
+}
+
+fn safe_media_url(url: &str) -> Option<&str> {
+    let safe = safe_export_url(url)?;
+    let lower = safe.to_ascii_lowercase();
+    if lower.starts_with("mailto:") || lower.starts_with("tel:") {
+        None
+    } else {
+        Some(safe)
+    }
+}
+
 /// Reverse lsdoc's HTML escaping for a `data-*` payload we re-emit elsewhere (e.g.
 /// `data-tex` → visible KaTeX text, `data-asset` → an `src`). `&amp;` decodes LAST so
 /// an escaped `&amp;lt;` becomes `&lt;`, not `<`.
@@ -391,6 +601,7 @@ fn decorate(html: &str, ctx: &Ctx, depth: u8) -> String {
     // `[[ ]]` (unlabeled `[[name]]`). A labeled ref's body starts with a tag, so the flag
     // is cleared without stripping.
     let mut strip_brackets = false;
+    let mut inert_link_closures = 0usize;
     while i < b.len() {
         if b[i] != b'<' {
             let start = i;
@@ -424,6 +635,12 @@ fn decorate(html: &str, ctx: &Ctx, depth: u8) -> String {
         }
         let name = inner.split([' ', '\t', '/']).next().unwrap_or("");
 
+        if inner == "/a" && inert_link_closures > 0 {
+            inert_link_closures -= 1;
+            out.push_str("</span>");
+            continue;
+        }
+
         if name == "a" && has_class(inner, "page-ref") {
             if let Some(page) = tag_attr(inner, "data-page") {
                 out.push_str(&format!(
@@ -453,7 +670,9 @@ fn decorate(html: &str, ctx: &Ctx, depth: u8) -> String {
                         let text = if body == auto { esc(&t.text) } else { body };
                         out.push_str(&format!(
                             "<a class=\"ref block-ref\" href=\"{}.html#{}\">{}</a>",
-                            t.slug, id, text
+                            t.slug,
+                            fragment(&id),
+                            text
                         ));
                     }
                     None => out.push_str(&format!("<span class=\"block-ref\">{body}</span>")),
@@ -498,29 +717,55 @@ fn decorate(html: &str, ctx: &Ctx, depth: u8) -> String {
             if let Some(asset) = tag_attr(inner, "data-asset") {
                 let alt = tag_attr(inner, "alt").map(unescape).unwrap_or_default();
                 let src = unescape(asset);
-                let src = if ctx.inline_assets {
-                    // Self-contained print doc: read the asset and emit a `data:`
-                    // URI. Falls back to the relative path if it can't be read
-                    // (missing file / non-local URL) — a broken img, never a panic.
-                    inline_asset_uri(ctx, &src).unwrap_or(src)
+                if ctx.inline_assets {
+                    if let Some(inlined) = inline_asset_uri(ctx, &src) {
+                        out.push_str(&format!(
+                            "<img class=\"inline-image\" src=\"{}\" alt=\"{}\">",
+                            esc_attr(&inlined),
+                            esc_attr(&alt)
+                        ));
+                    } else {
+                        out.push_str(
+                            "<span class=\"print-asset-omitted\">[Image omitted from PDF: unavailable or exceeds the print size limit]</span>",
+                        );
+                    }
+                } else if let Some(src) = safe_media_url(&src) {
+                    out.push_str(&format!(
+                        "<img class=\"inline-image\" src=\"{}\" alt=\"{}\">",
+                        esc_attr(&src),
+                        esc_attr(&alt)
+                    ));
                 } else {
-                    src
-                };
-                out.push_str(&format!(
-                    "<img class=\"inline-image\" src=\"{}\" alt=\"{}\">",
-                    esc_attr(&src),
-                    esc_attr(&alt)
-                ));
+                    out.push_str("<span class=\"unsafe-link\">[Unsafe image URL omitted]</span>");
+                }
                 continue;
             }
         }
         if (name == "video" || name == "audio") && has_class(inner, "media-embed") {
             if let Some(asset) = tag_attr(inner, "data-asset") {
                 let _ = take_to_close(html, &mut i, name); // empty element
-                out.push_str(&format!(
-                    "<{name} class=\"media-embed\" controls src=\"{}\"></{name}>",
-                    esc_attr(&unescape(asset))
-                ));
+                let src = unescape(asset);
+                if let Some(src) = safe_media_url(&src) {
+                    out.push_str(&format!(
+                        "<{name} class=\"media-embed\" controls src=\"{}\"></{name}>",
+                        esc_attr(src)
+                    ));
+                } else {
+                    out.push_str("<span class=\"unsafe-link\">[Unsafe media URL omitted]</span>");
+                }
+                continue;
+            }
+        }
+        if name == "a" {
+            if let Some(href) = tag_attr(inner, "href").map(unescape) {
+                if safe_export_url(&href).is_some() {
+                    out.push('<');
+                    out.push_str(inner);
+                    out.push('>');
+                } else {
+                    out.push_str("<span class=\"unsafe-link\">");
+                    inert_link_closures += 1;
+                }
                 continue;
             }
         }
@@ -693,10 +938,14 @@ struct Ctx<'a> {
     /// so the printed document needs no sibling `assets/` folder. The whole-graph
     /// site export keeps the relative `../assets/<file>` links (`false`).
     inline_assets: bool,
+    /// Shared admission state for every image in one print document. Present
+    /// exactly when `inline_assets` is true; all images therefore consume one
+    /// cumulative byte ceiling before base64/IPC/DOM amplification.
+    print_asset_budget: Option<&'a RefCell<PrintAssetBudget>>,
     /// Export-local `{{query}}` memo. Whole-graph publish sets this so repeated
     /// macros do one graph scan per distinct source; print export/tests leave it
     /// `None` and keep the old direct call path.
-    query_cache: Option<&'a QueryCache>,
+    query_cache: Option<&'a SharedQueryCache>,
     /// Pass-1 parsed public page documents, keyed by Logseq page identity. Page
     /// embeds use this before falling back to disk for non-public/unseen pages.
     pages: Option<&'a HashMap<String, &'a doc::Document>>,
@@ -828,6 +1077,54 @@ fn render_result_block(dto: &BlockDto, out: &mut String, ctx: &Ctx, depth: u8) {
     out.push_str("</li>");
 }
 
+fn collect_wanted_doc_blocks<'a>(
+    blocks: &'a [DocBlock],
+    wanted: &std::collections::HashSet<&str>,
+    found: &mut std::collections::HashMap<&'a str, &'a DocBlock>,
+) {
+    for block in blocks {
+        if wanted.contains(block.uuid.as_str()) {
+            found.insert(block.uuid.as_str(), block);
+        }
+        // OG can retain a matching descendant below a non-matching child of a
+        // retained ancestor. Keep walking so both roots hydrate from source.
+        collect_wanted_doc_blocks(&block.children, wanted, found);
+    }
+}
+
+/// Query DTOs intentionally carry shallow membership rows. Static publishing
+/// has the source graph in-process, so hydrate each result subtree directly from
+/// its page once instead of shipping/caching overlapping owned DTO trees.
+fn render_query_groups(graph: &Graph, groups: &[RefGroup], out: &mut String, ctx: &Ctx, depth: u8) {
+    graph.with_pages(|pages| {
+        // One lookup index for the complete query avoids O(pages * groups)
+        // source-page scans during static/print export.
+        let page_by_key = pages
+            .iter()
+            .map(|(entry, doc)| ((entry.name.as_str(), entry.kind), doc.as_ref()))
+            .collect::<std::collections::HashMap<_, _>>();
+        for group in groups {
+            let Some(doc) = page_by_key.get(&(group.page.as_str(), group.kind)) else {
+                // A result without a source in this exact projection has no
+                // publication capability. Never fall back to cached DTO bytes.
+                continue;
+            };
+            let wanted = group
+                .blocks
+                .iter()
+                .map(|block| block.id.as_str())
+                .collect::<std::collections::HashSet<_>>();
+            let mut found = std::collections::HashMap::with_capacity(wanted.len());
+            collect_wanted_doc_blocks(&doc.roots, &wanted, &mut found);
+            for block in &group.blocks {
+                if let Some(source) = found.get(block.id.as_str()) {
+                    render_embedded_block(source, out, ctx, depth);
+                }
+            }
+        }
+    });
+}
+
 /// Render an embedded page's block (a `DocBlock`) as an `<li>`, mirroring `render_result_block`.
 fn render_embedded_block(b: &DocBlock, out: &mut String, ctx: &Ctx, depth: u8) {
     out.push_str("<li>");
@@ -868,23 +1165,50 @@ fn expand_macro(name: &str, args: &[String], ctx: &Ctx, depth: u8) -> String {
 
 /// Run a `{{query …}}` against the graph and render its results as a bordered block.
 fn render_query(graph: &Graph, src: &str, ctx: &Ctx, depth: u8) -> String {
+    const STATIC_QUERY_MAX_ROWS: usize = 20_000;
+    const STATIC_QUERY_MAX_BYTES: usize = 32 * 1024 * 1024;
+    if !crate::query::query_source_within_limit(src) {
+        return format!(
+            "<div class=\"query query-too-large\">Query source exceeds the {} KiB publication limit.</div>",
+            crate::query::QUERY_SOURCE_MAX_BYTES / 1024
+        );
+    }
+    if !crate::query::query_nesting_within_limit(src) {
+        return "<div class=\"query query-too-large\">Query nesting is too deep to publish safely.</div>".to_string();
+    }
     let is_advanced = crate::query::is_advanced(src);
-    let groups = if let Some(cache) = ctx.query_cache {
+    let bounded = if let Some(cache) = ctx.query_cache {
         let key = if is_advanced {
             QueryCacheKey::Advanced(src.to_string())
         } else {
             QueryCacheKey::Simple(src.to_string())
         };
-        let cached = cache.borrow().get(&key).cloned();
+        let cached = cache.borrow().get(&key);
         if let Some(groups) = cached {
             groups
         } else {
             #[cfg(test)]
             publish_test_counts::bump_query_run(graph);
             let groups = if is_advanced {
-                crate::query::run_advanced_query(graph, src, None).groups
+                let (result, exceeded, total) = crate::query::run_advanced_query_bounded(
+                    graph,
+                    src,
+                    None,
+                    STATIC_QUERY_MAX_ROWS,
+                    STATIC_QUERY_MAX_BYTES,
+                );
+                crate::query::BoundedGroups {
+                    groups: result.groups,
+                    total,
+                    exceeded,
+                }
             } else {
-                crate::query::run_query(graph, src)
+                crate::query::run_query_bounded(
+                    graph,
+                    src,
+                    STATIC_QUERY_MAX_ROWS,
+                    STATIC_QUERY_MAX_BYTES,
+                )
             };
             cache.borrow_mut().insert(key, groups.clone());
             groups
@@ -892,12 +1216,39 @@ fn render_query(graph: &Graph, src: &str, ctx: &Ctx, depth: u8) -> String {
     } else if is_advanced {
         #[cfg(test)]
         publish_test_counts::bump_query_run(graph);
-        crate::query::run_advanced_query(graph, src, None).groups
+        let (result, exceeded, total) = crate::query::run_advanced_query_bounded(
+            graph,
+            src,
+            None,
+            STATIC_QUERY_MAX_ROWS,
+            STATIC_QUERY_MAX_BYTES,
+        );
+        crate::query::BoundedGroups {
+            groups: result.groups,
+            total,
+            exceeded,
+        }
     } else {
         #[cfg(test)]
         publish_test_counts::bump_query_run(graph);
-        crate::query::run_query(graph, src)
+        crate::query::run_query_bounded(graph, src, STATIC_QUERY_MAX_ROWS, STATIC_QUERY_MAX_BYTES)
     };
+    if bounded.exceeded {
+        return format!(
+            "<div class=\"query query-too-large\">Query has {} matches; narrow it before publishing.</div>",
+            bounded.total
+        );
+    }
+    // A site export is a projection of the public page set, not an alternate
+    // frontend over the live graph. Query execution still reuses the ordinary
+    // engine, but results from pages outside the pass-1 public capability must
+    // never cross into generated HTML. Print export has no page capability and
+    // deliberately retains its existing whole-graph behavior.
+    let groups: Vec<RefGroup> = bounded
+        .groups
+        .into_iter()
+        .filter(|group| publish_page_allowed(ctx, &group.page))
+        .collect();
     let total: usize = groups.iter().map(|g| g.blocks.len()).sum();
     let mut out = format!(
         "<div class=\"query\"><div class=\"query-head\">Query <span class=\"query-count\">{}</span></div>",
@@ -907,11 +1258,7 @@ fn render_query(graph: &Graph, src: &str, ctx: &Ctx, depth: u8) -> String {
         out.push_str("<div class=\"query-empty\">No matching blocks.</div>");
     } else {
         out.push_str("<ul class=\"query-results\">");
-        for g in &groups {
-            for blk in &g.blocks {
-                render_result_block(blk, &mut out, ctx, depth);
-            }
-        }
+        render_query_groups(graph, &groups, &mut out, ctx, depth);
         out.push_str("</ul>");
     }
     out.push_str("</div>");
@@ -921,16 +1268,37 @@ fn render_query(graph: &Graph, src: &str, ctx: &Ctx, depth: u8) -> String {
 /// Inline an `{{embed ((uuid))}}` or `{{embed [[Page]]}}`.
 fn render_embed(graph: &Graph, arg: &str, ctx: &Ctx, depth: u8) -> String {
     if let Some(uuid) = arg.strip_prefix("((").and_then(|s| s.strip_suffix("))")) {
-        return match crate::query::resolve_block(graph, uuid.trim()) {
-            Some(g) => {
+        let uuid = uuid.trim();
+        if ctx.pages.is_some() && !ctx.refs.contains_key(uuid) {
+            return "<div class=\"embed embed-missing\">Embedded content is not public.</div>"
+                .into();
+        }
+        const STATIC_EMBED_BLOCK_LIMIT: usize = 10_000;
+        const STATIC_EMBED_BYTE_LIMIT: usize = 8 * 1024 * 1024;
+        return match crate::query::preview_block_with_budget(
+            graph,
+            uuid,
+            STATIC_EMBED_BLOCK_LIMIT,
+            STATIC_EMBED_BYTE_LIMIT,
+        ) {
+            Some(preview) if publish_page_allowed(ctx, &preview.group.page) => {
                 let mut out = String::from(
                     "<div class=\"embed block-embed single-root\"><ul class=\"embed-outline\">",
                 );
-                for blk in &g.blocks {
+                for blk in &preview.group.blocks {
                     render_result_block(blk, &mut out, ctx, depth);
+                }
+                if preview.truncated > 0 {
+                    out.push_str(&format!(
+                        "<li class=\"query-truncated\">{} more blocks omitted</li>",
+                        preview.truncated
+                    ));
                 }
                 out.push_str("</ul></div>");
                 out
+            }
+            Some(_) => {
+                "<div class=\"embed embed-missing\">Embedded content is not public.</div>".into()
             }
             None => "<div class=\"embed embed-missing\">Embedded block not found.</div>".into(),
         };
@@ -942,6 +1310,10 @@ fn render_embed(graph: &Graph, arg: &str, ctx: &Ctx, depth: u8) -> String {
             .and_then(|pages| pages.get(&crate::refs::page_key(page)).copied())
         {
             return render_page_embed_doc(page, doc, ctx, depth);
+        }
+        if ctx.pages.is_some() {
+            return "<div class=\"embed embed-missing\">Embedded content is not public.</div>"
+                .into();
         }
         return match load_page_doc(graph, page) {
             Some(doc) => render_page_embed_doc(page, &doc, ctx, depth),
@@ -963,11 +1335,14 @@ fn render_video(url: &str) -> String {
             esc_attr(&id)
         );
     }
-    format!(
-        "<div class=\"video-embed\"><a href=\"{}\">{}</a></div>",
-        esc_attr(url),
-        esc(url)
-    )
+    match safe_media_url(url) {
+        Some(url) => format!(
+            "<div class=\"video-embed\"><a href=\"{}\">{}</a></div>",
+            esc_attr(url),
+            esc(url)
+        ),
+        None => format!("<div class=\"video-embed unsafe-link\">{}</div>", esc(url)),
+    }
 }
 
 /// Extract a YouTube video id from a watch/short/embed URL, if this is one.
@@ -1004,7 +1379,7 @@ fn render_namespace(graph: &Graph, ns: &str, ctx: &Ctx) -> String {
         .list_pages()
         .into_iter()
         .map(|e| e.name)
-        .filter(|n| n.starts_with(&prefix))
+        .filter(|n| n.starts_with(&prefix) && publish_page_allowed(ctx, n))
         .collect();
     children.sort();
     children.dedup();
@@ -1029,6 +1404,11 @@ fn render_namespace(graph: &Graph, ns: &str, ctx: &Ctx) -> String {
     out
 }
 
+fn publish_page_allowed(ctx: &Ctx, page: &str) -> bool {
+    ctx.pages
+        .is_none_or(|pages| pages.contains_key(&crate::refs::page_key(page)))
+}
+
 fn render_page_embed_doc(page: &str, doc: &doc::Document, ctx: &Ctx, depth: u8) -> String {
     let mut out = format!(
         "<div class=\"embed page-embed\"><a class=\"embed-title ref\" href=\"{}.html\">{}</a><ul>",
@@ -1044,12 +1424,14 @@ fn render_page_embed_doc(page: &str, doc: &doc::Document, ctx: &Ctx, depth: u8) 
 
 /// Read + parse a page's file by name (for `{{embed [[Page]]}}`), case-insensitively.
 fn load_page_doc(graph: &Graph, name: &str) -> Option<doc::Document> {
-    let pages = graph.list_pages();
-    let e = pages.iter().find(|e| e.name.eq_ignore_ascii_case(name))?;
     #[cfg(test)]
     publish_test_counts::bump_page_doc_load(graph);
-    let content = fs::read_to_string(&e.path).ok()?;
-    Some(doc::parse(&content))
+    graph.with_pages(|pages| {
+        pages
+            .iter()
+            .find(|(entry, _)| entry.name.eq_ignore_ascii_case(name))
+            .map(|(_, document)| document.as_ref().clone())
+    })
 }
 
 fn render_block(
@@ -1078,7 +1460,7 @@ fn render_block(
             a
         }
     };
-    out.push_str(&format!("<li id=\"{anchor}\">"));
+    out.push_str(&format!("<li id=\"{}\">", esc_attr(&anchor)));
     let text = ast_plain_text(&blocks);
     if !text.is_empty() {
         index.push(json!({"slug": slug, "title": title, "anchor": anchor, "text": text}));
@@ -1113,7 +1495,7 @@ fn render_block(
                 out.push_str(&format!(
                     "<li><a href=\"{}.html#{}\"><span class=\"referrer-page\">{}</span>: {}</a></li>",
                     referrer.slug,
-                    referrer.anchor,
+                    fragment(&referrer.anchor),
                     esc(&referrer.page),
                     esc(text)
                 ));
@@ -1184,7 +1566,9 @@ stroke=\"currentColor\" stroke-width=\"1.7\"><rect x=\"4\" y=\"5\" width=\"16\" 
 fn shell(title: &str, main: &str, home_href: &str) -> String {
     format!(
         "<!doctype html><html><head><meta charset=\"utf-8\">\
-<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{title}</title>\
+<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
+<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'self'; base-uri 'none'; object-src 'none'; form-action 'none'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data: https: http:; media-src 'self' blob: https: http:; frame-src https://www.youtube.com https://player.vimeo.com\">\
+<title>{title}</title>\
 <link rel=\"stylesheet\" href=\"style.css\">{katex}{hljs}</head><body>\
 <aside class=\"sidebar\">\
 <a class=\"home\" href=\"{home_href}\">\u{2302} Home</a>\
@@ -1193,7 +1577,7 @@ fn shell(title: &str, main: &str, home_href: &str) -> String {
 <div id=\"tine-results\" hidden></div>\
 <nav id=\"tine-pages\"></nav>\
 </aside><main>{main}</main>\
-<script src=\"search-index.js\"></script><script src=\"fuse.min.js\"></script><script src=\"app.js\"></script>\
+<script src=\"search-index.js\"></script><script src=\"fuse.min.js\"></script><script src=\"app.js\"></script><script defer src=\"enhance.js\"></script>\
 </body></html>",
         title = esc(title),
         katex = KATEX_HEAD,
@@ -1205,10 +1589,11 @@ fn shell(title: &str, main: &str, home_href: &str) -> String {
 
 /// A **self-contained single page** for the print-to-PDF export: the same block
 /// render as a published page, but with the stylesheet + print rules inlined and
-/// no sidebar / search / app scripts — so it prints (or opens) standalone. Assets
-/// are inlined as `data:` URIs upstream (`inline_assets`), so no sibling folder is
-/// needed. KaTeX / highlight.js still load from CDN (math/code typeset when online;
-/// offline shows raw TeX / plain code, same as a published page).
+/// no sidebar / search / scripts — so the returned document cannot execute in the
+/// privileged Tauri origin. Assets are inlined as `data:` URIs upstream
+/// (`inline_assets`). The frontend upgrades math/code with its locally bundled
+/// KaTeX/highlight.js before placing this static document in a script-disabled
+/// sandbox.
 // Inter faces bundled INTO the print document as `@font-face` data URIs. The print
 // doc is a separate document from the app, so it does NOT inherit the app's Inter
 // `@font-face` rules; without this it falls back to a system font, and if that font
@@ -1265,11 +1650,10 @@ fn print_shell(title: &str, main: &str, opts: PrintOpts) -> String {
     format!(
         "<!doctype html><html><head><meta charset=\"utf-8\">\
 <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>{title}</title>\
-{katex}{hljs}<style>{fonts}{style}\n{print}\n{tuned}</style></head><body class=\"print\">\
+<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; script-src 'none'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; media-src 'self' data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'\">\
+<style>{fonts}{style}\n{print}\n{tuned}</style></head><body class=\"print\">\
 <main>{main}</main></body></html>",
         title = esc(title),
-        katex = KATEX_HEAD,
-        hljs = HLJS_HEAD,
         fonts = print_fontface(),
         style = STYLE,
         print = PRINT_STYLE,
@@ -1307,6 +1691,7 @@ body.print h1.page{margin-top:0}
    affordance and misalign against the bullet dots when printed — dots alone read
    cleaner. */
 body.print ul.outline ul{border-left:none}
+.print-asset-omitted{display:inline-block;color:#777;font-style:italic;margin:.3rem 0}
 @media print{
   body.print main{padding:0}
   a.ref,a.tag,a.block-ref{color:inherit;text-decoration:none}
@@ -1333,12 +1718,14 @@ pub fn page_print_html(graph: &Graph, name: &str, opts: PrintOpts) -> io::Result
     let slug = slug(&entry.name);
     let mut refs = RefIndex::new();
     collect_block_refs(&parsed.roots, &slug, &mut refs);
+    let print_asset_budget = RefCell::new(PrintAssetBudget::standard());
     let ctx = Ctx {
         refs: &refs,
         reverse_refs: None,
         graph: Some(graph),
         slugs: None,
         inline_assets: true,
+        print_asset_budget: Some(&print_asset_budget),
         query_cache: None,
         pages: None,
     };
@@ -1398,13 +1785,28 @@ impl Default for PrintOpts {
 // register before auto-render runs; `defer` preserves script order, so auto-render's
 // onload fires only after katex.min.js and mhchem have executed. Math therefore
 // typesets when the page is viewed online; an offline viewer shows the raw TeX.
-const KATEX_HEAD: &str = r#"<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.47/dist/katex.min.css"><script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.47/dist/katex.min.js"></script><script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.47/dist/contrib/mhchem.min.js"></script><script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.47/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.body,{delimiters:[{left:'\\[',right:'\\]',display:true},{left:'\\(',right:'\\)',display:false}],throwOnError:false})"></script>"#;
+const KATEX_HEAD: &str = r#"<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.47/dist/katex.min.css"><script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.47/dist/katex.min.js"></script><script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.47/dist/contrib/mhchem.min.js"></script><script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.47/dist/contrib/auto-render.min.js"></script>"#;
 
 // highlight.js (from CDN) syntax-highlights the `<pre class="code-block"><code
 // class="hljs language-X">` blocks lsdoc emits (the export's `data-lang` → `language-X`).
 // `highlightAll()` reads the `language-X` class; `defer` + onload runs it after the body
 // parses. Offline / no network → plain (already-escaped) code, never broken.
-const HLJS_HEAD: &str = r#"<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/styles/github.min.css"><script defer src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/highlight.min.js" onload="hljs.highlightAll()"></script>"#;
+const HLJS_HEAD: &str = r#"<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/styles/github.min.css"><script defer src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/highlight.min.js"></script>"#;
+
+const ENHANCE_JS: &str = r#"(function () {
+  'use strict';
+  if (window.renderMathInElement) {
+    window.renderMathInElement(document.body, {
+      delimiters: [
+        {left: '\\[', right: '\\]', display: true},
+        {left: '\\(', right: '\\)', display: false}
+      ],
+      throwOnError: false
+    });
+  }
+  if (window.hljs) window.hljs.highlightAll();
+})();
+"#;
 
 const STYLE: &str = r#":root{
   --bg:#fff;--fg:#2e2e2e;--muted:#8a8f98;--line:#e9e9ec;--accent:#10b981;--link:#0b6ec9;--code:#f4f5f7;
@@ -1649,7 +2051,7 @@ const APP_JS: &str = r#"(function () {
     } else {
       results.innerHTML = hits.map(function (h) {
         var e = h.item;
-        var href = e.slug + '.html#' + e.anchor;
+        var href = e.slug + '.html#' + encodeURIComponent(String(e.anchor));
         return '<a class="res" href="' + href + '">' +
           '<span class="res-title">' + esc(e.title) + '</span>' +
           '<span class="res-snip">' + snippet(e, h.matches) + '</span></a>';
@@ -1683,42 +2085,369 @@ fn page_is_public(pre_block: Option<&str>) -> bool {
     })
 }
 
+struct PublishStage {
+    path: PathBuf,
+    root: Dir,
+    dir: Dir,
+    identity: FileIdentity,
+}
+
+struct PublicationGraphSnapshot {
+    graph: Graph,
+    root: PathBuf,
+}
+
+impl PublicationGraphSnapshot {
+    fn new(pages: Vec<(crate::model::PageEntry, Arc<doc::Document>)>) -> io::Result<Self> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let temp = std::env::temp_dir();
+        for _ in 0..128 {
+            let root = temp.join(format!(
+                "tine-publication-snapshot-{}-{}",
+                std::process::id(),
+                SEQ.fetch_add(1, Ordering::Relaxed)
+            ));
+            match fs::create_dir(&root) {
+                Ok(()) => {
+                    return Ok(Self {
+                        graph: Graph::from_page_snapshot(&root, pages),
+                        root,
+                    });
+                }
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error),
+            }
+        }
+        Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "could not reserve an immutable publication snapshot root",
+        ))
+    }
+}
+
+impl Drop for PublicationGraphSnapshot {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+struct PublishRecovery {
+    #[cfg(test)]
+    path: PathBuf,
+    dir: Dir,
+}
+
+#[cfg(target_os = "windows")]
+fn dir_identity(dir: &Dir, path: &Path) -> io::Result<FileIdentity> {
+    let capability = identity_from_file(dir.try_clone()?.into_std_file())?;
+    let share_delete = identity_from_path(path)?;
+    if capability != share_delete {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "static-publish staging path changed while binding its identity",
+        ));
+    }
+    Ok(share_delete)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn dir_identity(dir: &Dir, _path: &Path) -> io::Result<FileIdentity> {
+    identity_from_file(dir.try_clone()?.into_std_file())
+}
+
+fn reserve_publish_stage(graph: &Graph) -> io::Result<PublishStage> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let root = Dir::open_ambient_dir(&graph.root, ambient_authority())?;
+    for _ in 0..128 {
+        let name = format!(
+            ".tine-publish-stage-{}-{}",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        );
+        let path = graph.root.join(&name);
+        graph.ensure_write_target(&path)?;
+        match root.create_dir(&name) {
+            Ok(()) => {
+                let dir = root.open_dir(&name)?;
+                let identity = dir_identity(&dir, &path)?;
+                return Ok(PublishStage {
+                    path,
+                    root,
+                    dir,
+                    identity,
+                });
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "could not reserve a unique static-publish staging directory",
+    ))
+}
+
+fn write_publish_stage_file(stage: &PublishStage, name: &str, bytes: &[u8]) -> io::Result<()> {
+    let relative = Path::new(name);
+    if relative.file_name().is_none_or(|value| value != name)
+        || relative
+            .parent()
+            .is_some_and(|parent| parent != Path::new(""))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "static-publish output name must be one file",
+        ));
+    }
+    publish_stage_write_race_hook(stage)?;
+    // All generation is relative to the directory handle reserved above. A
+    // rename plus symlink/junction replacement of the ambient stage pathname
+    // therefore cannot redirect an open or truncate outside the graph.
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    let mut file = stage.dir.open_with(relative, &options)?;
+    file.write_all(bytes)?;
+    file.sync_all()
+}
+
+#[cfg(test)]
+thread_local! {
+    static PUBLISH_STAGE_WRITE_SWAP: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+    static PUBLISH_RECOVERY_SWAP: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn replace_bound_dir_path(path: &Path, outside: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+        let displaced = path.with_file_name(format!(
+            "{}.displaced",
+            path.file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("bound")
+        ));
+        fs::rename(path, &displaced)?;
+        symlink(outside, path)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (path, outside);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+fn publish_stage_write_race_hook(stage: &PublishStage) -> io::Result<()> {
+    PUBLISH_STAGE_WRITE_SWAP.with(|outside| match outside.borrow_mut().take() {
+        Some(outside) => replace_bound_dir_path(&stage.path, &outside),
+        None => Ok(()),
+    })
+}
+
+#[cfg(not(test))]
+fn publish_stage_write_race_hook(_stage: &PublishStage) -> io::Result<()> {
+    Ok(())
+}
+
+#[cfg(test)]
+fn publish_recovery_race_hook(recovery: &PublishRecovery) -> io::Result<()> {
+    PUBLISH_RECOVERY_SWAP.with(|outside| match outside.borrow_mut().take() {
+        Some(outside) => replace_bound_dir_path(&recovery.path, &outside),
+        None => Ok(()),
+    })
+}
+
+#[cfg(not(test))]
+fn publish_recovery_race_hook(_recovery: &PublishRecovery) -> io::Result<()> {
+    Ok(())
+}
+
+fn reserve_publish_recovery(graph: &Graph, root: &Dir) -> io::Result<PublishRecovery> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let recovery_rel = Path::new("logseq").join(".tine-trash").join("conflicts");
+    let recovery = graph.root.join(&recovery_rel);
+    graph.ensure_write_target(&recovery)?;
+    root.create_dir_all(&recovery_rel)?;
+    let recovery_root = root.open_dir(&recovery_rel)?;
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+    for _ in 0..128 {
+        let name = format!(
+            "{stamp}-{}__previous-publish",
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        );
+        match recovery_root.create_dir(&name) {
+            Ok(()) => {
+                return Ok(PublishRecovery {
+                    #[cfg(test)]
+                    path: recovery.join(&name),
+                    dir: recovery_root.open_dir(&name)?,
+                });
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "could not reserve static-publish recovery directory",
+    ))
+}
+
+fn commit_publish_stage(graph: &Graph, stage: PublishStage, out: &Path) -> io::Result<()> {
+    graph.ensure_write_target(out)?;
+    // cap-std may represent a directory capability with an O_PATH descriptor on
+    // Linux, which cannot itself be fsynced. Every generated file is fsynced;
+    // directory durability remains best-effort, matching the other atomic paths.
+    let _ = stage.dir.try_clone()?.into_std_file().sync_all();
+    let PublishStage {
+        path,
+        root,
+        dir,
+        identity,
+    } = stage;
+    // Windows refuses to rename a directory while this capability is open.
+    // Every file is already synced and the stable identity above survives the
+    // close for the post-move replacement check.
+    drop(dir);
+
+    // Reject a pre-existing alias without touching it. A replacement racing the
+    // check is moved as an inode into bound recovery and rejected there; it is
+    // never followed for a write.
+    let old_recovery = match root.symlink_metadata("publish") {
+        Ok(metadata) => {
+            if !metadata.is_dir() || metadata.file_type().is_symlink() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "static-publish output is not a real directory",
+                ));
+            }
+            let recovery = reserve_publish_recovery(graph, &root)?;
+            publish_recovery_race_hook(&recovery)?;
+            root.rename("publish", &recovery.dir, "previous")?;
+            let retired = recovery.dir.symlink_metadata("previous")?;
+            if !retired.is_dir() || retired.file_type().is_symlink() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "static-publish output changed during retirement",
+                ));
+            }
+            Some(recovery)
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error),
+    };
+
+    if let Err(error) = crate::model::move_file_noreplace(&path, out) {
+        // The previous site stays complete in conflict recovery. Avoid a
+        // compare-then-replace restoration that could clobber a late winner.
+        let _ = old_recovery;
+        return Err(error);
+    }
+    let out_meta = fs::symlink_metadata(out)?;
+    let same_stage = out_meta.is_dir()
+        && !out_meta.file_type().is_symlink()
+        && identity_from_path(out).is_ok_and(|live| live == identity);
+    if same_stage {
+        return Ok(());
+    }
+
+    // A replaced stage must never remain live. Move it through the bound graph
+    // and recovery directory handles; the previous complete site is already
+    // retained separately and is not overwritten during automatic recovery.
+    let bad = reserve_publish_recovery(graph, &root)?;
+    let _ = root.rename("publish", &bad.dir, "invalid-stage");
+    Err(io::Error::new(
+        io::ErrorKind::InvalidInput,
+        "static-publish staging directory changed during commit",
+    ))
+}
+
 /// Export public pages to `<root>/publish/`. Returns (output dir, page count).
 /// Only pages with `public:: true` are published, unless
 /// `:publishing/all-pages-public?` is set in config (matching Logseq).
 pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
     let out = graph.root.join("publish");
     graph.ensure_write_target(&out)?;
-    fs::create_dir_all(&out)?;
-    crate::model::atomic_write(&out.join("style.css"), STYLE.as_bytes())?;
+    let stage = reserve_publish_stage(graph)?;
+    write_publish_stage_file(&stage, "style.css", STYLE.as_bytes())?;
     // Sidebar + fuzzy search are JS-driven: Fuse (vendored, OG's version) + our tiny
     // app.js, both loaded as `<script src>` so they work offline / over file://.
-    crate::model::atomic_write(
-        &out.join("fuse.min.js"),
+    write_publish_stage_file(
+        &stage,
+        "fuse.min.js",
         include_str!("../assets/fuse.min.js").as_bytes(),
     )?;
-    crate::model::atomic_write(&out.join("app.js"), APP_JS.as_bytes())?;
+    write_publish_stage_file(&stage, "app.js", APP_JS.as_bytes())?;
+    write_publish_stage_file(&stage, "enhance.js", ENHANCE_JS.as_bytes())?;
     let all_public = graph.config.all_pages_public;
     let favorites: HashSet<&str> = graph.config.favorites.iter().map(|s| s.as_str()).collect();
 
     let pages = graph.list_pages();
+    // Query/reference DTOs currently identify their source by logical page name.
+    // If two physical files claim that identity, a name-only authorization check
+    // cannot prove which file produced a result. Fail closed for that identity:
+    // publish neither twin rather than let a private twin borrow the public
+    // capability. Ordinary unique pages retain the exact one-file capability.
+    let mut source_identity_counts: HashMap<String, usize> = HashMap::new();
+    for page in &pages {
+        *source_identity_counts
+            .entry(crate::refs::page_key(&page.name))
+            .or_default() += 1;
+    }
     let mut entries: Vec<_> = pages.iter().collect();
     entries.sort_by(|a, b| a.name.cmp(&b.name));
 
     // Pass 1: parse every page, keep only the public ones. `entries` is already
     // sorted by name, so `public` (and hence the slug assignment below) is
     // deterministic across runs.
-    let mut public: Vec<(&str, PageKind, doc::Document)> = Vec::new();
+    let mut public: Vec<(&str, PageKind, Arc<doc::Document>)> = Vec::new();
+    let mut snapshot_pages = Vec::new();
     for e in entries {
-        let Ok(content) = fs::read_to_string(&e.path) else {
-            continue;
+        let content = fs::read_to_string(&e.path)?;
+        let mut parsed = if e
+            .path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("org"))
+        {
+            crate::org::parse_org(&content)
+        } else {
+            doc::parse(&content)
         };
-        let parsed = doc::parse(&content);
         if !all_public && !page_is_public(parsed.pre_block.as_deref()) {
             continue;
         }
-        public.push((e.name.as_str(), e.kind, parsed));
+        if source_identity_counts
+            .get(&crate::refs::page_key(&e.name))
+            .copied()
+            .unwrap_or(0)
+            != 1
+        {
+            eprintln!(
+                "tine export: refusing ambiguous public page identity {:?}; more than one source file claims it",
+                e.name
+            );
+            continue;
+        }
+        crate::model::assign_doc_uuids(&mut parsed.roots);
+        let parsed = Arc::new(parsed);
+        public.push((e.name.as_str(), e.kind, Arc::clone(&parsed)));
+        snapshot_pages.push((e.clone(), parsed));
     }
+
+    // Every downstream resolver gets the same exact document revision as the
+    // visibility pass. The snapshot graph has an empty private root and a fully
+    // preinstalled cache/page list, so a query/embed/namespace lookup cannot
+    // fall through to the live graph or a stale pre-export cache.
+    let snapshot = PublicationGraphSnapshot::new(snapshot_pages)?;
 
     // ONE source of truth: a unique, nonempty name→slug map for the exported set.
     // Every filename, cross-page link, block-ref target, and search-index entry is
@@ -1753,7 +2482,7 @@ pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
 
     let page_docs: HashMap<String, &doc::Document> = public
         .iter()
-        .map(|(name, _, parsed)| (crate::refs::page_key(name), parsed))
+        .map(|(name, _, parsed)| (crate::refs::page_key(name), parsed.as_ref()))
         .collect();
     let mut reverse_refs = ReverseRefIndex::new();
     for (name, _, parsed) in &public {
@@ -1767,7 +2496,7 @@ pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
             &mut reverse_refs,
         );
     }
-    let query_cache: QueryCache = RefCell::new(HashMap::new());
+    let query_cache: SharedQueryCache = RefCell::new(QueryCache::default());
 
     // Pass 2: render each public page (collecting the per-block search index along
     // the way), accumulate the sidebar page index (`__tinePages`) and the static
@@ -1783,20 +2512,29 @@ pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
     let ctx = Ctx {
         refs: &refs,
         reverse_refs: Some(&reverse_refs),
-        graph: Some(graph),
+        graph: Some(&snapshot.graph),
         slugs: Some(&slugs),
         inline_assets: false,
+        print_asset_budget: None,
         query_cache: Some(&query_cache),
         pages: Some(&page_docs),
     };
     for (name, kind, parsed) in &public {
         let slug = slug_of(name);
         let file = format!("{slug}.html");
-        let html = page_html(name, &slug, parsed, *kind, &ctx, &mut all_blocks, &home_file);
+        let html = page_html(
+            name,
+            &slug,
+            parsed,
+            *kind,
+            &ctx,
+            &mut all_blocks,
+            &home_file,
+        );
         if name.eq_ignore_ascii_case("Welcome to Tine") {
             welcome_html = Some(html.clone());
         }
-        crate::model::atomic_write(&out.join(&file), html.as_bytes())?;
+        write_publish_stage_file(&stage, &file, html.as_bytes())?;
         let journal = *kind == PageKind::Journal;
         let tag = if journal {
             "<span class=\"k\">journal</span>"
@@ -1826,7 +2564,7 @@ pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
         serde_json::to_string(&sidebar_pages).unwrap_or_else(|_| "[]".into()),
         serde_json::to_string(&all_blocks).unwrap_or_else(|_| "[]".into()),
     );
-    crate::model::atomic_write(&out.join("search-index.js"), data.as_bytes())?;
+    write_publish_stage_file(&stage, "search-index.js", data.as_bytes())?;
 
     // Keep the alphabetical page list separately discoverable. When the public
     // set contains Welcome to Tine, index.html is that actual rendered page and
@@ -1838,9 +2576,10 @@ pub fn publish_graph(graph: &Graph) -> io::Result<(String, usize)> {
         index_list
     );
     let pages_html = shell("Pages", &main, &home_file);
-    crate::model::atomic_write(&out.join("pages.html"), pages_html.as_bytes())?;
+    write_publish_stage_file(&stage, "pages.html", pages_html.as_bytes())?;
     let entry_html = welcome_html.unwrap_or(pages_html);
-    crate::model::atomic_write(&out.join("index.html"), entry_html.as_bytes())?;
+    write_publish_stage_file(&stage, "index.html", entry_html.as_bytes())?;
+    commit_publish_stage(graph, stage, &out)?;
     Ok((out.display().to_string(), count))
 }
 
@@ -1868,6 +2607,7 @@ mod tests {
             graph: None,
             slugs: None,
             inline_assets: false,
+            print_asset_budget: None,
             query_cache: None,
             pages: None,
         };
@@ -1977,6 +2717,56 @@ mod tests {
     }
 
     #[test]
+    fn ordinary_links_and_video_macros_use_the_closed_url_policy() {
+        let js = render_body("[click](javascript:alert(1))", &no_refs());
+        assert!(!js.contains("href="), "{js}");
+        assert!(js.contains("unsafe-link"), "{js}");
+        let data = render_body("[click](data:text/html,boom)", &no_refs());
+        assert!(!data.contains("href="), "{data}");
+        let web = render_body("[safe](https://example.com/x)", &no_refs());
+        assert!(web.contains("href=\"https://example.com/x\""), "{web}");
+        let local = render_body("[safe](../assets/report.pdf)", &no_refs());
+        assert!(local.contains("href=\"../assets/report.pdf\""), "{local}");
+        assert!(render_video("javascript:alert(1)").contains("unsafe-link"));
+        assert!(!render_video("javascript:alert(1)").contains("href="));
+    }
+
+    #[test]
+    fn user_block_ids_are_contextualized_for_attributes_and_fragments() {
+        let id = "bad\" onmouseover=\"alert(1) #/%";
+        let mut refs = RefIndex::new();
+        refs.insert(
+            id.into(),
+            RefTarget {
+                slug: "safe".into(),
+                text: "target".into(),
+            },
+        );
+        let link = decorate(
+            &format!(
+                "<span class=\"block-ref\" data-block=\"{}\">label</span>",
+                esc_attr(id)
+            ),
+            &Ctx {
+                refs: &refs,
+                reverse_refs: None,
+                graph: None,
+                slugs: None,
+                inline_assets: false,
+                print_asset_budget: None,
+                query_cache: None,
+                pages: None,
+            },
+            0,
+        );
+        assert!(
+            link.contains("#bad%22%20onmouseover%3D%22alert%281%29%20%23%2F%25"),
+            "{link}"
+        );
+        assert!(!link.contains(" onmouseover="), "{link}");
+    }
+
+    #[test]
     fn decorates_image_and_code_block() {
         // image: `data-asset` → src; the inline-image skeleton survives.
         let h = render_body("![cat](../assets/cat.png)", &no_refs());
@@ -2056,6 +2846,10 @@ mod tests {
         // assets emitted alongside the pages
         assert!(out.join("fuse.min.js").exists(), "vendored Fuse shipped");
         assert!(out.join("app.js").exists(), "app.js shipped");
+        assert!(
+            out.join("enhance.js").exists(),
+            "script-free enhancement shipped"
+        );
 
         // embedded search data: pages + blocks globals, favorite flag, stripped text
         let sidx = fs::read_to_string(out.join("search-index.js")).unwrap();
@@ -2064,6 +2858,9 @@ mod tests {
             "{}",
             &sidx[..60.min(sidx.len())]
         );
+        let alpha = fs::read_to_string(out.join("alpha.html")).unwrap();
+        assert!(alpha.contains("Content-Security-Policy"), "{alpha}");
+        assert!(!alpha.contains(" onload="), "{alpha}");
         assert!(sidx.contains("window.__tineBlocks="));
         assert!(
             sidx.contains("\"favorite\":true"),
@@ -2108,6 +2905,286 @@ mod tests {
     }
 
     #[test]
+    fn publish_fails_closed_when_public_and_private_files_claim_one_page_identity() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("tine-publish-ambiguous-{unique}"));
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("pages/Twin.md"),
+            "public:: true\n- public sentinel\n- {{query (page Twin)}}\n",
+        )
+        .unwrap();
+        fs::write(dir.join("journals/Twin.md"), "- PRIVATE SENTINEL\n").unwrap();
+        fs::write(dir.join("pages/Visible.md"), "public:: true\n- visible\n").unwrap();
+
+        let graph = Graph::open(&dir);
+        let (outdir, count) = publish_graph(&graph).unwrap();
+        let out = Path::new(&outdir);
+        assert_eq!(count, 1);
+        assert!(!out.join("twin.html").exists());
+        let all = fs::read_to_string(out.join("search-index.js")).unwrap();
+        assert!(!all.contains("PRIVATE SENTINEL"), "{all}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn publish_macros_never_expand_private_graph_content() {
+        let dir = std::env::temp_dir().join(format!(
+            "tine-publish-private-macros-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        let private_id = "99999999-9999-4999-8999-999999999999";
+        fs::write(
+            dir.join("pages/Dashboard.md"),
+            format!(
+                "public:: true\n- {{{{query (task TODO)}}}}\n- {{{{embed [[Secret]]}}}}\n- {{{{embed (({private_id}))}}}}\n- {{{{namespace PrivateNS}}}}\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages/Secret.md"),
+            format!("- TODO PRIVATE_QUERY_AND_EMBED_TOKEN\n  id:: {private_id}\n"),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages/PrivateNS___Child.md"),
+            "- PRIVATE_NAMESPACE_TOKEN\n",
+        )
+        .unwrap();
+
+        let graph = Graph::open(&dir);
+        let (outdir, count) = publish_graph(&graph).unwrap();
+        assert_eq!(count, 1);
+        let dashboard =
+            fs::read_to_string(std::path::Path::new(&outdir).join("dashboard.html")).unwrap();
+        assert!(!dashboard.contains("PRIVATE_QUERY_AND_EMBED_TOKEN"));
+        assert!(!dashboard.contains("PRIVATE_NAMESPACE_TOKEN"));
+        assert!(!dashboard.contains("PrivateNS/Child"));
+        assert!(
+            dashboard.contains("No matching blocks")
+                || dashboard.contains("Embedded content is not public"),
+            "private macro targets should fail closed: {dashboard}"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn publish_uses_one_fresh_snapshot_after_external_visibility_rewrite() {
+        let dir = std::env::temp_dir().join(format!(
+            "tine-publish-external-visibility-snapshot-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        let source_id = "99999999-9999-4999-8999-999999999998";
+        fs::write(
+            dir.join("pages/Dashboard.md"),
+            format!(
+                "public:: true\n- {{{{query (task TODO)}}}}\n- {{{{query [:find (pull ?b [*]) :where (task ?b \"TODO\")]}}}}\n- {{{{embed (({source_id}))}}}}\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages/Source.md"),
+            format!("- TODO PRIVATE_STALE_TOKEN\n  id:: {source_id}\n"),
+        )
+        .unwrap();
+
+        let graph = Graph::open(&dir);
+        graph.warm_cache();
+
+        // Simulate a sync/editor outside Tine changing both visibility and body
+        // after the live graph cache was populated. Publication must not combine
+        // the fresh public classification with stale cached query/embed DTOs.
+        fs::write(
+            dir.join("pages/Source.md"),
+            format!("public:: true\n- harmless current body\n  id:: {source_id}\n"),
+        )
+        .unwrap();
+
+        let (outdir, count) = publish_graph(&graph).unwrap();
+        assert_eq!(count, 2);
+        let out = Path::new(&outdir);
+        let dashboard = fs::read_to_string(out.join("dashboard.html")).unwrap();
+        let source = fs::read_to_string(out.join("source.html")).unwrap();
+        let search = fs::read_to_string(out.join("search-index.js")).unwrap();
+        let published = format!("{dashboard}\n{source}\n{search}");
+        assert!(published.contains("harmless current body"), "{published}");
+        assert!(
+            !published.contains("PRIVATE_STALE_TOKEN"),
+            "a stale live-graph query/embed result crossed the publication snapshot: {published}"
+        );
+        assert!(
+            dashboard.contains("harmless current body"),
+            "the block embed must resolve from the same fresh snapshot: {dashboard}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn republish_retires_pages_that_are_no_longer_public() {
+        let dir =
+            std::env::temp_dir().join(format!("tine-publish-retire-stale-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("pages/Visible.md"),
+            "public:: true\n- visible body\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages/Secret.md"),
+            "public:: true\n- stale private token\n",
+        )
+        .unwrap();
+
+        let graph = Graph::open(&dir);
+        let (outdir, count) = publish_graph(&graph).unwrap();
+        assert_eq!(count, 2);
+        let out = std::path::Path::new(&outdir);
+        assert!(out.join("secret.html").exists());
+
+        fs::write(dir.join("pages/Secret.md"), "- stale private token\n").unwrap();
+        let graph = Graph::open(&dir);
+        let (outdir, count) = publish_graph(&graph).unwrap();
+        assert_eq!(count, 1);
+        let out = std::path::Path::new(&outdir);
+        assert!(out.join("visible.html").exists());
+        assert!(
+            !out.join("secret.html").exists(),
+            "a formerly public page must not remain deployable after republish"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn publish_commit_never_writes_through_a_replaced_output_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let dir =
+            std::env::temp_dir().join(format!("tine-publish-output-swap-{}", std::process::id()));
+        let outside = std::env::temp_dir().join(format!(
+            "tine-publish-output-swap-outside-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&outside);
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("index.html"), "outside sentinel").unwrap();
+        let graph = Graph::open(&dir);
+        let stage = reserve_publish_stage(&graph).unwrap();
+        write_publish_stage_file(&stage, "index.html", b"generated site").unwrap();
+        symlink(&outside, dir.join("publish")).unwrap();
+
+        assert!(commit_publish_stage(&graph, stage, &dir.join("publish")).is_err());
+
+        assert_eq!(
+            fs::read_to_string(outside.join("index.html")).unwrap(),
+            "outside sentinel"
+        );
+        assert!(fs::symlink_metadata(dir.join("publish"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&outside);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn publish_stage_handle_survives_ambient_symlink_swap_without_outside_write() {
+        let dir = std::env::temp_dir().join(format!(
+            "tine-publish-stage-capability-{}",
+            std::process::id()
+        ));
+        let outside = std::env::temp_dir().join(format!(
+            "tine-publish-stage-capability-outside-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&outside);
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(
+            dir.join("pages/Public.md"),
+            "public:: true\n- generated sentinel\n",
+        )
+        .unwrap();
+        fs::write(outside.join("style.css"), "outside sentinel").unwrap();
+        PUBLISH_STAGE_WRITE_SWAP.with(|slot| *slot.borrow_mut() = Some(outside.clone()));
+
+        let graph = Graph::open(&dir);
+        assert!(publish_graph(&graph).is_err());
+        assert_eq!(
+            fs::read_to_string(outside.join("style.css")).unwrap(),
+            "outside sentinel"
+        );
+        assert!(!outside.join("public.html").exists());
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&outside);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn publish_recovery_handle_survives_ambient_symlink_swap_without_outside_move() {
+        let dir = std::env::temp_dir().join(format!(
+            "tine-publish-recovery-capability-{}",
+            std::process::id()
+        ));
+        let outside = std::env::temp_dir().join(format!(
+            "tine-publish-recovery-capability-outside-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&outside);
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("publish")).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(dir.join("publish/index.html"), "previous site").unwrap();
+        fs::write(
+            dir.join("pages/Public.md"),
+            "public:: true\n- generated sentinel\n",
+        )
+        .unwrap();
+        fs::write(outside.join("previous"), "outside sentinel").unwrap();
+        PUBLISH_RECOVERY_SWAP.with(|slot| *slot.borrow_mut() = Some(outside.clone()));
+
+        let graph = Graph::open(&dir);
+        let (out, count) = publish_graph(&graph).unwrap();
+        assert_eq!(count, 1);
+        assert!(Path::new(&out).join("public.html").exists());
+        assert_eq!(
+            fs::read_to_string(outside.join("previous")).unwrap(),
+            "outside sentinel"
+        );
+        let conflicts = dir.join("logseq/.tine-trash/conflicts");
+        assert!(fs::read_dir(conflicts)
+            .unwrap()
+            .flatten()
+            .any(|entry| entry.path().join("previous/index.html").exists()));
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&outside);
+    }
+
+    #[test]
     fn publish_uses_welcome_home_and_public_reverse_block_refs() {
         let dir = std::env::temp_dir().join(format!("tine-publish-welcome-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
@@ -2144,7 +3221,10 @@ mod tests {
         assert!(welcome.contains("aria-label=\"2 block references\">2</summary>"));
         assert!(welcome.contains("href=\"welcome-to-tine.html#b0\""));
         assert!(welcome.contains("href=\"other.html#b0\""));
-        assert!(!welcome.contains("Private"), "private referrer must not leak");
+        assert!(
+            !welcome.contains("Private"),
+            "private referrer must not leak"
+        );
         assert!(pages.contains("welcome-to-tine.html") && pages.contains("other.html"));
         assert!(pages.contains("href=\"welcome-to-tine.html\">⌂ Home</a>"));
         let _ = fs::remove_dir_all(&dir);
@@ -2158,8 +3238,7 @@ mod tests {
         // first) and `日本語` writes a degenerate `.html`. Post-fix every page must
         // get a distinct, nonempty file, and every cross-page link must point at
         // the file its target was actually written to.
-        let dir =
-            std::env::temp_dir().join(format!("tine-publish-collide-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("tine-publish-collide-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("journals")).unwrap();
         fs::create_dir_all(dir.join("pages")).unwrap();
@@ -2203,7 +3282,10 @@ mod tests {
             assert!(seen.insert(s.to_string()), "slugs must be distinct: {s}");
             let f = out.join(format!("{s}.html"));
             assert!(f.exists(), "file for slug {s} exists");
-            assert!(fs::metadata(&f).unwrap().len() > 0, "file {s}.html nonempty");
+            assert!(
+                fs::metadata(&f).unwrap().len() > 0,
+                "file {s}.html nonempty"
+            );
         }
         // No page landed in a degenerate empty-slug file.
         assert!(!out.join(".html").exists(), "no empty-slug .html file");
@@ -2249,6 +3331,60 @@ mod tests {
     }
 
     #[test]
+    fn print_asset_inlining_enforces_per_file_and_shared_export_budgets() {
+        let dir = std::env::temp_dir().join(format!("tine-print-budget-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("assets")).unwrap();
+        fs::write(dir.join("assets/one.png"), b"1234").unwrap();
+        fs::write(dir.join("assets/two.png"), b"5678").unwrap();
+        fs::write(dir.join("assets/large.png"), b"123456").unwrap();
+        let graph = Graph::open(&dir);
+        let refs = no_refs();
+        let cumulative = RefCell::new(PrintAssetBudget {
+            per_asset: 5,
+            remaining: 7,
+        });
+        let cumulative_ctx = Ctx {
+            refs: &refs,
+            reverse_refs: None,
+            graph: Some(&graph),
+            slugs: None,
+            inline_assets: true,
+            print_asset_budget: Some(&cumulative),
+            query_cache: None,
+            pages: None,
+        };
+
+        assert!(inline_asset_uri(&cumulative_ctx, "../assets/one.png").is_some());
+        assert_eq!(cumulative.borrow().remaining, 3);
+        assert!(
+            inline_asset_uri(&cumulative_ctx, "../assets/two.png").is_none(),
+            "the second valid file must not cross the shared export ceiling"
+        );
+        assert_eq!(
+            cumulative.borrow().remaining,
+            3,
+            "a rejection consumes no budget"
+        );
+
+        let per_file = RefCell::new(PrintAssetBudget {
+            per_asset: 5,
+            remaining: 20,
+        });
+        let per_file_ctx = Ctx {
+            print_asset_budget: Some(&per_file),
+            ..cumulative_ctx
+        };
+        assert!(
+            inline_asset_uri(&per_file_ctx, "../assets/large.png").is_none(),
+            "one oversized file must be rejected before it is returned"
+        );
+        assert_eq!(per_file.borrow().remaining, 20);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn page_print_html_is_self_contained_with_inlined_image() {
         let dir = std::env::temp_dir().join(format!("tine-print-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
@@ -2264,9 +3400,11 @@ mod tests {
             0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
         ];
         fs::write(dir.join("assets").join("pic.png"), png).unwrap();
+        let oversized = fs::File::create(dir.join("assets").join("oversized.png")).unwrap();
+        oversized.set_len(PRINT_ASSET_MAX_BYTES + 1).unwrap();
         fs::write(
             dir.join("pages").join("Report.md"),
-            "- # Report\n- Some **bold** text and a [[Welcome]] link.\n- ![shot](../assets/pic.png)\n",
+            "- # Report\n- Some **bold** text and a [[Welcome]] link.\n- ![shot](../assets/pic.png)\n- ![large](../assets/oversized.png)\n",
         )
         .unwrap();
 
@@ -2289,10 +3427,27 @@ mod tests {
             "no relative asset link left"
         );
         assert!(
+            html.contains("class=\"print-asset-omitted\""),
+            "an oversized image becomes an explicit inert marker"
+        );
+        assert!(
+            !html.contains("oversized.png"),
+            "the rejected source path is not retained in the print document"
+        );
+        assert!(
             !html.contains("<aside class=\"sidebar\">"),
             "no sidebar in print doc"
         );
         assert!(!html.contains("src=\"app.js\""), "no app.js in print doc");
+        assert!(!html.contains("<script"), "print doc executes no scripts");
+        assert!(
+            !html.contains("cdn.jsdelivr.net"),
+            "print doc has no CDN resources"
+        );
+        assert!(
+            html.contains("script-src 'none'"),
+            "print doc denies script execution even if markup regresses"
+        );
         assert!(
             !html.contains("href=\"style.css\""),
             "no external stylesheet link"
@@ -2437,10 +3592,8 @@ mod tests {
 
     #[test]
     fn publish_memoizes_repeated_query_macros() {
-        let dir = std::env::temp_dir().join(format!(
-            "tine-publish-query-memo-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("tine-publish-query-memo-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("journals")).unwrap();
         fs::create_dir_all(dir.join("pages")).unwrap();
@@ -2486,11 +3639,100 @@ mod tests {
     }
 
     #[test]
-    fn publish_reuses_pass1_docs_for_repeated_page_embeds() {
+    fn publication_rejects_query_sources_before_keying_and_bounds_valid_memos() {
         let dir = std::env::temp_dir().join(format!(
-            "tine-publish-embed-reuse-{}",
+            "tine-publish-query-source-bound-{}",
             std::process::id()
         ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(dir.join("pages").join("P.md"), "- TODO target\n").unwrap();
+        let graph = Graph::open(&dir);
+        graph.warm_cache();
+        let refs = RefIndex::new();
+        let cache: SharedQueryCache = RefCell::new(QueryCache::default());
+        let ctx = Ctx {
+            refs: &refs,
+            reverse_refs: None,
+            graph: Some(&graph),
+            slugs: None,
+            inline_assets: false,
+            print_asset_budget: None,
+            query_cache: Some(&cache),
+            pages: None,
+        };
+
+        let oversized = "x".repeat(crate::query::QUERY_SOURCE_MAX_BYTES + 1);
+        assert!(render_query(&graph, &oversized, &ctx, 0).contains("publication limit"));
+        let nested = format!(
+            "{}(task TODO){}",
+            "(and ".repeat(1_000),
+            ")".repeat(1_000)
+        );
+        assert!(render_query(&graph, &nested, &ctx, 0).contains("nesting is too deep"));
+        assert!(cache.borrow().entries.is_empty());
+
+        for index in 0..(QUERY_CACHE_MAX_ENTRIES + 20) {
+            let source = format!("(and (task TODO) (content \"memo-{index}\"))");
+            let _ = render_query(&graph, &source, &ctx, 0);
+        }
+        let cache = cache.borrow();
+        assert_eq!(cache.entries.len(), QUERY_CACHE_MAX_ENTRIES);
+        assert!(cache.bytes <= QUERY_CACHE_MAX_BYTES);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn publish_query_keeps_and_hydrates_a_match_below_a_nonmatching_gap() {
+        let dir =
+            std::env::temp_dir().join(format!("tine-publish-query-gap-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("logseq").join("config.edn"),
+            "{:publishing/all-pages-public? true}\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages").join("Tasks.md"),
+            "- TODO parity ancestor\n  - DONE parity gap\n    - TODO parity grandchild\n      - live child below retained grandchild\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages").join("Dashboard.md"),
+            "- {{query (task TODO)}}\n",
+        )
+        .unwrap();
+
+        let graph = Graph::open(&dir);
+        let (outdir, _) = publish_graph(&graph).unwrap();
+        let dashboard =
+            fs::read_to_string(std::path::Path::new(&outdir).join("dashboard.html")).unwrap();
+
+        assert_eq!(
+            dashboard.matches("parity grandchild").count(),
+            2,
+            "{dashboard}"
+        );
+        assert_eq!(
+            dashboard
+                .matches("live child below retained grandchild")
+                .count(),
+            2,
+            "{dashboard}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn publish_reuses_pass1_docs_for_repeated_page_embeds() {
+        let dir =
+            std::env::temp_dir().join(format!("tine-publish-embed-reuse-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("journals")).unwrap();
         fs::create_dir_all(dir.join("pages")).unwrap();

@@ -2,9 +2,58 @@
 // trigger at the caret, and apply a chosen completion. No DOM — unit-testable.
 
 import { TEMPLATE_VARS } from "./templateVars";
-import { tagRef } from "../tags";
+import { isBareTagPrefix, tagRef } from "../tags";
 
-export type TriggerKind = "page" | "tag" | "command" | "block";
+export type TriggerKind = "page" | "tag" | "command" | "block" | "code-language";
+
+export interface CodeLanguageItem {
+  /** Canonical highlight.js/common identifier written to the fence. */
+  id: string;
+  label: string;
+  aliases: readonly string[];
+}
+
+// Runtime rendering lazy-loads highlight.js/lib/common. Keep this small static
+// mirror so opening the editor does not eagerly pull the highlighter into the
+// main bundle; a drift test compares it with the pinned dependency's registry.
+export const COMMON_CODE_LANGUAGES: readonly CodeLanguageItem[] = [
+  { id: "javascript", label: "JavaScript", aliases: ["js", "jsx", "mjs", "cjs"] },
+  { id: "typescript", label: "TypeScript", aliases: ["ts", "tsx", "mts", "cts"] },
+  { id: "python", label: "Python", aliases: ["py", "gyp", "ipython"] },
+  { id: "bash", label: "Bash", aliases: ["sh", "zsh"] },
+  { id: "json", label: "JSON", aliases: ["jsonc"] },
+  { id: "markdown", label: "Markdown", aliases: ["md", "mkdown", "mkd"] },
+  { id: "xml", label: "HTML, XML", aliases: ["html", "xhtml", "rss", "atom", "xjb", "xsd", "xsl", "plist", "wsf", "svg"] },
+  { id: "css", label: "CSS", aliases: [] },
+  { id: "sql", label: "SQL", aliases: [] },
+  { id: "java", label: "Java", aliases: ["jsp"] },
+  { id: "c", label: "C", aliases: ["h"] },
+  { id: "cpp", label: "C++", aliases: ["cc", "c++", "h++", "hpp", "hh", "hxx", "cxx"] },
+  { id: "csharp", label: "C#", aliases: ["cs", "c#"] },
+  { id: "go", label: "Go", aliases: ["golang"] },
+  { id: "rust", label: "Rust", aliases: ["rs"] },
+  { id: "kotlin", label: "Kotlin", aliases: ["kt", "kts"] },
+  { id: "swift", label: "Swift", aliases: [] },
+  { id: "php", label: "php", aliases: [] },
+  { id: "ruby", label: "Ruby", aliases: ["rb", "gemspec", "podspec", "thor", "irb"] },
+  { id: "yaml", label: "YAML", aliases: ["yml"] },
+  { id: "plaintext", label: "Plain text", aliases: ["text", "txt"] },
+  { id: "diff", label: "Diff", aliases: ["patch"] },
+  { id: "graphql", label: "GraphQL", aliases: ["gql"] },
+  { id: "ini", label: "TOML, also INI", aliases: ["toml"] },
+  { id: "less", label: "Less", aliases: [] },
+  { id: "lua", label: "Lua", aliases: ["pluto"] },
+  { id: "makefile", label: "Makefile", aliases: ["mk", "mak", "make"] },
+  { id: "perl", label: "Perl", aliases: ["pl", "pm"] },
+  { id: "objectivec", label: "Objective-C", aliases: ["mm", "objc", "obj-c", "obj-c++", "objective-c++"] },
+  { id: "php-template", label: "PHP template", aliases: [] },
+  { id: "python-repl", label: "python-repl", aliases: ["pycon"] },
+  { id: "r", label: "R", aliases: [] },
+  { id: "scss", label: "SCSS", aliases: [] },
+  { id: "shell", label: "Shell Session", aliases: ["console", "shellsession"] },
+  { id: "vbnet", label: "Visual Basic .NET", aliases: ["vb"] },
+  { id: "wasm", label: "WebAssembly", aliases: [] },
+];
 
 export interface Trigger {
   kind: TriggerKind;
@@ -16,6 +65,25 @@ export interface Trigger {
   end: number;
 }
 
+/** True when the current line starts inside a preceding Markdown fence. A
+ * fence-looking line inside code is content/closing syntax, never an opening
+ * language declaration. */
+function insideFenceBefore(raw: string, lineStart: number): boolean {
+  let open: { char: "`" | "~"; len: number } | null = null;
+  for (const line of raw.slice(0, lineStart).split("\n")) {
+    const match = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (!match) continue;
+    const fence = match[1];
+    const char = fence[0] as "`" | "~";
+    if (!open) {
+      open = { char, len: fence.length };
+    } else if (char === open.char && fence.length >= open.len && match[2].trim() === "") {
+      open = null;
+    }
+  }
+  return open !== null;
+}
+
 /** Detect an active completion trigger immediately before `caret`. */
 export function detectTrigger(raw: string, caret: number): Trigger | null {
   // No trigger spans a newline: the `[[` inner forbids it, and `#tag`/`/command`
@@ -25,6 +93,15 @@ export function detectTrigger(raw: string, caret: number): Trigger | null {
   // are offset back into `raw` by `lineStart`, so callers see absolute positions.
   const lineStart = raw.lastIndexOf("\n", caret - 1) + 1;
   const before = raw.slice(lineStart, caret);
+
+  // Opening Markdown fence language. Do not pop a menu for a bare fence typed
+  // by hand (Enter keeps its established behavior); one language character is
+  // enough. The /Code block command explicitly opens the empty picker instead.
+  const fence = /^( {0,3})(`{3,}|~{3,})([\w+#.-]+)$/.exec(before);
+  if (fence && !insideFenceBefore(raw, lineStart)) {
+    const start = lineStart + fence[1].length + fence[2].length;
+    return { kind: "code-language", query: fence[3], start, end: caret };
+  }
 
   // [[page and ((block — an opener with no closer since (the line has no
   // newline). Whichever opener sits closer to the caret wins (you can type a
@@ -44,11 +121,17 @@ export function detectTrigger(raw: string, caret: number): Trigger | null {
     }
   }
 
-  // #tag — `#` at start or after whitespace, followed by tag chars.
-  const tag = /(^|\s)#([\w/_.-]*)$/.exec(before);
-  if (tag) {
-    const start = lineStart + before.length - tag[2].length - 1; // position of '#'
-    return { kind: "tag", query: tag[2], start, end: caret };
+  // #tag — `#` at start or after whitespace, followed by the same hard-stop
+  // contract as lsdoc's bare-tag lexer. Do not use `\w`: it is ASCII-only and
+  // closes the picker after CJK/Indic/emoji IME commits. Logseq OG 6e7afa8
+  // (`handle-last-input` + `close-autocomplete-if-outside`) likewise starts on
+  // the marker boundary and keeps arbitrary committed tag text active.
+  const hash = before.lastIndexOf("#");
+  if (hash !== -1 && (hash === 0 || /\s/u.test(before[hash - 1]))) {
+    const query = before.slice(hash + 1);
+    if (isBareTagPrefix(query)) {
+      return { kind: "tag", query, start: lineStart + hash, end: caret };
+    }
   }
 
   // /command — `/` at start or after whitespace.
@@ -142,18 +225,48 @@ export function tagInsert(name: string): string {
   return tagRef(name);
 }
 
-/** Order the `[[`/`#` completion list, deciding which item is the DEFAULT (first,
- *  Enter) action. A blank query or an exact existing match shows the matches with
- *  no "Create" option. Otherwise `linkFirst` chooses the default: false (OG) →
- *  "Create" leads (Enter makes a new page/tag); true → the first match leads
- *  (Enter links it) and "Create" trails. The other items stay reachable by arrow. */
+export type LinkAutocompletePolicy = "adaptive" | "existing" | "typed";
+
+/** An autocomplete row whose canonical page name is still available at this
+ * boundary. `PageEntry` does not expose the alias that matched in the backend,
+ * so alias hits deliberately use this canonical deterministic fallback. */
+export interface NamedAutocompleteItem<T> {
+  name: string;
+  item: T;
+}
+
+function canonicalName(name: string): string {
+  return name.normalize("NFKC").toLowerCase();
+}
+
+function canonicalCompare<T extends NamedAutocompleteItem<unknown>>(a: T, b: T): number {
+  const an = canonicalName(a.name);
+  const bn = canonicalName(b.name);
+  return an.length - bn.length || (an < bn ? -1 : an > bn ? 1 : 0);
+}
+
+/** OG 1.0.0 page/tag default-action ordering. Blank queries retain their trigger
+ * lifecycle but deliberately expose no rows; the editor also skips quickSwitch
+ * for them. Nonblank results are canonical-name ordered so graph/index order is
+ * never an accidental Enter policy. */
 export function orderAcItems<T>(
-  matches: T[],
-  createItem: T,
-  opts: { hasQuery: boolean; exact: boolean; linkFirst: boolean }
+  matches: readonly NamedAutocompleteItem<T>[],
+  createItem: NamedAutocompleteItem<T>,
+  opts: { query: string; policy: LinkAutocompletePolicy },
 ): T[] {
-  if (!opts.hasQuery || opts.exact) return matches;
-  return opts.linkFirst ? [...matches, createItem] : [createItem, ...matches];
+  const query = canonicalName(opts.query.trim());
+  if (!query) return [];
+  const exact = matches.filter((match) => canonicalName(match.name) === query).sort(canonicalCompare);
+  if (exact.length) return exact.map((match) => match.item);
+
+  const prefix = matches.filter((match) => canonicalName(match.name).startsWith(query)).sort(canonicalCompare);
+  const fuzzy = matches.filter((match) => !canonicalName(match.name).startsWith(query)).sort(canonicalCompare);
+  const ordered = [...prefix, ...fuzzy];
+  if (opts.policy === "typed") return [createItem.item, ...ordered.map((match) => match.item)];
+  if (opts.policy === "existing") return [...ordered.map((match) => match.item), createItem.item];
+  return prefix.length
+    ? [prefix[0].item, createItem.item, ...prefix.slice(1).map((match) => match.item), ...fuzzy.map((match) => match.item)]
+    : [createItem.item, ...fuzzy.map((match) => match.item)];
 }
 
 /** Action commands need runtime behaviour (date stamps, file picker) rather
@@ -168,12 +281,15 @@ export type CommandAction =
   | "today"
   | "query-builder"
   | "page-props"
+  | "code-block"
   | "sheet-grid"
   | "sheet-table"
   | "sheet-board"
   | "priority-a"
   | "priority-b"
-  | "priority-c";
+  | "priority-c"
+  | "page-reference"
+  | "insert-link";
 
 export interface Command {
   label: string;
@@ -188,9 +304,17 @@ export interface Command {
    *  literally named "A"/"B"/"C" — a full-length exact match that outranks longer
    *  partial matches). Display still uses `label`. */
   key?: string;
+  /** Immutable pre-v0.5.10 typed-query tiebreaker. Never derive this from the
+   * visible bare-menu order: `/A` and every existing fuzzy tie depend on it. */
+  readonly matchTieOrder: number;
+  /** Explicit empty-slash menu order. This is intentionally independent of
+   * `matchTieOrder`; changing `/` must not perturb `/query`. */
+  readonly bareOrder: number;
 }
 
-export const COMMANDS: Command[] = [
+type CommandDefinition = Omit<Command, "matchTieOrder" | "bareOrder">;
+
+const COMMAND_DEFINITIONS: readonly CommandDefinition[] = [
   { label: "TODO", insert: "TODO " },
   { label: "DOING", insert: "DOING " },
   { label: "LATER", insert: "LATER " },
@@ -214,12 +338,12 @@ export const COMMANDS: Command[] = [
   { label: "Heading 2", insert: "## " },
   { label: "Heading 3", insert: "### " },
   { label: "Heading 4", insert: "#### " },
-  { label: "Page reference", insert: "[[]]", caret: 2 },
-  { label: "Link", insert: "[]()", caret: 1 },
+  { label: "Page reference", action: "page-reference" },
+  { label: "Link", action: "insert-link" },
   { label: "Upload an asset", action: "upload-asset" },
   { label: "Voice recording", action: "record" },
   { label: "Draw.io diagram", action: "drawio" },
-  { label: "Code block", insert: "```\n\n```", caret: 4 },
+  { label: "Code block", action: "code-block" },
   { label: "Calculator", insert: "```calc\n\n```", caret: 8 },
   { label: "Quote", insert: "> " },
   // Org-mode admonitions (Logseq's colored callouts). Caret lands on the empty
@@ -242,6 +366,28 @@ export const COMMANDS: Command[] = [
   ...TEMPLATE_VARS.map((v) => ({ label: `Template var: ${v.label}`, insert: v.insert })),
   { label: "Template var: date…", insert: "<% date:  %>", caret: 9 },
 ];
+
+const BARE_ORDER = new Map<string, number>([
+  "Page reference", "Link", "Upload an asset", "Voice recording", "Draw.io diagram",
+  "Heading 1", "Heading 2", "Heading 3", "Heading 4",
+  "Today", "Current time",
+  "TODO", "DOING", "LATER", "NOW", "DONE", "WAITING", "WAIT", "IN-PROGRESS", "CANCELED", "Scheduled", "Deadline",
+  "Priority A", "Priority B", "Priority C",
+  "Grid", "Table", "Board",
+  "Code block", "Calculator", "Quote",
+  "Admonition: note", "Admonition: tip", "Admonition: important", "Admonition: warning", "Admonition: caution",
+  "Divider", "Query", "Query (visual builder)", "Embed", "Math block", "Page properties",
+].map((label, index) => [label, index]));
+
+/** One registry drives rendering, matching, selection and tests. The old
+ * definition order is frozen into matchTieOrder before the bare menu is sorted. */
+export const COMMANDS: readonly Command[] = Object.freeze(COMMAND_DEFINITIONS.map((command, matchTieOrder) =>
+  Object.freeze({
+    ...command,
+    matchTieOrder,
+    bareOrder: BARE_ORDER.get(command.label) ?? 1000 + matchTieOrder,
+  }),
+));
 
 // --- Fuzzy ranking (port of OG Logseq's frontend.search/score) ---------------
 // Higher = better; a score of 0 means "not a match" (the query isn't even a
@@ -294,6 +440,26 @@ export function fuzzyScore(query: string, str: string): number {
   }
 }
 
+/** Languages actually bundled by highlight.js/common, ranked by canonical id,
+ * readable name, and aliases. Accepting an alias always writes the canonical id
+ * so rendering and future edits have one stable representation. */
+export function codeLanguageItems(query: string): CodeLanguageItem[] {
+  if (!query) return COMMON_CODE_LANGUAGES.slice();
+  return COMMON_CODE_LANGUAGES
+    .map((item, index) => ({
+      item,
+      index,
+      score: Math.max(
+        fuzzyScore(query, item.id),
+        fuzzyScore(query, item.label),
+        ...item.aliases.map((alias) => fuzzyScore(query, alias)),
+      ),
+    }))
+    .filter(({ score }) => score > 0)
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .map(({ item }) => item);
+}
+
 /** Fuzzy score for a command against `query`: the best of its label and its
  *  optional short `key` (so a one-letter query can surface it first). */
 export function commandScore(query: string, c: Command): number {
@@ -303,9 +469,9 @@ export function commandScore(query: string, c: Command): number {
 /** Slash-command matches for `query`, ranked best-first (OG-style). An empty
  *  query (bare `/`) lists every command in its defined order. */
 export function filterCommands(query: string): Command[] {
-  if (!query) return COMMANDS.slice();
+  if (!query) return COMMANDS.slice().sort((a, b) => a.bareOrder - b.bareOrder);
   return COMMANDS.map((c) => ({ c, s: commandScore(query, c) }))
     .filter((x) => x.s > 0)
-    .sort((a, b) => b.s - a.s) // stable: equal scores keep their defined order
+    .sort((a, b) => b.s - a.s || a.c.matchTieOrder - b.c.matchTieOrder)
     .map((x) => x.c);
 }

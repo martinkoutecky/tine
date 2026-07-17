@@ -1,7 +1,9 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
-import { pdfTarget, setPdfTarget } from "../ui";
+import { openPdf, pdfTarget, setPdfTarget } from "../ui";
+import { setDoc } from "../store";
+import { AnnotationBody } from "../components/AnnotationBody";
 import { AstBody } from "./body";
 import { initParser } from "./parse";
 
@@ -9,9 +11,10 @@ beforeAll(async () => {
   await initParser();
 });
 
-afterEach(() => {
+  afterEach(() => {
   vi.restoreAllMocks();
   setPdfTarget(null);
+  setDoc("pages", []);
   document.body.replaceChildren();
 });
 
@@ -54,7 +57,57 @@ describe("PDF annotation block references (GH #61)", () => {
       await settle();
 
       expect(backend().getPage).toHaveBeenCalledWith("hls__book", "page");
-      expect(pdfTarget()).toEqual({ filename: "A_Book.pdf", label: "A_Book.pdf", page: 42 });
+      expect(pdfTarget()).toEqual({
+        filename: "A_Book.pdf",
+        label: "A_Book.pdf",
+        page: 42,
+        highlightId: id,
+      });
+    } finally {
+      dispose();
+    }
+  });
+
+  it("keeps the current location when a direct link reopens the same PDF", () => {
+    setPdfTarget({ filename: "assets/paper.pdf", label: "Paper", page: 7 });
+    openPdf("assets/paper.pdf", "Paper");
+    expect(pdfTarget()).toEqual({
+      filename: "assets/paper.pdf",
+      label: "Paper",
+      page: 7,
+    });
+
+    openPdf("assets/paper.pdf", "Paper", 3);
+    expect(pdfTarget()?.page).toBe(3);
+  });
+
+  it("carries the exact id from a rendered annotation block", async () => {
+    const id = "61a00000-0000-0000-0000-000000000002";
+    setDoc("pages", [{
+      name: "hls__book",
+      preBlock: "file-path:: ../assets/A_Book.pdf",
+      roots: [],
+      format: "markdown",
+    } as any]);
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => (
+      <AnnotationBody
+        highlightId={id}
+        color="green"
+        hlPage={7}
+        line="Exact annotation"
+        page="hls__book"
+      />
+    ), host);
+    try {
+      host.querySelector<HTMLElement>(".hl-prefix")!.click();
+      expect(pdfTarget()).toEqual({
+        filename: "A_Book.pdf",
+        label: "A_Book.pdf",
+        page: 7,
+        highlightId: id,
+      });
     } finally {
       dispose();
     }

@@ -16,8 +16,12 @@ const version = JSON.parse(fs.readFileSync(path.join(root, "src-tauri/tauri.conf
 const changelog = fs.readFileSync(path.join(root, "CHANGELOG.md"), "utf8");
 const section = releaseSection(changelog, version);
 const impactPath = path.join(root, `docs/releases/v${version}-impact.json`);
-const catalog = JSON.parse(fs.readFileSync(path.join(root, "tests/ui-regressions/catalog.json"), "utf8"));
-const catalogIds = new Set(catalog.entries.map((entry) => entry.id));
+const regressionIndex = JSON.parse(fs.readFileSync(path.join(root, "tests/regressions/catalog.json"), "utf8"));
+const catalogIds = new Set();
+for (const inventory of regressionIndex.inventories ?? []) {
+  const catalog = JSON.parse(fs.readFileSync(path.join(root, inventory.path), "utf8"));
+  for (const entry of catalog.entries ?? []) catalogIds.add(entry.id);
+}
 const problems = [];
 
 if (!section) problems.push(`CHANGELOG.md has no released section for ${version}`);
@@ -88,4 +92,4 @@ if (problems.length) {
   process.exit(1);
 }
 
-console.log(`Release readiness OK: v${version}, ${catalog.entries.length} catalog entries, ${path.basename(impactPath)}.`);
+console.log(`Release readiness OK: v${version}, ${catalogIds.size} catalog entries, ${path.basename(impactPath)}.`);

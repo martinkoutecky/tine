@@ -5,18 +5,55 @@ import { transitionFence, type FenceState } from "./fences";
 
 export const PROP_LINE = /^([A-Za-z0-9_./-]+):: ?(.*)$/;
 
-/** OG treats a Markdown page's first bullet as page properties when every
- * nonblank line is a property. Keep this predicate shared by display and edit
- * paths so the block cannot be hidden in one place but edited as ordinary text
- * in another. */
-export function isPropertiesOnly(raw: string): boolean {
+const PAGE_HEADER_KEY = /^[\p{L}\p{M}\p{N}_./-]+$/u;
+
+/** Parse one canonical Markdown page-header property line. This grammar is
+ * intentionally separate from ordinary block properties: page headers may use
+ * Unicode/plugin keys, but must start at column zero and cannot absorb prose,
+ * headings or fences into metadata. The value is returned byte-for-byte after
+ * the exact `::` delimiter (including its optional conventional space). */
+export function parsePageHeaderPropertyLine(line: string): { key: string; value: string } | null {
+  const delimiter = line.indexOf("::");
+  if (delimiter <= 0) return null;
+  const key = line.slice(0, delimiter);
+  if (key.startsWith("#") || !PAGE_HEADER_KEY.test(key)) return null;
+  return { key, value: line.slice(delimiter + 2) };
+}
+
+/** A complete canonical page header: one or more property lines, with blank
+ * separators permitted only between properties (never at either edge). */
+export function isPageHeaderPropertiesOnly(raw: string): boolean {
+  if (!raw || raw.startsWith("\n") || raw.endsWith("\n")) return false;
+  const lines = raw.split("\n");
   let sawProperty = false;
-  for (const line of raw.split("\n")) {
-    if (!line.trim()) continue;
-    if (!PROP_LINE.test(line)) return false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line === "") {
+      if (!sawProperty || i === lines.length - 1) return false;
+      continue;
+    }
+    if (!parsePageHeaderPropertyLine(line)) return false;
     sawProperty = true;
   }
   return sawProperty;
+}
+
+/** Keep the canonical page-header predicate shared by display and edit paths so
+ * a candidate cannot be hidden in one place but edited as ordinary text in
+ * another. */
+export function isPropertiesOnly(raw: string): boolean {
+  return isPageHeaderPropertiesOnly(raw);
+}
+
+/** Whether the textarea caret is on a complete `key:: value` line. This is
+ * deliberately line-local: an empty line after a run of page properties is the
+ * double-Enter exit sentinel, not another property line. */
+export function caretOnPropertyLine(raw: string, caret: number): boolean {
+  const c = Math.max(0, Math.min(caret, raw.length));
+  const lineStart = raw.lastIndexOf("\n", c - 1) + 1;
+  const nextNewline = raw.indexOf("\n", c);
+  const lineEnd = nextNewline === -1 ? raw.length : nextNewline;
+  return parsePageHeaderPropertyLine(raw.slice(lineStart, lineEnd)) !== null;
 }
 
 /** Split a Markdown page preamble into real page-property lines and ordinary
@@ -24,23 +61,43 @@ export function isPropertiesOnly(raw: string): boolean {
 export function splitPagePreamble(raw: string | null | undefined): {
   properties: string | null;
   content: string | null;
+  /** Exact suffix following the canonical header, including separator newlines.
+   * Re-concatenating `properties + remainder` reproduces the original bytes. */
+  remainder: string | null;
 } {
-  if (!raw) return { properties: null, content: null };
-  const properties: string[] = [];
-  const content: string[] = [];
-  let fence: FenceState | null = null;
-  for (const line of raw.split("\n")) {
-    const transition = transitionFence(fence, line);
-    if (fence === null && !transition.opens && PROP_LINE.test(line)) properties.push(line);
-    else content.push(line);
-    fence = transition.next;
+  if (!raw) return { properties: null, content: null, remainder: null };
+  if (!parsePageHeaderPropertyLine(raw.split("\n", 1)[0])) {
+    const content = raw.replace(/^\n+|\n+$/g, "") || null;
+    return { properties: null, content, remainder: raw };
   }
-  const trimBlankEdges = (lines: string[]) => {
-    while (lines.length && !lines[0].trim()) lines.shift();
-    while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
-    return lines.length ? lines.join("\n") : null;
-  };
-  return { properties: trimBlankEdges(properties), content: trimBlankEdges(content) };
+
+  // Extend through property lines and blank runs only when another property
+  // follows. A blank before prose belongs to the exact suffix, not the header.
+  let pos = 0;
+  let headerEnd = 0;
+  while (pos < raw.length) {
+    const nl = raw.indexOf("\n", pos);
+    const end = nl === -1 ? raw.length : nl;
+    const line = raw.slice(pos, end);
+    if (!parsePageHeaderPropertyLine(line)) break;
+    headerEnd = end;
+    if (nl === -1) break;
+    let next = nl + 1;
+    while (next < raw.length) {
+      const nextNl = raw.indexOf("\n", next);
+      const nextEnd = nextNl === -1 ? raw.length : nextNl;
+      if (raw.slice(next, nextEnd) !== "") break;
+      next = nextNl === -1 ? raw.length : nextNl + 1;
+    }
+    const nextNl = raw.indexOf("\n", next);
+    const nextEnd = nextNl === -1 ? raw.length : nextNl;
+    if (next >= raw.length || !parsePageHeaderPropertyLine(raw.slice(next, nextEnd))) break;
+    pos = next;
+  }
+  const properties = raw.slice(0, headerEnd);
+  const remainder = raw.slice(headerEnd) || null;
+  const content = remainder?.replace(/^\n+|\n+$/g, "") || null;
+  return { properties, content, remainder };
 }
 
 // Built-in properties hidden from the editor by default (like OG): `id::`,
@@ -68,7 +125,7 @@ function propLineKey(line: string): string | null {
 export function multilineExitTrim(
   text: string,
   caret: number,
-  kind: "calc" | "fence"
+  kind: "calc" | "fence" | "properties"
 ): string | null {
   const c = Math.max(0, Math.min(caret, text.length));
   const lineStart = text.lastIndexOf("\n", c - 1) + 1;
@@ -76,7 +133,7 @@ export function multilineExitTrim(
   if (lineEnd === -1) lineEnd = text.length;
   if (text.slice(lineStart, lineEnd).trim() !== "" || lineStart === 0) return null;
 
-  if (kind === "calc") {
+  if (kind === "calc" || kind === "properties") {
     if (text.slice(lineEnd).trim() !== "") return null;
     return text.slice(0, lineStart - 1);
   }
@@ -307,23 +364,34 @@ export function readPropertyValue(block: string | null, key: string): string | n
 }
 
 /** Add / replace / remove a `key:: value` line. A null or empty value removes
- *  the key. Other property lines are preserved (blank lines dropped); returns
- *  null when nothing is left (so an emptied pre-block isn't written as "").  */
+ *  the key. Replace the first matching line in place and preserve every
+ *  unrelated line and blank separator byte-for-byte; page-property grouping
+ *  and order are user data, not disposable formatting. Duplicate matching
+ *  keys retain the prior single-value behavior and collapse to the first slot.
+ *  Returns null when no nonblank content remains. */
 export function upsertPropertyLine(
   block: string | null,
   key: string,
   value: string | null
 ): string | null {
-  const kept = (block ?? "")
-    .split("\n")
-    .filter((l) => {
-      const m = PROP_LINE.exec(l);
-      return !(m && m[1].toLowerCase() === key.toLowerCase());
-    })
-    .filter((l) => l.trim() !== "");
   const v = value == null ? null : value.trim();
-  if (v) kept.push(`${key}:: ${v}`);
-  return kept.length ? kept.join("\n") : null;
+  const lines = block == null || block === "" ? [] : block.split("\n");
+  const out: string[] = [];
+  let matched = false;
+  for (const line of lines) {
+    const m = PROP_LINE.exec(line);
+    if (m && m[1].toLowerCase() === key.toLowerCase()) {
+      if (!matched && v) out.push(`${m[1]}:: ${v}`);
+      matched = true;
+      continue;
+    }
+    out.push(line);
+  }
+  // Actual Logseq `frontend.util.page-property/insert-property` prepends a new
+  // page property and replaces an existing one in place.  Keep that ordering
+  // contract instead of inventing a Tine-local append rule.
+  if (!matched && v) out.unshift(`${key}:: ${v}`);
+  return out.some((line) => line.trim() !== "") ? out.join("\n") : null;
 }
 
 /** The page-level properties we surface in the page-properties panel, with a

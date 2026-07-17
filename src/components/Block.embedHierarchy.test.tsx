@@ -39,7 +39,13 @@ function fixture(targetId: string): { page: PageDto; group: RefGroup } {
     pre_block: null,
     blocks: [target, { id: `${targetId}-host`, raw: `{{embed ((${targetId}))}}`, collapsed: false, children: [] }],
   };
-  return { page, group: { page: page.name, kind: page.kind, blocks: [target] } };
+  // Resolution/query membership is intentionally shallow; LiveRefGroup must
+  // hydrate the hierarchy once from the source page rather than rely on an
+  // overlapping subtree copy in every result row.
+  return {
+    page,
+    group: { page: page.name, kind: page.kind, blocks: [{ ...target, children: [] }] },
+  };
 }
 
 function renderFixture(targetId: string) {
@@ -170,10 +176,16 @@ describe("block embed hierarchy", () => {
         expect(element).not.toBeNull();
         return element!;
       });
+      // Reference/query surfaces initialize the first descendant branch folded
+      // (released OG default-open level 2), unlike embeds which retain source
+      // disclosure. The guide expands that local copy without touching source.
+      expect(root.textContent).not.toContain("Embedded grandchild");
       guide.click();
-      await vi.waitFor(() => expect(root.textContent).not.toContain("Embedded grandchild"));
+      await vi.waitFor(() => expect(root.textContent).toContain("Embedded grandchild"));
       expect(doc.byId[`${targetId}-child`].collapsed).toBe(false);
       expect(doc.byId[`${targetId}-child`].raw).not.toContain("collapsed:: true");
+      guide.click();
+      await vi.waitFor(() => expect(root.textContent).not.toContain("Embedded grandchild"));
     } finally {
       dispose();
     }
@@ -215,6 +227,108 @@ describe("block embed hierarchy", () => {
       expect(doc.byId[createdId!].page).toBe("Block Embed Test");
       undo();
       expect(doc.byId[createdId!]).toBeUndefined();
+    } finally {
+      dispose();
+    }
+  });
+
+  it("keeps ArrowUp and ArrowDown navigation in the visible embed surface", async () => {
+    const targetId = "embed-arrow-surface";
+    const childId = `${targetId}-child`;
+    const { root, dispose } = renderFixture(targetId);
+
+    try {
+      const embeddedChild = await vi.waitFor(() => {
+        const element = root.querySelector<HTMLElement>(
+          `.embed-block [data-block-id="${childId}"] > .block-main .block-content`,
+        );
+        expect(element).not.toBeNull();
+        return element!;
+      });
+      mouseDownAndUp(embeddedChild);
+
+      const childEditor = await vi.waitFor(() => {
+        const editor = root.querySelector<HTMLTextAreaElement>(
+          `.embed-block [data-block-id="${childId}"] textarea.block-editor`,
+        );
+        expect(editor).not.toBeNull();
+        return editor!;
+      });
+      childEditor.setSelectionRange(0, 0);
+      childEditor.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }));
+
+      const parentEditor = await vi.waitFor(() => {
+        const editor = root.querySelector<HTMLTextAreaElement>(
+          `.embed-block [data-block-id="${targetId}"] textarea.block-editor`,
+        );
+        expect(editor).not.toBeNull();
+        expect(document.activeElement).toBe(editor);
+        return editor!;
+      });
+      expect(editingId()).toBe(targetId);
+
+      parentEditor.setSelectionRange(parentEditor.value.length, parentEditor.value.length);
+      parentEditor.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+      await vi.waitFor(() => {
+        const editor = root.querySelector<HTMLTextAreaElement>(
+          `.embed-block [data-block-id="${childId}"] textarea.block-editor`,
+        );
+        expect(editor).not.toBeNull();
+        expect(document.activeElement).toBe(editor);
+      });
+      expect(editingId()).toBe(childId);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("keeps deletion and the empty-block Backspace destination in the visible embed", async () => {
+    const targetId = "embed-delete-surface";
+    const childId = `${targetId}-child`;
+    const { root, dispose } = renderFixture(targetId);
+
+    try {
+      const embeddedChild = await vi.waitFor(() => {
+        const element = root.querySelector<HTMLElement>(
+          `.embed-block [data-block-id="${childId}"] > .block-main .block-content`,
+        );
+        expect(element).not.toBeNull();
+        return element!;
+      });
+      mouseDownAndUp(embeddedChild);
+
+      const editor = await vi.waitFor(() => {
+        const element = root.querySelector<HTMLTextAreaElement>(
+          `.embed-block [data-block-id="${childId}"] textarea.block-editor`,
+        );
+        expect(element).not.toBeNull();
+        return element!;
+      });
+      editor.setSelectionRange(0, editor.value.length);
+      editor.value = "";
+      editor.dispatchEvent(new InputEvent("input", {
+        bubbles: true,
+        inputType: "deleteContentForward",
+      }));
+
+      await vi.waitFor(() => {
+        expect(doc.byId[childId].raw).toBe("");
+        expect(editingId()).toBe(childId);
+        expect(document.activeElement).toBe(editor);
+        expect(editor.closest(".embed-block")).not.toBeNull();
+      });
+
+      editor.setSelectionRange(0, 0);
+      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", bubbles: true }));
+      await vi.waitFor(() => {
+        const parentEditor = root.querySelector<HTMLTextAreaElement>(
+          `.embed-block [data-block-id="${targetId}"] textarea.block-editor`,
+        );
+        expect(parentEditor).not.toBeNull();
+        expect(document.activeElement).toBe(parentEditor);
+        expect(editingId()).toBe(targetId);
+        expect(doc.byId[childId]).toBeUndefined();
+      });
     } finally {
       dispose();
     }

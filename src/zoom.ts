@@ -1,7 +1,9 @@
 // Interface zoom (UI scale) — like a browser's Ctrl +/-/0. Scales the WHOLE
 // webview uniformly (fonts, spacing, images, the PDF pane, everything) via the
-// native WebKit zoom-level, so it stays transparent to layout/caret math (unlike
-// the CSS `zoom:` property, which desyncs getBoundingClientRect from clientX).
+// native webview zoom-level where the platform implements it. Wry's Android
+// `setZoom` is a documented no-op, so Android uses Chromium's CSS `zoom` on the
+// document root; that engine keeps hit-testing/caret coordinates in the scaled
+// coordinate space.
 //
 // It's a per-machine display preference → persisted in localStorage, NOT in
 // config.edn (that's the graph config shared with OG Logseq over Syncthing).
@@ -14,6 +16,7 @@ import { createSignal } from "solid-js";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { isTauri } from "./backend";
 import { activePane } from "./ui";
+import { platformKind } from "./platform";
 
 const ZOOM_KEY = "logseq-claude.zoom";
 const MIN = 0.5;
@@ -51,10 +54,24 @@ const clamp = (z: number) => Math.min(MAX, Math.max(MIN, Math.round(z * 100) / 1
 
 /** Push the current zoom to the webview. Tauri-only (no-op on the web build).
  *  Call once at startup to restore the saved level. */
+export function applyAndroidInterfaceZoom(scale: number): void {
+  document.documentElement.style.zoom = scale === 1 ? "" : String(scale);
+}
+
 export function applyZoom(): void {
   if (!isTauri()) return;
-  void getCurrentWebview()
-    .setZoom(interfaceZoom())
+  void platformKind()
+    .then((kind) => {
+      const scale = interfaceZoom();
+      if (kind === "android") {
+        applyAndroidInterfaceZoom(scale);
+        return;
+      }
+      // Clear an Android fallback left behind by an unusual hot-reload before
+      // handing scaling back to the native desktop/iOS webview implementation.
+      document.documentElement.style.zoom = "";
+      return getCurrentWebview().setZoom(scale);
+    })
     .catch(() => {});
 }
 

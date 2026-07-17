@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   closeLayoutPane,
+  closePane,
   focusPane,
   openRouteInOtherPane,
   layoutPaneIds,
   layoutRoot,
   focusedPaneId,
   moveActiveTabToPane,
+  moveTabToSplitPane,
   paneRouter,
   resetPaneLayoutToSingle,
   splitLayoutNode,
@@ -16,6 +18,7 @@ import {
 import { hasSelection, selectBlock } from "./store";
 import { cellSel, setCellSel } from "./sheet/selection";
 import type { PaneSnapshot } from "./router";
+import { clearRecent, recentPages } from "./ui";
 
 const pageSnapshot = (name: string): PaneSnapshot => ({
   tabs: [{ history: [{ kind: "page", name, pageKind: "page" }], pos: 0, pinned: false }],
@@ -28,11 +31,72 @@ const journalsSnapshot = (): PaneSnapshot => ({
 });
 
 beforeEach(() => {
+  clearRecent();
   resetPaneLayoutToSingle(journalsSnapshot());
   paneRouter("main").setScrollerElement(null);
 });
 
 describe("pane layout mutations", () => {
+  it("promotes the route exposed by creating and focusing a split, but not a background split", () => {
+    resetPaneLayoutToSingle(pageSnapshot("Left"));
+    clearRecent();
+
+    const background = splitPane("main", "row", {
+      focusNew: false,
+      snapshot: pageSnapshot("Background"),
+    })!;
+    expect(focusedPaneId()).toBe("main");
+    expect(recentPages()).toEqual([]);
+
+    const foreground = splitPane(background, "col", {
+      snapshot: pageSnapshot("Foreground"),
+    })!;
+    expect(focusedPaneId()).toBe(foreground);
+    expect(recentPages().map((item) => item.name)).toEqual(["Foreground"]);
+  });
+
+  it("promotes the sibling route exposed by closing the focused pane only", () => {
+    resetPaneLayoutToSingle(pageSnapshot("Left"));
+    const right = splitPane("main", "row", {
+      focusNew: false,
+      snapshot: pageSnapshot("Right"),
+    })!;
+
+    focusPane(right);
+    clearRecent();
+    expect(closePane(right)).toBe(true);
+    expect(focusedPaneId()).toBe("main");
+    expect(recentPages().map((item) => item.name)).toEqual(["Left"]);
+
+    const background = splitPane("main", "row", {
+      focusNew: false,
+      snapshot: pageSnapshot("Background"),
+    })!;
+    clearRecent();
+    expect(closePane(background)).toBe(true);
+    expect(focusedPaneId()).toBe("main");
+    expect(recentPages()).toEqual([]);
+  });
+
+  it("promotes the moved route when a real tab move creates and focuses a split", () => {
+    resetPaneLayoutToSingle({
+      tabs: [
+        { history: [{ kind: "page", name: "Moved", pageKind: "page" }], pos: 0, pinned: false },
+        { history: [{ kind: "page", name: "Spare", pageKind: "page" }], pos: 0, pinned: false },
+      ],
+      activeIndex: 0,
+    });
+    const movedId = paneRouter("main").activeId();
+    clearRecent();
+
+    const target = moveTabToSplitPane("main", movedId, "main", "right");
+
+    expect(target).not.toBeNull();
+    expect(focusedPaneId()).toBe(target);
+    expect(paneRouter(target!).route()).toEqual({ kind: "page", name: "Moved", pageKind: "page" });
+    expect(recentPages().map((item) => item.name)).toEqual(["Moved"]);
+  });
+
   it("clears a sheet selection when focus moves to another pane", () => {
     splitPane("main", "row");
     focusPane("main");
@@ -131,6 +195,18 @@ describe("pane layout mutations", () => {
       pinned: true,
     });
     expect(snap.scrolls?.[snap.activeIndex]).toBe(73);
+  });
+
+  it("adopts an empty query route without changing its identity/source or the intended focus", () => {
+    resetPaneLayoutToSingle({
+      tabs: [{ history: [{ kind: "query", id: "query-empty-adopt", sourceKind: "search", source: "", presentation: "search" }], pos: 0, pinned: false }],
+      activeIndex: 0,
+    });
+    const target = splitPane("main", "row", { focusNew: false })!;
+    focusPane("main");
+    expect(moveActiveTabToPane("main", target)).toBe(true);
+    expect(paneRouter(target).route()).toEqual({ kind: "query", id: "query-empty-adopt", sourceKind: "search", source: "", presentation: "search" });
+    expect(focusedPaneId()).toBe(target);
   });
 
   it("moving the last page tab out closes the emptied pane", () => {

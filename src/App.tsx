@@ -1,12 +1,12 @@
 import { Show, Suspense, createEffect, lazy, on, onCleanup, onMount, type JSX } from "solid-js";
 import { Sidebar } from "./components/Sidebar";
-import { PageView, reloadJournalsFeedFromStart, toLoadablePage } from "./components/Page";
+import { PageView, reloadJournalsFeedFromStart, toLoadablePage, type JournalsFeedOwner } from "./components/Page";
 import { QueryWorkspace } from "./components/QueryWorkspace";
 import { QuickSwitcher } from "./components/QuickSwitcher";
 // pdf.js (~hundreds of KB) is heavy and most sessions never open a PDF — load
 // the viewer only when one is opened.
-const PdfViewer = lazy(() =>
-  import("./components/PdfViewer").then((m) => ({ default: m.PdfViewer }))
+const KeyedPdfViewer = lazy(() =>
+  import("./components/PdfViewer").then((m) => ({ default: m.KeyedPdfViewer }))
 );
 import { TabBar, tabDropHighlightsPane, tabSplitPreviewSideForPane } from "./components/TabBar";
 import { ContextMenu } from "./components/ContextMenu";
@@ -20,6 +20,12 @@ import { HelpPopup } from "./components/HelpShortcuts";
 import { DatePicker } from "./components/DatePicker";
 import { FormulaEditor } from "./components/FormulaEditor";
 import { MobileKeyboardToolbar } from "./components/MobileKeyboardToolbar";
+import {
+  DrawerBackground,
+  MobileDrawerController,
+  MobileDrawerPanel,
+  dismissDrawerAndRestore,
+} from "./components/MobileDrawerShell";
 import { PageProps } from "./components/PageProps";
 import { ExportModal } from "./components/ExportModal";
 import { PdfExportDialog } from "./components/PdfExportDialog";
@@ -27,10 +33,10 @@ import { InPageFind } from "./components/InPageFind";
 import { installKeybindings } from "./keybindings";
 import { installFileDrop } from "./filedrop";
 import { installBlockSelectionDrag } from "./blockDrag";
-import { loadGraphPath, persistedGraphPath, refreshAliases } from "./graph";
+import { loadGraphPath, persistedGraphPath, refreshAliases, refreshPageIdentities } from "./graph";
 import { checkForUpdate } from "./update";
-import { Welcome } from "./components/Welcome";
-import { goBack, goForward, canGoBack, canGoForward, flushSession, openJournals, type PaneRouter, type QueryRoute } from "./router";
+import { WelcomeLayer } from "./components/Welcome";
+import { goBack, goForward, canGoBack, canGoForward, flushSession, openJournals, sameRoute, type PaneRouter, type QueryRoute } from "./router";
 import {
   theme,
   toggleTheme,
@@ -59,22 +65,28 @@ import {
   dimInactiveBlocks,
   exitFocusMode,
   dataRev,
+  bumpDataRev,
+  pageInventoryRev,
+  bumpPageInventoryRev,
   installPaneTracker,
   markConflict,
-  isConflicted,
   pushToast,
   refreshSyncConflicts,
+  graphEpoch,
   graphTransitioning,
   setGraphTransitioning,
+  activeDrawer,
+  completeActiveLeftNavigation,
+  dismissMobileDrawer,
 } from "./ui";
+import { mobileDrawerMode, restoreDrawerFocus } from "./mobileDrawers";
+import { dismissTopTransient } from "./transientLayers";
 import { applyZoom, installInterfaceZoomKeys, installInterfaceZoomWheel } from "./zoom";
 import {
   doc,
   flushAll,
   appendToTodayJournal,
   captureToPage,
-  isDirty,
-  isSaving,
   pageByName,
   reloadDisposition,
   reloadPage,
@@ -113,16 +125,86 @@ import {
 import { paneSel, samePaneTarget } from "./paneSelect";
 import { SurfaceContext } from "./components/Block";
 import { endEdit } from "./editorController";
+import { installAndroidBackHandler, requestAndroidRootClose } from "./androidBack";
+import { createSafeCloseCoordinator } from "./safeClose";
 
-async function handleGraphChange(c: GraphChange) {
+/** The single persistence transaction used by both desktop close and Android
+ * root Back.  Callers choose only the final platform action. */
+const safeClose = createSafeCloseCoordinator({
+  blurActive() {
+    const active = document.activeElement;
+    if (active instanceof HTMLElement) active.blur();
+  },
+  endEdit() {
+    endEdit("graph-switch");
+  },
+  flushAll,
+  confirmDiscard: () => backend().confirm(
+    "Tine has unsaved changes that couldn't be saved (a conflict or a stuck save).\n\nClose this window anyway and lose them?",
+    "Unsaved changes",
+  ),
+  flushSession,
+  setTransition: setGraphTransitioning,
+  notifyConfirmationFailure: () => {
+    pushToast("Couldn't confirm closing the window. Your unsaved changes are still open.", "error");
+  },
+});
+
+async function closeAndroidRootSafely(): Promise<void> {
+  await requestAndroidRootClose(
+    safeClose,
+    async () => {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("plugin:app|exit");
+    },
+    () => pushToast("Couldn't close the app. Your graph remains open.", "error"),
+  );
+}
+
+/** Capture the actual live Journals surfaces that justified a watcher restart.
+ * The shared feed may be displayed in either half of a split; a main-router
+ * check alone would let an old graph/navigation response land in that feed. */
+function journalsFeedOwner(
+  routes: Array<{ paneId: string; route: ReturnType<PaneRouter["route"]> }>
+): JournalsFeedOwner | null {
+  const epoch = graphEpoch();
+  const owners = routes.filter((p) => p.route.kind === "journals");
+  if (!owners.length) return null;
+  return {
+    graphEpoch: epoch,
+    isLive: () =>
+      graphEpoch() === epoch && owners.some((p) =>
+        layoutPaneIds().includes(p.paneId) && sameRoute(paneRouter(p.paneId).route(), p.route)
+      ),
+  };
+}
+
+function requestJournalFeedWatcherRestart(
+  routes: Array<{ paneId: string; route: ReturnType<PaneRouter["route"]> }>
+) {
+  const owner = journalsFeedOwner(routes);
+  if (owner) void reloadJournalsFeedFromStart(owner);
+}
+
+export async function handleGraphChange(c: GraphChange) {
+  // The backend watcher has already landed this transaction in its graph cache.
+  // Invalidate every derived visible-entity view even when the changed page is
+  // outside the bounded frontend working set (#166); loaded pages are refreshed
+  // below, while unloaded block references re-resolve by UUID from dataRev.
+  bumpDataRev();
+  if (c.created || c.removed) bumpPageInventoryRev();
   const routes = layoutPaneIds().map((paneId) => ({ paneId, router: paneRouter(paneId), route: paneRouter(paneId).route() }));
   if (c.removed) {
     const disp = reloadDisposition(c.name);
     if (disp === "conflict") {
       markConflict(c.name);
+      if (c.kind === "journal") requestJournalFeedWatcherRestart(routes);
       return;
     }
-    if (disp === "skip") return;
+    if (disp === "skip") {
+      if (c.kind === "journal") requestJournalFeedWatcherRestart(routes);
+      return;
+    }
     for (const p of routes) {
       if (p.route.kind === "page" && p.route.name === c.name) {
         if (p.router.canGoBack()) p.router.goBack();
@@ -131,30 +213,41 @@ async function handleGraphChange(c: GraphChange) {
     }
     if (c.kind === "journal" && routes.some((p) => p.route.kind === "journals")) {
       restoreTodayJournalInFeed();
-      void reloadJournalsFeedFromStart().catch(() => {});
+      requestJournalFeedWatcherRestart(routes);
     }
     return;
   }
 
   const disp = reloadDisposition(c.name);
-  if (disp === "skip") return;
+  if (disp === "skip") {
+    if (c.kind === "journal") requestJournalFeedWatcherRestart(routes);
+    return;
+  }
   if (disp === "conflict") {
     markConflict(c.name);
+    if (c.kind === "journal") requestJournalFeedWatcherRestart(routes);
     return;
   }
   if (routes.some((p) => p.route.kind === "page" && p.route.name === c.name)) {
     const dto = await backend().getPage(c.name, c.kind);
     if (dto) reloadPage(toLoadablePage(dto, c.name));
+    // A page surface may have the same journal loaded while another live pane
+    // shows Journals.  Reloading that DTO is not feed reconciliation: always
+    // give the live feed owner its authoritative null-cursor restart too.
+    if (c.kind === "journal") requestJournalFeedWatcherRestart(routes);
     return;
   }
   if (c.kind === "journal" && routes.some((p) => p.route.kind === "journals")) {
     if (pageByName(c.name)) {
       const dto = await backend().getPage(c.name, c.kind);
       if (dto) reloadPage(dto);
+      requestJournalFeedWatcherRestart(routes);
       return;
     }
-    if (doc.feed.some((n) => isDirty(n) || isConflicted(n) || isSaving(n))) return;
-    void reloadJournalsFeedFromStart().catch(() => {});
+    // The feed owner performs the page-scoped dirty/save/conflict/move gate.
+    // Calling it even while unsafe records a pending restart instead of losing
+    // this watcher update until another unrelated file changes.
+    requestJournalFeedWatcherRestart(routes);
     return;
   }
   if (pageByName(c.name) && !doc.feed.includes(c.name)) {
@@ -249,7 +342,7 @@ function PaneContent(props: { router: PaneRouter }): JSX.Element {
       when={props.router.route().kind === "query"}
       fallback={<PageView />}
     >
-      <QueryWorkspace route={props.router.route() as QueryRoute} router={props.router} />
+      <QueryWorkspace route={props.router.route() as QueryRoute} router={props.router} focusSource={focusedPaneId() === props.router.paneId} />
     </Show>
   );
 }
@@ -284,6 +377,7 @@ function PaneLeaf(props: { paneId: string }): JSX.Element {
               <PaneEdgeSegHighlight paneId={props.paneId} />
               <main
                 class="main-content"
+                tabindex="-1"
                 data-pane-id={props.paneId}
                 ref={(el) => router.setScrollerElement(el)}
               >
@@ -312,7 +406,7 @@ function PaneLeaf(props: { paneId: string }): JSX.Element {
               paneStrip
               focused={focusedPaneId() === props.paneId}
             />
-            <main class="main-content pane-main-content" ref={(el) => router.setScrollerElement(el)}>
+            <main class="main-content pane-main-content" tabindex="-1" ref={(el) => router.setScrollerElement(el)}>
               <div class="main-content-inner">
                 <PaneContent router={router} />
               </div>
@@ -413,6 +507,28 @@ export function App(): JSX.Element {
   // Startup debug trace (TINE_DEBUG=1 / --debug): forward UI milestones + errors
   // into the backend log so a remote "bad startup" is diagnosable in one file.
   onMount(() => void initDebug());
+
+  // AppPlugin is the single Android native Back owner.  A drawer/transient is
+  // never represented by synthetic history; route history remains the fallback.
+  onMount(() => {
+    if (!isTauri()) return;
+    const uninstall = installAndroidBackHandler({
+      platform: () => backend().appPlatform(),
+      subscribe: async (handler) => {
+        const { onBackButtonPress } = await import("@tauri-apps/api/app");
+        return onBackButtonPress(handler);
+      },
+      dismissTransient: () => dismissTopTransient("back"),
+      dismissDrawer: () => dismissMobileDrawer("back"),
+      restoreDrawerFocus: () => restoreDrawerFocus("back"),
+      historyBack: () => window.history.back(),
+      closeRoot: () => { void closeAndroidRootSafely(); },
+      // No JS listener means the inspected AppPlugin retains its native WebView
+      // history/activity fallback. Do not install a competing recovery owner.
+      setupFailed: (error) => console.warn("Android Back listener unavailable; using native fallback", error),
+    });
+    onCleanup(uninstall);
+  });
 
   // One-time notice after the desktop identifier rename chain
   // dev.tine.app / page.tine.app -> page.tine.Tine: the backend moved
@@ -544,56 +660,7 @@ export function App(): JSX.Element {
         e.preventDefault();
         if (closeInProgress) return;
         closeInProgress = true;
-        setGraphTransitioning(true);
-        const active = document.activeElement;
-        if (active instanceof HTMLElement) active.blur();
-        endEdit("graph-switch");
-        await Promise.resolve();
-        // Try to persist everything. Cap the wait so a genuinely stuck save IPC
-        // can't wedge the window open forever — but a timeout counts as "not
-        // saved", not "safe to discard".
-        let saved = false;
-        try {
-          saved = await Promise.race([
-            flushAll(),
-            new Promise<boolean>((r) => setTimeout(() => r(false), 4000)),
-          ]);
-        } catch {
-          saved = false;
-        }
-        // If edits remain unsaved (conflict, error, or stalled flush), DON'T
-        // silently throw them away — ask. Default (Cancel) keeps the app open so
-        // the user can resolve the conflict; only an explicit confirm quits.
-        if (!saved) {
-          // Native GTK confirm — window.confirm silently returns true in this
-          // WebKitGTK build, which would quit and discard the unsaved edits with
-          // no prompt at all. The whole point here is to NOT lose them silently.
-          let quit = false;
-          try {
-            quit = await backend().confirm(
-              "Tine has unsaved changes that couldn't be saved (a conflict or a stuck save).\n\nClose this window anyway and lose them?",
-              "Unsaved changes"
-            );
-          } catch {
-            pushToast("Couldn't confirm closing the window. Your unsaved changes are still open.", "error");
-            closeInProgress = false;
-            setGraphTransitioning(false);
-            return;
-          }
-          if (!quit) {
-            closeInProgress = false;
-            setGraphTransitioning(false);
-            return; // stay open
-          }
-        }
-        // Persist the final tab session too — the 150ms debounce may not have
-        // fired if the last tab action came right before quitting. Capped so a
-        // stuck IPC can't wedge the window open.
-        try {
-          await Promise.race([flushSession(), new Promise((r) => setTimeout(r, 1000))]);
-        } catch {
-          // best-effort
-        }
+        if ((await safeClose.prepare()) !== "accepted") { closeInProgress = false; return; }
         allowClose = true;
         // Close only this graph window. The backend exits the process (including
         // Linux WebKit cleanup) only when this is the final graph window.
@@ -606,7 +673,15 @@ export function App(): JSX.Element {
         try {
           await w.destroy();
         } catch {
-          await w.close(); // re-fires onCloseRequested; the guard lets it close
+          try { await w.close(); } // re-fires onCloseRequested; the guard lets it close
+          catch {
+            // The native close attempt failed. Re-arm the persistence guard as
+            // well as the shared transaction before a later close request;
+            // leaving allowClose=true would let that retry bypass saving.
+            allowClose = false;
+            safeClose.reset();
+            closeInProgress = false;
+          }
         }
       });
     })();
@@ -737,6 +812,9 @@ export function App(): JSX.Element {
   // alias:: doesn't leave navigation resolving to the old canonical page. The
   // Rust side caches aliases, so this is cheap unless a save actually changed them.
   createEffect(on(dataRev, () => void refreshAliases(), { defer: true }));
+  // Page creation/deletion has its own rare invalidation lane: canonical-name
+  // precedence stays current without listing every page after ordinary saves.
+  createEffect(on(pageInventoryRev, () => void refreshPageIdentities(), { defer: true }));
 
   // (Re)install keybindings whenever config or the user's local overrides change
   // (precedence: defaults < config.edn :shortcuts < Settings overrides). We also
@@ -808,6 +886,8 @@ export function App(): JSX.Element {
   return (
     <div
       class="app-container"
+      data-mobile-drawer-mode={mobileDrawerMode() ? "true" : "false"}
+      data-active-drawer={activeDrawer() ?? ""}
       classList={{
         "sidebar-collapsed": !sidebarOpen(),
         "wide-mode": wideMode(),
@@ -825,20 +905,32 @@ export function App(): JSX.Element {
       }}
     >
       <Show when={parserFailed()}>
-        <div class="parser-error-banner" role="alert">
+        <DrawerBackground class="parser-error-banner" blockedBy="any" role="alert">
           The block renderer failed to load — text is shown unformatted. Please reload Tine;
           if this persists, report it.
-        </div>
+        </DrawerBackground>
       </Show>
       <Show when={graphTransitioning()}>
-        <div class="graph-transition-shield" role="status" aria-live="polite">
+        <DrawerBackground class="graph-transition-shield" blockedBy="any" role="status" ariaLive="polite">
           Finishing graph operation…
-        </div>
+        </DrawerBackground>
       </Show>
       <Show when={sidebarOpen()}>
-        <div class="left-sidebar" style={{ flex: `0 0 ${sidebarWidth()}px`, width: `${sidebarWidth()}px` }}>
+        <MobileDrawerPanel
+          side="left"
+          label="Navigation sidebar"
+          class="left-sidebar"
+          style={{
+            flex: `0 0 ${sidebarWidth()}px`,
+            width: `${sidebarWidth()}px`,
+            "--mobile-drawer-width": `${sidebarWidth()}px`,
+          }}
+        >
           <div class="left-sidebar-scroll">
-            <Sidebar />
+            <Show when={mobileDrawerMode()}>
+              <button class="mobile-drawer-close" type="button" aria-label="Close navigation sidebar" onClick={() => dismissDrawerAndRestore("explicit")}>Close</button>
+            </Show>
+            <Sidebar onActiveNavigationComplete={completeActiveLeftNavigation} />
           </div>
           <div
             class="sidebar-resizer"
@@ -855,14 +947,15 @@ export function App(): JSX.Element {
               window.addEventListener("mouseup", onUp);
             }}
           />
-        </div>
+        </MobileDrawerPanel>
       </Show>
-      <div class="main-container">
+      <DrawerBackground class="main-container" blockedBy="left">
         {/* In focus mode the topbar is hidden; this thin strip at the very top
             reveals it on hover (CSS adjacency), so controls are reachable. */}
-        <Show when={focusMode()}>
-          <div class="topbar-hover-zone" />
-        </Show>
+        <DrawerBackground blockedBy="right">
+          <Show when={focusMode()}>
+            <div class="topbar-hover-zone" />
+          </Show>
         {/* The toolbar doubles as the title bar: data-tauri-drag-region lets the
             user drag the window by its empty areas (buttons/tabs, being children
             without the attribute, still click normally; double-click maximizes). */}
@@ -871,7 +964,7 @@ export function App(): JSX.Element {
             <button
               class="icon-btn"
               title="Toggle sidebar (t l)"
-              onClick={toggleSidebar}
+              onClick={(event) => toggleSidebar(event.currentTarget)}
             >
               <svg viewBox="0 0 24 24" class="nav-icon">
                 <rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.7" />
@@ -880,7 +973,21 @@ export function App(): JSX.Element {
             </button>
             <button
               class="icon-btn"
+              title="Search (Ctrl+K)"
+              aria-label="Search"
+              data-search-trigger
+              data-pane-focus-neutral
+              onClick={() => openSwitcher()}
+            >
+              <svg viewBox="0 0 24 24" class="nav-icon">
+                <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="1.7" />
+                <line x1="16.5" y1="16.5" x2="21" y2="21" stroke="currentColor" stroke-width="1.7" />
+              </svg>
+            </button>
+            <button
+              class="icon-btn"
               title="Go back"
+              data-pane-focus-neutral
               disabled={!canGoBack()}
               onClick={goBack}
             >
@@ -891,6 +998,7 @@ export function App(): JSX.Element {
             <button
               class="icon-btn"
               title="Go forward"
+              data-pane-focus-neutral
               disabled={!canGoForward()}
               onClick={goForward}
             >
@@ -911,18 +1019,12 @@ export function App(): JSX.Element {
           </Show>
           <div class="topbar-right">
             <CalendarJump />
-            <button class="icon-btn" title="Journals" onClick={() => openJournals()}>
+            <button class="icon-btn" title="Journals" data-pane-focus-neutral onClick={() => openJournals()}>
               <svg viewBox="0 0 24 24" class="nav-icon">
                 <path d="M4 5h11a2 2 0 0 1 2 2v12H6a2 2 0 0 1-2-2V5z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
                 <line x1="8" y1="9" x2="14" y2="9" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
                 <line x1="8" y1="12.5" x2="14" y2="12.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
                 <path d="M17 5h3v14a2 2 0 0 1-2 2 1 1 0 0 1-1-1V5z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
-              </svg>
-            </button>
-            <button class="icon-btn" title="Search (Ctrl+K)" onClick={() => openSwitcher()}>
-              <svg viewBox="0 0 24 24" class="nav-icon">
-                <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="1.7" />
-                <line x1="16.5" y1="16.5" x2="21" y2="21" stroke="currentColor" stroke-width="1.7" />
               </svg>
             </button>
             <button class="icon-btn" title="Toggle theme (t t)" onClick={toggleTheme}>
@@ -952,7 +1054,7 @@ export function App(): JSX.Element {
               class="icon-btn"
               classList={{ active: rightSidebarOpen() }}
               title="Toggle right sidebar (t r)"
-              onClick={toggleRightSidebar}
+              onClick={(event) => toggleRightSidebar(event.currentTarget)}
             >
               <svg viewBox="0 0 24 24" class="nav-icon">
                 <rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.7" />
@@ -982,14 +1084,15 @@ export function App(): JSX.Element {
         </header>
         <ConflictBar />
         <InPageFind />
+        </DrawerBackground>
         {/* Everything below the topbar lives in this row, so the topbar (and its
             window controls at the far right) spans the full window width and the
             right sidebar / PDF pane sit UNDER it — not beside the close button. */}
         <div class="content-row">
+          <DrawerBackground class="drawer-workspace" blockedBy="right">
           <PaneEdgeHighlights />
           <PaneSelectHint />
           <PaneTree node={layoutRoot()} path={[]} />
-          <RightSidebar />
           <Show when={pdfTarget()}>
         <div class="pdf-pane" data-pane-id="pdf" style={{ flex: `0 0 ${pdfPaneWidth()}px`, width: `${pdfPaneWidth()}px` }}>
           <div
@@ -1010,28 +1113,34 @@ export function App(): JSX.Element {
             }}
           />
           <Suspense fallback={<div class="pdf-loading" />}>
-            <PdfViewer
-              filename={pdfTarget()!.filename}
-              label={pdfTarget()!.label}
-              page={pdfTarget()!.page}
-            />
+            <KeyedPdfViewer target={pdfTarget} />
           </Suspense>
         </div>
           </Show>
+          </DrawerBackground>
+          <RightSidebar />
         </div>
-      </div>
-      <Show when={focusMode()}>
-        <button class="focus-exit" title="Exit focus (Esc)" onClick={() => void exitFocusMode()}>
-          <svg viewBox="0 0 24 24" class="nav-icon">
-            <path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
-          </svg>
-        </button>
-      </Show>
+      </DrawerBackground>
+      <MobileDrawerController />
+      <DrawerBackground class="drawer-floating-background" blockedBy="any">
+        <Show when={focusMode()}>
+          <button class="focus-exit" title="Exit focus (Esc)" onClick={() => void exitFocusMode()}>
+            <svg viewBox="0 0 24 24" class="nav-icon">
+              <path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+            </svg>
+          </button>
+        </Show>
+        <Show when={isTauri() && !osDrawsWindowControls() && !maximized()}>
+          <ResizeGrips />
+        </Show>
+      </DrawerBackground>
       <QuickSwitcher />
       <ContextMenu />
       <DatePicker />
       <FormulaEditor />
-      <MobileKeyboardToolbar />
+      <DrawerBackground class="drawer-floating-background" blockedBy="any">
+        <MobileKeyboardToolbar />
+      </DrawerBackground>
       <PageProps />
       <ExportModal />
       <PdfExportDialog />
@@ -1039,18 +1148,16 @@ export function App(): JSX.Element {
       <HelpPopup />
       {/* First-run onboarding: covers the (empty) app when no graph is configured.
           Rendered before Toasts so a "couldn't create graph" toast still shows on top. */}
-      <Show when={welcomeOpen() || (globalThis as any).__FORCE_WELCOME__ === true || (firstLoadDone() && !graphMeta())}>
-        <Welcome onClose={welcomeOpen() ? closeWelcome : undefined} />
-      </Show>
-      <Toasts />
+      <WelcomeLayer
+        mandatory={(globalThis as any).__FORCE_WELCOME__ === true || (firstLoadDone() && !graphMeta())}
+        optionalOpen={welcomeOpen()}
+        onClose={closeWelcome}
+      />
+      <DrawerBackground class="drawer-floating-background" blockedBy="any">
+        <Toasts />
+      </DrawerBackground>
       <Lightbox />
       <AudioOverlay />
-      {/* Resize grips for the frameless window — hidden while maximized (no edge
-          to drag, and they'd otherwise overlap the content scrollbar) and whenever
-          the OS draws its own frame (it provides resize borders). */}
-      <Show when={isTauri() && !osDrawsWindowControls() && !maximized()}>
-        <ResizeGrips />
-      </Show>
     </div>
   );
 }

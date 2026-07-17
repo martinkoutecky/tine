@@ -74,7 +74,8 @@ pub struct BlockProjection {
     /// for breadcrumb labels / display. `raw` minus the byte ranges lsdoc
     /// recognized as `Properties` blocks (see `visible_minus_properties`).
     pub visible: String,
-    /// `visible`, lowercased — for `search` / `(content …)` (hot path, pre-lowered).
+    /// `visible`, lowercased then NFC-normalized — for `search` / `(content …)`
+    /// (hot path, pre-folded without compatibility/accent folding).
     pub visible_lower: String,
     /// Normalized page references (`[[..]]` / `#tag`) — for backlinks / `(page-ref)`.
     pub refs_norm: Vec<String>,
@@ -107,6 +108,10 @@ pub struct BlockProjection {
     /// Inline `#tag` / org headline tags, first-seen and de-duplicated. Page refs
     /// stay separate in `refs_page`; this is only the tag field.
     pub tags: Vec<String>,
+    /// Parser-owned source spans used by both linked and unlinked reference
+    /// surfaces. Kept on the memoized projection so reference queries do not
+    /// parse every block again.
+    pub(crate) reference_source: crate::reference_evidence::ReferenceSourceProjection,
 }
 
 impl BlockProjection {
@@ -179,12 +184,14 @@ impl DocBlock {
             let (scheduled, deadline) = planning_dates(&proj.blocks, &self.raw);
             let tags = tags_from_blocks(&proj.blocks);
             let visible = visible_minus_properties(&self.raw, &proj.blocks);
-            let visible_lower = visible.to_lowercase();
+            let visible_lower = crate::search_query::canonical_fold(&visible);
             let refs_page = proj.refs.page;
             let refs_norm = refs_page
                 .iter()
                 .map(|r| crate::refs::normalize(r))
                 .collect();
+            let reference_source =
+                crate::reference_evidence::project(&self.raw, self.is_org, &proj.blocks);
             BlockProjection {
                 visible,
                 visible_lower,
@@ -198,6 +205,7 @@ impl DocBlock {
                 scheduled,
                 deadline,
                 tags,
+                reference_source,
             }
         })
     }
@@ -343,7 +351,9 @@ fn tags_from_blocks(blocks: &[lsdoc::ast::Block]) -> Vec<String> {
                 }
                 collect_tags_from_inline(inline, &mut out, &mut seen);
             }
-            Block::Paragraph { inline, .. } => collect_tags_from_inline(inline, &mut out, &mut seen),
+            Block::Paragraph { inline, .. } => {
+                collect_tags_from_inline(inline, &mut out, &mut seen)
+            }
             _ => {}
         }
     }
@@ -1048,7 +1058,7 @@ mod projection_tests {
     fn projection_matches_direct_computation() {
         let b = DocBlock::new("TODO ship [[Foo Bar]] and #tag\nid:: abc\nprop:: secret");
         let p = b.projection();
-        // visible_lower == visible_text(raw).to_lowercase(): property lines dropped
+        // visible_lower == canonical_fold(visible_text(raw)): property lines dropped
         assert_eq!(p.visible_lower, "todo ship [[foo bar]] and #tag");
         assert!(
             !p.visible_lower.contains("secret"),

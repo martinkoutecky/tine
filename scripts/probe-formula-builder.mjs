@@ -121,6 +121,28 @@ try {
   check("Edit formula menu item clicked", editorOpened);
   await browser.$(".formula-editor").waitForExist({ timeout: 5000 });
 
+  // Post-#161 closure: a value picker is a child of the FormulaEditor, so one
+  // Escape peels only the picker and returns to its face without changing the
+  // unsaved formula draft or closing the outer editor.
+  const formulaDraftBeforePicker = await browser.execute(() =>
+    document.querySelector(".formula-editor")?.textContent ?? "",
+  );
+  await browser.$(".formula-builder-value-face").click();
+  await browser.$(".formula-builder-picker").waitForExist({ timeout: 5000 });
+  await browser.keys(["Escape"]);
+  await browser.$(".formula-builder-picker").waitForExist({ reverse: true, timeout: 5000 });
+  const pickerDismissal = await browser.execute(() => ({
+    editorOpen: !!document.querySelector(".formula-editor"),
+    activeIsFace: document.activeElement?.classList.contains("formula-builder-value-face") ?? false,
+    text: document.querySelector(".formula-editor")?.textContent ?? "",
+  }));
+  check(
+    "Escape closes only the formula value picker and restores its face",
+    pickerDismissal.editorOpen && pickerDismissal.activeIsFace
+      && pickerDismissal.text.replace(/\s+/g, " ").trim() === formulaDraftBeforePicker.replace(/\s+/g, " ").trim(),
+    JSON.stringify(pickerDismissal),
+  );
+
   const face = await browser.execute(() => {
     const ifFace = document.querySelector(".formula-builder-if");
     const keyword = document.querySelector(".formula-builder-keyword");

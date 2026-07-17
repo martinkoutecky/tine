@@ -23,6 +23,35 @@ export interface BlockDto {
   properties?: [string, string][];
 }
 
+/** Node-and-byte-bounded subtree used only for block-reference previews/exports. */
+export interface BlockPreview {
+  group: RefGroup;
+  /** Nodes omitted after the requested preview construction budget. */
+  truncated: number;
+}
+
+/** One rendered query macro requested by a Copy / Export session. */
+export interface QueryExportSpec {
+  key: string;
+  query: string;
+  advanced: boolean;
+}
+
+/** Native hierarchy projection for one query macro. */
+export interface QueryExportResult {
+  key: string;
+  groups: RefGroup[];
+  shown: number;
+  total: number;
+  omitted_nodes: number;
+}
+
+/** Every result in this batch shared one native root/node/byte budget. */
+export interface QueryExportBatch {
+  results: QueryExportResult[];
+  omitted_queries: number;
+}
+
 /** On-disk page format: markdown (default) or org. */
 export type Format = "md" | "org";
 
@@ -48,6 +77,15 @@ export interface PageDto {
   /** Bundled in-app Guide page: read-only, ephemeral, and excluded from normal
    *  graph persistence/search/reference surfaces. */
   guide?: boolean;
+}
+
+/** One authoritative Journals-feed transaction.  Cursor fields are ordinal
+ * journal days, never counts of returned DTOs (a selected file may vanish). */
+export interface JournalFeedPage {
+  pages: PageDto[];
+  next_before_day: number | null;
+  done: boolean;
+  as_of_day: number;
 }
 
 export interface GuidePage {
@@ -173,6 +211,40 @@ export interface RefGroup {
   page: string;
   kind: PageKind;
   blocks: BlockDto[];
+  evidence?: ReferenceBlockEvidence[];
+}
+
+export interface BacklinkFilterTarget {
+  page: string;
+  kind: PageKind;
+  block_id: string;
+}
+
+export interface BacklinkFilterEntry extends BacklinkFilterTarget {
+  text: string;
+  facets: string[];
+  truncated?: boolean;
+}
+
+export interface BacklinkFilterContext {
+  entries: BacklinkFilterEntry[];
+  truncated?: boolean;
+}
+
+export type ReferenceKind = "explicit" | "plain";
+
+export interface ReferenceOccurrence {
+  matched_name: string;
+  canonical: string;
+  kind: ReferenceKind;
+  /** UTF-16 offsets into the matching BlockDto.raw. */
+  span: MatchSpan;
+  rule: string;
+}
+
+export interface ReferenceBlockEvidence {
+  block_id: string;
+  occurrences: ReferenceOccurrence[];
 }
 
 export interface MatchSpan {
@@ -188,6 +260,8 @@ export interface MatchEvidence {
   spans: MatchSpan[];
   score?: number;
 }
+
+export type ObjectiveMatchClass = "exact" | "prefix" | "substring" | "fuzzy" | "body_evidence";
 
 export interface QueryDiagnostic {
   code: string;
@@ -208,6 +282,8 @@ export type QueryHit =
       display_text: string;
       evidence: MatchEvidence[];
       score: number;
+      match_class?: ObjectiveMatchClass;
+      matched_alias?: string;
     }
   | {
       entity: "block";
@@ -216,6 +292,7 @@ export type QueryHit =
       block: BlockDto;
       display_text: string;
       evidence: MatchEvidence[];
+      match_class?: ObjectiveMatchClass;
     };
 
 export interface QueryExecution {
@@ -223,6 +300,14 @@ export interface QueryExecution {
   diagnostics: QueryDiagnostic[];
   explanation: { branches: QueryExplainNode[] };
   cancelled: boolean;
+}
+
+/** A single routed page used to scope block search. When present, `path` is the
+ * authoritative file identity; otherwise kind plus canonical page name is used. */
+export interface QueryPageScope {
+  name: string;
+  pageKind: PageKind;
+  path?: string;
 }
 
 /** Result of an advanced (datalog) query: matched groups + which clause heads
@@ -260,6 +345,10 @@ export interface Rect {
   left: number;
   width: number;
   height: number;
+  /** Coordinate-space dimensions from a current Logseq PDF sidecar. Absent on
+   * rectangles written by older Tine versions, which already use page space. */
+  source_width?: number;
+  source_height?: number;
 }
 
 export interface Highlight {
@@ -269,6 +358,12 @@ export interface Highlight {
   color: string;
   text: string | null;
   image: number | null;
+}
+
+export interface PdfState {
+  highlights: Highlight[];
+  page: number | null;
+  scale: number | null;
 }
 
 /** Options for the print-to-PDF export (chosen in the pre-export dialog). Field

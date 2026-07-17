@@ -9,23 +9,17 @@ use wasm_bindgen::prelude::*;
 
 #[path = "../../tine-core/src/logbook.rs"]
 mod logbook;
+#[path = "../../lsdoc-block-parse.rs"]
+mod lsdoc_block_parse;
 
 /// Parse one de-bulleted block body into lsdoc's render AST, serialized to JSON.
 ///
-/// Mirrors `tine_core::render::parse_block` EXACTLY (the OG-faithful boundary):
-/// re-prepend the block pattern (`-` Markdown / `*` Org) to `raw.trim_start()`,
-/// then `lsdoc::parse`. The first returned block carries the block header
-/// (marker / priority / heading size); continuation constructs follow as siblings.
-///
-/// KEEP IN SYNC with `crates/tine-core/src/render.rs::parse_block`. The two share
-/// no code (this crate can't cheaply depend on tine-core — see Cargo.toml), so the
-/// 3-line re-prepend is duplicated; the transition diff-oracle (parse via WASM and
-/// via the `parse_blocks` IPC, assert equal) guards against drift.
+/// Mirrors `tine_core::render::parse_block` exactly. Both bridges compile the same
+/// shared boundary helper: OG-compatible re-bullet parsing plus Tine's deliberate
+/// correction for line-leading Markdown inline code containing `::`.
 #[wasm_bindgen]
 pub fn parse_block_json(raw: &str, is_org: bool) -> String {
-    let (pattern, fmt) = if is_org { ("*", "org") } else { ("-", "md") };
-    let input = format!("{pattern} {}", raw.trim_start());
-    let ast = lsdoc::parse(&input, fmt);
+    let ast = lsdoc_block_parse::parse_block(raw, is_org);
     serde_json::to_string(&ast).unwrap_or_else(|_| "[]".to_string())
 }
 
@@ -52,13 +46,12 @@ pub fn parse_document_json(text: &str, is_org: bool) -> String {
 /// catching drift between the two renderers (Option C2: both conform to one skeleton).
 #[wasm_bindgen]
 pub fn render_block_html(raw: &str, is_org: bool) -> String {
-    let (pattern, fmt, rfmt) = if is_org {
-        ("*", "org", lsdoc::Format::Org)
+    let rfmt = if is_org {
+        lsdoc::Format::Org
     } else {
-        ("-", "md", lsdoc::Format::Md)
+        lsdoc::Format::Md
     };
-    let input = format!("{pattern} {}", raw.trim_start());
-    let blocks = lsdoc::parse(&input, fmt);
+    let blocks = lsdoc_block_parse::parse_block(raw, is_org);
     lsdoc::render_html(&blocks, &lsdoc::RenderOpts { format: rfmt })
 }
 

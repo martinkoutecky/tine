@@ -479,6 +479,8 @@ fn write_highlights_preserves_externally_added_ones() {
             left: 0.0,
             width: 1.0,
             height: 1.0,
+            source_width: None,
+            source_height: None,
         };
         Highlight {
             id: id.into(),
@@ -559,6 +561,8 @@ fn highlight_write_is_not_seen_as_external_change() {
         left: 0.0,
         width: 1.0,
         height: 1.0,
+        source_width: None,
+        source_height: None,
     };
     let h = Highlight {
         id: "H1".into(),

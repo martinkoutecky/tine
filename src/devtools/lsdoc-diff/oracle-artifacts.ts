@@ -1,4 +1,4 @@
-import { canon } from "./vendor/compare.mjs";
+import { canon, canonJSON } from "./vendor/compare.mjs";
 import type { Projection } from "./mldoc-client";
 
 interface Comparison {
@@ -15,8 +15,13 @@ type JsonObject = Record<string, unknown>;
  * literal backtick from the start of a Code node to the preceding Plain node.
  */
 export function isMldocBacktickStateArtifact(lsdoc: Projection, mldoc: Projection): boolean {
-  const left = canon({ blocks: lsdoc.blocks, refs: lsdoc.refs });
-  const right = canon({ blocks: mldoc.blocks, refs: mldoc.refs });
+  // The projection contract compares canonical JSON, not JavaScript object
+  // identity. In particular, JSON serialization omits object fields whose value
+  // is `undefined` (mldoc may retain `checkbox: undefined` while Rust serde
+  // omits the key). Classify the narrow ownership shift in that exact domain so
+  // otherwise-equal oracle artifacts do not escape quarantine.
+  const left = JSON.parse(canonJSON({ blocks: lsdoc.blocks, refs: lsdoc.refs }));
+  const right = JSON.parse(canonJSON({ blocks: mldoc.blocks, refs: mldoc.refs }));
   const result = compare(left, right);
   return result.matches && result.shifts > 0;
 }

@@ -8,6 +8,7 @@ import { backend } from "../backend";
 import { blockProperty, doc, resetStore, setDoc, undo, type FeedPage, type Node as StoreNode } from "../store";
 import { clearSimpleForm, getSimpleForm, stashSimpleForm } from "../editor/queryBuilder";
 import type { QueryExecution, RefGroup } from "../types";
+import { bumpDataRev } from "../ui";
 
 beforeAll(async () => {
   await initParser();
@@ -83,6 +84,23 @@ function activeView(root: HTMLElement): string | undefined {
   return root.querySelector(".query-view-switcher button.active")?.textContent?.trim();
 }
 
+function presentedResultNumbers(
+  root: HTMLElement,
+  view: "Search" | "List" | "Table" | "Board"
+): number[] {
+  const selectors = {
+    Search: ".query-search-hit",
+    List: '.query-group [data-block-id^="todo-"]',
+    Table: '.sheet-title-cell[data-block-id^="todo-"]',
+    Board: '.sheet-board-card[data-block-id^="todo-"]',
+  } as const;
+  return [...root.querySelectorAll(selectors[view])].map((element) => {
+    const match = /Result\s+(\d+)/.exec(element.textContent ?? "");
+    if (!match) throw new Error(`${view} result did not expose its fixture identity: ${element.textContent}`);
+    return Number(match[1]);
+  });
+}
+
 function loadQueryDoc(queryRaw: string) {
   setDoc({
     byId: {
@@ -116,6 +134,80 @@ function loadAdvancedQueryDoc(queryRaw: string) {
 }
 
 describe("QueryMacro sheet integration", () => {
+  it("shows bounded ancestor context for list-query hits", async () => {
+    setDoc({
+      byId: {
+        query: node("query", "{{query (task TODO)}}", null),
+        projects: node("projects", "Projects", null, ["tine"]),
+        tine: node("tine", "Tine", "projects", ["todo"]),
+        todo: node("todo", "TODO From query\nowner:: Martin", "tine"),
+      },
+      pages: [page(["query", "projects"])],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    vi.spyOn(backend(), "runQuery").mockResolvedValue([
+      {
+        page: "Sheet",
+        kind: "page",
+        blocks: [{
+          id: "todo",
+          raw: doc.byId.todo.raw,
+          collapsed: false,
+          children: [],
+        }],
+      },
+    ]);
+
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await settleQuery();
+      await vi.waitFor(() => expect(root.querySelector(".ref-breadcrumb")?.textContent ?? "").toContain("Projects"));
+      expect(root.querySelectorAll(".ref-breadcrumb")).toHaveLength(1);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("retains a local query-tree disclosure across fresh result object identities", async () => {
+    setDoc({
+      byId: {
+        query: node("query", "{{query (task LATER)}}", null),
+        "hit-root": node("hit-root", "TODO Query hit", null, ["hit-child"]),
+        "hit-child": node("hit-child", "Query child", "hit-root", ["hit-grandchild"]),
+        "hit-grandchild": node("hit-grandchild", "Query grandchild", "hit-child"),
+      },
+      pages: [page(["query", "hit-root"])],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    const freshResult = (): RefGroup[] => [{
+      page: "Sheet",
+      kind: "page",
+      blocks: [{ id: "hit-root", raw: "TODO Query hit", collapsed: false, children: [] }],
+    }];
+    const runQuery = vi.spyOn(backend(), "runQuery").mockImplementation(async () => freshResult());
+
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await settleQuery();
+      await vi.waitFor(() => expect(root.textContent).toContain("Query child"));
+      expect(root.textContent).not.toContain("Query grandchild");
+
+      root.querySelector<HTMLElement>(
+        '[data-block-id="hit-child"] > .block-main .collapse-toggle.has-children',
+      )!.click();
+      await vi.waitFor(() => expect(root.textContent).toContain("Query grandchild"));
+
+      bumpDataRev();
+      await vi.waitFor(() => expect(runQuery).toHaveBeenCalledTimes(2));
+      await vi.waitFor(() => expect(root.textContent).toContain("Query grandchild"));
+      expect(doc.byId["hit-child"].collapsed).toBe(false);
+    } finally {
+      dispose();
+    }
+  });
+
   it("reopens a materialized friendly search without exposing it as raw DSL", async () => {
     loadQueryDoc('{{query (search "alpha beta")}}\ntine.view:: search');
     const execution: QueryExecution = {
@@ -150,7 +242,7 @@ describe("QueryMacro sheet integration", () => {
     dispose();
   });
 
-  it("keeps ordinary DSL query membership when switching to the Search presentation", async () => {
+  it("keeps ordinary DSL query membership across Search, List, Table, and Board presentations", async () => {
     const ids = Array.from({ length: 9 }, (_, index) => `todo-${index + 1}`);
     setDoc({
       byId: {
@@ -175,6 +267,16 @@ describe("QueryMacro sheet integration", () => {
     expect(root.querySelector(".query-count")?.textContent).toBe("9");
     expect(root.querySelectorAll(".query-search-results .query-search-hit")).toHaveLength(9);
     expect(root.querySelector(".query-search-hit")?.textContent).toContain("Result 1");
+    expect(presentedResultNumbers(root, "Search")).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(graphSearch).not.toHaveBeenCalled();
+
+    for (const view of ["List", "Table", "Board", "Search"] as const) {
+      clickView(root, view);
+      await settleQuery();
+      expect(activeView(root)).toBe(view);
+      expect(root.querySelector(".query-count")?.textContent).toBe("9");
+      expect(presentedResultNumbers(root, view)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    }
     expect(graphSearch).not.toHaveBeenCalled();
 
     dispose();
@@ -197,6 +299,44 @@ describe("QueryMacro sheet integration", () => {
     expect(root.querySelectorAll(".sheet-table")).toHaveLength(1);
     expect(root.querySelectorAll(".query-table")).toHaveLength(0);
     expect(root.textContent).toContain("From query");
+
+    dispose();
+  });
+
+  it("applies the Sheets formula filter to query-sourced Table and Board faces", async () => {
+    setDoc({
+      byId: {
+        query: node(
+          "query",
+          "{{query (and (todo TODO) \"score\")}}\ntine.view:: table\ntine.fields:: points=number\ntine.filter:: points > 2",
+          null
+        ),
+        low: node("low", "TODO Low score\npoints:: 1", null),
+        high: node("high", "TODO High score\npoints:: 3", null),
+      },
+      pages: [page(["query", "low", "high"])],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    vi.spyOn(backend(), "runQuery").mockResolvedValue(queryGroups(["low", "high"]));
+
+    const { root, dispose } = mount(() => <Block id="query" />);
+    await settleQuery();
+
+    expect(activeView(root)).toBe("Table");
+    expect(
+      [...root.querySelectorAll(".sheet-title-cell .sheet-cell-body")].map((cell) => cell.textContent?.trim())
+    ).toEqual(["High score"]);
+
+    clickView(root, "Board");
+    await settleQuery();
+    expect(activeView(root)).toBe("Board");
+    expect([...root.querySelectorAll(".sheet-board-card-title")].map((card) => card.textContent?.trim())).toEqual([
+      "High score",
+    ]);
+    // View switching must retain the coarse query and the formula refinement.
+    expect(blockProperty("query", "tine.filter")).toBe("points > 2");
+    expect(backend().runQuery).toHaveBeenCalledWith('(and (todo TODO) "score")');
 
     dispose();
   });

@@ -4,6 +4,7 @@ import { openPage, openPageAtBlock, openPageInNewTab } from "../router";
 import { openPageInSidebar, openPageContextMenu, dataRev, graphEpoch, graphMeta } from "../ui";
 import { blockProperty, doc, formatForPage, formatForBlock, resolveGuidePageDto, setBlockProperty, setRaw, withUndoUnit } from "../store";
 import { resolveBlockBatched } from "../resolveBatch";
+import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 import { LiveRefGroup } from "./LiveRefGroup";
 import { QueryBuilder } from "./QueryBuilder";
 import { SearchResultRow } from "./SearchResultRow";
@@ -291,6 +292,16 @@ export function QueryMacro(props: {
       return sharedQueryResult(scope, `simple\0${requestKey}`, () => backend().runQuery(form()));
     }
   );
+  const groupsError = () => {
+    const error = groups.error;
+    if (!error) return null;
+    const message = error instanceof Error ? error.message : String(error);
+    const oversized = message.startsWith("result-too-large:");
+    return {
+      lead: oversized ? "Query result is too large to display safely:" : "Query couldn't be loaded:",
+      message: message.replace(/^result-too-large:\s*/, ""),
+    };
+  };
   // Presentation never changes membership. Canonical `(search "…")` queries
   // already carry page/block hits and match evidence from QueryPlan. Ordinary
   // DSL queries return RefGroups, so adapt those same blocks into evidence-free
@@ -314,6 +325,16 @@ export function QueryMacro(props: {
   // ordered sequence with a per-row page breadcrumb), not grouped by page, or the
   // global order would be lost to page headers.
   const globalSort = createMemo(() => /\(\s*sort-by\b/i.test(form()));
+  const queryGroupKey = (group: RefGroup, flat: boolean) =>
+    flat
+      ? `${group.kind}\0${group.page}\0${group.blocks.map((block) => block.id).join("\0")}`
+      : `${group.kind}\0${group.page}`;
+  const groupedQueryByKey = createMemo(() =>
+    new Map((groups() ?? []).map((group) => [queryGroupKey(group, false), group] as const))
+  );
+  const flatQueryByKey = createMemo(() =>
+    new Map((groups() ?? []).map((group) => [queryGroupKey(group, true), group] as const))
+  );
   const [sortCol, setSortCol] = createSignal<string>("");
   const [sortDir, setSortDir] = createSignal(1);
 
@@ -509,6 +530,13 @@ export function QueryMacro(props: {
             <Show when={props.blockId && !isAdvanced()}>
               <QueryBuilder dsl={form} onChange={applyDsl} blockId={props.blockId} />
             </Show>
+            <Show when={groupsError()}>
+              {(message) => (
+                <div class="query-unsupported" role="alert">
+                  {message().lead} {message().message}
+                </div>
+              )}
+            </Show>
             <Show when={!collapsed()}>
               <Show
                 when={sheetFace()}
@@ -606,16 +634,16 @@ export function QueryMacro(props: {
                           <Show
                             when={globalSort()}
                             fallback={
-                              <For each={groups() ?? []}>
-                                {(g) => <QueryGroup page={g.page} group={() => g} />}
+                              <For each={[...groupedQueryByKey().keys()]}>
+                                {(key) => <QueryGroup group={() => groupedQueryByKey().get(key)} />}
                               </For>
                             }
                           >
                             {/* Sorted: flat global order (each group holds one block). Iterate the
                                 groups DIRECTLY and pass the group object — re-`find()`ing the group
                                 by page/id for every row was O(groups²) on broad queries (audit #3). */}
-                            <For each={groups() ?? []}>
-                              {(g) => <QueryGroup page={g.page} group={() => g} flat />}
+                            <For each={[...flatQueryByKey().keys()]}>
+                              {(key) => <QueryGroup group={() => flatQueryByKey().get(key)} flat />}
                             </For>
                           </Show>
                         }
@@ -652,6 +680,7 @@ export function QueryMacro(props: {
                                       }
                                     }}
                                     onContextMenu={(e) => {
+                                      if (!shouldOpenTextContextMenu(e.target)) return;
                                       e.preventDefault();
                                       e.stopPropagation();
                                       openPageContextMenu(e.clientX, e.clientY, r.page, r.kind);
@@ -702,8 +731,9 @@ export function QueryMacro(props: {
 // Keyed by page name (outer <For>) and block uuid (inner <For>) so a reactive
 // re-query that returns the same membership reuses the existing rows — it never
 // re-mounts a block you're editing in a result and yanks the caret out.
-function QueryGroup(props: { page: string; group: () => RefGroup | undefined; flat?: boolean }): JSX.Element {
+function QueryGroup(props: { group: () => RefGroup | undefined; flat?: boolean }): JSX.Element {
   const kind = (): PageKind => props.group()?.kind ?? "page";
+  const page = () => props.group()?.page ?? "";
   return (
     <Show when={props.group()}>
       {(g) => (
@@ -712,25 +742,26 @@ function QueryGroup(props: { page: string; group: () => RefGroup | undefined; fl
             class={props.flat ? "query-crumb" : "query-page"}
             onClick={(e) => {
               e.stopPropagation();
-              if (e.shiftKey) openPageInSidebar(props.page, kind());
-              else openPage(props.page, kind());
+              if (e.shiftKey) openPageInSidebar(page(), kind());
+              else openPage(page(), kind());
             }}
             onAuxClick={(e) => {
               if (e.button === 1) {
                 e.preventDefault();
                 e.stopPropagation();
-                openPageInNewTab(props.page, kind());
+                openPageInNewTab(page(), kind());
               }
             }}
             onContextMenu={(e) => {
+              if (!shouldOpenTextContextMenu(e.target)) return;
               e.preventDefault();
               e.stopPropagation();
-              openPageContextMenu(e.clientX, e.clientY, props.page, kind());
+              openPageContextMenu(e.clientX, e.clientY, page(), kind());
             }}
           >
-            {props.page}
+            {page()}
           </div>
-          <LiveRefGroup page={props.page} kind={kind()} blocks={g().blocks} />
+          <LiveRefGroup page={page()} kind={kind()} blocks={g().blocks} surface="query" showBreadcrumb />
         </div>
       )}
     </Show>
@@ -860,7 +891,7 @@ export function EmbedMacro(props: { body: string }): JSX.Element {
   const target = () => props.body.replace(/^embed\s*/i, "").trim();
 
   const [data] = createResource(
-    () => `${target()} ${graphEpoch()}`,
+    () => `${target()} ${graphEpoch()} ${dataRev()}`,
     async () => {
     const t = target();
     const blockRef = /^\(\(([^)]+)\)\)$/.exec(t);

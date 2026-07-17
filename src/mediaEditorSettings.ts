@@ -1,7 +1,7 @@
 // Device-local external-editor command templates (GH #38), persisted in
-// tine-settings.json via the generic app_string backend so they survive a
-// restart (WebKitGTK localStorage does not). One command per media-editor
-// registry entry, keyed by its `settingKey`. Read once at startup by
+// tine-settings.json via the generic app_string backend so native launch actions
+// and independent WebViews share one value. One command per media-editor registry
+// entry, keyed by its `settingKey`. Read once at startup by
 // initMediaEditorSettings(); the store drives both the "Edit in …" action and
 // the Settings → Files rows. Empty = the OS default opener.
 //

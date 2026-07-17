@@ -7,10 +7,10 @@
 //! written here is ordinary Logseq Markdown — the same graph opens in Logseq.
 
 use std::collections::{HashMap, HashSet};
-use std::io::{self, Write};
+use std::io;
 use std::path::Path;
 
-use crate::model::{atomic_write, markdown_page_dto, Graph, PageDto, PageKind};
+use crate::model::{atomic_write_new, markdown_page_dto, Graph, PageDto, PageKind};
 
 /// `logseq/config.edn` for the demo graph (triple-lowbar namespace filenames,
 /// the welcome page pinned as a favorite).
@@ -199,7 +199,6 @@ fn copy_referenced_guide_assets(graph: &Graph) -> io::Result<Vec<String>> {
     let mut referenced: Vec<String> = referenced.into_iter().collect();
     referenced.sort();
 
-    let assets = graph.assets_path();
     let mut copied = Vec::new();
     for name in referenced {
         if name.contains('/') || name.contains('\\') {
@@ -214,20 +213,8 @@ fn copy_referenced_guide_assets(graph: &Graph) -> io::Result<Vec<String>> {
                 format!("missing bundled guide asset {name}"),
             ));
         };
-        std::fs::create_dir_all(&assets)?;
-        let path = assets.join(&name);
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-        {
-            Ok(mut file) => {
-                file.write_all(asset.bytes)?;
-                file.sync_all()?;
-                copied.push(name);
-            }
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
-            Err(e) => return Err(e),
+        if graph.create_asset_if_absent(&name, asset.bytes)? {
+            copied.push(name);
         }
     }
     Ok(copied)
@@ -267,13 +254,13 @@ pub fn create_demo_graph(root: &Path) -> io::Result<()> {
 
     // Config first, so opening the graph below picks up the triple-lowbar
     // filename encoding the page paths are resolved with.
-    atomic_write(&logseq.join("config.edn"), CONFIG_EDN.as_bytes())?;
-    atomic_write(&assets.join("quick-capture.png"), QUICK_CAPTURE_PNG)?;
+    atomic_write_new(&logseq.join("config.edn"), CONFIG_EDN.as_bytes())?;
+    atomic_write_new(&assets.join("quick-capture.png"), QUICK_CAPTURE_PNG)?;
 
     let graph = Graph::open(root);
     for template in GUIDE_TEMPLATES {
         let path = graph.path_for(template.title, PageKind::Page);
-        atomic_write(&path, template.markdown.as_bytes())?;
+        atomic_write_new(&path, template.markdown.as_bytes())?;
     }
     Ok(())
 }
@@ -550,5 +537,43 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copy_guide_rejects_pages_directory_symlink_swap() {
+        use std::os::unix::fs::symlink;
+
+        let dir = scratch("tine-guide-pages-swap");
+        let outside = scratch("tine-guide-pages-outside");
+        std::fs::create_dir_all(dir.join("pages")).unwrap();
+        let graph = Graph::open(&dir);
+        std::fs::remove_dir(dir.join("pages")).unwrap();
+        symlink(&outside, dir.join("pages")).unwrap();
+
+        assert!(copy_guide_into_graph(&graph, "Tine Guide").is_err());
+        assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 0);
+        let _ = std::fs::remove_file(dir.join("pages"));
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&outside);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copy_guide_rejects_assets_directory_symlink_swap() {
+        use std::os::unix::fs::symlink;
+
+        let dir = scratch("tine-guide-assets-swap");
+        let outside = scratch("tine-guide-assets-outside");
+        std::fs::create_dir_all(dir.join("assets")).unwrap();
+        let graph = Graph::open(&dir);
+        std::fs::remove_dir(dir.join("assets")).unwrap();
+        symlink(&outside, dir.join("assets")).unwrap();
+
+        assert!(copy_guide_into_graph(&graph, "Tine Guide").is_err());
+        assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 0);
+        let _ = std::fs::remove_file(dir.join("assets"));
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&outside);
     }
 }

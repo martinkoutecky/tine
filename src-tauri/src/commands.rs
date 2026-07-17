@@ -2,9 +2,154 @@
 use crate::debug::diag;
 #[cfg(desktop)]
 use crate::platform::{open_page_source, opener_command, reveal_page_source};
-use crate::state::{refresh_graph, slot_for_context, with_graph, GraphContext};
+use crate::state::{
+    capture_quick_switch_slot, refresh_graph, slot_for_context, with_graph, AppState, GraphContext,
+};
+use serde::Serialize;
 use std::sync::Arc;
-use tine_core::model::{PageDto, PageEntry, PageKind, RefGroup};
+use tauri::{State, WebviewWindow};
+use tine_core::date::JournalDate;
+use tine_core::model::{
+    BacklinkFilterContext, BacklinkFilterTarget, PageDto, PageEntry, PageKind, RefGroup,
+};
+
+const RESULT_BRIDGE_MAX_ROWS: usize = 20_000;
+const RESULT_BRIDGE_MAX_BYTES: usize = 32 * 1024 * 1024;
+const QUERY_EXPORT_MAX_QUERIES: usize = 64;
+const QUERY_EXPORT_REQUEST_MAX_QUERIES: usize = 1_024;
+const QUERY_EXPORT_MAX_QUERY_BYTES: usize = 64 * 1024;
+const QUERY_EXPORT_MAX_ROOTS: usize = 50;
+const QUERY_EXPORT_MAX_NODES: usize = 2_000;
+const QUERY_EXPORT_MAX_BYTES: usize = 8 * 1024 * 1024;
+
+fn validate_query_source(query: &str) -> Result<(), String> {
+    if !tine_core::query::query_source_within_limit(query) {
+        return Err(format!(
+            "query-too-large: query source is {} bytes (limit: {} bytes)",
+            query.len(),
+            tine_core::query::QUERY_SOURCE_MAX_BYTES
+        ));
+    }
+    if !tine_core::query::query_nesting_within_limit(query) {
+        return Err("query-nesting-too-deep: simplify nested boolean clauses".to_string());
+    }
+    Ok(())
+}
+
+fn enforce_result_bridge_budget(groups: &[RefGroup]) -> Result<(), String> {
+    let rows = groups.iter().map(|group| group.blocks.len()).sum::<usize>();
+    let bytes = tine_core::model::ref_groups_estimated_bytes(groups);
+    if rows > RESULT_BRIDGE_MAX_ROWS || bytes > RESULT_BRIDGE_MAX_BYTES {
+        return Err(format!(
+            "result-too-large: {rows} matching blocks (~{bytes} bytes); narrow the query or add (sample N) (limits: {RESULT_BRIDGE_MAX_ROWS} blocks / {RESULT_BRIDGE_MAX_BYTES} bytes)"
+        ));
+    }
+    Ok(())
+}
+
+fn bounded_groups_or_error(
+    result: tine_core::model::BoundedRefGroups,
+) -> Result<Arc<Vec<RefGroup>>, String> {
+    if result.exceeded {
+        return Err(format!(
+            "result-too-large: {} matching blocks; narrow the query or add (sample N) (construction limits: {RESULT_BRIDGE_MAX_ROWS} blocks / {RESULT_BRIDGE_MAX_BYTES} bytes)",
+            result.total
+        ));
+    }
+    Ok(result.groups)
+}
+
+fn enforce_query_execution_budget(
+    execution: &tine_core::query_plan::QueryExecution,
+) -> Result<(), String> {
+    use tine_core::query_plan::QueryHit;
+    let bytes = execution.hits.iter().fold(0usize, |total, hit| {
+        total.saturating_add(match hit {
+            QueryHit::Page {
+                page,
+                display_text,
+                evidence,
+                matched_alias,
+                ..
+            } => {
+                page.name.len()
+                    + page.rel_path.len()
+                    + display_text.len()
+                    + matched_alias.as_ref().map_or(0, String::len)
+                    + evidence.len() * 128
+                    + 256
+            }
+            QueryHit::Block {
+                page,
+                block,
+                display_text,
+                evidence,
+                ..
+            } => {
+                page.len()
+                    + tine_core::model::block_dto_estimated_bytes(block)
+                    + display_text.len()
+                    + evidence.len() * 128
+                    + 256
+            }
+        })
+    });
+    if execution.hits.len() > RESULT_BRIDGE_MAX_ROWS || bytes > RESULT_BRIDGE_MAX_BYTES {
+        return Err(format!(
+            "result-too-large: {} search hits (~{bytes} bytes); narrow the search (limits: {RESULT_BRIDGE_MAX_ROWS} hits / {RESULT_BRIDGE_MAX_BYTES} bytes)",
+            execution.hits.len()
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod result_bridge_budget_tests {
+    use super::{
+        enforce_result_bridge_budget, validate_query_source, RESULT_BRIDGE_MAX_BYTES,
+        RESULT_BRIDGE_MAX_ROWS,
+    };
+    use tine_core::{BlockDto, PageKind, RefGroup};
+
+    fn group(blocks: Vec<BlockDto>) -> RefGroup {
+        RefGroup {
+            page: "Budget".into(),
+            kind: PageKind::Page,
+            blocks,
+            evidence: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn rejects_oversized_result_count_before_ipc() {
+        let groups = [group(vec![BlockDto::default(); RESULT_BRIDGE_MAX_ROWS + 1])];
+        assert!(enforce_result_bridge_budget(&groups)
+            .unwrap_err()
+            .starts_with("result-too-large:"));
+    }
+
+    #[test]
+    fn rejects_oversized_result_bytes_before_ipc() {
+        let mut block = BlockDto::default();
+        block.raw = "x".repeat(RESULT_BRIDGE_MAX_BYTES + 1);
+        assert!(enforce_result_bridge_budget(&[group(vec![block])])
+            .unwrap_err()
+            .starts_with("result-too-large:"));
+    }
+
+    #[test]
+    fn rejects_oversized_query_source_before_cache_or_parser() {
+        let source = "x".repeat(tine_core::query::QUERY_SOURCE_MAX_BYTES + 1);
+        assert!(validate_query_source(&source)
+            .unwrap_err()
+            .starts_with("query-too-large:"));
+
+        let nested = format!("{}(task TODO){}", "(and ".repeat(65), ")".repeat(65));
+        assert!(validate_query_source(&nested)
+            .unwrap_err()
+            .starts_with("query-nesting-too-deep:"));
+    }
+}
 
 /// Write a PNG image to the OS clipboard. The lightbox encodes the shown image to
 /// PNG and sends the bytes. On Linux we prefer `wl-copy`/`xclip` (see above) and
@@ -12,11 +157,55 @@ use tine_core::model::{PageDto, PageEntry, PageKind, RefGroup};
 /// Decode a base64 asset payload. The frontend sends bytes as one base64 string
 /// rather than a JSON number[] (which inflated the IPC payload ~4-5x and forced a
 /// per-element parse + a giant throwaway array on the webview thread).
+const ASSET_INGRESS_MAX_BYTES: usize = 64 * 1024 * 1024;
+
+fn decoded_base64_len(input: &str) -> Option<usize> {
+    if input.len() % 4 != 0 {
+        return None;
+    }
+    let padding = input
+        .as_bytes()
+        .iter()
+        .rev()
+        .take_while(|byte| **byte == b'=')
+        .count()
+        .min(2);
+    input
+        .len()
+        .checked_div(4)?
+        .checked_mul(3)?
+        .checked_sub(padding)
+}
+
 pub(crate) fn decode_asset_b64(b64: &str) -> Result<Vec<u8>, String> {
     use base64::Engine;
-    base64::engine::general_purpose::STANDARD
+    let max_encoded = ASSET_INGRESS_MAX_BYTES.div_ceil(3) * 4;
+    if b64.len() > max_encoded
+        || decoded_base64_len(b64).is_some_and(|len| len > ASSET_INGRESS_MAX_BYTES)
+    {
+        return Err("asset payload exceeds 64 MiB ingress limit".into());
+    }
+    let decoded = base64::engine::general_purpose::STANDARD
         .decode(b64)
-        .map_err(|e| format!("bad base64 asset payload: {e}"))
+        .map_err(|e| format!("bad base64 asset payload: {e}"))?;
+    if decoded.len() > ASSET_INGRESS_MAX_BYTES {
+        return Err("asset payload exceeds 64 MiB ingress limit".into());
+    }
+    Ok(decoded)
+}
+
+#[cfg(test)]
+mod asset_ingress_tests {
+    use super::{decoded_base64_len, ASSET_INGRESS_MAX_BYTES};
+
+    #[test]
+    fn base64_size_gate_accounts_for_padding_before_decode() {
+        let encoded = ASSET_INGRESS_MAX_BYTES.div_ceil(3) * 4;
+        assert!(encoded / 4 * 3 > ASSET_INGRESS_MAX_BYTES);
+        assert_eq!(decoded_base64_len("AAAA"), Some(3));
+        assert_eq!(decoded_base64_len("AA=="), Some(1));
+        assert_eq!(decoded_base64_len("AAA="), Some(2));
+    }
 }
 
 #[tauri::command]
@@ -24,27 +213,194 @@ pub(crate) fn list_pages(state: GraphContext<'_>) -> Result<Vec<PageEntry>, Stri
     with_graph(&state, |g| Ok(g.list_pages()))
 }
 
-#[tauri::command]
-pub(crate) fn journals_desc(
+#[derive(Serialize)]
+pub(crate) struct JournalFeedPage {
+    pages: Vec<PageDto>,
+    next_before_day: Option<i64>,
+    done: bool,
+    as_of_day: i64,
+}
+
+fn collect_journal_feed_page<F>(
+    entries: Vec<PageEntry>,
     limit: usize,
-    offset: usize,
-    state: GraphContext<'_>,
-) -> Result<Vec<PageDto>, String> {
-    with_graph(&state, |g| {
-        let entries = g.journals_desc();
-        let mut out = Vec::new();
-        for e in entries.into_iter().skip(offset).take(limit) {
-            match g.load_page(&e) {
-                Ok(dto) => out.push(dto),
-                // A journal deleted from disk between the cache listing and this
-                // load just drops out of the feed — don't fail the whole batch (and
-                // don't serve a stale ghost; load_page already evicted it).
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-                Err(err) => return Err(err.to_string()),
-            }
+    before_day: Option<i64>,
+    as_of_day: i64,
+    mut load: F,
+) -> Result<JournalFeedPage, String>
+where
+    F: FnMut(&PageEntry) -> Result<PageDto, std::io::Error>,
+{
+    // A zero limit is authoritative: do not scan/load the feed merely to
+    // discover that the caller requested no rows. No cursor advances because
+    // no day was examined.
+    if limit == 0 {
+        let done = !entries
+            .iter()
+            .any(|entry| before_day.is_none_or(|before| entry.date_key.unwrap_or(0) < before));
+        return Ok(JournalFeedPage {
+            pages: Vec::new(),
+            next_before_day: None,
+            done,
+            as_of_day,
+        });
+    }
+    let mut out = Vec::new();
+    let mut last_examined = None;
+    let mut candidates = entries
+        .into_iter()
+        .filter(|e| before_day.is_none_or(|before| e.date_key.unwrap_or(0) < before))
+        .peekable();
+    while let Some(e) = candidates.next() {
+        let day = e
+            .date_key
+            .expect("feed inventory only contains dated journals");
+        last_examined = Some(day);
+        match load(&e) {
+            Ok(dto) => out.push(dto),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err.to_string()),
         }
-        Ok(out)
+        if out.len() == limit {
+            break;
+        }
+    }
+    let done = candidates.peek().is_none();
+    Ok(JournalFeedPage {
+        pages: out,
+        next_before_day: if done { None } else { last_examined },
+        done,
+        as_of_day,
     })
+}
+
+/// Feed-only pagination. `before_day` is an ordinal-day cursor rather than a
+/// mutable vector offset, so a file disappearing after inventory cannot make a
+/// later day duplicate or disappear from the next request.
+#[tauri::command]
+pub(crate) fn journal_feed_page(
+    limit: usize,
+    before_day: Option<i64>,
+    state: GraphContext<'_>,
+) -> Result<JournalFeedPage, String> {
+    with_graph(&state, |g| {
+        let as_of_day = JournalDate::today().ordinal_key();
+        let entries = g.feed_journals_desc_through(JournalDate::from_ordinal(as_of_day));
+        collect_journal_feed_page(entries, limit, before_day, as_of_day, |entry| {
+            // A journal deleted from disk between inventory and load is skipped,
+            // but its day still advances the cursor in the helper above.
+            g.load_page(entry)
+        })
+    })
+}
+
+#[cfg(test)]
+mod journal_feed_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn entry(day: i64) -> PageEntry {
+        PageEntry {
+            name: day.to_string(),
+            kind: PageKind::Journal,
+            date_key: Some(day),
+            rel_path: String::new(),
+            path: PathBuf::new(),
+        }
+    }
+    fn dto(entry: &PageEntry) -> PageDto {
+        serde_json::from_value(serde_json::json!({
+            "name": entry.name, "kind": "journal", "title": entry.name,
+            "pre_block": null, "blocks": []
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn deletion_stable_day_cursor_fills_then_continues_without_duplicates() {
+        let entries = [5, 4, 3, 2, 1].into_iter().map(entry).collect();
+        let first = collect_journal_feed_page(entries, 3, None, 5, |e| {
+            if e.date_key == Some(5) {
+                Err(std::io::Error::from(std::io::ErrorKind::NotFound))
+            } else {
+                Ok(dto(e))
+            }
+        })
+        .unwrap();
+        assert_eq!(
+            first
+                .pages
+                .iter()
+                .map(|p| p.name.as_str())
+                .collect::<Vec<_>>(),
+            ["4", "3", "2"]
+        );
+        assert_eq!(first.next_before_day, Some(2));
+        assert!(!first.done);
+        let entries = [5, 4, 3, 2, 1].into_iter().map(entry).collect();
+        let second =
+            collect_journal_feed_page(entries, 3, first.next_before_day, 5, |e| Ok(dto(e)))
+                .unwrap();
+        assert_eq!(
+            second
+                .pages
+                .iter()
+                .map(|p| p.name.as_str())
+                .collect::<Vec<_>>(),
+            ["1"]
+        );
+        assert!(second.done);
+        assert_eq!(second.next_before_day, None);
+    }
+
+    #[test]
+    fn cursor_handles_second_page_loss_empty_suffix_exact_limit_zero_and_hard_errors() {
+        let first = collect_journal_feed_page(
+            [5, 4, 3, 2, 1].into_iter().map(entry).collect(), 3, None, 5, |e| Ok(dto(e)),
+        )
+        .unwrap();
+        assert_eq!(first.next_before_day, Some(3));
+        let second = collect_journal_feed_page(
+            [5, 4, 3, 2, 1].into_iter().map(entry).collect(), 3, first.next_before_day, 5, |e| {
+                if e.date_key == Some(2) { Err(std::io::Error::from(std::io::ErrorKind::NotFound)) } else { Ok(dto(e)) }
+            },
+        )
+        .unwrap();
+        assert_eq!(second.pages.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["1"]);
+        assert!(second.done, "a missing second-page row still exhausts the suffix");
+
+        let empty = collect_journal_feed_page(
+            [5, 4].into_iter().map(entry).collect(), 3, Some(4), 5, |e| Ok(dto(e)),
+        )
+        .unwrap();
+        assert!(empty.pages.is_empty());
+        assert!(empty.done);
+
+        let exact = collect_journal_feed_page(
+            [3, 2, 1].into_iter().map(entry).collect(), 3, None, 3, |e| Ok(dto(e)),
+        )
+        .unwrap();
+        assert!(exact.done, "an exactly-full final page is done");
+        assert_eq!(exact.next_before_day, None);
+
+        let mut loads = 0;
+        let zero = collect_journal_feed_page(
+            [3, 2, 1].into_iter().map(entry).collect(), 0, None, 3, |_e| {
+                loads += 1;
+                Ok(dto(&entry(0)))
+            },
+        )
+        .unwrap();
+        assert_eq!(loads, 0, "zero limit loads no entries");
+        assert!(!zero.done);
+
+        let hard = collect_journal_feed_page(
+            [3].into_iter().map(entry).collect(), 1, None, 3, |_e| {
+                Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied"))
+            },
+        );
+        assert!(matches!(hard, Err(err) if err.contains("denied")));
+    }
 }
 
 #[tauri::command]
@@ -177,7 +533,32 @@ pub(crate) fn get_backlinks(
     name: String,
     state: GraphContext<'_>,
 ) -> Result<Arc<Vec<RefGroup>>, String> {
-    with_graph(&state, |g| Ok(g.backlinks(&name)))
+    with_graph(&state, |g| {
+        bounded_groups_or_error(g.backlinks_bounded(
+            &name,
+            RESULT_BRIDGE_MAX_ROWS,
+            RESULT_BRIDGE_MAX_BYTES,
+        ))
+    })
+}
+
+#[tauri::command]
+pub(crate) fn get_backlink_filter_context(
+    name: String,
+    targets: Vec<BacklinkFilterTarget>,
+    state: GraphContext<'_>,
+) -> Result<BacklinkFilterContext, String> {
+    if targets.len() > RESULT_BRIDGE_MAX_ROWS {
+        return Err(format!(
+            "too many backlink filter roots: {} (limit: {RESULT_BRIDGE_MAX_ROWS})",
+            targets.len()
+        ));
+    }
+    with_graph(&state, |graph| {
+        Ok(tine_core::query::backlink_filter_context(
+            graph, &name, &targets,
+        ))
+    })
 }
 
 #[tauri::command]
@@ -185,17 +566,26 @@ pub(crate) fn get_unlinked_refs(
     name: String,
     state: GraphContext<'_>,
 ) -> Result<Arc<Vec<RefGroup>>, String> {
-    with_graph(&state, |g| Ok(g.unlinked_refs(&name)))
+    with_graph(&state, |g| {
+        bounded_groups_or_error(g.unlinked_refs_bounded(
+            &name,
+            RESULT_BRIDGE_MAX_ROWS,
+            RESULT_BRIDGE_MAX_BYTES,
+        ))
+    })
 }
 
 /// `block uuid → # of referrers` over the whole graph (drives the per-block
 /// reference-count badge). Small map (only referenced uuids); fetched once per
 /// graph generation by the frontend.
 #[tauri::command]
-pub(crate) fn block_ref_counts(
+pub(crate) async fn block_ref_counts(
     state: GraphContext<'_>,
 ) -> Result<Arc<std::collections::HashMap<String, usize>>, String> {
-    with_graph(&state, |g| Ok(g.block_ref_counts()))
+    let graph = Arc::clone(&slot_for_context(&state)?.graph);
+    tauri::async_runtime::spawn_blocking(move || graph.block_ref_counts())
+        .await
+        .map_err(|error| error.to_string())
 }
 
 /// The blocks that reference block `uuid`, grouped by page (the badge's referrers
@@ -205,7 +595,13 @@ pub(crate) fn block_referrers(
     uuid: String,
     state: GraphContext<'_>,
 ) -> Result<Arc<Vec<RefGroup>>, String> {
-    with_graph(&state, |g| Ok(g.block_referrers(&uuid)))
+    with_graph(&state, |g| {
+        bounded_groups_or_error(g.block_referrers_bounded(
+            &uuid,
+            RESULT_BRIDGE_MAX_ROWS,
+            RESULT_BRIDGE_MAX_BYTES,
+        ))
+    })
 }
 
 #[tauri::command]
@@ -252,7 +648,73 @@ pub(crate) fn run_query(
     query: String,
     state: GraphContext<'_>,
 ) -> Result<Arc<Vec<RefGroup>>, String> {
-    with_graph(&state, |g| Ok(g.run_query(&query)))
+    validate_query_source(&query)?;
+    with_graph(&state, |g| {
+        bounded_groups_or_error(g.run_query_bounded(
+            &query,
+            RESULT_BRIDGE_MAX_ROWS,
+            RESULT_BRIDGE_MAX_BYTES,
+        ))
+    })
+}
+
+/// Resolve every query macro in one Copy / Export session under one cumulative
+/// construction budget. Unlike `get_page`, this returns only selected subtrees;
+/// unrelated page content is never cloned across IPC or retained by the WebView.
+#[tauri::command]
+pub(crate) fn export_query_subtrees(
+    specs: Vec<tine_core::query::QueryExportSpec>,
+    state: GraphContext<'_>,
+) -> Result<tine_core::query::QueryExportBatch, String> {
+    let query_bytes = specs.iter().fold(0usize, |total, spec| {
+        total
+            .saturating_add(spec.key.len())
+            .saturating_add(spec.query.len())
+    });
+    if specs.len() > QUERY_EXPORT_REQUEST_MAX_QUERIES || query_bytes > QUERY_EXPORT_MAX_QUERY_BYTES
+    {
+        return Err(format!(
+            "query-export-request-too-large: {} macros / {} bytes (request limits: {} macros / {} bytes; processing cap: {} macros)",
+            specs.len(),
+            query_bytes,
+            QUERY_EXPORT_REQUEST_MAX_QUERIES,
+            QUERY_EXPORT_MAX_QUERY_BYTES,
+            QUERY_EXPORT_MAX_QUERIES,
+        ));
+    }
+    with_graph(&state, |graph| {
+        let batch = tine_core::query::export_query_subtrees(
+            graph,
+            &specs,
+            QUERY_EXPORT_MAX_QUERIES,
+            QUERY_EXPORT_MAX_ROOTS,
+            QUERY_EXPORT_MAX_NODES,
+            QUERY_EXPORT_MAX_BYTES,
+        );
+        let bytes = batch
+            .results
+            .iter()
+            .map(|result| {
+                result.key.len()
+                    + result
+                        .groups
+                        .iter()
+                        .map(|group| {
+                            tine_core::model::ref_groups_estimated_bytes(std::slice::from_ref(
+                                group,
+                            ))
+                        })
+                        .sum::<usize>()
+                    + 128
+            })
+            .sum::<usize>();
+        if bytes > QUERY_EXPORT_MAX_BYTES {
+            return Err(format!(
+                "query-export-result-too-large: ~{bytes} bytes (limit: {QUERY_EXPORT_MAX_BYTES} bytes)"
+            ));
+        }
+        Ok(batch)
+    })
 }
 
 #[tauri::command]
@@ -262,15 +724,27 @@ pub(crate) async fn run_graph_search(
     block_limit: usize,
     lane: Option<String>,
     explain: bool,
+    scope: Option<tine_core::query_plan::QueryPageScope>,
     state: GraphContext<'_>,
 ) -> Result<tine_core::query_plan::QueryExecution, String> {
     let graph = Arc::clone(&slot_for_context(&state)?.graph);
-    tauri::async_runtime::spawn_blocking(move || match lane.as_deref() {
-        Some(lane) => graph.run_graph_search_latest(lane, &source, page_limit, block_limit, explain),
-        None => graph.run_graph_search(&source, page_limit, block_limit, explain),
+    let page_limit = page_limit.min(RESULT_BRIDGE_MAX_ROWS);
+    let block_limit = block_limit.min(RESULT_BRIDGE_MAX_ROWS - page_limit);
+    let execution = tauri::async_runtime::spawn_blocking(move || match lane.as_deref() {
+        Some(lane) => graph.run_graph_search_latest_scoped(
+            lane,
+            &source,
+            page_limit,
+            block_limit,
+            scope,
+            explain,
+        ),
+        None => graph.run_graph_search_scoped(&source, page_limit, block_limit, scope, explain),
     })
     .await
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+    enforce_query_execution_budget(&execution)?;
+    Ok(execution)
 }
 
 #[tauri::command]
@@ -279,14 +753,37 @@ pub(crate) fn run_advanced_query(
     current_page: Option<String>,
     state: GraphContext<'_>,
 ) -> Result<tine_core::query::AdvancedResult, String> {
+    validate_query_source(&query)?;
     with_graph(&state, |g| {
-        Ok(g.run_advanced_query(&query, current_page.as_deref()))
+        let (result, exceeded, total) = g.run_advanced_query_bounded_cached(
+            &query,
+            current_page.as_deref(),
+            RESULT_BRIDGE_MAX_ROWS,
+            RESULT_BRIDGE_MAX_BYTES,
+        );
+        if exceeded {
+            return Err(format!(
+                "result-too-large: {total} advanced-query matches; narrow the query"
+            ));
+        }
+        Ok(result)
     })
 }
 
 #[tauri::command]
 pub(crate) fn query_facets(state: GraphContext<'_>) -> Result<Vec<(String, Vec<String>)>, String> {
-    with_graph(&state, |g| Ok(g.property_facets()))
+    with_graph(&state, |g| {
+        let (facets, exceeded) = tine_core::query::property_facets_bounded(
+            g,
+            RESULT_BRIDGE_MAX_ROWS,
+            RESULT_BRIDGE_MAX_BYTES,
+        );
+        if exceeded {
+            Err("result-too-large: property facets exceed the construction budget".into())
+        } else {
+            Ok(facets)
+        }
+    })
 }
 
 #[tauri::command]
@@ -403,12 +900,15 @@ pub(crate) async fn search(
     state: GraphContext<'_>,
 ) -> Result<Vec<RefGroup>, String> {
     let graph = Arc::clone(&slot_for_context(&state)?.graph);
-    tauri::async_runtime::spawn_blocking(move || match lane.as_deref() {
+    let limit = limit.min(RESULT_BRIDGE_MAX_ROWS);
+    let groups = tauri::async_runtime::spawn_blocking(move || match lane.as_deref() {
         Some(lane) => graph.search_latest(lane, &query, limit),
         None => graph.search(&query, limit),
     })
     .await
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+    enforce_result_bridge_budget(&groups)?;
+    Ok(groups)
 }
 
 #[tauri::command]
@@ -418,6 +918,142 @@ pub(crate) fn quick_switch(
     state: GraphContext<'_>,
 ) -> Result<Vec<PageEntry>, String> {
     with_graph(&state, |g| Ok(g.quick_switch(&query, limit)))
+}
+
+fn capture_quick_switch_for(
+    state: &AppState,
+    caller: &str,
+    binding_generation: Option<u64>,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<PageEntry>, String> {
+    let slot = capture_quick_switch_slot(state, caller, binding_generation)?;
+    Ok(slot.graph.quick_switch(query, limit.min(8)))
+}
+
+/// The sole graph-backed capability exposed to Quick Capture. It is deliberately
+/// not a `GraphContext` command: capture may ask for bounded page/tag candidates
+/// but cannot save, delete, trash, or invoke any other graph command.
+#[tauri::command]
+pub(crate) fn capture_quick_switch(
+    query: String,
+    limit: usize,
+    binding_generation: Option<u64>,
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+) -> Result<Vec<PageEntry>, String> {
+    capture_quick_switch_for(&state, window.label(), binding_generation, &query, limit)
+}
+
+#[cfg(test)]
+mod capture_quick_switch_tests {
+    use super::*;
+    use crate::state::{slot_for_bound_window, GraphRegistry, GraphSlot};
+    use std::path::PathBuf;
+    use std::sync::atomic::AtomicU64;
+    use std::sync::{Mutex, RwLock};
+    use tine_core::model::Graph;
+
+    fn state_with_selected_graph() -> (AppState, PathBuf) {
+        let base = std::env::temp_dir().join(format!(
+            "tine-capture-quick-switch-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let selected = base.join("selected");
+        let other = base.join("other");
+        for (root, page) in [
+            (&selected, "Selected Capture Target"),
+            (&other, "Other Target"),
+        ] {
+            std::fs::create_dir_all(root.join("pages")).unwrap();
+            std::fs::create_dir_all(root.join("journals")).unwrap();
+            std::fs::write(root.join("pages").join(format!("{page}.md")), "- fixture\n").unwrap();
+        }
+        let state = AppState {
+            graphs: RwLock::new(GraphRegistry::default()),
+            graph_load: Mutex::new(()),
+            watch_ctl: Mutex::new(None),
+            last_focused: Mutex::new(Some("main".into())),
+            capture_graph: Mutex::new(None),
+            #[cfg(desktop)]
+            next_window: AtomicU64::new(2),
+        };
+        let selected_slot = Arc::new(GraphSlot::new(Graph::open(&selected), selected.clone()));
+        let generation = selected_slot.binding_generation;
+        state
+            .graphs
+            .write()
+            .unwrap()
+            .bind("main".into(), selected_slot)
+            .unwrap();
+        state
+            .graphs
+            .write()
+            .unwrap()
+            .bind(
+                "other".into(),
+                Arc::new(GraphSlot::new(Graph::open(&other), other)),
+            )
+            .unwrap();
+        state.bind_capture_graph("main".into(), generation);
+        (state, base)
+    }
+
+    #[test]
+    fn returns_candidates_from_the_selected_capture_graph() {
+        let (state, base) = state_with_selected_graph();
+        let generation = state.capture_graph_binding().unwrap().binding_generation;
+        let result =
+            capture_quick_switch_for(&state, "capture", Some(generation), "Selected Capture", 8)
+                .unwrap();
+        assert!(result
+            .iter()
+            .any(|page| page.name == "Selected Capture Target"));
+        assert!(!result.iter().any(|page| page.name == "Other Target"));
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn rejects_a_stale_capture_binding_generation() {
+        let (state, base) = state_with_selected_graph();
+        let generation = state.capture_graph_binding().unwrap().binding_generation;
+        assert_eq!(
+            capture_quick_switch_for(&state, "capture", Some(generation + 1), "Selected", 8)
+                .unwrap_err(),
+            "stale-graph-binding"
+        );
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn rejects_non_capture_callers() {
+        let (state, base) = state_with_selected_graph();
+        let generation = state.capture_graph_binding().unwrap().binding_generation;
+        assert_eq!(
+            capture_quick_switch_for(&state, "main", Some(generation), "Selected", 8).unwrap_err(),
+            "capture quick switch is only available to quick capture"
+        );
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn capture_binding_never_grants_generic_graphcontext_mutation_access() {
+        let (state, base) = state_with_selected_graph();
+        let generation = state.capture_graph_binding().unwrap().binding_generation;
+        // `save_page` and other mutations resolve through GraphContext, which
+        // uses this normal window-slot path and therefore has no capture fallback.
+        assert_eq!(
+            slot_for_bound_window(&state, "capture", Some(generation))
+                .err()
+                .unwrap(),
+            "no graph loaded for window capture"
+        );
+        std::fs::remove_dir_all(base).unwrap();
+    }
 }
 
 #[tauri::command]
@@ -437,7 +1073,13 @@ pub(crate) fn resolve_block(
     uuid: String,
     state: GraphContext<'_>,
 ) -> Result<Option<RefGroup>, String> {
-    with_graph(&state, |g| Ok(g.resolve_block(&uuid)))
+    with_graph(&state, |g| {
+        let group = g.resolve_block(&uuid);
+        if let Some(group) = &group {
+            enforce_result_bridge_budget(std::slice::from_ref(group))?;
+        }
+        Ok(group)
+    })
 }
 
 #[tauri::command]
@@ -445,7 +1087,50 @@ pub(crate) fn resolve_blocks(
     uuids: Vec<String>,
     state: GraphContext<'_>,
 ) -> Result<Vec<Option<RefGroup>>, String> {
-    with_graph(&state, |g| Ok(g.resolve_blocks(&uuids)))
+    if uuids.len() > RESULT_BRIDGE_MAX_ROWS {
+        return Err(format!(
+            "result-too-large: {} requested block references (limit: {RESULT_BRIDGE_MAX_ROWS})",
+            uuids.len()
+        ));
+    }
+    with_graph(&state, |g| {
+        let (groups, exceeded, total) = tine_core::query::resolve_blocks_bounded(
+            g,
+            &uuids,
+            RESULT_BRIDGE_MAX_ROWS,
+            RESULT_BRIDGE_MAX_BYTES,
+        );
+        if exceeded {
+            Err(format!("result-too-large: {total} resolved block-reference rows exceed the construction budget"))
+        } else {
+            Ok(groups)
+        }
+    })
+}
+
+/// Explicit, bounded subtree resolution for hover previews. Ordinary
+/// `resolve_block(s)` stays shallow so a page containing nested references
+/// cannot multiply the same descendants across the IPC bridge.
+#[tauri::command]
+pub(crate) fn preview_block(
+    uuid: String,
+    max_nodes: usize,
+    state: GraphContext<'_>,
+) -> Result<Option<tine_core::BlockPreview>, String> {
+    const MAX_PREVIEW_NODES: usize = 2_000;
+    with_graph(&state, |g| {
+        // Leave room for RefGroup/page/serializer overhead, then assert the
+        // shared bridge invariant as a second line of defense.
+        let preview = g.preview_block_with_budget(
+            &uuid,
+            max_nodes.clamp(1, MAX_PREVIEW_NODES),
+            RESULT_BRIDGE_MAX_BYTES.saturating_sub(4 * 1024),
+        );
+        if let Some(preview) = &preview {
+            enforce_result_bridge_budget(std::slice::from_ref(&preview.group))?;
+        }
+        Ok(preview)
+    })
 }
 
 #[tauri::command]
@@ -472,10 +1157,7 @@ pub(crate) fn read_asset(
 /// range-aware `tine-media:` protocol. The protocol revalidates against the
 /// requesting window's current graph on every request.
 #[tauri::command]
-pub(crate) fn stream_asset_path(
-    name: String,
-    state: GraphContext<'_>,
-) -> Result<String, String> {
+pub(crate) fn stream_asset_path(name: String, state: GraphContext<'_>) -> Result<String, String> {
     let slot = slot_for_context(&state)?;
     slot.graph
         .stream_asset_path(&name)
@@ -523,24 +1205,50 @@ pub(crate) fn tine_open_devtools(window: tauri::WebviewWindow) {
     if window.is_devtools_open() {
         window.close_devtools();
     } else {
-        window.open_devtools();
-        // #31 follow-up: open the inspector as its OWN window (detached) instead of
-        // docked into the app. Docked, WebKitGTK puts the window's resize grip at the
-        // top of the inspector pane (confusing) and the inspector renders at the wrong
-        // scale on HiDPI/fractional displays; a separate top-level window avoids both.
-        // Best-effort + Linux-only: if detach isn't possible it stays docked (no worse
-        // than before). WebKitGTK's inspector keeps an attach button for docking back.
+        // #31 follow-up: on X11/XWayland, open the inspector as its OWN window
+        // instead of docked into the app. Docked, WebKitGTK puts the window's resize
+        // grip at the top of the inspector pane. Do not force this on native Wayland:
+        // Fedora 44 / WebKitGTK 2.52 renders the detached inspector black, while its
+        // docked inspector is correctly scaled and usable. Query the actual GDK
+        // display rather than session environment variables because an AppImage in a
+        // Wayland session deliberately runs GTK through XWayland.
+        // WebKit creates/attaches the inspector asynchronously, so an immediate
+        // is_attached()+detach() races and usually does nothing. Arm a one-shot hook
+        // BEFORE opening instead. The attach signal is the event boundary; its idle
+        // continuation runs after WebKit's default attach handler has finished, then
+        // detaches. There is deliberately no guessed timeout. Disconnecting first
+        // also lets the user attach the already-open inspector manually afterward.
         #[cfg(target_os = "linux")]
         {
             let _ = window.with_webview(|wv| {
-                use webkit2gtk::{WebInspectorExt, WebViewExt};
+                use gtk::{gdk::prelude::DisplayExtManual, prelude::WidgetExt};
+                use std::{cell::RefCell, rc::Rc};
+                use webkit2gtk::{glib, glib::prelude::ObjectExt, WebInspectorExt, WebViewExt};
+                if wv.inner().display().backend().is_wayland() {
+                    return;
+                }
                 if let Some(inspector) = wv.inner().inspector() {
-                    if inspector.is_attached() {
-                        inspector.detach();
-                    }
+                    let handler_slot = Rc::new(RefCell::new(None));
+                    let callback_slot = Rc::clone(&handler_slot);
+                    let handler_id = inspector.connect_attach(move |inspector| {
+                        if let Some(handler_id) = callback_slot.borrow_mut().take() {
+                            inspector.disconnect(handler_id);
+                        }
+                        let inspector = inspector.clone();
+                        glib::idle_add_local_once(move || {
+                            if inspector.is_attached() {
+                                inspector.detach();
+                            }
+                        });
+                        false
+                    });
+                    *handler_slot.borrow_mut() = Some(handler_id);
                 }
             });
         }
+        // Tauri queues UI-thread messages in order: with_webview installs the
+        // hook above before this open request is dispatched.
+        window.open_devtools();
     }
 }
 
@@ -593,6 +1301,85 @@ pub(crate) fn import_asset(
     })
 }
 
+/// Import a bounded Android photo or voice memo by native cache-file capability.
+/// Media never crosses Kotlin/WebView/Rust as base64; Rust streams the open file
+/// into the graph and removes the temp only after the durable asset commit.
+#[tauri::command]
+pub(crate) fn import_native_capture(
+    path: String,
+    name: String,
+    app: tauri::AppHandle,
+    state: GraphContext<'_>,
+) -> Result<String, String> {
+    use cap_std::{ambient_authority, fs::Dir};
+    use tauri::Manager;
+
+    const MAX_PHOTO_BYTES: u64 = 64 * 1024 * 1024;
+    const MAX_RECORDING_BYTES: u64 = 32 * 1024 * 1024;
+    let source = std::path::Path::new(&path);
+    let filename = source
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| "invalid native capture token".to_string())?;
+    let (max_bytes, media_label) =
+        if filename.starts_with("tine_memo_") && filename.ends_with(".m4a") {
+            (MAX_RECORDING_BYTES, "recording")
+        } else if filename.starts_with("tine_photo_") && filename.ends_with(".jpg") {
+            (MAX_PHOTO_BYTES, "photo")
+        } else {
+            return Err("invalid native capture token".into());
+        };
+    let cache_path = app
+        .path()
+        .app_cache_dir()
+        .map_err(|error| error.to_string())?;
+    let token_parent = source
+        .parent()
+        .ok_or_else(|| "recording has no cache parent".to_string())?;
+    let cache_dir = Dir::open_ambient_dir(&cache_path, ambient_authority())
+        .map_err(|error| error.to_string())?;
+    let token_dir = Dir::open_ambient_dir(token_parent, ambient_authority())
+        .map_err(|error| error.to_string())?;
+    let cache_identity = same_file::Handle::from_file(
+        cache_dir
+            .try_clone()
+            .map_err(|error| error.to_string())?
+            .into_std_file(),
+    )
+    .map_err(|error| error.to_string())?;
+    let token_identity = same_file::Handle::from_file(
+        token_dir
+            .try_clone()
+            .map_err(|error| error.to_string())?
+            .into_std_file(),
+    )
+    .map_err(|error| error.to_string())?;
+    if token_identity != cache_identity {
+        return Err("capture is outside Tine's native cache".into());
+    }
+
+    let capture = token_dir
+        .open(filename)
+        .map_err(|error| error.to_string())?;
+    let metadata = capture.metadata().map_err(|error| error.to_string())?;
+    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > max_bytes {
+        return Err(format!(
+            "{media_label} is empty or exceeds the {} MiB limit",
+            max_bytes / (1024 * 1024)
+        ));
+    }
+    let mut capture = capture.into_std();
+    let stored = with_graph(&state, |graph| {
+        graph
+            .import_asset_file(&mut capture, &name, max_bytes)
+            .map_err(|error| error.to_string())
+    })?;
+    // The graph asset is authoritative now. Cleanup failure is harmless cache
+    // litter and must not make the frontend omit the already-durable reference.
+    let _ = cache_dir.remove_file(filename);
+    Ok(stored)
+}
+
 /// Read a dropped delimited-text file for the CSV/TSV → grid drop path.
 /// Deliberately NARROW: this is the only webview-reachable read of a
 /// caller-chosen path (everything else is gated to the graph/assets dirs),
@@ -632,7 +1419,9 @@ pub(crate) fn read_text_file(path: String) -> Result<String, String> {
 /// (canonicalized) so a crafted name can't open a file outside the graph.
 #[tauri::command]
 pub(crate) fn open_asset(name: String, state: GraphContext<'_>) -> Result<(), String> {
-    let target = with_graph(&state, |g| g.asset_file_for_read(&name).map_err(|e| e.to_string()))?;
+    let target = with_graph(&state, |g| {
+        g.asset_file_for_read(&name).map_err(|e| e.to_string())
+    })?;
     #[cfg(desktop)]
     {
         #[cfg(target_os = "linux")]
@@ -708,7 +1497,9 @@ pub(crate) fn edit_asset_external(
     command: String,
     state: GraphContext<'_>,
 ) -> Result<(), String> {
-    let target = with_graph(&state, |g| g.asset_file_for_read(&name).map_err(|e| e.to_string()))?;
+    let target = with_graph(&state, |g| {
+        g.asset_file_for_read(&name).map_err(|e| e.to_string())
+    })?;
     #[cfg(desktop)]
     {
         let target_str = target.to_string_lossy().to_string();
@@ -1217,6 +2008,17 @@ pub(crate) fn read_highlights(
 }
 
 #[tauri::command]
+pub(crate) fn open_pdf(
+    pdf: String,
+    label: String,
+    state: GraphContext<'_>,
+) -> Result<tine_core::pdf::PdfState, String> {
+    with_graph(&state, |g| {
+        g.open_pdf(&pdf, &label).map_err(|e| e.to_string())
+    })
+}
+
+#[tauri::command]
 pub(crate) fn write_highlights(
     pdf: String,
     label: String,
@@ -1226,6 +2028,19 @@ pub(crate) fn write_highlights(
 ) -> Result<(), String> {
     with_graph(&state, |g| {
         g.write_highlights(&pdf, &label, &highlights, &base_ids)
+            .map_err(|e| e.to_string())
+    })
+}
+
+#[tauri::command]
+pub(crate) fn write_pdf_view_state(
+    pdf: String,
+    page: i64,
+    scale: f64,
+    state: GraphContext<'_>,
+) -> Result<(), String> {
+    with_graph(&state, |g| {
+        g.write_pdf_view_state(&pdf, page, scale)
             .map_err(|e| e.to_string())
     })
 }

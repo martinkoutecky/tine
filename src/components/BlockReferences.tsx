@@ -1,9 +1,10 @@
 import { For, Show, createResource, type JSX } from "solid-js";
 import { backend } from "../backend";
-import { graphEpoch } from "../ui";
+import { dataRev, graphEpoch } from "../ui";
 import { openPage, openPageInNewTab } from "../router";
 import { openPageInSidebar, openPageContextMenu } from "../ui";
 import { LiveRefGroup } from "./LiveRefGroup";
+import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 
 // Block-level "linked references": the blocks that reference THIS block (via
 // `((uuid))` / `[..](((uuid)))` / `{{embed ((uuid))}}`), grouped by page. Toggled
@@ -12,7 +13,7 @@ import { LiveRefGroup } from "./LiveRefGroup";
 // the block-ref panel). Refetches when the graph generation changes.
 export function BlockReferences(props: { id: string }): JSX.Element {
   const [groups] = createResource(
-    () => `${props.id} ${graphEpoch()}`,
+    () => `${props.id} ${graphEpoch()} ${dataRev()}`,
     () => backend().getBlockReferrers(props.id)
   );
   const count = () => (groups() ?? []).reduce((acc, g) => acc + g.blocks.length, 0);
@@ -39,6 +40,7 @@ export function BlockReferences(props: { id: string }): JSX.Element {
                   }
                 }}
                 onContextMenu={(e) => {
+                  if (!shouldOpenTextContextMenu(e.target)) return;
                   e.preventDefault();
                   openPageContextMenu(e.clientX, e.clientY, g.page, g.kind);
                 }}
@@ -48,7 +50,7 @@ export function BlockReferences(props: { id: string }): JSX.Element {
               <div class="reference-blocks">
                 {/* OG shows each referrer's ancestor breadcrumb in the block-ref
                     panel (:breadcrumb-show? true) for "where does this live" context. */}
-                <LiveRefGroup page={g.page} kind={g.kind} blocks={g.blocks} showBreadcrumb />
+                <LiveRefGroup page={g.page} kind={g.kind} blocks={g.blocks} surface="ref" showBreadcrumb />
               </div>
             </div>
           )}

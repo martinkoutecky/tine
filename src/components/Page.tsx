@@ -1,11 +1,11 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup, untrack, useContext, type JSX } from "solid-js";
-import { doc, mainPages, pageByName, loadFeed, appendFeed, emptyPage, ensurePageLoaded, setFeedExtender, flushAll, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, insertOutlineAfter, promotePagePreamble, type FeedPage } from "../store";
+import { doc, mainPages, pageByName, loadFeed, appendFeed, emptyPage, ensurePageLoaded, setFeedExtender, flushAll, formatForBlock, readPageProperty, setPageProperty, appendToTodayJournal, ensureEmptyBlock, insertEmptyChildBlock, insertOutlineAfter, promotePagePreamble, beginPageHeaderEdit, trailingVisibleEmptyLeaf, isBlockMoving, isDirty, isSaving, type FeedPage } from "../store";
 import { sameRoute, type PaneRouter } from "../router";
 import { PaneContext, focusedRouter } from "../panes";
 import {
   zoomedBlock, isFavorite, toggleFavorite,
   graphEpoch, openPageInSidebar, openPageContextMenu, carryDays, showCarryButtons,
-  agendaQuery, openPageProps, dataRev,
+  agendaQuery, contextMenu, dataRev, isConflicted, renamePageInNavigation,
 } from "../ui";
 import { carryDay, carryPrevDay, carryDaysBack } from "../carry";
 import { backend } from "../backend";
@@ -16,26 +16,125 @@ import { UnlinkedReferences } from "./UnlinkedReferences";
 import { QueryMacro } from "./Macro";
 import { SheetTable } from "./SheetTable";
 import { NamespaceCrumb, NamespaceHierarchy } from "./Namespace";
-import { pageProperties, aliasNames, visibleBody } from "../render/block";
-import { InlineText } from "../render/inline";
+import { pageProperties, aliasNames, isImplicitPageRefProperty, isQuotedPagePropertyValue, normalizeImplicitPageName, visibleBody } from "../render/block";
+import { InlineText, PageRef } from "../render/inline";
 import { EmojiText } from "../render/emoji";
 import { journalTitle } from "../journal";
-import { endEditForSurface, startEditing } from "../editorController";
-import type { PageDto, RefGroup } from "../types";
+import { editingId, endEditForSurface, startEditing } from "../editorController";
+import type { JournalFeedPage, PageDto, RefGroup } from "../types";
 import { tagRef } from "../tags";
 import { copyGuideIntoGraph, ensureGuidePagesLoaded, isGuidePageName } from "../guide";
 import { isPropertiesOnly, splitPagePreamble } from "../editor/properties";
+import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 
 export const FEED_PAGE = 3;
-let journalOffset = 0;
-let loadingMore = false;
+let journalAsOfDay: number | null = null;
+let nextBeforeDay: number | null = null;
+let feedGeneration = 0;
+let loadingGeneration: number | null = null;
 let feedDone = false;
+let pendingFeedRestart = false;
+
+/** A feed response belongs to one graph and one or more concrete Journals
+ * surfaces.  App's watcher supplies a captured owner too, so a response begun
+ * before navigation/graph switch cannot update the shared feed store. */
+export interface JournalsFeedOwner {
+  graphEpoch: number;
+  isLive: () => boolean;
+}
+
+function localDayKey(now = new Date()): number {
+  return now.getFullYear() * 10_000 + (now.getMonth() + 1) * 100 + now.getDate();
+}
+
+function feedHasActiveEdit(): boolean {
+  const edited = editingId();
+  // An editor in a sidebar, a page tab, or another split pane is unrelated to
+  // the working set that loadFeed replaces.  Only a block owned by a visible
+  // feed page is unsafe here.
+  if (edited && doc.byId[edited] && doc.feed.includes(doc.byId[edited].page)) return true;
+  return doc.feed.some((name) =>
+    isDirty(name) || isSaving(name) || isConflicted(name) || isBlockMoving(name)
+  );
+}
+
+function responseMatches(day: number, response: JournalFeedPage): boolean {
+  return response.as_of_day === day && localDayKey() === day;
+}
+
+function ownerIsLive(owner: JournalsFeedOwner): boolean {
+  return graphEpoch() === owner.graphEpoch && owner.isLive();
+}
+
+/** The single start-over owner for route loads, watcher changes and calendar
+ * rollover.  It intentionally keeps the old feed/cursor until a response has
+ * passed all ownership checks. */
+async function restartJournalFeed(owner: JournalsFeedOwner, retried = false): Promise<void> {
+  // An already-dead watcher/surface must be entirely inert.  In particular it
+  // must not steal the generation from a live request that is about to land.
+  if (!ownerIsLive(owner)) return;
+  const generation = ++feedGeneration; // invalidate starts/appends before checking edit safety
+  if (feedHasActiveEdit()) {
+    pendingFeedRestart = true;
+    return;
+  }
+  const browserDay = localDayKey();
+  loadingGeneration = generation;
+  try {
+    const response = await backend().journalFeedPage(FEED_PAGE, null);
+    if (generation !== feedGeneration || !ownerIsLive(owner) || !responseMatches(browserDay, response)) {
+      if (generation === feedGeneration && ownerIsLive(owner) && !retried && !feedHasActiveEdit()) {
+        return restartJournalFeed(owner, true);
+      }
+      // A stale/disposed owner cannot create deferred work for a later surface.
+      if (generation === feedGeneration && ownerIsLive(owner)) pendingFeedRestart = true;
+      return;
+    }
+    // Clear the deferred flag before loadFeed synchronously updates doc.feed;
+    // otherwise the intentionally reactive pending-retry effect observes the
+    // old true value during that store write and starts a duplicate restart.
+    pendingFeedRestart = false;
+    loadFeed(withToday(response.pages), { endEdit: false });
+    journalAsOfDay = response.as_of_day;
+    nextBeforeDay = response.next_before_day;
+    feedDone = response.done;
+  } catch {
+    // A failed refresh must leave the displayed feed and its cursor usable.
+    // Focus, visibility, load-more, or the next calendar check will retry.
+    if (generation === feedGeneration && ownerIsLive(owner)) pendingFeedRestart = true;
+  } finally {
+    if (loadingGeneration === generation) loadingGeneration = null;
+  }
+}
 
 // Page properties NOT shown in the under-title property list: `alias` is surfaced
 // as "aka" chips above, and `icon` is consumed as the page icon next to the title
 // (OG hides it too). Other internal/metadata page props could be added here.
 const PAGE_PROPS_HIDDEN = new Set(["alias", "icon", "tine.tag-table"]);
 const TAG_TABLE_PROP = "tine.tag-table";
+
+/** Render Logseq's implicit page-reference properties without changing the
+ * stored text. Bare alias/aliases/tags values become navigable, while explicit
+ * inline markup, separators, spacing, custom properties, and quoted values keep
+ * their authored representation. */
+function PagePropertyValue(props: { propertyKey: string; value: string; format: "md" | "org" }): JSX.Element {
+  if (!isImplicitPageRefProperty(props.propertyKey) || isQuotedPagePropertyValue(props.value)) {
+    return <InlineText text={props.value} format={props.format} />;
+  }
+  return (
+    <For each={props.value.split(/([,，])/g)}>
+      {(part) => {
+        if (part === "," || part === "，") return part;
+        const leading = part.match(/^\s*/)?.[0] ?? "";
+        const trailing = part.match(/\s*$/)?.[0] ?? "";
+        const value = part.slice(leading.length, part.length - trailing.length);
+        if (!value) return part;
+        const name = normalizeImplicitPageName(value);
+        return <>{leading}<PageRef name={name} alias={name} />{trailing}</>;
+      }}
+    </For>
+  );
+}
 
 function paneContextFromContext() {
   const ctx = useContext(PaneContext);
@@ -57,16 +156,19 @@ export function toLoadablePage(dto: PageDto, name: string): PageDto {
     : { ...dto, blocks: [{ id: `new-${name}`, raw: "", collapsed: false, children: [] }] };
 }
 
-export async function reloadJournalsFeedFromStart() {
-  const js = await backend().journalsDesc(FEED_PAGE, 0);
-  journalOffset = js.length;
-  feedDone = js.length < FEED_PAGE;
-  loadFeed(withToday(js), { endEdit: false });
+export async function reloadJournalsFeedFromStart(owner: JournalsFeedOwner): Promise<void> {
+  await restartJournalFeed(owner);
 }
 
 export function PageView(): JSX.Element {
   const pane = paneContextFromContext();
   const router = pane.router;
+  // Route equality alone is not a component lifetime: a pane can disappear
+  // while its router still says Journals.  Every owner issued by this surface
+  // carries this revocation token, so an already-issued IPC can finish but can
+  // never change the shared feed after unmount.
+  let surfaceAlive = true;
+  onCleanup(() => { surfaceAlive = false; });
   const [ready, setReady] = createSignal(false);
   // Keep the route whose asynchronous load actually completed separate from the
   // router's desired route. A cached large page is already present in doc.pages;
@@ -81,6 +183,10 @@ export function PageView(): JSX.Element {
   // route — without this, route() would re-fire this loader, remount the feed via
   // setReady(false), and reset scroll to the top.
   const currentRoute = createMemo(() => router.route(), undefined, { equals: sameRoute });
+  const journalOwner = (route = currentRoute(), epoch = graphEpoch()): JournalsFeedOwner => ({
+    graphEpoch: epoch,
+    isLive: () => surfaceAlive && sameRoute(currentRoute(), route),
+  });
   createEffect(() => {
     const r = currentRoute();
     const epoch = graphEpoch(); // reload when the open graph changes
@@ -105,12 +211,11 @@ export function PageView(): JSX.Element {
           setReady(true);
           return;
         } else if (r.kind === "journals") {
-          const js = await backend().journalsDesc(FEED_PAGE, 0);
+          // restartJournalFeed synchronously reads the working set safety gate.
+          // Keep those reads out of this route/epoch loader's dependency set:
+          // loadFeed replaces doc.feed, and subscribing here would self-reload.
+          await untrack(() => restartJournalFeed(journalOwner(r, epoch)));
           if (epoch !== graphEpoch()) return; // graph switched mid-load — drop it
-          journalOffset = js.length;
-          if (js.length < FEED_PAGE) feedDone = true;
-          else feedDone = false;
-          loadFeed(withToday(js), { endEdit: false });
         } else {
           if (isGuidePageName(r.name)) {
             await ensureGuidePagesLoaded(true);
@@ -127,6 +232,17 @@ export function PageView(): JSX.Element {
             ? await backend().getPageByPath(r.path)
             : await backend().getPage(r.name, r.pageKind);
           if (epoch !== graphEpoch()) return; // graph switched mid-load — drop it
+          // Core page identity is Unicode-case-insensitive while display names
+          // preserve their original spelling. Alias-map warmup normally
+          // canonicalizes before navigation; this adoption also covers an early
+          // click or restored route that raced that map. Re-route once so the
+          // exact-keyed working set, tab history, Recent, and editor all own the
+          // backend's canonical display name instead of a phantom case variant.
+          if (dto && !r.path && r.pageKind === "page" && dto.name !== r.name) {
+            renamePageInNavigation(r.name, dto.name);
+            router.replaceActiveRoute({ ...r, name: dto.name });
+            return;
+          }
           // null = page doesn't exist yet → start a fresh empty page. A failed
           // read throws and is caught below, so we never overwrite a page whose
           // load errored with empty content.
@@ -148,14 +264,89 @@ export function PageView(): JSX.Element {
   });
 
   const loadMore = async () => {
-    if (currentRoute().kind !== "journals" || loadingMore || feedDone) return;
-    loadingMore = true;
-    const js = await backend().journalsDesc(FEED_PAGE, journalOffset);
-    journalOffset += js.length;
-    if (js.length) appendFeed(js);
-    else feedDone = true;
-    loadingMore = false;
+    const route = currentRoute();
+    if (route.kind !== "journals") return;
+    const owner = journalOwner(route);
+    if (!ownerIsLive(owner)) return;
+    if (pendingFeedRestart || journalAsOfDay !== localDayKey()) {
+      await restartJournalFeed(owner);
+      return;
+    }
+    if (loadingGeneration !== null || feedDone || nextBeforeDay === null) return;
+    const generation = feedGeneration;
+    const asOfDay = journalAsOfDay;
+    const cursor = nextBeforeDay;
+    loadingGeneration = generation;
+    try {
+      const response = await backend().journalFeedPage(FEED_PAGE, cursor);
+      if (
+        generation !== feedGeneration || !ownerIsLive(owner) || asOfDay === null ||
+        cursor !== nextBeforeDay || response.as_of_day !== asOfDay || !responseMatches(asOfDay, response)
+      ) {
+        if (generation === feedGeneration && ownerIsLive(owner)) await restartJournalFeed(owner);
+        return;
+      }
+      if (response.pages.length) appendFeed(response.pages);
+      nextBeforeDay = response.next_before_day;
+      feedDone = response.done;
+    } catch {
+      if (generation === feedGeneration && ownerIsLive(owner)) pendingFeedRestart = true;
+    } finally {
+      if (loadingGeneration === generation) loadingGeneration = null;
+    }
   };
+
+  // Local calendar rollover is a one-shot revalidation.  Calendar construction
+  // (rather than 24h arithmetic) remains correct on DST transitions.
+  createEffect(() => {
+    const route = currentRoute();
+    if (route.kind !== "journals") return;
+    const owner = journalOwner(route);
+    let timer: number | undefined;
+    let disposed = false;
+    const restart = () => { void restartJournalFeed(owner); };
+    const arm = () => {
+      if (disposed || !ownerIsLive(owner)) return;
+      const now = new Date();
+      const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+      timer = window.setTimeout(() => {
+        // One-shot rather than 24h arithmetic (DST-safe).  Re-arm after every
+        // trigger, including a deferred/error response, while this owner lives.
+        void restartJournalFeed(owner).finally(() => { if (!disposed && ownerIsLive(owner)) arm(); });
+      }, Math.max(1, next.getTime() - now.getTime() + 25));
+    };
+    arm();
+    const onFocus = () => {
+      if (journalAsOfDay !== localDayKey() || pendingFeedRestart) restart();
+    };
+    const onVisibility = () => { if (!document.hidden) onFocus(); };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+    onCleanup(() => {
+      disposed = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+    });
+  });
+
+  // A deferred watcher/midnight refresh is retried only when the existing edit
+  // lifecycle has advanced; it never replaces a dirty feed with a stale window.
+  createEffect(() => {
+    const route = currentRoute();
+    if (route.kind !== "journals") return;
+    editingId();
+    dataRev();
+    // Subscribe to every page-scoped safety gate even before a watcher marks a
+    // retry pending.  That makes the corresponding release event sufficient;
+    // no unrelated graph change is needed to wake a deferred feed refresh.
+    const unsafe = feedHasActiveEdit();
+    if (pendingFeedRestart && !unsafe) {
+      // This effect deliberately tracks the edit/conflict/save lifecycle.  Do
+      // not untrack it with the initial route loader: it is the pending retry.
+      void restartJournalFeed(journalOwner(route));
+    }
+  });
 
   createEffect(() => {
     if (currentRoute().kind !== "journals") return;
@@ -293,14 +484,15 @@ function ZoomedView(props: { id: string }): JSX.Element {
   const pageName = () => doc.byId[props.id]?.page ?? "";
   const pageKind = () => doc.pages.find((p) => p.name === pageName())?.kind ?? "page";
   const crumb = (id: string) => visibleBody(doc.byId[id].raw)[0] || "…";
+  const editSurface = () => pane.paneId === "main" ? "main" : `pane:${pane.paneId}`;
   const focusTrailing = () => {
     const root = doc.byId[props.id];
     if (!root || pageByName(root.page)?.readOnly || pageByName(root.page)?.guide) return;
-    const leaf = trailingLeaf(props.id);
-    const id = leaf && !doc.byId[leaf].raw.trim()
+    const leaf = trailingVisibleEmptyLeaf({ roots: [props.id], forceExpandedRoot: props.id });
+    const id = leaf
       ? leaf
       : insertEmptyChildBlock(props.id, root.children.length);
-    if (id) startEditing(id, 0, pane.paneId === "main" ? "main" : `pane:${pane.paneId}`);
+    if (id) startEditing(id, 0, null, editSurface());
   };
 
   return (
@@ -343,33 +535,55 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
   const router = pane.router;
   const [renaming, setRenaming] = createSignal(false);
   const [newName, setNewName] = createSignal("");
+  let pageActionsTrigger: HTMLButtonElement | undefined;
+  const pageActionsOpen = () => {
+    const menu = contextMenu();
+    return menu?.kind === "page"
+      && menu.name === props.page.name
+      && menu.pageKind === props.page.kind
+      && !!menu.fileActions
+      && menu.focusOwner === pageActionsTrigger;
+  };
   const firstPropertiesId = () => {
     if (props.page.format !== "md") return null;
     const id = props.page.roots[0];
-    return id && doc.byId[id] && isPropertiesOnly(doc.byId[id].raw) ? id : null;
+    // Keep the first block mounted until editing ends. `alias::` already parses
+    // as a properties-only block before its value is typed; hiding it at the
+    // second colon unmounted the textarea and discarded the rest of the user's
+    // keystrokes (GH #62's regression after the GH #86 presentation change).
+    return id && editingId() !== id && doc.byId[id] && isPropertiesOnly(doc.byId[id].raw) ? id : null;
   };
   const propertySource = () => {
     const first = firstPropertiesId();
+    if (first && doc.byId[first].originatedFromPageHeader) {
+      return doc.byId[first].raw + (props.page.preBlock ?? "");
+    }
     return [props.page.preBlock, first ? doc.byId[first].raw : null].filter(Boolean).join("\n") || null;
   };
   const rootsToRender = () => firstPropertiesId() ? props.page.roots.slice(1) : props.page.roots;
   const preambleContent = () => props.page.format === "md" ? splitPagePreamble(props.page.preBlock).content : null;
+  const editSurface = () => pane.paneId === "main" ? "main" : `pane:${pane.paneId}`;
   const editPreamble = () => {
     const id = promotePagePreamble(props.page.name);
     if (id) startEditing(id, doc.byId[id].raw.length);
+  };
+  const editPageHeader = (event?: MouseEvent) => {
+    if (event?.target instanceof Element && event.target.closest("a, button")) return;
+    const id = beginPageHeaderEdit(props.page.name);
+    if (id) startEditing(id, doc.byId[id].raw.length, null, editSurface());
   };
   const focusTrailing = () => {
     const roots = rootsToRender();
     if (!roots.length) {
       const id = ensureEmptyBlock(props.page.name, { afterProperties: true });
-      if (id) startEditing(id, 0, pane.paneId === "main" ? "main" : `pane:${pane.paneId}`);
+      if (id) startEditing(id, 0, null, editSurface());
       return;
     }
-    const leaf = trailingLeaf(roots[roots.length - 1]);
-    const id = leaf && !doc.byId[leaf].raw.trim()
+    const leaf = trailingVisibleEmptyLeaf({ roots });
+    const id = leaf
       ? leaf
       : insertOutlineAfter(roots[roots.length - 1], [{ raw: "", children: [] }]);
-    startEditing(id, 0, pane.paneId === "main" ? "main" : `pane:${pane.paneId}`);
+    startEditing(id, 0, null, editSurface());
   };
   // A page emptied of its last block (explicit Delete bypasses the Backspace
   // last-block guard) would render nothing to type into. Re-seed the phantom empty
@@ -449,6 +663,7 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
             onDblClick={startRename}
             onContextMenu={(e) => {
               if (props.page.guide) return;
+              if (!shouldOpenTextContextMenu(e.target)) return;
               e.preventDefault();
               openPageContextMenu(e.clientX, e.clientY, props.page.name, props.page.kind, true);
             }}
@@ -467,7 +682,14 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
                 ?.trim()}
             >
               {(icon) => (
-                <span class="page-icon page-title-icon">
+                <span
+                  class="page-icon page-title-icon"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    editPageHeader();
+                  }}
+                >
                   <EmojiText text={icon()} />
                 </span>
               )}
@@ -486,19 +708,27 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
         </Show>
         <Show when={!props.page.guide}>
           <button
-            class="page-gear"
-            title="Page properties (alias, public, tags, icon, title)"
-            onClick={(e) => openPageProps(props.page.name, e.clientX, e.clientY)}
+            ref={pageActionsTrigger}
+            type="button"
+            class="page-actions-trigger"
+            data-page-actions-trigger
+            title="Page actions"
+            aria-label="Page actions"
+            aria-haspopup="menu"
+            aria-expanded={pageActionsOpen()}
+            onClick={(e) => {
+              const rect = e.currentTarget.getBoundingClientRect();
+              openPageContextMenu(
+                rect.left,
+                rect.bottom + 4,
+                props.page.name,
+                props.page.kind,
+                true,
+                e.currentTarget,
+              );
+            }}
           >
-            <svg viewBox="0 0 24 24" class="gear-icon" aria-hidden="true">
-              <path
-                d="M12 8.5a3.5 3.5 0 100 7 3.5 3.5 0 000-7z M19.4 12.9c.04-.3.06-.6.06-.9s-.02-.6-.06-.9l1.7-1.3a.5.5 0 00.12-.64l-1.6-2.8a.5.5 0 00-.6-.22l-2 .8a6 6 0 00-1.55-.9l-.3-2.13a.5.5 0 00-.5-.42h-3.2a.5.5 0 00-.5.42l-.3 2.13a6 6 0 00-1.55.9l-2-.8a.5.5 0 00-.6.22l-1.6 2.8a.5.5 0 00.12.64l1.7 1.3c-.04.3-.06.6-.06.9s.02.6.06.9l-1.7 1.3a.5.5 0 00-.12.64l1.6 2.8c.13.23.4.31.6.22l2-.8c.47.37 1 .67 1.55.9l.3 2.13c.04.24.25.42.5.42h3.2c.25 0 .46-.18.5-.42l.3-2.13a6 6 0 001.55-.9l2 .8c.2.09.47.01.6-.22l1.6-2.8a.5.5 0 00-.12-.64z"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.4"
-                stroke-linejoin="round"
-              />
-            </svg>
+            <span aria-hidden="true">⋯</span>
           </button>
           <button
             class="fav-star"
@@ -519,22 +749,22 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
         </Show>
       </div>
       <Show when={aliasNames(propertySource(), props.page.format).length}>
-        <div class="page-aliases" title="Also known as — other names that link here">
+        <div class="page-aliases" title="Also known as — other names that link here" onClick={editPageHeader}>
           <span class="page-aliases-label">aka</span>
           <For each={aliasNames(propertySource(), props.page.format)}>
-            {(a) => <span class="alias-chip">{a}</span>}
+            {(a) => <span class="alias-chip"><PageRef name={a} alias={a} /></span>}
           </For>
         </div>
       </Show>
       <Show when={pageProperties(propertySource(), props.page.format).filter(([k]) => !PAGE_PROPS_HIDDEN.has(k.toLowerCase())).length}>
-        <div class="page-properties">
+        <div class="page-properties" onClick={editPageHeader}>
           {/* `alias`/`icon` are surfaced elsewhere (chips / title icon) — see PAGE_PROPS_HIDDEN. */}
           <For each={pageProperties(propertySource(), props.page.format).filter(([k]) => !PAGE_PROPS_HIDDEN.has(k.toLowerCase()))}>
             {([key, value]) => (
               <div class="prop-row">
                 <span class="prop-key">{key}</span>
                 <span class="prop-value">
-                  <InlineText text={value} format={props.page.format} />
+                  <PagePropertyValue propertyKey={key} value={value} format={props.page.format} />
                 </span>
               </div>
             )}
@@ -580,17 +810,6 @@ function PageSection(props: { page: FeedPage }): JSX.Element {
       </Show>
     </div>
   );
-}
-
-function trailingLeaf(id: string): string | null {
-  let current = doc.byId[id];
-  if (!current) return null;
-  while (current.children.length) {
-    const next = doc.byId[current.children[current.children.length - 1]];
-    if (!next) break;
-    current = next;
-  }
-  return current.id;
 }
 
 function TrailingBlockTarget(props: { onActivate: () => void }): JSX.Element {

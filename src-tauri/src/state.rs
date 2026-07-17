@@ -9,6 +9,16 @@ use tine_core::model::Graph;
 
 pub(crate) type WindowKey = String;
 
+/// Read-only graph lease used by the auxiliary Quick Capture WebView. Capture
+/// deliberately does not own a graph slot: the registry permits one writable
+/// window per graph root, while this surface only needs the selected graph's
+/// query/read commands before it hands writes back to the owning window.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CaptureGraphBinding {
+    pub(crate) target: WindowKey,
+    pub(crate) binding_generation: u64,
+}
+
 pub(crate) struct GraphSlot {
     pub(crate) graph: Arc<Graph>,
     pub(crate) root_key: PathBuf,
@@ -18,6 +28,9 @@ pub(crate) struct GraphSlot {
     pub(crate) binding_generation: u64,
     pub(crate) warm_done: AtomicBool,
     pub(crate) warm_generation: AtomicU64,
+    /// Revoked as soon as this exact window→graph binding is replaced/removed.
+    /// Detached warm/backup workers check it before and during graph-sized work.
+    pub(crate) background_cancelled: AtomicBool,
 }
 
 impl GraphSlot {
@@ -29,6 +42,7 @@ impl GraphSlot {
             binding_generation: NEXT_BINDING.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             warm_done: AtomicBool::new(false),
             warm_generation: AtomicU64::new(0),
+            background_cancelled: AtomicBool::new(false),
         }
     }
 
@@ -47,6 +61,7 @@ impl GraphSlot {
                 old.warm_generation
                     .load(std::sync::atomic::Ordering::Acquire),
             ),
+            background_cancelled: AtomicBool::new(false),
         }
     }
 }
@@ -90,6 +105,13 @@ impl GraphRegistry {
             }
         }
         if let Some(old) = self.by_window.insert(window.clone(), slot.clone()) {
+            // A same-root refresh replaces only the in-memory Graph object and
+            // preserves the frontend binding lease. Let its already-running
+            // warm/backup finish; a real graph switch revokes the old source.
+            if old.binding_generation != slot.binding_generation || old.root_key != slot.root_key {
+                old.background_cancelled
+                    .store(true, std::sync::atomic::Ordering::Release);
+            }
             self.by_root.remove(&old.root_key);
         }
         self.by_root.insert(slot.root_key.clone(), window);
@@ -98,6 +120,8 @@ impl GraphRegistry {
 
     pub(crate) fn remove(&mut self, window: &str) -> Option<Arc<GraphSlot>> {
         let slot = self.by_window.remove(window)?;
+        slot.background_cancelled
+            .store(true, std::sync::atomic::Ordering::Release);
         self.by_root.remove(&slot.root_key);
         Some(slot)
     }
@@ -110,6 +134,7 @@ pub(crate) struct AppState {
     pub(crate) graph_load: Mutex<()>,
     pub(crate) watch_ctl: Mutex<Option<Sender<()>>>,
     pub(crate) last_focused: Mutex<Option<WindowKey>>,
+    pub(crate) capture_graph: Mutex<Option<CaptureGraphBinding>>,
     #[cfg(desktop)]
     pub(crate) next_window: AtomicU64,
 }
@@ -129,6 +154,25 @@ impl AppState {
             *last = Some(label.to_string());
             true
         }
+    }
+
+    /// Atomically publish the graph snapshot selected for the next Quick
+    /// Capture show. The capture WebView must present this exact generation on
+    /// every graph-scoped invoke; a later show, graph switch, or close makes
+    /// older requests stale rather than letting them read another graph.
+    pub(crate) fn bind_capture_graph(&self, target: WindowKey, binding_generation: u64) {
+        *self.capture_graph.lock().unwrap() = Some(CaptureGraphBinding {
+            target,
+            binding_generation,
+        });
+    }
+
+    pub(crate) fn capture_graph_binding(&self) -> Option<CaptureGraphBinding> {
+        self.capture_graph.lock().unwrap().clone()
+    }
+
+    pub(crate) fn clear_capture_graph(&self) {
+        *self.capture_graph.lock().unwrap() = None;
     }
 }
 
@@ -180,9 +224,45 @@ pub(crate) fn slot_for_window(state: &AppState, window: &str) -> Result<Arc<Grap
 }
 
 pub(crate) fn slot_for_context(ctx: &GraphContext<'_>) -> Result<Arc<GraphSlot>, String> {
-    let slot = slot_for_window(&ctx.state, ctx.window.label())?;
-    let generation = ctx.binding_generation.ok_or("missing-graph-binding")?;
+    slot_for_bound_window(&ctx.state, ctx.window.label(), ctx.binding_generation)
+}
+
+/// Resolve a normal graph-window command. Quick Capture intentionally has no
+/// graph slot, so this path cannot be used to grant it any GraphContext command
+/// (including save, delete, trash, or other mutations).
+pub(crate) fn slot_for_bound_window(
+    state: &AppState,
+    window: &str,
+    binding_generation: Option<u64>,
+) -> Result<Arc<GraphSlot>, String> {
+    let slot = slot_for_window(state, window)?;
+    let generation = binding_generation.ok_or("missing-graph-binding")?;
     if generation != slot.binding_generation {
+        return Err("stale-graph-binding".into());
+    }
+    Ok(slot)
+}
+
+/// Resolve the only graph capability granted to the capture WebView: a bounded
+/// page/tag quick-switch query. This is deliberately not a GraphContext route;
+/// capture retains no generic read or write access to the selected graph.
+pub(crate) fn capture_quick_switch_slot(
+    state: &AppState,
+    caller: &str,
+    binding_generation: Option<u64>,
+) -> Result<Arc<GraphSlot>, String> {
+    if caller != "capture" {
+        return Err("capture quick switch is only available to quick capture".into());
+    }
+    let capture = state
+        .capture_graph_binding()
+        .ok_or("no graph bound for quick capture")?;
+    let generation = binding_generation.ok_or("missing-graph-binding")?;
+    if generation != capture.binding_generation {
+        return Err("stale-graph-binding".into());
+    }
+    let slot = slot_for_window(state, &capture.target)?;
+    if slot.binding_generation != capture.binding_generation {
         return Err("stale-graph-binding".into());
     }
     Ok(slot)
@@ -199,7 +279,8 @@ pub(crate) fn with_graph<T>(
 pub(crate) fn refresh_graph(ctx: &GraphContext<'_>) -> Result<(), String> {
     let label = ctx.window.label().to_string();
     let old = slot_for_window(&ctx.state, &label)?;
-    let approved = crate::settings::approved_external_assets(ctx.window.app_handle(), &old.root_key);
+    let approved =
+        crate::settings::approved_external_assets(ctx.window.app_handle(), &old.root_key);
     let graph = Graph::open_checked_with_assets(&old.root_key, approved.as_deref())
         .map_err(|e| e.to_string())?;
     graph.migrate_journal_filenames();
@@ -232,6 +313,7 @@ mod tests {
             graph_load: Mutex::new(()),
             watch_ctl: Mutex::new(None),
             last_focused: Mutex::new(Some("graph-1".into())),
+            capture_graph: Mutex::new(None),
             #[cfg(desktop)]
             next_window: AtomicU64::new(2),
         };
@@ -242,11 +324,41 @@ mod tests {
     }
 
     #[test]
+    fn capture_binding_retains_the_selected_graph_lease() {
+        let state = AppState {
+            graphs: RwLock::new(GraphRegistry::default()),
+            graph_load: Mutex::new(()),
+            watch_ctl: Mutex::new(None),
+            last_focused: Mutex::new(Some("main".into())),
+            capture_graph: Mutex::new(None),
+            #[cfg(desktop)]
+            next_window: AtomicU64::new(2),
+        };
+
+        state.bind_capture_graph("main".into(), 17);
+        assert_eq!(
+            state.capture_graph_binding(),
+            Some(CaptureGraphBinding {
+                target: "main".into(),
+                binding_generation: 17,
+            })
+        );
+        state.bind_capture_graph("graph-1".into(), 18);
+        assert_eq!(
+            state.capture_graph_binding(),
+            Some(CaptureGraphBinding {
+                target: "graph-1".into(),
+                binding_generation: 18,
+            })
+        );
+    }
+
+    #[test]
     fn same_root_refresh_preserves_frontend_binding_lease() {
-        let base =
-            std::env::temp_dir().join(format!("tine-slot-refresh-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!("tine-slot-refresh-{}", std::process::id()));
         let old = graph(&base);
-        old.warm_done.store(true, std::sync::atomic::Ordering::Release);
+        old.warm_done
+            .store(true, std::sync::atomic::Ordering::Release);
         old.warm_generation
             .store(7, std::sync::atomic::Ordering::Release);
 
@@ -254,7 +366,9 @@ mod tests {
 
         assert_eq!(replacement.binding_generation, old.binding_generation);
         assert_eq!(replacement.root_key, old.root_key);
-        assert!(replacement.warm_done.load(std::sync::atomic::Ordering::Acquire));
+        assert!(replacement
+            .warm_done
+            .load(std::sync::atomic::Ordering::Acquire));
         assert_eq!(
             replacement
                 .warm_generation
@@ -270,12 +384,20 @@ mod tests {
         let a = base.join("a");
         let b = base.join("b");
         let mut registry = GraphRegistry::default();
-        registry.bind("main".into(), graph(&a)).unwrap();
+        let old = graph(&a);
+        registry.bind("main".into(), old.clone()).unwrap();
         assert_eq!(registry.owner(&a).as_deref(), Some("main"));
         registry.bind("main".into(), graph(&b)).unwrap();
+        assert!(old
+            .background_cancelled
+            .load(std::sync::atomic::Ordering::Acquire));
         assert!(registry.owner(&a).is_none());
         assert_eq!(registry.owner(&b).as_deref(), Some("main"));
+        let current = registry.slot("main").unwrap();
         registry.remove("main");
+        assert!(current
+            .background_cancelled
+            .load(std::sync::atomic::Ordering::Acquire));
         assert!(registry.owner(&b).is_none());
         assert_eq!(registry.len(), 0);
         let _ = std::fs::remove_dir_all(base);

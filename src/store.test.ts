@@ -34,7 +34,9 @@ import {
   undo,
   redo,
   selectBlock,
+  selectedIds,
   moveSelection,
+  cycleSelectionTasks,
   moveSelectionItems,
   moveBlockFeed,
   moveBlock,
@@ -48,6 +50,7 @@ import {
   exportNodesFor,
   prevVisible,
   nextVisible,
+  trailingVisibleEmptyLeaf,
   orderedListMarker,
   blockProperty,
   setBlockProperty,
@@ -60,6 +63,8 @@ import {
   readSchedule,
   readPageProperty,
   setPageProperty,
+  beginPageHeaderEdit,
+  finishPageHeaderEdit,
 } from "./store";
 import { editingId, startEditing, takeCaretFor } from "./editorController";
 import { exportOutline, DEFAULT_EXPORT_OPTIONS } from "./editor/exportText";
@@ -79,6 +84,8 @@ import {
   seedFavorites,
   renamePageInNavigation,
   dataRev,
+  pageInventoryRev,
+  setWorkflow,
 } from "./ui";
 import { journalTitle } from "./journal";
 import type { BlockDto, PageDto } from "./types";
@@ -116,6 +123,97 @@ describe("properties-only first block", () => {
     expect(doc.pages[0].preBlock).toBeNull();
     expect(doc.byId[properties.id].raw).toContain("tags:: blah, reference");
   });
+
+  it("opens an existing header as a representation-only ordinary root and canonicalizes it for persistence", () => {
+    const body = blk("Reading list");
+    loadSingle({
+      name: "Test", kind: "page", title: "Test",
+      pre_block: "alias:: book\n\nklíč:: hodnota\n\nIntro",
+      blocks: [body], format: "md",
+    });
+    const id = beginPageHeaderEdit("Test");
+    expect(id).not.toBeNull();
+    expect(doc.byId[id!]).toMatchObject({
+      raw: "alias:: book\n\nklíč:: hodnota",
+      originatedFromPageHeader: true,
+      children: [],
+    });
+    expect(doc.pages[0].roots).toEqual([id, body.id]);
+    expect(doc.pages[0].preBlock).toBe("\n\nIntro");
+    expect(isDirty("Test")).toBe(false);
+    expect(pageToDto("Test")).toMatchObject({
+      pre_block: "alias:: book\n\nklíč:: hodnota\n\nIntro",
+      blocks: [{ raw: "Reading list" }],
+    });
+  });
+
+  it("fails closed on an invalid marked header draft and keeps the draft editable", () => {
+    loadSingle({
+      name: "Test", kind: "page", title: "Test", pre_block: "alias:: book",
+      blocks: [blk("Body")], format: "md",
+    });
+    const id = beginPageHeaderEdit("Test")!;
+    setRaw(id, "alias:: book\nprose");
+    expect(pageToDto("Test")).toBeNull();
+    expect(doc.byId[id].raw).toBe("alias:: book\nprose");
+    expect(doc.byId[id].originatedFromPageHeader).toBe(true);
+    undo();
+    expect(doc.byId[id].raw).toBe("alias:: book");
+    finishPageHeaderEdit(id);
+    expect(doc.byId[id].originatedFromPageHeader).toBe(true);
+    expect(pageToDto("Test")?.pre_block).toBe("alias:: book");
+  });
+
+  it("deleting the header leaves no root or disk bullet and undo restores it in one step", () => {
+    const body = blk("Body");
+    loadSingle({ name: "Test", kind: "page", title: "Test", pre_block: "alias:: book", blocks: [body], format: "md" });
+    const id = beginPageHeaderEdit("Test")!;
+    setRaw(id, "");
+    finishPageHeaderEdit(id);
+    expect(doc.byId[id]).toBeUndefined();
+    expect(doc.pages[0].roots).toEqual([body.id]);
+    expect(pageToDto("Test")?.pre_block).toBeNull();
+    expect(pageToDto("Test")?.blocks.map((block) => block.raw)).toEqual(["Body"]);
+
+    undo();
+    expect(doc.pages[0].roots).toEqual([id, body.id]);
+    expect(doc.byId[id].raw).toBe("alias:: book");
+    expect(pageToDto("Test")?.pre_block).toBe("alias:: book");
+    redo();
+    expect(doc.pages[0].roots).toEqual([body.id]);
+    expect(doc.byId[id]).toBeUndefined();
+  });
+
+  it("does not synthesize page-header editors for Org, Guide, read-only, prose or fenced preambles", () => {
+    for (const [name, format, pre_block, read_only, guide] of [
+      ["Org", "org", "alias:: visible org text", false, false],
+      ["Guide", "md", "alias:: book", false, true],
+      ["Read only", "md", "alias:: book", true, false],
+      ["Prose", "md", "Intro\nalias:: not-header", false, false],
+      ["Fence", "md", "```\nalias:: not-header\n```", false, false],
+    ] as const) {
+      resetStore();
+      loadSingle({
+        name, kind: "page", title: name, pre_block, blocks: [blk("Body")], format,
+        read_only, guide,
+      });
+      expect(beginPageHeaderEdit(name), name).toBeNull();
+      expect(doc.pages[0].roots).toHaveLength(1);
+      expect(doc.pages[0].preBlock).toBe(pre_block);
+    }
+  });
+
+  it("edits the real preamble when the first body block also looks property-only", () => {
+    const body = blk("body-key:: body value");
+    loadSingle({
+      name: "Test", kind: "page", title: "Test", pre_block: "alias:: book",
+      blocks: [body], format: "md",
+    });
+    const id = beginPageHeaderEdit("Test");
+    expect(id).not.toBe(body.id);
+    expect(doc.byId[id!].raw).toBe("alias:: book");
+    expect(doc.byId[body.id].raw).toBe("body-key:: body value");
+  });
 });
 
 beforeAll(() => initParser());
@@ -123,6 +221,7 @@ beforeAll(() => initParser());
 beforeEach(() => {
   counter = 0;
   resetStore();
+  setWorkflow("now");
   resetPaneLayoutToSingle({
     tabs: [{ history: [{ kind: "journals" }], pos: 0, pinned: false }],
     activeIndex: 0,
@@ -310,6 +409,60 @@ describe("move selection (mod+up/down in block-select)", () => {
     moveSelection(1, true); // extend to C → selection [B, C]
     moveSelectionItems(-1);
     expect(shape()).toEqual([["B"], ["C"], ["A"]]);
+  });
+});
+
+describe("cycle tasks across a block selection (GH #136)", () => {
+  it("cycles every non-empty block independently and undoes as one unit", () => {
+    setWorkflow("todo");
+    const dto = load([blk("write docs"), blk("TODO test it"), blk("DOING ship it"), blk("   ")]);
+    selectBlock(dto.blocks[0].id);
+    moveSelection(1, true);
+    moveSelection(1, true);
+    moveSelection(1, true);
+
+    cycleSelectionTasks();
+    expect(shape()).toEqual([
+      ["TODO write docs"],
+      ["DOING test it"],
+      ["DONE ship it"],
+      ["   "],
+    ]);
+    expect(selectedIds()).toEqual(dto.blocks.map((block) => block.id));
+
+    undo();
+    expect(shape()).toEqual([["write docs"], ["TODO test it"], ["DOING ship it"], ["   "]]);
+    expect(selectedIds()).toEqual(dto.blocks.map((block) => block.id));
+    redo();
+    expect(shape()).toEqual([
+      ["TODO write docs"],
+      ["DOING test it"],
+      ["DONE ship it"],
+      ["   "],
+    ]);
+  });
+
+  it("is atomic when any selected non-empty block is read-only", () => {
+    setWorkflow("todo");
+    const writable = load([blk("first")]);
+    const readOnly = blk("second");
+    loadGuidePages([{
+      name: "Tine-guide/read-only",
+      kind: "page",
+      title: "read-only",
+      pre_block: null,
+      blocks: [readOnly],
+      read_only: true,
+      guide: true,
+    }]);
+    selectBlock(writable.blocks[0].id);
+    // Build a cross-page selection directly through the visible feed scope.
+    setDoc("feed", ["Test", "Tine-guide/read-only"]);
+    moveSelection(1, true);
+
+    cycleSelectionTasks();
+    expect(doc.byId[writable.blocks[0].id].raw).toBe("first");
+    expect(doc.byId[readOnly.id].raw).toBe("second");
   });
 });
 
@@ -973,6 +1126,20 @@ describe("collapse / visible order", () => {
     toggleCollapse(dto.blocks[1].id);
     expect(visibleOrder().map((id) => doc.byId[id].raw.split("\n")[0])).toEqual(["grid", "plain"]);
   });
+
+  it("finds a reusable trailing leaf only through an explicit rendered scope", () => {
+    const expanded = blk("parent", [blk("")]);
+    const collapsed = blk("collapsed", [blk("")]);
+    collapsed.collapsed = true;
+    const grid = blk("tine.view:: grid", [blk("")]);
+    grid.properties = [["tine.view", "grid"]];
+    const dto = load([expanded, collapsed, grid]);
+    const expandedLeaf = dto.blocks[0].children[0].id;
+
+    expect(trailingVisibleEmptyLeaf({ roots: [dto.blocks[0].id] })).toBe(expandedLeaf);
+    expect(trailingVisibleEmptyLeaf({ roots: [dto.blocks[1].id] })).toBeNull();
+    expect(trailingVisibleEmptyLeaf({ roots: [dto.blocks[2].id] })).toBeNull();
+  });
 });
 
 describe("undo / redo", () => {
@@ -1202,6 +1369,19 @@ describe("save engine (persistence)", () => {
     markDirty("Test");
     await flushPage("Test");
     expect(saveSpy.mock.calls[1][1]).toBe("rev2");
+  });
+
+  it("refreshes page inventory only when a save creates a new file", async () => {
+    const before = pageInventoryRev();
+    load([blk("new")]);
+    markDirty("Test");
+    expect(await flushPage("Test")).toBe(true);
+    expect(pageInventoryRev()).toBeGreaterThan(before);
+
+    const afterCreate = pageInventoryRev();
+    markDirty("Test");
+    expect(await flushPage("Test")).toBe(true);
+    expect(pageInventoryRev()).toBe(afterCreate);
   });
 
   it("a conflict marks the page (no clobber) and flushAll reports failure", async () => {

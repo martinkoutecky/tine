@@ -135,6 +135,52 @@ fn backlinks_include_explicit_links_in_page_properties() {
 }
 
 #[test]
+fn backlinks_include_bare_tags_page_properties() {
+    let root = std::env::temp_dir().join(format!(
+        "tine-page-property-tags-backlink-test-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("journals")).unwrap();
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    std::fs::write(root.join("pages/page1.md"), "- Reference target page.\n").unwrap();
+    std::fs::write(
+        root.join("pages/page2.md"),
+        "tags:: unrelated\n\n- Page tagged with the target after load.\n",
+    )
+    .unwrap();
+
+    let g = Graph::open(&root);
+    assert!(
+        g.backlinks("page1").is_empty(),
+        "warm the derived cache before the bare tags property edit"
+    );
+    let entry = g.find_entry("page2", tine_core::PageKind::Page).unwrap();
+    let mut page = g.load_page(&entry).unwrap();
+    page.pre_block = Some("tags:: page1".into());
+    g.save_page(&page, page.rev.as_deref()).unwrap();
+
+    let groups = g.backlinks("page1");
+    let source = groups
+        .iter()
+        .find(|group| group.page == "page2")
+        .expect("a bare tags:: value should create a Linked Reference group");
+    assert_eq!(source.blocks.len(), 1, "one property source counts once");
+    assert_eq!(source.blocks[0].raw, "tags:: page1");
+    assert!(source.blocks[0].page_property);
+    assert_eq!(source.evidence.len(), 1);
+    assert_eq!(source.evidence[0].occurrences.len(), 1);
+    let occurrence = &source.evidence[0].occurrences[0];
+    assert_eq!(occurrence.matched_name, "page1");
+    assert_eq!(occurrence.canonical, "page1");
+    assert_eq!(occurrence.span.start, "tags:: ".encode_utf16().count());
+    assert_eq!(occurrence.span.end, "tags:: page1".encode_utf16().count());
+    assert_eq!(occurrence.rule, "implicit_linkable_property");
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn block_ref_counts_and_referrers() {
     // Isolated temp graph: a target block (id:: aaaaaaaa-0000-0000-0000-000000000001) referenced by a same-page
     // block and three blocks on another page (labeled, embed, and a double ref that
@@ -347,6 +393,122 @@ fn save_preserves_file_format_no_churn() {
     assert_eq!(
         std::fs::read_to_string(root.join("pages").join("C.md")).unwrap(),
         spaces
+    );
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn sheet_field_rename_org_saves_and_reparses_every_dependency() {
+    use tine_core::model::{Format, PageKind};
+
+    let root = std::env::temp_dir().join(format!(
+        "tine-sheet-field-rename-org-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("pages")).unwrap();
+    std::fs::create_dir_all(root.join("journals")).unwrap();
+    let path = root.join("pages").join("Sheet.org");
+    let before = [
+        "* Table",
+        ":PROPERTIES:",
+        ":tine.view: table",
+        ":tine.fields: severity=number;occurrence=number;detection=number",
+        ":tine.formula.rpn: severity * occurrence * detection + if(label == \"occurrence\", formula.occurrence, 0)",
+        ":tine.filter: occurrence > 1",
+        ":tine.group-by: prop:occurrence",
+        ":tine.col-aggregates: prop:occurrence=sum;prop:severity=max",
+        ":END:",
+        "** Row",
+        ":PROPERTIES:",
+        ":severity: 2",
+        ":occurrence: 2",
+        ":detection: 2",
+        ":label: other",
+        ":END:",
+        "",
+    ]
+    .join("\n");
+    std::fs::write(&path, &before).unwrap();
+
+    // This DTO is the exact write shape produced by the frontend's already-unit-
+    // tested rename plan. Exercise the real guarded Graph save, inspect bytes,
+    // then construct a fresh Graph so this cannot pass on an in-memory document.
+    let graph = Graph::open(&root);
+    let mut page = graph
+        .load_named("Sheet", PageKind::Page)
+        .unwrap()
+        .expect("org sheet");
+    assert_eq!(page.format, Format::Org);
+    assert!(!page.read_only, "canonical Org fixture must be writable");
+    let owner = &mut page.blocks[0];
+    owner.raw = owner
+        .raw
+        .replace(
+            ":tine.fields: severity=number;occurrence=number;detection=number",
+            ":tine.fields: severity=number;OCC=number;detection=number",
+        )
+        .replace(
+            ":tine.formula.rpn: severity * occurrence * detection + if(label == \"occurrence\", formula.occurrence, 0)",
+            ":tine.formula.rpn: severity * OCC * detection + if(label == \"occurrence\", formula.occurrence, 0)",
+        )
+        .replace(":tine.filter: occurrence > 1", ":tine.filter: OCC > 1")
+        .replace(
+            ":tine.group-by: prop:occurrence",
+            ":tine.group-by: prop:OCC",
+        )
+        .replace(
+            ":tine.col-aggregates: prop:occurrence=sum;prop:severity=max",
+            ":tine.col-aggregates: prop:OCC=sum;prop:severity=max",
+        );
+    owner.children[0].raw = owner.children[0]
+        .raw
+        .replace(":occurrence: 2", ":OCC: 2");
+    graph
+        .save_page(&page, page.rev.as_deref())
+        .expect("guarded Org save");
+
+    let disk = std::fs::read_to_string(&path).unwrap();
+    assert!(disk.contains(":tine.fields: severity=number;OCC=number;detection=number"));
+    assert!(disk.contains(
+        ":tine.formula.rpn: severity * OCC * detection + if(label == \"occurrence\", formula.occurrence, 0)"
+    ));
+    assert!(disk.contains(":tine.filter: OCC > 1"));
+    assert!(disk.contains(":tine.group-by: prop:OCC"));
+    assert!(disk.contains(":tine.col-aggregates: prop:OCC=sum;prop:severity=max"));
+    assert!(disk.contains(":OCC: 2"));
+    assert!(!disk.contains("occurrence=number"));
+    assert!(!disk.contains("severity * occurrence * detection"));
+    assert!(!disk.contains(":tine.filter: occurrence > 1"));
+    assert!(!disk.contains("prop:occurrence"));
+    assert!(!disk.contains(":occurrence: 2"));
+    assert!(
+        disk.contains("if(label == \"occurrence\", formula.occurrence, 0)"),
+        "string literal and formula member are not field identities"
+    );
+
+    let reopened = Graph::open(&root)
+        .load_named("Sheet", PageKind::Page)
+        .unwrap()
+        .expect("reparsed org sheet");
+    assert_eq!(reopened.format, Format::Org);
+    assert!(!reopened.read_only, "renamed Org bytes must remain writable");
+    assert_eq!(reopened.blocks[0].raw, page.blocks[0].raw);
+    assert_eq!(reopened.blocks[0].children[0].raw, page.blocks[0].children[0].raw);
+    assert!(
+        reopened.blocks[0]
+            .properties
+            .iter()
+            .any(|(key, value)| key.eq_ignore_ascii_case("tine.fields") && value.contains("OCC=number")),
+        "fresh parser recognizes the renamed schema"
+    );
+    assert!(
+        reopened.blocks[0].children[0]
+            .properties
+            .iter()
+            .any(|(key, value)| key.eq_ignore_ascii_case("OCC") && value == "2"),
+        "fresh parser recognizes the renamed row property"
     );
 
     std::fs::remove_dir_all(&root).ok();

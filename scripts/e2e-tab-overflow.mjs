@@ -1,42 +1,67 @@
-// Linux real-app proof for GH #105. Exercises the pane-local overflow trigger,
-// keyboard-accessible all-tabs overview, activation/reveal, close, and focus
-// restoration in Tauri's WebKit shell.
-import { spawn } from "node:child_process";
+// Native real-app proof for GH #105 and GH #174. Exercises the pane-local
+// overflow trigger, keyboard-accessible all-tabs overview, activation/reveal,
+// close, and focus restoration in Tauri's WebKit/WebView shell.
+import { spawn, spawnSync } from "node:child_process";
 import { remote } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  startWebdriverApplication,
+  stopWebdriverApplication,
+  tauriCapabilities,
+  webdriverServerArgs,
+} from "./e2e-capabilities.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const APP = process.env.TINE_APP || path.join(ROOT, "target/release/tine");
-const TD = process.env.TAURI_DRIVER || (process.env.CARGO_HOME ? path.join(process.env.CARGO_HOME, "bin", "tauri-driver") : "tauri-driver");
+const APP = process.env.TINE_APP || path.join(ROOT, process.platform === "win32" ? "target/release/tine.exe" : "target/release/tine");
+const TD = process.env.TAURI_DRIVER || "tauri-driver";
 const DRIVER_PORT = Number(process.env.E2E_DRIVER_PORT || 4492);
 const NATIVE_PORT = Number(process.env.E2E_NATIVE_PORT || 4493);
-const TMP = "/tmp/tine-tab-overflow-e2e";
-const GRAPH = `${TMP}/graph`;
-const ARTIFACT = process.env.E2E_ARTIFACT_DIR || `${TMP}/artifacts`;
+const TMP = path.join(os.tmpdir(), `tine-tab-overflow-e2e-${process.pid}`);
+const GRAPH = path.join(TMP, "graph");
+const ARTIFACT = process.env.E2E_ARTIFACT_DIR || path.join(TMP, "artifacts");
 const PAGES = Array.from({ length: 10 }, (_, index) => `Readable tab title ${String(index + 1).padStart(2, "0")}`);
 
 fs.rmSync(TMP, { recursive: true, force: true });
 fs.mkdirSync(ARTIFACT, { recursive: true });
-for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(`${GRAPH}/${dir}`, { recursive: true });
-for (const dir of ["data", "config", "cache"]) fs.mkdirSync(`${TMP}/xdg/${dir}`, { recursive: true });
-fs.writeFileSync(`${GRAPH}/logseq/config.edn`, "{}\n");
-for (const name of PAGES) fs.writeFileSync(`${GRAPH}/pages/${name}.md`, `- Content for [[${name}]]\n`);
+for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(path.join(GRAPH, dir), { recursive: true });
+for (const dir of ["data", "config", "cache"]) fs.mkdirSync(path.join(TMP, "xdg", dir), { recursive: true });
+fs.writeFileSync(path.join(GRAPH, "logseq", "config.edn"), "{}\n");
+for (const name of PAGES) fs.writeFileSync(path.join(GRAPH, "pages", `${name}.md`), `- Content for [[${name}]]\n`);
 const now = new Date();
 const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
-fs.writeFileSync(`${GRAPH}/journals/${journal}.md`, "- Tab overflow native regression\n");
+fs.writeFileSync(path.join(GRAPH, "journals", `${journal}.md`), "- Tab overflow native regression\n");
 
-const log = fs.openSync(`${TMP}/tauri-driver.log`, "w");
-const td = spawn(TD, ["--port", String(DRIVER_PORT), "--native-port", String(NATIVE_PORT), "--native-driver", process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver"], {
-  env: {
-    ...process.env,
-    TINE_GRAPH: GRAPH,
-    XDG_DATA_HOME: `${TMP}/xdg/data`, XDG_CONFIG_HOME: `${TMP}/xdg/config`, XDG_CACHE_HOME: `${TMP}/xdg/cache`,
-    WEBKIT_DISABLE_DMABUF_RENDERER: "1", WEBKIT_DISABLE_COMPOSITING_MODE: "1", LIBGL_ALWAYS_SOFTWARE: "1", GDK_BACKEND: "x11",
-  },
-  stdio: ["ignore", log, log], detached: true,
+const env = {
+  ...process.env,
+  TINE_GRAPH: GRAPH,
+  XDG_DATA_HOME: path.join(TMP, "xdg", "data"),
+  XDG_CONFIG_HOME: path.join(TMP, "xdg", "config"),
+  XDG_CACHE_HOME: path.join(TMP, "xdg", "cache"),
+  APPDATA: path.join(TMP, "appdata"),
+  LOCALAPPDATA: path.join(TMP, "localappdata"),
+  WEBKIT_DISABLE_DMABUF_RENDERER: "1",
+  WEBKIT_DISABLE_COMPOSITING_MODE: "1",
+  LIBGL_ALWAYS_SOFTWARE: "1",
+  GDK_BACKEND: "x11",
+};
+if (process.platform === "win32" && process.env.CI === "true") {
+  spawnSync("taskkill", ["/IM", path.basename(APP), "/T", "/F"], { stdio: "ignore" });
+}
+const webviewTarget = await startWebdriverApplication(APP, env, NATIVE_PORT);
+const log = fs.openSync(path.join(ARTIFACT, "tauri-driver.log"), "w");
+const driverArgs = webdriverServerArgs(
+  DRIVER_PORT,
+  NATIVE_PORT,
+  process.env.WEBKIT_DRIVER || "/usr/bin/WebKitWebDriver",
+);
+const td = spawn(TD, driverArgs, {
+  env: webviewTarget.env,
+  stdio: ["ignore", log, log],
+  detached: process.platform !== "win32",
 });
 
 let browser;
@@ -44,7 +69,7 @@ try {
   await sleep(2500);
   browser = await remote({
     hostname: "127.0.0.1", port: DRIVER_PORT, path: "/", logLevel: "error", connectionRetryCount: 1, connectionRetryTimeout: 60_000,
-    capabilities: { browserName: "wry", "wdio:enforceWebDriverClassic": true, "tauri:options": { application: APP } },
+    capabilities: tauriCapabilities(APP, "default", process.platform, webviewTarget.debuggerAddress),
   });
   await browser.setWindowSize(1000, 720);
   await browser.$(".ls-block, .page-title").waitForExist({ timeout: 20_000 });
@@ -93,11 +118,24 @@ try {
     throw new Error(`unexpected native tab geometry: ${JSON.stringify(initial)}`);
   }
 
+  // Drive the reporter's literal pointer path. A programmatic HTMLElement.click()
+  // bypasses WebView2's pointer-capture retargeting and cannot reproduce GH #174.
+  const beforePointerClose = await browser.$$(".tab-strip-scroll > .tab").length;
+  const expectedTabsAfterPointerClose = beforePointerClose - 1;
+  const pointerClose = await browser.$(".tab-strip-scroll > .tab:last-child .tab-close");
+  await pointerClose.click();
+  await browser.waitUntil(async () => (await browser.$$(".tab-strip-scroll > .tab")).length === expectedTabsAfterPointerClose, {
+    timeout: 5000,
+    timeoutMsg: "native close-button pointer click did not close its tab",
+  });
+
   await browser.execute(() => document.querySelector("[data-tab-overview-trigger]")?.focus());
   await browser.keys("Enter");
   await browser.$("[role=listbox]").waitForExist({ timeout: 5000 });
   const rows = await browser.$$("[data-tab-overview-row]");
-  if (rows.length !== initial.tabs) throw new Error(`${rows.length} overview rows for ${initial.tabs} tabs`);
+  if (rows.length !== expectedTabsAfterPointerClose) {
+    throw new Error(`${rows.length} overview rows for ${expectedTabsAfterPointerClose} remaining tabs`);
+  }
   await browser.keys("End");
   const selectedId = await browser.execute(() => document.activeElement?.getAttribute("data-tab-id"));
   if (!selectedId) throw new Error("End did not focus the final overview row");
@@ -121,9 +159,100 @@ try {
   await browser.execute(() => document.querySelector("[data-tab-overview-trigger]")?.focus());
   await browser.keys("Enter");
   await browser.keys("Escape");
-  const restored = await browser.execute(() =>
-    document.activeElement?.hasAttribute("data-tab-overview-trigger") && !document.querySelector("[role=listbox]"));
-  if (!restored) throw new Error("Escape did not dismiss the overview and restore trigger focus");
+  const escapeState = await browser.execute(() => ({
+    triggerFocused: document.activeElement?.hasAttribute("data-tab-overview-trigger"),
+    overviewOpen: !!document.querySelector("[role=listbox]"),
+    paneSelected: !!document.querySelector(".pane-selected, .pane-select-hint"),
+  }));
+  if (!escapeState.triggerFocused || escapeState.overviewOpen || escapeState.paneSelected) {
+    throw new Error(`Escape ownership failed: ${JSON.stringify(escapeState)}`);
+  }
+
+  // WebDriver W3C pointer actions retain a pressed pointer across commands. Hold
+  // a real overview-row drag over another row, retire it with Escape, and only
+  // then release the original pointer. A late native pointer-up must be inert.
+  await trigger.click();
+  await browser.$("[role=listbox]").waitForExist({ timeout: 5000 });
+  const heldDrag = await browser.execute(() => {
+    const rows = [...document.querySelectorAll("[data-tab-overview-row]")];
+    const handle = rows[0]?.querySelector(".tab-overview-drag-handle");
+    const target = rows[1];
+    if (!(handle instanceof HTMLElement) || !(target instanceof HTMLElement)) return null;
+    const start = handle.getBoundingClientRect();
+    const end = target.getBoundingClientRect();
+    return {
+      before: rows.map((row) => row.getAttribute("data-tab-id")),
+      sourceId: rows[0].getAttribute("data-tab-id"),
+      targetId: target.getAttribute("data-tab-id"),
+      start: { x: Math.round(start.left + start.width / 2), y: Math.round(start.top + start.height / 2) },
+      end: { x: Math.round(end.left + end.width / 2), y: Math.round(end.top + end.height * 0.8) },
+    };
+  });
+  if (!heldDrag?.sourceId || !heldDrag.targetId) throw new Error("overview rows did not expose a native drag path");
+  await browser.execute(() => {
+    window.__tabOverviewPointerTrace = [];
+    const record = (event) => window.__tabOverviewPointerTrace.push({
+      type: event.type,
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      target: event.target?.className ?? "",
+    });
+    document.addEventListener("pointerdown", record, true);
+    window.addEventListener("pointermove", record, true);
+  });
+  let heldPointer = false;
+  try {
+    await browser.performActions([{
+      type: "pointer",
+      id: "p1e-o-held-overview-row",
+      parameters: { pointerType: "mouse" },
+      actions: [
+        { type: "pointerMove", duration: 0, x: heldDrag.start.x, y: heldDrag.start.y },
+        { type: "pointerDown", button: 0 },
+        { type: "pointerMove", duration: 120, x: heldDrag.end.x, y: heldDrag.end.y },
+      ],
+    }]);
+    heldPointer = true;
+    try {
+      await browser.waitUntil(() => browser.execute((sourceId, targetId) =>
+        document.querySelector(`[data-tab-overview-row][data-tab-id="${sourceId}"]`)?.classList.contains("tab-overview-dragging")
+        && document.querySelector(`[data-tab-overview-row][data-tab-id="${targetId}"]`)?.classList.contains("tab-overview-drop-after"), heldDrag.sourceId, heldDrag.targetId), {
+        timeout: 5000, timeoutMsg: "native held overview-row drag did not arm a reorder session",
+      });
+    } catch (error) {
+      const state = await browser.execute((start, end) => ({
+        trace: window.__tabOverviewPointerTrace,
+        startHit: document.elementFromPoint(start.x, start.y)?.className ?? "",
+        endHit: document.elementFromPoint(end.x, end.y)?.className ?? "",
+        dragging: document.querySelector(".tab-overview-dragging")?.getAttribute("data-tab-id") ?? null,
+        drop: document.querySelector(".tab-overview-drop-before, .tab-overview-drop-after")?.className ?? null,
+      }), heldDrag.start, heldDrag.end);
+      throw new Error(`${String(error)}; state=${JSON.stringify(state)}`);
+    }
+    await browser.keys("Escape");
+    await browser.$("[role=listbox]").waitForExist({ reverse: true, timeout: 5000 });
+    await browser.performActions([{
+      type: "pointer",
+      id: "p1e-o-held-overview-row",
+      parameters: { pointerType: "mouse" },
+      actions: [{ type: "pointerUp", button: 0 }],
+    }]);
+    heldPointer = false;
+  } finally {
+    if (heldPointer) await browser.releaseActions();
+  }
+  const heldRetirement = await browser.execute((before) => ({
+    order: [...document.querySelectorAll(".tab-strip-scroll > .tab")].map((tab) => tab.getAttribute("data-tab-id")),
+    triggerFocused: document.activeElement?.hasAttribute("data-tab-overview-trigger"),
+    overviewOpen: !!document.querySelector("[role=listbox]"),
+    paneSelected: !!document.querySelector(".pane-selected, .pane-select-hint"),
+    before,
+  }), heldDrag.before);
+  if (heldRetirement.overviewOpen || !heldRetirement.triggerFocused || heldRetirement.paneSelected
+    || JSON.stringify(heldRetirement.order) !== JSON.stringify(heldRetirement.before)) {
+    throw new Error(`held overview-row retirement failed: ${JSON.stringify(heldRetirement)}`);
+  }
 
   // Delete follows the ordinary close path and keeps the overview usable.
   const beforeClose = await browser.$$(".tab-strip-scroll > .tab").length;
@@ -175,9 +304,15 @@ try {
     return !!strip && strip.scrollWidth <= strip.clientWidth + 1 && !document.querySelector("[data-tab-overview-trigger]");
   }), { timeout: 5000, timeoutMsg: "overflow control remained after tabs fit" });
 
-  console.log("PASS: native tab overflow overview, keyboard navigation, reveal, close, and resize behavior work in WebKit");
+  console.log("PASS: native tab close, overflow overview, keyboard navigation, reveal, and resize behavior work");
 } finally {
   try { await browser?.deleteSession(); } catch {}
-  try { process.kill(-td.pid, "SIGKILL"); } catch {}
+  if (process.platform === "win32") {
+    spawnSync("taskkill", ["/PID", String(td.pid), "/T", "/F"], { stdio: "ignore" });
+    if (process.env.CI === "true") {
+      spawnSync("taskkill", ["/IM", path.basename(APP), "/T", "/F"], { stdio: "ignore" });
+    }
+  } else try { process.kill(-td.pid, "SIGKILL"); } catch {}
+  stopWebdriverApplication(webviewTarget);
   fs.closeSync(log);
 }

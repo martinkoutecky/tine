@@ -12,22 +12,12 @@ name: Flatpak build test
 on:
   workflow_call:
   workflow_dispatch:
-  push:
-    # A branch filter is intentional: GitHub does not evaluate `paths` for tag
-    # pushes, so without it every release tag starts this non-release workflow.
-    branches: [master]
-    paths:
-      - "flatpak/**"
-      - ".github/workflows/flatpak.yml"
-      # Dependency changes must rebuild the offline manifest immediately. This
-      # catches stale generated sources before a release tag is cut.
-      - "Cargo.lock"
-      - "Cargo.toml"
-      - "**/Cargo.toml"
-      - "package-lock.json"
-      - "package.json"
 
-# One in-flight build per ref; newer pushes cancel older runs.
+# The real offline build is expensive. Release calls it as a hard gate; focused
+# Flatpak work can dispatch it manually. Source-manifest drift is covered by the
+# lightweight PR/full-CI scripts, so master pushes do not start another build.
+
+# One in-flight build per ref; a newer manual/called run cancels the older run.
 concurrency:
   group: flatpak-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true

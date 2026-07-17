@@ -82,6 +82,8 @@ pub(crate) fn debug_header() {
     for k in [
         "TINE_GRAPH",
         "TINE_GPU",
+        "WEBVIEW2_USER_DATA_FOLDER",
+        "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
         "WEBKIT_DISABLE_DMABUF_RENDERER",
         "WEBKIT_DISABLE_COMPOSITING_MODE",
         "XDG_SESSION_TYPE",

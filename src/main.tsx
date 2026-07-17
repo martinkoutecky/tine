@@ -6,6 +6,8 @@ import { initParser } from "./render/parse";
 import { applyTheme, applyAccent } from "./ui";
 import { initThemeGallery } from "./themeGallery";
 import { initThemePackages } from "./themes/manager";
+import { isTauri } from "./backend";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import "@fontsource/inter/400.css";
 import "@fontsource/inter/500.css";
 import "@fontsource/inter/600.css";
@@ -27,7 +29,23 @@ void initThemePackages().then(initThemeGallery);
 // Restore the saved tab session before first paint, so tabs come back without a
 // flash. Capped so a slow/stuck backend read can never block startup — worst
 // case we paint the default journals tab and the session is simply not restored.
-const mount = () => render(() => <App />, document.getElementById("root")!);
+async function revealMainWindowAfterStableFrame(): Promise<void> {
+  if (!isTauri()) return;
+  // The window starts hidden, so the user never sees the default white webview,
+  // unthemed controls, or an empty root. A hidden WebKit view may throttle
+  // requestAnimationFrame indefinitely, so wait one microtask after Solid mounts
+  // the themed App DOM, then map the native window; its first compositor frame
+  // is the complete application rather than the backing surface.
+  await new Promise<void>((resolve) => queueMicrotask(resolve));
+  await getCurrentWindow().show();
+}
+
+const mount = () => {
+  render(() => <App />, document.getElementById("root")!);
+  void revealMainWindowAfterStableFrame().catch((error) =>
+    console.error("failed to reveal the main window:", error)
+  );
+};
 // Init the in-browser wasm parser before first paint so blocks render
 // synchronously (no IPC, no fallback flash). Runs concurrently with the (capped)
 // session restore; a parser-init failure is caught so it can't block startup —

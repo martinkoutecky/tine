@@ -32,16 +32,18 @@ import { spawn } from "node:child_process";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import os from "node:os";
+import path from "node:path";
 
 const UPDATE = process.argv.includes("--update");
 const argValue = (name) => {
   const i = process.argv.indexOf(name);
   return i >= 0 ? process.argv[i + 1] : null;
 };
-const PORT = 5260;
+const PORT = Number(argValue("--port") ?? 5260);
+const APP_DIR = path.resolve(argValue("--app-dir") ?? ".");
 const BASELINE = "scripts/bench-baseline.json";
 const OUTPUT = argValue("--output");
-const K = 8; // measured runs per metric (plus one discarded warmup); min-of-K
+const K = Number(argValue("--runs") ?? 8); // measured runs per metric (plus one discarded warmup)
 const REGRESS_PCT = 30; // flag a normalized metric that grows more than this. Set
 // above the ~10–15% run-to-run noise floor of `bigLoad` (mounting 2000 Solid
 // components is GC-sensitive in a way the pure-ALU calib can't fully normalize,
@@ -49,7 +51,13 @@ const REGRESS_PCT = 30; // flag a normalized metric that grows more than this. S
 // which is the goal ("spot regressions"). scrollBig + parseStats are far tighter.
 const THROTTLE_FACTOR = 1.5; // calib this much over baseline ⇒ machine unreliable
 
-const server = spawn("npx", ["vite", "preview", "--port", String(PORT), "--strictPort"], { stdio: "ignore" });
+if (!Number.isInteger(K) || K < 2 || K > 32) throw new Error(`invalid --runs ${K}`);
+if (!Number.isInteger(PORT) || PORT < 1024 || PORT > 65_535) throw new Error(`invalid --port ${PORT}`);
+const viteBin = path.join(APP_DIR, "node_modules", "vite", "bin", "vite.js");
+const server = spawn(process.execPath, [viteBin, "preview", "--port", String(PORT), "--strictPort"], {
+  cwd: APP_DIR,
+  stdio: "ignore",
+});
 const waitServer = async (u, t = 80) => { for (let i = 0; i < t; i++) { try { if ((await fetch(u)).ok) return; } catch {} await sleep(250); } throw new Error("server did not start"); };
 const min = (xs) => xs.reduce((a, b) => (b < a ? b : a), Infinity);
 const median = (xs) => { const s = [...xs].sort((a, b) => a - b); return s[Math.floor(s.length / 2)]; };
@@ -157,8 +165,8 @@ async function main() {
   const result = {
     calib: round(min(calib)),
     metrics: {
-      bigLoad: { rawMin: round(min(bigLoad)), rawMedian: round(median(bigLoad)) },
-      scrollBig: { rawMin: round(min(scrollBig)), rawMedian: round(median(scrollBig)) },
+      bigLoad: { rawMin: round(min(bigLoad)), rawMedian: round(median(bigLoad)), rawSamples: bigLoad.map(round) },
+      scrollBig: { rawMin: round(min(scrollBig)), rawMedian: round(median(scrollBig)), rawSamples: scrollBig.map(round) },
     },
     parseStats,
   };
@@ -173,7 +181,14 @@ function report(result) {
 
   if (UPDATE) {
     const out = { machine, calib: result.calib, metrics: {}, parseStats: result.parseStats, note: "normalized = rawMin/calib; regenerate with `npm run bench -- --update` on a QUIET machine" };
-    for (const [k, v] of Object.entries(result.metrics)) out.metrics[k] = { normalized: v.normalized, rawMin: v.rawMin };
+    for (const [k, v] of Object.entries(result.metrics)) {
+      out.metrics[k] = {
+        normalized: v.normalized,
+        rawMin: v.rawMin,
+        rawMedian: v.rawMedian,
+        rawSamples: v.rawSamples,
+      };
+    }
     const destination = OUTPUT ?? BASELINE;
     writeFileSync(destination, JSON.stringify(out, null, 2) + "\n");
     console.log(`\nmeasurement written → ${destination}`);

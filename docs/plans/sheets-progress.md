@@ -674,7 +674,7 @@ Assessment (no new reasons against; the picture IMPROVED in rounds 1–4):
   remains is the known cost, unchanged since the spec: per-pane
   `RouteContext` instead of the singleton `route()`/tabs in `src/router.ts`,
   a pane split-tree (workspace state, NOT document — must persist via the
-  Rust backend, WebKitGTK localStorage is ephemeral), pane chrome, and
+  Rust backend for atomic, WebView-independent state), pane chrome, and
   pointer-events-only seam/tab drag (never HTML5 DnD).
 - **Whiteboards-lite** = the canvas face (`trackModel: free`, spec §10 v3,
   Jul 5 decomposition): cards + `tine.x/y/w/h` scalar props + ref edges,

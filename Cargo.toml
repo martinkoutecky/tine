@@ -7,7 +7,7 @@ exclude = ["crates/lsdoc-wasm"]
 resolver = "2"
 
 [workspace.package]
-version = "0.5.7"
+version = "0.5.10"
 edition = "2021"
 license = "AGPL-3.0-only"
 authors = ["Martin Koutecký"]
@@ -24,3 +24,10 @@ codegen-units = 1
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
+
+[patch.crates-io]
+# tao 0.35.3 stops GTK button events at the application-window handler, which
+# also swallows Linux native titlebar controls. This exact upstream merge makes
+# GTK propagate those events again. Remove the pin once Tauri adopts tao 0.36+.
+# https://github.com/tauri-apps/tao/pull/1218
+tao = { git = "https://github.com/tauri-apps/tao", rev = "07f3742b1833b64be27b1ef991e38d557d4276c9" }

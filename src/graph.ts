@@ -2,7 +2,7 @@
 // persisting the choice so it reopens next launch.
 
 import { backend } from "./backend";
-import { setGraphMeta, setWorkflow, bumpGraphEpoch, setRightSidebar, graphMeta, graphEpoch, setAliasMap, seedFavorites, pruneSidebarBlocks, pushToast, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections } from "./ui";
+import { setGraphMeta, setWorkflow, bumpGraphEpoch, setRightSidebar, graphMeta, graphEpoch, setAliasMap, seedFavorites, pruneSidebarBlocks, pushToast, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, pageIdentityKey } from "./ui";
 import { resetStore, flushAll } from "./store";
 import { clearAssetBlobCache } from "./assetCache";
 import { resetTabsToJournals, openPage, restoreSession, flushSession } from "./router";
@@ -97,6 +97,7 @@ export async function loadGraphPath(
     return { kind: "already_current", root: meta.root };
   }
   resetStore();
+  resetNavigationIndex();
   clearAssetBlobCache(); // old graph's image blob URLs must not leak into the new one
   if (switching) {
     // A graph switch is a full workspace reset (OG opens one graph at a time):
@@ -154,25 +155,73 @@ export async function loadGraphPath(
   }
 }
 
-/** Load the graph's alias:: index so link/navigation can resolve aliases.
- *  Guarded by the graph epoch so a slow response after a graph switch can't
- *  install the old graph's aliases. Exposed as `refreshAliases` so it can be
- *  re-run after edits (an alias:: change would otherwise leave nav stale). */
+let navigationEpoch = -1;
+let aliasEntries: Record<string, string> = {};
+let pageIdentities: Record<string, string> = {};
+let aliasRequest = 0;
+let pageIdentityRequest = 0;
+
+function resetNavigationIndex(): void {
+  navigationEpoch = -1;
+  aliasEntries = {};
+  pageIdentities = {};
+  aliasRequest++;
+  pageIdentityRequest++;
+  setAliasMap({});
+}
+
+function bindNavigationIndex(epoch: number): void {
+  if (navigationEpoch === epoch) return;
+  navigationEpoch = epoch;
+  aliasEntries = {};
+  pageIdentities = {};
+  aliasRequest++;
+  pageIdentityRequest++;
+  setAliasMap({});
+}
+
+function commitNavigationIndex(): void {
+  // Existing files win a colliding alias, matching core `load_named`.
+  setAliasMap({ ...aliasEntries, ...pageIdentities });
+}
+
+/** Refresh semantic aliases after content saves. Request sequencing prevents an
+ *  older same-epoch response from overwriting a newer alias edit. */
 export async function refreshAliases(): Promise<void> {
   const epoch = graphEpoch();
-  try {
-    const pairs = await backend().pageAliases();
-    if (epoch !== graphEpoch()) return;
-    setAliasMap(Object.fromEntries(pairs));
-  } catch {
-    if (epoch === graphEpoch()) setAliasMap({});
-  }
+  bindNavigationIndex(epoch);
+  const request = ++aliasRequest;
+  const result = await Promise.allSettled([backend().pageAliases()]);
+  if (epoch !== graphEpoch() || navigationEpoch !== epoch || request !== aliasRequest) return;
+  aliasEntries = result[0].status === "fulfilled"
+    ? Object.fromEntries(result[0].value)
+    : {};
+  commitNavigationIndex();
+}
+
+/** Refresh the real-page identity inventory only after graph bind, create,
+ *  delete, or rename. Ordinary content saves refresh aliases but never pay for
+ *  this whole-page-list IPC. Real pages override colliding semantic aliases. */
+export async function refreshPageIdentities(): Promise<void> {
+  const epoch = graphEpoch();
+  bindNavigationIndex(epoch);
+  const request = ++pageIdentityRequest;
+  const result = await Promise.allSettled([backend().listPages()]);
+  if (epoch !== graphEpoch() || navigationEpoch !== epoch || request !== pageIdentityRequest) return;
+  pageIdentities = result[0].status === "fulfilled"
+    ? Object.fromEntries(
+        result[0].value
+          .filter((entry) => entry.kind === "page")
+          .map((entry) => [pageIdentityKey(entry.name), entry.name])
+      )
+    : {};
+  commitNavigationIndex();
 }
 async function loadAliases(): Promise<void> {
   const epoch = graphEpoch();
   if (!(await waitForWarmCache(epoch))) return;
   if (epoch !== graphEpoch()) return;
-  await refreshAliases();
+  await Promise.all([refreshAliases(), refreshPageIdentities()]);
 }
 
 /** Refresh frontend state after a successful page rename. The backend rename
@@ -188,8 +237,9 @@ async function loadAliases(): Promise<void> {
 export function refreshAfterRename(from: string, to: string): void {
   renamePageInNavigation(from, to);
   resetStore();
+  resetNavigationIndex();
   bumpGraphEpoch();
-  void refreshAliases();
+  void Promise.all([refreshAliases(), refreshPageIdentities()]);
 }
 
 // If config.edn sets :default-templates {:journals "X"}, create today's journal
@@ -250,7 +300,7 @@ async function injectCustomCss(): Promise<void> {
 }
 
 /** Pick a folder and open it as the graph. No-op if cancelled. */
-export async function switchGraph(): Promise<void> {
+export async function switchGraph(): Promise<LoadGraphPathOutcome> {
   const platform = await platformKind();
   if (platform === "android") {
     let result;
@@ -258,7 +308,7 @@ export async function switchGraph(): Promise<void> {
       result = await backend().pickGraphFolder();
     } catch (e) {
       pushToast(`Couldn't open the Android folder picker. (${String(e)})`, "error");
-      return;
+      return { kind: "aborted" };
     }
     // Diagnostic breadcrumbs (visible in `adb logcat`, chromium console channel):
     // an intermittent first-run stall on "Opening…" — these pin down whether the
@@ -267,49 +317,51 @@ export async function switchGraph(): Promise<void> {
     if (result.status === "picked") {
       if (result.path) {
         console.info("[tine/android] loadGraphPath: start");
-        await loadGraphPath(result.path);
+        const outcome = await loadGraphPath(result.path);
         console.info("[tine/android] loadGraphPath: done");
+        return outcome;
       }
-      return;
+      return { kind: "aborted" };
     }
     if (result.status === "permission-requested" || result.status === "permission-needed") {
       pushToast('Grant "All files access" for Tine, then tap Open again.', "info");
     }
-    return;
+    return { kind: "aborted" };
   }
   if (platform === "ios") {
     pushToast(
       "Opening an existing graph on iOS is coming soon. For now, tap “Create a new graph” to try Tine.",
       "info"
     );
-    return;
+    return { kind: "aborted" };
   }
   const path = await backend().pickFolder();
-  if (path) await loadGraphPath(path);
+  return path ? loadGraphPath(path) : { kind: "aborted" };
 }
 
 /** Onboarding "create a new graph": pick where to put it, scaffold a small
  *  narrated demo graph there, open it, and land on the "Welcome to Tine" tour.
  *  No-op if the folder picker is cancelled. */
-export async function createNewGraph(): Promise<void> {
+export async function createNewGraph(): Promise<LoadGraphPathOutcome> {
   const dir = (await isMobile())
     ? await backend().defaultGraphParent()
     : await backend().pickFolder("Choose where to create your new graph");
-  if (!dir) return;
+  if (!dir) return { kind: "aborted" };
   let root: string;
   try {
     root = await backend().createGraph(dir);
   } catch (e) {
     pushToast(`Couldn't create the graph. (${String(e)})`, "error");
-    return;
+    return { kind: "aborted" };
   }
   const loaded = await loadGraphPath(root);
   if (loaded.kind !== "loaded" || loaded.root !== root) {
     pushToast(`Created the graph at ${root}, but kept the current graph open.`, "info");
-    return;
+    return loaded;
   }
   await seedTodayJournal();
   openPage("Welcome to Tine", "page"); // land on the tour, not the empty journal feed
+  return loaded;
 }
 
 /** Give a freshly-created demo graph a friendly today's-journal entry so the

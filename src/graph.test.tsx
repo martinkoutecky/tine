@@ -25,7 +25,8 @@ const META: GraphMeta = {
 async function loadHarness(
   existing: PageDto | null,
   access = { graph_root: META.root, external_assets_path: null as string | null, approved: true },
-  confirm = true
+  confirm = true,
+  warm = false
 ) {
   vi.resetModules();
   const events: string[] = [];
@@ -49,8 +50,13 @@ async function loadHarness(
       return "new-rev";
     }),
     readCustomCss: vi.fn(async () => ""),
-    pageAliases: vi.fn(async () => []),
+    pageAliases: vi.fn(async () => [["page1", "other"], ["shortcut", "other"]] as [string, string][]),
+    listPages: vi.fn(async () => [
+      { name: "page1", kind: "page" as const, date_key: null, path: "pages/page1.md" },
+      { name: "Jul 10th, 2026", kind: "journal" as const, date_key: 20260710, path: "journals/2026_07_10.md" },
+    ]),
   };
+  const setAliasMap = vi.fn();
 
   vi.doMock("./backend", () => ({ backend: () => api }));
   vi.doMock("./ui", () => ({
@@ -60,7 +66,8 @@ async function loadHarness(
     bumpGraphEpoch: () => { events.push("bump-epoch"); },
     setWorkflow: vi.fn(),
     setRightSidebar: vi.fn(),
-    setAliasMap: vi.fn(),
+    setAliasMap,
+    pageIdentityKey: (name: string) => name.trim().toLowerCase(),
     seedFavorites: vi.fn(),
     pruneSidebarBlocks: vi.fn(),
     pushToast: vi.fn(),
@@ -85,15 +92,15 @@ async function loadHarness(
     setJournalTitleFormat: vi.fn(),
   }));
   vi.doMock("./editor/templateVars", () => ({ applyTemplateVars: (raw: string) => raw }));
-  vi.doMock("./warmCache", () => ({ waitForWarmCache: vi.fn(async () => false) }));
+  vi.doMock("./warmCache", () => ({ waitForWarmCache: vi.fn(async () => warm) }));
   vi.doMock("./lsShim", () => ({ CUSTOM_CSS_STYLE_ID: "test-css", ensureLsShimStyle: vi.fn() }));
   vi.doMock("./themeGallery", () => ({ ensureThemeStyle: vi.fn() }));
   vi.doMock("./platform", () => ({ isMobile: () => false, platformKind: vi.fn(async () => "desktop") }));
   vi.doMock("./guide", () => ({ maybeShowGuideAnnouncement: vi.fn() }));
   vi.doMock("./editorController", () => ({ endEdit: vi.fn() }));
 
-  const { loadGraphPath } = await import("./graph");
-  return { loadGraphPath, api, events };
+  const { loadGraphPath, refreshAliases, refreshPageIdentities } = await import("./graph");
+  return { loadGraphPath, refreshAliases, refreshPageIdentities, api, events, setAliasMap };
 }
 
 afterEach(() => {
@@ -105,6 +112,69 @@ afterEach(() => {
 });
 
 describe("default journal template graph bind", () => {
+  it("loads real page identities once and lets them win colliding aliases", async () => {
+    const { loadGraphPath, refreshAliases, refreshPageIdentities, api, setAliasMap } = await loadHarness(null, undefined, true, true);
+
+    await loadGraphPath(META.root);
+    await vi.waitFor(() => expect(setAliasMap).toHaveBeenLastCalledWith({
+      page1: "page1",
+      shortcut: "other",
+    }));
+    expect(api.listPages).toHaveBeenCalledTimes(1);
+
+    await refreshAliases();
+    expect(api.pageAliases).toHaveBeenCalledTimes(2);
+    expect(api.listPages).toHaveBeenCalledTimes(1);
+
+    await refreshPageIdentities();
+    expect(api.listPages).toHaveBeenCalledTimes(2);
+  });
+
+  it("refreshes real-page precedence after a same-session page creation", async () => {
+    const { loadGraphPath, refreshAliases, refreshPageIdentities, api, setAliasMap } = await loadHarness(null, undefined, true, true);
+    await loadGraphPath(META.root);
+    await vi.waitFor(() => expect(api.listPages).toHaveBeenCalledTimes(1));
+
+    api.pageAliases.mockResolvedValue([["new page", "Alias target"]]);
+    api.listPages.mockResolvedValue([
+      { name: "page1", kind: "page" as const, date_key: null, path: "pages/page1.md" },
+      { name: "New Page", kind: "page" as const, date_key: null, path: "pages/New Page.md" },
+    ]);
+    await Promise.all([refreshAliases(), refreshPageIdentities()]);
+
+    expect(setAliasMap).toHaveBeenLastCalledWith({
+      "new page": "New Page",
+      page1: "page1",
+    });
+  });
+
+  it("discards an older same-epoch page-inventory response", async () => {
+    const { loadGraphPath, refreshPageIdentities, api, setAliasMap } = await loadHarness(null, undefined, true, true);
+    await loadGraphPath(META.root);
+    await vi.waitFor(() => expect(api.listPages).toHaveBeenCalledTimes(1));
+
+    let releaseStale!: (entries: Awaited<ReturnType<typeof api.listPages>>) => void;
+    const stale = new Promise<Awaited<ReturnType<typeof api.listPages>>>((resolve) => {
+      releaseStale = resolve;
+    });
+    api.listPages
+      .mockImplementationOnce(() => stale)
+      .mockResolvedValueOnce([
+        { name: "Newest", kind: "page" as const, date_key: null, path: "pages/Newest.md" },
+      ]);
+
+    const older = refreshPageIdentities();
+    const newer = refreshPageIdentities();
+    await newer;
+    releaseStale([
+      { name: "Stale", kind: "page" as const, date_key: null, path: "pages/Stale.md" },
+    ]);
+    await older;
+
+    expect(setAliasMap).toHaveBeenLastCalledWith(expect.objectContaining({ newest: "Newest" }));
+    expect(setAliasMap).not.toHaveBeenLastCalledWith(expect.objectContaining({ stale: "Stale" }));
+  });
+
   it("invalidates stale loads before awaiting template work, then refreshes after save", async () => {
     const { loadGraphPath, events } = await loadHarness(null);
 

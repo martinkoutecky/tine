@@ -27,6 +27,10 @@ describe("aliasNames", () => {
     expect(aliasNames("#+TITLE: P\n#+ALIAS: foo, bar", "org")).toEqual(["foo", "bar"]);
     expect(aliasNames(":PROPERTIES:\n:alias: baz\n:END:", "org")).toEqual(["baz"]);
   });
+  it("accepts aliases:: and full-width separators while quoted values suppress refs", () => {
+    expect(aliasNames("aliases:: Foo， Bar, Baz")).toEqual(["Foo", "Bar", "Baz"]);
+    expect(aliasNames('alias:: "Foo, Bar"')).toEqual([]);
+  });
 });
 
 describe("pageProperties", () => {
@@ -34,6 +38,14 @@ describe("pageProperties", () => {
     expect(pageProperties("title:: P\ntags:: a, b")).toEqual([
       ["title", "P"],
       ["tags", "a, b"],
+    ]);
+  });
+  it("only renders the canonical header prefix, never later prose/fence lookalikes", () => {
+    expect(pageProperties("Intro\ncustom:: not-a-header")).toEqual([]);
+    expect(pageProperties("```\ncustom:: not-a-header\n```")).toEqual([]);
+    expect(pageProperties("klíč:: hodnota\n\ncustom/key:: value\n\nIntro\nlater:: body")).toEqual([
+      ["klíč", "hodnota"],
+      ["custom/key", "value"],
     ]);
   });
   it("org #+KEY: directives and :PROPERTIES: drawer (keys lowercased)", () => {

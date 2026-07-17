@@ -7,6 +7,8 @@ import {
   createMemo,
   createResource,
   createSignal,
+  createUniqueId,
+  onCleanup,
   type JSX,
 } from "solid-js";
 import { backend } from "../backend";
@@ -28,6 +30,8 @@ import type {
 } from "../types";
 import { QueryBuilder } from "./QueryBuilder";
 import { SearchResultRow, buildSearchExcerpt } from "./SearchResultRow";
+import { registerTransientLayer } from "../transientLayers";
+import { bumpPageInventoryRev } from "../ui";
 
 const PAGE_LIMIT = 40;
 const BLOCK_LIMIT = 100;
@@ -38,29 +42,26 @@ export interface MaterializeQueryInput {
   sourceKind: QueryRoute["sourceKind"];
   source: string;
   presentation: QueryPresentation;
+  /** Stable workspace identity: also bounds the native validation cancellation lane. */
+  routeId: string;
 }
 
 export interface MaterializeQueryDependencies {
   getPage(name: string, kind: "page"): Promise<PageDto | null>;
   savePage(page: PageDto, baseRev: null, force: false): Promise<string>;
+  /** Rust-authoritative friendly-search validation; required before every nonblank friendly save. */
+  runGraphSearch(source: string, pageLimit: number, blockLimit: number, lane: string, explain: boolean): Promise<QueryExecution>;
 }
 
 export type MaterializeQueryResult =
   | { ok: true; name: string; page: PageDto; rev: string }
   | {
       ok: false;
-      kind: "invalid-name" | "empty-query" | "exists" | "conflict" | "error";
+      kind: "invalid-name" | "empty-query" | "invalid-query" | "exists" | "conflict" | "error";
       message: string;
     };
 
 export interface QueryWorkspaceDependencies extends MaterializeQueryDependencies {
-  runGraphSearch(
-    source: string,
-    pageLimit: number,
-    blockLimit: number,
-    lane: string,
-    explain: boolean
-  ): Promise<QueryExecution>;
   runQuery(source: string): Promise<RefGroup[]>;
   runAdvancedQuery(source: string): Promise<AdvancedQueryResult>;
 }
@@ -70,6 +71,7 @@ export interface QueryWorkspaceProps {
   router: PaneRouter;
   /** Dependency injection keeps create/save races and rendering testable without IPC. */
   deps?: QueryWorkspaceDependencies;
+  focusSource?: boolean;
 }
 
 function savedQueryRaw(input: Pick<MaterializeQueryInput, "source" | "sourceKind" | "presentation">): string {
@@ -98,6 +100,17 @@ export async function materializeQueryWorkspace(
   if (!input.source.trim()) {
     return { ok: false, kind: "empty-query", message: "Enter a search or query before saving." };
   }
+  if (input.sourceKind === "search") {
+    try {
+      const execution = await deps.runGraphSearch(input.source.trim(), 0, 0, `query-workspace:${input.routeId}:materialize`, true);
+      if (execution.cancelled) return { ok: false, kind: "invalid-query", message: "Search validation was superseded. Try saving again." };
+      if (execution.diagnostics.length) return { ok: false, kind: "invalid-query", message: execution.diagnostics.map((item) => item.message).join(" · ") };
+      if (!execution.explanation.branches.length) return { ok: false, kind: "empty-query", message: "Enter a search with at least one included term before saving." };
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      return { ok: false, kind: "invalid-query", message: detail ? `Could not validate this search: ${detail}` : "Could not validate this search." };
+    }
+  }
 
   try {
     if (await deps.getPage(name, "page")) {
@@ -121,6 +134,7 @@ export async function materializeQueryWorkspace(
       }],
     };
     const rev = await deps.savePage(page, null, false);
+    bumpPageInventoryRev();
     return { ok: true, name, page, rev };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
@@ -205,7 +219,30 @@ function hitKind(hit: QueryHit): "Page" | "Block" {
 }
 
 function MarkedText(props: { text: string; spans: MatchSpan[] }): JSX.Element {
-  const segments = () => buildSearchExcerpt(props.text, props.spans);
+  const segments = () => {
+    const spans = props.spans
+      .map((span) => ({
+        start: Math.max(0, Math.min(props.text.length, span.start)),
+        end: Math.max(0, Math.min(props.text.length, span.end)),
+      }))
+      .filter((span) => span.end > span.start)
+      .sort((a, b) => a.start - b.start || a.end - b.end);
+    const merged: MatchSpan[] = [];
+    for (const span of spans) {
+      const previous = merged[merged.length - 1];
+      if (previous && span.start <= previous.end) previous.end = Math.max(previous.end, span.end);
+      else merged.push({ ...span });
+    }
+    const out: { text: string; marked: boolean }[] = [];
+    let cursor = 0;
+    for (const span of merged) {
+      if (span.start > cursor) out.push({ text: props.text.slice(cursor, span.start), marked: false });
+      out.push({ text: props.text.slice(span.start, span.end), marked: true });
+      cursor = span.end;
+    }
+    if (cursor < props.text.length) out.push({ text: props.text.slice(cursor), marked: false });
+    return out;
+  };
   return (
     <For each={segments()}>{(segment) => segment.marked
       ? <mark>{segment.text}</mark>
@@ -334,6 +371,8 @@ function AdvancedModal(props: {
   sourceKind: () => QueryRoute["sourceKind"];
   onApply: (source: string, sourceKind: QueryRoute["sourceKind"]) => void;
   onClose: () => void;
+  layerId: string;
+  trigger: () => HTMLElement | null;
 }): JSX.Element {
   const initialFields = props.sourceKind() === "search" ? friendlyFieldsFromSource(props.source()) : null;
   const [all, setAll] = createSignal(initialFields?.all ?? "");
@@ -349,6 +388,16 @@ function AdvancedModal(props: {
   const [error, setError] = createSignal<string | null>(null);
   let dialog!: HTMLDivElement;
   let firstField: HTMLElement | undefined;
+
+  createEffect(() => {
+    const unregister = registerTransientLayer({
+      id: props.layerId,
+      root: () => dialog ?? null,
+      trigger: props.trigger,
+      dismiss: () => { props.onClose(); return true; },
+    });
+    onCleanup(unregister);
+  });
 
   queueMicrotask(() => (firstField ?? dialog)?.focus());
 
@@ -409,10 +458,7 @@ function AdvancedModal(props: {
         aria-labelledby="query-advanced-title"
         tabIndex={-1}
         onKeyDown={(event) => {
-          if (event.key === "Escape") {
-            event.preventDefault();
-            props.onClose();
-          } else if (event.key === "Tab") {
+          if (event.key === "Tab") {
             const focusable = focusableElements(dialog);
             const first = focusable[0];
             const last = focusable[focusable.length - 1];
@@ -437,7 +483,11 @@ function AdvancedModal(props: {
 
         <Show when={draftKind() === "search"} fallback={
           <div class="query-dsl-editor">
-            <QueryBuilder dsl={dsl} onChange={(next) => { setDsl(next); setError(null); }} />
+            <QueryBuilder
+              dsl={dsl}
+              onChange={(next) => { setDsl(next); setError(null); }}
+              parentTransientId={props.layerId}
+            />
             <details>
               <summary>Raw query DSL</summary>
               <label>
@@ -522,12 +572,31 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
   const [saveError, setSaveError] = createSignal<string | null>(null);
   const [saving, setSaving] = createSignal(false);
   let advancedButton!: HTMLButtonElement;
+  const advancedLayerId = `query-advanced-${createUniqueId()}`;
+  let sourceInput: HTMLInputElement | undefined;
+  // Props replace the whole route object on source/presentation edits. Keep an
+  // explicit identity latch so that replacement cannot re-run the focus work.
+  let lastFocusRouteId: string | undefined;
+  let previouslyFocused = false;
 
   createEffect(() => {
     props.route.id;
     setSource(props.route.source);
     setSourceKind(props.route.sourceKind);
     setPresentation(props.route.presentation);
+  });
+  createEffect(() => {
+    const routeId = props.route.id;
+    const focusSource = !!props.focusSource;
+    const shouldFocus = focusSource && (routeId !== lastFocusRouteId || !previouslyFocused);
+    lastFocusRouteId = routeId;
+    previouslyFocused = focusSource;
+    if (!shouldFocus) return;
+    queueMicrotask(() => {
+      if (!props.router.route) return;
+      const active = props.router.route();
+      if (props.focusSource && active.kind === "query" && active.id === routeId) sourceInput?.focus();
+    });
   });
 
   const [execution] = createResource(
@@ -587,6 +656,8 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
     if (hit.entity === "page") props.router.openPage(hit.page.name, hit.page.kind);
     else props.router.openPageAtBlock(hit.page, hit.kind, hit.block.id);
   };
+  const hitSurfaceId = (hit: QueryHit) =>
+    `query:${props.route.id}:${hit.entity}:${hit.entity === "page" ? hit.page.name : hit.block.id}`;
   const save = async (event: SubmitEvent) => {
     event.preventDefault();
     if (saving()) return;
@@ -598,6 +669,7 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
         sourceKind: sourceKind(),
         source: source(),
         presentation: presentation(),
+        routeId: props.route.id,
       }, deps());
       if (!result.ok) {
         setSaveError(result.message);
@@ -610,18 +682,24 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
   };
 
   const resultButton = (hit: QueryHit, body: JSX.Element) => (
-    <button type="button" class="query-result-row switcher-row" onClick={() => openHit(hit)}>
+    <button
+      type="button"
+      class="query-result-row switcher-row"
+      data-inpage-find-surface={hitSurfaceId(hit)}
+      onClick={() => openHit(hit)}
+    >
       {body}
     </button>
   );
 
   return (
-    <section class="query-workspace" aria-label="Search and query workspace">
+    <section class="query-workspace" data-query-route-id={props.route.id} aria-label="Search and query workspace">
       <header class="query-workspace-header">
         <div class="query-workspace-search-row">
           <label class="query-workspace-source-label">
             <span class="sr-only">{sourceKind() === "search" ? "Search" : "Query DSL"}</span>
             <input
+              ref={sourceInput}
               class="query-workspace-source"
               type="search"
               value={source()}
@@ -691,14 +769,15 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
       </header>
 
       <section class="query-workspace-status" aria-live="polite" aria-atomic="true">
-        <Show when={execution.loading}>Searching…</Show>
-        <Show when={!execution.loading && execution.error}>
+        <Show when={!source().trim()}>{sourceKind() === "search" ? "Enter a search to begin." : "Enter a query to begin."}</Show>
+        <Show when={!!source().trim() && execution.loading}>Searching…</Show>
+        <Show when={!!source().trim() && !execution.loading && execution.error}>
           Search failed: {execution.error instanceof Error ? execution.error.message : String(execution.error)}
         </Show>
-        <Show when={!execution.loading && !execution.error && execution()?.cancelled}>
+        <Show when={!!source().trim() && !execution.loading && !execution.error && execution()?.cancelled}>
           Search superseded by a newer request.
         </Show>
-        <Show when={!execution.loading && !execution.error && execution() && !execution()?.cancelled}>
+        <Show when={!!source().trim() && !execution.loading && !execution.error && execution() && !execution()?.cancelled}>
           {hits().length} result{hits().length === 1 ? "" : "s"}
         </Show>
       </section>
@@ -738,7 +817,11 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
                     <span class="switcher-kind">page</span>
                     <span class="search-result-body">
                       <span class="search-result-context">Page</span>
-                      <span class="search-result-excerpt"><MarkedText text={hit.display_text} spans={hitSpans(hit)} /></span>
+                      <span class="search-result-excerpt">
+                        <For each={buildSearchExcerpt(hit.display_text, hitSpans(hit))}>{(segment) => segment.marked
+                          ? <mark>{segment.text}</mark>
+                          : segment.text}</For>
+                      </span>
                     </span>
                   </>)}
               </div>
@@ -750,9 +833,9 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
           <ul class="query-results-list" aria-label="Query results">
             <For each={hits()}>{(hit) => (
               <li>
-                <button type="button" onClick={() => openHit(hit)}>
+                <button type="button" data-inpage-find-surface={hitSurfaceId(hit)} onClick={() => openHit(hit)}>
                   <span class="query-list-context">{hitPage(hit)}</span>
-                  <span class="query-list-text">{hit.display_text}</span>
+                  <span class="query-list-text"><MarkedText text={hit.display_text} spans={hitSpans(hit)} /></span>
                 </button>
               </li>
             )}</For>
@@ -766,10 +849,10 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
               <thead><tr><th scope="col">Type</th><th scope="col">Page</th><th scope="col">Content</th></tr></thead>
               <tbody>
                 <For each={hits()}>{(hit) => (
-                  <tr>
+                  <tr data-inpage-find-surface={hitSurfaceId(hit)}>
                     <td>{hitKind(hit)}</td>
                     <td><button type="button" onClick={() => openHit(hit)}>{hitPage(hit)}</button></td>
-                    <td>{hit.display_text}</td>
+                    <td><MarkedText text={hit.display_text} spans={hitSpans(hit)} /></td>
                   </tr>
                 )}</For>
               </tbody>
@@ -784,8 +867,8 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
                 <h2>{page}<span class="query-board-count">{pageHits.length}</span></h2>
                 <div role="list">
                   <For each={pageHits}>{(hit) => (
-                    <button type="button" role="listitem" class="query-board-card" onClick={() => openHit(hit)}>
-                      <span class="sr-only">{hitKind(hit)}: </span>{hit.display_text}
+                    <button type="button" role="listitem" class="query-board-card" data-inpage-find-surface={hitSurfaceId(hit)} onClick={() => openHit(hit)}>
+                      <span class="sr-only">{hitKind(hit)}: </span><MarkedText text={hit.display_text} spans={hitSpans(hit)} />
                     </button>
                   )}</For>
                 </div>
@@ -801,6 +884,8 @@ export function QueryWorkspace(props: QueryWorkspaceProps): JSX.Element {
           sourceKind={sourceKind}
           onApply={(next, kind) => { updateSource(next, kind); closeAdvanced(); }}
           onClose={closeAdvanced}
+          layerId={advancedLayerId}
+          trigger={() => advancedButton ?? null}
         />
       </Show>
     </section>

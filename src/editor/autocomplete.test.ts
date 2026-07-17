@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
+import hljs from "highlight.js/lib/common";
 import {
+  COMMANDS,
+  commandScore,
   detectTrigger,
   applyCompletion,
   withRefCompletionSpace,
@@ -10,7 +13,14 @@ import {
   filterCommands,
   fuzzyScore,
   orderAcItems,
+  codeLanguageItems,
+  COMMON_CODE_LANGUAGES,
 } from "./autocomplete";
+import slashFixtureManifest from "./fixtures/slash-ranking-prefix-base-15bbddc/manifest.json";
+import slashFixturePart1 from "./fixtures/slash-ranking-prefix-base-15bbddc/part-1.json";
+import slashFixturePart2 from "./fixtures/slash-ranking-prefix-base-15bbddc/part-2.json";
+import slashFixturePart3 from "./fixtures/slash-ranking-prefix-base-15bbddc/part-3.json";
+import slashFixturePart4 from "./fixtures/slash-ranking-prefix-base-15bbddc/part-4.json";
 
 describe("autoPairEdit (OG-style [[ ]] auto-pairing)", () => {
   // `value`/`caret` are the POST-input textarea state; `typed` is the char.
@@ -65,39 +75,51 @@ describe("fullWidthRefReplace (Chinese IME full-width page refs)", () => {
 });
 
 describe("orderAcItems (autocomplete default action)", () => {
-  const matches = ["m1", "m2"];
-  const create = "CREATE";
+  const matches = [
+    { name: "Match One", item: "m1" },
+    { name: "Match Two", item: "m2" },
+  ];
+  const create = { name: "match", item: "CREATE" };
 
-  it("OG default (linkFirst off): Create leads, matches follow", () => {
-    expect(orderAcItems(matches, create, { hasQuery: true, exact: false, linkFirst: false })).toEqual([
-      "CREATE",
-      "m1",
-      "m2",
-    ]);
+  it("uses OG adaptive prefix ordering and puts Create immediately after the leader", () => {
+    expect(orderAcItems(matches, create, { query: "match", policy: "adaptive" })).toEqual(["m1", "CREATE", "m2"]);
   });
 
-  it("linkFirst on: first match leads, Create trails", () => {
-    expect(orderAcItems(matches, create, { hasQuery: true, exact: false, linkFirst: true })).toEqual([
-      "m1",
-      "m2",
-      "CREATE",
-    ]);
+  it("offers explicit existing and typed policies without creating an exact duplicate", () => {
+    expect(orderAcItems(matches, create, { query: "match", policy: "existing" })).toEqual(["m1", "m2", "CREATE"]);
+    expect(orderAcItems(matches, create, { query: "match", policy: "typed" })).toEqual(["CREATE", "m1", "m2"]);
+    expect(orderAcItems([{ name: "MATCH", item: "exact" }], create, { query: "match", policy: "typed" })).toEqual(["exact"]);
   });
 
-  it("no Create option for a blank query or an exact match (either mode)", () => {
-    for (const linkFirst of [false, true]) {
-      expect(orderAcItems(matches, create, { hasQuery: false, exact: false, linkFirst })).toEqual(matches);
-      expect(orderAcItems(matches, create, { hasQuery: true, exact: true, linkFirst })).toEqual(matches);
-    }
+  it("keeps blank page/tag lifecycles row-free and deterministically orders reverse backend input", () => {
+    expect(orderAcItems(matches, create, { query: "", policy: "adaptive" })).toEqual([]);
+    const reversed = [
+      { name: "Parity Target___Child", item: "child" },
+      { name: "Parity Target", item: "target" },
+      { name: "Parity Tarp", item: "tarp" },
+    ];
+    expect(orderAcItems(reversed, { name: "Parity Tar", item: "create" }, { query: "Parity Tar", policy: "adaptive" }))
+      .toEqual(["tarp", "create", "target", "child"]);
   });
 
-  it("no matches → just Create (so Enter still works), either mode", () => {
-    expect(orderAcItems([], create, { hasQuery: true, exact: false, linkFirst: false })).toEqual(["CREATE"]);
-    expect(orderAcItems([], create, { hasQuery: true, exact: false, linkFirst: true })).toEqual(["CREATE"]);
+  it("uses canonical fallback for alias-backed hits whose matched alias is not exposed", () => {
+    const aliasHits = [
+      { name: "Zulu", item: "zulu" },
+      { name: "Alpha", item: "alpha" },
+    ];
+    expect(orderAcItems(aliasHits, { name: "alias", item: "create" }, { query: "alias", policy: "existing" }))
+      .toEqual(["zulu", "alpha", "create"]);
   });
 });
 
 describe("detectTrigger", () => {
+  it("detects language text only on opening backtick and tilde fences", () => {
+    expect(detectTrigger("```j", 4)).toEqual({ kind: "code-language", query: "j", start: 3, end: 4 });
+    expect(detectTrigger("~~~~py", 6)).toEqual({ kind: "code-language", query: "py", start: 4, end: 6 });
+    expect(detectTrigger("```", 3)).toBeNull();
+    expect(detectTrigger("```js\ncode\n```p", 16)).toBeNull();
+  });
+
   it("detects [[ page trigger", () => {
     const t = detectTrigger("see [[log", 9);
     expect(t).toEqual({ kind: "page", query: "log", start: 4, end: 9 });
@@ -112,8 +134,33 @@ describe("detectTrigger", () => {
     expect(t).toEqual({ kind: "tag", query: "pro", start: 2, end: 6 });
   });
 
+  it("keeps bare tag completion active for Unicode text committed by an IME (GH #167)", () => {
+    // Logseq OG 6e7afa8, frontend/handler/editor.cljs `handle-last-input` and
+    // `close-autocomplete-if-outside`: the marker boundary starts hashtag search,
+    // and committed text is not restricted to ASCII keyboard word characters.
+    for (const query of ["倘", "かな", "한글", "ไทย", "café", "🧠"]) {
+      const raw = `prefix #${query}`;
+      expect(detectTrigger(raw, raw.length)).toEqual({
+        kind: "tag",
+        query,
+        start: "prefix ".length,
+        end: raw.length,
+      });
+    }
+  });
+
   it("tag requires start or whitespace before #", () => {
     expect(detectTrigger("email@x#y", 9)).toBeNull();
+  });
+
+  it("shares bare-tag hard stops without narrowing namespaces or punctuation inside names", () => {
+    const raw = "#team/foo.bar;baz";
+    expect(detectTrigger(raw, raw.length)).toEqual({
+      kind: "tag", query: "team/foo.bar;baz", start: 0, end: raw.length,
+    });
+    for (const rawWithStop of ["#tag,", "#tag!", "#tag?", "#tag:", "#tag#"]) {
+      expect(detectTrigger(rawWithStop, rawWithStop.length)).toBeNull();
+    }
   });
 
   it("detects / command trigger at block start", () => {
@@ -165,6 +212,33 @@ describe("detectTrigger", () => {
   });
 });
 
+describe("codeLanguageItems", () => {
+  it("stays in lockstep with the languages and aliases bundled for rendering", () => {
+    expect(new Set(COMMON_CODE_LANGUAGES.map((item) => item.id))).toEqual(new Set(hljs.listLanguages()));
+    for (const item of COMMON_CODE_LANGUAGES) {
+      expect(new Set(item.aliases), item.id).toEqual(new Set(hljs.getLanguage(item.id)?.aliases ?? []));
+    }
+  });
+
+  it("canonicalizes highlight.js aliases while keeping readable labels", () => {
+    expect(codeLanguageItems("js")[0]).toMatchObject({ id: "javascript", label: "JavaScript" });
+    expect(codeLanguageItems("ts")[0]).toMatchObject({ id: "typescript", label: "TypeScript" });
+    expect(codeLanguageItems("html")[0]).toMatchObject({ id: "xml", label: "HTML, XML" });
+  });
+
+  it("offers a bounded full picker for the slash-command path", () => {
+    const all = codeLanguageItems("");
+    expect(all.length).toBeGreaterThan(20);
+    expect(all.length).toBeLessThan(50);
+    expect(new Set(all.map((item) => item.id)).size).toBe(all.length);
+  });
+
+  it("does not rewrite language identifiers outside the bundled highlighter", () => {
+    expect(codeLanguageItems("brainfuck")).toEqual([]);
+    expect(codeLanguageItems("calc")).toEqual([]);
+  });
+});
+
 describe("applyCompletion", () => {
   it("inserts a page ref and places caret after it", () => {
     const t = detectTrigger("see [[log", 9)!;
@@ -188,6 +262,39 @@ describe("applyCompletion", () => {
 });
 
 describe("filterCommands", () => {
+  const fixtureRows = [
+    ...slashFixturePart1,
+    ...slashFixturePart2,
+    ...slashFixturePart3,
+    ...slashFixturePart4,
+  ];
+  const fixtureTemplates = slashFixtureManifest.dynamicTemplates;
+  const mergedRanking = (query: string): string[] => {
+    const showAllTemplates = !!query && "template".startsWith(query.toLowerCase());
+    return [
+      ...COMMANDS.map((command) => ({
+        label: command.label,
+        score: commandScore(query, command),
+        index: command.matchTieOrder,
+      })).filter((row) => row.score > 0),
+      ...fixtureTemplates.map((name, offset) => ({
+        label: `Template: ${name}`,
+        score: showAllTemplates ? 1 : fuzzyScore(query, name),
+        index: COMMANDS.length + offset,
+      })).filter((row) => row.score > 0),
+    ].sort((a, b) => b.score - a.score || a.index - b.index).map((row) => row.label);
+  };
+
+  it("preserves every checked pre-fix nonempty command/template ranking", () => {
+    // Generated from `git show 15bbddc:src/editor/autocomplete.ts` before the
+    // bare-menu edit.  This deliberately exercises Block's merged command +
+    // dynamic-template list, rather than blessing a later filterCommands-only
+    // snapshot.  Never regenerate it to approve a typed-ranking change.
+    expect(slashFixtureManifest.source.baseRevision).toBe("15bbddc0c5596c3fa72e84c4f3ad90c722db81a0");
+    expect(fixtureRows).toHaveLength(343);
+    for (const row of fixtureRows) expect(mergedRanking(row.query)).toEqual(row.labels);
+  });
+
   it("filters by label substring", () => {
     expect(filterCommands("head").map((c) => c.label)).toEqual([
       "Heading 1",
@@ -220,10 +327,17 @@ describe("filterCommands", () => {
     expect(filterCommands("kan")[0]?.label).toBe("Board");
   });
 
-  it("a bare slash (empty query) lists every command in defined order", () => {
+  it("uses the approved bare-slash group order independently from typed rankings", () => {
     const all = filterCommands("");
-    expect(all.length).toBeGreaterThan(20);
-    expect(all[0].label).toBe("TODO");
+    expect(all.map((command) => command.label)).toEqual([
+      "Page reference", "Link", "Upload an asset", "Voice recording", "Draw.io diagram",
+      "Heading 1", "Heading 2", "Heading 3", "Heading 4", "Today", "Current time",
+      "TODO", "DOING", "LATER", "NOW", "DONE", "WAITING", "WAIT", "IN-PROGRESS", "CANCELED", "Scheduled", "Deadline",
+      "Priority A", "Priority B", "Priority C", "Grid", "Table", "Board", "Code block", "Calculator", "Quote",
+      "Admonition: note", "Admonition: tip", "Admonition: important", "Admonition: warning", "Admonition: caution",
+      "Divider", "Query", "Query (visual builder)", "Embed", "Math block", "Page properties",
+      "Template var: today", "Template var: yesterday", "Template var: tomorrow", "Template var: current page", "Template var: time", "Template var: date…",
+    ]);
   });
 });
 

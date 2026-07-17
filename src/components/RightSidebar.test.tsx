@@ -14,7 +14,12 @@ const page: PageDto = {
   title: "Sidebar test",
   pre_block: null,
   blocks: [
-    { id: "sidebar-root", raw: "Editable sidebar text", collapsed: false, children: [] },
+    {
+      id: "sidebar-root",
+      raw: "Editable sidebar text",
+      collapsed: false,
+      children: [{ id: "sidebar-child", raw: "Sidebar child", collapsed: false, children: [] }],
+    },
     { id: "sidebar-second", raw: "Second block", collapsed: false, children: [] },
   ],
 };
@@ -49,6 +54,60 @@ function mount(items = [
 }
 
 describe("right sidebar collection disclosures", () => {
+  it("adopts the canonical page name for a restored mixed-case sidebar item", async () => {
+    const canonical = { ...page, name: "page1", title: "page1" };
+    applySidebarSession({
+      right: true,
+      items: [{ kind: "page", name: "Page1", pageKind: "page" }],
+    });
+    vi.spyOn(backend(), "getPage").mockResolvedValue(canonical);
+    vi.spyOn(backend(), "getBacklinks").mockResolvedValue([]);
+    vi.spyOn(backend(), "getUnlinkedRefs").mockResolvedValue([]);
+    vi.spyOn(backend(), "getBlockRefCounts").mockResolvedValue({});
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const dispose = render(() => <RightSidebar />, root);
+
+    try {
+      await vi.waitFor(() => {
+        expect(rightSidebar()[0]).toMatchObject({ kind: "page", name: "page1" });
+        expect(root.textContent).toContain("Editable sidebar text");
+      });
+    } finally {
+      dispose();
+    }
+  });
+
+  it("keeps a real sidebar Block disclosure separate from the sidebar item's disclosure", async () => {
+    const { root, dispose } = mount([
+      { kind: "page", name: page.name, pageKind: "page" },
+    ]);
+    try {
+      const parentToggle = await vi.waitFor(() => {
+        const found = root.querySelector<HTMLElement>(
+          '[data-block-id="sidebar-root"] > .block-main .collapse-toggle.has-children'
+        );
+        expect(found).not.toBeNull();
+        expect(root.querySelector('[data-block-id="sidebar-child"] > .block-main .collapse-toggle:not(.has-children)')).not.toBeNull();
+        expect(root.querySelectorAll('[data-block-id="sidebar-root"] > .block-main .collapse-toggle.has-children')).toHaveLength(1);
+        return found!;
+      });
+      const itemToggle = root.querySelector<HTMLButtonElement>("[data-right-sidebar-item-toggle]")!;
+      expect(itemToggle.getAttribute("aria-expanded")).toBe("true");
+      expect(root.querySelector(".rs-item-body")).not.toBeNull();
+
+      parentToggle.click();
+      await vi.waitFor(() => expect(root.querySelector('[data-block-id="sidebar-child"]')).toBeNull());
+      expect(root.querySelector(".rs-item-body")).not.toBeNull();
+      expect(itemToggle.getAttribute("aria-expanded")).toBe("true");
+
+      root.querySelector<HTMLElement>('[data-block-id="sidebar-root"] > .block-main .collapse-toggle.has-children')!.click();
+      await vi.waitFor(() => expect(root.querySelector('[data-block-id="sidebar-child"]')).not.toBeNull());
+    } finally {
+      dispose();
+    }
+  });
+
   it("collapses items independently and offers collapse, expand, and close all", async () => {
     const { root, dispose } = mount();
     try {

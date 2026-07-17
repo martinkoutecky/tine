@@ -1,4 +1,4 @@
-import { For, Show, Switch, Match, createEffect, createSignal, type JSX } from "solid-js";
+import { For, Show, Switch, Match, createEffect, createSignal, onCleanup, type JSX } from "solid-js";
 import {
   contextMenu,
   closeContextMenu,
@@ -54,6 +54,7 @@ import { startEditing } from "../editorController";
 import { copyStripCollapsed } from "../copySettings";
 import { copyOutline } from "../clipboard";
 import type { PageKind } from "../types";
+import { registerTransientLayer } from "../transientLayers";
 
 // Copy a block reference/embed — but only after the block's id:: is durably on
 // disk. ensureBlockId returns null if the save couldn't land (conflict/error), in
@@ -94,7 +95,16 @@ export function placeContextMenu(
 }
 
 export function ContextMenu(): JSX.Element {
-  const close = () => closeContextMenu();
+  const close = (restoreFocus = true) => {
+    const current = contextMenu();
+    const owner = current?.kind === "page" ? current.focusOwner : undefined;
+    closeContextMenu();
+    if (restoreFocus && owner) {
+      queueMicrotask(() => {
+        if (!contextMenu() && owner.isConnected) owner.focus();
+      });
+    }
+  };
   let menuEl: HTMLDivElement | undefined;
   const [place, setPlace] = createSignal<{ left: number; top: number } | null>(null);
 
@@ -112,25 +122,50 @@ export function ContextMenu(): JSX.Element {
     const { x, y } = cm;
     requestAnimationFrame(() => {
       const el = menuEl;
-      if (!el || !contextMenu()) return;
+      if (!el || contextMenu() !== cm) return;
       const r = el.getBoundingClientRect();
       setPlace(placeContextMenu(x, y, r.width, r.height, window.innerWidth, window.innerHeight));
+      if (cm.kind === "page") {
+        el.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus();
+      }
     });
+  });
+  createEffect(() => {
+    const cm = contextMenu();
+    if (!cm) return;
+    const unregister = registerTransientLayer({
+      id: "context-menu",
+      root: () => menuEl ?? null,
+      trigger: cm.kind === "page" && cm.focusOwner ? () => cm.focusOwner ?? null : undefined,
+      dismiss: () => {
+        const inline = menuEl?.querySelector<HTMLInputElement>(".ctx-template-name, .ctx-rename-name");
+        if (inline) { inline.dispatchEvent(new Event("tine-dismiss-inline")); return true; }
+        close();
+        return true;
+      },
+    });
+    onCleanup(unregister);
   });
 
   return (
     <Show when={contextMenu()}>
       {(m) => (
-        <div class="ctx-overlay" onClick={close} onContextMenu={(e) => { e.preventDefault(); close(); }}>
+        <div class="ctx-overlay" onClick={() => close()} onContextMenu={(e) => { e.preventDefault(); close(); }}>
           <div
             ref={menuEl}
             class="ctx-menu"
+            role={m().kind === "page" ? "menu" : undefined}
+            aria-label={m().kind === "page" ? "Page actions" : undefined}
             style={{
               left: `${place()?.left ?? m().x}px`,
               top: `${place()?.top ?? m().y}px`,
               visibility: place() ? "visible" : "hidden",
             }}
             onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              if (m().kind !== "page" || !menuEl) return;
+              handlePageMenuKeyDown(e, menuEl, () => close());
+            }}
           >
             <Switch>
               <Match when={m().kind === "block"}>
@@ -185,6 +220,38 @@ export function ContextMenu(): JSX.Element {
       )}
     </Show>
   );
+}
+
+function pageMenuItems(menu: HTMLElement): HTMLButtonElement[] {
+  return [...menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
+    .filter((item) => !item.disabled && item.getAttribute("aria-disabled") !== "true");
+}
+
+function handlePageMenuKeyDown(
+  event: KeyboardEvent,
+  menu: HTMLElement,
+  close: () => void,
+) {
+  const target = event.target instanceof HTMLElement ? event.target : null;
+  // The inline rename field owns ordinary text-editing keys. Its first Escape
+  // is a separate transient rung and remounts/focuses the rename menu item.
+  if (target?.closest(".ctx-rename-form")) return;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    close();
+    return;
+  }
+  const items = pageMenuItems(menu);
+  if (!items.length) return;
+  const current = items.indexOf(document.activeElement as HTMLButtonElement);
+  let next: number | null = null;
+  if (event.key === "ArrowDown") next = current < 0 ? 0 : (current + 1) % items.length;
+  else if (event.key === "ArrowUp") next = current < 0 ? items.length - 1 : (current - 1 + items.length) % items.length;
+  else if (event.key === "Home") next = 0;
+  else if (event.key === "End") next = items.length - 1;
+  if (next == null) return;
+  event.preventDefault();
+  items[next].focus();
 }
 
 function ActionMenu(props: { items: readonly ContextMenuAction[]; close: () => void }): JSX.Element {
@@ -641,11 +708,13 @@ function MakeTemplate(props: { id: string; close: () => void }): JSX.Element {
       <div class="ctx-template-form">
         <input
           class="ctx-template-name"
+          ref={(el) => el.addEventListener("tine-dismiss-inline", () => setEditing(false), { once: true })}
           placeholder="Template name"
           autofocus
           value={name()}
           onInput={(e) => setName(e.currentTarget.value)}
           onKeyDown={(e) => {
+            if (e.isComposing || e.keyCode === 229) return;
             if (e.key === "Enter") { e.preventDefault(); void submit(); }
             else if (e.key === "Escape") { e.preventDefault(); setEditing(false); }
           }}
@@ -678,7 +747,7 @@ function PageMenu(props: {
   fileActions: boolean;
   x: number;
   y: number;
-  close: () => void;
+  close: (restoreFocus?: boolean) => void;
 }): JSX.Element {
   const fav = () => isFavorite(props.name);
   const readOnly = () => pageByName(props.name)?.readOnly ?? false;
@@ -741,13 +810,14 @@ function PageMenu(props: {
       })
       .catch(() => pushToast("Delete failed", "error"));
   };
-  const items: { label: string; run: () => void; danger?: boolean }[] = [
-    { label: "Open", run: () => openPage(props.name, props.pageKind) },
-    { label: "Open in sidebar", run: () => openPageInSidebar(props.name, props.pageKind) },
-    { label: "Open in new tab", run: () => openPageInNewTab(props.name, props.pageKind) },
-    { label: fav() ? "Remove from favorites" : "Add to favorites", run: () => toggleFavorite(props.name, props.pageKind) },
-    { label: "Copy page ref", run: () => { void backend().writeText(`[[${props.name}]]`); pushToast("Copied page ref", "success"); } },
+  const items: { id: string; label: string; run: () => void; danger?: boolean }[] = [
+    { id: "open", label: "Open", run: () => openPage(props.name, props.pageKind) },
+    { id: "open-sidebar", label: "Open in sidebar", run: () => openPageInSidebar(props.name, props.pageKind) },
+    { id: "open-new-tab", label: "Open in new tab", run: () => openPageInNewTab(props.name, props.pageKind) },
+    { id: "favorite-toggle", label: fav() ? "Remove from favorites" : "Add to favorites", run: () => toggleFavorite(props.name, props.pageKind) },
+    { id: "copy-page-ref", label: "Copy page ref", run: () => { void backend().writeText(`[[${props.name}]]`); pushToast("Copied page ref", "success"); } },
     {
+      id: "copy-page-markdown",
       label: "Copy page as Markdown",
       run: () =>
         void backend()
@@ -757,26 +827,34 @@ function PageMenu(props: {
             pushToast("Copied page as Markdown", "success");
           }),
     },
-    { label: "Export to PDF…", run: () => openPdfExport(props.name) },
+    { id: "export-pdf", label: "Export to PDF…", run: () => openPdfExport(props.name) },
     ...(props.fileActions && !pageByName(props.name)?.guide
       ? [
-          { label: "Show in folder", run: () => void runFileAction(true) },
-          { label: "Open with default app", run: () => void runFileAction(false) },
+          { id: "show-in-folder", label: "Show in folder", run: () => void runFileAction(true) },
+          { id: "open-default-app", label: "Open with default app", run: () => void runFileAction(false) },
         ]
       : []),
-    ...(!readOnly() ? [{ label: "Page properties…", run: () => openPageProps(props.name, props.x, props.y) }] : []),
+    ...(!readOnly() ? [{ id: "page-properties", label: "Page properties…", run: () => openPageProps(props.name, props.x, props.y) }] : []),
     // Carry a past day's unfinished tasks to today (journal days only, not today).
     ...(!readOnly() && props.pageKind === "journal" && props.name !== journalTitle(new Date())
-      ? [{ label: "Carry unfinished tasks → today", run: () => void carryDay(props.name) }]
+      ? [{ id: "carry-unfinished", label: "Carry unfinished tasks → today", run: () => void carryDay(props.name) }]
       : []),
   ];
   return (
     <>
       <For each={items}>
         {(it) => (
-          <div class="ctx-item" classList={{ danger: !!it.danger }} onClick={() => { it.run(); props.close(); }}>
+          <button
+            type="button"
+            class="ctx-item ctx-page-item"
+            classList={{ danger: !!it.danger }}
+            role="menuitem"
+            tabIndex={-1}
+            data-page-action-id={it.id}
+            onClick={() => { it.run(); props.close(false); }}
+          >
             {it.label}
-          </div>
+          </button>
         )}
       </For>
       {/* Rename is page-only. It expands into an inline input (like MakeTemplate)
@@ -785,9 +863,16 @@ function PageMenu(props: {
         <RenamePage name={props.name} pageKind={props.pageKind} close={props.close} />
       </Show>
       <Show when={!readOnly() && pageMenuAvailability(props.pageKind).delete}>
-        <div class="ctx-item danger" onClick={() => { void remove(); props.close(); }}>
+        <button
+          type="button"
+          class="ctx-item ctx-page-item danger"
+          role="menuitem"
+          tabIndex={-1}
+          data-page-action-id={props.pageKind === "journal" ? "delete-journal" : "delete-page"}
+          onClick={() => { void remove(); props.close(false); }}
+        >
           {deletePageMenuLabel(props.pageKind)}
-        </div>
+        </button>
       </Show>
     </>
   );
@@ -807,10 +892,28 @@ export function deletePageMenuLabel(pageKind: PageKind): string {
 function RenamePage(props: {
   name: string;
   pageKind: PageKind;
-  close: () => void;
+  close: (restoreFocus?: boolean) => void;
 }): JSX.Element {
   const [editing, setEditing] = createSignal(false);
   const [value, setValue] = createSignal(props.name);
+  let renameItem: HTMLButtonElement | undefined;
+  let renameInput: HTMLInputElement | undefined;
+  const cancel = () => {
+    setEditing(false);
+    queueMicrotask(() => renameItem?.focus());
+  };
+
+  createEffect(() => {
+    if (!editing()) return;
+    const unregister = registerTransientLayer({
+      id: "context-menu-page-rename",
+      parentId: "context-menu",
+      root: () => renameInput ?? null,
+      trigger: () => renameItem ?? null,
+      dismiss: () => { cancel(); return true; },
+    });
+    onCleanup(unregister);
+  });
 
   const submit = async () => {
     // Snapshot everything we need BEFORE close() disposes this component — reading
@@ -818,7 +921,7 @@ function RenamePage(props: {
     const from = props.name;
     const kind = props.pageKind;
     const next = value().trim();
-    props.close();
+    props.close(false);
     if (!next || next === from) return;
     try {
       // Persist ALL unsaved edits first — the rename reads every referencing page
@@ -844,23 +947,33 @@ function RenamePage(props: {
     <Show
       when={editing()}
       fallback={
-        <div
-          class="ctx-item"
+        <button
+          ref={renameItem}
+          type="button"
+          class="ctx-item ctx-page-item"
+          role="menuitem"
+          tabIndex={-1}
+          data-page-action-id="rename-page"
           onClick={(e) => { e.stopPropagation(); setValue(props.name); setEditing(true); }}
         >
           Rename page…
-        </div>
+        </button>
       }
     >
       <div class="ctx-rename-form" onClick={(e) => e.stopPropagation()}>
         <input
           class="ctx-rename-name"
-          ref={(el) => queueMicrotask(() => (el.focus(), el.select()))}
+          ref={(el) => {
+            renameInput = el;
+            queueMicrotask(() => (el.focus(), el.select()));
+            el.addEventListener("tine-dismiss-inline", cancel, { once: true });
+          }}
           value={value()}
           onInput={(e) => setValue(e.currentTarget.value)}
           onKeyDown={(e) => {
+            if (e.isComposing || e.keyCode === 229) return;
             if (e.key === "Enter") { e.preventDefault(); void submit(); }
-            else if (e.key === "Escape") { e.preventDefault(); setEditing(false); }
+            else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); cancel(); }
           }}
         />
       </div>

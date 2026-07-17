@@ -196,6 +196,69 @@ try {
     return errs;
   };
 
+  // Post-#161 transient closure: drive the real calendar control and prove one
+  // Escape closes only its popup and restores its actual opener.
+  const calendarButton = await browser.$('button[title="Go to date"]');
+  await calendarButton.click();
+  await browser.$(".calendar-jump-pop").waitForExist({ timeout: 5_000 });
+  await browser.keys([Key.Escape]);
+  await browser.$(".calendar-jump-pop").waitForExist({ reverse: true, timeout: 5_000 });
+  const calendarFocus = await browser.execute(() => document.activeElement?.getAttribute("title"));
+  if (calendarFocus !== "Go to date") throw new Error(`calendar Escape restored focus to ${calendarFocus}`);
+
+  // The selection toolbar intentionally keeps focus in the textarea. Its More
+  // menu must peel without collapsing the selected range or exiting editing.
+  // The overflow is driven by the editor container (260px), not the viewport
+  // directly. Use a phone-width viewport so the real responsive layout crosses
+  // that container-query boundary.
+  await browser.setWindowSize(320, 800);
+  await clickBlock(1, "end");
+  const selectedBefore = await browser.execute(() => {
+    const editor = document.activeElement;
+    if (!(editor instanceof HTMLTextAreaElement)) return null;
+    editor.setSelectionRange(0, Math.min(5, editor.value.length), "forward");
+    editor.dispatchEvent(new Event("select", { bubbles: true }));
+    return { value: editor.value, start: editor.selectionStart, end: editor.selectionEnd };
+  });
+  if (!selectedBefore || selectedBefore.start === selectedBefore.end) {
+    throw new Error(`could not prepare selection-overflow proof: ${JSON.stringify(selectedBefore)}`);
+  }
+  // The native window has a desktop minimum width, so WebDriver cannot make
+  // this named container as narrow as a phone/tablet split can. Constrain the
+  // live editor container itself to exercise the production container query.
+  await browser.execute(() => {
+    const editor = document.activeElement;
+    if (!(editor instanceof HTMLTextAreaElement)) return false;
+    const wrap = editor.closest(".editor-wrap");
+    if (!(wrap instanceof HTMLElement)) return false;
+    wrap.style.width = "240px";
+    return true;
+  });
+  const selectionMore = await browser.$(".sel-toolbar-more");
+  await selectionMore.waitForDisplayed({ timeout: 5_000 });
+  await selectionMore.click();
+  await browser.$(".sel-toolbar-overflow").waitForExist({ timeout: 5_000 });
+  await browser.keys([Key.Escape]);
+  await browser.$(".sel-toolbar-overflow").waitForExist({ reverse: true, timeout: 5_000 });
+  const selectedAfter = await browser.execute(() => {
+    const editor = document.activeElement;
+    return editor instanceof HTMLTextAreaElement ? {
+      value: editor.value,
+      start: editor.selectionStart,
+      end: editor.selectionEnd,
+      editing: !!editor.closest(".block-main.editing"),
+    } : null;
+  });
+  if (!selectedAfter || !selectedAfter.editing || selectedAfter.value !== selectedBefore.value
+    || selectedAfter.start !== selectedBefore.start || selectedAfter.end !== selectedBefore.end) {
+    throw new Error(`selection overflow Escape changed its editor: ${JSON.stringify({ selectedBefore, selectedAfter })}`);
+  }
+  await browser.execute(() => {
+    const wrap = document.querySelector(".editor-wrap[style]");
+    if (wrap instanceof HTMLElement) wrap.style.removeProperty("width");
+  });
+  await browser.setWindowSize(1400, 1000);
+
   // Stay on the DEFAULT journal feed — its blocks are main-feed (in visibleOrder).
   log("=== default journal feed (no navigation) ===");
   await sleep(1000);

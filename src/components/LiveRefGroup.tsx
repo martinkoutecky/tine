@@ -1,11 +1,15 @@
-import { For, Show, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
+import { For, Show, createEffect, createMemo, createResource, createSignal, createUniqueId, onCleanup, onMount, type JSX } from "solid-js";
 import { backend } from "../backend";
-import { doc, ensurePageLoaded, pageByName } from "../store";
+import { doc, ensurePageLoaded, formatForPage, pageByName } from "../store";
 import { Block, CollapseSurfaceContext, SurfaceContext, type CollapseSurfaceApi } from "./Block";
 import { RefBlocks } from "./RefBlocks";
 import { observeNear, unobserveNear } from "../lazyObserve";
-import type { BlockDto, PageKind } from "../types";
+import type { BlockDto, PageKind, ReferenceBlockEvidence } from "../types";
 import { graphEpoch, graphMeta } from "../ui";
+import { OccurrenceControls } from "./ReferenceEvidence";
+import { startEditing } from "../editorController";
+import { isBuiltinHidden, rawOffsetToVisibleOffset } from "../editor/properties";
+import { visibleBody } from "../render/block";
 
 // The "near the viewport" lazy-mount observer is shared app-wide (block bodies
 // use it too) — see src/lazyObserve.ts.
@@ -26,7 +30,8 @@ export function LiveRefGroup(props: {
   blocks: BlockDto[];
   embedId?: string;
   showBreadcrumb?: boolean;
-  surface?: "ref" | "embed";
+  surface: "ref" | "query" | "embed";
+  evidence?: ReferenceBlockEvidence[];
 }): JSX.Element {
   const [near, setNear] = createSignal(false);
   let el: HTMLDivElement | undefined;
@@ -63,7 +68,32 @@ export function LiveRefGroup(props: {
   // O(1) id → dto. The prior `props.blocks.find` inside the per-row <For> was
   // O(N) per row → O(N²) per group (250k iterations on a 500-block hub group).
   const byId = createMemo(() => new Map(props.blocks.map((b) => [b.id, b] as const)));
+  const evidenceById = createMemo(() => new Map((props.evidence ?? []).map((item) => [item.block_id, item])));
   const dtoById = (id: string) => byId().get(id);
+  const liveBreadcrumb = (id: string): string[] | null => {
+    if (!ready() || !doc.byId[id]) return null;
+
+    // The loaded source page is authoritative after hydration. Walk only the
+    // nearest four ancestors: three labels are rendered and the fourth proves
+    // that an ellipsis is needed. This keeps breadcrumb work O(1) per hit even
+    // for malformed or unusually deep outlines, and never invents ancestor IDs
+    // from result-row labels.
+    const nearest: string[] = [];
+    const seen = new Set([id]);
+    let parent = doc.byId[id].parent;
+    while (parent !== null && nearest.length < 4) {
+      if (seen.has(parent)) return null;
+      const ancestor = doc.byId[parent];
+      if (!ancestor) return null;
+      seen.add(parent);
+      const line = (visibleBody(ancestor.raw)[0] ?? "").trim();
+      const chars = [...line];
+      nearest.push(chars.length > 60 ? `${chars.slice(0, 60).join("")}…` : line);
+      parent = ancestor.parent;
+    }
+    const tail = nearest.slice(0, 3).reverse();
+    return nearest.length > 3 ? ["…", ...tail] : tail;
+  };
   // A ref/query/embed group can render a block that ALSO lives in the main outline
   // of the same page (e.g. the journal agenda re-lists today's scheduled/deadline
   // bullets). Give this group its own edit "surface" so an UNSCOPED keyboard nav
@@ -72,9 +102,41 @@ export function LiveRefGroup(props: {
   // copy wins, stealing the caret and scrolling the viewport to it. Same mechanism
   // as the right sidebar (see startEditing / focusSurfaceFor). One key per group.
   const surface = `${props.surface === "embed" ? "embed" : "ref"}:` + createUniqueId();
+  const resultRootIds = createMemo(() => new Set(props.blocks.map((block) => block.id)));
+  const initialCollapsed = new Map<string, boolean>();
   const [localCollapsed, setLocalCollapsed] = createSignal<Record<string, boolean>>({});
+  const relativeDepth = (id: string): number | null => {
+    const roots = resultRootIds();
+    if (roots.has(id)) return 0;
+    let depth = 0;
+    let current = doc.byId[id];
+    const seen = new Set<string>();
+    while (current?.parent && !seen.has(current.id)) {
+      seen.add(current.id);
+      depth += 1;
+      if (roots.has(current.parent)) return depth;
+      current = doc.byId[current.parent];
+    }
+    return null;
+  };
+  const defaultCollapsed = (id: string, stored: boolean): boolean => {
+    const previous = initialCollapsed.get(id);
+    if (previous !== undefined) return previous;
+    const depth = relativeDepth(id);
+    const hasChildren = (doc.byId[id]?.children.length ?? 0) > 0;
+    // Released OG initializes reference/query disclosure from the source state
+    // and default-open level 2, then keeps that copy local to the result view.
+    // Tine's displayed hit is relative depth 0, so branches immediately below it
+    // default folded. Embeds deliberately retain source disclosure semantics.
+    const initial = stored || (props.surface !== "embed" && depth !== null && depth >= 1 && hasChildren);
+    initialCollapsed.set(id, initial);
+    return initial;
+  };
   const collapseSurface: CollapseSurfaceApi = {
-    collapsed: (id, stored) => localCollapsed()[id] ?? stored,
+    collapsed: (id, stored) => {
+      const local = localCollapsed();
+      return Object.prototype.hasOwnProperty.call(local, id) ? local[id] : defaultCollapsed(id, stored);
+    },
     toggle: (id, current) => setLocalCollapsed((state) => ({ ...state, [id]: !current })),
     setMany: (ids, collapsed) => setLocalCollapsed((state) => {
       const next = { ...state };
@@ -82,6 +144,32 @@ export function LiveRefGroup(props: {
       return next;
     }),
   };
+  // Result DTOs are replaced during filter/query refresh. Retain local choices
+  // for stable roots and their live descendants, but discard state once a root
+  // leaves this group so an old choice cannot leak into a later membership.
+  createEffect(() => {
+    if (!ready()) return;
+    const present = new Set<string>();
+    const visit = (id: string) => {
+      if (present.has(id)) return;
+      present.add(id);
+      for (const child of doc.byId[id]?.children ?? []) visit(child);
+    };
+    for (const root of resultRootIds()) visit(root);
+    for (const id of initialCollapsed.keys()) {
+      if (!present.has(id)) initialCollapsed.delete(id);
+    }
+    setLocalCollapsed((state) => {
+      let changed = false;
+      const next: Record<string, boolean> = {};
+      for (const [id, value] of Object.entries(state)) {
+        if (present.has(id)) next[id] = value;
+        else changed = true;
+      }
+      return changed ? next : state;
+    });
+  });
+  onCleanup(() => initialCollapsed.clear());
   return (
     <div
       ref={el}
@@ -94,7 +182,11 @@ export function LiveRefGroup(props: {
         <SurfaceContext.Provider value={surface}>
         <For each={props.blocks.map((b) => b.id)}>
           {(id) => {
-            const crumb = () => dtoById(id)?.breadcrumb ?? [];
+            const crumb = () => {
+              const all = liveBreadcrumb(id) ?? dtoById(id)?.breadcrumb ?? [];
+              const tail = all.slice(-3);
+              return all.length > 3 ? ["…", ...tail] : tail;
+            };
             return (
               <>
                 <Show when={props.showBreadcrumb && crumb().length > 0}>
@@ -119,6 +211,26 @@ export function LiveRefGroup(props: {
                     </Show>
                   }
                 >
+                  <Show when={evidenceById().get(id)}>
+                    {(item) => (
+                      <div class="reference-live-evidence">
+                        <OccurrenceControls
+                          evidence={item()}
+                          onOccurrence={(offset) => startEditing(
+                            id,
+                            rawOffsetToVisibleOffset(
+                              doc.byId[id]?.raw ?? "",
+                              offset,
+                              isBuiltinHidden,
+                              formatForPage(props.page),
+                            ),
+                            null,
+                            surface,
+                          )}
+                        />
+                      </div>
+                    )}
+                  </Show>
                   <Block id={id} hideRefCount={!!props.embedId && id === props.embedId} />
                 </Show>
               </>

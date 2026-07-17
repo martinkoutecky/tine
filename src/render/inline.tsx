@@ -8,7 +8,7 @@ import { mediaKind } from "../media";
 import { openPage, openPageInNewTab, openPageAtBlock, focusBlock } from "../router";
 import { refClickZoom } from "../copySettings";
 import { isJournalTitle } from "../journal";
-import { openPdf, openPageInSidebar, openBlockInSidebar, openPageContextMenu, openBlockRefContextMenu, setLightbox, setAudioPlayer, graphEpoch, graphMeta, pushToast } from "../ui";
+import { openPdf, openPageInSidebar, openBlockInSidebar, openPageContextMenu, openBlockRefContextMenu, setLightbox, setAudioPlayer, dataRev, graphEpoch, graphMeta, pushToast } from "../ui";
 import { copyImageFromSrc } from "../copyImage";
 import { parseBlock, parserReady } from "./parse";
 import type { Inline, Url, MacroInline, TimestampInline, EmailValue, Block as AstBlock, Format } from "./ast";
@@ -26,6 +26,7 @@ import { AstBody } from "./body";
 import { backend } from "../backend";
 import { acquireAssetBlob, acquireLocalImageBlob, assetVersion } from "../assetCache";
 import { mediaEditorForAsset } from "../mediaEditors";
+import { acquireMediaBlobFallback, type MediaBlobLease } from "../mediaBlobFallback";
 import { resolveMediaEditorCommand } from "../mediaEditorSettings";
 import { refreshAssetOnReturn } from "../assetRefresh";
 import { isMobilePlatform } from "../nativeChrome";
@@ -37,6 +38,7 @@ import { NamespaceMacro } from "../components/Namespace";
 import { guideTargetForLink, isGuidePageName } from "../guide";
 import { PeekPopup, PeekContext, capBlockTree } from "./PeekPopup";
 import { annotationInfoForBlock, pdfFileFromPreBlock } from "../editor/annotation";
+import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
 
 
 // ===========================================================================
@@ -227,15 +229,20 @@ function createPeekBridge(disabled: () => boolean) {
     clearClose();
     closeT = setTimeout(() => setOpen(false), PEEK_CLOSE_MS);
   };
+  const dismiss = () => {
+    clearOpen();
+    clearClose();
+    setOpen(false);
+  };
   onCleanup(() => {
     clearOpen();
     clearClose();
   });
-  return { open, anchorEnter, anchorLeave, popupEnter, popupLeave };
+  return { open, anchorEnter, anchorLeave, popupEnter, popupLeave, dismiss };
 }
 
 // A `[[page]]` / `#tag` anchor — shared by page_ref links, bare refs, and #tags.
-function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolean; blockId?: string; spanAttrs?: SpanDomAttrs }): JSX.Element {
+export function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolean; blockId?: string; spanAttrs?: SpanDomAttrs }): JSX.Element {
   const pane = useContext(PaneContext);
   const insidePeek = useContext(PeekContext);
   let anchorEl: HTMLAnchorElement | undefined;
@@ -290,6 +297,7 @@ function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolean; bloc
           }
         }}
         onContextMenu={(e) => {
+          if (!shouldOpenTextContextMenu(e.target)) return;
           e.preventDefault();
           e.stopPropagation();
           if (!isGuidePageName(targetName())) openPageContextMenu(e.clientX, e.clientY, targetName());
@@ -316,6 +324,7 @@ function PageRef(props: { name: string; alias?: JSX.Element; tag?: boolean; bloc
           truncatedCount={() => capped().truncated}
           onPointerEnter={peek.popupEnter}
           onPointerLeave={peek.popupLeave}
+          onDismiss={peek.dismiss}
         />
       </Show>
     </>
@@ -845,9 +854,18 @@ function MediaEmbed(props: {
     else void backend().openExternal(props.url);
   };
   let tryingBlobFallback = false;
-  let ownedBlobUrl = "";
+  let blobLease: MediaBlobLease | null = null;
+  let fallbackAbort: AbortController | null = null;
+  let disposed = false;
+  const releaseBlobFallback = () => {
+    fallbackAbort?.abort();
+    fallbackAbort = null;
+    blobLease?.release();
+    blobLease = null;
+  };
   onCleanup(() => {
-    if (ownedBlobUrl) URL.revokeObjectURL(ownedBlobUrl);
+    disposed = true;
+    releaseBlobFallback();
   });
   const onMediaError = () => {
     const r = rel();
@@ -859,7 +877,8 @@ function MediaEmbed(props: {
     const canRetry = props.kind === "audio" || r?.toLowerCase().endsWith(".mkv");
     if (!external && r && canRetry && !tryingBlobFallback && !blobFallback()) {
       tryingBlobFallback = true;
-      const maxBytes = props.kind === "audio" ? 256 * 1024 * 1024 : 512 * 1024 * 1024;
+      const abort = new AbortController();
+      fallbackAbort = abort;
       const ext = r.split(".").pop()?.toLowerCase();
       const mime = props.kind === "video" ? "video/x-matroska" :
         ext === "mp3" || ext === "mpeg" ? "audio/mpeg" :
@@ -868,12 +887,20 @@ function MediaEmbed(props: {
         ext === "ogg" || ext === "oga" ? "audio/ogg" :
         ext === "opus" ? "audio/opus" :
         ext === "flac" ? "audio/flac" : "application/octet-stream";
-      void backend().readAsset(r, maxBytes).then((bytes) => {
-        ownedBlobUrl = URL.createObjectURL(new Blob([Uint8Array.from(bytes).buffer], { type: mime }));
-        setBlobFallback(ownedBlobUrl);
-      }).catch(() => setFailed(true));
+      void acquireMediaBlobFallback(r, props.kind, mime, abort.signal).then((lease) => {
+        if (disposed) {
+          lease.release();
+          return;
+        }
+        blobLease = lease;
+        setBlobFallback(lease.url);
+      }).catch(() => {
+        releaseBlobFallback();
+        if (!disposed) setFailed(true);
+      });
       return;
     }
+    releaseBlobFallback();
     setFailed(true);
   };
 
@@ -1060,23 +1087,45 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
   const insidePeek = useContext(PeekContext);
   let anchorEl: HTMLSpanElement | undefined;
   const [grp] = createResource(
-    () => `${props.id}\0${graphEpoch()}`, // resolve once per open graph; batched + cached
+    () => `${props.id}\0${graphEpoch()}\0${dataRev()}`,
     () => resolveBlockBatched(props.id)
   );
   const peek = createPeekBridge(() => insidePeek);
+  // A loaded target shares the editor's reactive node, so references update on
+  // the keystroke without re-resolving every visible uuid after every save. The
+  // backend snapshot remains the fallback for targets outside the working set;
+  // visible fallback UUIDs are batch-refreshed after landed graph transactions.
+  const liveTarget = () => doc.byId[props.id];
+  const targetRaw = () => {
+    const resolved = grp();
+    // `undefined` is the initial/loading state, where a loaded reactive entity
+    // may paint immediately. `null` is an authoritative post-transaction miss:
+    // do not let an evicted/deleted page's stale working-set node win forever.
+    if (resolved === null) return undefined;
+    return liveTarget()?.raw ?? resolved?.blocks[0].raw;
+  };
   // Visible text: an explicit label wins; otherwise the target's first line.
-  const text = () => props.label ?? (grp() ? visibleBody(grp()!.blocks[0].raw)[0] : undefined);
+  const text = () => props.label ?? (targetRaw() ? visibleBody(targetRaw()!)[0] : undefined);
   // Parse the referenced block's text with ITS page's format (org refs render org).
-  const fmt = () => formatForPage(grp()?.page);
+  const fmt = () => liveTarget() ? formatForBlock(props.id) : formatForPage(grp()?.page);
   const annotation = () => {
     const block = grp()?.blocks[0];
     return block ? annotationInfoForBlock(block) : null;
   };
-  const capped = createMemo(() => capBlockTree(grp()?.blocks ?? [], PEEK_BLOCK_CAP));
+  // Summary resolution stays shallow and graph-lifetime cached. Fetch the
+  // descendant tree only after the hover dwell, through a backend operation
+  // that applies the cap before DTO allocation and IPC serialization.
+  const [preview] = createResource(
+    () => (peek.open() && grp() ? `${props.id}\0${graphEpoch()}\0${dataRev()}` : null),
+    () => backend().previewBlock(props.id, PEEK_BLOCK_CAP),
+  );
+  const capped = createMemo(() => capBlockTree(preview()?.group.blocks ?? [], PEEK_BLOCK_CAP));
+  const previewTruncated = () => (preview()?.truncated ?? 0) + capped().truncated;
   return (
     <>
       <span
         ref={anchorEl}
+        data-block-ref={props.id}
         class="block-ref"
         classList={{ "block-ref-missing": !grp() }}
         {...(props.spanAttrs ?? {})}
@@ -1090,6 +1139,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
         onContextMenu={(e) => {
           const g = grp();
           if (!g) return; // missing target → let the default menu through
+          if (!shouldOpenTextContextMenu(e.target)) return;
           e.preventDefault();
           e.stopPropagation();
           openBlockRefContextMenu(e.clientX, e.clientY, props.id, g.page, g.kind);
@@ -1106,7 +1156,7 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
               .getPage(g.page, g.kind)
               .then((page) => {
                 const file = pdfFileFromPreBlock(page?.pre_block);
-                if (file) openPdf(file, file, ann.hlPage);
+                if (file) openPdf(file, file, ann.hlPage, props.id);
                 else pushToast("Couldn't find the PDF for this highlight", "error");
               })
               .catch(() => pushToast("Couldn't open the PDF for this highlight", "error"));
@@ -1129,16 +1179,17 @@ function BlockRefView(props: { id: string; label?: string; spanAttrs?: SpanDomAt
           <InlineText text={text()!} format={fmt()} />
         </Show>
       </span>
-      <Show when={peek.open() && grp() && capped().blocks.length > 0}>
+      <Show when={peek.open() && preview() && capped().blocks.length > 0}>
         <PeekPopup
           anchor={() => anchorEl}
-          title={<span class="peek-popup-title-name">{grp()!.page}</span>}
+          title={<span class="peek-popup-title-name">{preview()!.group.page}</span>}
           blocks={() => capped().blocks}
-          page={grp()!.page}
-          pageKind={grp()!.kind}
-          truncatedCount={() => capped().truncated}
+          page={preview()!.group.page}
+          pageKind={preview()!.group.kind}
+          truncatedCount={previewTruncated}
           onPointerEnter={peek.popupEnter}
           onPointerLeave={peek.popupLeave}
+          onDismiss={peek.dismiss}
         />
       </Show>
     </>

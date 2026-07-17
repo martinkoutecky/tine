@@ -1,15 +1,41 @@
-# Checks on every push to master and every PR: frontend/type/Rust tests plus
-# platform compile probes. The probes exist because Linux host tests cannot see
-# Windows-only code or Android-specific libc declarations.
+# Full CI is a release-candidate gate, not a per-push tax. Dispatch `scope=full`
+# only after the candidate SHA is frozen; release.yml independently verifies that
+# this exact SHA has successful evidence from every full job before packaging.
+# Focused scopes remain available between releases for platform/performance work.
+# Pull requests get one lightweight Linux validation job and docs-only PRs skip it.
 name: ci
 
+run-name: ci / ${{ github.event_name == 'workflow_dispatch' && inputs.scope || 'pull-request' }} / ${{ github.sha }}
+
 on:
-  push:
-    branches: [master]
   pull_request:
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**/*.png"
+      - "docs/**/*.jpg"
+      - "docs/**/*.jpeg"
+      - "docs/**/*.gif"
+      - "docs/**/*.webp"
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: Full release gate or one focused proof lane
+        required: true
+        default: full
+        type: choice
+        options:
+          - full
+          - windows
+          - android
+          - performance
+
+permissions:
+  contents: read
 
 jobs:
-  test:
+  pr-validation:
+    name: PR validation / Linux unit and contract checks
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -29,6 +55,47 @@ jobs:
 
       - run: npm ci
 
+      - name: Release and offline-source contract fixtures
+        run: |
+          node scripts/check-flatpak-node-sources.mjs
+          node scripts/check-flatpak-cargo-sources.mjs
+          node scripts/test-release-pipeline.mjs
+
+      - name: lsdoc generated artifacts are current
+        run: |
+          node scripts/check-wasm-pin.mjs
+          node scripts/check-lsdoc-oracle-sync.mjs
+
+      - name: Typecheck and frontend tests
+        run: |
+          npx tsc --noEmit
+          npm test
+
+      - name: Rust core tests
+        run: cargo test -p tine-core
+
+  test:
+    name: Full CI / Linux tests and release contracts
+    if: github.event_name == 'workflow_dispatch' && inputs.scope == 'full'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - run: npm ci
+
       - name: Flatpak offline npm sources are current
         run: node scripts/check-flatpak-node-sources.mjs
 
@@ -37,6 +104,16 @@ jobs:
 
       - name: Release pipeline contract fixtures
         run: node scripts/test-release-pipeline.mjs
+
+      - name: Performance baseline policy is current
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          latest=$(gh api "repos/${{ github.repository }}/releases/latest" --jq .tag_name)
+          node scripts/check-bench-policy.mjs --expected-previous "$latest"
+
+      - name: Performance A/B multi-round reliability fixtures
+        run: node scripts/test-bench-ab.mjs
 
       - name: UI regression catalog and release evidence contracts
         run: |
@@ -71,10 +148,11 @@ jobs:
       - name: Launch plugins build and conform
         run: ./scripts/build-community-plugins.sh
 
-  # Compile platform-gated source on every change. Linux host tests do not see
-  # either branch: Windows has its own cfg implementation, while Android's libc
-  # declarations differ from desktop Linux even for the same syscall.
+  # Linux host tests do not see either platform branch: Windows has its own cfg
+  # implementation, while Android's libc declarations differ from desktop Linux.
   windows-compile:
+    name: Full CI / Windows compile and core tests
+    if: github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'windows')
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -94,6 +172,8 @@ jobs:
         run: cargo check -p tine --features custom-protocol
 
   android-core-compile:
+    name: Full CI / Android core compile
+    if: github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'android')
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -163,9 +243,20 @@ jobs:
   # abrupt regressions. All three builds run on this one runner, so CPU model is
   # not confused with code performance (docs/BENCH.md).
   bench:
+    name: Full CI / performance A/B
+    if: github.event_name == 'workflow_dispatch' && (inputs.scope == 'full' || inputs.scope == 'performance')
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Require the rolling baseline to be the latest published release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          latest=$(gh api "repos/${{ github.repository }}/releases/latest" --jq .tag_name)
+          node scripts/check-bench-policy.mjs --expected-previous "$latest"
 
       - name: Read performance baseline refs
         id: perf-policy
@@ -204,20 +295,23 @@ jobs:
           npm --prefix .bench/immutable run build
           npm --prefix .bench/previous run build
 
-      - name: Measure immutable baseline, previous release, and candidate
+      - name: Measure immutable baseline, previous release, and candidate in interleaved rounds
         run: |
           mkdir -p test-results/perf
-          npm --prefix .bench/immutable run bench -- --update
-          npm --prefix .bench/previous run bench -- --update
-          npm run bench -- --update --output test-results/perf/candidate.json
+          node scripts/bench-ab.mjs \
+            --policy scripts/bench-policy.json \
+            --candidate-dir . \
+            --immutable-dir .bench/immutable \
+            --previous-dir .bench/previous \
+            --output-dir test-results/perf
 
       - name: Enforce metric-specific A/B budgets
         run: |
           node scripts/check-bench-ab.mjs \
             --policy scripts/bench-policy.json \
             --candidate test-results/perf/candidate.json \
-            --immutable .bench/immutable/scripts/bench-baseline.json \
-            --previous .bench/previous/scripts/bench-baseline.json
+            --immutable test-results/perf/immutable.json \
+            --previous test-results/perf/previous.json
 
       - name: Upload performance measurements
         if: always()
@@ -225,6 +319,4 @@ jobs:
         with:
           name: perf-ab-${{ github.run_attempt }}
           path: |
-            test-results/perf/candidate.json
-            .bench/immutable/scripts/bench-baseline.json
-            .bench/previous/scripts/bench-baseline.json
+            test-results/perf/

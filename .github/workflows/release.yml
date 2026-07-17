@@ -4,7 +4,8 @@
 #   git tag v0.1.0 && git push origin v0.1.0
 #
 # …or run it manually from the Actions tab (workflow_dispatch) to smoke-test the
-# build matrix WITHOUT cutting a release.
+# build matrix WITHOUT cutting a release. Both paths fail before packaging unless
+# the exact candidate SHA already has a successful manually dispatched full CI.
 #
 # Publication is atomic at the workflow level: every expensive build writes only
 # an immutable workflow artifact; one assembler creates latest.json; and one
@@ -23,6 +24,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -36,10 +38,18 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
+      - name: Require exact-SHA full CI evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_EVIDENCE_SHA: ${{ github.sha }}
+          CI_EVIDENCE_REPOSITORY: ${{ github.repository }}
+        run: node scripts/check-ci-evidence.mjs
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
         with:
@@ -132,7 +142,7 @@ jobs:
             libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev \
             libayatana-appindicator3-dev patchelf \
             build-essential curl wget file libssl-dev libxdo-dev \
-            webkit2gtk-driver xvfb xauth xdotool openbox
+            webkit2gtk-driver xvfb xauth xdotool openbox x11-utils weston
 
       - uses: actions/setup-node@v4
         with:
@@ -198,26 +208,12 @@ jobs:
           $zip = "Tine_${version}_${{ matrix.win-arch }}-portable.zip"
           Compress-Archive -Path $exe -DestinationPath $zip -Force
 
-      # The expensive platform build above is also the exact binary under test:
-      # Linux is a hard publication gate; Windows x64 is retained as advisory
-      # evidence until its hosted reliability has been calibrated further.
+      # The expensive Linux build above is also the exact binary under test and
+      # is a hard publication gate. Windows advisory evidence runs independently
+      # from the staged portable artifact below so it cannot serialize assembly.
       - name: Install Tauri WebDriver bridge
-        if: matrix.lane == 'linux-x64' || matrix.lane == 'windows-x64'
+        if: matrix.lane == 'linux-x64'
         run: cargo install tauri-driver --locked
-
-      - name: Install Edge WebDriver matching the hosted browser
-        if: matrix.lane == 'windows-x64'
-        shell: pwsh
-        run: |
-          $edgeExe = "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
-          if (-not (Test-Path $edgeExe)) { throw "Microsoft Edge not found at $edgeExe" }
-          $version = (Get-Item $edgeExe).VersionInfo.ProductVersion
-          $driverDir = "$env:RUNNER_TEMP\edgedriver"
-          $zip = "$env:RUNNER_TEMP\edgedriver.zip"
-          Invoke-WebRequest "https://msedgedriver.microsoft.com/$version/edgedriver_win64.zip" -OutFile $zip
-          Expand-Archive $zip -DestinationPath $driverDir -Force
-          $driverDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          & "$driverDir\msedgedriver.exe" --version
 
       - name: Gate Linux x64 on the complete real-app regression catalog
         if: matrix.lane == 'linux-x64'
@@ -229,21 +225,26 @@ jobs:
         if: matrix.lane == 'linux-x64'
         run: npm run e2e:plugins
 
-      - name: Run advisory Windows x64 real-app smoke
-        if: matrix.lane == 'windows-x64'
-        continue-on-error: true
-        env:
-          TINE_APP: ${{ github.workspace }}\target\release\tine.exe
-        run: npm run e2e:windows:smoke
-
       - name: Upload release E2E evidence
-        if: always() && (matrix.lane == 'linux-x64' || matrix.lane == 'windows-x64')
+        if: always() && matrix.lane == 'linux-x64'
         uses: actions/upload-artifact@v4
         with:
           name: release-e2e-${{ matrix.lane }}
           path: test-results/e2e
           if-no-files-found: warn
           retention-days: 14
+
+      # The staged Windows smoke jobs verify that the downloaded portable exe
+      # embeds this exact production frontend.  Preserve the already-built dist
+      # once instead of rebuilding it independently in every advisory job.
+      - name: Upload exact Windows x64 frontend proof
+        if: matrix.lane == 'windows-x64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-e2e-frontend-windows-x64
+          path: dist
+          if-no-files-found: error
+          retention-days: 3
 
       - name: Stage immutable release artifact
         run: node scripts/stage-release-lane.mjs "${{ matrix.lane }}" release-candidate "${{ github.sha }}"
@@ -256,6 +257,79 @@ jobs:
           if-no-files-found: error
           retention-days: 3
           compression-level: 0
+
+  # Advisory Windows scenarios consume the already-staged portable x64 binary.
+  # They run on independent hosts and in parallel with candidate assembly, so a
+  # bad runner neither cascades into 0/N evidence nor delays atomic publication.
+  # Job-level continue-on-error keeps the advisory policy while leaving each
+  # scenario's real failure visible instead of turning one 0/N step green.
+  windows-smoke:
+    needs: [preflight, build]
+    # A failure in another build-matrix lane (for example the hard Linux E2E
+    # gate) must not suppress evidence from an already-staged Windows x64 app.
+    # If x64 itself failed, the artifact download below fails visibly instead.
+    if: ${{ always() && needs.preflight.result == 'success' && needs.build.result != 'cancelled' }}
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario:
+          - windows-core
+          - og-parity-references
+          - page-properties
+          - page-trailing-block
+          - pdf-logseq
+          - print-security
+          - tab-overflow
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-windows-x64
+          path: release-windows-x64
+      - name: Download the exact embedded frontend proof
+        uses: actions/download-artifact@v4
+        with:
+          name: release-e2e-frontend-windows-x64
+          path: dist
+      - name: Extract the exact staged portable app
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem release-windows-x64 -Filter '*-portable.zip' | Select-Object -First 1
+          if (-not $zip) { throw "staged Windows portable zip is missing" }
+          Expand-Archive $zip.FullName -DestinationPath "$env:RUNNER_TEMP\tine-portable" -Force
+          $exe = Get-ChildItem "$env:RUNNER_TEMP\tine-portable" -Filter '*.exe' | Select-Object -First 1
+          if (-not $exe) { throw "portable Tine executable is missing" }
+          "TINE_APP=$($exe.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Install Edge WebDriver matching the hosted browser
+        shell: pwsh
+        run: |
+          $edgeExe = "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
+          if (-not (Test-Path $edgeExe)) { throw "Microsoft Edge not found at $edgeExe" }
+          $version = (Get-Item $edgeExe).VersionInfo.ProductVersion
+          $driverDir = "$env:RUNNER_TEMP\edgedriver"
+          $zip = "$env:RUNNER_TEMP\edgedriver.zip"
+          Invoke-WebRequest "https://msedgedriver.microsoft.com/$version/edgedriver_win64.zip" -OutFile $zip
+          Expand-Archive $zip -DestinationPath $driverDir -Force
+          $driverDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          & "$driverDir\msedgedriver.exe" --version
+      - name: Run advisory Windows x64 real-app scenario
+        run: npm run e2e:windows:smoke -- --scenario=${{ matrix.scenario }}
+      - name: Upload Windows E2E evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-e2e-windows-x64-${{ matrix.scenario }}
+          path: test-results/e2e/windows-smoke
+          if-no-files-found: warn
+          retention-days: 14
 
   # Android builds concurrently and contributes another immutable workflow
   # artifact. Signed Android output is mandatory for every release smoke/tag.

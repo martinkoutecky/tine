@@ -41,6 +41,14 @@ const versions = new Map([
 const expected = tauri.version;
 const problems = [];
 
+const benchPolicy = spawnSync(process.execPath, [path.join(root, "scripts", "check-bench-policy.mjs")], {
+  encoding: "utf8",
+  env: process.env,
+});
+if (benchPolicy.status !== 0) {
+  problems.push(`check-bench-policy.mjs failed:\n${benchPolicy.stderr || benchPolicy.stdout}`);
+}
+
 for (const [source, version] of versions) {
   if (version !== expected) problems.push(`${source} has ${version ?? "no version"}; expected ${expected}`);
 }

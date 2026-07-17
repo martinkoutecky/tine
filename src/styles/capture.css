@@ -12,6 +12,12 @@ body {
   background: var(--bg-primary, #ffffff);
   color: var(--text-primary, #1a1a1a);
   overflow: hidden;
+  min-height: 100vh;
+  box-sizing: border-box;
+  /* The native mini-window is intentionally frameless. Keep its edge legible
+     against both light and dark desktop content without consuming layout space
+     or changing the auto-sized window geometry. */
+  box-shadow: inset 0 0 0 1px var(--border-color);
 }
 .capture-shell {
   padding: 12px 14px;

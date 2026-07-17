@@ -21,8 +21,11 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
 - Collapse/expand, zoom into a block (with breadcrumb), drag-to-reorder, move
   up/down (`Alt+Shift+↑/↓`).
 - Multi-block selection → move / indent / cut / copy; the viewport follows the
-  active end as you extend past the top/bottom edge.
-- Multi-line blocks, syntax-highlighted code blocks, Markdown tables.
+  active end as you extend past the top/bottom edge. `Mod+Enter` cycles every
+  selected task independently as one undoable edit.
+- Multi-line blocks, syntax-highlighted code blocks, Markdown tables. Opening a
+  backtick or tilde fence offers completion from the bundled highlight languages;
+  `/Code block` opens the same picker.
 - **One-click copy** on hover for fenced code blocks, inline `` `code` ``, and
   links — copies the raw source (not the rendered text) to the clipboard.
 - Paste an indented outline → a real block tree; paste a clipboard image → a graph
@@ -32,7 +35,8 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   a Markdown page, `[[url][text]]` on an Org page. (Skipped inside code, and when
   the selection is itself a URL — then a normal replace happens.)
 - Inline formatting (`Mod+B/I`, strike, `==highlight==`, link) via a floating
-  selection toolbar, plus Emacs-style word/line kill motions.
+  selection toolbar, including page-link and inline-code wrapping/unwrapping,
+  plus Emacs-style word/line kill motions.
 - **Select then wrap** (always on, Logseq parity) — with text selected, typing a
   wrap character surrounds it: `[` twice → `[[selection]]` (opens the page search
   seeded with the words — Enter links or creates), `(` twice → `((selection))`
@@ -79,6 +83,11 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   `%`-token template — `%assetname %ext %yyyymmdd %hhmmss` (and granular `%yyyy %MM
   %dd %HH %mm %ss`) — defaulting to the plain original name, with a one-click
   *Date + name* preset.
+- **Explicit external-assets approval** — a graph whose `assets` directory is a
+  symlink or Windows junction can use its resolved device-local target after one
+  clear approval. Tine stores that exact canonical directory, confines asset reads
+  and writes to it, and fails closed if the link is later retargeted; pages,
+  journals, and configuration never inherit that exception.
 - **Drag the corner grip to resize an image *or a video*** — stored as a width % in
   Logseq's `{:width …}` brace, so it round-trips.
 - ⊕ **Audio ⤢ Expand** opens a wide overlay player — a **waveform scrubber** with
@@ -113,14 +122,26 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   character), it shows as a prefix on every inline `[[reference]]` and `#tag` to
   that page — like Logseq, and like Tine's own page title / namespace listing. (Emoji
   render as Twemoji SVG, since WebKitGTK paints color-emoji fonts blank.)
+- Values of `tags::`, `alias::`, and `aliases::` render as navigable page links,
+  including comma-separated bare values; quoted and custom property values stay
+  literal unless they contain explicit page-reference syntax.
 - The `((` popup full-text-searches blocks and inserts a **durable** reference
   (writes a stable `id::` first).
-- The `[[`/`#` Enter default is configurable (Settings → *Journals & tasks* →
-  **Link autocomplete default**): create-a-new-page (default, like Logseq) or
-  link-the-first-match.
+- **Page references lead the bare `/` menu.** `/` then Enter inserts `[[]]`,
+  keeps the caret inside, and opens page completion once you start typing;
+  typed slash commands retain their existing fuzzy ranking (including `/A`).
+- The `[[`/`#` Enter default is configurable (Settings → *Editor* → Advanced →
+  **Link autocomplete default**): **OG adaptive** (default: strict-prefix
+  matches lead, fuzzy-only matches keep Create first), **Prefer existing**, or
+  **Prefer exactly what I typed**. Exact existing names always select the page.
+- **Mod-L inserts an external link** in Markdown or Org. It wraps selected plain
+  text as a label, or uses a selected URL/page/block/already-formatted link as
+  the target with an empty label.
 - **Linked & unlinked references** on every page (live/editable), with co-reference
   filtering and hover previews — and in the **right sidebar** page view too
-  (shift-click a page to open it there).
+  (shift-click a page to open it there). Both panels use the same parser-owned
+  exact-match evidence; large panels group by source page and show bounded,
+  highlighted excerpts with exact jump targets and per-page disclosure.
 - **Per-block reference count** badge → click to reveal the referencing blocks
   (grouped by page, each with its **ancestor breadcrumb**), or shift-click to open
   in the sidebar.
@@ -129,6 +150,9 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   reference** to the current block.
 - Inline block refs render as **link-styled text** (full-strength color + accent
   underline, like OG — not a grey chip).
+- Block embeds remain live editing surfaces: their disclosure state is local to the
+  visible embed, Enter keeps the caret there, and the root bullet plus heavier guide
+  use one restrained theme-aware accent without boxing or recoloring the content.
 - Copying a block **strips `id::`** from the clipboard text (like OG) so it never
   leaks into a paste — though the `id::` stays in the file so sidebar/tab/zoom spots
   persist a restart. Copy behavior is configurable (Settings → Journals & tasks),
@@ -147,14 +171,29 @@ files. **⊕ marks things Tine adds on top of Logseq core** (no plugins).
   `(task …)`, `(priority …)`, `(property …)`, `(page-property …)`, `(page-tags …)`,
   `(scheduled)`, `(deadline)`, `(journal)`, `(namespace …)`, `(between START END)`
   with a field selector, `(sort-by …)`. Results render as a list or a sortable
-  **table**; ⊕ an interactive **visual query builder** (chip/clause bar) builds them
-  without writing the DSL. The builder's **Sort** control offers one-click presets
+  **table** or board. Search, list, table, and board are presentations of one result
+  membership rather than separate query implementations. ⊕ A friendly search-text
+  surface, a Gmail-style filter dialog, the interactive **visual query builder**
+  (chip/clause bar), and the raw DSL all compile to the same query plan. Explanations
+  show what Tine understood and diagnostics identify unsupported or invalid parts.
+  Nested query matches follow Logseq's exact top-level-result rule: a match is
+  suppressed only when its immediate parent is also a match, so a valid match
+  below a non-matching gap remains visible. Reference surfaces keep every direct
+  occurrence. Transport rows stay shallow, while explicit previews/exports are
+  node-and-byte/work bounded before hydration or serialization.
+  The builder's **Sort** control offers one-click presets
   — *Newest / Oldest first*, *Priority*, *Page*, *Deadline*, *Scheduled* — plus a
   free-text field for any other property. *Newest first* orders results on one
   recency timeline: journal pages by the day they represent (stable, not their file
   mtime), other pages by file modified-time, so journal and page todos interleave
   chronologically. (`sort-by modified/priority/page/deadline/scheduled` extend
   Logseq's property-only `sort-by`.)
+- ⊕ **Persistent search/query workspaces** — Ctrl+K can open its complete page and
+  block result set in a graph-scoped virtual tab; an empty workspace can be opened
+  first and then searched directly in its own input. The workspace survives restart,
+  switches between Search/List/Table/Board without changing membership, and remains
+  outside the graph until named. Giving it a title materializes one ordinary query
+  page, so exploratory search and durable dashboards share a single path.
 - **Summarize results** (beyond Logseq) — the builder's **∑ summarize** control
   computes, with no code, a **count** / **sum** / **average** of a property over the
   matched blocks, and/or a **group-by** (page or property) that breaks the results
@@ -319,11 +358,15 @@ within a column; merged cells are still v2+.
   to move it at that position, onto a pane body to append and activate it there,
   or onto a seam/pane edge to split that half and move the tab into the new pane.
   `Esc` cancels an in-progress tab drag.
+- **Tab overflow overview:** when a pane's tab strip no longer fits, its overview
+  button lists every full title with active, pinned, and close controls. Activating
+  a hidden tab reveals it in the strip. Drag its handle or use `Alt+Up/Down` to
+  reorder the pane's actual tab strip without leaving the overview.
 
 ## Tasks, journals & dates
 
 - `TODO/DOING/DONE/NOW/LATER/WAITING/CANCELED`, two configurable workflows,
-  priorities, cycle with `Mod+Enter`.
+  priorities, cycle with `Mod+Enter` (including every selected task at once).
 - **Time tracking / logbook** — marker transitions write OG-compatible
   `:LOGBOOK:` drawers: moving into `DOING`/`NOW` clocks in, moving back to
   `TODO`/`LATER` or into `DONE` clocks out. CLOCK rows use Logseq's exact local
@@ -365,12 +408,22 @@ within a column; merged cells are still v2+.
 - Each highlight becomes a clean bullet you can nest notes under; writes **merge with
   disk**, so an externally-added highlight or your top-level notes are never dropped,
   and recoloring a highlight updates its note-page badge to match.
+- Upload links keep the original source name while the configured asset template
+  chooses the stored filename. Viewer page/scale state, `hls__` note pages, copied
+  highlight references, rectangles, and sidecar metadata follow Logseq's current
+  graph contract without discarding foreign fields.
 
 ## Search & navigation
 
 - `Ctrl+K` quick switcher: page titles + full-text content hits (visible text only —
-  no false hits on hidden properties/uuids), with block breadcrumbs and middle-click
-  → background tab.
+  no false hits on hidden properties/uuids), with separated page/breadcrumb context,
+  bounded two-line evidence excerpts, all positive matching terms highlighted, and
+  middle-click → background tab. **Search syntax** documents phrases, alternatives,
+  exclusions, and regex; **Open all results** creates the persistent workspace above.
+- Title results are ranked first by objective exact/prefix/substring/fuzzy class.
+  Repeated deliberate choices may break ties inside one class using bounded,
+  device-local, per-graph history; this learning can be reset or disabled and never
+  changes saved search/query membership.
 - `Mod+F` in-page find on normal pages: a slim find bar with next/previous,
   `n / total` counts, and highlights for the current page. The match list is built
   from the block model, so collapsed or lazy-rendered branches are found and opened
@@ -380,6 +433,14 @@ within a column; merged cells are still v2+.
   "Namespace" header + nested descendant tree), an automatic **"Hierarchy"** section
   (breadcrumb paths of descendant pages) on any namespaced page, and read-only
   **"aka" alias chips** on pages reachable by another name.
+- **Collapsible navigation sections** — Favorites and Recent fold independently and
+  remember their state per graph. Right-sidebar pages/blocks also fold independently;
+  a compact menu collapses, expands, or closes all items, committing active edits
+  before an item is unmounted.
+- **Recursive outline-guide disclosure** — clicking the vertical guide below a
+  bullet expands every collapsible descendant if any are folded, otherwise collapses
+  the complete descendant subtree. The guide is keyboard-accessible; the bullet keeps
+  its normal single-block action.
 - **In-app Guide** — Help → Guide (or the *Open Guide* command) loads bundled,
   read-only how-to pages under the virtual `Tine-guide/` namespace. Guide links stay
   inside that virtual namespace, guide pages are hidden from search/page lists/backlinks,
@@ -480,10 +541,16 @@ within a column; merged cells are still v2+.
   image) straight into the graph's `assets/` and inserts it; the mic button
   records a voice memo (`.m4a`) into `assets/` and inserts an audio player
   (permission-prompted on first use, with a pulsing stop button while recording).
-- **Mobile-tuned UI** — a real app icon, an edge-to-edge layout that keeps
-  controls clear of the status/navigation bars, a hardware **Back** button that
-  navigates within Tine (exiting only at the root), and compact journal headers
-  and settings for a phone.
+- **Mobile-tuned UI** — a real app icon, an edge-to-edge layout whose native
+  status/navigation icons follow the selected theme, tighter deep-outline geometry,
+  a hardware **Back** button that navigates within Tine (exiting only at the root),
+  and compact journal headers and settings for a phone. Interface size scales the
+  complete Android document and persists locally.
+- **Width-responsive sidebars** — below 640 px, the left and right sidebars are
+  modal drawers over an unchanged page: tap the shaded outside edge, use their
+  close control, press Escape, or press Android Back to dismiss them safely. At
+  640 px and wider—including tablets—they remain persistent desktop-style panes,
+  can be open together, and retain their resize controls.
 - **Distribution** — sideloaded, release-signed APK attached to each GitHub
   release (built and signed in CI). Play Store / F-Droid are planned; iOS is
   being scoped.

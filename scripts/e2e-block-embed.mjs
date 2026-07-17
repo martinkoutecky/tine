@@ -1,6 +1,7 @@
 // Linux real-app proof for GH #124. Exercises the browser's full pointer event
 // sequence on embedded disclosure controls and verifies that Enter keeps focus in
 // same-page and cross-page transclusions while the source files persist normally.
+// A third isolated transclusion covers structural Arrow navigation and deletion.
 import { spawn } from "node:child_process";
 import { remote } from "webdriverio";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -19,6 +20,8 @@ const SOURCE = `${GRAPH}/pages/Block Embed Source.md`;
 const TEST = `${GRAPH}/pages/Block Embed Test.md`;
 const CROSS = "11111111-1111-4111-8111-111111111111";
 const SAME = "33333333-3333-4333-8333-333333333333";
+const NAV = "55555555-5555-4555-8555-555555555555";
+const NAV_CHILD = "66666666-6666-4666-8666-666666666666";
 
 fs.rmSync(TMP, { recursive: true, force: true });
 for (const dir of ["pages", "journals", "logseq"]) fs.mkdirSync(`${GRAPH}/${dir}`, { recursive: true });
@@ -30,11 +33,18 @@ fs.writeFileSync(SOURCE, [
   "  - Cross-page child block",
   "    id:: 22222222-2222-4222-8222-222222222222",
   "    - Cross-page grandchild block",
+  "- Navigation-only embedded parent",
+  `  id:: ${NAV}`,
+  "  - Navigation-only child block",
+  `    id:: ${NAV_CHILD}`,
+  "    - Navigation-only grandchild block",
   "",
 ].join("\n"));
 fs.writeFileSync(TEST, [
   "- Cross-page block embed",
   `  - {{embed ((${CROSS}))}}`,
+  "- Navigation-only block embed",
+  `  - {{embed ((${NAV}))}}`,
   "- Same-page source block",
   `  id:: ${SAME}`,
   "  - Same-page child block",
@@ -72,6 +82,7 @@ async function openTestPage() {
     timeout: 10_000, timeoutMsg: "Block Embed Test page did not open",
   });
   await browser.$(`${rootSelector(CROSS)} .block-content`).waitForExist({ timeout: 10_000 });
+  await browser.$(`${rootSelector(NAV)} .block-content`).waitForExist({ timeout: 10_000 });
   await browser.$(`${rootSelector(SAME)} .block-content`).waitForExist({ timeout: 10_000 });
 }
 
@@ -134,6 +145,64 @@ async function exerciseEnter(id, inserted, file) {
   });
 }
 
+async function activeEditor() {
+  return browser.execute(() => {
+    const active = document.activeElement;
+    const row = active?.closest?.(".ls-block");
+    return {
+      editor: active instanceof HTMLTextAreaElement && active.classList.contains("block-editor"),
+      inEmbed: Boolean(active?.closest?.(".embed-block")),
+      id: row?.getAttribute("data-block-id") ?? null,
+      value: active instanceof HTMLTextAreaElement ? active.value : null,
+    };
+  });
+}
+
+async function waitForEmbedEditor(id, value) {
+  await browser.waitUntil(async () => {
+    const state = await activeEditor();
+    return state.editor && state.inEmbed && state.id === id && (value === undefined || state.value === value);
+  }, {
+    timeout: 5000,
+    timeoutMsg: `embed editor ${id} did not retain focus: ${JSON.stringify(await activeEditor())}`,
+  });
+}
+
+async function exerciseArrowAndDelete() {
+  const childRoot = rootSelector(NAV_CHILD);
+  await browser.$(`${childRoot} > .block-main .block-content`).click();
+  await browser.execute((selector) => {
+    const input = document.querySelector(selector);
+    input.focus();
+    input.setSelectionRange(0, 0);
+  }, `${childRoot} textarea.block-editor`);
+  await browser.keys(["ArrowUp"]);
+  await waitForEmbedEditor(NAV);
+
+  const parentRoot = rootSelector(NAV);
+  await browser.execute((selector) => {
+    const input = document.querySelector(selector);
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  }, `${parentRoot} textarea.block-editor`);
+  await browser.keys(["ArrowDown"]);
+  await waitForEmbedEditor(NAV_CHILD);
+
+  await browser.execute((selector) => {
+    const input = document.querySelector(selector);
+    input.focus();
+    input.setSelectionRange(0, input.value.length);
+  }, `${childRoot} textarea.block-editor`);
+  await browser.keys(["Delete"]);
+  await waitForEmbedEditor(NAV_CHILD, "");
+  await browser.keys(["Backspace"]);
+  await waitForEmbedEditor(NAV);
+  await browser.waitUntil(() => !fs.readFileSync(SOURCE, "utf8").includes("Navigation-only child block"), {
+    timeout: 10_000,
+    timeoutMsg: "empty embedded child was not merged into its source outline",
+  });
+}
+
 try {
   browser = await remote({
     hostname: "127.0.0.1", port: DRIVER_PORT, path: "/", logLevel: "error", connectionRetryCount: 1, connectionRetryTimeout: 60_000,
@@ -145,12 +214,13 @@ try {
   if (fs.readFileSync(SOURCE, "utf8").includes("collapsed::") || fs.readFileSync(TEST, "utf8").includes("collapsed::")) {
     throw new Error("embed-local disclosure leaked collapsed:: into a source file");
   }
+  await exerciseArrowAndDelete();
   // WebKitDriver can coalesce immediately repeated identical key events, so keep
   // these proof strings free of doubled characters; the behavior under test is
   // focus routing and source persistence, not keyboard-repeat timing.
   await exerciseEnter(CROSS, "native child alpha", SOURCE);
   await exerciseEnter(SAME, "native child beta", TEST);
-  console.log("PASS: same-page and cross-page embed disclosure and Enter focus stayed local and persisted safely");
+  console.log("PASS: embed disclosure, Arrow navigation, deletion, and Enter focus stayed local and persisted safely");
 } finally {
   try { await browser?.deleteSession(); } catch {}
   try { process.kill(-td.pid, "SIGKILL"); } catch {}

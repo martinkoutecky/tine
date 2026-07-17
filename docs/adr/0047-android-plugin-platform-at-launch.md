@@ -1,4 +1,4 @@
-# 0045. Android joins the initial plugin-platform launch through explicit opt-in
+# 0047. Android joins the initial plugin-platform launch through explicit opt-in
 
 - **Status:** Accepted
 - **Date:** 2026-07-13

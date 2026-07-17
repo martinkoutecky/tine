@@ -20,8 +20,10 @@ child; the script SIGKILLs vite itself in a `finally`).
 ## What it measures
 
 Headless Chromium drives the mock backend's gated **2000-block "Big" page**
-(`?big` in `src/mock.ts`). Each metric is timed **in-page** with `performance.now`
-and reported as the **min of K=8** runs (least noise), after one discarded warmup.
+(`?big` in `src/mock.ts`). A local invocation times each metric **in-page** with
+`performance.now` and reports the **min of K=8** runs (least noise), after one
+discarded warmup. Manual full/focused CI wraps the same harness in the
+multi-round protocol below.
 It boots once and measures **warm navigations** (journals ↔ Big) so the numbers
 reflect the app's own mount/render cost, not per-reload JIT + WASM-compile jitter.
 
@@ -55,12 +57,21 @@ browser layout/paint to normalize scrolling reliably. Accordingly, `npm run
 bench` reports a different-machine baseline as advisory and does not fail; a
 baseline recorded on the same machine retains the local regression exit code.
 
-## CI hard gate: same-machine A/B without baseline ratcheting
+## Release/focused CI hard gate: same-machine A/B without baseline ratcheting
 
-CI checks out and builds three exact trees on one runner: the candidate, the
-immutable long-term anchor, and the most recently published release. It measures
-all three sequentially and compares their **raw** values. A calibration-spread
-guard rejects a noisy/throttled run instead of calling it a code regression.
+The manual performance job checks out and builds three exact trees on one
+runner: the candidate, the immutable long-term anchor, and the most recently
+published release. It runs
+three interleaved rounds and rotates the order, so every version occupies the
+first, middle, and last position once. Each decision uses the **median of the
+three round minima**, not a single invocation. The artifact retains every round,
+its exact order, and its within-round samples.
+
+Reliability is checked at both levels: calibration spread across all nine
+measurements, and per-version/per-metric spread across rounds. A volatile
+`scrollBig` baseline therefore fails as unreliable even when its median would
+make the candidate pass. Rerunning a red job cannot erase the first attempt's
+evidence; every attempt uploads its complete distribution.
 
 `scripts/bench-policy.json` is the contract:
 
@@ -71,11 +82,41 @@ guard rejects a noisy/throttled run instead of calling it a code regression.
   published version. It catches a large one-release jump.
 - Budgets are metric-specific: large-page load is allowed 25% over the immutable
   anchor and 15% over the previous release; scroll is allowed 30% and 20% because
-  its browser scheduling noise differs. Cold parse misses have an absolute cap of
-  15, independent of timing.
+  its browser scheduling noise differs. Round-spread limits are 30% for the
+  coarser load metric and 15% for scroll. Cold parse misses use the worst of the
+  three rounds and have an absolute cap of 15, independent of timing.
 
-The job is a hard gate. A feature expected to exceed a budget stops for a product
-decision and performance design; do not move either baseline to make it pass.
+The job is a hard release gate when `ci.yml` is dispatched with `scope=full`.
+Use the same workflow with `scope=performance` for focused proof between
+releases; it does not count as full release evidence. A feature expected to
+exceed a budget stops for a product decision and performance design; do not move
+either baseline to make it pass.
+
+## Native startup and early-frame paint
+
+The Chromium benchmark does not include Tauri process creation, WebKit startup,
+session restoration, or the first native frame. Before a release, build the
+production-protocol binary and run:
+
+```bash
+source scripts/env.sh
+npm run bench:startup
+```
+
+This downloads and caches the published Linux v0.4.7 binary under ignored
+`test-results/` (never under the home directory), then launches v0.4.7 and the
+candidate in alternating order. Every sample gets fresh XDG state and a private
+D-Bus session so Tine's single-instance forwarding cannot contaminate the
+measurement. The graph is deterministic: 80 pages derived from the public
+kitchen-sink fixture plus a 120-block journal.
+
+The report records native session creation and first visible journal content,
+using eight measured samples per binary. Any median or p95 more than 30% slower
+than the immutable v0.4.7 anchor fails. Separate, unmeasured visual trials retain
+frames at session attach, first content, +100 ms, +300 ms, and +1 s; inspect them
+for new blank/intermediate/corrupt paints even when the final timing is within
+budget. Override binaries or output with `TINE_STARTUP_BASELINE`,
+`TINE_STARTUP_CANDIDATE`, and `TINE_STARTUP_ARTIFACT_DIR`.
 
 ## Graph-scale bench (Rust core, on-disk graph)
 

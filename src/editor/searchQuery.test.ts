@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { SEARCH_SYNTAX, parseSearchQuery, matcherMatches, simpleTerm, matchHighlight, matchHighlights, friendlySearchToDsl, friendlySearchToSavedDsl, savedDslToFriendlySearch } from "./searchQuery";
+import { SEARCH_SYNTAX, canonicalFold, parseSearchQuery, matcherMatches, simpleTerm, matchHighlight, matchHighlights, friendlySearchToDsl, friendlySearchToSavedDsl, savedDslToFriendlySearch } from "./searchQuery";
 
 // Mirrors crates/tine-core/src/search_query.rs tests — keep the two in sync.
 const hit = (q: string, text: string) =>
-  matcherMatches(parseSearchQuery(q), text.toLowerCase(), text);
+  matcherMatches(parseSearchQuery(q), canonicalFold(text), text);
 
 describe("searchQuery parser (#44)", () => {
   it("executes every example displayed by Ctrl K syntax help", () => {
@@ -84,6 +84,21 @@ describe("searchQuery parser (#44)", () => {
       { start: 0, end: 2 },
       { start: 3, end: 5 },
     ]);
+  });
+
+  it("matches canonical Unicode forms and maps highlights to original UTF-16 spans", () => {
+    expect(hit("Café", "Cafe\u0301")).toBe(true);
+    expect(hit("Cafe\u0301", "Café")).toBe(true);
+    expect(hit("가", "\u1100\u1161")).toBe(true);
+    expect(hit("i\u0307", "İ")).toBe(true);
+    expect(hit("cafe", "café")).toBe(false);
+    expect(hit("/Café/", "Cafe\u0301")).toBe(false);
+    expect(matchHighlight(parseSearchQuery("Résumé"), "\u{1F9E0} Re\u0301sume\u0301"))
+      .toEqual({ start: 3, len: 8 });
+    expect(matchHighlights(parseSearchQuery("è\u0315"), "e\u0315\u0300"))
+      .toEqual([{ start: 0, end: 3 }]);
+    expect(matchHighlights(parseSearchQuery("i\u0307"), "İ"))
+      .toEqual([{ start: 0, end: 1 }]);
   });
 
   it("compiles friendly search to ordinary query DSL and preserves saved source losslessly", () => {

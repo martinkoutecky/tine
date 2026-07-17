@@ -103,6 +103,23 @@ describe("persisted split session", () => {
     expect(JSON.stringify(parsed)).not.toContain("results");
   });
 
+  it("round-trips independent empty query routes in split panes with the chosen focused owner", () => {
+    const empty = (id: string, source: string, presentation: "search" | "table"): PaneSnapshot => ({
+      tabs: [{ history: [{ kind: "query", id, sourceKind: "search", source, presentation }], pos: 0, pinned: false }],
+      activeIndex: 0,
+    });
+    const root: LayoutNode = {
+      kind: "split", dir: "row", ratio: 0.5,
+      children: [{ kind: "pane", paneId: "main" }, { kind: "pane", paneId: "pane-2" }],
+    };
+    restorePaneLayout(root, new Map([["main", empty("query-empty", "", "search")], ["pane-2", empty("query-alpha", "alpha", "table")]]), "pane-2");
+    const parsed = parsePersistedSession(JSON.stringify(buildPersistedSession()))!;
+    expect(parsed.focusedPaneId).toBe("pane-2");
+    expect(parsed.snapshots.get("main")?.tabs[0].history[0]).toEqual({ kind: "query", id: "query-empty", sourceKind: "search", source: "", presentation: "search" });
+    expect(parsed.snapshots.get("pane-2")?.tabs[0].history[0]).toEqual({ kind: "query", id: "query-alpha", sourceKind: "search", source: "alpha", presentation: "table" });
+    expect(JSON.stringify(parsed)).not.toContain("results");
+  });
+
   it("round-trips graph-scoped Favorites and Recent disclosure state and defaults legacy sessions open", () => {
     setFavoritesSectionExpanded(false);
     setRecentSectionExpanded(true);

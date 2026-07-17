@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { render } from "solid-js/web";
 import { PaneTree } from "../App";
-import { layoutRoot, resetPaneLayoutToSingle, restorePaneLayout } from "../panes";
+import { focusPane, layoutRoot, paneRouter, resetPaneLayoutToSingle, restorePaneLayout, type LayoutNode } from "../panes";
 import { setPaneSel } from "../paneSelect";
 import { resetStore } from "../store";
 import type { PaneSnapshot } from "../router";
@@ -103,6 +103,52 @@ describe("PaneTree", () => {
     setPaneSel({ kind: "seam", path: [] });
     expect(root.querySelector(".pane-resizer")?.classList.contains("pane-seam-selected")).toBe(true);
     dispose();
+  });
+
+  it("wires query source focus to the active pane and route ID without stealing same-route control focus", async () => {
+    const query = (id: string, source = ""): PaneSnapshot => ({
+      tabs: [{ history: [{ kind: "query", id, sourceKind: "search", source, presentation: "search" }], pos: 0, pinned: false }],
+      activeIndex: 0,
+    });
+    const rootNode: LayoutNode = {
+      kind: "split" as const, dir: "row" as const, ratio: 0.5,
+      children: [{ kind: "pane" as const, paneId: "main" }, { kind: "pane" as const, paneId: "pane-2" }],
+    };
+    const main: PaneSnapshot = {
+      tabs: [
+        { history: [{ kind: "query", id: "query-main-a", sourceKind: "search", source: "", presentation: "search" }], pos: 0, pinned: false },
+        { history: [{ kind: "query", id: "query-main-b", sourceKind: "search", source: "beta", presentation: "search" }], pos: 0, pinned: false },
+      ], activeIndex: 0,
+    };
+    restorePaneLayout(rootNode, new Map([["main", main], ["pane-2", query("query-side", "alpha")]]), "pane-2");
+    const host = document.createElement("div"); document.body.append(host);
+    const dispose = render(() => <PaneTree node={layoutRoot()} path={[]} />, host);
+    await Promise.resolve(); await Promise.resolve();
+    expect(document.activeElement).toBe(host.querySelector('[data-pane-id="pane-2"] .query-workspace-source'));
+
+    focusPane("main");
+    await Promise.resolve(); await Promise.resolve();
+    // `query-main-a` mounted while pane-2 owned focus. Restoring/activating
+    // main must focus that already-active route without requiring a tab change.
+    expect(document.activeElement).toBe(host.querySelector('[data-pane-id="main"] .query-workspace-source'));
+    paneRouter("main").setActiveTab(paneRouter("main").tabs()[1].id);
+    await Promise.resolve(); await Promise.resolve();
+    const activeSource = host.querySelector<HTMLInputElement>('[data-pane-id="main"] .query-workspace-source')!;
+    expect(activeSource.value).toBe("beta");
+    expect(document.activeElement).toBe(activeSource);
+    const presentation = host.querySelector<HTMLButtonElement>('[data-pane-id="main"] .query-presentations button:not(.active)')!;
+    presentation.focus();
+    paneRouter("main").updateActiveQuery({ source: " beta ", presentation: "table" });
+    await Promise.resolve(); await Promise.resolve();
+    expect(document.activeElement).toBe(presentation);
+    dispose();
+
+    restorePaneLayout(rootNode, new Map([["main", main], ["pane-2", query("query-side", "alpha")]]), "main");
+    const secondHost = document.createElement("div"); document.body.append(secondHost);
+    const disposeSecond = render(() => <PaneTree node={layoutRoot()} path={[]} />, secondHost);
+    await Promise.resolve(); await Promise.resolve();
+    expect(document.activeElement).toBe(secondHost.querySelector('[data-pane-id="main"] .query-workspace-source'));
+    disposeSecond();
   });
 
   it("renders the solo-pane edge highlight OUTSIDE the scroller (so it doesn't scroll away)", () => {

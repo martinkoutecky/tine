@@ -141,7 +141,7 @@ fn migrate_app_data_dir(new_dir: &Path) -> bool {
 /// this early). `dirs::data_dir()` is exactly the base Tauri v2's `app_data_dir()`
 /// joins the identifier onto (verified on Linux: `~/.local/share/<id>`, where
 /// WebKitGTK also puts the webview store).
-fn current_app_data_dir() -> Option<std::path::PathBuf> {
+pub(crate) fn current_app_data_dir() -> Option<std::path::PathBuf> {
     dirs::data_dir().map(|base| base.join(CURRENT_IDENTIFIER))
 }
 

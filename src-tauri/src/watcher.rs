@@ -11,22 +11,36 @@ use tine_core::{model::PageKind, Graph};
 struct GraphChange {
     name: String,
     kind: PageKind,
+    created: bool,
     removed: bool,
 }
 
 #[derive(Default)]
 struct Pending {
     paths: HashSet<PathBuf>,
+    full_paths: HashSet<PathBuf>,
     need_full: bool,
 }
 
 impl Pending {
     fn add_event(&mut self, event: notify::Event) {
-        if event.need_rescan() || !event_is_plain_page_file_op(&event) {
-            self.need_full = true;
+        if event.need_rescan() {
+            if event.paths.is_empty() {
+                self.need_full = true;
+            } else {
+                self.full_paths.extend(event.paths);
+            }
             return;
         }
-        self.paths.extend(event.paths);
+        if let Some(paths) = incremental_page_paths(&event) {
+            self.paths.extend(paths);
+        } else if event.paths.is_empty() {
+            self.need_full = true;
+        } else {
+            // A directory move or genuinely unknown file operation needs a full
+            // diff only for the graph that owns its reported path.
+            self.full_paths.extend(event.paths);
+        }
     }
 }
 
@@ -41,29 +55,58 @@ fn path_is_existing_dir(path: &Path) -> bool {
     std::fs::metadata(path).map(|m| m.is_dir()).unwrap_or(false)
 }
 
-fn all_concrete_page_file_paths(event: &notify::Event) -> bool {
-    !event.paths.is_empty()
-        && event
-            .paths
-            .iter()
-            .all(|p| is_page_file_path(p) && !path_is_existing_dir(p))
+fn is_tine_atomic_page_temp_path(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+        return false;
+    };
+    let Some(mut stem) = name.strip_suffix(".tmp") else {
+        return false;
+    };
+    if let Some(without_new) = stem.strip_suffix(".new") {
+        stem = without_new;
+    }
+    let Some((before_seq, seq)) = stem.rsplit_once('.') else {
+        return false;
+    };
+    let Some((page_name, pid)) = before_seq.rsplit_once('.') else {
+        return false;
+    };
+    seq.chars().all(|value| value.is_ascii_digit())
+        && pid.chars().all(|value| value.is_ascii_digit())
+        && page_name.starts_with('.')
+        && is_page_file_path(Path::new(page_name))
 }
 
-fn event_is_plain_page_file_op(event: &notify::Event) -> bool {
+fn incremental_page_paths(event: &notify::Event) -> Option<Vec<PathBuf>> {
     use notify::event::{CreateKind, EventKind, ModifyKind, RemoveKind, RenameMode};
 
-    if !all_concrete_page_file_paths(event) {
-        return false;
+    let supported = matches!(
+        event.kind,
+        EventKind::Create(CreateKind::File)
+            | EventKind::Modify(ModifyKind::Data(_))
+            | EventKind::Modify(ModifyKind::Metadata(_))
+            | EventKind::Modify(ModifyKind::Name(
+                RenameMode::From | RenameMode::To | RenameMode::Both
+            ))
+            | EventKind::Remove(RemoveKind::File)
+    );
+    if !supported || event.paths.is_empty() {
+        return None;
     }
-    match event.kind {
-        EventKind::Create(CreateKind::File) => true,
-        EventKind::Modify(ModifyKind::Data(_)) | EventKind::Modify(ModifyKind::Metadata(_)) => true,
-        EventKind::Modify(ModifyKind::Name(
-            RenameMode::From | RenameMode::To | RenameMode::Both,
-        )) => true,
-        EventKind::Remove(RemoveKind::File) => true,
-        _ => false,
+    if event.paths.iter().any(|path| {
+        (!is_page_file_path(path) || path_is_existing_dir(path))
+            && !is_tine_atomic_page_temp_path(path)
+    }) {
+        return None;
     }
+    Some(
+        event
+            .paths
+            .iter()
+            .filter(|path| is_page_file_path(path) && !path_is_existing_dir(path))
+            .cloned()
+            .collect(),
+    )
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -180,12 +223,14 @@ fn full_diff_reconcile(
     let mut conflicts_dirty = false;
     for (p, m) in &current {
         if snap.get(p) != Some(m) {
+            let created = !snap.contains_key(p);
             if tine_core::model::path_is_sync_conflict(p) {
                 conflicts_dirty = true;
             } else if let Some(en) = graph.sync_file(p) {
                 changes.push(GraphChange {
                     name: en.name,
                     kind: en.kind,
+                    created,
                     removed: false,
                 });
             }
@@ -199,6 +244,7 @@ fn full_diff_reconcile(
                 changes.push(GraphChange {
                     name: en.name,
                     kind: en.kind,
+                    created: false,
                     removed: true,
                 });
             }
@@ -218,6 +264,7 @@ fn incremental_reconcile(
 
     for p in paths {
         if let Some(m) = file_snapshot(p) {
+            let created = !snap.contains_key(p);
             // This path came from an explicit OS event. Always compare its
             // content even if a sync/copy tool preserved mtime and length;
             // `Graph::sync_file` already suppresses Tine's own/unchanged bytes.
@@ -227,6 +274,7 @@ fn incremental_reconcile(
                 changes.push(GraphChange {
                     name: en.name,
                     kind: en.kind,
+                    created,
                     removed: false,
                 });
             }
@@ -238,6 +286,7 @@ fn incremental_reconcile(
                 changes.push(GraphChange {
                     name: en.name,
                     kind: en.kind,
+                    created: false,
                     removed: true,
                 });
             }
@@ -371,17 +420,18 @@ pub(crate) fn start_watcher(app: tauri::AppHandle) {
             }
 
             // --- reconcile (identical in both modes) ---
-            let (paths, event_need_full) = if inotify {
+            let (paths, full_paths, event_need_full) = if inotify {
                 if let Ok(mut p) = pending.lock() {
                     let paths = std::mem::take(&mut p.paths);
+                    let full_paths = std::mem::take(&mut p.full_paths);
                     let need_full = p.need_full;
                     p.need_full = false;
-                    (paths, need_full)
+                    (paths, full_paths, need_full)
                 } else {
-                    (HashSet::new(), true)
+                    (HashSet::new(), HashSet::new(), true)
                 }
             } else {
-                (HashSet::new(), true)
+                (HashSet::new(), HashSet::new(), true)
             };
             for (label, graph) in graphs.iter_mut() {
                 if !graph.baseline {
@@ -390,7 +440,8 @@ pub(crate) fn start_watcher(app: tauri::AppHandle) {
                     continue;
                 }
                 let owned = pending_for_graph(&paths, &graph.dirs);
-                let need_full = event_need_full || !inotify;
+                let full_owned = pending_for_graph(&full_paths, &graph.dirs);
+                let need_full = event_need_full || !inotify || !full_owned.is_empty();
                 if need_full || !owned.is_empty() {
                     let (changes, conflicts_dirty, _) = reconcile_pending(
                         &graph.slot.graph,
@@ -472,6 +523,40 @@ pub(crate) fn set_watch_mode(
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn atomic_page_save_temp_events_stay_incremental() {
+        use notify::event::{EventKind, ModifyKind, RenameMode};
+
+        let page = PathBuf::from("/graphs/a/pages/one.md");
+        let temp = PathBuf::from("/graphs/a/pages/.one.md.123.7.tmp");
+        let mut pending = Pending::default();
+        pending.add_event(notify::Event {
+            kind: EventKind::Modify(ModifyKind::Name(RenameMode::Both)),
+            paths: vec![temp, page.clone()],
+            attrs: Default::default(),
+        });
+
+        assert!(!pending.need_full, "Tine's own temp rename must not request a full scan");
+        assert_eq!(pending.paths, HashSet::from([page]));
+    }
+
+    #[test]
+    fn unknown_path_event_requests_full_scan_only_for_its_owner() {
+        use notify::event::{CreateKind, EventKind};
+
+        let unknown = PathBuf::from("/graphs/a/pages/new-directory");
+        let mut pending = Pending::default();
+        pending.add_event(notify::Event {
+            kind: EventKind::Create(CreateKind::Folder),
+            paths: vec![unknown.clone()],
+            attrs: Default::default(),
+        });
+
+        assert!(!pending.need_full);
+        assert_eq!(pending.full_paths, HashSet::from([unknown]));
+        assert!(pending.paths.is_empty());
+    }
 
     #[test]
     fn pending_paths_are_dispatched_only_to_the_owning_graph() {
@@ -675,6 +760,26 @@ mod tests {
     }
 
     #[test]
+    fn incremental_create_is_identified_as_inventory_change() {
+        let tg = TempGraph::new("create-inventory");
+        tg.write("pages/Seed.md", "- seed\n");
+        let graph = Graph::open(&tg.root);
+        warm_cache(&graph);
+        let dirs = graph_dirs(&graph);
+        let mut snap = collect_graph_page_files(&dirs);
+        let path = tg.path("pages/New.md");
+        tg.write("pages/New.md", "- new\n");
+
+        let (changes, conflicts_dirty) =
+            incremental_reconcile(&graph, &mut snap, &HashSet::from([path]));
+
+        assert!(!conflicts_dirty);
+        assert_eq!(changes.len(), 1);
+        assert!(changes[0].created);
+        assert!(!changes[0].removed);
+    }
+
+    #[test]
     fn incremental_create_nested_file_matches_full_diff() {
         assert_incremental_matches_full(
             "create-nested",
@@ -730,6 +835,7 @@ mod tests {
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0].name, "Edit");
         assert_eq!(changes[0].kind, PageKind::Page);
+        assert!(!changes[0].created);
         assert!(!changes[0].removed);
     }
 

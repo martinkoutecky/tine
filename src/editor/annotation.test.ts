@@ -15,6 +15,11 @@ describe("pdfFileForPage", () => {
     expect(pdfFileForPage("hls__book")).toBe("book_123.pdf");
   });
 
+  it("reads the OG Org #+FILE-PATH pre-block form", () => {
+    seed("#+FILE: [[../assets/A Book.pdf][A Book]]\n#+FILE-PATH: ../assets/A Book.pdf");
+    expect(pdfFileForPage("hls__book")).toBe("A Book.pdf");
+  });
+
   it("basenames a Windows backslash relative path", () => {
     seed("file-path:: ..\\assets\\book_123.pdf");
     expect(pdfFileForPage("hls__book")).toBe("book_123.pdf");

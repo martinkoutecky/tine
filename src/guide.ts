@@ -1,7 +1,7 @@
 import { backend } from "./backend";
 import { openPage, openPageInNewTab } from "./router";
 import { loadGuidePages, pageByName } from "./store";
-import { graphMeta, pushToast, setGraphMeta } from "./ui";
+import { bumpPageInventoryRev, graphMeta, pushToast, setGraphMeta } from "./ui";
 import type { GuidePage } from "./types";
 
 export const GUIDE_DISPLAY_PREFIX = "Tine-guide/";
@@ -71,6 +71,7 @@ export async function copyGuideIntoGraph(pageName: string): Promise<void> {
   const title = guideTitleFromName(page?.name ?? pageName);
   try {
     const result = await backend().copyGuideIntoGraph(title);
+    if ((result.created_pages?.length ?? 0) > 0) bumpPageInventoryRev();
     pushToast(
       result.created
         ? "Copied the guide into your graph under tine-guide/."

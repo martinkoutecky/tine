@@ -7,10 +7,25 @@
 #   TINE_TOOLCHAIN=$HOME/.tine-toolchain source scripts/env.sh
 
 # Resolve the repo root from this script's own path (works when sourced), then
-# default the toolchain to a sibling `.toolchain/` of the repo.
+# default the toolchain to a sibling `.toolchain/` of the primary checkout.
+# Linked agent worktrees live under `tine-agent-worktrees/`, so their immediate
+# sibling is not the persistent toolchain. Git's common dir points back to the
+# primary checkout and keeps the same script valid in both layouts.
 _env_sh_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 _repo_root="$(cd "$_env_sh_dir/.." && pwd)"
-: "${TINE_TOOLCHAIN:=$(cd "$_repo_root/.." && pwd)/.toolchain}"
+if [ -z "${TINE_TOOLCHAIN:-}" ]; then
+  _toolchain_candidate="$(cd "$_repo_root/.." && pwd)/.toolchain"
+  if [ ! -x "$_toolchain_candidate/cargo/bin/rustup" ]; then
+    while IFS= read -r _worktree_root; do
+      _worktree_candidate="$(cd "$(dirname "$_worktree_root")" && pwd)/.toolchain"
+      if [ -x "$_worktree_candidate/cargo/bin/rustup" ]; then
+        _toolchain_candidate="$_worktree_candidate"
+        break
+      fi
+    done < <(git -C "$_repo_root" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p')
+  fi
+  TINE_TOOLCHAIN="$_toolchain_candidate"
+fi
 
 export CARGO_HOME="$TINE_TOOLCHAIN/cargo"
 export RUSTUP_HOME="$TINE_TOOLCHAIN/rustup"
@@ -50,4 +65,4 @@ case "${CXXFLAGS:-}" in *conda*) unset CXXFLAGS ;; esac
 case "${CPPFLAGS:-}" in *conda*) unset CPPFLAGS ;; esac
 case "${LDFLAGS:-}" in *conda*) unset LDFLAGS ;; esac
 
-unset _env_sh_dir _repo_root
+unset _env_sh_dir _repo_root _toolchain_candidate _worktree_root _worktree_candidate

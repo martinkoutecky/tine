@@ -1,7 +1,10 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
+import { backend } from "../backend";
 import { AstBody } from "./body";
 import { initParser } from "./parse";
+import { installKeybindings } from "../keybindings";
+import { clearTransientLayersForTest, dismissTopTransient, registerTransientLayer } from "../transientLayers";
 
 const PEEK_OPEN_MS = 350;
 const PEEK_CLOSE_MS = 150;
@@ -18,7 +21,9 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  clearTransientLayersForTest();
   vi.useRealTimers();
+  vi.restoreAllMocks();
   document.body.replaceChildren();
 });
 
@@ -187,6 +192,7 @@ describe("page hover-peek (GH #40)", () => {
   });
 
   it("opens block-ref peeks only after dwell", async () => {
+    const preview = vi.spyOn(backend(), "previewBlock");
     const { root, dispose } = mountAttached("Inline ref ((arch-1)) here");
     try {
       const ref = root.querySelector(".block-ref")!;
@@ -194,12 +200,83 @@ describe("page hover-peek (GH #40)", () => {
       fireEnter(ref);
       await advance(PEEK_OPEN_MS - 1);
       expect(popup()).toBeFalsy();
+      expect(preview).not.toHaveBeenCalled();
 
       await advance(1);
       const shown = await waitFor(() => !!popup()?.querySelector(".ls-block"));
       expect(shown).toBe(true);
       expect(popup()!.querySelector(".peek-popup-title-name")?.textContent).toContain("Tine");
       expect(popup()!.querySelector(".ls-block")).toBeTruthy();
+      expect(preview).toHaveBeenCalledWith("arch-1", 50);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("gives a real page peek one shared Escape before a lower transient", async () => {
+    const lowerRoot = document.createElement("button");
+    document.body.append(lowerRoot);
+    let lowerDismissals = 0;
+    const unregisterLower = registerTransientLayer({
+      id: "peek-lower",
+      root: () => lowerRoot,
+      dismiss: () => { lowerDismissals += 1; return true; },
+    });
+    const uninstall = installKeybindings();
+    const { root, dispose } = mountAttached("A link to [[Tine]] here");
+    try {
+      fireEnter(root.querySelector("a.page-ref")!);
+      await advance(PEEK_OPEN_MS);
+      await waitFor(() => !!popup()?.querySelector(".ls-block"));
+      const event = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+      popup()!.dispatchEvent(event);
+      await advance(0);
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(popup()).toBeFalsy();
+      expect(lowerDismissals).toBe(0);
+      document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      expect(lowerDismissals).toBe(1);
+    } finally {
+      uninstall();
+      unregisterLower();
+      dispose();
+    }
+  });
+
+  it.each([
+    ["composing", { composing: true, keyCode: undefined }],
+    ["keyCode 229", { composing: false, keyCode: 229 }],
+  ] as const)("keeps a real page peek open for %s Escape", async (_name, variant) => {
+    const uninstall = installKeybindings();
+    const { root, dispose } = mountAttached("A link to [[Tine]] here");
+    try {
+      fireEnter(root.querySelector("a.page-ref")!);
+      await advance(PEEK_OPEN_MS);
+      await waitFor(() => !!popup()?.querySelector(".ls-block"));
+      const event = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+      if (variant.composing) Object.defineProperty(event, "isComposing", { value: true });
+      if (variant.keyCode != null) Object.defineProperty(event, "keyCode", { value: variant.keyCode });
+      popup()!.dispatchEvent(event);
+      await advance(PEEK_CLOSE_MS + 1);
+
+      expect(event.defaultPrevented).toBe(false);
+      expect(popup()).toBeTruthy();
+    } finally {
+      uninstall();
+      dispose();
+    }
+  });
+
+  it("uses the same mounted peek rung for shared Back", async () => {
+    const { root, dispose } = mountAttached("Inline ref ((arch-1)) here");
+    try {
+      fireEnter(root.querySelector(".block-ref")!);
+      await advance(PEEK_OPEN_MS);
+      await waitFor(() => !!popup()?.querySelector(".ls-block"));
+      expect(dismissTopTransient("back")).toBe(true);
+      await advance(0);
+      expect(popup()).toBeFalsy();
     } finally {
       dispose();
     }

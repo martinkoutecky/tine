@@ -121,6 +121,48 @@ describe("renderInlines", () => {
     });
   });
 
+  it("serializes whole-file audio fallback, bounds it globally, and releases bytes on unmount", async () => {
+    vi.spyOn(backend(), "streamAsset").mockImplementation(async (name) => `asset://${name}`);
+    const resolvers: Array<(bytes: Uint8Array) => void> = [];
+    const read = vi.spyOn(backend(), "readAsset").mockImplementation(
+      () => new Promise<Uint8Array>((resolve) => { resolvers.push(resolve); })
+    );
+    vi.stubGlobal("URL", {
+      createObjectURL: vi.fn((blob: Blob) => `blob:media-${blob.size}`),
+      revokeObjectURL: vi.fn(),
+    });
+    const host = document.createElement("div");
+    const media = (name: string): Inline => ({
+      k: "link",
+      url: { type: "search", v: `../assets/${name}` },
+      full: `![](../assets/${name})`,
+      image: true,
+    });
+    const dispose = render(() => renderInlines([media("one.mp3"), media("two.mp3")]), host);
+    await vi.waitFor(() => expect(host.querySelectorAll("audio")).toHaveLength(2));
+
+    for (const audio of host.querySelectorAll("audio")) audio.dispatchEvent(new Event("error"));
+    await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
+    expect(read).toHaveBeenCalledWith("one.mp3", 64 * 1024 * 1024);
+
+    resolvers.shift()!(new Uint8Array([1, 2, 3]));
+    await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+    expect(read).toHaveBeenLastCalledWith("two.mp3", 64 * 1024 * 1024);
+    resolvers.shift()!(new Uint8Array([4, 5, 6]));
+    await vi.waitFor(() => expect(host.querySelectorAll('audio[src^="blob:media-"]')).toHaveLength(2));
+
+    dispose();
+
+    const nextHost = document.createElement("div");
+    const disposeNext = render(() => renderInlines([media("three.mp3")]), nextHost);
+    await vi.waitFor(() => expect(nextHost.querySelector("audio")).not.toBeNull());
+    nextHost.querySelector("audio")!.dispatchEvent(new Event("error"));
+    await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(3));
+    expect(read).toHaveBeenLastCalledWith("three.mp3", 64 * 1024 * 1024);
+    resolvers.shift()!(new Uint8Array([7, 8, 9]));
+    disposeNext();
+  });
+
   it("image-syntax PDF renders as a PDF link, not an image", () => {
     const h = inl([{ k: "link", url: { type: "search", v: "../assets/paper.pdf" }, full: "![](../assets/paper.pdf)", image: true }]);
     expect(h).toContain('class="external-link pdf-link"');

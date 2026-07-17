@@ -6,10 +6,119 @@
 use crate::date::JournalDate;
 use crate::doc::{DocBlock, Document};
 use crate::model::{
-    block_to_dto, BlockDto, Format, Graph, PageEntry, PageKind, RefGroup, TemplateDto,
+    block_to_shallow_dto, BacklinkFilterContext, BacklinkFilterEntry, BacklinkFilterTarget,
+    BlockDto, BlockPreview, Format, Graph, PageEntry, PageKind, RefGroup, ReferenceBlockEvidence,
+    ReferenceDiagnosticTrace, ReferenceDiagnostics, ReferenceKind, TemplateDto,
 };
 use crate::refs;
 use crate::search_query::Matcher;
+
+/// Query source crosses several boundaries (live macros, native IPC, static
+/// publication, and export). Keep one shared ceiling so no caller can make the
+/// parser or its cache key proportional to an unbounded graph-authored string.
+pub const QUERY_SOURCE_MAX_BYTES: usize = 64 * 1024;
+const QUERY_NESTING_MAX: usize = 64;
+
+pub fn query_source_within_limit(source: &str) -> bool {
+    source.len() <= QUERY_SOURCE_MAX_BYTES
+}
+
+/// Iterative, string/comment-aware guard before either recursive DSL parser.
+/// Count parentheses because those are the only delimiters that construct
+/// recursive predicates; brackets/braces are scanned iteratively as data.
+pub fn query_nesting_within_limit(source: &str) -> bool {
+    let semicolon_comments = is_advanced(source);
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut in_comment = false;
+    for byte in source.bytes() {
+        if in_comment {
+            if byte == b'\n' {
+                in_comment = false;
+            }
+            continue;
+        }
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match byte {
+            b';' if semicolon_comments => in_comment = true,
+            b'"' => in_string = true,
+            b'(' => {
+                depth = depth.saturating_add(1);
+                if depth > QUERY_NESTING_MAX {
+                    return false;
+                }
+            }
+            b')' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    true
+}
+
+#[derive(Debug, Clone)]
+pub struct BoundedGroups {
+    pub groups: Vec<RefGroup>,
+    pub total: usize,
+    pub exceeded: bool,
+}
+
+struct ConstructionBudget {
+    max_rows: usize,
+    max_bytes: usize,
+    rows: usize,
+    bytes: usize,
+    total: usize,
+    exceeded: bool,
+}
+
+impl ConstructionBudget {
+    fn new(max_rows: usize, max_bytes: usize) -> Self {
+        Self {
+            max_rows,
+            max_bytes,
+            rows: 0,
+            bytes: 0,
+            total: 0,
+            exceeded: false,
+        }
+    }
+
+    fn admit_estimated(&mut self, page: &str, payload_bytes: usize) -> bool {
+        self.total = self.total.saturating_add(1);
+        let bytes = payload_bytes
+            .saturating_add(page.len())
+            .saturating_add(256);
+        if self.exceeded
+            || self.rows >= self.max_rows
+            || self.bytes.saturating_add(bytes) > self.max_bytes
+        {
+            self.exceeded = true;
+            return false;
+        }
+        self.rows += 1;
+        self.bytes += bytes;
+        true
+    }
+
+    fn deny_match(&mut self) {
+        self.total = self.total.saturating_add(1);
+        self.exceeded = true;
+    }
+
+    fn closed(&self) -> bool {
+        self.exceeded || self.rows >= self.max_rows
+    }
+}
 
 /// Parse a journal-page title (e.g. "Jan 1st, 2022") to a `yyyymmdd` ordinal.
 fn journal_ordinal(title: &str) -> Option<i64> {
@@ -24,18 +133,193 @@ fn walk<'a>(blocks: &'a [DocBlock], f: &mut impl FnMut(&'a DocBlock)) {
     }
 }
 
-/// Walk depth-first, passing each block's ancestor chain (outermost first).
-fn walk_path<'a>(
+type PathRefCounts = std::collections::HashMap<String, usize>;
+
+fn push_path_refs(block: &DocBlock, refs: &mut PathRefCounts) {
+    for reference in &block.projection().refs_norm {
+        *refs.entry(reference.clone()).or_default() += 1;
+    }
+}
+
+fn pop_path_refs(block: &DocBlock, refs: &mut PathRefCounts) {
+    for reference in &block.projection().refs_norm {
+        let remove = if let Some(count) = refs.get_mut(reference) {
+            *count -= 1;
+            *count == 0
+        } else {
+            false
+        };
+        if remove {
+            refs.remove(reference);
+        }
+    }
+}
+
+/// Walk all blocks while maintaining the normalized union of ancestor refs.
+/// This mirrors OG's materialized `:block/path-refs` without adding a second
+/// persistent index or turning deep outlines into an O(nodes * depth) scan.
+fn walk_path_refs<'a>(
+    blocks: &'a [DocBlock],
+    refs: &mut PathRefCounts,
+    track_refs: bool,
+    f: &mut impl FnMut(&'a DocBlock, &PathRefCounts),
+) {
+    for block in blocks {
+        f(block, refs);
+        if track_refs {
+            push_path_refs(block, refs);
+        }
+        walk_path_refs(&block.children, refs, track_refs, f);
+        if track_refs {
+            pop_path_refs(block, refs);
+        }
+    }
+}
+
+/// Collect matches in document order while evaluating every candidate exactly
+/// once. OG query presentation removes a result only when its *immediate parent*
+/// is also in the unfiltered result set (`tree/filter-top-level-blocks`); it does
+/// not prune the rest of a matching block's subtree. Reference occurrence
+/// surfaces use `suppress_direct_child = false` because every referring block is
+/// independently countable/navigable.
+fn collect_matching_path<'a, M, T>(
     blocks: &'a [DocBlock],
     path: &mut Vec<&'a DocBlock>,
-    f: &mut impl FnMut(&'a DocBlock, &[&'a DocBlock]),
+    parent_matched: bool,
+    suppress_direct_child: bool,
+    classify: &mut impl FnMut(&'a DocBlock, &[&'a DocBlock]) -> Option<M>,
+    materialize: &mut impl FnMut(&'a DocBlock, &[&'a DocBlock], M) -> Option<T>,
+    out: &mut Vec<T>,
 ) {
-    for b in blocks {
-        f(b, path);
-        path.push(b);
-        walk_path(&b.children, path, f);
+    for block in blocks {
+        let classification = classify(block, path);
+        let matched = classification.is_some();
+        if !suppress_direct_child || !parent_matched {
+            if let Some(classification) = classification {
+                if let Some(item) = materialize(block, path, classification) {
+                    out.push(item);
+                }
+            }
+        }
+        path.push(block);
+        collect_matching_path(
+            &block.children,
+            path,
+            matched,
+            suppress_direct_child,
+            classify,
+            materialize,
+            out,
+        );
         path.pop();
     }
+}
+
+fn collect_og_query_roots<'a, M, T>(
+    blocks: &'a [DocBlock],
+    path: &mut Vec<&'a DocBlock>,
+    path_refs: &mut PathRefCounts,
+    track_path_refs: bool,
+    parent_matched: bool,
+    classify: &mut impl FnMut(&'a DocBlock, &[&'a DocBlock], &PathRefCounts) -> Option<M>,
+    materialize: &mut impl FnMut(&'a DocBlock, &[&'a DocBlock], M) -> Option<T>,
+    out: &mut Vec<T>,
+) {
+    for block in blocks {
+        let classification = classify(block, path, path_refs);
+        let matched = classification.is_some();
+        if !parent_matched {
+            if let Some(classification) = classification {
+                if let Some(item) = materialize(block, path, classification) {
+                    out.push(item);
+                }
+            }
+        }
+        path.push(block);
+        if track_path_refs {
+            push_path_refs(block, path_refs);
+        }
+        collect_og_query_roots(
+            &block.children,
+            path,
+            path_refs,
+            track_path_refs,
+            matched,
+            classify,
+            materialize,
+            out,
+        );
+        if track_path_refs {
+            pop_path_refs(block, path_refs);
+        }
+        path.pop();
+    }
+}
+
+fn collect_reference_matches<'a, M, T>(
+    blocks: &'a [DocBlock],
+    path: &mut Vec<&'a DocBlock>,
+    classify: &mut impl FnMut(&'a DocBlock, &[&'a DocBlock]) -> Option<M>,
+    materialize: &mut impl FnMut(&'a DocBlock, &[&'a DocBlock], M) -> Option<T>,
+    out: &mut Vec<T>,
+) {
+    collect_matching_path(blocks, path, false, false, classify, materialize, out);
+}
+
+fn crumb_line_estimated_bytes(block: &DocBlock) -> usize {
+    let line = block.visible_text().lines().next().unwrap_or("").trim();
+    let mut chars = line.chars();
+    let bytes = chars.by_ref().take(60).map(char::len_utf8).sum::<usize>();
+    bytes + usize::from(chars.next().is_some()) * '…'.len_utf8()
+}
+
+fn shallow_dto_estimated_bytes(block: &DocBlock, ancestors: &[&DocBlock]) -> usize {
+    let projection = block.projection();
+    let id_bytes = if block.uuid.is_empty() { 36 } else { block.uuid.len() };
+    id_bytes
+        .saturating_add(block.raw.len())
+        .saturating_add(
+            ancestors
+                .iter()
+                .map(|ancestor| crumb_line_estimated_bytes(ancestor))
+                .sum::<usize>(),
+        )
+        .saturating_add(projection.tags.iter().map(String::len).sum::<usize>())
+        .saturating_add(
+            projection
+                .properties
+                .iter()
+                .map(|(key, value)| key.len().saturating_add(value.len()))
+                .sum::<usize>(),
+        )
+        .saturating_add(128)
+}
+
+fn reference_evidence_estimated_bytes(evidence: &ReferenceBlockEvidence) -> usize {
+    evidence.block_id.len()
+        + evidence
+            .occurrences
+            .iter()
+            .map(|occurrence| {
+                occurrence
+                    .matched_name
+                    .len()
+                    .saturating_add(occurrence.canonical.len())
+                    .saturating_add(occurrence.rule.len())
+                    .saturating_add(std::mem::size_of_val(occurrence))
+            })
+            .sum::<usize>()
+}
+
+fn result_dto(block: &DocBlock) -> BlockDto {
+    #[cfg(test)]
+    RESULT_DTO_CONSTRUCTIONS.with(|count| count.set(count.get().saturating_add(1)));
+    block_to_shallow_dto(block)
+}
+
+#[cfg(test)]
+thread_local! {
+    static RESULT_DTO_CONSTRUCTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Cancellable variant used by interactive search. Returning false from `f`
@@ -61,12 +345,32 @@ fn crumb_line(b: &DocBlock) -> String {
 /// I/O or re-parsing happens per call.
 fn collect(
     graph: &Graph,
+    keep: impl FnMut(&DocBlock) -> bool,
+    keep_page_properties: impl FnMut(&PageEntry, &str) -> Option<BlockDto>,
+    exclude: Option<&str>,
+) -> Vec<RefGroup> {
+    collect_bounded(
+        graph,
+        keep,
+        keep_page_properties,
+        exclude,
+        usize::MAX,
+        usize::MAX,
+    )
+    .groups
+}
+
+fn collect_bounded(
+    graph: &Graph,
     mut keep: impl FnMut(&DocBlock) -> bool,
     mut keep_page_properties: impl FnMut(&PageEntry, &str) -> Option<BlockDto>,
     exclude: Option<&str>,
-) -> Vec<RefGroup> {
+    max_rows: usize,
+    max_bytes: usize,
+) -> BoundedGroups {
     let ex = exclude.map(refs::normalize);
-    graph.with_pages(|pages| {
+    let mut budget = ConstructionBudget::new(max_rows, max_bytes);
+    let groups = graph.with_pages(|pages| {
         // Pair each group with the referring page's journal `date_key` so the result
         // can be ordered like OG (the page cache itself is in arbitrary read_dir order).
         let mut groups: Vec<(Option<i64>, RefGroup)> = Vec::new();
@@ -77,17 +381,36 @@ fn collect(
             let mut matched: Vec<BlockDto> = Vec::new();
             if let Some(pre) = doc.pre_block.as_deref() {
                 if let Some(property_ref) = keep_page_properties(entry, pre) {
-                    matched.push(property_ref);
+                    if budget.admit_estimated(
+                        &entry.name,
+                        crate::model::block_dto_estimated_bytes(&property_ref),
+                    ) {
+                        matched.push(property_ref);
+                    }
                 }
             }
             let mut path: Vec<&DocBlock> = Vec::new();
-            walk_path(&doc.roots, &mut path, &mut |b, anc| {
-                if keep(b) {
-                    let mut dto = block_to_dto(b);
-                    dto.breadcrumb = anc.iter().map(|a| crumb_line(a)).collect();
-                    matched.push(dto);
-                }
-            });
+            collect_reference_matches(
+                &doc.roots,
+                &mut path,
+                &mut |block, _| keep(block).then_some(()),
+                &mut |block, ancestors, ()| {
+                    if budget.closed() {
+                        budget.deny_match();
+                        return None;
+                    }
+                    if !budget.admit_estimated(
+                        &entry.name,
+                        shallow_dto_estimated_bytes(block, ancestors),
+                    ) {
+                        return None;
+                    }
+                    let mut dto = result_dto(block);
+                    dto.breadcrumb = ancestors.iter().map(|ancestor| crumb_line(ancestor)).collect();
+                    Some(dto)
+                },
+                &mut matched,
+            );
             if !matched.is_empty() {
                 groups.push((
                     entry.date_key,
@@ -95,6 +418,7 @@ fn collect(
                         page: entry.name.clone(),
                         kind: entry.kind,
                         blocks: matched,
+                        evidence: Vec::new(),
                     },
                 ));
             }
@@ -110,7 +434,12 @@ fn collect(
                 .then_with(|| a.1.page.cmp(&b.1.page))
         });
         groups.into_iter().map(|(_, g)| g).collect()
-    })
+    });
+    BoundedGroups {
+        groups,
+        total: budget.total,
+        exceeded: budget.exceeded,
+    }
 }
 
 /// True when every non-empty line of a block's raw text is a `key:: value`
@@ -137,32 +466,54 @@ fn is_properties_only(raw: &str) -> bool {
 /// treats as page properties (GH #62). Without the latter, `- alias:: book`
 /// typed in the editor never registers as an alias, so link navigation and
 /// backlinks don't merge the two pages.
+/// The normalized aliases contributed by one document, using the exact same
+/// page-property rules as [`page_aliases`]. Keeping this extraction shared also
+/// lets cache invalidation compare the old and new semantic alias sets instead
+/// of treating the mere presence of an unchanged `alias::` line as a change.
+pub(crate) fn document_aliases(doc: &Document) -> Vec<String> {
+    let alias_text: Option<&str> = match &doc.pre_block {
+        Some(pre) => Some(pre.as_str()),
+        // No pre-block: a properties-only FIRST block is the page-properties
+        // block in OG (it gets written back as a pre-block on save there).
+        None => doc
+            .roots
+            .first()
+            .filter(|b| is_properties_only(&b.raw))
+            .map(|b| b.raw.as_str()),
+    };
+    let Some(text) = alias_text else {
+        return Vec::new();
+    };
+    let mut aliases = Vec::new();
+    for line in text.lines() {
+        if let Some((k, v)) = crate::doc::parse_property_line(line) {
+            if k.eq_ignore_ascii_case("alias") || k.eq_ignore_ascii_case("aliases") {
+                let trimmed = v.trim();
+                if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
+                    continue;
+                }
+                for alias in v.split([',', '，']) {
+                    let alias = strip_ref(alias.trim());
+                    if !alias.is_empty() {
+                        aliases.push(refs::normalize(&alias));
+                    }
+                }
+            }
+        }
+    }
+    // Ordering and duplicate spelling do not alter alias resolution. Comparing
+    // the semantic set avoids graph-wide invalidation for harmless formatting.
+    aliases.sort_unstable();
+    aliases.dedup();
+    aliases
+}
+
 pub fn page_aliases(graph: &Graph) -> Vec<(String, String)> {
     graph.with_pages(|pages| {
         let mut out: Vec<(String, String)> = Vec::new();
         for (entry, doc) in pages {
-            let alias_text: Option<&str> = match &doc.pre_block {
-                Some(pre) => Some(pre.as_str()),
-                // No pre-block: a properties-only FIRST block is the page-properties
-                // block in OG (it gets written back as a pre-block on save there).
-                None => doc
-                    .roots
-                    .first()
-                    .filter(|b| is_properties_only(&b.raw))
-                    .map(|b| b.raw.as_str()),
-            };
-            let Some(text) = alias_text else { continue };
-            for line in text.lines() {
-                if let Some((k, v)) = crate::doc::parse_property_line(line) {
-                    if k.eq_ignore_ascii_case("alias") {
-                        for a in v.split(',') {
-                            let a = strip_ref(a.trim());
-                            if !a.is_empty() {
-                                out.push((refs::normalize(&a), entry.name.clone()));
-                            }
-                        }
-                    }
-                }
+            for alias in document_aliases(doc) {
+                out.push((alias, entry.name.clone()));
             }
         }
         out
@@ -224,49 +575,417 @@ fn property_projection(raw: &str, is_org: bool) -> DocBlock {
     }
 }
 
-fn page_properties_reference_names(
-    pre: &str,
-    is_org: bool,
-    names_norm: &[String],
-) -> Option<String> {
+fn page_property_block(entry: &PageEntry, pre: &str) -> Option<DocBlock> {
+    let is_org = Format::from_path(&entry.path) == Format::Org;
     let raw = page_property_raw(pre, is_org);
     if raw.is_empty() {
         return None;
     }
-    let block = property_projection(&raw, is_org);
-    let refs = &block.projection().refs_norm;
-    names_norm
-        .iter()
-        .any(|name| refs.iter().any(|reference| reference == name))
-        .then_some(raw)
-}
-
-fn page_property_backlink(entry: &PageEntry, pre: &str, names_norm: &[String]) -> Option<BlockDto> {
-    let is_org = Format::from_path(&entry.path) == Format::Org;
-    let raw = page_properties_reference_names(pre, is_org, names_norm)?;
     let mut block = property_projection(&raw, is_org);
     block.uuid = format!(
         "page-property:{:?}:{}",
         entry.kind,
         refs::page_key(&entry.name)
     );
-    let mut dto = block_to_dto(&block);
-    dto.page_property = true;
-    Some(dto)
+    Some(block)
+}
+
+fn block_reference_evidence(
+    block: &DocBlock,
+    canonical: &str,
+    names_norm: &[String],
+    kind: ReferenceKind,
+) -> Option<ReferenceBlockEvidence> {
+    let occurrences = crate::reference_evidence::occurrences_of_kind(
+        &block.raw,
+        &block.projection().reference_source,
+        canonical,
+        names_norm,
+        kind,
+    );
+    (!occurrences.is_empty()).then(|| ReferenceBlockEvidence {
+        block_id: block.uuid.clone(),
+        occurrences,
+    })
+}
+
+fn block_has_reference(
+    block: &DocBlock,
+    names_norm: &[String],
+    kind: ReferenceKind,
+) -> bool {
+    crate::reference_evidence::has_occurrence_kind(
+        &block.raw,
+        &block.projection().reference_source,
+        names_norm,
+        kind,
+    )
+}
+
+fn collect_reference_occurrences(
+    graph: &Graph,
+    canonical: &str,
+    names_norm: &[String],
+    kind: ReferenceKind,
+) -> Vec<RefGroup> {
+    collect_reference_occurrences_bounded(
+        graph,
+        canonical,
+        names_norm,
+        kind,
+        usize::MAX,
+        usize::MAX,
+    )
+    .groups
+}
+
+fn collect_reference_occurrences_bounded(
+    graph: &Graph,
+    canonical: &str,
+    names_norm: &[String],
+    kind: ReferenceKind,
+    max_rows: usize,
+    max_bytes: usize,
+) -> BoundedGroups {
+    let exclude = refs::normalize(canonical);
+    let mut budget = ConstructionBudget::new(max_rows, max_bytes);
+    let groups = graph.with_pages(|pages| {
+        let mut groups: Vec<(Option<i64>, RefGroup)> = Vec::new();
+        for (entry, doc) in pages {
+            if refs::normalize(&entry.name) == exclude {
+                continue;
+            }
+            let mut blocks = Vec::new();
+            let mut evidence = Vec::new();
+            if kind == ReferenceKind::Explicit {
+                if let Some(mut block) = doc
+                    .pre_block
+                    .as_deref()
+                    .and_then(|pre| page_property_block(entry, pre))
+                {
+                    if budget.closed() {
+                        if block_has_reference(&block, names_norm, kind) {
+                            budget.deny_match();
+                        }
+                    } else if let Some(hit) =
+                        block_reference_evidence(&block, canonical, names_norm, kind)
+                    {
+                        let mut dto = block_to_shallow_dto(&block);
+                        dto.page_property = true;
+                        let estimated = crate::model::block_dto_estimated_bytes(&dto)
+                            .saturating_add(reference_evidence_estimated_bytes(&hit));
+                        if budget.admit_estimated(&entry.name, estimated) {
+                            blocks.push(dto);
+                            evidence.push(hit);
+                        }
+                    }
+                    // Make it impossible to accidentally retain this synthetic
+                    // block past the result construction boundary.
+                    block.children.clear();
+                }
+            }
+            let mut path = Vec::new();
+            let mut found: Vec<(BlockDto, ReferenceBlockEvidence)> = Vec::new();
+            let construction_closed = std::cell::Cell::new(budget.closed());
+            collect_reference_matches(
+                &doc.roots,
+                &mut path,
+                &mut |block, _| {
+                    if construction_closed.get() {
+                        block_has_reference(block, names_norm, kind).then_some(None)
+                    } else {
+                        block_reference_evidence(block, canonical, names_norm, kind).map(Some)
+                    }
+                },
+                &mut |block, ancestors, hit| {
+                    let Some(hit) = hit else {
+                        budget.deny_match();
+                        construction_closed.set(true);
+                        return None;
+                    };
+                    let estimated = shallow_dto_estimated_bytes(block, ancestors)
+                        .saturating_add(reference_evidence_estimated_bytes(&hit));
+                    if !budget.admit_estimated(&entry.name, estimated) {
+                        construction_closed.set(true);
+                        return None;
+                    }
+                    construction_closed.set(budget.closed());
+                    let mut dto = result_dto(block);
+                    dto.breadcrumb = ancestors
+                        .iter()
+                        .map(|ancestor| crumb_line(ancestor))
+                        .collect();
+                    Some((dto, hit))
+                },
+                &mut found,
+            );
+            for (dto, hit) in found {
+                blocks.push(dto);
+                evidence.push(hit);
+            }
+            if !blocks.is_empty() {
+                groups.push((
+                    entry.date_key,
+                    RefGroup {
+                        page: entry.name.clone(),
+                        kind: entry.kind,
+                        blocks,
+                        evidence,
+                    },
+                ));
+            }
+        }
+        groups.sort_by(|a, b| {
+            b.0.unwrap_or(i64::MIN)
+                .cmp(&a.0.unwrap_or(i64::MIN))
+                .then_with(|| a.1.page.cmp(&b.1.page))
+        });
+        groups.into_iter().map(|(_, group)| group).collect()
+    });
+    BoundedGroups {
+        groups,
+        total: budget.total,
+        exceeded: budget.exceeded,
+    }
 }
 
 pub fn backlinks(graph: &Graph, target: &str) -> Vec<RefGroup> {
     let aliases = graph.page_aliases();
     let (canonical, names_norm) = equivalent_page_names(&aliases, target);
-    collect(
+    collect_reference_occurrences(graph, &canonical, &names_norm, ReferenceKind::Explicit)
+}
+
+pub fn backlinks_bounded(
+    graph: &Graph,
+    target: &str,
+    max_rows: usize,
+    max_bytes: usize,
+) -> BoundedGroups {
+    let aliases = graph.page_aliases();
+    let (canonical, names_norm) = equivalent_page_names(&aliases, target);
+    collect_reference_occurrences_bounded(
         graph,
-        |b| {
-            let refs = &b.projection().refs_norm;
-            names_norm.iter().any(|n| refs.iter().any(|r| r == n))
-        },
-        |entry, pre| page_property_backlink(entry, pre, &names_norm),
-        Some(&canonical),
+        &canonical,
+        &names_norm,
+        ReferenceKind::Explicit,
+        max_rows,
+        max_bytes,
     )
+}
+
+const BACKLINK_FILTER_MAX_BYTES: usize = 16 * 1024 * 1024;
+const BACKLINK_FILTER_MAX_TEXT_BYTES: usize = 64 * 1024;
+const BACKLINK_FILTER_MAX_FACETS: usize = 256;
+
+fn append_bounded_text(out: &mut String, value: &str, max_bytes: usize) -> bool {
+    if value.is_empty() || out.len() >= max_bytes {
+        return !value.is_empty() && out.len() >= max_bytes;
+    }
+    if !out.is_empty() {
+        if out.len() + 1 > max_bytes {
+            return true;
+        }
+        out.push('\n');
+    }
+    let remaining = max_bytes.saturating_sub(out.len());
+    if value.len() <= remaining {
+        out.push_str(value);
+        return false;
+    }
+    let mut end = remaining;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    out.push_str(&value[..end]);
+    true
+}
+
+fn backlink_filter_entry(
+    page: &str,
+    kind: PageKind,
+    block: &DocBlock,
+    excluded_refs: &std::collections::HashSet<String>,
+    remaining_bytes: usize,
+) -> BacklinkFilterEntry {
+    let max_text = BACKLINK_FILTER_MAX_TEXT_BYTES.min(remaining_bytes);
+    let mut text = String::new();
+    let mut facets = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut facets_truncated = false;
+
+    let mut add_facet = |name: &str| {
+        let name = name.trim();
+        if name.is_empty() {
+            return;
+        }
+        let key = refs::normalize(name);
+        if excluded_refs.contains(&key) || !seen.insert(key) {
+            return;
+        }
+        if facets.len() >= BACKLINK_FILTER_MAX_FACETS {
+            facets_truncated = true;
+        } else {
+            facets.push(name.to_string());
+        }
+    };
+
+    fn visit(
+        block: &DocBlock,
+        text: &mut String,
+        max_text: usize,
+        add_facet: &mut impl FnMut(&str),
+        truncated: &mut bool,
+    ) {
+        *truncated |= append_bounded_text(text, block.visible_text(), max_text);
+        let projection = block.projection();
+        for name in &projection.refs_page {
+            add_facet(name);
+        }
+        if let Some(marker) = projection.marker.as_deref() {
+            add_facet(marker);
+        }
+        // OG treats tags::/alias:: property values as page references too. The
+        // property boundary itself is parser-owned; only its comma-separated
+        // semantic values are unwrapped here.
+        for (key, value) in &projection.properties {
+            if !(key.eq_ignore_ascii_case("tags")
+                || key.eq_ignore_ascii_case("alias")
+                || key.eq_ignore_ascii_case("aliases"))
+            {
+                continue;
+            }
+            let quoted = value.trim();
+            if quoted.len() >= 2 && quoted.starts_with('"') && quoted.ends_with('"') {
+                continue;
+            }
+            for value in value.split([',', '，']) {
+                let name = strip_ref(value.trim());
+                add_facet(&name);
+            }
+        }
+        for child in &block.children {
+            visit(child, text, max_text, add_facet, truncated);
+        }
+    }
+
+    let mut text_truncated = false;
+    visit(block, &mut text, max_text, &mut add_facet, &mut text_truncated);
+    BacklinkFilterEntry {
+        page: page.to_string(),
+        kind,
+        block_id: block.uuid.clone(),
+        text,
+        facets,
+        truncated: text_truncated || facets_truncated,
+    }
+}
+
+/// Build search/facet metadata only for the shallow backlink roots already in
+/// one rendered panel. This deliberately does not rerun backlink selection and
+/// cannot turn into a graph-sized arbitrary export: the request is ID-scoped,
+/// de-duplicated, and the response has both per-root and total byte ceilings.
+pub fn backlink_filter_context(
+    graph: &Graph,
+    target: &str,
+    targets: &[BacklinkFilterTarget],
+) -> BacklinkFilterContext {
+    let aliases = graph.page_aliases();
+    let (_, names_norm) = equivalent_page_names(&aliases, target);
+    let excluded_refs = names_norm.into_iter().collect::<std::collections::HashSet<_>>();
+    let mut requested = std::collections::HashMap::<
+        (PageKind, String),
+        std::collections::HashSet<String>,
+    >::new();
+    for item in targets {
+        requested
+            .entry((item.kind, refs::normalize(&item.page)))
+            .or_default()
+            .insert(item.block_id.clone());
+    }
+    let requested_unique = requested
+        .values()
+        .map(std::collections::HashSet::len)
+        .sum::<usize>();
+
+    let mut context = BacklinkFilterContext::default();
+    let mut bytes = 0usize;
+    graph.with_pages(|pages| {
+        for (page, document) in pages {
+            let Some(ids) = requested.get(&(page.kind, refs::normalize(&page.name))) else {
+                continue;
+            };
+            if let Some(pre) = document.pre_block.as_deref() {
+                if let Some(block) = page_property_block(page, pre) {
+                    if ids.contains(&block.uuid) {
+                        let entry = backlink_filter_entry(
+                            &page.name,
+                            page.kind,
+                            &block,
+                            &excluded_refs,
+                            BACKLINK_FILTER_MAX_BYTES.saturating_sub(bytes),
+                        );
+                        let estimated = entry.text.len()
+                            + entry.facets.iter().map(String::len).sum::<usize>()
+                            + entry.page.len()
+                            + entry.block_id.len()
+                            + 128;
+                        if bytes.saturating_add(estimated) > BACKLINK_FILTER_MAX_BYTES {
+                            context.truncated = true;
+                        } else {
+                            bytes += estimated;
+                            context.entries.push(entry);
+                        }
+                    }
+                }
+            }
+            fn collect<'a>(
+                blocks: &'a [DocBlock],
+                ids: &std::collections::HashSet<String>,
+                out: &mut Vec<&'a DocBlock>,
+            ) {
+                for block in blocks {
+                    if ids.contains(&block.uuid) {
+                        out.push(block);
+                    }
+                    collect(&block.children, ids, out);
+                }
+            }
+            let mut blocks = Vec::new();
+            collect(&document.roots, ids, &mut blocks);
+            for block in blocks {
+                if bytes >= BACKLINK_FILTER_MAX_BYTES {
+                    context.truncated = true;
+                    break;
+                }
+                let entry = backlink_filter_entry(
+                    &page.name,
+                    page.kind,
+                    block,
+                    &excluded_refs,
+                    BACKLINK_FILTER_MAX_BYTES.saturating_sub(bytes),
+                );
+                let estimated = entry.text.len()
+                    + entry.facets.iter().map(String::len).sum::<usize>()
+                    + entry.page.len()
+                    + entry.block_id.len()
+                    + 128;
+                if bytes.saturating_add(estimated) > BACKLINK_FILTER_MAX_BYTES {
+                    context.truncated = true;
+                    break;
+                }
+                bytes += estimated;
+                context.truncated |= entry.truncated;
+                context.entries.push(entry);
+            }
+        }
+    });
+    if context.entries.len() < requested_unique {
+        // Missing IDs can be stale results after an external edit; the frontend
+        // can still search each root's shallow raw text but must not claim the
+        // descendant index is complete.
+        context.truncated = true;
+    }
+    context
 }
 
 /// Block-level referrers: every block across the graph that references the block
@@ -287,42 +1006,123 @@ pub fn block_referrers(graph: &Graph, uuid: &str) -> Vec<RefGroup> {
     )
 }
 
-fn contains_word(hay: &str, needle: &str) -> bool {
-    if needle.is_empty() {
-        return false;
+pub fn block_referrers_bounded(
+    graph: &Graph,
+    uuid: &str,
+    max_rows: usize,
+    max_bytes: usize,
+) -> BoundedGroups {
+    let u = uuid.trim();
+    if u.is_empty() {
+        return BoundedGroups {
+            groups: Vec::new(),
+            total: 0,
+            exceeded: false,
+        };
     }
-    let bytes = hay.as_bytes();
-    let mut start = 0;
-    while let Some(pos) = hay[start..].find(needle) {
-        let i = start + pos;
-        let before_ok = i == 0 || !bytes[i - 1].is_ascii_alphanumeric();
-        let after = i + needle.len();
-        let after_ok = after >= hay.len() || !bytes[after].is_ascii_alphanumeric();
-        if before_ok && after_ok {
-            return true;
-        }
-        start = i + needle.len();
-    }
-    false
+    collect_bounded(
+        graph,
+        |b| b.projection().block_refs.iter().any(|r| r == u),
+        |_, _| None,
+        None,
+        max_rows,
+        max_bytes,
+    )
 }
 
-/// Unlinked references: blocks that mention `target` as plain text (whole word)
-/// but do NOT link it via `[[..]]`/`#tag`.
+/// Unlinked references: parser-visible plain occurrences outside explicit
+/// reference syntax. A block containing both kinds appears once in each surface,
+/// with the corresponding occurrence evidence.
 pub fn unlinked_refs(graph: &Graph, target: &str) -> Vec<RefGroup> {
     let aliases = graph.page_aliases();
     let (canonical, names_norm) = equivalent_page_names(&aliases, target);
-    collect(
+    collect_reference_occurrences(graph, &canonical, &names_norm, ReferenceKind::Plain)
+}
+
+pub fn unlinked_refs_bounded(
+    graph: &Graph,
+    target: &str,
+    max_rows: usize,
+    max_bytes: usize,
+) -> BoundedGroups {
+    let aliases = graph.page_aliases();
+    let (canonical, names_norm) = equivalent_page_names(&aliases, target);
+    collect_reference_occurrences_bounded(
         graph,
-        |b| {
-            let lower = b.raw.to_lowercase();
-            names_norm.iter().any(|name| contains_word(&lower, name))
-                && !names_norm
-                    .iter()
-                    .any(|name| b.projection().refs_contains_norm(name))
-        },
-        |_, _| None,
-        Some(&canonical),
+        &canonical,
+        &names_norm,
+        ReferenceKind::Plain,
+        max_rows,
+        max_bytes,
     )
+}
+
+/// Target-scoped trace for bug reports. Membership comes from the exact same
+/// occurrence engine as the panels; the deliberately uncached parser path makes
+/// projection-cache drift visible. No launcher history is read or returned.
+pub fn reference_diagnostics(graph: &Graph, target: &str) -> ReferenceDiagnostics {
+    let aliases = graph.page_aliases();
+    let (canonical, names_norm) = equivalent_page_names(&aliases, target);
+    let excluded_page = refs::normalize(&canonical);
+    let mut traces = graph.with_pages(|pages| {
+        let mut traces = Vec::new();
+        for (entry, document) in pages {
+            let self_page = refs::normalize(&entry.name) == excluded_page;
+            let mut inspect = |block: &DocBlock| {
+                let occurrences = crate::reference_evidence::slow_occurrences(
+                    &block.raw,
+                    block.is_org,
+                    &canonical,
+                    &names_norm,
+                );
+                let raw_lower = block.raw.to_lowercase();
+                let textual_candidate = names_norm.iter().any(|name| raw_lower.contains(name));
+                if occurrences.is_empty() && !textual_candidate {
+                    return;
+                }
+                let explicit = occurrences
+                    .iter()
+                    .any(|occurrence| occurrence.kind == ReferenceKind::Explicit);
+                let plain = occurrences
+                    .iter()
+                    .any(|occurrence| occurrence.kind == ReferenceKind::Plain);
+                traces.push(ReferenceDiagnosticTrace {
+                    page: entry.name.clone(),
+                    kind: entry.kind,
+                    block_id: block.uuid.clone(),
+                    occurrences,
+                    included_linked: !self_page && explicit,
+                    included_unlinked: !self_page && plain,
+                    exclusion_reason: if self_page {
+                        Some("self_page_excluded".to_string())
+                    } else if !explicit && !plain {
+                        Some("parser_excluded_context_or_boundary".to_string())
+                    } else {
+                        None
+                    },
+                });
+            };
+            if let Some(block) = document
+                .pre_block
+                .as_deref()
+                .and_then(|pre| page_property_block(entry, pre))
+            {
+                inspect(&block);
+            }
+            walk(&document.roots, &mut inspect);
+        }
+        traces
+    });
+    traces.sort_by(|a, b| {
+        a.page
+            .cmp(&b.page)
+            .then_with(|| a.block_id.cmp(&b.block_id))
+    });
+    ReferenceDiagnostics {
+        engine_version: crate::reference_evidence::ENGINE_VERSION.to_string(),
+        target: canonical,
+        traces,
+    }
 }
 
 /// Page-level properties and `tags::` values parsed from a page's pre-block.
@@ -347,18 +1147,48 @@ fn page_facets(pre_block: Option<&str>) -> (Vec<(String, String)>, Vec<String>) 
 }
 
 pub fn run_query(graph: &Graph, query_src: &str) -> Vec<RefGroup> {
+    run_query_bounded(graph, query_src, usize::MAX, usize::MAX).groups
+}
+
+pub fn run_query_bounded(
+    graph: &Graph,
+    query_src: &str,
+    max_rows: usize,
+    max_bytes: usize,
+) -> BoundedGroups {
+    if !query_source_within_limit(query_src) || !query_nesting_within_limit(query_src) {
+        return BoundedGroups {
+            groups: Vec::new(),
+            total: 0,
+            exceeded: false,
+        };
+    }
     let today = JournalDate::today();
     let Some(pred) = Pred::parse(query_src, today) else {
-        return Vec::new();
+        return BoundedGroups {
+            groups: Vec::new(),
+            total: 0,
+            exceeded: false,
+        };
     };
     let mut opts = QueryOpts::default();
     pred.collect_opts(&mut opts);
-    run_pred(graph, &pred, &opts)
+    run_pred_bounded(graph, &pred, &opts, max_rows, max_bytes)
 }
 
-/// Evaluate a parsed predicate against the whole graph (shared by the simple-DSL
-/// `run_query` and the advanced-datalog `run_advanced_query`).
-fn run_pred(graph: &Graph, pred: &Pred, opts: &QueryOpts) -> Vec<RefGroup> {
+fn run_pred_bounded(
+    graph: &Graph,
+    pred: &Pred,
+    opts: &QueryOpts,
+    max_rows: usize,
+    max_bytes: usize,
+) -> BoundedGroups {
+    let mut budget = ConstructionBudget::new(max_rows, max_bytes);
+    // An unsorted `(sample N)` semantically needs only the first N matches in
+    // deterministic traversal order. Do not construct or classify the rest as
+    // an over-budget failure. Sorted samples still require global ranking and
+    // therefore retain the ordinary construction ceiling.
+    let sample_admission_cap = opts.sample.filter(|_| opts.sort.is_none());
     // A recency sort (`(sort-by modified …)`) needs each result page's position on
     // a single time axis: journal pages by the day they represent, other pages by
     // file mtime. Only computed when such a sort is active (else we skip the stat).
@@ -375,21 +1205,47 @@ fn run_pred(graph: &Graph, pred: &Pred, opts: &QueryOpts) -> Vec<RefGroup> {
                 page_props: &page_props,
                 page_tags: &page_tags,
             };
-            let mut matched: Vec<&DocBlock> = Vec::new();
-            walk(&doc.roots, &mut |b| {
-                if pred.eval(b, &ctx) {
-                    matched.push(b);
-                }
-            });
+            let mut matched: Vec<BlockDto> = Vec::new();
+            let mut path = Vec::new();
+            let mut path_refs = PathRefCounts::new();
+            let track_path_refs = pred.uses_path_refs();
+            collect_og_query_roots(
+                &doc.roots,
+                &mut path,
+                &mut path_refs,
+                track_path_refs,
+                false,
+                &mut |block, _, ancestor_refs| {
+                    pred.eval_with_path_refs(block, ancestor_refs, &ctx)
+                        .then_some(())
+                },
+                &mut |block, _, ()| {
+                    if sample_admission_cap.is_some_and(|cap| budget.rows >= cap) {
+                        return None;
+                    }
+                    if budget.closed() {
+                        budget.deny_match();
+                        return None;
+                    }
+                    if !budget.admit_estimated(
+                        &entry.name,
+                        shallow_dto_estimated_bytes(block, &[]),
+                    ) {
+                        return None;
+                    }
+                    Some(result_dto(block))
+                },
+                &mut matched,
+            );
             if !matched.is_empty() {
                 if want_recency {
                     recency.insert(entry.name.clone(), page_recency_secs(entry));
                 }
-                let blocks: Vec<BlockDto> = matched.into_iter().map(block_to_dto).collect();
                 groups.push(RefGroup {
                     page: entry.name.clone(),
                     kind: entry.kind,
-                    blocks,
+                    blocks: matched,
+                    evidence: Vec::new(),
                 });
             }
         }
@@ -425,7 +1281,12 @@ fn run_pred(graph: &Graph, pred: &Pred, opts: &QueryOpts) -> Vec<RefGroup> {
         // upside-down under its heading.
         let mut flat: Vec<(SortDecor, usize, RefGroup)> = Vec::new();
         for g in groups {
-            let RefGroup { page, kind, blocks } = g;
+            let RefGroup {
+                page,
+                kind,
+                blocks,
+                evidence: _,
+            } = g;
             for b in blocks {
                 let key = if is_recency_field(field) {
                     // Recency is numeric (Unix seconds on one axis): journal pages by
@@ -442,6 +1303,7 @@ fn run_pred(graph: &Graph, pred: &Pred, opts: &QueryOpts) -> Vec<RefGroup> {
                         page: page.clone(),
                         kind,
                         blocks: vec![b],
+                        evidence: Vec::new(),
                     },
                 ));
             }
@@ -478,7 +1340,11 @@ fn run_pred(graph: &Graph, pred: &Pred, opts: &QueryOpts) -> Vec<RefGroup> {
             true
         });
     }
-    groups
+    BoundedGroups {
+        groups,
+        total: budget.total,
+        exceeded: budget.exceeded,
+    }
 }
 
 // --- Scoped-invalidation support (#52) --------------------------------------
@@ -501,11 +1367,17 @@ pub(crate) fn page_affects_query(src: &str, entry: &PageEntry, doc: &Document) -
         page_tags: &page_tags,
     };
     let mut hit = false;
-    walk(&doc.roots, &mut |b| {
-        if !hit && pred.eval(b, &ctx) {
-            hit = true;
-        }
-    });
+    let mut path_refs = PathRefCounts::new();
+    walk_path_refs(
+        &doc.roots,
+        &mut path_refs,
+        pred.uses_path_refs(),
+        &mut |block, ancestor_refs| {
+            if !hit && pred.eval_with_path_refs(block, ancestor_refs, &ctx) {
+                hit = true;
+            }
+        },
+    );
     hit
 }
 
@@ -518,23 +1390,20 @@ pub(crate) fn page_affects_backlinks(
     entry: &PageEntry,
     doc: &Document,
 ) -> bool {
-    let (_, names_norm) = equivalent_page_names(aliases, target);
+    let (canonical, names_norm) = equivalent_page_names(aliases, target);
     if doc.pre_block.as_deref().is_some_and(|pre| {
-        page_properties_reference_names(
-            pre,
-            Format::from_path(&entry.path) == Format::Org,
-            &names_norm,
-        )
-        .is_some()
+        page_property_block(entry, pre).is_some_and(|block| {
+            block_reference_evidence(&block, &canonical, &names_norm, ReferenceKind::Explicit)
+                .is_some()
+        })
     }) {
         return true;
     }
     let mut hit = false;
     walk(&doc.roots, &mut |b| {
         if !hit
-            && names_norm
-                .iter()
-                .any(|name| b.projection().refs_contains_norm(name))
+            && block_reference_evidence(b, &canonical, &names_norm, ReferenceKind::Explicit)
+                .is_some()
         {
             hit = true;
         }
@@ -549,19 +1418,67 @@ pub(crate) fn page_affects_unlinked(
     target: &str,
     doc: &Document,
 ) -> bool {
-    let (_, names_norm) = equivalent_page_names(aliases, target);
+    let (canonical, names_norm) = equivalent_page_names(aliases, target);
     let mut hit = false;
     walk(&doc.roots, &mut |b| {
-        let lower = b.raw.to_lowercase();
         if !hit
-            && names_norm.iter().any(|name| contains_word(&lower, name))
-            && !names_norm
-                .iter()
-                .any(|name| b.projection().refs_contains_norm(name))
+            && block_reference_evidence(b, &canonical, &names_norm, ReferenceKind::Plain).is_some()
         {
             hit = true;
         }
     });
+    hit
+}
+
+/// Whether this page contains a referrer to one block UUID. This is the exact
+/// predicate used by `block_referrers_bounded`, without DTO construction.
+pub(crate) fn page_affects_block_referrers(uuid: &str, doc: &Document) -> bool {
+    let uuid = uuid.trim();
+    if uuid.is_empty() {
+        return false;
+    }
+    let mut hit = false;
+    walk(&doc.roots, &mut |block| {
+        if !hit && block.projection().block_refs.iter().any(|reference| reference == uuid) {
+            hit = true;
+        }
+    });
+    hit
+}
+
+/// Whether an edited page can contribute to the supported advanced-query
+/// subset. Parsing and evaluation are shared with the real advanced query, so
+/// scoped cache invalidation cannot drift into a second query dialect.
+pub(crate) fn page_affects_advanced_query(
+    query_src: &str,
+    current_page: Option<&str>,
+    entry: &PageEntry,
+    doc: &Document,
+) -> bool {
+    let today = JournalDate::today();
+    let (Some(pred), _, _) = advanced_pred(query_src, current_page, today) else {
+        return false;
+    };
+    let (page_props, page_tags) = page_facets(doc.pre_block.as_deref());
+    let ctx = EvalCtx {
+        journal: entry.date_key,
+        is_journal: entry.kind == PageKind::Journal,
+        page_name: &entry.name,
+        page_props: &page_props,
+        page_tags: &page_tags,
+    };
+    let mut hit = false;
+    let mut path_refs = PathRefCounts::new();
+    walk_path_refs(
+        &doc.roots,
+        &mut path_refs,
+        pred.uses_path_refs(),
+        &mut |block, ancestor_refs| {
+            if !hit && pred.eval_with_path_refs(block, ancestor_refs, &ctx) {
+                hit = true;
+            }
+        },
+    );
     hit
 }
 
@@ -576,6 +1493,15 @@ pub struct AdvancedResult {
     pub supported: bool,
 }
 
+pub(crate) fn rejected_advanced_query(reason: &str) -> AdvancedResult {
+    AdvancedResult {
+        groups: Vec::new(),
+        ran: Vec::new(),
+        ignored: vec![reason.to_string()],
+        supported: false,
+    }
+}
+
 /// Run an advanced `[:find … :where …]` / `{:query … :inputs …}` query by mapping
 /// the common clause subset (task / between / page-ref / property / page-property
 /// / priority + and/or/not) onto the simple-DSL `Pred` engine — the matching
@@ -587,36 +1513,90 @@ pub fn run_advanced_query(
     query_src: &str,
     current_page: Option<&str>,
 ) -> AdvancedResult {
+    run_advanced_query_bounded(graph, query_src, current_page, usize::MAX, usize::MAX).0
+}
+
+pub fn run_advanced_query_bounded(
+    graph: &Graph,
+    query_src: &str,
+    current_page: Option<&str>,
+    max_rows: usize,
+    max_bytes: usize,
+) -> (AdvancedResult, bool, usize) {
+    if !query_source_within_limit(query_src) {
+        return (
+            rejected_advanced_query("query-too-large"),
+            false,
+            0,
+        );
+    }
+    if !query_nesting_within_limit(query_src) {
+        return (
+            rejected_advanced_query("query-nesting-too-deep"),
+            false,
+            0,
+        );
+    }
     let today = JournalDate::today();
+    let (pred, ran, ignored) = advanced_pred(query_src, current_page, today);
+    let Some(pred) = pred else {
+        return (
+            AdvancedResult {
+                groups: Vec::new(),
+                ran,
+                ignored,
+                supported: false,
+            },
+            false,
+            0,
+        );
+    };
+    let mut opts = QueryOpts::default();
+    pred.collect_opts(&mut opts);
+    let bounded = run_pred_bounded(graph, &pred, &opts, max_rows, max_bytes);
+    (
+        AdvancedResult {
+            groups: bounded.groups,
+            ran,
+            ignored,
+            supported: true,
+        },
+        bounded.exceeded,
+        bounded.total,
+    )
+}
+
+fn advanced_pred(
+    query_src: &str,
+    current_page: Option<&str>,
+    today: JournalDate,
+) -> (Option<Pred>, Vec<String>, Vec<String>) {
+    if !query_nesting_within_limit(query_src) {
+        return (
+            None,
+            Vec::new(),
+            vec!["query-nesting-too-deep".to_string()],
+        );
+    }
     let inputs = resolve_inputs(query_src, current_page, today);
     let mut ran = Vec::new();
     let mut ignored = Vec::new();
     let preds: Vec<Pred> = where_groups(query_src)
         .iter()
-        .filter_map(|g| parse_adv_group(g, &inputs, today, &mut ran, &mut ignored))
+        .filter_map(|g| parse_adv_group(g, &inputs, today, &mut ran, &mut ignored, 0))
         .collect();
+    if ignored.iter().any(|item| item == "query-nesting-too-deep") {
+        return (None, Vec::new(), ignored);
+    }
     if preds.is_empty() {
-        return AdvancedResult {
-            groups: Vec::new(),
-            ran,
-            ignored,
-            supported: false,
-        };
+        return (None, ran, ignored);
     }
     let pred = if preds.len() == 1 {
         preds.into_iter().next().unwrap()
     } else {
         Pred::And(preds)
     };
-    let mut opts = QueryOpts::default();
-    pred.collect_opts(&mut opts);
-    let groups = run_pred(graph, &pred, &opts);
-    AdvancedResult {
-        groups,
-        ran,
-        ignored,
-        supported: true,
-    }
+    (Some(pred), ran, ignored)
 }
 
 /// Collect balanced `(...)`/`[...]` groups at the top level of `s` (string-aware),
@@ -695,7 +1675,12 @@ fn parse_adv_group(
     today: JournalDate,
     ran: &mut Vec<String>,
     ignored: &mut Vec<String>,
+    depth: usize,
 ) -> Option<Pred> {
+    if depth > QUERY_NESTING_MAX {
+        ignored.push("query-nesting-too-deep".into());
+        return None;
+    }
     let c = group.trim();
     if !c.starts_with('(') {
         ignored.push("pattern".into()); // `[?e :a ?v]` joins, etc. — not in the subset
@@ -711,7 +1696,7 @@ fn parse_adv_group(
         "and" | "or" | "not" => {
             let kids: Vec<Pred> = scan_groups(inner)
                 .iter()
-                .filter_map(|g| parse_adv_group(g, inputs, today, ran, ignored))
+                .filter_map(|g| parse_adv_group(g, inputs, today, ran, ignored, depth + 1))
                 .collect();
             if kids.is_empty() {
                 None
@@ -807,6 +1792,7 @@ fn parse_adv_group(
                 ignored.push("between".into());
                 return None;
             }
+            let (lo, hi) = ordered_bounds(lo, hi);
             ran.push("between".into());
             Some(Pred::Between(field, lo, hi))
         }
@@ -1075,9 +2061,20 @@ const INTERNAL_PROPS: &[&str] = &[
 /// Distinct property keys (each with its sorted distinct values) used across the
 /// graph. Drives the query builder's property-filter pickers.
 pub fn property_facets(graph: &Graph) -> Vec<(String, Vec<String>)> {
+    property_facets_bounded(graph, usize::MAX, usize::MAX).0
+}
+
+pub fn property_facets_bounded(
+    graph: &Graph,
+    max_values: usize,
+    max_bytes: usize,
+) -> (Vec<(String, Vec<String>)>, bool) {
     use std::collections::BTreeMap;
     use std::collections::BTreeSet;
-    graph.with_pages(|pages| {
+    let mut values = 0usize;
+    let mut bytes = 0usize;
+    let mut exceeded = false;
+    let facets = graph.with_pages(|pages| {
         let mut map: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         for (_entry, doc) in pages {
             walk(&doc.roots, &mut |b| {
@@ -1085,9 +2082,27 @@ pub fn property_facets(graph: &Graph) -> Vec<(String, Vec<String>)> {
                     if INTERNAL_PROPS.iter().any(|p| p.eq_ignore_ascii_case(&k)) {
                         continue;
                     }
-                    let set = map.entry(k).or_default();
-                    if !v.trim().is_empty() {
-                        set.insert(v);
+                    if v.trim().is_empty() {
+                        continue;
+                    }
+                    if map.get(&k).is_some_and(|set| set.contains(&v)) {
+                        continue;
+                    }
+                    let key_bytes = if map.contains_key(&k) {
+                        0
+                    } else {
+                        k.len() + 64
+                    };
+                    let next_bytes = bytes
+                        .saturating_add(key_bytes)
+                        .saturating_add(v.len())
+                        .saturating_add(64);
+                    if values >= max_values || next_bytes > max_bytes {
+                        exceeded = true;
+                    } else {
+                        values += 1;
+                        bytes = next_bytes;
+                        map.entry(k).or_default().insert(v);
                     }
                 }
             });
@@ -1095,7 +2110,8 @@ pub fn property_facets(graph: &Graph) -> Vec<(String, Vec<String>)> {
         map.into_iter()
             .map(|(k, vs)| (k, vs.into_iter().collect()))
             .collect()
-    })
+    });
+    (facets, exceeded)
 }
 
 #[cfg(test)]
@@ -1176,29 +2192,9 @@ pub fn quick_switch(graph: &Graph, query: &str, limit: usize) -> Vec<PageEntry> 
     crate::query_plan::page_hits_to_entries(execution.hits)
 }
 
-#[cfg(test)]
-fn score_name(name: &str, q: &str) -> Option<i32> {
-    if q.is_empty() {
-        return Some(0);
-    }
-    if name.starts_with(q) {
-        Some(1000)
-    } else if name.contains(q) {
-        Some(500)
-    } else if is_subsequence(q, name) {
-        Some(100)
-    } else {
-        None
-    }
-}
-
-#[cfg(test)]
-fn is_subsequence(needle: &str, hay: &str) -> bool {
-    let mut it = hay.chars();
-    needle.chars().all(|c| it.any(|h| h == c))
-}
-
-/// Resolve a `((uuid))` block reference to its block (with subtree).
+/// Resolve a `((uuid))` block reference to a shallow identity/result row.
+/// Descendants are owned by the source page; explicit bounded consumers use
+/// `preview_block`.
 pub fn resolve_block(graph: &Graph, uuid: &str) -> Option<RefGroup> {
     // Jump to the owning page via the uuid index, falling back to a full scan if
     // the hint is missing or stale (so a lagging index can never give a wrong
@@ -1216,7 +2212,8 @@ pub fn resolve_block(graph: &Graph, uuid: &str) -> Option<RefGroup> {
             found.map(|b| RefGroup {
                 page: entry.name.clone(),
                 kind: entry.kind,
-                blocks: vec![block_to_dto(b)],
+                blocks: vec![block_to_shallow_dto(b)],
+                evidence: Vec::new(),
             })
         };
         if let Some(h) = &hint {
@@ -1244,11 +2241,20 @@ pub fn resolve_block(graph: &Graph, uuid: &str) -> Option<RefGroup> {
 /// wins ordering are identical to `resolve_block`. Output is positional and
 /// per-input (duplicate input uuids each get their own `Some(..)`/`None`).
 pub fn resolve_blocks(graph: &Graph, uuids: &[String]) -> Vec<Option<RefGroup>> {
+    resolve_blocks_bounded(graph, uuids, usize::MAX, usize::MAX).0
+}
+
+pub fn resolve_blocks_bounded(
+    graph: &Graph,
+    uuids: &[String],
+    max_rows: usize,
+    max_bytes: usize,
+) -> (Vec<Option<RefGroup>>, bool, usize) {
     use std::collections::{HashMap, HashSet};
     // Distinct requested ids (a page often refs the same uuid repeatedly).
     let distinct: HashSet<&str> = uuids.iter().map(String::as_str).collect();
     if distinct.is_empty() {
-        return uuids.iter().map(|_| None).collect();
+        return (uuids.iter().map(|_| None).collect(), false, 0);
     }
     // Bucket each distinct id under its page hint (O(1) per id off the cached
     // uuid index); unhinted ids go straight to the whole-graph fallback.
@@ -1262,6 +2268,7 @@ pub fn resolve_blocks(graph: &Graph, uuids: &[String]) -> Vec<Option<RefGroup>> 
     }
 
     let mut resolved: HashMap<&str, RefGroup> = HashMap::new();
+    let mut resolved_budget = ConstructionBudget::new(max_rows, max_bytes);
     graph.with_pages(|pages| {
         let mut page_by_name: HashMap<&str, (&PageEntry, &std::sync::Arc<Document>)> =
             HashMap::with_capacity(pages.len());
@@ -1274,7 +2281,7 @@ pub fn resolve_blocks(graph: &Graph, uuids: &[String]) -> Vec<Option<RefGroup>> 
         for (page, ids) in &by_page {
             if let Some(&(entry, doc)) = page_by_name.get(page.as_str()) {
                 let want: HashSet<&str> = ids.iter().copied().collect();
-                resolve_ids_in_page(entry, doc, &want, &mut resolved);
+                resolve_ids_in_page(entry, doc, &want, &mut resolved, &mut resolved_budget);
             }
         }
         // 2) Remaining ids (no hint, or the hinted page didn't actually hold the
@@ -1290,15 +2297,373 @@ pub fn resolve_blocks(graph: &Graph, uuids: &[String]) -> Vec<Option<RefGroup>> 
                 if resolved.len() == distinct.len() {
                     break; // everything found
                 }
-                resolve_ids_in_page(entry, doc, &remaining, &mut resolved);
+                resolve_ids_in_page(entry, doc, &remaining, &mut resolved, &mut resolved_budget);
             }
         }
     });
 
-    uuids
+    let mut output_budget = ConstructionBudget::new(max_rows, max_bytes);
+    let output = uuids
         .iter()
-        .map(|u| resolved.get(u.as_str()).cloned())
-        .collect()
+        .map(|u| {
+            let group = resolved.get(u.as_str())?;
+            let block = group.blocks.first()?;
+            output_budget
+                .admit_estimated(
+                    &group.page,
+                    crate::model::block_dto_estimated_bytes(block),
+                )
+                .then(|| group.clone())
+        })
+        .collect();
+    (
+        output,
+        resolved_budget.exceeded || output_budget.exceeded,
+        output_budget.total,
+    )
+}
+
+fn subtree_node_count(root: &DocBlock) -> usize {
+    let mut count = 0usize;
+    let mut stack = vec![root];
+    while let Some(block) = stack.pop() {
+        count = count.saturating_add(1);
+        stack.extend(block.children.iter());
+    }
+    count
+}
+
+fn block_to_bounded_dto(
+    block: &DocBlock,
+    remaining_nodes: &mut usize,
+    remaining_bytes: &mut usize,
+) -> Option<BlockDto> {
+    if *remaining_nodes == 0 {
+        return None;
+    }
+    let minimum_bytes = block
+        .raw
+        .len()
+        .saturating_add(if block.uuid.is_empty() {
+            36
+        } else {
+            block.uuid.len()
+        })
+        .saturating_add(128);
+    if minimum_bytes > *remaining_bytes {
+        return None;
+    }
+    let mut dto = block_to_shallow_dto(block);
+    let dto_bytes = crate::model::block_dto_estimated_bytes(&dto);
+    if dto_bytes > *remaining_bytes {
+        return None;
+    }
+    *remaining_nodes -= 1;
+    *remaining_bytes -= dto_bytes;
+    for child in &block.children {
+        let Some(child_dto) = block_to_bounded_dto(child, remaining_nodes, remaining_bytes) else {
+            break;
+        };
+        dto.children.push(child_dto);
+    }
+    Some(dto)
+}
+
+/// One query macro requested by Copy / Export. Query evaluation and subtree
+/// hydration stay in the same native operation so a shallow result never causes
+/// the WebView to fetch and retain its complete source page.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct QueryExportSpec {
+    pub key: String,
+    pub query: String,
+    pub advanced: bool,
+}
+
+/// A single query macro's bounded, hierarchy-preserving export projection.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct QueryExportResult {
+    pub key: String,
+    pub groups: Vec<RefGroup>,
+    pub shown: usize,
+    pub total: usize,
+    pub omitted_nodes: usize,
+}
+
+/// All query macros in one export session share the same construction budget.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct QueryExportBatch {
+    pub results: Vec<QueryExportResult>,
+    /// Query macros beyond the native request cap are not evaluated. The caller
+    /// renders an explicit truncation note rather than silently expanding them
+    /// through an unbounded sequence of independent requests.
+    pub omitted_queries: usize,
+}
+
+#[derive(Debug)]
+struct SelectedExportRoot {
+    page: String,
+    kind: PageKind,
+    id: String,
+}
+
+#[derive(Debug)]
+struct SelectedExportQuery {
+    key: String,
+    total: usize,
+    roots: Vec<SelectedExportRoot>,
+}
+
+/// Evaluate and hydrate several Copy / Export query macros under one cumulative
+/// root, node, and byte budget. Only the selected block subtrees are cloned into
+/// DTOs; complete PageDto values never cross IPC or accumulate in the WebView.
+///
+/// `max_roots` is deliberately global, not per macro. This keeps a selection
+/// containing many distinct query blocks from multiplying the same advertised
+/// export limit. Each relevant source document is scanned at most once and only
+/// references to the requested roots are retained while the graph snapshot is
+/// borrowed.
+pub fn export_query_subtrees(
+    graph: &Graph,
+    specs: &[QueryExportSpec],
+    max_queries: usize,
+    max_roots: usize,
+    max_nodes: usize,
+    max_bytes: usize,
+) -> QueryExportBatch {
+    let query_limit = max_queries.max(1);
+    let mut remaining_roots = max_roots.max(1);
+    let mut selected = Vec::new();
+
+    // Evaluate one query at a time and retain only at most `max_roots` identities
+    // across the whole session. Cached shallow results may be larger, but they are
+    // dropped before the next query and never become complete page trees.
+    for spec in specs.iter().take(query_limit) {
+        const QUERY_EXPORT_CONSTRUCTION_ROWS: usize = 20_000;
+        const QUERY_EXPORT_CONSTRUCTION_BYTES: usize = 32 * 1024 * 1024;
+        let bounded = if spec.advanced {
+            let (result, exceeded, total) = run_advanced_query_bounded(
+                graph,
+                &spec.query,
+                None,
+                QUERY_EXPORT_CONSTRUCTION_ROWS,
+                QUERY_EXPORT_CONSTRUCTION_BYTES,
+            );
+            BoundedGroups {
+                groups: result.groups,
+                total,
+                exceeded,
+            }
+        } else {
+            run_query_bounded(
+                graph,
+                &spec.query,
+                QUERY_EXPORT_CONSTRUCTION_ROWS,
+                QUERY_EXPORT_CONSTRUCTION_BYTES,
+            )
+        };
+        let total = bounded.total;
+        let mut roots = Vec::new();
+        // Do not emit a wrongly ordered prefix of a globally-sorted query. A
+        // query over the construction ceiling is disclosed as entirely omitted;
+        // ordinary bounded queries still retain the existing first-N export.
+        for group in if bounded.exceeded {
+            &[]
+        } else {
+            bounded.groups.as_slice()
+        } {
+            for block in &group.blocks {
+                if remaining_roots == 0 {
+                    break;
+                }
+                roots.push(SelectedExportRoot {
+                    page: group.page.clone(),
+                    kind: group.kind,
+                    id: block.id.clone(),
+                });
+                remaining_roots -= 1;
+            }
+            if remaining_roots == 0 {
+                break;
+            }
+        }
+        selected.push(SelectedExportQuery {
+            key: spec.key.clone(),
+            total,
+            roots,
+        });
+    }
+
+    let results = graph.with_pages(|pages| {
+        use std::collections::{HashMap, HashSet};
+
+        let mut wanted_by_page: HashMap<(PageKind, String), HashSet<String>> = HashMap::new();
+        for query in &selected {
+            for root in &query.roots {
+                wanted_by_page
+                    .entry((root.kind, root.page.clone()))
+                    .or_default()
+                    .insert(root.id.clone());
+            }
+        }
+
+        // Borrow at most `max_roots` matching blocks. Walking with an explicit
+        // stack avoids both recursive call growth and variadic child spreading on
+        // a page with hundreds of thousands of direct children.
+        let total_wanted = wanted_by_page.values().map(HashSet::len).sum::<usize>();
+        let mut found: HashMap<(PageKind, String, String), &DocBlock> = HashMap::new();
+        for (entry, doc) in pages {
+            if found.len() == total_wanted {
+                break;
+            }
+            let page_key = (entry.kind, entry.name.clone());
+            let Some(wanted) = wanted_by_page.get(&page_key) else {
+                continue;
+            };
+            let mut stack: Vec<&DocBlock> = doc.roots.iter().rev().collect();
+            while let Some(block) = stack.pop() {
+                let property_id = block.property("id");
+                let matched = if wanted.contains(block.uuid.as_str()) {
+                    Some(block.uuid.as_str())
+                } else {
+                    property_id.as_deref().filter(|id| wanted.contains(*id))
+                };
+                if let Some(id) = matched {
+                    found.insert((entry.kind, entry.name.clone(), id.to_string()), block);
+                    if found.len() == total_wanted {
+                        break;
+                    }
+                }
+                for child in block.children.iter().rev() {
+                    stack.push(child);
+                }
+            }
+        }
+
+        let mut remaining_nodes = max_nodes.max(1);
+        let mut remaining_bytes = max_bytes.max(1);
+        selected
+            .into_iter()
+            .map(|query| {
+                let mut groups: Vec<RefGroup> = Vec::new();
+                let mut shown = 0usize;
+                let mut omitted_nodes = 0usize;
+                for root in query.roots {
+                    let Some(block) = found.get(&(root.kind, root.page.clone(), root.id.clone()))
+                    else {
+                        // The graph changed between query evaluation and the
+                        // borrowed hydration snapshot. Count the missing result as
+                        // omitted instead of falling back to an unbounded page load.
+                        omitted_nodes = omitted_nodes.saturating_add(1);
+                        continue;
+                    };
+                    let total_nodes = subtree_node_count(block);
+                    let before_nodes = remaining_nodes;
+                    let dto =
+                        block_to_bounded_dto(block, &mut remaining_nodes, &mut remaining_bytes);
+                    let emitted = before_nodes.saturating_sub(remaining_nodes);
+                    omitted_nodes =
+                        omitted_nodes.saturating_add(total_nodes.saturating_sub(emitted));
+                    let Some(dto) = dto else {
+                        continue;
+                    };
+                    shown += 1;
+                    if let Some(group) = groups
+                        .iter_mut()
+                        .find(|group| group.kind == root.kind && group.page == root.page)
+                    {
+                        group.blocks.push(dto);
+                    } else {
+                        groups.push(RefGroup {
+                            page: root.page,
+                            kind: root.kind,
+                            blocks: vec![dto],
+                            evidence: Vec::new(),
+                        });
+                    }
+                }
+                QueryExportResult {
+                    key: query.key,
+                    groups,
+                    shown,
+                    total: query.total,
+                    omitted_nodes,
+                }
+            })
+            .collect()
+    });
+
+    QueryExportBatch {
+        results,
+        omitted_queries: specs.len().saturating_sub(query_limit),
+    }
+}
+
+/// Resolve one block for a hover/export consumer that explicitly needs a
+/// subtree. This compatibility wrapper applies the caller's node bound; native
+/// and export consumers use `preview_block_with_budget` to add a byte bound.
+pub fn preview_block(graph: &Graph, uuid: &str, max_nodes: usize) -> Option<BlockPreview> {
+    preview_block_with_budget(graph, uuid, max_nodes, usize::MAX)
+}
+
+/// Node-and-byte-bounded preview used by IPC and static/export consumers. The
+/// byte cap is applied while constructing the DTO, so a legal node count cannot
+/// still create an unbounded structured-clone payload. If even the root cannot
+/// fit, the preview is returned with an empty block list and the exact omitted
+/// count; callers can disclose truncation without confusing "too large" with
+/// "block not found".
+pub fn preview_block_with_budget(
+    graph: &Graph,
+    uuid: &str,
+    max_nodes: usize,
+    max_bytes: usize,
+) -> Option<BlockPreview> {
+    let max_nodes = max_nodes.max(1);
+    let max_bytes = max_bytes.max(1);
+    let hint = graph.block_page_hint(uuid);
+    graph.with_pages(|pages| {
+        let find_in = |entry: &PageEntry, doc: &Document| -> Option<BlockPreview> {
+            let mut found: Option<&DocBlock> = None;
+            walk(&doc.roots, &mut |block| {
+                if found.is_none()
+                    && (block.uuid == uuid || block.property("id").as_deref() == Some(uuid))
+                {
+                    found = Some(block);
+                }
+            });
+            found.map(|block| {
+                let total = subtree_node_count(block);
+                let mut remaining_nodes = max_nodes;
+                let mut remaining_bytes = max_bytes;
+                let blocks =
+                    block_to_bounded_dto(block, &mut remaining_nodes, &mut remaining_bytes)
+                        .into_iter()
+                        .collect::<Vec<_>>();
+                let emitted = max_nodes - remaining_nodes;
+                BlockPreview {
+                    group: RefGroup {
+                        page: entry.name.clone(),
+                        kind: entry.kind,
+                        blocks,
+                        evidence: Vec::new(),
+                    },
+                    truncated: total.saturating_sub(emitted),
+                }
+            })
+        };
+        if let Some(hint) = &hint {
+            if let Some((entry, doc)) = pages.iter().find(|(entry, _)| &entry.name == hint) {
+                if let Some(preview) = find_in(entry, doc) {
+                    return Some(preview);
+                }
+            }
+        }
+        for (entry, doc) in pages {
+            if let Some(preview) = find_in(entry, doc) {
+                return Some(preview);
+            }
+        }
+        None
+    })
 }
 
 /// Walk `doc` once, resolving any block whose uuid (or persisted `id::`) is a
@@ -1309,6 +2674,7 @@ fn resolve_ids_in_page<'a>(
     doc: &Document,
     want: &std::collections::HashSet<&'a str>,
     resolved: &mut std::collections::HashMap<&'a str, RefGroup>,
+    budget: &mut ConstructionBudget,
 ) {
     walk(&doc.roots, &mut |b| {
         // A block's identity is its uuid OR its persisted `id::`; check both
@@ -1323,14 +2689,22 @@ fn resolve_ids_in_page<'a>(
                     .filter(|id| !resolved.contains_key(id))
             });
         if let Some(id) = hit {
-            resolved.insert(
-                id,
-                RefGroup {
-                    page: entry.name.clone(),
-                    kind: entry.kind,
-                    blocks: vec![block_to_dto(b)],
-                },
-            );
+            if budget.closed() {
+                budget.deny_match();
+                return;
+            }
+            if budget.admit_estimated(&entry.name, shallow_dto_estimated_bytes(b, &[])) {
+                let dto = result_dto(b);
+                resolved.insert(
+                    id,
+                    RefGroup {
+                        page: entry.name.clone(),
+                        kind: entry.kind,
+                        blocks: vec![dto],
+                        evidence: Vec::new(),
+                    },
+                );
+            }
         }
     });
 }
@@ -1473,8 +2847,9 @@ enum AggKind {
 /// Which date a `between` range is tested against.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum BetweenField {
-    /// Journal date OR scheduled OR deadline (Tine's permissive default;
-    /// fieldless `(between …)` keeps this for back-compat).
+    /// Journal date OR scheduled OR deadline. This is a Tine extension and is
+    /// requested explicitly as `(between any …)`; OG's fieldless form is
+    /// journal-only.
     Any,
     /// The page's journal date only — implies journal pages, matching OG's
     /// `:between` rule (`:block/journal? true`).
@@ -1547,12 +2922,15 @@ fn block_date_ordinals(raw: &str, only: Option<&str>) -> Vec<i64> {
 
 impl Pred {
     fn parse(src: &str, today: JournalDate) -> Option<Pred> {
-        if is_advanced(src) {
+        if is_advanced(src)
+            || !query_source_within_limit(src)
+            || !query_nesting_within_limit(src)
+        {
             return None;
         }
         let tokens = tokenize(src);
         let mut pos = 0;
-        let p = parse_expr(&tokens, &mut pos, today)?;
+        let p = parse_expr(&tokens, &mut pos, today, 0)?;
         Some(p)
     }
 
@@ -1567,9 +2945,37 @@ impl Pred {
         }
     }
 
-    fn eval(&self, block: &DocBlock, ctx: &EvalCtx) -> bool {
+    fn uses_path_refs(&self) -> bool {
         match self {
-            Pred::PageRef(name) => block.projection().refs_contains(name),
+            Pred::PageRef(_) => true,
+            Pred::And(ps) | Pred::Or(ps) => ps.iter().any(Pred::uses_path_refs),
+            Pred::Not(p) => p.uses_path_refs(),
+            _ => false,
+        }
+    }
+
+    #[cfg(test)]
+    fn eval(&self, block: &DocBlock, ctx: &EvalCtx) -> bool {
+        self.eval_with_path_refs(block, &PathRefCounts::new(), ctx)
+    }
+
+    fn eval_with_path_refs(
+        &self,
+        block: &DocBlock,
+        ancestor_refs: &PathRefCounts,
+        ctx: &EvalCtx,
+    ) -> bool {
+        match self {
+            // OG's `:page-ref` query rule reads `:block/path-refs`, which is the
+            // union of this block's explicit refs, every ancestor's refs, and
+            // the page a block physically belongs to. `(page …)` below
+            // deliberately remains membership-only.
+            Pred::PageRef(name) => {
+                let normalized = refs::normalize(name);
+                block.projection().refs_contains_norm(&normalized)
+                    || ancestor_refs.contains_key(&normalized)
+                    || refs::normalize(ctx.page_name) == normalized
+            }
             Pred::Task(markers) => block
                 .marker()
                 .map(|m| markers.iter().any(|x| x.eq_ignore_ascii_case(m)))
@@ -1621,9 +3027,13 @@ impl Pred {
             Pred::Content(s) => block.projection().visible_lower.contains(s.as_str()),
             Pred::Search(search) => search.matches(block),
             Pred::ContentRegex(regex) => regex.matches(block),
-            Pred::And(ps) => ps.iter().all(|p| p.eval(block, ctx)),
-            Pred::Or(ps) => ps.iter().any(|p| p.eval(block, ctx)),
-            Pred::Not(p) => !p.eval(block, ctx),
+            Pred::And(ps) => ps
+                .iter()
+                .all(|p| p.eval_with_path_refs(block, ancestor_refs, ctx)),
+            Pred::Or(ps) => ps
+                .iter()
+                .any(|p| p.eval_with_path_refs(block, ancestor_refs, ctx)),
+            Pred::Not(p) => !p.eval_with_path_refs(block, ancestor_refs, ctx),
             // Options and frontend-computed directives are not filters.
             Pred::Sample(_) | Pred::SortBy(..) | Pred::Aggregate(_) | Pred::GroupBy(_) => true,
         }
@@ -1643,11 +3053,12 @@ fn value_matches(stored: &str, query: Option<&str>) -> bool {
 }
 fn strip_ref(s: &str) -> String {
     let t = s.trim();
+    let t = t.strip_prefix('#').unwrap_or(t).trim();
     let t = t
         .strip_prefix("[[")
         .and_then(|x| x.strip_suffix("]]"))
         .unwrap_or(t);
-    t.strip_prefix('#').unwrap_or(t).trim().to_string()
+    t.trim().to_string()
 }
 
 /// Resolve a `between` bound token to a `yyyymmdd` ordinal: `today`/`yesterday`/
@@ -1667,6 +3078,16 @@ fn resolve_date_token(tok: &str, today: JournalDate) -> Option<i64> {
         return Some(jd.ordinal_key());
     }
     journal_ordinal(t)
+}
+
+/// OG's `build-between-two-arg` orders its two resolved bounds before building
+/// the predicate, so `(between END START)` has the same inclusive interval as
+/// `(between START END)`. Preserve open bounds used by Tine's advanced subset.
+fn ordered_bounds(lo: Option<i64>, hi: Option<i64>) -> (Option<i64>, Option<i64>) {
+    match (lo, hi) {
+        (Some(lo), Some(hi)) if lo > hi => (Some(hi), Some(lo)),
+        pair => pair,
+    }
 }
 
 /// Parse a signed relative duration like `-7d`, `+2w`, `3m`, `-1y` off `today`.
@@ -1784,7 +3205,15 @@ fn tokenize(src: &str) -> Vec<Tok> {
     toks
 }
 
-fn parse_expr(toks: &[Tok], pos: &mut usize, today: JournalDate) -> Option<Pred> {
+fn parse_expr(
+    toks: &[Tok],
+    pos: &mut usize,
+    today: JournalDate,
+    depth: usize,
+) -> Option<Pred> {
+    if depth > QUERY_NESTING_MAX {
+        return None;
+    }
     let t = toks.get(*pos)?.clone();
     match t {
         Tok::PageRef(name) | Tok::Tag(name) => {
@@ -1797,7 +3226,15 @@ fn parse_expr(toks: &[Tok], pos: &mut usize, today: JournalDate) -> Option<Pred>
         // constant query string for every candidate block (perf Codex#7).
         Tok::Str(s) => {
             *pos += 1;
-            Some(Pred::Content(s.to_lowercase()))
+            Some(Pred::Content(crate::search_query::canonical_fold(&s)))
+        }
+        // Logseq's simple-query macros substitute parser-decoded arguments into
+        // the query template. A quoted invocation argument can therefore arrive
+        // here as a bare word. It is still a block-content term, not syntax to
+        // silently discard.
+        Tok::Word(s) => {
+            *pos += 1;
+            Some(Pred::Content(crate::search_query::canonical_fold(&s)))
         }
         Tok::LParen => {
             *pos += 1; // consume (
@@ -1807,9 +3244,9 @@ fn parse_expr(toks: &[Tok], pos: &mut usize, today: JournalDate) -> Option<Pred>
             };
             *pos += 1;
             let pred = match head.as_str() {
-                "and" => Pred::And(parse_list(toks, pos, today)),
-                "or" => Pred::Or(parse_list(toks, pos, today)),
-                "not" => Pred::Not(Box::new(parse_expr(toks, pos, today)?)),
+                "and" => Pred::And(parse_list(toks, pos, today, depth + 1)),
+                "or" => Pred::Or(parse_list(toks, pos, today, depth + 1)),
+                "not" => Pred::Not(Box::new(parse_expr(toks, pos, today, depth + 1)?)),
                 "task" | "todo" => {
                     let markers = parse_words(toks, pos);
                     // `(todo)` with no args means any open task.
@@ -1862,8 +3299,9 @@ fn parse_expr(toks: &[Tok], pos: &mut usize, today: JournalDate) -> Option<Pred>
                 "journal" => Pred::Journal,
                 "between" => {
                     // (between [FIELD] START END): optional leading field keyword
-                    // journal|scheduled|deadline (default Any = journal-or-
-                    // scheduled-or-deadline); bounds are journal titles,
+                    // journal|scheduled|deadline|any (default Journal, matching
+                    // OG; `any` retains Tine's journal-or-planning extension);
+                    // bounds are journal titles,
                     // `today`/`yesterday`/`tomorrow`, signed durations `±N[dwmy]`,
                     // or `yyyy-MM-dd`.
                     let field = match toks.get(*pos) {
@@ -1880,12 +3318,17 @@ fn parse_expr(toks: &[Tok], pos: &mut usize, today: JournalDate) -> Option<Pred>
                                 *pos += 1;
                                 BetweenField::Deadline
                             }
-                            _ => BetweenField::Any,
+                            "any" => {
+                                *pos += 1;
+                                BetweenField::Any
+                            }
+                            _ => BetweenField::Journal,
                         },
-                        _ => BetweenField::Any,
+                        _ => BetweenField::Journal,
                     };
                     let lo = parse_name(toks, pos).and_then(|s| resolve_date_token(&s, today));
                     let hi = parse_name(toks, pos).and_then(|s| resolve_date_token(&s, today));
+                    let (lo, hi) = ordered_bounds(lo, hi);
                     Pred::Between(field, lo, hi)
                 }
                 "sample" => {
@@ -1927,13 +3370,18 @@ fn parse_expr(toks: &[Tok], pos: &mut usize, today: JournalDate) -> Option<Pred>
     }
 }
 
-fn parse_list(toks: &[Tok], pos: &mut usize, today: JournalDate) -> Vec<Pred> {
+fn parse_list(
+    toks: &[Tok],
+    pos: &mut usize,
+    today: JournalDate,
+    depth: usize,
+) -> Vec<Pred> {
     let mut out = Vec::new();
     while let Some(t) = toks.get(*pos) {
         if *t == Tok::RParen {
             break;
         }
-        match parse_expr(toks, pos, today) {
+        match parse_expr(toks, pos, today, depth) {
             Some(p) => out.push(p),
             None => break,
         }
@@ -2025,6 +3473,122 @@ mod tests {
 
     fn pred(src: &str) -> Pred {
         Pred::parse(src, TODAY).expect("parse")
+    }
+
+    fn nested_boolean(head: &str, depth: usize, leaf: &str) -> String {
+        format!(
+            "{}{}{}",
+            format!("({head} ").repeat(depth),
+            leaf,
+            ")".repeat(depth)
+        )
+    }
+
+    #[test]
+    fn query_parsers_fail_closed_past_the_shared_depth_and_size_limits() {
+        let simple_at_limit = nested_boolean("and", QUERY_NESTING_MAX - 1, "(task TODO)");
+        assert!(Pred::parse(&simple_at_limit, TODAY).is_some());
+        let simple_too_deep = nested_boolean("and", QUERY_NESTING_MAX, "(task TODO)");
+        assert!(Pred::parse(&simple_too_deep, TODAY).is_none());
+
+        let advanced_at_limit = format!(
+            "[:find (pull ?b [*]) :where {}]",
+            nested_boolean("and", QUERY_NESTING_MAX - 1, "(task ?b #{\"TODO\"})")
+        );
+        let (accepted, _, rejected) = advanced_pred(&advanced_at_limit, None, TODAY);
+        assert!(accepted.is_some(), "unexpected ignored clauses: {rejected:?}");
+        let advanced_too_deep = format!(
+            "[:find (pull ?b [*]) :where {}]",
+            nested_boolean(
+                "and",
+                QUERY_NESTING_MAX,
+                "(task ?b #{\"TODO\"})"
+            )
+        );
+        let (rejected, ran, ignored) = advanced_pred(&advanced_too_deep, None, TODAY);
+        assert!(rejected.is_none());
+        assert!(ran.is_empty());
+        assert!(ignored.iter().any(|item| item == "query-nesting-too-deep"));
+
+        let oversized = "x".repeat(QUERY_SOURCE_MAX_BYTES + 1);
+        assert!(!query_source_within_limit(&oversized));
+        assert!(Pred::parse(&oversized, TODAY).is_none());
+
+        let harmless = format!("(and (content \"{}\"))", "(".repeat(QUERY_NESTING_MAX + 10));
+        assert!(query_nesting_within_limit(&harmless));
+
+        let simple_semicolon = format!(";{}", "(".repeat(QUERY_NESTING_MAX + 1));
+        assert!(
+            !query_nesting_within_limit(&simple_semicolon),
+            "semicolon is ordinary text, not a comment, in the simple DSL"
+        );
+        let advanced_comment = format!(
+            "[:find ?b :where ;; {}\n(task ?b #{{\"TODO\"}})]",
+            "(".repeat(QUERY_NESTING_MAX + 1)
+        );
+        assert!(
+            query_nesting_within_limit(&advanced_comment),
+            "advanced EDN comments must not count delimiter text"
+        );
+    }
+
+    #[test]
+    fn backlink_filter_context_indexes_visible_descendants_and_parser_owned_facets() {
+        use std::fs;
+
+        const ROOT: &str = "12345678-1234-4234-8234-123456789abc";
+        let dir = std::env::temp_dir().join(format!(
+            "tine-backlink-filter-context-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::write(
+            dir.join("pages/Source.md"),
+            format!(
+                "- Parent [[Target]]\n  id:: {ROOT}\n  - A descendant carries the exact needle [[Other]] #tag\n    tags:: Team\n  - TODO parser-owned task state\n  - ```\n    [[CodeOnly]]\n    ```\n"
+            ),
+        )
+        .unwrap();
+
+        let graph = Graph::open(&dir);
+        let context = backlink_filter_context(
+            &graph,
+            "Target",
+            &[
+                BacklinkFilterTarget {
+                    page: "Source".into(),
+                    kind: PageKind::Page,
+                    block_id: ROOT.into(),
+                },
+                // Defensive duplicate input must not make a complete response
+                // look truncated or duplicate its payload.
+                BacklinkFilterTarget {
+                    page: "Source".into(),
+                    kind: PageKind::Page,
+                    block_id: ROOT.into(),
+                },
+            ],
+        );
+
+        assert!(!context.truncated);
+        assert_eq!(context.entries.len(), 1);
+        let entry = &context.entries[0];
+        assert!(entry.text.contains("exact needle"), "{:?}", entry.text);
+        assert!(!entry.text.contains("id::"), "properties are not visible text");
+        let facets = entry
+            .facets
+            .iter()
+            .map(|facet| refs::normalize(facet))
+            .collect::<std::collections::HashSet<_>>();
+        for expected in ["other", "tag", "team", "todo"] {
+            assert!(facets.contains(expected), "missing {expected}: {:?}", entry.facets);
+        }
+        assert!(!facets.contains("target"));
+        assert!(!facets.contains("codeonly"), "code-fence text is not a reference facet");
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     /// A minimal eval context for a block on a named (non-journal) page.
@@ -2271,7 +3835,100 @@ mod tests {
         assert!(q.eval(&b, &on_2022));
         assert!(!q.eval(&b, &on_2019));
         let sched = DocBlock::new("TODO x\nSCHEDULED: <2022-03-03 Thu>");
-        assert!(q.eval(&sched, &ctx_named()));
+        assert!(!q.eval(&sched, &ctx_named()));
+        assert!(pred("(between any [[Jan 1st, 2021]] [[Jan 1st, 2100]])")
+            .eval(&sched, &ctx_named()));
+    }
+
+    /// The unqualified two-bound form is OG's journal-page range. Scheduled and
+    /// deadline ranges remain available through their explicit field selectors;
+    /// Tine's former permissive union is retained only as explicit `any`.
+    #[test]
+    fn og_unqualified_between_is_bounded_to_journal_pages() {
+        use std::fs;
+
+        const DEC_5_A: &str = "44444444-4444-4444-8444-444444444441";
+        const DEC_5_B: &str = "44444444-4444-4444-8444-444444444442";
+        const DEC_7_A: &str = "44444444-4444-4444-8444-444444444443";
+        const DEC_7_B: &str = "44444444-4444-4444-8444-444444444444";
+        const OUTSIDE_JOURNAL: &str = "55555555-5555-4555-8555-555555555555";
+        const NAMED_SCHEDULED: &str = "66666666-6666-4666-8666-666666666666";
+        let dir = std::env::temp_dir().join(format!(
+            "tine-og-between-journal-bounds-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::write(
+            dir.join("journals/2020_12_05.md"),
+            format!(
+                "- first in range\n  id:: {DEC_5_A}\n- second in range\n  id:: {DEC_5_B}\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("journals/2020_12_07.md"),
+            format!(
+                "- third in range\n  id:: {DEC_7_A}\n- fourth in range\n  id:: {DEC_7_B}\n"
+            ),
+        )
+        .unwrap();
+        // Both rows have an in-range planning timestamp but live outside the
+        // requested journal-page interval. The old Any default leaked them.
+        fs::write(
+            dir.join("journals/2021_07_01.md"),
+            format!(
+                "- outside journal\n  SCHEDULED: <2020-12-06 Sun>\n  id:: {OUTSIDE_JOURNAL}\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages/Named.md"),
+            format!(
+                "- named scheduled\n  DEADLINE: <2020-12-06 Sun>\n  id:: {NAMED_SCHEDULED}\n"
+            ),
+        )
+        .unwrap();
+
+        let graph = Graph::open(&dir);
+        let ids = run_query(
+            &graph,
+            "(between [[Dec 5th, 2020]] [[Dec 7th, 2020]])",
+        )
+        .into_iter()
+        .flat_map(|group| group.blocks.into_iter().map(|block| block.id))
+        .collect::<Vec<_>>();
+        assert_eq!(
+            ids,
+            vec![
+                DEC_5_A.to_string(),
+                DEC_5_B.to_string(),
+                DEC_7_A.to_string(),
+                DEC_7_B.to_string(),
+            ]
+        );
+
+        // Reversed bounds are normalized by OG's build-between-two-arg.
+        let reversed = run_query(
+            &graph,
+            "(between [[Dec 7th, 2020]] [[Dec 5th, 2020]])",
+        );
+        assert_eq!(
+            reversed.iter().map(|group| group.blocks.len()).sum::<usize>(),
+            4
+        );
+        // Tine's union remains explicitly requestable.
+        let any = run_query(
+            &graph,
+            "(between any [[Dec 5th, 2020]] [[Dec 7th, 2020]])",
+        );
+        assert_eq!(
+            any.iter().map(|group| group.blocks.len()).sum::<usize>(),
+            6
+        );
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -2280,7 +3937,7 @@ mod tests {
         let q = pred("(between -7d +7d)");
         assert_eq!(
             q,
-            Pred::Between(BetweenField::Any, Some(20260609), Some(20260623))
+            Pred::Between(BetweenField::Journal, Some(20260609), Some(20260623))
         );
         let b = DocBlock::new("x");
         assert!(q.eval(&b, &ctx_journal(20260616)));
@@ -2289,11 +3946,11 @@ mod tests {
         // keyword bounds + month/year units
         assert_eq!(
             pred("(between today tomorrow)"),
-            Pred::Between(BetweenField::Any, Some(20260616), Some(20260617))
+            Pred::Between(BetweenField::Journal, Some(20260616), Some(20260617))
         );
         assert_eq!(
             pred("(between -1m +1y)"),
-            Pred::Between(BetweenField::Any, Some(20260516), Some(20270616))
+            Pred::Between(BetweenField::Journal, Some(20260516), Some(20270616))
         );
     }
 
@@ -2419,6 +4076,14 @@ mod tests {
     }
 
     #[test]
+    fn content_predicate_uses_canonical_unicode_without_accent_folding() {
+        let none = ctx_named();
+        let block = DocBlock::new("Re\u{301}sume\u{301}");
+        assert!(pred("\"Résumé\"").eval(&block, &none));
+        assert!(!pred("\"Resume\"").eval(&block, &none));
+    }
+
+    #[test]
     fn parse_extracts_options() {
         let mut opts = QueryOpts::default();
         pred("(and (task TODO) (sample 5) (sort-by priority desc))").collect_opts(&mut opts);
@@ -2467,63 +4132,10 @@ mod tests {
         query: &str,
         limit: usize,
     ) -> Vec<PageEntry> {
-        use crate::search_query::Matcher;
-        let matcher = Matcher::parse(query);
-        let simple = matcher.simple_term();
-        if limit == 0 || matches!(matcher, Matcher::InvalidRegex(_)) {
-            return Vec::new();
-        }
-        let q = simple.unwrap_or("").to_string();
-        let use_matcher = simple.is_none() && !matches!(matcher, Matcher::Empty);
-        let score = |lower: &str, orig: &str| -> Option<i32> {
-            if use_matcher {
-                matcher.score_name(lower, orig)
-            } else {
-                score_name(lower, &q)
-            }
-        };
-        let file_pages = graph.list_pages();
-        enum Cand {
-            File(usize),
-            Ref(PageEntry),
-        }
-        let mut scored: Vec<(i32, Cand)> = file_pages
-            .iter()
-            .enumerate()
-            .filter_map(|(i, e)| {
-                score(&e.name.to_lowercase(), &e.name)
-                    .map(|s| (s - e.name.len() as i32, Cand::File(i)))
-            })
-            .collect();
-        let have: std::collections::HashSet<String> =
-            file_pages.iter().map(|e| refs::page_key(&e.name)).collect();
-        for name in graph.referenced_page_names() {
-            let lower = refs::page_key(&name);
-            if have.contains(&lower) {
-                continue;
-            }
-            if let Some(s) = score(&name.to_lowercase(), &name) {
-                let len = name.len() as i32;
-                scored.push((
-                    s - len,
-                    Cand::Ref(PageEntry {
-                        name,
-                        kind: PageKind::Page,
-                        date_key: None,
-                        rel_path: String::new(),
-                        path: std::path::PathBuf::new(),
-                    }),
-                ));
-            }
-        }
-        scored.sort_by(|a, b| b.0.cmp(&a.0));
-        scored
+        let plan = crate::query_plan::QueryPlan::legacy_page_search(query, usize::MAX);
+        crate::query_plan::page_hits_to_entries(plan.execute(graph, || false).hits)
             .into_iter()
             .take(limit)
-            .map(|(_, c)| match c {
-                Cand::File(i) => file_pages[i].clone(),
-                Cand::Ref(e) => e,
-            })
             .collect()
     }
 
@@ -2573,6 +4185,179 @@ mod tests {
         }
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// OG 1.0.0 (`query_dsl.cljs` + the `:page-ref` rule) evaluates a bare
+    /// `[[Page]]` simple-query clause against `:block/path-refs`. That relation
+    /// includes both explicit references and the page the block physically
+    /// belongs to. Keep the explicit `(page …)` operator narrower: it means
+    /// physical membership only.
+    #[test]
+    fn og_bare_page_token_unions_physical_membership_and_explicit_refs() {
+        use std::fs;
+
+        const ON_PAGE: &str = "11111111-1111-4111-8111-111111111111";
+        const EXPLICIT_REF: &str = "22222222-2222-4222-8222-222222222222";
+        const UNRELATED: &str = "33333333-3333-4333-8333-333333333333";
+        let dir = std::env::temp_dir().join(format!(
+            "tine-og-bare-page-union-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::write(
+            dir.join("pages/Parity Target.md"),
+            format!("- TODO physically on target\n  id:: {ON_PAGE}\n"),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages/Parity Workflows.md"),
+            format!("- TODO explicit [[Parity Target]] witness\n  id:: {EXPLICIT_REF}\n"),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages/Other.md"),
+            format!("- TODO unrelated witness\n  id:: {UNRELATED}\n"),
+        )
+        .unwrap();
+
+        let graph = Graph::open(&dir);
+        let ids = |query: &str| {
+            run_query(&graph, query)
+                .into_iter()
+                .flat_map(|group| group.blocks.into_iter().map(|block| block.id))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            ids("(and (task TODO) [[Parity Target]])"),
+            vec![ON_PAGE.to_string(), EXPLICIT_REF.to_string()]
+        );
+        assert_eq!(
+            ids("(and (task TODO) (page \"Parity Target\"))"),
+            vec![ON_PAGE.to_string()]
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// OG's graph parser materializes `:block/path-refs` from every ancestor's
+    /// explicit refs (`with-path-refs`), so a bare page-ref query also matches a
+    /// descendant whose own text does not repeat the reference. The explicit
+    /// `(page ...)` operator remains physical page membership only.
+    #[test]
+    fn og_bare_page_token_inherits_ancestor_path_refs() {
+        use std::fs;
+
+        const ON_PAGE: &str = "44444444-4444-4444-8444-444444444444";
+        const INHERITED_CHILD: &str = "55555555-5555-4555-8555-555555555555";
+        const INHERITED_GRANDCHILD: &str = "66666666-6666-4666-8666-666666666666";
+        const DIRECT_REF: &str = "77777777-7777-4777-8777-777777777777";
+        const UNRELATED_CHILD: &str = "88888888-8888-4888-8888-888888888888";
+        const INVALIDATION_WITNESS: &str = "99999999-9999-4999-8999-999999999999";
+        let dir = std::env::temp_dir().join(format!(
+            "tine-og-bare-page-path-refs-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::write(
+            dir.join("pages/Target.md"),
+            format!("- TODO physically on target\n  id:: {ON_PAGE}\n"),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages/Workflows.md"),
+            format!(
+                "- Parent [[Target]]\n  - TODO inherited child\n    id:: {INHERITED_CHILD}\n    - TODO inherited grandchild\n      id:: {INHERITED_GRANDCHILD}\n- Other parent\n  - TODO unrelated child\n    id:: {UNRELATED_CHILD}\n- TODO direct [[Target]]\n  id:: {DIRECT_REF}\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages/Inherited Only.md"),
+            format!(
+                "- Cache context [[Target]]\n  - TODO inherited invalidation witness\n    id:: {INVALIDATION_WITNESS}\n"
+            ),
+        )
+        .unwrap();
+
+        let graph = Graph::open(&dir);
+        let ids = |query: &str| {
+            run_query(&graph, query)
+                .into_iter()
+                .flat_map(|group| group.blocks.into_iter().map(|block| block.id))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            ids("(and (task TODO) [[Target]])")
+                .into_iter()
+                .collect::<std::collections::HashSet<_>>(),
+            [ON_PAGE, INHERITED_CHILD, INVALIDATION_WITNESS, DIRECT_REF]
+                .into_iter()
+                .map(str::to_string)
+                .collect()
+        );
+        // OG query presentation suppresses a matching block only when its
+        // immediate parent also matched, so the matching grandchild is not a
+        // second top-level result.
+        assert!(
+            !ids("(and (task TODO) [[Target]])")
+                .contains(&INHERITED_GRANDCHILD.to_string())
+        );
+        assert_eq!(
+            ids("(and (task TODO) (not [[Target]]))"),
+            vec![UNRELATED_CHILD.to_string()]
+        );
+        assert_eq!(
+            ids("(and (task TODO) (page \"Target\"))"),
+            vec![ON_PAGE.to_string()]
+        );
+
+        graph.with_pages(|pages| {
+            let (entry, doc) = pages
+                .iter()
+                .find(|(entry, _)| entry.name == "Inherited Only")
+                .expect("inherited-only fixture page");
+            assert!(page_affects_query(
+                "(and (task TODO) [[Target]])",
+                entry,
+                doc
+            ));
+            assert!(!page_affects_query(
+                "(and (task TODO) (page \"Target\"))",
+                entry,
+                doc
+            ));
+            assert!(page_affects_advanced_query(
+                r#"[:find (pull ?b [*]) :where (and (task ?b #{"TODO"}) (page-ref ?b "Target"))]"#,
+                None,
+                entry,
+                doc,
+            ));
+        });
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Macro arguments arrive without their source quotes after the parser has
+    /// expanded `$1`. OG's simple query reader treats that bare value as a
+    /// block-content term; Tine must not silently drop it from an `and` form.
+    #[test]
+    fn og_bare_word_is_a_content_term() {
+        let parsed = pred("(and (task DONE) changelog)");
+        assert_eq!(
+            parsed,
+            Pred::And(vec![Pred::Task(vec!["DONE".into()]), Pred::Content("changelog".into())])
+        );
+        assert!(parsed.eval(
+            &DocBlock::new("DONE Write changelog for v0.0.9"),
+            &ctx_named()
+        ));
+        assert!(!parsed.eval(
+            &DocBlock::new("DONE Publish release notes"),
+            &ctx_named()
+        ));
     }
 
     #[test]
@@ -2672,6 +4457,337 @@ mod tests {
     }
 
     #[test]
+    fn canonical_reference_evidence_keeps_mixed_alias_occurrences_and_properties() {
+        use std::fs;
+        let dir =
+            std::env::temp_dir().join(format!("tine-reference-evidence-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::write(
+            dir.join("pages").join("Target.md"),
+            "alias:: Alias\n\n- canonical page\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages").join("Source.md"),
+            "- [[Alias]] then Alias and Target and `Target`\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages").join("Props.md"),
+            "related:: [[Alias]]\n\n- ordinary\n",
+        )
+        .unwrap();
+
+        let graph = Graph::open(&dir);
+        graph.warm_cache();
+        let linked = backlinks(&graph, "Target");
+        let source = linked.iter().find(|group| group.page == "Source").unwrap();
+        assert_eq!(source.blocks.len(), 1);
+        assert_eq!(source.evidence.len(), 1);
+        assert_eq!(source.evidence[0].occurrences.len(), 1);
+        assert_eq!(
+            source.evidence[0].occurrences[0].kind,
+            ReferenceKind::Explicit
+        );
+        let props = linked.iter().find(|group| group.page == "Props").unwrap();
+        assert!(props.blocks[0].page_property);
+        assert_eq!(
+            props.evidence[0].occurrences[0].kind,
+            ReferenceKind::Explicit
+        );
+
+        let unlinked = unlinked_refs(&graph, "Target");
+        let source = unlinked
+            .iter()
+            .find(|group| group.page == "Source")
+            .unwrap();
+        assert_eq!(
+            source.blocks.len(),
+            1,
+            "one block row, not one row per mention"
+        );
+        assert_eq!(
+            source.evidence[0].occurrences.len(),
+            2,
+            "alias + title; code excluded"
+        );
+        assert!(source.evidence[0]
+            .occurrences
+            .iter()
+            .all(|occurrence| occurrence.kind == ReferenceKind::Plain));
+        let diagnostics = reference_diagnostics(&graph, "Target");
+        assert_eq!(diagnostics.engine_version, "reference-evidence/v1");
+        let source_trace = diagnostics
+            .traces
+            .iter()
+            .find(|trace| trace.page == "Source")
+            .unwrap();
+        assert!(source_trace.included_linked && source_trace.included_unlinked);
+        assert_eq!(source_trace.occurrences.len(), 3);
+        assert!(!serde_json::to_string(&diagnostics)
+            .unwrap()
+            .contains("launcher-ranking"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Regression for the pre-0.6 performance audit: recursive `block_to_dto`
+    /// used to clone a nested suffix for every matching/query/reference id,
+    /// producing N(N+1)/2 wire nodes (and ~1.8 GiB RSS at N=2,000). OG query
+    /// presentation suppresses a result whose direct parent is also a result;
+    /// references retain every occurrence. All wire rows stay shallow, and an
+    /// explicit preview is bounded before allocation.
+    #[test]
+    fn nested_result_contract_is_non_overlapping_and_preview_is_bounded() {
+        use std::fs;
+
+        fn collect_ids(blocks: &[BlockDto], out: &mut Vec<String>) {
+            for block in blocks {
+                out.push(block.id.clone());
+                collect_ids(&block.children, out);
+            }
+        }
+        fn dto_nodes(blocks: &[BlockDto]) -> usize {
+            blocks
+                .iter()
+                .map(|block| 1 + dto_nodes(&block.children))
+                .sum()
+        }
+
+        const DEPTH: usize = 512;
+        let dir =
+            std::env::temp_dir().join(format!("tine-non-overlap-results-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        let nested = (0..DEPTH)
+            .map(|depth| format!("{}- TODO [[Target]] node {depth}\n", "  ".repeat(depth)))
+            .collect::<String>();
+        fs::write(dir.join("pages").join("Nested.md"), nested).unwrap();
+
+        let graph = Graph::open(&dir);
+        graph.warm_cache();
+        let entry = graph
+            .list_pages()
+            .into_iter()
+            .find(|entry| entry.name == "Nested")
+            .unwrap();
+        let page = graph.load_page(&entry).unwrap();
+        let mut ids = Vec::new();
+        collect_ids(&page.blocks, &mut ids);
+        assert_eq!(ids.len(), DEPTH);
+
+        let query = run_query(&graph, "(task TODO)");
+        assert_eq!(query.iter().map(|g| g.blocks.len()).sum::<usize>(), 1);
+        assert_eq!(
+            dto_nodes(&query[0].blocks),
+            1,
+            "query membership DTOs stay shallow"
+        );
+
+        let linked = backlinks(&graph, "Target");
+        assert_eq!(linked.iter().map(|g| g.blocks.len()).sum::<usize>(), DEPTH);
+        assert_eq!(
+            linked
+                .iter()
+                .flat_map(|group| &group.blocks)
+                .map(|block| dto_nodes(std::slice::from_ref(block)))
+                .sum::<usize>(),
+            DEPTH,
+            "every reference occurrence remains independently countable but shallow"
+        );
+
+        let resolved = resolve_blocks(&graph, &ids);
+        assert_eq!(resolved.len(), DEPTH);
+        assert_eq!(
+            resolved
+                .iter()
+                .flatten()
+                .map(|group| dto_nodes(&group.blocks))
+                .sum::<usize>(),
+            DEPTH,
+            "N requested nested ids must produce N DTO nodes, not N(N+1)/2"
+        );
+
+        let preview = preview_block(&graph, &ids[0], 50).unwrap();
+        assert_eq!(dto_nodes(&preview.group.blocks), 50);
+        assert_eq!(preview.truncated, DEPTH - 50);
+
+        let byte_bounded = preview_block_with_budget(&graph, &ids[0], DEPTH, 512).unwrap();
+        assert!(
+            byte_bounded
+                .group
+                .blocks
+                .iter()
+                .map(crate::model::block_dto_estimated_bytes)
+                .sum::<usize>()
+                <= 512
+        );
+        assert!(byte_bounded.truncated > 0);
+
+        let root_too_large = preview_block_with_budget(&graph, &ids[0], DEPTH, 64).unwrap();
+        assert!(root_too_large.group.blocks.is_empty());
+        assert_eq!(root_too_large.truncated, DEPTH);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn og_query_roots_and_reference_occurrences_cover_matching_descendants_below_a_gap() {
+        use std::fs;
+
+        const TARGET_ID: &str = "11111111-1111-4111-8111-111111111111";
+        let dir =
+            std::env::temp_dir().join(format!("tine-og-query-root-gap-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::write(
+            dir.join("pages").join("Nested.md"),
+            format!(
+                "- TODO [[Target]] (({TARGET_ID})) PlainName ancestor\n  - DONE non-matching gap\n    - TODO [[Target]] (({TARGET_ID})) PlainName grandchild\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages").join("Target.md"),
+            format!("- target\n  id:: {TARGET_ID}\n"),
+        )
+        .unwrap();
+        fs::write(dir.join("pages").join("PlainName.md"), "- target\n").unwrap();
+
+        let graph = Graph::open(&dir);
+        graph.warm_cache();
+        let raws = |groups: &[RefGroup]| {
+            groups
+                .iter()
+                .flat_map(|group| group.blocks.iter().map(|block| block.raw.clone()))
+                .collect::<Vec<_>>()
+        };
+
+        let simple = raws(&run_query(&graph, "(task TODO)"));
+        assert_eq!(simple.len(), 2);
+        assert!(simple.iter().any(|raw| raw.contains("ancestor")));
+        assert!(simple.iter().any(|raw| raw.contains("grandchild")));
+
+        let advanced = run_advanced_query(
+            &graph,
+            "[:find (pull ?b [*]) :where (task ?b \"TODO\")]",
+            None,
+        );
+        assert!(advanced.supported);
+        assert_eq!(raws(&advanced.groups).len(), 2);
+
+        let linked = backlinks(&graph, "Target");
+        assert_eq!(raws(&linked).len(), 2);
+        assert_eq!(
+            linked
+                .iter()
+                .map(|group| group.evidence.len())
+                .sum::<usize>(),
+            2
+        );
+
+        let unlinked = unlinked_refs(&graph, "PlainName");
+        assert_eq!(raws(&unlinked).len(), 2);
+        assert_eq!(
+            unlinked
+                .iter()
+                .map(|group| group.evidence.len())
+                .sum::<usize>(),
+            2
+        );
+
+        assert_eq!(raws(&block_referrers(&graph, TARGET_ID)).len(), 2);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn query_export_hydrates_only_selected_subtrees_under_one_session_budget() {
+        use std::fs;
+
+        let dir =
+            std::env::temp_dir().join(format!("tine-query-export-budget-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("journals")).unwrap();
+
+        let wide_children = |prefix: &str| {
+            (0..5_000)
+                .map(|index| format!("  - {prefix} child {index}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        // Each matching root has 5,000 descendants. Page A also has a 5,000-node
+        // unrelated branch: whole-page hydration would clone/index all 10,002
+        // nodes before noticing the export cap.
+        fs::write(
+            dir.join("pages").join("A.md"),
+            format!(
+                "- TODO selected A\n{}\n- unrelated branch\n{}\n",
+                wide_children("selected-a"),
+                wide_children("unrelated-a"),
+            ),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("pages").join("B.md"),
+            format!("- DONE selected B\n{}\n", wide_children("selected-b")),
+        )
+        .unwrap();
+
+        let graph = Graph::open(&dir);
+        graph.warm_cache();
+        let batch = export_query_subtrees(
+            &graph,
+            &[
+                QueryExportSpec {
+                    key: "todo".into(),
+                    query: "(task TODO)".into(),
+                    advanced: false,
+                },
+                QueryExportSpec {
+                    key: "done".into(),
+                    query: "(task DONE)".into(),
+                    advanced: false,
+                },
+            ],
+            64,
+            50,
+            3,
+            1024 * 1024,
+        );
+
+        assert_eq!(batch.results.len(), 2);
+        assert_eq!(batch.results[0].total, 1);
+        assert_eq!(batch.results[0].shown, 1);
+        assert_eq!(batch.results[0].groups[0].blocks[0].children.len(), 2);
+        assert_eq!(batch.results[0].omitted_nodes, 4_998);
+        assert_eq!(batch.results[1].total, 1);
+        assert_eq!(batch.results[1].shown, 0);
+        assert_eq!(batch.results[1].omitted_nodes, 5_001);
+        let emitted = batch
+            .results
+            .iter()
+            .flat_map(|result| result.groups.iter())
+            .flat_map(|group| group.blocks.iter())
+            .map(crate::model::block_dto_estimated_bytes)
+            .sum::<usize>();
+        assert!(emitted <= 1024 * 1024);
+        assert!(batch.results.iter().all(|result| {
+            result
+                .groups
+                .iter()
+                .flat_map(|group| group.blocks.iter())
+                .all(|block| !block.raw.contains("unrelated branch"))
+        }));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn interactive_search_stops_inside_a_page_when_superseded() {
         use std::cell::Cell;
         use std::fs;
@@ -2693,6 +4809,71 @@ mod tests {
         });
         assert!(result.is_empty());
         assert!(checks.get() < 40, "cancellation checks: {}", checks.get());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn result_families_stop_constructing_at_row_and_byte_budgets() {
+        use std::fs;
+        let dir = std::env::temp_dir().join(format!(
+            "tine-result-construction-budget-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        let content = (0..12)
+            .map(|i| {
+                format!(
+                    "- TODO [[Target]] item {i}\n  field-{i}:: {}",
+                    "x".repeat(100)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(dir.join("pages/Source.md"), content).unwrap();
+        fs::write(dir.join("pages/Target.md"), "- target\n").unwrap();
+        let graph = Graph::open(&dir);
+
+        RESULT_DTO_CONSTRUCTIONS.with(|count| count.set(0));
+        let query = run_query_bounded(&graph, "(task TODO)", 3, usize::MAX);
+        assert!(query.exceeded);
+        assert_eq!(query.total, 12);
+        assert_eq!(
+            query
+                .groups
+                .iter()
+                .map(|group| group.blocks.len())
+                .sum::<usize>(),
+            3
+        );
+        assert_eq!(RESULT_DTO_CONSTRUCTIONS.with(std::cell::Cell::get), 3);
+
+        RESULT_DTO_CONSTRUCTIONS.with(|count| count.set(0));
+        crate::reference_evidence::reset_occurrence_constructions();
+        let refs = backlinks_bounded(&graph, "Target", 2, usize::MAX);
+        assert!(refs.exceeded);
+        assert_eq!(refs.total, 12);
+        assert_eq!(
+            refs.groups
+                .iter()
+                .map(|group| group.blocks.len())
+                .sum::<usize>(),
+            2
+        );
+        assert_eq!(RESULT_DTO_CONSTRUCTIONS.with(std::cell::Cell::get), 2);
+        assert_eq!(crate::reference_evidence::occurrence_constructions(), 2);
+
+        RESULT_DTO_CONSTRUCTIONS.with(|count| count.set(0));
+        let sample = run_query_bounded(&graph, "(and (task TODO) (sample 1))", 20, usize::MAX);
+        assert!(!sample.exceeded);
+        assert_eq!(sample.total, 1);
+        assert_eq!(RESULT_DTO_CONSTRUCTIONS.with(std::cell::Cell::get), 1);
+
+        let (facets, facets_exceeded) = property_facets_bounded(&graph, 2, usize::MAX);
+        assert!(facets_exceeded);
+        assert!(facets.iter().map(|(_, values)| values.len()).sum::<usize>() <= 2);
         let _ = fs::remove_dir_all(&dir);
     }
 }

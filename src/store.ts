@@ -20,15 +20,17 @@ import {
   conflicts,
   pushToast,
   graphMeta,
+  workflow,
   timetrackingEnabled,
   logbookWithSecondSupport,
   removeDeletedPageFromNavigation,
   removeDeletedBlocksFromSidebar,
   bumpDataRev,
+  bumpPageInventoryRev,
 } from "./ui";
 import { seedFacets, facetsFromDto, clearSeededFacets, facetsOf } from "./render/facets";
 import { journalTitle } from "./journal";
-import { upsertPropertyLine, readPropertyValue, splitProps, joinProps, isBuiltinHidden, isPropertiesOnly, splitPagePreamble } from "./editor/properties";
+import { upsertPropertyLine, readPropertyValue, splitProps, joinProps, isBuiltinHidden, isPropertiesOnly, isPageHeaderPropertiesOnly, splitPagePreamble } from "./editor/properties";
 import { copyIncludeSubtree, copyStripCollapsed } from "./copySettings";
 import { trimBlockTrailingSpace } from "./editor/format";
 import { OPEN_MARKERS, MARKER_RE } from "./markers";
@@ -37,6 +39,7 @@ import { notifyModeReset, notifyOutlineSelectionStarted } from "./modeHooks";
 import { sheetConfigFromRaw } from "./sheet/config";
 import { clearMatrixDimensionCache, invalidateAllMatrixDimensions } from "./sheet/matrix";
 import { applyMarkerTransition } from "./logbook";
+import { cycleMarkerSmart } from "./editor/repeat";
 import {
   markDirty,
   isDirty,
@@ -66,6 +69,10 @@ export interface Node {
   parent: string | null; // null = a root of its page
   page: string; // owning page name
   children: string[];
+  /** Frontend-only editing provenance for an existing unbulleted Markdown page
+   * header. Spread-based undo snapshots retain it; DTO serialization consumes
+   * it and never sends it over the wire. */
+  originatedFromPageHeader?: boolean;
 }
 
 export interface FeedPage {
@@ -386,6 +393,7 @@ export async function deletePage(name: string, kind: PageKind): Promise<boolean>
   // keep showing the stale cached result (only the block whose node was purged from
   // byId visibly disappears, leaving the rest of the deleted page's rows behind).
   bumpDataRev();
+  bumpPageInventoryRev();
   return true;
 }
 
@@ -579,7 +587,21 @@ function toDto(id: string): BlockDto {
 export function pageToDto(pageName: string): PageDto | null {
   const p = doc.pages.find((x) => x.name === pageName);
   if (!p) return null;
-  let blocks = p.roots.map(toDto);
+  let rootIds = p.roots;
+  let preBlock = p.preBlock;
+  const first = doc.byId[rootIds[0]];
+  if (first?.originatedFromPageHeader) {
+    if (first.children.length > 0 || (first.raw !== "" && !isPageHeaderPropertiesOnly(first.raw))) {
+      pushToast("Page-header properties must contain only valid key:: value lines before they can be saved.", "error");
+      return null;
+    }
+    // Exact raw is authoritative here: ordinary toDto trimming must never eat a
+    // page-header value or its separator trivia. An empty draft deletes the
+    // header and emits no stray outline bullet.
+    preBlock = first.raw ? first.raw + (p.preBlock ?? "") : p.preBlock;
+    rootIds = rootIds.slice(1);
+  }
+  let blocks = rootIds.map(toDto);
   // Don't persist a lone placeholder block. A page that exists only for its
   // properties is loaded with one empty editable bullet (toLoadable); saving it
   // — e.g. after a page-property edit — must NOT write that bullet back as a
@@ -592,7 +614,7 @@ export function pageToDto(pageName: string): PageDto | null {
     name: p.name,
     kind: p.kind,
     title: p.title,
-    pre_block: p.preBlock,
+    pre_block: preBlock,
     blocks,
     format: p.format,
     // Pin the save to the exact file this page came from (#21). Absent for a
@@ -733,6 +755,18 @@ function scopedVisibleOrder(scope: OutlineScope): string[] {
   return order;
 }
 
+/** The only trailing-block reuse candidate for a rendered outline boundary.
+ * The caller must supply the actual page or zoom scope so journal days cannot
+ * cross-select each other. A collapsed parent and an opaque Sheet host remain
+ * visible terminal rows, but their storage children mean neither is a leaf. */
+export function trailingVisibleEmptyLeaf(scope: OutlineScope): string | null {
+  const id = scopedVisibleOrder(scope).at(-1);
+  if (!id) return null;
+  const node = doc.byId[id];
+  if (!node || node.children.length !== 0) return null;
+  return splitProps(node.raw, isBuiltinHidden, formatForBlock(id)).visible.trim() === "" ? id : null;
+}
+
 let activeSelectionScope: OutlineScope | null = null;
 
 /** Visible order to resolve a block SELECTION against. The journals feed lives in
@@ -813,6 +847,11 @@ interface RawEntry {
   id: string;
   raw: string; // the block's text to restore
   page: string;
+  /** A transient page-header node can legitimately disappear when its text is
+   * deleted. Carry the structural shell on its normal O(1) typing undo entry so
+   * Undo can restore it and Redo can remove it again without an extra step. */
+  headerRoot?: { node: Node; rootIndex: number };
+  removeHeaderOnApply?: boolean;
 }
 type UndoEntry = SnapEntry | RawEntry;
 const undoStack: UndoEntry[] = [];
@@ -914,7 +953,17 @@ function pushRawUndo(id: string, prevRaw: string) {
   if (undoSuppressionDepth > 0) return;
   const tag = `type:${id}`;
   if (tag === lastUndoTag) return; // mid-burst: keep the first (pre-burst) raw
-  undoStack.push({ kind: "raw", id, raw: prevRaw, page: doc.byId[id].page });
+  const node = doc.byId[id];
+  const rootIndex = node.originatedFromPageHeader
+    ? (pageByName(node.page)?.roots.indexOf(id) ?? -1)
+    : -1;
+  undoStack.push({
+    kind: "raw",
+    id,
+    raw: prevRaw,
+    page: node.page,
+    ...(rootIndex >= 0 ? { headerRoot: { node: cloneNode(node), rootIndex } } : {}),
+  });
   if (undoStack.length > 200) undoStack.shift();
   redoStack = [];
   lastUndoTag = tag;
@@ -924,9 +973,37 @@ function pushRawUndo(id: string, prevRaw: string) {
 function applyEntry(e: UndoEntry): UndoEntry {
   if (e.kind === "raw") {
     const node = doc.byId[e.id];
-    const inverse: RawEntry = { kind: "raw", id: e.id, raw: node ? node.raw : "", page: e.page };
+    const rootIndex = node?.originatedFromPageHeader
+      ? (pageByName(node.page)?.roots.indexOf(e.id) ?? -1)
+      : -1;
+    const inverse: RawEntry = {
+      kind: "raw",
+      id: e.id,
+      raw: node ? node.raw : "",
+      page: e.page,
+      ...(node && rootIndex >= 0 ? { headerRoot: { node: cloneNode(node), rootIndex } } : {}),
+    };
     if (node) {
-      setDoc("byId", e.id, "raw", e.raw);
+      if (e.removeHeaderOnApply && node.originatedFromPageHeader) {
+        setDoc(produce((s) => {
+          const page = s.pages.find((p) => p.name === node.page);
+          if (page) page.roots = page.roots.filter((id) => id !== e.id);
+          delete s.byId[e.id];
+        }));
+        inverse.headerRoot = { node: cloneNode(node), rootIndex: Math.max(0, rootIndex) };
+      } else {
+        setDoc("byId", e.id, "raw", e.raw);
+      }
+      addDirty(e.page);
+    } else if (e.headerRoot) {
+      const restored = { ...cloneNode(e.headerRoot.node), raw: e.raw };
+      setDoc(produce((s) => {
+        s.byId[e.id] = restored;
+        const page = s.pages.find((p) => p.name === e.page);
+        if (page) page.roots.splice(Math.min(e.headerRoot!.rootIndex, page.roots.length), 0, e.id);
+      }));
+      inverse.headerRoot = { node: cloneNode(restored), rootIndex: e.headerRoot.rootIndex };
+      inverse.removeHeaderOnApply = true;
       addDirty(e.page);
     }
     return inverse;
@@ -1252,7 +1329,11 @@ export function outdentBlock(id: string, caretOffset: number) {
 }
 
 /** Backspace at offset 0: merge into the previous visible block (same page). */
-export function mergeWithPrev(id: string, scope: OutlineScope | null = null): boolean {
+export function mergeWithPrev(
+  id: string,
+  scope: OutlineScope | null = null,
+  editingSurface: string | null = null,
+): boolean {
   if (!blockWritable(id)) return false;
   const prev = prevVisible(id, scope);
   if (prev === null) return false;
@@ -1293,7 +1374,7 @@ export function mergeWithPrev(id: string, scope: OutlineScope | null = null): bo
       delete s.byId[id];
     })
   );
-  startEditing(prev, joinOffset);
+  startEditing(prev, joinOffset, null, editingSurface);
   markDirty(pageName);
   return true;
 }
@@ -1527,15 +1608,73 @@ export function setPageProperty(pageName: string, key: string, value: string | n
   pushUndo(`pageprop:${pageName}:${key}`, [pageName]);
   const page = doc.pages[idx];
   const first = page.format === "md" ? doc.byId[page.roots[0]] : null;
-  // A properties-only first bullet is OG's editable page-properties block. Keep
-  // its on-disk form instead of silently duplicating the property in preBlock.
-  if (!page.preBlock && first && isPropertiesOnly(first.raw)) {
-    setDoc("byId", first.id, "raw", upsertPropertyLine(first.raw, key, value) ?? "");
+  // A properties-only first root is the same editable source as the rendered
+  // header. Do not silently duplicate its property into preBlock; pageToDto or
+  // the native new-header boundary canonicalizes its persisted form.
+  if (first && (first.originatedFromPageHeader || (!page.preBlock && isPropertiesOnly(first.raw)))) {
+    const next = upsertPropertyLine(first.raw, key, value) ?? "";
+    if (first.originatedFromPageHeader && next === "") {
+      setDoc(produce((s) => {
+        const target = s.pages.find((p) => p.name === pageName);
+        if (target?.roots[0] === first.id) target.roots.shift();
+        delete s.byId[first.id];
+      }));
+    } else {
+      setDoc("byId", first.id, "raw", next);
+    }
     markDirty(pageName);
     return;
   }
   setDoc("pages", idx, "preBlock", upsertPropertyLine(doc.pages[idx].preBlock, key, value));
   markDirty(pageName);
+}
+
+/** Materialize an existing canonical Markdown page header as Tine's ordinary
+ * first-root editor. This is representation-only: no undo entry, dirty flag or
+ * save is created until the user actually changes the node. */
+export function beginPageHeaderEdit(pageName: string): string | null {
+  const page = pageByName(pageName);
+  if (!page || page.format !== "md" || !pageWritable(pageName)) return null;
+  const first = doc.byId[page.roots[0]];
+  if (first && (first.originatedFromPageHeader || (!page.preBlock && isPropertiesOnly(first.raw)))) {
+    return first.id;
+  }
+
+  const split = splitPagePreamble(page.preBlock);
+  if (!split.properties || !isPageHeaderPropertiesOnly(split.properties)) return null;
+  const id = freshId();
+  setDoc(
+    produce((s) => {
+      const index = s.pages.findIndex((p) => p.name === pageName);
+      s.pages[index].preBlock = split.remainder;
+      s.byId[id] = {
+        id,
+        raw: split.properties!,
+        collapsed: false,
+        parent: null,
+        page: pageName,
+        children: [],
+        originatedFromPageHeader: true,
+      };
+      s.pages[index].roots.unshift(id);
+    })
+  );
+  return id;
+}
+
+/** Remove a deleted transient header root after its editor exits. Invalid
+ * drafts intentionally remain present and editable; pageToDto keeps them from
+ * reaching native persistence. */
+export function finishPageHeaderEdit(id: string): void {
+  const node = doc.byId[id];
+  if (!node?.originatedFromPageHeader || node.raw !== "" || node.children.length > 0) return;
+  setDoc(
+    produce((s) => {
+      const page = s.pages.find((p) => p.name === node.page);
+      if (page?.roots[0] === id) page.roots.shift();
+      delete s.byId[id];
+    })
+  );
 }
 
 /** Turn ordinary text before the first Markdown bullet into a real first block
@@ -1553,7 +1692,8 @@ export function promotePagePreamble(pageName: string): string | null {
       const index = s.pages.findIndex((p) => p.name === pageName);
       s.pages[index].preBlock = properties;
       s.byId[id] = { id, raw: content, collapsed: false, parent: null, page: pageName, children: [] };
-      s.pages[index].roots.unshift(id);
+      const markedHeader = s.byId[s.pages[index].roots[0]]?.originatedFromPageHeader;
+      s.pages[index].roots.splice(markedHeader ? 1 : 0, 0, id);
     })
   );
   markDirty(pageName);
@@ -2185,6 +2325,32 @@ export function moveSelection(dir: 1 | -1, extend: boolean) {
   scrollBlockRowIntoView(next);
 }
 
+/** Cycle every non-empty block in the active selection as one document
+ * transaction. Each block advances from its own current marker, so a mixed
+ * selection stays mixed (plain -> open, open -> active, active -> done). The
+ * operation is all-or-nothing across read-only pages and preserves the visual
+ * selection for repeated cycling. */
+export function cycleSelectionTasks(): boolean {
+  const ids = selectedIds().filter((id) => !!doc.byId[id]?.raw.trim());
+  if (!ids.length || ids.some((id) => !blockWritable(id))) return false;
+
+  const pages = [...new Set(ids.map((id) => doc.byId[id].page))];
+  pushUndo("cycle-task-sel", pages);
+  setDoc(
+    produce((state) => {
+      for (const id of ids) {
+        const node = state.byId[id];
+        if (!node) continue;
+        // Match the existing editor command exactly: marker cycling handles
+        // repeaters, while checkbox/marker-chip transitions own time tracking.
+        node.raw = cycleMarkerSmart(node.raw, workflow()).raw;
+      }
+    })
+  );
+  for (const page of pages) markDirty(page);
+  return true;
+}
+
 /** Keep the active end of a keyboard selection on screen: as the user holds
  *  Arrow / Shift+Arrow past the top or bottom edge, reveal the newly-focused
  *  block. Targets the block's own row (`.block-main`), not the whole `.ls-block`
@@ -2417,12 +2583,21 @@ export async function moveBlock(
 // During a block-move reorder the textarea momentarily blurs; this flag tells
 // the editor's onBlur to keep edit mode (the move handler refocuses + restores
 // the caret right after).
-let blockMoving = false;
-export function isBlockMoving(): boolean {
-  return blockMoving;
+// A reorder only keeps the editor transiently blurred for one animation frame.
+// Keep its page ownership: watcher/feed refreshes for another page must not be
+// held hostage by a sidebar or split-pane reorder.
+let blockMovingPage: string | null = null;
+// Feed refresh ownership observes the end of a page-scoped drag.  Keep the
+// inexpensive page check above, but make its lifecycle observable so a deferred
+// restart is released by the move itself rather than a coincidental later event.
+const [blockMoveRev, setBlockMoveRev] = createSignal(0);
+export function isBlockMoving(page?: string): boolean {
+  blockMoveRev();
+  return blockMovingPage !== null && (page === undefined || blockMovingPage === page);
 }
-export function setBlockMoving(v: boolean): void {
-  blockMoving = v;
+export function setBlockMoving(v: boolean, page?: string): void {
+  blockMovingPage = v ? (page ?? blockMovingPage ?? "") : null;
+  setBlockMoveRev((n) => n + 1);
 }
 
 export function moveItem(id: string, dir: 1 | -1) {

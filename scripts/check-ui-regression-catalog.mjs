@@ -59,9 +59,11 @@ if (catalog.schemaVersion !== 1 || !Array.isArray(catalog.entries)) {
   }
 }
 
-for (const [issue, owners] of issueOwners) {
-  if (owners.length > 1) problems.push(`GH #${issue} belongs to multiple catalog entries: ${owners.join(", ")}`);
-}
+// One GitHub thread may legitimately accumulate a distinct follow-up regression
+// after its original behavior shipped (GH #57 is the first concrete example).
+// Stable catalog IDs identify behaviors; issue numbers are provenance, not a
+// one-to-one ownership key. Keep validating each number above without rejecting
+// several independently covered behaviors from the same thread.
 
 if (problems.length) {
   console.error(`UI regression catalog failed (${problems.length} problem(s)):`);

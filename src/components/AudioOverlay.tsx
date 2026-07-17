@@ -1,15 +1,15 @@
 // Expanded audio player overlay. Opened by the "Expand" button on an inline audio
 // embed (render/inline.tsx → MediaEmbed). A dimmed, ~90vw panel "over" the app
-// (like opening a video with no picture) with a hand-rolled WebAudio WAVEFORM
-// scrubber — the thing that makes big-width precise seeking worthwhile — plus
+// (like opening a video with no picture) with a wide streaming scrubber plus
 // ±5s / ±15s skip, play/pause, speed, and a time read-out. Esc / click-out / ✕
-// closes. The waveform is best-effort: a codec WebAudio can't decode just falls
-// back to a plain progress bar, so playback (driven by the <audio> element, which
-// uses the same path as the inline embed) is never blocked on decoding.
+// closes. It deliberately does not decode the whole track merely to draw a
+// waveform: long compressed recordings can expand into gigabytes of PCM.
 
 import { For, Show, createEffect, createResource, createSignal, onCleanup, onMount, type JSX } from "solid-js";
 import { audioPlayer, setAudioPlayer } from "../ui";
 import { backend, isTauri } from "../backend";
+import { acquireMediaBlobFallback, type MediaBlobLease } from "../mediaBlobFallback";
+import { registerTransientLayer } from "../transientLayers";
 
 /** Bare `assets/`-relative path of a media URL (mirrors inline.tsx's helper). */
 function relOf(url: string): string | null {
@@ -25,29 +25,8 @@ function fmtTime(t: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-/** Downsample one channel to `n` normalized [0,1] peaks for the waveform bars. */
-function computePeaks(buf: AudioBuffer, n: number): number[] {
-  const ch = buf.getChannelData(0);
-  const block = Math.max(1, Math.floor(ch.length / n));
-  const peaks: number[] = [];
-  let max = 0;
-  for (let i = 0; i < n; i++) {
-    let m = 0;
-    const start = i * block;
-    const end = Math.min(ch.length, start + block);
-    for (let j = start; j < end; j++) {
-      const v = Math.abs(ch[j]);
-      if (v > m) m = v;
-    }
-    peaks.push(m);
-    if (m > max) max = m;
-  }
-  return max > 0 ? peaks.map((p) => p / max) : peaks; // normalize so quiet tracks fill
-}
-
-/** Paint the waveform (or a plain bar when undecoded) with a played/unplayed split
- *  and a playhead. Cheap enough to redraw every animation frame. */
-function drawWave(canvas: HTMLCanvasElement | undefined, peaks: number[] | null, progress: number): void {
+/** Paint a streaming progress bar with a played/unplayed split and playhead. */
+function drawWave(canvas: HTMLCanvasElement | undefined, progress: number): void {
   if (!canvas) return;
   const dpr = window.devicePixelRatio || 1;
   const cssW = canvas.clientWidth || 800;
@@ -73,20 +52,10 @@ function drawWave(canvas: HTMLCanvasElement | undefined, peaks: number[] | null,
   ctx.fillStyle = unplayed;
   ctx.fillRect(0, mid - 1, cssW, 2);
   ctx.globalAlpha = 1;
-  if (peaks && peaks.length) {
-    const n = peaks.length;
-    const barW = cssW / n;
-    for (let i = 0; i < n; i++) {
-      const bh = Math.max(1, peaks[i] * (cssH - 6));
-      ctx.fillStyle = i / n <= p ? played : unplayed;
-      ctx.fillRect(i * barW, mid - bh / 2, Math.max(1, barW - 0.6), bh);
-    }
-  } else {
-    ctx.fillStyle = unplayed;
-    ctx.fillRect(0, mid - 3, cssW, 6);
-    ctx.fillStyle = played;
-    ctx.fillRect(0, mid - 3, cssW * p, 6);
-  }
+  ctx.fillStyle = unplayed;
+  ctx.fillRect(0, mid - 3, cssW, 6);
+  ctx.fillStyle = played;
+  ctx.fillRect(0, mid - 3, cssW * p, 6);
   ctx.fillStyle = played;
   ctx.fillRect(Math.min(cssW - 2, p * cssW), 2, 2, cssH - 4);
 }
@@ -105,13 +74,27 @@ export function AudioOverlay(): JSX.Element {
   const [blobFallback, setBlobFallback] = createSignal("");
   const resolvedSrc = () => blobFallback() || src();
   let tryingBlobFallback = false;
-  let ownedBlobUrl = "";
+  let blobLease: MediaBlobLease | null = null;
+  let fallbackAbort: AbortController | null = null;
+  let fallbackGeneration = 0;
+  const releaseBlobFallback = () => {
+    fallbackGeneration += 1;
+    fallbackAbort?.abort();
+    fallbackAbort = null;
+    blobLease?.release();
+    blobLease = null;
+    setBlobFallback("");
+    tryingBlobFallback = false;
+  };
   const retryAsBoundedBlob = () => {
     const u = audioPlayer()?.url;
     if (!u || isExternal(u) || tryingBlobFallback || blobFallback()) return;
     const rel = relOf(u);
     if (!rel) return;
     tryingBlobFallback = true;
+    const generation = fallbackGeneration;
+    const abort = new AbortController();
+    fallbackAbort = abort;
     const ext = rel.split(".").pop()?.toLowerCase();
     const mime = ext === "mp3" || ext === "mpeg" ? "audio/mpeg" :
       ext === "m4a" || ext === "aac" ? "audio/mp4" :
@@ -119,13 +102,25 @@ export function AudioOverlay(): JSX.Element {
       ext === "ogg" || ext === "oga" ? "audio/ogg" :
       ext === "opus" ? "audio/opus" :
       ext === "flac" ? "audio/flac" : "application/octet-stream";
-    void backend().readAsset(rel, 256 * 1024 * 1024).then((bytes) => {
-      ownedBlobUrl = URL.createObjectURL(new Blob([Uint8Array.from(bytes).buffer], { type: mime }));
-      setBlobFallback(ownedBlobUrl);
+    void acquireMediaBlobFallback(rel, "audio", mime, abort.signal).then((lease) => {
+      if (generation !== fallbackGeneration || audioPlayer()?.url !== u) {
+        lease.release();
+        return;
+      }
+      blobLease = lease;
+      setBlobFallback(lease.url);
     }).catch(() => {});
   };
-  onCleanup(() => {
-    if (ownedBlobUrl) URL.revokeObjectURL(ownedBlobUrl);
+  onCleanup(releaseBlobFallback);
+
+  // The component is app-lifetime mounted; closing the inner Show or switching
+  // tracks must explicitly end the old fallback lease and invalidate late reads.
+  let activeUrl: string | null = null;
+  createEffect(() => {
+    const next = audioPlayer()?.url ?? null;
+    if (next === activeUrl) return;
+    activeUrl = next;
+    releaseBlobFallback();
   });
 
   let audioEl: HTMLAudioElement | undefined;
@@ -134,12 +129,21 @@ export function AudioOverlay(): JSX.Element {
   const [cur, setCur] = createSignal(0);
   const [dur, setDur] = createSignal(0);
   const [rate, setRate] = createSignal(1);
-  const [peaks, setPeaks] = createSignal<number[] | null>(null);
 
   const close = () => {
     audioEl?.pause();
+    releaseBlobFallback();
     setAudioPlayer(null);
   };
+  createEffect(() => {
+    if (!audioPlayer()) return;
+    const unregister = registerTransientLayer({
+      id: "expanded-audio",
+      root: () => document.querySelector<HTMLElement>(".audio-overlay"),
+      dismiss: () => { close(); return true; },
+    });
+    onCleanup(unregister);
+  });
   const togglePlay = () => {
     if (!audioEl) return;
     if (audioEl.paused) void audioEl.play().catch(() => {});
@@ -164,15 +168,12 @@ export function AudioOverlay(): JSX.Element {
     }
   });
 
-  // Esc closes; Space toggles play (capture phase so it wins over block handlers).
+  // Escape is owned by the application transient registry; this listener keeps
+  // the non-dismissal Space transport control local.
   onMount(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!audioPlayer()) return;
-      if (e.key === "Escape") {
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        close();
-      } else if (e.key === " " || e.code === "Space") {
+      if (e.key === " " || e.code === "Space") {
         e.preventDefault();
         e.stopImmediatePropagation();
         togglePlay();
@@ -182,34 +183,15 @@ export function AudioOverlay(): JSX.Element {
     onCleanup(() => window.removeEventListener("keydown", onKey, true));
   });
 
-  // Decode the audio for the waveform once the src resolves. Best-effort.
-  createEffect(() => {
-    const s = resolvedSrc();
-    setPeaks(null);
-    if (!s) return;
-    void (async () => {
-      try {
-        const buf = await fetch(s).then((r) => r.arrayBuffer());
-        const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-        const ac = new Ctx();
-        const decoded = await ac.decodeAudioData(buf);
-        setPeaks(computePeaks(decoded, 480));
-        void ac.close();
-      } catch {
-        setPeaks(null); // codec WebAudio can't decode → plain progress bar
-      }
-    })();
-  });
-
-  // Redraw whenever the waveform, position, or duration changes.
-  createEffect(() => drawWave(canvasEl, peaks(), dur() ? cur() / dur() : 0));
+  // Redraw whenever the position or duration changes.
+  createEffect(() => drawWave(canvasEl, dur() ? cur() / dur() : 0));
 
   // Draw once the canvas has layout (it mounts with the overlay) and on resize —
   // the per-frame loop only runs during playback, so without this a paused or
   // still-loading track would show an empty scrubber.
   createEffect(() => {
     if (!audioPlayer()) return;
-    const redraw = () => drawWave(canvasEl, peaks(), dur() ? cur() / dur() : 0);
+    const redraw = () => drawWave(canvasEl, dur() ? cur() / dur() : 0);
     requestAnimationFrame(redraw);
     window.addEventListener("resize", redraw);
     onCleanup(() => window.removeEventListener("resize", redraw));

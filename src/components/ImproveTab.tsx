@@ -95,7 +95,8 @@ export function ImproveTab(): JSX.Element {
       <p class="settings-hint">
         <b>Privacy:</b> nothing is uploaded. Every divergence snippet shown below is <b>anonymized</b> (page names
         and words replaced; URL schemes kept but hosts and paths scrubbed) and <b>re-checked</b> to confirm it still
-        reproduces the bug — so it's safe to share. Read it before you post anything.
+        reproduces the bug. Tine omits a finding when that privacy-preserving scrub loses the mismatch. Still read
+        every snippet carefully before you choose to share it.
       </p>
 
       <div class="settings-field">

@@ -6,7 +6,7 @@
 // in Rust). See that file's doc comment for the grammar.
 
 export interface Term {
-  // Lowercased needle for `.includes(..)`.
+  // Lowercase-plus-NFC needle for `.includes(..)`.
   text: string;
   negated: boolean;
   // Came from a `"quoted phrase"` — an explicit grammar opt-in, so even a single
@@ -29,6 +29,66 @@ export const SEARCH_SYNTAX = [
   { example: "/[A-Z]{3}/", description: "case-sensitive regular expression", match: "ABC", miss: "abc" },
 ] as const;
 
+/** Locale-independent comparison form for non-regex search. NFC handles only
+ * canonical equivalence: it deliberately does not perform compatibility or
+ * accent folding. */
+export function canonicalFold(value: string): string {
+  return value.toLowerCase().normalize("NFC");
+}
+
+interface SourceSpan { start: number; end: number }
+
+const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+/** Fold text while retaining original UTF-16 provenance. Each normalized
+ * scalar maps to its complete contributing extended grapheme, so composition,
+ * mark reordering, Hangul Jamo, and lowercase expansion cannot leave a partial
+ * highlight behind. */
+function foldedWithMap(original: string): { scalars: string[]; spans: SourceSpan[] } {
+  const lowered = original.toLowerCase();
+  const loweredSources: SourceSpan[] = [];
+  let originalUtf16 = 0;
+  for (const scalar of original) {
+    const start = originalUtf16;
+    originalUtf16 += scalar.length;
+    for (const _ of scalar.toLowerCase()) loweredSources.push({ start, end: originalUtf16 });
+  }
+
+  const scalars: string[] = [];
+  const spans: SourceSpan[] = [];
+  let sourceAt = 0;
+  for (const part of graphemeSegmenter.segment(lowered)) {
+    const count = Array.from(part.segment).length;
+    const contributors = loweredSources.slice(sourceAt, sourceAt + count);
+    sourceAt += count;
+    const source = {
+      start: contributors[0]?.start ?? 0,
+      end: contributors.at(-1)?.end ?? 0,
+    };
+    for (const scalar of part.segment.normalize("NFC")) {
+      scalars.push(scalar);
+      spans.push(source);
+    }
+  }
+  return { scalars, spans };
+}
+
+function canonicalSubstringSpans(text: string, needle: string, limit: number): SourceSpan[] {
+  const hay = foldedWithMap(text);
+  const wanted = Array.from(canonicalFold(needle));
+  if (!wanted.length || wanted.length > hay.scalars.length) return [];
+  const out: SourceSpan[] = [];
+  for (let at = 0; at <= hay.scalars.length - wanted.length && out.length < limit; at += 1) {
+    if (!wanted.every((scalar, index) => hay.scalars[at + index] === scalar)) continue;
+    const span = {
+      start: hay.spans[at].start,
+      end: hay.spans[at + wanted.length - 1].end,
+    };
+    if (!out.some((existing) => existing.start === span.start && existing.end === span.end)) out.push(span);
+  }
+  return out;
+}
+
 export function parseSearchQuery(query: string): SearchMatcher {
   const q = query.trim();
   if (!q) return { kind: "empty" };
@@ -49,7 +109,7 @@ export function parseSearchQuery(query: string): SearchMatcher {
   return { kind: "boolean", groups };
 }
 
-// Does `orig` (original case) / `lower` (pre-lowercased) match?
+// Does `orig` (original text) / `lower` (pre-folded lowercase-plus-NFC) match?
 export function matcherMatches(m: SearchMatcher, lower: string, orig: string): boolean {
   switch (m.kind) {
     case "regex":
@@ -77,13 +137,14 @@ export function matchHighlight(m: SearchMatcher, text: string): { start: number;
     return hit ? { start: hit.index, len: hit[0].length } : null;
   }
   if (m.kind === "boolean") {
-    const lower = text.toLowerCase();
     let best: { start: number; len: number } | null = null;
     for (const g of m.groups) {
       for (const t of g) {
         if (t.negated || !t.text) continue;
-        const i = lower.indexOf(t.text);
-        if (i !== -1 && (!best || i < best.start)) best = { start: i, len: t.text.length };
+        const span = canonicalSubstringSpans(text, t.text, 1)[0];
+        if (span && (!best || span.start < best.start)) {
+          best = { start: span.start, len: span.end - span.start };
+        }
       }
     }
     return best;
@@ -107,19 +168,13 @@ export function matchHighlights(m: SearchMatcher, text: string, limit = 24): { s
     return out;
   }
   if (m.kind !== "boolean") return [];
-  const lower = text.toLowerCase();
+  const lower = canonicalFold(text);
   const group = m.groups.find((candidate) => groupMatches(candidate, lower));
   if (!group) return [];
   const out: { start: number; end: number }[] = [];
   for (const term of group) {
     if (term.negated || !term.text) continue;
-    let from = 0;
-    while (out.length < limit) {
-      const start = lower.indexOf(term.text, from);
-      if (start < 0) break;
-      out.push({ start, end: start + term.text.length });
-      from = start + Math.max(1, term.text.length);
-    }
+    out.push(...canonicalSubstringSpans(text, term.text, limit - out.length));
   }
   return out.sort((a, b) => a.start - b.start || a.end - b.end);
 }
@@ -192,7 +247,7 @@ function parseBoolean(q: string): Term[][] {
       continue;
     }
     if (!tok.text) continue;
-    cur.push({ text: tok.text.toLowerCase(), negated: tok.negated, quoted: tok.quoted });
+    cur.push({ text: canonicalFold(tok.text), negated: tok.negated, quoted: tok.quoted });
   }
   groups.push(cur);
   return groups.filter((g) => g.length > 0);

@@ -2,6 +2,15 @@ name: ui-e2e
 
 on:
   workflow_dispatch:
+    inputs:
+      linux_scenario:
+        description: Optional single Linux scenario for focused debugging
+        required: false
+        default: ""
+      windows_scenario:
+        description: Optional single Windows scenario, or all, for focused debugging
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -9,6 +18,7 @@ permissions:
 jobs:
   linux-release:
     name: Linux x64 real-app release suite
+    if: ${{ inputs.windows_scenario == '' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 45
     steps:
@@ -19,7 +29,7 @@ jobs:
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev \
             libayatana-appindicator3-dev build-essential libssl-dev \
-            webkit2gtk-driver xvfb xauth xdotool openbox
+            webkit2gtk-driver xvfb xauth xdotool openbox x11-utils weston
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -39,7 +49,12 @@ jobs:
       - name: Run complete Linux UI regression catalog
         env:
           E2E_ALLOW_SYNTHETIC_FOCUS: "1"
-        run: npm run e2e:linux:release
+        run: |
+          if [ -n "${{ inputs.linux_scenario }}" ]; then
+            npm run e2e:linux:release -- --scenario=${{ inputs.linux_scenario }}
+          else
+            npm run e2e:linux:release
+          fi
       - name: Upload Linux E2E evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -50,9 +65,14 @@ jobs:
           retention-days: 14
 
   windows-smoke:
-    name: Windows x64 real-app smoke (advisory)
+    name: Windows x64 ${{ matrix.scenario }} real-app smoke
+    if: ${{ inputs.linux_scenario == '' }}
     runs-on: windows-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: ${{ fromJSON((inputs.windows_scenario == '' || inputs.windows_scenario == 'all') && '["windows-core","og-parity-references","page-properties","page-trailing-block","pdf-logseq","print-security","tab-overflow"]' || format('["{0}"]', inputs.windows_scenario)) }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -67,8 +87,6 @@ jobs:
       - run: npm run build
       - name: Build production-protocol app
         run: cargo build --release --features custom-protocol --manifest-path src-tauri/Cargo.toml
-      - name: Install Tauri WebDriver bridge
-        run: cargo install tauri-driver --locked
       - name: Install Edge WebDriver matching the hosted browser
         shell: pwsh
         run: |
@@ -82,15 +100,14 @@ jobs:
           $driverDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           & "$driverDir\msedgedriver.exe" --version
       - name: Run Windows WebView2 smoke
-        continue-on-error: true
         env:
           TINE_APP: ${{ github.workspace }}\target\release\tine.exe
-        run: npm run e2e:windows:smoke
+        run: npm run e2e:windows:smoke -- --scenario=${{ matrix.scenario }}
       - name: Upload Windows E2E evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ui-e2e-windows-${{ github.run_attempt }}
+          name: ui-e2e-windows-${{ matrix.scenario }}-${{ github.run_attempt }}
           path: test-results/e2e/windows-smoke
           if-no-files-found: warn
           retention-days: 14

@@ -40,15 +40,31 @@ const GRID_MD = [
   "- TODO buy milk",
   "- task table",
   "  tine.view:: table",
-  "  tine.fields:: state=state;topic=enum:infra,ui;shipped=checkbox",
+  "  tine.fields:: state=state;topic=enum:infra,ui;shipped=checkbox;severity=number;occurrence=number;DET=number",
+  '  tine.formula.rpn:: severity * occurrence * DET + if(label == "occurrence", formula.occurrence, 0)',
+  "  tine.filter:: true || occurrence > 1",
+  "  tine.group-by:: prop:occurrence",
+  "  tine.col-aggregates:: prop:occurrence=sum;prop:severity=max",
   "\t- WAIT row one",
   "\t  topic:: infra",
   "\t  shipped:: false",
+  "\t  label:: other",
   "- reading list",
   "  tine.view:: board",
   "  tine.group-by:: tags",
   "\t- paper one #alpha",
   "\t- paper two #alpha #beta",
+  "- ## Query filter proof",
+  "  {{query (and (todo WAIT) \"score\")}}",
+  "  tine.view:: table",
+  "  tine.fields:: points=number;tier=text",
+  "  tine.group-by:: prop:tier",
+  "- WAIT Low score",
+  "  points:: 1",
+  "  tier:: low",
+  "- WAIT High score",
+  "  points:: 3",
+  "  tier:: high",
   "",
 ].join("\n");
 
@@ -171,10 +187,11 @@ try {
   await sleep(2500);
   const disk = fs.readFileSync(JFILE, "utf8");
   check("edited text saved to disk", disk.includes("alpha-edited"), JSON.stringify(disk));
-  // Seeded file has 9 bullets (host + 2 rows + 4 cells + board query + task) —
+  // Seeded file has 17 bullets (the original 14 plus the query-filter owner and
+  // its two result rows) —
   // an Enter-split would add one.
   const bulletCount = (disk.match(/^\s*-/gm) || []).length;
-  check("no block was split/created (14 bullets)", bulletCount === 14, `got ${bulletCount}: ${JSON.stringify(disk)}`);
+  check("no block was split/created (17 bullets)", bulletCount === 17, `got ${bulletCount}: ${JSON.stringify(disk)}`);
   check("grid config intact", disk.includes("tine.view:: grid"), JSON.stringify(disk));
 
   // Esc from selection → outline selection on the grid block (no doc change).
@@ -200,7 +217,7 @@ try {
   await sleep(2500);
   const disk3 = fs.readFileSync(JFILE, "utf8");
   const bullets3 = (disk3.match(/^\s*-/gm) || []).length;
-  check("seam-typing inserted a row on disk (16 bullets: +row +cell)", bullets3 === 16, `got ${bullets3}: ${JSON.stringify(disk3)}`);
+  check("seam-typing inserted a row on disk (19 bullets: +row +cell)", bullets3 === 19, `got ${bullets3}: ${JSON.stringify(disk3)}`);
   check("inserted cell holds the typed char", /-\s*z\s*$/m.test(disk3), JSON.stringify(disk3));
   // The typed char rides the editor's own undo entry; the structural insert is
   // its own atomic unit — so TWO undos fully revert (text, then structure).
@@ -313,6 +330,174 @@ try {
     }
   } else {
     check("schema'd table rendered", false, "no table cell (0,2) found");
+  }
+
+  // GH #176: Tab from a native typed-cell input must commit before advancing
+  // the sheet selection. Before the fix, blur saved `severity:: 2` but left
+  // selection on severity, so typing 3 immediately overtyped it.
+  const severityCell = await browser.$('.sheet-table .sheet-cell[data-row="0"][data-col="4"]');
+  if (await severityCell.isExisting()) {
+    await browser.execute(() => {
+      const el = document.querySelector('.sheet-table .sheet-cell[data-row="0"][data-col="4"]');
+      el?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, button: 0 }));
+    });
+    await sleep(250);
+    await browser.keys(["2"]);
+    await browser.keys(["Tab"]);
+    await sleep(250);
+    const afterSeverityTab = await browser.execute(() => {
+      const selected = document.querySelector('.sheet-table .sheet-cell-selected');
+      return selected ? { row: selected.getAttribute("data-row"), col: selected.getAttribute("data-col") } : null;
+    });
+    check("typed Table Tab commits then advances", afterSeverityTab?.row === "0" && afterSeverityTab?.col === "5", JSON.stringify(afterSeverityTab));
+
+    await browser.keys(["3"]);
+    await sleep(150);
+    const occurrenceDraft = await browser.execute(() =>
+      document.querySelector('.sheet-table .sheet-cell[data-row="0"][data-col="5"] input.sheet-prop-input')?.value ?? null
+    );
+    check("typing after Tab targets the next cell", occurrenceDraft === "3", JSON.stringify(occurrenceDraft));
+    await browser.keys(["Tab"]);
+    await sleep(250);
+    const afterOccurrenceTab = await browser.execute(() => {
+      const selected = document.querySelector('.sheet-table .sheet-cell-selected');
+      return selected ? { row: selected.getAttribute("data-row"), col: selected.getAttribute("data-col") } : null;
+    });
+    check("repeated typed Table Tab keeps advancing", afterOccurrenceTab?.row === "0" && afterOccurrenceTab?.col === "6", JSON.stringify(afterOccurrenceTab));
+
+    await browser.keys(["4"]);
+    await sleep(150);
+    const detectionDraft = await browser.execute(() =>
+      document.querySelector('.sheet-table .sheet-cell[data-row="0"][data-col="6"] input.sheet-prop-input')?.value ?? null
+    );
+    check("typing after repeated Tab targets the third cell", detectionDraft === "4", JSON.stringify(detectionDraft));
+    await browser.keys(["Enter"]);
+    await sleep(500);
+
+    const formulaValue = await browser.execute(() =>
+      document.querySelector('.sheet-table .sheet-cell[data-row="0"][data-col="7"]')?.textContent?.replace("⋮", "").trim() ?? null
+    );
+    check("formula observes all Tab-committed values", formulaValue === "24", JSON.stringify(formulaValue));
+    await sleep(2500);
+    const diskTyped = fs.readFileSync(JFILE, "utf8");
+    check("typed Table values survive the next edit and save",
+      diskTyped.includes("severity:: 2") && diskTyped.includes("occurrence:: 3") && diskTyped.includes("DET:: 4"), JSON.stringify(diskTyped));
+  } else {
+    check("typed Table Tab commits then advances", false, "no Table cell (0,4)");
+  }
+
+  // GH #175: a declared, children-backed property field is a local schema
+  // identity. Rename it through the literal header menu and prove that every
+  // local dependency (schema, row keys, formula field refs, filter field AST,
+  // group-by and aggregates) moves together as one persisted Undo unit. String
+  // literals and non-field formula member names deliberately stay byte-stable.
+  const renameMenuOpened = await browser.execute(() => {
+    const header = [...document.querySelectorAll(".sheet-table .sheet-field-header")]
+      .find((el) => (el.textContent ?? "").trim() === "occurrence");
+    if (!header) return false;
+    header.dispatchEvent(new MouseEvent("contextmenu", {
+      bubbles: true, cancelable: true, clientX: 420, clientY: 260,
+    }));
+    return true;
+  });
+  await sleep(250);
+  const renameMenuClicked = renameMenuOpened && await browser.execute(() => {
+    const item = [...document.querySelectorAll(".ctx-item")]
+      .find((el) => (el.textContent ?? "").trim() === "Rename field…");
+    if (!item) return false;
+    item.click();
+    return true;
+  });
+  await sleep(250);
+  const renameInputFilled = renameMenuClicked && await browser.execute(() => {
+    const input = document.querySelector(".sheet-header-rename-input");
+    if (!(input instanceof HTMLInputElement)) return false;
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, "OCC");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.focus();
+    return true;
+  });
+  check("declared Table field opens the inline rename editor", !!renameInputFilled);
+  if (renameInputFilled) {
+    await browser.keys(["Enter"]);
+    await sleep(2600);
+    const renamedView = await browser.execute(() => {
+      const headers = [...document.querySelectorAll(".sheet-table .sheet-field-header")]
+        .map((el) => (el.textContent ?? "").trim());
+      const formula = document.querySelector('.sheet-table .sheet-cell[data-row="0"][data-col="7"]')
+        ?.textContent?.replace("⋮", "").trim() ?? null;
+      return { headers, formula };
+    });
+    const renamedDisk = fs.readFileSync(JFILE, "utf8");
+    check("rename produces exactly one OCC header and keeps the formula live",
+      renamedView.headers.filter((h) => h === "OCC").length === 1 &&
+      !renamedView.headers.includes("occurrence") && renamedView.formula === "24",
+      JSON.stringify(renamedView));
+    const renamedDependencies =
+      renamedDisk.includes("tine.fields:: state=state;topic=enum:infra,ui;shipped=checkbox;severity=number;OCC=number;DET=number") &&
+      renamedDisk.includes('tine.formula.rpn:: severity * OCC * DET + if(label == "occurrence", formula.occurrence, 0)') &&
+      renamedDisk.includes("tine.filter:: true || OCC > 1") &&
+      renamedDisk.includes("tine.group-by:: prop:OCC") &&
+      renamedDisk.includes("tine.col-aggregates:: prop:OCC=sum;prop:severity=max") &&
+      renamedDisk.includes("OCC:: 3") && !renamedDisk.includes("occurrence::") &&
+      !renamedDisk.includes("occurrence=number") &&
+      !renamedDisk.includes("severity * occurrence * DET") &&
+      !renamedDisk.includes("true || occurrence > 1") &&
+      !renamedDisk.includes("prop:occurrence");
+    check("rename persists every dependency with no old field identity", renamedDependencies,
+      JSON.stringify(renamedDisk));
+    check("rename preserves string literals and non-field formula member names",
+      renamedDisk.includes('if(label == "occurrence", formula.occurrence, 0)'), JSON.stringify(renamedDisk));
+
+    await browser.keys(["Control", "z"]);
+    await sleep(2400);
+    const undoneDisk = fs.readFileSync(JFILE, "utf8");
+    check("one Undo restores every field dependency together",
+      undoneDisk.includes("occurrence=number") && undoneDisk.includes("occurrence:: 3") &&
+      undoneDisk.includes('severity * occurrence * DET + if(label == "occurrence", formula.occurrence, 0)') &&
+      undoneDisk.includes("tine.filter:: true || occurrence > 1") &&
+      undoneDisk.includes("tine.group-by:: prop:occurrence") &&
+      undoneDisk.includes("tine.col-aggregates:: prop:occurrence=sum;prop:severity=max") &&
+      !undoneDisk.includes("OCC=number") && !undoneDisk.includes("OCC:: 3") &&
+      !undoneDisk.includes("severity * OCC * DET") && !undoneDisk.includes("true || OCC > 1") &&
+      !undoneDisk.includes("prop:OCC"),
+      JSON.stringify(undoneDisk));
+
+    await browser.keys(["Control", "Shift", "z"]);
+    await sleep(2400);
+    const redoneDisk = fs.readFileSync(JFILE, "utf8");
+    check("one Redo reapplies every field dependency",
+      redoneDisk.includes("OCC=number") && redoneDisk.includes("OCC:: 3") &&
+      redoneDisk.includes('severity * OCC * DET + if(label == "occurrence", formula.occurrence, 0)') &&
+      redoneDisk.includes("tine.filter:: true || OCC > 1") &&
+      redoneDisk.includes("tine.group-by:: prop:OCC") &&
+      redoneDisk.includes("tine.col-aggregates:: prop:OCC=sum;prop:severity=max") &&
+      !redoneDisk.includes("occurrence=number") && !redoneDisk.includes("occurrence:: 3") &&
+      !redoneDisk.includes("severity * occurrence * DET") && !redoneDisk.includes("true || occurrence > 1") &&
+      !redoneDisk.includes("prop:occurrence"),
+      JSON.stringify(redoneDisk));
+
+    await browser.refresh();
+    await browser.$(".sheet-table").waitForExist({ timeout: 15_000 });
+    const reloaded = await browser.execute(() => {
+      const headers = [...document.querySelectorAll(".sheet-table .sheet-field-header")]
+        .map((el) => (el.textContent ?? "").trim());
+      const formula = document.querySelector('.sheet-table .sheet-cell[data-row="0"][data-col="7"]')
+        ?.textContent?.replace("⋮", "").trim() ?? null;
+      return { headers, formula };
+    });
+    const reloadedDisk = fs.readFileSync(JFILE, "utf8");
+    check("renamed field and every dependency survive a real app reload",
+      reloaded.headers.filter((h) => h === "OCC").length === 1 && reloaded.formula === "24" &&
+      reloadedDisk.includes("OCC=number") && reloadedDisk.includes("OCC:: 3") &&
+      reloadedDisk.includes('severity * OCC * DET + if(label == "occurrence", formula.occurrence, 0)') &&
+      reloadedDisk.includes("tine.filter:: true || OCC > 1") &&
+      reloadedDisk.includes("tine.group-by:: prop:OCC") &&
+      reloadedDisk.includes("tine.col-aggregates:: prop:OCC=sum;prop:severity=max") &&
+      !reloadedDisk.includes("occurrence=number") && !reloadedDisk.includes("occurrence:: 3") &&
+      !reloadedDisk.includes("severity * occurrence * DET") && !reloadedDisk.includes("true || occurrence > 1") &&
+      !reloadedDisk.includes("prop:occurrence"),
+      JSON.stringify({ reloaded, reloadedDisk }));
   }
 
   // --- Formula editor (phase 7c): add a formula, value computed not stored ---
@@ -563,6 +748,151 @@ try {
       });
       check("aggregate row adds no vertical scroller overflow", aggOverflow.ok, JSON.stringify(aggOverflow));
     }
+  }
+
+  // GH #92: refine a REAL query result set through the Sheets filter UI. This
+  // is intentionally native-WebKit evidence rather than a mocked component
+  // proof: the backend must materialize both coarse rows, the formula editor
+  // must persist tine.filter, and the same filtered identity must survive the
+  // actual Table -> Board view switch without rewriting the coarse query.
+  const queryFilterInitial = await browser.execute(() => {
+    const block = [...document.querySelectorAll(".ls-block")].find((el) =>
+      (el.querySelector(".heading-text")?.textContent ?? "").includes("Query filter proof")
+    );
+    if (!block) return { found: false, reason: "missing query-filter block" };
+    const titles = [...block.querySelectorAll(".sheet-title-cell .sheet-cell-body")]
+      .map((el) => (el.textContent ?? "").trim());
+    return {
+      found: true,
+      active: block.querySelector(".query-view-switcher button.active")?.textContent?.trim() ?? null,
+      count: block.querySelector(".query-count")?.textContent?.trim() ?? null,
+      titles,
+    };
+  });
+  check(
+    "query-sourced Table starts from both coarse numeric rows",
+    queryFilterInitial.found && queryFilterInitial.active === "Table" &&
+      queryFilterInitial.count === "2" &&
+      queryFilterInitial.titles.includes("Low score") && queryFilterInitial.titles.includes("High score"),
+    JSON.stringify(queryFilterInitial)
+  );
+
+  const filterMenuOpened = await browser.execute(() => {
+    const block = [...document.querySelectorAll(".ls-block")].find((el) =>
+      (el.querySelector(".heading-text")?.textContent ?? "").includes("Query filter proof")
+    );
+    const table = block?.querySelector(".sheet-table");
+    if (!table) return false;
+    table.dispatchEvent(new MouseEvent("contextmenu", {
+      bubbles: true, cancelable: true, button: 2, clientX: 440, clientY: 320,
+    }));
+    return true;
+  });
+  await sleep(250);
+  const filterMenuClicked = filterMenuOpened && await browser.execute(() => {
+    const item = [...document.querySelectorAll(".ctx-item")]
+      .find((el) => (el.textContent ?? "").trim() === "Edit filter…");
+    if (!item) return false;
+    item.click();
+    return true;
+  });
+  await sleep(250);
+  const filterEntered = filterMenuClicked && await browser.execute(() => {
+    const textarea = document.querySelector(".formula-editor-textarea");
+    if (!(textarea instanceof HTMLTextAreaElement)) return false;
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set.call(textarea, "points > 2");
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    return true;
+  });
+  check("query Sheet opens the real filter editor", !!filterEntered);
+  if (filterEntered) {
+    const filterSaved = await browser.execute(() => {
+      const save = [...document.querySelectorAll(".formula-editor-btn")]
+        .find((el) => (el.textContent ?? "").trim() === "Save");
+      if (!(save instanceof HTMLButtonElement) || save.disabled) return false;
+      save.click();
+      return true;
+    });
+    check("query Sheet filter expression is accepted by the real editor", filterSaved);
+    await browser.waitUntil(async () => browser.execute(() => {
+      const block = [...document.querySelectorAll(".ls-block")].find((el) =>
+        (el.querySelector(".heading-text")?.textContent ?? "").includes("Query filter proof")
+      );
+      const titles = [...(block?.querySelectorAll(".sheet-title-cell .sheet-cell-body") ?? [])]
+        .map((el) => (el.textContent ?? "").trim());
+      return titles.length === 1 && titles[0] === "High score";
+    }), { timeout: 10_000, timeoutMsg: "query Table did not apply points > 2" });
+    const filteredTable = await browser.execute(() => {
+      const block = [...document.querySelectorAll(".ls-block")].find((el) =>
+        (el.querySelector(".heading-text")?.textContent ?? "").includes("Query filter proof")
+      );
+      return {
+        count: block?.querySelector(".query-count")?.textContent?.trim() ?? null,
+        titles: [...(block?.querySelectorAll(".sheet-title-cell .sheet-cell-body") ?? [])]
+          .map((el) => (el.textContent ?? "").trim()),
+      };
+    });
+    check(
+      "query-sourced Table filters only the fine-grained subset while retaining coarse count",
+      filteredTable.count === "2" && JSON.stringify(filteredTable.titles) === JSON.stringify(["High score"]),
+      JSON.stringify(filteredTable)
+    );
+    await sleep(2400);
+    const tableDisk = fs.readFileSync(JFILE, "utf8");
+    check(
+      "query filter persists without rewriting coarse query membership",
+      tableDisk.includes('{{query (and (todo WAIT) "score")}}') &&
+        tableDisk.includes("tine.filter:: points > 2") && tableDisk.includes("tine.view:: table"),
+      JSON.stringify(tableDisk)
+    );
+
+    const boardClicked = await browser.execute(() => {
+      const block = [...document.querySelectorAll(".ls-block")].find((el) =>
+        (el.querySelector(".heading-text")?.textContent ?? "").includes("Query filter proof")
+      );
+      const button = [...(block?.querySelectorAll(".query-view-switcher button") ?? [])]
+        .find((el) => (el.textContent ?? "").trim() === "Board");
+      if (!(button instanceof HTMLButtonElement)) return false;
+      button.click();
+      return true;
+    });
+    check("query filter proof switches through the real Board control", boardClicked);
+    await browser.waitUntil(async () => browser.execute(() => {
+      const block = [...document.querySelectorAll(".ls-block")].find((el) =>
+        (el.querySelector(".heading-text")?.textContent ?? "").includes("Query filter proof")
+      );
+      const titles = [...(block?.querySelectorAll(".sheet-board-card-title") ?? [])]
+        .map((el) => (el.textContent ?? "").trim());
+      return titles.length === 1 && titles[0] === "High score";
+    }), { timeout: 10_000, timeoutMsg: "query Board did not retain points > 2" });
+    const filteredBoard = await browser.execute(() => {
+      const block = [...document.querySelectorAll(".ls-block")].find((el) =>
+        (el.querySelector(".heading-text")?.textContent ?? "").includes("Query filter proof")
+      );
+      return {
+        active: block?.querySelector(".query-view-switcher button.active")?.textContent?.trim() ?? null,
+        count: block?.querySelector(".query-count")?.textContent?.trim() ?? null,
+        titles: [...(block?.querySelectorAll(".sheet-board-card-title") ?? [])]
+          .map((el) => (el.textContent ?? "").trim()),
+      };
+    });
+    check(
+      "query-sourced Board retains the same filtered subset and coarse count",
+      filteredBoard.active === "Board" && filteredBoard.count === "2" &&
+        JSON.stringify(filteredBoard.titles) === JSON.stringify(["High score"]),
+      JSON.stringify(filteredBoard)
+    );
+    await sleep(2400);
+    const boardDisk = fs.readFileSync(JFILE, "utf8");
+    check(
+      "Board switch preserves query, filter, fields, and grouping on disk",
+      boardDisk.includes('{{query (and (todo WAIT) "score")}}') &&
+        boardDisk.includes("tine.filter:: points > 2") &&
+        boardDisk.includes("tine.view:: board") &&
+        boardDisk.includes("tine.fields:: points=number;tier=text") &&
+        boardDisk.includes("tine.group-by:: prop:tier"),
+      JSON.stringify(boardDisk)
+    );
   }
 } catch (e) {
   failures++;
