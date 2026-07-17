@@ -325,6 +325,16 @@ export function QueryMacro(props: {
   // ordered sequence with a per-row page breadcrumb), not grouped by page, or the
   // global order would be lost to page headers.
   const globalSort = createMemo(() => /\(\s*sort-by\b/i.test(form()));
+  const queryGroupKey = (group: RefGroup, flat: boolean) =>
+    flat
+      ? `${group.kind}\0${group.page}\0${group.blocks.map((block) => block.id).join("\0")}`
+      : `${group.kind}\0${group.page}`;
+  const groupedQueryByKey = createMemo(() =>
+    new Map((groups() ?? []).map((group) => [queryGroupKey(group, false), group] as const))
+  );
+  const flatQueryByKey = createMemo(() =>
+    new Map((groups() ?? []).map((group) => [queryGroupKey(group, true), group] as const))
+  );
   const [sortCol, setSortCol] = createSignal<string>("");
   const [sortDir, setSortDir] = createSignal(1);
 
@@ -624,16 +634,16 @@ export function QueryMacro(props: {
                           <Show
                             when={globalSort()}
                             fallback={
-                              <For each={groups() ?? []}>
-                                {(g) => <QueryGroup page={g.page} group={() => g} />}
+                              <For each={[...groupedQueryByKey().keys()]}>
+                                {(key) => <QueryGroup group={() => groupedQueryByKey().get(key)} />}
                               </For>
                             }
                           >
                             {/* Sorted: flat global order (each group holds one block). Iterate the
                                 groups DIRECTLY and pass the group object — re-`find()`ing the group
                                 by page/id for every row was O(groups²) on broad queries (audit #3). */}
-                            <For each={groups() ?? []}>
-                              {(g) => <QueryGroup page={g.page} group={() => g} flat />}
+                            <For each={[...flatQueryByKey().keys()]}>
+                              {(key) => <QueryGroup group={() => flatQueryByKey().get(key)} flat />}
                             </For>
                           </Show>
                         }
@@ -721,8 +731,9 @@ export function QueryMacro(props: {
 // Keyed by page name (outer <For>) and block uuid (inner <For>) so a reactive
 // re-query that returns the same membership reuses the existing rows — it never
 // re-mounts a block you're editing in a result and yanks the caret out.
-function QueryGroup(props: { page: string; group: () => RefGroup | undefined; flat?: boolean }): JSX.Element {
+function QueryGroup(props: { group: () => RefGroup | undefined; flat?: boolean }): JSX.Element {
   const kind = (): PageKind => props.group()?.kind ?? "page";
+  const page = () => props.group()?.page ?? "";
   return (
     <Show when={props.group()}>
       {(g) => (
@@ -731,26 +742,26 @@ function QueryGroup(props: { page: string; group: () => RefGroup | undefined; fl
             class={props.flat ? "query-crumb" : "query-page"}
             onClick={(e) => {
               e.stopPropagation();
-              if (e.shiftKey) openPageInSidebar(props.page, kind());
-              else openPage(props.page, kind());
+              if (e.shiftKey) openPageInSidebar(page(), kind());
+              else openPage(page(), kind());
             }}
             onAuxClick={(e) => {
               if (e.button === 1) {
                 e.preventDefault();
                 e.stopPropagation();
-                openPageInNewTab(props.page, kind());
+                openPageInNewTab(page(), kind());
               }
             }}
             onContextMenu={(e) => {
               if (!shouldOpenTextContextMenu(e.target)) return;
               e.preventDefault();
               e.stopPropagation();
-              openPageContextMenu(e.clientX, e.clientY, props.page, kind());
+              openPageContextMenu(e.clientX, e.clientY, page(), kind());
             }}
           >
-            {props.page}
+            {page()}
           </div>
-          <LiveRefGroup page={props.page} kind={kind()} blocks={g().blocks} />
+          <LiveRefGroup page={page()} kind={kind()} blocks={g().blocks} surface="query" showBreadcrumb />
         </div>
       )}
     </Show>

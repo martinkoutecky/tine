@@ -8,6 +8,7 @@ import { backend } from "../backend";
 import { blockProperty, doc, resetStore, setDoc, undo, type FeedPage, type Node as StoreNode } from "../store";
 import { clearSimpleForm, getSimpleForm, stashSimpleForm } from "../editor/queryBuilder";
 import type { QueryExecution, RefGroup } from "../types";
+import { bumpDataRev } from "../ui";
 
 beforeAll(async () => {
   await initParser();
@@ -133,6 +134,71 @@ function loadAdvancedQueryDoc(queryRaw: string) {
 }
 
 describe("QueryMacro sheet integration", () => {
+  it("shows bounded ancestor context for list-query hits", async () => {
+    loadQueryDoc("{{query (task TODO)}}");
+    vi.mocked(backend().runQuery).mockResolvedValue([
+      {
+        page: "Sheet",
+        kind: "page",
+        blocks: [{
+          id: "todo",
+          raw: doc.byId.todo.raw,
+          collapsed: false,
+          children: [],
+          breadcrumb: ["Projects", "Tine"],
+        }],
+      },
+    ]);
+
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await settleQuery();
+      await vi.waitFor(() => expect(root.querySelector(".ref-breadcrumb")?.textContent ?? "").toContain("Projects"));
+      expect(root.querySelectorAll(".ref-breadcrumb")).toHaveLength(1);
+    } finally {
+      dispose();
+    }
+  });
+
+  it("retains a local query-tree disclosure across fresh result object identities", async () => {
+    setDoc({
+      byId: {
+        query: node("query", "{{query (task LATER)}}", null),
+        "hit-root": node("hit-root", "TODO Query hit", null, ["hit-child"]),
+        "hit-child": node("hit-child", "Query child", "hit-root", ["hit-grandchild"]),
+        "hit-grandchild": node("hit-grandchild", "Query grandchild", "hit-child"),
+      },
+      pages: [page(["query", "hit-root"])],
+      feed: ["Sheet"],
+      loaded: true,
+    });
+    const freshResult = (): RefGroup[] => [{
+      page: "Sheet",
+      kind: "page",
+      blocks: [{ id: "hit-root", raw: "TODO Query hit", collapsed: false, children: [] }],
+    }];
+    const runQuery = vi.spyOn(backend(), "runQuery").mockImplementation(async () => freshResult());
+
+    const { root, dispose } = mount(() => <Block id="query" />);
+    try {
+      await settleQuery();
+      await vi.waitFor(() => expect(root.textContent).toContain("Query child"));
+      expect(root.textContent).not.toContain("Query grandchild");
+
+      root.querySelector<HTMLElement>(
+        '[data-block-id="hit-child"] > .block-main .collapse-toggle.has-children',
+      )!.click();
+      await vi.waitFor(() => expect(root.textContent).toContain("Query grandchild"));
+
+      bumpDataRev();
+      await vi.waitFor(() => expect(runQuery).toHaveBeenCalledTimes(2));
+      await vi.waitFor(() => expect(root.textContent).toContain("Query grandchild"));
+      expect(doc.byId["hit-child"].collapsed).toBe(false);
+    } finally {
+      dispose();
+    }
+  });
+
   it("reopens a materialized friendly search without exposing it as raw DSL", async () => {
     loadQueryDoc('{{query (search "alpha beta")}}\ntine.view:: search');
     const execution: QueryExecution = {

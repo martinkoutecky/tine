@@ -5,8 +5,10 @@ import type { BacklinkFilterContext, BlockDto, RefGroup } from "../types";
 import { LinkedReferences } from "./LinkedReferences";
 
 vi.mock("./LiveRefGroup", () => ({
-  LiveRefGroup: (props: { blocks: BlockDto[] }) => (
-    <div class="test-ref-group">{props.blocks.map((block) => block.id).join(",")}</div>
+  LiveRefGroup: (props: { blocks: BlockDto[]; showBreadcrumb?: boolean }) => (
+    <div class="test-ref-group" data-show-breadcrumb={props.showBreadcrumb ? "true" : "false"}>
+      {props.blocks.map((block) => block.id).join(",")}
+    </div>
   ),
 }));
 
@@ -33,6 +35,21 @@ afterEach(() => {
 });
 
 describe("Linked References filters", () => {
+  it("requests ancestor context for every linked-reference hit", async () => {
+    vi.spyOn(backend(), "getBacklinks").mockResolvedValue([
+      { page: "Journal", kind: "journal", blocks: [block("nested", "Nested [[Target]]")] },
+    ]);
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const dispose = render(() => <LinkedReferences name="Target" />, root);
+
+    await tick();
+    await tick();
+    expect(root.querySelector(".test-ref-group")?.getAttribute("data-show-breadcrumb")).toBe("true");
+
+    dispose();
+  });
+
   it("normalizes each native search corpus once instead of once per search evaluation", async () => {
     const groups: RefGroup[] = [
       {

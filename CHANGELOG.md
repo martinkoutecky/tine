@@ -34,6 +34,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   the arrow keys, uses the ordinary block editor; newly authored custom and
   Unicode properties reopen as canonical Logseq page metadata without changing
   body blocks or unsafe preambles. (GH #163)
+- **Linked References and list-query results now keep deep matches concise and
+  understandable.** Each hit shows its final ancestor context, while deeper
+  descendant branches start folded in a view-local copy that never changes the
+  source block's collapse state.
 - **Mixed-case page links now open the existing canonical page.** Wiki links,
   tags, aliases, tabs, and sidebar navigation share the same case-insensitive
   page identity instead of opening a blank, non-editable case variant. (GH #179)

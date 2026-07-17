@@ -40,7 +40,10 @@ for (let index = 0; index < 140; index += 1) {
 }
 fs.writeFileSync(`${GRAPH}/pages/Query parity.md`, [
   "- {{query (and (task TODO) (priority A) (not (page Templates)) (sort-by modified desc))}}",
-  ...Array.from({ length: 9 }, (_, index) => `- TODO [#A] Included result ${index + 1}`),
+  "- Query ancestor one",
+  "  - Query ancestor two",
+  "    - TODO [#A] Included result 1",
+  ...Array.from({ length: 8 }, (_, index) => `- TODO [#A] Included result ${index + 2}`),
   "",
 ].join("\n"));
 fs.writeFileSync(`${GRAPH}/pages/Templates.md`, "- TODO [#A] Excluded template result\n");
@@ -52,8 +55,17 @@ const unlinkedRaw = [
 fs.writeFileSync(`${GRAPH}/pages/Unlinked source.md`, `- ${unlinkedRaw}\n`);
 fs.writeFileSync(`${GRAPH}/pages/Second unlinked.md`, "- A second source also names Query parity without brackets\n");
 fs.writeFileSync(`${GRAPH}/pages/Linked source.md`, [
-  "- [[Query parity]] appears explicitly and [[Query parity]] appears again",
-  "  - A descendant-only filter witness carries #Evidence",
+  "- Ancestor one",
+  "  - Ancestor two",
+  "    - Ancestor three",
+  "      - Ancestor four",
+  "        - [[Query parity]] appears explicitly and [[Query parity]] appears again",
+  "          - A descendant-only filter witness carries #Evidence",
+  "            - Grandchild body is hidden by the reference-local depth default",
+  `              - Large unrelated descendant ${"context ".repeat(120)}`,
+  "- [[Query parity]] source-collapsed witness",
+  "  collapsed:: true",
+  "  - Source-collapsed child carries #Evidence",
   "",
 ].join("\n"));
 fs.writeFileSync(`${GRAPH}/pages/Tagged source.md`, "tags:: Query parity\n\n- This page is tagged through a bare page property.\n");
@@ -171,6 +183,12 @@ await withApp(0, async (browser) => {
   });
   await browser.waitUntil(async () => (await browser.$(".query-count").getText()).trim() === "9", {
     timeout: 10_000, timeoutMsg: "ordinary query did not produce its nine expected blocks",
+  });
+  await browser.waitUntil(() => browser.execute(() =>
+    [...document.querySelectorAll(".query-block .ref-breadcrumb")]
+      .some((breadcrumb) => (breadcrumb.textContent ?? "").includes("Query ancestor one")
+        && (breadcrumb.textContent ?? "").includes("Query ancestor two"))), {
+    timeout: 10_000, timeoutMsg: "list query did not render the nested hit's ancestor breadcrumb",
   });
   const referenceBlocks = await browser.$(".reference-blocks");
   await referenceBlocks.waitForExist({ timeout: 10_000 });
@@ -487,14 +505,91 @@ await withApp(2, async (browser) => {
     const tagged = groups.find((group) => group.querySelector(".reference-page")?.textContent?.trim() === "Tagged source");
     return {
       groupCount: groups.length,
+      totalRoots: Number(document.querySelector(".linked-references .references-count")?.textContent?.trim()),
       mentions: source?.querySelector(".reference-mention-count")?.textContent?.trim(),
       jumps: source?.querySelectorAll(".reference-occurrence-jump").length,
       taggedPresent: !!tagged,
+      breadcrumbs: [...(source?.querySelectorAll(".ref-breadcrumb") ?? [])]
+        .map((item) => item.textContent?.replace(/\s+/g, "").trim()),
     };
   });
-  if (linkedProof.groupCount !== 3 || linkedProof.mentions !== "2 mentions" || linkedProof.jumps !== 2
-    || !linkedProof.taggedPresent) {
+  if (linkedProof.groupCount !== 3 || linkedProof.totalRoots !== 4
+    || linkedProof.mentions !== "2 mentions" || linkedProof.jumps !== 3
+    || !linkedProof.taggedPresent
+    || JSON.stringify(linkedProof.breadcrumbs) !== JSON.stringify(["…›Ancestor two›Ancestor three›Ancestor four"])) {
     throw new Error(`linked reference evidence is incomplete: ${JSON.stringify(linkedProof)}`);
+  }
+
+  const linkedBytesBeforeDisclosure = fs.readFileSync(`${GRAPH}/pages/Linked source.md`, "utf8");
+  const depthProof = await browser.execute(() => {
+    const source = [...document.querySelectorAll(".linked-references .reference-group")]
+      .find((group) => group.querySelector(".reference-page")?.textContent?.trim() === "Linked source");
+    const roots = [...(source?.querySelectorAll(".live-ref-group > .ls-block") ?? [])];
+    const ownText = (block) => block.querySelector(":scope > .block-main .block-content")?.textContent ?? "";
+    const nested = roots.find((block) => ownText(block).includes("appears explicitly"));
+    const stored = roots.find((block) => ownText(block).includes("source-collapsed witness"));
+    const immediate = nested?.querySelector(":scope > .block-children-container > .block-children > .ls-block");
+    return {
+      nestedId: nested?.getAttribute("data-block-id"),
+      immediateId: immediate?.getAttribute("data-block-id"),
+      nestedText: nested?.textContent ?? "",
+      immediateText: immediate?.textContent ?? "",
+      immediateCollapsed: immediate?.classList.contains("collapsed"),
+      storedId: stored?.getAttribute("data-block-id"),
+      storedCollapsed: stored?.classList.contains("collapsed"),
+      storedText: stored?.textContent ?? "",
+    };
+  });
+  if (!depthProof.nestedId || !depthProof.immediateId || !depthProof.storedId
+    || !depthProof.nestedText.includes("descendant-only filter witness")
+    || depthProof.nestedText.includes("Grandchild body")
+    || depthProof.immediateCollapsed !== true
+    || depthProof.storedCollapsed !== true
+    || depthProof.storedText.includes("Source-collapsed child")) {
+    throw new Error(`reference-local initial depth is wrong: ${JSON.stringify(depthProof)}`);
+  }
+
+  await browser.execute((immediateId, storedId) => {
+    for (const id of [immediateId, storedId]) {
+      document.querySelector(`[data-block-id="${CSS.escape(id)}"] > .block-main .collapse-toggle`)?.click();
+    }
+  }, depthProof.immediateId, depthProof.storedId);
+  await browser.waitUntil(() => browser.execute((nestedId, storedId) => {
+    const nested = document.querySelector(`[data-block-id="${CSS.escape(nestedId)}"]`);
+    const stored = document.querySelector(`[data-block-id="${CSS.escape(storedId)}"]`);
+    return (nested?.textContent ?? "").includes("Grandchild body")
+      && (stored?.textContent ?? "").includes("Source-collapsed child");
+  }, depthProof.nestedId, depthProof.storedId), {
+    timeout: 5_000, timeoutMsg: "local reference disclosures did not reveal the bounded descendants",
+  });
+  await sleep(500);
+  if (fs.readFileSync(`${GRAPH}/pages/Linked source.md`, "utf8") !== linkedBytesBeforeDisclosure) {
+    throw new Error("reference-local disclosure changed the source Markdown bytes");
+  }
+
+  for (const [id, marker] of [
+    [depthProof.nestedId, "live-root-edit-witness"],
+    [depthProof.immediateId, "live-descendant-edit-witness"],
+  ]) {
+    const entered = await browser.execute((blockId) => {
+      const content = document.querySelector(`[data-block-id="${CSS.escape(blockId)}"] > .block-main .block-content`);
+      if (!(content instanceof HTMLElement)) return false;
+      content.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
+      document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, button: 0 }));
+      return true;
+    }, id);
+    if (!entered) throw new Error(`could not enter the linked-reference editor for ${marker}`);
+    const editor = await browser.$(`[data-block-id="${id}"] textarea.block-editor`);
+    await editor.waitForExist({ timeout: 5_000 });
+    await editor.setValue(`${await editor.getValue()} ${marker}`);
+    await browser.$("h1.page-title").click();
+    await browser.waitUntil(() => fs.readFileSync(`${GRAPH}/pages/Linked source.md`, "utf8").includes(marker), {
+      timeout: 10_000, timeoutMsg: `live linked-reference edit did not save ${marker}`,
+    });
+  }
+  const linkedBytesAfterEditing = fs.readFileSync(`${GRAPH}/pages/Linked source.md`, "utf8");
+  if (!linkedBytesAfterEditing.includes("\n  collapsed:: true\n")) {
+    throw new Error("live reference edits changed the source-collapsed property's bytes");
   }
 
   const linkedFilterToggle = await browser.$('.linked-references button[aria-label="Filter linked references"]');
@@ -507,13 +602,13 @@ await withApp(2, async (browser) => {
     const pages = [...document.querySelectorAll(".linked-references .reference-page")]
       .map((item) => item.textContent?.trim());
     return summary.includes(`1 of ${expectedGroups}`) && pages.length === 1 && pages[0] === "Linked source";
-  }, linkedProof.groupCount), { timeout: 10_000, timeoutMsg: "descendant-only linked-reference search did not retain its backlink root" });
+  }, linkedProof.totalRoots), { timeout: 10_000, timeoutMsg: "descendant-only linked-reference search did not retain its backlink root" });
   await browser.saveScreenshot(`${ARTIFACTS}/linked-reference-filter.png`);
 
   await browser.$(".linked-references .reference-filter-clear").click();
   await browser.waitUntil(() => browser.execute((expectedGroups) =>
     (document.querySelector(".linked-references .reference-filter-summary")?.textContent ?? "").includes(`${expectedGroups} of ${expectedGroups}`),
-  linkedProof.groupCount), {
+  linkedProof.totalRoots), {
     timeout: 5_000,
     timeoutMsg: "clearing linked-reference search did not restore every root",
   });
