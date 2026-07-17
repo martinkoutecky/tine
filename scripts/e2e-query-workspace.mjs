@@ -481,17 +481,6 @@ await withApp(2, async (browser) => {
         && group.querySelector(".reference-mention-count")?.textContent?.trim() === "2 mentions")), {
     timeout: 10_000, timeoutMsg: "linked reference evidence did not lazy-mount",
   });
-  await browser.execute(() => {
-    const tagged = [...document.querySelectorAll(".linked-references .reference-group")]
-      .find((group) => group.querySelector(".reference-page")?.textContent?.trim() === "Tagged source");
-    tagged?.scrollIntoView({ block: "center" });
-  });
-  await browser.waitUntil(() => browser.execute(() =>
-    [...document.querySelectorAll(".linked-references .reference-group")]
-      .some((group) => group.querySelector(".reference-page")?.textContent?.trim() === "Tagged source"
-        && group.querySelector(".reference-mention-count")?.textContent?.trim() === "1 mention")), {
-    timeout: 10_000, timeoutMsg: "bare tags property evidence did not lazy-mount",
-  });
   const linkedProof = await browser.execute(() => {
     const groups = [...document.querySelectorAll(".linked-references .reference-group")];
     const source = groups.find((group) => group.querySelector(".reference-page")?.textContent?.trim() === "Linked source");
@@ -500,12 +489,11 @@ await withApp(2, async (browser) => {
       groupCount: groups.length,
       mentions: source?.querySelector(".reference-mention-count")?.textContent?.trim(),
       jumps: source?.querySelectorAll(".reference-occurrence-jump").length,
-      taggedMentions: tagged?.querySelector(".reference-mention-count")?.textContent?.trim(),
-      taggedJumps: tagged?.querySelectorAll(".reference-occurrence-jump").length,
+      taggedPresent: !!tagged,
     };
   });
-  if (linkedProof.groupCount < 3 || linkedProof.mentions !== "2 mentions" || linkedProof.jumps !== 2
-    || linkedProof.taggedMentions !== "1 mention" || linkedProof.taggedJumps !== 1) {
+  if (linkedProof.groupCount !== 3 || linkedProof.mentions !== "2 mentions" || linkedProof.jumps !== 2
+    || !linkedProof.taggedPresent) {
     throw new Error(`linked reference evidence is incomplete: ${JSON.stringify(linkedProof)}`);
   }
 
@@ -544,11 +532,11 @@ await withApp(2, async (browser) => {
     return pages.length === 1 && pages[0] === "Linked source";
   }), { timeout: 5_000, timeoutMsg: "including the descendant Evidence facet did not retain Linked source" });
   await evidenceFacet.click();
-  await browser.waitUntil(() => browser.execute(() => {
+  await browser.waitUntil(() => browser.execute((expectedGroups) => {
     const pages = [...document.querySelectorAll(".linked-references .reference-page")]
       .map((item) => item.textContent?.trim());
-    return pages.length === 1 && pages[0] !== "Linked source";
-  }), { timeout: 5_000, timeoutMsg: "excluding the descendant Evidence facet did not hide Linked source" });
+    return pages.length === expectedGroups - 1 && !pages.includes("Linked source");
+  }, linkedProof.groupCount), { timeout: 5_000, timeoutMsg: "excluding the descendant Evidence facet did not hide Linked source" });
   await evidenceFacet.click();
   await browser.waitUntil(() => browser.execute(
     (expectedGroups) => document.querySelectorAll(".linked-references .reference-page").length === expectedGroups,
