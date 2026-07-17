@@ -142,6 +142,12 @@
       "nonRequirements": ["Exact drag threshold.", "Exact theme palette/RGB.", "Exact CSS filter/DOM strategy."],
       "stability": "stable"
     },
+    "scripts/e2e-pdf-ownership.mjs": {
+      "contracts": [{ "class": "exact-safety-interoperability", "userOutcome": "An in-place graph switch and ordinary safe close persist PDF work only through the window-local graph generation that created it.", "blocking": true, "authority": "Tine PDF graph-owner generation and safe-close persistence contract" }],
+      "acceptableVariations": ["PDF rendering and graph-switch presentation may vary while the old graph is drained, the viewer is remounted, and sidecar bytes remain owner-isolated."],
+      "nonRequirements": ["Exact PDF pixels, graph-switch animation, or debounce completion time."],
+      "stability": "stable"
+    },
     "scripts/e2e-plugins.mjs": {
       "contracts": [
         { "class": "exact-safety-interoperability", "userOutcome": "Signed community plugin and theme metadata remains bound to the reviewed package identity, and executable plugins install disabled until explicitly enabled.", "blocking": true, "authority": "Tine signed plugin registry and capability-review contract" },

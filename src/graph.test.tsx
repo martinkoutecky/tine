@@ -196,7 +196,12 @@ describe("default journal template graph bind", () => {
 
     await loadGraphPath(META.root);
 
-    expect(events).toEqual(["bump-epoch", "save-template", "bump-epoch"]);
+    expect(events).toEqual([
+      `activate-pdf:${META.root}`,
+      "bump-epoch",
+      "save-template",
+      "bump-epoch",
+    ]);
   });
 
   it("uses an empty journal's revision as the conflict baseline", async () => {
@@ -271,5 +276,41 @@ describe("PDF graph ownership", () => {
     expect(harness.events.indexOf("retire-pdf")).toBeLessThan(harness.events.indexOf("close-pdf"));
     expect(harness.events.indexOf("close-pdf")).toBeLessThan(harness.events.indexOf("load-next"));
     expect(harness.activatePdfOwnership).toHaveBeenLastCalledWith(nextMeta.root);
+  });
+
+  it("keeps the old graph bound and viewer live when PDF drain fails", async () => {
+    const harness = await loadHarness(null);
+    await harness.loadGraphPath(META.root);
+    harness.events.length = 0;
+    harness.drainPdfWork.mockResolvedValueOnce(false);
+
+    await expect(harness.loadGraphPath("/tmp/other-graph")).resolves.toEqual({ kind: "aborted" });
+
+    expect(harness.drainPdfWork).toHaveBeenCalledOnce();
+    expect(harness.events).toEqual([]);
+    expect(harness.retirePdfOwnership).not.toHaveBeenCalled();
+    expect(harness.closePdf).not.toHaveBeenCalled();
+    expect(harness.api.loadGraph).toHaveBeenCalledOnce();
+  });
+
+  it("publishes a fresh PDF generation for a same-root force refresh", async () => {
+    const harness = await loadHarness(null);
+    await harness.loadGraphPath(META.root);
+    harness.events.length = 0;
+    (harness.api.loadGraph as any).mockImplementationOnce(async () => {
+      harness.events.push("load-refresh");
+      return { kind: "already_current" as const, meta: META, binding_generation: 1 };
+    });
+
+    await harness.loadGraphPath(META.root, { forceRefresh: true });
+
+    expect(harness.events.slice(0, 5)).toEqual([
+      "drain-pdf",
+      "retire-pdf",
+      "close-pdf",
+      "load-refresh",
+      `activate-pdf:${META.root}`,
+    ]);
+    expect(harness.activatePdfOwnership).toHaveBeenCalledTimes(2);
   });
 });

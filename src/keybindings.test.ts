@@ -345,7 +345,11 @@ describe("find-in-page routing", () => {
     const fake = installFakeWindow();
     const dispose = installKeybindings();
     const e = modFEvent();
-    setPdfTarget({ filename: "paper.pdf", label: "Paper" });
+    setPdfTarget({
+      filename: "paper.pdf",
+      label: "Paper",
+      owner: { graphRoot: "/test/keybindings", generation: 1 },
+    });
 
     fake.dispatchCaptureKeydown(e.event);
 

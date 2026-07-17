@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
 import { openPdf, pdfTarget, setPdfTarget } from "../ui";
@@ -6,14 +6,22 @@ import { setDoc } from "../store";
 import { AnnotationBody } from "../components/AnnotationBody";
 import { AstBody } from "./body";
 import { initParser } from "./parse";
+import { activatePdfOwnership, resetPdfOwnershipForTest, type PdfOwnership } from "../pdfOwnership";
+
+let pdfOwner: PdfOwnership;
 
 beforeAll(async () => {
   await initParser();
 });
 
-  afterEach(() => {
+beforeEach(() => {
+  pdfOwner = activatePdfOwnership("/test/annotation-graph");
+});
+
+afterEach(() => {
   vi.restoreAllMocks();
   setPdfTarget(null);
+  resetPdfOwnershipForTest();
   setDoc("pages", []);
   document.body.replaceChildren();
 });
@@ -60,6 +68,7 @@ describe("PDF annotation block references (GH #61)", () => {
       expect(pdfTarget()).toEqual({
         filename: "A_Book.pdf",
         label: "A_Book.pdf",
+        owner: pdfOwner,
         page: 42,
         highlightId: id,
       });
@@ -69,11 +78,12 @@ describe("PDF annotation block references (GH #61)", () => {
   });
 
   it("keeps the current location when a direct link reopens the same PDF", () => {
-    setPdfTarget({ filename: "assets/paper.pdf", label: "Paper", page: 7 });
+    setPdfTarget({ filename: "assets/paper.pdf", label: "Paper", owner: pdfOwner, page: 7 });
     openPdf("assets/paper.pdf", "Paper");
     expect(pdfTarget()).toEqual({
       filename: "assets/paper.pdf",
       label: "Paper",
+      owner: pdfOwner,
       page: 7,
     });
 
@@ -105,6 +115,7 @@ describe("PDF annotation block references (GH #61)", () => {
       expect(pdfTarget()).toEqual({
         filename: "A_Book.pdf",
         label: "A_Book.pdf",
+        owner: pdfOwner,
         page: 7,
         highlightId: id,
       });

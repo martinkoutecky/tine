@@ -2,7 +2,7 @@
 // persisting the choice so it reopens next launch.
 
 import { backend } from "./backend";
-import { setGraphMeta, setWorkflow, bumpGraphEpoch, setRightSidebar, graphMeta, graphEpoch, setAliasMap, seedFavorites, pruneSidebarBlocks, pushToast, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, pageIdentityKey } from "./ui";
+import { setGraphMeta, setWorkflow, bumpGraphEpoch, setRightSidebar, graphMeta, graphEpoch, setAliasMap, seedFavorites, pruneSidebarBlocks, pushToast, refreshJournalConflicts, refreshSyncConflicts, clearRecent, graphTransitioning, setGraphTransitioning, renamePageInNavigation, resetLeftSidebarSections, pageIdentityKey, closePdf } from "./ui";
 import { resetStore, flushAll } from "./store";
 import { clearAssetBlobCache } from "./assetCache";
 import { resetTabsToJournals, openPage, restoreSession, flushSession } from "./router";
@@ -16,6 +16,7 @@ import { isMobile, platformKind } from "./platform";
 import type { BlockDto } from "./types";
 import { maybeShowGuideAnnouncement } from "./guide";
 import { endEdit } from "./editorController";
+import { activatePdfOwnership, drainPdfWork, retirePdfOwnership } from "./pdfOwnership";
 
 const GRAPH_KEY = "tine.graphPath";
 
@@ -83,6 +84,7 @@ export async function loadGraphPath(
   // discard that edit — gated on whether a graph is actually loaded now, NOT on
   // the persisted path (which is empty on a TINE_GRAPH/CLI launch).
   const hadGraph = !!graphMeta();
+  const rebindsPdfOwner = hadGraph && (switching || options.forceRefresh === true);
   const flushed = await flushAll();
   if (hadGraph && !flushed) {
     pushToast("Some pages couldn't be saved — resolve conflicts before switching graphs.", "error");
@@ -90,12 +92,37 @@ export async function loadGraphPath(
   }
   if (hadGraph) await flushSession();
   if (!(await authorizeGraphAccess(path))) return { kind: "aborted" };
-  const result = await backend().loadGraph(path);
-  if (result.kind === "focused_existing") return { kind: "focused_existing" };
+  // This is the last await before the backend graph binding can change.  Flush
+  // delayed view state plus complete highlight/area mutations under A; only a
+  // successful drain permits us to invalidate that authority and unmount it.
+  if (rebindsPdfOwner && !(await drainPdfWork())) {
+    pushToast("PDF changes couldn't be saved — the current graph is still open.", "error");
+    return { kind: "aborted" };
+  }
+  if (rebindsPdfOwner) {
+    retirePdfOwnership();
+    closePdf();
+  }
+
+  let result;
+  try {
+    result = await backend().loadGraph(path);
+  } catch (error) {
+    // load_graph failed before installing a replacement binding.  Publish a new
+    // local generation for the still-bound old graph; the retired viewer stays
+    // closed, so no callback can regain its former authority.
+    if (rebindsPdfOwner && prev) activatePdfOwnership(prev);
+    throw error;
+  }
+  if (result.kind === "focused_existing") {
+    if (rebindsPdfOwner && prev) activatePdfOwnership(prev);
+    return { kind: "focused_existing" };
+  }
   const meta = result.meta;
   if (result.kind === "already_current" && hadGraph && !options.forceRefresh) {
     return { kind: "already_current", root: meta.root };
   }
+  if (!hadGraph || rebindsPdfOwner) activatePdfOwnership(meta.root);
   resetStore();
   resetNavigationIndex();
   clearAssetBlobCache(); // old graph's image blob URLs must not leak into the new one

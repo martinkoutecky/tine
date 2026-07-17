@@ -3,10 +3,12 @@ export type SafeClosePrepareResult = "accepted" | "rejected" | "in_flight";
 export interface SafeCloseDeps {
   blurActive(): void;
   endEdit(): void;
+  flushPdfWork(): Promise<boolean>;
   flushAll(): Promise<boolean>;
   confirmDiscard(): Promise<boolean>;
   flushSession(): Promise<void>;
   setTransition(active: boolean): void;
+  notifyPdfFailure(): void;
   notifyConfirmationFailure(): void;
   runBounded?<T>(operation: Promise<T>, timeoutMs: number, fallback: T): Promise<T>;
 }
@@ -45,6 +47,20 @@ export function createSafeCloseCoordinator(deps: SafeCloseDeps): SafeCloseCoordi
       deps.blurActive();
       deps.endEdit();
       await Promise.resolve();
+
+      let pdfSaved = false;
+      try {
+        // A pending PDF view-state timer is not visible to the page persistence
+        // engine until it fires. Enroll and drain it first while this window's
+        // current graph binding still owns every PDF mutation.
+        pdfSaved = await bounded(deps.flushPdfWork(), 4000, false);
+      } catch {
+        pdfSaved = false;
+      }
+      if (!pdfSaved) {
+        deps.notifyPdfFailure();
+        return "rejected";
+      }
 
       let saved = false;
       try {
