@@ -3226,7 +3226,7 @@ fn parse_expr(
         // constant query string for every candidate block (perf Codex#7).
         Tok::Str(s) => {
             *pos += 1;
-            Some(Pred::Content(s.to_lowercase()))
+            Some(Pred::Content(crate::search_query::canonical_fold(&s)))
         }
         // Logseq's simple-query macros substitute parser-decoded arguments into
         // the query template. A quoted invocation argument can therefore arrive
@@ -3234,7 +3234,7 @@ fn parse_expr(
         // silently discard.
         Tok::Word(s) => {
             *pos += 1;
-            Some(Pred::Content(s.to_lowercase()))
+            Some(Pred::Content(crate::search_query::canonical_fold(&s)))
         }
         Tok::LParen => {
             *pos += 1; // consume (
@@ -4073,6 +4073,14 @@ mod tests {
         assert!(pred("(property tags research)").eval(&mv, &none));
         assert!(pred("(property tags optimization)").eval(&mv, &none));
         assert!(!pred("(property tags cooking)").eval(&mv, &none));
+    }
+
+    #[test]
+    fn content_predicate_uses_canonical_unicode_without_accent_folding() {
+        let none = ctx_named();
+        let block = DocBlock::new("Re\u{301}sume\u{301}");
+        assert!(pred("\"Résumé\"").eval(&block, &none));
+        assert!(!pred("\"Resume\"").eval(&block, &none));
     }
 
     #[test]

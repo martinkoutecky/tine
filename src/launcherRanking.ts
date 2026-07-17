@@ -61,7 +61,7 @@ function graphKey(root: string): string {
 }
 
 function normalizeQuery(query: string): string {
-  return query.trim().toLocaleLowerCase();
+  return query.trim().toLowerCase().normalize("NFC");
 }
 
 function read(root: string, storage: Storage = localStorage): RankingStore {

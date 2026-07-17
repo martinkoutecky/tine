@@ -227,6 +227,29 @@ describe("QuickSwitcher search syntax help", () => {
     dispose();
   });
 
+  it("suppresses Create when the backend classifies a canonical-equivalent page as exact", async () => {
+    vi.spyOn(backend(), "runGraphSearch").mockResolvedValue({
+      hits: [{
+        entity: "page",
+        page: { name: "Cafe\u0301", kind: "page", date_key: null, path: "pages/cafe.md" },
+        display_text: "Cafe\u0301",
+        evidence: [{ clause_id: 1, field: "page_name", mode: "fuzzy", spans: [{ start: 0, end: 5 }] }],
+        score: 1500,
+        match_class: "exact",
+      }],
+      diagnostics: [], explanation: { branches: [] }, cancelled: false,
+    });
+    const root = document.createElement("div"); document.body.append(root);
+    const dispose = render(() => <QuickSwitcher />, root);
+    openSwitcher();
+    const input = root.querySelector<HTMLInputElement>(".switcher-input")!;
+    input.value = "Café";
+    input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    await vi.waitFor(() => expect(root.textContent).toContain("Cafe\u0301"));
+    expect(root.textContent).not.toContain("Create page:");
+    dispose();
+  });
+
   it("refreshes canonical page inventory after a direct create", async () => {
     const save = vi.spyOn(backend(), "savePage").mockResolvedValue("created-rev");
     const before = pageInventoryRev();

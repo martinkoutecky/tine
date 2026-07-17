@@ -18,11 +18,20 @@
 //! quick switcher uses to keep today's fuzzy page-name ranking; any second
 //! term / operator / regex switches both pages and blocks to this grammar.
 
-/// One AND-term: a substring to test (already lowercased) plus whether it is
+use unicode_normalization::UnicodeNormalization;
+
+/// Canonical comparison representation for non-regex search. Lowercasing is
+/// locale-independent; NFC makes canonically equivalent spellings compare
+/// alike without compatibility folding or removing accents.
+pub fn canonical_fold(value: &str) -> String {
+    value.to_lowercase().nfc().collect()
+}
+
+/// One AND-term: a substring to test (already canonically folded) plus whether it is
 /// negated (`-term` → must NOT be present).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Term {
-    /// Lowercased needle for `visible_lower.contains(..)`.
+    /// Lowercase-plus-NFC needle for `visible_lower.contains(..)`.
     pub text: String,
     pub negated: bool,
     /// The term came from a `"quoted phrase"` — an explicit opt-in to the
@@ -92,8 +101,8 @@ impl Matcher {
         }
     }
 
-    /// Does `visible` match? `lower` is the pre-lowercased body (hot path for
-    /// boolean terms); `orig` is the original-case body (needed by regex).
+    /// Does `visible` match? `lower` is the pre-folded lowercase-plus-NFC body
+    /// (hot path for boolean terms); `orig` is the original body (needed by regex).
     pub fn matches(&self, lower: &str, orig: &str) -> bool {
         match self {
             Matcher::Regex(re) => re.is_match(orig),
@@ -114,7 +123,7 @@ impl Matcher {
         }
     }
 
-    /// Rank a page name (already lowercased in `lower`, original in `orig`) for
+    /// Rank a page name (already lowercase-plus-NFC in `lower`, original in `orig`) for
     /// the non-simple path: prefix > substring, else `None` if it doesn't match.
     pub fn score_name(&self, lower: &str, orig: &str) -> Option<i32> {
         match self {
@@ -154,7 +163,7 @@ fn parse_boolean(q: &str) -> Vec<AndGroup> {
             continue;
         }
         cur.push(Term {
-            text: tok.text.to_lowercase(),
+            text: canonical_fold(&tok.text),
             negated: tok.negated,
             quoted: tok.quoted,
         });
@@ -235,9 +244,9 @@ mod tests {
     fn m(q: &str) -> Matcher {
         Matcher::parse(q)
     }
-    // Convenience: match against text (auto-lowercases the boolean side).
+    // Convenience: match against text (folds the boolean side once).
     fn hit(q: &str, text: &str) -> bool {
-        m(q).matches(&text.to_lowercase(), text)
+        m(q).matches(&canonical_fold(text), text)
     }
 
     #[test]
@@ -332,5 +341,16 @@ mod tests {
         // `//` is too short to be a regex → literal term.
         assert!(hit("//", "a // b"));
         assert!(!matches!(m("//"), Matcher::Regex(_)));
+    }
+
+    #[test]
+    fn canonical_unicode_equivalence_does_not_fold_accents() {
+        assert!(hit("café", "a cafe\u{301} here"));
+        assert!(hit("cafe\u{301}", "a café here"));
+        assert!(hit("\u{ac00}", "Hangul \u{1100}\u{1161}"));
+        assert!(hit("i\u{307}", "\u{130}"));
+        assert!(!hit("cafe", "café"));
+        // Regular expressions retain their original-text semantics.
+        assert!(!hit("/café/", "cafe\u{301}"));
     }
 }

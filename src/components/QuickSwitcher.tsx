@@ -152,7 +152,6 @@ export function QuickSwitcher(): JSX.Element {
       return out;
     }
 
-    const ql = q.toLowerCase();
     // Page and block membership, diagnostics, and match evidence now come from
     // one Rust QueryPlan execution. Commands/create remain launcher providers.
     const allPages: Item[] = currentPageOnly() ? [] : (graphResults()?.hits ?? [])
@@ -183,7 +182,7 @@ export function QuickSwitcher(): JSX.Element {
       });
 
     // Create page (when no exact match exists).
-    const exact = pageItems.some((p) => p.t === "page" && p.name.toLowerCase() === ql);
+    const exact = pageItems.some((p) => p.t === "page" && p.adaptiveClass === "exact");
     if (!currentPageOnly() && !exact) out.push({ header: "Create", items: [{ t: "create", name: q }] });
 
     // Commands matching the query.

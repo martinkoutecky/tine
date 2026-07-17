@@ -5,7 +5,7 @@ import { openPageInSidebar, openPageContextMenu } from "../ui";
 import { LiveRefGroup } from "./LiveRefGroup";
 import type { BacklinkFilterEntry, BacklinkFilterTarget, BlockDto, RefGroup } from "../types";
 import { shouldOpenTextContextMenu } from "../contextMenuPolicy";
-import { matcherMatches, parseSearchQuery } from "../editor/searchQuery";
+import { canonicalFold, matcherMatches, parseSearchQuery } from "../editor/searchQuery";
 
 const norm = (s: string) => s.trim().toLowerCase();
 
@@ -41,7 +41,7 @@ function searchableFilterEntry(
   return {
     text: entry.text,
     facets: entry.facets,
-    normalizedText: entry.text.toLowerCase(),
+    normalizedText: canonicalFold(entry.text),
   };
 }
 

@@ -8,7 +8,7 @@ import { SAMPLE_PDF_B64 } from "./sample-pdf";
 import { hlsPageName } from "./pdf";
 import { MARKER_RE } from "./markers";
 import { fuzzyScore } from "./editor/autocomplete";
-import { matcherMatches, matchHighlights, parseSearchQuery, simpleTerm } from "./editor/searchQuery";
+import { canonicalFold, matcherMatches, matchHighlights, parseSearchQuery, simpleTerm } from "./editor/searchQuery";
 import { parseJournalWith } from "./journal";
 
 /** Mock feed membership must use a Logseq journal-title parser, never the
@@ -1019,10 +1019,10 @@ export function mockBackend(): Backend {
       return [...map.entries()].map(([k, vs]) => [k, [...vs].sort()] as [string, string[]]);
     },
     async search(query: string, limit: number): Promise<RefGroup[]> {
-      const q = query.trim().toLowerCase();
+      const q = canonicalFold(query.trim());
       if (!q) return [];
       let n = limit;
-      const groups = collect((b) => b.raw.toLowerCase().includes(q));
+      const groups = collect((b) => canonicalFold(b.raw).includes(q));
       for (const g of groups) {
         if (g.blocks.length > n) g.blocks = g.blocks.slice(0, n);
         n -= g.blocks.length;
@@ -1043,8 +1043,8 @@ export function mockBackend(): Backend {
       }
       const bare = simpleTerm(matcher);
       const pages = scope ? [] : all
-        .map((page) => ({ page, score: bare ? fuzzyScore(bare, page.name) : 0 }))
-        .filter(({ page, score }) => bare ? score > 0 : matcherMatches(matcher, page.name.toLowerCase(), page.name))
+        .map((page) => ({ page, score: bare ? fuzzyScore(bare, canonicalFold(page.name)) : 0 }))
+        .filter(({ page, score }) => bare ? score > 0 : matcherMatches(matcher, canonicalFold(page.name), page.name))
         .sort((a, b) => b.score - a.score)
         .slice(0, pageLimit)
         .map(({ page, score }) => ({
@@ -1059,16 +1059,22 @@ export function mockBackend(): Backend {
             score,
           }],
           score,
+          match_class: bare
+            ? canonicalFold(page.name) === bare ? "exact" as const
+              : canonicalFold(page.name).startsWith(bare) ? "prefix" as const
+              : canonicalFold(page.name).includes(bare) ? "substring" as const
+              : "fuzzy" as const
+            : undefined,
         }));
       const inScope = (group: RefGroup) => {
         if (!scope) return true;
-        const page = all.find((candidate) => candidate.kind === group.kind && candidate.name.toLowerCase() === group.page.toLowerCase());
+        const page = all.find((candidate) => candidate.kind === group.kind && canonicalFold(candidate.name) === canonicalFold(group.page));
         if (!page) return false;
         return scope.path
           ? mockPagePath(page) === scope.path
-          : page.kind === scope.pageKind && page.name.toLowerCase() === scope.name.toLowerCase();
+          : page.kind === scope.pageKind && canonicalFold(page.name) === canonicalFold(scope.name);
       };
-      const blocks = collect((block) => matcherMatches(matcher, block.raw.toLowerCase(), block.raw))
+      const blocks = collect((block) => matcherMatches(matcher, canonicalFold(block.raw), block.raw))
         .filter(inScope)
         .flatMap((group) => group.blocks.map((block) => ({ group, block })))
         .slice(0, Math.max(0, blockLimit))
@@ -1114,9 +1120,9 @@ export function mockBackend(): Backend {
       ];
     },
     async quickSwitch(query: string, limit: number): Promise<PageEntry[]> {
-      const q = query.trim().toLowerCase();
+      const q = canonicalFold(query.trim());
       return all
-        .filter((p) => p.name.toLowerCase().includes(q))
+        .filter((p) => canonicalFold(p.name).includes(q))
         .slice(0, limit)
         .map(mockPageEntry);
     },

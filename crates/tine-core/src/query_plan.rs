@@ -9,11 +9,13 @@
 use crate::doc::DocBlock;
 use crate::model::{BlockDto, Graph, PageEntry, PageKind};
 use crate::refs;
-use crate::search_query::{Matcher, Term};
+use crate::search_query::{canonical_fold, Matcher, Term};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
+use unicode_normalization::UnicodeNormalization;
+use unicode_segmentation::UnicodeSegmentation;
 
 const MAX_EVIDENCE_SPANS: usize = 32;
 
@@ -267,6 +269,7 @@ impl QueryPlan {
     /// constructor makes the opt-in visible in the typed IR; it never changes the
     /// default behavior of existing block queries.
     pub fn page_name_fuzzy(value: impl Into<String>, limit: usize) -> Self {
+        let value = value.into();
         Self {
             branches: vec![QueryBranch {
                 target: QueryTarget::Pages,
@@ -274,7 +277,7 @@ impl QueryPlan {
                     clause_id: 1,
                     field: TextField::PageName,
                     mode: TextMatchMode::Fuzzy,
-                    value: value.into().to_lowercase(),
+                    value: canonical_fold(&value),
                 }),
                 limit,
             }],
@@ -643,25 +646,51 @@ fn match_text(plan: &QueryPlan, pred: &TextPredicate, original: &str) -> Option<
     }
 }
 
-/// Lowercased text plus one original UTF-16 span per lowered scalar.  A Unicode
-/// lowercase expansion therefore still maps back to the correct source glyph.
+/// Lowercase-plus-NFC text plus one original UTF-16 span per folded scalar.
+/// Normalization is performed per extended grapheme cluster, which is the
+/// boundary across which canonical composition cannot contribute. Every output
+/// scalar maps to the full union of original scalars that formed that grapheme,
+/// including lowercase expansions, reordered marks, and Hangul Jamo.
 fn folded_with_map(original: &str) -> (Vec<char>, Vec<MatchSpan>) {
-    let mut folded = Vec::new();
-    let mut map = Vec::new();
-    let mut utf16 = 0;
+    let lowered = original.to_lowercase();
+    let mut lowered_sources = Vec::new();
+    let mut original_utf16 = 0;
     for ch in original.chars() {
-        let start = utf16;
-        utf16 += ch.len_utf16();
-        for lower in ch.to_lowercase() {
-            folded.push(lower);
-            map.push(MatchSpan { start, end: utf16 });
+        let start = original_utf16;
+        original_utf16 += ch.len_utf16();
+        for _ in ch.to_lowercase() {
+            lowered_sources.push(MatchSpan {
+                start,
+                end: original_utf16,
+            });
         }
     }
+    // Rust's whole-string lowercase differs from scalar lowercase only by
+    // contextual substitutions such as final sigma, never by scalar count.
+    debug_assert_eq!(lowered.chars().count(), lowered_sources.len());
+
+    let mut folded = Vec::new();
+    let mut map = Vec::new();
+    let mut source_at = 0;
+    for grapheme in lowered.graphemes(true) {
+        let scalar_count = grapheme.chars().count();
+        let contributors = &lowered_sources[source_at..source_at + scalar_count];
+        source_at += scalar_count;
+        let source = MatchSpan {
+            start: contributors.first().map_or(0, |span| span.start),
+            end: contributors.last().map_or(0, |span| span.end),
+        };
+        for normalized in grapheme.nfc() {
+            folded.push(normalized);
+            map.push(source);
+        }
+    }
+    debug_assert_eq!(folded.iter().collect::<String>(), canonical_fold(original));
     (folded, map)
 }
 
 fn folded_chars(value: &str) -> Vec<char> {
-    value.chars().flat_map(char::to_lowercase).collect()
+    canonical_fold(value).chars().collect()
 }
 
 fn merge_spans(spans: impl IntoIterator<Item = MatchSpan>) -> Vec<MatchSpan> {
@@ -897,10 +926,11 @@ fn best_page_match(
     page_name: &str,
     aliases: &[String],
 ) -> Option<(i32, ObjectiveMatchClass, String, Option<String>)> {
-    let mut best = page_base_score(plan, expr, page_name, &page_name.to_lowercase())
+    let mut best = page_base_score(plan, expr, page_name, &canonical_fold(page_name))
         .map(|(score, class)| (score, class, page_name.to_string(), None));
     for alias in aliases {
-        let Some((score, class)) = page_base_score(plan, expr, alias, &alias.to_lowercase()) else {
+        let Some((score, class)) = page_base_score(plan, expr, alias, &canonical_fold(alias))
+        else {
             continue;
         };
         let replace = best.as_ref().is_none_or(|(best_score, best_class, _, _)| {
@@ -926,7 +956,7 @@ fn execute_pages(
     let mut aliases_by_page: HashMap<String, Vec<String>> = HashMap::new();
     for (alias, canonical) in graph.page_aliases() {
         aliases_by_page
-            .entry(refs::page_key(&canonical))
+            .entry(canonical_fold(&canonical))
             .or_default()
             .push(alias);
     }
@@ -936,7 +966,7 @@ fn execute_pages(
             return None;
         }
         let aliases = aliases_by_page
-            .get(&refs::page_key(&page.name))
+            .get(&canonical_fold(&page.name))
             .map(Vec::as_slice)
             .unwrap_or(&[]);
         if let Some((base_score, match_class, matched_text, matched_alias)) =
@@ -958,18 +988,18 @@ fn execute_pages(
     }
     let have: HashSet<String> = file_pages
         .iter()
-        .map(|page| refs::page_key(&page.name))
+        .map(|page| canonical_fold(&page.name))
         .collect();
     for (offset, name) in graph.referenced_page_names().into_iter().enumerate() {
         if cancelled() {
             return None;
         }
-        let key = refs::page_key(&name);
+        let key = canonical_fold(&name);
         if have.contains(&key) {
             continue;
         }
         let aliases = aliases_by_page
-            .get(&refs::page_key(&name))
+            .get(&canonical_fold(&name))
             .map(Vec::as_slice)
             .unwrap_or(&[]);
         if let Some((base_score, match_class, matched_text, matched_alias)) =
@@ -1336,6 +1366,147 @@ mod tests {
     }
 
     #[test]
+    fn canonical_unicode_matches_pages_aliases_blocks_and_original_utf16_spans() {
+        let page_plan = QueryPlan::page_name_fuzzy("Café", 8);
+        let page_pred = &page_plan.branches[0].predicate;
+        let page = best_page_match(&page_plan, page_pred, "Cafe\u{301}", &[]).unwrap();
+        assert_eq!(page.1, ObjectiveMatchClass::Exact);
+        let page_evidence =
+            eval_expr(&page_plan, page_pred, TextField::PageName, "Cafe\u{301}").unwrap();
+        assert_eq!(
+            page_evidence.evidence[0].spans,
+            vec![MatchSpan { start: 0, end: 5 }]
+        );
+
+        let alias_plan = QueryPlan::page_name_fuzzy("Résumé", 8);
+        let alias = best_page_match(
+            &alias_plan,
+            &alias_plan.branches[0].predicate,
+            "Canonical page",
+            &["Re\u{301}sume\u{301}".into()],
+        )
+        .unwrap();
+        assert_eq!(alias.1, ObjectiveMatchClass::Exact);
+        assert_eq!(alias.3.as_deref(), Some("Re\u{301}sume\u{301}"));
+
+        let block_plan = QueryPlan::block_search("Résumé", 8);
+        let block_pred = &block_plan.branches[0].predicate;
+        let original = "🧠 Re\u{301}sume\u{301}";
+        let folded = canonical_fold(original);
+        assert!(eval_expr_fast(
+            &block_plan,
+            block_pred,
+            TextField::VisibleContent,
+            original,
+            &folded,
+        ));
+        let evidence =
+            eval_expr(&block_plan, block_pred, TextField::VisibleContent, original).unwrap();
+        assert_eq!(
+            evidence.evidence[0].spans,
+            vec![MatchSpan { start: 3, end: 11 }]
+        );
+
+        let hangul = QueryPlan::block_search("\u{ac00}", 8);
+        let hit = eval_expr(
+            &hangul,
+            &hangul.branches[0].predicate,
+            TextField::VisibleContent,
+            "\u{1100}\u{1161}",
+        )
+        .unwrap();
+        assert_eq!(hit.evidence[0].spans, vec![MatchSpan { start: 0, end: 2 }]);
+
+        let reordered = QueryPlan::block_search("è\u{315}", 8);
+        let hit = eval_expr(
+            &reordered,
+            &reordered.branches[0].predicate,
+            TextField::VisibleContent,
+            "e\u{315}\u{300}",
+        )
+        .unwrap();
+        assert_eq!(hit.evidence[0].spans, vec![MatchSpan { start: 0, end: 3 }]);
+
+        let negative = QueryPlan::block_search("cafe", 8);
+        assert!(eval_expr(
+            &negative,
+            &negative.branches[0].predicate,
+            TextField::VisibleContent,
+            "café",
+        )
+        .is_none());
+
+        let expansion = QueryPlan::block_search("i\u{307}", 8);
+        let hit = eval_expr(
+            &expansion,
+            &expansion.branches[0].predicate,
+            TextField::VisibleContent,
+            "\u{130}",
+        )
+        .unwrap();
+        assert_eq!(hit.evidence[0].spans, vec![MatchSpan { start: 0, end: 1 }]);
+    }
+
+    #[test]
+    fn canonical_unicode_executes_through_real_page_alias_and_block_projections() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "tine-query-plan-unicode-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(dir.join("pages")).unwrap();
+        fs::create_dir_all(dir.join("journals")).unwrap();
+        fs::create_dir_all(dir.join("logseq")).unwrap();
+        fs::write(
+            dir.join("pages").join("Cafe\u{301}.md"),
+            "alias:: Re\u{301}sume\u{301}\n\n- Re\u{301}sume\u{301}\n",
+        )
+        .unwrap();
+        let graph = Graph::open(&dir);
+        graph.warm_cache();
+
+        let page = QueryPlan::page_name_fuzzy("Café", 8).execute(&graph, || false);
+        assert!(matches!(
+            page.hits.first(),
+            Some(QueryHit::Page {
+                page,
+                match_class: ObjectiveMatchClass::Exact,
+                matched_alias: None,
+                evidence,
+                ..
+            }) if page.name == "Cafe\u{301}"
+                && evidence[0].spans == vec![MatchSpan { start: 0, end: 5 }]
+        ));
+
+        let alias = QueryPlan::page_name_fuzzy("Résumé", 8).execute(&graph, || false);
+        assert!(
+            matches!(
+                alias.hits.first(),
+                Some(QueryHit::Page {
+                    page,
+                    match_class: ObjectiveMatchClass::Exact,
+                    matched_alias: Some(name),
+                    ..
+                }) if page.name == "Cafe\u{301}" && name == "re\u{301}sume\u{301}"
+            ),
+            "{:#?}",
+            alias.hits
+        );
+
+        let blocks = QueryPlan::block_search("Résumé", 8).execute(&graph, || false);
+        assert!(matches!(
+            blocks.hits.first(),
+            Some(QueryHit::Block { display_text, evidence, .. })
+                if display_text == "Re\u{301}sume\u{301}"
+                    && evidence[0].spans == vec![MatchSpan { start: 0, end: 8 }]
+        ));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn boolean_evidence_uses_positive_terms_and_first_matching_or_branch() {
         let plan = QueryPlan::friendly("foo -draft OR ready", 8, 8);
         let blocks = &plan.branches[1].predicate;
@@ -1364,7 +1535,13 @@ mod tests {
     fn zero_limit_friendly_plans_still_classify_saveable_sources() {
         let rust_only_invalid = QueryPlan::friendly("/(a)\\1/", 0, 0);
         assert!(rust_only_invalid.branches.is_empty());
-        assert_eq!(rust_only_invalid.diagnostics.first().map(|item| item.code.as_str()), Some("invalid_regex"));
+        assert_eq!(
+            rust_only_invalid
+                .diagnostics
+                .first()
+                .map(|item| item.code.as_str()),
+            Some("invalid_regex")
+        );
         let valid = QueryPlan::friendly("alpha", 0, 0);
         assert!(!valid.branches.is_empty());
         assert!(valid.branches.iter().all(|branch| branch.limit == 0));

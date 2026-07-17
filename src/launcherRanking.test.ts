@@ -88,4 +88,11 @@ describe("bounded Ctrl+K frecency (GH #143)", () => {
     );
     expect((storage as TestStorage).writes).toBe(writes);
   });
+
+  it("shares adaptive history across canonically equivalent query forms", () => {
+    const items = [item("a", "fuzzy"), item("b", "fuzzy")];
+    recordLauncherActivation("graph", "Cafe\u0301", "b", 100, storage);
+    recordLauncherActivation("graph", "Cafe\u0301", "b", 101, storage);
+    expect(rankLauncherItems("graph", "Café", items, 101, storage)[0].adaptiveIdentity).toBe("b");
+  });
 });
