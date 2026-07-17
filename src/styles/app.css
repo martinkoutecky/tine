@@ -7579,9 +7579,60 @@ img.emoji {
 }
 
 .pdf-viewer {
+  --pdf-container-bg: #fff;
+  --pdf-toolbar-bg: #fff;
+  --pdf-page-bg: #fff;
+  --pdf-panel-bg: #fff;
+  --pdf-local-text: #242424;
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
+  color: var(--pdf-local-text);
+  background: var(--pdf-container-bg);
+}
+
+.pdf-viewer[data-theme="light"] {
+  --pdf-container-bg: #fff;
+  --pdf-toolbar-bg: #fff;
+  --pdf-page-bg: #fff;
+  --pdf-panel-bg: #fff;
+  --pdf-local-text: #242424;
+}
+
+.pdf-viewer[data-theme="warm"] {
+  --pdf-container-bg: #f6efdf;
+  --pdf-toolbar-bg: #f6efdf;
+  --pdf-page-bg: #f8eeda;
+  --pdf-panel-bg: #f8eeda;
+  --pdf-local-text: #493e2e;
+}
+
+.pdf-viewer[data-theme="dark"] {
+  --pdf-container-bg: #202124;
+  --pdf-toolbar-bg: #292a2d;
+  --pdf-page-bg: #15171a;
+  --pdf-panel-bg: #292a2d;
+  --pdf-local-text: #e8eaed;
+}
+
+/* Apply paper/inversion effects only to pdf.js-owned page presentation. Tine's
+   highlight layer remains outside the filter so overlay colors stay usable. */
+.pdf-viewer[data-theme="warm"] .pdf-page > :is(canvas, .textLayer) {
+  filter: sepia(0.18) saturate(0.88);
+}
+
+.pdf-viewer[data-theme="dark"] .pdf-page > :is(canvas, .textLayer) {
+  filter: invert(1) hue-rotate(180deg);
+}
+
+.pdf-viewer[data-theme="dark"] .pdf-hl {
+  mix-blend-mode: screen;
+}
+
+.pdf-viewer[data-theme="dark"] .pdf-hl-area {
+  mix-blend-mode: normal;
+  border-color: #8bc1ff;
 }
 
 .pdf-load-error {
@@ -7606,12 +7657,13 @@ img.emoji {
   justify-content: space-between;
   padding: 0 12px;
   border-bottom: 1px solid var(--border-color);
+  background: var(--pdf-toolbar-bg);
 }
 
 .pdf-title {
   font-size: 13px;
   font-weight: 600;
-  color: var(--text-secondary);
+  color: color-mix(in srgb, var(--pdf-local-text) 78%, transparent);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -7636,7 +7688,7 @@ img.emoji {
 }
 .pdf-zoom-level {
   font-size: 11px;
-  color: var(--text-muted);
+  color: color-mix(in srgb, var(--pdf-local-text) 66%, transparent);
   min-width: 40px;
   text-align: center;
 }
@@ -7659,8 +7711,8 @@ img.emoji {
   font-size: 12px;
   border: 1px solid var(--border-color);
   border-radius: 5px;
-  background-color: var(--bg-primary);
-  color: var(--text-primary);
+  background-color: var(--pdf-panel-bg);
+  color: var(--pdf-local-text);
 }
 .pdf-page-input:focus {
   border-color: var(--link-color);
@@ -7668,7 +7720,7 @@ img.emoji {
 }
 .pdf-page-total {
   font-size: 12px;
-  color: var(--text-muted);
+  color: color-mix(in srgb, var(--pdf-local-text) 66%, transparent);
   margin: 0 4px 0 2px;
 }
 .icon-btn.active {
@@ -7711,13 +7763,139 @@ img.emoji {
   padding: 4px 10px;
   border: 1px solid var(--border-color);
   border-radius: 6px;
-  background: var(--bg-primary);
-  color: var(--text-secondary);
+  background: var(--pdf-panel-bg);
+  color: var(--pdf-local-text);
   cursor: pointer;
 }
 
 .pdf-notes-btn:hover {
-  background: var(--bg-tertiary);
+  background: color-mix(in srgb, var(--link-color) 13%, var(--pdf-panel-bg));
+}
+
+.pdf-toolbar .icon-btn {
+  color: var(--pdf-local-text);
+}
+
+.pdf-toolbar .icon-btn.active {
+  color: var(--link-color);
+  background: color-mix(in srgb, var(--link-color) 13%, transparent);
+}
+
+.pdf-settings-menu,
+.pdf-outline-panel {
+  position: absolute;
+  top: 44px;
+  right: 8px;
+  z-index: 210;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  color: var(--pdf-local-text);
+  background: var(--pdf-panel-bg);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+
+.pdf-settings-menu {
+  min-width: 210px;
+  padding: 10px;
+}
+
+.pdf-settings-heading,
+.pdf-outline-heading {
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.pdf-theme-choices {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.pdf-theme-choice {
+  min-height: 30px;
+  padding: 4px 7px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
+.pdf-theme-choice:hover,
+.pdf-theme-choice.active {
+  border-color: var(--link-color);
+  background: color-mix(in srgb, var(--link-color) 13%, transparent);
+}
+
+.pdf-outline-panel {
+  width: min(300px, calc(100% - 16px));
+  max-height: min(480px, calc(100% - 56px));
+  padding: 10px 8px;
+  overflow: auto;
+}
+
+.pdf-outline-loading,
+.pdf-outline-empty {
+  padding: 8px;
+  color: color-mix(in srgb, var(--pdf-local-text) 66%, transparent);
+  font-size: 12px;
+}
+
+.pdf-outline-list,
+.pdf-outline-children {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pdf-outline-children {
+  padding-left: 16px;
+}
+
+.pdf-outline-row {
+  display: flex;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.pdf-outline-disclosure,
+.pdf-outline-disclosure-spacer {
+  flex: 0 0 24px;
+  width: 24px;
+  min-height: 28px;
+}
+
+.pdf-outline-disclosure,
+.pdf-outline-label {
+  border: 0;
+  border-radius: 5px;
+  color: inherit;
+  background: transparent;
+}
+
+.pdf-outline-disclosure {
+  padding: 3px;
+  cursor: pointer;
+}
+
+.pdf-outline-label {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 6px;
+  overflow-wrap: anywhere;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pdf-outline-disclosure:hover,
+.pdf-outline-label:not(:disabled):hover {
+  background: color-mix(in srgb, var(--link-color) 13%, transparent);
+}
+
+.pdf-outline-label:disabled {
+  opacity: 0.55;
+  cursor: default;
 }
 
 /* PDF highlight (annotation) block: colored dot + "P<page>" badge + text,
@@ -7765,6 +7943,7 @@ img.emoji {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  background: var(--pdf-container-bg);
   /* Pages are centered via margin-inline:auto on .pdf-page (NOT align-items:center):
      auto margins collapse to 0 when a page is wider than the pane (zoomed in), so it
      left-aligns and its full width stays horizontally scrollable. align-items:center
@@ -7775,7 +7954,7 @@ img.emoji {
   position: relative;
   margin-inline: auto;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
-  background: #fff;
+  background: var(--pdf-page-bg);
 }
 
 .pdf-page .textLayer {

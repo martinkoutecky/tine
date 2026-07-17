@@ -24,6 +24,103 @@ const COLOR_RGB: Record<string, string> = {
 const COLOR_RGBA: Record<string, string> = Object.fromEntries(
   Object.entries(COLOR_RGB).map(([k, v]) => [k, `rgba(${v}, 0.4)`])
 );
+const PDF_THEME_KEY = "ls-pdf-viewer-theme";
+const PDF_THEMES = ["light", "warm", "dark"] as const;
+type PdfTheme = (typeof PDF_THEMES)[number];
+
+interface PdfOutlineItem {
+  id: string;
+  label: string;
+  destination: string | unknown[] | null;
+  children: PdfOutlineItem[];
+}
+
+function storedPdfTheme(): PdfTheme {
+  try {
+    const stored = window.localStorage.getItem(PDF_THEME_KEY);
+    return PDF_THEMES.includes(stored as PdfTheme) ? stored as PdfTheme : "light";
+  } catch {
+    return "light";
+  }
+}
+
+function sanitizeOutlineItems(value: unknown, parentId = "outline"): PdfOutlineItem[] {
+  if (!Array.isArray(value)) return [];
+  const sanitized: PdfOutlineItem[] = [];
+  value.forEach((candidate, index) => {
+    if (!candidate || typeof candidate !== "object") return;
+    const raw = candidate as Record<string, unknown>;
+    const id = `${parentId}-${index}`;
+    const label = typeof raw.title === "string" && raw.title.trim() ? raw.title : "Untitled";
+    const destination = typeof raw.dest === "string" || Array.isArray(raw.dest) ? raw.dest : null;
+    sanitized.push({
+      id,
+      label,
+      destination,
+      children: sanitizeOutlineItems(raw.items, id),
+    });
+  });
+  return sanitized;
+}
+
+function isPdfPageRef(value: unknown): value is { num: number; gen: number } {
+  if (!value || typeof value !== "object") return false;
+  const ref = value as { num?: unknown; gen?: unknown };
+  return Number.isSafeInteger(ref.num) && Number(ref.num) >= 0 &&
+    Number.isSafeInteger(ref.gen) && Number(ref.gen) >= 0;
+}
+
+function PdfOutlineTree(props: {
+  items: PdfOutlineItem[];
+  nested?: boolean;
+  expanded: (id: string) => boolean;
+  toggle: (id: string) => void;
+  activate: (item: PdfOutlineItem) => void;
+}): JSX.Element {
+  return (
+    <ul class={props.nested ? "pdf-outline-children" : "pdf-outline-list"}>
+      <For each={props.items}>
+        {(item) => (
+          <li class="pdf-outline-item">
+            <div class="pdf-outline-row">
+              <Show
+                when={item.children.length}
+                fallback={<span class="pdf-outline-disclosure-spacer" aria-hidden="true" />}
+              >
+                <button
+                  type="button"
+                  class="pdf-outline-disclosure"
+                  aria-label={`${props.expanded(item.id) ? "Collapse" : "Expand"} ${item.label}`}
+                  aria-expanded={props.expanded(item.id)}
+                  onClick={() => props.toggle(item.id)}
+                >
+                  {props.expanded(item.id) ? "▾" : "▸"}
+                </button>
+              </Show>
+              <button
+                type="button"
+                class="pdf-outline-label"
+                disabled={item.destination === null}
+                onClick={() => props.activate(item)}
+              >
+                {item.label}
+              </button>
+            </div>
+            <Show when={item.children.length && props.expanded(item.id)}>
+              <PdfOutlineTree
+                items={item.children}
+                nested
+                expanded={props.expanded}
+                toggle={props.toggle}
+                activate={props.activate}
+              />
+            </Show>
+          </li>
+        )}
+      </For>
+    </ul>
+  );
+}
 
 // Resource ceilings are deliberately generous for books, scanned documents, and
 // architectural drawings, but bounded below the point where pdf.js/WebView canvas
@@ -91,10 +188,16 @@ export function PdfViewer(props: {
   const instanceStem = `pdf-viewer-${createUniqueId()}`;
   const findLayerId = `${instanceStem}-find`;
   const highlightMenuLayerId = `${instanceStem}-highlight-menu`;
+  const settingsLayerId = `${instanceStem}-settings`;
+  const outlineLayerId = `${instanceStem}-outline`;
   let scrollRef!: HTMLDivElement;
   let findTriggerEl: HTMLButtonElement | undefined;
   let findRootEl: HTMLDivElement | undefined;
   let highlightMenuRootEl: HTMLDivElement | undefined;
+  let settingsTriggerEl: HTMLButtonElement | undefined;
+  let settingsRootEl: HTMLDivElement | undefined;
+  let outlineTriggerEl: HTMLButtonElement | undefined;
+  let outlineRootEl: HTMLDivElement | undefined;
   const pageEls: Record<number, HTMLDivElement> = {};
   const textLayers: Record<number, HTMLDivElement> = {};
   const hlLayers: Record<number, HTMLDivElement> = {};
@@ -129,6 +232,12 @@ export function PdfViewer(props: {
   const [findCount, setFindCount] = createSignal(0);
   const [findCur, setFindCur] = createSignal(0);
   const [findTruncated, setFindTruncated] = createSignal(false);
+  const [theme, setTheme] = createSignal<PdfTheme>(storedPdfTheme());
+  const [settingsOpen, setSettingsOpen] = createSignal(false);
+  const [outlineOpen, setOutlineOpen] = createSignal(false);
+  const [outlineReady, setOutlineReady] = createSignal(false);
+  const [outlineItems, setOutlineItems] = createSignal<PdfOutlineItem[]>([]);
+  const [expandedOutlineIds, setExpandedOutlineIds] = createSignal<Set<string>>(new Set());
   let findMatches: { page: number }[] = [];
   const pageTextCache: Record<number, string> = {};
   const pageTextLru: number[] = [];
@@ -146,6 +255,39 @@ export function PdfViewer(props: {
   let disposed = false;
   let navigationToken = 0;
   let activeHighlightId: string | undefined;
+
+  const chooseTheme = (next: PdfTheme) => {
+    setTheme(next);
+    try {
+      window.localStorage.setItem(PDF_THEME_KEY, next);
+    } catch {
+      // The current mount still changes presentation when storage is unavailable.
+    }
+  };
+
+  const toggleOutlineItem = (id: string) => {
+    setExpandedOutlineIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  async function loadOutline(doc: pdfjs.PDFDocumentProxy) {
+    setOutlineReady(false);
+    setOutlineItems([]);
+    setExpandedOutlineIds(new Set<string>());
+    let loaded: unknown = [];
+    try {
+      loaded = await doc.getOutline();
+    } catch {
+      loaded = [];
+    }
+    if (disposed || pdfDoc !== doc) return;
+    setOutlineItems(sanitizeOutlineItems(loaded));
+    setOutlineReady(true);
+  }
 
   // Per-page unscaled dimensions (index 1..N), fetched once so we can size every
   // page wrapper up front — that gives correct scroll geometry without having to
@@ -827,6 +969,9 @@ export function PdfViewer(props: {
       failPdf(`This PDF reports an unsafe page count (${pdfDoc.numPages}); at most ${MAX_PDF_PAGES} pages can be displayed.`);
       return;
     }
+    // Outline parsing can be slow on large PDFs. Start it once per document,
+    // but never await it on the page-one/layout path that controls first paint.
+    void loadOutline(pdfDoc);
     // Measure ONLY page 1 up front (for fit-width + as the size estimate for the
     // rest). Every other page is sized from that estimate and corrected to its
     // real size the first time it renders — so first paint doesn't wait on N
@@ -865,6 +1010,11 @@ export function PdfViewer(props: {
   onCleanup(() => {
     disposed = true;
     findToken++;
+    setOutlineOpen(false);
+    setSettingsOpen(false);
+    setOutlineItems([]);
+    setOutlineReady(false);
+    setExpandedOutlineIds(new Set<string>());
     io?.disconnect();
     clearTimeout(zoomTimer);
     clearTimeout(textTimer);
@@ -1205,6 +1355,31 @@ export function PdfViewer(props: {
     const p = Math.max(1, Math.min(np, Math.floor(n) || 1));
     if (pageEls[p]) scrollRef.scrollTop = pageEls[p].offsetTop;
   };
+  const activateOutlineItem = async (item: PdfOutlineItem) => {
+    const doc = pdfDoc;
+    if (!doc || item.destination === null) return;
+    let destination: unknown = item.destination;
+    if (typeof destination === "string") {
+      try {
+        destination = await doc.getDestination(destination);
+      } catch {
+        return;
+      }
+    }
+    if (disposed || pdfDoc !== doc || !Array.isArray(destination) || !destination.length) return;
+    const target = destination[0];
+    if (Number.isSafeInteger(target) && Number(target) >= 0) {
+      scrollToPage(Number(target) + 1);
+      return;
+    }
+    if (!isPdfPageRef(target)) return;
+    try {
+      const index = await doc.getPageIndex(target);
+      if (!disposed && pdfDoc === doc && Number.isSafeInteger(index) && index >= 0) scrollToPage(index + 1);
+    } catch {
+      // A broken outline destination is ignored without activating its URL.
+    }
+  };
   const commitPageField = () => {
     const v = parseInt(pageField(), 10);
     if (Number.isFinite(v)) scrollToPage(v);
@@ -1425,6 +1600,56 @@ export function PdfViewer(props: {
     onCleanup(unregister);
   });
   createEffect(() => {
+    if (!settingsOpen()) return;
+    const unregister = registerTransientLayer({
+      id: settingsLayerId,
+      root: () => settingsRootEl ?? null,
+      trigger: () => settingsTriggerEl ?? null,
+      dismiss: () => {
+        setSettingsOpen(false);
+        return true;
+      },
+    });
+    // The shared registry orders Escape/Back and pointer activation; individual
+    // anchored popups still own their outside-pointer dismissal.
+    const dismissOnOutsidePointer = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (target && !settingsRootEl?.contains(target) && !settingsTriggerEl?.contains(target)) {
+        setSettingsOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", dismissOnOutsidePointer, true);
+    onCleanup(() => {
+      document.removeEventListener("pointerdown", dismissOnOutsidePointer, true);
+      unregister();
+    });
+  });
+  createEffect(() => {
+    if (!outlineOpen()) return;
+    const unregister = registerTransientLayer({
+      id: outlineLayerId,
+      root: () => outlineRootEl ?? null,
+      trigger: () => outlineTriggerEl ?? null,
+      dismiss: () => {
+        setOutlineOpen(false);
+        return true;
+      },
+    });
+    // See the settings popup above: outside-click is intentionally local while
+    // the registry remains the single Escape/Back ordering authority.
+    const dismissOnOutsidePointer = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (target && !outlineRootEl?.contains(target) && !outlineTriggerEl?.contains(target)) {
+        setOutlineOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", dismissOnOutsidePointer, true);
+    onCleanup(() => {
+      document.removeEventListener("pointerdown", dismissOnOutsidePointer, true);
+      unregister();
+    });
+  });
+  createEffect(() => {
     if (!menu()) return;
     const unregister = registerTransientLayer({
       id: highlightMenuLayerId,
@@ -1447,6 +1672,7 @@ export function PdfViewer(props: {
   return (
     <div
       class="pdf-viewer"
+      data-theme={theme()}
       data-pdf-filename={props.filename}
       data-pdf-highlight-target={props.navigation?.()?.highlightId}
       data-pdf-ready={ready() ? "true" : "false"}
@@ -1523,11 +1749,80 @@ export function PdfViewer(props: {
           >
             Notes
           </button>
+          <button
+            ref={(el) => (outlineTriggerEl = el)}
+            type="button"
+            class="icon-btn"
+            classList={{ active: outlineOpen() }}
+            title="Outline"
+            aria-label="Outline"
+            aria-expanded={outlineOpen()}
+            onClick={() => {
+              setSettingsOpen(false);
+              setOutlineOpen((open) => !open);
+            }}
+          >
+            ☷
+          </button>
+          <button
+            ref={(el) => (settingsTriggerEl = el)}
+            type="button"
+            class="icon-btn"
+            classList={{ active: settingsOpen() }}
+            title="More settings"
+            aria-label="More settings"
+            aria-expanded={settingsOpen()}
+            onClick={() => {
+              setOutlineOpen(false);
+              setSettingsOpen((open) => !open);
+            }}
+          >
+            ⋯
+          </button>
           <button class="icon-btn" title="Close PDF" onClick={closePdf}>
             ✕
           </button>
         </div>
       </div>
+      <Show when={settingsOpen()}>
+        <div ref={(el) => (settingsRootEl = el)} class="pdf-settings-menu" role="dialog" aria-label="PDF settings">
+          <div class="pdf-settings-heading">Theme</div>
+          <div class="pdf-theme-choices" role="group" aria-label="PDF theme">
+            <For each={PDF_THEMES}>
+              {(choice) => {
+                const label = `${choice[0].toUpperCase()}${choice.slice(1)}`;
+                return (
+                  <button
+                    type="button"
+                    class="pdf-theme-choice"
+                    classList={{ active: theme() === choice }}
+                    aria-label={`${label} PDF theme`}
+                    aria-pressed={theme() === choice}
+                    onClick={() => chooseTheme(choice)}
+                  >
+                    {label}
+                  </button>
+                );
+              }}
+            </For>
+          </div>
+        </div>
+      </Show>
+      <Show when={outlineOpen()}>
+        <div ref={(el) => (outlineRootEl = el)} class="pdf-outline-panel" role="dialog" aria-label="Document outline">
+          <div class="pdf-outline-heading">Outline</div>
+          <Show when={outlineReady()} fallback={<div class="pdf-outline-loading">Loading outline…</div>}>
+            <Show when={outlineItems().length} fallback={<div class="pdf-outline-empty">No outlines</div>}>
+              <PdfOutlineTree
+                items={outlineItems()}
+                expanded={(id) => expandedOutlineIds().has(id)}
+                toggle={toggleOutlineItem}
+                activate={(item) => void activateOutlineItem(item)}
+              />
+            </Show>
+          </Show>
+        </div>
+      </Show>
       <Show when={findOpen()}>
         <div ref={(el) => (findRootEl = el)} class="pdf-find-bar">
           <input

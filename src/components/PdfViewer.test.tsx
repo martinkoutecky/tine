@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import { Show, createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import { backend } from "../backend";
@@ -76,6 +77,9 @@ function documentWithPages(pages: ReturnType<typeof page>[]) {
   return {
     numPages: pages.length,
     getPage: vi.fn((number: number) => Promise.resolve(pages[number - 1])),
+    getOutline: vi.fn().mockResolvedValue([]),
+    getDestination: vi.fn().mockResolvedValue(null),
+    getPageIndex: vi.fn().mockResolvedValue(0),
     destroy: vi.fn().mockResolvedValue(undefined),
   };
 }
@@ -1052,5 +1056,268 @@ describe("PdfViewer local transient ownership", () => {
       unregisterLower();
       dispose();
     }
+  });
+});
+
+describe("PdfViewer released-OG themes and outline", () => {
+  beforeEach(() => {
+    clearTransientLayersForTest();
+    getDocumentMock.mockReset();
+    TestIntersectionObserver.instances = [];
+    vi.stubGlobal("IntersectionObserver", TestIntersectionObserver);
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    localStorage.clear();
+    vi.spyOn(backend() as any, "openPdf").mockResolvedValue({ highlights: [], page: 1, scale: 1 });
+    vi.spyOn(backend(), "readAsset").mockResolvedValue(new Uint8Array([1]));
+  });
+
+  afterEach(() => {
+    clearTransientLayersForTest();
+    localStorage.clear();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    document.body.replaceChildren();
+    Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+    Reflect.deleteProperty(document, "elementFromPoint");
+  });
+
+  function mountViewer(filename = "paper.pdf") {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <PdfViewer filename={filename} label="Paper" />, host);
+    return { host, dispose };
+  }
+
+  function button(host: HTMLElement, selector: string): HTMLButtonElement {
+    const found = host.querySelector<HTMLButtonElement>(selector);
+    expect(found).not.toBeNull();
+    return found!;
+  }
+
+  function setPageOffsets(host: HTMLElement) {
+    [...host.querySelectorAll<HTMLElement>(".pdf-page")].forEach((element, index) => {
+      Object.defineProperty(element, "offsetTop", { configurable: true, value: (index + 1) * 100 });
+    });
+  }
+
+  it("validates the local theme, exposes all choices, and persists presentation-only changes for later mounts", async () => {
+    localStorage.setItem("ls-pdf-viewer-theme", "graph-dark");
+    const firstPage = page(612, 792);
+    const firstPdf = documentWithPages([firstPage]);
+    getDocumentMock.mockReturnValueOnce({ promise: Promise.resolve(firstPdf) });
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as CanvasRenderingContext2D);
+    const writeHighlights = vi.spyOn(backend(), "writeHighlights").mockResolvedValue(undefined);
+    const writeViewState = vi.spyOn(backend() as any, "writePdfViewState").mockResolvedValue(undefined);
+    const writeText = vi.spyOn(backend(), "writeText").mockResolvedValue(undefined);
+    const saveArea = vi.spyOn(backend(), "savePdfAreaImage").mockResolvedValue("");
+    const first = mountViewer();
+    try {
+      await flush();
+      const viewer = first.host.querySelector(".pdf-viewer")!;
+      expect(viewer.getAttribute("data-theme")).toBe("light");
+
+      TestIntersectionObserver.instances[0].show(first.host.querySelector(".pdf-page")!);
+      await flush();
+      expect(firstPage.render).toHaveBeenCalledOnce();
+      const getPageCallsBeforeThemes = firstPdf.getPage.mock.calls.length;
+
+      button(first.host, 'button[title="More settings"]').click();
+      const choices = [...first.host.querySelectorAll<HTMLButtonElement>(".pdf-theme-choice")];
+      expect(choices.map((choice) => choice.getAttribute("aria-label"))).toEqual([
+        "Light PDF theme",
+        "Warm PDF theme",
+        "Dark PDF theme",
+      ]);
+      for (const theme of ["warm", "dark", "light", "dark"] as const) {
+        button(first.host, `button[aria-label="${theme[0].toUpperCase()}${theme.slice(1)} PDF theme"]`).click();
+        await flush();
+        expect(viewer.getAttribute("data-theme")).toBe(theme);
+        expect(localStorage.getItem("ls-pdf-viewer-theme")).toBe(theme);
+      }
+      expect(firstPage.render).toHaveBeenCalledOnce();
+      expect(firstPdf.getPage).toHaveBeenCalledTimes(getPageCallsBeforeThemes);
+      expect(writeHighlights).not.toHaveBeenCalled();
+      expect(writeViewState).not.toHaveBeenCalled();
+      expect(writeText).not.toHaveBeenCalled();
+      expect(saveArea).not.toHaveBeenCalled();
+    } finally {
+      first.dispose();
+    }
+
+    const secondPdf = documentWithPages([page(612, 792)]);
+    getDocumentMock.mockReturnValueOnce({ promise: Promise.resolve(secondPdf) });
+    const second = mountViewer("later.pdf");
+    try {
+      await flush();
+      expect(second.host.querySelector(".pdf-viewer")?.getAttribute("data-theme")).toBe("dark");
+    } finally {
+      second.dispose();
+    }
+  });
+
+  it("loads an empty outline once without blocking first paint", async () => {
+    let resolveOutline!: (items: unknown[]) => void;
+    const pendingOutline = new Promise<unknown[]>((resolve) => { resolveOutline = resolve; });
+    const pdf = documentWithPages([page(612, 792)]);
+    pdf.getOutline.mockReturnValue(pendingOutline);
+    getDocumentMock.mockReturnValue({ promise: Promise.resolve(pdf) });
+    const view = mountViewer();
+    try {
+      await flush();
+      expect(view.host.querySelector(".pdf-viewer")?.getAttribute("data-pdf-ready")).toBe("true");
+      button(view.host, 'button[title="Outline"]').click();
+      button(view.host, 'button[title="Outline"]').click();
+      button(view.host, 'button[title="Outline"]').click();
+      expect(pdf.getOutline).toHaveBeenCalledOnce();
+
+      resolveOutline([]);
+      await flush();
+      expect(view.host.querySelector(".pdf-outline-empty")?.textContent).toBe("No outlines");
+    } finally {
+      view.dispose();
+    }
+  });
+
+  it("keeps nested items collapsed, separates disclosure from labels, and resolves named, integer, and ref destinations", async () => {
+    const ref = { num: 17, gen: 0 };
+    const pdf = documentWithPages(Array.from({ length: 4 }, () => page(612, 792)));
+    pdf.getOutline.mockResolvedValue([
+      {
+        title: "<img src=x onerror=alert(1)>",
+        dest: "chapter-two",
+        url: "https://example.invalid/must-not-open",
+        items: [{ title: "Integer page", dest: [2, { name: "XYZ" }], items: [] }],
+      },
+      { title: "Reference page", dest: [ref, { name: "Fit" }], items: [] },
+      { title: "URL only", dest: null, url: "https://example.invalid/never", items: [] },
+    ] as any);
+    pdf.getDestination.mockResolvedValue([1, { name: "Fit" }]);
+    pdf.getPageIndex.mockResolvedValue(3);
+    getDocumentMock.mockReturnValue({ promise: Promise.resolve(pdf) });
+    const open = vi.spyOn(window, "open").mockImplementation(() => null);
+    const view = mountViewer();
+    try {
+      await flush();
+      setPageOffsets(view.host);
+      button(view.host, 'button[title="Outline"]').click();
+      await flush();
+
+      const labels = [...view.host.querySelectorAll<HTMLButtonElement>(".pdf-outline-label")];
+      expect(labels.map((label) => label.textContent)).toEqual([
+        "<img src=x onerror=alert(1)>",
+        "Reference page",
+        "URL only",
+      ]);
+      expect(view.host.querySelector(".pdf-outline-label img")).toBeNull();
+      expect(view.host.querySelector(".pdf-outline-children")).toBeNull();
+
+      const disclosure = button(view.host, ".pdf-outline-disclosure");
+      disclosure.click();
+      await flush();
+      expect(pdf.getDestination).not.toHaveBeenCalled();
+      expect(view.host.querySelector(".pdf-outline-children")).not.toBeNull();
+      expect(disclosure.getAttribute("aria-expanded")).toBe("true");
+
+      const scroll = view.host.querySelector<HTMLElement>(".pdf-scroll")!;
+      button(view.host, ".pdf-outline-label").click();
+      await flush();
+      expect(pdf.getDestination).toHaveBeenCalledWith("chapter-two");
+      expect(scroll.scrollTop).toBe(200);
+      expect(disclosure.getAttribute("aria-expanded")).toBe("true");
+
+      button(view.host, ".pdf-outline-children .pdf-outline-label").click();
+      await flush();
+      expect(scroll.scrollTop).toBe(300);
+      expect(pdf.getPageIndex).not.toHaveBeenCalled();
+
+      labels[1].click();
+      await flush();
+      expect(pdf.getPageIndex).toHaveBeenCalledWith(ref);
+      expect(scroll.scrollTop).toBe(400);
+
+      labels[2].click();
+      await flush();
+      expect(open).not.toHaveBeenCalled();
+      expect(scroll.scrollTop).toBe(400);
+    } finally {
+      view.dispose();
+    }
+  });
+
+  it("clears stale outline state on document identity teardown", async () => {
+    let resolveFirst!: (items: unknown[]) => void;
+    const firstOutline = new Promise<unknown[]>((resolve) => { resolveFirst = resolve; });
+    const first = documentWithPages([page(612, 792)]);
+    first.getOutline.mockReturnValue(firstOutline);
+    const second = documentWithPages([page(612, 792)]);
+    second.getOutline.mockResolvedValue([{ title: "Current document", dest: [0], items: [] }] as any);
+    getDocumentMock
+      .mockReturnValueOnce({ promise: Promise.resolve(first) })
+      .mockReturnValueOnce({ promise: Promise.resolve(second) });
+    const [target, setTarget] = createSignal({ filename: "a.pdf", label: "A" });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const dispose = render(() => <KeyedPdfViewer target={target} />, host);
+    try {
+      await flush();
+      setTarget({ filename: "b.pdf", label: "B" });
+      await flush();
+      resolveFirst([{ title: "Stale document", dest: [0], items: [] }]);
+      await flush();
+      button(host, 'button[title="Outline"]').click();
+      await flush();
+
+      expect(first.getOutline).toHaveBeenCalledOnce();
+      expect(second.getOutline).toHaveBeenCalledOnce();
+      expect(host.querySelector(".pdf-outline-panel")?.textContent).toContain("Current document");
+      expect(host.querySelector(".pdf-outline-panel")?.textContent).not.toContain("Stale document");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("dismisses only settings or outline on outside pointer and Escape", async () => {
+    const pdf = documentWithPages([page(612, 792)]);
+    pdf.getOutline.mockResolvedValue([{ title: "Chapter", dest: [0], items: [] }] as any);
+    getDocumentMock.mockReturnValue({ promise: Promise.resolve(pdf) });
+    const view = mountViewer();
+    try {
+      await flush();
+      button(view.host, 'button[title="More settings"]').click();
+      expect(view.host.querySelector(".pdf-settings-menu")).not.toBeNull();
+      document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+      await flush();
+      expect(view.host.querySelector(".pdf-settings-menu")).toBeNull();
+      expect(view.host.querySelector(".pdf-viewer")).not.toBeNull();
+
+      button(view.host, 'button[title="Outline"]').click();
+      expect(view.host.querySelector(".pdf-outline-panel")).not.toBeNull();
+      expect(dismissTopTransient("escape")).toBe(true);
+      await flush();
+      expect(view.host.querySelector(".pdf-outline-panel")).toBeNull();
+      expect(view.host.querySelector(".pdf-viewer")).not.toBeNull();
+      expect(pdf.destroy).not.toHaveBeenCalled();
+    } finally {
+      view.dispose();
+    }
+  });
+
+  it("styles light, warm, and dark locally while leaving the highlight layer uninverted", () => {
+    const css = readFileSync("src/styles/app.css", "utf8");
+    expect(css).toContain('.pdf-viewer[data-theme="light"] {\n  --pdf-container-bg: #fff;');
+    expect(css).toContain('.pdf-viewer[data-theme="warm"] {\n  --pdf-container-bg: #f6efdf;');
+    expect(css).toContain('  --pdf-toolbar-bg: #f6efdf;\n  --pdf-page-bg: #f8eeda;');
+    expect(css).toContain('.pdf-viewer[data-theme="dark"] {\n  --pdf-container-bg: #202124;');
+    expect(css).toMatch(/\.pdf-viewer\[data-theme="warm"\] \.pdf-page > :is\(canvas, \.textLayer\) \{[^}]*filter: sepia/s);
+    expect(css).toMatch(/\.pdf-viewer\[data-theme="dark"\] \.pdf-page > :is\(canvas, \.textLayer\) \{[^}]*filter: invert\(1\) hue-rotate\(180deg\)/s);
+    expect(css).toMatch(/\.pdf-viewer\[data-theme="dark"\] \.pdf-hl \{[^}]*mix-blend-mode: screen/s);
+    expect(css).not.toMatch(/\.pdf-viewer\[data-theme="dark"\] \.pdf-hl-layer \{[^}]*filter:/s);
   });
 });
