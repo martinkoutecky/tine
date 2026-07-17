@@ -5,12 +5,15 @@ import { closeSwitcher, openSwitcher, pageInventoryRev, rightSidebar, setRightSi
 import { activeId, closeTab, route, tabRoute, tabs } from "../router";
 import { backend } from "../backend";
 import { closePane, focusPane, layoutPaneIds, paneRouter, resetPaneLayoutToSingle, setFocusedPaneId, splitPane } from "../panes";
+import { loadSingle, resetStore } from "../store";
+import type { PageDto } from "../types";
 
 afterEach(() => {
   closeSwitcher();
   setRightSidebar([]);
   setRightSidebarOpen(false);
   resetPaneLayoutToSingle({ tabs: [{ history: [{ kind: "journals" }], pos: 0, pinned: false }], activeIndex: 0 });
+  resetStore();
   document.body.innerHTML = "";
 });
 
@@ -132,15 +135,42 @@ describe("QuickSwitcher search syntax help", () => {
   });
 
   it("opens an unloaded selected block in the sidebar and starts durable target persistence", async () => {
+    const blockId = "7eab7af1-1b53-4baa-9082-c1d63540e123";
+    const canonicalPath = "pages/unloaded.md";
+    const exactPath = "pages/duplicates/unloaded.md";
+    const canonical: PageDto = {
+      name: "Unloaded", kind: "page", title: "Unloaded", pre_block: null,
+      path: canonicalPath, rev: "canonical-rev",
+      blocks: [{ id: "canonical-block", raw: "canonical sibling bytes", collapsed: false, children: [] }],
+    };
+    const exact: PageDto = {
+      name: "Unloaded", kind: "page", title: "Unloaded", pre_block: null,
+      path: exactPath, rev: "exact-rev",
+      blocks: [{ id: blockId, raw: "needle block", collapsed: false, children: [] }],
+    };
+    const disk = new Map<string, string>([
+      [canonicalPath, JSON.stringify(canonical)],
+      [exactPath, JSON.stringify(exact)],
+    ]);
+    const canonicalBytes = disk.get(canonicalPath)!;
+    loadSingle(JSON.parse(canonicalBytes) as PageDto);
+
     const getPage = vi.spyOn(backend(), "getPage").mockResolvedValue(null);
-    const getPageByPath = vi.spyOn(backend(), "getPageByPath").mockResolvedValue(null);
+    const getPageByPath = vi.spyOn(backend(), "getPageByPath").mockImplementation(async (path) => {
+      const bytes = disk.get(path);
+      return bytes ? JSON.parse(bytes) as PageDto : null;
+    });
+    const savePage = vi.spyOn(backend(), "savePage").mockImplementation(async (dto) => {
+      if (dto.path) disk.set(dto.path, JSON.stringify(dto));
+      return "saved-exact-rev";
+    });
     vi.spyOn(backend(), "runGraphSearch").mockResolvedValue({
       hits: [{
         entity: "block",
         page: "Unloaded",
         kind: "page",
-        path: "pages/duplicates/unloaded.md",
-        block: { id: "7eab7af1-1b53-4baa-9082-c1d63540e123", raw: "needle block", collapsed: false, children: [], breadcrumb: [] },
+        path: exactPath,
+        block: { id: blockId, raw: "needle block", collapsed: false, children: [], breadcrumb: [] },
         display_text: "needle block",
         evidence: [{ clause_id: 1, field: "visible_content", mode: "contains", spans: [{ start: 0, end: 6 }] }],
         match_class: "body_evidence",
@@ -162,11 +192,17 @@ describe("QuickSwitcher search syntax help", () => {
     input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true, cancelable: true }));
 
     expect(rightSidebar()).toEqual([{
-      kind: "block", uuid: "7eab7af1-1b53-4baa-9082-c1d63540e123", page: "Unloaded", pageKind: "page",
-      path: "pages/duplicates/unloaded.md",
+      kind: "block", uuid: blockId, page: "Unloaded", pageKind: "page",
+      path: exactPath,
     }]);
-    await vi.waitFor(() => expect(getPageByPath).toHaveBeenCalledWith("pages/duplicates/unloaded.md"));
+    await vi.waitFor(() => expect(savePage).toHaveBeenCalledTimes(1));
+    expect(getPageByPath).toHaveBeenCalledWith(exactPath);
     expect(getPage).not.toHaveBeenCalled();
+    const savedExact = JSON.parse(disk.get(exactPath)!) as PageDto;
+    expect(savedExact.path).toBe(exactPath);
+    expect(savedExact.blocks[0].raw).toBe(`needle block\nid:: ${blockId}`);
+    expect(disk.get(canonicalPath)).toBe(canonicalBytes);
+    expect(canonical.blocks[0].raw).toBe("canonical sibling bytes");
     dispose();
   });
 

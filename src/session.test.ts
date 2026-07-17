@@ -201,6 +201,29 @@ describe("persisted split session", () => {
     }]);
   });
 
+  it("evicts an old same-name owner when an existing block UUID moves to an exact path", () => {
+    setRightSidebar([
+      { kind: "page", name: "Twin", pageKind: "page", path: "pages/Twin.md" },
+      { kind: "block", uuid: "shared-block", page: "Twin", pageKind: "page", path: "pages/Twin.md" },
+    ]);
+
+    openBlockInSidebar({
+      uuid: "shared-block",
+      page: "Twin",
+      pageKind: "page",
+      path: "pages/duplicates/Twin.md",
+    });
+
+    expect(rightSidebar()).toEqual([{
+      kind: "block",
+      uuid: "shared-block",
+      page: "Twin",
+      pageKind: "page",
+      path: "pages/duplicates/Twin.md",
+      collapsed: false,
+    }]);
+  });
+
   it("rewrites duplicate restored journals panes to a previous page route", () => {
     const raw = JSON.stringify({
       tabs: journals().tabs,
