@@ -5,12 +5,20 @@ import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { setTimeout as sleep } from "node:timers/promises";
+import {
+  resolveLaunchPluginRoots,
+  resolveRepositoryRoot,
+  resolveViteExecutable,
+} from "./docs-preview-paths.mjs";
 
 const PORT = 5197;
-const ROOT = new URL("../..", import.meta.url).pathname.replace(/\/$/, "");
-const QUERY_ROOT = process.env.TINE_QUERY_PLUGIN_ROOT ?? `${ROOT}/tine-plugin-query-filter`;
-const BULLET_ROOT = process.env.TINE_BULLET_PLUGIN_ROOT ?? `${ROOT}/tine-plugin-bullet-threading`;
-const HEADING_ROOT = process.env.TINE_HEADING_PLUGIN_ROOT ?? `${ROOT}/tine-plugin-heading-level-shortcuts`;
+const ROOT = resolveRepositoryRoot(import.meta.url);
+const VITE = resolveViteExecutable(ROOT);
+const {
+  query: QUERY_ROOT,
+  bullet: BULLET_ROOT,
+  heading: HEADING_ROOT,
+} = resolveLaunchPluginRoots(ROOT);
 const SCREENSHOT_ROOT = process.env.TINE_PLUGIN_SCREENSHOT_ROOT;
 const PLATFORM = process.env.TINE_PLUGIN_PLATFORM ?? "desktop";
 
@@ -22,12 +30,15 @@ const BULLET_SHOTS = screenshotDir(BULLET_ROOT, "bullet-threading");
 const QUERY_SHOTS = screenshotDir(QUERY_ROOT, "query-filter");
 const HEADING_SHOTS = screenshotDir(HEADING_ROOT, "heading-level-shortcuts");
 
-const server = spawn(`${ROOT}/tine-plugins/node_modules/.bin/vite`, ["preview", "--host", "127.0.0.1", "--port", String(PORT), "--strictPort"], {
+let serverSpawnError;
+const server = spawn(VITE, ["preview", "--host", "127.0.0.1", "--port", String(PORT), "--strictPort"], {
   stdio: "ignore",
 });
+server.once("error", (error) => { serverSpawnError = error; });
 
 async function waitForServer(url) {
   for (let attempt = 0; attempt < 40; attempt += 1) {
+    if (serverSpawnError) throw serverSpawnError;
     try {
       if ((await fetch(url)).ok) return;
     } catch {
@@ -35,6 +46,7 @@ async function waitForServer(url) {
     }
     await sleep(250);
   }
+  if (serverSpawnError) throw serverSpawnError;
   throw new Error("preview server did not start");
 }
 

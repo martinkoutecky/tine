@@ -67,6 +67,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Plugin launch verification now works from a standalone Tine checkout.**
+  Documentation launchers use the checkout's own Vite and bundled community
+  plugins instead of depending on an untracked sibling development repository.
 - **Ctrl-K page and block results now keep their exact physical file owner.**
   Current, alternate, background-tab, and right-sidebar activation preserve the
   selected graph-relative path, including duplicate-name sidebar restore and

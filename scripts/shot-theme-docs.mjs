@@ -4,23 +4,31 @@ import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { setTimeout as sleep } from "node:timers/promises";
+import {
+  resolveLaunchThemeRoots,
+  resolveRepositoryRoot,
+  resolveViteExecutable,
+} from "./docs-preview-paths.mjs";
 
 const PORT = 5198;
-const ROOT = new URL("../..", import.meta.url).pathname.replace(/\/$/, "");
-const DEV_ROOT = process.env.TINE_DEV_THEME_ROOT ?? `${ROOT}/tine-theme-dev`;
-const THINGS_ROOT = process.env.TINE_THINGS_THEME_ROOT ?? `${ROOT}/tine-theme-things`;
+const ROOT = resolveRepositoryRoot(import.meta.url);
+const VITE = resolveViteExecutable(ROOT);
+const { dev: DEV_ROOT, things: THINGS_ROOT } = resolveLaunchThemeRoots(ROOT);
 const SCREENSHOT_ROOT = process.env.TINE_THEME_SCREENSHOT_ROOT;
 const DEV_SHOTS = SCREENSHOT_ROOT ? `${SCREENSHOT_ROOT}/dev` : `${DEV_ROOT}/docs`;
 const THINGS_SHOTS = SCREENSHOT_ROOT ? `${SCREENSHOT_ROOT}/things` : `${THINGS_ROOT}/docs`;
 
 const server = spawn(
-  `${ROOT}/tine-plugins/node_modules/.bin/vite`,
+  VITE,
   ["preview", "--host", "127.0.0.1", "--port", String(PORT), "--strictPort"],
   { stdio: "ignore" },
 );
+let serverSpawnError;
+server.once("error", (error) => { serverSpawnError = error; });
 
 async function waitForServer(url) {
   for (let attempt = 0; attempt < 40; attempt += 1) {
+    if (serverSpawnError) throw serverSpawnError;
     try {
       if ((await fetch(url)).ok) return;
     } catch {
@@ -28,6 +36,7 @@ async function waitForServer(url) {
     }
     await sleep(250);
   }
+  if (serverSpawnError) throw serverSpawnError;
   throw new Error("preview server did not start");
 }
 

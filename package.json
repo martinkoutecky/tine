@@ -43,6 +43,7 @@
     "plugin:revocation-fixture:check": "node scripts/check-plugin-revocation-fixtures.mjs",
     "plugin:revocation-fixture:repro": "node scripts/test-plugin-revocation-reproducibility.mjs",
     "plugin:template-check": "node scripts/test-plugin-template.mjs",
+    "plugin:launch-paths-check": "node scripts/test-docs-preview-paths.mjs",
     "plugin:launch-e2e": "node scripts/shot-plugin-docs.mjs",
     "plugin:launch-e2e:android": "TINE_PLUGIN_PLATFORM=android node scripts/shot-plugin-docs.mjs",
     "theme:check": "node scripts/tine-theme.mjs check",
