@@ -289,6 +289,8 @@ export type QueryHit =
       entity: "block";
       page: string;
       kind: PageKind;
+      /** Exact graph-root-relative file that physically owns this block hit. */
+      path?: string;
       block: BlockDto;
       display_text: string;
       evidence: MatchEvidence[];

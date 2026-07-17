@@ -2096,16 +2096,24 @@ export function persistentBlockRef(id: string): { uuid: string; page: string; pa
 export async function persistBlockRefTarget(
   uuid: string,
   page: string,
-  kind: PageKind
+  kind: PageKind,
+  path?: string,
 ): Promise<void> {
-  if (!doc.byId[uuid]) {
-    const dto = await backend().getPage(page, kind);
+  const loadedOwner = pageByName(page);
+  const exactOwnerLoaded = !!loadedOwner && (!path || loadedOwner.path === path);
+  const loadedNode = doc.byId[uuid];
+  if (!loadedNode || !exactOwnerLoaded || loadedNode.page !== page) {
+    const dto = path
+      ? await backend().getPageByPath(path)
+      : await backend().getPage(page, kind);
     if (dto) ensurePageLoaded(dto);
   }
   // Re-check: a concurrent navigation may have loaded the page meanwhile, or the
   // cache may have been rebuilt (external change) and reassigned the block a new
   // uuid — in which case there's nothing safe to stamp.
-  if (doc.byId[uuid]) ensureStableBlockId(uuid);
+  const owner = pageByName(page);
+  const node = doc.byId[uuid];
+  if (node?.page === page && owner && (!path || owner.path === path)) ensureStableBlockId(uuid);
 }
 
 /** Serialize a block (and, normally, its subtree) to Logseq markdown.

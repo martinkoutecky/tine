@@ -426,7 +426,7 @@ export function openRouteInOtherPane(route: Route, sourcePaneId = focusedPaneId(
     // would leave a stray duplicate tab beside the target.
     if (route.kind === "journals") router.openJournals();
     else if (route.kind === "query") router.replaceActiveRoute(route);
-    else if (route.block) router.openPageAtBlock(route.name, route.pageKind, route.block);
+    else if (route.block) router.openPageAtBlock(route.name, route.pageKind, route.block, route.path);
     else if (route.path) router.openFile(route.path, route.name, route.pageKind);
     else router.openPage(route.name, route.pageKind);
   } else {

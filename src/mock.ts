@@ -1130,10 +1130,12 @@ export function mockBackend(): Backend {
         .flatMap((group) => group.blocks.map((block) => ({ group, block })))
         .slice(0, Math.max(0, blockLimit))
         .map(({ group, block }) => {
+          const owner = all.find((candidate) => candidate.kind === group.kind && canonicalFold(candidate.name) === canonicalFold(group.page));
           return {
             entity: "block" as const,
             page: group.page,
             kind: group.kind,
+            path: owner ? mockPagePath(owner) : "",
             block,
             display_text: block.raw,
             evidence: [{

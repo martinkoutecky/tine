@@ -7,6 +7,9 @@ import {
   favoritesSectionExpanded,
   recentSectionExpanded,
   rightSidebar,
+  parseStoredSidebarItems,
+  openBlockInSidebar,
+  openPageInSidebar,
   setRightSidebar,
   setFavoritesSectionExpanded,
   setRecentSectionExpanded,
@@ -141,8 +144,8 @@ describe("persisted split session", () => {
 
   it("round-trips each right-sidebar item's graph-local disclosure state", () => {
     setRightSidebar([
-      { kind: "page", name: "Expanded", pageKind: "page", collapsed: false },
-      { kind: "block", uuid: "stable-block", page: "Source", pageKind: "page", collapsed: true },
+      { kind: "page", name: "Expanded", pageKind: "page", path: "pages/duplicates/Expanded.md", collapsed: false },
+      { kind: "block", uuid: "stable-block", page: "Source", pageKind: "page", path: "pages/duplicates/Source.md", collapsed: true },
     ]);
     const persisted = buildPersistedSession();
     expect(persisted.rightSidebarItems?.map((item) => item.collapsed)).toEqual([false, true]);
@@ -154,6 +157,48 @@ describe("persisted split session", () => {
 
     applySidebarSession({ items: [{ kind: "page", name: "Legacy", pageKind: "page" }] });
     expect(rightSidebar()[0].collapsed).toBeUndefined();
+  });
+
+  it("accepts legacy pathless localStorage items and round-trips new exact paths", () => {
+    expect(parseStoredSidebarItems(JSON.stringify([
+      { kind: "page", name: "Legacy", pageKind: "page" },
+      { kind: "block", uuid: "legacy-id", page: "Legacy", pageKind: "page" },
+    ]))).toEqual([
+      { kind: "page", name: "Legacy", pageKind: "page" },
+      { kind: "block", uuid: "legacy-id", page: "Legacy", pageKind: "page" },
+    ]);
+
+    const pathful = [
+      { kind: "page" as const, name: "Twin", pageKind: "page" as const, path: "pages/noncanonical/Twin.md" },
+      { kind: "block" as const, uuid: "twin-id", page: "Twin", pageKind: "page" as const, path: "pages/noncanonical/Twin.md" },
+    ];
+    expect(parseStoredSidebarItems(JSON.stringify(pathful))).toEqual(pathful);
+  });
+
+  it("replaces an incompatible same-name physical sidebar owner", () => {
+    setRightSidebar([
+      { kind: "page", name: "Twin", pageKind: "page", path: "pages/Twin.md" },
+      { kind: "block", uuid: "canonical-block", page: "Twin", pageKind: "page", path: "pages/Twin.md" },
+    ]);
+
+    openPageInSidebar("Twin", "page", "pages/duplicates/Twin.md");
+    expect(rightSidebar()).toEqual([
+      { kind: "page", name: "Twin", pageKind: "page", path: "pages/duplicates/Twin.md", collapsed: false },
+    ]);
+
+    openBlockInSidebar({
+      uuid: "third-owner-block",
+      page: "Twin",
+      pageKind: "page",
+      path: "pages/third/Twin.md",
+    });
+    expect(rightSidebar()).toEqual([{
+      kind: "block",
+      uuid: "third-owner-block",
+      page: "Twin",
+      pageKind: "page",
+      path: "pages/third/Twin.md",
+    }]);
   });
 
   it("rewrites duplicate restored journals panes to a previous page route", () => {
