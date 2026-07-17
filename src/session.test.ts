@@ -33,6 +33,26 @@ beforeEach(() => {
 });
 
 describe("persisted split session", () => {
+  it("copies only bounded route fields while retaining exact page ownership", () => {
+    const path = "pages/client-b/Twin.md";
+    const raw = JSON.stringify({
+      tabs: [{
+        history: [{
+          kind: "page", name: "Twin", pageKind: "page", path,
+          block: "11111111-1111-4111-8111-111111111111", injected: { unsafe: true },
+        }],
+        pos: 0,
+        pinned: false,
+      }],
+      activeIndex: 0,
+    });
+
+    expect(parsePersistedSession(raw)?.snapshots.get("main")?.tabs[0].history[0]).toEqual({
+      kind: "page", name: "Twin", pageKind: "page", path,
+      block: "11111111-1111-4111-8111-111111111111",
+    });
+  });
+
   it("round-trips a two-pane layout with pane tabs and scrolls", () => {
     const root: LayoutNode = {
       kind: "split" as const,

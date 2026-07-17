@@ -92,4 +92,16 @@ describe("foreground route activation RECENT semantics (GH #170)", () => {
     focusPane("main");
     expect(recentPages().map((item) => item.name)).toEqual(["Left", "Right"]);
   });
+
+  it("retains the latest exact owner for an indistinguishable same-name Recent row", () => {
+    const router = createPaneRouter("recent-exact-owner");
+    router.openFile("pages/client-a/Twin.md", "Twin", "page");
+    router.openFile("pages/client-b/Twin.md", "Twin", "page");
+
+    expect(recentPages()).toEqual([{
+      name: "Twin",
+      kind: "page",
+      path: "pages/client-b/Twin.md",
+    }]);
+  });
 });
