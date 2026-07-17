@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { backend } from "../backend";
+import { doc, isDirty, resetStore, setDoc } from "../store";
+import { bumpGraphEpoch, setGraphMeta, setGraphTransitioning } from "../ui";
+import type { GraphMeta } from "../types";
 import { installedPlugins, PluginManager } from "./manager";
+import { bindPluginBlockSnapshot, capturePluginGraphOwner } from "./ownership";
+import type { PluginEvent, PluginResponse } from "./protocol";
 import { PluginRuntime } from "./runtime";
 
 const manifest = (id: string, name: string) => ({
@@ -27,7 +32,43 @@ const record = (id: string, name: string) => ({
   enabled: true,
 });
 
-afterEach(() => vi.restoreAllMocks());
+function graphMeta(root: string): GraphMeta {
+  return {
+    root, journals_dir: "journals", pages_dir: "pages", preferred_workflow: "now",
+    shortcuts: {}, start_of_week: 6, block_hidden_properties: [], default_journal_template: null,
+    favorites: [], journal_page_title_format: "MMM do, yyyy", journal_file_name_format: "yyyy_MM_dd",
+    preferred_format: "md", macros: {}, enable_timetracking: true, logbook_with_second_support: true,
+    logbook_enabled_in_timestamped_blocks: false, logbook_enabled_in_all_blocks: false, guide_announced: true,
+  };
+}
+
+function commandRecord() {
+  const value = {
+    ...manifest("page.tine.graph-owner", "Graph owner"),
+    capabilities: ["commands.register", "slash-commands.register", "block-decorations.register", "graph.write.block"],
+    contributions: {
+      commands: [{ id: "write", title: "Write", description: "Write focused block." }],
+      slashCommands: [{ id: "insert", title: "Insert" }],
+      blockDecorations: [{ id: "badge", kind: "badge" }],
+    },
+  };
+  return { ...record(value.id, value.name), manifest_json: JSON.stringify(value) };
+}
+
+function sharedDoc(raw = "same raw") {
+  setDoc({
+    byId: { "shared-id": { id: "shared-id", raw, collapsed: false, parent: null, page: "Shared", children: [] } },
+    pages: [{ name: "Shared", kind: "page", title: "Shared", preBlock: null, roots: ["shared-id"], format: "md", readOnly: false, guide: false }],
+    feed: ["Shared"], loaded: true,
+  });
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  setGraphTransitioning(false);
+  setGraphMeta(null);
+  resetStore();
+});
 
 describe("installed plugin lifecycle", () => {
   it("uninstalls an incompatible stored manifest through its real package identity", async () => {
@@ -181,5 +222,134 @@ describe("installed plugin lifecycle", () => {
     });
     expect(readEntry).not.toHaveBeenCalled();
     expect(createRuntime).not.toHaveBeenCalled();
+  });
+});
+
+describe("plugin invocation ownership", () => {
+  it("drops a delayed graph-A write when graph B has the same UUID and raw bytes", async () => {
+    const api = backend();
+    vi.spyOn(api, "appPlatform").mockResolvedValue("desktop");
+    vi.spyOn(api, "listInstalledPlugins").mockResolvedValue([commandRecord()]);
+    vi.spyOn(api, "readPluginEntry").mockResolvedValue(new Uint8Array([0, 97, 115, 109]));
+    vi.spyOn(api, "getAppString").mockResolvedValue("{}");
+    vi.spyOn(api, "setPluginEnabled").mockResolvedValue();
+
+    let resolveCommand!: (response: PluginResponse) => void;
+    const pending = new Promise<PluginResponse>((resolve) => { resolveCommand = resolve; });
+    const runtime = {
+      invoke: vi.fn((event: PluginEvent) => event.kind === "activate"
+        ? Promise.resolve({ protocolVersion: 2 as const, effects: [] })
+        : pending),
+      dispose: vi.fn(),
+    };
+    vi.spyOn(PluginRuntime, "create").mockResolvedValue(runtime as unknown as PluginRuntime);
+
+    const manager = new PluginManager();
+    setGraphMeta(graphMeta("/graph-a"));
+    sharedDoc();
+    await manager.initialize();
+    const owned = bindPluginBlockSnapshot({ id: "shared-id", raw: "same raw", parentId: null, depth: 0, format: "md" })!;
+    const invocation = manager.invokeCommand("page.tine.graph-owner", "write", owned);
+    await vi.waitFor(() => expect(runtime.invoke).toHaveBeenCalledTimes(2));
+
+    setGraphTransitioning(true);
+    resetStore();
+    setGraphMeta(graphMeta("/graph-b"));
+    bumpGraphEpoch();
+    sharedDoc();
+    setGraphTransitioning(false);
+    resolveCommand({ protocolVersion: 2, effects: [{ kind: "replace-block-text", blockId: "shared-id", expectedRaw: "same raw", raw: "A result" }] });
+    await invocation;
+
+    expect(doc.byId["shared-id"].raw).toBe("same raw");
+    expect(isDirty("Shared")).toBe(false);
+    expect(runtime.dispose).not.toHaveBeenCalled();
+  });
+
+  it("rejects stale palette/decorate owners before worker invocation and permits the current owner", async () => {
+    const api = backend();
+    vi.spyOn(api, "appPlatform").mockResolvedValue("desktop");
+    vi.spyOn(api, "listInstalledPlugins").mockResolvedValue([commandRecord()]);
+    vi.spyOn(api, "readPluginEntry").mockResolvedValue(new Uint8Array([0, 97, 115, 109]));
+    vi.spyOn(api, "getAppString").mockResolvedValue("{}");
+    vi.spyOn(api, "setPluginEnabled").mockResolvedValue();
+    const runtime = {
+      invoke: vi.fn().mockResolvedValue({ protocolVersion: 2 as const, effects: [] }),
+      dispose: vi.fn(),
+    };
+    vi.spyOn(PluginRuntime, "create").mockResolvedValue(runtime as unknown as PluginRuntime);
+    setGraphMeta(graphMeta("/graph-a"));
+    sharedDoc();
+    const manager = new PluginManager();
+    await manager.initialize();
+    const stale = bindPluginBlockSnapshot({ id: "shared-id", raw: "same raw", parentId: null, depth: 0 })!;
+    bumpGraphEpoch();
+
+    await manager.invokeCommand("page.tine.graph-owner", "write", stale);
+    await manager.decorateBlocks("page.tine.graph-owner", "badge", { owner: stale.owner, blocks: [stale.block] });
+    expect(runtime.invoke).toHaveBeenCalledTimes(1);
+
+    const current = bindPluginBlockSnapshot({ id: "shared-id", raw: "same raw", parentId: null, depth: 0 })!;
+    await manager.invokeCommand("page.tine.graph-owner", "write", current);
+    await manager.decorateBlocks("page.tine.graph-owner", "badge", { owner: capturePluginGraphOwner()!, blocks: [current.block] });
+    expect(runtime.invoke).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not disable or dispose a successor when an old runtime fails late", async () => {
+    const api = backend();
+    vi.spyOn(api, "appPlatform").mockResolvedValue("desktop");
+    vi.spyOn(api, "listInstalledPlugins").mockResolvedValue([commandRecord()]);
+    vi.spyOn(api, "readPluginEntry").mockResolvedValue(new Uint8Array([0, 97, 115, 109]));
+    vi.spyOn(api, "getAppString").mockResolvedValue("{}");
+    const persist = vi.spyOn(api, "setPluginEnabled").mockResolvedValue();
+    let rejectCommand!: (error: Error) => void;
+    const pending = new Promise<PluginResponse>((_resolve, reject) => { rejectCommand = reject; });
+    const oldRuntime = {
+      invoke: vi.fn((event: PluginEvent) => event.kind === "activate"
+        ? Promise.resolve({ protocolVersion: 2 as const, effects: [] })
+        : pending),
+      dispose: vi.fn(),
+    };
+    vi.spyOn(PluginRuntime, "create").mockResolvedValue(oldRuntime as unknown as PluginRuntime);
+    setGraphMeta(graphMeta("/graph-a"));
+    sharedDoc();
+    const manager = new PluginManager();
+    await manager.initialize();
+    const owned = bindPluginBlockSnapshot({ id: "shared-id", raw: "same raw", parentId: null, depth: 0 })!;
+    const invocation = manager.invokeCommand("page.tine.graph-owner", "write", owned);
+    await vi.waitFor(() => expect(oldRuntime.invoke).toHaveBeenCalledTimes(2));
+
+    const successor = { manifest: JSON.parse(commandRecord().manifest_json), runtime: { invoke: vi.fn(), dispose: vi.fn() } };
+    (manager as unknown as { active: Map<string, unknown> }).active.set("page.tine.graph-owner", successor);
+    rejectCommand(new Error("old runtime failed"));
+    await expect(invocation).rejects.toThrow("old runtime failed");
+
+    expect(oldRuntime.dispose).not.toHaveBeenCalled();
+    expect(successor.runtime.dispose).not.toHaveBeenCalled();
+    expect(persist).not.toHaveBeenCalled();
+  });
+
+  it("does not disable an active runtime when a new start attempt fails before registration", async () => {
+    const api = backend();
+    vi.spyOn(api, "appPlatform").mockResolvedValue("desktop");
+    vi.spyOn(api, "listInstalledPlugins").mockResolvedValue([commandRecord()]);
+    const readEntry = vi.spyOn(api, "readPluginEntry").mockResolvedValue(new Uint8Array([0, 97, 115, 109]));
+    vi.spyOn(api, "getAppString").mockResolvedValue("{}");
+    const persist = vi.spyOn(api, "setPluginEnabled").mockResolvedValue();
+    const activeRuntime = { invoke: vi.fn().mockResolvedValue({ protocolVersion: 2 as const, effects: [] }), dispose: vi.fn() };
+    vi.spyOn(PluginRuntime, "create").mockResolvedValue(activeRuntime as unknown as PluginRuntime);
+    const manager = new PluginManager();
+    await manager.initialize();
+    readEntry.mockRejectedValueOnce(new Error("new start could not read bytes"));
+
+    await expect(manager.enable("page.tine.graph-owner", "1.0.0")).rejects.toThrow("new start could not read bytes");
+
+    expect(activeRuntime.dispose).not.toHaveBeenCalled();
+    expect(persist).not.toHaveBeenCalled();
+    expect(installedPlugins().find((item) => item.manifest.id === "page.tine.graph-owner")).toMatchObject({
+      enabled: true,
+      running: true,
+      error: undefined,
+    });
   });
 });

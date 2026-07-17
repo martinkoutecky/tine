@@ -17,6 +17,7 @@ import {
   type Trigger,
 } from "../editor/autocomplete";
 import { pluginManager } from "../plugins/manager";
+import { bindPluginBlockSnapshot, isPluginGraphOwnerCurrent } from "../plugins/ownership";
 import { autoPairInsertOnInput, wrapSelectionEdit, doubleRefKind, backspacePairEdit, SELECTION_WRAP } from "../editor/autopair";
 import { typoTypeReplace } from "../render/typography";
 import { linkAutocompletePolicy } from "../editor/linkDefault";
@@ -1046,6 +1047,12 @@ export function Editor(props: { id: string }): JSX.Element {
   // transclusion the user is looking at.
   const editSurface = () => surfaceKey.startsWith("embed:") ? surfaceKey : null;
   let ref!: HTMLTextAreaElement;
+  let pluginSlashInvocation = 0;
+  let editorMounted = true;
+  onCleanup(() => {
+    editorMounted = false;
+    pluginSlashInvocation++;
+  });
   const autocompleteLayerId = `block-completion-${createUniqueId()}`;
   const selectionOverflowLayerId = `block-selection-overflow-${createUniqueId()}`;
   // Caret/selection stashed when the *window* (not this block) loses focus, so
@@ -1761,8 +1768,12 @@ export function Editor(props: { id: string }): JSX.Element {
       return;
     }
     if (item.plugin) {
-      const before = ref.value;
+      const textarea = ref;
+      const before = textarea.value;
+      const selectionStart = textarea.selectionStart;
+      const selectionEnd = textarea.selectionEnd;
       const node = doc.byId[props.id];
+      if (!node) return;
       let depth = 0;
       let parentId = node.parent;
       while (parentId && doc.byId[parentId] && depth < 1_000) {
@@ -1770,17 +1781,54 @@ export function Editor(props: { id: string }): JSX.Element {
         parentId = doc.byId[parentId].parent;
       }
       const plugin = item.plugin;
+      const ownedBlock = bindPluginBlockSnapshot({
+        id: node.id,
+        raw: node.raw,
+        parentId: node.parent,
+        depth,
+        format: pageByName(node.page)?.format === "org" ? "org" : "md",
+      });
+      if (!ownedBlock) return;
+      const token = ++pluginSlashInvocation;
+      const capturedEditingId = editingId();
+      const capturedEditingOwner = editingOwner();
+      const capturedEditingSurface = editingSurface();
+      const capturedSurfaceKey = surfaceKey;
+      const trigger = { ...t };
+      const editorIsCurrent = () => {
+        const liveTrigger = detectTrigger(textarea.value, textarea.selectionStart);
+        const liveNode = doc.byId[props.id];
+        return editorMounted
+          && token === pluginSlashInvocation
+          && isPluginGraphOwnerCurrent(ownedBlock.owner)
+          && ref === textarea
+          && textarea.isConnected
+          && editingId() === capturedEditingId
+          && editingOwner() === capturedEditingOwner
+          && editingSurface() === capturedEditingSurface
+          && surfaceKey === capturedSurfaceKey
+          && textarea.value === before
+          && textarea.selectionStart === selectionStart
+          && textarea.selectionEnd === selectionEnd
+          && !!liveTrigger
+          && liveTrigger.kind === trigger.kind
+          && liveTrigger.start === trigger.start
+          && liveTrigger.end === trigger.end
+          && liveTrigger.query === trigger.query
+          && liveNode?.id === ownedBlock.block.id
+          && liveNode.raw === ownedBlock.block.raw;
+      };
       closeAc();
       void pluginManager
-        .invokeSlashCommand(plugin.pluginId, plugin.contributionId, {
-          id: node.id,
-          raw: node.raw,
-          parentId: node.parent,
-          depth,
-          format: pageByName(node.page)?.format === "org" ? "org" : "md",
-        })
+        .invokeSlashCommand(plugin.pluginId, plugin.contributionId, ownedBlock)
         .then((effects) => {
-          if (ref.value !== before) {
+          if (!editorIsCurrent()) {
+            if (isPluginGraphOwnerCurrent(ownedBlock.owner) && textarea.isConnected && textarea.value !== before) {
+              pushToast("Plugin result was not inserted because the block changed while it ran.", "info");
+            }
+            return;
+          }
+          if (textarea.value !== before) {
             pushToast("Plugin result was not inserted because the block changed while it ran.", "info");
             return;
           }
@@ -1790,9 +1838,18 @@ export function Editor(props: { id: string }): JSX.Element {
           const result = applyCompletion(before, t.start, t.end, text);
           commit(result.raw);
           queueMicrotask(() => {
-            ref.value = result.raw;
-            ref.setSelectionRange(result.caret, result.caret);
-            ref.focus();
+            if (!editorMounted
+              || token !== pluginSlashInvocation
+              || !isPluginGraphOwnerCurrent(ownedBlock.owner)
+              || ref !== textarea
+              || !textarea.isConnected
+              || editingId() !== capturedEditingId
+              || editingOwner() !== capturedEditingOwner
+              || editingSurface() !== capturedEditingSurface
+              || textarea.value !== result.raw) return;
+            textarea.value = result.raw;
+            textarea.setSelectionRange(result.caret, result.caret);
+            textarea.focus();
             autosize();
           });
         })

@@ -78,6 +78,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
   legacy split keys migrate through a guarded transaction, torn or unreadable
   cache state holds guest activation, and cached/live revocations clear the
   installed enable bit before any guest bytes or runtime can be used.
+- **Delayed plugin results now stay with the graph and editor that invoked them.**
+  Switching or refreshing a graph while a command or slash completion is pending
+  drops the stale result, even when the new graph contains the same block UUID
+  and text, without disabling the healthy plugin worker.
 - **Cached signed plugin and theme revocations now take effect before startup
   activation.** A stalled catalogue refresh is abort-bounded, one broken plugin
   no longer blocks the rest, and a newer verified revocation immediately stops

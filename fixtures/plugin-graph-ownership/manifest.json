@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "page.tine.e2e.graph-owner",
+  "name": "Graph ownership E2E sentinel",
+  "version": "0.0.1",
+  "apiVersion": "0.2",
+  "description": "Reserved test fixture whose delayed command proves graph-effect ownership.",
+  "author": "Tine test fixture",
+  "license": "MIT",
+  "source": "https://github.com/martinkoutecky/tine/tree/master/fixtures/plugin-graph-ownership",
+  "entry": "plugin.wasm",
+  "platforms": ["desktop"],
+  "capabilities": ["commands.register", "graph.write.block"],
+  "contributions": {
+    "commands": [
+      {
+        "id": "delayed-write",
+        "title": "E2E delayed graph write",
+        "description": "Replace the focused test block after a bounded guest delay.",
+        "defaultBinding": "mod+alt+g"
+      }
+    ]
+  },
+  "aiDevelopment": "primary"
+}

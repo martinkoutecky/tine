@@ -1,7 +1,7 @@
 // Small global UI state: theme, left sidebar, and the quick-switcher modal.
 import { createSignal, useContext } from "solid-js";
 import type { GraphMeta, JournalConflict, SyncConflict, PageKind } from "./types";
-import type { PluginBlockSnapshot } from "./plugins/protocol";
+import type { OwnedPluginBlockSnapshot } from "./plugins/ownership";
 import { backend, isTauri } from "./backend";
 // Zoom is route state; these are call-time only, so the ui↔router cycle is safe.
 import { route, focusBlock, scheduleSessionSave, type PageTarget } from "./router";
@@ -1475,14 +1475,14 @@ export function resolveAlias(name: string): string {
 }
 
 export const [switcherOpen, setSwitcherOpen] = createSignal(false);
-export const [switcherPluginBlock, setSwitcherPluginBlock] = createSignal<PluginBlockSnapshot | null>(null);
+export const [switcherPluginBlock, setSwitcherPluginBlock] = createSignal<OwnedPluginBlockSnapshot | null>(null);
 // "all" = full Ctrl-K (pages/create/commands/blocks); "commands" = command
 // palette (⌘⇧P), commands only.
 export type SwitcherMode = "all" | "commands" | "current-page";
 export const [switcherMode, setSwitcherMode] = createSignal<SwitcherMode>("all");
 export const [switcherEmbryo, setSwitcherEmbryo] =
   createSignal<{ paneId: string; prefill: string } | null>(null);
-export function openSwitcher(opts?: { mode?: "embryo" | "current-page"; paneId?: string; prefill?: string; pluginBlock?: PluginBlockSnapshot | null }) {
+export function openSwitcher(opts?: { mode?: "embryo" | "current-page"; paneId?: string; prefill?: string; pluginBlock?: OwnedPluginBlockSnapshot | null }) {
   setSwitcherMode(opts?.mode === "current-page" ? "current-page" : "all");
   setSwitcherPluginBlock(opts?.pluginBlock ?? null);
   setSwitcherEmbryo(opts?.mode === "embryo" && opts.paneId
@@ -1496,7 +1496,7 @@ export function openSwitcher(opts?: { mode?: "embryo" | "current-page"; paneId?:
 export function openDevtools() {
   void backend().openDevtools();
 }
-export function openCommandPalette(pluginBlock: PluginBlockSnapshot | null = null) {
+export function openCommandPalette(pluginBlock: OwnedPluginBlockSnapshot | null = null) {
   setSwitcherMode("commands");
   setSwitcherEmbryo(null);
   setSwitcherPluginBlock(pluginBlock);

@@ -19,6 +19,12 @@ import {
 } from "./protocol";
 import { PluginRuntime } from "./runtime";
 import {
+  capturePluginGraphOwner,
+  isPluginGraphOwnerCurrent,
+  type OwnedPluginBlockSnapshot,
+  type PluginGraphOwner,
+} from "./ownership";
+import {
   defaultPluginSettings,
   parsePluginSettingsBlob,
   settingAccepts,
@@ -53,6 +59,17 @@ type ActivePlugin = {
   manifest: PluginManifest;
   runtime: PluginRuntime;
 };
+
+type InvocationAuthority = {
+  plugin: ActivePlugin;
+  phase: "active" | "starting";
+  graphOwner?: PluginGraphOwner;
+};
+
+export interface OwnedPluginBlockList {
+  owner: PluginGraphOwner;
+  blocks: PluginBlockSnapshot[];
+}
 
 export type RevokedPluginVersions = ReadonlySet<string>;
 
@@ -292,26 +309,28 @@ export class PluginManager {
     return undefined;
   }
 
-  async invokeCommand(pluginId: string, contributionId: string, focusedBlock?: PluginBlockSnapshot) {
+  async invokeCommand(pluginId: string, contributionId: string, focusedBlock?: OwnedPluginBlockSnapshot) {
     const plugin = this.active.get(pluginId);
     if (!plugin) throw new Error("plugin is not running");
     const contribution = plugin.manifest.contributions?.commands?.find((item) => item.id === contributionId);
     if (!contribution || !supportsPlatform(plugin.manifest, this.platform, contribution.platforms)) {
       throw new Error("plugin command is unavailable");
     }
+    const graphOwner = focusedBlock?.owner ?? capturePluginGraphOwner();
+    if (!graphOwner || !isPluginGraphOwnerCurrent(graphOwner)) return;
     const event: PluginEvent = {
       protocolVersion: PLUGIN_PROTOCOL_VERSION,
       kind: "command",
       contributionId,
-      ...(focusedBlock ? { focusedBlock } : {}),
+      ...(focusedBlock ? { focusedBlock: focusedBlock.block } : {}),
     };
-    await this.invokeAndApply(plugin, event);
+    await this.invokeAndApply({ plugin, phase: "active", graphOwner }, event);
   }
 
   async invokeSlashCommand(
     pluginId: string,
     contributionId: string,
-    focusedBlock: PluginBlockSnapshot
+    focusedBlock: OwnedPluginBlockSnapshot
   ): Promise<PluginEffect[]> {
     const plugin = this.active.get(pluginId);
     if (!plugin) throw new Error("plugin is not running");
@@ -319,26 +338,27 @@ export class PluginManager {
     if (!contribution || !supportsPlatform(plugin.manifest, this.platform, contribution.platforms)) {
       throw new Error("plugin slash command is unavailable");
     }
-    return this.invokeAndApply(plugin, {
+    return this.invokeAndApply({ plugin, phase: "active", graphOwner: focusedBlock.owner }, {
       protocolVersion: PLUGIN_PROTOCOL_VERSION,
       kind: "slash-command",
       contributionId,
-      focusedBlock,
+      focusedBlock: focusedBlock.block,
     });
   }
 
-  async decorateBlocks(pluginId: string, contributionId: string, blocks: PluginBlockSnapshot[]): Promise<PluginEffect[]> {
+  async decorateBlocks(pluginId: string, contributionId: string, owned: OwnedPluginBlockList): Promise<PluginEffect[]> {
     const plugin = this.active.get(pluginId);
     if (!plugin) return [];
+    if (!isPluginGraphOwnerCurrent(owned.owner)) return [];
     const contribution = plugin.manifest.contributions?.blockDecorations?.find((item) => item.id === contributionId);
     if (!contribution || !supportsPlatform(plugin.manifest, this.platform, contribution.platforms)) return [];
     const event: PluginEvent = {
       protocolVersion: PLUGIN_PROTOCOL_VERSION,
       kind: "decorate-blocks",
       contributionId,
-      blocks,
+      blocks: owned.blocks,
     };
-    return this.invokeAndApply(plugin, event);
+    return this.invokeAndApply({ plugin, phase: "active", graphOwner: owned.owner }, event);
   }
 
   async applyRevocations(revoked: RevokedPluginVersions) {
@@ -472,6 +492,7 @@ export class PluginManager {
     };
     assertAllowed();
     let runtime: PluginRuntime | undefined;
+    let registeredStarting = false;
     try {
       const bytes = await backend().readPluginEntry(id, version);
       assertAllowed();
@@ -482,22 +503,30 @@ export class PluginManager {
       runtime = await PluginRuntime.create(bytesBuffer(bytes));
       assertAllowed();
       this.starting.set(id, { version, runtime });
+      registeredStarting = true;
+      const assertStarting = () => {
+        assertAllowed();
+        const owner = this.starting.get(id);
+        if (owner?.version !== version || owner.runtime !== runtime) {
+          throw new Error("plugin startup was superseded");
+        }
+      };
       const settings = await this.loadSettings(plugin.manifest);
-      assertAllowed();
+      assertStarting();
       this.patchSettings(id, settings);
       const active: ActivePlugin = { manifest: plugin.manifest, runtime };
-      await this.invokeAndApply(active, {
+      await this.invokeAndApply({ plugin: active, phase: "starting" }, {
         protocolVersion: PLUGIN_PROTOCOL_VERSION,
         kind: "activate",
         platform: this.platform,
         capabilities: plugin.manifest.capabilities,
         settings: plugin.manifest.capabilities.includes("settings.read") ? settings : {},
       });
-      assertAllowed();
+      assertStarting();
       if (persist) {
         await backend().setPluginEnabled(id, version, true);
         this.durablyDisabled.delete(versionKey(id, version));
-        assertAllowed();
+        assertStarting();
       }
       this.active.get(id)?.runtime.dispose();
       this.starting.delete(id);
@@ -517,40 +546,86 @@ export class PluginManager {
         )
       );
     } catch (error) {
+      const ownsStarting = !!runtime && this.starting.get(id)?.runtime === runtime;
+      const currentActive = this.active.get(id);
+      const hasActiveSuccessor = !!currentActive && currentActive.runtime !== runtime;
       if (runtime) {
-        if (this.starting.get(id)?.runtime === runtime) this.starting.delete(id);
+        if (ownsStarting) this.starting.delete(id);
         runtime.dispose();
       }
-      if (this.revoked.has(versionKey(id, version))) {
-        await this.persistRevokedDisabled(plugin);
-      } else if (persist || plugin.enabled) {
-        await backend().setPluginEnabled(id, version, false);
+      // Only the exact starting attempt (or a failure before it registered a
+      // worker) may persist/paint its failure. A superseded attempt cannot
+      // disable another starting or already-active runtime.
+      if ((!registeredStarting || ownsStarting) && !hasActiveSuccessor) {
+        if (this.revoked.has(versionKey(id, version))) {
+          await this.persistRevokedDisabled(plugin);
+        } else if (persist || plugin.enabled) {
+          await backend().setPluginEnabled(id, version, false);
+        }
+        const message = this.revoked.has(versionKey(id, version))
+          ? "This version was revoked by the registry."
+          : displayError(error);
+        this.patch(id, version, { enabled: false, running: false, error: message });
       }
-      const message = this.revoked.has(versionKey(id, version))
-        ? "This version was revoked by the registry."
-        : displayError(error);
-      this.patch(id, version, { enabled: false, running: false, error: message });
       throw error;
     }
   }
 
-  private async invokeAndApply(plugin: ActivePlugin, event: PluginEvent): Promise<PluginEffect[]> {
+  private runtimeAuthorityCurrent(authority: InvocationAuthority): boolean {
+    const { plugin } = authority;
+    if (this.revoked.has(versionKey(plugin.manifest.id, plugin.manifest.version))) return false;
+    if (authority.phase === "active") return this.active.get(plugin.manifest.id) === plugin;
+    const starting = this.starting.get(plugin.manifest.id);
+    return starting?.version === plugin.manifest.version && starting.runtime === plugin.runtime;
+  }
+
+  private invocationAuthorityCurrent(authority: InvocationAuthority): boolean {
+    return this.runtimeAuthorityCurrent(authority)
+      && (!authority.graphOwner || isPluginGraphOwnerCurrent(authority.graphOwner));
+  }
+
+  private async retireFailedActive(authority: InvocationAuthority, error: unknown): Promise<void> {
+    if (authority.phase !== "active" || !this.runtimeAuthorityCurrent(authority)) return;
+    const { plugin } = authority;
+    plugin.runtime.dispose();
+    this.active.delete(plugin.manifest.id);
+    await backend().setPluginEnabled(plugin.manifest.id, plugin.manifest.version, false);
+    if (!this.active.has(plugin.manifest.id)) {
+      this.patch(plugin.manifest.id, plugin.manifest.version, {
+        enabled: false,
+        running: false,
+        error: displayError(error),
+      });
+    }
+  }
+
+  private async invokeAndApply(authority: InvocationAuthority, event: PluginEvent): Promise<PluginEffect[]> {
+    if (!this.invocationAuthorityCurrent(authority)) return [];
     let effects: PluginEffect[];
     try {
-      effects = (await plugin.runtime.invoke(event)).effects;
+      effects = (await authority.plugin.runtime.invoke(event)).effects;
     } catch (error) {
-      await this.disable(plugin.manifest.id);
-      this.patch(plugin.manifest.id, plugin.manifest.version, { error: displayError(error) });
+      // A genuine timeout/crash has already killed this worker. Retire only the
+      // exact still-current active runtime; a starting runtime is owned by start()'s
+      // failure path, and a replaced/revoked runtime may not touch its successor.
+      await this.retireFailedActive(authority, error);
       throw error;
     }
+    if (!this.invocationAuthorityCurrent(authority)) return [];
     const accepted: PluginEffect[] = [];
     for (const effect of effects) {
-      if (await this.applyEffect(plugin.manifest, event, effect)) accepted.push(effect);
+      if (!this.invocationAuthorityCurrent(authority)) break;
+      if (await this.applyEffect(authority, event, effect)) {
+        if (!this.invocationAuthorityCurrent(authority)) break;
+        accepted.push(effect);
+      }
     }
-    return accepted;
+    return this.invocationAuthorityCurrent(authority) ? accepted : [];
   }
 
-  private async applyEffect(manifest: PluginManifest, event: PluginEvent, effect: PluginEffect): Promise<boolean> {
+  private async applyEffect(authority: InvocationAuthority, event: PluginEvent, effect: PluginEffect): Promise<boolean> {
+    if (!this.invocationAuthorityCurrent(authority)) return false;
+    const manifest = authority.plugin.manifest;
     switch (effect.kind) {
       case "notice":
         pushToast(effect.message, effect.level === "error" ? "error" : "info");
@@ -560,8 +635,10 @@ export class PluginManager {
         if ((event.kind !== "command" && event.kind !== "slash-command") || event.focusedBlock?.id !== effect.blockId) {
           return false;
         }
+        if (!this.invocationAuthorityCurrent(authority)) return false;
         const block = doc.byId[effect.blockId];
         if (!block || block.raw !== effect.expectedRaw) return false;
+        if (!this.invocationAuthorityCurrent(authority)) return false;
         setRaw(effect.blockId, effect.raw, { timetracking: false });
         return true;
       }
@@ -628,7 +705,7 @@ export class PluginManager {
     this.patchSettings(manifest.id, settings);
     const active = this.active.get(manifest.id);
     if (notifyRunning && active?.manifest.version === manifest.version && manifest.capabilities.includes("settings.read")) {
-      await this.invokeAndApply(active, {
+      await this.invokeAndApply({ plugin: active, phase: "active" }, {
         protocolVersion: PLUGIN_PROTOCOL_VERSION,
         kind: "settings-changed",
         settings,

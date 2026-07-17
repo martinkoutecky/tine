@@ -72,6 +72,9 @@ const suites = {
   "plugin-revocation": [
     ["plugin-revocation", "scripts/e2e-plugin-revocation.mjs", {}],
   ],
+  "plugin-graph-ownership": [
+    ["plugin-graph-ownership", "scripts/e2e-plugin-graph-ownership.mjs", {}],
+  ],
   "og-parity-pilot": [
     ["og-parity-references", "scripts/e2e-og-parity-references.mjs", {}],
   ],
@@ -104,6 +107,7 @@ const suites = {
     ["media", "scripts/e2e-media.mjs", {}],
     ["pdf-logseq", "scripts/e2e-pdf-logseq.mjs", { E2E_WINDOW_MANAGER: "openbox" }],
     ["pdf-ownership", "scripts/e2e-pdf-ownership.mjs", {}],
+    ["plugin-graph-ownership", "scripts/e2e-plugin-graph-ownership.mjs", {}],
     ["external-assets", "scripts/e2e-external-assets.mjs", {}],
     ["capture", "scripts/e2e-capture.mjs", { E2E_WINDOW_MANAGER: process.env.E2E_WINDOW_MANAGER || "openbox" }],
     ["native-titlebar", "scripts/e2e-native-titlebar.mjs", { E2E_WINDOW_MANAGER: "openbox" }],
