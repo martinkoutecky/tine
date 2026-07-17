@@ -3765,8 +3765,24 @@ impl Graph {
         block_limit: usize,
         explain: bool,
     ) -> crate::query_plan::QueryExecution {
-        crate::query_plan::QueryPlan::friendly(source, page_limit, block_limit)
-            .execute_with_explain(self, || false, explain)
+        self.run_graph_search_scoped(source, page_limit, block_limit, None, explain)
+    }
+
+    pub fn run_graph_search_scoped(
+        &self,
+        source: &str,
+        page_limit: usize,
+        block_limit: usize,
+        scope: Option<crate::query_plan::QueryPageScope>,
+        explain: bool,
+    ) -> crate::query_plan::QueryExecution {
+        match scope {
+            Some(scope) => {
+                crate::query_plan::QueryPlan::friendly_for_page(source, block_limit, scope)
+            }
+            None => crate::query_plan::QueryPlan::friendly(source, page_limit, block_limit),
+        }
+        .execute_with_explain(self, || false, explain)
     }
 
     /// Interactive search lane: a newer request in the same lane cooperatively
@@ -3798,6 +3814,18 @@ impl Graph {
         block_limit: usize,
         explain: bool,
     ) -> crate::query_plan::QueryExecution {
+        self.run_graph_search_latest_scoped(lane, source, page_limit, block_limit, None, explain)
+    }
+
+    pub fn run_graph_search_latest_scoped(
+        &self,
+        lane: &str,
+        source: &str,
+        page_limit: usize,
+        block_limit: usize,
+        scope: Option<crate::query_plan::QueryPageScope>,
+        explain: bool,
+    ) -> crate::query_plan::QueryExecution {
         use std::sync::atomic::Ordering;
         let epoch = {
             let mut lanes = self.search_lanes.lock().unwrap();
@@ -3807,8 +3835,13 @@ impl Graph {
                 .clone()
         };
         let mine = epoch.fetch_add(1, Ordering::AcqRel) + 1;
-        crate::query_plan::QueryPlan::friendly(source, page_limit, block_limit)
-            .execute_with_explain(self, || epoch.load(Ordering::Acquire) != mine, explain)
+        match scope {
+            Some(scope) => {
+                crate::query_plan::QueryPlan::friendly_for_page(source, block_limit, scope)
+            }
+            None => crate::query_plan::QueryPlan::friendly(source, page_limit, block_limit),
+        }
+        .execute_with_explain(self, || epoch.load(Ordering::Acquire) != mine, explain)
     }
 
     /// Fuzzy page-name matches for the quick switcher.

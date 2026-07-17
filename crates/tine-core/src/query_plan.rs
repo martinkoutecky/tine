@@ -118,6 +118,18 @@ pub struct QueryBranch {
     pub limit: usize,
 }
 
+/// One routed page used to scope a block-search plan. A supplied relative path
+/// is authoritative so duplicate display identities do not leak into results;
+/// otherwise kind plus Logseq's canonical page identity selects the document.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueryPageScope {
+    pub name: String,
+    pub page_kind: PageKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+}
+
 /// Stable diagnostic codes let the frontend localize/rephrase messages later.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QueryDiagnostic {
@@ -182,6 +194,7 @@ pub struct QueryExecution {
 pub struct QueryPlan {
     pub branches: Vec<QueryBranch>,
     pub diagnostics: Vec<QueryDiagnostic>,
+    page_scope: Option<QueryPageScope>,
     regexes: HashMap<u32, Regex>,
 }
 
@@ -237,8 +250,17 @@ impl QueryPlan {
         Self {
             branches,
             diagnostics,
+            page_scope: None,
             regexes,
         }
+    }
+
+    /// Current-page search is a block-only execution profile of the same typed
+    /// friendly plan—not a frontend filter over whole-graph results.
+    pub fn friendly_for_page(query: &str, block_limit: usize, scope: QueryPageScope) -> Self {
+        let mut plan = Self::block_search(query, block_limit);
+        plan.page_scope = Some(scope);
+        plan
     }
 
     /// Explicit page-name fuzzy plan for normal-query frontends and tests.  This
@@ -257,6 +279,7 @@ impl QueryPlan {
                 limit,
             }],
             diagnostics: Vec::new(),
+            page_scope: None,
             regexes: HashMap::new(),
         }
     }
@@ -294,6 +317,7 @@ impl QueryPlan {
         Self {
             branches,
             diagnostics,
+            page_scope: None,
             regexes,
         }
     }
@@ -307,6 +331,7 @@ impl QueryPlan {
             return Self {
                 branches: Vec::new(),
                 diagnostics: Vec::new(),
+                page_scope: None,
                 regexes: HashMap::new(),
             };
         }
@@ -332,6 +357,7 @@ impl QueryPlan {
                 limit,
             }],
             diagnostics: Vec::new(),
+            page_scope: None,
             regexes,
         }
     }
@@ -1060,6 +1086,17 @@ fn execute_blocks(
             if cancelled() {
                 return None;
             }
+            if let Some(scope) = &plan.page_scope {
+                let selected = match scope.path.as_deref() {
+                    Some(path) => entry.rel_path == path,
+                    None => {
+                        entry.kind == scope.page_kind && refs::same_page(&entry.name, &scope.name)
+                    }
+                };
+                if !selected {
+                    continue;
+                }
+            }
             let mut ancestors = Vec::new();
             walk_blocks(&doc.roots, &mut ancestors, &mut |block, path| {
                 if remaining == 0 || cancelled() {
@@ -1415,6 +1452,38 @@ mod tests {
 
         let no_explain = graph.run_graph_search("foo", 10, 10, false);
         assert!(no_explain.explanation.branches.is_empty());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn current_page_scope_is_block_only_and_path_authoritative() {
+        let (dir, graph) = fixture();
+        fs::create_dir_all(dir.join("pages").join("duplicate")).unwrap();
+        fs::write(
+            dir.join("pages")
+                .join("duplicate")
+                .join("Opinion Diffusion.md"),
+            "- duplicate foo\n",
+        )
+        .unwrap();
+        graph.warm_cache();
+
+        let execution = QueryPlan::friendly_for_page(
+            "foo",
+            50,
+            QueryPageScope {
+                name: "Opinion Diffusion".into(),
+                page_kind: PageKind::Page,
+                path: Some("pages/Opinion Diffusion.md".into()),
+            },
+        )
+        .execute(&graph, || false);
+        assert!(!execution.hits.is_empty());
+        assert!(execution.hits.iter().all(|hit| matches!(
+            hit,
+            QueryHit::Block { page, block, .. }
+                if page == "Opinion Diffusion" && block.raw != "duplicate foo"
+        )));
         fs::remove_dir_all(dir).unwrap();
     }
 

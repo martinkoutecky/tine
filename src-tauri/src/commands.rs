@@ -724,16 +724,22 @@ pub(crate) async fn run_graph_search(
     block_limit: usize,
     lane: Option<String>,
     explain: bool,
+    scope: Option<tine_core::query_plan::QueryPageScope>,
     state: GraphContext<'_>,
 ) -> Result<tine_core::query_plan::QueryExecution, String> {
     let graph = Arc::clone(&slot_for_context(&state)?.graph);
     let page_limit = page_limit.min(RESULT_BRIDGE_MAX_ROWS);
     let block_limit = block_limit.min(RESULT_BRIDGE_MAX_ROWS - page_limit);
     let execution = tauri::async_runtime::spawn_blocking(move || match lane.as_deref() {
-        Some(lane) => {
-            graph.run_graph_search_latest(lane, &source, page_limit, block_limit, explain)
-        }
-        None => graph.run_graph_search(&source, page_limit, block_limit, explain),
+        Some(lane) => graph.run_graph_search_latest_scoped(
+            lane,
+            &source,
+            page_limit,
+            block_limit,
+            scope,
+            explain,
+        ),
+        None => graph.run_graph_search_scoped(&source, page_limit, block_limit, scope, explain),
     })
     .await
     .map_err(|e| e.to_string())?;

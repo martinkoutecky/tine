@@ -1339,12 +1339,12 @@ export function resolveAlias(name: string): string {
 export const [switcherOpen, setSwitcherOpen] = createSignal(false);
 // "all" = full Ctrl-K (pages/create/commands/blocks); "commands" = command
 // palette (⌘⇧P), commands only.
-export type SwitcherMode = "all" | "commands";
+export type SwitcherMode = "all" | "commands" | "current-page";
 export const [switcherMode, setSwitcherMode] = createSignal<SwitcherMode>("all");
 export const [switcherEmbryo, setSwitcherEmbryo] =
   createSignal<{ paneId: string; prefill: string } | null>(null);
-export function openSwitcher(opts?: { mode?: "embryo"; paneId?: string; prefill?: string }) {
-  setSwitcherMode("all");
+export function openSwitcher(opts?: { mode?: "embryo" | "current-page"; paneId?: string; prefill?: string }) {
+  setSwitcherMode(opts?.mode === "current-page" ? "current-page" : "all");
   setSwitcherEmbryo(opts?.mode === "embryo" && opts.paneId
     ? { paneId: opts.paneId, prefill: opts.prefill ?? "" }
     : null);

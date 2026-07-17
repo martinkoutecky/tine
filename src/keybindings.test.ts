@@ -391,6 +391,15 @@ describe("pane-select Esc cascade", () => {
     dispose();
   });
 
+  it("declares current-page block search as a remappable Mod-Shift-K command", () => {
+    expect(commandDefaults()).toContainEqual({
+      id: "go/search-current-page",
+      label: "Search blocks in current page",
+      binding: "mod+shift+k",
+      scope: "global",
+    });
+  });
+
   it("typing on a selected edge materializes an embryo pane that Escape unsplits", () => {
     resetPaneLayoutToSingle(pageSnapshot("Source"));
     const fake = installFakeWindow();

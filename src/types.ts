@@ -302,6 +302,14 @@ export interface QueryExecution {
   cancelled: boolean;
 }
 
+/** A single routed page used to scope block search. When present, `path` is the
+ * authoritative file identity; otherwise kind plus canonical page name is used. */
+export interface QueryPageScope {
+  name: string;
+  pageKind: PageKind;
+  path?: string;
+}
+
 /** Result of an advanced (datalog) query: matched groups + which clause heads
  *  ran vs were ignored (`supported` is false only when nothing in the subset matched). */
 export interface AdvancedQueryResult {

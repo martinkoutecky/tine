@@ -1,6 +1,6 @@
 import { For, Show, createSignal, createResource, createEffect, createMemo, onCleanup, type JSX } from "solid-js";
 import { backend } from "../backend";
-import { switcherOpen, closeSwitcher, switcherMode, switcherEmbryo, recentPages, graphMeta, isFavorite, pushToast, bumpPageInventoryRev } from "../ui";
+import { switcherOpen, closeSwitcher, switcherMode, switcherEmbryo, recentPages, graphMeta, isFavorite, pushToast, bumpPageInventoryRev, openPageInSidebar, openBlockInSidebar } from "../ui";
 import { openPage, openPageAtBlock, openPageInNewTab, openFile, openInNewTab, route } from "../router";
 import { paletteCommands } from "../keybindings";
 import { closePane, focusPane, focusedRouter, layoutPaneIds, openRouteInOtherPane, paneRouter } from "../panes";
@@ -11,6 +11,8 @@ import { SearchResultRow } from "./SearchResultRow";
 import type { MatchSpan, ObjectiveMatchClass, PageKind } from "../types";
 import { rankLauncherItems, recordLauncherActivation } from "../launcherRanking";
 import { dismissTopTransient, registerTransientLayer } from "../transientLayers";
+import { persistBlockRefTarget } from "../store";
+import type { QueryPageScope } from "../types";
 
 // One selectable result row.
 type Item =
@@ -54,6 +56,7 @@ export function QuickSwitcher(): JSX.Element {
   let inputRef: HTMLInputElement | undefined;
   let resultsRef: HTMLDivElement | undefined;
   let originPaneId: string | null = null;
+  const [currentPageScope, setCurrentPageScope] = createSignal<QueryPageScope | null>(null);
   let wasOpen = false;
   // X11/WebKitGTK pastes the PRIMARY selection into the focused input on ANY
   // middle-click (not cancelable from the row's mousedown). We want that paste
@@ -69,6 +72,7 @@ export function QuickSwitcher(): JSX.Element {
   });
 
   const commandsOnly = () => switcherMode() === "commands";
+  const currentPageOnly = () => currentPageScope() !== null;
   // The backend search/quick-switch IPC keys off a debounced query so holding
   // keys doesn't fire a whole-graph scan per character; local sections (recents,
   // commands, create-option) still react to `query()` instantly.
@@ -84,13 +88,27 @@ export function QuickSwitcher(): JSX.Element {
   // graph. The +1 row is never displayed. Re-fetches when the query OR the
   // (Load-more-grown) limit changes; the early-stop scan keeps each fetch cheap.
   const [graphResults] = createResource(
-    () => (commandsOnly() ? null : { q: debouncedQuery(), pages: pageLimit(), blocks: blockLimit() }),
+    () => (commandsOnly() ? null : {
+      q: debouncedQuery(),
+      pages: currentPageOnly() ? 0 : pageLimit(),
+      blocks: blockLimit(),
+      scope: currentPageScope(),
+    }),
     (s) => s && s.q.trim()
-      ? backend().runGraphSearch(s.q, s.pages + 1, s.blocks + 1, "quick-switch", false)
+      ? backend().runGraphSearch(
+          s.q,
+          s.pages + (s.scope ? 0 : 1),
+          s.blocks + 1,
+          s.scope ? "quick-switch:current-page" : "quick-switch",
+          false,
+          s.scope ?? undefined,
+        )
       : Promise.resolve({ hits: [], diagnostics: [], explanation: { branches: [] }, cancelled: false })
   );
 
   const currentPageName = () => {
+    const scope = currentPageScope();
+    if (scope) return scope.name;
     const r = route();
     return r.kind === "page" ? r.name : null;
   };
@@ -121,6 +139,7 @@ export function QuickSwitcher(): JSX.Element {
 
     // Empty query → recents.
     if (!q) {
+      if (currentPageOnly()) return out;
       const recents: Item[] = recentPages().map((r) => ({
         t: "page",
         name: r.name,
@@ -136,7 +155,7 @@ export function QuickSwitcher(): JSX.Element {
     const ql = q.toLowerCase();
     // Page and block membership, diagnostics, and match evidence now come from
     // one Rust QueryPlan execution. Commands/create remain launcher providers.
-    const allPages: Item[] = (graphResults()?.hits ?? [])
+    const allPages: Item[] = currentPageOnly() ? [] : (graphResults()?.hits ?? [])
       .filter((hit) => hit.entity === "page")
       .map((hit) => ({
         t: "page",
@@ -165,10 +184,10 @@ export function QuickSwitcher(): JSX.Element {
 
     // Create page (when no exact match exists).
     const exact = pageItems.some((p) => p.t === "page" && p.name.toLowerCase() === ql);
-    if (!exact) out.push({ header: "Create", items: [{ t: "create", name: q }] });
+    if (!currentPageOnly() && !exact) out.push({ header: "Create", items: [{ t: "create", name: q }] });
 
     // Commands matching the query.
-    const cmds = embryoPane ? [] : commandItems(q);
+    const cmds = embryoPane || currentPageOnly() ? [] : commandItems(q);
     if (cmds.length) out.push({ header: "Commands", items: cmds });
 
     // Blocks. Gather every match (backend order), then page the whole set so a
@@ -190,7 +209,7 @@ export function QuickSwitcher(): JSX.Element {
           adaptiveIdentity: `block:${hit.kind}:${hit.page.toLocaleLowerCase()}:${hit.block.id}`,
           adaptiveFavorite: isFavorite(hit.page),
         },
-        onCur: !!(cur && hit.page === cur),
+        onCur: currentPageOnly() || !!(cur && hit.page === cur),
       });
     }
     // We asked for blockLimit + 1; getting past the limit means more remain.
@@ -235,7 +254,14 @@ export function QuickSwitcher(): JSX.Element {
   createEffect(() => {
     const open = switcherOpen();
     if (open && !wasOpen) {
-      originPaneId = switcherEmbryo()?.paneId ?? focusedRouter().paneId;
+      const origin = focusedRouter();
+      originPaneId = switcherEmbryo()?.paneId ?? origin.paneId;
+      const originRoute = origin.route();
+      setCurrentPageScope(
+        switcherMode() === "current-page" && originRoute.kind === "page"
+          ? { name: originRoute.name, pageKind: originRoute.pageKind, path: originRoute.path }
+          : null,
+      );
       setQuery(switcherEmbryo()?.prefill ?? "");
       setSel(0);
       setSyntaxOpen(false);
@@ -321,6 +347,20 @@ export function QuickSwitcher(): JSX.Element {
     closeSwitcher();
   };
 
+  const chooseSidebar = (it: Extract<Item, { t: "page" | "block" }>) => {
+    recordChoice(it);
+    if (it.t === "page") {
+      openPageInSidebar(it.name, it.pageKind);
+    } else {
+      // Search results can target a page that is not loaded in the frontend.
+      // Stamp its id:: through the guarded ordinary page-save path before the
+      // durable sidebar item outlives this search session.
+      void persistBlockRefTarget(it.blockId, it.page, it.pageKind);
+      openBlockInSidebar({ uuid: it.blockId, page: it.page, pageKind: it.pageKind });
+    }
+    closeSwitcher();
+  };
+
   // Middle-click: open in a background tab and KEEP the switcher open, so you can
   // fan several results out without re-searching. A block opens zoomed into
   // itself (self-contained and durable — the tab shows exactly what you found);
@@ -369,7 +409,9 @@ export function QuickSwitcher(): JSX.Element {
       e.preventDefault();
       const it = flat()[sel()];
       if (it) {
-        if (e.altKey && !switcherEmbryo()) void chooseOther(it);
+        const shiftOnly = e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey;
+        if (shiftOnly && !switcherEmbryo() && (it.t === "page" || it.t === "block")) chooseSidebar(it);
+        else if (e.altKey && !switcherEmbryo()) void chooseOther(it);
         else choose(it);
       }
     } else if (e.key === "Escape") {
@@ -414,7 +456,7 @@ export function QuickSwitcher(): JSX.Element {
             ref={inputRef}
             class="switcher-input"
             type="text"
-            placeholder={commandsOnly() ? "Run a command…" : "Jump to page, search, or run a command…"}
+            placeholder={commandsOnly() ? "Run a command…" : currentPageOnly() ? "Search blocks in current page…" : "Jump to page, search, or run a command…"}
             value={query()}
             role="combobox"
             aria-autocomplete="list"
@@ -514,6 +556,7 @@ export function QuickSwitcher(): JSX.Element {
             <span><kbd>↵</kbd> open</span>
             <span><kbd>⌘⇧P</kbd> commands</span>
             <Show when={!commandsOnly()}>
+              <Show when={!currentPageOnly()}>
               <button
                 type="button"
                 class="switcher-syntax-toggle"
@@ -540,6 +583,7 @@ export function QuickSwitcher(): JSX.Element {
               >
                 Open search tab
               </button>
+              </Show>
             </Show>
           </div>
         </div>

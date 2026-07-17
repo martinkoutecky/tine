@@ -24,6 +24,7 @@ import type {
   PrintOpts,
   PdfState,
   QueryExecution,
+  QueryPageScope,
   QueryExportBatch,
   QueryExportSpec,
 } from "./types";
@@ -302,7 +303,8 @@ export interface Backend {
     pageLimit: number,
     blockLimit: number,
     lane?: string,
-    explain?: boolean
+    explain?: boolean,
+    scope?: QueryPageScope
   ): Promise<QueryExecution>;
   quickSwitch(query: string, limit: number): Promise<PageEntry[]>;
   /** Capture-only page/tag completion capability. It is intentionally not the
@@ -670,8 +672,8 @@ class TauriBackend implements Backend {
   search(query: string, limit: number, lane?: string) {
     return this.call<RefGroup[]>("search", { query, limit, lane });
   }
-  runGraphSearch(source: string, pageLimit: number, blockLimit: number, lane = "graph-search", explain = false) {
-    return this.call<QueryExecution>("run_graph_search", { source, pageLimit, blockLimit, lane, explain });
+  runGraphSearch(source: string, pageLimit: number, blockLimit: number, lane = "graph-search", explain = false, scope?: QueryPageScope) {
+    return this.call<QueryExecution>("run_graph_search", { source, pageLimit, blockLimit, lane, explain, scope: scope ?? null });
   }
   quickSwitch(query: string, limit: number) {
     return this.call<PageEntry[]>("quick_switch", { query, limit });

@@ -1029,7 +1029,7 @@ export function mockBackend(): Backend {
       }
       return groups.filter((g) => g.blocks.length > 0);
     },
-    async runGraphSearch(source: string, pageLimit: number, blockLimit: number, _lane?: string, explain = false): Promise<QueryExecution> {
+    async runGraphSearch(source: string, pageLimit: number, blockLimit: number, _lane?: string, explain = false, scope?: import("./types").QueryPageScope): Promise<QueryExecution> {
       // Browser-preview approximation only (ADR 0016). Production matching,
       // diagnostics, and UTF-16 evidence come from Rust's QueryPlan evaluator.
       const matcher = parseSearchQuery(source);
@@ -1042,7 +1042,7 @@ export function mockBackend(): Backend {
         };
       }
       const bare = simpleTerm(matcher);
-      const pages = all
+      const pages = scope ? [] : all
         .map((page) => ({ page, score: bare ? fuzzyScore(bare, page.name) : 0 }))
         .filter(({ page, score }) => bare ? score > 0 : matcherMatches(matcher, page.name.toLowerCase(), page.name))
         .sort((a, b) => b.score - a.score)
@@ -1060,7 +1060,16 @@ export function mockBackend(): Backend {
           }],
           score,
         }));
+      const inScope = (group: RefGroup) => {
+        if (!scope) return true;
+        const page = all.find((candidate) => candidate.kind === group.kind && candidate.name.toLowerCase() === group.page.toLowerCase());
+        if (!page) return false;
+        return scope.path
+          ? mockPagePath(page) === scope.path
+          : page.kind === scope.pageKind && page.name.toLowerCase() === scope.name.toLowerCase();
+      };
       const blocks = collect((block) => matcherMatches(matcher, block.raw.toLowerCase(), block.raw))
+        .filter(inScope)
         .flatMap((group) => group.blocks.map((block) => ({ group, block })))
         .slice(0, Math.max(0, blockLimit))
         .map(({ group, block }) => {
