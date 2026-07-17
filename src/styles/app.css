@@ -7616,14 +7616,8 @@ img.emoji {
   --pdf-local-text: #e8eaed;
 }
 
-/* Apply paper/inversion effects only to pdf.js-owned page presentation. Tine's
-   highlight layer remains outside the filter so overlay colors stay usable. */
-.pdf-viewer[data-theme="warm"] .pdf-page > :is(canvas, .textLayer) {
-  filter: sepia(0.18) saturate(0.88);
-}
-
 .pdf-viewer[data-theme="dark"] .pdf-page > :is(canvas, .textLayer) {
-  filter: invert(1) hue-rotate(180deg);
+  filter: invert(1);
 }
 
 .pdf-viewer[data-theme="dark"] .pdf-hl {

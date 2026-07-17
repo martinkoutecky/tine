@@ -1350,14 +1350,15 @@ describe("PdfViewer released-OG themes and outline", () => {
     }
   });
 
-  it("styles light, warm, and dark locally while leaving the highlight layer uninverted", () => {
+  it("matches released OG 1.0.0 page-theme filtering without inverting highlight overlays", () => {
     const css = readFileSync("src/styles/app.css", "utf8");
-    expect(css).toContain('.pdf-viewer[data-theme="light"] {\n  --pdf-container-bg: #fff;');
-    expect(css).toContain('.pdf-viewer[data-theme="warm"] {\n  --pdf-container-bg: #f6efdf;');
-    expect(css).toContain('  --pdf-toolbar-bg: #f6efdf;\n  --pdf-page-bg: #f8eeda;');
+    expect(css).toContain('.pdf-viewer[data-theme="light"] {\n  --pdf-container-bg: #fff;\n  --pdf-toolbar-bg: #fff;\n  --pdf-page-bg: #fff;');
+    expect(css).toContain('.pdf-viewer[data-theme="warm"] {\n  --pdf-container-bg: #f6efdf;\n  --pdf-toolbar-bg: #f6efdf;\n  --pdf-page-bg: #f8eeda;');
+    expect(css).not.toMatch(/\.pdf-viewer\[data-theme="warm"\][^{]*\{[^}]*filter:[^}]*\b(?:sepia|saturate)\b/s);
+    expect(css).not.toMatch(/\.pdf-viewer\[data-theme="dark"\][^{]*\{[^}]*filter:[^}]*\bhue-rotate\b/s);
+    expect(css).toMatch(/\.pdf-page \{[^}]*background: var\(--pdf-page-bg\);/s);
     expect(css).toContain('.pdf-viewer[data-theme="dark"] {\n  --pdf-container-bg: #202124;');
-    expect(css).toMatch(/\.pdf-viewer\[data-theme="warm"\] \.pdf-page > :is\(canvas, \.textLayer\) \{[^}]*filter: sepia/s);
-    expect(css).toMatch(/\.pdf-viewer\[data-theme="dark"\] \.pdf-page > :is\(canvas, \.textLayer\) \{[^}]*filter: invert\(1\) hue-rotate\(180deg\)/s);
+    expect(css).toMatch(/\.pdf-viewer\[data-theme="dark"\] \.pdf-page > :is\(canvas, \.textLayer\) \{[^}]*filter: invert\(1\);/s);
     expect(css).toMatch(/\.pdf-viewer\[data-theme="dark"\] \.pdf-hl \{[^}]*mix-blend-mode: screen/s);
     expect(css).not.toMatch(/\.pdf-viewer\[data-theme="dark"\] \.pdf-hl-layer \{[^}]*filter:/s);
   });
