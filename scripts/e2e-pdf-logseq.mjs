@@ -531,6 +531,23 @@ function graphSnapshot() {
   return snapshot;
 }
 
+function fileTreeSnapshot(directory) {
+  const files = [];
+  const walk = (current) => {
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const absolute = path.join(current, entry.name);
+      if (entry.isDirectory()) walk(absolute);
+      else if (entry.isFile()) files.push({
+        path: path.relative(directory, absolute),
+        size: fs.statSync(absolute).size,
+        sha256: sha256(absolute),
+      });
+    }
+  };
+  walk(directory);
+  return files.sort((a, b) => a.path.localeCompare(b.path));
+}
+
 // A pending area chooser must be completely side-effect free. Hashes are useful
 // for the final receipt, but retain the actual bytes here so a cancellation
 // proves literal equality for the real sidecar, hls page, and every asset.
@@ -843,6 +860,49 @@ async function proveNativeUploadsThemesAndHighlights() {
   await browser.keys(["Escape"]);
   await browser.$(".pdf-settings-menu").waitForExist({ reverse: true, timeout: 5_000 });
 
+  // This is deliberately stronger than the later PdfViewer remount check: end
+  // the WebDriver session and the actual app/driver process tree, then start a
+  // new native WebKit process with the exact same isolated XDG directories.
+  const localStorageKey = "ls-pdf-viewer-theme";
+  const processRelaunchTheme = {
+    storageKey: localStorageKey,
+    isolatedXdg: {
+      data: env.XDG_DATA_HOME,
+      config: env.XDG_CONFIG_HOME,
+      cache: env.XDG_CACHE_HOME,
+    },
+    before: await browser.execute((key) => ({
+      localStorage: localStorage.getItem(key),
+      viewerTheme: document.querySelector(".pdf-viewer")?.getAttribute("data-theme"),
+    }), localStorageKey),
+  };
+  if (processRelaunchTheme.before.localStorage !== "dark" || processRelaunchTheme.before.viewerTheme !== "dark") {
+    throw new Error(`dark choice was not present before the clean process relaunch: ${JSON.stringify(processRelaunchTheme.before)}`);
+  }
+  await browser.deleteSession();
+  browser = undefined;
+  killDriverTree();
+  await sleep(800);
+  const terminatedXdg = path.join(ARTIFACTS, "localstorage-relaunch-xdg-after-clean-termination");
+  fs.cpSync(path.join(TMP, "xdg"), terminatedXdg, { recursive: true, force: true });
+  processRelaunchTheme.storageFilesAfterTermination = fileTreeSnapshot(terminatedXdg);
+  await startDriverTree("pdf-theme-relaunch");
+  browser = await remote({
+    hostname: "127.0.0.1", port: DRIVER_PORT, path: "/", logLevel: "error",
+    connectionRetryCount: 1, connectionRetryTimeout: 60_000,
+    capabilities: tauriCapabilities(APP, "pdf-theme-relaunch", process.platform, webviewTarget.debuggerAddress),
+  });
+  await browser.$(".ls-block").waitForExist({ timeout: 30_000 });
+  await routeToPage("PDF Outline");
+  await reopenCurrentPagePdf(path.basename(OUTLINE_STORED), "Outline fixture", "outline-reopen-after-process-relaunch");
+  processRelaunchTheme.after = await browser.execute((key) => ({
+    localStorage: localStorage.getItem(key),
+    viewerTheme: document.querySelector(".pdf-viewer")?.getAttribute("data-theme"),
+  }), localStorageKey);
+  if (processRelaunchTheme.after.localStorage !== "dark" || processRelaunchTheme.after.viewerTheme !== "dark") {
+    throw new Error(`dark PDF theme did not survive a clean real application relaunch: ${JSON.stringify(processRelaunchTheme)}`);
+  }
+
   // The real fixture contains an explicit page-reference parent and a nested
   // named destination. Expansion and both navigation kinds are pointer actions;
   // the DOM only observes their visible result.
@@ -901,6 +961,7 @@ async function proveNativeUploadsThemesAndHighlights() {
   }
   literalReceipt.rows.themesOutline = {
     choices: themeState,
+    processRelaunchTheme,
     remountedTheme,
     colouredCanvas,
     explicitDestinationPage: 1,

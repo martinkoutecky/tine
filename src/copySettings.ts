@@ -1,7 +1,7 @@
 // Device-local copy/paste behavior preferences (persisted in tine-settings.json via
-// the generic app_bool backend, so they survive a restart — WebKitGTK localStorage
-// does not). Read once at startup by initCopySettings(); the signals drive both the
-// copy logic (store.ts selectionMarkdown) and the Settings toggles.
+// the generic app_bool backend for atomic, WebView-independent state). Read once at
+// startup by initCopySettings(); the signals drive both the copy logic
+// (store.ts selectionMarkdown) and the Settings toggles.
 //
 // Both DIFFER from OG by default (Tine's preferred behavior), with a one-click
 // revert to Logseq in Settings:

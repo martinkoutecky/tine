@@ -71,8 +71,8 @@ harness, not to build. Watch for two gotchas:
   new spawn site). Default = system opener (`xdg-open`/OS equivalent).
 - **Setting (small):** `Settings → Files → Excalidraw command` — optional
   custom command template (e.g. a desktop Excalidraw binary); empty = system
-  opener. Persist via the Rust backend like other settings (localStorage does
-  not survive restarts in WebKitGTK).
+  opener. Persist via the Rust backend like other settings so native launch
+  actions and independent WebViews share one atomic value.
 - **Discoverability of the workflow itself:** the menu item appears only on
   matching filenames; docs/FEATURES.md documents the export-with-embed-scene
   convention (that's where users learn to produce the right files). Users

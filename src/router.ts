@@ -223,8 +223,8 @@ export function createPaneRouter(paneId = "main"): PaneRouter {
 
   // Start on a single journals tab. The saved session (if any) is loaded
   // asynchronously from the backend by restoreSession(), called once at startup
-  // before first paint - see main.tsx. (localStorage isn't durably persisted in
-  // this WebKitGTK app, so the session round-trips through a real backend file.)
+  // before first paint - see main.tsx. The structured session round-trips through
+  // an atomic backend file rather than being tied to one WebView's localStorage.
   const [tabs, setTabs] = createSignal<Tab[]>([
     { id: newId(), history: [{ kind: "journals" }], pos: 0, pinned: false },
   ]);

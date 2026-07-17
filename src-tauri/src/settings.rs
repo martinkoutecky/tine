@@ -293,8 +293,8 @@ pub(crate) fn set_app_string(
 
 /// Path to the persisted UI session (open tabs / active tab / zoom). This is
 /// app-level window state, not graph content, so it lives next to the settings
-/// file in the app-data dir. (WebKitGTK's localStorage is not durably persisted
-/// for this app, so the frontend can't rely on it — it round-trips here.)
+/// file in the app-data dir. The backend owns atomic structured persistence and
+/// makes it independent of a particular WebView's localStorage namespace.
 fn legacy_session_path(app: &tauri::AppHandle) -> Option<PathBuf> {
     app.path()
         .app_data_dir()

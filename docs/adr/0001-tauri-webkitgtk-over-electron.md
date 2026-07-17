@@ -26,10 +26,12 @@ not Electron, and not a bundled browser engine.
   sold on.
 - **Harder:** we own the host-webview quirks, and **WebKitGTK is the sharp edge** —
   blob-URL video can't play, color-emoji webfonts paint blank (we ship Twemoji
-  SVGs instead), `localStorage` isn't persisted across launches, `window.confirm`
+  SVGs instead), separate WebViews do not share `localStorage`, `window.confirm`
   is a silent no-op, and GPU/DMABUF compositor combos can fail to start (hence
-  `TINE_GPU=0`). Each is worked around in code; new UI must be checked against
-  WebKitGTK, not just a dev browser.
+  `TINE_GPU=0`). A same-XDG cold-restart regression proves current Linux
+  `localStorage` persistence; durable structured or cross-WebView state still uses
+  Rust-owned app settings/session files. New UI must be checked against WebKitGTK,
+  not just a dev browser.
 - **Committed to:** Linux is the primary, best-tested target; macOS/Windows ride
   the same frontend but are newer. Unsigned-build friction (Gatekeeper, SmartScreen)
   is now ours to document and, eventually, to fix with notarization.

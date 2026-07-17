@@ -1,6 +1,6 @@
 // Device-local spellcheck preferences (persisted in tine-settings.json via the
-// generic app_bool/app_string backend, so they survive a restart — WebKitGTK
-// localStorage does not). Read at startup by initSpellcheckSettings(); the
+// generic app_bool/app_string backend for atomic, WebView-independent state).
+// Read at startup by initSpellcheckSettings(); the
 // `spellcheckEnabled` signal gates the editor <textarea spellcheck> attribute,
 // and `applySpellcheck` pushes the toggle + languages onto the native WebKitGTK
 // spell checker live (no restart — unlike Logseq, which needs a relaunch).

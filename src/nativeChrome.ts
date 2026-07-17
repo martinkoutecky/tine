@@ -1,5 +1,5 @@
 // Window-chrome preferences (device-local, persisted in tine-settings.json via the
-// generic app_bool backend — WebKitGTK localStorage doesn't survive a restart).
+// generic app_bool backend so native startup can read them before a WebView exists).
 //
 // Tine's main window is frameless by default (`decorations: false`) so the toolbar
 // doubles as the title bar and we save a row — see WindowChrome.tsx. That custom

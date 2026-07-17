@@ -37,10 +37,10 @@ hand-vetted set, not a scraper.
   3(a) "an Appearance pane" already exists; we extend it. No new tab/route.
 - **Theme mode state** — `src/ui.ts`: `theme` signal, applied to
   `<html data-theme>` at startup (`applyTheme()` called once). NOTE it persists via
-  `localStorage` (`THEME_KEY`), which the BACKLOG flags as a known bug — **WebKitGTK
-  localStorage does not survive a restart** (memory `tine-localstorage-ephemeral`).
-  The gallery must NOT repeat this: persist the selection through the backend (see
-  Design §1), not localStorage.
+  `localStorage` (`THEME_KEY`). A current same-XDG Linux cold-restart test proves
+  that value survives a process relaunch. The gallery nevertheless uses the backend
+  (see Design §1), because app settings are atomic and available to independent
+  WebViews rather than being tied to one origin-local store.
 - **App-level persistence that survives restart** — the generic
   `get_app_string`/`set_app_string` (+ bool) backend, written to
   `tine-settings.json`. Frontend API: `backend().getAppString(key, fallback)` /

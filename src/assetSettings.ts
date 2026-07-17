@@ -1,6 +1,6 @@
 // Device-local asset-naming preference (persisted in tine-settings.json via the
-// generic app_string backend, so it survives a restart — WebKitGTK localStorage
-// does not). Read once at startup by initAssetSettings(); the signal drives both
+// generic app_string backend for atomic, WebView-independent state). Read once at
+// startup by initAssetSettings(); the signal drives both
 // the insert-time tokenizer (media.ts assetFileName) and the Settings field.
 //
 // The value is a FORMAT TEMPLATE with `%`-tokens substituted per insert:
