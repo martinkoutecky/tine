@@ -573,9 +573,9 @@ await withApp(2, async (browser) => {
   ]) {
     const root = `[data-block-id="${id}"]`;
     const textSpanSelector = `${root} > .block-main > .block-content-wrapper > .block-content span[data-so]`;
-    // Saving the first live hit refreshes backlink membership asynchronously.
-    // Wait through that bounded remount; if the revealed child really re-collapsed
-    // or changed identity, this same-ID selector still times out and R6/R7 fail.
+    // The revealed descendant must still be present under its original identity
+    // after saving its parent. This is deliberately an identity/disclosure check,
+    // not a text-only approximation.
     await browser.$(textSpanSelector).waitForExist({
       timeout: 10_000,
       timeoutMsg: `linked-reference edit target ${marker} did not survive the reactive refresh`,
@@ -602,7 +602,12 @@ await withApp(2, async (browser) => {
       input.setSelectionRange(input.value.length, input.value.length);
     }, `${root} textarea.block-editor`);
     await editor.addValue(` ${marker}`);
-    await browser.$("h1.page-title").click();
+    // Do not use the page title to commit the edit: it is a navigation control,
+    // so clicking it remounts the page and legitimately resets an off-viewport
+    // lazy reference group. The page-actions button is a real focus target that
+    // commits the editor through the ordinary blur path without changing routes.
+    await browser.$(".page-actions-trigger").click();
+    await browser.keys(["Escape"]);
     await browser.waitUntil(() => fs.readFileSync(`${GRAPH}/pages/Linked source.md`, "utf8").includes(marker), {
       timeout: 10_000, timeoutMsg: `live linked-reference edit did not save ${marker}`,
     });
@@ -671,7 +676,11 @@ await withApp(2, async (browser) => {
     timeout: 5_000, timeoutMsg: "Expand all did not restore linked reference bodies",
   });
 
-  await browser.$(".unlinked-references .references-header").click();
+  const unlinkedHeader = await browser.$(".unlinked-references .references-header");
+  // WebKitDriver does not reliably scroll an off-viewport non-button element
+  // before its native click. Scroll, then drive the actual header interaction.
+  await unlinkedHeader.scrollIntoView();
+  await unlinkedHeader.click();
   await browser.$(".unlinked-references .reference-bulk-controls").waitForExist({ timeout: 10_000 });
   const unlinkedProof = await browser.execute((expectedRaw) => {
     const groups = [...document.querySelectorAll(".unlinked-references .reference-group")];
