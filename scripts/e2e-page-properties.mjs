@@ -47,11 +47,13 @@ const detailed = [
   "",
 ].join("\n");
 const simple = "A:: XX\r\nB:: XX\r\nC:: XX\r\n";
+const deletion = "alias:: Delete Me\ncustom/key:: transient\n\n- Body survives\n";
 fs.writeFileSync(`${GRAPH}/pages/Property detailed.md`, detailed);
 fs.writeFileSync(`${GRAPH}/pages/Property simple.md`, simple);
+fs.writeFileSync(`${GRAPH}/pages/Property deletion.md`, deletion);
 const now = new Date();
 const journal = `${now.getFullYear()}_${String(now.getMonth() + 1).padStart(2, "0")}_${String(now.getDate()).padStart(2, "0")}`;
-fs.writeFileSync(`${GRAPH}/journals/${journal}.md`, "- [[Property detailed]]\n- [[Property simple]]\n");
+fs.writeFileSync(`${GRAPH}/journals/${journal}.md`, "- [[Property detailed]]\n- [[Property simple]]\n- [[Property deletion]]\n");
 
 const env = {
   ...process.env,
@@ -159,6 +161,77 @@ async function nativeTab({ shift = false } = {}) {
   await browser.releaseActions();
 }
 
+async function nativeSelectAll() {
+  await browser.performActions([{
+    type: "key",
+    id: "page-properties-select-all",
+    actions: [
+      { type: "keyDown", value: "\uE009" },
+      { type: "keyDown", value: "a" },
+      { type: "keyUp", value: "a" },
+      { type: "keyUp", value: "\uE009" },
+    ],
+  }]);
+  await browser.releaseActions();
+}
+
+async function replaceHeaderLikeUser(editor, replacement, selection = null) {
+  // WebdriverIO's setValue() first clears the textarea as a separate WebDriver
+  // command. Clearing an existing header and blurring is a real delete action,
+  // so Tine correctly removes that transient editor before setValue() can issue
+  // its second (send-keys) command. A user replaces text in one edit session:
+  // select it, then type. Exercise that native sequence and prove there was no
+  // artificial empty input between the two actions.
+  await browser.execute(() => {
+    window.__tinePageHeaderInputTrace = [];
+    const textarea = document.querySelector(".page-blocks textarea.block-editor");
+    textarea?.addEventListener("input", (event) => {
+      window.__tinePageHeaderInputTrace.push({
+        inputType: event.inputType,
+        data: event.data,
+        value: event.currentTarget.value,
+      });
+    }, { capture: true });
+  });
+  await editor.click();
+  if (selection) {
+    await browser.execute(({ start, end }) => {
+      const textarea = document.querySelector(".page-blocks textarea.block-editor");
+      if (!(textarea instanceof HTMLTextAreaElement)) throw new Error("missing page-header editor");
+      textarea.focus();
+      textarea.setSelectionRange(start, end);
+    }, selection);
+  } else {
+    await nativeSelectAll();
+  }
+  await editor.addValue(replacement);
+  const trace = await browser.execute(() => window.__tinePageHeaderInputTrace ?? []);
+  if (
+    trace.length === 0
+    || trace[0].data !== replacement[0]
+    || trace[0].value === ""
+    || trace.some((entry) => entry.value === "")
+  ) {
+    throw new Error(`native page-header replacement emitted an empty intermediate input: ${JSON.stringify(trace)}`);
+  }
+  return trace;
+}
+
+async function deleteHeaderLikeUser(editor) {
+  await editor.click();
+  await nativeSelectAll();
+  await browser.keys(["Backspace"]);
+  if (await editor.getValue() !== "") {
+    throw new Error(`native page-header deletion did not empty the editor: ${JSON.stringify(await editor.getValue())}`);
+  }
+  await browser.execute(() => {
+    const textarea = document.querySelector(".page-blocks textarea.block-editor");
+    if (!(textarea instanceof HTMLTextAreaElement)) throw new Error("missing page-header editor");
+    textarea.blur();
+  });
+  await editor.waitForExist({ reverse: true, timeout: 5_000 });
+}
+
 async function activePagePropertyControl() {
   return browser.execute(() => {
     const panel = document.querySelector(".page-props-panel");
@@ -239,7 +312,14 @@ try {
     throw new Error(`page-header ordinary editor lost raw properties/separators: ${JSON.stringify(originalHeader)}`);
   }
   const editedHeader = originalHeader.replace("ai-prompt:: [[Prompt-Test]]", "ai-prompt:: [[Prompt-Edited]]");
-  await headerEditor.setValue(editedHeader);
+  const oldPromptStart = originalHeader.indexOf("Prompt-Test");
+  const replacementTrace = await replaceHeaderLikeUser(headerEditor, "Prompt-Edited", {
+    start: oldPromptStart,
+    end: oldPromptStart + "Prompt-Test".length,
+  });
+  if ((await headerEditor.getValue()) !== editedHeader) {
+    throw new Error(`native page-header replacement did not preserve the intended value: ${JSON.stringify({ replacementTrace, actual: await headerEditor.getValue() })}`);
+  }
   await browser.execute(() => {
     const editor = document.querySelector(".page-blocks textarea.block-editor");
     editor?.focus();
@@ -260,7 +340,11 @@ try {
     timeout: 5_000,
     timeoutMsg: "Arrow Up did not cross from the first body block back into the page header",
   });
-  await browser.$("h1.page-title").click();
+  await browser.execute(() => {
+    const textarea = document.querySelector(".page-blocks textarea.block-editor");
+    if (!(textarea instanceof HTMLTextAreaElement)) throw new Error("missing page-header editor");
+    textarea.blur();
+  });
   const detailedAfter = await waitForFile(
     `${GRAPH}/pages/Property detailed.md`,
     (text) => text.includes("alias:: Test Record, Alternate") && text.includes("ai-prompt:: [[Prompt-Edited]]"),
@@ -298,7 +382,59 @@ try {
   if (!reopenedCustom?.includes("Prompt-Edited")) {
     throw new Error(`reopened page did not parse the edited custom header: ${JSON.stringify(reopenedCustom)}`);
   }
-  console.log("PASS: page-header click/edit/navigation, gear traversal, disk bytes, and real-app reopen are canonical");
+  await openPage("Property deletion");
+  const deleteTarget = await browser.execute(() => {
+    const rows = [...document.querySelectorAll(".page-properties .prop-row")];
+    const row = rows.find((element) => element.querySelector(".prop-key")?.textContent?.trim() === "custom/key");
+    if (!row) return false;
+    row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+    return true;
+  });
+  if (!deleteTarget) throw new Error("missing rendered page-header deletion target");
+  headerEditor = await browser.$(".page-blocks textarea.block-editor");
+  await headerEditor.waitForExist({ timeout: 5_000 });
+  const selectAllTrace = await replaceHeaderLikeUser(headerEditor, "alias:: Delete Me Later");
+  if ((await headerEditor.getValue()) !== "alias:: Delete Me Later") {
+    throw new Error(`Ctrl+A page-header replacement did not preserve the intended value: ${JSON.stringify({ traceLength: selectAllTrace.length, actual: await headerEditor.getValue() })}`);
+  }
+  await browser.execute(() => {
+    const textarea = document.querySelector(".page-blocks textarea.block-editor");
+    if (!(textarea instanceof HTMLTextAreaElement)) throw new Error("missing page-header editor");
+    textarea.blur();
+  });
+  const replacementAfter = await waitForFile(
+    `${GRAPH}/pages/Property deletion.md`,
+    (text) => text.startsWith("alias:: Delete Me Later\n\n"),
+    "Ctrl+A page-header replacement",
+  );
+  if (replacementAfter !== "alias:: Delete Me Later\n\n- Body survives\n") {
+    throw new Error(`Ctrl+A page-header replacement changed body bytes: ${JSON.stringify(replacementAfter)}`);
+  }
+  await openPage("Property deletion");
+  const replacedTarget = await browser.execute(() => {
+    const row = [...document.querySelectorAll(".page-aliases, .page-properties .prop-row")]
+      .find((element) => element.textContent?.includes("Delete Me Later"));
+    if (!row) return false;
+    row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+    return true;
+  });
+  if (!replacedTarget) throw new Error("missing replaced page-header deletion target");
+  headerEditor = await browser.$(".page-blocks textarea.block-editor");
+  await headerEditor.waitForExist({ timeout: 5_000 });
+  await deleteHeaderLikeUser(headerEditor);
+  const deletionAfter = await waitForFile(
+    `${GRAPH}/pages/Property deletion.md`,
+    (text) => !text.includes("alias::") && !text.includes("custom/key::"),
+    "deliberate page-header deletion",
+  );
+  if (deletionAfter !== "- Body survives\n") {
+    throw new Error(`deleting the page header changed body bytes: ${JSON.stringify(deletionAfter)}`);
+  }
+  await openPage("Property deletion");
+  if ((await browser.$$(".page-properties .prop-row")).length !== 0) {
+    throw new Error("deleted page-header properties reappeared after real-app reopen");
+  }
+  console.log(`PASS: page-header click/edit/navigation, native replacements (${replacementTrace.length}+${selectAllTrace.length} input events), deletion, disk bytes, and real-app reopen are canonical`);
 } finally {
   try { await browser?.deleteSession(); } catch {}
   if (process.platform === "win32") {
