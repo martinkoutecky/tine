@@ -2,7 +2,7 @@
 // outside Tauri (browser dev / Playwright screenshots). Mirrors the real
 // backend's shape so the UI behaves identically.
 
-import type { Backend, GpuEnv, DebugInfo, InstalledPluginRecord } from "./backend";
+import type { Backend, GpuEnv, DebugInfo, InstalledPluginRecord, PluginRegistryCacheEnvelope } from "./backend";
 import type { BacklinkFilterContext, BacklinkFilterTarget, BlockDto, BlockPreview, GuideCopyResult, GuidePage, Highlight, PageDto, PageEntry, PdfState, QueryExecution, QueryExportBatch, QueryExportSpec, RefGroup } from "./types";
 import { SAMPLE_PDF_B64 } from "./sample-pdf";
 import { hlsPageName } from "./pdf";
@@ -83,6 +83,7 @@ let _id = 0;
 const nid = () => `mock-${_id++}`;
 const mockPlugins: InstalledPluginRecord[] = [];
 const mockPluginEntries = new Map<string, Uint8Array>();
+let mockPluginRegistryCache: PluginRegistryCacheEnvelope | null = null;
 
 function b(raw: string, children: BlockDto[] = [], collapsed = false, properties?: [string, string][]): BlockDto {
   // Mirror the real backend: a block carrying an `id::` property uses that uuid as
@@ -727,6 +728,34 @@ export function mockBackend(): Backend {
     },
     async verifyPluginRegistry() {
       // Browser mock has no embedded native key. Registry tests mock this boundary.
+    },
+    async loadPluginRegistryCache() {
+      if (mockPluginRegistryCache) {
+        return { kind: "envelope" as const, envelope: { ...mockPluginRegistryCache } };
+      }
+      const hasIndex = Object.prototype.hasOwnProperty.call(mockAppStrings, "plugin-registry-index");
+      const hasSignature = Object.prototype.hasOwnProperty.call(mockAppStrings, "plugin-registry-signature");
+      if (!hasIndex && !hasSignature) return { kind: "absent" as const };
+      if (!hasIndex || !hasSignature || !mockAppStrings["plugin-registry-index"] || !mockAppStrings["plugin-registry-signature"]?.trim()) {
+        return { kind: "unsafe" as const, reason: "legacy registry cache is torn" };
+      }
+      return {
+        kind: "legacy" as const,
+        indexJson: mockAppStrings["plugin-registry-index"],
+        signature: mockAppStrings["plugin-registry-signature"],
+      };
+    },
+    async storePluginRegistryCache(indexJson, signature, expectedLegacy) {
+      if (expectedLegacy && (
+        mockPluginRegistryCache !== null
+        || mockAppStrings["plugin-registry-index"] !== expectedLegacy.indexJson
+        || mockAppStrings["plugin-registry-signature"] !== expectedLegacy.signature
+      )) {
+        throw new Error("legacy registry cache changed during migration");
+      }
+      mockPluginRegistryCache = { schemaVersion: 1, indexJson, signature: signature.trim() };
+      delete mockAppStrings["plugin-registry-index"];
+      delete mockAppStrings["plugin-registry-signature"];
     },
     async setSystemBarAppearance(): Promise<void> {},
     async quit(): Promise<void> {

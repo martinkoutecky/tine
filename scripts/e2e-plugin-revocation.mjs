@@ -89,6 +89,23 @@ function seedEnabledSettings(indexJson, signature) {
   }, null, 2)}\n`);
 }
 
+async function assertNoContribution(browser, label) {
+  const state = await browser.execute((id, version, kinds) => ({
+    threadDecorationVisible: kinds.includes("thread-lines") && Boolean(document.querySelector(".plugin-thread-lines")),
+    identity: `${id}@${version}`,
+  }), manifest.id, manifest.version, decorationKinds);
+  if (state.threadDecorationVisible) throw new Error(`${label} contribution became visible: ${JSON.stringify(state)}`);
+  if (commandLabels.length > 0) {
+    await browser.keys(["Control", "Shift", "p"]);
+    await browser.$(".switcher-input").waitForExist({ timeout: 5_000 });
+    const paletteText = await browser.$(".switcher").getText();
+    const leaked = commandLabels.find((commandLabel) => paletteText.includes(commandLabel));
+    if (leaked) throw new Error(`${label} command appeared in the command palette: ${leaked}`);
+    await browser.keys(["Escape"]);
+    await browser.$(".switcher").waitForExist({ reverse: true, timeout: 5_000 });
+  }
+}
+
 // A CONNECT proxy which accepts the TLS tunnel and then never forwards bytes.
 // WebKit's HTTPS request therefore reaches a real open socket but can complete
 // only through the application's AbortController deadline.
@@ -170,20 +187,7 @@ try {
 
   seedEnabledSettings(revokedIndexJson, revokedSignature);
   await withAppSession("revoked", async (browser) => {
-    const state = await browser.execute((id, version, kinds) => ({
-      threadDecorationVisible: kinds.includes("thread-lines") && Boolean(document.querySelector(".plugin-thread-lines")),
-      identity: `${id}@${version}`,
-    }), manifest.id, manifest.version, decorationKinds);
-    if (state.threadDecorationVisible) throw new Error(`cached-revoked contribution became visible: ${JSON.stringify(state)}`);
-    if (commandLabels.length > 0) {
-      await browser.keys(["Control", "Shift", "p"]);
-      await browser.$(".switcher-input").waitForExist({ timeout: 5_000 });
-      const paletteText = await browser.$(".switcher").getText();
-      const leaked = commandLabels.find((label) => paletteText.includes(label));
-      if (leaked) throw new Error(`cached-revoked command appeared in the command palette: ${leaked}`);
-      await browser.keys(["Escape"]);
-      await browser.$(".switcher").waitForExist({ reverse: true, timeout: 5_000 });
-    }
+    await assertNoContribution(browser, "cached-revoked");
 
     await browser.$('[title="Settings (t s)"]').click();
     await browser.$("button=Plugins").click();
@@ -200,7 +204,31 @@ try {
   if (persistedState?.version !== manifest.version || persistedState.enabled !== false) {
     throw new Error(`cached revocation was not persisted disabled: ${JSON.stringify(persistedState)}`);
   }
-  console.log(`PASS: ${manifest.id}@${manifest.version} activated under control, then stayed absent and persisted disabled when revoked`);
+  const envelope = persisted.plugin_registry_cache;
+  if (envelope?.schemaVersion !== 1 || envelope.indexJson !== revokedIndexJson || envelope.signature !== revokedSignature) {
+    throw new Error(`legacy revocation pair did not migrate to one exact signed envelope: ${JSON.stringify(envelope)}`);
+  }
+  if (Object.hasOwn(persisted, "plugin-registry-index") || Object.hasOwn(persisted, "plugin-registry-signature")) {
+    throw new Error("legacy split registry keys survived successful atomic migration");
+  }
+  console.log(`PASS: ${manifest.id}@${manifest.version} stayed absent, migrated atomically, and persisted disabled when revoked`);
+
+  // Later cache loss must not resurrect the already revoked package: durable
+  // native enablement is an independent restart safety boundary.
+  delete persisted.plugin_registry_cache;
+  fs.writeFileSync(settingsPath, `${JSON.stringify(persisted, null, 2)}\n`);
+  await withAppSession("restart-without-cache", async (browser) => {
+    await assertNoContribution(browser, "restart-without-cache");
+    await browser.$('[title="Settings (t s)"]').click();
+    await browser.$("button=Plugins").click();
+    await browser.$("button=Installed (1)").click();
+    await browser.waitUntil(async () => browser.execute((id) => {
+      const row = [...document.querySelectorAll(".settings-field")].find((candidate) => candidate.textContent?.includes(id));
+      const toggle = row?.querySelector('[role="switch"]');
+      return toggle?.getAttribute("aria-checked") === "false";
+    }, manifest.id), { timeout: 10_000, timeoutMsg: "durably disabled package re-enabled after cache loss" });
+  });
+  console.log(`PASS: ${manifest.id}@${manifest.version} remained disabled after later cache unavailability`);
 } finally {
   for (const socket of sockets) socket.destroy();
   await new Promise((resolve) => stall.close(resolve));

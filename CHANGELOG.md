@@ -67,6 +67,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/); versions use
 
 ### Fixed
 
+- **Signed plugin registry cache updates are now failure-atomic and revocations
+  remain durable.** The verified index and signature share one native envelope,
+  legacy split keys migrate through a guarded transaction, torn or unreadable
+  cache state holds guest activation, and cached/live revocations clear the
+  installed enable bit before any guest bytes or runtime can be used.
 - **Ctrl-K page and block results now keep their exact physical file owner.**
   Current, alternate, background-tab, and right-sidebar activation preserve the
   selected graph-relative path, including duplicate-name sidebar restore and

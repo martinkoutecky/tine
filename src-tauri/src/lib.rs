@@ -47,8 +47,8 @@ use graph::{
 };
 use platform::{clipboard_files, copy_image_to_clipboard, gpu_env, open_external};
 use plugins::{
-    install_plugin, list_installed_plugins, read_plugin_entry, set_plugin_enabled,
-    uninstall_plugin, verify_plugin_registry,
+    install_plugin, list_installed_plugins, load_plugin_registry_cache, read_plugin_entry,
+    set_plugin_enabled, store_plugin_registry_cache, uninstall_plugin, verify_plugin_registry,
 };
 use settings::{
     forget_known_graph, get_app_bool, get_app_string, get_capture_enter_files,
@@ -825,6 +825,8 @@ pub fn run() {
             read_plugin_entry,
             set_plugin_enabled,
             verify_plugin_registry,
+            load_plugin_registry_cache,
+            store_plugin_registry_cache,
             migrate_identifier::take_identifier_migration_notice,
             gpu_env,
             get_smooth_scroll,

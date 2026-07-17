@@ -7,11 +7,166 @@ use tauri::Manager;
 
 const MAX_MANIFEST_BYTES: usize = 64 * 1024;
 const MAX_WASM_BYTES: usize = 8 * 1024 * 1024;
+const MAX_REGISTRY_INDEX_BYTES: usize = 2 * 1024 * 1024;
+const MAX_REGISTRY_SIGNATURE_BYTES: usize = 1024;
+const REGISTRY_CACHE_KEY: &str = "plugin_registry_cache";
+const LEGACY_REGISTRY_INDEX_KEY: &str = "plugin-registry-index";
+const LEGACY_REGISTRY_SIGNATURE_KEY: &str = "plugin-registry-signature";
 static INSTALL_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 const REGISTRY_PUBLIC_KEY: [u8; 32] = [
     0x6c, 0x25, 0xa1, 0xfd, 0x0c, 0x6d, 0xbc, 0x60, 0xca, 0xb7, 0xa4, 0x8c, 0x23, 0x6a, 0xa9, 0x18,
     0x45, 0x66, 0xa6, 0x57, 0xff, 0x69, 0x72, 0x46, 0xd3, 0x0b, 0xaf, 0xc4, 0x7e, 0x17, 0x6c, 0x00,
 ];
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct PluginRegistryCacheEnvelope {
+    schema_version: u8,
+    index_json: String,
+    signature: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct LegacyPluginRegistryCache {
+    index_json: String,
+    signature: String,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub(crate) enum PluginRegistryCacheLoad {
+    Absent,
+    Envelope { envelope: PluginRegistryCacheEnvelope },
+    Legacy {
+        #[serde(rename = "indexJson")]
+        index_json: String,
+        signature: String,
+    },
+    Unsafe { reason: String },
+}
+
+fn unsafe_cache(reason: impl Into<String>) -> PluginRegistryCacheLoad {
+    PluginRegistryCacheLoad::Unsafe {
+        reason: reason.into(),
+    }
+}
+
+fn load_plugin_registry_cache_at(path: &Path) -> PluginRegistryCacheLoad {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return PluginRegistryCacheLoad::Absent;
+        }
+        Err(error) => return unsafe_cache(format!("registry cache settings are unreadable: {error}")),
+    };
+    let root: serde_json::Value = match serde_json::from_str::<serde_json::Value>(&text) {
+        Ok(value) if value.is_object() => value,
+        Ok(_) => return unsafe_cache("registry cache settings root is not an object"),
+        Err(error) => return unsafe_cache(format!("registry cache settings are malformed: {error}")),
+    };
+    if let Some(value) = root.get(REGISTRY_CACHE_KEY) {
+        let envelope: PluginRegistryCacheEnvelope = match serde_json::from_value(value.clone()) {
+            Ok(envelope) => envelope,
+            Err(error) => return unsafe_cache(format!("registry cache envelope is malformed: {error}")),
+        };
+        if envelope.schema_version != 1
+            || envelope.index_json.is_empty()
+            || envelope.index_json.len() > MAX_REGISTRY_INDEX_BYTES
+            || envelope.signature.trim().is_empty()
+            || envelope.signature.len() > MAX_REGISTRY_SIGNATURE_BYTES
+        {
+            return unsafe_cache("registry cache envelope violates its size or schema contract");
+        }
+        return PluginRegistryCacheLoad::Envelope { envelope };
+    }
+
+    let legacy_index = root.get(LEGACY_REGISTRY_INDEX_KEY);
+    let legacy_signature = root.get(LEGACY_REGISTRY_SIGNATURE_KEY);
+    match (legacy_index, legacy_signature) {
+        (None, None) => PluginRegistryCacheLoad::Absent,
+        (Some(index), Some(signature)) => {
+            let Some(index_json) = index.as_str() else {
+                return unsafe_cache("legacy registry index has the wrong type");
+            };
+            let Some(signature) = signature.as_str() else {
+                return unsafe_cache("legacy registry signature has the wrong type");
+            };
+            if index_json.is_empty()
+                || index_json.len() > MAX_REGISTRY_INDEX_BYTES
+                || signature.trim().is_empty()
+                || signature.len() > MAX_REGISTRY_SIGNATURE_BYTES
+            {
+                return unsafe_cache("legacy registry cache violates its size contract");
+            }
+            PluginRegistryCacheLoad::Legacy {
+                index_json: index_json.to_string(),
+                signature: signature.to_string(),
+            }
+        }
+        _ => unsafe_cache("legacy registry cache is torn"),
+    }
+}
+
+fn store_plugin_registry_cache_at(
+    path: &Path,
+    index_json: String,
+    signature: String,
+    expected_legacy: Option<LegacyPluginRegistryCache>,
+) -> Result<(), String> {
+    if index_json.is_empty() || index_json.len() > MAX_REGISTRY_INDEX_BYTES {
+        return Err("plugin registry index is empty or too large".to_string());
+    }
+    let signature = signature.trim().to_string();
+    if signature.is_empty() || signature.len() > MAX_REGISTRY_SIGNATURE_BYTES {
+        return Err("plugin registry signature is empty or too large".to_string());
+    }
+    verify_plugin_registry(index_json.clone(), signature.clone())?;
+    let envelope = PluginRegistryCacheEnvelope {
+        schema_version: 1,
+        index_json,
+        signature,
+    };
+    crate::settings::update_settings_strict_at(path, |json| {
+        if let Some(expected) = &expected_legacy {
+            let actual_index = json.get(LEGACY_REGISTRY_INDEX_KEY).and_then(serde_json::Value::as_str);
+            let actual_signature = json
+                .get(LEGACY_REGISTRY_SIGNATURE_KEY)
+                .and_then(serde_json::Value::as_str);
+            if json.get(REGISTRY_CACHE_KEY).is_some()
+                || actual_index != Some(expected.index_json.as_str())
+                || actual_signature != Some(expected.signature.as_str())
+            {
+                return Err("legacy registry cache changed during migration".to_string());
+            }
+        }
+        json[REGISTRY_CACHE_KEY] = serde_json::to_value(&envelope)
+            .map_err(|error| error.to_string())?;
+        let object = json
+            .as_object_mut()
+            .ok_or_else(|| "device settings root is not an object".to_string())?;
+        object.remove(LEGACY_REGISTRY_INDEX_KEY);
+        object.remove(LEGACY_REGISTRY_SIGNATURE_KEY);
+        Ok(())
+    })
+}
+
+#[tauri::command]
+pub(crate) fn load_plugin_registry_cache(app: tauri::AppHandle) -> PluginRegistryCacheLoad {
+    crate::settings::settings_path(&app)
+        .map_or_else(|| unsafe_cache("no app-data dir"), |path| load_plugin_registry_cache_at(&path))
+}
+
+#[tauri::command]
+pub(crate) fn store_plugin_registry_cache(
+    index_json: String,
+    signature: String,
+    expected_legacy: Option<LegacyPluginRegistryCache>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let path = crate::settings::settings_path(&app).ok_or("no app-data dir")?;
+    store_plugin_registry_cache_at(&path, index_json, signature, expected_legacy)
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct InstalledPlugin {
@@ -189,7 +344,7 @@ pub(crate) fn verify_plugin_registry(
     signature_b64: String,
 ) -> Result<(), String> {
     use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-    if index_json.len() > 2 * 1024 * 1024 {
+    if index_json.len() > MAX_REGISTRY_INDEX_BYTES {
         return Err("plugin registry index is too large".to_string());
     }
     let signature_bytes = base64::engine::general_purpose::STANDARD
@@ -385,18 +540,34 @@ pub(crate) fn set_plugin_enabled(
     enabled: bool,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
-    let target = package_dir(&plugins_dir(&app)?, &id, &version)?;
+    let root = plugins_dir(&app)?;
+    let settings = crate::settings::settings_path(&app).ok_or("no app-data dir")?;
+    set_plugin_enabled_at(&root, &settings, &id, &version, enabled)
+}
+
+fn set_plugin_enabled_at(
+    plugins_root: &Path,
+    settings_path: &Path,
+    id: &str,
+    version: &str,
+    enabled: bool,
+) -> Result<(), String> {
+    let target = package_dir(plugins_root, id, version)?;
     if !target.join("manifest.json").is_file() || !target.join("plugin.wasm").is_file() {
         return Err("plugin version is not installed".to_string());
     }
-    crate::settings::update_settings(&app, |json| {
-        json["plugin_states"][&id] = serde_json::json!({ "version": version, "enabled": enabled });
+    crate::settings::update_settings_strict_at(settings_path, |json| {
+        json["plugin_states"][id] = serde_json::json!({ "version": version, "enabled": enabled });
+        Ok(())
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const SIGNED_CONTROL_INDEX: &str = "{\n  \"schemaVersion\": 1,\n  \"generatedAt\": \"2026-07-12T00:00:00Z\",\n  \"plugins\": [],\n  \"themes\": [],\n  \"revocations\": []\n}\n";
+    const SIGNED_CONTROL_SIGNATURE: &str = "2g6EPs5ssf7fkuBH5kYfDNaCEnoTX8PznGPsZ6yzz+xVMggocK5cyYHyE3tnnFGeyuMIBLx6ixPaHWN0FvNdAw==";
 
     fn test_manifest(id: &str, version: &str) -> String {
         format!(r#"{{"id":"{id}","version":"{version}"}}"#)
@@ -437,10 +608,204 @@ mod tests {
     fn registry_public_key_has_the_expected_identity() {
         assert_eq!(REGISTRY_PUBLIC_KEY.len(), 32);
         assert!(ed25519_dalek::VerifyingKey::from_bytes(&REGISTRY_PUBLIC_KEY).is_ok());
-        let index = "{\n  \"schemaVersion\": 1,\n  \"generatedAt\": \"2026-07-12T00:00:00Z\",\n  \"plugins\": [],\n  \"themes\": [],\n  \"revocations\": []\n}\n";
-        let signature = "2g6EPs5ssf7fkuBH5kYfDNaCEnoTX8PznGPsZ6yzz+xVMggocK5cyYHyE3tnnFGeyuMIBLx6ixPaHWN0FvNdAw==";
-        verify_plugin_registry(index.to_string(), signature.to_string()).unwrap();
-        assert!(verify_plugin_registry(format!("{index} "), signature.to_string()).is_err());
+        verify_plugin_registry(SIGNED_CONTROL_INDEX.to_string(), SIGNED_CONTROL_SIGNATURE.to_string()).unwrap();
+        assert!(verify_plugin_registry(format!("{SIGNED_CONTROL_INDEX} "), SIGNED_CONTROL_SIGNATURE.to_string()).is_err());
+    }
+
+    fn envelope(index_json: &str, signature: &str) -> serde_json::Value {
+        serde_json::json!({
+            "schemaVersion": 1,
+            "indexJson": index_json,
+            "signature": signature,
+        })
+    }
+
+    #[test]
+    fn registry_cache_store_is_one_atomic_envelope_and_preserves_unrelated_settings() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("tine-settings.json");
+        let old = serde_json::json!({
+            "unrelated": { "keep": true },
+            REGISTRY_CACHE_KEY: envelope("old-index", "old-signature"),
+        });
+        std::fs::write(&path, format!("{}\n", serde_json::to_string_pretty(&old).unwrap())).unwrap();
+
+        store_plugin_registry_cache_at(
+            &path,
+            SIGNED_CONTROL_INDEX.to_string(),
+            SIGNED_CONTROL_SIGNATURE.to_string(),
+            None,
+        )
+        .unwrap();
+
+        let persisted: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(persisted["unrelated"]["keep"], true);
+        assert_eq!(persisted[REGISTRY_CACHE_KEY], envelope(SIGNED_CONTROL_INDEX, SIGNED_CONTROL_SIGNATURE));
+        assert!(persisted.get(LEGACY_REGISTRY_INDEX_KEY).is_none());
+        assert!(persisted.get(LEGACY_REGISTRY_SIGNATURE_KEY).is_none());
+        assert!(matches!(load_plugin_registry_cache_at(&path), PluginRegistryCacheLoad::Envelope { .. }));
+    }
+
+    #[test]
+    fn registry_cache_load_distinguishes_absent_torn_and_malformed_states() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("tine-settings.json");
+        assert_eq!(load_plugin_registry_cache_at(&path), PluginRegistryCacheLoad::Absent);
+        std::fs::write(&path, "{}\n").unwrap();
+        assert_eq!(load_plugin_registry_cache_at(&path), PluginRegistryCacheLoad::Absent);
+
+        std::fs::write(&path, format!(r#"{{"{LEGACY_REGISTRY_INDEX_KEY}":"index"}}"#)).unwrap();
+        assert!(matches!(load_plugin_registry_cache_at(&path), PluginRegistryCacheLoad::Unsafe { .. }));
+        std::fs::write(&path, format!(r#"{{"{REGISTRY_CACHE_KEY}":{{"schemaVersion":1,"indexJson":"x","signature":"y","extra":true}}}}"#)).unwrap();
+        assert!(matches!(load_plugin_registry_cache_at(&path), PluginRegistryCacheLoad::Unsafe { .. }));
+        std::fs::write(&path, "not-json\n").unwrap();
+        assert!(matches!(load_plugin_registry_cache_at(&path), PluginRegistryCacheLoad::Unsafe { .. }));
+    }
+
+    #[test]
+    fn guarded_legacy_migration_removes_both_keys_or_publishes_nothing() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("tine-settings.json");
+        let legacy = LegacyPluginRegistryCache {
+            index_json: SIGNED_CONTROL_INDEX.to_string(),
+            signature: SIGNED_CONTROL_SIGNATURE.to_string(),
+        };
+        let initial = serde_json::json!({
+            "keep": 7,
+            LEGACY_REGISTRY_INDEX_KEY: legacy.index_json,
+            LEGACY_REGISTRY_SIGNATURE_KEY: legacy.signature,
+        });
+        std::fs::write(&path, format!("{}\n", serde_json::to_string_pretty(&initial).unwrap())).unwrap();
+
+        let mismatched = LegacyPluginRegistryCache {
+            index_json: "other".to_string(),
+            signature: SIGNED_CONTROL_SIGNATURE.to_string(),
+        };
+        let before = std::fs::read(&path).unwrap();
+        assert!(store_plugin_registry_cache_at(
+            &path,
+            SIGNED_CONTROL_INDEX.to_string(),
+            SIGNED_CONTROL_SIGNATURE.to_string(),
+            Some(mismatched),
+        )
+        .is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+
+        store_plugin_registry_cache_at(
+            &path,
+            SIGNED_CONTROL_INDEX.to_string(),
+            SIGNED_CONTROL_SIGNATURE.to_string(),
+            Some(legacy),
+        )
+        .unwrap();
+        let persisted: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(persisted["keep"], 7);
+        assert!(persisted.get(LEGACY_REGISTRY_INDEX_KEY).is_none());
+        assert!(persisted.get(LEGACY_REGISTRY_SIGNATURE_KEY).is_none());
+        assert_eq!(persisted[REGISTRY_CACHE_KEY], envelope(SIGNED_CONTROL_INDEX, SIGNED_CONTROL_SIGNATURE));
+    }
+
+    #[test]
+    fn invalid_or_unpublishable_registry_cache_never_replaces_last_good_bytes() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("tine-settings.json");
+        std::fs::write(&path, "{\n  \"keep\": true\n}\n").unwrap();
+        let before = std::fs::read(&path).unwrap();
+
+        assert!(store_plugin_registry_cache_at(
+            &path,
+            SIGNED_CONTROL_INDEX.to_string(),
+            "invalid".to_string(),
+            None,
+        )
+        .is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert!(store_plugin_registry_cache_at(
+            &path,
+            "x".repeat(MAX_REGISTRY_INDEX_BYTES + 1),
+            SIGNED_CONTROL_SIGNATURE.to_string(),
+            None,
+        )
+        .is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+
+        std::fs::write(&path, "not-json\n").unwrap();
+        let malformed = std::fs::read(&path).unwrap();
+        assert!(store_plugin_registry_cache_at(
+            &path,
+            SIGNED_CONTROL_INDEX.to_string(),
+            SIGNED_CONTROL_SIGNATURE.to_string(),
+            None,
+        )
+        .is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), malformed);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn registry_cache_publication_failure_preserves_last_good_bytes() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("tine-settings.json");
+        let old = serde_json::json!({ REGISTRY_CACHE_KEY: envelope("old-index", "old-signature") });
+        std::fs::write(&path, format!("{}\n", serde_json::to_string_pretty(&old).unwrap())).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let original_mode = std::fs::metadata(temp.path()).unwrap().permissions().mode();
+        std::fs::set_permissions(temp.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
+        let result = store_plugin_registry_cache_at(
+            &path,
+            SIGNED_CONTROL_INDEX.to_string(),
+            SIGNED_CONTROL_SIGNATURE.to_string(),
+            None,
+        );
+        std::fs::set_permissions(temp.path(), std::fs::Permissions::from_mode(original_mode)).unwrap();
+
+        assert!(result.is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
+
+    #[test]
+    fn concurrent_registry_cache_readers_observe_complete_old_or_new_envelopes() {
+        use std::sync::Arc;
+        let temp = tempfile::tempdir().unwrap();
+        let path = Arc::new(temp.path().join("tine-settings.json"));
+        let old = serde_json::json!({ REGISTRY_CACHE_KEY: envelope("old-index", "old-signature") });
+        std::fs::write(path.as_ref(), format!("{}\n", serde_json::to_string_pretty(&old).unwrap())).unwrap();
+
+        let writer_path = Arc::clone(&path);
+        let writer = std::thread::spawn(move || {
+            store_plugin_registry_cache_at(
+                writer_path.as_ref(),
+                SIGNED_CONTROL_INDEX.to_string(),
+                SIGNED_CONTROL_SIGNATURE.to_string(),
+                None,
+            )
+            .unwrap();
+        });
+        for _ in 0..500 {
+            let text = std::fs::read_to_string(path.as_ref()).unwrap();
+            let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+            let cache = &value[REGISTRY_CACHE_KEY];
+            let pair = (cache["indexJson"].as_str().unwrap(), cache["signature"].as_str().unwrap());
+            assert!(pair == ("old-index", "old-signature")
+                || pair == (SIGNED_CONTROL_INDEX, SIGNED_CONTROL_SIGNATURE));
+        }
+        writer.join().unwrap();
+    }
+
+    #[test]
+    fn revoked_plugin_state_is_durably_disabled_without_opening_guest_bytes() {
+        let temp = tempfile::tempdir().unwrap();
+        let plugins = temp.path().join("plugins");
+        write_test_package(&plugins, "page.tine.revoked", "1.0.0");
+        let settings = temp.path().join("tine-settings.json");
+        std::fs::write(&settings, r#"{"plugin_states":{"page.tine.revoked":{"version":"1.0.0","enabled":true}}}"#).unwrap();
+
+        set_plugin_enabled_at(&plugins, &settings, "page.tine.revoked", "1.0.0", false).unwrap();
+
+        let persisted: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(settings).unwrap()).unwrap();
+        assert_eq!(persisted["plugin_states"]["page.tine.revoked"]["enabled"], false);
+        assert_eq!(persisted["plugin_states"]["page.tine.revoked"]["version"], "1.0.0");
     }
 
     #[test]

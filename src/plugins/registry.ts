@@ -1,5 +1,5 @@
 import { createSignal } from "solid-js";
-import { backend } from "../backend";
+import { backend, type LegacyPluginRegistryCache, type PluginRegistryCacheLoad } from "../backend";
 import {
   PLUGIN_API_VERSION,
   PLUGIN_CAPABILITIES,
@@ -110,10 +110,12 @@ export interface VerifiedRegistrySnapshot {
 
 const [communityPlugins, setCommunityPlugins] = createSignal<RegistryPlugin[]>([]);
 const [communityThemes, setCommunityThemes] = createSignal<RegistryTheme[]>([]);
-const [registryState, setRegistryState] = createSignal<"idle" | "loading" | "ready" | "offline" | "invalid">("idle");
-export { communityPlugins, communityThemes, registryState };
+const [registryState, setRegistryState] = createSignal<"idle" | "loading" | "ready" | "offline" | "invalid" | "unsafe">("idle");
+const [registryPersistenceError, setRegistryPersistenceError] = createSignal<string | null>(null);
+export { communityPlugins, communityThemes, registryState, registryPersistenceError };
 
 let hasVerifiedRegistry = false;
+let unsafeCacheHeld = false;
 let refreshGeneration = 0;
 let latestVerifiedGeneration = 0;
 let liveApplyChain = Promise.resolve();
@@ -424,36 +426,59 @@ async function withDeadline<T>(promise: Promise<T>, timeoutMs: number): Promise<
 
 export async function loadVerifiedCachedRegistry(
   timeoutMs = CACHE_LOAD_TIMEOUT_MS
-): Promise<VerifiedRegistrySnapshot | null> {
+): Promise<VerifiedCachedRegistryLoad> {
+  let loaded: PluginRegistryCacheLoad;
   try {
-    return await withDeadline((async () => {
-      const [cached, signature] = await Promise.all([
-        backend().getAppString("plugin-registry-index", ""),
-        backend().getAppString("plugin-registry-signature", ""),
-      ]);
-      if (!cached || !signature) throw new Error("no verified registry cache");
-      return snapshot(await verifiedIndex(cached, signature));
-    })(), timeoutMs);
-  } catch {
-    return null;
+    loaded = await withDeadline(backend().loadPluginRegistryCache(), timeoutMs);
+  } catch (error) {
+    return { kind: "unsafe", reason: error instanceof Error ? error.message : String(error) };
+  }
+  if (loaded.kind === "absent" || loaded.kind === "unsafe") return loaded;
+  const candidate = loaded.kind === "envelope" ? loaded.envelope : loaded;
+  try {
+    const verified = snapshot(await verifiedIndex(candidate.indexJson, candidate.signature));
+    if (loaded.kind === "legacy") {
+      const expectedLegacy: LegacyPluginRegistryCache = {
+        indexJson: loaded.indexJson,
+        signature: loaded.signature,
+      };
+      try {
+        await backend().storePluginRegistryCache(loaded.indexJson, loaded.signature, expectedLegacy);
+        setRegistryPersistenceError(null);
+      } catch (error) {
+        setRegistryPersistenceError(`Verified registry cache migration was not persisted: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    } else {
+      setRegistryPersistenceError(null);
+    }
+    return { kind: "verified", snapshot: verified, source: loaded.kind };
+  } catch (error) {
+    return { kind: "unsafe", reason: error instanceof Error ? error.message : String(error) };
   }
 }
 
-export function seedCachedCommunityRegistry(cached: VerifiedRegistrySnapshot | null): ReadonlySet<string> {
-  if (!cached) {
+export type VerifiedCachedRegistryLoad =
+  | { kind: "verified"; snapshot: VerifiedRegistrySnapshot; source: "envelope" | "legacy" }
+  | { kind: "absent" }
+  | { kind: "unsafe"; reason: string };
+
+export function seedCachedCommunityRegistry(cached: VerifiedCachedRegistryLoad): ReadonlySet<string> {
+  if (cached.kind !== "verified") {
     hasVerifiedRegistry = false;
+    unsafeCacheHeld = cached.kind === "unsafe";
     setCommunityPlugins([]);
     setCommunityThemes([]);
     applyThemeRevocations(new Set());
-    setRegistryState("invalid");
+    setRegistryState(cached.kind === "unsafe" ? "unsafe" : "invalid");
     return new Set();
   }
   hasVerifiedRegistry = true;
-  setCommunityPlugins(cached.index.plugins);
-  setCommunityThemes(cached.index.themes);
-  applyThemeRevocations(cached.revoked);
+  unsafeCacheHeld = false;
+  setCommunityPlugins(cached.snapshot.index.plugins);
+  setCommunityThemes(cached.snapshot.index.themes);
+  applyThemeRevocations(cached.snapshot.revoked);
   setRegistryState("offline");
-  return cached.revoked;
+  return cached.snapshot.revoked;
 }
 
 async function applyLiveSnapshot(
@@ -461,7 +486,7 @@ async function applyLiveSnapshot(
   generation: number,
   cache: { indexJson: string; signature: string }
 ): Promise<void> {
-  liveApplyChain = liveApplyChain.catch(() => {}).then(async () => {
+  liveApplyChain = liveApplyChain.then(async () => {
     if (generation !== latestVerifiedGeneration) return;
     await pluginManager.applyRevocations(current.revoked);
     if (generation !== latestVerifiedGeneration) return;
@@ -470,14 +495,17 @@ async function applyLiveSnapshot(
     applyThemeRevocations(current.revoked);
     applyTheme(selectedGalleryTheme());
     hasVerifiedRegistry = true;
+    unsafeCacheHeld = false;
     setRegistryState("ready");
-    // Keep the durable pair inside the same accepted-generation queue as live
-    // application. A stale response writes nothing; if a newer response verifies
-    // while this write is already in flight, its queued write runs afterward.
-    await Promise.all([
-      backend().setAppString("plugin-registry-index", cache.indexJson),
-      backend().setAppString("plugin-registry-signature", cache.signature.trim()),
-    ]).catch(() => {});
+    await pluginManager.setActivationHold(false);
+    try {
+      // Atomic publication remains in the accepted-generation queue. A stale
+      // response writes nothing; a failed write leaves the previous envelope.
+      await backend().storePluginRegistryCache(cache.indexJson, cache.signature);
+      setRegistryPersistenceError(null);
+    } catch (error) {
+      setRegistryPersistenceError(`The verified live registry is active but was not saved for restart: ${error instanceof Error ? error.message : String(error)}`);
+    }
   });
   await liveApplyChain;
 }
@@ -498,7 +526,9 @@ export async function refreshCommunityRegistry(
   } catch {
     // Cache verification and application are a separate startup phase. A live
     // timeout never clears or re-applies older state over a verified snapshot.
-    if (generation === refreshGeneration) setRegistryState(hasVerifiedRegistry ? "offline" : "invalid");
+    if (generation === refreshGeneration) {
+      setRegistryState(hasVerifiedRegistry ? "offline" : unsafeCacheHeld ? "unsafe" : "invalid");
+    }
   }
 }
 

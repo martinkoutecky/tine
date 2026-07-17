@@ -50,6 +50,35 @@ pub(crate) fn native_frame_active() -> bool {
 /// another's key, and a transient read error aborts instead of resetting all prefs.
 static SETTINGS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// Strict, fallible variant used by the signed registry cache. Unlike the
+/// legacy generic preference writer, this must never rebuild a malformed
+/// settings file from `{}`: doing so could erase unrelated device settings and
+/// turn a cache-storage failure into apparent success.
+pub(crate) fn update_settings_strict_at(
+    path: &std::path::Path,
+    mutate: impl Fn(&mut serde_json::Value) -> Result<(), String>,
+) -> Result<(), String> {
+    tine_core::model::atomic_update(path, &SETTINGS_LOCK, |content| {
+        let mut json: serde_json::Value = serde_json::from_str(content)
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+        if !json.is_object() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "device settings root is not an object",
+            ));
+        }
+        mutate(&mut json)
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+        serde_json::to_string_pretty(&json)
+            .map(|mut text| {
+                text.push('\n');
+                text
+            })
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+    })
+    .map_err(|error| error.to_string())
+}
+
 /// Merge one or more keys into the device-settings JSON, durably. `mutate` edits the
 /// parsed object (an unparseable existing file is treated as `{}`, the prior behavior).
 pub(crate) fn update_settings(

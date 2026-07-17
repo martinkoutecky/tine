@@ -67,7 +67,7 @@ describe("installed plugin lifecycle", () => {
     ]);
     vi.spyOn(api, "readPluginEntry").mockResolvedValue(new Uint8Array([0, 97, 115, 109]));
     vi.spyOn(api, "getAppString").mockResolvedValue("{}");
-    vi.spyOn(api, "setPluginEnabled").mockResolvedValue();
+    const setEnabled = vi.spyOn(api, "setPluginEnabled").mockResolvedValue();
 
     let failB!: (error: Error) => void;
     const bActivation = new Promise<never>((_resolve, reject) => { failB = reject; });
@@ -98,6 +98,9 @@ describe("installed plugin lifecycle", () => {
       running: false,
       error: "B activation failed",
     });
+    expect(setEnabled.mock.calls.filter(([id, version, enabled]) =>
+      id === "page.tine.startup-a" && version === "1.0.0" && enabled === false
+    )).toHaveLength(1);
   });
 
   it("does not overwrite a newer live revocation after the platform startup await", async () => {
@@ -122,5 +125,61 @@ describe("installed plugin lifecycle", () => {
       enabled: false,
       error: "This version was revoked by the registry.",
     });
+  });
+
+  it("holds persisted and manual activation until registry verification releases it", async () => {
+    const api = backend();
+    vi.spyOn(api, "appPlatform").mockResolvedValue("desktop");
+    vi.spyOn(api, "listInstalledPlugins").mockResolvedValue([
+      record("page.tine.held", "Held plugin"),
+    ]);
+    const readEntry = vi.spyOn(api, "readPluginEntry").mockResolvedValue(new Uint8Array([0, 97, 115, 109]));
+    vi.spyOn(api, "getAppString").mockResolvedValue("{}");
+    const setEnabled = vi.spyOn(api, "setPluginEnabled").mockResolvedValue();
+    const runtime = { invoke: vi.fn().mockResolvedValue({ effects: [] }), dispose: vi.fn() };
+    vi.spyOn(PluginRuntime, "create").mockResolvedValue(runtime as unknown as PluginRuntime);
+
+    const manager = new PluginManager();
+    await manager.initialize(new Set(), true);
+    expect(readEntry).not.toHaveBeenCalled();
+
+    await manager.enable("page.tine.held", "1.0.0");
+    expect(setEnabled).toHaveBeenCalledWith("page.tine.held", "1.0.0", true);
+    expect(readEntry).not.toHaveBeenCalled();
+
+    await manager.setActivationHold(false);
+    expect(readEntry).toHaveBeenCalledTimes(1);
+    expect(runtime.invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it("blocks guest reads when durable revocation disable fails and retries on the next verified pass", async () => {
+    const api = backend();
+    vi.spyOn(api, "appPlatform").mockResolvedValue("desktop");
+    vi.spyOn(api, "listInstalledPlugins").mockResolvedValue([
+      record("page.tine.retry-disable", "Retry disable"),
+    ]);
+    const readEntry = vi.spyOn(api, "readPluginEntry").mockResolvedValue(new Uint8Array([0, 97, 115, 109]));
+    const createRuntime = vi.spyOn(PluginRuntime, "create");
+    vi.spyOn(api, "getAppString").mockResolvedValue("{}");
+    const setEnabled = vi.spyOn(api, "setPluginEnabled")
+      .mockRejectedValueOnce(new Error("disk full"))
+      .mockResolvedValue(undefined);
+    const revoked = new Set(["page.tine.retry-disable@1.0.0"]);
+
+    const manager = new PluginManager();
+    await manager.initialize(revoked);
+    expect(readEntry).not.toHaveBeenCalled();
+    expect(createRuntime).not.toHaveBeenCalled();
+    expect(installedPlugins().find((item) => item.manifest.id === "page.tine.retry-disable")?.error).toContain("disk full");
+
+    await manager.applyRevocations(revoked);
+    expect(setEnabled).toHaveBeenCalledTimes(2);
+    expect(installedPlugins().find((item) => item.manifest.id === "page.tine.retry-disable")).toMatchObject({
+      enabled: false,
+      running: false,
+      error: "This version was revoked by the registry.",
+    });
+    expect(readEntry).not.toHaveBeenCalled();
+    expect(createRuntime).not.toHaveBeenCalled();
   });
 });

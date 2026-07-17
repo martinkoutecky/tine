@@ -81,22 +81,39 @@ export class PluginManager {
   private readonly starting = new Map<string, { version: string; runtime: PluginRuntime }>();
   private platform: PluginPlatform = "desktop";
   private revoked: RevokedPluginVersions = new Set();
+  private activationHeld = false;
+  private initialized = false;
+  private readonly durableDisablePending = new Set<string>();
+  private readonly durableDisableInFlight = new Map<string, Promise<void>>();
+  private readonly durablyDisabled = new Set<string>();
 
-  async initialize(revoked: RevokedPluginVersions = new Set()) {
+  async initialize(revoked: RevokedPluginVersions = new Set(), activationHeld = false) {
     // Seed before the first await. A live refresh may supersede this set while
     // platform/storage reads are pending, but initialization never writes the
     // older startup snapshot again afterward.
     this.revoked = new Set(revoked);
+    this.activationHeld = activationHeld;
+    this.initialized = false;
     this.platform = await platformKind();
     const records = await backend().listInstalledPlugins();
-    const managed = await Promise.all(records.map(async (record) => {
+    for (const record of records) {
+      if (record.enabled) this.durablyDisabled.delete(versionKey(record.id, record.version));
+    }
+    const parsed = await Promise.all(records.map(async (record) => {
       const plugin = this.parseRecord(record);
       if (!plugin.error) plugin.settings = await this.loadSettings(plugin.manifest);
-      return plugin;
+      return { record, plugin };
     }));
+    const managed = parsed.map(({ plugin }) => plugin);
     setInstalledPlugins(managed);
-    for (const plugin of managed) {
-      if (plugin.enabled) {
+    this.initialized = true;
+    for (const { record, plugin } of parsed) {
+      const key = versionKey(plugin.manifest.id, plugin.manifest.version);
+      if (record.enabled && this.revoked.has(key)) {
+        await this.persistRevokedDisabled(plugin);
+        continue;
+      }
+      if (plugin.enabled && !this.activationHeld) {
         // A corrupt or incompatible persisted plugin disables only itself. The
         // remaining enabled plugins still get their independent startup attempt.
         try {
@@ -131,7 +148,29 @@ export class PluginManager {
   }
 
   async enable(id: string, version: string): Promise<void> {
+    if (this.activationHeld) {
+      if (this.revoked.has(versionKey(id, version))) throw new Error("this plugin version has been revoked");
+      await backend().setPluginEnabled(id, version, true);
+      this.durablyDisabled.delete(versionKey(id, version));
+      this.patch(id, version, { enabled: true, running: false, error: undefined });
+      return;
+    }
     await this.start(id, version, true);
+  }
+
+  async setActivationHold(held: boolean): Promise<void> {
+    if (this.activationHeld === held) return;
+    this.activationHeld = held;
+    if (held || !this.initialized) return;
+    for (const plugin of installedPlugins()) {
+      if (!plugin.enabled || plugin.running || this.revoked.has(versionKey(plugin.manifest.id, plugin.manifest.version))) continue;
+      try {
+        await this.start(plugin.manifest.id, plugin.manifest.version, false);
+      } catch {
+        // start() records the causal failure and prevents other resumptions from
+        // being coupled to one broken package.
+      }
+    }
   }
 
   async disable(id: string): Promise<void> {
@@ -304,6 +343,7 @@ export class PluginManager {
 
   async applyRevocations(revoked: RevokedPluginVersions) {
     this.revoked = new Set(revoked);
+    const runtimeRevoked = new Set<string>();
     for (const [id, starting] of this.starting) {
       if (this.revoked.has(versionKey(id, starting.version))) {
         // A live revocation can arrive while entry bytes, settings, or guest
@@ -311,13 +351,67 @@ export class PluginManager {
         // active; start() observes the revocation and persists the disabled state.
         starting.runtime.dispose();
         this.starting.delete(id);
+        runtimeRevoked.add(versionKey(id, starting.version));
       }
     }
     for (const [id, active] of this.active) {
       if (this.revoked.has(versionKey(id, active.manifest.version))) {
-        await this.disable(id);
-        this.patch(id, active.manifest.version, { error: "This version was revoked by the registry." });
+        active.runtime.dispose();
+        this.active.delete(id);
+        runtimeRevoked.add(versionKey(id, active.manifest.version));
       }
+    }
+    for (const plugin of installedPlugins()) {
+      const key = versionKey(plugin.manifest.id, plugin.manifest.version);
+      if (!this.revoked.has(key)) continue;
+      if (plugin.enabled || plugin.running || runtimeRevoked.has(key) || this.durableDisablePending.has(key)) {
+        await this.persistRevokedDisabled(plugin);
+      } else {
+        this.patch(plugin.manifest.id, plugin.manifest.version, {
+          enabled: false,
+          running: false,
+          error: "This version was revoked by the registry.",
+        });
+      }
+    }
+  }
+
+  private async persistRevokedDisabled(plugin: ManagedPlugin): Promise<void> {
+    const key = versionKey(plugin.manifest.id, plugin.manifest.version);
+    if (this.durablyDisabled.has(key)) {
+      this.patch(plugin.manifest.id, plugin.manifest.version, {
+        enabled: false,
+        running: false,
+        error: "This version was revoked by the registry.",
+      });
+      return;
+    }
+    const current = this.durableDisableInFlight.get(key);
+    if (current) return current;
+    const disable = (async () => {
+      try {
+        await backend().setPluginEnabled(plugin.storageId, plugin.storageVersion, false);
+        this.durableDisablePending.delete(key);
+        this.durablyDisabled.add(key);
+        this.patch(plugin.manifest.id, plugin.manifest.version, {
+          enabled: false,
+          running: false,
+          error: "This version was revoked by the registry.",
+        });
+      } catch (error) {
+        this.durableDisablePending.add(key);
+        this.patch(plugin.manifest.id, plugin.manifest.version, {
+          enabled: false,
+          running: false,
+          error: `This version was revoked by the registry. Could not persist disabled state: ${displayError(error)}`,
+        });
+      }
+    })();
+    this.durableDisableInFlight.set(key, disable);
+    try {
+      await disable;
+    } finally {
+      if (this.durableDisableInFlight.get(key) === disable) this.durableDisableInFlight.delete(key);
     }
   }
 
@@ -374,6 +468,7 @@ export class PluginManager {
     if (!supportsPlatform(plugin.manifest, this.platform)) throw new Error(`plugin does not support ${this.platform}`);
     const assertAllowed = () => {
       if (this.revoked.has(versionKey(id, version))) throw new Error("this plugin version has been revoked");
+      if (this.activationHeld) throw new Error("plugin activation is held until the signed registry is verified");
     };
     assertAllowed();
     let runtime: PluginRuntime | undefined;
@@ -401,6 +496,7 @@ export class PluginManager {
       assertAllowed();
       if (persist) {
         await backend().setPluginEnabled(id, version, true);
+        this.durablyDisabled.delete(versionKey(id, version));
         assertAllowed();
       }
       this.active.get(id)?.runtime.dispose();
@@ -425,7 +521,11 @@ export class PluginManager {
         if (this.starting.get(id)?.runtime === runtime) this.starting.delete(id);
         runtime.dispose();
       }
-      if (persist || plugin.enabled) await backend().setPluginEnabled(id, version, false);
+      if (this.revoked.has(versionKey(id, version))) {
+        await this.persistRevokedDisabled(plugin);
+      } else if (persist || plugin.enabled) {
+        await backend().setPluginEnabled(id, version, false);
+      }
       const message = this.revoked.has(versionKey(id, version))
         ? "This version was revoked by the registry."
         : displayError(error);

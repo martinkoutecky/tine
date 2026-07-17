@@ -111,6 +111,7 @@ import {
   installCommunityTheme,
   loadSafetyReport,
   refreshCommunityRegistry,
+  registryPersistenceError,
   registryState,
   type PluginSafetyReport,
   type RegistryPlugin,
@@ -715,6 +716,8 @@ function PluginsTab(): JSX.Element {
       <div class="settings-hint">
         Signed registry · automated deterministic and no-tools AI audits · immutable version digests.
         <Show when={registryState() === "offline"}> Showing the last verified offline copy.</Show>
+        <Show when={registryState() === "unsafe"}> Installed plugins are held until a signed catalogue can be verified.</Show>
+        <Show when={registryPersistenceError()}> {registryPersistenceError()}</Show>
       </div>
       <Show
         when={communityPlugins().length > 0}

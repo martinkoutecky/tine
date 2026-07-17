@@ -129,6 +129,23 @@ export interface InstalledPluginRecord {
   enabled: boolean;
 }
 
+export interface PluginRegistryCacheEnvelope {
+  schemaVersion: 1;
+  indexJson: string;
+  signature: string;
+}
+
+export interface LegacyPluginRegistryCache {
+  indexJson: string;
+  signature: string;
+}
+
+export type PluginRegistryCacheLoad =
+  | { kind: "absent" }
+  | { kind: "envelope"; envelope: PluginRegistryCacheEnvelope }
+  | { kind: "legacy"; indexJson: string; signature: string }
+  | { kind: "unsafe"; reason: string };
+
 export type LoadGraphResult =
   | { kind: "loaded" | "already_current"; meta: GraphMeta; binding_generation: number }
   | { kind: "focused_existing"; window_label: string };
@@ -165,6 +182,12 @@ export interface Backend {
   readPluginEntry(id: string, version: string): Promise<Uint8Array>;
   setPluginEnabled(id: string, version: string, enabled: boolean): Promise<void>;
   verifyPluginRegistry(indexJson: string, signatureB64: string): Promise<void>;
+  loadPluginRegistryCache(): Promise<PluginRegistryCacheLoad>;
+  storePluginRegistryCache(
+    indexJson: string,
+    signature: string,
+    expectedLegacy?: LegacyPluginRegistryCache
+  ): Promise<void>;
   /** Keep Android's edge-to-edge status/navigation icon appearance readable
    *  against Tine's explicit in-app theme. Other platforms are a no-op. */
   setSystemBarAppearance(dark: boolean): Promise<void>;
@@ -570,6 +593,20 @@ class TauriBackend implements Backend {
   }
   verifyPluginRegistry(indexJson: string, signatureB64: string) {
     return this.call<void>("verify_plugin_registry", { indexJson, signatureB64 });
+  }
+  loadPluginRegistryCache() {
+    return this.call<PluginRegistryCacheLoad>("load_plugin_registry_cache");
+  }
+  storePluginRegistryCache(
+    indexJson: string,
+    signature: string,
+    expectedLegacy?: LegacyPluginRegistryCache
+  ) {
+    return this.call<void>("store_plugin_registry_cache", {
+      indexJson,
+      signature,
+      expectedLegacy: expectedLegacy ?? null,
+    });
   }
   setSystemBarAppearance(dark: boolean) {
     return this.call<void>("set_system_bar_appearance", { dark });
