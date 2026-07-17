@@ -18,6 +18,8 @@ export const COMMUNITY_REGISTRY_URL =
 const MAX_INDEX_BYTES = 2 * 1024 * 1024;
 const MAX_WASM_BYTES = 8 * 1024 * 1024;
 const MAX_AUDIT_BYTES = 256 * 1024;
+const NETWORK_READ_TIMEOUT_MS = 15_000;
+const CACHE_LOAD_TIMEOUT_MS = 2_000;
 
 export type RegistryAuditRisk = "low" | "review" | "elevated";
 export type RegistryAuditDisposition = "publish" | "quarantine" | "reject";
@@ -101,10 +103,20 @@ interface RegistryIndex {
   revocations: Array<{ id: string; version: string; severity: string; reason: string; revokedAt: string }>;
 }
 
+export interface VerifiedRegistrySnapshot {
+  index: RegistryIndex;
+  revoked: ReadonlySet<string>;
+}
+
 const [communityPlugins, setCommunityPlugins] = createSignal<RegistryPlugin[]>([]);
 const [communityThemes, setCommunityThemes] = createSignal<RegistryTheme[]>([]);
 const [registryState, setRegistryState] = createSignal<"idle" | "loading" | "ready" | "offline" | "invalid">("idle");
 export { communityPlugins, communityThemes, registryState };
+
+let hasVerifiedRegistry = false;
+let refreshGeneration = 0;
+let latestVerifiedGeneration = 0;
+let liveApplyChain = Promise.resolve();
 
 function object(value: unknown, where: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${where} is invalid`);
@@ -319,41 +331,69 @@ export function parseRegistryIndex(value: unknown): RegistryIndex {
   return { schemaVersion: 1, generatedAt: text(root.generatedAt, "generatedAt", 80), plugins, themes, revocations };
 }
 
-async function boundedBytes(url: string, max: number): Promise<Uint8Array> {
-  const response = await fetch(url, { cache: "no-store", redirect: "error" });
-  if (!response.ok) throw new Error(`registry request failed (${response.status})`);
-  const declared = Number(response.headers.get("content-length") ?? "0");
-  if (declared > max) throw new Error("registry response is too large");
-  if (!response.body) {
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    if (bytes.byteLength > max) throw new Error("registry response is too large");
-    return bytes;
-  }
-  const chunks: Uint8Array[] = [];
-  let length = 0;
-  const reader = response.body.getReader();
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      length += value.byteLength;
-      if (length > max) throw new Error("registry response is too large");
-      chunks.push(value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  const bytes = new Uint8Array(length);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return bytes;
+function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<T>((resolve, reject) => {
+    const aborted = () => reject(signal.reason ?? new Error("registry request timed out"));
+    signal.addEventListener("abort", aborted, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", aborted);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", aborted);
+        reject(error);
+      }
+    );
+  });
 }
 
-async function boundedText(url: string, max: number): Promise<string> {
-  return new TextDecoder("utf-8", { fatal: true }).decode(await boundedBytes(url, max));
+async function boundedBytes(url: string, max: number, timeoutMs = NETWORK_READ_TIMEOUT_MS): Promise<Uint8Array> {
+  const controller = new AbortController();
+  const deadline = setTimeout(() => controller.abort(new Error("registry request timed out")), timeoutMs);
+  try {
+    const response = await abortable(fetch(url, {
+      cache: "no-store",
+      redirect: "error",
+      signal: controller.signal,
+    }), controller.signal);
+    if (!response.ok) throw new Error(`registry request failed (${response.status})`);
+    const declared = Number(response.headers.get("content-length") ?? "0");
+    if (declared > max) throw new Error("registry response is too large");
+    if (!response.body) {
+      const bytes = new Uint8Array(await abortable(response.arrayBuffer(), controller.signal));
+      if (bytes.byteLength > max) throw new Error("registry response is too large");
+      return bytes;
+    }
+    const chunks: Uint8Array[] = [];
+    let length = 0;
+    const reader = response.body.getReader();
+    try {
+      while (true) {
+        const { done, value } = await abortable(reader.read(), controller.signal);
+        if (done) break;
+        length += value.byteLength;
+        if (length > max) throw new Error("registry response is too large");
+        chunks.push(value);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    const bytes = new Uint8Array(length);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return bytes;
+  } finally {
+    clearTimeout(deadline);
+  }
+}
+
+async function boundedText(url: string, max: number, timeoutMs = NETWORK_READ_TIMEOUT_MS): Promise<string> {
+  return new TextDecoder("utf-8", { fatal: true }).decode(await boundedBytes(url, max, timeoutMs));
 }
 
 async function verifiedIndex(indexJson: string, signature: string): Promise<RegistryIndex> {
@@ -361,45 +401,97 @@ async function verifiedIndex(indexJson: string, signature: string): Promise<Regi
   return parseRegistryIndex(JSON.parse(indexJson));
 }
 
-export async function refreshCommunityRegistry(): Promise<void> {
-  setRegistryState("loading");
+function snapshot(index: RegistryIndex): VerifiedRegistrySnapshot {
+  return {
+    index,
+    revoked: new Set(index.revocations.map((item) => `${item.id}@${item.version}`)),
+  };
+}
+
+async function withDeadline<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let deadline: ReturnType<typeof setTimeout> | undefined;
   try {
-    const [indexJson, signature] = await Promise.all([
-      boundedText(COMMUNITY_REGISTRY_URL, MAX_INDEX_BYTES),
-      boundedText(`${COMMUNITY_REGISTRY_URL}.sig`, 1_024),
+    return await Promise.race([
+      promise,
+      new Promise<T>((_resolve, reject) => {
+        deadline = setTimeout(() => reject(new Error("registry cache load timed out")), timeoutMs);
+      }),
     ]);
-    const index = await verifiedIndex(indexJson, signature);
-    await Promise.all([
-      backend().setAppString("plugin-registry-index", indexJson),
-      backend().setAppString("plugin-registry-signature", signature.trim()),
-    ]);
-    setCommunityPlugins(index.plugins);
-    setCommunityThemes(index.themes);
-    const revoked = new Set(index.revocations.map((item) => `${item.id}@${item.version}`));
-    await pluginManager.applyRevocations(revoked);
-    applyThemeRevocations(revoked);
-    applyTheme(selectedGalleryTheme());
-    setRegistryState("ready");
-  } catch {
-    try {
+  } finally {
+    if (deadline !== undefined) clearTimeout(deadline);
+  }
+}
+
+export async function loadVerifiedCachedRegistry(
+  timeoutMs = CACHE_LOAD_TIMEOUT_MS
+): Promise<VerifiedRegistrySnapshot | null> {
+  try {
+    return await withDeadline((async () => {
       const [cached, signature] = await Promise.all([
         backend().getAppString("plugin-registry-index", ""),
         backend().getAppString("plugin-registry-signature", ""),
       ]);
       if (!cached || !signature) throw new Error("no verified registry cache");
-      const index = await verifiedIndex(cached, signature);
-      setCommunityPlugins(index.plugins);
-      setCommunityThemes(index.themes);
-      const revoked = new Set(index.revocations.map((item) => `${item.id}@${item.version}`));
-      await pluginManager.applyRevocations(revoked);
-      applyThemeRevocations(revoked);
-      applyTheme(selectedGalleryTheme());
-      setRegistryState("offline");
-    } catch {
-      setCommunityPlugins([]);
-      setCommunityThemes([]);
-      setRegistryState("invalid");
-    }
+      return snapshot(await verifiedIndex(cached, signature));
+    })(), timeoutMs);
+  } catch {
+    return null;
+  }
+}
+
+export function seedCachedCommunityRegistry(cached: VerifiedRegistrySnapshot | null): ReadonlySet<string> {
+  if (!cached) {
+    hasVerifiedRegistry = false;
+    setCommunityPlugins([]);
+    setCommunityThemes([]);
+    applyThemeRevocations(new Set());
+    setRegistryState("invalid");
+    return new Set();
+  }
+  hasVerifiedRegistry = true;
+  setCommunityPlugins(cached.index.plugins);
+  setCommunityThemes(cached.index.themes);
+  applyThemeRevocations(cached.revoked);
+  setRegistryState("offline");
+  return cached.revoked;
+}
+
+async function applyLiveSnapshot(current: VerifiedRegistrySnapshot, generation: number): Promise<void> {
+  liveApplyChain = liveApplyChain.catch(() => {}).then(async () => {
+    if (generation !== latestVerifiedGeneration) return;
+    await pluginManager.applyRevocations(current.revoked);
+    if (generation !== latestVerifiedGeneration) return;
+    setCommunityPlugins(current.index.plugins);
+    setCommunityThemes(current.index.themes);
+    applyThemeRevocations(current.revoked);
+    applyTheme(selectedGalleryTheme());
+    hasVerifiedRegistry = true;
+    setRegistryState("ready");
+  });
+  await liveApplyChain;
+}
+
+export async function refreshCommunityRegistry(
+  options: { timeoutMs?: number } = {}
+): Promise<void> {
+  const generation = ++refreshGeneration;
+  setRegistryState("loading");
+  try {
+    const [indexJson, signature] = await Promise.all([
+      boundedText(COMMUNITY_REGISTRY_URL, MAX_INDEX_BYTES, options.timeoutMs),
+      boundedText(`${COMMUNITY_REGISTRY_URL}.sig`, 1_024, options.timeoutMs),
+    ]);
+    const current = snapshot(await verifiedIndex(indexJson, signature));
+    latestVerifiedGeneration = Math.max(latestVerifiedGeneration, generation);
+    await applyLiveSnapshot(current, generation);
+    void Promise.all([
+      backend().setAppString("plugin-registry-index", indexJson),
+      backend().setAppString("plugin-registry-signature", signature.trim()),
+    ]).catch(() => {});
+  } catch {
+    // Cache verification and application are a separate startup phase. A live
+    // timeout never clears or re-applies older state over a verified snapshot.
+    if (generation === refreshGeneration) setRegistryState(hasVerifiedRegistry ? "offline" : "invalid");
   }
 }
 

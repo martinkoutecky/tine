@@ -3,9 +3,8 @@ import { App } from "./App";
 import "./session";
 import { restoreSession } from "./router";
 import { initParser } from "./render/parse";
-import { applyTheme, applyAccent } from "./ui";
-import { initThemeGallery } from "./themeGallery";
-import { initThemePackages } from "./themes/manager";
+import { applyTheme, applyAccent, pushToast } from "./ui";
+import { startCommunityExtensions } from "./plugins/startup";
 import { isTauri } from "./backend";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import "@fontsource/inter/400.css";
@@ -24,7 +23,13 @@ import "./styles/app.css";
 
 applyTheme();
 applyAccent();
-void initThemePackages().then(initThemeGallery);
+const communityExtensionsReady = startCommunityExtensions()
+  .then(({ pluginInitialization }) => {
+    void pluginInitialization.catch((error) =>
+      pushToast(`Plugins unavailable: ${String(error)}`, "error")
+    );
+  })
+  .catch((error) => pushToast(`Community extensions unavailable: ${String(error)}`, "error"));
 
 // Restore the saved tab session before first paint, so tabs come back without a
 // flash. Capped so a slow/stuck backend read can never block startup — worst
@@ -53,4 +58,5 @@ const mount = () => {
 void Promise.all([
   initParser().catch((e) => console.error("lsdoc-wasm init failed:", e)),
   Promise.race([restoreSession(), new Promise((r) => setTimeout(r, 1500))]),
+  communityExtensionsReady,
 ]).then(mount, mount);

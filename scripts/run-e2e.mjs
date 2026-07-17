@@ -69,6 +69,9 @@ if (portableX11Deps) {
 }
 
 const suites = {
+  "plugin-revocation": [
+    ["plugin-revocation", "scripts/e2e-plugin-revocation.mjs", {}],
+  ],
   "og-parity-pilot": [
     ["og-parity-references", "scripts/e2e-og-parity-references.mjs", {}],
   ],

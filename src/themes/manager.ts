@@ -41,7 +41,10 @@ async function persist(themes: InstalledTheme[]) {
   await backend().setAppString(STORAGE_KEY, JSON.stringify(themes.map((theme) => theme.manifest)));
 }
 
-export async function initThemePackages(): Promise<void> {
+export async function initThemePackages(initialRevocations: ReadonlySet<string> = new Set()): Promise<void> {
+  // Seed before the first await so a selected installed theme can never be
+  // restored through an empty startup revocation window.
+  applyThemeRevocations(initialRevocations);
   let text = "[]";
   try { text = await backend().getAppString(STORAGE_KEY, "[]"); } catch {}
   setInstalledThemes(managed(parseStoredThemes(text)));

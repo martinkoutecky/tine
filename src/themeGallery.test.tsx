@@ -5,8 +5,14 @@ import {
   applyTheme,
   ensureThemeStyle,
   selectedGalleryTheme,
+  initThemeGallery,
 } from "./themeGallery";
-import { applyThemeRevocations, installThemePackage, uninstallThemePackage } from "./themes/manager";
+import {
+  applyThemeRevocations,
+  initThemePackages,
+  installThemePackage,
+  uninstallThemePackage,
+} from "./themes/manager";
 
 function managedStyleIds(): string[] {
   return Array.from(document.head.children)
@@ -101,6 +107,31 @@ describe("theme gallery style layer", () => {
     expect(selectedGalleryTheme()).toBe("");
     expect(document.getElementById(THEME_GALLERY_STYLE_ID)?.textContent).toBe("");
     await expect(installThemePackage(manifest)).rejects.toThrow(/revoked/);
+    await uninstallThemePackage(installed.key);
+  });
+
+  it("seeds cached revocations before restoring a selected installed theme", async () => {
+    const installed = await installThemePackage({
+      schemaVersion: 1,
+      id: "page.tine.theme.startup-revoked",
+      name: "Startup revoked tokens",
+      version: "1.0.0",
+      apiVersion: "0.1",
+      description: "A startup ordering fixture.",
+      author: "Tine",
+      license: "MIT",
+      source: "https://example.invalid/theme",
+      modes: { dark: { "--ls-primary-background-color": "#010203" } },
+      screenshots: [],
+    });
+    applyTheme(installed.key);
+    applyThemeRevocations(new Set());
+
+    await initThemePackages(new Set([installed.key]));
+    await initThemeGallery();
+
+    expect(selectedGalleryTheme()).toBe("");
+    expect(document.getElementById(THEME_GALLERY_STYLE_ID)?.textContent).toBe("");
     await uninstallThemePackage(installed.key);
   });
 });
